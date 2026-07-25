@@ -29,6 +29,9 @@
 
 #include "FFIContext.h"
 
+#include "JSCJSValueInlines.h"
+#include "JSFFICallback.h"
+#include "SlotVisitorInlines.h"
 #include <algorithm>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -36,9 +39,46 @@ namespace JSC { namespace FFI {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FFIContext);
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadsafeInvocation);
+
+FFIContext::ThreadsafeDispatchFunction FFIContext::s_threadsafeDispatch { nullptr };
+
 FFIContext::FFIContext() = default;
 
 FFIContext::~FFIContext() = default;
+
+void FFIContext::setThreadsafeDispatch(ThreadsafeDispatchFunction fn)
+{
+    s_threadsafeDispatch = fn;
+}
+
+void FFIContext::addLiveCallback(VM& vm, JSGlobalObject& owner, JSFFICallback* callback)
+{
+    // Barriered against the owning global object; guarded by its cellLock because the
+    // concurrent marker iterates this set from JSGlobalObject::visitChildren (append may
+    // reallocate the buffer under an unlocked iterator otherwise).
+    Locker locker { owner.cellLock() };
+    m_liveCallbacks.append(WriteBarrier<JSFFICallback>(vm, &owner, callback));
+}
+
+void FFIContext::removeLiveCallback(JSGlobalObject& owner, JSFFICallback* callback)
+{
+    Locker locker { owner.cellLock() };
+    m_liveCallbacks.removeFirstMatching([&](const WriteBarrier<JSFFICallback>& entry) {
+        return entry.get() == callback;
+    });
+}
+
+template<typename Visitor>
+void FFIContext::visitLiveCallbacks(JSGlobalObject& owner, Visitor& visitor)
+{
+    Locker locker { owner.cellLock() };
+    for (auto& callback : m_liveCallbacks)
+        visitor.append(callback);
+}
+
+template void FFIContext::visitLiveCallbacks(JSGlobalObject&, AbstractSlotVisitor&);
+template void FFIContext::visitLiveCallbacks(JSGlobalObject&, SlotVisitor&);
 
 const CString* FFIContext::cachedUTF8(StringImpl& impl)
 {

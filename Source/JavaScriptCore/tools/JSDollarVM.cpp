@@ -67,6 +67,7 @@
 #include "SnippetParams.h"
 #include "Strong.h"
 #include "StructureCreateInlines.h"
+#include "TopExceptionScope.h"
 #include "TypeProfiler.h"
 #include "TypeProfilerLog.h"
 #include "VMEntryScopeInlines.h"
@@ -2291,7 +2292,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionFFIRead);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIReadObject);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIWrite);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICString);
-static JSC_DECLARE_HOST_FUNCTION(functionFFISetNapiEnv);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICompileCounts);
 #endif
 
@@ -4576,8 +4576,8 @@ static std::optional<FFI::Type> dollarVMParseFFIType(JSGlobalObject* globalObjec
 // (SPEC section 9.1: m_closed makes further $vm / Bun glue reject the object);
 // the engine conversion itself deliberately delegates that check here (see the
 // FFIConversions.cpp JSFFICallback case), so every pointer-consuming $vm entry
-// point (ffiFunction, ffiRead, ffiWrite, ffiCString, ffiSetNapiEnv) funnels
-// through this helper and rejects closed callbacks identically.
+// point (ffiFunction, ffiRead, ffiWrite, ffiCString) funnels through this
+// helper and rejects closed callbacks identically.
 static void* dollarVMFFIPointerFromJS(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -4596,8 +4596,8 @@ static void* dollarVMFFIPointerFromJS(JSGlobalObject* globalObject, JSValue valu
 
 // $vm.ffiRead / $vm.ffiWrite accept the plain scalar and pointer types only
 // (SPEC section 11.2: "u8..f64, ptr"); char/i8/bool and the *_fast variants are
-// the same scalars. void, cstring/function/buffer/napi_env carry no meaningful
-// raw poke/peek, and napi_value would let a test forge JSValues from memory.
+// the same scalars. void, cstring/function/buffer carry no meaningful raw
+// poke/peek, and jsvalue would let a test forge JSValues from memory.
 // FFI-SPEC-GAP: the spec does not enumerate the accepted set beyond "u8..f64, ptr".
 static bool dollarVMFFIIsRawMemoryType(FFI::Type type)
 {
@@ -4621,8 +4621,8 @@ static bool dollarVMFFIIsRawMemoryType(FFI::Type type)
     case FFI::Type::Void:
     case FFI::Type::CString:
     case FFI::Type::Function:
-    case FFI::Type::NapiEnv:
-    case FFI::Type::NapiValue:
+    case FFI::Type::RESERVED_WasNapiEnv:
+    case FFI::Type::JSValue:
     case FFI::Type::Buffer:
         return false;
     }
@@ -4688,8 +4688,8 @@ static uint64_t dollarVMFFILoadSlot(FFI::Type type, const void* address)
     case FFI::Type::Void:
     case FFI::Type::CString:
     case FFI::Type::Function:
-    case FFI::Type::NapiEnv:
-    case FFI::Type::NapiValue:
+    case FFI::Type::RESERVED_WasNapiEnv:
+    case FFI::Type::JSValue:
     case FFI::Type::Buffer:
         break;
     }
@@ -4713,6 +4713,49 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 // `ptr` is a double-encoded pointer (or anything the SPEC section 5 pointer rule
 // accepts, including a JSFFICallback). Invalid descriptors throw a TypeError via
 // FFI::signatureFromJS; --useJIT=0 throws "bun:ffi requires the JIT".
+// Test-only CallHooks for $vm.ffiFunction(sig, target, name, { owner, hooks: "test" }): before()
+// pushes "before:N" onto the array at owner.hookLog and returns N as the token; after() pushes
+// "after:N" (the token round-trips). These are ORDINARY embedder code and are held to full
+// exception-check discipline: every throwing operation is checked under exactly one scope. The
+// before-hook uses a ThrowScope (its exceptions abort the call); the after-hook uses a
+// TopExceptionScope because an after-hook must leave the VM clean (it swallows its own failures).
+static void* dollarVMTestHookBefore(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    static uintptr_t tokenCounter = 0;
+    uintptr_t token = ++tokenCounter;
+    if (JSObject* owner = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee())->owner()) {
+        JSValue logValue = owner->get(globalObject, Identifier::fromString(vm, "hookLog"_s));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (auto* log = dynamicDowncast<JSArray>(logValue)) {
+            log->push(globalObject, jsString(vm, makeString("before:"_s, token)));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+    }
+    return reinterpret_cast<void*>(token);
+}
+static void dollarVMTestHookAfter(JSGlobalObject* globalObject, CallFrame* callFrame, void* token)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (JSObject* owner = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee())->owner()) {
+        JSValue logValue = owner->get(globalObject, Identifier::fromString(vm, "hookLog"_s));
+        if (scope.exception()) {
+            scope.clearException();
+            return;
+        }
+        if (auto* log = dynamicDowncast<JSArray>(logValue)) {
+            log->push(globalObject, jsString(vm, makeString("after:"_s, reinterpret_cast<uintptr_t>(token))));
+            if (scope.exception())
+                scope.clearException();
+        }
+    }
+}
+static const FFI::CallHooks dollarVMTestHooks { dollarVMTestHookBefore, dollarVMTestHookAfter };
+
+// Usage: $vm.ffiFunction(signature, target, name?, options?) where options may be
+// { owner: JSObject, hooks: "test" } -- exercises the owner cell and the CallHooks bracket.
 JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4743,11 +4786,33 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, Cal
         RETURN_IF_EXCEPTION(scope, { });
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name)));
+    JSObject* owner = nullptr;
+    const FFI::CallHooks* hooks = nullptr;
+    if (JSObject* options = callFrame->argument(3).getObject()) {
+        JSValue ownerValue = options->get(globalObject, Identifier::fromString(vm, "owner"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!ownerValue.isUndefinedOrNull()) {
+            owner = ownerValue.getObject();
+            if (!owner)
+                return throwVMTypeError(globalObject, scope, "$vm.ffiFunction: owner must be an object"_s);
+        }
+        JSValue hooksValue = options->get(globalObject, Identifier::fromString(vm, "hooks"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!hooksValue.isUndefinedOrNull()) {
+            String kind = hooksValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (kind != "test"_s)
+                return throwVMTypeError(globalObject, scope, "$vm.ffiFunction: hooks must be \"test\""_s);
+            hooks = &dollarVMTestHooks;
+        }
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name, owner, hooks)));
 }
 
 // Usage: $vm.ffiCallback({ args: [...], returns: ... }, jsFunction) -> JSFFICallback
 // (JSFFICallback::finishCreation installs its `ptr` / `threadsafe` own properties.)
+static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation&); // defined below with the queue/drain model
 JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4765,7 +4830,49 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, Cal
     if (!callableValue.isCallable())
         return throwVMTypeError(globalObject, scope, "$vm.ffiCallback: expected a callable"_s);
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), asObject(callableValue), signature.releaseNonNull())));
+    // Optional third argument: { threadsafe: true } creates a THREADSAFE callback wired to the
+    // shell's queue-and-drain dispatch model (registered lazily on first threadsafe creation).
+    bool threadsafe = false;
+    if (JSObject* options = callFrame->argument(2).getObject()) {
+        JSValue threadsafeValue = options->get(globalObject, Identifier::fromString(vm, "threadsafe"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        threadsafe = threadsafeValue.toBoolean(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (threadsafe && !FFI::FFIContext::threadsafeDispatch())
+        FFI::FFIContext::setThreadsafeDispatch(dollarVMThreadsafeDispatch);
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), asObject(callableValue), signature.releaseNonNull(), threadsafe, nullptr)));
+}
+
+// Shell model of an embedder's threadsafe-callback dispatch: the engine calls
+// dollarVMThreadsafeDispatch (possibly from a foreign thread) which merely QUEUES the record;
+// $vm.drainThreadsafeCallbacks() then runs each on the JS thread through
+// FFI::runThreadsafeInvocation -- the same split a real embedder makes with its event loop.
+static Lock s_threadsafeQueueLock;
+static Vector<RefPtr<FFI::ThreadsafeInvocation>>& threadsafeQueue()
+{
+    static NeverDestroyed<Vector<RefPtr<FFI::ThreadsafeInvocation>>> queue;
+    return queue.get();
+}
+static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation& invocation)
+{
+    // May run on a foreign thread: only a lock and a queue append (the record is refcounted C data).
+    Locker locker { s_threadsafeQueueLock };
+    threadsafeQueue().append(&invocation);
+}
+static JSC_DECLARE_HOST_FUNCTION(functionDrainThreadsafeCallbacks);
+JSC_DEFINE_HOST_FUNCTION(functionDrainThreadsafeCallbacks, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    Vector<RefPtr<FFI::ThreadsafeInvocation>> pending;
+    {
+        Locker locker { s_threadsafeQueueLock };
+        pending = std::exchange(threadsafeQueue(), { });
+    }
+    for (auto& invocation : pending)
+        FFI::runThreadsafeInvocation(*invocation);
+    return JSValue::encode(jsNumber(pending.size()));
 }
 
 // Usage: $vm.ffiFixture(name) -> number (double-encoded pointer to the named
@@ -4887,21 +4994,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICString, (JSGlobalObject* globalObject, Call
         return JSValue::encode(jsNull());
 
     return JSValue::encode(jsString(vm, String::fromUTF8(static_cast<const char*>(address))));
-}
-
-// Usage: $vm.ffiSetNapiEnv(ptr) -> undefined; sets the current global's
-// FFIContext napi env pointer (SPEC section 6), read live by every tier.
-JSC_DEFINE_HOST_FUNCTION(functionFFISetNapiEnv, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    DollarVMAssertScope assertScope;
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    void* env = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(0));
-    RETURN_IF_EXCEPTION(scope, { });
-
-    FFI::setNapiEnv(globalObject, env);
-    return JSValue::encode(jsUndefined());
 }
 
 // Usage: $vm.ffiCompileCounts() -> { icStub, dfgCallFFI, ftlCallFFI }, read from
@@ -5143,15 +5235,15 @@ void JSDollarVM::finishCreation(VM& vm)
     // bun:ffi $vm test API (SPEC section 11.2). These call arbitrary native code
     // and poke raw memory, so they are off in fuzzer mode like the other unsafe
     // $vm helpers.
-    addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 3);
-    addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 2);
+    addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
+    addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
+    addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);
     addFunction(vm, allowIfNotFuzz, "ffiFixture"_s, functionFFIFixture, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFixtures"_s, functionFFIFixtures, 0);
     addFunction(vm, allowIfNotFuzz, "ffiSignatureString"_s, functionFFISignatureString, 1);
     addFunction(vm, allowIfNotFuzz, "ffiRead"_s, functionFFIRead, 2);
     addFunction(vm, allowIfNotFuzz, "ffiWrite"_s, functionFFIWrite, 3);
     addFunction(vm, allowIfNotFuzz, "ffiCString"_s, functionFFICString, 1);
-    addFunction(vm, allowIfNotFuzz, "ffiSetNapiEnv"_s, functionFFISetNapiEnv, 1);
     addFunction(vm, allowIfNotFuzz, "ffiCompileCounts"_s, functionFFICompileCounts, 0);
 #endif
 

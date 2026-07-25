@@ -75,14 +75,14 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     void* target = function->target();
     JSGlobalObject* globalObject = function->globalObject();
 
-    // FFI-SPEC-GAP: the spec (10.4 step 4) hands `&ctx` and `ctx.addressOfNapiEnv()` to the
-    // emitted code as immediates, which requires the FFIContext to already exist while we
-    // compile on the DFG compiler thread. It always does: a JSFFIFunction can only feed a
-    // CallFFI node after having been called (the ByteCodeParser feed reads the callee from a
-    // CallLinkStatus, spec 10.2), and every non-DFG entry into the function (the C++ host path
-    // and the IC stub's slow path, spec 8.2/8.3) begins with `globalObject->ffiContext()`,
-    // creating the context on the mutator thread first. See also CROSS-ROW-REQUESTS.md,
-    // which asks JSFFIFunction::create to touch the context eagerly for both codegen tiers.
+    // FFI-SPEC-GAP: the spec (10.4 step 4) hands `&ctx` to the emitted code as an immediate,
+    // which requires the FFIContext to already exist while we compile on the DFG compiler
+    // thread. It always does: a JSFFIFunction can only feed a CallFFI node after having been
+    // called (the ByteCodeParser feed reads the callee from a CallLinkStatus, spec 10.2), and
+    // every non-DFG entry into the function (the C++ host path and the IC stub's slow path,
+    // spec 8.2/8.3) begins with `globalObject->ffiContext()`, creating the context on the
+    // mutator thread first. See also CROSS-ROW-REQUESTS.md, which asks JSFFIFunction::create
+    // to touch the context eagerly for both codegen tiers.
     FFI::FFIContext* ffiContext = &globalObject->ffiContext();
 
     CodePtr<JITThunkPtrTag> invokeThunk = signature.invokeThunk();
@@ -109,7 +109,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
 
     // Strength reduction (spec 10.2) established exact arity and reserved the outgoing frame
     // space for the slot buffer via the m_parameterSlots bump; sanity-check both here.
-    DFG_ASSERT(m_graph, node, node->numChildren() == 2 + signature.jsArgumentCount(), node->numChildren(), signature.jsArgumentCount());
+    DFG_ASSERT(m_graph, node, node->numChildren() == 2 + nativeArgumentCount, node->numChildren(), nativeArgumentCount);
     DFG_ASSERT(m_graph, node, m_graph.m_parameterSlots * sizeof(Register) >= signature.slotBufferBytes(), m_graph.m_parameterSlots, signature.slotCount());
 
     // The callee's global object is the realm every tier uses for conversions and errors
@@ -124,16 +124,11 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     // Determine whether any UntypedUse conversion may allocate from the call-scoped string
     // arena (spec section 5); if so the whole call is bracketed with arena enter/exit.
     bool needsArenaBracket = false;
-    {
-        unsigned jsArgumentIndex = 0;
-        for (unsigned i = 0; i < nativeArgumentCount; ++i) {
-            FFI::Type type = signature.argumentType(i);
-            if (FFI::isSyntheticArgument(type))
-                continue;
-            Edge edge = m_graph.varArgChild(node, 2 + jsArgumentIndex++);
-            if (edge.useKind() == UntypedUse && ffiUntypedConversionMayUseStringArena(type))
-                needsArenaBracket = true;
-        }
+    for (unsigned i = 0; i < nativeArgumentCount; ++i) {
+        FFI::Type type = signature.argumentType(i);
+        Edge edge = m_graph.varArgChild(node, 2 + i);
+        if (edge.useKind() == UntypedUse && ffiUntypedConversionMayUseStringArena(type))
+            needsArenaBracket = true;
     }
 
     if (needsArenaBracket) {
@@ -219,23 +214,11 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     // unlock, and the children stay referenced until the result is set (spec 10.4 step 8), so
     // cell arguments (typed-array views whose vector pointers we store) remain live in the
     // frame across the native call after the flushRegisters() below.
-    unsigned jsArgumentIndex = 0;
     for (unsigned i = 0; i < nativeArgumentCount; ++i) {
         FFI::Type type = signature.argumentType(i);
         Address slotAddress = slotAddressFor(i);
 
-        if (FFI::isSyntheticArgument(type)) {
-            // Synthetic napi_env: read live from the FFIContext at call time, never baked as
-            // an immediate (spec section 6).
-            ASSERT(type == FFI::Type::NapiEnv);
-            GPRTemporary scratch(this);
-            loadPtr(ffiContext->addressOfNapiEnv(), scratch.gpr());
-            store64(scratch.gpr(), slotAddress);
-            continue;
-        }
-
-        Edge& edge = m_graph.varArgChild(node, 2 + jsArgumentIndex);
-        ++jsArgumentIndex;
+        Edge& edge = m_graph.varArgChild(node, 2 + i);
 
         switch (edge.useKind()) {
         case KnownInt32Use: {
@@ -417,13 +400,13 @@ void SpeculativeJIT::compileCallFFI(Node* node)
                 storeTypedArrayViewVector();
                 break;
 
-            case FFI::Type::NapiValue:
+            case FFI::Type::JSValue:
                 // Raw EncodedJSValue pass-through; no conversion, no slow path.
                 store64(valueGPR, slotAddress);
                 break;
 
             case FFI::Type::Void:
-            case FFI::Type::NapiEnv:
+            case FFI::Type::RESERVED_WasNapiEnv:
                 DFG_CRASH(m_graph, node, "CallFFI: unexpected JS argument type");
                 break;
             }
@@ -582,7 +565,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
         break;
     }
 
-    case FFI::Type::NapiValue: {
+    case FFI::Type::JSValue: {
         // Raw EncodedJSValue bits, no conversion (spec section 5).
         GPRTemporary result(this);
         load64(returnSlot, result.gpr());
@@ -614,8 +597,8 @@ void SpeculativeJIT::compileCallFFI(Node* node)
         break;
     }
 
-    case FFI::Type::NapiEnv:
-        DFG_CRASH(m_graph, node, "CallFFI: napi_env is never a return type");
+    case FFI::Type::RESERVED_WasNapiEnv:
+        DFG_CRASH(m_graph, node, "CallFFI: the reserved tag is never a return type");
         break;
     }
 

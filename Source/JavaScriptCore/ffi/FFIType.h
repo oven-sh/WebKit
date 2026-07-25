@@ -64,8 +64,15 @@ enum class Type : uint8_t {
     Int64Fast = 15,
     Uint64Fast = 16,
     Function = 17,
-    NapiEnv = 18,
-    NapiValue = 19,
+    // 18 is RESERVED and permanently invalid. It was `napi_env`, an engine-injected synthetic
+    // argument; that concept was removed (the embedder now supplies any environment pointer
+    // itself and brackets calls with JSFFIFunction's before/after hooks). The slot is kept so
+    // the wire-compatible tags below do not shift; Signature::tryCreate rejects it.
+    RESERVED_WasNapiEnv = 18,
+    // A raw JSValue: the argument's boxed 64-bit encoding is passed through unchanged, and a
+    // JSValue-returning callee's raw encoding is boxed unchanged. (Historically `napi_value`,
+    // which is layout-identical to an encoded JSValue -- but nothing here is N-API-specific.)
+    JSValue = 19,
     Buffer = 20,
 };
 
@@ -112,10 +119,10 @@ constexpr ASCIILiteral name(Type type)
         return "u64_fast"_s;
     case Type::Function:
         return "function"_s;
-    case Type::NapiEnv:
-        return "napi_env"_s;
-    case Type::NapiValue:
-        return "napi_value"_s;
+    case Type::RESERVED_WasNapiEnv:
+        return "invalid"_s;
+    case Type::JSValue:
+        return "jsvalue"_s;
     case Type::Buffer:
         return "buffer"_s;
     }
@@ -170,10 +177,8 @@ inline std::optional<Type> parseType(StringView string)
         return Type::Uint64Fast;
     if (string == "function"_s)
         return Type::Function;
-    if (string == "napi_env"_s)
-        return Type::NapiEnv;
-    if (string == "napi_value"_s)
-        return Type::NapiValue;
+    if (string == "jsvalue"_s || string == "napi_value"_s) // napi_value: legacy spelling of the same raw-JSValue type
+        return Type::JSValue;
     if (string == "buffer"_s)
         return Type::Buffer;
 
@@ -238,32 +243,25 @@ constexpr ArgClass argClass(Type type)
     case Type::Int64Fast:
     case Type::Uint64Fast:
     case Type::Function:
-    case Type::NapiEnv:
-    case Type::NapiValue:
+    case Type::RESERVED_WasNapiEnv:
+    case Type::JSValue:
     case Type::Buffer:
         return ArgClass::Int;
     }
     return ArgClass::Int;
 }
 
-// NapiEnv and Buffer are argument-only (Bun compatibility). Void is a valid
-// return type.
+// Buffer is argument-only (Bun compatibility); Void is a valid return type; the reserved tag
+// is invalid in every position (Signature::tryCreate rejects it).
 constexpr bool isValidReturnType(Type type)
 {
-    return type != Type::NapiEnv && type != Type::Buffer;
+    return type != Type::RESERVED_WasNapiEnv && type != Type::Buffer;
 }
 
-// Void is invalid as an argument; everything else is a valid argument type.
+// Void is invalid as an argument, as is the reserved tag; everything else is a valid argument.
 constexpr bool isValidArgumentType(Type type)
 {
-    return type != Type::Void;
-}
-
-// A synthetic argument is supplied by the engine (from FFIContext), not by
-// the JS caller: it occupies a native parameter slot but no JS argument.
-constexpr bool isSyntheticArgument(Type type)
-{
-    return type == Type::NapiEnv;
+    return type != Type::Void && type != Type::RESERVED_WasNapiEnv;
 }
 
 // Size in bytes of the native (C ABI) representation. Void has no
@@ -293,8 +291,8 @@ constexpr unsigned nativeSizeInBytes(Type type)
     case Type::Int64Fast:
     case Type::Uint64Fast:
     case Type::Function:
-    case Type::NapiEnv:
-    case Type::NapiValue:
+    case Type::RESERVED_WasNapiEnv:
+    case Type::JSValue:
     case Type::Buffer:
         return 8;
     }
@@ -326,8 +324,8 @@ constexpr bool isSigned(Type type)
     case Type::Void:
     case Type::CString:
     case Type::Function:
-    case Type::NapiEnv:
-    case Type::NapiValue:
+    case Type::RESERVED_WasNapiEnv:
+    case Type::JSValue:
     case Type::Buffer:
         return false;
     }

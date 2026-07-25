@@ -419,12 +419,11 @@ function main() {
         gc();
         check(callCbI32(entryBefore, 7), 107, "entry code alive after close and GC");
         // The $vm glue rejects a closed callback wherever it converts it to
-        // a pointer (target of ffiFunction, ffiCString, ffiRead, ffiSetNapiEnv).
+        // a pointer (target of ffiFunction, ffiCString, ffiRead).
         for (const [label, use] of [
             ["ffiFunction target", () => $vm.ffiFunction({ args: ["i32"], returns: "i32" }, closed, "closed target")],
             ["ffiCString", () => $vm.ffiCString(closed)],
             ["ffiRead", () => $vm.ffiRead(closed, "u8")],
-            ["ffiSetNapiEnv", () => $vm.ffiSetNapiEnv(closed)],
         ]) {
             checkThrows(use, e => {
                 if (!(e instanceof TypeError))

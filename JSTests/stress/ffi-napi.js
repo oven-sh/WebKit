@@ -1,8 +1,7 @@
 //@ requireOptions("--useDollarVM=1")
 
-// napi_env is a synthetic argument supplied live from FFIContext (never
-// consumed from the JS argument list, never baked at code-generation time);
-// napi_value is a raw EncodedJSValue pass-through (SPEC sections 5, 6, 15.7).
+// jsvalue (historical spelling: napi_value) is a raw EncodedJSValue pass-through
+// in both directions (SPEC sections 5, 15.7).
 
 function describe(value) {
     if (typeof value === "bigint")
@@ -28,58 +27,7 @@ function check(actual, expected, message) {
 
 function main() {
     const fixture = name => $vm.ffiFixture(name);
-    // The C fixture is `void* ffi_recv_napi_env(napi_env)`: it just returns the env.
-    const recvEnv = $vm.ffiFunction({ args: ["napi_env"], returns: "ptr" }, fixture("ffi_recv_napi_env"), "ffi_recv_napi_env");
-    // napi_env followed by a real JS argument: the JS argument is the FIRST JS argument.
-    const recvEnvThenInt = $vm.ffiFunction({ args: ["napi_env", "i32"], returns: "ptr" }, fixture("ffi_recv_napi_env"), "env then i32");
     const echoNapiValue = $vm.ffiFunction({ args: ["napi_value"], returns: "napi_value" }, fixture("ffi_echo_napi_value"), "ffi_echo_napi_value");
-
-    check(recvEnv.length, 0, "napi_env does not count as a JS parameter");
-    check(recvEnvThenInt.length, 1, "napi_env excluded from length");
-
-    // ---- Initially unset: the synthesized env is a null pointer -> JS null.
-    check(recvEnv(), null, "napi env before ffiSetNapiEnv");
-    check(recvEnv(12345), null, "JS arguments never fill the napi_env slot");
-    check(recvEnvThenInt(7), null, "napi env before set, with a JS argument");
-
-    // ---- Live values: every call reads the current env, including functions
-    // created before the env was (re)set, in every tier.
-    const envA = 0x1000;
-    const envB = 0x00007ffd0000abc0;
-    $vm.ffiSetNapiEnv(envA);
-    check(recvEnv(), envA, "env A cold");
-    check(recvEnvThenInt(999), envA, "env A with a JS argument");
-    for (let i = 0; i < 3e4; ++i) {
-        if (recvEnv() !== envA)
-            throw new Error("hot recvEnv (env A) iteration " + i + ": " + recvEnv());
-        if (recvEnvThenInt(i) !== envA)
-            throw new Error("hot recvEnvThenInt (env A) iteration " + i);
-    }
-    // Switch AFTER the callers are (probably) compiled: no baked immediates allowed.
-    $vm.ffiSetNapiEnv(envB);
-    check(recvEnv(), envB, "env B right after switching");
-    for (let i = 0; i < 3e4; ++i) {
-        if (recvEnv() !== envB)
-            throw new Error("hot recvEnv did not pick up env B at iteration " + i + ": " + recvEnv());
-        if (recvEnvThenInt(i) !== envB)
-            throw new Error("hot recvEnvThenInt did not pick up env B at iteration " + i);
-    }
-    // Flip-flop inside the hot loop.
-    for (let i = 0; i < 2000; ++i) {
-        const env = (i & 1) ? envA : envB;
-        $vm.ffiSetNapiEnv(env);
-        if (recvEnv() !== env)
-            throw new Error("flip-flop iteration " + i + ": expected " + env + " got " + recvEnv());
-    }
-    // Back to null.
-    $vm.ffiSetNapiEnv(0);
-    check(recvEnv(), null, "env reset to null");
-    for (let i = 0; i < 1e4; ++i) {
-        if (recvEnv() !== null)
-            throw new Error("hot recvEnv after reset iteration " + i);
-    }
-    $vm.ffiSetNapiEnv(envA);
-    check(recvEnv(), envA, "env A restored");
 
     // ---- napi_value: identity of arbitrary JSValues in both directions.
     const object = { deep: { array: [1, 2, 3] } };
@@ -93,7 +41,7 @@ function main() {
         2147483647, -2147483648, 2147483648, 4294967295, Number.MAX_SAFE_INTEGER, Number.MIN_VALUE,
         true, false, null, undefined, "", "string", "\u{1F600}", 0n, -1n,
         new Uint8Array(3), new ArrayBuffer(2), Object.freeze({}), Object.create(null),
-        recvEnv, echoNapiValue, // JSFFIFunctions themselves
+        echoNapiValue, // a JSFFIFunction itself
         $vm.ffiCallback({ args: [], returns: "void" }, () => { }), // a JSFFICallback
         new Proxy({}, {}), new Error("as a value"), Promise.resolve(1), new Map(), new WeakRef(object),
     ];

@@ -76,12 +76,24 @@ void JSFFICallback::destroy(JSCell* cell)
     static_cast<JSFFICallback*>(cell)->JSFFICallback::~JSFFICallback();
 }
 
+// The callback prototype: a plain object with the `close` native function. `close` lives on
+// the PROTOTYPE (not the cell) so an embedder class that adopts its own prototype for the cell
+// (Object.setPrototypeOf) provides its own close and subclass overrides resolve normally, while
+// prototype-less use (the jsc shell) still finds close here.
+JSObject* JSFFICallback::createPrototype(VM& vm, JSGlobalObject* globalObject)
+{
+    JSObject* prototype = JSFinalObject::create(vm, JSFinalObject::createStructure(vm, globalObject, globalObject->objectPrototype(), 1));
+    constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
+    prototype->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "close"_s), 0, ffiCallbackProtoFuncClose, ImplementationVisibility::Public, NoIntrinsic, attributes);
+    return prototype;
+}
+
 Structure* JSFFICallback::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* callable, Ref<FFI::Signature>&& signature)
+JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* callable, Ref<FFI::Signature>&& signature, bool threadsafe, void* embedderContext)
 {
     // Materialize the per-global FFIContext eagerly on the mutator (parity with
     // JSFFIFunction::create): ffiCallbackDispatch reads globalObject->ffiContext() from a
@@ -108,11 +120,21 @@ JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Struc
     UNUSED_PARAM(structure);
     UNUSED_PARAM(callable);
     UNUSED_PARAM(signature);
+    UNUSED_PARAM(threadsafe);
+    UNUSED_PARAM(embedderContext);
     throwTypeError(globalObject, scope, "bun:ffi is not supported on this architecture"_s);
     return nullptr;
 #else
     ASSERT(callable);
+    // A threadsafe callback hands foreign-thread invocations to the embedder's dispatch function,
+    // which must therefore be registered before one is created.
+    if (threadsafe && !FFI::FFIContext::threadsafeDispatch()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "bun:ffi: no threadsafe dispatch registered (FFIContext::setThreadsafeDispatch)"_s);
+        return nullptr;
+    }
     JSFFICallback* callback = new (NotNull, allocateCell<JSFFICallback>(vm)) JSFFICallback(vm, structure, WTF::move(signature));
+    callback->m_threadsafe = threadsafe;
+    callback->m_embedderContext = embedderContext;
     callback->finishCreation(vm, callable);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!callback->m_entryCode) [[unlikely]] {
@@ -121,6 +143,9 @@ JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Struc
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
+    // Root the callback: native code may hold nativeEntrypoint() with no JS reference alive, so
+    // the cell must survive until close(). The context's live set is the single such root.
+    globalObject->ffiContext().addLiveCallback(vm, *globalObject, callback);
     return callback;
 #endif
 }
@@ -146,9 +171,12 @@ void JSFFICallback::finishCreation(VM& vm, JSObject* callable)
     // double-encoded pointer, Bun parity) and "threadsafe" (always false in v1).
     constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     putDirect(vm, Identifier::fromString(vm, "ptr"_s), jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(nativeEntrypoint()))), attributes);
-    putDirect(vm, Identifier::fromString(vm, "threadsafe"_s), jsBoolean(false), attributes);
-    // The `close` JS method (see the FFI-SPEC-GAP above ffiCallbackProtoFuncClose).
-    putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "close"_s), 0, ffiCallbackProtoFuncClose, ImplementationVisibility::Public, NoIntrinsic, attributes);
+    putDirect(vm, Identifier::fromString(vm, "threadsafe"_s), jsBoolean(m_threadsafe), attributes);
+    // NOTE: `close` is deliberately NOT an own property of the cell. The embedder's JS class
+    // (whose instances ARE this cell) supplies close() on its prototype -- an own native `close`
+    // here would shadow the prototype method and any subclass override / Symbol.dispose. The
+    // engine-side close is reachable via JSFFICallback::close() from the embedder's binding
+    // (and $vm keeps ffiCallbackProtoFuncClose for shell-only use where no class exists).
 #endif
 }
 
@@ -169,9 +197,21 @@ void JSFFICallback::close()
     // Nothing is dropped native-side: the entry code lives as long as the
     // cell and nativeEntrypoint() keeps returning it. Only the JS-visible "ptr"
     // property becomes null so Bun's glue stops handing the pointer out.
+    // Publish "closed" in the atomic state word so a foreign thread's increment either
+    // happens-before this (count>0 -> defer the unroot to the last invocation) or observes the
+    // closed bit and never dispatches. Unroot now only when no invocation is in flight; queued
+    // records hold raw pointers to this cell, so it must stay rooted until the last one drains.
     VM& vm = this->vm();
+    if (!markClosedAndReportPending())
+        unroot();
     constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     putDirect(vm, Identifier::fromString(vm, "ptr"_s), jsNull(), attributes);
+}
+
+void JSFFICallback::unroot()
+{
+    if (auto* globalObject = this->globalObject())
+        globalObject->ffiContext().removeLiveCallback(*globalObject, this);
 }
 
 template<typename Visitor>

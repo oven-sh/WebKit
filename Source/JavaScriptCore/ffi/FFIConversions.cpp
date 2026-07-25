@@ -469,16 +469,15 @@ bool writeSlotFromJSValue(JSGlobalObject* globalObject, FFIContext& context, Typ
     case Type::Buffer:
         return writePointerSlot(globalObject, context, type, value, slotOut, arena);
 
-    case Type::NapiValue:
+    case Type::JSValue:
         // Raw EncodedJSValue pass-through; no conversion.
         slotOut = static_cast<uint64_t>(JSValue::encode(value));
         return true;
 
-    case Type::NapiEnv:
-        // Synthetic argument: supplied by the engine from the context, never
-        // read from the JS caller. Read live at conversion time.
-        slotOut = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(context.napiEnv()));
-        return true;
+    case Type::RESERVED_WasNapiEnv:
+        // Never present in a valid Signature (Signature::tryCreate rejects it).
+        RELEASE_ASSERT_NOT_REACHED();
+        return false;
 
     case Type::Void:
         // Void is only a return type; a callback returning void leaves the
@@ -547,14 +546,13 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
         if (static_cast<uint64_t>(slot) <= static_cast<uint64_t>(maxInt52))
             return jsNumber(static_cast<double>(static_cast<uint64_t>(slot)));
         return JSBigInt::createFrom(globalObject, static_cast<uint64_t>(slot));
-    case Type::NapiValue:
+    case Type::JSValue:
         return JSValue::decode(static_cast<EncodedJSValue>(slot));
     case Type::Void:
         return jsUndefined();
-    case Type::NapiEnv:
-        // napi_env is a synthetic argument and never a return type or a
-        // callback argument (Signature validation rejects it as a return).
-        ASSERT_NOT_REACHED();
+    case Type::RESERVED_WasNapiEnv:
+        // Never present in a valid Signature (Signature::tryCreate rejects it).
+        RELEASE_ASSERT_NOT_REACHED();
         return jsUndefined();
     }
 

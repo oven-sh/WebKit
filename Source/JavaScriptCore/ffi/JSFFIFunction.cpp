@@ -52,15 +52,29 @@ namespace JSC {
 const ClassInfo JSFFIFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFFIFunction) };
 CLASSINFO_KEEP_ADDRESS_UNIQUE(JSFFIFunction);
 
-JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, Ref<FFI::Signature>&& signature, void* target, RefPtr<JITCode>&& icCode)
+JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, Ref<FFI::Signature>&& signature, void* target, RefPtr<JITCode>&& icCode, const FFI::CallHooks* hooks)
     : Base(vm, executable, globalObject, structure)
     , m_signature(WTF::move(signature))
     , m_target(target)
     , m_icCode(WTF::move(icCode))
+    , m_hooks(hooks)
 {
+    // A hooked function never has an IC stub: hooks run only in the C++ host path.
+    ASSERT(!m_hooks || !m_icCode);
 }
 
 JSFFIFunction::~JSFFIFunction() = default;
+
+template<typename Visitor>
+void JSFFIFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSFFIFunction>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_owner); // keeps the owner (e.g. library handle) alive
+}
+
+DEFINE_VISIT_CHILDREN(JSFFIFunction);
 
 void JSFFIFunction::destroy(JSCell* cell)
 {
@@ -73,7 +87,7 @@ Structure* JSFFIFunction::createStructure(VM& vm, JSGlobalObject* globalObject, 
     return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
 }
 
-JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, Ref<FFI::Signature>&& signatureRef, void* target, const String& name)
+JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, Ref<FFI::Signature>&& signatureRef, void* target, const String& name, JSObject* owner, const FFI::CallHooks* hooks)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -94,11 +108,13 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
     UNUSED_PARAM(signatureRef);
     UNUSED_PARAM(target);
     UNUSED_PARAM(name);
+    UNUSED_PARAM(owner);
+    UNUSED_PARAM(hooks);
     throwTypeError(globalObject, scope, "bun:ffi is not supported on this architecture"_s);
     return nullptr;
 #else
     Ref<FFI::Signature> signature = WTF::move(signatureRef);
-    unsigned length = signature->jsArgumentCount();
+    unsigned length = signature->argumentCount();
 
     // Materialize the per-global FFIContext eagerly on the mutator thread: DFG/FTL CallFFI
     // codegen bakes &globalObject->ffiContext() as a compile-time constant from a compiler
@@ -114,7 +130,10 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
     // The stub bakes only the target and the signature, never the cell pointer (the callee cell
     // is read from CallFrameSlot::callee), so no cell is needed to generate it. Generation
     // failure or Options::useFFIICStub() == false yields the plain host function executable.
-    if (Options::useFFIICStub())
+    // A HOOKED function is permanently host-path-only (its before/after hooks are invoked from
+    // exactly one place, FFI::ffiHostCall), so it never gets a stub; the DFG likewise refuses to
+    // turn calls to it into CallFFI (isHostPathOnly()).
+    if (Options::useFFIICStub() && !hooks)
         stub = FFI::generateICStubCode(vm, globalObject, signature.get(), target);
 #endif
 
@@ -130,8 +149,10 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
         executable = NativeExecutable::create(vm, Ref<JITCode>(*stub), FFI::ffiHostCall, base->generatedJITCodeForConstruct(), callHostFunctionAsConstructor, ImplementationVisibility::Public, length, name);
     }
 
-    JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, WTF::move(signature), target, WTF::move(stub));
+    JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, WTF::move(signature), target, WTF::move(stub), hooks);
     function->finishCreation(vm);
+    if (owner)
+        function->m_owner.set(vm, function, owner); // write-barriered: the owner outlives this function
 
     dataLogLnIf(Options::verboseFFI(), "FFI: created JSFFIFunction '", name, "' ", function->signature().toString(), " target=", RawPointer(target), " icStub=", !!function->icCode());
 

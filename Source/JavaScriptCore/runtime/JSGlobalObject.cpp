@@ -2229,9 +2229,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
     m_ffiCallbackStructure.initLater(
         [] (const Initializer<Structure>& init) {
-            // FFI-SPEC-GAP: JSFFICallback is a JSNonFinalObject; the spec (section 9.1) does not name its
-            // prototype, so it is Object.prototype, matching Bun's plain JSCallback objects.
-            init.set(JSFFICallback::createStructure(init.vm, init.owner, init.owner->m_objectPrototype.get()));
+            // JSFFICallback's prototype carries the `close` method (a plain Object.prototype-derived
+            // object); an embedder that adopts its own class prototype for the cell replaces it.
+            init.set(JSFFICallback::createStructure(init.vm, init.owner, JSFFICallback::createPrototype(init.vm, init.owner)));
         });
 #endif
 
@@ -3001,6 +3001,10 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_internalFieldTupleStructure);
     thisObject->m_ffiFunctionStructure.visit(visitor);
     thisObject->m_ffiCallbackStructure.visit(visitor);
+    // Root every un-close()d FFI callback (native code may hold its entry pointer with no JS
+    // reference alive). Only touch an already-created context: never lazily create one here.
+    if (thisObject->m_ffiContext)
+        thisObject->m_ffiContext->visitLiveCallbacks(*thisObject, visitor);
 #endif
 
     visitor.append(thisObject->m_globalLexicalEnvironment);
@@ -3817,7 +3821,11 @@ FFI::FFIContext& JSGlobalObject::ffiContext()
         // FFI-SPEC-GAP: the spec (section 6) states the context is per-JSGlobalObject and lazily
         // created here but does not fix FFIContext's constructor; a default-constructible
         // context (all state internal, nothing borrowed from the global object) is assumed.
-        m_ffiContext = makeUnique<FFI::FFIContext>();
+        auto context = makeUnique<FFI::FFIContext>();
+        // visitChildren reads m_ffiContext from concurrent marker threads: make sure the fully
+        // constructed FFIContext is visible before the pointer is (weakly-ordered ARM64).
+        WTF::storeStoreFence();
+        m_ffiContext = WTF::move(context);
     }
     return *m_ffiContext;
 }

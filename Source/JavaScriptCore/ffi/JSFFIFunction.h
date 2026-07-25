@@ -45,6 +45,25 @@ class JSGlobalObject;
 // (FFI::ffiHostCall) -- and C++-initiated calls (JSC::call,
 // Function.prototype.call reached from C++) always run FFI::ffiHostCall
 // directly. Both paths share the same body, so behavior is identical.
+namespace FFI {
+
+// Embedder-supplied call bracketing for a JSFFIFunction. When present the function is bound
+// PERMANENTLY to the C++ host path: it is never given an FFIICStub and the DFG never converts a
+// call to it into a CallFFI node, so before/after run around every single call from exactly one
+// place (FFI::ffiHostCall). `before` runs immediately before the native call and returns an
+// opaque token; `after` receives that token and runs immediately after the native call returns,
+// UNCONDITIONALLY -- including when the native call left a JS exception pending (e.g. a callback
+// threw) -- so a scope opened in before is always closed. The engine attaches no meaning to the
+// token or to the JSFFIFunction's owner object; both are the embedder's to interpret (e.g. Bun
+// opens/closes an N-API handle scope and finds its environment via callee->owner()). The struct
+// must have static lifetime; the cell holds a raw pointer to it.
+struct CallHooks {
+    void* (*before)(JSGlobalObject*, CallFrame*);
+    void (*after)(JSGlobalObject*, CallFrame*, void* token);
+};
+
+} // namespace FFI
+
 class JSFFIFunction final : public JSFunction {
 public:
     using Base = JSFunction;
@@ -75,10 +94,23 @@ public:
     // bun:ffi cannot be used (JIT disabled / executable memory unavailable /
     // unsupported architecture); returns nullptr with an exception pending in
     // that case, never a partially-built object.
-    JS_EXPORT_PRIVATE static JSFFIFunction* create(VM&, JSGlobalObject*, Structure*, Ref<FFI::Signature>&&, void* target, const String& name);
+    // `owner` (optional): a JS object this function keeps alive via a write barrier -- e.g. the
+    // object owning the dlopen'd library handle. The GC therefore cannot finalize the owner while
+    // ANY function referencing it is reachable, which is what makes GC-driven library close safe:
+    // the owner's finalizer (dlclose) can only run once its last function is unreachable. Set once
+    // at creation and never cleared. `hooks` (optional, static lifetime): see FFI::CallHooks --
+    // presence binds the function permanently to the host path.
+    JS_EXPORT_PRIVATE static JSFFIFunction* create(VM&, JSGlobalObject*, Structure*, Ref<FFI::Signature>&&, void* target, const String& name, JSObject* owner = nullptr, const FFI::CallHooks* hooks = nullptr);
+
+    DECLARE_VISIT_CHILDREN;
 
     FFI::Signature& signature() const { return m_signature.get(); }
     void* target() const { return m_target; }
+    JSObject* owner() const { return m_owner.get(); }
+    const FFI::CallHooks* hooks() const { return m_hooks; }
+    // A hooked function must run every call through the C++ host path (the only place the
+    // hooks are invoked): no FFIICStub, no DFG/FTL CallFFI node.
+    bool isHostPathOnly() const { return !!m_hooks; }
     // The IC entry stub installed as this function's executable call code, or
     // null when the plain host-function path is in use.
     JITCode* icCode() const { return m_icCode.get(); }
@@ -89,11 +121,13 @@ public:
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(JSFFIFunction, m_target); }
 
 private:
-    JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, Ref<FFI::Signature>&&, void* target, RefPtr<JITCode>&& icCode);
+    JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, Ref<FFI::Signature>&&, void* target, RefPtr<JITCode>&& icCode, const FFI::CallHooks* hooks);
 
     Ref<FFI::Signature> m_signature;
     void* m_target;
     RefPtr<JITCode> m_icCode; // Keeps the IC entry stub alive; null when no stub.
+    WriteBarrier<JSObject> m_owner; // Optional; keeps the owner (e.g. library handle object) alive.
+    const FFI::CallHooks* m_hooks; // Optional, static lifetime; non-null => host path only.
 };
 
 } // namespace JSC

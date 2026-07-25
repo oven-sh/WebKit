@@ -2361,6 +2361,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                 // its non-nullness into an invariant of the conversion instead of a runtime
                 // OutOfMemoryError for the whole node.
                 if (Options::useFFICallInDFG() && (callOp == Call || callOp == TailCall) && callee.function() && callee.function()->inherits<JSFFIFunction>()
+                    && !uncheckedDowncast<JSFFIFunction>(callee.function())->isHostPathOnly() // hooked => host path only
                     && uncheckedDowncast<JSFFIFunction>(callee.function())->signature().invokeThunk()) {
                     auto* ffiFunction = uncheckedDowncast<JSFFIFunction>(callee.function());
                     m_graph.m_plan.recordedStatuses().addCallLinkStatus(currentNodeOrigin().semantic, CallLinkStatus(callee));

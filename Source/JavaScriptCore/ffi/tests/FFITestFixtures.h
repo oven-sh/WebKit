@@ -41,8 +41,7 @@
 // resolve them. Every name below is a contract with the JS stress tests
 // (JSTests/stress/ffi-*.js) and with testFFI.cpp; do not rename.
 
-// The engine treats napi_env as a synthesized pointer supplied by the
-// embedder (FFIContext::napiEnv()) and napi_value as a raw EncodedJSValue
+// The engine treats jsvalue (historically napi_value) as a raw EncodedJSValue
 // pass-through, so the fixtures only need pointer/int64 stand-ins.
 typedef void* napi_env;
 typedef int64_t napi_value;
@@ -196,6 +195,9 @@ JS_EXPORT_PRIVATE int32_t ffi_call_cb_reentrant(int32_t (*cb)(int32_t), int32_t 
 JS_EXPORT_PRIVATE int64_t ffi_call_cb_i32_x9(int64_t (*cb)(int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t), int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t);
 JS_EXPORT_PRIVATE double ffi_call_cb_f64_x9(double (*cb)(double, double, double, double, double, double, double, double, double), double, double, double, double, double, double, double, double, double);
 JS_EXPORT_PRIVATE int64_t ffi_call_cb_u8_x10(int64_t (*cb)(uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t), uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t);
+// Threadsafe-callback fixtures: spawn a FOREIGN OS thread that invokes cb with the given values,
+// join it, and return. A threadsafe callback must not run inline (it is queued for the JS thread).
+JS_EXPORT_PRIVATE void ffi_call_cb_from_thread(void (*cb)(int32_t, int64_t, uint64_t, double), int32_t a, int64_t b, uint64_t c, double d);
 JS_EXPORT_PRIVATE int64_t ffi_call_cb_ret_i8(int8_t (*cb)(void)); // returns (int64_t) of the callback result
 JS_EXPORT_PRIVATE int64_t ffi_call_cb_ret_u8(uint8_t (*cb)(void));
 JS_EXPORT_PRIVATE int64_t ffi_call_cb_ret_i64(int64_t (*cb)(void));

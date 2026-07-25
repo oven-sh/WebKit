@@ -28,13 +28,11 @@ function main() {
     const echoI64 = $vm.ffiFunction({ args: ["i64"], returns: "i64" }, fixture("ffi_echo_i64"), "ffi_echo_i64");
     const sum4 = $vm.ffiFunction({ args: ["i32", "i32", "i32", "i32"], returns: "i64" }, fixture("ffi_sum_i32_4"), "ffi_sum_i32_4");
     const sum0 = $vm.ffiFunction({ args: [], returns: "i64" }, fixture("ffi_sum_i32_0"), "ffi_sum_i32_0");
-    const napiEnvFn = $vm.ffiFunction({ args: ["napi_env", "i32"], returns: "ptr" }, fixture("ffi_recv_napi_env"), "napi env receiver");
 
     // ---- JSFunction surface.
     check(addI32.length, 2, "length");
     check(sum4.length, 4, "length of ffi_sum_i32_4");
     check(sum0.length, 0, "length of ffi_sum_i32_0");
-    check(napiEnvFn.length, 1, "length excludes the synthetic napi_env parameter");
     check(addI32.name, "ffi_add_i32", "name");
     check(typeof addI32, "function", "typeof");
     check(addI32 instanceof Function, true, "instanceof Function");

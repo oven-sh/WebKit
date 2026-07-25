@@ -167,14 +167,14 @@ static void emitStoreIncomingArgumentGPR(CCallHelpers& jit, Type type, GPRReg so
     case Type::CString:
     case Type::Function:
     case Type::Buffer:
-    case Type::NapiEnv:
-    case Type::NapiValue:
+    case Type::JSValue:
         jit.store64(source, slot);
         return;
     case Type::Float:
     case Type::Double:
     case Type::Void:
-        RELEASE_ASSERT_NOT_REACHED(); // Never GPR-classed.
+    case Type::RESERVED_WasNapiEnv:
+        RELEASE_ASSERT_NOT_REACHED(); // Never GPR-classed / never a valid argument.
     }
     jit.store64(scratchGPR, slot);
 }
@@ -228,11 +228,11 @@ static void emitStoreIncomingArgumentStack(CCallHelpers& jit, Type type, CCallHe
     case Type::CString:
     case Type::Function:
     case Type::Buffer:
-    case Type::NapiEnv:
-    case Type::NapiValue:
+    case Type::JSValue:
         jit.load64(source, scratchGPR);
         break;
     case Type::Void:
+    case Type::RESERVED_WasNapiEnv:
         RELEASE_ASSERT_NOT_REACHED(); // Never an argument.
     }
     jit.store64(scratchGPR, slot);
@@ -447,6 +447,27 @@ private:
 // native code, and the vmEntry inside profiledCall saves and restores it.
 JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* callback, uint64_t* slots))
 {
+    // THREADSAFE branch, FIRST, before touching the global object / VM / lock: a threadsafe
+    // callback may be entered from a FOREIGN thread, so nothing here may assume the JS thread.
+    // We only read plain immutable-after-creation cell fields and copy the raw C argument
+    // words (no JS values are created off-thread -- that is the whole point: BigInt/heap boxing
+    // for i64/u64/large pointers happens later, on the JS thread, in runThreadsafeInvocation).
+    if (callback->isThreadsafe()) [[unlikely]] {
+        FFI::Signature& signature = callback->signature();
+        const unsigned argumentCount = signature.argumentCount();
+        auto dispatch = FFI::FFIContext::threadsafeDispatch();
+        RELEASE_ASSERT(dispatch); // creation refused a threadsafe callback with no dispatch registered
+        // Count the invocation BEFORE handing it off (a single CAS): the cell then stays rooted
+        // until it drains, and the increment cannot race close() -- if close() already ran, the
+        // closed bit is visible and we do NOT dispatch (no record referencing an unrooted cell).
+        if (callback->tryBeginThreadsafeInvocation()) [[likely]] {
+            auto invocation = FFI::ThreadsafeInvocation::create(callback, callback->embedderContext(), std::span<const uint64_t>(slots, argumentCount));
+            dispatch(invocation.get()); // embedder queues to its JS thread; keeps its own ref
+        }
+        slots[argumentCount] = 0; // a threadsafe return value is undefined by nature: zero it
+        return { encodedJSUndefined(), nullptr };
+    }
+
     JSGlobalObject* globalObject = callback->globalObject();
     VM& vm = globalObject->vm();
     // The JS thread that made the outer FFI call already holds the lock; this
@@ -495,8 +516,6 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* ca
     MarkedArgumentBuffer arguments;
     for (unsigned i = 0; i < argumentCount; ++i) {
         FFI::Type type = signature.argumentType(i);
-        if (FFI::isSyntheticArgument(type))
-            continue; // A synthetic napi_env is engine-supplied and never passed to JS.
         // jsValueFromSlot only throws on out-of-memory (heap BigInt
         // allocation); check per iteration so nothing else allocates or
         // converts under a pending exception.
@@ -541,6 +560,82 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* ca
     // only so the JS result is visible in a debugger.
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
+
+namespace FFI {
+
+// JS-thread half of a threadsafe callback. The embedder's dispatch function queued
+// `invocation`; its event loop calls this on the JS thread. Converts the copied raw slots to
+// JS values via the SAME jsValueFromSlot the synchronous path uses (so BigInt boxing for
+// i64/u64/large pointers is done here, on the JS thread, never off-thread) and invokes the
+// callable. The C caller received 0 long ago, so the JS return value is discarded. A callback
+// close()d before the task ran is a silent no-op (native code raced close; nothing to deliver).
+// Any exception is left pending for the embedder's task machinery to report as it does for any
+// posted task -- there is no outer FFI call site to surface it to.
+void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
+{
+    JSFFICallback* callback = invocation.callback();
+    // This invocation was counted by ffiCallbackDispatch, so the cell is still rooted here even
+    // if close() already ran. Retire the count on every exit; if this was the last pending
+    // invocation of a CLOSED callback, unroot now (the deferred half of close()).
+    struct RetireInvocation {
+        JSFFICallback* callback;
+        ~RetireInvocation()
+        {
+            if (callback->endThreadsafeInvocation())
+                callback->unroot();
+        }
+    } retire { callback };
+
+    if (callback->isClosed()) [[unlikely]]
+        return;
+
+    JSGlobalObject* globalObject = callback->globalObject();
+    VM& vm = globalObject->vm();
+    JSLockHolder locker(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Signature& signature = callback->signature();
+    FFIContext& context = globalObject->ffiContext();
+    StringArena::Scope arenaScope(context);
+
+    std::span<const uint64_t> slots = invocation.slots();
+    ASSERT(slots.size() == signature.argumentCount());
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 0; i < signature.argumentCount(); ++i) {
+        arguments.append(jsValueFromSlot(globalObject, context, signature.argumentType(i), slots[i]));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (arguments.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+
+    JSObject* callable = callback->callable();
+    CallData callData = JSC::getCallData(callable);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        throwTypeError(globalObject, scope, "FFI callback target is not callable"_s);
+        return;
+    }
+    profiledCall(globalObject, ProfilingReason::API, callable, callData, jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, void());
+}
+
+} // namespace FFI
+
+#else // !FFI_CALLBACK_THUNK_SUPPORTED
+
+// The callback thunk machinery is compiled out on this configuration (no JIT / 32-bit /
+// JIT-caged / unsupported CPU), so no threadsafe callback can ever be created and no
+// ThreadsafeInvocation can exist. runThreadsafeInvocation is still declared unconditionally in
+// BunFFI.h (embedders and $vm link against it), so provide the degraded definition here rather
+// than leave an undefined symbol -- matching how the creation entry points degrade to a
+// runtime error instead of a link error.
+namespace FFI {
+void runThreadsafeInvocation(ThreadsafeInvocation&)
+{
+    RELEASE_ASSERT_NOT_REACHED(); // unreachable: no threadsafe callback exists to have queued this
+}
+} // namespace FFI
 
 #endif // FFI_CALLBACK_THUNK_SUPPORTED
 

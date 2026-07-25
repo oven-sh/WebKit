@@ -42,14 +42,6 @@
 
 namespace JSC { namespace FFI {
 
-bool isAvailable()
-{
-#if !USE(JSVALUE64) || ENABLE(JIT_CAGE) || !(CPU(X86_64) || CPU(ARM64))
-    return false; // The FFI machinery is compiled out on this configuration (SPEC section 14).
-#else
-    return Options::useJIT(); // false when the JIT is disabled OR the executable allocator failed
-#endif
-}
 
 
 std::optional<Type> typeFromJS(JSGlobalObject* globalObject, JSValue value)
@@ -145,44 +137,7 @@ RefPtr<Signature> signatureFromJS(JSGlobalObject* globalObject, JSValue descript
     return signature;
 }
 
-void setNapiEnv(JSGlobalObject* globalObject, void* napiEnv)
-{
-    globalObject->ffiContext().setNapiEnv(napiEnv);
-}
-
-void* napiEnv(JSGlobalObject* globalObject)
-{
-    return globalObject->ffiContext().napiEnv();
-}
-
-JSFFIFunction* createFunction(JSGlobalObject* globalObject, Ref<Signature>&& signature, void* target, const String& name)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // FFI-SPEC-GAP: a null target is rejected at creation (calling it could only crash); Bun's
-    // dlopen/linkSymbols glue also never produces one.
-    if (!target) [[unlikely]] {
-        throwTypeError(globalObject, scope, "bun:ffi function pointer must not be null"_s);
-        return nullptr;
-    }
-
-    RELEASE_AND_RETURN(scope, JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), WTF::move(signature), target, name));
-}
-
-JSFFIFunction* createFunction(JSGlobalObject* globalObject, JSValue signatureDescriptor, void* target, const String& name)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    RefPtr<Signature> signature = signatureFromJS(globalObject, signatureDescriptor);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    ASSERT(signature);
-
-    RELEASE_AND_RETURN(scope, createFunction(globalObject, signature.releaseNonNull(), target, name));
-}
-
-JSFFICallback* createCallback(JSGlobalObject* globalObject, Ref<Signature>&& signature, JSObject* callable)
+JSFFICallback* createCallback(JSGlobalObject* globalObject, Ref<Signature>&& signature, JSObject* callable, bool threadsafe, void* embedderContext)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -199,20 +154,9 @@ JSFFICallback* createCallback(JSGlobalObject* globalObject, Ref<Signature>&& sig
         return nullptr;
     }
 
-    RELEASE_AND_RETURN(scope, JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), callable, WTF::move(signature)));
+    RELEASE_AND_RETURN(scope, JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), callable, WTF::move(signature), threadsafe, embedderContext));
 }
 
-JSFFICallback* createCallback(JSGlobalObject* globalObject, JSValue signatureDescriptor, JSObject* callable)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    RefPtr<Signature> signature = signatureFromJS(globalObject, signatureDescriptor);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    ASSERT(signature);
-
-    RELEASE_AND_RETURN(scope, createCallback(globalObject, signature.releaseNonNull(), callable));
-}
 
 } } // namespace JSC::FFI
 

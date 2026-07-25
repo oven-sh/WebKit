@@ -59,9 +59,8 @@ using InvokeThunkFunction = void (JIT_OPERATION_ATTRIBUTES *)(void* target, uint
 // The canonical slot buffer (spec section 4): every FFI call, in either
 // direction, marshals through `uint64_t slots[signature.slotCount()]`.
 // slots[i] for i < argumentCount() is native argument i (declaration
-// order, synthetic NapiEnv included at its declared position);
-// slots[argumentCount()] is the return slot. Each slot is 8 bytes and the
-// buffer is 8-byte aligned.
+// order); slots[argumentCount()] is the return slot. Each slot is 8 bytes
+// and the buffer is 8-byte aligned.
 constexpr size_t slotSize = 8;
 
 // Byte offset of argument slot `index` within the slot buffer.
@@ -92,11 +91,10 @@ public:
     // canonical interned Signature for this (arguments, returnType) shape.
     JS_EXPORT_PRIVATE static RefPtr<Signature> tryCreate(std::span<const Type> arguments, Type returnType);
 
-    // Native parameter count, including synthetic (engine-supplied) params.
+    // Parameter count: every native parameter is a JS-caller-supplied
+    // argument, so this is also what JSFFIFunction's `length` and its arity
+    // check use.
     unsigned argumentCount() const { return static_cast<unsigned>(m_arguments.size()); }
-    // Parameters supplied by the JS caller (excludes synthetic NapiEnv). This
-    // is what JSFFIFunction's `length` and its arity check use.
-    unsigned jsArgumentCount() const { return m_jsArgumentCount; }
     Type argumentType(unsigned index) const { return m_arguments[index]; }
     std::span<const Type> arguments() const LIFETIME_BOUND { return m_arguments.span(); }
     Type returnType() const { return m_returnType; }
@@ -138,7 +136,6 @@ private:
 
     FixedVector<Type> m_arguments;
     Type m_returnType;
-    unsigned m_jsArgumentCount { 0 };
     unsigned m_hash { 0 };
 
     Lock m_codeLock;

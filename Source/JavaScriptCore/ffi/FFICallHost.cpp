@@ -26,6 +26,9 @@
 #include "config.h"
 #include "FFICallHost.h"
 
+#include "TopExceptionScope.h"
+
+
 #if USE(BUN_JSC_ADDITIONS)
 
 // See FFICallHost.h: the host path is compiled out on 32-bit exactly like
@@ -69,16 +72,10 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
     ASSERT(argumentCount <= Signature::maxArguments);
     uint64_t slots[Signature::maxArguments + 1];
 
-    unsigned jsIndex = 0;
     for (unsigned i = 0; i < argumentCount; ++i) {
         Type type = signature.argumentType(i);
-        if (isSyntheticArgument(type)) {
-            ASSERT(type == Type::NapiEnv);
-            slots[i] = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(context.napiEnv()));
-            continue;
-        }
         // Missing JS arguments are jsUndefined() and take each type's undefined rule (Bun parity).
-        writeSlotFromJSValue(globalObject, context, type, callFrame->argument(jsIndex++), slots[i], &context.stringArena());
+        writeSlotFromJSValue(globalObject, context, type, callFrame->argument(i), slots[i], &context.stringArena());
         RETURN_IF_EXCEPTION(scope, { });
     }
     slots[argumentCount] = 0;
@@ -89,7 +86,52 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
         return { };
     }
 
-    thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+    // Embedder call hooks (hooked functions are host-path-only, so this is the single place they
+    // run). `before` immediately precedes the native call; `after` immediately follows it and runs
+    // UNCONDITIONALLY -- even when the native call left a JS exception pending (a callback threw)
+    // -- so a scope opened in before (e.g. an N-API handle scope) is always closed.
+    //
+    // Exception discipline: a callback that throws during the native call raises its exception
+    // INSIDE `hookScope` below, which is therefore the owning scope entitled to clear it. That is
+    // the CallData.cpp stash-and-rethrow idiom: the exception is stashed and cleared through the
+    // inner TopExceptionScope (so the after-hook -- ordinary embedder code, not exception-handling
+    // code -- observes a clean VM), the inner scope closes, and only then is the exception
+    // re-thrown against this function's own throw scope, propagating exactly as it would have.
+    // A before-hook that throws aborts the native call (its exception flows the same way).
+    if (const CallHooks* hooks = function->hooks()) [[unlikely]] {
+        Exception* pending = nullptr;
+        {
+            auto hookScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            void* hookToken = hooks->before ? hooks->before(globalObject, callFrame) : nullptr;
+            if (!hookScope.exception()) [[likely]]
+                thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+            pending = hookScope.exception(); // from a throwing before-hook or an in-call callback
+            if (pending) [[unlikely]]
+                hookScope.clearException();
+            if (hooks->after)
+                hooks->after(globalObject, callFrame, hookToken); // runs on a clean VM
+            if (hookScope.exception()) [[unlikely]] {
+                // The after-hook itself threw. If we were already carrying an exception it wins
+                // (the after-hook's is dropped); otherwise the after-hook's exception propagates.
+                if (pending)
+                    hookScope.clearException();
+                else {
+                    pending = hookScope.exception();
+                    hookScope.clearException();
+                }
+            }
+        }
+        if (pending) [[unlikely]] {
+            // Re-throw the ORIGINAL Exception* cell (not pending->value()): the JSValue overload
+            // would mint a NEW Exception, discarding identity/stack, notifying the debugger twice,
+            // and -- for a TerminationException -- re-installing it as an ordinary catchable cell.
+            // Re-throwing the same cell keeps caught===thrown and keeps m_terminationException the
+            // pending exception, so termination stays uncatchable.
+            throwException(globalObject, scope, pending);
+            return { };
+        }
+    } else
+        thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
     // A JS callback that ran inside the native call may have left an exception pending on the VM.
     RETURN_IF_EXCEPTION(scope, { });
 

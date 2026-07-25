@@ -15207,9 +15207,9 @@ IGNORE_CLANG_WARNINGS_END
     {
         Node* node = m_node;
         JSFFIFunction* ffiFunction = node->ffiFunction();
-        // The callee's global object is the realm every tier uses for conversions, the napi
-        // env, the string arena and TypeErrors: the C++ host path receives the callee's realm
-        // (spec 8.2), the IC stub bakes the creation global (spec 8.3) and the DFG codegen uses
+        // The callee's global object is the realm every tier uses for conversions, the string
+        // arena and TypeErrors: the C++ host path receives the callee's realm (spec 8.2), the
+        // IC stub bakes the creation global (spec 8.3) and the DFG codegen uses
         // ffiFunction->globalObject() (spec 10.4) -- never the caller's semantic-origin realm.
         // Its FFIContext already exists (JSFFIFunction::create materializes it on the mutator
         // thread), so reading &globalObject->ffiContext() here on the compiler thread is a
@@ -15220,7 +15220,7 @@ IGNORE_CLANG_WARNINGS_END
         unsigned nativeArgumentCount = signature.argumentCount();
 
         DFG_ASSERT(m_graph, node, node->numChildren() >= 2);
-        DFG_ASSERT(m_graph, node, node->numChildren() - 2 == signature.jsArgumentCount(), node->numChildren(), signature.jsArgumentCount());
+        DFG_ASSERT(m_graph, node, node->numChildren() - 2 == nativeArgumentCount, node->numChildren(), nativeArgumentCount);
 
         CodePtr<JITThunkPtrTag> invokeThunk = signature.invokeThunk();
         if (!invokeThunk) {
@@ -15254,12 +15254,9 @@ IGNORE_CLANG_WARNINGS_END
         // type (operationFFIWriteSlot may transcode a JS string into the call-scoped StringArena).
         bool needsArena = false;
         {
-            unsigned jsIndex = 0;
             for (unsigned i = 0; i < nativeArgumentCount; ++i) {
                 FFI::Type type = signature.argumentType(i);
-                if (FFI::isSyntheticArgument(type))
-                    continue;
-                Edge edge = m_graph.varArgChild(node, 2 + jsIndex++);
+                Edge edge = m_graph.varArgChild(node, 2 + i);
                 if (edge.useKind() != UntypedUse)
                     continue;
                 switch (type) {
@@ -15312,42 +15309,30 @@ IGNORE_CLANG_WARNINGS_END
 
         // DIRECT-CALL path (no invoke thunk): when every argument converts to a SINGLE typed SSA
         // value (int32-family / bool / f32 / f64 via KnownInt32/KnownBoolean/DoubleRep) and there
-        // is no string arena, no synthetic napi_env and a scalar/void return, call the native target
-        // straight from B3 as a CCallValue with the arguments in registers. This removes the thunk's
-        // extra call/ret + frame and the store-then-reload of every argument through the slot
-        // buffer. UntypedUse arguments (which convert into their slot from several basic blocks)
-        // and everything else keep the thunk path unchanged.
+        // is no string arena and a scalar/void return, call the native target straight from B3 as
+        // a CCallValue with the arguments in registers. This removes the thunk's extra call/ret +
+        // frame and the store-then-reload of every argument through the slot buffer. UntypedUse
+        // arguments (which convert into their slot from several basic blocks) and everything
+        // else keep the thunk path unchanged.
         // DIRECT-CALL: the native target is a compile-time constant here, so the FTL calls it
         // straight from B3 as a CCallValue with the arguments in registers -- no invoke thunk (its
         // extra call/ret + frame + slot-buffer store/reload disappear). Arguments the JIT lowers to
         // a single typed SSA value (KnownInt32 / KnownBoolean / DoubleRep) become register operands
-        // directly. UntypedUse / synthetic arguments keep their existing conversion code, which
-        // finishes by leaving the canonical 64-bit value in the slot; the direct call simply reloads
-        // that slot as its operand -- so the typed-array-view path, i64/u64 (BigInt, wrapping mod
-        // 2^64) and the C++ slow path all feed the direct call unchanged.
+        // directly. UntypedUse arguments keep their existing conversion code, which finishes by
+        // leaving the canonical 64-bit value in the slot; the direct call simply reloads that slot
+        // as its operand -- so the typed-array-view path, i64/u64 (BigInt, wrapping mod 2^64) and
+        // the C++ slow path all feed the direct call unchanged.
         // Selected at instantiation time by compileCallFFI() below (which evaluates the option and
         // the Darwin sub-word-spill eligibility once), so the dead call path folds away entirely.
         constexpr bool directCall = DirectCall;
         Vector<LValue> directOperands;
 
-        unsigned jsArgumentIndex = 0;
         for (unsigned i = 0; i < nativeArgumentCount; ++i) {
             FFI::Type type = signature.argumentType(i);
             TypedPointer slot = slotPointer(i);
             LValue directOperand = nullptr; // set by the single-value cases; else reloaded from the slot
 
-            if (FFI::isSyntheticArgument(type)) {
-                // Type::NapiEnv is supplied by the engine: load the embedder's napi env LIVE at
-                // call time (spec 6), never as an immediate baked at compile time.
-                LValue env = m_out.load64(m_out.absolute(context.addressOfNapiEnv()));
-                if constexpr (directCall)
-                    directOperands.append(env); // napi_env is a pointer: pass it in a register
-                else
-                    m_out.store64(env, slot);
-                continue;
-            }
-
-            Edge edge = m_graph.varArgChild(node, 2 + jsArgumentIndex++);
+            Edge edge = m_graph.varArgChild(node, 2 + i);
             switch (edge.useKind()) {
             case KnownInt32Use: {
                 LValue value = lowInt32(edge);
@@ -15422,7 +15407,7 @@ IGNORE_CLANG_WARNINGS_END
                 break;
             }
             case UntypedUse: {
-                // i64 family, pointer family, napi_value and anything the conversion left untyped.
+                // i64 family, pointer family, jsvalue and anything the conversion left untyped.
                 // The pointer family gets the same INLINE fast paths as the DFG (parity keeps the
                 // tiers behaviorally identical, SPEC section 5): numbers, and typed-array /
                 // DataView views resolved straight to their data pointer. Everything else -- and
@@ -15571,7 +15556,7 @@ IGNORE_CLANG_WARNINGS_END
             case FFI::Type::Int16: case FFI::Type::Uint16:
             case FFI::Type::Int32: case FFI::Type::Uint32: case FFI::Type::Bool:
                 returnLType = Int32; break;
-            default: returnLType = Int64; break; // i64/u64 (+fast), pointer family, napi_value
+            default: returnLType = Int64; break; // i64/u64 (+fast), pointer family, jsvalue
             }
             LValue rawReturn = m_out.call(returnLType, callee, directOperands);
             // Normalize into the canonical return slot exactly as the thunk's return
@@ -15610,7 +15595,7 @@ IGNORE_CLANG_WARNINGS_END
             case FFI::Type::Double:
                 m_out.storeDouble(rawReturn, returnSlot);
                 break;
-            default: // 64-bit integers, pointer family, napi_value: raw 64 bits are the encoding.
+            default: // 64-bit integers, pointer family, jsvalue: raw 64 bits are the encoding.
                 m_out.store64(rawReturn, returnSlot);
                 break;
             }
@@ -15677,8 +15662,8 @@ IGNORE_CLANG_WARNINGS_END
         case FFI::Type::Float:
             setJSValue(boxDouble(m_out.purifyNaN(m_out.floatToDouble(m_out.loadFloat(returnSlot)))));
             break;
-        case FFI::Type::NapiValue:
-            // Spec 4/5: napi_value is a raw EncodedJSValue pass-through; the slot bits ARE the result.
+        case FFI::Type::JSValue:
+            // Spec 4/5: a raw EncodedJSValue pass-through; the slot bits ARE the result.
             setJSValue(m_out.load64(returnSlot));
             break;
         case FFI::Type::Int64:
@@ -15708,8 +15693,8 @@ IGNORE_CLANG_WARNINGS_END
             setJSValue(boxed);
             break;
         }
-        case FFI::Type::NapiEnv:
-            DFG_CRASH(m_graph, node, "napi_env is never a valid FFI return type");
+        case FFI::Type::RESERVED_WasNapiEnv:
+            DFG_CRASH(m_graph, node, "the reserved tag is never a valid FFI return type");
             break;
         }
 

@@ -34,6 +34,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <wtf/Threading.h>
 #include <wtf/Compiler.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -347,6 +348,17 @@ double ffi_call_cb_f64_x9(double (*cb)(double, double, double, double, double, d
 int64_t ffi_call_cb_u8_x10(int64_t (*cb)(uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t), uint8_t a0, uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4, uint8_t a5, uint8_t a6, uint8_t a7, uint8_t a8, uint8_t a9)
 {
     return cb(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+}
+
+// Spawns a FOREIGN OS thread that invokes cb(a, b, c, d) exactly once, then joins it. Being
+// entered off the JS thread is the whole point: it exercises the threadsafe dispatch path, which
+// must copy raw slots and hand off to the embedder WITHOUT touching the VM off-thread.
+void ffi_call_cb_from_thread(void (*cb)(int32_t, int64_t, uint64_t, double), int32_t a, int64_t b, uint64_t c, double d)
+{
+    auto thread = Thread::create("ffi-cb-from-thread"_s, [cb, a, b, c, d] {
+        cb(a, b, c, d);
+    });
+    thread->waitForCompletion();
 }
 
 int64_t ffi_call_cb_ret_i8(int8_t (*cb)(void)) { return static_cast<int64_t>(cb()); }
@@ -861,6 +873,7 @@ std::span<const FFIFixtureEntry> ffiTestFixtures()
         FFI_FIXTURE(ffi_call_cb_ret_ptr),
         FFI_FIXTURE(ffi_call_cb_then_read_u32),
         FFI_FIXTURE(ffi_canary_call),
+        FFI_FIXTURE(ffi_call_cb_from_thread),
         FFI_FIXTURE(ffi_align_probe_0),
         FFI_FIXTURE(ffi_align_probe_9),
     };

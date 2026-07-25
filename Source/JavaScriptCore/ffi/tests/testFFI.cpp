@@ -207,8 +207,8 @@ static void testTypeTraits()
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Int64Fast), 15u);
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Uint64Fast), 16u);
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Function), 17u);
-    FFI_CHECK_EQ(static_cast<unsigned>(Type::NapiEnv), 18u);
-    FFI_CHECK_EQ(static_cast<unsigned>(Type::NapiValue), 19u);
+    FFI_CHECK_EQ(static_cast<unsigned>(Type::RESERVED_WasNapiEnv), 18u);
+    FFI_CHECK_EQ(static_cast<unsigned>(Type::JSValue), 19u);
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Buffer), 20u);
 
     // Canonical names and parsing round trip for every type.
@@ -217,8 +217,7 @@ static void testTypeTraits()
         { Type::Uint16, "u16"_s }, { Type::Int32, "i32"_s }, { Type::Uint32, "u32"_s }, { Type::Int64, "i64"_s },
         { Type::Uint64, "u64"_s }, { Type::Double, "f64"_s }, { Type::Float, "f32"_s }, { Type::Bool, "bool"_s },
         { Type::Pointer, "ptr"_s }, { Type::Void, "void"_s }, { Type::CString, "cstring"_s }, { Type::Int64Fast, "i64_fast"_s },
-        { Type::Uint64Fast, "u64_fast"_s }, { Type::Function, "function"_s }, { Type::NapiEnv, "napi_env"_s }, { Type::NapiValue, "napi_value"_s },
-        { Type::Buffer, "buffer"_s },
+        { Type::Uint64Fast, "u64_fast"_s }, { Type::Function, "function"_s }, { Type::JSValue, "jsvalue"_s }, { Type::Buffer, "buffer"_s },
     };
     for (auto& entry : names) {
         FFI_CHECK(!strcmp(FFI::name(entry.type).characters(), entry.name.characters()));
@@ -238,7 +237,7 @@ static void testTypeTraits()
         // (Bun's FFIType parity), the resolution A1 documented for the alias
         // the SPEC lists without a target.
         { "void*"_s, Type::Pointer }, { "pointer"_s, Type::Pointer }, { "char*"_s, Type::Pointer }, { "callback"_s, Type::Function },
-        { "fn"_s, Type::Function },
+        { "fn"_s, Type::Function }, { "napi_value"_s, Type::JSValue }, // napi_value: legacy spelling of the raw-JSValue type
     };
     for (auto& entry : aliases) {
         std::optional<Type> parsed = FFI::parseType(StringView(entry.alias));
@@ -261,9 +260,8 @@ static void testTypeTraits()
         else if (type == Type::Double)
             expected = FFI::ArgClass::Double;
         FFI_CHECK(FFI::argClass(type) == expected);
-        FFI_CHECK_EQ(FFI::isValidReturnType(type), type != Type::NapiEnv && type != Type::Buffer);
-        FFI_CHECK_EQ(FFI::isValidArgumentType(type), type != Type::Void);
-        FFI_CHECK_EQ(FFI::isSyntheticArgument(type), type == Type::NapiEnv);
+        FFI_CHECK_EQ(FFI::isValidReturnType(type), type != Type::RESERVED_WasNapiEnv && type != Type::Buffer);
+        FFI_CHECK_EQ(FFI::isValidArgumentType(type), type != Type::Void && type != Type::RESERVED_WasNapiEnv);
     }
 
     // Sizes and signedness (SPEC section 2). char is signed on every target.
@@ -296,8 +294,7 @@ static void testTypeTraits()
     FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::CString), 8u);
     FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::Function), 8u);
     FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::Buffer), 8u);
-    FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::NapiEnv), 8u);
-    FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::NapiValue), 8u);
+    FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::JSValue), 8u);
     FFI_CHECK_EQ(FFI::slotSize, 8u);
 }
 
@@ -325,7 +322,6 @@ static void testSignatures()
     FFI_CHECK(viaRegistry.ptr() == a.get());
     FFI_CHECK(a->toString() == "f64(i32,f64)"_s);
     FFI_CHECK_EQ(a->argumentCount(), 2u);
-    FFI_CHECK_EQ(a->jsArgumentCount(), 2u);
     FFI_CHECK_EQ(a->slotCount(), 3u);
     FFI_CHECK_EQ(a->slotBufferBytes(), 24u);
     FFI_CHECK(a->argumentType(0) == Type::Int32);
@@ -350,15 +346,14 @@ static void testSignatures()
         FFI_CHECK(d->toString() == "f64(f64,i32)"_s);
     }
 
-    // Synthetic napi_env counts as a native parameter but not as a JS one.
-    Vector<Type> withEnv { Type::NapiEnv, Type::Int32, Type::NapiValue };
-    RefPtr<FFI::Signature> env = FFI::Signature::tryCreate(withEnv.span(), Type::NapiValue);
-    FFI_CHECK(!!env);
-    if (env) {
-        FFI_CHECK_EQ(env->argumentCount(), 3u);
-        FFI_CHECK_EQ(env->jsArgumentCount(), 2u);
-        FFI_CHECK_EQ(env->slotCount(), 4u);
-        FFI_CHECK(env->toString() == "napi_value(napi_env,i32,napi_value)"_s);
+    // A jsvalue parameter is an ordinary JS-caller-supplied parameter.
+    Vector<Type> withJSValue { Type::Int32, Type::JSValue };
+    RefPtr<FFI::Signature> jsvalueSignature = FFI::Signature::tryCreate(withJSValue.span(), Type::JSValue);
+    FFI_CHECK(!!jsvalueSignature);
+    if (jsvalueSignature) {
+        FFI_CHECK_EQ(jsvalueSignature->argumentCount(), 2u);
+        FFI_CHECK_EQ(jsvalueSignature->slotCount(), 3u);
+        FFI_CHECK(jsvalueSignature->toString() == "jsvalue(i32,jsvalue)"_s);
     }
 
     // Empty signature.
@@ -380,25 +375,27 @@ static void testSignatures()
     // Void is a valid return but never an argument.
     Vector<Type> voidArg { Type::Int32, Type::Void };
     FFI_CHECK(!FFI::Signature::tryCreate(voidArg.span(), Type::Int32));
-    // napi_env / buffer are valid arguments but invalid returns.
+    // buffer is a valid argument but an invalid return; the reserved tag (18)
+    // is invalid in every position.
     Vector<Type> oneInt { Type::Int32 };
-    FFI_CHECK(!FFI::Signature::tryCreate(oneInt.span(), Type::NapiEnv));
+    Vector<Type> reservedArg { Type::RESERVED_WasNapiEnv };
+    FFI_CHECK(!FFI::Signature::tryCreate(oneInt.span(), Type::RESERVED_WasNapiEnv));
+    FFI_CHECK(!FFI::Signature::tryCreate(reservedArg.span(), Type::Int32));
     FFI_CHECK(!FFI::Signature::tryCreate(oneInt.span(), Type::Buffer));
-    FFI_CHECK(!!FFI::Signature::tryCreate(oneInt.span(), Type::NapiValue));
+    FFI_CHECK(!!FFI::Signature::tryCreate(oneInt.span(), Type::JSValue));
     FFI_CHECK(!!FFI::Signature::tryCreate(oneInt.span(), Type::Void));
 
     // Every valid argument type at once, canonical toString.
     Vector<Type> everyArg {
         Type::Char, Type::Int8, Type::Uint8, Type::Int16, Type::Uint16, Type::Int32, Type::Uint32,
         Type::Int64, Type::Uint64, Type::Double, Type::Float, Type::Bool, Type::Pointer, Type::CString,
-        Type::Int64Fast, Type::Uint64Fast, Type::Function, Type::NapiEnv, Type::NapiValue, Type::Buffer,
+        Type::Int64Fast, Type::Uint64Fast, Type::Function, Type::JSValue, Type::Buffer,
     };
     RefPtr<FFI::Signature> every = FFI::Signature::tryCreate(everyArg.span(), Type::Char);
     FFI_CHECK(!!every);
     if (every) {
-        FFI_CHECK_EQ(every->argumentCount(), 20u);
-        FFI_CHECK_EQ(every->jsArgumentCount(), 19u);
-        FFI_CHECK(every->toString() == "char(char,i8,u8,i16,u16,i32,u32,i64,u64,f64,f32,bool,ptr,cstring,i64_fast,u64_fast,function,napi_env,napi_value,buffer)"_s);
+        FFI_CHECK_EQ(every->argumentCount(), 19u);
+        FFI_CHECK(every->toString() == "char(char,i8,u8,i16,u16,i32,u32,i64,u64,f64,f32,bool,ptr,cstring,i64_fast,u64_fast,function,jsvalue,buffer)"_s);
     }
 }
 
@@ -715,12 +712,12 @@ static Vector<GoldenCase> buildGoldenCorpus()
         "f0 f1 f2 f3 f4 f5 f6 f7 s0 s4 #16 rf"_s,
         "f0 f1 f2 f3 s32 s40 s48 s56 s64 s72 #80 rf"_s);
     // Every integer-class exotic type is passed exactly like a 64-bit integer.
-    add("u64(cstring,u64,i64_fast,u64_fast,function,buffer,napi_value,napi_env)"_s,
-        { T::CString, T::Uint64, T::Int64Fast, T::Uint64Fast, T::Function, T::Buffer, T::NapiValue, T::NapiEnv }, T::Uint64,
-        "g0 g1 g2 g3 g4 g5 s0 s8 #16 ri"_s,
-        "g0 g1 g2 g3 g4 g5 g6 g7 #0 ri"_s,
-        "g0 g1 g2 g3 g4 g5 g6 g7 #0 ri"_s,
-        "g0 g1 g2 g3 s32 s40 s48 s56 #64 ri"_s);
+    add("u64(cstring,u64,i64_fast,u64_fast,function,buffer,jsvalue)"_s,
+        { T::CString, T::Uint64, T::Int64Fast, T::Uint64Fast, T::Function, T::Buffer, T::JSValue }, T::Uint64,
+        "g0 g1 g2 g3 g4 g5 s0 #16 ri"_s,
+        "g0 g1 g2 g3 g4 g5 g6 #0 ri"_s,
+        "g0 g1 g2 g3 g4 g5 g6 #0 ri"_s,
+        "g0 g1 g2 g3 s32 s40 s48 #64 ri"_s);
     // i8s only after the integer registers are exhausted.
     add("i64(i64x8,i8,i8,i8)"_s,
         { T::Int64, T::Int64, T::Int64, T::Int64, T::Int64, T::Int64, T::Int64, T::Int64, T::Int8, T::Int8, T::Int8 }, T::Int64,
@@ -913,7 +910,7 @@ static void testCallLayoutAgainstReferenceModel()
         FFI::Type::Char, FFI::Type::Int8, FFI::Type::Uint8, FFI::Type::Int16, FFI::Type::Uint16,
         FFI::Type::Int32, FFI::Type::Uint32, FFI::Type::Int64, FFI::Type::Uint64, FFI::Type::Double,
         FFI::Type::Float, FFI::Type::Bool, FFI::Type::Pointer, FFI::Type::CString, FFI::Type::Int64Fast,
-        FFI::Type::Uint64Fast, FFI::Type::Function, FFI::Type::NapiEnv, FFI::Type::NapiValue, FFI::Type::Buffer,
+        FFI::Type::Uint64Fast, FFI::Type::Function, FFI::Type::JSValue, FFI::Type::Buffer,
     };
     static constexpr FFI::Type returnTypes[] = {
         FFI::Type::Void, FFI::Type::Int32, FFI::Type::Uint32, FFI::Type::Int64, FFI::Type::Double, FFI::Type::Float, FFI::Type::Bool, FFI::Type::Pointer,
@@ -1320,19 +1317,19 @@ static void testConversions()
         }
     }
 
-    // ---- napi_value: raw bits, no conversion.
+    // ---- jsvalue: raw bits, no conversion.
     {
         JSObject* object = constructEmptyObject(globalObject);
         JSString* string = jsString(vm, String("napi"_s));
-        expectSlot(T::NapiValue, jsNumber(3.5), static_cast<uint64_t>(JSValue::encode(jsNumber(3.5))));
-        expectSlot(T::NapiValue, jsBoolean(true), static_cast<uint64_t>(JSValue::encode(jsBoolean(true))));
-        expectSlot(T::NapiValue, jsUndefined(), static_cast<uint64_t>(JSValue::encode(jsUndefined())));
-        expectSlot(T::NapiValue, jsNull(), static_cast<uint64_t>(JSValue::encode(jsNull())));
-        expectSlot(T::NapiValue, object, static_cast<uint64_t>(JSValue::encode(object)));
-        expectSlot(T::NapiValue, string, static_cast<uint64_t>(JSValue::encode(string)));
-        JSValue backObject = slotToJS(T::NapiValue, static_cast<uint64_t>(JSValue::encode(object)));
+        expectSlot(T::JSValue, jsNumber(3.5), static_cast<uint64_t>(JSValue::encode(jsNumber(3.5))));
+        expectSlot(T::JSValue, jsBoolean(true), static_cast<uint64_t>(JSValue::encode(jsBoolean(true))));
+        expectSlot(T::JSValue, jsUndefined(), static_cast<uint64_t>(JSValue::encode(jsUndefined())));
+        expectSlot(T::JSValue, jsNull(), static_cast<uint64_t>(JSValue::encode(jsNull())));
+        expectSlot(T::JSValue, object, static_cast<uint64_t>(JSValue::encode(object)));
+        expectSlot(T::JSValue, string, static_cast<uint64_t>(JSValue::encode(string)));
+        JSValue backObject = slotToJS(T::JSValue, static_cast<uint64_t>(JSValue::encode(object)));
         FFI_CHECK(backObject == JSValue(object));
-        JSValue backNumber = slotToJS(T::NapiValue, static_cast<uint64_t>(JSValue::encode(jsNumber(-7))));
+        JSValue backNumber = slotToJS(T::JSValue, static_cast<uint64_t>(JSValue::encode(jsNumber(-7))));
         FFI_CHECK(backNumber == jsNumber(-7));
     }
 
@@ -1500,8 +1497,8 @@ static uint64_t canonicalizeSlot(FFI::Type type, uint64_t raw)
     case FFI::Type::CString:
     case FFI::Type::Function:
     case FFI::Type::Buffer:
-    case FFI::Type::NapiEnv:
-    case FFI::Type::NapiValue:
+    case FFI::Type::RESERVED_WasNapiEnv:
+    case FFI::Type::JSValue:
     case FFI::Type::Void:
         return raw;
     }
@@ -1569,7 +1566,7 @@ static uint64_t edgeBitsForType(FFI::Type type, WeakRandom& random)
     case FFI::Type::CString:
     case FFI::Type::Function:
     case FFI::Type::Buffer:
-    case FFI::Type::NapiEnv: {
+    case FFI::Type::RESERVED_WasNapiEnv: {
         // Never dereferenced by the fixtures the generic differential runs on.
         static const uint64_t values[] = {
             0, 0x00007fffdeadbee0ull, ~0ull, 4096,
@@ -1577,7 +1574,7 @@ static uint64_t edgeBitsForType(FFI::Type type, WeakRandom& random)
         };
         return values[random.getUint32(std::size(values))];
     }
-    case FFI::Type::NapiValue:
+    case FFI::Type::JSValue:
         return random.getUint64();
     case FFI::Type::Void:
         return 0;
@@ -1728,8 +1725,7 @@ static void testInvokeThunkDifferential()
     differentialCase("ffi_echo_ptr(as buffer)"_s, ffi_echo_ptr, { T::Buffer }, T::Pointer, 20, random);
     differentialCase("ffi_echo_ptr(as function)"_s, ffi_echo_ptr, { T::Function }, T::Pointer, 20, random);
     differentialCase("ffi_echo_cstring"_s, ffi_echo_cstring, { T::CString }, T::CString, 30, random);
-    differentialCase("ffi_echo_napi_value"_s, ffi_echo_napi_value, { T::NapiValue }, T::NapiValue, 40, random);
-    differentialCase("ffi_recv_napi_env"_s, ffi_recv_napi_env, { T::NapiEnv }, T::Pointer, 20, random);
+    differentialCase("ffi_echo_napi_value"_s, ffi_echo_napi_value, { T::JSValue }, T::JSValue, 40, random);
     differentialCase("ffi_widen_char"_s, ffi_widen_char, { T::Char }, T::Int64, 30, random);
     differentialCase("ffi_widen_i8"_s, ffi_widen_i8, { T::Int8 }, T::Int64, 30, random);
     differentialCase("ffi_widen_u8"_s, ffi_widen_u8, { T::Uint8 }, T::Int64, 30, random);
@@ -2017,10 +2013,10 @@ static void testCanaries()
                 }
             }
         }
-        // Zero arguments, napi_value return: the JS side returns a fresh object
+        // Zero arguments, jsvalue return: the JS side returns a fresh object
         // whose bits go back out through the return register (which the canary
         // ignores). Allocation and heap churn inside must not clobber anything.
-        RefPtr<FFI::Signature> objectSignature = FFI::Signature::tryCreate({ }, FFI::Type::NapiValue);
+        RefPtr<FFI::Signature> objectSignature = FFI::Signature::tryCreate({ }, FFI::Type::JSValue);
         FFI_CHECK(!!objectSignature);
         if (objectSignature) {
             JSFFICallback* allocatingCallback = JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), allocatingTarget, objectSignature.releaseNonNull());
@@ -2157,7 +2153,7 @@ static void testJSFFIFunctionEndToEnd()
 
     // ffi_add_i32 through the JS call machinery (IC stub or host path).
     if (JSFFIFunction* addI32 = makeFunction({ T::Int32, T::Int32 }, T::Int32, reinterpret_cast<void*>(ffi_add_i32), "ffi_add_i32"_s)) {
-        FFI_CHECK_EQ(addI32->signature().jsArgumentCount(), 2u);
+        FFI_CHECK_EQ(addI32->signature().argumentCount(), 2u);
         FFI_CHECK(addI32->target() == reinterpret_cast<void*>(ffi_add_i32));
         MarkedArgumentBuffer arguments;
         arguments.append(jsNumber(40));

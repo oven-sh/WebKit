@@ -279,17 +279,15 @@ void emitConvertArgument(CCallHelpers& jit, Type type, CCallHelpers::Address arg
         return;
     }
 
-    case Type::NapiValue:
-        // napi_value is a raw EncodedJSValue pass-through: no conversion.
+    case Type::JSValue:
+        // A raw EncodedJSValue pass-through: no conversion.
         jit.load64(argument, valueGPR);
         jit.store64(valueGPR, slot);
         return;
 
-    case Type::NapiEnv:
+    case Type::RESERVED_WasNapiEnv:
     case Type::Void:
-        // NapiEnv is synthetic (never read from JS) and is emitted by the
-        // caller; Void is not a valid argument type (rejected by
-        // Signature::tryCreate).
+        // Neither is a valid argument type (rejected by Signature::tryCreate).
         RELEASE_ASSERT_NOT_REACHED();
         return;
     }
@@ -354,10 +352,10 @@ void emitBoxReturnValue(CCallHelpers& jit, VM& vm, JSGlobalObject* globalObject,
         jit.boxDouble(valueFPR, resultRegs);
         return;
 
-    case Type::NapiValue:
+    case Type::JSValue:
         // FFI-SPEC-GAP: section 8.3 step 7 lists only the numeric/void inline
-        // cases and the operationFFIBoxSlot cases; napi_value is by definition
-        // the raw EncodedJSValue bits (section 5, "napi_value -> JSValue::decode(bits)"),
+        // cases and the operationFFIBoxSlot cases; a jsvalue return is by
+        // definition the raw EncodedJSValue bits (section 5, "-> JSValue::decode(bits)"),
         // so it is returned as-is without an operation call.
         jit.load64(returnSlot, GPRInfo::returnValueGPR);
         return;
@@ -381,7 +379,7 @@ void emitBoxReturnValue(CCallHelpers& jit, VM& vm, JSGlobalObject* globalObject,
         return;
 
     case Type::Buffer:
-    case Type::NapiEnv:
+    case Type::RESERVED_WasNapiEnv:
         // Neither is a valid return type (rejected by Signature::tryCreate).
         RELEASE_ASSERT_NOT_REACHED();
         return;
@@ -405,7 +403,6 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
         return nullptr;
 
     const unsigned argumentCount = signature.argumentCount();
-    const unsigned jsArgumentCount = signature.jsArgumentCount();
     const Type returnType = signature.returnType();
 
     // Frame layout (SPEC section 8.3 step 1). After emitFunctionPrologue() the
@@ -448,32 +445,18 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
 
     // 2. Arity: provided < expected takes the slow path (missing arguments
     //    become undefined there); extra arguments are simply ignored.
-    if (jsArgumentCount) {
+    if (argumentCount) {
         JIT_COMMENT(jit, "arity check");
-        slowPath.append(jit.branch32(CCallHelpers::Below, CCallHelpers::payloadFor(CallFrameSlot::argumentCountIncludingThis), CCallHelpers::TrustedImm32(jsArgumentCount + 1)));
+        slowPath.append(jit.branch32(CCallHelpers::Below, CCallHelpers::payloadFor(CallFrameSlot::argumentCountIncludingThis), CCallHelpers::TrustedImm32(argumentCount + 1)));
     }
 
     // 4. Fast-convert each native parameter into its canonical slot.
-    void* const* napiEnvAddress = nullptr;
-    unsigned jsIndex = 0;
     for (unsigned i = 0; i < argumentCount; ++i) {
         Type type = signature.argumentType(i);
         JIT_COMMENT(jit, "argument ", i, " : ", name(type));
-        if (isSyntheticArgument(type)) {
-            // Synthetic napi_env: read the embedder's env LIVE from the
-            // FFIContext (never baked as an immediate, SPEC section 6).
-            if (!napiEnvAddress)
-                napiEnvAddress = globalObject->ffiContext().addressOfNapiEnv();
-            jit.move(CCallHelpers::TrustedImmPtr(napiEnvAddress), scratchGPR);
-            jit.loadPtr(CCallHelpers::Address(scratchGPR), scratchGPR);
-            jit.store64(scratchGPR, slotAddress(i));
-            continue;
-        }
-        CCallHelpers::Address argument = CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(jsIndex) + 1));
+        CCallHelpers::Address argument = CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(i) + 1));
         emitConvertArgument(jit, type, argument, slotAddress(i), slowPath);
-        ++jsIndex;
     }
-    ASSERT(jsIndex == jsArgumentCount);
 
     // 5. Call the invoke thunk: void SYSV thunk(void* target, uint64_t* slots).
     JIT_COMMENT(jit, "call invoke thunk");

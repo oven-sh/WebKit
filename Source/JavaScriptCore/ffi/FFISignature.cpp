@@ -60,12 +60,6 @@ Signature::Signature(std::span<const Type> arguments, Type returnType)
     : m_arguments(arguments)
     , m_returnType(returnType)
 {
-    unsigned jsArgumentCount = 0;
-    for (Type type : arguments) {
-        if (!isSyntheticArgument(type))
-            ++jsArgumentCount;
-    }
-    m_jsArgumentCount = jsArgumentCount;
     m_hash = computeHash(arguments, returnType);
 }
 

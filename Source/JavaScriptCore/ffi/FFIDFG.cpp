@@ -64,10 +64,15 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
     if (!ffiFunction)
         return false;
 
+    // A hooked function must run every call through the C++ host path (the only place its
+    // before/after hooks run); never lift it into a CallFFI node.
+    if (ffiFunction->isHostPathOnly())
+        return false;
+
     Signature& signature = ffiFunction->signature();
 
     // Exact arity only: children are |callee|, |this|, then the JS arguments.
-    if (node->numChildren() - 2 != signature.jsArgumentCount())
+    if (node->numChildren() - 2 != signature.argumentCount())
         return false;
 
     // The DFG/FTL CallFFI codegen calls the signature's invoke thunk; make
@@ -97,15 +102,9 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
 
     // Establish argument checks and edge use kinds here and nowhere else:
     // PredictionPropagation and FixupPhase run before strength reduction.
-    unsigned jsArgumentIndex = 0;
     for (unsigned index = 0; index < signature.argumentCount(); ++index) {
         Type type = signature.argumentType(index);
-        // Synthetic arguments (napi_env) are supplied by the engine and have
-        // no JS argument child.
-        if (isSyntheticArgument(type))
-            continue;
-
-        unsigned childIndex = 2 + jsArgumentIndex++;
+        unsigned childIndex = 2 + index;
         DFG::Edge argument = graph.varArgChild(node, childIndex);
         DFG::Node* argumentNode = argument.node();
         switch (type) {
@@ -175,19 +174,18 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
         case Type::CString:
         case Type::Function:
         case Type::Buffer:
-        case Type::NapiValue: {
+        case Type::JSValue: {
             // Converted at runtime through operationFFIWriteSlot; keep the value boxed.
             graph.varArgChild(node, childIndex) = DFG::Edge(argumentNode, DFG::UntypedUse);
             break;
         }
-        case Type::NapiEnv:
+        case Type::RESERVED_WasNapiEnv:
         case Type::Void:
-            // NapiEnv is synthetic (skipped above); Void is never a valid argument type.
+            // Neither is a valid argument type (Signature::tryCreate rejects both).
             RELEASE_ASSERT_NOT_REACHED();
             break;
         }
     }
-    ASSERT(jsArgumentIndex == signature.jsArgumentCount());
 
     // Child 0 is the callee, a cell constant (dynamicCastConstant above), so it
     // trivially satisfies KnownCellUse (SPEC section 10.1). Child 1 (|this|)
@@ -235,10 +233,10 @@ SpeculatedType speculatedResultTypeForCallFFI(DFG::Node* node)
         // to an exact HeapBigInt (SPEC section 5, oven-sh/bun#28068). All three must be in the
         // proven type or the abstract interpreter would let `typeof x === "bigint"` fold to false.
         return SpecBytecodeNumber | SpecOther | SpecBigInt;
-    case Type::NapiValue:
+    case Type::JSValue:
         return SpecBytecodeTop;
-    case Type::NapiEnv:
-        // NapiEnv is never a valid return type (Signature::tryCreate rejects it).
+    case Type::RESERVED_WasNapiEnv:
+        // Never a valid return type (Signature::tryCreate rejects it).
         RELEASE_ASSERT_NOT_REACHED();
         return SpecBytecodeTop;
     }
