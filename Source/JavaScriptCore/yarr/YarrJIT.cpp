@@ -5618,8 +5618,6 @@ class YarrGenerator final : public YarrJITInfo {
         if (depth > 8)
             return false;
 
-        size_t incomingPathCount = outPaths.size();
-
         for (auto& term : alternative->m_terms) {
             switch (term.type) {
             case PatternTerm::Type::PatternCharacter:
@@ -5664,7 +5662,7 @@ class YarrGenerator final : public YarrJITInfo {
                     if (!tryFlattenLookbehindAlternative(innerAlt.get(), branch, depth + 1))
                         return false;
                     for (auto& b : branch)
-                        outPaths.append(std::exchange(b, { }));
+                        outPaths.append(WTF::move(b));
                     if (outPaths.size() > maxLookbehindFlatAlternatives)
                         return false;
                 }
@@ -5684,10 +5682,6 @@ class YarrGenerator final : public YarrJITInfo {
             }
         }
 
-        // Make sure this alternative actually contributed new paths when it matched
-        // something; an empty-expansion inside a lookbehind would be a zero-width match
-        // that we choose not to handle here.
-        UNUSED_PARAM(incomingPathCount);
         return true;
     }
 
@@ -5707,7 +5701,7 @@ class YarrGenerator final : public YarrJITInfo {
             if (!tryFlattenLookbehindAlternative(bodyAlt.get(), branch, 0))
                 return false;
             for (auto& b : branch)
-                paths.append(std::exchange(b, { }));
+                paths.append(WTF::move(b));
             if (paths.size() > maxLookbehindFlatAlternatives)
                 return false;
         }
@@ -5730,7 +5724,7 @@ class YarrGenerator final : public YarrJITInfo {
             synthetic->m_minimumSize = position;
             synthetic->m_hasFixedSize = true;
             synthetic->m_isLastAlternative = (i + 1 == paths.size());
-            m_syntheticLookbehindAlternatives.append(std::unique_ptr<PatternAlternative>(synthetic.release()));
+            m_syntheticLookbehindAlternatives.append(WTF::move(synthetic));
             outAlternatives.append(m_syntheticLookbehindAlternatives.last().get());
         }
 
