@@ -84,6 +84,13 @@ static JSCustomGetterFunction* createCustomGetterFunction(JSGlobalObject* global
     });
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSObject* customGetterFunctionForPrimordial(JSGlobalObject* globalObject, VM& vm, PropertyName propertyName, GetValueFunc getValueFunc)
+{
+    return createCustomGetterFunction(globalObject, vm, propertyName, getValueFunc, std::nullopt);
+}
+#endif
+
 bool PropertyDescriptor::writable() const
 {
     ASSERT(!isAccessorDescriptor());

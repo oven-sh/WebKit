@@ -127,6 +127,10 @@ class ShadowRealmPrototype;
 class SourceCodeKey;
 class SourceOrigin;
 class StringConstructor;
+#if USE(BUN_JSC_ADDITIONS)
+class SymbolConstructor;
+class BigIntConstructor;
+#endif
 class SymbolTable;
 class WrapperMap;
 class WrapForValidIteratorPrototype;
@@ -280,6 +284,10 @@ public:
     WriteBarrier<JSPromiseConstructor> m_promiseConstructor;
     WriteBarrier<JSIteratorConstructor> m_iteratorConstructor;
     WriteBarrier<StringConstructor> m_stringConstructor;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<SymbolConstructor> m_symbolConstructor;
+    WriteBarrier<BigIntConstructor> m_bigIntConstructor;
+#endif
 
     LazyProperty<JSGlobalObject, IntlCollator> m_defaultCollator;
     LazyProperty<JSGlobalObject, IntlDateTimeFormat> m_defaultDateTimeFormat;
@@ -501,7 +509,16 @@ public:
     FixedVector<LazyProperty<JSGlobalObject, JSCell>> m_linkTimeConstants;
 
 #if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE void capturePrimordials(VM&, JSObject* holder, PrimordialHolder);
+    void initializePrimordialLinkTimeConstants();
+    void snapshotEagerPrimordials(VM&);
+    JS_EXPORT_PRIVATE void snapshotPrimordialsFromHolder(VM&, JSObject* holder, PrimordialHolder, bool overrideExisting = false);
+    // Host embedders that replace a builtin during their own global setup call this
+    // so the primordial is what user code sees.
+    JS_EXPORT_PRIVATE void overridePrimordialsFromHolder(VM&, JSObject* holder, PrimordialHolder);
+    JSObject* primordialHolderObject(VM&, PrimordialHolder);
+    JSCell* materializePrimordial(VM&, LinkTimeConstant);
+    JSCell* materializePrimordialFromTables(VM&, JSObject* holder, unsigned index);
+    JS_EXPORT_PRIVATE static JSValue auditPrimordials(JSGlobalObject*);
 #endif
 
     StructureCache m_structureCache;
@@ -827,6 +844,11 @@ public:
     ObjectConstructor* objectConstructor() const LIFETIME_BOUND { return m_objectConstructor.get(); }
     FunctionConstructor* functionConstructor() const LIFETIME_BOUND { return m_functionConstructor.get(); }
     JSPromiseConstructor* promiseConstructor() const LIFETIME_BOUND { return m_promiseConstructor.get(); }
+#if USE(BUN_JSC_ADDITIONS)
+    StringConstructor* stringConstructor() const LIFETIME_BOUND { return m_stringConstructor.get(); }
+    SymbolConstructor* symbolConstructor() const LIFETIME_BOUND { return m_symbolConstructor.get(); }
+    BigIntConstructor* bigIntConstructor() const LIFETIME_BOUND { return m_bigIntConstructor.get(); }
+#endif
     JSIteratorConstructor* iteratorConstructor() const LIFETIME_BOUND { return m_iteratorConstructor.get(); }
 
     IntlCollator* defaultCollator() const LIFETIME_BOUND { return m_defaultCollator.get(this); }

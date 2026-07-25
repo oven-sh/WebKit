@@ -33,6 +33,10 @@ namespace JSC {
 
 class GetterSetter;
 
+#if USE(BUN_JSC_ADDITIONS)
+JS_EXPORT_PRIVATE JSObject* customGetterFunctionForPrimordial(JSGlobalObject*, VM&, PropertyName, GetValueFunc);
+#endif
+
 class PropertyDescriptor {
 public:
     PropertyDescriptor()

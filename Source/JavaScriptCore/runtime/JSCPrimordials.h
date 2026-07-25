@@ -40,11 +40,25 @@ namespace JSC {
 //     @ObjectDefineProperty(obj, key, desc);     // static
 //     @MapPrototypeGetSize.@call(map);           // accessor getter
 //
-// Each primordial is captured into `m_linkTimeConstants` when its holder
-// object is created (eager holders during JSGlobalObject::init(), lazy ones
-// inside their own LazyClassStructure/LazyProperty/PropertyCallback bodies),
-// so capture is exactly as lazy as the holder itself and always happens
-// before user code can observe or mutate the holder.
+// Each primordial is a lazy link-time constant, materialized on the first
+// CodeBlock link that references it. The pristine source is one of:
+//
+//   - the holder's own property, snapshotted at the holder's creation
+//     (JSGlobalObject::snapshotPrimordialsFromHolder) before user code can
+//     reach the holder: end of JSGlobalObject::init() for the eager holders,
+//     and the LazyClassStructure / LazyProperty / static-table PropertyCallback
+//     that creates a lazy holder. This is a getDirect + pointer store; it never
+//     reifies, allocates, or transitions.
+//   - the holder's ClassInfo static hash tables, which user code cannot
+//     mutate. A property still lazy at link time is looked up in the tables of
+//     the (possibly freshly created) holder; the holder object's own state is
+//     only used to reuse an untampered reified value for identity.
+//
+// A key present in neither is a builtin the current configuration does not
+// expose (e.g. runtime-flagged); its primordial is a function that throws
+// when called instead of a crash at capture time. An embedder that replaces
+// a builtin during its own global setup calls overridePrimordialsFromHolder()
+// so the primordial is what user code sees.
 //
 // Per-holder tables are defined as
 //
@@ -58,8 +72,9 @@ namespace JSC {
 //     SymbolGetter  key names a well-known symbol; value is the accessor's getter
 //
 // JSC_FOREACH_PRIMORDIAL_NAME(V) is the union used to declare link-time
-// constants and private names. JSC_FOREACH_PRIMORDIAL_HOLDER(H) drives the
-// capture dispatch in JSGlobalObject::capturePrimordials.
+// constants and private names; its expansion order (holder by holder) defines
+// each primordial's index. JSC_FOREACH_PRIMORDIAL_HOLDER(H) enumerates holders
+// in that same order.
 //
 // Empty per-holder macros exist where a lazy-type macro expansion references
 // a holder with no primordials of its own.
@@ -623,7 +638,11 @@ namespace JSC {
 // Holder enumeration and combined name list
 // ---------------------------------------------------------------------------
 
-#define JSC_FOREACH_PRIMORDIAL_HOLDER(H) \
+// Eager holders exist by the time JSGlobalObject::init() finishes; their own
+// (non-static-table) properties are snapshotted there. Lazy holders snapshot
+// their own properties in their own creation hooks. Static-table properties of
+// every holder are materialized from the ClassInfo tables on first link.
+#define JSC_FOREACH_PRIMORDIAL_EAGER_HOLDER(H) \
     H(ObjectPrototype) \
     H(ObjectConstructor) \
     H(FunctionPrototype) \
@@ -651,6 +670,8 @@ namespace JSC {
     H(WeakRefPrototype) \
     H(FinalizationRegistryPrototype) \
     H(GlobalFunctions) \
+
+#define JSC_FOREACH_PRIMORDIAL_LAZY_HOLDER(H) \
     H(BooleanPrototype) \
     H(BooleanConstructor) \
     H(DatePrototype) \
@@ -676,6 +697,10 @@ namespace JSC {
     H(JSONObject) \
     H(ReflectObject) \
     H(AtomicsObject) \
+
+#define JSC_FOREACH_PRIMORDIAL_HOLDER(H) \
+    JSC_FOREACH_PRIMORDIAL_EAGER_HOLDER(H) \
+    JSC_FOREACH_PRIMORDIAL_LAZY_HOLDER(H) \
 
 #define JSC_FOREACH_PRIMORDIAL_NAME(V) \
     JSC_FOREACH_PRIMORDIAL_ObjectPrototype(V) \
@@ -737,6 +762,17 @@ enum class PrimordialHolder : uint8_t {
     JSC_FOREACH_PRIMORDIAL_HOLDER(DECLARE_PRIMORDIAL_HOLDER)
 #undef DECLARE_PRIMORDIAL_HOLDER
 };
+
+enum class PrimordialKind : uint8_t {
+    Method,
+    Getter,
+    SymbolMethod,
+    SymbolGetter,
+};
+
+#define JSC_COUNT_PRIMORDIAL(name, key, kind) 1 +
+static constexpr unsigned numberOfPrimordials = JSC_FOREACH_PRIMORDIAL_NAME(JSC_COUNT_PRIMORDIAL) 0;
+#undef JSC_COUNT_PRIMORDIAL
 
 } // namespace JSC
 
