@@ -74,6 +74,68 @@ struct SourceTypeImpl<T, std::enable_if_t<!std::is_fundamental<T>::value && !std
 template<typename T>
 using SourceType = typename SourceTypeImpl<T>::type;
 
+#if USE(BUN_JSC_ADDITIONS)
+// ============================================================================
+// Portable wire format
+//
+// Bun ships bytecode inside cross-compiled single-file executables (Linux CI
+// encodes, user's macOS/Windows machine decodes), so the on-disk layout must
+// be byte-identical across every 64-bit LE target. The upstream design
+// placement-news Cached* C++ structs into the encoder buffer and memcpys the
+// raw struct images out, which makes the wire format = C++ object layout =
+// implementation-defined (bitfield allocation, base-class tail-padding reuse,
+// alignment padding all vary between Itanium and MS ABIs).
+//
+// Wire<T> (defined in CachedTypes.h) makes every on-disk member a uint8_t[N]
+// with alignment 1 and explicit memcpy in/out. With every member at
+// alignment 1:
+//   - no padding is ever inserted (between members, after bases, anywhere),
+//   - layout is fully determined by declaration order and member sizes,
+//   - has_unique_object_representations_v<Cached*> holds.
+// The choke-point asserts in Encoder::malloc<T> and
+// VariableLengthObject::allocate<T> verify this for every type that touches
+// the buffer, so a future merge that adds a raw `int m_foo` to a Cached* type
+// fails to compile rather than silently breaking the format.
+//
+// Wire<T>'s primary template is undefined, so only fixed-width primitive
+// specializations are usable. Wire<size_t>, Wire<bool>, Wire<SomeEnum> are
+// compile errors; cast at the encode/decode boundary instead. Wire<T> is a
+// struct, so it cannot be declared as a bitfield.
+// ============================================================================
+
+// A type is wire-portable iff its byte image is fully determined by its value
+// on every 64-bit LE target. has_unique_object_representations_v<T> ("no
+// padding bits") is the load-bearing check: with no padding anywhere, member
+// offsets are forced by member sizes alone, so Itanium and MS ABIs cannot
+// disagree. It rejects raw `int m_x` next to a Wire<uint8_t> (alignment
+// padding), partial bitfields like `unsigned x : 3` (storage-unit padding),
+// and inheritance with tail padding. It accepts single-scalar wrappers like
+// ScopeOffset / VirtualRegister and packed PODs like OffsetLocation, which
+// genuinely are portable.
+//
+// Known theoretical gap: a bitfield run that *exactly* fills its storage unit
+// (e.g. `uint8_t a:4, b:4;`) passes this check but has implementation-defined
+// bit allocation order. In practice every Bun target (clang/clang-cl, LE)
+// allocates same-type bitfields LSB-first identically, and Wire<> being a
+// struct makes accidentally introducing one unlikely. Prefer Wire<uintN_t>
+// with explicit shift/mask anyway.
+//
+// `double` is special-cased: the standard leaves
+// has_unique_object_representations for floating-point implementation-defined
+// (clang/gcc both say false), but IEEE 754 binary64 is identical on every
+// target we ship.
+template<typename T> inline constexpr bool isWirePortable =
+    std::is_same_v<T, double>
+    || (std::has_unique_object_representations_v<T> && alignof(T) <= 8);
+
+#define BUN_ASSERT_WIRE_PORTABLE(T)                                           \
+    static_assert(isWirePortable<T>,                                          \
+        #T " is not wire-portable. Cached* types must use only Wire<> "       \
+        "members (or other Cached* types). Raw int/unsigned/bool/enum/"       \
+        "bitfield members make layout implementation-defined. See the "       \
+        "'Portable wire format' comment at the top of CachedTypes.cpp.")
+#endif // USE(BUN_JSC_ADDITIONS)
+
 class Encoder {
     WTF_MAKE_NONCOPYABLE(Encoder);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -121,6 +183,9 @@ public:
     template<typename T, typename... Args>
     T* malloc(Args&&... args)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        BUN_ASSERT_WIRE_PORTABLE(T);
+#endif
         return new (malloc(sizeof(T)).buffer()) T(std::forward<Args>(args)...);
     }
 
@@ -214,7 +279,16 @@ private:
 
         bool malloc(size_t size, ptrdiff_t& result)
         {
-            size_t alignment = std::min(alignof(std::max_align_t), static_cast<size_t>(roundUpToPowerOfTwo(size)));
+#if USE(BUN_JSC_ADDITIONS)
+            // Every on-disk type is alignment 1 (Wire<>) or a fixed-width
+            // primitive; 8 covers the largest primitive and is identical on
+            // every 64-bit target. Upstream's alignof(max_align_t) is 16 on
+            // x64-Itanium and 8 elsewhere, which would shift offsets.
+            constexpr size_t cachedTypesMaxAlignment = 8;
+#else
+            constexpr size_t cachedTypesMaxAlignment = alignof(std::max_align_t);
+#endif
+            size_t alignment = std::min(cachedTypesMaxAlignment, static_cast<size_t>(roundUpToPowerOfTwo(size)));
             ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
             size = roundUpToMultipleOf(alignment, size);
             if (static_cast<size_t>(offset + size) > capacity())
@@ -246,7 +320,12 @@ private:
 
         void NODELETE alignEnd()
         {
-            ptrdiff_t size = roundUpToMultipleOf(alignof(std::max_align_t), m_offset);
+#if USE(BUN_JSC_ADDITIONS)
+            constexpr size_t cachedTypesMaxAlignment = 8;
+#else
+            constexpr size_t cachedTypesMaxAlignment = alignof(std::max_align_t);
+#endif
+            ptrdiff_t size = roundUpToMultipleOf(cachedTypesMaxAlignment, m_offset);
             if (size == m_offset)
                 return;
             RELEASE_ASSERT(static_cast<size_t>(size) <= capacity());
@@ -262,7 +341,14 @@ private:
 
     void allocateNewPage(size_t size = 0)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // pageSize() is 16384 on Apple Silicon and 4096 elsewhere; the page
+        // boundary becomes a gap in the output blob (alignEnd pads to it), so
+        // pin to a constant. 4096 keeps the output identical to Linux/Windows.
+        constexpr size_t minPageSize = 4096;
+#else
         static size_t minPageSize = pageSize();
+#endif
         if (m_currentPage) {
             m_currentPage->alignEnd();
             m_baseOffset += m_currentPage->size();
@@ -392,7 +478,14 @@ static T decode(Decoder& decoder, T src)
 
 template<typename Source>
 class CachedObject {
+#if !USE(BUN_JSC_ADDITIONS)
+    // Under BUN_JSC_ADDITIONS the wire-portability assert requires
+    // has_unique_object_representations_v<T>, which requires trivial
+    // copyability. The placement-new-only operator restrictions below already
+    // prevent the actual misuse NONCOPYABLE was guarding against (heap
+    // allocation of buffer-resident objects).
     WTF_MAKE_NONCOPYABLE(CachedObject);
+#endif
 
 public:
     using SourceType_ = Source;
@@ -457,6 +550,9 @@ protected:
 #endif
     T* allocate(Encoder& encoder, unsigned size = 1)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        BUN_ASSERT_WIRE_PORTABLE(T);
+#endif
         uint8_t* result = allocate(encoder, sizeof(T) * size);
         ASSERT(!(std::bit_cast<uintptr_t>(result) % alignof(T)));
         return new (result) T[size];
@@ -646,7 +742,11 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<uint32_t> m_size;
+#else
     unsigned m_size;
+#endif
 };
 
 template<typename First, typename Second>
@@ -816,6 +916,15 @@ public:
     std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { this->template buffer<char16_t>(), m_length }; }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<uint8_t> m_is8Bit;
+    Wire<uint8_t> m_isSymbol;
+    Wire<uint8_t> m_isWellKnownSymbol;
+    Wire<uint8_t> m_isAtomic;
+    Wire<uint8_t> m_isRegistered;
+    Wire<uint8_t> m_isPrivate;
+    Wire<uint32_t> m_length;
+#else
     bool m_is8Bit : 1;
     bool m_isSymbol : 1;
     bool m_isWellKnownSymbol : 1;
@@ -823,6 +932,7 @@ private:
     bool m_isRegistered : 1;
     bool m_isPrivate : 1;
     unsigned m_length;
+#endif
 };
 
 class CachedUniquedStringImpl : public CachedUniquedStringImplBase<UniquedStringImpl> { };
@@ -1012,6 +1122,39 @@ private:
     CachedVector<T> m_entries;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// HandlerInfoBase has `uint32_t typeBits : 2` (30 padding bits) which fails
+// has_unique_object_representations. Serialize the four logical fields
+// explicitly so the wire format is independent of bitfield allocation.
+class CachedHandlerInfo : public CachedObject<UnlinkedHandlerInfo> {
+public:
+    void encode(Encoder&, const UnlinkedHandlerInfo& src)
+    {
+        m_start = src.start;
+        m_end = src.end;
+        m_target = src.target;
+        m_typeBits = src.typeBits;
+    }
+
+    void decode(Decoder&, UnlinkedHandlerInfo& dst) const
+    {
+        dst.start = m_start;
+        dst.end = m_end;
+        dst.target = m_target;
+        dst.typeBits = m_typeBits;
+    }
+
+private:
+    Wire<uint32_t> m_start;
+    Wire<uint32_t> m_end;
+    Wire<uint32_t> m_target;
+    Wire<uint8_t> m_typeBits;
+};
+// Tripwire so an upstream change to HandlerInfoBase doesn't silently drop a
+// new field on round-trip.
+static_assert(sizeof(UnlinkedHandlerInfo) == 16);
+#endif
+
 class CachedCodeBlockRareData : public CachedObject<UnlinkedCodeBlock::RareData> {
 public:
     void encode(Encoder& encoder, const UnlinkedCodeBlock::RareData& rareData)
@@ -1043,15 +1186,24 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    CachedVector<CachedHandlerInfo> m_exceptionHandlers;
+#else
     CachedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
+#endif
     CachedVector<CachedSimpleJumpTable> m_unlinkedSwitchJumpTables;
     CachedVector<CachedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
     CachedVector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
     CachedVector<CachedBitVector> m_bitVectors;
     CachedVector<CachedHashSet<CachedRefPtr<CachedUniquedStringImpl>, IdentifierRepHash>> m_constantIdentifierSets;
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<uint8_t> m_needsClassFieldInitializer;
+    Wire<uint8_t> m_privateBrandRequirement;
+#else
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_privateBrandRequirement : 1;
+#endif
 };
 
 class CachedExpressionInfo : public CachedObject<ExpressionInfo> {
@@ -1258,7 +1410,11 @@ public:
     void encode(Encoder& encoder, const SymbolTable& symbolTable)
     {
         m_map.encode(encoder, symbolTable.m_map);
+#if USE(BUN_JSC_ADDITIONS)
+        m_maxScopeOffset = symbolTable.m_maxScopeOffset.offsetUnchecked();
+#else
         m_maxScopeOffset = symbolTable.m_maxScopeOffset;
+#endif
         m_usesSloppyEval = symbolTable.m_usesSloppyEval;
         m_nestedLexicalScope = symbolTable.m_nestedLexicalScope;
         m_scopeType = symbolTable.m_scopeType;
@@ -1270,7 +1426,11 @@ public:
     {
         SymbolTable* symbolTable = SymbolTable::create(decoder.vm());
         m_map.decode(decoder, symbolTable->m_map);
+#if USE(BUN_JSC_ADDITIONS)
+        symbolTable->m_maxScopeOffset = ScopeOffset { static_cast<uint32_t>(m_maxScopeOffset) };
+#else
         symbolTable->m_maxScopeOffset = m_maxScopeOffset;
+#endif
         symbolTable->m_usesSloppyEval = m_usesSloppyEval;
         symbolTable->m_nestedLexicalScope = m_nestedLexicalScope;
         symbolTable->m_scopeType = m_scopeType;
@@ -1287,10 +1447,17 @@ public:
 
 private:
     CachedHashMap<CachedRefPtr<CachedUniquedStringImpl>, CachedSymbolTableEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, SymbolTableIndexHashTraits> m_map;
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<uint32_t> m_maxScopeOffset; // ScopeOffset
+    Wire<uint8_t> m_usesSloppyEval;
+    Wire<uint8_t> m_nestedLexicalScope;
+    Wire<uint8_t> m_scopeType;
+#else
     ScopeOffset m_maxScopeOffset;
     unsigned m_usesSloppyEval : 1;
     unsigned m_nestedLexicalScope : 1;
     unsigned m_scopeType : 3;
+#endif
     CachedPtr<CachedScopedArgumentsTable> m_arguments;
     CachedPtr<CachedSymbolTableRareData> m_rareData;
 };
@@ -1324,8 +1491,13 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<uint8_t> m_indexingType; // IndexingType
+    Wire<uint32_t> m_length;
+#else
     IndexingType m_indexingType;
     unsigned m_length;
+#endif
     union {
         CachedArray<double> m_cachedDoubles;
         CachedArray<CachedJSValue, WriteBarrier<Unknown>> m_cachedValues;
@@ -1404,8 +1576,13 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<uint32_t> m_length;
+    Wire<uint8_t> m_sign;
+#else
     unsigned m_length;
     bool m_sign;
+#endif
 };
 
 class CachedJSValue : public VariableLengthObject<WriteBarrier<Unknown>> {
@@ -1530,6 +1707,71 @@ private:
 
 class CachedMetadataTable : public CachedObject<UnlinkedMetadataTable> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    // Upstream serializes the *finalized* offset table, whose entries are byte
+    // offsets computed from sizeof(OpXXX::Metadata) on the encoding host.
+    // Those metadata structs contain WriteBarrier, ArrayProfile, CallLinkInfo
+    // etc. — runtime types whose sizeof can differ across builds. Decoding the
+    // encoder's offsets verbatim on a host where the sizes differ points
+    // MetadataTable indexing into the wrong bytes.
+    //
+    // Serialize the platform-independent input instead: per-opcode entry
+    // *counts* (what addEntry() accumulates pre-finalize). Counts can be
+    // recovered from a finalized table because consecutive offsets differ by
+    // count * the encoder's metadataSize(); dividing by the *local*
+    // metadataSize() yields the same count on every platform iff the encoder
+    // and decoder agree on the count (they do — it's how many times the
+    // bytecode generator emitted that opcode). decode() replays the counts
+    // into a fresh table and runs finalize() with the decoder's own
+    // sizeof/alignof, so offsets are always correct for the running process.
+    void encode(Encoder&, const UnlinkedMetadataTable& metadataTable)
+    {
+        ASSERT(metadataTable.m_isFinalized);
+        m_hasMetadata = metadataTable.m_hasMetadata;
+        if (!m_hasMetadata)
+            return;
+        m_numValueProfiles = metadataTable.m_numValueProfiles;
+        auto offsetAt = [&](unsigned i) -> unsigned {
+            return metadataTable.m_is32Bit ? metadataTable.offsetTable32()[i] : metadataTable.offsetTable16()[i];
+        };
+        // Reconstruct counts from offset deltas. finalize() laid them out as
+        //   offset[i+1] = roundUp(offset[i], align(i)) + count[i] * size(i)
+        // (see UnlinkedMetadataTable::finalize), but the entry stored at [i]
+        // is the *pre*-roundup value, so the delta we compute here may include
+        // the alignment padding for opcode i. Remove it before dividing.
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries - 1; ++i) {
+            unsigned start = offsetAt(i);
+            unsigned end = offsetAt(i + 1);
+            if (end == start) {
+                m_entryCounts[i] = 0;
+                continue;
+            }
+            unsigned aligned = roundUpToMultipleOf(metadataAlignment(static_cast<OpcodeID>(i)), start);
+            unsigned size = metadataSize(static_cast<OpcodeID>(i));
+            ASSERT(size && end >= aligned && !((end - aligned) % size));
+            m_entryCounts[i] = (end - aligned) / size;
+        }
+    }
+
+    Ref<UnlinkedMetadataTable> decode(Decoder&) const
+    {
+        if (!m_hasMetadata)
+            return UnlinkedMetadataTable::empty();
+
+        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create();
+        metadataTable->m_hasMetadata = true;
+        metadataTable->m_numValueProfiles = m_numValueProfiles;
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries - 1; ++i)
+            metadataTable->preprocessBuffer()[i] = m_entryCounts[i];
+        metadataTable->finalize();
+        return metadataTable;
+    }
+
+private:
+    Wire<uint8_t> m_hasMetadata;
+    Wire<uint32_t> m_numValueProfiles;
+    Wire<uint32_t> m_entryCounts[UnlinkedMetadataTable::s_offsetTableEntries - 1];
+#else
     void encode(Encoder&, const UnlinkedMetadataTable& metadataTable)
     {
         ASSERT(metadataTable.m_isFinalized);
@@ -1572,6 +1814,7 @@ private:
     bool m_is32Bit;
     unsigned m_numValueProfiles;
     std::array<unsigned, UnlinkedMetadataTable::s_offsetTableEntries> m_metadata;
+#endif
 };
 
 class CachedSourceOrigin : public CachedObject<SourceOrigin> {
@@ -1604,8 +1847,13 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<int32_t> m_line;
+    Wire<int32_t> m_column;
+#else
     int m_line;
     int m_column;
+#endif
 };
 
 template <typename Source, typename CachedType>
@@ -1619,14 +1867,14 @@ public:
         m_sourceURLDirective.encode(encoder, sourceProvider.sourceURLDirective());
         m_sourceMappingURLDirective.encode(encoder, sourceProvider.sourceMappingURLDirective());
         m_startPosition.encode(encoder, sourceProvider.startPosition());
-        m_sourceTaintedOrigin = sourceProvider.sourceTaintedOrigin();
+        m_sourceTaintedOrigin = static_cast<uint8_t>(sourceProvider.sourceTaintedOrigin());
     }
 
     void decode(Decoder& decoder, SourceProvider& sourceProvider) const
     {
         sourceProvider.setSourceURLDirective(m_sourceURLDirective.decode(decoder));
         sourceProvider.setSourceMappingURLDirective(m_sourceMappingURLDirective.decode(decoder));
-        sourceProvider.setSourceTaintedOrigin(m_sourceTaintedOrigin);
+        sourceProvider.setSourceTaintedOrigin(static_cast<SourceTaintedOrigin>(static_cast<uint8_t>(m_sourceTaintedOrigin)));
     }
 
 protected:
@@ -1636,7 +1884,11 @@ protected:
     CachedString m_sourceURLDirective;
     CachedString m_sourceMappingURLDirective;
     CachedTextPosition m_startPosition;
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<uint8_t> m_sourceTaintedOrigin; // SourceTaintedOrigin
+#else
     SourceTaintedOrigin m_sourceTaintedOrigin;
+#endif
 };
 
 class CachedStringSourceProvider : public CachedSourceProviderShape<StringSourceProvider, CachedStringSourceProvider> {
@@ -1693,14 +1945,14 @@ public:
         String decodedSourceURL = m_sourceURL.decode(decoder);
         TextPosition decodedStartPosition = m_startPosition.decode(decoder);
 
-        Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(decodedSource, decodedSourceOrigin, decodedSourceURL, m_sourceTaintedOrigin, decodedStartPosition, sourceType);
+        Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(decodedSource, decodedSourceOrigin, decodedSourceURL, static_cast<SourceTaintedOrigin>(static_cast<uint8_t>(m_sourceTaintedOrigin)), decodedStartPosition, sourceType);
         Base::decode(decoder, sourceProvider.get());
         return &sourceProvider.leakRef();
     }
 
 private:
 #if USE(BUN_JSC_ADDITIONS)
-    unsigned m_sourceLength;
+    Wire<uint32_t> m_sourceLength;
 #else
     CachedString m_source;
 #endif
@@ -1846,11 +2098,19 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<uint8_t> m_hasProvider;
+    Wire<int32_t> m_startOffset;
+    Wire<int32_t> m_endOffset;
+    Wire<int32_t> m_firstLine;
+    Wire<int32_t> m_startColumn;
+#else
     bool m_hasProvider;
     int m_startOffset;
     int m_endOffset;
     int m_firstLine;
     int m_startColumn;
+#endif
 };
 
 class CachedTDZEnvironmentLink : public CachedObject<TDZEnvironmentLink> {
@@ -1888,9 +2148,15 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<int32_t> m_line;
+    Wire<int32_t> m_offset;
+    Wire<int32_t> m_lineStartOffset;
+#else
     int m_line;
     int m_offset;
     int m_lineStartOffset;
+#endif
 };
 
 class CachedClassElementDefinition : public CachedObject<UnlinkedFunctionExecutable::ClassElementDefinition> {
@@ -1908,14 +2174,18 @@ public:
         definition.ident = m_ident.decode(decoder);
         definition.position = m_position.decode(decoder);
         definition.initializerPosition = m_initializerPosition.decode(decoder);
-        definition.kind = static_cast<UnlinkedFunctionExecutable::ClassElementDefinition::Kind>(m_kind);
+        definition.kind = static_cast<UnlinkedFunctionExecutable::ClassElementDefinition::Kind>(static_cast<uint8_t>(m_kind));
     }
 
 private:
     CachedIdentifier m_ident;
     CachedJSTextPosition m_position;
     CachedOptional<CachedJSTextPosition> m_initializerPosition;
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<uint8_t> m_kind;
+#else
     uint8_t m_kind;
+#endif
 };
 
 class CachedFunctionExecutableRareData : public CachedObject<UnlinkedFunctionExecutable::RareData> {
@@ -1968,10 +2238,10 @@ public:
 
     CodeFeatures NODELETE features() const { return m_mutableMetadata.m_features; }
     LexicallyScopedFeatures NODELETE lexicallyScopedFeatures() const { return m_mutableMetadata.m_lexicallyScopedFeatures; }
-    SourceParseMode NODELETE sourceParseMode() const { return static_cast<SourceParseMode>(m_sourceParseMode); }
+    SourceParseMode NODELETE sourceParseMode() const { return static_cast<SourceParseMode>(static_cast<uint8_t>(m_sourceParseMode)); }
 
     unsigned NODELETE hasCapturedVariables() const { return m_mutableMetadata.m_hasCapturedVariables; }
-    ImplementationVisibility NODELETE implementationVisibility() const { return static_cast<ImplementationVisibility>(m_implementationVisibility); }
+    ImplementationVisibility NODELETE implementationVisibility() const { return static_cast<ImplementationVisibility>(static_cast<uint8_t>(m_implementationVisibility)); }
     unsigned NODELETE isBuiltinFunction() const { return m_isBuiltinFunction; }
     unsigned NODELETE isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
     unsigned NODELETE constructAbility() const { return m_constructAbility; }
@@ -1996,6 +2266,36 @@ public:
 private:
     CachedFunctionExecutableMetadata m_mutableMetadata;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Upstream packs these as bitfields to save a few bytes per executable;
+    // bit allocation is implementation-defined so the wire format uses one
+    // full unit per field. The 31-bit fields fit in uint32_t and the flag/
+    // mode fields fit in uint8_t.
+    Wire<uint32_t> m_firstLineOffset;
+    Wire<uint32_t> m_lineCount;
+    Wire<uint32_t> m_unlinkedFunctionStart;
+    Wire<uint32_t> m_unlinkedBodyStartColumn;
+    Wire<uint32_t> m_unlinkedBodyEndColumn;
+    Wire<uint32_t> m_startOffset;
+    Wire<uint32_t> m_sourceLength;
+    Wire<uint32_t> m_parametersStartOffset;
+    Wire<uint32_t> m_unlinkedFunctionEnd;
+    Wire<uint32_t> m_parameterCount;
+    Wire<uint8_t> m_isBuiltinFunction;
+    Wire<uint8_t> m_isBuiltinDefaultClassConstructor;
+    Wire<uint8_t> m_constructAbility;
+    Wire<uint8_t> m_scriptMode; // JSParserScriptMode
+    Wire<uint8_t> m_superBinding;
+    Wire<uint8_t> m_privateBrandRequirement;
+    Wire<uint8_t> m_sourceParseMode; // SourceParseMode
+    Wire<uint8_t> m_constructorKind;
+    Wire<uint8_t> m_functionMode; // FunctionMode
+    Wire<uint8_t> m_derivedContextType;
+    Wire<uint8_t> m_evalContextType;
+    Wire<uint8_t> m_inlineAttribute;
+    Wire<uint8_t> m_needsClassFieldInitializer;
+    Wire<uint8_t> m_implementationVisibility;
+#else
     unsigned m_firstLineOffset : 31;
     unsigned m_lineCount : 31;
     unsigned m_isBuiltinFunction : 1;
@@ -2020,6 +2320,7 @@ private:
     unsigned m_inlineAttribute : 1;
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_implementationVisibility : bitWidthOfImplementationVisibility;
+#endif
 
     CachedPtr<CachedFunctionExecutableRareData> m_rareData;
 
@@ -2053,8 +2354,13 @@ public:
 
     JSInstructionStream* instructions(Decoder& decoder) const { return m_instructions.decode(decoder); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    VirtualRegister NODELETE thisRegister() const { return VirtualRegister { static_cast<int32_t>(m_thisRegister) }; }
+    VirtualRegister NODELETE scopeRegister() const { return VirtualRegister { static_cast<int32_t>(m_scopeRegister) }; }
+#else
     VirtualRegister NODELETE thisRegister() const { return m_thisRegister; }
     VirtualRegister NODELETE scopeRegister() const { return m_scopeRegister; }
+#endif
 
     RefPtr<StringImpl> sourceURLDirective(Decoder& decoder) const { return m_sourceURLDirective.decode(decoder); }
     RefPtr<StringImpl> sourceMappingURLDirective(Decoder& decoder) const { return m_sourceMappingURLDirective.decode(decoder); }
@@ -2083,7 +2389,7 @@ public:
 
     CodeFeatures NODELETE features() const { return m_features; }
     LexicallyScopedFeatures NODELETE lexicallyScopedFeatures() const { return m_lexicallyScopedFeatures; }
-    SourceParseMode NODELETE parseMode() const { return static_cast<SourceParseMode>(m_parseMode); }
+    SourceParseMode NODELETE parseMode() const { return static_cast<SourceParseMode>(static_cast<uint8_t>(m_parseMode)); }
     OptionSet<CodeGenerationMode> NODELETE codeGenerationMode() const { return OptionSet<CodeGenerationMode>::fromRaw(m_codeGenerationMode); }
     unsigned NODELETE codeType() const { return m_codeType; }
 
@@ -2095,6 +2401,41 @@ public:
     unsigned NODELETE numUnaryArithProfiles() const { return m_numUnaryArithProfiles; }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<int32_t> m_thisRegister; // VirtualRegister
+    Wire<int32_t> m_scopeRegister; // VirtualRegister
+
+    Wire<uint8_t> m_isConstructor;
+    Wire<uint8_t> m_hasCapturedVariables;
+    Wire<uint8_t> m_isBuiltinFunction;
+    Wire<uint8_t> m_superBinding;
+    Wire<uint8_t> m_scriptMode;
+    Wire<uint8_t> m_isArrowFunctionContext;
+    Wire<uint8_t> m_isClassContext;
+    Wire<uint8_t> m_constructorKind;
+    Wire<uint8_t> m_derivedContextType;
+    Wire<uint8_t> m_evalContextType;
+    Wire<uint8_t> m_hasTailCalls;
+    Wire<uint8_t> m_codeType;
+    Wire<uint8_t> m_hasCheckpoints;
+
+    Wire<uint16_t> m_features; // CodeFeatures
+    Wire<uint8_t> m_lexicallyScopedFeatures; // LexicallyScopedFeatures
+    Wire<uint8_t> m_parseMode; // SourceParseMode
+    Wire<uint8_t> m_codeGenerationMode; // OptionSet<CodeGenerationMode>
+
+    Wire<uint32_t> m_lineCount;
+    Wire<uint32_t> m_endColumn;
+
+    Wire<int32_t> m_numVars;
+    Wire<int32_t> m_numCalleeLocals;
+    Wire<int32_t> m_numParameters;
+
+    Wire<uint32_t> m_numValueProfiles;
+    Wire<uint32_t> m_numArrayProfiles;
+    Wire<uint32_t> m_numBinaryArithProfiles;
+    Wire<uint32_t> m_numUnaryArithProfiles;
+#else
     VirtualRegister m_thisRegister;
     VirtualRegister m_scopeRegister;
 
@@ -2129,6 +2470,7 @@ private:
     unsigned m_numArrayProfiles;
     unsigned m_numBinaryArithProfiles;
     unsigned m_numUnaryArithProfiles;
+#endif
 
     CachedMetadataTable m_metadata;
 
@@ -2195,7 +2537,11 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    Wire<int32_t> m_moduleEnvironmentSymbolTableConstantRegisterOffset;
+#else
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset;
+#endif
 };
 
 class CachedEvalCodeBlock : public CachedCodeBlock<UnlinkedEvalCodeBlock> {
@@ -2494,8 +2840,13 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
 template<typename CodeBlockType>
 ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::encode(Encoder& encoder, const UnlinkedCodeBlock& codeBlock)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_thisRegister = codeBlock.m_thisRegister.offset();
+    m_scopeRegister = codeBlock.m_scopeRegister.offset();
+#else
     m_thisRegister = codeBlock.m_thisRegister;
     m_scopeRegister = codeBlock.m_scopeRegister;
+#endif
     m_isConstructor = codeBlock.m_isConstructor;
     m_hasCapturedVariables = codeBlock.m_hasCapturedVariables;
     m_isBuiltinFunction = codeBlock.m_isBuiltinFunction;
@@ -2648,6 +2999,80 @@ private:
 
 static_assert(alignof(CacheEntry<UnlinkedProgramCodeBlock>) <= alignof(std::max_align_t));
 static_assert(alignof(CacheEntry<UnlinkedModuleProgramCodeBlock>) <= alignof(std::max_align_t));
+
+#if USE(BUN_JSC_ADDITIONS)
+// Width tripwires: every place a Wire<uintN_t> stands in for a typedef/enum or
+// a former bitfield, assert the source still fits. If upstream widens one of
+// these, the build fails here instead of silently truncating on encode.
+static_assert(sizeof(CodeFeatures) <= sizeof(uint16_t) && bitWidthOfCodeFeatures <= 16); // CachedCodeBlock::m_features
+static_assert(sizeof(LexicallyScopedFeatures) <= sizeof(uint8_t) && bitWidthOfLexicallyScopedFeatures <= 8); // CachedCodeBlock::m_lexicallyScopedFeatures
+static_assert(sizeof(SourceParseMode) <= sizeof(uint8_t)); // m_parseMode / m_sourceParseMode
+static_assert(sizeof(std::underlying_type_t<CodeGenerationMode>) <= sizeof(uint8_t)); // m_codeGenerationMode
+static_assert(bitWidthOfImplementationVisibility <= 8); // CachedFunctionExecutable::m_implementationVisibility
+static_assert(sizeof(SourceTaintedOrigin) <= sizeof(uint8_t)); // CachedSourceProviderShape::m_sourceTaintedOrigin
+static_assert(sizeof(IndexingType) <= sizeof(uint8_t)); // CachedImmutableButterfly::m_indexingType
+static_assert(sizeof(SourceProviderSourceType) <= sizeof(uint8_t)); // CachedSourceProvider::m_sourceType
+static_assert(sizeof(ScopeOffset) <= sizeof(uint32_t)); // CachedSymbolTable::m_maxScopeOffset
+static_assert(sizeof(VirtualRegister) <= sizeof(int32_t)); // CachedCodeBlock::m_thisRegister/m_scopeRegister
+
+// Explicit wire-portability table. The choke-point asserts in
+// Encoder::malloc<T> / VariableLengthObject::allocate<T> already cover every
+// type that flows through them, but those are template instantiations and a
+// type only reachable from an unused encode path (e.g. CachedEvalCodeBlock)
+// would silently skip the check. Listing every Cached* type here makes the
+// guarantee unconditional and gives a single place to scan when reviewing
+// upstream merges. Adding a type to the wire without listing it here is fine
+// (the choke point still checks it); this is belt-and-suspenders.
+BUN_ASSERT_WIRE_PORTABLE(CacheEntry<UnlinkedProgramCodeBlock>);
+BUN_ASSERT_WIRE_PORTABLE(CacheEntry<UnlinkedModuleProgramCodeBlock>);
+BUN_ASSERT_WIRE_PORTABLE(GenericCacheEntry);
+BUN_ASSERT_WIRE_PORTABLE(CachedSourceCodeKey);
+BUN_ASSERT_WIRE_PORTABLE(CachedProgramCodeBlock);
+BUN_ASSERT_WIRE_PORTABLE(CachedModuleCodeBlock);
+BUN_ASSERT_WIRE_PORTABLE(CachedEvalCodeBlock);
+BUN_ASSERT_WIRE_PORTABLE(CachedFunctionCodeBlock);
+BUN_ASSERT_WIRE_PORTABLE(CachedCodeBlockRareData);
+BUN_ASSERT_WIRE_PORTABLE(CachedMetadataTable);
+BUN_ASSERT_WIRE_PORTABLE(CachedInstructionStream);
+BUN_ASSERT_WIRE_PORTABLE(CachedExpressionInfo);
+BUN_ASSERT_WIRE_PORTABLE(CachedFunctionExecutable);
+BUN_ASSERT_WIRE_PORTABLE(CachedFunctionExecutableRareData);
+BUN_ASSERT_WIRE_PORTABLE(CachedFunctionExecutableMetadata);
+BUN_ASSERT_WIRE_PORTABLE(CachedClassElementDefinition);
+BUN_ASSERT_WIRE_PORTABLE(CachedJSTextPosition);
+BUN_ASSERT_WIRE_PORTABLE(CachedHandlerInfo);
+BUN_ASSERT_WIRE_PORTABLE(CachedSimpleJumpTable);
+BUN_ASSERT_WIRE_PORTABLE(CachedStringJumpTable);
+BUN_ASSERT_WIRE_PORTABLE(CachedBitVector);
+BUN_ASSERT_WIRE_PORTABLE(CachedSymbolTable);
+BUN_ASSERT_WIRE_PORTABLE(CachedSymbolTableEntry);
+BUN_ASSERT_WIRE_PORTABLE(CachedSymbolTableRareData);
+BUN_ASSERT_WIRE_PORTABLE(CachedScopedArgumentsTable);
+BUN_ASSERT_WIRE_PORTABLE(CachedImmutableButterfly);
+BUN_ASSERT_WIRE_PORTABLE(CachedRegExp);
+BUN_ASSERT_WIRE_PORTABLE(CachedTemplateObjectDescriptor);
+BUN_ASSERT_WIRE_PORTABLE(CachedBigInt);
+BUN_ASSERT_WIRE_PORTABLE(CachedJSValue);
+BUN_ASSERT_WIRE_PORTABLE(CachedString);
+BUN_ASSERT_WIRE_PORTABLE(CachedIdentifier);
+BUN_ASSERT_WIRE_PORTABLE(CachedUniquedStringImpl);
+BUN_ASSERT_WIRE_PORTABLE(CachedStringImpl);
+BUN_ASSERT_WIRE_PORTABLE(CachedVariableEnvironment);
+BUN_ASSERT_WIRE_PORTABLE(CachedVariableEnvironmentRareData);
+BUN_ASSERT_WIRE_PORTABLE(CachedCompactTDZEnvironment);
+BUN_ASSERT_WIRE_PORTABLE(CachedCompactTDZEnvironmentMapHandle);
+BUN_ASSERT_WIRE_PORTABLE(CachedTDZEnvironmentLink);
+BUN_ASSERT_WIRE_PORTABLE(CachedSourceOrigin);
+BUN_ASSERT_WIRE_PORTABLE(CachedTextPosition);
+BUN_ASSERT_WIRE_PORTABLE(CachedSourceProvider);
+BUN_ASSERT_WIRE_PORTABLE(CachedStringSourceProvider);
+#if ENABLE(WEBASSEMBLY)
+BUN_ASSERT_WIRE_PORTABLE(CachedWebAssemblySourceProvider);
+#endif
+BUN_ASSERT_WIRE_PORTABLE(CachedUnlinkedSourceCode);
+BUN_ASSERT_WIRE_PORTABLE(CachedSourceCode);
+BUN_ASSERT_WIRE_PORTABLE(CachedSourceCodeWithoutProvider);
+#endif // USE(BUN_JSC_ADDITIONS)
 
 bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, UnlinkedCodeBlock*>& result) const
 {
