@@ -49,6 +49,9 @@
 #include "FrameTracers.h"
 #include "GlobalObjectMethodTable.h"
 #include "InlineCallFrame.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InternalFieldTuple.h"
+#endif
 #include "InterpreterInlines.h"
 #include "JITCode.h"
 #include "JSArrayInlines.h"
@@ -491,7 +494,16 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     auto getContextValueFromPromise = [&](JSPromise* promise) -> JSValue {
         if (!promise)
             return { };
-        return promise->asyncStackTraceContext();
+        JSValue context = promise->asyncStackTraceContext();
+#if USE(BUN_JSC_ADDITIONS)
+        // JSPromise::resolveWithInternalMicrotaskForAsyncAwait stores
+        // InternalFieldTuple(context, asyncContext) when ALS is active.
+        if (context) {
+            if (auto* tuple = dynamicDowncast<InternalFieldTuple>(context))
+                return tuple->getInternalField(0);
+        }
+#endif
+        return context;
     };
 
     auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen) -> JSAsyncFunctionGenerator* {
