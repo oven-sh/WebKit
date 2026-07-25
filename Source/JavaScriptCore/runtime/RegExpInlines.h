@@ -133,6 +133,21 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
         return -1;
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    auto throwExecutionError = [&](int executionResult) {
+        if (matchFrom == Yarr::MatchFrom::CompilerThread)
+            return -1;
+        if (nullOrGlobalObject) {
+            auto throwScope = DECLARE_THROW_SCOPE(vm);
+            if (executionResult == static_cast<int>(Yarr::JSRegExpResult::ErrorNoMemory))
+                throwStackOverflowError(nullOrGlobalObject, throwScope);
+            else
+                throwRangeError(nullOrGlobalObject, throwScope, "Maximum regular expression match count exceeded."_s);
+        }
+        return -1;
+    };
+#endif
+
     if (m_state == ParseError)
         return throwError();
 
@@ -194,6 +209,11 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (result < -1) [[unlikely]]
+        return throwExecutionError(result);
+#endif
 
     ASSERT(result >= -1);
 
@@ -262,6 +282,21 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
         return MatchResult::failed();
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    auto throwExecutionError = [&](int executionResult) {
+        if (matchFrom == Yarr::MatchFrom::CompilerThread)
+            return MatchResult::failed();
+        if (nullOrGlobalObject) {
+            auto throwScope = DECLARE_THROW_SCOPE(vm);
+            if (executionResult == static_cast<int>(Yarr::JSRegExpResult::ErrorNoMemory))
+                throwStackOverflowError(nullOrGlobalObject, throwScope);
+            else
+                throwRangeError(nullOrGlobalObject, throwScope, "Maximum regular expression match count exceeded."_s);
+        }
+        return MatchResult::failed();
+    };
+#endif
+
     if (m_state == ParseError)
         return throwError();
 
@@ -290,6 +325,11 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
 #if ENABLE(REGEXP_TRACING)
         if (!result)
             m_rtMatchOnlyFoundCount++;
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+        if (result.start == static_cast<size_t>(Yarr::JSRegExpResult::ErrorHitLimit)
+            || result.start == static_cast<size_t>(Yarr::JSRegExpResult::ErrorNoMemory)) [[unlikely]]
+            return throwExecutionError(static_cast<int>(result.start));
 #endif
         if (result.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure))
             return result;
@@ -326,6 +366,11 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
 #endif
         return MatchResult(result, reinterpret_cast<unsigned*>(offsetVector)[1]);
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (result < -1) [[unlikely]]
+        return throwExecutionError(result);
+#endif
 
     return MatchResult::failed();
 }
