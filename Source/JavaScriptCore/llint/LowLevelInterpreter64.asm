@@ -828,19 +828,36 @@ _llint_op_enter:
     traceExecution()
     checkStackPointerAlignment(t2, 0xdead00e1)
     loadp CodeBlock[cfr], t2                // t2<CodeBlock> = cfr.CodeBlock
-    loadi CodeBlock::m_numVars[t2], t2      // t2<size_t> = t2<CodeBlock>.m_numVars
-    subq CalleeSaveSpaceAsVirtualRegisters, t2
+    loadi CodeBlock::m_numVars[t2], t3      // t3<size_t> = t2<CodeBlock>.m_numVars
+    subq CalleeSaveSpaceAsVirtualRegisters, t3
     move cfr, t1
     subq CalleeSaveSpaceAsVirtualRegisters * 8, t1
-    btiz t2, .opEnterDone
+    btiz t3, .opEnterDone
     move ValueUndefined, t0
-    negi t2
-    sxi2q t2, t2
+    negi t3
+    sxi2q t3, t3
 .opEnterLoop:
-    storeq t0, [t1, t2, 8]
-    addq 1, t2
-    btqnz t2, .opEnterLoop
+    storeq t0, [t1, t3, 8]
+    addq 1, t3
+    btqnz t3, .opEnterLoop
 .opEnterDone:
+    # Fast path for the common case of slow_path_enter: writeBarrier(codeBlock) and
+    # storing the callee's scope into the scope register. Mirrors the baseline JIT's
+    # emit_op_enter; the slow path handles the barrier and tainted code.
+    btbnz CodeBlock::m_couldBeTainted[t2], .opEnterSlow
+    loadb JSCell::m_cellState[t2], t1
+    loadp CodeBlock::m_vm[t2], t0
+    loadi (constexpr (VM::offsetOfHeapBarrierThreshold()))[t0], t0
+    bibeq t1, t0, .opEnterSlow      # codeBlock's cell state is within the barrier threshold.
+    loadis CodeBlock::m_scopeRegister[t2], t1
+    loadp Callee[cfr], t0
+    loadp JSCallee::m_scope[t0], t0
+    storeq t0, [cfr, t1, 8]
+    checkTraps(macro()
+        dispatchOp(narrow, op_enter)
+    end)
+
+.opEnterSlow:
     callSlowPath(_slow_path_enter)
 
     checkTraps(macro()

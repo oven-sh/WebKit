@@ -969,9 +969,10 @@ private:
     const unsigned m_numCalleeLocals;
     const unsigned m_numVars;
     unsigned m_numParameters;
-    unsigned m_numberOfArgumentsToSkip : 31 { 0 };
-    unsigned m_couldBeTainted : 1 { 0 };
+    unsigned m_numberOfArgumentsToSkip { 0 };
     uint32_t m_osrExitCounter { 0 };
+    // A byte (not a bitfield) so the LLInt can test it in op_enter's fast path.
+    bool m_couldBeTainted { false };
     union {
         unsigned m_debuggerRequests;
         struct {
