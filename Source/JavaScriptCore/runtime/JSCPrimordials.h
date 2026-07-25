@@ -27,6 +27,8 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
+#include <cstdint>
+
 namespace JSC {
 
 // Primordials are tamper-proof references to original ECMAScript built-in
