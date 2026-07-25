@@ -629,8 +629,16 @@ class Sequence
             end
             
             if address.is_a? BaseIndex
+                # ARM64 register-offset addressing ([base, index, lsl #shift]) requires the shift to be
+                # 0 or log2(access size), and is not available for load/store pair, exclusive/atomic,
+                # or post-index forms. Note that address.scale is an Immediate, so compare scaleValue.
+                registerOffsetForm = $currentSettings["ADDRESS64"] &&
+                    !isLoadStorePairOp &&
+                    node.opcode != "loadqinc" &&
+                    node.opcode !~ /^atomic|^loadlinkacq|^storecondrel|^loadv|^storev/
                 address.offset.value == 0 and
-                    (node.opcode =~ /^lea/ or address.scale == 1 or address.scale == size)
+                    (node.opcode =~ /^lea/ or
+                     (registerOffsetForm and (address.scaleValue == 1 or address.scaleValue == size)))
             elsif address.is_a? Address
                 if isLoadStorePairOp
                     not isMalformedArm64LoadStorePairAddress(node.opcode, address)
