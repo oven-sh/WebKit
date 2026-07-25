@@ -2740,6 +2740,56 @@ RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCod
     return encoder.release(error);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Top-level entry for a builtin UnlinkedFunctionExecutable.
+// Simpler than GenericCacheEntry: no SourceCodeKey (source is fixed at build time),
+// no bootSessionUUID (Bun fork already neutralizes it). Only version check.
+class BuiltinFunctionCacheEntry {
+public:
+    BuiltinFunctionCacheEntry()
+        : m_cacheVersion(computeJSCBytecodeCacheVersion())
+    {
+    }
+
+    void encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable)
+    {
+        m_executable.encode(encoder, executable);
+    }
+
+    UnlinkedFunctionExecutable* decode(Decoder& decoder) const
+    {
+        if (m_cacheVersion != computeJSCBytecodeCacheVersion())
+            return nullptr;
+        return m_executable.decode(decoder);
+    }
+
+private:
+    uint32_t m_cacheVersion;
+    CachedFunctionExecutable m_executable;
+};
+static_assert(alignof(BuiltinFunctionCacheEntry) <= alignof(std::max_align_t));
+
+RefPtr<CachedBytecode> encodeBuiltinFunctionExecutable(VM& vm, UnlinkedFunctionExecutable* executable)
+{
+    BytecodeCacheError error;
+    FileSystem::FileHandle invalidFileHandle;
+    Encoder encoder(vm, invalidFileHandle);
+    encoder.malloc<BuiltinFunctionCacheEntry>()->encode(encoder, *executable);
+    return encoder.release(error);
+}
+
+UnlinkedFunctionExecutable* decodeBuiltinFunctionExecutable(VM& vm, Ref<CachedBytecode> cachedBytecode)
+{
+    auto span = cachedBytecode->span();
+    if (span.empty())
+        return nullptr;
+    const auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(span.data());
+    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode));
+    DeferGC deferGC(vm);
+    return entry->decode(decoder.get());
+}
+#endif
+
 std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cachedBytecode)
 {
     const auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());

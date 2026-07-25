@@ -130,4 +130,12 @@ JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionC
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 
+#if USE(BUN_JSC_ADDITIONS)
+// Encode/decode a top-level UnlinkedFunctionExecutable (including nested code blocks)
+// for Bun's builtin module bytecode cache. Unlike encodeCodeBlock, this skips
+// SourceCodeKey validation since builtin sources are fixed at build time.
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunctionExecutable(VM&, UnlinkedFunctionExecutable*);
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunctionExecutable(VM&, Ref<CachedBytecode>);
+#endif
+
 } // namespace JSC
