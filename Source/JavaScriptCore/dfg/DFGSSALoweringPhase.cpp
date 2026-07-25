@@ -217,21 +217,28 @@ private:
         Edge offset = m_graph.varArgChild(m_node, 1);
         RELEASE_ASSERT(offset.useKind() == Int32Use);
 
+#if USE(LARGE_TYPED_ARRAYS)
+        constexpr bool lengthAsInt52 = true;
+#else
+        constexpr bool lengthAsInt52 = false;
+#endif
         Node* length = m_insertionSet.insertNode(
-            m_nodeIndex, SpecInt32Only, GetArrayLength, m_node->origin,
+            m_nodeIndex, lengthAsInt52 ? SpecInt52Any : SpecInt32Only, lengthAsInt52 ? GetTypedArrayLengthAsInt52 : GetArrayLength, m_node->origin,
             OpInfo(arrayMode.asWord()), Edge(base.node(), KnownCellUse), Edge());
         if (arrayMode.mayBeResizableOrGrowableSharedTypedArray())
             m_insertionSet.insertNode(m_nodeIndex, SpecNone, ExitOK, m_node->origin.withExitOK(true));
+        Edge lengthEdge = lengthAsInt52 ? Edge(length, Int52RepUse) : Edge(length, KnownInt32Use);
+        NodeType checkInBounds = lengthAsInt52 ? CheckInBoundsInt52 : CheckInBounds;
 
         unsigned appended = 1;
-        Node* checkFirstByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, offset, Edge(length, KnownInt32Use));
+        Node* checkFirstByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, checkInBounds, m_node->origin, offset, lengthEdge);
         Node* checkLastByte = nullptr;
         if (data.byteSize > 1) {
             Node* lastByteOffset = m_insertionSet.insertNode(
                 m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(Arith::CheckOverflow),
                 Edge(offset.node(), Int32Use),
                 m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(data.byteSize - 1), Int32Use));
-            checkLastByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, Edge(lastByteOffset, Int32Use), Edge(length, KnownInt32Use));
+            checkLastByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, checkInBounds, m_node->origin, Edge(lastByteOffset, Int32Use), lengthEdge);
             appended = 2;
         }
 
