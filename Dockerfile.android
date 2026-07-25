@@ -1,7 +1,7 @@
 ARG MARCH_FLAG="-march=armv8-a+crc -mtune=cortex-a78"
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
-ARG LLVM_VERSION="21"
+ARG LLVM_VERSION="22"
 ARG NDK_VERSION="r27c"
 ARG NDK_SHA256="59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc"
 ARG ANDROID_API="28"
@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Host clang (same version Bun uses) — we cross-compile via --target/--sysroot,
 # not via the NDK's bundled clang. apt.llvm.org installs version-suffixed names
-# only (ld.lld-21, not ld.lld), so add unversioned links for -fuse-ld=lld.
+# only (ld.lld-22, not ld.lld), so add unversioned links for -fuse-ld=lld.
 RUN wget -qO- https://apt.llvm.org/llvm.sh | bash -s -- ${LLVM_VERSION} && \
     for t in clang clang++ ld.lld lld llvm-ar llvm-ranlib; do \
       ln -sf /usr/bin/${t}-${LLVM_VERSION} /usr/local/bin/${t}; \

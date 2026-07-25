@@ -2,12 +2,12 @@ ARG MARCH_FLAG=""
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG CPU=native
 ARG LTO_FLAG="-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables "
-ARG LLVM_VERSION="21"
+ARG LLVM_VERSION="22"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 
-FROM alpine:3.23 as base
+FROM alpine:3.24 as base
 
 ARG MARCH_FLAG
 ARG WEBKIT_RELEASE_TYPE
@@ -16,14 +16,19 @@ ARG LTO_FLAG
 ARG LLVM_VERSION
 ARG DEFAULT_CFLAGS
 
+# alpine 3.24 ships clang22/llvm22/lld22 at 22.1.3; edge has 22.1.8. Tag the
+# edge repo so only the llvm packages come from there (musl is the same
+# version in both, so edge's binaries run on 3.24). Everything else stays on
+# 3.24 stable.
+RUN echo "@edge https://dl-cdn.alpinelinux.org/alpine/edge/main" >> /etc/apk/repositories
 RUN apk update
-RUN apk add --no-cache cmake make clang21 clang21-static clang21-dev llvm21-dev llvm21-static musl-dev git lld libgcc gcc g++ libstdc++ build-base lld-dev llvm21-libs libc-dev xz zlib zlib-dev libxml2 libxml2-dev
+RUN apk add --no-cache cmake make clang22@edge clang22-static@edge clang22-dev@edge llvm22-dev@edge llvm22-static@edge lld22@edge lld22-dev@edge llvm22-libs@edge musl-dev git libgcc gcc g++ libstdc++ build-base libc-dev xz zlib zlib-dev libxml2 libxml2-dev
 
-ENV CXX=clang++-21
-ENV CC=clang-21
-ENV LDFLAGS='-L/usr/include -L/usr/include/llvm21'
-ENV CXXFLAGS="-I/usr/include -I/usr/include/llvm21"
-ENV PATH="/usr/bin:/usr/local/bin:/zig/bin:/usr/lib/llvm21/bin:$PATH"
+ENV CXX=clang++-22
+ENV CC=clang-22
+ENV LDFLAGS='-L/usr/include -L/usr/include/llvm22'
+ENV CXXFLAGS="-I/usr/include -I/usr/include/llvm22"
+ENV PATH="/usr/bin:/usr/local/bin:/zig/bin:/usr/lib/llvm22/bin:$PATH"
 ENV CPU=${CPU}
 ENV MARCH_FLAG=${MARCH_FLAG}
 ENV WEBKIT_OUT_DIR=/webkitbuild

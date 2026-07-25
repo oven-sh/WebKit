@@ -80,7 +80,7 @@ jobs:
       build_ref: ${{ needs.trigger.outputs.sha }}
       release_tag: ${{ needs.trigger.outputs.release_tag }}
       is_prerelease: true
-      llvm_version: '19'
+      llvm_version: '22'
 
   notify:
     name: Update PR Comment

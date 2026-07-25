@@ -3,7 +3,7 @@ ARG WEBKIT_RELEASE_TYPE=Release
 ARG CPU=native
 ARG LTO_FLAG="-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables "
 ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
-ARG LLVM_VERSION="21"
+ARG LLVM_VERSION="22"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
@@ -31,15 +31,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Both archive.ubuntu.com and azure.archive.ubuntu.com have intermittently
 # timed out from inside the GitHub-hosted docker-buildx network at different
-# times. Prefer Azure (faster on Azure-hosted runners) but fall back to the
-# canonical mirror if `apt-get update` can't reach it. arm64 uses
-# ports.ubuntu.com which has been reachable, so leave it alone.
-RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+# times, and ports.ubuntu.com (arm64) has gone fully dark for hours at a
+# stretch. Prefer Azure on amd64 (faster on Azure-hosted runners). On any
+# failed attempt, swap to a fallback mirror before retrying: amd64 falls back
+# to the canonical archive, arm64 falls back to a Launchpad-registered
+# ubuntu-ports mirror.
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list \
+    && echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99-retries
 
-# Install basic build dependencies
-RUN ( apt-get update || \
-      ( sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list && apt-get update ) \
-    ) && apt-get install -y \
+# Install basic build dependencies. `apt-get update` exits 0 on partial index
+# fetch failure (only W:, not E:), which then makes the install fail with
+# "no installation candidate" — so retry the whole update+install, swapping
+# to a fallback mirror after the first failure.
+RUN for attempt in 1 2 3; do \
+      apt-get update && apt-get install -y \
     wget \
     curl \
     git \
@@ -52,6 +57,15 @@ RUN ( apt-get update || \
     ca-certificates \
     gnupg \
     lsb-release \
+    && break || { \
+        echo "apt attempt $attempt failed, swapping mirrors and retrying"; \
+        sed -i -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+               -e 's|http://ports.ubuntu.com/ubuntu-ports|http://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
+               /etc/apt/sources.list; \
+        sleep 15; \
+    }; \
+    done \
+    && dpkg -l wget curl git python3 ninja-build lsb-release >/dev/null \
     && rm -rf /var/lib/apt/lists/*
 
 # Install zstd (for icu/compress-data.ts). Pinned: focal's apt has 1.4.4 which
@@ -102,11 +116,65 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
     --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
     --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
 
-# Install LLVM 21
-RUN wget https://apt.llvm.org/llvm.sh \
-    && chmod +x llvm.sh \
-    && ./llvm.sh 21 all \
-    && rm llvm.sh \
+# Install LLVM 22.
+#
+# apt.llvm.org stopped publishing focal arm64 binaries for the 22 release
+# (llvm-toolchain-focal-22/main/binary-arm64 carries only the Architecture:all
+# -doc/-examples packages). The bullseye repo still has the full arm64 set and
+# is built against glibc 2.31 (same as focal), so on arm64 we pull from there
+# instead. The bullseye clang-22 package declares Depends on Debian's
+# libstdc++-10-dev/libgcc-10-dev/libobjc-10-dev, which focal doesn't name that
+# way (we use gcc-13's libstdc++ via the PPA and set its include paths below),
+# so those three are satisfied with equivs dummies before the install.
+#
+# Two more bullseye-vs-focal gaps have to be closed on arm64:
+#
+#   libz3: bullseye's libllvm22 needs libz3-4 (>= 4.8.10) and llvm-22-dev needs
+#   the matching libz3-dev; focal only has 4.8.7. equivs can't paper over this
+#   one -- libz3.so.4 is a real DT_NEEDED of libLLVM, so a dummy would make
+#   clang-22 fail to start. The two bullseye .debs are installed directly,
+#   SHA-256-pinned, rather than by adding deb.debian.org as an apt source: it
+#   keeps apt from pulling any other Debian package into the image, in
+#   particular a libc6/libstdc++6 that would move the glibc floor. Both only
+#   declare libc6 (>= 2.30) / libstdc++6 (>= 9), which focal already satisfies,
+#   so the floor stays where the base image puts it (verified: libc6 stays at
+#   2.31 and a clang++-22 -stdlib=libstdc++ binary still tops out at GLIBC_2.17).
+#
+#   lldb-22: pulls python3-lldb-22, which Depends: python3 (>= 3.9~) (<< 3.10).
+#   focal ships python3.8, so it is not installable here and would need Debian's
+#   whole python3 stack. Nothing in the build uses lldb, so arm64 omits it; the
+#   /usr/bin/lldb symlink below is left dangling, which is harmless.
+ARG LIBZ3_VERSION=4.8.10-1
+ARG LIBZ3_SHA256_arm64=ae1ea58ecfdd4b5ec53d734e60ac2df37fddb11888b7730a19335f1a9b09f489
+ARG LIBZ3_DEV_SHA256_arm64=4739e62c1f39c35f2382f15347b588245a71bd12c8628a8caa6639fdc1774b6c
+RUN wget -qO /etc/apt/trusted.gpg.d/apt.llvm.org.asc https://apt.llvm.org/llvm-snapshot.gpg.key \
+    && if [ "$TARGETARCH" = "arm64" ]; then \
+         echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-22 main" > /etc/apt/sources.list.d/llvm.list \
+         && apt-get update \
+         && apt-get install -y --no-install-recommends equivs \
+         && for p in libstdc++-10-dev libgcc-10-dev libobjc-10-dev; do \
+              printf 'Section: misc\nPriority: optional\nStandards-Version: 3.9.2\nPackage: %s\nVersion: 99\nDescription: dummy for bullseye clang-22 dep\n' "$p" > /tmp/$p.ctl \
+              && (cd /tmp && equivs-build $p.ctl && dpkg -i ${p}_99_all.deb && rm -f $p.ctl ${p}_99_all.deb); \
+            done \
+         && curl -fsSL --retry 5 --retry-connrefused \
+              "http://deb.debian.org/debian/pool/main/z/z3/libz3-4_${LIBZ3_VERSION}_arm64.deb" -o /tmp/libz3-4.deb \
+         && curl -fsSL --retry 5 --retry-connrefused \
+              "http://deb.debian.org/debian/pool/main/z/z3/libz3-dev_${LIBZ3_VERSION}_arm64.deb" -o /tmp/libz3-dev.deb \
+         && echo "${LIBZ3_SHA256_arm64}  /tmp/libz3-4.deb" | sha256sum -c - \
+         && echo "${LIBZ3_DEV_SHA256_arm64}  /tmp/libz3-dev.deb" | sha256sum -c - \
+         && dpkg -i /tmp/libz3-4.deb /tmp/libz3-dev.deb \
+         && rm -f /tmp/libz3-4.deb /tmp/libz3-dev.deb \
+         && apt-get install -y --no-install-recommends \
+              clang-22 lld-22 llvm-22 llvm-22-dev llvm-22-tools llvm-22-runtime \
+              llvm-22-linker-tools libllvm22 libclang-cpp22 libclang1-22 \
+              libclang-common-22-dev libclang-rt-22-dev liblld-22 clangd-22; \
+       else \
+         wget https://apt.llvm.org/llvm.sh \
+         && chmod +x llvm.sh \
+         && ./llvm.sh 22 all \
+         && rm llvm.sh; \
+       fi \
+    && clang-22 --version \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure library paths
