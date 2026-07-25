@@ -1744,6 +1744,9 @@ public:
         switch (m_sourceType) {
         case SourceProviderSourceType::Program:
         case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule:
+#endif
             this->allocate<CachedStringSourceProvider>(encoder)->encode(encoder, reinterpret_cast<const StringSourceProvider&>(sourceProvider));
             break;
 #if ENABLE(WEBASSEMBLY)
@@ -1761,6 +1764,9 @@ public:
         switch (m_sourceType) {
         case SourceProviderSourceType::Program:
         case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule:
+#endif
             return this->buffer<CachedStringSourceProvider>()->decode(decoder, m_sourceType);
 #if ENABLE(WEBASSEMBLY)
         case SourceProviderSourceType::WebAssembly:
