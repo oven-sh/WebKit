@@ -15552,8 +15552,14 @@ IGNORE_CLANG_WARNINGS_END
         LValue targetValue = m_out.constIntPtr(target);
         if constexpr (directCall) {
             // Call the native target directly (tagged exactly as the thunk calls it: a raw
-            // CFunctionPtrTag call). topCallFrame first: a JS callback or an exception raised from
-            // inside the native call must see this frame.
+            // CFunctionPtrTag call). Record this call site's CallSiteIndex in the frame's tag
+            // slot first (callPreflight): a callback re-entering the VM or an exception unwinding
+            // from inside the native call reads callFrame->callSiteIndex() to find the enclosing
+            // handler / code origin, and without this store it would consume a STALE index left by
+            // an earlier operation call in this frame (delivering the exception to the wrong catch,
+            // wrong stack trace). Then topCallFrame explicitly -- callPreflight only stores it under
+            // !USE(BUILTIN_FRAME_ADDRESS) || ASSERT_ENABLED, and it must always be current here.
+            callPreflight();
             m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
             LValue callee = m_out.constIntPtr(tagCFunctionPtr<void*, CFunctionPtrTag>(target));
             LType returnLType = Void;
@@ -15622,6 +15628,10 @@ IGNORE_CLANG_WARNINGS_END
             m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots);
             exceptionCheckWithArenaExit(nullptr);
         } else {
+            // Same CallSiteIndex requirement as the direct path (the arena path gets it from the
+            // preceding operationFFIArenaEnter vmCall): store it before the native call so a
+            // callback / unwind from inside the call sees THIS call site, not a stale one.
+            callPreflight();
             m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
             m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots);
             // A JS callback the native code invoked may have left an exception pending: reload

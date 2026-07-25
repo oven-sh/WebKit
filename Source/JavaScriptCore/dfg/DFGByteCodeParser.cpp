@@ -5003,8 +5003,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
-#if USE(BUN_JSC_ADDITIONS)
-#endif // USE(BUN_JSC_ADDITIONS)
 
         case DataViewSetInt8:
         case DataViewSetUint8:

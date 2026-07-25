@@ -53,6 +53,13 @@ namespace FFI {
 // Parses a single FFI type from JS: either a canonical name / alias string ("i32", "int32_t",
 // "ptr", "void*", ...) or a numeric FFI::Type tag (0..20, wire-compatible with Bun's FFIType).
 // Throws a TypeError and returns std::nullopt for anything else.
+// True iff the engine-native FFI can be used in this process: the JIT is enabled and the
+// executable allocator is up (Options::useJIT() is false when either fails), and this is a
+// supported build (64-bit, non-JIT-caged, x86-64/arm64). This is EXACTLY the condition
+// JSFFIFunction::create / JSFFICallback::create enforce, exported so an embedder can route to
+// its non-JIT fallback instead of catching the "bun:ffi requires the JIT" TypeError after the fact.
+JS_EXPORT_PRIVATE bool isAvailable();
+
 JS_EXPORT_PRIVATE std::optional<Type> typeFromJS(JSGlobalObject*, JSValue);
 
 // Reads a signature descriptor of the form { args: (string|number)[], returns: string|number }

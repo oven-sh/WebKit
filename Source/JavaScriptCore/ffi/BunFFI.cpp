@@ -42,6 +42,16 @@
 
 namespace JSC { namespace FFI {
 
+bool isAvailable()
+{
+#if !USE(JSVALUE64) || ENABLE(JIT_CAGE) || !(CPU(X86_64) || CPU(ARM64))
+    return false; // The FFI machinery is compiled out on this configuration (SPEC section 14).
+#else
+    return Options::useJIT(); // false when the JIT is disabled OR the executable allocator failed
+#endif
+}
+
+
 std::optional<Type> typeFromJS(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();

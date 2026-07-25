@@ -353,6 +353,14 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
     }
 
     if (value.isUndefinedOrNull()) {
+        // A null DATA pointer is legitimate (ptr / cstring / buffer callers pass null on purpose),
+        // but a null FUNCTION pointer is never: an omitted or undefined callback argument used to
+        // marshal NULL and the C callee would call through it (SIGSEGV) instead of the TypeError
+        // the JS glue raised. Reject it here so a missing callback is a JS error, not a crash.
+        if (type == Type::Function) [[unlikely]] {
+            throwTypeError(globalObject, scope, "bun:ffi: expected a callback (a JSCallback or an FFI function) but got undefined/null"_s);
+            return false;
+        }
         slotOut = 0;
         return true;
     }
@@ -414,6 +422,18 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
             // Bun's existing guidance for strings.
             throwTypeError(globalObject, scope, "To convert a string to a pointer, encode it as a buffer"_s);
             return false;
+        }
+
+        // An object carrying a numeric/BigInt `ptr` own or inherited property is accepted for the
+        // pointer family (documented Bun API: FFIType.function / pointer accept a JSCallback,
+        // Pointer or CString object, whose engine cell or address lives behind `.ptr`; the TinyCC-era
+        // shim did `val && val.ptr`). The property get can run a getter, so exceptions propagate,
+        // and only a number/BigInt result is unwrapped -- anything else falls to the type error.
+        if (type != Type::Buffer && cell->isObject()) {
+            JSValue ptrValue = uncheckedDowncast<JSObject>(cell)->get(globalObject, Identifier::fromString(vm, "ptr"_s));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (ptrValue.isNumber() || ptrValue.isBigInt())
+                RELEASE_AND_RETURN(scope, writePointerSlot(globalObject, context, type, ptrValue, slotOut, arena));
         }
     }
 

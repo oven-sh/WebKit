@@ -116,8 +116,17 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
         case Type::Uint16:
         case Type::Int32:
         case Type::Uint32: {
-            insertionSet.insertCheck(checkIndex, node->origin, DFG::Edge(argumentNode, DFG::Int32Use));
-            graph.varArgChild(node, childIndex) = DFG::Edge(argumentNode, DFG::KnownInt32Use);
+            // Only speculate int32 when profiling says the site actually passes int32s. The C++
+            // conversion (writeIntegerSlot) legitimately accepts doubles, booleans, null/undefined
+            // and BigInts for integer parameters, so an unconditional Int32Use check would OSR-exit
+            // on EVERY call at a site that validly passes e.g. `true` or `0.5` -- a deopt storm.
+            // Non-int32 sites keep the boxed value and convert via operationFFIWriteSlot instead
+            // (same UntypedUse path the Bool case below uses for its fallback).
+            if (argumentNode->shouldSpeculateInt32()) {
+                insertionSet.insertCheck(checkIndex, node->origin, DFG::Edge(argumentNode, DFG::Int32Use));
+                graph.varArgChild(node, childIndex) = DFG::Edge(argumentNode, DFG::KnownInt32Use);
+            } else
+                graph.varArgChild(node, childIndex) = DFG::Edge(argumentNode, DFG::UntypedUse);
             break;
         }
         case Type::Bool: {

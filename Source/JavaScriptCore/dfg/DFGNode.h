@@ -3024,11 +3024,7 @@ public:
 
     DataViewData dataViewData()
     {
-#if USE(BUN_JSC_ADDITIONS)
         ASSERT(op() == DataViewGetInt || op() == DataViewGetFloat || op() == DataViewSet);
-#else
-        ASSERT(op() == DataViewGetInt || op() == DataViewGetFloat || op() == DataViewSet);
-#endif
         return std::bit_cast<DataViewData>(m_opInfo.as<uint64_t>());
     }
 
