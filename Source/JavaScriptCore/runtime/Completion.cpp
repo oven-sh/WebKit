@@ -104,7 +104,7 @@ RefPtr<CachedBytecode> generateProgramBytecode(VM& vm, const SourceCode& source,
     EvalContextType evalContextType = EvalContextType::None;
 
     ParserError parserError;
-    UnlinkedCodeBlock* unlinkedCodeBlock = recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, lexicallyScopedFeatures, scriptMode, { }, parserError, evalContextType);
+    UnlinkedCodeBlock* unlinkedCodeBlock = recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, lexicallyScopedFeatures, scriptMode, { }, parserError, evalContextType, bytecodeCacheDepthFromOptions());
     if (parserError.isValid())
         error = parserError;
     if (!unlinkedCodeBlock)
@@ -123,7 +123,7 @@ RefPtr<CachedBytecode> generateModuleBytecode(VM& vm, const SourceCode& source, 
     EvalContextType evalContextType = EvalContextType::None;
 
     ParserError parserError;
-    UnlinkedCodeBlock* unlinkedCodeBlock = recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, lexicallyScopedFeatures, scriptMode, { }, parserError, evalContextType);
+    UnlinkedCodeBlock* unlinkedCodeBlock = recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, lexicallyScopedFeatures, scriptMode, { }, parserError, evalContextType, bytecodeCacheDepthFromOptions());
     if (parserError.isValid())
         error = parserError;
     if (!unlinkedCodeBlock)

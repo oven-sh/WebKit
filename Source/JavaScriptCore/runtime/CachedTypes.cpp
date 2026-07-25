@@ -2254,6 +2254,7 @@ enum class CachedCodeBlockTag {
     CachedProgramCodeBlockTag,
     CachedModuleCodeBlockTag,
     CachedEvalCodeBlockTag,
+    CachedFunctionExecutableTag,
 };
 
 static CachedCodeBlockTag NODELETE tagFromSourceCodeType(SourceCodeType type)
@@ -2266,7 +2267,7 @@ static CachedCodeBlockTag NODELETE tagFromSourceCodeType(SourceCodeType type)
     case SourceCodeType::ModuleType:
         return CachedCodeBlockTag::CachedModuleCodeBlockTag;
     case SourceCodeType::FunctionType:
-        break;
+        return CachedCodeBlockTag::CachedFunctionExecutableTag;
     }
     ASSERT_NOT_REACHED();
     return static_cast<CachedCodeBlockTag>(-1);
@@ -2573,6 +2574,7 @@ private:
 class GenericCacheEntry {
 public:
     bool decode(Decoder&, std::pair<SourceCodeKey, UnlinkedCodeBlock*>&) const;
+    bool decode(Decoder&, std::pair<SourceCodeKey, UnlinkedFunctionExecutable*>&) const;
     bool decode(Decoder&, SourceCodeKey&) const;
     bool isStillValid(Decoder&, const SourceCodeKey&, CachedCodeBlockTag) const;
 
@@ -2649,6 +2651,54 @@ private:
 static_assert(alignof(CacheEntry<UnlinkedProgramCodeBlock>) <= alignof(std::max_align_t));
 static_assert(alignof(CacheEntry<UnlinkedModuleProgramCodeBlock>) <= alignof(std::max_align_t));
 
+// A top-level cache entry whose payload is a single UnlinkedFunctionExecutable and the
+// tree of UnlinkedFunctionCodeBlocks reachable from it. Programs, modules and eval are
+// cached as code blocks because that is their top-level compilation unit; a builtin's
+// top-level unit is a function, which has no code-block-shaped entry of its own.
+class FunctionExecutableCacheEntry : public GenericCacheEntry {
+public:
+    FunctionExecutableCacheEntry(Encoder& encoder)
+        : GenericCacheEntry(encoder, CachedCodeBlockTag::CachedFunctionExecutableTag)
+    {
+    }
+
+    void encode(Encoder& encoder, std::pair<SourceCodeKey, const UnlinkedFunctionExecutable*> pair)
+    {
+        m_key.encode(encoder, pair.first);
+        m_executable.encode(encoder, pair.second);
+    }
+
+private:
+    friend GenericCacheEntry;
+
+    bool isStillValid(Decoder& decoder, const SourceCodeKey& key) const
+    {
+        SourceCodeKey decodedKey;
+        m_key.decode(decoder, decodedKey);
+        return decodedKey == key;
+    }
+
+    bool decode(Decoder& decoder, std::pair<SourceCodeKey, UnlinkedFunctionExecutable*>& result) const
+    {
+        ASSERT(tag() == CachedCodeBlockTag::CachedFunctionExecutableTag);
+        SourceCodeKey decodedKey;
+        m_key.decode(decoder, decodedKey);
+        result = { WTF::move(decodedKey), m_executable.decode(decoder) };
+        return true;
+    }
+
+    bool decode(Decoder& decoder, SourceCodeKey& key) const
+    {
+        m_key.decode(decoder, key);
+        return true;
+    }
+
+    CachedSourceCodeKey m_key;
+    CachedPtr<CachedFunctionExecutable> m_executable;
+};
+
+static_assert(alignof(FunctionExecutableCacheEntry) <= alignof(std::max_align_t));
+
 bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, UnlinkedCodeBlock*>& result) const
 {
     if (!isUpToDate(decoder))
@@ -2659,12 +2709,26 @@ bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, Unlink
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedProgramCodeBlock*>&>(result));
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedModuleProgramCodeBlock*>&>(result));
+    case CachedCodeBlockTag::CachedFunctionExecutableTag:
+        // The caller asked for a code block; this entry holds a function executable.
+        return false;
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
     }
     RELEASE_ASSERT_NOT_REACHED();
     return false;
+}
+
+bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, UnlinkedFunctionExecutable*>& result) const
+{
+    if (!isUpToDate(decoder))
+        return false;
+
+    if (m_tag != CachedCodeBlockTag::CachedFunctionExecutableTag)
+        return false;
+
+    return std::bit_cast<const FunctionExecutableCacheEntry*>(this)->decode(decoder, result);
 }
 
 bool GenericCacheEntry::decode(Decoder& decoder, SourceCodeKey& key) const
@@ -2677,6 +2741,8 @@ bool GenericCacheEntry::decode(Decoder& decoder, SourceCodeKey& key) const
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, key);
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, key);
+    case CachedCodeBlockTag::CachedFunctionExecutableTag:
+        return std::bit_cast<const FunctionExecutableCacheEntry*>(this)->decode(decoder, key);
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         return false;
@@ -2695,6 +2761,8 @@ bool GenericCacheEntry::isStillValid(Decoder& decoder, const SourceCodeKey& key,
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->isStillValid(decoder, key);
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->isStillValid(decoder, key);
+    case CachedCodeBlockTag::CachedFunctionExecutableTag:
+        return std::bit_cast<const FunctionExecutableCacheEntry*>(this)->isStillValid(decoder, key);
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
@@ -2738,6 +2806,33 @@ RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCod
     Encoder encoder(vm, invalidFileHandle);
     encoder.malloc<CachedFunctionCodeBlock>()->encode(encoder, *codeBlock);
     return encoder.release(error);
+}
+
+RefPtr<CachedBytecode> encodeFunctionExecutable(VM& vm, const SourceCodeKey& key, const UnlinkedFunctionExecutable* executable, BytecodeCacheError& error)
+{
+    FileSystem::FileHandle invalidFileHandle;
+    Encoder encoder(vm, invalidFileHandle);
+    encoder.malloc<FunctionExecutableCacheEntry>(encoder)->encode(encoder, { key, executable });
+    return encoder.release(error);
+}
+
+UnlinkedFunctionExecutable* decodeFunctionExecutable(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode)
+{
+    if (cachedBytecode->size() < sizeof(FunctionExecutableCacheEntry))
+        return nullptr;
+
+    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
+    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider());
+    std::pair<SourceCodeKey, UnlinkedFunctionExecutable*> entry;
+    {
+        DeferGC deferGC(vm);
+        if (!cachedEntry->decode(decoder.get(), entry))
+            return nullptr;
+    }
+    if (entry.first != key)
+        return nullptr;
+
+    return entry.second;
 }
 
 std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cachedBytecode)

@@ -57,8 +57,15 @@ void CodeCacheMap::pruneSlowCase()
     }
 }
 
-static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error)
+// `depth` bounds how many levels of nested functions get eagerly compiled: 0 stops at
+// the code block passed in (no nested functions), 1 additionally compiles its immediate
+// children, and so on. maxBytecodeCacheDepth (unbounded) preserves the historical
+// recursive behavior.
+static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth)
 {
+    if (!depth)
+        return;
+    unsigned childDepth = depth == maxBytecodeCacheDepth ? depth : depth - 1;
     auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable, CodeSpecializationKind constructorKind) {
         if (constructorKind == CodeSpecializationKind::CodeForConstruct && SourceParseModeSet(SourceParseMode::AsyncArrowFunctionMode, SourceParseMode::AsyncMethodMode, SourceParseMode::AsyncFunctionMode).contains(unlinkedExecutable->parseMode()))
             return;
@@ -66,7 +73,7 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
         SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
         UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, constructorKind, codeGenerationMode, error, unlinkedExecutable->parseMode());
         if (unlinkedFunctionCodeBlock)
-            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error);
+            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, childDepth);
     };
 
     // FIXME: We should also generate CodeBlocks for CodeForConstruct
@@ -149,27 +156,33 @@ UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM& vm, DirectEval
     return generateUnlinkedCodeBlock<UnlinkedEvalCodeBlock>(vm, executable, source, scriptMode, codeGenerationMode, error, evalContextType, variablesUnderTDZ, privateNameEnvironment);
 }
 
+unsigned bytecodeCacheDepthFromOptions()
+{
+    int32_t depth = Options::bytecodeCacheMaxDepth();
+    return depth < 0 ? maxBytecodeCacheDepth : static_cast<unsigned>(depth);
+}
+
 template <class UnlinkedCodeBlockType>
     requires (!std::same_as<UnlinkedCodeBlockType, UnlinkedEvalCodeBlock>)
-UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType)
+UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth)
 {
     bool isArrowFunctionContext = false;
     UnlinkedCodeBlockType* unlinkedCodeBlock = generateUnlinkedCodeBlockImpl<UnlinkedCodeBlockType>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType, DerivedContextType::None, isArrowFunctionContext);
     if (!unlinkedCodeBlock)
         return nullptr;
 
-    generateUnlinkedCodeBlockForFunctions(vm, unlinkedCodeBlock, source, codeGenerationMode, error);
+    generateUnlinkedCodeBlockForFunctions(vm, unlinkedCodeBlock, source, codeGenerationMode, error, depth);
     return unlinkedCodeBlock;
 }
 
-UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType)
+UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth)
 {
-    return recursivelyGenerateUnlinkedCodeBlock<UnlinkedProgramCodeBlock>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType);
+    return recursivelyGenerateUnlinkedCodeBlock<UnlinkedProgramCodeBlock>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType, depth);
 }
 
-UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType)
+UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth)
 {
-    return recursivelyGenerateUnlinkedCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType);
+    return recursivelyGenerateUnlinkedCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType, depth);
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType>
@@ -323,6 +336,29 @@ SourceCodeKey sourceCodeKeyForSerializedModule(VM& vm, const SourceCode& sourceC
 {
     JSParserScriptMode scriptMode = JSParserScriptMode::Module;
     return sourceCodeKeyForSerializedBytecode(vm, sourceCode, SourceCodeType::ModuleType, StrictModeLexicallyScopedFeature, scriptMode, {});
+}
+
+SourceCodeKey sourceCodeKeyForSerializedFunctionExecutable(VM&, const SourceCode& sourceCode, const String& name)
+{
+    return SourceCodeKey(
+        sourceCode, name, SourceCodeType::FunctionType, NoLexicallyScopedFeatures, JSParserScriptMode::Classic,
+        DerivedContextType::None, EvalContextType::None, false, { },
+        std::nullopt);
+}
+
+UnlinkedFunctionCodeBlock* recursivelyGenerateUnlinkedCodeBlockForFunctionExecutable(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error, unsigned depth)
+{
+    OptionSet<CodeGenerationMode> codeGenerationMode = { };
+    SourceCode source = executable->linkedSourceCode(parentSource);
+    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForCall, codeGenerationMode, error, executable->parseMode());
+    if (!unlinkedCodeBlock || error.isValid())
+        return nullptr;
+
+    generateUnlinkedCodeBlockForFunctions(vm, unlinkedCodeBlock, source, codeGenerationMode, error, depth);
+    if (error.isValid())
+        return nullptr;
+
+    return unlinkedCodeBlock;
 }
 
 RefPtr<CachedBytecode> serializeBytecode(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, SourceCodeType codeType, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, OptionSet<CodeGenerationMode> codeGenerationMode)
