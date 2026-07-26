@@ -4853,12 +4853,25 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainThreadsafeCallbacks, (JSGlobalObject* glob
         pending = std::exchange(threadsafeQueue(), { });
     }
     // runThreadsafeInvocation leaves any exception the callable threw pending (there is no C
-    // caller to hand it to); stop draining and propagate rather than running the next invocation
-    // with an exception already on the VM.
-    for (auto& invocation : pending) {
-        FFI::runThreadsafeInvocation(*invocation);
-        RETURN_IF_EXCEPTION(scope, { });
+    // caller to hand it to). Once one throws, do NOT run the remaining invocations with an
+    // exception already on the VM -- but every remaining record was counted by the dispatch, so
+    // its count must still be RETIRED (the deferred half of close(): a callback closed while
+    // records were queued unroots when the last one drains). Skipping that would leak
+    // m_threadsafeState and leave such a cell rooted forever.
+    unsigned index = 0;
+    for (; index < pending.size(); ++index) {
+        FFI::runThreadsafeInvocation(*pending[index]);
+        if (scope.exception()) [[unlikely]] {
+            ++index;
+            break;
+        }
     }
+    for (; index < pending.size(); ++index) {
+        JSFFICallback* callback = pending[index]->callback();
+        if (callback->endThreadsafeInvocation())
+            callback->unroot();
+    }
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsNumber(pending.size()));
 }
 
