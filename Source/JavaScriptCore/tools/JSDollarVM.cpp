@@ -4540,30 +4540,11 @@ static bool dollarVMFFIJITIsUnavailable()
 // Parses a $vm-facing FFI type descriptor: a canonical name / alias string
 // (FFI::parseType) or a raw FFI::Type tag number (SPEC section 2). Throws a
 // TypeError and returns nullopt on failure.
+// Delegates to the engine's own parser (FFI::typeFromJS) so $vm cannot drift from it: a
+// numeric tag validated against numberOfTypes, or a type name via FFI::parseType.
 static std::optional<FFI::Type> dollarVMParseFFIType(JSGlobalObject* globalObject, JSValue value)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (value.isNumber()) {
-        double tag = value.asNumber();
-        if (tag >= 0 && tag < FFI::numberOfTypes && tag == std::floor(tag))
-            return static_cast<FFI::Type>(static_cast<uint8_t>(tag));
-        throwTypeError(globalObject, scope, "Invalid FFI type tag"_s);
-        return std::nullopt;
-    }
-
-    if (value.isString()) {
-        String name = asString(value)->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (auto type = FFI::parseType(name))
-            return type;
-        throwTypeError(globalObject, scope, makeString("Unknown FFI type '"_s, name, "'"_s));
-        return std::nullopt;
-    }
-
-    throwTypeError(globalObject, scope, "FFI type must be a string or a number"_s);
-    return std::nullopt;
+    return FFI::typeFromJS(globalObject, value);
 }
 
 // Converts a JS value to a raw pointer with the SPEC section 5 pointer rule

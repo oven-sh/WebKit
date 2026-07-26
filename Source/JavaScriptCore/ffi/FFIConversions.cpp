@@ -64,6 +64,19 @@
 
 namespace JSC { namespace FFI {
 
+JSValue pointerToJSValue(JSGlobalObject* globalObject, uint64_t address)
+{
+    // Bun's PTR_TO_JSVALUE: null pointer -> null; an address that fits an exact double (<= 2^52)
+    // -> number; anything higher (5-level page tables / arm64 tagged pointers, oven-sh/bun#28068)
+    // -> exact BigInt instead of a silently rounded double.
+    if (!address)
+        return jsNull();
+    // 2^52: the largest magnitude every uint64 below which converts to an exact double.
+    if (address <= (static_cast<uint64_t>(1) << 52))
+        return jsNumber(static_cast<double>(address));
+    return JSBigInt::createFrom(globalObject, address);
+}
+
 // Bun's MAX_INT52 (FFI.h): the largest integer Bun's glue boxes as a Number
 // on the i64_fast / u64_fast paths.
 static constexpr int64_t maxInt52 = 9007199254740991;
@@ -541,11 +554,7 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
         // page tables / arm64 memory-tagged pointers, oven-sh/bun#28068) cannot be
         // represented exactly as a double, so those are surfaced as a BigInt
         // (the u64_fast rule) instead of silently losing bits.
-        if (!slot)
-            return jsNull();
-        if (static_cast<uint64_t>(slot) <= static_cast<uint64_t>(maxInt52))
-            return jsNumber(static_cast<double>(static_cast<uint64_t>(slot)));
-        return JSBigInt::createFrom(globalObject, static_cast<uint64_t>(slot));
+        return pointerToJSValue(globalObject, static_cast<uint64_t>(slot));
     case Type::JSValue:
         return JSValue::decode(static_cast<EncodedJSValue>(slot));
     case Type::Void:

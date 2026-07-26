@@ -170,7 +170,7 @@ void JSFFICallback::finishCreation(VM& vm, JSObject* callable)
     // don't-enum, don't-delete own properties "ptr" (the code pointer as a
     // double-encoded pointer, Bun parity) and "threadsafe" (always false in v1).
     constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-    putDirect(vm, Identifier::fromString(vm, "ptr"_s), jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(nativeEntrypoint()))), attributes);
+    putDirect(vm, Identifier::fromString(vm, "ptr"_s), FFI::pointerToJSValue(globalObject(), reinterpret_cast<uint64_t>(nativeEntrypoint())), attributes);
     putDirect(vm, Identifier::fromString(vm, "threadsafe"_s), jsBoolean(m_threadsafe), attributes);
     // NOTE: `close` is deliberately NOT an own property of the cell. The embedder's JS class
     // (whose instances ARE this cell) supplies close() on its prototype -- an own native `close`

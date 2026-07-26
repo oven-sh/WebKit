@@ -29,6 +29,7 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
+
 #if USE(JSVALUE64)
 
 #include "FFIContext.h"
@@ -63,6 +64,13 @@ JS_EXPORT_PRIVATE bool writeSlotFromJSValue(JSGlobalObject*, FFIContext&, Type, 
 // arguments (C -> JS).
 JS_EXPORT_PRIVATE JSValue jsValueFromSlot(JSGlobalObject*, FFIContext&, Type, uint64_t slot);
 
+
+// A native pointer exposed to JS: null -> null, an address <= 2^52 -> an exact double, and a
+// higher address (5-level page tables / tagged pointers) -> an exact BigInt. This is the single
+// boxing rule for every pointer surfaced to JS (return slots AND the intrinsic `.ptr`
+// properties), so `x.ptr` can always be fed back into the FFI without silently losing bits.
+JS_EXPORT_PRIVATE JSValue pointerToJSValue(JSGlobalObject*, uint64_t address);
+
 // The ONLY double -> 64-bit-integer conversions used by every tier. Their
 // semantics are DEFINED as the target hardware truncation that the JIT tiers
 // emit via MacroAssembler::truncateDoubleToInt64 (x86-64 cvttsd2si: NaN or
@@ -92,3 +100,4 @@ JSC_DECLARE_JIT_OPERATION(operationFFIArenaExit, void, (JSGlobalObject*));
 #endif // USE(JSVALUE64)
 
 #endif // USE(BUN_JSC_ADDITIONS)
+

@@ -176,7 +176,7 @@ bool JSFFIFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
     }
     if (propertyName == Identifier::fromString(vm, "ptr"_s)) [[unlikely]] {
         slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete),
-            jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(thisObject->target()))));
+            FFI::pointerToJSValue(globalObject, reinterpret_cast<uint64_t>(thisObject->target())));
         return true;
     }
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
