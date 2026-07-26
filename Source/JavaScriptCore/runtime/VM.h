@@ -980,6 +980,11 @@ public:
     JS_EXPORT_PRIVATE JSLock& apiLock();
     CodeCache* codeCache() LIFETIME_BOUND { return m_codeCache.get(); }
     IntlCache& intlCache() { return *m_intlCache; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Clears both dateCache and intlCache; callable without including IntlCache.h
+    // (which transitively includes ICU headers that Bun's C++ cannot see on macOS).
+    JS_EXPORT_PRIVATE void clearForTimeZoneChange();
+#endif
 
     JS_EXPORT_PRIVATE void whenIdle(Function<void()>&&);
 

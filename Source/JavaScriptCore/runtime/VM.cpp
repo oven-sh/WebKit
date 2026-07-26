@@ -1781,6 +1781,14 @@ bool VM::hasLanguageChange()
     return m_intlCache->hasLanguageChange();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void VM::clearForTimeZoneChange()
+{
+    intlCache().clearForTimeZoneChange();
+    dateCache.clearForTimeZoneChange();
+}
+#endif
+
 void VM::executeEntryScopeServicesOnEntry()
 {
     if (hasEntryScopeServiceRequest(EntryScopeService::FirePrimitiveGigacageEnabled)) [[unlikely]] {
