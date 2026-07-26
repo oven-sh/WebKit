@@ -60,7 +60,6 @@ bool ffi_echo_bool(bool x) { return x; }
 void* ffi_echo_ptr(void* x) { return x; }
 const char* ffi_echo_cstring(const char* x) { return x; }
 napi_value ffi_echo_napi_value(napi_value x) { return x; }
-void* ffi_recv_napi_env(napi_env env) { return env; }
 
 // ---------------------------------------------------------------------------
 // Widening / return-normalization probes.
@@ -802,7 +801,6 @@ std::span<const FFIFixtureEntry> ffiTestFixtures()
         FFI_FIXTURE(ffi_echo_ptr),
         FFI_FIXTURE(ffi_echo_cstring),
         FFI_FIXTURE(ffi_echo_napi_value),
-        FFI_FIXTURE(ffi_recv_napi_env),
         FFI_FIXTURE(ffi_widen_char),
         FFI_FIXTURE(ffi_widen_i8),
         FFI_FIXTURE(ffi_widen_u8),

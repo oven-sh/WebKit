@@ -38,10 +38,10 @@ namespace JSC {
 // (SPEC section 9). Native code calls `nativeEntrypoint()` like any C function
 // pointer of the callback's signature; the entry thunk marshals the native
 // arguments into the canonical slot buffer and re-enters JS through
-// ffiCallbackDispatch. Invoking the entry point after the object has been
-// collected is undefined behaviour, exactly like Bun's non-threadsafe
-// callbacks today: the user must keep the object alive while native code may
-// call it.
+// ffiCallbackDispatch. An un-close()d callback is ROOTED by the engine (the
+// live-callback set on FFIContext), so the cell -- and therefore its entry code --
+// stays alive as long as native code might call it, even with no JS reference;
+// close() unroots it (deferred until any queued threadsafe invocations drain).
 class JSFFICallback final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;

@@ -43,7 +43,6 @@
 
 // The engine treats jsvalue (historically napi_value) as a raw EncodedJSValue
 // pass-through, so the fixtures only need pointer/int64 stand-ins.
-typedef void* napi_env;
 typedef int64_t napi_value;
 
 extern "C" {
@@ -69,7 +68,6 @@ JS_EXPORT_PRIVATE bool ffi_echo_bool(bool);
 JS_EXPORT_PRIVATE void* ffi_echo_ptr(void*);
 JS_EXPORT_PRIVATE const char* ffi_echo_cstring(const char*);
 JS_EXPORT_PRIVATE napi_value ffi_echo_napi_value(napi_value);
-JS_EXPORT_PRIVATE void* ffi_recv_napi_env(napi_env);
 
 // ---------------------------------------------------------------------------
 // Sub-word signedness probes (missing caller-side extension) and return

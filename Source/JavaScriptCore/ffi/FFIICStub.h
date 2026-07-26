@@ -50,9 +50,9 @@ class Signature;
 // operationFFICallSlowPath (SPEC section 8.2).
 //
 // Only `target` and the signature are baked as immediates; the callee cell is
-// read from CallFrameSlot::callee and the napi env is live-loaded from the
-// global object's FFIContext, so no JSFFIFunction cell needs to exist when
-// this runs. JSFFIFunction::create() (SPEC section 8.1) calls this BEFORE
+// read from CallFrameSlot::callee at call time, so no JSFFIFunction cell needs to
+// exist when this stub is generated. JSFFIFunction::create() (SPEC section 8.1)
+// calls this BEFORE
 // allocating the cell and installs the result as the call code of a
 // diversified NativeExecutable (its generatedJITCodeForCall()), with no
 // Repatch.cpp special case. JS call sites -- the LLInt call slow path,

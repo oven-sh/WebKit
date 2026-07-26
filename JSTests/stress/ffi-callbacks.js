@@ -376,8 +376,8 @@ function main() {
     }
 
     // ---- Property surface; un-close()d callbacks are engine-rooted, so they SURVIVE gc()/fullGC()
-// (the destructor runs only after close()); the collection here checks a rooted callback
-// stays fully functional across a full GC.
+    // (the destructor runs only after close()); the collection here checks a rooted callback
+    // stays fully functional across a full GC.
     {
         const cb = callback(["i32"], "i32", x => x);
         check(typeof cb.ptr, "number", "callback .ptr is a number");

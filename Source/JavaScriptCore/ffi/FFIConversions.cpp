@@ -66,13 +66,15 @@ namespace JSC { namespace FFI {
 
 JSValue pointerToJSValue(JSGlobalObject* globalObject, uint64_t address)
 {
-    // Bun's PTR_TO_JSVALUE: null pointer -> null; an address that fits an exact double (<= 2^52)
+    // Bun's PTR_TO_JSVALUE: null pointer -> null; an address that fits an exact double (<= 2^53-1)
     // -> number; anything higher (5-level page tables / arm64 tagged pointers, oven-sh/bun#28068)
     // -> exact BigInt instead of a silently rounded double.
     if (!address)
         return jsNull();
-    // 2^52: the largest magnitude every uint64 below which converts to an exact double.
-    if (address <= (static_cast<uint64_t>(1) << 52))
+    // 2^53-1 (Number.MAX_SAFE_INTEGER): every integer <= this is an EXACT double, so such a
+    // pointer is a plain number; a higher address (5-level page tables / tagged pointers) is
+    // surfaced as an exact BigInt. Same bound as maxInt52 below and the JS fuzz oracle.
+    if (address <= static_cast<uint64_t>(9007199254740991ULL))
         return jsNumber(static_cast<double>(address));
     return JSBigInt::createFrom(globalObject, address);
 }

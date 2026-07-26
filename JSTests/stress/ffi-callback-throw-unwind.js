@@ -27,9 +27,8 @@ for (let i = 0; i < 100000; ++i) {
     out = "PROPAGATED:" + e.constructor.name;               // <-- the ONLY correct outcome
   }
   if (out !== "PROPAGATED:RangeError") {
-    print("WRONG at iteration " + i + ": " + out);
-    print("  (EARLY_HANDLER means the exception was routed to the try's stale handler)");
-    break;
+    throw new Error("WRONG at iteration " + i + ": " + out +
+        "  (EARLY_HANDLER means the exception was routed to the try's stale handler)");
   }
 }
 if (out === "PROPAGATED:RangeError") print("OK: callback exception propagated correctly in all tiers");
