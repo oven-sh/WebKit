@@ -1603,6 +1603,18 @@ static ProxyObject::Field NODELETE proxyInternalFieldIndex(BytecodeIntrinsicNode
     return ProxyObject::Field::Target;
 }
 
+RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getInternalField(BytecodeGenerator& generator, RegisterID* dst)
+{
+    ArgumentListNode* node = m_args->m_listNode;
+    RefPtr<RegisterID> base = generator.emitNode(node);
+    node = node->m_next;
+    RELEASE_ASSERT(node->m_expr->isNumber());
+    unsigned index = static_cast<unsigned>(static_cast<IntegerNode*>(node->m_expr)->value());
+    ASSERT(!node->m_next);
+
+    return generator.emitGetInternalField(generator.finalDestination(dst), base.get(), index);
+}
+
 static JSWrapForValidIterator::Field NODELETE wrapForValidIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);

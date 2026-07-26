@@ -231,17 +231,17 @@ AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalOb
 void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const ModuleRequest& request, AbstractModuleRecord* record)
 {
     VM& vm = globalObject->vm();
-    // visitChildrenImpl() walks both maps under cellLock(); take the same lock
-    // for mutation so a concurrent marker thread can't observe a mid-rehash
+    // visitChildrenImpl() walks m_loadedModules under cellLock(); take the same
+    // lock for mutation so a concurrent marker thread can't observe a mid-rehash
     // bucket array (matches finishLoadingImportedModule's locking).
-    Locker locker { cellLock() };
-    m_dependencies.set(request.m_specifier.string(), WriteBarrier<AbstractModuleRecord>(vm, this, record));
+    //
     // innerModuleLinking/innerModuleEvaluation walk loadedModules() via
     // getImportedModule(), so records that are linked outside the loader (Bun's
     // node:vm SourceTextModule) need this map populated too. Reuse the original
     // ModuleRequest (specifier + attributes) so a `with { type: "json" }` /
     // HostDefined import lands in the same (specifier, type) bucket that
     // getImportedModule()'s typed lookup will use.
+    Locker locker { cellLock() };
     ModuleMapKey key { request.m_specifier.impl(), request.type() };
     m_loadedModules.set(key, LoadedModuleRequest { vm, request, record, this });
 }
