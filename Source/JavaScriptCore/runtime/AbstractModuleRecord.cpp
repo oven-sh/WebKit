@@ -221,7 +221,11 @@ auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
 
 AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    for (auto type : { ScriptFetchParameters::Type::JavaScript, ScriptFetchParameters::Type::JSON, ScriptFetchParameters::Type::WebAssembly, ScriptFetchParameters::Type::HostDefined, ScriptFetchParameters::Type::None }) {
+#else
     for (auto type : { ScriptFetchParameters::Type::JavaScript, ScriptFetchParameters::Type::JSON, ScriptFetchParameters::Type::WebAssembly, ScriptFetchParameters::Type::None }) {
+#endif
         if (auto iter = m_loadedModules.find(ModuleMapKey { moduleName.impl(), type }); iter != m_loadedModules.end())
             return iter->value.m_module.get();
     }
