@@ -179,7 +179,7 @@ static std::optional<size_t> NODELETE stackSize(ThreadType threadType)
 #endif
 }
 
-#if PLATFORM(COCOA) || OS(LINUX)
+#if PLATFORM(COCOA) || (OS(LINUX) && !USE(BUN_JSC_ADDITIONS))
 // uid 1 is reserved for the main thread, assigned in Thread::initializeCurrentTLS
 // when current thread is detected as main thread. ++s_uid yields >= 2 for every non-main thread.
 std::atomic<uint32_t> ThreadLike::s_uid { 1 };

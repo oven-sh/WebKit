@@ -464,7 +464,12 @@ Thread& Thread::initializeCurrentTLS()
     WTF::initialize();
 #if PLATFORM(COCOA)
     Ref thread = adoptRef(*new Thread(SchedulingPolicy::Other, pthread_main_np() ? IsMain::Yes : IsMain::No));
-#elif OS(LINUX)
+#elif OS(LINUX) && !USE(BUN_JSC_ADDITIONS)
+    // Bun may call initializeMainThread() from a bundler worker thread (macro
+    // evaluation spins up a JSC VM off the process main thread). Keying the
+    // reserved uid 1 on getpid()==gettid() would leave that "WebKit main" with
+    // uid >= 2 and trip the RELEASE_ASSERT in initializeMainThread(), so fall
+    // through to the first-thread-gets-uid-1 behaviour instead.
     Ref thread = adoptRef(*new Thread(SchedulingPolicy::Other, getpid() == static_cast<pid_t>(syscall(SYS_gettid)) ? IsMain::Yes : IsMain::No));
 #else
     Ref thread = adoptRef(*new Thread(SchedulingPolicy::Other));
