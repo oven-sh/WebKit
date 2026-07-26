@@ -340,7 +340,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     setNumParameters(other.numParameters(), allocateArgumentValueProfiles);
 
     ASSERT(m_couldBeTainted == (taintednessToTriState(source().provider()->sourceTaintedOrigin()) != TriState::False));
-    m_lastExecutionCountForAging = m_unlinkedCode->llintExecuteCounter().count();
+    m_previousCounter = m_unlinkedCode->llintExecuteCounter().count();
     vm.heap.codeBlockSet().add(this);
     checker().set(CrashChecker::This, checker().hash(this));
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
@@ -391,7 +391,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     setNumParameters(unlinkedCodeBlock->numParameters(), allocateArgumentValueProfiles);
 
     m_couldBeTainted = source().provider()->couldBeTainted();
-    m_lastExecutionCountForAging = m_unlinkedCode->llintExecuteCounter().count();
+    m_previousCounter = m_unlinkedCode->llintExecuteCounter().count();
     vm.heap.codeBlockSet().add(this);
     checker().set(CrashChecker::This, checker().hash(this));
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
@@ -1325,7 +1325,13 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         // that the next iteration will immediately relink, re-profile and re-JIT.
         // Optimizing-tier blocks have no cheap per-entry counter and keep the
         // existing pure-TTL policy.
-        double currentCount = 0;
+        //
+        // The snapshot lives in m_previousCounter, which updateActivity() in
+        // finalizeUnconditionally also writes for UnlinkedCodeBlock aging when
+        // VM::useUnlinkedCodeBlockJettisoning() is enabled. Both sites store the
+        // same current count for the same tier, so they agree; outside that mode
+        // updateActivity() never touches the field.
+        float currentCount = 0;
         bool hasCounter = false;
         switch (type) {
         case JITType::InterpreterThunk:
@@ -1343,8 +1349,8 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         default:
             break;
         }
-        if (hasCounter && currentCount != m_lastExecutionCountForAging) {
-            m_lastExecutionCountForAging = currentCount;
+        if (hasCounter && currentCount != m_previousCounter) {
+            m_previousCounter = currentCount;
             // Push the effective creation time forward so the block is not
             // considered for old-age jettison again until leaseMultiplier * ttl
             // has elapsed with no observed execution.

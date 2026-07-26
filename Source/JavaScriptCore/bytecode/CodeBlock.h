@@ -1021,7 +1021,6 @@ private:
     WriteBarrier<CodeBlock> m_alternative;
 
     ApproximateTime m_creationTime;
-    double m_lastExecutionCountForAging { 0 };
 
     std::unique_ptr<RareData> m_rareData;
     NO_UNIQUE_ADDRESS CrashChecker m_checker;

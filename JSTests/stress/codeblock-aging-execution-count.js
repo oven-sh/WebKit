@@ -32,9 +32,9 @@ idle(0);
 var activeJettisons = 0;
 for (var iter = 0; iter < 30; iter++) {
     shouldBe(runActive(), expected, "iter " + iter);
-    // Let the eager TTL (InterpreterThunk = 10ms) elapse.
+    // Let the eager TTL elapse (InterpreterThunk = 10ms, BaselineJIT = 30ms).
     var start = preciseTime();
-    while (preciseTime() - start < 0.025) { }
+    while (preciseTime() - start < 0.060) { }
     fullGC();
     for (var i = 0; i < N; i++) {
         if ($vm.codeBlockFor(active[i]) === undefined)
