@@ -586,9 +586,11 @@ void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
         }
     } retire { callback };
 
-    if (callback->isClosed()) [[unlikely]]
-        return;
-
+    // Deliver even if close() has since run. close() only stops NEW foreign-thread calls from
+    // being accepted (tryBeginThreadsafeInvocation() refuses once closed); an invocation that
+    // was accepted while the callback was open is a commitment and must still reach the JS
+    // callable (Bun parity: cc()/ffi threadsafe callbacks drain their queue after close()). The
+    // count keeps the cell rooted until this drains, so the callable is guaranteed alive here.
     JSGlobalObject* globalObject = callback->globalObject();
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
