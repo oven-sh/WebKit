@@ -30,6 +30,7 @@
 
 #include "Error.h"
 #include "FFICallHost.h"
+#include "FFIConversions.h"
 #include "FFISignature.h"
 #include "JITCode.h"
 #include "JSCInlines.h"

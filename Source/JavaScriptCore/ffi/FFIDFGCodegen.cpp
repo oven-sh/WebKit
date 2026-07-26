@@ -596,10 +596,10 @@ void SpeculativeJIT::compileCallFFI(Node* node)
         GPRReg slotValueGPR = slotValue.gpr();
         GPRReg resultGPR = result.gpr();
         load64(returnSlot, slotValueGPR);
+        // operationFFIBoxSlot allocates (heap BigInts) and can throw OOM; the exception check for
+        // it is emitted by callOperation() itself (operationExceptionCheck), like every other DFG
+        // boxing site, so no explicit exceptionCheck() follows.
         callOperation(operationFFIBoxSlot, resultGPR, TrustedImmPtr(frozenGlobalObject), TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(signature.returnType()))), slotValueGPR);
-        // operationFFIBoxSlot allocates (heap BigInts) and can throw OOM; the FTL and IC-stub twins
-        // of this path check, so must the DFG.
-        exceptionCheck();
         jsValueResult(resultGPR, node);
         break;
     }

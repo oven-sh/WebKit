@@ -571,7 +571,8 @@ namespace FFI {
 // i64/u64/large pointers is done here, on the JS thread, never off-thread) and invokes the
 // callable. The C caller received 0 long ago, so the JS return value is discarded. Delivery is
 // UNCONDITIONAL, even if close() ran after this record was accepted: close() only refuses NEW
-// foreign-thread calls; an invocation accepted while open is a commitment. Any exception is left pending for the embedder's task machinery to report as it does for any
+// foreign-thread calls; an invocation accepted while open is a commitment. Any exception is
+// left pending for the embedder's task machinery to report as it does for any
 // posted task -- there is no outer FFI call site to surface it to.
 void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
 {

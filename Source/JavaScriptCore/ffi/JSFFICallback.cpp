@@ -29,6 +29,7 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 #include "Error.h"
+#include "FFIConversions.h"
 #include "ExceptionHelpers.h"
 #include "FFICallbackThunk.h"
 #include "JSCInlines.h"

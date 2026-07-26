@@ -15307,13 +15307,6 @@ IGNORE_CLANG_WARNINGS_END
 
         Vector<LValue> keepAliveValues;
 
-        // DIRECT-CALL path (no invoke thunk): when every argument converts to a SINGLE typed SSA
-        // value (int32-family / bool / f32 / f64 via KnownInt32/KnownBoolean/DoubleRep) and there
-        // is no string arena and a scalar/void return, call the native target straight from B3 as
-        // a CCallValue with the arguments in registers. This removes the thunk's extra call/ret +
-        // frame and the store-then-reload of every argument through the slot buffer. UntypedUse
-        // arguments (which convert into their slot from several basic blocks) and everything
-        // else keep the thunk path unchanged.
         // DIRECT-CALL: the native target is a compile-time constant here, so the FTL calls it
         // straight from B3 as a CCallValue with the arguments in registers -- no invoke thunk (its
         // extra call/ret + frame + slot-buffer store/reload disappear). Arguments the JIT lowers to
