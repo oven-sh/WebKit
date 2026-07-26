@@ -2289,7 +2289,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixtures);
 static JSC_DECLARE_HOST_FUNCTION(functionFFISignatureString);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIRead);
-static JSC_DECLARE_HOST_FUNCTION(functionFFIReadObject);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIWrite);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICString);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICompileCounts);
