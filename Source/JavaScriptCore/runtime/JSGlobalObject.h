@@ -1110,8 +1110,9 @@ public:
     Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }
     Structure* ffiFunctionStructure() const { return m_ffiFunctionStructure.get(this); }
     Structure* ffiCallbackStructure() const { return m_ffiCallbackStructure.get(this); }
-    // Per-global bun:ffi state (napi env pointer, UTF-8 string cache, call-scoped string arena).
-    // Lazily created; holds no GC-visited references.
+    // Per-global bun:ffi state (UTF-8 string cache, call-scoped string arena, live-callback
+    // root set). Lazily created; the live-callback set is GC-visited from
+    // JSGlobalObject::visitChildren (under this object's cellLock).
     JS_EXPORT_PRIVATE FFI::FFIContext& ffiContext();
 #endif
 

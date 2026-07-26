@@ -15523,6 +15523,15 @@ IGNORE_CLANG_WARNINGS_END
                 } else if (type == FFI::Type::Float) {
                     // Same, for f32: the slot's low 32 bits are the float (SPEC section 4).
                     directOperands.append(m_out.loadFloat(slotPointer(i)));
+                } else if (FFI::nativeSizeInBytes(type) <= 4) {
+                    // UntypedUse for a <=32-bit integer parameter (i32/u32 now that the speculation
+                    // is profile-gated, plus char/i8/u8/i16/u16/bool): the slot holds the value already
+                    // widened to 32 bits, and the operand must be a B3 Int32 -- load64 would hand
+                    // CCallValue an Int64, which lays a STACK argument at 8-byte stride, but Darwin/
+                    // arm64 packs a stacked int32_t/uint32_t at 4-byte natural stride, so every
+                    // subsequent stacked argument would shift. castToInt32 keeps the width honest on
+                    // every ABI (in a register the low 32 bits are what the callee reads anyway).
+                    directOperands.append(m_out.castToInt32(m_out.load64(slotPointer(i))));
                 } else
                     directOperands.append(m_out.load64(slotPointer(i)));
             }

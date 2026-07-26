@@ -4861,16 +4861,23 @@ static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation& invocation)
     threadsafeQueue().append(&invocation);
 }
 static JSC_DECLARE_HOST_FUNCTION(functionDrainThreadsafeCallbacks);
-JSC_DEFINE_HOST_FUNCTION(functionDrainThreadsafeCallbacks, (JSGlobalObject*, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(functionDrainThreadsafeCallbacks, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<RefPtr<FFI::ThreadsafeInvocation>> pending;
     {
         Locker locker { s_threadsafeQueueLock };
         pending = std::exchange(threadsafeQueue(), { });
     }
-    for (auto& invocation : pending)
+    // runThreadsafeInvocation leaves any exception the callable threw pending (there is no C
+    // caller to hand it to); stop draining and propagate rather than running the next invocation
+    // with an exception already on the VM.
+    for (auto& invocation : pending) {
         FFI::runThreadsafeInvocation(*invocation);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return JSValue::encode(jsNumber(pending.size()));
 }
 

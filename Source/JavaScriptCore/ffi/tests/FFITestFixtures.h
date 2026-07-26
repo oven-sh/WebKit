@@ -195,6 +195,11 @@ JS_EXPORT_PRIVATE int32_t ffi_call_cb_reentrant(int32_t (*cb)(int32_t), int32_t 
 JS_EXPORT_PRIVATE int64_t ffi_call_cb_i32_x9(int64_t (*cb)(int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t), int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t);
 JS_EXPORT_PRIVATE double ffi_call_cb_f64_x9(double (*cb)(double, double, double, double, double, double, double, double, double), double, double, double, double, double, double, double, double, double);
 JS_EXPORT_PRIVATE int64_t ffi_call_cb_u8_x10(int64_t (*cb)(uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t), uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t);
+// Ten int32 parameters: on AAPCS64 the 9th and 10th spill to the STACK, where Darwin/arm64
+// packs them at 4-byte natural stride. Weighted so a mis-strided or shifted stack argument
+// changes the sum. (Regression: an UntypedUse i32 direct-call operand must be a B3 Int32, not
+// Int64, or CCallValue lays it at 8-byte stride.)
+JS_EXPORT_PRIVATE int64_t ffi_sum_i32_x10(int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t);
 // Threadsafe-callback fixtures: spawn a FOREIGN OS thread that invokes cb with the given values,
 // join it, and return. A threadsafe callback must not run inline (it is queued for the JS thread).
 JS_EXPORT_PRIVATE void ffi_call_cb_from_thread(void (*cb)(int32_t, int64_t, uint64_t, double), int32_t a, int64_t b, uint64_t c, double d);

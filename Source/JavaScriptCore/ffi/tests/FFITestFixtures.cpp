@@ -350,6 +350,15 @@ int64_t ffi_call_cb_u8_x10(int64_t (*cb)(uint8_t, uint8_t, uint8_t, uint8_t, uin
     return cb(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
 }
 
+int64_t ffi_sum_i32_x10(int32_t a0, int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5, int32_t a6, int32_t a7, int32_t a8, int32_t a9)
+{
+    // Weight each argument by its position so a shifted/mis-strided stack slot is detectable.
+    return static_cast<int64_t>(a0) * 1 + static_cast<int64_t>(a1) * 2 + static_cast<int64_t>(a2) * 3
+        + static_cast<int64_t>(a3) * 4 + static_cast<int64_t>(a4) * 5 + static_cast<int64_t>(a5) * 6
+        + static_cast<int64_t>(a6) * 7 + static_cast<int64_t>(a7) * 8 + static_cast<int64_t>(a8) * 9
+        + static_cast<int64_t>(a9) * 10;
+}
+
 // Spawns a FOREIGN OS thread that invokes cb(a, b, c, d) exactly once, then joins it. Being
 // entered off the JS thread is the whole point: it exercises the threadsafe dispatch path, which
 // must copy raw slots and hand off to the embedder WITHOUT touching the VM off-thread.
@@ -873,6 +882,7 @@ std::span<const FFIFixtureEntry> ffiTestFixtures()
         FFI_FIXTURE(ffi_call_cb_ret_ptr),
         FFI_FIXTURE(ffi_call_cb_then_read_u32),
         FFI_FIXTURE(ffi_canary_call),
+        FFI_FIXTURE(ffi_sum_i32_x10),
         FFI_FIXTURE(ffi_call_cb_from_thread),
         FFI_FIXTURE(ffi_align_probe_0),
         FFI_FIXTURE(ffi_align_probe_9),
