@@ -72,6 +72,10 @@ RefPtr<PolyProtoAccessChain> PolyProtoAccessChain::tryCreate(JSGlobalObject* glo
         // If we found it, then traverse should stop for Unset case.
         // https://262.ecma-international.org/9.0/#_ref_2826
         if (!target && isTypedArrayType(structure->typeInfo().type()) && isCanonicalNumericIndexString(propertyName.uid())) {
+            // Absence of an integer index on a TypedArray is length-dependent, not
+            // structure-dependent, so refuse to cache it. See generateConditions().
+            if (parseTypedArrayIndex(PropertyName(propertyName.uid())))
+                return nullptr;
             found = true;
             break;
         }

@@ -312,8 +312,15 @@ ObjectPropertyConditionSet generateConditions(JSGlobalObject* globalObject, Stru
         // TypedArray has an ability to stop [[Prototype]] traversing for numeric index string (e.g. "0.1").
         // If we found it, then traverse should stop for Unset case.
         // https://262.ecma-international.org/9.0/#_ref_2826
-        if (!prototype && isTypedArrayType(structure->typeInfo().type()) && uid && isCanonicalNumericIndexString(uid))
+        if (!prototype && isTypedArrayType(structure->typeInfo().type()) && uid && isCanonicalNumericIndexString(uid)) {
+            // Absence of an integer index on a TypedArray is length-dependent, not
+            // structure-dependent. parseIndex() already keeps 0..MAX_ARRAY_INDEX out of
+            // this path; only UINT32_MAX can reach here as a canonical numeric string
+            // that is also a valid TypedArray index.
+            if (parseTypedArrayIndex(PropertyName(uid)))
+                return ObjectPropertyConditionSet::invalid();
             break;
+        }
         
         JSValue value = structure->prototypeForLookup(globalObject);
         
@@ -612,6 +619,10 @@ static std::optional<PrototypeChainCachingStatus> prepareChainForCaching(JSGloba
         // If we found it, then traverse should stop for Unset case.
         // https://262.ecma-international.org/9.0/#_ref_2826
         if (!target && propertyName && isTypedArrayType(structure->typeInfo().type()) && isCanonicalNumericIndexString(propertyName)) {
+            // Absence of an integer index on a TypedArray is length-dependent, not
+            // structure-dependent, so refuse to cache it. See generateConditions().
+            if (parseTypedArrayIndex(PropertyName(propertyName)))
+                return std::nullopt;
             found = true;
             break;
         }

@@ -526,7 +526,7 @@ bool JSGenericTypedArrayView<Adaptor>::getOwnPropertySlot(
 {
     JSGenericTypedArrayView* thisObject = uncheckedDowncast<JSGenericTypedArrayView>(object);
 
-    if (std::optional<uint32_t> index = parseIndex(propertyName))
+    if (std::optional<uint32_t> index = parseTypedArrayIndex(propertyName))
         return getOwnPropertySlotByIndex(thisObject, globalObject, index.value(), slot);
 
     if (isCanonicalNumericIndexString(propertyName.uid()))
@@ -543,7 +543,7 @@ bool JSGenericTypedArrayView<Adaptor>::put(
     JSGenericTypedArrayView* thisObject = uncheckedDowncast<JSGenericTypedArrayView>(cell);
 
     // https://tc39.es/ecma262/#sec-typedarray-set
-    if (std::optional<uint32_t> index = parseIndex(propertyName)) {
+    if (std::optional<uint32_t> index = parseTypedArrayIndex(propertyName)) {
         if (isThisValueAltered(slot, thisObject)) [[unlikely]] {
             if (thisObject->isDetached() || !thisObject->inBounds(index.value()))
                 return true;
@@ -572,7 +572,7 @@ bool JSGenericTypedArrayView<Adaptor>::defineOwnProperty(
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSGenericTypedArrayView* thisObject = uncheckedDowncast<JSGenericTypedArrayView>(object);
 
-    if (std::optional<uint32_t> index = parseIndex(propertyName)) {
+    if (std::optional<uint32_t> index = parseTypedArrayIndex(propertyName)) {
         auto throwTypeErrorIfNeeded = [&] (ASCIILiteral errorMessage) -> bool {
             if (shouldThrow)
                 throwTypeError(globalObject, scope, makeString(errorMessage, *index));
@@ -616,7 +616,7 @@ bool JSGenericTypedArrayView<Adaptor>::deleteProperty(
 {
     JSGenericTypedArrayView* thisObject = uncheckedDowncast<JSGenericTypedArrayView>(cell);
 
-    if (std::optional<uint32_t> index = parseIndex(propertyName))
+    if (std::optional<uint32_t> index = parseTypedArrayIndex(propertyName))
         return deletePropertyByIndex(thisObject, globalObject, index.value());
 
     if (isCanonicalNumericIndexString(propertyName.uid()))
