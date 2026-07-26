@@ -74,7 +74,7 @@ public:
     // non-canonical structure loses the callee fast paths on POLYMORPHIC (non-devirtualized)
     // call sites: measured ~2.5x slower per call. Keeping the structure canonical keeps every
     // call site fast, not just the ones the DFG turns into CallFFI.
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnSpecialPropertyNames;
 
     static constexpr DestructionMode needsDestruction = NeedsDestruction; // Holds Ref<Signature> + RefPtr<JITCode>.
     static void destroy(JSCell*);
@@ -117,8 +117,11 @@ public:
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     // Keep enumeration coherent with the intrinsic slots above: `ptr` / `native` are real own
-    // properties of the cell, so Object.getOwnPropertyNames / `"ptr" in fn` must agree with reads.
-    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    // properties, so ownKeys / `"ptr" in fn` must agree with reads. They are non-indexed STRING
+    // keys, so they belong in getOwnSpecialPropertyNames (the hook JSFunction uses for length/name)
+    // AFTER Base contributes indexed keys and its own specials -- overriding getOwnPropertyNames
+    // and prepending would order string keys before integer indices (OrdinaryOwnPropertyKeys).
+    static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     // The intrinsic ptr/native slots are ReadOnly|DontDelete. put/deleteProperty consult the
     // Structure (never getOwnPropertySlot), so without these overrides a strict-mode `delete fn.ptr`
     // would return true and `fn.ptr = 42` would silently transition this cell's Structure -- both

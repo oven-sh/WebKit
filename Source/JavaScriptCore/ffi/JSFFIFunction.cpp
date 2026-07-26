@@ -207,17 +207,19 @@ bool JSFFIFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, P
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
 
-void JSFFIFunction::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
+void JSFFIFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
-    // Both intrinsic properties are DontEnum (they must not perturb for-in / spread / JSON), so
-    // they only appear when non-enumerable properties are requested (getOwnPropertyNames,
-    // Reflect.ownKeys), matching what getOwnPropertySlot reports for them.
+    // Base (JSFunction) first: indexed keys are contributed by the ordinary machinery ahead of
+    // the specials, and JSFunction adds its own intrinsic length/name here -- so appending after
+    // keeps integer indices before string keys (OrdinaryOwnPropertyKeys). Both FFI intrinsics
+    // are DontEnum (they must not perturb for-in / spread / JSON), so they appear only when
+    // non-enumerable properties are requested, matching what getOwnPropertySlot reports.
+    Base::getOwnSpecialPropertyNames(object, globalObject, propertyNames, mode);
     VM& vm = object->vm();
     if (mode == DontEnumPropertiesMode::Include) {
         propertyNames.add(Identifier::fromString(vm, "ptr"_s));
         propertyNames.add(Identifier::fromString(vm, "native"_s));
     }
-    Base::getOwnPropertyNames(object, globalObject, propertyNames, mode);
 }
 
 } // namespace JSC
