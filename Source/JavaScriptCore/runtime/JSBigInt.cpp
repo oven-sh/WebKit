@@ -1024,6 +1024,118 @@ void JSBigInt::multiplySpecialHigh(std::span<const Digit> xSpan, std::span<const
 
 #undef MULTIPLY_BODY
 
+// Scratch space (in Digits) needed for multiplyKaratsuba where the larger
+// operand has {larger} digits. See the recurrence in multiplyKaratsuba:
+// each balanced level consumes 4*half+4 before recursing on half+1, which
+// sums to 4*larger plus a constant per level.
+size_t JSBigInt::karatsubaScratchSize(size_t larger)
+{
+    size_t depth = 0;
+    for (size_t n = larger; n >= karatsubaThreshold; n = (n >> 1) + 2)
+        ++depth;
+    return 4 * larger + 16 * depth + 32;
+}
+
+// Z[0..|x|+|y|) := X * Y via Karatsuba. Requires |x| >= |y| >= 1.
+// Writes exactly |x|+|y| digits. Z must not alias X, Y or scratch.
+void JSBigInt::multiplyKaratsuba(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch)
+{
+    ASSERT(x.size() >= y.size());
+    ASSERT(!y.empty());
+    ASSERT(z.size() == x.size() + y.size());
+
+    if (y.size() < karatsubaThreshold) {
+        if (y.size() == 1) {
+            auto filled = multiplySingle(x, y[0], z);
+            if (filled.size() < z.size())
+                zeroSpan(z.subspan(filled.size()));
+        } else
+            multiplyTextbook(x, y, z);
+        return;
+    }
+
+    size_t half = (x.size() + 1) >> 1;
+    auto x0 = x.first(half);
+    auto x1 = x.subspan(half);
+
+    if (y.size() <= half) {
+        // Unbalanced: no three-way split benefit. Compute x0*y and x1*y
+        // separately and accumulate; recursion shrinks the larger side.
+        auto z0 = z.first(half + y.size());
+        multiplyKaratsuba(z0, x0, y, scratch);
+        zeroSpan(z.subspan(z0.size()));
+
+        size_t pSize = x1.size() + y.size();
+        auto p = scratch.first(pSize);
+        auto childScratch = scratch.subspan(pSize);
+        if (x1.size() >= y.size())
+            multiplyKaratsuba(p, x1, y, childScratch);
+        else
+            multiplyKaratsuba(p, y, x1, childScratch);
+
+        auto zHigh = z.subspan(half);
+        ASSERT(zHigh.size() == pSize);
+        Digit carry = inplaceAdd(zHigh, p);
+        ASSERT_UNUSED(carry, !carry);
+        return;
+    }
+
+    auto y0 = y.first(half);
+    auto y1 = y.subspan(half);
+
+    // z0 = x0*y0 in z[0 .. 2*half), z2 = x1*y1 in z[2*half .. |x|+|y|).
+    // They tile z exactly: 2*half + (|x1|+|y1|) = 2*half + |x|+|y| - 2*half.
+    auto z0 = z.first(2 * half);
+    auto z2 = z.subspan(2 * half);
+    multiplyKaratsuba(z0, x0, y0, scratch);
+    multiplyKaratsuba(z2, x1, y1, scratch);
+
+    // p = (x0+x1)*(y0+y1); z1 = p - z0 - z2; z[half..) += z1.
+    auto xs = scratch.first(half + 1);
+    auto ys = scratch.subspan(half + 1, half + 1);
+    auto p = scratch.subspan(2 * half + 2, 2 * half + 2);
+    auto childScratch = scratch.subspan(4 * half + 4);
+
+    addTextbook(x0, x1, xs);
+    addTextbook(y0, y1, ys);
+
+    auto xsN = normalize(std::span<const Digit>(xs));
+    auto ysN = normalize(std::span<const Digit>(ys));
+    if (xsN.empty() || ysN.empty())
+        zeroSpan(p);
+    else {
+        if (xsN.size() < ysN.size())
+            std::swap(xsN, ysN);
+        auto pFill = p.first(xsN.size() + ysN.size());
+        multiplyKaratsuba(pFill, xsN, ysN, childScratch);
+        if (pFill.size() < p.size())
+            zeroSpan(p.subspan(pFill.size()));
+    }
+
+    auto subtractFrom = [](std::span<Digit> acc, std::span<const Digit> v) {
+        Digit borrow = subtractAndReturnBorrow(acc.first(v.size()), acc.first(v.size()), v);
+        for (size_t i = v.size(); borrow && i < acc.size(); ++i) {
+            Digit b = 0;
+            acc[i] = digitSub(acc[i], borrow, b);
+            borrow = b;
+        }
+        ASSERT(!borrow);
+    };
+    subtractFrom(p, z0);
+    subtractFrom(p, z2);
+
+    auto pN = normalize(std::span<const Digit>(p));
+    auto zMid = z.subspan(half);
+    ASSERT(pN.size() <= zMid.size());
+    Digit carry = inplaceAdd(zMid.first(pN.size()), pN);
+    for (size_t i = pN.size(); carry && i < zMid.size(); ++i) {
+        Digit c = 0;
+        zMid[i] = digitAdd(zMid[i], carry, c);
+        carry = c;
+    }
+    ASSERT(!carry);
+}
+
 template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::multiplyImpl(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
@@ -1091,6 +1203,11 @@ JSBigInt::ImplResult JSBigInt::multiplyImpl(JSGlobalObject* globalObject, BigInt
         }
         if (y.size() == 1)
             return multiplySingle(x, y[0], span);
+        if (y.size() >= karatsubaThreshold) {
+            Vector<Digit> scratch(karatsubaScratchSize(x.size()));
+            multiplyKaratsuba(span, x, y, scratch.mutableSpan());
+            return span;
+        }
         return multiplyTextbook(x, y, span);
     }(xSpan, ySpan, bigInt->digits()));
     ASSERT(!result.empty());
@@ -1600,6 +1717,236 @@ std::span<JSBigInt::Digit> JSBigInt::remainderSameSize(std::span<Digit> r, std::
     return r.first(n);
 }
 
+// Burnikel-Ziegler recursive division.
+// J. Burnikel and J. Ziegler, "Fast Recursive Division", MPI-I-98-1-022, 1998.
+//
+// The two mutually-recursive cores (bzD2n1n / bzD3n2n) operate on a divisor B
+// of exactly n digits whose top digit has its MSB set. n is always even above
+// the base case because the public entry point pads B to a multiple of a power
+// of two before calling in.
+
+// Algorithm D3n/2n: divides [A1A2:A3] (3n digits) by B (2n digits).
+// Q receives the n-digit quotient, R the 2n-digit remainder (< B).
+// Precondition: A1A2 < B (so the quotient fits in n digits).
+void JSBigInt::bzD3n2n(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a1a2, std::span<const Digit> a3, std::span<const Digit> b, std::span<Digit> scratch)
+{
+    size_t n = a3.size();
+    ASSERT(b.size() == 2 * n);
+    ASSERT(a1a2.size() == 2 * n);
+    ASSERT(q.size() == n);
+    ASSERT(r.size() == 2 * n);
+
+    auto b1 = b.subspan(n, n);
+    auto b2 = b.first(n);
+    auto a1 = a1a2.subspan(n, n);
+
+    // R acts as the running remainder: r[n..2n) holds R1 after step 1,
+    // then r becomes [R1:A3] - D.
+    auto r1 = r.subspan(n, n);
+    Digit r1Carry = 0;
+
+    if (compareDigits(a1, b1) == ComparisonResult::LessThan) {
+        bzD2n1n(q, r1, a1a2, b1, scratch);
+    } else {
+        // A1 == B1 (since A1A2 < B implies A1 <= B1). Qhat = beta^n - 1,
+        // R1 = A1A2 - Qhat*B1 = (A1-B1)*beta^n + A2 + B1 = A2 + B1.
+        for (size_t i = 0; i < n; ++i)
+            q[i] = std::numeric_limits<Digit>::max();
+        r1Carry = addAndReturnCarry(r1, a1a2.first(n), b1);
+    }
+
+    // D = Qhat * B2 in scratch[0..2n), then Rhat = [R1:A3] - D.
+    auto d = scratch.first(2 * n);
+    auto childScratch = scratch.subspan(2 * n);
+    {
+        auto qN = normalize(std::span<const Digit>(q));
+        auto b2N = normalize(b2);
+        if (qN.empty() || b2N.empty())
+            zeroSpan(d);
+        else {
+            auto lhs = qN;
+            auto rhs = b2N;
+            if (lhs.size() < rhs.size())
+                std::swap(lhs, rhs);
+            auto dFill = d.first(lhs.size() + rhs.size());
+            multiplyKaratsuba(dFill, lhs, rhs, childScratch);
+            if (dFill.size() < d.size())
+                zeroSpan(d.subspan(dFill.size()));
+        }
+    }
+
+    memcpySpan(r.first(n), a3);
+    Digit borrow = subtractAndReturnBorrow(r, r, d);
+    // Fold the extra R1 carry (0 or 1) in: conceptually Rhat had a digit at
+    // position 2n equal to r1Carry - borrow.
+    Digit rHigh = r1Carry - borrow;
+
+    // Rhat may be negative: correct by adding B and decrementing Q (paper
+    // bounds this at two iterations).
+    while (rHigh >> (digitBits - 1)) {
+        rHigh += inplaceAdd(r, b);
+        Digit qBorrow = 1;
+        for (size_t i = 0; qBorrow && i < n; ++i) {
+            Digit bOut = 0;
+            q[i] = digitSub(q[i], qBorrow, bOut);
+            qBorrow = bOut;
+        }
+    }
+    ASSERT(!rHigh);
+}
+
+// Algorithm D2n/1n: divides A (2n digits) by B (n digits, top bit set).
+// Precondition: A < beta^n * B (so the quotient fits in n digits).
+void JSBigInt::bzD2n1n(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b, std::span<Digit> scratch)
+{
+    size_t n = b.size();
+    ASSERT(a.size() == 2 * n);
+    ASSERT(q.size() == n);
+    ASSERT(r.size() == n);
+
+    if ((n & 1) || n < burnikelZieglerThreshold) {
+        // The public entry point pads B so that halving reaches this branch
+        // with n below the threshold; the odd check is purely defensive.
+        auto aN = normalize(a);
+        if (compareDigits(aN, b) == ComparisonResult::LessThan) {
+            zeroSpan(q);
+            memcpySpan(r.first(aN.size()), aN);
+            zeroSpan(r.subspan(aN.size()));
+            return;
+        }
+        // divideTextbook may need n+1 quotient slots even though the
+        // precondition guarantees the top one is zero.
+        Vector<Digit, burnikelZieglerThreshold + 1> qTmp(aN.size() - n + 1);
+        auto [qs, rs] = divideTextbook(qTmp.mutableSpan(), r, aN, b);
+        qs = normalize(qs);
+        ASSERT(qs.size() <= n);
+        memcpySpan(q.first(qs.size()), qs);
+        zeroSpan(q.subspan(qs.size()));
+        if (rs.size() < r.size())
+            zeroSpan(r.subspan(rs.size()));
+        return;
+    }
+
+    size_t half = n >> 1;
+    // First split: divide the top 3*half digits of A by B.
+    // The intermediate n-digit remainder lives in scratch so the second
+    // bzD3n2n can read it while writing the final remainder into r.
+    auto rTemp = scratch.first(n);
+    auto childScratch = scratch.subspan(n);
+    bzD3n2n(q.subspan(half, half), rTemp, a.subspan(n, n), a.subspan(half, half), b, childScratch);
+    bzD3n2n(q.first(half), r, rTemp, a.first(half), b, childScratch);
+}
+
+// Drop-in for divideTextbook that switches to Burnikel-Ziegler above the
+// threshold. Accepts the same optional-q / optional-r convention.
+std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideBurnikelZiegler(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+{
+    size_t s = b.size();
+    ASSERT(s >= 2);
+    ASSERT(a.size() >= s);
+    if (s < burnikelZieglerThreshold)
+        return divideTextbook(q, r, a, b);
+
+    // Choose block size n: the smallest multiple of m (a power of two) that
+    // covers s, with n/m below the threshold so the recursion bottoms out in
+    // divideTextbook before n goes odd.
+    size_t m = 1;
+    while (m * burnikelZieglerThreshold < s)
+        m <<= 1;
+    size_t n = ((s + m - 1) / m) * m;
+
+    // Normalize B into an n-digit buffer with its top bit set: shift left by
+    // clz(b.back()) bits and then by (n - s) whole digits.
+    unsigned bitShift = clz(b[s - 1]);
+    size_t digitShift = n - s;
+
+    Vector<Digit> bStorage(n);
+    auto bNorm = bStorage.mutableSpan();
+    zeroSpan(bNorm.first(digitShift));
+    leftShift(bNorm.subspan(digitShift, s), b, bitShift);
+    ASSERT(bNorm[n - 1] >> (digitBits - 1));
+
+    // Apply the same shift to A, with one extra leading zero digit so the
+    // top n-digit block is guaranteed < bNorm.
+    size_t aNormLen = a.size() + digitShift + 1;
+    Vector<Digit> aStorage(aNormLen);
+    auto aNorm = aStorage.mutableSpan();
+    zeroSpan(aNorm.first(digitShift));
+    {
+        auto filled = leftShift(aNorm.subspan(digitShift), a, bitShift);
+        if (digitShift + filled.size() < aNormLen)
+            zeroSpan(aNorm.subspan(digitShift + filled.size()));
+    }
+
+    // Process A in n-digit blocks from most to least significant. t is the
+    // block count; the running remainder (< bNorm) doubles as the high half of
+    // the next iteration's 2n-digit dividend.
+    size_t t = (aNormLen + n - 1) / n;
+    ASSERT(t >= 2);
+
+    Vector<Digit> zStorage(2 * n);
+    auto z = zStorage.mutableSpan();
+    Vector<Digit> remStorage(n);
+    auto rem = remStorage.mutableSpan();
+    Vector<Digit> qiStorage(n);
+    auto qi = qiStorage.mutableSpan();
+
+    // Scratch for the recursion: bzD2n1n(n) peaks at ~4n (n for its
+    // intermediate remainder plus bzD3n2n(n/2) which peaks at 2*(n/2) for
+    // Qhat*B2 plus Karatsuba's ~4*(n/2) behind it, summed geometrically).
+    Vector<Digit> scratchStorage(5 * n + karatsubaScratchSize(n));
+    auto scratch = scratchStorage.mutableSpan();
+
+    size_t qNormLen = (t - 1) * n;
+    Vector<Digit> qStorage(qNormLen);
+    auto qNorm = qStorage.mutableSpan();
+
+    auto loadBlock = [&](std::span<Digit> dst, size_t i) {
+        size_t start = i * n;
+        size_t len = start < aNormLen ? std::min(n, aNormLen - start) : 0;
+        if (len)
+            memcpySpan(dst.first(len), aNorm.subspan(start, len));
+        if (len < n)
+            zeroSpan(dst.subspan(len));
+    };
+
+    // Seed the high half with the topmost block; it is < bNorm by
+    // construction (the extra leading digit above keeps it that way).
+    loadBlock(z.subspan(n, n), t - 1);
+    ASSERT(compareDigits(z.subspan(n, n), bNorm) == ComparisonResult::LessThan);
+
+    for (size_t i = t - 1; i-- > 0;) {
+        loadBlock(z.first(n), i);
+        bzD2n1n(qi, rem, z, bNorm, scratch);
+        memcpySpan(qNorm.subspan(i * n, n), qi);
+        memcpySpan(z.subspan(n, n), rem);
+    }
+
+    // Undo the normalization on the remainder.
+    auto remN = normalize(std::span<const Digit>(rem));
+    Vector<Digit> rShifted(remN.size());
+    rightShift(rShifted.mutableSpan(), remN, bitShift);
+    auto rResultFull = digitShift < rShifted.size()
+        ? normalize(std::span<const Digit>(rShifted).subspan(digitShift))
+        : std::span<const Digit> { };
+
+    auto qResultFull = normalize(std::span<const Digit>(qNorm));
+
+    std::span<Digit> qOut;
+    if (!q.empty()) {
+        RELEASE_ASSERT(q.size() >= qResultFull.size());
+        memcpySpan(q, qResultFull);
+        qOut = q.first(qResultFull.size());
+    }
+    std::span<Digit> rOut;
+    if (!r.empty()) {
+        RELEASE_ASSERT(r.size() >= rResultFull.size());
+        memcpySpan(r, rResultFull);
+        rOut = r.first(rResultFull.size());
+    }
+    return { qOut, rOut };
+}
+
 template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::divideImpl(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
@@ -1745,7 +2092,15 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyDigits(std::span<const Digit> x, st
     if (x.size() < y.size())
         std::swap(x, y);
     RELEASE_ASSERT(result.size() >= x.size() + y.size());
-    return normalize((y.size() == 1) ? multiplySingle(x, y[0], result) : multiplyTextbook(x, y, result));
+    if (y.size() == 1)
+        return normalize(multiplySingle(x, y[0], result));
+    if (y.size() >= karatsubaThreshold) {
+        auto z = result.first(x.size() + y.size());
+        Vector<Digit> scratch(karatsubaScratchSize(x.size()));
+        multiplyKaratsuba(z, x, y, scratch.mutableSpan());
+        return normalize(z);
+    }
+    return normalize(multiplyTextbook(x, y, result));
 }
 
 std::span<JSBigInt::Digit> JSBigInt::divideDigits(std::span<Digit> quotient, std::span<const Digit> x, std::span<const Digit> y)
@@ -3376,12 +3731,82 @@ String JSBigInt::toStringBasePowerOfTwo(VM& vm, JSGlobalObject* nullOrGlobalObje
     return StringImpl::adopt(WTF::move(resultString));
 }
 
+// Below this many digits, the O(n^2) schoolbook loop in toStringGeneric wins
+// and also serves as the leaf of the divide-and-conquer recursion.
+static constexpr unsigned toStringFastThreshold = 64;
+
+struct JSBigInt::ToStringState {
+    unsigned radix;
+    unsigned chunkChars;
+    Digit chunkDivisor;
+    Latin1Character* out;
+    Latin1Character* outBegin;
+    Vector<Vector<Digit>, 16> divisors;
+    Vector<size_t, 16> divisorChars;
+    Vector<Vector<Digit>, 16> qBufs;
+    Vector<Vector<Digit>, 16> rBufs;
+};
+
+// Schoolbook leaf: repeatedly divide by chunkDivisor, writing characters
+// right-to-left. Always writes exactly charCount characters, zero-padded.
+void JSBigInt::toStringEmitLeaf(ToStringState& s, std::span<const Digit> digits, size_t charCount)
+{
+    ASSERT(digits.size() <= toStringFastThreshold);
+    Latin1Character* stop = s.out - charCount;
+    ASSERT(stop >= s.outBegin);
+
+    if (!digits.empty()) {
+        std::array<Digit, toStringFastThreshold> restStorage;
+        std::span<Digit> rest(restStorage.data(), digits.size());
+        memcpySpan(rest, digits);
+        std::span<const Digit> dividend = rest;
+
+        while (dividend.size() > 1) {
+            Digit chunk;
+            auto q = divideSingle(rest.first(dividend.size()), chunk, dividend, s.chunkDivisor);
+            for (unsigned i = 0; i < s.chunkChars; ++i) {
+                *--s.out = radixDigits[chunk % s.radix];
+                chunk /= s.radix;
+            }
+            dividend = normalize(std::span<const Digit>(q));
+        }
+
+        Digit last = dividend.empty() ? 0 : dividend[0];
+        while (last) {
+            *--s.out = radixDigits[last % s.radix];
+            last /= s.radix;
+        }
+    }
+
+    while (s.out > stop)
+        *--s.out = '0';
+}
+
+void JSBigInt::toStringEmit(ToStringState& s, std::span<const Digit> digits, size_t charCount, unsigned level)
+{
+    digits = normalize(digits);
+
+    if (digits.size() <= toStringFastThreshold) {
+        toStringEmitLeaf(s, digits, charCount);
+        return;
+    }
+
+    auto divisor = normalize(std::span<const Digit>(s.divisors[level].span()));
+    while (s.divisorChars[level] >= charCount || compareDigits(digits, divisor) == ComparisonResult::LessThan) {
+        ASSERT(level);
+        --level;
+        divisor = normalize(std::span<const Digit>(s.divisors[level].span()));
+    }
+
+    ASSERT(divisor.size() >= 2);
+    auto [qs, rs] = divideBurnikelZiegler(s.qBufs[level].mutableSpan(), s.rBufs[level].mutableSpan(), digits, divisor);
+    unsigned nextLevel = level ? level - 1 : 0;
+    toStringEmit(s, rs, s.divisorChars[level], nextLevel);
+    toStringEmit(s, qs, charCount - s.divisorChars[level], nextLevel);
+}
+
 String JSBigInt::toStringGeneric(VM& vm, JSGlobalObject* nullOrGlobalObjectForOOM, JSBigInt* x, unsigned radix)
 {
-    // FIXME: [JSC] Revisit usage of Vector into JSBigInt::toString
-    // https://bugs.webkit.org/show_bug.cgi?id=180671
-    Vector<Latin1Character> resultString;
-
     ASSERT(radix >= 2 && radix <= 36);
     ASSERT(!x->isZero());
 
@@ -3399,20 +3824,74 @@ String JSBigInt::toStringGeneric(VM& vm, JSGlobalObject* nullOrGlobalObjectForOO
         return String();
     }
 
+    unsigned chunkChars = digitBits * bitsPerCharTableMultiplier / maxBitsPerChar;
+    Digit chunkDivisor = digitPow(radix, chunkChars);
+    ASSERT(chunkDivisor);
+
+    if (length >= toStringFastThreshold) {
+        // Divide-and-conquer: split by repeatedly-squared powers of
+        // chunkDivisor, using the sub-quadratic multiply/divide, and format
+        // each leaf with the schoolbook loop. The output is written
+        // right-to-left so leading zeros only need a final cursor adjustment.
+        size_t capacity = static_cast<size_t>(maximumCharactersRequired);
+        Vector<Latin1Character> resultString(capacity);
+
+        ToStringState s;
+        s.radix = radix;
+        s.chunkChars = chunkChars;
+        s.chunkDivisor = chunkDivisor;
+        s.out = resultString.mutableSpan().data() + capacity;
+        s.outBegin = resultString.mutableSpan().data();
+
+        // Build divisors[k] = chunkDivisor^(2^k) until the next square would be
+        // at least as long as the input, so divisors.back() splits it roughly
+        // in half.
+        {
+            Vector<Digit> first;
+            first.append(chunkDivisor);
+            s.divisors.append(WTF::move(first));
+        }
+        s.divisorChars.append(chunkChars);
+        while (2 * normalize(std::span<const Digit>(s.divisors.last().span())).size() < length) {
+            auto prev = normalize(std::span<const Digit>(s.divisors.last().span()));
+            Vector<Digit> next(2 * prev.size());
+            Vector<Digit> scratch(karatsubaScratchSize(prev.size()));
+            multiplyKaratsuba(next.mutableSpan(), prev, prev, scratch.mutableSpan());
+            s.divisorChars.append(s.divisorChars.last() * 2);
+            s.divisors.append(WTF::move(next));
+        }
+        for (auto& d : s.divisors) {
+            size_t dLen = normalize(std::span<const Digit>(d.span())).size();
+            s.qBufs.append(Vector<Digit>(dLen + 2));
+            s.rBufs.append(Vector<Digit>(dLen));
+        }
+
+        toStringEmit(s, x->digits(), capacity - sign, s.divisors.size() - 1);
+
+        Latin1Character* first = s.out;
+        Latin1Character* end = resultString.mutableSpan().data() + capacity;
+        while (first + 1 < end && *first == '0')
+            ++first;
+        if (sign)
+            *--first = '-';
+
+        size_t finalLen = end - first;
+        size_t skipped = first - resultString.mutableSpan().data();
+        if (skipped) {
+            memmoveSpan(resultString.mutableSpan().first(finalLen), std::span<const Latin1Character>(first, finalLen));
+            resultString.shrink(finalLen);
+        }
+        return StringImpl::adopt(WTF::move(resultString));
+    }
+
+    Vector<Latin1Character> resultString;
+
     Digit lastDigit;
     if (length == 1)
         lastDigit = x->digit(0);
     else {
-        unsigned chunkChars = digitBits * bitsPerCharTableMultiplier / maxBitsPerChar;
-        Digit chunkDivisor = digitPow(radix, chunkChars);
-
-        // By construction of chunkChars, there can't have been overflow.
-        ASSERT(chunkDivisor);
-
         // {rest} holds the part of the BigInt that we haven't looked at yet.
         // Not to be confused with "remainder"!
-        // In the first round, divide the input, allocating a new BigInt for
-        // the result == rest; from then on divide the rest in-place.
         Vector<Digit, 16> rest(length);
         std::span<const Digit> dividend = x->digits();
         do {
@@ -3425,8 +3904,6 @@ String JSBigInt::toStringGeneric(VM& vm, JSGlobalObject* nullOrGlobalObjectForOO
             }
             ASSERT(!chunk);
 
-            // Update dividend to point to the quotient for next iteration.
-            // The quotient.size() tells us how many digits are non-zero.
             dividend = normalize(quotient);
         } while (dividend.size() > 1);
 

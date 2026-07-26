@@ -545,6 +545,15 @@ private:
     static Digit divideSameSize(std::span<const Digit> a, std::span<const Digit> b);
     static std::span<Digit> remainderSameSize(std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b);
 
+    static constexpr unsigned karatsubaThreshold = 32;
+    static size_t karatsubaScratchSize(size_t larger);
+    static void multiplyKaratsuba(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch);
+
+    static constexpr unsigned burnikelZieglerThreshold = 64;
+    static void bzD2n1n(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b, std::span<Digit> scratch);
+    static void bzD3n2n(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a1a2, std::span<const Digit> a3, std::span<const Digit> b, std::span<Digit> scratch);
+    static std::tuple<std::span<Digit>, std::span<Digit>> divideBurnikelZiegler(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b);
+
     static std::span<Digit> NODELETE addTextbook(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
     static std::span<Digit> NODELETE subTextbook(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
 
@@ -602,6 +611,10 @@ private:
 
     static String toStringBasePowerOfTwo(VM&, JSGlobalObject*, JSBigInt*, unsigned radix);
     static String toStringGeneric(VM&, JSGlobalObject*, JSBigInt*, unsigned radix);
+
+    struct ToStringState;
+    static void toStringEmitLeaf(ToStringState&, std::span<const Digit>, size_t charCount);
+    static void toStringEmit(ToStringState&, std::span<const Digit>, size_t charCount, unsigned level);
 
     template <typename CharType>
     static JSValue parseInt(JSGlobalObject*, std::span<const CharType> data, ErrorParseMode);
