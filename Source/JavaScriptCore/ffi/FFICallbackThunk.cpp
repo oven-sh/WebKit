@@ -167,6 +167,7 @@ static void emitStoreIncomingArgumentGPR(CCallHelpers& jit, Type type, GPRReg so
     case Type::CString:
     case Type::Function:
     case Type::Buffer:
+    case Type::BufferLength: // a callback parameter is a plain unsigned 64-bit length (like Uint64)
     case Type::JSValue:
         jit.store64(source, slot);
         return;
@@ -228,6 +229,7 @@ static void emitStoreIncomingArgumentStack(CCallHelpers& jit, Type type, CCallHe
     case Type::CString:
     case Type::Function:
     case Type::Buffer:
+    case Type::BufferLength: // a callback parameter is a plain unsigned 64-bit length (like Uint64)
     case Type::JSValue:
         jit.load64(source, scratchGPR);
         break;

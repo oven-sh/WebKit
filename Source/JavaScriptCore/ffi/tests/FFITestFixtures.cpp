@@ -296,6 +296,8 @@ uint32_t ffi_ptr_read_u32(uint32_t* p) { return *p; }
 uint64_t ffi_strlen(const char* s) { return static_cast<uint64_t>(strlen(s)); }
 void* ffi_ptr_identity(void* p) { return p; }
 void* ffi_high_ptr(void) { return reinterpret_cast<void*>(static_cast<uintptr_t>(0x00007fffdeadbee0ull)); }
+uint64_t ffi_view_byte_length(const uint8_t*, uint64_t length) { return length; }
+int32_t ffi_view_last_byte(const uint8_t* ptr, uint64_t length) { return length ? static_cast<int32_t>(ptr[length - 1]) : -1; }
 
 // Perf-gate fixtures mirroring Bun's bench/ffi native library (noop / hash / string).
 void ffi_bench_noop(void) { }
@@ -859,6 +861,8 @@ std::span<const FFIFixtureEntry> ffiTestFixtures()
         FFI_FIXTURE(ffi_strlen),
         FFI_FIXTURE(ffi_ptr_identity),
         FFI_FIXTURE(ffi_high_ptr),
+        FFI_FIXTURE(ffi_view_byte_length),
+        FFI_FIXTURE(ffi_view_last_byte),
         FFI_FIXTURE(ffi_bench_noop),
         FFI_FIXTURE(ffi_bench_string),
         FFI_FIXTURE(ffi_bench_hash),

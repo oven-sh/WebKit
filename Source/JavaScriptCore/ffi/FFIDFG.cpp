@@ -174,8 +174,10 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
         case Type::CString:
         case Type::Function:
         case Type::Buffer:
+        case Type::BufferLength:
         case Type::JSValue: {
             // Converted at runtime through operationFFIWriteSlot; keep the value boxed.
+            // (buffer_length has no inline fast path in any tier: correctness over speed.)
             graph.varArgChild(node, childIndex) = DFG::Edge(argumentNode, DFG::UntypedUse);
             break;
         }
@@ -236,7 +238,8 @@ SpeculatedType speculatedResultTypeForCallFFI(DFG::Node* node)
     case Type::JSValue:
         return SpecBytecodeTop;
     case Type::RESERVED_WasNapiEnv:
-        // Never a valid return type (Signature::tryCreate rejects it).
+    case Type::BufferLength:
+        // Neither is a valid return type (Signature::tryCreate rejects both).
         RELEASE_ASSERT_NOT_REACHED();
         return SpecBytecodeTop;
     }

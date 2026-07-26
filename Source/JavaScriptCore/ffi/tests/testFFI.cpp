@@ -186,7 +186,7 @@ static void testTypeTraits()
 {
     using FFI::Type;
 
-    FFI_CHECK_EQ(FFI::numberOfTypes, 21u);
+    FFI_CHECK_EQ(FFI::numberOfTypes, 22u);
 
     // Wire-compatible numeric tags (must never change).
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Char), 0u);
@@ -210,6 +210,7 @@ static void testTypeTraits()
     FFI_CHECK_EQ(static_cast<unsigned>(Type::RESERVED_WasNapiEnv), 18u);
     FFI_CHECK_EQ(static_cast<unsigned>(Type::JSValue), 19u);
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Buffer), 20u);
+    FFI_CHECK_EQ(static_cast<unsigned>(Type::BufferLength), 21u);
 
     // Canonical names and parsing round trip for every type.
     static const struct { Type type; ASCIILiteral name; } names[] = {
@@ -218,6 +219,7 @@ static void testTypeTraits()
         { Type::Uint64, "u64"_s }, { Type::Double, "f64"_s }, { Type::Float, "f32"_s }, { Type::Bool, "bool"_s },
         { Type::Pointer, "ptr"_s }, { Type::Void, "void"_s }, { Type::CString, "cstring"_s }, { Type::Int64Fast, "i64_fast"_s },
         { Type::Uint64Fast, "u64_fast"_s }, { Type::Function, "function"_s }, { Type::JSValue, "jsvalue"_s }, { Type::Buffer, "buffer"_s },
+        { Type::BufferLength, "buffer_length"_s },
     };
     for (auto& entry : names) {
         FFI_CHECK(!strcmp(FFI::name(entry.type).characters(), entry.name.characters()));
@@ -238,6 +240,7 @@ static void testTypeTraits()
         // the SPEC lists without a target.
         { "void*"_s, Type::Pointer }, { "pointer"_s, Type::Pointer }, { "char*"_s, Type::Pointer }, { "callback"_s, Type::Function },
         { "fn"_s, Type::Function }, { "napi_value"_s, Type::JSValue }, // napi_value: legacy spelling of the raw-JSValue type
+        { "buffer_bytelength"_s, Type::BufferLength },
     };
     for (auto& entry : aliases) {
         std::optional<Type> parsed = FFI::parseType(StringView(entry.alias));
@@ -260,7 +263,7 @@ static void testTypeTraits()
         else if (type == Type::Double)
             expected = FFI::ArgClass::Double;
         FFI_CHECK(FFI::argClass(type) == expected);
-        FFI_CHECK_EQ(FFI::isValidReturnType(type), type != Type::RESERVED_WasNapiEnv && type != Type::Buffer);
+        FFI_CHECK_EQ(FFI::isValidReturnType(type), type != Type::RESERVED_WasNapiEnv && type != Type::Buffer && type != Type::BufferLength);
         FFI_CHECK_EQ(FFI::isValidArgumentType(type), type != Type::Void && type != Type::RESERVED_WasNapiEnv);
     }
 
@@ -294,6 +297,8 @@ static void testTypeTraits()
     FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::CString), 8u);
     FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::Function), 8u);
     FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::Buffer), 8u);
+    FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::BufferLength), 8u);
+    FFI_CHECK(!FFI::isSigned(Type::BufferLength));
     FFI_CHECK_EQ(FFI::nativeSizeInBytes(Type::JSValue), 8u);
     FFI_CHECK_EQ(FFI::slotSize, 8u);
 }
@@ -382,6 +387,10 @@ static void testSignatures()
     FFI_CHECK(!FFI::Signature::tryCreate(oneInt.span(), Type::RESERVED_WasNapiEnv));
     FFI_CHECK(!FFI::Signature::tryCreate(reservedArg.span(), Type::Int32));
     FFI_CHECK(!FFI::Signature::tryCreate(oneInt.span(), Type::Buffer));
+    // buffer_length is the length twin of buffer: also argument-only.
+    Vector<Type> bufferLengthArg { Type::Pointer, Type::BufferLength };
+    FFI_CHECK(!FFI::Signature::tryCreate(oneInt.span(), Type::BufferLength));
+    FFI_CHECK(!!FFI::Signature::tryCreate(bufferLengthArg.span(), Type::Uint64));
     FFI_CHECK(!!FFI::Signature::tryCreate(oneInt.span(), Type::JSValue));
     FFI_CHECK(!!FFI::Signature::tryCreate(oneInt.span(), Type::Void));
 
@@ -389,13 +398,13 @@ static void testSignatures()
     Vector<Type> everyArg {
         Type::Char, Type::Int8, Type::Uint8, Type::Int16, Type::Uint16, Type::Int32, Type::Uint32,
         Type::Int64, Type::Uint64, Type::Double, Type::Float, Type::Bool, Type::Pointer, Type::CString,
-        Type::Int64Fast, Type::Uint64Fast, Type::Function, Type::JSValue, Type::Buffer,
+        Type::Int64Fast, Type::Uint64Fast, Type::Function, Type::JSValue, Type::Buffer, Type::BufferLength,
     };
     RefPtr<FFI::Signature> every = FFI::Signature::tryCreate(everyArg.span(), Type::Char);
     FFI_CHECK(!!every);
     if (every) {
-        FFI_CHECK_EQ(every->argumentCount(), 19u);
-        FFI_CHECK(every->toString() == "char(char,i8,u8,i16,u16,i32,u32,i64,u64,f64,f32,bool,ptr,cstring,i64_fast,u64_fast,function,jsvalue,buffer)"_s);
+        FFI_CHECK_EQ(every->argumentCount(), 20u);
+        FFI_CHECK(every->toString() == "char(char,i8,u8,i16,u16,i32,u32,i64,u64,f64,f32,bool,ptr,cstring,i64_fast,u64_fast,function,jsvalue,buffer,buffer_length)"_s);
     }
 }
 
@@ -910,7 +919,7 @@ static void testCallLayoutAgainstReferenceModel()
         FFI::Type::Char, FFI::Type::Int8, FFI::Type::Uint8, FFI::Type::Int16, FFI::Type::Uint16,
         FFI::Type::Int32, FFI::Type::Uint32, FFI::Type::Int64, FFI::Type::Uint64, FFI::Type::Double,
         FFI::Type::Float, FFI::Type::Bool, FFI::Type::Pointer, FFI::Type::CString, FFI::Type::Int64Fast,
-        FFI::Type::Uint64Fast, FFI::Type::Function, FFI::Type::JSValue, FFI::Type::Buffer,
+        FFI::Type::Uint64Fast, FFI::Type::Function, FFI::Type::JSValue, FFI::Type::Buffer, FFI::Type::BufferLength,
     };
     static constexpr FFI::Type returnTypes[] = {
         FFI::Type::Void, FFI::Type::Int32, FFI::Type::Uint32, FFI::Type::Int64, FFI::Type::Double, FFI::Type::Float, FFI::Type::Bool, FFI::Type::Pointer,
@@ -1497,6 +1506,7 @@ static uint64_t canonicalizeSlot(FFI::Type type, uint64_t raw)
     case FFI::Type::CString:
     case FFI::Type::Function:
     case FFI::Type::Buffer:
+    case FFI::Type::BufferLength:
     case FFI::Type::RESERVED_WasNapiEnv:
     case FFI::Type::JSValue:
     case FFI::Type::Void:
@@ -1536,7 +1546,8 @@ static uint64_t edgeBitsForType(FFI::Type type, WeakRandom& random)
     case FFI::Type::Int64:
     case FFI::Type::Uint64:
     case FFI::Type::Int64Fast:
-    case FFI::Type::Uint64Fast: {
+    case FFI::Type::Uint64Fast:
+    case FFI::Type::BufferLength: { // ABI-identical to Uint64 (a byte length)
         static const uint64_t values[] = {
             0, 1, ~0ull, 0x8000000000000000ull, 0x7fffffffffffffffull, 0x0123456789abcdefull,
             0xffffffff80000000ull, 0x00000000ffffffffull, 9007199254740992ull, 0xdeadbeefcafebabeull,
@@ -1718,6 +1729,7 @@ static void testInvokeThunkDifferential()
     differentialCase("ffi_echo_i64(as i64_fast)"_s, ffi_echo_i64, { T::Int64Fast }, T::Int64Fast, 20, random);
     differentialCase("ffi_echo_u64"_s, ffi_echo_u64, { T::Uint64 }, T::Uint64, 40, random);
     differentialCase("ffi_echo_u64(as u64_fast)"_s, ffi_echo_u64, { T::Uint64Fast }, T::Uint64Fast, 20, random);
+    differentialCase("ffi_echo_u64(as buffer_length)"_s, ffi_echo_u64, { T::BufferLength }, T::Uint64, 20, random);
     differentialCase("ffi_echo_f32"_s, ffi_echo_f32, { T::Float }, T::Float, 40, random);
     differentialCase("ffi_echo_f64"_s, ffi_echo_f64, { T::Double }, T::Double, 40, random);
     differentialCase("ffi_echo_bool"_s, ffi_echo_bool, { T::Bool }, T::Bool, 20, random);

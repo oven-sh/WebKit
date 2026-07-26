@@ -400,6 +400,13 @@ void SpeculativeJIT::compileCallFFI(Node* node)
                 storeTypedArrayViewVector();
                 break;
 
+            case FFI::Type::BufferLength:
+                // buffer_length has no inline fast path: every value converts (or throws) in C++
+                // via operationFFIWriteSlot, which reads the view's byteLength(). Correctness
+                // over speed; the C++ conversion is the single authoritative implementation.
+                slowCases.append(jump());
+                break;
+
             case FFI::Type::JSValue:
                 // Raw EncodedJSValue pass-through; no conversion, no slow path.
                 store64(valueGPR, slotAddress);
@@ -598,7 +605,8 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     }
 
     case FFI::Type::RESERVED_WasNapiEnv:
-        DFG_CRASH(m_graph, node, "CallFFI: the reserved tag is never a return type");
+    case FFI::Type::BufferLength:
+        DFG_CRASH(m_graph, node, "CallFFI: the reserved tag / buffer_length is never a return type");
         break;
     }
 

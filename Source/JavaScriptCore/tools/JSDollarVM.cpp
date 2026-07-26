@@ -4604,6 +4604,7 @@ static bool dollarVMFFIIsRawMemoryType(FFI::Type type)
     case FFI::Type::RESERVED_WasNapiEnv:
     case FFI::Type::JSValue:
     case FFI::Type::Buffer:
+    case FFI::Type::BufferLength:
         return false;
     }
     return false;
@@ -4671,6 +4672,7 @@ static uint64_t dollarVMFFILoadSlot(FFI::Type type, const void* address)
     case FFI::Type::RESERVED_WasNapiEnv:
     case FFI::Type::JSValue:
     case FFI::Type::Buffer:
+    case FFI::Type::BufferLength:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

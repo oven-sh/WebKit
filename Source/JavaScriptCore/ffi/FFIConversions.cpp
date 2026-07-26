@@ -351,6 +351,23 @@ static bool writeCStringSlot(JSGlobalObject* globalObject, FFIContext& context, 
     return true;
 }
 
+// buffer_length: the "length twin" of Type::Buffer. Accepts exactly what Buffer accepts (a
+// TypedArray or DataView, nothing else) and writes the view's byteLength() as an unsigned
+// 64-bit integer (ABI-identical to Uint64). Passing the same view for a `buffer` argument and a
+// `buffer_length` argument snapshots pointer and length off one cell at call time.
+static bool writeBufferLengthSlot(JSGlobalObject* globalObject, JSValue value, uint64_t& slotOut)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
+        slotOut = static_cast<uint64_t>(view->byteLength());
+        return true;
+    }
+    throwTypeError(globalObject, scope, "bun:ffi 'buffer_length' argument must be a TypedArray or DataView"_s);
+    return false;
+}
+
 // ptr, cstring, function, buffer.
 static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, Type type, JSValue value, uint64_t& slotOut, StringArena* arena)
 {
@@ -484,6 +501,9 @@ bool writeSlotFromJSValue(JSGlobalObject* globalObject, FFIContext& context, Typ
     case Type::Buffer:
         return writePointerSlot(globalObject, context, type, value, slotOut, arena);
 
+    case Type::BufferLength:
+        return writeBufferLengthSlot(globalObject, value, slotOut);
+
     case Type::JSValue:
         // Raw EncodedJSValue pass-through; no conversion.
         slotOut = static_cast<uint64_t>(JSValue::encode(value));
@@ -525,6 +545,10 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
     case Type::Int64:
         return JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(slot));
     case Type::Uint64:
+    case Type::BufferLength:
+        // BufferLength is argument-only, so it reaches here only as a callback PARAMETER: a
+        // callback receives C arguments, not views, and the value is a plain unsigned 64-bit
+        // length -- decoded exactly like Uint64.
         return JSBigInt::createFrom(globalObject, static_cast<uint64_t>(slot));
     case Type::Int64Fast: {
         int64_t value = static_cast<int64_t>(slot);

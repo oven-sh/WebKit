@@ -39,9 +39,11 @@ function main() {
         [{ args: [18], returns: "i32" }, "reserved tag 18 (was napi_env) as an argument"],
         [{ args: ["i32"], returns: 18 }, "reserved tag 18 (was napi_env) as return type"],
         [{ args: ["i32"], returns: "buffer" }, "buffer as return type"],
+        [{ args: ["i32"], returns: "buffer_length" }, "buffer_length as return type"],
+        [{ args: ["i32"], returns: 21 }, "buffer_length tag (21) as return type"],
         [{ args: ["i32"], returns: "unknown" }, "unknown return type string"],
-        [{ args: ["i32"], returns: 21 }, "return tag out of range"],
-        [{ args: [21], returns: "i32" }, "argument tag out of range"],
+        [{ args: ["i32"], returns: 22 }, "return tag out of range"],
+        [{ args: [22], returns: "i32" }, "argument tag out of range"],
         [{ args: [-1], returns: "i32" }, "negative argument tag"],
         [{ args: [1.5], returns: "i32" }, "fractional argument tag"],
         [{ args: [13], returns: "i32" }, "void tag (13) as an argument"],
@@ -93,7 +95,7 @@ function main() {
     // Every numeric tag in order. Tag 13 (void) is not a valid argument and tag 18 is the
     // reserved (formerly napi_env) tag, invalid in every position; both are skipped here (18's
     // rejection is covered by the invalid-descriptor table above).
-    const canonicalByTag = ["char", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f64", "f32", "bool", "ptr", "void", "cstring", "i64_fast", "u64_fast", "function", null, "jsvalue", "buffer"];
+    const canonicalByTag = ["char", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f64", "f32", "bool", "ptr", "void", "cstring", "i64_fast", "u64_fast", "function", null, "jsvalue", "buffer", "buffer_length"];
     for (let tag = 0; tag < canonicalByTag.length; ++tag) {
         if (canonicalByTag[tag] === "void" || canonicalByTag[tag] === null)
             continue; // void is not a valid argument; 18 is reserved

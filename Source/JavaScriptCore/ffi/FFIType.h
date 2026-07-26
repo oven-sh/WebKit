@@ -74,9 +74,14 @@ enum class Type : uint8_t {
     // which is layout-identical to an encoded JSValue -- but nothing here is N-API-specific.)
     JSValue = 19,
     Buffer = 20,
+    // The "length twin" of Buffer: accepts exactly what Buffer accepts (a TypedArray or DataView)
+    // and marshals that view's byteLength() as an unsigned 64-bit integer (ABI-identical to
+    // Uint64). Argument-only; `args: ["buffer", "buffer_length"]` with the same view passed for
+    // both reads the pointer and the length off one cell at call time.
+    BufferLength = 21,
 };
 
-constexpr unsigned numberOfTypes = 21;
+constexpr unsigned numberOfTypes = 22;
 
 // Canonical name of a type (also used by Signature::toString()). Total over
 // all numberOfTypes values.
@@ -125,6 +130,8 @@ constexpr ASCIILiteral name(Type type)
         return "jsvalue"_s;
     case Type::Buffer:
         return "buffer"_s;
+    case Type::BufferLength:
+        return "buffer_length"_s;
     }
     return "invalid"_s;
 }
@@ -181,6 +188,8 @@ inline std::optional<Type> parseType(StringView string)
         return Type::JSValue;
     if (string == "buffer"_s)
         return Type::Buffer;
+    if (string == "buffer_length"_s || string == "buffer_bytelength"_s) // buffer_bytelength: alias of the same length twin
+        return Type::BufferLength;
 
     // Aliases.
     if (string == "int8_t"_s)
@@ -246,16 +255,18 @@ constexpr ArgClass argClass(Type type)
     case Type::RESERVED_WasNapiEnv:
     case Type::JSValue:
     case Type::Buffer:
+    case Type::BufferLength:
         return ArgClass::Int;
     }
     return ArgClass::Int;
 }
 
-// Buffer is argument-only (Bun compatibility); Void is a valid return type; the reserved tag
-// is invalid in every position (Signature::tryCreate rejects it).
+// Buffer and its length twin BufferLength are argument-only (Bun compatibility; a "length"
+// return makes no sense); Void is a valid return type; the reserved tag is invalid in every
+// position (Signature::tryCreate rejects it).
 constexpr bool isValidReturnType(Type type)
 {
-    return type != Type::RESERVED_WasNapiEnv && type != Type::Buffer;
+    return type != Type::RESERVED_WasNapiEnv && type != Type::Buffer && type != Type::BufferLength;
 }
 
 // Void is invalid as an argument, as is the reserved tag; everything else is a valid argument.
@@ -294,6 +305,7 @@ constexpr unsigned nativeSizeInBytes(Type type)
     case Type::RESERVED_WasNapiEnv:
     case Type::JSValue:
     case Type::Buffer:
+    case Type::BufferLength: // uint64_t / size_t, exactly like Uint64
         return 8;
     }
     return 0;
@@ -327,6 +339,7 @@ constexpr bool isSigned(Type type)
     case Type::RESERVED_WasNapiEnv:
     case Type::JSValue:
     case Type::Buffer:
+    case Type::BufferLength: // unsigned 64-bit, exactly like Uint64
         return false;
     }
     return false;

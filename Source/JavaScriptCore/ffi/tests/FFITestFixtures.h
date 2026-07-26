@@ -171,6 +171,12 @@ JS_EXPORT_PRIVATE uint32_t ffi_ptr_read_u32(uint32_t*);
 JS_EXPORT_PRIVATE uint64_t ffi_strlen(const char*);
 JS_EXPORT_PRIVATE void* ffi_ptr_identity(void*);
 JS_EXPORT_PRIVATE void* ffi_high_ptr(void); // returns (void*)0x00007fffdeadbee0
+// buffer_length probes (the length twin of `buffer`): bound as (ptr, buffer_length) with the
+// same view passed for both arguments. ffi_view_byte_length returns the marshalled length;
+// ffi_view_last_byte returns the last byte through the pointer (or -1 for an empty view),
+// proving pointer and length were read off the same cell.
+JS_EXPORT_PRIVATE uint64_t ffi_view_byte_length(const uint8_t* ptr, uint64_t length);
+JS_EXPORT_PRIVATE int32_t ffi_view_last_byte(const uint8_t* ptr, uint64_t length);
 // Perf-gate fixtures mirroring Bun's bench/ffi native library.
 JS_EXPORT_PRIVATE void ffi_bench_noop(void);
 JS_EXPORT_PRIVATE const char* ffi_bench_string(void);

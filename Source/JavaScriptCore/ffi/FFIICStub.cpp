@@ -279,6 +279,13 @@ void emitConvertArgument(CCallHelpers& jit, Type type, CCallHelpers::Address arg
         return;
     }
 
+    case Type::BufferLength:
+        // buffer_length has no inline conversion (it needs the view's byteLength(), which the
+        // C++ path computes authoritatively): route unconditionally to the slow path, which
+        // redoes the whole call in C++ -- exactly the miss protocol every other type uses.
+        slowPath.append(jit.jump());
+        return;
+
     case Type::JSValue:
         // A raw EncodedJSValue pass-through: no conversion.
         jit.load64(argument, valueGPR);
@@ -379,8 +386,9 @@ void emitBoxReturnValue(CCallHelpers& jit, VM& vm, JSGlobalObject* globalObject,
         return;
 
     case Type::Buffer:
+    case Type::BufferLength:
     case Type::RESERVED_WasNapiEnv:
-        // Neither is a valid return type (rejected by Signature::tryCreate).
+        // None is a valid return type (rejected by Signature::tryCreate).
         RELEASE_ASSERT_NOT_REACHED();
         return;
     }
@@ -404,6 +412,15 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
 
     const unsigned argumentCount = signature.argumentCount();
     const Type returnType = signature.returnType();
+
+    // A buffer_length parameter has no inline conversion (its byteLength() is computed by the
+    // authoritative C++ path), so a stub for such a signature would take the slow path on every
+    // call. Keep those signatures on the plain host executable instead of paying for a stub
+    // prologue that always misses. (emitConvertArgument still handles the tag defensively.)
+    for (unsigned i = 0; i < argumentCount; ++i) {
+        if (signature.argumentType(i) == Type::BufferLength)
+            return nullptr;
+    }
 
     // Frame layout (SPEC section 8.3 step 1). After emitFunctionPrologue() the
     // frame pointer equals the entry stack pointer and is 16-byte aligned; we

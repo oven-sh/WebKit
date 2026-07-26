@@ -15703,7 +15703,8 @@ IGNORE_CLANG_WARNINGS_END
             break;
         }
         case FFI::Type::RESERVED_WasNapiEnv:
-            DFG_CRASH(m_graph, node, "the reserved tag is never a valid FFI return type");
+        case FFI::Type::BufferLength:
+            DFG_CRASH(m_graph, node, "the reserved tag / buffer_length is never a valid FFI return type");
             break;
         }
 
