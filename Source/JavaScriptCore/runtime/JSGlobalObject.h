@@ -287,6 +287,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<SymbolConstructor> m_symbolConstructor;
     WriteBarrier<BigIntConstructor> m_bigIntConstructor;
+    WriteBarrier<JSObject> m_weakObjectRefConstructor;
+    WriteBarrier<JSObject> m_finalizationRegistryConstructor;
 #endif
 
     LazyProperty<JSGlobalObject, IntlCollator> m_defaultCollator;
@@ -848,6 +850,8 @@ public:
     StringConstructor* stringConstructor() const LIFETIME_BOUND { return m_stringConstructor.get(); }
     SymbolConstructor* symbolConstructor() const LIFETIME_BOUND { return m_symbolConstructor.get(); }
     BigIntConstructor* bigIntConstructor() const LIFETIME_BOUND { return m_bigIntConstructor.get(); }
+    JSObject* weakObjectRefConstructor() const LIFETIME_BOUND { return m_weakObjectRefConstructor.get(); }
+    JSObject* finalizationRegistryConstructor() const LIFETIME_BOUND { return m_finalizationRegistryConstructor.get(); }
 #endif
     JSIteratorConstructor* iteratorConstructor() const LIFETIME_BOUND { return m_iteratorConstructor.get(); }
 

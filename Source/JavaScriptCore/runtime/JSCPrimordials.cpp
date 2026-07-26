@@ -50,23 +50,21 @@ namespace Primordials {
 
 struct Entry {
     PrimordialKind kind;
-    Identifier (*makeKey)(VM&);
+    Identifier (*makeKey)(VM&); // nullptr for Self entries
     ASCIILiteral name;
 };
 
-#define JSC_PRIMORDIAL_KEY_Method(key) [](VM& vm) -> Identifier { return Identifier::fromString(vm, key ""_s); }
-#define JSC_PRIMORDIAL_KEY_Getter(key) [](VM& vm) -> Identifier { return Identifier::fromString(vm, key ""_s); }
-#define JSC_PRIMORDIAL_KEY_SymbolMethod(key) [](VM& vm) -> Identifier { return vm.propertyNames->key##Symbol; }
-#define JSC_PRIMORDIAL_KEY_SymbolGetter(key) [](VM& vm) -> Identifier { return vm.propertyNames->key##Symbol; }
-#define JSC_PRIMORDIAL_ENTRY(name, key, kind) { PrimordialKind::kind, JSC_PRIMORDIAL_KEY_##kind(key), #name ""_s },
+#define PROP(key) [](VM& vm) -> Identifier { return Identifier::fromString(vm, key ""_s); }
+#define SYM(key) [](VM& vm) -> Identifier { return vm.propertyNames->key##Symbol; }
+#define SELF nullptr
+#define JSC_PRIMORDIAL_ENTRY(name, makeKey, kind) { PrimordialKind::kind, makeKey, #name ""_s },
 static const Entry s_entries[numberOfPrimordials] = {
     JSC_FOREACH_PRIMORDIAL_NAME(JSC_PRIMORDIAL_ENTRY)
 };
 #undef JSC_PRIMORDIAL_ENTRY
-#undef JSC_PRIMORDIAL_KEY_Method
-#undef JSC_PRIMORDIAL_KEY_Getter
-#undef JSC_PRIMORDIAL_KEY_SymbolMethod
-#undef JSC_PRIMORDIAL_KEY_SymbolGetter
+#undef PROP
+#undef SYM
+#undef SELF
 
 #define JSC_PRIMORDIAL_COUNT_ENTRY(name, key, kind) 1 +
 #define JSC_PRIMORDIAL_HOLDER_COUNT(Holder) (JSC_FOREACH_PRIMORDIAL_##Holder(JSC_PRIMORDIAL_COUNT_ENTRY) 0),
@@ -120,9 +118,9 @@ static std::pair<unsigned, unsigned> rangeFor(PrimordialHolder holder)
     return { s_holderBegin[h], s_holderBegin[h + 1] };
 }
 
-static bool isGetterKind(PrimordialKind kind)
+static bool isAccessorKind(PrimordialKind kind)
 {
-    return kind == PrimordialKind::Getter || kind == PrimordialKind::SymbolGetter;
+    return kind == PrimordialKind::Getter || kind == PrimordialKind::Setter;
 }
 
 // A table entry not matched by any of reifyStaticProperty's typed cases is a
@@ -135,53 +133,127 @@ static bool isCustomAccessorEntry(const HashTableValue& entry)
     return !(entry.attributes() & typedMask);
 }
 
-static bool matchesEntry(VM& vm, JSFunction* function, const HashTableValue& entry, bool asGetter)
+static BuiltinGenerator builtinGeneratorFor(const HashTableValue& entry, PrimordialKind kind)
 {
+    switch (kind) {
+    case PrimordialKind::Getter:
+        return entry.builtinAccessorGetterGenerator();
+    case PrimordialKind::Setter:
+        return entry.builtinAccessorSetterGenerator();
+    default:
+        return entry.builtinGenerator();
+    }
+}
+
+// True when `function` is the exact function the (Builtin | Function | Accessor)
+// table entry reifies on `holder`: same generator/native pointer AND same realm
+// (a foreign realm's builtin shares the pointer but is a different value).
+static bool matchesEntry(VM& vm, JSObject* holder, JSFunction* function, const HashTableValue& entry, PrimordialKind kind)
+{
+    if (function->globalObject() != holder->globalObject())
+        return false;
     unsigned attributes = entry.attributes();
     if (attributes & PropertyAttribute::Builtin) {
-        BuiltinGenerator generator = asGetter ? entry.builtinAccessorGetterGenerator() : entry.builtinGenerator();
+        bool accessor = attributes & PropertyAttribute::Accessor;
+        if (accessor != isAccessorKind(kind))
+            return false;
         if (!function->isBuiltinFunction())
             return false;
-        return uncheckedDowncast<FunctionExecutable>(function->executable())->unlinkedExecutable() == generator(vm)->unlinkedExecutable();
+        return uncheckedDowncast<FunctionExecutable>(function->executable())->unlinkedExecutable() == builtinGeneratorFor(entry, kind)(vm)->unlinkedExecutable();
     }
-    NativeFunction native = asGetter ? NativeFunction(entry.accessorGetter()) : entry.function();
+    NativeFunction native;
+    if (isAccessorKind(kind) && (attributes & PropertyAttribute::Accessor))
+        native = NativeFunction(kind == PrimordialKind::Getter ? entry.accessorGetter() : entry.accessorSetter());
+    else if (kind == PrimordialKind::Method && (attributes & PropertyAttribute::Function))
+        native = entry.function();
+    else
+        return false;
     return function->isHostFunction() && function->nativeFunction() == native;
 }
 
-// Unwraps an own property value of the requested kind, ignoring anything that
-// is not a function (or accessor with a getter function).
-static JSCell* cellForOwnProperty(JSValue value, PrimordialKind kind)
+// The JS-visible value of a holder's own property, per kind (JS accessor function,
+// C++ accessor's cached wrapper or its value, or an own object/symbol). Only run at
+// holder creation or by the host, so reading a custom accessor here is pristine.
+static JSCell* cellForOwnProperty(VM& vm, JSGlobalObject* globalObject, JSObject* holder, const Identifier& key, JSValue value, PrimordialKind kind)
 {
     if (!value)
         return nullptr;
-    if (isGetterKind(kind)) {
-        if (!value.isGetterSetter())
-            return nullptr;
-        return uncheckedDowncast<GetterSetter>(value.asCell())->getter();
+    if (value.isGetterSetter()) {
+        auto* getterSetter = uncheckedDowncast<GetterSetter>(value.asCell());
+        if (kind == PrimordialKind::Getter)
+            return getterSetter->getter();
+        if (kind == PrimordialKind::Setter)
+            return getterSetter->setter();
+        return nullptr;
     }
+    if (auto* custom = value.isCell() ? dynamicDowncast<CustomGetterSetter>(value.asCell()) : nullptr) {
+        if (kind == PrimordialKind::Getter)
+            return custom->getter() ? createCustomGetterFunction(globalObject, vm, key, custom->getter(), std::nullopt) : nullptr;
+        if (kind == PrimordialKind::Setter)
+            return custom->setter() ? createCustomSetterFunction(globalObject, vm, key, custom->setter()) : nullptr;
+        // A CustomValue property presents its getter's result as a data value.
+        if (!custom->getter())
+            return nullptr;
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        DeferTerminationForAWhile deferScope(vm);
+        value = JSValue::decode(custom->getter()(globalObject, JSValue::encode(holder), key));
+        catchScope.assertNoExceptionExceptTermination();
+    }
+    if (isAccessorKind(kind))
+        return nullptr;
+    if (value.isSymbol())
+        return kind == PrimordialKind::Value ? value.asCell() : nullptr;
     if (!value.isCell() || !value.asCell()->isObject())
         return nullptr;
     return value.asCell();
 }
 
 // A reified static property is trusted only if it is still the exact function
-// (or accessor) the ClassInfo table describes; anything else is user-installed.
-static JSCell* cellIfMatchesEntry(VM& vm, JSValue value, const HashTableValue& entry, PrimordialKind kind)
+// (or accessor function) the ClassInfo table describes; anything else is user-installed.
+static JSCell* cellIfMatchesEntry(VM& vm, JSObject* holder, JSValue value, const HashTableValue& entry, PrimordialKind kind)
 {
     if (!value)
         return nullptr;
-    if (isGetterKind(kind)) {
+    if (isAccessorKind(kind)) {
         if (!value.isGetterSetter())
             return nullptr;
-        auto* getter = dynamicDowncast<JSFunction>(uncheckedDowncast<GetterSetter>(value.asCell())->getter());
-        if (!getter || !matchesEntry(vm, getter, entry, true))
+        auto* getterSetter = uncheckedDowncast<GetterSetter>(value.asCell());
+        auto* function = dynamicDowncast<JSFunction>(kind == PrimordialKind::Getter ? getterSetter->getter() : getterSetter->setter());
+        if (!function || !matchesEntry(vm, holder, function, entry, kind))
             return nullptr;
-        return getter;
+        return function;
     }
     auto* function = value.isCell() ? dynamicDowncast<JSFunction>(value.asCell()) : nullptr;
-    if (!function || !matchesEntry(vm, function, entry, false))
+    if (!function || !matchesEntry(vm, holder, function, entry, kind))
         return nullptr;
     return function;
+}
+
+// Lazy cells and lazy class structures carry their own pristine source: the
+// holder object's current state is irrelevant, so recompute the value directly.
+static JSCell* recomputableEntryValue(VM& vm, JSObject* holder, const HashTableValue& entry)
+{
+    unsigned attributes = entry.attributes();
+    if (attributes & PropertyAttribute::CellProperty) {
+        auto* property = std::bit_cast<LazyCellProperty*>(std::bit_cast<char*>(holder) + entry.lazyCellPropertyOffset());
+        return property->get(holder);
+    }
+    if (attributes & PropertyAttribute::ClassStructure) {
+        auto* lazyStructure = std::bit_cast<LazyClassStructure*>(std::bit_cast<char*>(holder) + entry.lazyClassStructureOffset());
+        return lazyStructure->constructor(uncheckedDowncast<JSGlobalObject>(holder));
+    }
+    // A PropertyCallback that is a primordial on its own holder (the global's
+    // `eval`) hands back a lazily-created member the holder owns, so the call is
+    // idempotent; a callback that allocates would have to be a holder instead.
+    if (attributes & PropertyAttribute::PropertyCallback) {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        DeferTerminationForAWhile deferScope(vm);
+        JSValue value = entry.lazyPropertyCallback()(vm, holder);
+        catchScope.assertNoExceptionExceptTermination();
+        ASSERT_WITH_MESSAGE(value == entry.lazyPropertyCallback()(vm, holder), "primordial PropertyCallback entries must be idempotent");
+        return value.isCell() ? value.asCell() : nullptr;
+    }
+    return nullptr;
 }
 
 // Builds a fresh, un-installed copy of the property from its immutable table
@@ -189,21 +261,22 @@ static JSCell* cellIfMatchesEntry(VM& vm, JSValue value, const HashTableValue& e
 static JSCell* materializeFromEntry(VM& vm, JSGlobalObject* globalObject, const Identifier& key, const HashTableValue& entry, PrimordialKind kind)
 {
     unsigned attributes = entry.attributes();
-    bool wantGetter = isGetterKind(kind);
     if (isCustomAccessorEntry(entry)) {
-        ASSERT(wantGetter);
-        return customGetterFunctionForPrimordial(globalObject, vm, key, entry.propertyGetter());
+        if (kind == PrimordialKind::Setter)
+            return createCustomSetterFunction(globalObject, vm, key, entry.propertyPutter());
+        return createCustomGetterFunction(globalObject, vm, key, entry.propertyGetter(), std::nullopt);
     }
-    if (attributes & PropertyAttribute::Builtin) {
-        BuiltinGenerator generator = wantGetter ? entry.builtinAccessorGetterGenerator() : entry.builtinGenerator();
-        return JSFunction::create(vm, globalObject, generator(vm), globalObject);
-    }
+    if (attributes & PropertyAttribute::Builtin)
+        return JSFunction::create(vm, globalObject, builtinGeneratorFor(entry, kind)(vm), globalObject);
     if (attributes & PropertyAttribute::Accessor) {
-        ASSERT(wantGetter);
-        String getterName = tryMakeString("get "_s, String(PropertyName(key).publicName()));
-        return JSFunction::create(vm, globalObject, 0, getterName, entry.accessorGetter(), ImplementationVisibility::Public);
+        ASSERT(isAccessorKind(kind));
+        bool getter = kind == PrimordialKind::Getter;
+        String name = tryMakeString(getter ? "get "_s : "set "_s, String(PropertyName(key).publicName()));
+        return JSFunction::create(vm, globalObject, getter ? 0 : 1, name, getter ? entry.accessorGetter() : entry.accessorSetter(), ImplementationVisibility::Public);
     }
-    ASSERT(attributes & PropertyAttribute::Function);
+    // Only Function entries carry a native function to build from; the recomputable
+    // (CellProperty/ClassStructure/PropertyCallback) entries never reach here.
+    RELEASE_ASSERT(attributes & PropertyAttribute::Function);
     StringImpl* name = PropertyName(key).publicName();
     if (!name)
         name = vm.propertyNames->anonymous.impl();
@@ -230,8 +303,12 @@ static JSCell* pristineFromHolderOwnProperty(VM& vm, JSObject* holder, const Cla
         offset = holder->getDirectOffset(vm, key, attributes);
         if (!isValidOffset(offset))
             return nullptr;
+        // Just reified from the immutable table: a Value can be trusted as-is
+        // (there's no table-side function to compare it against).
+        if (kind == PrimordialKind::Value)
+            return cellForOwnProperty(vm, holder->globalObject(), holder, key, holder->getDirect(offset), kind);
     }
-    return cellIfMatchesEntry(vm, holder->getDirect(offset), entry, kind);
+    return cellIfMatchesEntry(vm, holder, holder->getDirect(offset), entry, kind);
 }
 
 JSC_DEFINE_HOST_FUNCTION(primordialUnavailableHostFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -292,7 +369,11 @@ void JSGlobalObject::snapshotPrimordialsFromHolder(VM& vm, JSObject* holder, Pri
         auto& slot = m_linkTimeConstants[static_cast<unsigned>(linkTimeConstantFor(i))];
         if (slot.isInitialized() && !overrideExisting)
             continue;
-        JSCell* cell = cellForOwnProperty(holder->getDirect(vm, s_entries[i].makeKey(vm)), s_entries[i].kind);
+        JSCell* cell = holder;
+        if (s_entries[i].kind != PrimordialKind::Self) {
+            Identifier key = s_entries[i].makeKey(vm);
+            cell = cellForOwnProperty(vm, this, holder, key, holder->getDirect(vm, key), s_entries[i].kind);
+        }
         if (!cell)
             continue;
         slot.set(vm, this, cell);
@@ -308,13 +389,15 @@ JSCell* JSGlobalObject::materializePrimordialFromTables(VM& vm, JSObject* holder
 {
     using namespace Primordials;
     const Entry& info = s_entries[index];
+    if (info.kind == PrimordialKind::Self)
+        return holder;
     Identifier key = info.makeKey(vm);
-    if (holder) {
-        if (auto entry = holder->findPropertyHashEntry(key)) {
-            if (JSCell* cell = pristineFromHolderOwnProperty(vm, holder, entry->table->classForThis, key, *entry->value, info.kind))
-                return cell;
-            return materializeFromEntry(vm, this, key, *entry->value, info.kind);
-        }
+    if (auto entry = holder->findPropertyHashEntry(key)) {
+        if (JSCell* cell = recomputableEntryValue(vm, holder, *entry->value))
+            return cell;
+        if (JSCell* cell = pristineFromHolderOwnProperty(vm, holder, entry->table->classForThis, key, *entry->value, info.kind))
+            return cell;
+        return materializeFromEntry(vm, this, key, *entry->value, info.kind);
     }
     return unavailableFunction(vm, this, info.name);
 }
@@ -325,8 +408,10 @@ JSCell* JSGlobalObject::materializePrimordial(VM& vm, LinkTimeConstant constant)
     unsigned index = indexFor(constant);
     auto& slot = m_linkTimeConstants[static_cast<unsigned>(constant)];
     // Forcing a lazy holder into existence snapshots its own properties, which may
-    // initialize this slot.
+    // initialize this slot. A null holder would mean an accessor re-entered its own
+    // lazy initializer; never cache a stub over that.
     JSObject* holder = primordialHolderObject(vm, holderFor(index));
+    RELEASE_ASSERT(holder);
     if (slot.isInitialized())
         return slot.getInitializedOnMainThread(this);
     return materializePrimordialFromTables(vm, holder, index);
@@ -340,15 +425,19 @@ JSValue JSGlobalObject::auditPrimordials(JSGlobalObject* globalObject)
 
     JSArray* result = constructEmptyArray(globalObject, nullptr, numberOfPrimordials);
     RETURN_IF_EXCEPTION(scope, { });
-    static constexpr ASCIILiteral kindNames[] = { "Method"_s, "Getter"_s, "SymbolMethod"_s, "SymbolGetter"_s };
+    static constexpr ASCIILiteral kindNames[] = { "Method"_s, "Getter"_s, "Setter"_s, "Value"_s, "Self"_s };
     for (unsigned i = 0; i < numberOfPrimordials; ++i) {
         JSCell* value = globalObject->linkTimeConstant(linkTimeConstantFor(i));
-        Identifier key = s_entries[i].makeKey(vm);
         JSObject* row = constructEmptyObject(globalObject);
         row->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, String(s_entries[i].name)));
         row->putDirect(vm, Identifier::fromString(vm, "holder"_s), jsString(vm, String(s_holderNames[static_cast<unsigned>(holderFor(i))])));
         row->putDirect(vm, Identifier::fromString(vm, "kind"_s), jsString(vm, String(kindNames[static_cast<unsigned>(s_entries[i].kind)])));
-        row->putDirect(vm, Identifier::fromString(vm, "key"_s), key.isSymbol() ? JSValue(Symbol::create(vm, static_cast<SymbolImpl&>(*key.impl()))) : jsString(vm, String(key.impl())));
+        JSValue keyValue = jsNull();
+        if (s_entries[i].makeKey) {
+            Identifier key = s_entries[i].makeKey(vm);
+            keyValue = key.isSymbol() ? JSValue(Symbol::create(vm, static_cast<SymbolImpl&>(*key.impl()))) : jsString(vm, String(key.impl()));
+        }
+        row->putDirect(vm, Identifier::fromString(vm, "key"_s), keyValue);
         row->putDirect(vm, vm.propertyNames->value, value);
         row->putDirect(vm, Identifier::fromString(vm, "available"_s), jsBoolean(!isUnavailableFunction(value)));
         result->putDirectIndex(globalObject, i, row);

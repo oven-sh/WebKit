@@ -34,7 +34,13 @@ namespace JSC {
 class GetterSetter;
 
 #if USE(BUN_JSC_ADDITIONS)
-JS_EXPORT_PRIVATE JSObject* customGetterFunctionForPrimordial(JSGlobalObject*, VM&, PropertyName, GetValueFunc);
+class JSCustomGetterFunction;
+class JSCustomSetterFunction;
+struct DOMAttributeAnnotation;
+
+// The JS function that reflects a C++ getter/setter; cached per (name, function).
+JS_EXPORT_PRIVATE JSCustomGetterFunction* createCustomGetterFunction(JSGlobalObject*, VM&, PropertyName, GetValueFunc, std::optional<DOMAttributeAnnotation>);
+JS_EXPORT_PRIVATE JSCustomSetterFunction* createCustomSetterFunction(JSGlobalObject*, VM&, PropertyName, PutValueFunc);
 #endif
 
 class PropertyDescriptor {
