@@ -5112,6 +5112,24 @@ void SpeculativeJIT::compileInstanceOfCustom(Node* node)
 
 void SpeculativeJIT::compileIsCellWithType(Node* node)
 {
+    JSTypeRange range = node->queriedType();
+    auto compareType = [&](GPRReg cellGPR, GPRReg resultGPR) {
+        if (range.first == range.last) {
+            compare8(Equal,
+                Address(cellGPR, JSCell::typeInfoTypeOffset()),
+                TrustedImm32(range.first),
+                resultGPR);
+            return;
+        }
+
+        load8(Address(cellGPR, JSCell::typeInfoTypeOffset()), resultGPR);
+        sub32(TrustedImm32(range.first), resultGPR);
+        compare32(BelowOrEqual,
+            resultGPR,
+            TrustedImm32(range.last - range.first),
+            resultGPR);
+    };
+
     switch (node->child1().useKind()) {
     case UntypedUse: {
         JSValueOperand value(this, node->child1());
@@ -5122,10 +5140,7 @@ void SpeculativeJIT::compileIsCellWithType(Node* node)
 
         Jump isNotCell = branchIfNotCell(valueRegs);
 
-        compare8(Equal,
-            Address(valueRegs.payloadGPR(), JSCell::typeInfoTypeOffset()),
-            TrustedImm32(node->queriedType()),
-            resultGPR);
+        compareType(valueRegs.payloadGPR(), resultGPR);
         blessBoolean(resultGPR);
         Jump done = jump();
 
@@ -5144,10 +5159,7 @@ void SpeculativeJIT::compileIsCellWithType(Node* node)
         GPRReg cellGPR = cell.gpr();
         GPRReg resultGPR = result.gpr();
 
-        compare8(Equal,
-            Address(cellGPR, JSCell::typeInfoTypeOffset()),
-            TrustedImm32(node->queriedType()),
-            resultGPR);
+        compareType(cellGPR, resultGPR);
         blessBoolean(resultGPR);
         blessedBooleanResult(resultGPR, node);
         return;
@@ -5157,32 +5169,6 @@ void SpeculativeJIT::compileIsCellWithType(Node* node)
         RELEASE_ASSERT_NOT_REACHED();
         break;
     }
-}
-
-void SpeculativeJIT::compileIsTypedArrayView(Node* node)
-{
-    JSValueOperand value(this, node->child1());
-    GPRTemporary result(this, Reuse, value, PayloadWord);
-
-    JSValueRegs valueRegs = value.jsValueRegs();
-    GPRReg resultGPR = result.gpr();
-
-    Jump isNotCell = branchIfNotCell(valueRegs);
-
-    load8(Address(valueRegs.payloadGPR(), JSCell::typeInfoTypeOffset()), resultGPR);
-    sub32(TrustedImm32(FirstTypedArrayType), resultGPR);
-    compare32(Below,
-        resultGPR,
-        TrustedImm32(NumberOfTypedArrayTypesExcludingDataView),
-        resultGPR);
-    blessBoolean(resultGPR);
-    Jump done = jump();
-
-    isNotCell.link(this);
-    moveFalseTo(resultGPR);
-
-    done.link(this);
-    blessedBooleanResult(resultGPR, node);
 }
 
 void SpeculativeJIT::compileArrayIsArray(Node* node)
@@ -5259,6 +5245,18 @@ void SpeculativeJIT::compileToObjectOrCallObjectConstructor(Node* node)
     } else
         addSlowPathGenerator(slowPathCall(slowCases, this, operationCallObjectConstructor, resultGPR, LinkableConstant(*this, node->cellOperand()->cell()), valueRegs));
 
+    cellResult(resultGPR, node);
+}
+
+void SpeculativeJIT::compileOpenAsyncFromSyncIterator(Node* node)
+{
+    JSValueOperand iterable(this, node->child1());
+    JSValueRegs iterableRegs = iterable.jsValueRegs();
+
+    flushRegisters();
+    GPRFlushedCallResult result(this);
+    GPRReg resultGPR = result.gpr();
+    callOperation(operationOpenAsyncFromSyncIterator, resultGPR, LinkableConstant::globalObject(*this, node), iterableRegs);
     cellResult(resultGPR, node);
 }
 
@@ -8913,12 +8911,14 @@ void SpeculativeJIT::compileEnqueueAsyncGeneratorDriver(Node* node)
 {
     SpeculateCellOperand iterator(this, node->child1());
     SpeculateCellOperand driver(this, node->child2());
+    JSValueOperand resumeValue(this, node->child3());
 
     GPRReg iteratorGPR = iterator.gpr();
     GPRReg driverGPR = driver.gpr();
+    JSValueRegs resumeValueRegs = resumeValue.jsValueRegs();
 
     flushRegisters();
-    callOperation(operationEnqueueAsyncGeneratorDriver, LinkableConstant::globalObject(*this, node), iteratorGPR, driverGPR, TrustedImmPtr(&vm().syncResumeCallCache()));
+    callOperation(operationEnqueueAsyncGeneratorDriver, LinkableConstant::globalObject(*this, node), iteratorGPR, driverGPR, resumeValueRegs, TrustedImmPtr(&vm().syncResumeCallCache()));
 
     noResult(node);
 }
@@ -10550,17 +10550,18 @@ void SpeculativeJIT::compileArrayIndexOfOrArrayIncludes(Node* node)
             falseCase.append(branchIfNotCell(leftStringGPR));
             falseCase.append(branchIfNotString(leftStringGPR));
 
-            loadPtr(Address(leftStringGPR, JSString::offsetOfValue()), leftStringGPR);
-
-            slowCase.append(branchIfRopeStringImpl(leftStringGPR));
-
-            load32(Address(leftStringGPR, StringImpl::lengthMemoryOffset()), compareLengthGPR);
+            loadPtr(Address(leftStringGPR, JSString::offsetOfValue()), leftCharGPR);
             loadPtr(Address(searchElementGPR, JSString::offsetOfValue()), rightStringGPR);
-            falseCase.append(branch32(
-                NotEqual,
-                Address(rightStringGPR, StringImpl::lengthMemoryOffset()),
-                compareLengthGPR
-            ));
+
+            auto notRopeElement = branchIfNotRopeStringImpl(leftCharGPR);
+            load32(Address(leftStringGPR, JSRopeString::offsetOfLength()), compareLengthGPR);
+            falseCase.append(branch32(NotEqual, Address(rightStringGPR, StringImpl::lengthMemoryOffset()), compareLengthGPR));
+            slowCase.append(jump());
+            notRopeElement.link(this);
+
+            move(leftCharGPR, leftStringGPR);
+            load32(Address(leftStringGPR, StringImpl::lengthMemoryOffset()), compareLengthGPR);
+            falseCase.append(branch32(NotEqual, Address(rightStringGPR, StringImpl::lengthMemoryOffset()), compareLengthGPR));
 
             trueCase.append(branchTest32(Zero, compareLengthGPR));
 
@@ -14134,6 +14135,60 @@ void SpeculativeJIT::compileRegExpTest(Node* node)
             speculateRegExpObject(node->child2(), baseGPR);
             speculateString(node->child3(), argumentGPR);
 
+#if CPU(ARM64) || CPU(X86_64)
+            // Anchored RegExp.test(string) fast-fail on a constant RegExpObject; tests input[0].
+            {
+                RegExp* regExp = nullptr;
+                if (RegExpObject* regExpObject = node->child2()->dynamicCastConstant<RegExpObject*>())
+                    regExp = regExpObject->regExp();
+                else if (node->child2()->op() == NewRegExp)
+                    regExp = node->child2()->castOperand<RegExp*>();
+                std::optional<WTF::BitSet<256>> localBitmap;
+                if (regExp && !regExp->globalOrSticky())
+                    localBitmap = Yarr::computeAnchoredFirstCharacterBitmap(regExp->pattern(), regExp->flags());
+                if (localBitmap) {
+                    const uint8_t* bitmap = jitCode()->common.m_regExpFirstCharacterBitmaps.add(*localBitmap)->storageBytes().data();
+
+                    GPRTemporary result(this);
+                    GPRTemporary scratch1(this);
+                    GPRTemporary scratch2(this);
+
+                    GPRReg resultGPR = result.gpr();
+                    GPRReg scratch1GPR = scratch1.gpr();
+                    GPRReg scratch2GPR = scratch2.gpr();
+
+                    flushRegisters();
+
+                    JumpList slowCases;
+                    JumpList doneCases;
+
+                    // The object must still wrap the expected RegExp (guards against .compile()).
+                    loadPtr(Address(baseGPR, RegExpObject::offsetOfRegExpAndFlags()), scratch1GPR);
+                    and64(TrustedImm64(RegExpObject::regExpMask), scratch1GPR);
+                    slowCases.append(branchLinkableConstant(NotEqual, scratch1GPR, LinkableConstant(*this, regExp)));
+
+                    loadPtr(Address(argumentGPR, JSString::offsetOfValue()), scratch1GPR);
+                    slowCases.append(branchIfRopeStringImpl(scratch1GPR));
+                    slowCases.append(branchTest32(Zero, Address(scratch1GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+                    slowCases.append(branchTest32(Zero, Address(scratch1GPR, StringImpl::lengthMemoryOffset())));
+
+                    loadPtr(Address(scratch1GPR, StringImpl::dataOffset()), scratch1GPR);
+                    load8(Address(scratch1GPR), scratch2GPR);
+                    emitFirstCharacterBitmapMatch(bitmap, scratch2GPR, scratch1GPR, resultGPR, slowCases);
+
+                    move(TrustedImm32(0), resultGPR);
+                    doneCases.append(jump());
+
+                    slowCases.link(this);
+                    callOperation(operationRegExpTestString, resultGPR, globalObjectGPR, baseGPR, argumentGPR);
+
+                    doneCases.link(this);
+                    unblessedBooleanResult(resultGPR, node);
+                    return;
+                }
+            }
+#endif
+
             flushRegisters();
             GPRFlushedCallResult result(this);
             callOperation(operationRegExpTestString, result.gpr(), globalObjectGPR, baseGPR, argumentGPR);
@@ -14347,6 +14402,51 @@ void SpeculativeJIT::compileRegExpExecNonGlobalOrSticky(Node* node)
 
     speculateString(node->child2(), argumentGPR);
 
+#if CPU(ARM64) || CPU(X86_64)
+    // Anchored non-sticky exec fast-fail; tests input[0].
+    {
+        RegExp* regExp = node->castOperand<RegExp*>();
+        if (auto localBitmap = Yarr::computeAnchoredFirstCharacterBitmap(regExp->pattern(), regExp->flags())) {
+            const uint8_t* bitmap = jitCode()->common.m_regExpFirstCharacterBitmaps.add(*localBitmap)->storageBytes().data();
+
+            GPRTemporary result(this);
+            GPRTemporary scratch1(this);
+            GPRTemporary scratch2(this);
+            GPRTemporary scratch3(this);
+
+            GPRReg resultGPR = result.gpr();
+            GPRReg scratch1GPR = scratch1.gpr();
+            GPRReg scratch2GPR = scratch2.gpr();
+            GPRReg scratch3GPR = scratch3.gpr();
+
+            flushRegisters();
+
+            JumpList slowCases;
+            JumpList doneCases;
+
+            loadPtr(Address(argumentGPR, JSString::offsetOfValue()), scratch1GPR);
+            slowCases.append(branchIfRopeStringImpl(scratch1GPR));
+            slowCases.append(branchTest32(Zero, Address(scratch1GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+            // An anchored pattern cannot match empty, so delegate an empty string to the operation.
+            slowCases.append(branchTest32(Zero, Address(scratch1GPR, StringImpl::lengthMemoryOffset())));
+
+            loadPtr(Address(scratch1GPR, StringImpl::dataOffset()), scratch1GPR);
+            load8(Address(scratch1GPR), scratch2GPR);
+            emitFirstCharacterBitmapMatch(bitmap, scratch2GPR, scratch1GPR, scratch3GPR, slowCases);
+
+            move(TrustedImm64(JSValue::encode(jsNull())), resultGPR);
+            doneCases.append(jump());
+
+            slowCases.link(this);
+            callOperation(operationRegExpExecNonGlobalOrSticky, resultGPR, globalObjectGPR, LinkableConstant(*this, node->cellOperand()->cell()), argumentGPR);
+
+            doneCases.link(this);
+            jsValueResult(resultGPR, node);
+            return;
+        }
+    }
+#endif
+
     flushRegisters();
     JSValueRegsFlushedCallResult result(this);
     JSValueRegs resultRegs = result.regs();
@@ -14368,6 +14468,68 @@ void SpeculativeJIT::compileRegExpExecSticky(Node* node)
 
     speculateRegExpObject(node->child2(), baseGPR);
     speculateString(node->child3(), argumentGPR);
+
+#if CPU(ARM64) || CPU(X86_64)
+    // Sticky exec fast-fail; when input[lastIndex] cannot begin a match, reset lastIndex to 0 and
+    // return null inline.
+    {
+        RegExp* regExp = node->castOperand<RegExp*>();
+        auto localBitmap = Yarr::computeStickyFirstCharacterBitmap(regExp->pattern(), regExp->flags());
+        if (localBitmap) {
+            const uint8_t* bitmap = jitCode()->common.m_regExpFirstCharacterBitmaps.add(*localBitmap)->storageBytes().data();
+
+            GPRTemporary result(this);
+            GPRTemporary scratch1(this);
+            GPRTemporary scratch2(this);
+            GPRTemporary scratch3(this);
+            GPRReg resultGPR = result.gpr();
+            GPRReg scratch1GPR = scratch1.gpr();
+            GPRReg scratch2GPR = scratch2.gpr();
+            GPRReg scratch3GPR = scratch3.gpr();
+
+            // baseGPR/argumentGPR/globalObjectGPR are preserved across flushRegisters for the
+            // slow-path operation call; the scratch registers are free to clobber.
+            flushRegisters();
+
+            JumpList slowCases;
+            JumpList doneCases;
+
+            // The string must be a resolved 8-bit string.
+            loadPtr(Address(argumentGPR, JSString::offsetOfValue()), scratch1GPR);
+            slowCases.append(branchIfRopeStringImpl(scratch1GPR));
+            slowCases.append(branchTest32(Zero, Address(scratch1GPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+
+            // lastIndex must be writable so the inline no-match path can reset it to 0.
+            slowCases.append(branchTest32(NonZero, Address(baseGPR, RegExpObject::offsetOfRegExpAndFlags()), TrustedImm32(RegExpObject::lastIndexIsNotWritableFlag)));
+
+            // lastIndex must be an Int32.
+            load64(Address(baseGPR, RegExpObject::offsetOfLastIndex()), scratch2GPR);
+            slowCases.append(branchIfNotInt32(scratch2GPR));
+            zeroExtend32ToWord(scratch2GPR, scratch2GPR);
+
+            // Need 0 <= lastIndex < length. An unsigned compare rejects negatives too.
+            load32(Address(scratch1GPR, StringImpl::lengthMemoryOffset()), scratch3GPR);
+            slowCases.append(branch32(AboveOrEqual, scratch2GPR, scratch3GPR));
+
+            // character = input[lastIndex] (scratch1GPR becomes the data pointer).
+            loadPtr(Address(scratch1GPR, StringImpl::dataOffset()), scratch1GPR);
+            load8(BaseIndex(scratch1GPR, scratch2GPR, TimesOne), scratch3GPR);
+            emitFirstCharacterBitmapMatch(bitmap, scratch3GPR, scratch1GPR, scratch2GPR, slowCases);
+
+            // The byte cannot begin a match: reset lastIndex to 0 and return null.
+            store64(TrustedImm64(JSValue::encode(jsNumber(0))), Address(baseGPR, RegExpObject::offsetOfLastIndex()));
+            move(TrustedImm64(JSValue::encode(jsNull())), resultGPR);
+            doneCases.append(jump());
+
+            slowCases.link(this);
+            callOperation(operationRegExpExecStickyKnownRegExp, resultGPR, globalObjectGPR, LinkableConstant(*this, node->cellOperand()->cell()), baseGPR, argumentGPR);
+
+            doneCases.link(this);
+            jsValueResult(resultGPR, node);
+            return;
+        }
+    }
+#endif
 
     flushRegisters();
     JSValueRegsFlushedCallResult result(this);
@@ -15727,11 +15889,12 @@ void SpeculativeJIT::compileNewButterflyWithSize(Node* node)
     IndexingType indexingMode = node->indexingMode();
     ASSERT(!hasAnyArrayStorage(indexingMode));
     ASSERT(!isCopyOnWrite(indexingMode));
-    unsigned butterflyLength = node->child1()->asInt32();
-    ASSERT(butterflyLength < MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH);
+    unsigned publicLength = node->child1()->asInt32();
+    unsigned vectorLength = std::max(publicLength, node->vectorLengthHint());
+    ASSERT(vectorLength < MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH);
 
     constexpr bool hasIndexingHeader = true;
-    size_t allocationSize = Butterfly::totalSize(0, 0, hasIndexingHeader, butterflyLength * sizeof(JSValue));
+    size_t allocationSize = Butterfly::totalSize(0, 0, hasIndexingHeader, vectorLength * sizeof(JSValue));
 
     JumpList slowCases;
     emitAllocate(storageGPR, JITAllocator::constant(vm().auxiliarySpace().allocatorForNonInline(allocationSize, AllocatorForMode::EnsureAllocator)), scratchGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
@@ -15740,19 +15903,20 @@ void SpeculativeJIT::compileNewButterflyWithSize(Node* node)
 
     GPRReg sizeGPR = scratch2GPR;
 
-    move(Imm32(butterflyLength), sizeGPR);
+    move(Imm32(vectorLength), sizeGPR);
+    move(Imm32(publicLength), scratchGPR);
 
     // FIXME: do post increment store pair.
     addPtr(TrustedImm32(sizeof(IndexingHeader)), storageGPR);
     static_assert(Butterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)) == Butterfly::offsetOfVectorLength());
-    storePair32(sizeGPR, sizeGPR, storageGPR, TrustedImm32(Butterfly::offsetOfPublicLength()));
+    storePair32(scratchGPR, sizeGPR, storageGPR, TrustedImm32(Butterfly::offsetOfPublicLength()));
 
     constexpr unsigned zeroFillUnrollLimit = 16;
-    if (butterflyLength <= zeroFillUnrollLimit) {
+    if (vectorLength <= zeroFillUnrollLimit) {
         if (hasDouble(indexingMode))
-            emitFillStorageWithDoubleEmpty(storageGPR, 0, butterflyLength, scratchGPR);
+            emitFillStorageWithDoubleEmpty(storageGPR, 0, vectorLength, scratchGPR);
         else
-            emitFillStorageWithJSEmpty(storageGPR, 0, butterflyLength, scratchGPR);
+            emitFillStorageWithJSEmpty(storageGPR, 0, vectorLength, scratchGPR);
     } else {
         if (hasDouble(indexingMode))
             moveTrustedValue(jsNaN(), scratchRegs);
@@ -16500,9 +16664,6 @@ void SpeculativeJIT::compileNewInternalFieldObject(Node* node)
         break;
     case JSWrapForValidIteratorType:
         compileNewInternalFieldObjectImpl<JSWrapForValidIterator>(node, operationNewWrapForValidIterator);
-        break;
-    case JSAsyncFromSyncIteratorType:
-        compileNewInternalFieldObjectImpl<JSAsyncFromSyncIterator>(node, operationNewAsyncFromSyncIterator);
         break;
     case JSRegExpStringIteratorType:
         compileNewInternalFieldObjectImpl<JSRegExpStringIterator>(node, operationNewRegExpStringIterator);

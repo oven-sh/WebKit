@@ -1,15 +1,15 @@
 // Copyright 2019 Google LLC
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkTextBlob.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkTo.h"
 #include "modules/skparagraph/include/DartTypes.h"
 #include "modules/skparagraph/include/TextStyle.h"
 #include "modules/skparagraph/src/ParagraphImpl.h"
 #include "modules/skparagraph/src/Run.h"
 #include "modules/skshaper/include/SkShaper.h"
-#include "src/base/SkUTF.h"
+#include "src/core/SkUTF.h"
 
 namespace skia {
 namespace textlayout {
@@ -57,6 +57,7 @@ Run::Run(ParagraphImpl* owner,
     fOffsets[info.glyphCount] = {0, 0};
     fClusterIndexes[info.glyphCount] = this->leftToRight() ? info.utf8Range.end() : info.utf8Range.begin();
     fEllipsis = false;
+    fHyphen = false;
     fPlaceholderIndex = std::numeric_limits<size_t>::max();
 }
 
@@ -363,6 +364,17 @@ SkFont Cluster::font() const {
 bool Cluster::isSoftBreak() const {
     return fOwner->codeUnitHasProperty(fTextRange.end,
                                        SkUnicode::CodeUnitFlags::kSoftLineBreakBefore);
+}
+
+bool Cluster::isSoftHyphen() const {
+    auto text = fOwner->text();
+    const char* p = text.begin() + fTextRange.start;
+    const char* end = text.begin() + fTextRange.end;
+    if (p >= end) {
+        return false;
+    }
+    SkUnichar cp = SkUTF::NextUTF8(&p, end);
+    return cp == 0x00AD && p == end;
 }
 
 bool Cluster::isGraphemeBreak() const {

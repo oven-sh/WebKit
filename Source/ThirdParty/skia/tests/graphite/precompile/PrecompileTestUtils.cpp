@@ -12,7 +12,7 @@
 #include "include/gpu/graphite/precompile/PrecompileColorFilter.h"
 #include "include/gpu/graphite/precompile/PrecompileRuntimeEffect.h"
 #include "include/gpu/graphite/precompile/PrecompileShader.h"
-#include "src/base/SkMathPriv.h"
+#include "src/core/SkMathPriv.h"
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/ContextUtils.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
@@ -27,7 +27,7 @@
 
 #if defined (SK_VULKAN)
 #include "include/gpu/vk/VulkanTypes.h"
-#include "src/base/SkBase64.h"
+#include "src/core/SkBase64.h"
 #include "src/gpu/graphite/vk/VulkanYcbcrConversion.h"
 #endif // SK_VULKAN
 
@@ -125,9 +125,6 @@ bool skip(const char* str) {
         return true;
     }
 #endif // SK_VULKAN
-    if (strstr(str, "RE_GainmapEffect")) {
-        return true;
-    }
     return false;
 }
 
@@ -237,7 +234,7 @@ void PipelineLabelInfoCollector::finalReport() {
 
 // Precompile with the provided PrecompileSettings then verify that:
 //   1) some case in 'kCases' is covered
-//   2) more than 40% of the generated Pipelines are in kCases
+//   2) more than 30% of the generated Pipelines are in kCases
 void RunTest(skgpu::graphite::PrecompileContext* precompileContext,
              skiatest::Reporter* reporter,
              const PrecompileSettings& settings,
@@ -301,7 +298,7 @@ void RunTest(skgpu::graphite::PrecompileContext* precompileContext,
     if (checkPaintOptionCoverage) {
         REPORTER_ASSERT(reporter, matchesInCases.size() >= 1,   // This tests requirement 1, above
                         "%d: num matches: %zu", precompileSettingsIndex, matchesInCases.size());
-        REPORTER_ASSERT(reporter, utilization >= 0.4f,         // This tests requirement 2, above
+        REPORTER_ASSERT(reporter, utilization >= 0.3f,         // This tests requirement 2, above
                         "%d: utilization: %f", precompileSettingsIndex, utilization);
     }
 

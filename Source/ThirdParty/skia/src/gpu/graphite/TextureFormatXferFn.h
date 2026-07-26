@@ -9,7 +9,7 @@
 #define skgpu_graphite_TextureFormatXferFn_DEFINED
 
 #include "include/core/SkRefCnt.h"
-#include "src/base/SkArenaAlloc.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkRasterPipelineOpContexts.h"
 #include "src/gpu/graphite/TextureFormat.h"
@@ -43,6 +43,11 @@ public:
                                                            const SkColorSpaceXformSteps& csSteps,
                                                            SkColorType dstCT);
 
+    // Builds a transfer function that moves data, assuming it is already exactly in the provided
+    // TextureFormat. Unlike the above two color-type/space converting functions, this also
+    // can support compressed textures (assuming the data is already compressed).
+    static std::optional<TextureFormatXferFn> MakeIdentity(TextureFormat format);
+
     TextureFormatXferFn(const TextureFormatXferFn&) = default;
     TextureFormatXferFn(TextureFormatXferFn&&) = default;
 
@@ -59,7 +64,8 @@ public:
     // respective buffers by `srcRowBytes` and `dstRowBytes` respectively.
     //
     // It is assumed that the row bytes and data contents match the formats and color types provided
-    // when the TextureFormatXferFn was created.
+    // when the TextureFormatXferFn was created. If transferring data for compressed formats, the
+    // width and height should be in units of blocks.
     void run(int width, int height,
              const void* src, size_t srcRowBytes,
              void* dst, size_t dstRowBytes) const;

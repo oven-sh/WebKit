@@ -2476,6 +2476,27 @@
                 "url": "https://www.w3.org/TR/SVG11/text.html#BaselineShiftProperty"
             }
         },
+        "baseline-source": {
+            "animation-type": "discrete",
+            "initial": "auto",
+            "values": [
+                "auto",
+                "first",
+                "last"
+            ],
+            "codegen-properties": {
+                "settings-flag": "cssBaselineSourceEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "boxData"],
+                "computed-style-storage-kind": "enum",
+                "computed-style-type": "BaselineSource",
+                "parser-grammar": "<<values>>"
+            },
+            "specification": {
+                "category": "css-inline",
+                "url": "https://drafts.csswg.org/css-inline-3/#baseline-source"
+            },
+            "status": "experimental"
+        },
         "block-ellipsis": {
             "animation-type": "discrete",
             "inherited": true,
@@ -8064,13 +8085,15 @@
             "initial": "auto",
             "values": [
                 "auto",
+                "spaces",
                 "none"
             ],
             "codegen-properties": {
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "enum",
                 "computed-style-type": "RubyOverhang",
-                "parser-grammar": "<<values>>"
+                "parser-grammar": "auto | spaces | none@(aliased-to=spaces)",
+                "parser-grammar-comment": "'none' is a legacy value alias of 'spaces'."
             },
             "specification": {
                 "category": "css-ruby",
@@ -8410,6 +8433,26 @@
                 "category": "css-22",
                 "url": "https://www.w3.org/TR/CSS22/tables.html#propdef-table-layout"
             }
+        },
+        "spatial": {
+            "animation-type": "discrete",
+            "initial": "none",
+            "values": [
+                "none",
+                "portal"
+            ],
+            "codegen-properties": {
+                "enable-if": "ENABLE_SPATIAL_PORTAL",
+                "settings-flag": "spatialPortalEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "enum",
+                "computed-style-type": "SpatialType",
+                "parser-grammar": "<<values>>"
+            },
+            "specification": {
+                "url": "https://webkit.github.io/explainers/css-spatial/Overview.html#portals"
+            },
+            "status": "in development"
         },
         "tab-size": {
             "animation-type": "by computed value",

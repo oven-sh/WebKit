@@ -8,7 +8,7 @@
 #define skgpu_graphite_BufferManager_DEFINED
 
 #include "include/core/SkRefCnt.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "src/core/SkTHash.h"
 #include "src/gpu/BufferWriter.h"
 #include "src/gpu/graphite/Buffer.h"
@@ -350,6 +350,10 @@ public:
     // Regardless of success or failure, the DrawBufferManager is reset to a valid initial state
     // for recording buffer data for the next Recording.
     [[nodiscard]] bool transferToRecording(Recording*);
+
+#if defined(GPU_TEST_UTILS)
+    void testingOnly_onFailedBuffer() { this->onFailedBuffer(); }
+#endif
 
 private:
     friend class BufferSubAllocator;

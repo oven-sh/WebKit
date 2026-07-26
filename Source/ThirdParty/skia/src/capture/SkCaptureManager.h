@@ -10,15 +10,21 @@
 
 #include "include/core/SkPicture.h"
 #include "include/core/SkRefCnt.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 
 #include <atomic>
+#include <cstdint>
+#include <map>
 
 class SkCanvas;
 class SkCapture;
 class SkCaptureCanvas;
 class SkSurface;
 
+/**
+ * SkCaptureManager is in charge of knowing the current state of capture, handling the creation of
+ * capture canvases, and tracking and recording metadata to the final SkCapture.
+ */
 class SkCaptureManager : public SkRefCnt {
 public:
     SkCaptureManager();
@@ -36,6 +42,8 @@ public:
     sk_sp<SkCapture> getLastCapture() const;
 
 private:
+    void processCanvasContent(SkCaptureCanvas*);
+
     std::atomic<bool> fIsCurrentlyCapturing = false;
     skia_private::TArray<std::unique_ptr<SkCaptureCanvas>> fTrackedCanvases;
     skia_private::TArray<sk_sp<SkPicture>>  fPictures;

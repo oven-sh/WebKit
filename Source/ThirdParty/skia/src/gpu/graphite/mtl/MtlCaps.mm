@@ -10,12 +10,12 @@
 #include "include/core/SkTextureCompressionType.h"
 #include "include/gpu/graphite/TextureInfo.h"
 #include "include/gpu/graphite/mtl/MtlGraphiteTypes.h"
+#include "include/private/SkLog.h"
 #include "src/gpu/SwizzlePriv.h"
 #include "src/gpu/graphite/CommandBuffer.h"
 #include "src/gpu/graphite/ComputePipelineDesc.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
 #include "src/gpu/graphite/GraphiteResourceKey.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RenderPassDesc.h"
 #include "src/gpu/graphite/RendererProvider.h"
 #include "src/gpu/graphite/TextureInfoPriv.h"
@@ -27,9 +27,7 @@
 
 namespace skgpu::graphite {
 
-MtlCaps::MtlCaps(const id<MTLDevice> device, const ContextOptions& options)
-        : Caps()
-        , fFormatSupport{} { // zero-initialize format support so everything defaults to unsupported
+MtlCaps::MtlCaps(const id<MTLDevice> device, const ContextOptions& options) : Caps() {
     // Metal-specific MtlCaps
     this->initGPUFamily(device);
     this->initCaps(device);
@@ -66,7 +64,7 @@ void MtlCaps::initGPUFamily(id<MTLDevice> device) {
     }
 
     // If we've reached here, we didn't find a supported family and nothing can be trusted.
-    SKGPU_LOG_F("Unable to detect supported MTLGPUFamily");
+    SK_ABORT("Unable to detect supported MTLGPUFamily");
 }
 
 void MtlCaps::initCaps(const id<MTLDevice> device) {
@@ -139,31 +137,16 @@ void MtlCaps::initCaps(const id<MTLDevice> device) {
         fAvoidMSAA = true;
     }
 
-    // ShaderCaps
+    // ShaderCaps overrides
     SkSL::ShaderCaps* shaderCaps = fShaderCaps.get();
 
     // Dual source blending requires Metal 1.2, but our minimum requirements ensure 2.2
     shaderCaps->fDualSourceBlendingSupport = true;
-
-    shaderCaps->fFlatInterpolationSupport = true;
-    shaderCaps->fShaderDerivativeSupport = true;
-    shaderCaps->fInfinitySupport = true;
-
+    shaderCaps->fVectorClampMinMaxSupport = !isIntel;
     if (this->isApple()) {
         shaderCaps->fFBFetchSupport = true;
         shaderCaps->fFBFetchColorName = "sk_LastFragColor";
     }
-
-    if (isIntel) {
-        shaderCaps->fVectorClampMinMaxSupport = false;
-    }
-
-    shaderCaps->fIntegerSupport = true;
-    shaderCaps->fNonsquareMatrixSupport = true;
-    shaderCaps->fInverseHyperbolicSupport = true;
-
-    // Metal uses IEEE floats so assuming those values here.
-    shaderCaps->fFloatIs32Bits = true;
 }
 
 
@@ -192,7 +175,8 @@ void MtlCaps::initFormatTable(const id<MTLDevice> device) {
         }
 #endif
 
-        auto& [supportedUsage, supportedSampleCounts] = fFormatSupport[i];
+        // The metal backend only supports optimal tiling currently
+        auto& [supportedUsage, supportedSampleCounts] = fFormatSupport[(int) Tiling::kOptimal][i];
         if (features == MTLFeatureFlag::NotAvailable) {
             SkASSERT(!SkToBool(supportedUsage) && !SkToBool(supportedSampleCounts));
             continue;

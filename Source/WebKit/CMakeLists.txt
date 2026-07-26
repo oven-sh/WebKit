@@ -282,8 +282,6 @@ set(WebKit_MESSAGES_IN_FILES
     NetworkProcess/webrtc/NetworkRTCProvider
     NetworkProcess/webrtc/RTCDataChannelRemoteManagerProxy
 
-    NetworkProcess/webrtc/rice/RiceBackend
-
     NetworkProcess/webtransport/NetworkTransportSession
 
     Shared/AuxiliaryProcess
@@ -392,8 +390,6 @@ set(WebKit_MESSAGES_IN_FILES
     WebProcess/Network/webrtc/RTCDataChannelRemoteManager
     WebProcess/Network/webrtc/WebRTCMonitor
     WebProcess/Network/webrtc/WebRTCResolver
-
-    WebProcess/Network/webrtc/rice/RiceBackendProxy
 
     WebProcess/Network/NetworkProcessConnection
     WebProcess/Network/WebResourceLoader
@@ -816,11 +812,6 @@ if (USE_LIBWEBRTC)
     endif ()
 endif ()
 
-if (USE_GSTREAMER_WEBRTC AND USE_LIBRICE)
-    list(APPEND WebKit_LIBRARIES Rice::Io)
-    list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES "${WEBKIT_DIR}/NetworkProcess/webrtc/rice")
-endif ()
-
 if (ATOMICS_REQUIRE_LIBATOMIC)
     list(APPEND WebKit_PRIVATE_LIBRARIES atomic)
 endif ()
@@ -857,13 +848,16 @@ set(WebKit_GENERATED_SERIALIZERS_SUFFIX cpp)
 set(WebKit_SWIFT_INTEROP_MODULE_PATH "${WEBKIT_DIR}/Modules/Internal")
 set(WebKit_SWIFT_INTEROP_MODULE_PATH_SWIFT_ONLY TRUE)
 
-# WebCore_Private.modulemap in-tree is a `framework module` that umbrellas the
-# Xcode framework's PrivateHeaders/. CMake stages those headers as a flat
-# directory instead, and umbrellaing it pulls in headers (ANGLEHeaders.h etc.)
-# whose own dependencies aren't on the Swift Clang importer's search path.
-# Expose only what WebBackForwardList.swift names directly; the rest of the
-# WebCore:: types it uses are reachable transitively via WebKit_Internal headers.
-if (ENABLE_BACK_FORWARD_LIST_SWIFT)
+# WebKit's Swift code names WebCore:: types via the WebCore_Private module. On
+# Apple this is staged from the in-tree map into the WebCore framework bundle by
+# PlatformMac.cmake and found by the Swift Clang importer via -F (same as
+# JavaScriptCore). The non-Apple ports build no framework bundles, so there is no
+# -F module to discover; the in-tree map is also a `framework module` that needs
+# the framework layout. Synthesize a plain module map exposing only what
+# WebBackForwardList.swift names directly (the rest of the WebCore:: types it uses
+# are reachable transitively via WebKit_Internal headers) and put it on the
+# importer's search path below.
+if (ENABLE_BACK_FORWARD_LIST_SWIFT AND NOT USE_FRAMEWORK_BUNDLES)
     set(WebCore_Private_SWIFT_MODULEMAP_DIR "${CMAKE_BINARY_DIR}/WebKit/SwiftModules/WebCorePrivate")
     file(MAKE_DIRECTORY "${WebCore_Private_SWIFT_MODULEMAP_DIR}")
     file(CONFIGURE OUTPUT "${WebCore_Private_SWIFT_MODULEMAP_DIR}/module.modulemap" CONTENT
@@ -886,6 +880,10 @@ WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WebKit)
 # the C++ target's include directories to swiftc's Clang importer so those
 # resolve. cmakeconfig.h is force-included because the headers assume the
 # project's prefix header has already defined ENABLE()/HAVE() values.
+#
+# WebCore_DERIVED_SOURCES_DIR and style/computed complete the search path for the
+# WebCore_Private umbrella. Inert on Apple (PlatformMac.cmake applies the live Mac
+# copy) but kept in sync for the non-Apple path below.
 set(WebKit_SWIFT_CLANG_INCLUDE_DIRS
     ${CMAKE_BINARY_DIR}
     ${WebKit_DERIVED_SOURCES_DIR}
@@ -893,7 +891,8 @@ set(WebKit_SWIFT_CLANG_INCLUDE_DIRS
     ${bmalloc_FRAMEWORK_HEADERS_DIR}
     ${PAL_FRAMEWORK_HEADERS_DIR}
     ${ICU_INCLUDE_DIRS}
-    ${WebCore_Private_SWIFT_MODULEMAP_DIR}
+    ${WebCore_DERIVED_SOURCES_DIR}
+    ${WEBCORE_DIR}/style/computed
 )
 if (NOT USE_FRAMEWORK_BUNDLES)
     list(APPEND WebKit_SWIFT_CLANG_INCLUDE_DIRS
@@ -903,6 +902,9 @@ if (NOT USE_FRAMEWORK_BUNDLES)
         ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}
         ${WebKit_PRIVATE_INCLUDE_DIRECTORIES}
     )
+    if (ENABLE_BACK_FORWARD_LIST_SWIFT)
+        list(APPEND WebKit_SWIFT_CLANG_INCLUDE_DIRS ${WebCore_Private_SWIFT_MODULEMAP_DIR})
+    endif ()
 endif ()
 
 if (NOT APPLE AND SWIFT_REQUIRED)
@@ -966,6 +968,7 @@ if (SWIFT_REQUIRED)
             UIProcess/API/mac/WKWebViewMac.mm
             UIProcess/ios/ViewGestureControllerIOS.mm
             UIProcess/mac/ViewGestureControllerMac.mm
+            UIProcess/mac/WKAppKitGestureController.mm
             UIProcess/mac/WebViewImpl.mm
         )
     endif ()
@@ -1122,6 +1125,7 @@ macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
 
             ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h
         )
+        list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.cpp)
         list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h)
     endforeach ()
 
@@ -1510,6 +1514,20 @@ endif ()
 
 if ("${PORT}" STREQUAL "Mac" OR "${PORT}" STREQUAL "IOS")
     WEBKIT_DEFINE_XPC_SERVICES()
+    # XPC services have a link dependency on WebKit, but for codesigning we
+    # need the reverse. The service bundles all sign, and then WebKit.framework
+    # can sign.
+    if (NOT "${PORT}" STREQUAL "IOS")
+        # FIXME: iOS port does not use the shared codesigning macros for
+        # extension processes.
+        add_dependencies(WebKit_CodeSign
+            WebProcess_CodeSign
+            WebProcessEnhancedSecurity_CodeSign
+            WebProcessCaptivePortal_CodeSign
+            NetworkProcess_CodeSign
+            GPUProcess_CodeSign
+        )
+    endif ()
 else ()
     if (NOT ANDROID)
         WEBKIT_POPULATE_LIBRARY_VERSION(WEBKIT)

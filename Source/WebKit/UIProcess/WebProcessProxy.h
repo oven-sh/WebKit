@@ -638,7 +638,7 @@ public:
     bool isEligibleForWebProcessCache() const { return m_isEligibleForWebProcessCache; }
 
     void incrementFrameProcessCount() { ++m_frameProcessCount; }
-    void decrementFrameProcessCount() { --m_frameProcessCount; }
+    void decrementFrameProcessCount();
     uint64_t frameProcessCount() const { return m_frameProcessCount; }
 
     enum class FirstPartyAccessResult {
@@ -664,8 +664,6 @@ private:
 
 #if PLATFORM(COCOA)
     bool handleRemoteObjectRegistryMessage(IPC::Connection&, IPC::Decoder&);
-
-    void cacheMediaMIMETypesInternal(const Vector<String>&);
 #endif
 
     // ProcessLauncher::Client
@@ -783,6 +781,7 @@ private:
 #else
     void createLogStream(LogStreamIdentifier, CompletionHandler<void()>&&);
 #endif
+    void stopLogStream();
 #endif
 
 #if ENABLE(REMOTE_INSPECTOR) && PLATFORM(COCOA)

@@ -241,7 +241,12 @@ bool AXCoreObject::isButton() const
 
 bool AXCoreObject::isTextControl() const
 {
-    switch (role()) {
+    return isTextControl(role());
+}
+
+bool AXCoreObject::isTextControl(AccessibilityRole role)
+{
+    switch (role) {
     case AccessibilityRole::ComboBox:
     case AccessibilityRole::SearchField:
     case AccessibilityRole::TextArea:
@@ -2335,7 +2340,7 @@ bool performCustomActionPress(AXTreeID treeID, AXID targetID)
     return retrieveValueFromMainThreadWithTimeoutAndDefault([treeID, targetID] () -> bool {
         if (WeakPtr<AXObjectCache> cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID)) {
             if (RefPtr object = cache->objectForID(targetID))
-                return object->press();
+                return object->pressPreservingFocus();
         }
         return false;
     }, InteractiveTimeout, false);

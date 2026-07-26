@@ -1346,6 +1346,10 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     [NSApp registerServicesMenuSendTypes:PasteboardTypes::forSelectionSingleton() returnTypes:PasteboardTypes::forEditingSingleton()];
 
+    // Occlusion notifications are not always sent in the base system, and stale occlusion state can result in various misbehaviors.
+    if (os_variant_is_basesystem("WebKit"))
+        setWindowOcclusionDetectionEnabled(false);
+
 #if ENABLE(TILED_CA_DRAWING_AREA)
     auto useRemoteLayerTree = [&]() {
         bool result = false;
@@ -1510,6 +1514,7 @@ void WebViewImpl::handleProcessSwapOrExit()
 #endif
 
     m_contentRelativeViewsNeedToBeRepositioned = false;
+    m_cursorOverlapsSelection = false;
 }
 
 void WebViewImpl::processWillSwap()
@@ -2552,6 +2557,8 @@ void WebViewImpl::pageDidScroll(const IntPoint& scrollOffset)
 
     m_lastPageScrollOffset = scrollOffset;
     m_pageScrollingHysteresis->impulse();
+
+    updateCursorOverlapsSelectionAndNotifyIfNeeded();
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
     // While a selection-drag is autoscrolling, keep extending the selection toward the
@@ -3903,7 +3910,7 @@ void WebViewImpl::contentRelativeViewsHysteresisTimerFired(PAL::HysteresisState 
     }
 
     if (m_contentRelativeViewsNeedToBeRepositioned != started && std::exchange(m_contentRelativeViewsNeedToBeRepositioned, started))
-        [inputContextForSelectionUpdates() textInputClientDidUpdateSelection];
+        [protect(inputContextForSelectionUpdates()) textInputClientDidUpdateSelection];
 }
 
 void WebViewImpl::pageScrollingHysteresisFired(PAL::HysteresisState state)
@@ -3935,6 +3942,31 @@ void WebViewImpl::restoreContentRelativeChildViews()
 #if ENABLE(WRITING_TOOLS)
     [m_view.get() _web_restoreContentRelativeChildViews];
     [m_textAnimationTypeManager restoreTextAnimationType];
+#endif
+}
+
+void WebViewImpl::updateCursorOverlapsSelectionAndNotifyIfNeeded()
+{
+    RetainPtr context = inputContextForSelectionUpdates();
+    if (!context)
+        return;
+
+    bool overlaps = false;
+    RetainPtr view = m_view.get();
+    if (RetainPtr window = [view window]) {
+        auto locationInView = [view convertPoint:[window mouseLocationOutsideOfEventStream] fromView:nil];
+        overlaps = page().selectionBoundingRectInRootViewCoordinates().contains(WebCore::FloatPoint { locationInView });
+    }
+
+    if (std::exchange(m_cursorOverlapsSelection, overlaps) == overlaps)
+        return;
+
+    if (overlaps)
+        return;
+
+#if HAVE(APPKIT_SIRI_AFFORDANCE)
+    if (RetainPtr controller = [NSCampoLightweightUIController sharedInstance]; [controller isVisible])
+        [controller dismiss];
 #endif
 }
 
@@ -8175,6 +8207,7 @@ void WebViewImpl::setRefreshController(NSRefreshController *refreshController)
         [[m_refreshController refreshControl] removeFromSuperview];
         m_topScrollStretchForRefreshController = 0;
         m_refreshControllerMask = nil;
+        m_suppressRefreshControllerUpdates = false;
     }
 
     m_refreshController = refreshController;
@@ -8210,6 +8243,10 @@ void WebViewImpl::setRefreshController(NSRefreshController *refreshController)
 void WebViewImpl::applyRefreshControllerHeight(CGFloat height, bool animated)
 {
     m_topScrollStretchForRefreshController = height;
+
+    if (!height && m_cachedTopScrollStretch > 0)
+        m_suppressRefreshControllerUpdates = true;
+
     if (CheckedPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy())
         scrollingCoordinator->setTopScrollStretchForRefreshController(height);
 }
@@ -8256,7 +8293,8 @@ void WebViewImpl::updateRefreshControllerFrame()
         [m_refreshControllerMask setPath:maskPath.get()];
     }
 
-    [[m_refreshController refreshControl] update];
+    if (!m_suppressRefreshControllerUpdates)
+        [[m_refreshController refreshControl] update];
 
     if (CheckedPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy())
         scrollingCoordinator->setRefreshControllerSnappingThreshold(refreshControllerSnappingThreshold());
@@ -8268,6 +8306,10 @@ void WebViewImpl::topScrollStretchDidChange(CGFloat topScrollStretch)
         return;
 
     m_cachedTopScrollStretch = topScrollStretch;
+
+    if (m_suppressRefreshControllerUpdates && !topScrollStretch)
+        m_suppressRefreshControllerUpdates = false;
+
     if (m_refreshController)
         updateRefreshControllerFrame();
 }
@@ -8279,8 +8321,10 @@ void WebViewImpl::updateRefreshControllerForWheelEvent(NSEvent *event)
 
     // Track whether this scroll gesture began at the top of the page.
     // Only allow refresh control activation for gestures that started at top.
-    if (event.phase == NSEventPhaseBegan)
+    if (event.phase == NSEventPhaseBegan) {
         m_canShowRefreshController = pageIsScrolledToTop();
+        m_suppressRefreshControllerUpdates = false;
+    }
 }
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
@@ -8291,8 +8335,10 @@ void WebViewImpl::updateRefreshControllerForPanGesture(NSGestureRecognizerState 
 
     // Track whether this scroll gesture began at the top of the page.
     // Only allow refresh control activation for gestures that started at top.
-    if (state == NSGestureRecognizerStateBegan)
+    if (state == NSGestureRecognizerStateBegan) {
         m_canShowRefreshController = pageIsScrolledToTop();
+        m_suppressRefreshControllerUpdates = false;
+    }
 }
 #endif
 

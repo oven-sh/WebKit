@@ -122,7 +122,6 @@ namespace JSC {
     macro(ObjectHasOwnIntrinsic) \
     macro(ObjectIsIntrinsic) \
     macro(ObjectKeysIntrinsic) \
-    macro(ObjectPrototypeIsPrototypeOfIntrinsic) \
     macro(ObjectToStringIntrinsic) \
     macro(ReflectGetPrototypeOfIntrinsic) \
     macro(ReflectOwnKeysIntrinsic) \
@@ -168,6 +167,7 @@ namespace JSC {
     macro(TypedArrayKeysIntrinsic) \
     macro(TypedArrayEntriesIntrinsic) \
     macro(IsTypedArrayViewIntrinsic) \
+    macro(ArrayBufferIsViewIntrinsic) \
     macro(BoundFunctionCallIntrinsic) \
     macro(RemoteFunctionCallIntrinsic) \
     macro(IteratorIntrinsic) \
@@ -221,7 +221,6 @@ namespace JSC {
     macro(FunctionBindIntrinsic) \
     macro(IteratorHelperCreateIntrinsic) \
     macro(WrapForValidIteratorCreateIntrinsic) \
-    macro(AsyncFromSyncIteratorCreateIntrinsic) \
     macro(RegExpStringIteratorCreateIntrinsic) \
     macro(RegExpStringIteratorNextIntrinsic) \
     macro(ResolvePromiseWithFirstResolvingFunctionCallCheckIntrinsic) \

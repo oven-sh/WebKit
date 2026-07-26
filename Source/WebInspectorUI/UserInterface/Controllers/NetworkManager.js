@@ -223,6 +223,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             target.NetworkAgent.enable();
             target.NetworkAgent.setResourceCachingDisabled(WI.settings.resourceCachingDisabled.value);
 
+            // COMPATIBILITY (macOS 26.4, iOS 26.4): Network.setClearResourceDataOnNavigate did not exist yet.
             if (target.hasCommand("Network.setClearResourceDataOnNavigate"))
                 target.NetworkAgent.setClearResourceDataOnNavigate(WI.settings.clearNetworkOnNavigate.value);
 
@@ -243,12 +244,16 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         if (target.type === WI.TargetType.Worker)
             this.adoptOrphanedResourcesForTarget(target);
 
-        // Under Site Isolation, the first FrameTarget signals that ProxyingNetworkAgent
-        // is active on the multiplexing target. Enable Network on the multiplexing target
-        // now (deferred from MultiplexingBackendTarget.initialize because ProxyingNetworkAgent
-        // only exists when SI is active).
+        // Under Site Isolation, the first FrameTarget signals that ProxyingNetworkAgent and
+        // ProxyingPageAgent are active on the multiplexing target (both are only constructed
+        // when SI is active; see WebPageInspectorController::createLazyAgents). Enable Network
+        // on the multiplexing target now (deferred from MultiplexingBackendTarget.initialize
+        // since it doesn't exist until this point), and record that the multiplexing target's
+        // PageAgent is likewise live, for callers like Resource.js that can't tell from
+        // hasCommand() alone since Page.getResourceContent is always in the static protocol.
         if (target.type === WI.TargetType.Frame && !this._enabledNetworkForSiteIsolation) {
             this._enabledNetworkForSiteIsolation = true;
+            this._enabledPageForSiteIsolation = true;
             if (WI.backendTarget && WI.backendTarget.hasDomain("Network"))
                 this.initializeTarget(WI.backendTarget);
         }
@@ -270,6 +275,8 @@ WI.NetworkManager = class NetworkManager extends WI.Object
     get mainFrame() { return this._mainFrame; }
     get localResourceOverrides() { return this._localResourceOverrides; }
     get bootstrapScript() { return this._bootstrapScript; }
+    get enabledNetworkForSiteIsolation() { return this._enabledNetworkForSiteIsolation; }
+    get enabledPageForSiteIsolation() { return this._enabledPageForSiteIsolation; }
 
     get frames()
     {
@@ -662,7 +669,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
 
         if (framePayload.loaderId === frame.provisionalLoaderIdentifier) {
             // There was a provisional load in progress, commit it.
-            frame.commitProvisionalLoad(framePayload.securityOrigin);
+            frame.commitProvisionalLoad(framePayload.name, framePayload.securityOrigin);
         } else {
             let mainResource = null;
             if (frame.mainResource.url !== framePayload.url || frame.loaderIdentifier !== framePayload.loaderId) {
@@ -1196,7 +1203,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
 
         let type = WI.ExecutionContext.typeFromPayload(payload);
         let target = frame.mainResource.target;
-        let executionContext = new WI.ExecutionContext(target, payload.id, type, payload.name, frame);
+        let executionContext = new WI.ExecutionContext(target, payload.id, type, payload.name, payload.frameId);
         frame.addExecutionContext(executionContext);
     }
 

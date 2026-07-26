@@ -30,6 +30,7 @@
 #include "FormDataBuilder.h"
 #include "MIMETypeRegistry.h"
 #include "Page.h"
+#include "PendingStreamState.h"
 #include "SharedBuffer.h"
 #include <pal/text/TextEncoding.h>
 #include "ThreadableBlobRegistry.h"
@@ -96,6 +97,21 @@ Ref<FormData> FormData::create(Vector<WebCore::FormDataElement>&& elements, uint
     return result;
 }
 
+Ref<FormData> FormData::create(PendingStreamIdentifier identifier, RefPtr<WebCore::PendingStreamState>&& state)
+{
+    auto result = create();
+    result->m_elements.append(FormDataElement { FormDataElement::PendingStreamData { identifier } });
+    result->m_pendingStreamState = WTF::move(state);
+    return result;
+}
+
+void FormData::setPendingStreamState(Ref<PendingStreamState>&& state)
+{
+    ASSERT(isPendingStream());
+    ASSERT(!m_pendingStreamState);
+    m_pendingStreamState = WTF::move(state);
+}
+
 Ref<FormData> FormData::createMultiPart(const DOMFormData& formData)
 {
     auto result = create();
@@ -115,6 +131,8 @@ Ref<FormData> FormData::isolatedCopy() const
     auto formData = create();
     formData->m_alwaysStream = m_alwaysStream;
     formData->m_elements = crossThreadCopy(m_elements);
+    // We copy m_pendingStreamState as it is thread-safe, but only one consumer of data per PendingStreamState is possible.
+    formData->m_pendingStreamState = m_pendingStreamState;
     return formData;
 }
 
@@ -144,6 +162,8 @@ uint64_t FormDataElement::lengthInBytes(NOESCAPE const Function<uint64_t(const U
             return FileSystem::fileSize(fileData.filename).value_or(0);
         }, [&blobSize] (const FormDataElement::EncodedBlobData& blobData) {
             return blobSize(blobData.url);
+        }, [] (const FormDataElement::PendingStreamData&) -> uint64_t {
+            return 0;
         }
     );
 }
@@ -164,6 +184,8 @@ FormDataElement FormDataElement::isolatedCopy() const
             return FormDataElement(fileData.isolatedCopy());
         }, [] (const FormDataElement::EncodedBlobData& blobData) {
             return FormDataElement(blobData.url.isolatedCopy());
+        }, [] (const FormDataElement::PendingStreamData& pendingStream) {
+            return FormDataElement(FormDataElement::PendingStreamData { pendingStream });
         }
     );
 }
@@ -340,6 +362,13 @@ bool FormData::containsBlobElement() const
     return false;
 }
 
+bool FormData::isPendingStream() const
+{
+    return m_elements.containsIf([](auto& element) {
+        return std::holds_alternative<FormDataElement::PendingStreamData>(element.data);
+    });
+}
+
 Ref<FormData> FormData::resolveBlobReferences(BlobRegistryImpl* blobRegistryImpl)
 {
     // First check if any blobs needs to be resolved, or we can take the fast path.
@@ -359,6 +388,8 @@ Ref<FormData> FormData::resolveBlobReferences(BlobRegistryImpl* blobRegistryImpl
                 newFormData->appendFileRange(fileData.filename, fileData.fileStart, fileData.fileLength, fileData.expectedFileModificationTime);
             }, [&] (const FormDataElement::EncodedBlobData& blobData) {
                 appendBlobResolved(blobRegistryImpl ? blobRegistryImpl : blobRegistry()->blobRegistryImpl(), newFormData.get(), blobData.url);
+            }, [&] (const FormDataElement::PendingStreamData& pendingStream) {
+                newFormData->m_elements.append(FormDataElement { FormDataElement::PendingStreamData { pendingStream } });
             }
         );
     }

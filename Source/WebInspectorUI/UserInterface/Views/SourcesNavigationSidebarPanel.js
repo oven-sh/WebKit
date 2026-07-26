@@ -326,6 +326,7 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
         WI.Target.addEventListener(WI.Target.Event.ResourceAdded, this._handleResourceAdded, this);
 
         WI.networkManager.addEventListener(WI.NetworkManager.Event.FrameWasAdded, this._handleFrameWasAdded, this);
+        WI.networkManager.addEventListener(WI.NetworkManager.Event.FrameWasRemoved, this._handleFrameWasRemoved, this);
 
         if (WI.NetworkManager.supportsBootstrapScript()) {
             WI.networkManager.addEventListener(WI.NetworkManager.Event.BootstrapScriptCreated, this._handleBootstrapScriptCreated, this);
@@ -386,9 +387,7 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
 
         if (WI.SourcesNavigationSidebarPanel.shouldPlaceResourcesAtTopLevel()) {
             this._resourcesTreeOutline.disclosureButtons = false;
-            WI.SourceCode.addEventListener(WI.SourceCode.Event.SourceMapAdded, function(event) {
-                this._resourcesTreeOutline.disclosureButtons = true;
-            }, this);
+            WI.SourceCode.addEventListener(WI.SourceCode.Event.SourceMapAdded, this._handleSourceCodeSourceMapAdded, this);
         }
 
         if (WI.debuggerManager.debuggerStatementsBreakpoint)
@@ -489,11 +488,15 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
     {
         WI.settings.resourceGroupingMode.removeEventListener(WI.Setting.Event.Changed, this._handleResourceGroupingModeChanged, this);
 
+        if (WI.SourcesNavigationSidebarPanel.shouldPlaceResourcesAtTopLevel())
+            WI.SourceCode.removeEventListener(WI.SourceCode.Event.SourceMapAdded, this._handleSourceCodeSourceMapAdded, this);
+
         WI.Frame.removeEventListener(WI.Frame.Event.MainResourceDidChange, this._handleFrameMainResourceDidChange, this);
         WI.Frame.removeEventListener(WI.Frame.Event.ResourceWasAdded, this._handleResourceAdded, this);
         WI.Target.removeEventListener(WI.Target.Event.ResourceAdded, this._handleResourceAdded, this);
 
         WI.networkManager.removeEventListener(WI.NetworkManager.Event.FrameWasAdded, this._handleFrameWasAdded, this);
+        WI.networkManager.removeEventListener(WI.NetworkManager.Event.FrameWasRemoved, this._handleFrameWasRemoved, this);
 
         if (WI.NetworkManager.supportsBootstrapScript()) {
             WI.networkManager.removeEventListener(WI.NetworkManager.Event.BootstrapScriptCreated, this._handleBootstrapScriptCreated, this);
@@ -908,6 +911,23 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
 
     // Private
 
+    _originForURLComponents(urlComponents, securityOrigin)
+    {
+        if (urlComponents.origin)
+            return urlComponents.origin;
+
+        if (securityOrigin && (securityOrigin === "file://" || parseURL(securityOrigin).origin === securityOrigin))
+            return securityOrigin;
+
+        if (urlComponents.scheme === "file")
+            return "file://";
+
+        if (urlComponents.scheme)
+            return urlComponents.scheme + ":";
+
+        return WI.Resource.displayNameForType(WI.Resource.Type.Other);
+    }
+
     _willDismissLocalOverridePopover(popover)
     {
         let serializedData = popover.serializedData;
@@ -1077,7 +1097,7 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
             }
             this._originTreeElementMap.clear();
 
-            let origin = mainFrame.urlComponents.origin;
+            let origin = this._originForURLComponents(mainFrame.urlComponents, mainFrame.securityOrigin);
             this._mainFrameTreeElement = new WI.OriginTreeElement(origin, mainFrame, {hasChildren: true});
             this._originTreeElementMap.set(origin, this._mainFrameTreeElement);
             break;
@@ -1151,25 +1171,19 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
             }
 
             if (!parentTreeElement) {
-                let origin = resource.urlComponents.origin;
-                if (origin) {
-                    let originTreeElement = this._originTreeElementMap.get(origin);
-                    if (!originTreeElement) {
-                        let representedObject = resource.type === WI.Resource.Type.Document ? resource.parentFrame : null;
-                        originTreeElement = new WI.OriginTreeElement(origin, representedObject, {hasChildren: true});
-                        this._originTreeElementMap.set(origin, originTreeElement);
+                let origin = this._originForURLComponents(resource.urlComponents, resource.parentFrame?.securityOrigin);
+                let originTreeElement = this._originTreeElementMap.get(origin);
+                if (!originTreeElement) {
+                    let representedObject = resource.type === WI.Resource.Type.Document ? resource.parentFrame : null;
+                    originTreeElement = new WI.OriginTreeElement(origin, representedObject, {hasChildren: true});
+                    this._originTreeElementMap.set(origin, originTreeElement);
 
-                        let index = insertionIndexForObjectInListSortedByFunction(originTreeElement, this._resourcesTreeOutline.children, this._boundCompareTreeElements);
-                        this._resourcesTreeOutline.insertChild(originTreeElement, index);
-                    }
+                    let index = insertionIndexForObjectInListSortedByFunction(originTreeElement, this._resourcesTreeOutline.children, this._boundCompareTreeElements);
+                    this._resourcesTreeOutline.insertChild(originTreeElement, index);
+                }
 
-                    let subpath = resource.urlComponents.path;
-                    if (subpath && subpath[0] === "/")
-                        subpath = subpath.substring(1);
-
-                    parentTreeElement = originTreeElement.createFoldersAsNeededForSubpath(subpath, this._boundCompareTreeElements);
-                } else
-                    parentTreeElement = this._resourcesTreeOutline;
+                let subpath = resource.urlComponents.scheme === "blob" ? resource.urlComponents.lastPathComponent : resource.urlComponents.path;
+                parentTreeElement = originTreeElement.createFoldersAsNeededForSubpath(subpath, this._boundCompareTreeElements);
             }
 
             let resourceTreeElement = null;
@@ -1266,6 +1280,31 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
         // If the script URL matches a resource we can assume it is part of that resource and does not need added.
         if (script.resource || script.dynamicallyAddedScriptElement)
             return;
+
+        if (script.parentFrame) {
+            if (WI.settings.resourceGroupingMode.value === WI.Resource.GroupingMode.Path) {
+                let origin = this._originForURLComponents(script.urlComponents, script.parentFrame?.securityOrigin);
+                let originTreeElement = this._originTreeElementMap.get(origin);
+                if (!originTreeElement) {
+                    let representedObject = origin === script.parentFrame?.urlComponents.origin ? script.parentFrame : null;
+                    originTreeElement = new WI.OriginTreeElement(origin, representedObject, {hasChildren: true});
+                    this._originTreeElementMap.set(origin, originTreeElement);
+
+                    let index = insertionIndexForObjectInListSortedByFunction(originTreeElement, this._resourcesTreeOutline.children, this._boundCompareTreeElements);
+                    this._resourcesTreeOutline.insertChild(originTreeElement, index);
+                }
+
+                let subpath = script.urlComponents.origin ? script.urlComponents.path : null;
+                let parentTreeElement = originTreeElement.createFoldersAsNeededForSubpath(subpath, this._boundCompareTreeElements);
+                let scriptTreeElement = new WI.ScriptTreeElement(script);
+                let index = insertionIndexForObjectInListSortedByFunction(scriptTreeElement, parentTreeElement.children, this._boundCompareTreeElements);
+                parentTreeElement.insertChild(scriptTreeElement, index);
+            }
+
+            this._addBreakpointsForSourceCode(script);
+            this._addIssuesForSourceCode(script);
+            return;
+        }
 
         let scriptTreeElement = new WI.ScriptTreeElement(script);
 
@@ -2348,6 +2387,11 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
         }
     }
 
+    _handleSourceCodeSourceMapAdded(event)
+    {
+        this._resourcesTreeOutline.disclosureButtons = true;
+    }
+
     _handleResourceGroupingModeChanged(event)
     {
         this._workerTargetTreeElementMap.clear();
@@ -2433,6 +2477,12 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
         this._addResourcesRecursivelyForFrame(frame);
     }
 
+    _handleFrameWasRemoved(event)
+    {
+        if (WI.settings.resourceGroupingMode.value === WI.Resource.GroupingMode.Path)
+            this._handleResourceGroupingModeChanged();
+    }
+
     _handleBootstrapScriptCreated(event)
     {
         this._addLocalOverride(event.data.bootstrapScript);
@@ -2485,7 +2535,7 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
         let parentTreeElement = scriptTreeElement.parent;
         parentTreeElement.removeChild(scriptTreeElement);
 
-        if (parentTreeElement instanceof WI.FolderTreeElement || parentTreeElement instanceof WI.OriginTreeElement) {
+        if (parentTreeElement.representedObject instanceof WI.ScriptCollection) {
             parentTreeElement.representedObject.remove(script);
 
             if (!parentTreeElement.children.length)
@@ -2504,6 +2554,11 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
                 continue;
 
             this._breakpointsTreeOutline.removeChild(treeElement, suppressOnDeselect, suppressSelectSibling);
+        }
+
+        if (WI.settings.resourceGroupingMode.value === WI.Resource.GroupingMode.Path) {
+            this._handleResourceGroupingModeChanged();
+            return;
         }
 
         if (this._extensionScriptsFolderTreeElement) {
@@ -2826,6 +2881,9 @@ WI.SourcesNavigationSidebarPanel = class SourcesNavigationSidebarPanel extends W
         let workerTreeElement = this._workerTargetTreeElementMap.take(target);
         if (workerTreeElement)
             workerTreeElement.parent.removeChild(workerTreeElement);
+
+        if (target instanceof WI.FrameTarget)
+            this._handleResourceGroupingModeChanged();
 
         let callStackTreeElement = this._findCallStackTargetTreeElement(target);
         console.assert(callStackTreeElement);

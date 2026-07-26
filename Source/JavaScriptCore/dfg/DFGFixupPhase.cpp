@@ -2324,6 +2324,11 @@ private:
             break;
         }
 
+        case OpenAsyncFromSyncIterator: {
+            fixEdge<UntypedUse>(node->child1());
+            break;
+        }
+
         case ToThis: {
             fixupToThis(node);
             break;
@@ -3178,6 +3183,7 @@ private:
         case EnqueueAsyncGeneratorDriver: {
             fixEdge<KnownCellUse>(node->child1());
             fixEdge<KnownCellUse>(node->child2());
+            fixEdge<UntypedUse>(node->child3());
             break;
         }
 
@@ -3807,7 +3813,6 @@ private:
         case NewSet:
         case NewWeakMap:
         case NewWeakSet:
-        case IsTypedArrayView:
         case IsEmpty:
         case TypeOfIsUndefined:
         case TypeOfIsObject:

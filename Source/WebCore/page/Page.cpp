@@ -1360,9 +1360,11 @@ unsigned Page::findMatchesForText(const String& target, FindOptions options, uns
             frame = incrementFrame(frame.get(), true, CanWrap::No);
             continue;
         }
-        if (shouldMarkMatches == MarkMatches)
+        if (shouldMarkMatches == MarkMatches) {
             protect(localFrame->editor())->setMarkedTextMatchesAreHighlighted(shouldHighlightMatches == HighlightMatches);
-        matchCount += protect(localFrame->editor())->countMatchesForText(target, std::nullopt, options, maxMatchCount ? (maxMatchCount - matchCount) : 0, shouldMarkMatches == MarkMatches, nullptr);
+            matchCount += protect(localFrame->editor())->markAllMatchesForText(target, options, maxMatchCount ? (maxMatchCount - matchCount) : 0);
+        } else
+            matchCount += protect(localFrame->editor())->countMatchesForText(target, std::nullopt, options, maxMatchCount ? (maxMatchCount - matchCount) : 0, false, nullptr);
         frame = incrementFrame(frame.get(), true, CanWrap::No);
     } while (frame);
 
@@ -1488,6 +1490,8 @@ void Page::unmarkAllTextMatches()
     forEachDocument([] (Document& document) {
         if (CheckedPtr markers = document.markersIfExists())
             markers->removeMarkers(DocumentMarkerType::TextMatch);
+        if (RefPtr frame = document.frame())
+            protect(frame->editor())->textMatchMarkersWereCleared();
     });
 }
 
@@ -2535,7 +2539,9 @@ void Page::finalizeRenderingUpdate(OptionSet<FinalizeRenderingUpdateFlags> flags
     for (auto& rootFrame : m_rootFrames)
         finalizeRenderingUpdateForRootFrame(Ref { rootFrame.get() }, flags);
 
-    ASSERT(m_renderingUpdateRemainingSteps.last().isEmpty());
+    // A site-isolated Page can have no local root frame with a view to consume the per-root-frame steps.
+    ASSERT(m_renderingUpdateRemainingSteps.last().isEmpty()
+        || (settings().siteIsolationEnabled() && m_renderingUpdateRemainingSteps.last() == perRootFrameRenderingUpdateSteps));
     renderingUpdateCompleted();
 }
 
@@ -5188,7 +5194,7 @@ ModelPlayerProvider& Page::modelPlayerProvider()
     return m_modelPlayerProvider.get();
 }
 
-void Page::setupForRemoteWorker(const URL& scriptURL, const SecurityOriginData& topOrigin, const String& referrerPolicy, OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections)
+void Page::setupForRemoteWorker(const URL& scriptURL, const SecurityOriginData& topOrigin, const String& referrerPolicy, OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections, std::optional<bool> globalPrivacyControlEnabled)
 {
     RefPtr localMainFrame = this->localMainFrame();
     if (!localMainFrame)
@@ -5206,6 +5212,8 @@ void Page::setupForRemoteWorker(const URL& scriptURL, const SecurityOriginData& 
 
     if (auto* documentLoader = localMainFrame->loader().documentLoader())
         documentLoader->setAdvancedPrivacyProtections(advancedPrivacyProtections);
+
+    settings().setGlobalPrivacyControlEnabled(globalPrivacyControlEnabled);
 
     document->setStorageBlockingPolicy(document->settings().storageBlockingPolicy());
 
@@ -5367,7 +5375,8 @@ void Page::performOpportunisticallyScheduledTasks(MonotonicTime deadline)
     OptionSet<JSC::VM::SchedulerOptions> options;
     if (m_opportunisticTaskScheduler->hasImminentlyScheduledWork())
         options.add(JSC::VM::SchedulerOptions::HasImminentlyScheduledWork);
-    commonVM().performOpportunisticallyScheduledTasks(deadline, options);
+
+    commonVM().performOpportunisticallyScheduledTasks(deadline.approximate<ApproximateTime>(), options);
 
     deleteRemovedNodesAndDetachedRenderers();
 }

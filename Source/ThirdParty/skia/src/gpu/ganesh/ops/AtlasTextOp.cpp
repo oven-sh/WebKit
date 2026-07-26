@@ -11,9 +11,10 @@
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkSurfaceProps.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkTArray.h"
-#include "src/base/SkArenaAlloc.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTArray.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/core/SkDistanceFieldGen.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkPaintPriv.h"
 #include "src/core/SkTraceEvent.h"
@@ -46,12 +47,13 @@
 #include "src/text/gpu/SubRunContainer.h"
 
 #if defined(SK_GAMMA_APPLY_TO_A8)
-#include "include/private/base/SkCPUTypes.h"
+#include "include/private/SkCPUTypes.h"
 #include "src/core/SkMaskGamma.h"
 #endif
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <new>
 #include <tuple>
 #include <utility>
@@ -160,23 +162,37 @@ calculate_clip(const GrClip* clip, SkRect deviceBounds, SkRect glyphBounds) {
 #if !defined(SK_DISABLE_SDF_TEXT)
 static std::tuple<AtlasTextOp::MaskType, uint32_t, bool> calculate_sdf_parameters(
         const skgpu::ganesh::SurfaceDrawContext& sdc,
-        const SkMatrix& drawMatrix,
+        const SkMatrix& viewDiffMatrix,
         bool useLCDText,
         bool isAntiAliased) {
     const GrColorInfo& colorInfo = sdc.colorInfo();
     const SkSurfaceProps& props = sdc.surfaceProps();
     using MT = AtlasTextOp::MaskType;
     bool isLCD = useLCDText && props.pixelGeometry() != kUnknown_SkPixelGeometry;
+    if (isLCD) {
+        // Must check the scaling ratio of the mask texels vs. screen space since the offset for
+        // R and B samples is based on the derivative. If it gets too big, it would sample outside
+        // the 2px padding of each glyph (SK_DistanceFieldInset). We can't allow offsetting to
+        // go outside of our padding (e.g. 2*SK_DistanceFieldInset if two SDF glyphs were next to
+        // each other is theoretically ok). This is because SDF and regular A8 masks are shared in
+        // the same atlas, so an adjacent glyph may not actually have its own padding.
+        //
+        // Multiply by 3 because the derivative offset is multiplied by 1/3 for R and B offsets.
+        static constexpr float kLCDOffsetLimit = 3.f * (SK_DistanceFieldInset - 0.5f);
+        const float maxLCDOffset = sk_ieee_float_divide(1.f, viewDiffMatrix.getMinScale());
+        isLCD &= (maxLCDOffset > 0.f && maxLCDOffset < kLCDOffsetLimit);
+    }
+
     MT maskType = !isAntiAliased ? MT::kAliasedDistanceField
                                  : isLCD ? MT::kLCDDistanceField
                                          : MT::kGrayscaleDistanceField;
 
     bool useGammaCorrectDistanceTable = colorInfo.isLinearlyBlended();
-    uint32_t DFGPFlags = drawMatrix.isSimilarity() ? kSimilarity_DistanceFieldEffectFlag : 0;
-    DFGPFlags |= drawMatrix.isScaleTranslate() ? kScaleOnly_DistanceFieldEffectFlag : 0;
+    uint32_t DFGPFlags = viewDiffMatrix.isSimilarity() ? kSimilarity_DistanceFieldEffectFlag : 0;
+    DFGPFlags |= viewDiffMatrix.isScaleTranslate() ? kScaleOnly_DistanceFieldEffectFlag : 0;
     DFGPFlags |= useGammaCorrectDistanceTable ? kGammaCorrect_DistanceFieldEffectFlag : 0;
     DFGPFlags |= MT::kAliasedDistanceField == maskType ? kAliased_DistanceFieldEffectFlag : 0;
-    DFGPFlags |= drawMatrix.hasPerspective() ? kPerspective_DistanceFieldEffectFlag : 0;
+    DFGPFlags |= viewDiffMatrix.hasPerspective() ? kPerspective_DistanceFieldEffectFlag : 0;
 
     if (isLCD) {
         bool isBGR = SkPixelGeometryIsBGR(props.pixelGeometry());
@@ -253,18 +269,19 @@ std::tuple<const GrClip*, GrOp::Owner> AtlasTextOp::Make(SurfaceDrawContext* sdc
 #if !defined(SK_DISABLE_SDF_TEXT)
     auto glyphParams = subrun->glyphParams();
     if (glyphParams.isSDF) {
-         auto [maskType, DFGPFlags, useGammaCorrectDistanceTable] =
-                 calculate_sdf_parameters(*sdc, viewMatrix, glyphParams.isLCD, glyphParams.isAA);
-         op = GrOp::Make<AtlasTextOp>(rContext,
-                                      maskType,
-                                      true,
-                                      subrun->glyphCount(),
-                                      subRunDeviceBounds,
-                                      SkPaintPriv::ComputeLuminanceColor(paint),
-                                      useGammaCorrectDistanceTable,
-                                      DFGPFlags,
-                                      geometry,
-                                      std::move(grPaint));
+        SkMatrix viewDiff = subrun->vertexFiller().viewDifference(positionMatrix);
+        auto [maskType, DFGPFlags, useGammaCorrectDistanceTable] =
+                 calculate_sdf_parameters(*sdc, viewDiff, glyphParams.isLCD, glyphParams.isAA);
+        op = GrOp::Make<AtlasTextOp>(rContext,
+                                     maskType,
+                                     true,
+                                     subrun->glyphCount(),
+                                     subRunDeviceBounds,
+                                     SkPaintPriv::ComputeLuminanceColor(paint),
+                                     useGammaCorrectDistanceTable,
+                                     DFGPFlags,
+                                     geometry,
+                                     std::move(grPaint));
      } else
 #endif
      {
@@ -490,8 +507,13 @@ void AtlasTextOp::onPrepareDraws(GrMeshDrawTarget* target) {
     } else
 #endif
     {
-        auto filter = fNeedsGlyphTransform ? GrSamplerState::Filter::kLinear
-                                           : GrSamplerState::Filter::kNearest;
+        // Only use linear padding if the glyphs were also padded for it. If we somehow get a direct
+        // subrun with a corrupted transform, we should still use nearest neighbor since it was
+        // packed tightly.
+        const bool hasGlyphPadding = atlasManager->supportsBilerp() ||
+                                     fHead->fSubRun.glyphSrcPadding() > 0;
+        auto filter = fNeedsGlyphTransform && hasGlyphPadding ? GrSamplerState::Filter::kLinear
+                                                              : GrSamplerState::Filter::kNearest;
         // Bitmap text uses a single color, combineIfPossible ensures all geometries have the same
         // color, so we can use the first's without worry.
         flushInfo.fGeometryProcessor = GrBitmapTextGeoProc::Make(
@@ -543,11 +565,9 @@ void AtlasTextOp::onPrepareDraws(GrMeshDrawTarget* target) {
 
         auto& glyphData = subRun.glyphVector().accessBackendData<GlyphData>();
 
-        SkDEBUGCODE(int strideCheck = SkToInt(glyphData.vertexStride(subRun.maskFormat(),
-                                                                     geo->fDrawMatrix)));
-        SkASSERTF(strideCheck == vertexStride,
-                   "subRun stride: %d vertex buffer stride: %d\n",
-                   strideCheck, vertexStride);
+        int strideCheck = SkToInt(glyphData.vertexStride(subRun.maskFormat(), geo->fDrawMatrix));
+        // If we (unexpectedly) have buffers of different sizes between CPU and GPU, bail out.
+        SkASSERTF_RELEASE(strideCheck == vertexStride, "stride mismatch");
 
         const int subRunEnd = subRun.glyphCount();
 
@@ -646,8 +666,9 @@ void AtlasTextOp::createDrawForGeneratedGlyphs(GrMeshDrawTarget* target,
         } else
 #endif
         {
-            auto filter = fNeedsGlyphTransform ? GrSamplerState::Filter::kLinear
-                                               : GrSamplerState::Filter::kNearest;
+            const bool hasGlyphPadding = fHead->fSubRun.glyphSrcPadding() > 0;
+            auto filter = fNeedsGlyphTransform && hasGlyphPadding
+                    ? GrSamplerState::Filter::kLinear : GrSamplerState::Filter::kNearest;
             reinterpret_cast<GrBitmapTextGeoProc*>(gp)->addNewViews(views, numActiveViews, filter);
         }
     }
@@ -673,6 +694,14 @@ GrOp::CombineResult AtlasTextOp::onCombineIfPossible(GrOp* t, SkArenaAlloc*, con
         fHasPerspective != that->fHasPerspective ||
         fUseGammaCorrectDistanceTable != that->fUseGammaCorrectDistanceTable) {
         // All flags must match for an op to be combined
+        return CombineResult::kCannotCombine;
+    }
+
+    // We use the same filter for every Geometry that is combined, but the filter choice only looks
+    // at the head's src padding, so we can only combine if we are consistent with that.
+    // NOTE: We don't have access to the context or atlas manager to check if it's always adding
+    // padding (even when the glyphs don't add it themselves), so this is conservative.
+    if (fHead->fSubRun.glyphSrcPadding() != that->fHead->fSubRun.glyphSrcPadding()) {
         return CombineResult::kCannotCombine;
     }
 
@@ -704,6 +733,10 @@ GrOp::CombineResult AtlasTextOp::onCombineIfPossible(GrOp* t, SkArenaAlloc*, con
             // This ensures all merged bitmap color text ops have a constant color
             return CombineResult::kCannotCombine;
         }
+    }
+
+    if (std::numeric_limits<int>::max() - fNumGlyphs < that->fNumGlyphs) {
+        return CombineResult::kCannotCombine;
     }
 
     fNumGlyphs += that->fNumGlyphs;
@@ -756,5 +789,3 @@ GrGeometryProcessor* AtlasTextOp::setupDfProcessor(SkArenaAlloc* arena,
 #endif // !defined(SK_DISABLE_SDF_TEXT)
 
 } // namespace skgpu::ganesh
-
-

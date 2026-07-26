@@ -616,6 +616,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/model-element/ModelPlayerIdentifier.h
     Modules/model-element/ModelPlayerProvider.h
     Modules/model-element/ModelPlayerTransformState.h
+    Modules/model-element/SpatialPortalController.h
 
     Modules/model-element/dummy/DummyModelPlayerProvider.h
 
@@ -695,6 +696,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/storage/StorageProvider.h
 
     Modules/streams/ReadableStreamSource.h
+    Modules/streams/ReadableStreamType.h
     Modules/streams/ReadableStreamToSharedBufferSink.h
     Modules/streams/WritableStream.h
     Modules/streams/WritableStreamSink.h
@@ -704,6 +706,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/url-pattern/URLPattern.h
     Modules/url-pattern/URLPatternComponent.h
     Modules/url-pattern/URLPatternInit.h
+    Modules/url-pattern/URLPatternOptions.h
+    Modules/url-pattern/URLPatternResult.h
 
     Modules/web-locks/WebLock.h
     Modules/web-locks/WebLockIdentifier.h
@@ -800,7 +804,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/websockets/WebSocketIdentifier.h
     Modules/websockets/WorkerThreadableWebSocketChannel.h
 
-    Modules/webtransport/DatagramsReadableMode.h
     Modules/webtransport/WebTransportCongestionControl.h
     Modules/webtransport/WebTransportConnectionInfo.h
     Modules/webtransport/WebTransportConnectionStats.h
@@ -890,6 +893,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     animation/KeyframeInterpolation.h
     animation/OptionalEffectTiming.h
     animation/PlaybackDirection.h
+    animation/ResolvableTimelineRange.h
+    animation/ResolvableViewTimelineInsets.h
     animation/ScrollAxis.h
     animation/ScrollTimeline.h
     animation/ScrollTimelineOptions.h
@@ -1613,6 +1618,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     html/HTMLOptionsCollectionInlines.h
     html/HTMLParagraphElement.h
     html/HTMLParamElement.h
+    html/HTMLPictureElement.h
     html/HTMLPlugInElement.h
     html/HTMLPreElement.h
     html/HTMLQuoteElement.h
@@ -1757,12 +1763,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingContext.h
     layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingQuirks.h
 
-    layout/formattingContexts/flex/FlexFormattingConstraints.h
     layout/formattingContexts/flex/FlexFormattingContext.h
     layout/formattingContexts/flex/FlexFormattingUtils.h
-    layout/formattingContexts/flex/FlexLayout.h
-    layout/formattingContexts/flex/FlexRect.h
-    layout/formattingContexts/flex/LogicalFlexItem.h
+    layout/formattingContexts/flex/FlexLayoutState.h
 
     layout/formattingContexts/grid/AxisConstraint.h
     layout/formattingContexts/grid/GridAreaLines.h
@@ -1814,6 +1817,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/integration/LayoutIntegrationBoxGeometryUpdater.h
     layout/integration/LayoutIntegrationBoxTreeUpdater.h
     layout/integration/LayoutIntegrationUtils.h
+
+    layout/integration/flex/FlexIntegrationUtils.h
     layout/integration/flex/LayoutIntegrationFlexLayout.h
 
     layout/integration/grid/LayoutIntegrationGridLayout.h
@@ -2216,6 +2221,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/FileStreamClient.h
     platform/FixedContainerEdges.h
     platform/FloatConversion.h
+    platform/FlowMode.h
     platform/FrameRateMonitor.h
     platform/GraphicsClient.h
     platform/HostWindow.h
@@ -2449,9 +2455,11 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/graphics/AlphaPremultiplication.h
     platform/graphics/AnimationFrameRate.h
+    platform/graphics/ArrayPixelBuffer.h
     platform/graphics/AudioTrackPrivate.h
     platform/graphics/AudioTrackPrivateClient.h
     platform/graphics/AudioVideoRenderer.h
+    platform/graphics/BezierUtilities.h
     platform/graphics/BifurcatedGraphicsContext.h
     platform/graphics/BitmapImage.h
     platform/graphics/CachedSubimage.h
@@ -2934,6 +2942,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/network/OrganizationStorageAccessPromptQuirk.h
     platform/network/ParsedContentRange.h
     platform/network/ParsedContentType.h
+    platform/network/PendingStreamIdentifier.h
+    platform/network/PendingStreamState.h
     platform/network/ProtectionSpace.h
     platform/network/ProtectionSpaceBase.h
     platform/network/ProtectionSpaceHash.h
@@ -2996,7 +3006,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/ClipRect.h
     rendering/EllipsisBoxPainter.h
     rendering/EventRegion.h
-    rendering/FlexLayoutUtils.h
     rendering/FloatingObjects.h
     rendering/GapRects.h
     rendering/GlyphDisplayListCacheRemoval.h
@@ -3036,7 +3045,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/RenderElementInlines.h
     rendering/RenderElementStyleInlines.h
     rendering/RenderEmbeddedObject.h
-    rendering/RenderFlexLayout.h
     rendering/RenderFlexibleBox.h
     rendering/RenderFrame.h
     rendering/RenderFrameBase.h
@@ -3719,12 +3727,14 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/JSFile.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSHTMLCollection.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSHTMLOptionsCollection.h
+    ${WebCore_DERIVED_SOURCES_DIR}/JSImageData.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSMediaList.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSNamedNodeMap.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSNode.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSNodeIterator.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSNodeList.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSNotification.h
+    ${WebCore_DERIVED_SOURCES_DIR}/JSOffscreenCanvas.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSRange.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSReadableStreamDefaultController.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSStyleSheet.h

@@ -32,7 +32,14 @@ enum class WebCore::ContactProperty : uint8_t {
 
 header: <WebCore/IDBResultData.h>
 
-enum class WebCore::IPAddressSpace : bool;
+header: <WebCore/IPAddressSpace.h>
+
+enum class WebCore::IPAddressSpace : uint8_t {
+    Public,
+    Local,
+    Loopback,
+    Unknown
+};
 
 enum class WebCore::NotificationEventType : bool;
 
@@ -1420,7 +1427,7 @@ enum class WebCore::VideoCodecType : uint8_t {
 
 header: <WebCore/FormData.h>
 [CustomHeader] struct WebCore::FormDataElement {
-    Variant<Vector<uint8_t>, WebCore::FormDataElement::EncodedFileData, WebCore::FormDataElement::EncodedBlobData> data
+    Variant<Vector<uint8_t>, WebCore::FormDataElement::EncodedFileData, WebCore::FormDataElement::EncodedBlobData, WebCore::FormDataElement::PendingStreamData> data
 }
 
 [Nested] struct WebCore::FormDataElement::EncodedFileData {
@@ -1432,6 +1439,10 @@ header: <WebCore/FormData.h>
 
 [Nested] struct WebCore::FormDataElement::EncodedBlobData {
     URL url;
+}
+
+[Nested] struct WebCore::FormDataElement::PendingStreamData {
+    WebCore::PendingStreamIdentifier identifier;
 }
 
 header: <WebCore/NetworkLoadInformation.h>
@@ -2772,6 +2783,7 @@ enum class WebCore::IncludeSecureCookies : bool;
     bool m_alwaysStream;
     Vector<uint8_t> m_boundary;
     [NotSerialized] std::optional<uint64_t> m_lengthInBytes;
+    [NotSerialized] RefPtr<WebCore::PendingStreamState> m_pendingStreamState;
 };
 
 #if ENABLE(ASYNC_SCROLLING)
@@ -3623,6 +3635,7 @@ struct WebCore::ServiceWorkerClientData {
     bool isFocused;
     uint64_t focusOrder;
     Vector<String> ancestorOrigins;
+    std::optional<bool> globalPrivacyControlEnabled;
 };
 
 struct WebCore::ServiceWorkerClientQueryOptions {
@@ -4128,6 +4141,7 @@ struct WebCore::WorkerInitializationData {
     std::optional<WebCore::ScriptExecutionContextIdentifier> clientIdentifier;
     OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections;
     String userAgent;
+    std::optional<bool> globalPrivacyControlEnabled;
 };
 
 struct WebCore::WorkerFetchResult {
@@ -4201,6 +4215,7 @@ struct WebCore::ServiceWorkerContextData {
     std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier;
     WebCore::NavigationPreloadState navigationPreloadState;
     Vector<WebCore::ServiceWorkerRoute> routes;
+    std::optional<bool> globalPrivacyControlEnabled;
 };
 
 #if HAVE(SCREEN_CAPTURE_KIT)
@@ -4861,6 +4876,7 @@ header: <WebCore/TextExtractionTypes.h>
     String text;
     std::optional<WebCore::FloatPoint> locationInRootView;
     std::optional<WebCore::NodeIdentifier> nodeIdentifier;
+    std::optional<WebCore::JSHandleIdentifier> targetNodeHandleIdentifier;
     WebCore::FloatSize scrollDelta;
     bool replaceAll;
     bool scrollToVisible;
@@ -4885,6 +4901,7 @@ header: <WebCore/TextExtractionTypes.h>
     std::optional<WebCore::FloatRect> collectionRectInRootView;
     std::optional<WebCore::JSHandleIdentifier> targetNodeHandleIdentifier;
     Vector<WebCore::JSHandleIdentifier> handleIdentifiersOfNodesToSkip;
+    std::optional<WebCore::NodeIdentifier> contextMenuTargetNodeIdentifier;
     bool mergeParagraphs;
     bool skipNearlyTransparentContent;
     WebCore::TextExtraction::NodeIdentifierInclusion nodeIdentifierInclusion;
@@ -4892,6 +4909,7 @@ header: <WebCore/TextExtractionTypes.h>
     bool includeAccessibilityAttributes;
     bool includeTextInAutoFilledControls;
     bool includeOffscreenPasswordFields;
+    bool includeTagName;
 #if ENABLE(DATA_DETECTION)
     OptionSet<WebCore::DataDetectorType> dataDetectorTypes;
 #endif
@@ -5894,15 +5912,6 @@ enum class WebCore::InspectorBackendClientDeveloperPreference : uint8_t {
 #endif
 }
 
-#if USE(LIBRICE)
-header: <WebCore/RiceGatherResult.h>
-using WebCore::RiceSocket = std::pair<String, WebCore::RTCIceProtocol>;
-[CustomHeader] struct WebCore::RiceGatherResult {
-    HashMap<WebCore::RiceSocket, String> addresses;
-    Vector<WebCore::RiceSocket> turnAddresses;
-};
-#endif
-
 struct WebCore::NonSerializedDataToken {
     WebCore::ProcessIdentifier processIdentifier;
     WebCore::NonSerializedDataIdentifier identifier;
@@ -6419,7 +6428,7 @@ header: <WebCore/ShareableCVPixelBuffer.h>
     WebCore::ShareableCVPixelBufferConfiguration m_configuration;
     Ref<WebCore::ShareableCVPixelBufferBytes> m_bytes;
 }
-    
+
 [CustomHeader, RefCounted] class WebCore::ShareableCVPixelBufferWithPlanarBytes {
     WebCore::ShareableCVPixelBufferConfiguration m_configuration;
     Vector<Ref<WebCore::ShareableCVPixelBufferBytes>> m_planes;
@@ -6442,7 +6451,8 @@ header: <WebCore/ShareableGainMap.h>
 header: <WebCore/ShareableBitmap.h>
 [CustomHeader] class WebCore::ShareableBitmapConfiguration {
     [Validator='m_size->width() > 0 && m_size->height() > 0'] WebCore::IntSize m_size;
-    std::optional<WebCore::DestinationColorSpace> m_colorSpace;
+    WebCore::DestinationColorSpace m_colorSpace;
+    WebCore::PixelFormat m_pixelFormat;
     WebCore::Headroom m_baseImageHeadroom;
     bool m_isOpaque;
     [Validator='*bitsPerComponent >= 1 && *bitsPerComponent <= 16'] unsigned bitsPerComponent();

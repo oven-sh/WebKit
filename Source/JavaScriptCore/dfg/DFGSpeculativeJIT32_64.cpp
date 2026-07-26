@@ -1611,11 +1611,14 @@ void SpeculativeJIT::compileToBoolean(Node* node, bool invert)
         SpeculateDoubleOperand value(this, node->child1());
         FPRTemporary scratch(this);
         GPRTemporary resultPayload(this);
-        move(invert ? TrustedImm32(0) : TrustedImm32(1), resultPayload.gpr());
-        Jump nonZero = branchDoubleNonZero(value.fpr(), scratch.fpr());
-        move(invert ? TrustedImm32(1) : TrustedImm32(0), resultPayload.gpr());
-        nonZero.link(this);
-        booleanResult(resultPayload.gpr(), node);
+
+        FPRReg valueFPR = value.fpr();
+        FPRReg scratchFPR = scratch.fpr();
+        GPRReg resultGPR = resultPayload.gpr();
+
+        moveZeroToDouble(scratchFPR);
+        compareDouble(invert ? DoubleEqualOrUnordered : DoubleNotEqualAndOrdered, valueFPR, scratchFPR, resultGPR);
+        booleanResult(resultGPR, node);
         return;
     }
 
@@ -3356,6 +3359,11 @@ void SpeculativeJIT::compile(Node* node)
         compileToObjectOrCallObjectConstructor(node);
         break;
     }
+
+    case OpenAsyncFromSyncIterator: {
+        compileOpenAsyncFromSyncIterator(node);
+        break;
+    }
         
     case ToThis: {
         compileToThis(node);
@@ -3972,11 +3980,6 @@ void SpeculativeJIT::compile(Node* node)
 
     case IsCellWithType: {
         compileIsCellWithType(node);
-        break;
-    }
-
-    case IsTypedArrayView: {
-        compileIsTypedArrayView(node);
         break;
     }
 

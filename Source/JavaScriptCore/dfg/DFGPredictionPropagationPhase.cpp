@@ -1324,7 +1324,6 @@ private:
         case IsCallable:
         case IsConstructor:
         case IsCellWithType:
-        case IsTypedArrayView:
         case ArrayIsArray:
         case HasStructureWithFlags:
         case MatchStructure: {
@@ -1400,6 +1399,10 @@ private:
 
         case CreatePromise:
             setPrediction(SpecPromiseObject);
+            break;
+
+        case OpenAsyncFromSyncIterator:
+            setPrediction(SpecObjectOther);
             break;
 
         case NewResolvedPromise:

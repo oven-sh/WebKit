@@ -36,6 +36,7 @@
 #include "SharedPreferencesForWebProcess.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
+#include <WebCore/DeprecatedGlobalSettings.h>
 #include <WebCore/PlatformMediaSessionInterface.h>
 #include <WebCore/PlatformMediaSessionManager.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -86,19 +87,21 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionManagerAudioHardwareListener);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionManagerProxy);
 
-RefPtr<RemoteMediaSessionManagerProxy> RemoteMediaSessionManagerProxy::create(WebPageProxy& page)
+Ref<RemoteMediaSessionManagerProxy> RemoteMediaSessionManagerProxy::singleton()
 {
-    return adoptRef(new RemoteMediaSessionManagerProxy(page));
+    static NeverDestroyed<Ref<RemoteMediaSessionManagerProxy>> instance { adoptRef(*new RemoteMediaSessionManagerProxy()) };
+    return instance.get();
 }
 
-RemoteMediaSessionManagerProxy::RemoteMediaSessionManagerProxy(WebPageProxy& page)
-    : REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS(page.webPageIDInMainFrameProcess())
-    , m_page(page)
-    , m_pageID(page.webPageIDInMainFrameProcess())
-    , m_process(page.legacyMainFrameProcess())
+RemoteMediaSessionManagerProxy::RemoteMediaSessionManagerProxy()
+    : REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS(std::nullopt) // No need to access a WebCore::Page in the UI process
 {
 #if USE(AUDIO_SESSION)
     AudioSession::setSharedSession(*this);
+#endif
+
+#if PLATFORM(IOS_FAMILY) || ENABLE(ROUTING_ARBITRATION)
+    WebCore::DeprecatedGlobalSettings::setShouldManageAudioSessionCategory(true);
 #endif
 
 #if PLATFORM(COCOA)
@@ -106,19 +109,18 @@ RemoteMediaSessionManagerProxy::RemoteMediaSessionManagerProxy(WebPageProxy& pag
         return protectedThis->ensureAudioHardwareListenerProxy(client);
     });
 #endif
-
-    m_process->addMessageReceiver(Messages::RemoteMediaSessionManagerProxy::messageReceiverName(), m_pageID, *this);
 }
 
 RemoteMediaSessionManagerProxy::~RemoteMediaSessionManagerProxy()
 {
-    m_process->removeMessageReceiver(Messages::RemoteMediaSessionManagerProxy::messageReceiverName(), m_pageID);
 }
 
-void RemoteMediaSessionManagerProxy::addMediaSession(RemoteMediaSessionState&& state)
+void RemoteMediaSessionManagerProxy::addMediaSession(IPC::Connection& connection, RemoteMediaSessionState&& state)
 {
-    auto addResult = m_sessionProxies.ensure(state.sessionIdentifier, [&] {
-        return RemoteMediaSessionProxy::create(state, *this);
+    Ref process = WebProcessProxy::fromConnection(connection);
+
+    auto addResult = m_sessionProxies.ensure({ state.sessionIdentifier, process->coreProcessIdentifier() }, [&] {
+        return RemoteMediaSessionProxy::create(state, process);
     });
 
     Ref session = addResult.iterator->value.get();
@@ -128,26 +130,39 @@ void RemoteMediaSessionManagerProxy::addMediaSession(RemoteMediaSessionState&& s
     REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::addSession(session);
 }
 
-void RemoteMediaSessionManagerProxy::removeMediaSession(RemoteMediaSessionState&& state)
+void RemoteMediaSessionManagerProxy::removeMediaSession(IPC::Connection& connection, RemoteMediaSessionState&& state)
 {
-    if (RefPtr session = findAndUpdateSession(state))
+    if (RefPtr session = findAndUpdateSession(connection, state))
         removeSession(*session);
+    m_sessionProxies.remove({ state.sessionIdentifier, WebProcessProxy::fromConnection(connection)->coreProcessIdentifier() });
 }
 
-void RemoteMediaSessionManagerProxy::setCurrentMediaSession(RemoteMediaSessionState&& state)
+// FIXME: Clean up m_sessionProxies when a web content process crashes.
+
+void RemoteMediaSessionManagerProxy::setCurrentMediaSession(IPC::Connection& connection, RemoteMediaSessionState&& state)
 {
-    if (RefPtr session = findAndUpdateSession(state))
+    if (RefPtr session = findAndUpdateSession(connection, state))
         setCurrentSession(*session);
 }
 
-void RemoteMediaSessionManagerProxy::updateMediaSessionState()
+void RemoteMediaSessionManagerProxy::refreshSessionStates(IPC::Connection& connection, const Vector<RemoteMediaSessionState>& sessions)
 {
+    Ref process = WebProcessProxy::fromConnection(connection);
+    for (auto& state : sessions) {
+        if (RefPtr session = m_sessionProxies.get({ state.sessionIdentifier, process->coreProcessIdentifier() }))
+            session->updateState(state);
+    }
+}
+
+void RemoteMediaSessionManagerProxy::updateMediaSessionStates(IPC::Connection& connection, Vector<RemoteMediaSessionState>&& sessions)
+{
+    refreshSessionStates(connection, sessions);
     updateSessionState();
 }
 
-void RemoteMediaSessionManagerProxy::mediaSessionStateChanged(WebKit::RemoteMediaSessionState&& state)
+void RemoteMediaSessionManagerProxy::mediaSessionStateChanged(IPC::Connection& connection, WebKit::RemoteMediaSessionState&& state)
 {
-    findAndUpdateSession(state);
+    findAndUpdateSession(connection, state);
 }
 
 void RemoteMediaSessionManagerProxy::setCurrentSession(WebCore::PlatformMediaSessionInterface& session)
@@ -155,29 +170,18 @@ void RemoteMediaSessionManagerProxy::setCurrentSession(WebCore::PlatformMediaSes
     if (!m_isInSetCurrentSession) {
         SetForScope isInSetCurrentSessionRestorer(m_isInSetCurrentSession, true);
 
-        RefPtr sessionProxy = m_sessionProxies.get(session.mediaSessionIdentifier());
-        ASSERT(sessionProxy);
-        if (!sessionProxy)
-            return;
-
-        RefPtr page = m_page.get();
-        if (!page)
-            return;
-
-        page->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
-            std::optional<WebCore::MediaSessionIdentifier> sessionIdentifier;
-            if (sessionProxy->pageIdentifier() == pageID)
-                sessionIdentifier = session.mediaSessionIdentifier();
-            webProcess.send(Messages::RemoteMediaSessionManager::SetCurrentMediaSession(sessionIdentifier), pageID);
-        });
+        for (Ref proxy : m_sessionProxies.values()) {
+            auto currentMediaSessionInProcess = proxy.ptr() == &session ? std::optional(proxy->sessionIdentifier()) : std::nullopt;
+            proxy->send(Messages::RemoteMediaSessionManager::SetCurrentMediaSession(currentMediaSessionInProcess));
+        }
     }
 
     REMOTE_MEDIA_SESSION_MANAGER_BASE_CLASS::addSession(session);
 }
 
-void RemoteMediaSessionManagerProxy::mediaSessionWillBeginPlayback(RemoteMediaSessionState&& state, CompletionHandler<void(bool)>&& completionHandler)
+void RemoteMediaSessionManagerProxy::mediaSessionWillBeginPlayback(IPC::Connection& connection, RemoteMediaSessionState&& state, CompletionHandler<void(bool)>&& completionHandler)
 {
-    RefPtr session = findAndUpdateSession(state);
+    RefPtr session = findAndUpdateSession(connection, state);
     if (!session) {
         completionHandler(false);
         return;
@@ -217,31 +221,28 @@ void RemoteMediaSessionManagerProxy::setCategory(CategoryType type, Mode mode, W
     m_mode = mode;
     m_routeSharingPolicy = policy;
 
-    send(Messages::RemoteMediaSessionManager::SetAudioSessionCategory(type, mode, policy), { });
+    for (Ref session : m_sessionProxies.values())
+        session->send(Messages::RemoteMediaSessionManager::SetAudioSessionCategory(type, mode, policy));
 #else
     UNUSED_PARAM(type);
     UNUSED_PARAM(policy);
 #endif
 }
 
-bool RemoteMediaSessionManagerProxy::tryToSetActiveInternal(bool active)
+Ref<WebCore::AudioSession::SetActivePromise> RemoteMediaSessionManagerProxy::tryToSetActiveInternal(bool active)
 {
     if (active && m_isInterruptedForTesting)
-        return false;
+        return SetActivePromise::createAndReject();
 
 /*
     FIXME: A call to `AudioSession::singleton().tryToSetActive` in the WebProcess ends up in
-    FIXME: `RemoteAudioSession::tryToSetActiveInternal`, which sends sync IPC to the GPU process.
-    FIXME: This is necessary because the return value, whether or not the audio session was activated,
-    FIXME: is used by `MediaSessionManagerInterface::sessionWillBeginPlayback` to know whether to
-    FIXME: allow playback to begin. Sync IPC from the UI process isn't a good idea generally, but
-    FIXME: sync IPC from the UI to the WebProcess and then to the GPU process is a terrible idea,
-    FIXME: so figure out how to restructure the logic to not require it.
+    FIXME: `RemoteAudioSession::tryToSetActiveInternal`, which sends async IPC to the GPU process.
+    FIXME: Now that the chain is async, we could restructure to send async IPC from the UI process
+    FIXME: to the WebProcess as well.
     auto sendResult = sendSync(Messages::RemoteMediaSessionManager::TryToSetAudioSessionActive(active), { });
     auto [succeeded] = sendResult.takeReplyOr(false);
  */
-    bool succeeded = true;
-    return succeeded;
+    return SetActivePromise::createAndResolve();
 }
 
 void RemoteMediaSessionManagerProxy::setPreferredBufferSize(size_t size)
@@ -250,7 +251,9 @@ void RemoteMediaSessionManagerProxy::setPreferredBufferSize(size_t size)
         return;
 
     m_audioConfiguration.preferredBufferSize = size;
-    send(Messages::RemoteMediaSessionManager::SetAudioSessionPreferredBufferSize(size), { });
+
+    for (Ref session : m_sessionProxies.values())
+        session->send(Messages::RemoteMediaSessionManager::SetAudioSessionPreferredBufferSize(size));
 }
 #endif
 
@@ -281,31 +284,17 @@ Ref<RemoteMediaSessionManagerAudioHardwareListener> RemoteMediaSessionManagerPro
 }
 #endif
 
-RefPtr<WebCore::PlatformMediaSessionInterface> RemoteMediaSessionManagerProxy::findAndUpdateSession(RemoteMediaSessionState& state)
+RefPtr<WebCore::PlatformMediaSessionInterface> RemoteMediaSessionManagerProxy::findAndUpdateSession(IPC::Connection& connection, const RemoteMediaSessionState& state)
 {
-    RefPtr session = firstSessionMatching([&state](auto& session) {
-        return session.mediaSessionIdentifier() == state.sessionIdentifier;
-    }).get();
-
+    RefPtr session = m_sessionProxies.get({ state.sessionIdentifier, WebProcessProxy::fromConnection(connection)->coreProcessIdentifier() });
     if (session)
-        downcast<RemoteMediaSessionProxy>(session)->updateState(state);
-
+        session->updateState(state);
     return session;
 }
 
-IPC::Connection* RemoteMediaSessionManagerProxy::messageSenderConnection() const
+std::optional<SharedPreferencesForWebProcess> RemoteMediaSessionManagerProxy::sharedPreferencesForWebProcess(IPC::Connection& connection) const
 {
-    return m_process->hasConnection() ? &m_process->connection() : nullptr;
-}
-
-uint64_t RemoteMediaSessionManagerProxy::messageSenderDestinationID() const
-{
-    return m_pageID.toUInt64();
-}
-
-std::optional<SharedPreferencesForWebProcess> RemoteMediaSessionManagerProxy::sharedPreferencesForWebProcess() const
-{
-    return m_process->sharedPreferencesForWebProcess();
+    return WebProcessProxy::fromConnection(connection)->sharedPreferencesForWebProcess();
 }
 
 } // namespace WebKit

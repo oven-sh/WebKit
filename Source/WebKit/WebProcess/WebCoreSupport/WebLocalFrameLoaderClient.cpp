@@ -106,7 +106,6 @@
 #include <WebCore/ScriptController.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/Settings.h>
-#include <WebCore/Site.h>
 #include <WebCore/SubresourceLoader.h>
 #include <WebCore/UIEventWithKeyState.h>
 #include <WebCore/Widget.h>
@@ -652,6 +651,8 @@ void WebLocalFrameLoaderClient::dispatchDidCommitLoad(std::optional<HasInsecureC
 
     frame->commitProvisionalFrame();
 
+    removeStorageAccessOnCommit(documentLoader.get());
+
     // Notify the bundle client.
     webPage->injectedBundleLoaderClient().didCommitLoadForFrame(*webPage, m_frame, userData);
 
@@ -1080,20 +1081,22 @@ WebCore::AllowsContentJavaScript WebLocalFrameLoaderClient::allowsContentJavaScr
     return webPage ? webPage->allowsContentJavaScriptFromMostRecentNavigation() : WebCore::AllowsContentJavaScript::No;
 }
 
+void WebLocalFrameLoaderClient::removeStorageAccessOnCommit(WebCore::DocumentLoader& documentLoader)
+{
+    if (m_frame->isMainFrame())
+        return;
+
+    auto& requester = documentLoader.triggeringAction().requester();
+    if (!requester)
+        return;
+
+    if (shouldNavigationLoseFrameSpecificStorageAccess(*requester, m_frame->frameID(), m_localFrame->loader().previousURL(), documentLoader.originalURL()))
+        removeStorageAccess();
+}
+
 void WebLocalFrameLoaderClient::dispatchDecidePolicyForNavigationAction(const NavigationAction& navigationAction, const ResourceRequest& request, const ResourceResponse& redirectResponse,
     FormState* formState, const String& clientRedirectSourceForHistory, std::optional<WebCore::NavigationIdentifier> navigationID, std::optional<WebCore::HitTestResult>&& hitTestResult, bool hasOpener, NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior, WebCore::SandboxFlags sandboxFlags, PolicyDecisionMode policyDecisionMode, FramePolicyFunction&& function)
 {
-    if (auto requestor = navigationAction.requester(); requestor && requestor->frameID) {
-        // another frame initiated navigation
-        if (*requestor->frameID != m_frame->frameID() && Site(requestor->url) != Site(m_frame->url()))
-            removeStorageAccess();
-        // this frame navigated itself
-        else if (*requestor->frameID == m_frame->frameID()) {
-            if (redirectResponse.isNull() && !SecurityOrigin::create(m_frame->url())->isSameOriginAs(SecurityOrigin::create(request.url())))
-                removeStorageAccess();
-        }
-    }
-
     WebFrameLoaderClient::dispatchDecidePolicyForNavigationAction(navigationAction, request, redirectResponse, formState, clientRedirectSourceForHistory, navigationID, WTF::move(hitTestResult), hasOpener, navigationUpgradeToHTTPSBehavior, sandboxFlags, policyDecisionMode, WTF::move(function));
 }
 
@@ -1595,7 +1598,7 @@ void WebLocalFrameLoaderClient::restoreViewState()
     // A scale factor of 0 means the history item has the default scale factor, thus we do not need to update it.
     RefPtr page = m_frame->page();
     if (page && scaleFactor)
-        page->send(Messages::WebPageProxy::PageScaleFactorDidChange(scaleFactor));
+        page->send(Messages::WebPageProxy::DidSetPageScaleFactor(scaleFactor));
 
     // FIXME: This should not be necessary. WebCore should be correctly invalidating
     // the view on restores from the back/forward cache.

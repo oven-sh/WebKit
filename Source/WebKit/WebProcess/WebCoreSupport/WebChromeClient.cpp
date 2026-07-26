@@ -207,6 +207,10 @@
 #include <WebCore/HTMLMediaElement.h>
 #endif
 
+#if PLATFORM(IOS_FAMILY) && ENABLE(VIDEO_PRESENTATION_MODE)
+#include <WebCore/PictureInPictureSupport.h>
+#endif
+
 namespace WebKit {
 using namespace WebCore;
 using namespace HTMLNames;
@@ -1490,6 +1494,9 @@ bool WebChromeClient::supportsVideoFullscreenStandby()
 
 void WebChromeClient::setMockVideoPresentationModeEnabled(bool enabled)
 {
+#if PLATFORM(IOS_FAMILY) && ENABLE(VIDEO_PRESENTATION_MODE)
+    setSupportsPictureInPicture(enabled);
+#endif
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::SetMockVideoPresentationModeEnabled(enabled));
 }
@@ -2391,6 +2398,18 @@ void WebChromeClient::clearAnimationsForActiveWritingToolsSession()
 {
     if (RefPtr page = m_page.get())
         page->clearAnimationsForActiveWritingToolsSession();
+}
+
+void WebChromeClient::showWritingToolsAffordance()
+{
+    if (RefPtr page = m_page.get())
+        page->showWritingToolsAffordance();
+}
+
+bool WebChromeClient::writingToolsAvailable() const
+{
+    RefPtr page = m_page.get();
+    return page && page->writingToolsAvailable();
 }
 
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)

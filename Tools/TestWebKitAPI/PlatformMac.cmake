@@ -247,6 +247,10 @@ WEBKIT_ADD_TARGET_CXX_FLAGS(TestWebKit -Wno-deprecated-declarations)
 # run-api-tests expects the binary to be named TestWebKitAPI.
 set_target_properties(TestWebKit PROPERTIES OUTPUT_NAME TestWebKitAPI)
 
+webkit_generate_entitlements(TestWebKit
+    USING ${TESTWEBKITAPI_DIR}/Scripts/process-entitlements.sh
+    BUNDLE_IDENTIFIER com.apple.WebKit.TestWebKitAPI)
+
 # TestIPC
 file(GLOB _ipc_core_sources
     "${WEBKIT_DIR}/Platform/IPC/ArgumentCoders.cpp"
@@ -283,6 +287,7 @@ list(APPEND TestIPC_SOURCES
     ${WEBKIT_DIR}/Platform/EditingRangeClamping.cpp
     ${WEBKIT_DIR}/Platform/Logging.cpp
     ${WEBKIT_DIR}/Platform/mac/MachUtilities.cpp
+    ${WEBKIT_DIR}/Shared/WebFoundTextRange.cpp
     ${WebKit_DERIVED_SOURCES_DIR}/MessageNames.cpp
 )
 unset(_ipc_core_sources)

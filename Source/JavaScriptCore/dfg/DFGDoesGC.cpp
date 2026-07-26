@@ -148,7 +148,6 @@ bool doesGC(Graph& graph, Node* node)
     case IsCallable:
     case IsConstructor:
     case IsCellWithType:
-    case IsTypedArrayView:
     case TypeOf:
     case ToBoolean:
     case LogicalNot:
@@ -399,6 +398,7 @@ bool doesGC(Graph& graph, Node* node)
     case ToNumber:
     case ToNumeric:
     case ToObject:
+    case OpenAsyncFromSyncIterator:
     case ToPrimitive:
     case ToPropertyKey:
     case ToPropertyKeyOrNumber:

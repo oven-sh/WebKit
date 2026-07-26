@@ -36,9 +36,11 @@
 
 namespace WebCore {
 
-class ScrollableArea;
-class RenderBox;
 class Element;
+class RenderBox;
+class RenderElement;
+class ScrollableArea;
+struct ScrollAlignment;
 
 namespace Style {
 class ComputedStyle;
@@ -87,7 +89,7 @@ struct ScrollSnapOffsetsInfo {
 
     template<typename OutputType> OutputType convertUnits(float deviceScaleFactor = 0.0) const;
     template<typename SizeType, typename PointType>
-    WEBCORE_EXPORT std::pair<UnitType, std::optional<unsigned>> closestSnapOffset(ScrollEventAxis, const SizeType& viewportSize, PointType scrollDestinationOffset, float velocity, std::optional<UnitType> originalPositionForDirectionalSnapping = std::nullopt) const;
+    WEBCORE_EXPORT std::pair<UnitType, std::optional<unsigned>> closestSnapOffset(ScrollEventAxis, const SizeType& viewportSize, PointType scrollDestinationOffset, float velocity, std::optional<UnitType> originalPositionForDirectionalSnapping = std::nullopt, ScrollSnapPointSelectionMethod = ScrollSnapPointSelectionMethod::Closest) const;
 };
 
 template<typename UnitType> inline bool operator==(const SnapOffset<UnitType>& a, const SnapOffset<UnitType>& b)
@@ -102,19 +104,23 @@ using FloatSnapOffset = SnapOffset<float>;
 template <> template <>
 LayoutScrollSnapOffsetsInfo FloatScrollSnapOffsetsInfo::convertUnits(float /* unusedScaleFactor */) const;
 template <> template <>
-WEBCORE_EXPORT std::pair<float, std::optional<unsigned>> FloatScrollSnapOffsetsInfo::closestSnapOffset(ScrollEventAxis, const FloatSize& viewportSize, FloatPoint scrollDestinationOffset, float velocity, std::optional<float> originalPositionForDirectionalSnapping) const;
+WEBCORE_EXPORT std::pair<float, std::optional<unsigned>> FloatScrollSnapOffsetsInfo::closestSnapOffset(ScrollEventAxis, const FloatSize& viewportSize, FloatPoint scrollDestinationOffset, float velocity, std::optional<float> originalPositionForDirectionalSnapping, ScrollSnapPointSelectionMethod) const;
 
 
 template <> template <>
 FloatScrollSnapOffsetsInfo LayoutScrollSnapOffsetsInfo::convertUnits(float deviceScaleFactor) const;
 template <> template <>
-WEBCORE_EXPORT std::pair<LayoutUnit, std::optional<unsigned>> LayoutScrollSnapOffsetsInfo::closestSnapOffset(ScrollEventAxis, const LayoutSize& viewportSize, LayoutPoint scrollDestinationOffset, float velocity, std::optional<LayoutUnit> originalPositionForDirectionalSnapping) const;
+WEBCORE_EXPORT std::pair<LayoutUnit, std::optional<unsigned>> LayoutScrollSnapOffsetsInfo::closestSnapOffset(ScrollEventAxis, const LayoutSize& viewportSize, LayoutPoint scrollDestinationOffset, float velocity, std::optional<LayoutUnit> originalPositionForDirectionalSnapping, ScrollSnapPointSelectionMethod) const;
 
 // Update the snap offsets for this scrollable area, given the RenderBox of the scroll container, the StyleComputedStyle
 // which defines the scroll-snap properties, and the viewport rectangle with the origin at the top left of
 // the scrolling container's border box.
 bool NODELETE mayHaveScrollSnappedBoxes(const RenderBox& scrollingElementBox);
 void updateSnapOffsetsForScrollableArea(ScrollableArea&, const RenderBox& scrollingElementBox, const Style::ComputedStyle& scrollingElementStyle, LayoutRect viewportRectInBorderBoxCoordinates, WritingMode, Element* focusedElement, Element* targetElement);
+// Adjust the scroll-into-view alignment of each axis to honor the target's scroll-snap-align. Only axes
+// without an author-specified alignment (adjustX / adjustY) are adjusted, per the CSSOM View rule that an
+// explicitly requested scrollIntoView() alignment must be used as-is.
+void adjustScrollAlignmentForScrollSnapAlign(const RenderElement&, ScrollAlignment* alignX, ScrollAlignment* alignY);
 
 template <typename T> WTF::TextStream& operator<<(WTF::TextStream& ts, SnapOffset<T> offset)
 {

@@ -34,6 +34,7 @@
 #include <wtf/AggregateLogger.h>
 #include <wtf/CancellableTask.h>
 #include <wtf/LoggerHelper.h>
+#include <wtf/NativePromise.h>
 #include <wtf/ProcessID.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeWeakPtr.h>
@@ -128,7 +129,17 @@ public:
     virtual void sessionCanProduceAudioChanged();
     virtual void clientCharacteristicsChanged(PlatformMediaSessionInterface&, bool) { }
 
+    // Re-evaluates ConcurrentPlaybackNotPermitted for `newSession`: if its
+    // current mediaType has that restriction, pauses other Playing sessions
+    // that report `canPlayConcurrently=false`. Called from sessionWillBeginPlayback
+    // and again when a session transitions from a non-restricted to a
+    // restricted mediaType (e.g., Video → VideoAudio after audio metadata loads).
+    void enforceConcurrentPlaybackRestriction(PlatformMediaSessionInterface& newSession);
+
     virtual void configureWirelessTargetMonitoring() { }
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
+    virtual void ensureMediaDeviceRouteControllerMonitoring() { }
+#endif
     virtual bool hasWirelessTargetsAvailable() { return false; }
     virtual bool isMonitoringWirelessTargets() const { return false; }
     virtual void sessionIsPlayingToWirelessPlaybackTargetChanged(PlatformMediaSessionInterface&);
@@ -164,7 +175,7 @@ public:
 #endif
 
 protected:
-    explicit MediaSessionManagerInterface(PageIdentifier);
+    explicit MediaSessionManagerInterface(std::optional<PageIdentifier>);
 
     virtual WeakListHashSet<PlatformMediaSessionInterface>& sessions() const = 0;
     virtual Vector<WeakPtr<PlatformMediaSessionInterface>> copySessionsToVector() const = 0;
@@ -175,8 +186,9 @@ protected:
     Vector<WeakPtr<PlatformMediaSessionInterface>> sessionsMatching(NOESCAPE const Function<bool(const PlatformMediaSessionInterface&)>&) const;
     WeakPtr<PlatformMediaSessionInterface> firstSessionMatching(NOESCAPE const Function<bool(const PlatformMediaSessionInterface&)>&) const;
 
-    void maybeDeactivateAudioSession();
-    bool maybeActivateAudioSession();
+    enum class ShouldCheckRequiredSession : bool { No, Yes };
+    void maybeDeactivateAudioSession(ShouldCheckRequiredSession = ShouldCheckRequiredSession::Yes);
+    Ref<GenericPromise> maybeActivateAudioSession();
 
     void nowPlayingMetadataChanged(const NowPlayingMetadata&);
     void enqueueTaskOnMainThread(Function<void()>&&);
@@ -188,7 +200,7 @@ protected:
     void scheduleUpdateSessionState();
     virtual void updateSessionState() { }
 
-    PageIdentifier pageIdentifier() const { return m_pageIdentifier; }
+    std::optional<PageIdentifier> pageIdentifier() const { return m_pageIdentifier; }
 
 #if !RELEASE_LOG_DISABLED
     void scheduleStateLog();
@@ -213,7 +225,7 @@ private:
     WeakHashSet<NowPlayingMetadataObserver> m_nowPlayingMetadataObservers;
     TaskCancellationGroup m_taskGroup;
 
-    PageIdentifier m_pageIdentifier;
+    Markable<PageIdentifier> m_pageIdentifier;
 #if !RELEASE_LOG_DISABLED
     UniqueRef<Timer> m_stateLogTimer;
     const Ref<AggregateLogger> m_logger;
@@ -226,9 +238,7 @@ private:
     bool m_alreadyScheduledSessionStatedUpdate { false };
     bool m_hasScheduledSessionStateUpdate { false };
     mutable bool m_isApplicationInBackground { false };
-#if USE(AUDIO_SESSION)
     bool m_becameActive { false };
-#endif
 };
 
 #if !RELEASE_LOG_DISABLED

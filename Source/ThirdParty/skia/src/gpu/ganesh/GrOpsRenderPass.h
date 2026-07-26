@@ -11,8 +11,8 @@
 #include "include/core/SkDrawable.h"
 #include "include/core/SkRefCnt.h"
 #include "include/gpu/ganesh/GrTypes.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/ganesh/GrBuffer.h"
 #include "src/gpu/ganesh/GrDeferredUpload.h"
@@ -129,7 +129,7 @@ public:
                           int baseVertex);
 
     // Performs an upload of vertex data in the middle of a set of a set of draws
-    virtual void inlineUpload(GrOpFlushState*, GrDeferredTextureUploadFn&) = 0;
+    virtual bool inlineUpload(GrOpFlushState*, GrDeferredTextureUploadFn&) = 0;
 
     /**
      * Clear the owned render target. Clears the full target if 'scissor' is disabled, otherwise it

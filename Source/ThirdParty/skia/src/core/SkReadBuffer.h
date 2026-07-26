@@ -11,6 +11,7 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkFlattenable.h"
+#include "include/core/SkFourByteTag.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPathEffect.h"
@@ -22,8 +23,8 @@
 #include "include/core/SkSerialProcs.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkAssert.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkAssert.h"
 #include "src/core/SkBlenderBase.h"
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkMaskFilterBase.h"
@@ -186,6 +187,13 @@ public:
     bool allowSkSL() const { return fAllowSkSL; }
     void setAllowSkSL(bool allow) { fAllowSkSL = allow; }
 
+    bool allowTags(SkFourByteTag tag) const {
+        if (!fProcs.fAllowTagsProc) {
+            return true;
+        }
+        return fProcs.fAllowTagsProc(tag, fProcs.fAllowTagsCtx);
+    }
+
     /**
      *  If isValid is false, sets the buffer to be "invalid". Returns true if the buffer
      *  is still valid.
@@ -227,6 +235,21 @@ public:
 
     SkSamplingOptions readSampling();
 
+    // SKPs can contain other SKPs and ImageFilters can contain other ImageFilters, so this
+    // can be used to limit how deeply nested things are.
+    void downLevel() {
+        fRecursionLimit -= 1;
+        this->validate(fRecursionLimit > 0);
+    }
+    void upLevel() {
+        fRecursionLimit += 1;
+        // If the readbuffer hit the limit, we'll maintain the error state
+    }
+    void setRecursionLimit(int newLimit) {
+        fRecursionLimit = newLimit;
+        this->validate(fRecursionLimit > 0);
+    }
+
 private:
     const char* readString(size_t* length);
 
@@ -255,6 +278,8 @@ private:
     static bool IsPtrAlign4(const void* ptr) {
         return SkIsAlign4((uintptr_t)ptr);
     }
+
+    int fRecursionLimit = 100;
 
     bool fAllowSkSL = true;
     bool fError = false;

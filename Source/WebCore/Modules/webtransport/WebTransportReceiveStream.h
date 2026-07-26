@@ -30,6 +30,7 @@
 namespace WebCore {
 
 class DeferredPromise;
+class WebTransportReceiveStreamByteSource;
 class WebTransportSession;
 
 struct WebTransportReceiveStreamStats;
@@ -39,12 +40,12 @@ using WebTransportStreamIdentifier = ObjectIdentifier<WebTransportStreamIdentifi
 
 class WebTransportReceiveStream final : public ReadableStream {
 public:
-    static ExceptionOr<Ref<WebTransportReceiveStream>> create(WebTransportStreamIdentifier, WebTransportSession&, JSDOMGlobalObject&, Ref<ReadableStreamSource>&&);
+    static ExceptionOr<Ref<WebTransportReceiveStream>> create(WebTransportStreamIdentifier, WebTransportSession&, JSDOMGlobalObject&, Ref<WebTransportReceiveStreamByteSource>&&);
     ~WebTransportReceiveStream() final;
 
     void getStats(ScriptExecutionContext&, Ref<DeferredPromise>&&);
 private:
-    WebTransportReceiveStream(ScriptExecutionContext*, WebTransportStreamIdentifier, WebTransportSession&, Ref<InternalReadableStream>&&);
+    WebTransportReceiveStream(ScriptExecutionContext*, WebTransportStreamIdentifier, WebTransportSession&);
 
     virtual Type type() const { return Type::WebTransport; }
 

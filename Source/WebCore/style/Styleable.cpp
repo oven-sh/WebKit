@@ -438,7 +438,7 @@ void Styleable::updateCSSAnimations(const Style::ComputedStyle* currentStyle, co
                 if (previousAnimation->animationName() == currentAnimationName) {
                     // Timing properties or play state may have changed so we need to update the backing animation with
                     // the Animation found in the current style.
-                    previousAnimation->setBackingStyleAnimation(currentAnimation);
+                    previousAnimation->setBackingStyleAnimation(currentAnimation, newStyle.usedZoomForLength());
                     // Keyframes may have been cleared if the @keyframes rules was changed since
                     // the last style update, so we must ensure keyframes are picked up.
                     previousAnimation->updateKeyframesIfNeeded(currentStyle, newStyle, resolutionContext);
@@ -452,7 +452,7 @@ void Styleable::updateCSSAnimations(const Style::ComputedStyle* currentStyle, co
             }
 
             if (!foundMatchingAnimation && isInDisplayNoneTree == Style::IsInDisplayNoneTree::No) {
-                auto cssAnimation = CSSAnimation::create(*this, Style::Animation { currentAnimation }, currentStyle, newStyle, resolutionContext);
+                auto cssAnimation = CSSAnimation::create(*this, Style::Animation { currentAnimation }, newStyle.usedZoomForLength(), currentStyle, newStyle, resolutionContext);
                 newStyleOriginatedAnimations.append(cssAnimation.ptr());
                 newAnimations.add(WTF::move(cssAnimation));
             }
@@ -912,7 +912,7 @@ void Styleable::updateCSSViewTimelines(const Style::ComputedStyle* currentStyle,
                 // Nothing to register.
             },
             [&](const Style::CustomIdent& identifier) {
-                styleOriginatedTimelinesController->registerNamedViewTimeline(identifier.value, *this, viewTimeline.axis(), viewTimeline.inset());
+                styleOriginatedTimelinesController->registerNamedViewTimeline(identifier.value, *this, viewTimeline.axis(), viewTimeline.inset(), afterChangeStyle.usedZoomForLength());
                 registeredViewTimelineNames.add(identifier.value);
             }
         );

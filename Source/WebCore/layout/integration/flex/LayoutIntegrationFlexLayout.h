@@ -25,62 +25,49 @@
 
 #pragma once
 
-#include "LayoutIntegrationBoxTreeUpdater.h"
-#include <WebCore/LayoutState.h>
-#include <WebCore/RenderObjectEnums.h>
-#include <wtf/CheckedPtr.h>
-#include <wtf/TZoneMalloc.h>
+#include <WebCore/FlexFormattingContext.h>
+#include <WebCore/FlexIntegrationUtils.h>
+#include <wtf/CheckedRef.h>
 
 namespace WebCore {
 
-class HitTestLocation;
-class HitTestRequest;
-class HitTestResult;
-class RenderBlock;
 class RenderFlexibleBox;
-struct PaintInfo;
-
-namespace Style {
-class ComputedStyle;
-}
 
 namespace LayoutIntegration {
 
-class FlexLayout final : public CanMakeCheckedPtr<FlexLayout, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
-    WTF_MAKE_TZONE_ALLOCATED(FlexLayout);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FlexLayout);
+class FlexLayout {
 public:
     FlexLayout(RenderFlexibleBox&);
-    ~FlexLayout();
 
-    void updateFormattingContexGeometries();
-    void NODELETE updateStyle(const RenderBlock&, const Style::ComputedStyle& oldStyle);
+    void layout(RelayoutChildren);
 
-    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicWidthConstraints();
+    std::optional<LayoutUnit> firstLineBaseline() const;
+    std::optional<LayoutUnit> lastLineBaseline() const;
 
-    void layout();
-    void NODELETE paint(PaintInfo&, const LayoutPoint& paintOffset);
-    bool NODELETE hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& accumulatedOffset, HitTestAction);
-
-    void NODELETE collectOverflow();
-    LayoutUnit contentBoxLogicalHeight() const;
+    // Sets the static position of an out-of-flow flex item; returns true if it changed.
+    bool setStaticPositionForPositionedLayout(const RenderBox&);
 
 private:
-    void updateRenderers();
+    FlexLayoutItems collectFlexItems(RelayoutChildren, const FlexLayoutConstraints&);
+    FlexLayoutConstraints flexLayoutConstraints() const;
+    LayoutUnit mainAxisAvailableSpace() const;
+    void prepareFlexItemForPositionedLayout(RenderBox&);
+    CheckedPtr<const RenderBox> flexItemForFirstBaseline() const;
+    CheckedPtr<const RenderBox> flexItemForLastBaseline() const;
+    CheckedPtr<const RenderBox> baselineFlexItemInLine(size_t lineStart, size_t itemCount, bool reverse) const;
+    LayoutUnit staticMainAxisPositionForPositionedFlexItem(const RenderBox&);
+    LayoutUnit staticCrossAxisPositionForPositionedFlexItem(const RenderBox&);
+    LayoutUnit staticInlinePositionForPositionedFlexItem(const RenderBox&);
+    LayoutUnit staticBlockPositionForPositionedFlexItem(const RenderBox&);
 
-    const Layout::ElementBox& flexBox() const { return *m_flexBox; }
-    Layout::ElementBox& flexBox() { return *m_flexBox; }
+    RenderFlexibleBox& flexBox() const LIFETIME_BOUND { return m_flexBox; }
 
-    const RenderFlexibleBox& flexBoxRenderer() const { return downcast<RenderFlexibleBox>(*m_flexBox->rendererForIntegration()); }
-    RenderFlexibleBox& flexBoxRenderer() { return downcast<RenderFlexibleBox>(*m_flexBox->rendererForIntegration()); }
+    const CheckedRef<RenderFlexibleBox> m_flexBox;
+    FlexIntegrationUtils m_integrationUtils;
 
-    Layout::LayoutState& layoutState() LIFETIME_BOUND { return *m_layoutState; }
-    const Layout::LayoutState& layoutState() const LIFETIME_BOUND { return *m_layoutState; }
-
-    CheckedPtr<Layout::ElementBox> m_flexBox;
-    WeakPtr<Layout::LayoutState> m_layoutState;
+    size_t m_numberOfFlexItemsOnFirstLine { 0 };
+    size_t m_numberOfFlexItemsOnLastLine { 0 };
 };
 
 }
 }
-

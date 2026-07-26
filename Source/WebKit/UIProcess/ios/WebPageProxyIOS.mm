@@ -807,11 +807,6 @@ void WebPageProxy::didRecognizeLongPress()
     protect(legacyMainFrameProcess())->send(Messages::WebPage::DidRecognizeLongPress(), webPageIDInMainFrameProcess());
 }
 
-void WebPageProxy::handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint& point, OptionSet<WebEventModifier> modifiers, TransactionID layerTreeTransactionIdAtLastTouchStart)
-{
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::HandleDoubleTapForDoubleClickAtPoint(point, modifiers, layerTreeTransactionIdAtLastTouchStart), webPageIDInMainFrameProcess());
-}
-
 void WebPageProxy::inspectorNodeSearchMovedToPosition(const WebCore::FloatPoint& position)
 {
     protect(legacyMainFrameProcess())->send(Messages::WebPage::InspectorNodeSearchMovedToPosition(position), webPageIDInMainFrameProcess());
@@ -1300,6 +1295,18 @@ WebCore::FloatRect WebPageProxy::selectionBoundingRectInRootViewCoordinates() co
         bounds = visualData.caretRectAtStart;
 
     return bounds;
+}
+
+void WebPageProxy::convertEditorStateSelectionRectToMainFrameCoordinates(WebCore::FloatRect rect, CompletionHandler<void(WebCore::FloatRect)>&& completionHandler)
+{
+    if (!editorState().hasVisualData()) {
+        completionHandler(rect);
+        return;
+    }
+
+    convertRectToMainFrameCoordinates(rect, editorState().visualData->rootFrameID, [rect, completionHandler = WTF::move(completionHandler)](std::optional<WebCore::FloatRect> convertedRect) mutable {
+        completionHandler(convertedRect.value_or(rect));
+    });
 }
 
 void WebPageProxy::requestDocumentEditingContext(WebKit::DocumentEditingContextRequest&& request, CompletionHandler<void(WebKit::DocumentEditingContext&&)>&& completionHandler)
@@ -1881,9 +1888,9 @@ void WebPageProxy::setPromisedDataForImage(IPC::Connection&, const String&, Shar
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
-RefPtr<ModelPresentationManagerProxy> WebPageProxy::modelPresentationManagerProxy() const
+RefPtr<PortalPresentationManagerProxy> WebPageProxy::portalPresentationManagerProxy() const
 {
-    return internals().modelPresentationManagerProxy;
+    return internals().portalPresentationManagerProxy;
 }
 #endif
 

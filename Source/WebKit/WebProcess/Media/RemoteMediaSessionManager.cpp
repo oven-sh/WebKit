@@ -47,9 +47,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionManager);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionState);
 
-RefPtr<RemoteMediaSessionManager> RemoteMediaSessionManager::create(WebPage& webPage)
+Ref<RemoteMediaSessionManager> RemoteMediaSessionManager::create(WebPage& webPage)
 {
-    return adoptRef(new RemoteMediaSessionManager(webPage));
+    return adoptRef(*new RemoteMediaSessionManager(webPage));
 }
 
 RemoteMediaSessionManager::RemoteMediaSessionManager(WebPage& webPage)
@@ -134,7 +134,15 @@ void RemoteMediaSessionManager::resetRestrictions()
 
 void RemoteMediaSessionManager::updateSessionState()
 {
-    send(Messages::RemoteMediaSessionManagerProxy::UpdateMediaSessionState());
+    auto liveSessions = copySessionsToVector();
+    Vector<RemoteMediaSessionState> sessions(liveSessions.size(), [&](size_t i) -> std::optional<RemoteMediaSessionState> {
+        RefPtr session = liveSessions[i].get();
+        if (!session)
+            return std::nullopt;
+        return currentSessionState(*session);
+    });
+
+    send(Messages::RemoteMediaSessionManagerProxy::UpdateMediaSessionStates(WTF::move(sessions)));
 }
 
 void RemoteMediaSessionManager::sessionStateChanged(WebCore::PlatformMediaSessionInterface& session)
@@ -235,7 +243,7 @@ void RemoteMediaSessionManager::setAudioSessionPreferredBufferSize(uint64_t pref
 
 void RemoteMediaSessionManager::tryToSetAudioSessionActive(bool active)
 {
-    WebCore::AudioSession::singleton().tryToSetActive(active);
+    WebCore::AudioSession::singleton().tryToSetActive(active)->whenSettled(RunLoop::mainSingleton(), [](auto&&) { });
 }
 #endif
 

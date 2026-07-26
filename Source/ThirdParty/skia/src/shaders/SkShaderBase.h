@@ -17,7 +17,7 @@
 #include "include/core/SkShader.h"
 #include "include/core/SkSurfaceProps.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkNoncopyable.h"
+#include "include/private/SkNoncopyable.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -185,8 +185,6 @@ private:
 class SkShaderBase : public SkShader {
 public:
     ~SkShaderBase() override;
-
-    uint32_t uniqueID() const { return fUniqueID; }
 
     sk_sp<SkShader> makeInvertAlpha() const;
     sk_sp<SkShader> makeWithCTM(const SkMatrix&) const;  // owns its own ctm
@@ -409,8 +407,6 @@ protected:
     }
 
 private:
-    const uint32_t fUniqueID;
-
     friend class SkShaders::MatrixRec;
 };
 inline SkShaderBase* as_SB(SkShader* shader) {

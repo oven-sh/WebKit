@@ -125,7 +125,7 @@
 [Legacy] StructureParam WebKit::HTTPBody::Element.data Variant<Vector<uint8_t>, WebKit::HTTPBody::Element::FileData, String>
 [Legacy] StructureParam WebCore::SerializedPlatformDataCueValue::Data.value Variant<std::nullptr_t, RetainPtr<NSString>, RetainPtr<NSDate>, RetainPtr<NSNumber>, RetainPtr<NSData>>
 [Legacy] StructureParam WebCore::BlobPart.m_dataOrURL Variant<Vector<uint8_t>, Ref<WebCore::SharedBuffer>, URL>
-[Legacy] StructureParam WebCore::FormDataElement.data Variant<Vector<uint8_t>, WebCore::FormDataElement::EncodedFileData, WebCore::FormDataElement::EncodedBlobData>
+[Legacy] StructureParam WebCore::FormDataElement.data Variant<Vector<uint8_t>, WebCore::FormDataElement::EncodedFileData, WebCore::FormDataElement::EncodedBlobData, WebCore::FormDataElement::PendingStreamData>
 [Legacy] StructureParam WebCore::FragmentedSharedBuffer.toIPCData() Variant<std::optional<WebCore::SharedMemoryHandle>, Vector<std::span<const uint8_t>>>
 [Legacy] StructureParam WebKit::RemoteLayerTreeTransaction::LayerCreationProperties::CustomData.sendRightAnnotated std::optional<WTF::MachSendRightAnnotated>
 [Legacy] StructureParam WebKit::NetworkSessionCreationParameters.proxyConfigData std::optional<Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>>
@@ -416,6 +416,7 @@
     [Legacy] MessageParam WebPageProxy.RegisterAttachmentIdentifierFromData data
     [Legacy] MessageParam ServiceWorkerDownloadTask.DidReceiveData data
     [Legacy] MessageParam ServiceWorkerFetchTask.DidReceiveData data
+    [Legacy] MessageParam NetworkResourceLoader.PendingStreamAppendData chunk
 
     [NotSentFromWebContent] MessageParam WebResourceLoader.DidReceiveData data
     [NotSentFromWebContent] MessageParam WebSWClientConnection.NotifyRecordResponseBodyChunk data
@@ -557,5 +558,7 @@
 [Legacy] StructureParam sk_sp<SkData>.dataReference() std::span<const uint8_t>
 [Legacy] StructureParam SkString.data() std::span<const char>
 [Legacy] StructureParam WebCore::CertificateInfo.certificateChain() Vector<Vector<uint8_t>>
-[Legacy] MessageParam RiceBackend.SendData data WebCore::SharedMemory::Handle
-[Legacy] MessageParam RiceBackendProxy.NotifyIncomingData data WebCore::SharedMemory::Handle
+
+[NeedsReview] MessageParam NetworkTransportSession.ExportKeyingMaterial label std::span<const uint8_t>
+[NeedsReview] MessageParam NetworkTransportSession.ExportKeyingMaterial context std::span<const uint8_t>
+[NeedsReview] MessageParamReply NetworkTransportSession.ExportKeyingMaterial keyingMaterial std::optional<Vector<uint8_t>>

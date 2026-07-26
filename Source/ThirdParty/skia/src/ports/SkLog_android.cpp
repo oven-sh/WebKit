@@ -5,9 +5,9 @@
  * found in the LICENSE file.
  */
 
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFeatures.h"
-#include "include/private/base/SkLog.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFeatures.h"
+#include "include/private/SkLog.h"
 
 #if defined(SK_BUILD_FOR_ANDROID)
 
@@ -44,7 +44,6 @@ void SkLogVAList(SkLogPriority priority, const char format[], va_list args) {
 
     int android_priority;
     switch (priority) {
-        case SkLogPriority::kFatal:   android_priority = ANDROID_LOG_FATAL;   break;
         case SkLogPriority::kError:   android_priority = ANDROID_LOG_ERROR;   break;
         case SkLogPriority::kWarning: android_priority = ANDROID_LOG_WARN;    break;
         case SkLogPriority::kInfo:    android_priority = ANDROID_LOG_INFO;    break;

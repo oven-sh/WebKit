@@ -42,6 +42,8 @@
 #include <WebCore/HTTPHeaderMap.h>
 #include <WebCore/InspectorIdentifierRegistry.h>
 #include <WebCore/ProcessQualified.h>
+#include <utility>
+#include <wtf/Expected.h>
 
 namespace Inspector {
 
@@ -354,11 +356,18 @@ void ProxyingNetworkAgent::getResponseBody(const Protocol::Network::RequestId& r
 
     targetProcess->sendWithAsyncReply(
         Messages::WebInspectorBackend::GetResponseBody { resourceID },
-        [callback = WTF::move(callback)](String content, bool base64Encoded, String errorString) mutable {
-            if (!errorString.isEmpty())
-                callback->sendFailure(errorString);
-            else
+        [callback = WTF::move(callback)](Expected<std::pair<String, bool>, String>&& result) mutable {
+            if (result) {
+                auto& [content, base64Encoded] = result.value();
                 callback->sendSuccess(content, base64Encoded);
+            } else if (!result.error().isEmpty()) {
+                // A real failure reported by the target WebProcess (e.g. missing or evicted content).
+                callback->sendFailure(result.error());
+            } else {
+                // Empty error: AsyncReplyError synthesized this reply on connection loss (the target
+                // WebProcess is gone). Fail explicitly so a dead process is never surfaced as success.
+                callback->sendFailure("Target WebProcess for requestId is no longer available"_s);
+            }
         },
         *targetPageID);
 }
@@ -461,14 +470,13 @@ CommandResult<void> ProxyingNetworkAgent::setEmulatedConditions(std::optional<in
 
 // IPC message handlers from WebProcess FrameNetworkAgentProxy.
 
-void ProxyingNetworkAgent::requestWillBeSent(ResourceID resourceID, FrameID frameID, ContextID contextID, const String& targetID, const String& documentURL, const ResourceRequest& request, std::optional<ResourceResponse>&& redirectResponse, ResourceType resourceType, double timestamp, double walltime)
+void ProxyingNetworkAgent::requestWillBeSent(ResourceID resourceID, FrameID frameID, const String& loaderId, const String& targetID, const String& documentURL, const ResourceRequest& request, std::optional<ResourceResponse>&& redirectResponse, ResourceType resourceType, double timestamp, double walltime)
 {
     if (!m_enabled)
         return;
 
     auto requestId = IdentifierRegistry::protocolRequestId(resourceID.processIdentifier(), resourceID.object());
     auto frameIdString = IdentifierRegistry::protocolFrameId(frameID, resourceID.processIdentifier());
-    auto loaderId = IdentifierRegistry::protocolLoaderId(contextID);
     auto requestObject = buildObjectForResourceRequest(request);
 
     // FIXME: Build Initiator object once we have stack trace IPC.
@@ -483,14 +491,13 @@ void ProxyingNetworkAgent::requestWillBeSent(ResourceID resourceID, FrameID fram
     m_frontendDispatcher->requestWillBeSent(requestId, frameIdString, loaderId, documentURL, WTF::move(requestObject), timestamp, walltime, WTF::move(initiatorObject), WTF::move(redirectResponseObject), toProtocolResourceType(resourceType), targetID);
 }
 
-void ProxyingNetworkAgent::responseReceived(ResourceID resourceID, FrameID frameID, ContextID contextID, const ResourceResponse& response, ResourceType resourceType, double timestamp)
+void ProxyingNetworkAgent::responseReceived(ResourceID resourceID, FrameID frameID, const String& loaderId, const ResourceResponse& response, ResourceType resourceType, double timestamp)
 {
     if (!m_enabled)
         return;
 
     auto requestId = IdentifierRegistry::protocolRequestId(resourceID.processIdentifier(), resourceID.object());
     auto frameIdString = IdentifierRegistry::protocolFrameId(frameID, resourceID.processIdentifier());
-    auto loaderId = IdentifierRegistry::protocolLoaderId(contextID);
     auto responseObject = buildObjectForResourceResponse(response);
 
     if (responseObject)
@@ -525,15 +532,13 @@ void ProxyingNetworkAgent::loadingFailed(ResourceID resourceID, double timestamp
     m_frontendDispatcher->loadingFailed(requestId, timestamp, errorText, canceled);
 }
 
-void ProxyingNetworkAgent::requestServedFromMemoryCache(ResourceID resourceID, FrameID frameID, ContextID contextID, const String& documentURL, const ResourceResponse& response, ResourceType resourceType, const String& sourceMapURL, uint64_t bodySize, double timestamp)
+void ProxyingNetworkAgent::requestServedFromMemoryCache(ResourceID resourceID, FrameID frameID, const String& loaderId, const String& documentURL, const ResourceResponse& response, ResourceType resourceType, const String& sourceMapURL, uint64_t bodySize, double timestamp)
 {
     if (!m_enabled)
         return;
 
     auto requestId = IdentifierRegistry::protocolRequestId(resourceID.processIdentifier(), resourceID.object());
     auto frameIdString = IdentifierRegistry::protocolFrameId(frameID, resourceID.processIdentifier());
-    auto loaderId = IdentifierRegistry::protocolLoaderId(contextID);
-
     auto cachedResourceObject = Protocol::Network::CachedResource::create()
         .setUrl(response.url().string())
         .setType(toProtocolResourceType(resourceType))

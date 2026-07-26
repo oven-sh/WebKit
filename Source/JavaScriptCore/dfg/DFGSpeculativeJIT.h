@@ -756,7 +756,6 @@ public:
     void compileOverridesHasInstance(Node*);
 
     void compileIsCellWithType(Node*);
-    void compileIsTypedArrayView(Node*);
     void compileArrayIsArray(Node*);
 
     void emitCall(Node*);
@@ -1731,6 +1730,7 @@ public:
     void compileRegExpExec(Node*);
     void compileRegExpExecNonGlobalOrSticky(Node*);
     void compileRegExpExecSticky(Node*);
+    void emitFirstCharacterBitmapMatch(const uint8_t* bitmap, GPRReg characterGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, JumpList& matchMaybeCases);
     void compileRegExpMatchFast(Node*);
     void compileRegExpMatchFastGlobal(Node*);
     void compileRegExpSplitFast(Node*);
@@ -1759,6 +1759,7 @@ public:
     void compileMaterializeNewObject(Node*);
     void compileRecordRegExpCachedResult(Node*);
     void compileToObjectOrCallObjectConstructor(Node*);
+    void compileOpenAsyncFromSyncIterator(Node*);
     void compileResolveScope(Node*);
     void compileResolveScopeForHoistingFuncDeclInEval(Node*);
     void compileGetGlobalVariable(Node*);

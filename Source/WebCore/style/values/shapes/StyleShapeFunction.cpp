@@ -42,6 +42,20 @@
 namespace WebCore {
 namespace Style {
 
+// https://drafts.csswg.org/css-shapes-1/#typedef-shape-arc-command
+static FloatSize resolveArcCommandRadius(const ArcCommand::SizeOfEllipse& size, FloatSize boxSize, ZoomFactor zoom)
+{
+    // If only one <length-percentage> is provided, both radiuses use the provided value.
+    // In that case, <percentage> values are resolved against the direction-agnostic size
+    // the reference box (similar to the circle() function).
+    if (size.width() == size.height()) {
+        auto directionAgnosticSize = boxSize.diagonalLength() / std::numbers::sqrt2_v<float>;
+        auto radius = evaluate<float>(size.width(), directionAgnosticSize, zoom);
+        return { radius, radius };
+    }
+    return evaluate<FloatSize>(size, boxSize, zoom);
+}
+
 // MARK: - Shape
 
 Shape::Shape(std::optional<FillRule> fillRule, Position&& startingPoint, Commands&& commands)
@@ -228,7 +242,7 @@ private:
     {
         auto& arcCommand = currentValue<ArcCommand>();
 
-        auto radius = evaluate<FloatSize>(arcCommand.size, m_boxSize, m_zoom);
+        auto radius = resolveArcCommandRadius(arcCommand.size, m_boxSize, m_zoom);
         return ArcToSegment {
             .rx = radius.width(),
             .ry = radius.height(),
@@ -347,9 +361,9 @@ private:
     {
         switch (mode) {
         case AbsoluteCoordinates:
-            return typename Command::To { .offset = { LengthPercentage<CSS::AllUnzoomed>::Dimension { offset } } };
+            return typename Command::To { .offset = { LengthPercentage<>::Dimension { offset } } };
         case RelativeCoordinates:
-            return typename Command::By { .offset = LengthPercentage<CSS::AllUnzoomed>::Dimension { offset } };
+            return typename Command::By { .offset = LengthPercentage<>::Dimension { offset } };
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -528,8 +542,8 @@ private:
             ArcCommand {
                 .toBy = fromOffsetPoint(offsetPoint, mode),
                 .size = {
-                    LengthPercentage<CSS::AllUnzoomed>::Dimension { r1 },
-                    LengthPercentage<CSS::AllUnzoomed>::Dimension { r2 }
+                    LengthPercentage<>::Dimension { r1 },
+                    LengthPercentage<>::Dimension { r2 }
                 },
                 .arcSweep = sweepFlag ? ArcSweep { CSS::Keyword::Cw { } } : ArcSweep { CSS::Keyword::Ccw { } },
                 .arcSize = largeArcFlag ? ArcSize { CSS::Keyword::Large { } } : ArcSize { CSS::Keyword::Small { } },
@@ -905,7 +919,7 @@ AcceleratedEffectShapeFunction::ArcCommand Evaluation<ArcCommand, AcceleratedEff
                 return evaluate<AcceleratedEffectShapeFunction::ArcCommand::By>(by, rect, zoom);
             }
         ),
-        .size = evaluate<FloatSize>(value.size, rect.size(), zoom),
+        .size = resolveArcCommandRadius(value.size, rect.size(), zoom),
         .arcSweep = std::holds_alternative<CSS::Keyword::Cw>(value.arcSweep) ? AcceleratedEffectShapeFunction::ArcSweep::Cw : AcceleratedEffectShapeFunction::ArcSweep::Ccw,
         .arcSize = std::holds_alternative<CSS::Keyword::Large>(value.arcSize) ? AcceleratedEffectShapeFunction::ArcSize::Large : AcceleratedEffectShapeFunction::ArcSize::Small,
         .rotation = value.rotation.value,

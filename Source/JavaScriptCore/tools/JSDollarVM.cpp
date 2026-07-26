@@ -3743,6 +3743,13 @@ private:
     {
         DollarVMAssertScope assertScope;
     }
+
+#if ENABLE(WEBASSEMBLY)
+    void sourceParsed(JSGlobalObject*, JSWebAssemblyModule*) final
+    {
+        DollarVMAssertScope assertScope;
+    }
+#endif
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DoNothingDebugger);

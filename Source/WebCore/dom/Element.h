@@ -82,6 +82,7 @@ class RenderTreePosition;
 class Settings;
 class ShadowRoot;
 class SpaceSplitString;
+class SpatialPortalController;
 class StylePropertyMap;
 class StylePropertyMapReadOnly;
 class Text;
@@ -105,7 +106,7 @@ enum class FullscreenNavigationUI : uint8_t;
 enum class FullscreenKeyboardLock : uint8_t;
 enum class IsSyntheticClick : bool { No, Yes };
 enum class ParserContentPolicy : uint8_t;
-enum class PopoverState : uint8_t { None, Auto, Manual };
+enum class PopoverState : uint8_t { None, Auto, Manual, Hint };
 enum class ResolveURLs : uint8_t { No, NoExcludingURLsForPrivacy, Yes, YesExcludingURLsForPrivacy };
 enum class SelectionRestorationMode : uint8_t;
 enum class ShadowRootDelegatesFocus : bool { No, Yes };
@@ -857,6 +858,7 @@ public:
 
     bool NODELETE hasDisplayContents() const;
     bool NODELETE hasDisplayNone() const;
+    bool computedStyleIsDisplayNone();
     void storeDisplayContentsOrNoneStyle(std::unique_ptr<Style::ComputedStyle>);
     void clearDisplayContentsOrNoneStyle();
 
@@ -922,6 +924,12 @@ public:
 
     bool NODELETE shouldNotifyTextManipulationControllerIfDisplayed() const;
     void NODELETE clearShouldNotifyTextManipulationControllerIfDisplayed();
+
+#if ENABLE(SPATIAL_PORTAL)
+    SpatialPortalController& ensureSpatialPortalController();
+    SpatialPortalController* spatialPortalController() const;
+    void clearSpatialPortalController();
+#endif
 
 protected:
     Element(const QualifiedName&, Document&, OptionSet<TypeFlag>);

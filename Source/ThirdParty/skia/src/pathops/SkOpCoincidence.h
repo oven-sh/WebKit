@@ -8,8 +8,8 @@
 #define SkOpCoincidence_DEFINED
 
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkMalloc.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkMalloc.h"
 #include "src/pathops/SkOpSpan.h"
 #include "src/pathops/SkPathOpsTypes.h"
 
@@ -282,13 +282,14 @@ private:
     void debugAddEndMovedSpans(SkPathOpsDebug::GlitchLog* ,
                                const SkOpPtT* ptT) const;
 #endif
-    void fixUp(SkCoincidentSpans* coin, SkOpPtT* deleted, const SkOpPtT* kept);
-    void markCollapsed(SkCoincidentSpans* head, SkOpPtT* test);
+    void fixUp(SkCoincidentSpans** headPtr, SkOpPtT* deleted, const SkOpPtT* kept);
+    void markCollapsed(SkCoincidentSpans** headPtr, SkOpPtT* test);
     bool overlap(const SkOpPtT* coinStart1, const SkOpPtT* coinEnd1,
                  const SkOpPtT* coinStart2, const SkOpPtT* coinEnd2,
                  double* overS, double* overE) const;
-    bool release(SkCoincidentSpans* coin, SkCoincidentSpans* );
-    void releaseDeleted(SkCoincidentSpans* );
+    bool release(SkCoincidentSpans** headPtr, SkCoincidentSpans*);
+    void release(SkCoincidentSpans** headPtr, const SkOpSegment*);
+    void releaseDeleted(SkCoincidentSpans** headPtr);
     void restoreHead();
     // return coinPtT->segment()->t mapped from overS->fT <= t <= overE->fT
     static double TRange(const SkOpPtT* overS, double t, const SkOpSegment* coinPtT

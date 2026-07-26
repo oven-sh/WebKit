@@ -42,6 +42,7 @@ dictionary FetchRequestInit {
     // FIXME: 'signal' should be of type AbortSignal?.
     any signal;
     RequestPriority priority;
+    [EnabledBySetting=FetchUploadStreamsEnabled] FetchRequestDuplex duplex;
     any window; // can only be set to null
     [EnabledBySetting=LocalNetworkAccessEnabled] IPAddressSpace targetAddressSpace;
 };

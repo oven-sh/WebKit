@@ -16,11 +16,11 @@
 #include "include/gpu/ganesh/GrBackendSemaphore.h"
 #include "include/gpu/ganesh/GrBackendSurface.h"
 #include "include/gpu/ganesh/GrContextThreadSafeProxy.h"
-#include "include/private/base/SingleOwner.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SingleOwner.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTemplates.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkAutoMalloc.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkCompressedDataUtils.h"
 #include "src/core/SkMipmap.h"
 #include "src/core/SkTaskGroup.h"
@@ -202,7 +202,9 @@ void GrDirectContext::releaseResourcesAndAbandonContext() {
     fResourceCache->releaseAll();
 
     // Must be after GrResourceCache::releaseAll().
-    fMappedBufferManager.reset();
+    // Must be called before fGpu->disconnect in case there are any outstanding, unsubmitted finish
+    // procs that callback into the fMappedBufferManager.
+    fMappedBufferManager->abandon();
 
     fGpu->disconnect(GrGpu::DisconnectType::kCleanup);
 #if !defined(SK_ENABLE_OPTIMIZE_SIZE)

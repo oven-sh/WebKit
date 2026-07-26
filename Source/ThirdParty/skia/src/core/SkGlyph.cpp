@@ -14,11 +14,12 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkSerialProcs.h"
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTFitsIn.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkArenaAlloc.h"
-#include "src/base/SkBezierCurves.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTFitsIn.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/core/SkBezierCurves.h"
+#include "src/core/SkPictureData.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkScalerContext.h"
 #include "src/core/SkWriteBuffer.h"
@@ -44,10 +45,17 @@ SkPictureBackedGlyphDrawable::MakeFromBuffer(SkReadBuffer& buffer) {
         return nullptr;
     }
 
-    // Propagate the outer buffer's allow-SkSL setting to the picture decoder, using the flag on
-    // the deserial procs.
+    // Glyphs have a limited set of what they can be. We explicitly disable sksl for security
+    // purposes (see b/40064011, b/40064341)
     SkDeserialProcs procs;
-    procs.fAllowSkSL = buffer.allowSkSL();
+    procs.fAllowSkSL = false;
+    procs.fAllowTagsProc = [](SkFourByteTag tag, void*) -> bool {
+        return tag == SK_PICT_BUFFER_SIZE_TAG ||
+               tag == SK_PICT_FACTORY_TAG ||
+               tag == SK_PICT_PAINT_BUFFER_TAG ||
+               tag == SK_PICT_PATH_BUFFER_TAG ||
+               tag == SK_PICT_READER_TAG;
+    };
     sk_sp<SkPicture> picture = SkPicture::MakeFromData(pictureData.get(), &procs);
     if (!buffer.validate(picture != nullptr)) {
         return nullptr;
@@ -398,6 +406,12 @@ size_t SkGlyph::addPathFromBuffer(SkReadBuffer& buffer, SkArenaAlloc* alloc) {
         const bool pathIsHairline = buffer.readBool();
         const bool pathIsModified = buffer.readBool();
         if (auto path = buffer.readPath()) {
+            if (fMaskFormat != SkMask::kBW_Format &&
+                fMaskFormat != SkMask::kA8_Format &&
+                fMaskFormat != SkMask::kLCD16_Format) {
+                buffer.validate(false);
+                return 0;
+            }
             if (this->setPath(alloc, &path.value(), pathIsHairline, pathIsModified)) {
                 memoryIncrease += path->approximateBytesUsed();
             }

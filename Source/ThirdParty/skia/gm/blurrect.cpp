@@ -28,8 +28,8 @@
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypes.h"
 #include "include/effects/SkGradient.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkBlurMask.h"
 #include "src/core/SkMask.h"
 #include "tools/timer/TimeUtils.h"
@@ -305,7 +305,7 @@ protected:
                         auto w = kSizes[widthIdx];
                         SkPaint paint;
                         paint.setColor(SK_ColorWHITE);
-                        SkImage* img;
+                        SkImage* img = nullptr;
                         switch (mode) {
                             case 0:
                                 img = fReferenceMasks[sigmaIdx][heightIdx][widthIdx].get();

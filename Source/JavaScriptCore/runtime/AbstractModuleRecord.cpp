@@ -99,8 +99,6 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_asyncCapability);
     Locker locker { thisObject->cellLock() };
     visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
-    auto values = thisObject->m_dependencies.values();
-    visitor.append(values.begin(), values.end());
     for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
 }
@@ -221,11 +219,13 @@ auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
     return Resolution { Type::Ambiguous, nullptr, Identifier() };
 }
 
-AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject* globalObject, const Identifier& moduleName)
+AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName)
 {
-    if (auto iter = m_dependencies.find(moduleName.string()); iter != m_dependencies.end())
-        return iter->value.get();
-    return globalObject->moduleLoader()->maybeGetImportedModule(this, moduleName);
+    for (auto type : { ScriptFetchParameters::Type::JavaScript, ScriptFetchParameters::Type::JSON, ScriptFetchParameters::Type::WebAssembly, ScriptFetchParameters::Type::None }) {
+        if (auto iter = m_loadedModules.find(ModuleMapKey { moduleName.impl(), type }); iter != m_loadedModules.end())
+            return iter->value.m_module.get();
+    }
+    return nullptr;
 }
 
 void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const ModuleRequest& request, AbstractModuleRecord* record)
@@ -1441,10 +1441,6 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
     for (const ModuleRequest& request : module->requestedModules()) {
         // 9.a. Let requiredModule be GetImportedModule(module, request).
         AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
-        {
-            Locker locker { cellLock() };
-            m_dependencies.set(request.m_specifier.string(), WriteBarrier<AbstractModuleRecord>(vm, this, requiredModule));
-        }
         checkSafeToRecurse(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, invalid);
         // 9.b. Set index to ? InnerModuleLinking(requiredModule, stack, index).
