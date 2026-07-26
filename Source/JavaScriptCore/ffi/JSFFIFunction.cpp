@@ -182,6 +182,19 @@ bool JSFFIFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
 
+void JSFFIFunction::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
+{
+    // Both intrinsic properties are DontEnum (they must not perturb for-in / spread / JSON), so
+    // they only appear when non-enumerable properties are requested (getOwnPropertyNames,
+    // Reflect.ownKeys), matching what getOwnPropertySlot reports for them.
+    VM& vm = object->vm();
+    if (mode == DontEnumPropertiesMode::Include) {
+        propertyNames.add(Identifier::fromString(vm, "ptr"_s));
+        propertyNames.add(Identifier::fromString(vm, "native"_s));
+    }
+    Base::getOwnPropertyNames(object, globalObject, propertyNames, mode);
+}
+
 } // namespace JSC
 
 #endif // USE(BUN_JSC_ADDITIONS)

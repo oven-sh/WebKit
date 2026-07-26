@@ -74,7 +74,7 @@ public:
     // non-canonical structure loses the callee fast paths on POLYMORPHIC (non-devirtualized)
     // call sites: measured ~2.5x slower per call. Keeping the structure canonical keeps every
     // call site fast, not just the ones the DFG turns into CallFFI.
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames;
 
     static constexpr DestructionMode needsDestruction = NeedsDestruction; // Holds Ref<Signature> + RefPtr<JITCode>.
     static void destroy(JSCell*);
@@ -116,6 +116,9 @@ public:
     JITCode* icCode() const { return m_icCode.get(); }
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    // Keep enumeration coherent with the intrinsic slots above: `ptr` / `native` are real own
+    // properties of the cell, so Object.getOwnPropertyNames / `"ptr" in fn` must agree with reads.
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 
     static constexpr ptrdiff_t offsetOfSignature() { return OBJECT_OFFSETOF(JSFFIFunction, m_signature); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(JSFFIFunction, m_target); }
