@@ -65,7 +65,7 @@ JS_EXPORT_PRIVATE bool writeSlotFromJSValue(JSGlobalObject*, FFIContext&, Type, 
 JS_EXPORT_PRIVATE JSValue jsValueFromSlot(JSGlobalObject*, FFIContext&, Type, uint64_t slot);
 
 
-// A native pointer exposed to JS: null -> null, an address <= 2^52 -> an exact double, and a
+// A native pointer exposed to JS: null -> null, an address <= 2^53-1 (Number.MAX_SAFE_INTEGER) -> an exact double, and a
 // higher address (5-level page tables / tagged pointers) -> an exact BigInt. This is the single
 // boxing rule for every pointer surfaced to JS (return slots AND the intrinsic `.ptr`
 // properties), so `x.ptr` can always be fed back into the FFI without silently losing bits.
