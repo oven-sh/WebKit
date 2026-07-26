@@ -3605,6 +3605,64 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
     unsigned limitA = 'A' + (static_cast<int32_t>(radix) - 10);
     unsigned initialLength = length - p;
     Vector<Digit, 16> resultVector;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Fast path for power-of-two radixes (2, 4, 8, 16, 32): pack characters
+    // directly into the digit vector. The generic path below calls multiplyAdd
+    // over the full-length digit vector for every lengthLimitForBigInt32-sized
+    // group of characters, which is O(n^2). This path is O(n) and mirrors
+    // toStringBasePowerOfTwo in the other direction.
+    // Short inputs that fit in a single int32 fall through to the generic path
+    // so they keep returning BigInt32 where applicable.
+    if (hasOneBitSet(radix) && initialLength > lengthLimitForBigInt32) {
+        const unsigned bitsPerChar = ctz(radix);
+        uint64_t totalBits = static_cast<uint64_t>(initialLength) * bitsPerChar;
+        uint64_t numDigits = (totalBits + digitBits - 1) / digitBits;
+        if (numDigits > maxLength) [[unlikely]] {
+            if (nullOrGlobalObjectForOOM) {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                throwOutOfMemoryError(nullOrGlobalObjectForOOM, scope, "BigInt generated from this operation is too big"_s);
+            }
+            return JSValue();
+        }
+        resultVector.fill(0, static_cast<unsigned>(numDigits));
+
+        Digit current = 0;
+        unsigned bitsInDigit = 0;
+        unsigned digitIndex = 0;
+        for (size_t i = length; i > p;) {
+            --i;
+            Digit c;
+            if (data[i] >= '0' && data[i] < limit0)
+                c = static_cast<Digit>(data[i] - '0');
+            else if (data[i] >= 'a' && data[i] < limita)
+                c = static_cast<Digit>(data[i] - 'a' + 10);
+            else if (data[i] >= 'A' && data[i] < limitA)
+                c = static_cast<Digit>(data[i] - 'A' + 10);
+            else {
+                if (errorParseMode == ErrorParseMode::ThrowExceptions) {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    ASSERT(nullOrGlobalObjectForOOM);
+                    throwVMError(nullOrGlobalObjectForOOM, scope, createSyntaxError(nullOrGlobalObjectForOOM, "Failed to parse String to BigInt"_s));
+                }
+                return JSValue();
+            }
+            current |= c << bitsInDigit;
+            bitsInDigit += bitsPerChar;
+            if (bitsInDigit >= digitBits) {
+                resultVector[digitIndex++] = current;
+                bitsInDigit -= digitBits;
+                current = bitsInDigit ? c >> (bitsPerChar - bitsInDigit) : 0;
+            }
+        }
+        if (bitsInDigit)
+            resultVector[digitIndex++] = current;
+        ASSERT(digitIndex <= resultVector.size());
+
+        return tryCreateFromImpl(nullOrGlobalObjectForOOM, vm, sign == ParseIntSign::Signed, resultVector.span());
+    }
+#endif
+
     while (p < length) {
         Checked<uint64_t, CrashOnOverflow> digit = 0;
         Checked<uint64_t, CrashOnOverflow> multiplier = 1;
