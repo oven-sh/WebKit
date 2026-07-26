@@ -589,6 +589,12 @@ macro(_WEBKIT_LIBRARY_LINK_FRAMEWORK _target)
 endmacro()
 
 function(_WEBKIT_ADD_CODE_SIGN _target)
+    # Bun cross-compiles the macOS JSC from a Linux Docker image where codesign
+    # is unavailable and /bin/sh is dash (no `set -o pipefail`). Skip signing
+    # when cross-compiling; ld64.lld already produces an ad-hoc signature.
+    if (CMAKE_CROSSCOMPILING)
+        return()
+    endif ()
     get_target_property(_skip_codesign ${_target} SKIP_CODESIGN)
     if (_skip_codesign)
         return()

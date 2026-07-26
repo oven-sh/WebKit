@@ -379,7 +379,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         void allocateSegment()
         {
+#if !OS(WINDOWS)
+            // On the MSVC ABI a class whose only member is a zero-length array is laid
+            // out with non-zero size (padded to alignof(T)), so this check is only
+            // meaningful on the Itanium ABI. The non-Windows builds still enforce it.
             static_assert(!sizeof(Segment), "Segment must add no header for (sizeof(T) * segSize) to size the buffer");
+#endif
             size_t segSize = sizeOfSegment(m_segments.size());
             auto* ptr = Malloc::malloc(sizeof(T) * segSize);
             m_segments.append(SegmentPtr(static_cast<Segment*>(ptr), { }));
