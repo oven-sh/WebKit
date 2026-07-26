@@ -82,6 +82,7 @@ static const ASCIILiteral s_holderNames[] = {
 
 static unsigned firstLinkTimeConstantIndex()
 {
+    static_assert(numberOfPrimordials <= numberOfLinkTimeConstants, "primordials must be a suffix of the link-time constants");
     return numberOfLinkTimeConstants - numberOfPrimordials;
 }
 
