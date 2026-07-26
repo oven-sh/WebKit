@@ -825,6 +825,9 @@ public:
     GetterSetter* promiseSpeciesGetterSetter() const LIFETIME_BOUND { return m_promiseSpeciesGetterSetter.get(); }
 
     ArrayConstructor* arrayConstructor() const LIFETIME_BOUND { return m_arrayConstructor.get(); }
+    // The realm's String constructor, held by a barrier since init: unlike reading
+    // String.prototype.constructor, this is not user-mutable (delete/replace-proof).
+    StringConstructor* stringConstructor() const LIFETIME_BOUND { return m_stringConstructor.get(); }
     RegExpConstructor* regExpConstructor() const LIFETIME_BOUND { return m_regExpConstructor.get(); }
     ObjectConstructor* objectConstructor() const LIFETIME_BOUND { return m_objectConstructor.get(); }
     FunctionConstructor* functionConstructor() const LIFETIME_BOUND { return m_functionConstructor.get(); }
