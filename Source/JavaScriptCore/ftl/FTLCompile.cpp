@@ -229,8 +229,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
         codeBlock->setScopeRegister(codeBlock->scopeRegister() + localsOffset);
 
     for (OSRExitDescriptor& descriptor : state.jitCode->osrExitDescriptors) {
-        for (unsigned i = descriptor.m_values.size(); i--;)
-            descriptor.m_values[i] = descriptor.m_values[i].withLocalsOffset(localsOffset);
+        descriptor.setLocalsOffset(localsOffset);
         for (ExitTimeObjectMaterialization* materialization : descriptor.m_materializations)
             materialization->accountForLocalsOffset(localsOffset);
     }

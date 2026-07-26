@@ -26980,8 +26980,9 @@ IGNORE_CLANG_WARNINGS_END
                 }
             });
 
-        for (unsigned i = 0; i < exitDescriptor->m_values.size(); ++i) {
-            Operand operand = exitDescriptor->m_values.operandForIndex(i);
+        Operands<ExitValue> values(exitDescriptor->numberOfArguments(), exitDescriptor->numberOfLocals(), exitDescriptor->numberOfTmps());
+        for (unsigned i = 0; i < values.size(); ++i) {
+            Operand operand = values.operandForIndex(i);
 
             Availability availability = availabilityMap.m_locals[i];
 
@@ -26995,8 +26996,9 @@ IGNORE_CLANG_WARNINGS_END
             ExitValue exitValue = exitValueForAvailability(arguments, map, availability);
             if (exitValue.hasIndexInStackmapLocations())
                 exitValue.adjustStackmapLocationsIndexByOffset(offsetOfExitArgumentsInStackmapLocations);
-            exitDescriptor->m_values[i] = exitValue;
+            values[i] = exitValue;
         }
+        exitDescriptor->setValues(values);
 
         for (auto& heapPair : availabilityMap.m_heap) {
             Node* node = heapPair.key.base();
@@ -27014,7 +27016,7 @@ IGNORE_CLANG_WARNINGS_END
 
         if (verboseCompilationEnabled()) [[unlikely]] {
             WTF::dataFile().atomically([&](auto&) {
-                dataLogLn("        Exit values: ", exitDescriptor->m_values);
+                dataLogLn("        Exit values: ", values);
                 if (!exitDescriptor->m_materializations.isEmpty()) {
                     dataLogLn("        Materializations:");
                     for (ExitTimeObjectMaterialization* materialization : exitDescriptor->m_materializations)
