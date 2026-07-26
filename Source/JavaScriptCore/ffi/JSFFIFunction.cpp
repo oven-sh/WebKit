@@ -182,6 +182,30 @@ bool JSFFIFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
 
+static ALWAYS_INLINE bool isIntrinsicFFIProperty(VM& vm, PropertyName propertyName)
+{
+    return propertyName == Identifier::fromString(vm, "ptr"_s) || propertyName == Identifier::fromString(vm, "native"_s);
+}
+
+// ReadOnly: a write is a TypeError in strict mode and a silent no-op otherwise -- and must never
+// materialize an own property (that would transition every FFI function's Structure).
+bool JSFFIFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    if (isIntrinsicFFIProperty(cell->vm(), propertyName)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(cell->vm());
+        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+    }
+    return Base::put(cell, globalObject, propertyName, value, slot);
+}
+
+// DontDelete: strict-mode delete throws (via the false return), sloppy delete returns false.
+bool JSFFIFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    if (isIntrinsicFFIProperty(cell->vm(), propertyName)) [[unlikely]]
+        return false;
+    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+}
+
 void JSFFIFunction::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     // Both intrinsic properties are DontEnum (they must not perturb for-in / spread / JSON), so

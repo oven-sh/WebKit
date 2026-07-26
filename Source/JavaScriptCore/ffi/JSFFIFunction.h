@@ -119,6 +119,12 @@ public:
     // Keep enumeration coherent with the intrinsic slots above: `ptr` / `native` are real own
     // properties of the cell, so Object.getOwnPropertyNames / `"ptr" in fn` must agree with reads.
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    // The intrinsic ptr/native slots are ReadOnly|DontDelete. put/deleteProperty consult the
+    // Structure (never getOwnPropertySlot), so without these overrides a strict-mode `delete fn.ptr`
+    // would return true and `fn.ptr = 42` would silently transition this cell's Structure -- both
+    // must instead be the TypeError the property's own descriptor promises.
+    static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
     static constexpr ptrdiff_t offsetOfSignature() { return OBJECT_OFFSETOF(JSFFIFunction, m_signature); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(JSFFIFunction, m_target); }
