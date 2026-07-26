@@ -70,9 +70,11 @@ public:
         return adoptRef(*new ThreadsafeInvocation(callback, embedderContext, slots));
     }
 
-    // The callback cell. Kept alive independently by the live-callback set until close(), so this
-    // raw pointer is valid for as long as runThreadsafeInvocation may consult it (which itself
-    // re-checks closedness before touching the cell as a JS object).
+    // The callback cell. LIFETIME: this record was COUNTED by the dispatch (see
+    // JSFFICallback::tryBeginThreadsafeInvocation), and a nonzero pending count keeps the cell in
+    // the live-callback root set -- close() with pending records defers its unroot until the last
+    // one drains (endThreadsafeInvocation). So the raw pointer is valid until runThreadsafeInvocation
+    // retires it, and, through the cell's m_callable barrier, so is the JS callable it invokes.
     JSFFICallback* callback() const { return m_callback; }
     // Opaque pointer the embedder supplied at creation (e.g. an event-loop / context handle):
     // captured on the JS thread, read on the foreign thread, never dereferenced by the engine.

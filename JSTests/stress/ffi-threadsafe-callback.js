@@ -7,7 +7,8 @@
 //   1) the callback does NOT run inline during the FFI call (queued, count 0 before drain);
 //   2) drain delivers it exactly once with exact values: i32, i64->BigInt, u64->BigInt, f64;
 //   3) values that don't fit an int32 (u64 = 2^64-1) round-trip exactly as BigInt;
-//   4) a callback close()d before the drain is a silent no-op.
+//   4) a callback close()d before the drain still DELIVERS its accepted invocations, and the
+//      pending count keeps the (JS-unreachable) cell + callable rooted until they drain.
 if (!$vm.useJIT()) quit();
 
 const callFromThread = $vm.ffiFunction({ args: ["ptr", "i32", "i64", "u64", "f64"], returns: "void" },
@@ -37,9 +38,14 @@ for (let i = 0; i < 200; ++i) {
     if (d !== 2.5) throw new Error("f64 wrong: " + d);
 }
 
-// (4) close() before drain -- WITH a full GC in between and no JS reference to the callback.
-// The queued record holds a raw pointer to the cell: the engine must keep the cell rooted until
-// the record drains (finding: unrooting on close() while records are queued was a use-after-free).
+// (4) close() before drain -- WITH a full GC in between and NO JS reference to the callback.
+// Two guarantees are exercised at once. LIFETIME: the queued records hold a raw pointer to the
+// cell, so the pending-invocation count must keep the cell (and, through its barrier, the
+// callable) rooted until every record drains -- close() while records are queued must NOT unroot
+// (that was a use-after-free), even across full GCs with no JS reference. DELIVERY: an invocation
+// accepted while the callback was open is a commitment, so it still RUNS after close(); close()
+// only refuses NEW foreign-thread calls. So the drained records execute the callable on a cell no
+// JS code can reach any more, and must produce the right values.
 seen = [];
 {
     let victim = $vm.ffiCallback({ args: ["i32", "i64", "u64", "f64"], returns: "void" },
@@ -52,10 +58,14 @@ seen = [];
 for (let i = 0; i < 5; ++i) { fullGC(); edenGC(); } // cell must survive: it is rooted until drain
 const late = $vm.drainThreadsafeCallbacks();       // must NOT crash / touch a swept cell
 if (late !== 2) throw new Error("expected 2 records drained even when closed, got " + late);
-if (seen.length !== 0) throw new Error("closed threadsafe callback still ran: " + JSON.stringify(seen));
+// Accepted-while-open invocations are delivered even after close(): the callable ran on the
+// unreachable (but rooted) cell and observed the right arguments, in order.
+if (seen.length !== 2 || seen[0] !== 111 || seen[1] !== 222)
+    throw new Error("post-close delivery wrong: " + JSON.stringify(seen));
 // A closed callback that is fully drained is now collectible; more GC must not resurrect issues.
 for (let i = 0; i < 3; ++i) { fullGC(); }
 if ($vm.drainThreadsafeCallbacks() !== 0) throw new Error("queue not empty");
+seen = []; // reset before section (5); it is the shared sink of the still-open `cb`
 
 // (5) the other test callback still works after all that.
 callFromThread(cb.ptr, 5, 6n, 7n, 8.5);
