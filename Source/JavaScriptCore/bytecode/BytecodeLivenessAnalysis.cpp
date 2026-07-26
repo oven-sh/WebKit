@@ -60,14 +60,20 @@ std::unique_ptr<FullBytecodeLiveness> BytecodeLivenessAnalysis::computeFullLiven
 
         out = block.out();
 
+        const FastBitVector* handlerLiveIn = handlerLiveInForBlock(codeBlock, m_graph, block);
+        if (handlerLiveIn)
+            out |= *handlerLiveIn;
+
         auto use = [&] (unsigned bitIndex) {
             // This is the use functor, so we set the bit.
             out[bitIndex] = true;
         };
 
         auto def = [&] (unsigned bitIndex) {
-            // This is the def functor, so we clear the bit.
-            out[bitIndex] = false;
+            // This is the def functor, so we clear the bit. Locals the block's handler keeps
+            // live are left set; see stepOverInstructionWithinBlock.
+            if (!handlerLiveIn || !(*handlerLiveIn)[bitIndex])
+                out[bitIndex] = false;
         };
 
         auto& instructions = codeBlock->instructions();
@@ -81,7 +87,6 @@ std::unique_ptr<FullBytecodeLiveness> BytecodeLivenessAnalysis::computeFullLiven
                 bytecodeIndex = bytecodeIndex.withCheckpoint(checkpoint);
 
                 stepOverBytecodeIndexDef(codeBlock, instructions, m_graph, bytecodeIndex, def);
-                stepOverBytecodeIndexUseInExceptionHandler(codeBlock, instructions, m_graph, bytecodeIndex, use);
                 result->m_usesAfter[result->toIndex(bytecodeIndex)] = out; // AfterUse point.
                 stepOverBytecodeIndexUse(codeBlock, instructions, m_graph, bytecodeIndex, use);
                 result->m_usesBefore[result->toIndex(bytecodeIndex)] = out; // BeforeUse point.
@@ -190,9 +195,6 @@ WTF::BitSet<maxNumCheckpointTmps> tmpLivenessForCheckpoint(const CodeBlock& code
         return result;
     }
     case op_iterator_open: {
-        return result;
-    }
-    case op_async_iterator_open: {
         return result;
     }
     case op_iterator_next: {
