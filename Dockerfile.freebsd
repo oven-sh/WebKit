@@ -80,6 +80,7 @@ ARG ICU_VERSION
 ARG ICU_RELEASE_TAG
 ARG ICU_SHA256
 ADD --checksum=sha256:${ICU_SHA256} https://github.com/unicode-org/icu/releases/download/${ICU_RELEASE_TAG}/icu4c-${ICU_VERSION}-src.tgz /icu.tgz
+COPY icu/tzdata /icu-tzdata
 
 # Host build (tools only — no LTO, fast).
 RUN mkdir -p /icu-host && cd /icu-host \
@@ -100,6 +101,9 @@ RUN mkdir -p /icu-host && cd /icu-host \
 # the staleness guard in ./Dockerfile).
 # This image does not run compress-data.ts, so those five items cost their raw
 # 35 KB here rather than the ~8 KB they compress to elsewhere.
+#
+# After filtering, overlay the four tzdata bundles from icu/tzdata (see
+# icu/tzdata/README.md).
 RUN --mount=type=tmpfs,target=/icu \
     export TARGET_TRIPLE="${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION}" && \
     export CROSS_FLAGS="--target=${TARGET_TRIPLE} --sysroot=${FREEBSD_SYSROOT}" && \
@@ -109,7 +113,7 @@ RUN --mount=type=tmpfs,target=/icu \
     cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && cd source && \
     /icu-host/source/bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
     /icu-host/source/bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
-    mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
+    /icu-host/source/bin/icupkg --auto_toc_prefix -a /icu-tzdata/tz.lst -s /icu-tzdata data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
     { ./configure --host=${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION} \
         --with-cross-build=/icu-host/source \
         --enable-static --disable-shared --with-data-packaging=static \

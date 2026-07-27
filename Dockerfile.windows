@@ -224,6 +224,9 @@ RUN mkdir -p /icu-host && cd /icu-host && \
 # numberingSystems.res (see the note and the staleness guard in ./Dockerfile).
 # pkgdata packages data/in/icudt*l.dat verbatim in a cross build, so filtering it
 # here is equivalent to the native flow.
+#
+# After filtering, overlay the four tzdata bundles from icu/tzdata (see
+# icu/tzdata/README.md).
 RUN set -eu && \
     DAT=$(ls /icu-src/source/data/in/icudt*l.dat) && \
     FILTERED="${DAT%.dat}-filtered.dat" && \
@@ -232,7 +235,8 @@ RUN set -eu && \
       grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > /tmp/icu-rm.lst && \
     test -s /tmp/icu-rm.lst && \
     /icu-host/bin/icupkg --auto_toc_prefix -r /tmp/icu-rm.lst "$DAT" "$FILTERED" && \
-    mv "$FILTERED" "$DAT" && \
+    /icu-host/bin/icupkg --auto_toc_prefix -a /icu-bun/tzdata/tz.lst -s /icu-bun/tzdata "$FILTERED" "$DAT" && \
+    rm -f "$FILTERED" && \
     ls -la "$DAT" && \
     test "$(stat -c%s "$DAT")" -lt 27000000
 

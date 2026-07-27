@@ -219,6 +219,10 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 # guard below re-derives that list from the data and fails the build if a CLDR
 # bump ever adds a locale we are not keeping.
 #
+# After filtering, overlay the four tzdata bundles from icu/tzdata (see
+# icu/tzdata/README.md). ICU 75.1 ships tzdata 2024a; without the overlay,
+# zones whose rules changed since then return wrong offsets.
+#
 # Finally, repack the filtered .dat with per-item zstd (icu/compress-data.ts).
 # Items matching icu/keep-raw.txt stay uncompressed (too expensive to decode lazily).
 # The repacked libicudata.a also embeds the trained zstd dictionary.
@@ -240,7 +244,7 @@ RUN --mount=type=tmpfs,target=/icu \
     { [ -z "$stale" ] || { echo "rbnf keep-list is stale, also reachable: $stale" >&2; exit 1; }; } && \
     bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
     bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
-    mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
+    bin/icupkg --auto_toc_prefix -a /icu-bun/tzdata/tz.lst -s /icu-bun/tzdata data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
     node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt75l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg
