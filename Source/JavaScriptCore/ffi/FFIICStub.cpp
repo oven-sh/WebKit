@@ -427,12 +427,6 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
     return adoptRef(new DirectJITCode(codeRef, codeRef.code(), JITType::HostCallThunk, NoIntrinsic));
 }
 
-#else // !(USE(JSVALUE64) && !ENABLE(JIT_CAGE))
-
-RefPtr<JITCode> generateICStubCode(VM&, JSGlobalObject*, Signature&, void*)
-{
-    return nullptr;
-}
 
 #endif // USE(JSVALUE64) && !ENABLE(JIT_CAGE)
 

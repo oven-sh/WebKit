@@ -115,12 +115,6 @@ constexpr ASCIILiteral name(Type type)
     return "invalid"_s;
 }
 
-constexpr std::optional<Type> typeFromTag(unsigned tag)
-{
-    if (tag >= numberOfTypes)
-        return std::nullopt;
-    return static_cast<Type>(tag);
-}
 
 inline std::optional<Type> parseType(StringView string)
 {

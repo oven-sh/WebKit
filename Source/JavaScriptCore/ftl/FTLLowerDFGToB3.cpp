@@ -1571,8 +1571,6 @@ private:
         case TailCallInlinedCallerWasm:
             compileCallWasm();
             break;
-#if USE(BUN_JSC_ADDITIONS)
-#endif
         case CallFFI:
 #if USE(BUN_JSC_ADDITIONS)
             compileCallFFI();

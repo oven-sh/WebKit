@@ -167,12 +167,6 @@ Ref<Signature> SignatureRegistry::intern(std::span<const Type> arguments, Type r
     return addResult.iterator->copyRef();
 }
 
-size_t SignatureRegistry::size()
-{
-    Locker locker { m_lock };
-    return m_signatures.size();
-}
-
 } } // namespace JSC::FFI
 
 #endif // USE(BUN_JSC_ADDITIONS)

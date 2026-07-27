@@ -142,8 +142,6 @@ void JSFFICallback::finishCreation(VM& vm, JSObject* callable)
 
 void* JSFFICallback::nativeEntrypoint() const
 {
-    if (!m_entryCode)
-        return nullptr;
     return untagCFunctionPtr<void*, JITThunkPtrTag>(m_entryCode.code().taggedPtr());
 }
 

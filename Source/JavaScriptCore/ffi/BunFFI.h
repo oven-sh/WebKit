@@ -38,7 +38,6 @@
 namespace JSC {
 
 class JSFFICallback;
-class JSFFIFunction;
 class JSGlobalObject;
 class JSObject;
 

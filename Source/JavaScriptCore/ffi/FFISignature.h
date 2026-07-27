@@ -72,7 +72,6 @@ public:
 
     unsigned slotCount() const { return argumentCount() + 1; }
     size_t slotBufferBytes() const { return static_cast<size_t>(slotCount()) * slotSize; }
-    size_t returnSlotOffset() const { return static_cast<size_t>(argumentCount()) * slotSize; }
 
     unsigned hash() const { return m_hash; }
     JS_EXPORT_PRIVATE String toString() const;
@@ -113,7 +112,6 @@ public:
 
     JS_EXPORT_PRIVATE Ref<Signature> intern(std::span<const Type> arguments, Type returnType);
 
-    JS_EXPORT_PRIVATE size_t size();
 
 private:
     Lock m_lock;

@@ -31,7 +31,6 @@ function check(actual, expected, message) {
         throw new Error(message + ": expected " + String(expected) + " but got " + String(actual));
 }
 
-// $vm.ffiRead gives us an engine-independent way to compare "the pointer the
 // FFI call saw" against the view's current backing store.
 function currentPtr(view) { return identity(view); }
 

@@ -77,7 +77,6 @@ public:
     bool isHostPathOnly() const { return !!m_hooks; }
     JITCode* icCode() const { return m_icCode.get(); }
 
-    static constexpr ptrdiff_t offsetOfSignature() { return OBJECT_OFFSETOF(JSFFIFunction, m_signature); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(JSFFIFunction, m_target); }
 
 private:

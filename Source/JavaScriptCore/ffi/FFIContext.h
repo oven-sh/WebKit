@@ -44,7 +44,6 @@
 #include <wtf/text/StringImpl.h>
 
 namespace JSC {
-class JSCell;
 class JSFFICallback;
 class VM;
 } // namespace JSC
@@ -99,7 +98,6 @@ public:
             m_arena.exit();
         }
 
-        StringArena& arena() { return m_arena; }
 
     private:
         StringArena& m_arena;
@@ -137,7 +135,6 @@ private:
     unsigned m_depth { 0 };
 };
 
-using ArenaScope = StringArena::Scope;
 
 class FFIContext final : public HeapObserver {
     WTF_MAKE_TZONE_ALLOCATED(FFIContext);
@@ -149,8 +146,8 @@ public:
     void willGarbageCollect() final { }
     void didGarbageCollect(CollectionScope) final { m_arena.shrinkWhenIdle(); }
 
-    StringArena& arena() { return m_arena; }
     StringArena& stringArena() { return m_arena; }
+    StringArena& arena() { return m_arena; }
 
     const CString* cachedUTF8(StringImpl&);
     const CString& cacheUTF8(StringImpl&, CString&&);
@@ -160,7 +157,6 @@ public:
     void addLiveCallback(VM&, JSGlobalObject& owner, JSFFICallback*);
     void removeLiveCallback(JSGlobalObject& owner, JSFFICallback*);
     template<typename Visitor> void visitLiveCallbacks(JSGlobalObject& owner, Visitor&);
-    unsigned liveCallbackCount() const { return m_liveCallbacks.size(); }
 
     using ThreadsafeDispatchFunction = void (*)(ThreadsafeInvocation&);
     JS_EXPORT_PRIVATE static void setThreadsafeDispatch(ThreadsafeDispatchFunction);
