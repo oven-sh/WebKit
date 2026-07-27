@@ -235,7 +235,6 @@ namespace JSC {
     macro(PromiseRejectIntrinsic) \
     macro(PromisePrototypeThenIntrinsic) \
     macro(PromisePrototypeCatchIntrinsic) \
-    \
     /* Getter intrinsics. */ \
     macro(TypedArrayLengthIntrinsic) \
     macro(TypedArrayByteLengthIntrinsic) \
@@ -254,7 +253,6 @@ namespace JSC {
     macro(RegExpUnicodeIntrinsic) \
     macro(RegExpUnicodeSetsIntrinsic) \
     macro(RegExpStickyIntrinsic) \
-    \
     /* Debugging intrinsics. These are meant to be used as testing hacks within jsc.cpp and should never be exposed to users.*/ \
     macro(DFGTrueIntrinsic) \
     macro(FTLTrueIntrinsic) \
@@ -263,13 +261,11 @@ namespace JSC {
     macro(SetInt32HeapPredictionIntrinsic) \
     macro(CheckInt32Intrinsic) \
     macro(FiatInt52Intrinsic) \
-    \
     /* These are used for $vm performance debugging features. */ \
     macro(CPUMfenceIntrinsic) \
     macro(CPURdtscIntrinsic) \
     macro(CPUCpuidIntrinsic) \
     macro(CPUPauseIntrinsic) \
-    \
     macro(DataViewGetInt8) \
     macro(DataViewGetUint8) \
     macro(DataViewGetInt16) \
@@ -292,8 +288,6 @@ namespace JSC {
     macro(DataViewSetFloat64) \
     macro(DataViewSetBigInt64) \
     macro(DataViewSetBigUint64) \
-    \
-    \
     macro(WasmFunctionIntrinsic) \
 
 enum Intrinsic : uint8_t {
