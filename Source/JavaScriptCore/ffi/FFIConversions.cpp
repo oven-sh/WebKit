@@ -205,9 +205,9 @@ static bool writeFloatingPointSlot(JSGlobalObject* globalObject, Type type, JSVa
         number = value.asNumber();
     else if (value.isUndefined())
         number = PNaN; // Number(undefined) === NaN.
-    else if (value.isBigInt()) {
+    else if (value.isBigInt())
         number = JSBigInt::toNumber(value).asNumber();
-    } else {
+    else {
         number = value.toNumber(globalObject); // strings, booleans, null, objects; Symbols throw.
         RETURN_IF_EXCEPTION(scope, false);
     }

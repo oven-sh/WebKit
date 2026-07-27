@@ -127,9 +127,8 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 #endif
 
     NativeExecutable* executable = base;
-    if (stub) {
+    if (stub)
         executable = NativeExecutable::create(vm, Ref<JITCode>(*stub), FFI::ffiHostCall, base->generatedJITCodeForConstruct(), callHostFunctionAsConstructor, ImplementationVisibility::Public, length, name);
-    }
 
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, WTF::move(signature), target, WTF::move(stub), hooks);
     function->finishCreation(vm);
