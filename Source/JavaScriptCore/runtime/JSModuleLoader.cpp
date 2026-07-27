@@ -877,7 +877,6 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii. Else,
                     // 2.d.iii.1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
-                    unsigned loadedModulesCountBefore = module->loadedModules().size();
                     JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, state, state->scriptFetcher(), true);
                     if (scope.exception()) [[unlikely]] {
                         state->setDrainingInnerLoad(false);
@@ -885,12 +884,13 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii.2. NOTE: HostLoadImportedModule will call FinishLoadingImportedModule, which re-enters the graph loading process through ContinueModuleLoading.
                     //
-                    // If module.[[LoadedModules]] grew across the HostLoadImportedModule call, the requested
-                    // module was loaded synchronously, which means it was already loaded before. In that case
-                    // there is no need to attach a ModuleGraphLoadingError reaction, so we skip it.
-                    bool needsErrorReaction = module->loadedModules().size() == loadedModulesCountBefore;
-                    ASSERT(module->loadedModules().size() <= loadedModulesCountBefore + 1);
-                    ASSERT(needsErrorReaction != module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() }));
+                    // If FinishLoadingImportedModule ran synchronously with a normal completion for this
+                    // request, the request key is now in module.[[LoadedModules]] and the state already
+                    // processed this edge, so we skip attaching the ModuleGraphLoadingError reaction.
+                    // Previously this was inferred from module.[[LoadedModules]].size() growing, but that
+                    // is unsound when a nested graph walk (reached via the HostLoadImportedModule call
+                    // itself) visits this same referrer and populates a different request key first.
+                    bool needsErrorReaction = !module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() });
                     if (needsErrorReaction)
                         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, state);
                     // 2.d.iv. If state.[[IsLoading]] is false, return UNUSED.
