@@ -417,7 +417,6 @@ namespace JSC { namespace DFG {
     macro(TailCallInlinedCallerWasm, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     /* bun:ffi (USE(BUN_JSC_ADDITIONS)); the enumerators are unconditional, only their uses are guarded. */\
     macro(CallFFI, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
-    /* base is the (unboxed) address argument. Must-generate: the underlying memory is not modeled. */\
     \
     macro(CallCustomAccessorGetter, NodeResultJS | NodeMustGenerate) \
     macro(CallCustomAccessorSetter, NodeMustGenerate) \

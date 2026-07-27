@@ -68,7 +68,6 @@ function main() {
     const validCallback = $vm.ffiCallback({ args: [], returns: "void" }, () => { });
     const validView = new Uint8Array(16);
 
-    // Bun parity contract (loose): the numeric types (i8..u32, f32/f64, bool)
     const cases = [
         [echoI32, 1, symbol, "Symbol -> i32"],
         [echoI32, 1, "42", "string -> i32 (strings never coerce into numeric params)"],
