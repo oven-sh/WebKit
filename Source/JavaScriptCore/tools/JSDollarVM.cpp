@@ -1077,7 +1077,6 @@ public:
 
     static DOMJITNode* create(VM& vm, Structure* structure)
     {
-
         DollarVMAssertScope assertScope;
         DOMJITNode* getter = new (NotNull, allocateCell<DOMJITNode>(vm)) DOMJITNode(vm, structure);
         getter->finishCreation(vm);
@@ -1094,6 +1093,7 @@ public:
 private:
     int32_t m_value { 42 };
 };
+
 
 static JSC_DECLARE_CUSTOM_GETTER(domJITGetterCustomGetter);
 JSC_DECLARE_JIT_OPERATION(domJITGetterSlowCall, EncodedJSValue, (JSGlobalObject*, void*));
@@ -1183,7 +1183,6 @@ JSC_DEFINE_CUSTOM_GETTER(domJITGetterCustomGetter, (JSGlobalObject* globalObject
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
-
     auto scope = DECLARE_THROW_SCOPE(vm);
     DOMJITNode* thisObject = dynamicDowncast<DOMJITNode>(JSValue::decode(thisValue));
     if (!thisObject)
@@ -1200,6 +1199,7 @@ JSC_DEFINE_JIT_OPERATION(domJITGetterSlowCall, EncodedJSValue, (JSGlobalObject* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(static_cast<DOMJITGetter*>(pointer)->value())));
 }
+
 
 static JSC_DECLARE_CUSTOM_GETTER(domJITGetterNoEffectCustomGetter);
 JSC_DECLARE_JIT_OPERATION(domJITGetterNoEffectSlowCall, EncodedJSValue, (JSGlobalObject*, void*));
@@ -1703,7 +1703,6 @@ public:
 
     static JSTestCustomGetterSetter* create(VM& vm, JSGlobalObject*, Structure* structure)
     {
-
         DollarVMAssertScope assertScope;
         JSTestCustomGetterSetter* result = new (NotNull, allocateCell<JSTestCustomGetterSetter>(vm)) JSTestCustomGetterSetter(vm, structure);
         result->finishCreation(vm);
@@ -1720,6 +1719,7 @@ public:
 
     DECLARE_INFO;
 };
+
 
 static JSC_DECLARE_CUSTOM_GETTER(customGetAccessor);
 static JSC_DECLARE_CUSTOM_GETTER(customGetValue);
@@ -4371,7 +4371,6 @@ JSC_DEFINE_HOST_FUNCTION(functionResetJITSizeStatistics, (JSGlobalObject* global
 
     VM& vm = globalObject->vm();
 
-
     if (!vm.jitSizeStatistics)
         return JSValue::encode(jsUndefined());
 
@@ -4399,6 +4398,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEnsureArrayStorage, (JSGlobalObject* globalObje
         asObject(arg)->ensureArrayStorage(vm);
     return JSValue::encode(jsUndefined());
 }
+
 
 #if PLATFORM(COCOA)
 JSC_DEFINE_HOST_FUNCTION(functionSetCrashLogMessage, (JSGlobalObject* globalObject, CallFrame* callFrame))

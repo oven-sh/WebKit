@@ -396,13 +396,13 @@ public:
                     default:
                         DFG_CRASH(m_graph, nullptr, "Bad flush format for argument");
                         break;
-
                     }
                 }
             }
 
             m_out.jump(firstDFGBasicBlock);
         }
+
 
         m_out.appendTo(m_handleExceptions, firstDFGBasicBlock);
         Box<CCallHelpers::Label> exceptionHandler = state->exceptionHandler;
@@ -3006,7 +3006,6 @@ private:
 
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
         patchpoint->appendSomeRegister(left);
-
         patchpoint->appendSomeRegister(right);
         patchpoint->append(m_notCellMask, ValueRep::lateReg(GPRInfo::notCellMaskRegister));
         patchpoint->append(m_numberTag, ValueRep::lateReg(GPRInfo::numberTagRegister));
@@ -3020,6 +3019,7 @@ private:
         patchpoint->setGenerator(
             [=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
+
 
                 Box<CCallHelpers::JumpList> exceptions =
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
@@ -6202,7 +6202,6 @@ IGNORE_CLANG_WARNINGS_END
                 GPRReg scratch1GPR = params.gpScratch(0);
                 GPRReg scratch2GPR = params.gpScratch(1);
 
-
                 jit.loadTypedArrayLength(baseGPR, resultGPR, scratch1GPR, scratch2GPR, typedArrayType);
             });
             return patchpoint;
@@ -6216,6 +6215,7 @@ IGNORE_CLANG_WARNINGS_END
         return m_out.load32NonNegative(base, m_heaps.JSArrayBufferView_length);
 #endif
     }
+
 
     void compileGetArrayLength()
     {
@@ -7563,7 +7563,6 @@ IGNORE_CLANG_WARNINGS_END
             }
 
             LBasicBlock inBoundCase = m_out.newBlock();
-
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock holeCase = m_out.newBlock();
             LBasicBlock doStoreCase = m_out.newBlock();
@@ -7577,6 +7576,7 @@ IGNORE_CLANG_WARNINGS_END
                 Void, slowPathFunction,
                 weakPointer(globalObject), base, index, value);
             m_out.jump(continuation);
+
 
             if (arrayMode.isSlowPut()) {
                 m_out.appendTo(inBoundCase, doStoreCase);
@@ -8983,7 +8983,6 @@ IGNORE_CLANG_WARNINGS_END
                 if (isArrayIncludes)
                     setBoolean(vmCall(Int32, operationArrayIncludesValueInt32, weakPointer(globalObject), storage, lowJSValue(searchElementEdge), startIndex));
                 else
-
                     setInt32(vmCall(Int32, operationArrayIndexOfValueInt32, weakPointer(globalObject), storage, lowJSValue(searchElementEdge), startIndex));
                 return;
             default:
@@ -8997,6 +8996,7 @@ IGNORE_CLANG_WARNINGS_END
             return;
         }
     }
+
 
     void compileArrayPop()
     {
@@ -9426,7 +9426,6 @@ IGNORE_CLANG_WARNINGS_END
                     return JSFunction::selectStructureForNewFuncExp(globalObject, m_node->castOperand<FunctionExecutable*>());
                 default:
                     RELEASE_ASSERT_NOT_REACHED();
-
                 }
             }());
 
@@ -9440,6 +9439,7 @@ IGNORE_CLANG_WARNINGS_END
             isAsyncFunction ? allocateObject<JSAsyncFunction>(structure, m_out.intPtrZero, slowPath) :
             isAsyncGeneratorFunction ? allocateObject<JSAsyncGeneratorFunction>(structure, m_out.intPtrZero, slowPath) :
             allocateObject<JSFunction>(structure, m_out.intPtrZero, slowPath);
+
 
         // We don't need memory barriers since we just fast-created the function, so it
         // must be young.
@@ -11425,7 +11425,6 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock notNumber = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-
         ValueFromBlock fastResult = m_out.anchor(value);
         m_out.branch(isNumber(value, provenType(m_node->child1())), unsure(continuation), unsure(notNumber));
 
@@ -11438,6 +11437,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(continuation, lastNext);
         setJSValue(m_out.phi(Int64, fastResult, slowResult));
     }
+
 
     void compileToStringOrCallStringConstructorOrStringValueOf()
     {
@@ -14633,7 +14633,6 @@ IGNORE_CLANG_WARNINGS_END
         case TailCallForwardVarargsInlinedCaller:
         case ConstructForwardVarargs:
             forwarding = true;
-
             break;
         default:
             DFG_CRASH(m_graph, node, "bad node type");
@@ -14647,6 +14646,7 @@ IGNORE_CLANG_WARNINGS_END
                 return;
             }
         }
+
 
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
 
@@ -15342,7 +15342,6 @@ IGNORE_CLANG_WARNINGS_END
                         directOperand = value;
                     else
                         m_out.storeDouble(value, slot);
-
                 }
                 break;
             }
@@ -15768,6 +15767,7 @@ IGNORE_CLANG_WARNINGS_END
                 knownLength = 0;
             return m_out.constInt32(knownLength);
         }
+
 
         // We need to perform the same logical operation as the code above, but through dynamic operations.
         if (!numberOfArgumentsToSkip)
@@ -18477,7 +18477,6 @@ IGNORE_CLANG_WARNINGS_END
                 speculateAndJump(continuation, LoadFromHole, noValue(), nullptr, m_out.logicalNot(notHole));
 
             m_out.appendTo(slowCase, continuation);
-
             ValueFromBlock slowResult = m_out.anchor(
                 m_out.notZero64(vmCall(Int64, slowPathOperation, weakPointer(globalObject), base, index)));
             m_out.jump(continuation);
@@ -18904,6 +18903,7 @@ IGNORE_CLANG_WARNINGS_END
         // If it's an Int32 and we use it as such this boxing will be DCE'd by b3 later anyway.
         lowJSValue(propertyNameEdge, ManualOperandSpeculation);
 
+
         LValue index = lowInt32(indexEdge);
         LValue mode = lowInt32(m_graph.varArgChild(m_node, 4));
         LValue enumerator = lowCell(m_graph.varArgChild(m_node, 5));
@@ -19185,7 +19185,6 @@ IGNORE_CLANG_WARNINGS_END
                 CCallHelpers::Call slowPathCall;
                 auto operation = ecmaMode.isStrict() ? operationPutByValStrictOptimize : operationPutByValSloppyOptimize;
                 if (Options::useHandlerICInFTL()) {
-
                     jit.move(CCallHelpers::TrustedImmPtr(generator->propertyCache()), propertyCacheGPR);
                     downcast<HandlerPropertyInlineCache>(*generator->propertyCache()).m_slowOperation = operation;
                     slowPathCall = callOperation(
@@ -19611,6 +19610,7 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.storePtr(scope, fastObject, m_heaps.JSScope_next);
         m_out.storePtr(weakPointer(table), fastObject, m_heaps.JSSymbolTableObject_symbolTable);
+
 
         ValueFromBlock fastResult = m_out.anchor(fastObject);
         m_out.jump(continuation);

@@ -184,6 +184,7 @@ constexpr bool typeExposedByDefault = true;
     macro(WeakObjectRef, weakObjectRef, weakObjectRef, JSWeakObjectRef, WeakRef, object, typeExposedByDefault) \
     macro(FinalizationRegistry, finalizationRegistry, finalizationRegistry, JSFinalizationRegistry, FinalizationRegistry, object, typeExposedByDefault) \
 
+
 #define FOR_EACH_BUILTIN_DERIVED_ITERATOR_TYPE(macro) \
     macro(StringIterator, stringIterator, stringIterator, JSStringIterator, StringIterator, iterator, typeExposedByDefault) \
 
@@ -824,7 +825,6 @@ public:
     GetterSetter* promiseSpeciesGetterSetter() const LIFETIME_BOUND { return m_promiseSpeciesGetterSetter.get(); }
 
     ArrayConstructor* arrayConstructor() const LIFETIME_BOUND { return m_arrayConstructor.get(); }
-    StringConstructor* stringConstructor() const LIFETIME_BOUND { return m_stringConstructor.get(); }
     RegExpConstructor* regExpConstructor() const LIFETIME_BOUND { return m_regExpConstructor.get(); }
     ObjectConstructor* objectConstructor() const LIFETIME_BOUND { return m_objectConstructor.get(); }
     FunctionConstructor* functionConstructor() const LIFETIME_BOUND { return m_functionConstructor.get(); }

@@ -69,4 +69,3 @@ JSC_DECLARE_JIT_OPERATION(operationFFIArenaExit, void, (JSGlobalObject*));
 #endif // USE(JSVALUE64)
 
 #endif // USE(BUN_JSC_ADDITIONS)
-

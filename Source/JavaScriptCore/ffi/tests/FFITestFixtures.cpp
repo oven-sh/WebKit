@@ -344,7 +344,6 @@ int32_t ffi_call_cb_ret_bool(bool (*cb)(void)) { return cb() ? 10 : 20; }
 float ffi_call_cb_ret_f32(float (*cb)(void)) { return cb(); }
 double ffi_call_cb_ret_f64(double (*cb)(void)) { return cb(); }
 const char* ffi_call_cb_ret_cstring(const char* (*cb)(void)) { return cb(); }
-
 void* ffi_call_cb_ret_ptr(void* (*cb)(void)) { return cb(); }
 
 uint32_t ffi_call_cb_then_read_u32(uint32_t (*cb)(void), uint32_t* p)

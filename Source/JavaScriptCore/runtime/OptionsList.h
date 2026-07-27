@@ -690,6 +690,8 @@ bool hasCapacityToUseLargeGigacage();
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
 
+
+
 enum OptionEquivalence {
     SameOption,
     InvertedOption,

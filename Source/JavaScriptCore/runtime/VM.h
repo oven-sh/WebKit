@@ -1370,7 +1370,7 @@ private:
     friend class LLIntOffsetsExtractor;
     friend class SuspendExceptionScope;
 #if USE(BUN_JSC_ADDITIONS)
-    friend class FFI::CallbackEntryScope; // Suspends the exception-check verifier state across a foreign-code re-entry (ffi/JSFFICallback).
+    friend class FFI::CallbackEntryScope;
 #endif
     friend class VMTraps;
 };
