@@ -1610,7 +1610,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     if (featureFlag) \
         putDirectWithoutTransition(vm, vm.propertyNames-> jsName, lowerName ## Constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-
     FOR_EACH_SIMPLE_BUILTIN_TYPE_WITH_CONSTRUCTOR(PUT_CONSTRUCTOR_FOR_SIMPLE_TYPE)
 
 #undef PUT_CONSTRUCTOR_FOR_SIMPLE_TYPE
@@ -2229,8 +2228,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
     m_ffiCallbackStructure.initLater(
         [] (const Initializer<Structure>& init) {
-            // JSFFICallback's prototype carries the `close` method (a plain Object.prototype-derived
-            // object); an embedder that adopts its own class prototype for the cell replaces it.
             init.set(JSFFICallback::createStructure(init.vm, init.owner, JSFFICallback::createPrototype(init.vm, init.owner)));
         });
 #endif
@@ -3001,8 +2998,6 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_internalFieldTupleStructure);
     thisObject->m_ffiFunctionStructure.visit(visitor);
     thisObject->m_ffiCallbackStructure.visit(visitor);
-    // Root every un-close()d FFI callback (native code may hold its entry pointer with no JS
-    // reference alive). Only touch an already-created context: never lazily create one here.
     if (thisObject->m_ffiContext)
         thisObject->m_ffiContext->visitLiveCallbacks(*thisObject, visitor);
 #endif
@@ -3812,25 +3807,14 @@ void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t paylo
 FFI::FFIContext& JSGlobalObject::ffiContext()
 {
     if (!m_ffiContext) [[unlikely]] {
-        // The lazy first-creation is a plain std::unique_ptr store, so it may only happen on the
-        // mutator thread. DFG/FTL compiler threads call ffiContext() to bake its address at
-        // code-generation time, but only for a JSFFIFunction whose create() already materialized
-        // the context here on the mutator (FFIContext.h thread contract); a compiler-thread
-        // first-creation would be an unsynchronized race.
         ASSERT(!isCompilationThread());
-        // FFI-SPEC-GAP: the spec (section 6) states the context is per-JSGlobalObject and lazily
-        // created here but does not fix FFIContext's constructor; a default-constructible
-        // context (all state internal, nothing borrowed from the global object) is assumed.
         auto context = makeUnique<FFI::FFIContext>();
-        // visitChildren reads m_ffiContext from concurrent marker threads: make sure the fully
-        // constructed FFIContext is visible before the pointer is (weakly-ordered ARM64).
         WTF::storeStoreFence();
         m_ffiContext = WTF::move(context);
     }
     return *m_ffiContext;
 }
 #endif
-
 
 void JSGlobalObject::setMicrotaskQueue(Ref<MicrotaskQueue>&& queue)
 {

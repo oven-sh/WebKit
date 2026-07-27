@@ -77,9 +77,6 @@ bool hasCapacityToUseLargeGigacage();
 // On instantiation of the first VM instance, the Options will be write protected
 // and cannot be modified thereafter.
 
-// bun:ffi engine options. Preprocessor conditionals cannot appear inside the
-// FOR_EACH_JSC_OPTION X-macro body, so the FFI options live in this guarded
-// sub-macro that FOR_EACH_JSC_OPTION invokes from its Bun Features block.
 #if USE(BUN_JSC_ADDITIONS)
 #define FOR_EACH_JSC_FFI_OPTION(v) \
     v(Bool, useFFIICStub, true, Normal, "install per-function FFI IC stubs"_s) \
@@ -693,8 +690,6 @@ bool hasCapacityToUseLargeGigacage();
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
 
-
-
 enum OptionEquivalence {
     SameOption,
     InvertedOption,
@@ -733,7 +728,6 @@ enum OptionEquivalence {
     v(maximumFTLCandidateInstructionCount, maximumFTLCandidateBytecodeCost, SameOption) \
     v(maximumInliningCallerSize, maximumInliningCallerBytecodeCost, SameOption) \
     v(validateBCE, validateBoundsCheckElimination, SameOption) \
-
 
 enum ExperimentalOptionFlags {
     LLIntAndBaselineOnly = 0,

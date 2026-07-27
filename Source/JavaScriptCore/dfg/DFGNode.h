@@ -972,7 +972,6 @@ public:
     void NODELETE convertToCallWasm(FrozenValue*);
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Call -> CallFFI (constant JSFFIFunction callee), OpInfo convention = CallWasm's.
     void NODELETE convertToCallFFI(FrozenValue*);
 
     JSFFIFunction* ffiFunction();

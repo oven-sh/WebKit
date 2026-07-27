@@ -53,7 +53,7 @@ double ffi_echo_f64(double x) { return x; }
 bool ffi_echo_bool(bool x) { return x; }
 void* ffi_echo_ptr(void* x) { return x; }
 const char* ffi_echo_cstring(const char* x) { return x; }
-napi_value ffi_echo_napi_value(napi_value x) { return x; }
+jsvalue_slot ffi_echo_jsvalue(jsvalue_slot x) { return x; }
 
 int64_t ffi_widen_char(signed char x) { return x; }
 int64_t ffi_widen_i8(int8_t x) { return x; }
@@ -695,7 +695,7 @@ std::span<const FFIFixtureEntry> ffiTestFixtures()
         FFI_FIXTURE(ffi_echo_bool),
         FFI_FIXTURE(ffi_echo_ptr),
         FFI_FIXTURE(ffi_echo_cstring),
-        FFI_FIXTURE(ffi_echo_napi_value),
+        FFI_FIXTURE(ffi_echo_jsvalue),
         FFI_FIXTURE(ffi_widen_char),
         FFI_FIXTURE(ffi_widen_i8),
         FFI_FIXTURE(ffi_widen_u8),

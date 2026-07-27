@@ -2349,14 +2349,6 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                     return inliningResult;
 
 #if USE(BUN_JSC_ADDITIONS)
-                // We encourage CallFFI conversion by emitting the constant callee here.
-                // This allows strength reduction to fold this Call to CallFFI.
-                // The feed is skipped (leaving the plain Call and this function's host path) when the
-                // signature's invoke thunk cannot be generated: the DFG/FTL CallFFI codegen calls that
-                // process-shared, immortal thunk, so making it exist here (generation is a plain
-                // LinkBuffer emit under the Signature's own lock, safe on the compiler thread) turns
-                // its non-nullness into an invariant of the conversion instead of a runtime
-                // OutOfMemoryError for the whole node.
                 if (Options::useFFICallInDFG() && (callOp == Call || callOp == TailCall) && callee.function() && callee.function()->inherits<JSFFIFunction>()
                     && !uncheckedDowncast<JSFFIFunction>(callee.function())->isHostPathOnly() // hooked => host path only
                     && uncheckedDowncast<JSFFIFunction>(callee.function())->signature().invokeThunk()) {
@@ -2366,9 +2358,6 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                     addToGraph(CheckIsConstant, OpInfo(frozenFunction), Edge(callTargetNode, CellUse));
                     m_parameterSlots = std::max(m_parameterSlots, Graph::parameterSlotsForArgCount(
                         std::max<unsigned>(ffiFunction->signature().slotCount() + 1, argumentCountIncludingThis)));
-                    // A bytecode tail call (arrow expression body / strict-mode tail position -- all
-                    // ESM code is strict) is emitted as a plain Call: CallFFI is a non-terminal node, and
-                    // dropping the tail-call frame reuse is a legal optimization loss, not a semantic one.
                     addCall(result, Call, OpInfo(), jsConstant(frozenFunction), argumentCountIncludingThis, registerOffset, prediction);
                     return CallOptimizationResult::Inlined;
                 }

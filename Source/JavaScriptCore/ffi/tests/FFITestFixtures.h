@@ -33,7 +33,7 @@
 #include <cstdint>
 #include <span>
 
-typedef int64_t napi_value;
+typedef int64_t jsvalue_slot; // an encoded JSValue crossing the boundary as an int64
 
 extern "C" {
 
@@ -51,7 +51,7 @@ JS_EXPORT_PRIVATE double ffi_echo_f64(double);
 JS_EXPORT_PRIVATE bool ffi_echo_bool(bool);
 JS_EXPORT_PRIVATE void* ffi_echo_ptr(void*);
 JS_EXPORT_PRIVATE const char* ffi_echo_cstring(const char*);
-JS_EXPORT_PRIVATE napi_value ffi_echo_napi_value(napi_value);
+JS_EXPORT_PRIVATE jsvalue_slot ffi_echo_jsvalue(jsvalue_slot);
 
 JS_EXPORT_PRIVATE int64_t ffi_widen_char(signed char);
 JS_EXPORT_PRIVATE int64_t ffi_widen_i8(int8_t);

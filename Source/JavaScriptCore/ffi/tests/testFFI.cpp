@@ -204,7 +204,7 @@ static void testTypeTraits()
         { "c_uint"_s, Type::Uint32 }, { "int64_t"_s, Type::Int64 }, { "isize"_s, Type::Int64 }, { "uint64_t"_s, Type::Uint64 },
         { "usize"_s, Type::Uint64 }, { "size_t"_s, Type::Uint64 }, { "double"_s, Type::Double }, { "float"_s, Type::Float },
         { "void*"_s, Type::Pointer }, { "pointer"_s, Type::Pointer }, { "char*"_s, Type::Pointer }, { "callback"_s, Type::Function },
-        { "fn"_s, Type::Function }, { "napi_value"_s, Type::JSValue }, // napi_value: legacy spelling of the raw-JSValue type
+        { "fn"_s, Type::Function }, { "napi_value"_s, Type::JSValue },
         { "buffer_bytelength"_s, Type::BufferLength },
     };
     for (auto& entry : aliases) {
@@ -1592,7 +1592,7 @@ static void testInvokeThunkDifferential()
     differentialCase("ffi_echo_ptr(as buffer)"_s, ffi_echo_ptr, { T::Buffer }, T::Pointer, 20, random);
     differentialCase("ffi_echo_ptr(as function)"_s, ffi_echo_ptr, { T::Function }, T::Pointer, 20, random);
     differentialCase("ffi_echo_cstring"_s, ffi_echo_cstring, { T::CString }, T::CString, 30, random);
-    differentialCase("ffi_echo_napi_value"_s, ffi_echo_napi_value, { T::JSValue }, T::JSValue, 40, random);
+    differentialCase("ffi_echo_jsvalue"_s, ffi_echo_jsvalue, { T::JSValue }, T::JSValue, 40, random);
     differentialCase("ffi_widen_char"_s, ffi_widen_char, { T::Char }, T::Int64, 30, random);
     differentialCase("ffi_widen_i8"_s, ffi_widen_i8, { T::Int8 }, T::Int64, 30, random);
     differentialCase("ffi_widen_u8"_s, ffi_widen_u8, { T::Uint8 }, T::Int64, 30, random);

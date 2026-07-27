@@ -53,7 +53,7 @@ function main() {
     const echoF64 = bind("ffi_echo_f64", ["f64"], "f64");
     const echoBool = bind("ffi_echo_bool", ["bool"], "bool");
     const echoPtr = bind("ffi_echo_ptr", ["ptr"], "ptr");
-    const echoNapiValue = bind("ffi_echo_napi_value", ["napi_value"], "napi_value");
+    const echoNapiValue = bind("ffi_echo_jsvalue", ["napi_value"], "napi_value");
     const addI32 = bind("ffi_add_i32", ["i32", "i32"], "i32");
     const addF64 = bind("ffi_add_f64", ["f64", "f64"], "f64");
     const addI64 = bind("ffi_add_i64", ["i64", "i64"], "i64");

@@ -4686,8 +4686,6 @@ static void dollarVMTestHookAfter(JSGlobalObject* globalObject, CallFrame* callF
 }
 static const FFI::CallHooks dollarVMTestHooks { dollarVMTestHookBefore, dollarVMTestHookAfter };
 
-// Usage: $vm.ffiFunction(signature, target, name?, options?) where options may be
-// { owner: JSObject, hooks: "test" } -- exercises the owner cell and the CallHooks bracket.
 JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4739,8 +4737,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, Cal
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name, owner, hooks)));
 }
 
-// Usage: $vm.ffiCallback({ args: [...], returns: ... }, jsFunction) -> JSFFICallback
-// (JSFFICallback::finishCreation installs its `ptr` / `threadsafe` own properties.)
 static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation&); // defined below with the queue/drain model
 JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -4759,8 +4755,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, Cal
     if (!callableValue.isCallable())
         return throwVMTypeError(globalObject, scope, "$vm.ffiCallback: expected a callable"_s);
 
-    // Optional third argument: { threadsafe: true } creates a THREADSAFE callback wired to the
-    // shell's queue-and-drain dispatch model (registered lazily on first threadsafe creation).
     bool threadsafe = false;
     if (JSObject* options = callFrame->argument(2).getObject()) {
         JSValue threadsafeValue = options->get(globalObject, Identifier::fromString(vm, "threadsafe"_s));
@@ -4774,10 +4768,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, Cal
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), asObject(callableValue), signature.releaseNonNull(), threadsafe, nullptr)));
 }
 
-// Shell model of an embedder's threadsafe-callback dispatch: the engine calls
-// dollarVMThreadsafeDispatch (possibly from a foreign thread) which merely QUEUES the record;
-// $vm.drainThreadsafeCallbacks() then runs each on the JS thread through
-// FFI::runThreadsafeInvocation -- the same split a real embedder makes with its event loop.
 static Lock s_threadsafeQueueLock;
 static Vector<RefPtr<FFI::ThreadsafeInvocation>>& threadsafeQueue()
 {
@@ -4786,7 +4776,6 @@ static Vector<RefPtr<FFI::ThreadsafeInvocation>>& threadsafeQueue()
 }
 static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation& invocation)
 {
-    // May run on a foreign thread: only a lock and a queue append (the record is refcounted C data).
     Locker locker { s_threadsafeQueueLock };
     threadsafeQueue().append(&invocation);
 }
@@ -4801,12 +4790,6 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainThreadsafeCallbacks, (JSGlobalObject* glob
         Locker locker { s_threadsafeQueueLock };
         pending = std::exchange(threadsafeQueue(), { });
     }
-    // runThreadsafeInvocation leaves any exception the callable threw pending (there is no C
-    // caller to hand it to). Once one throws, do NOT run the remaining invocations with an
-    // exception already on the VM -- but every remaining record was counted by the dispatch, so
-    // its count must still be RETIRED (the deferred half of close(): a callback closed while
-    // records were queued unroots when the last one drains). Skipping that would leak
-    // m_threadsafeState and leave such a cell rooted forever.
     unsigned index = 0;
     for (; index < pending.size(); ++index) {
         FFI::runThreadsafeInvocation(*pending[index]);
@@ -4841,7 +4824,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIFixture, (JSGlobalObject* globalObject, Call
     return throwVMTypeError(globalObject, scope, makeString("Unknown FFI fixture '"_s, name, "'"_s));
 }
 
-// Usage: $vm.ffiFixtures() -> array of all native test fixture names.
 JSC_DEFINE_HOST_FUNCTION(functionFFIFixtures, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -4857,8 +4839,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIFixtures, (JSGlobalObject* globalObject, Cal
     return JSValue::encode(result);
 }
 
-// Usage: $vm.ffiSignatureString({ args: [...], returns: ... }) -> string
-// The canonical interned form (e.g. "f64(i32,f64)"), a signature-interning smoke test.
 JSC_DEFINE_HOST_FUNCTION(functionFFISignatureString, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4871,9 +4851,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFFISignatureString, (JSGlobalObject* globalObje
 
     return JSValue::encode(jsString(vm, signature->toString()));
 }
-
-// Usage: $vm.ffiRead(ptr, type) -> value read from raw memory using the SPEC
-// section 5 native->JS conversion.
 
 JSC_DEFINE_HOST_FUNCTION(functionFFIRead, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

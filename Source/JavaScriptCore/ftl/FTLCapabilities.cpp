@@ -211,7 +211,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case ConstructForwardVarargs:
     case CallWasm:
     case TailCallInlinedCallerWasm:
-    case CallFFI: // FFI: unconditional label (docs/ffi/SPEC.md 13(c)); the node is only created under USE(BUN_JSC_ADDITIONS) and lowers in LowerDFGToB3::compileCallFFI().
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case VarargsLength:

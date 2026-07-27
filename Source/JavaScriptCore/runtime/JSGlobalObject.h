@@ -184,7 +184,6 @@ constexpr bool typeExposedByDefault = true;
     macro(WeakObjectRef, weakObjectRef, weakObjectRef, JSWeakObjectRef, WeakRef, object, typeExposedByDefault) \
     macro(FinalizationRegistry, finalizationRegistry, finalizationRegistry, JSFinalizationRegistry, FinalizationRegistry, object, typeExposedByDefault) \
 
-
 #define FOR_EACH_BUILTIN_DERIVED_ITERATOR_TYPE(macro) \
     macro(StringIterator, stringIterator, stringIterator, JSStringIterator, StringIterator, iterator, typeExposedByDefault) \
 
@@ -825,8 +824,6 @@ public:
     GetterSetter* promiseSpeciesGetterSetter() const LIFETIME_BOUND { return m_promiseSpeciesGetterSetter.get(); }
 
     ArrayConstructor* arrayConstructor() const LIFETIME_BOUND { return m_arrayConstructor.get(); }
-    // The realm's String constructor, held by a barrier since init: unlike reading
-    // String.prototype.constructor, this is not user-mutable (delete/replace-proof).
     StringConstructor* stringConstructor() const LIFETIME_BOUND { return m_stringConstructor.get(); }
     RegExpConstructor* regExpConstructor() const LIFETIME_BOUND { return m_regExpConstructor.get(); }
     ObjectConstructor* objectConstructor() const LIFETIME_BOUND { return m_objectConstructor.get(); }
@@ -1113,9 +1110,6 @@ public:
     Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }
     Structure* ffiFunctionStructure() const { return m_ffiFunctionStructure.get(this); }
     Structure* ffiCallbackStructure() const { return m_ffiCallbackStructure.get(this); }
-    // Per-global bun:ffi state (UTF-8 string cache, call-scoped string arena, live-callback
-    // root set). Lazily created; the live-callback set is GC-visited from
-    // JSGlobalObject::visitChildren (under this object's cellLock).
     JS_EXPORT_PRIVATE FFI::FFIContext& ffiContext();
 #endif
 

@@ -2006,7 +2006,6 @@ private:
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-            // Fold a Call to a constant JSFFIFunction into CallFFI (mirrors the CallWasm conversion above).
             if (FFI::tryConvertCallToCallFFI(m_graph, m_insertionSet, m_nodeIndex, m_node, function)) {
                 m_changed = true;
                 break;

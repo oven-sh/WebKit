@@ -4623,7 +4623,7 @@ void SpeculativeJIT::compile(Node* node)
     case DateSetTime:
     case CallWasm:
     case TailCallInlinedCallerWasm:
-    case CallFFI: // CallFFI is JSVALUE64 only (spec docs/ffi/SPEC.md 10.4); the strength reduction never creates it here.
+    case CallFFI:
     case FunctionBind:
     case NewBoundFunction:
     case EnumeratorPutByVal:

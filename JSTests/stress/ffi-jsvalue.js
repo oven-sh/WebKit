@@ -1,7 +1,7 @@
 //@ requireOptions("--useDollarVM=1")
 
-// jsvalue (historical spelling: napi_value) is a raw EncodedJSValue pass-through
-// in both directions (SPEC sections 5, 15.7).
+// The "jsvalue" type is a raw EncodedJSValue pass-through in both directions: every JS value
+// kind (objects, functions, symbols, -0, BigInt) must round-trip with identity intact.
 
 function describe(value) {
     if (typeof value === "bigint")
@@ -27,7 +27,7 @@ function check(actual, expected, message) {
 
 function main() {
     const fixture = name => $vm.ffiFixture(name);
-    const echoNapiValue = $vm.ffiFunction({ args: ["napi_value"], returns: "napi_value" }, fixture("ffi_echo_napi_value"), "ffi_echo_napi_value");
+    const echoNapiValue = $vm.ffiFunction({ args: ["jsvalue"], returns: "jsvalue" }, fixture("ffi_echo_jsvalue"), "ffi_echo_jsvalue");
 
     // ---- napi_value: identity of arbitrary JSValues in both directions.
     const object = { deep: { array: [1, 2, 3] } };
@@ -72,8 +72,8 @@ function main() {
     }
     // napi_value inside a callback: JS -> native -> JS receives the very same values.
     const seen = [];
-    const cb = $vm.ffiCallback({ args: ["napi_value"], returns: "napi_value" }, v => { seen.push(v); return v; });
-    const throughCallback = $vm.ffiFunction({ args: ["napi_value"], returns: "napi_value" }, cb, "napi_value round trip");
+    const cb = $vm.ffiCallback({ args: ["jsvalue"], returns: "jsvalue" }, v => { seen.push(v); return v; });
+    const throughCallback = $vm.ffiFunction({ args: ["jsvalue"], returns: "jsvalue" }, cb, "napi_value round trip");
     for (const value of values) {
         seen.length = 0;
         const result = throughCallback(value);

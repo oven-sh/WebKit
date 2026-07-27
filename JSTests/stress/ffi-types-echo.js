@@ -51,7 +51,7 @@ function main() {
     const echoBool = echo("ffi_echo_bool", "bool");
     const echoPtr = echo("ffi_echo_ptr", "ptr");
     const echoCString = echo("ffi_echo_cstring", "cstring");
-    const echoNapiValue = echo("ffi_echo_napi_value", "napi_value");
+    const echoNapiValue = echo("ffi_echo_jsvalue", "napi_value");
 
     const object = { tag: "object" };
     const symbol = Symbol("napi");
