@@ -170,6 +170,42 @@ async function test() {
             shouldBe(e instanceof TypeError, true);
         }
     }
+
+    // Spec step ordering: PerformPromiseAllKeyed does a single [[OwnPropertyKeys]]
+    // call, then per-key [[GetOwnProperty]] and [[Get]] only for enumerable keys.
+    for (let fn of [Promise.allKeyed, Promise.allSettledKeyed]) {
+        let s0 = Symbol("s0");
+        let s1 = Symbol("s1");
+
+        let ownKeysCalls = 0;
+        let gopdCalls = [];
+        let getCalls = [];
+
+        let source = new Proxy({ a: 0, b: 1, c: 2, [s0]: 3, [s1]: 4 }, {
+            ownKeys: t => {
+                ++ownKeysCalls;
+                return Reflect.ownKeys(t);
+            },
+            getOwnPropertyDescriptor: (t, key) => {
+                gopdCalls.push(key);
+                let desc = Reflect.getOwnPropertyDescriptor(t, key);
+                if (key === "b" || key === s0)
+                    desc.enumerable = false;
+                return desc;
+            },
+            get: (t, key, receiver) => {
+                getCalls.push(key);
+                return Reflect.get(t, key, receiver);
+            },
+        });
+
+        let result = await fn.call(Promise, source);
+
+        shouldBe(ownKeysCalls, 1);
+        shouldBeArray(gopdCalls, ["a", "b", "c", s0, s1]);
+        shouldBeArray(getCalls, ["a", "c", s1]);
+        shouldBeArray(Reflect.ownKeys(result), ["a", "c", s1]);
+    }
 }
 
 test().then(
