@@ -275,7 +275,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateCallbackThunk(VM&, JSFFICallback& 
 
     jit.addPtr(CCallHelpers::TrustedImm32(slotsOffsetFromFP), GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
     jit.move(CCallHelpers::TrustedImmPtr(&callback), GPRInfo::argumentGPR0);
-    jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(ffiCallbackDispatch)), thunkScratchGPR);
+    auto dispatchOperation = callback.isThreadsafe() ? tagCFunction<OperationPtrTag>(ffiCallbackDispatchThreadsafe) : tagCFunction<OperationPtrTag>(ffiCallbackDispatch);
+    jit.move(CCallHelpers::TrustedImmPtr(dispatchOperation), thunkScratchGPR);
     jit.call(thunkScratchGPR, OperationPtrTag);
 
     const CCallHelpers::Address returnSlot(GPRInfo::callFrameRegister, slotsOffsetFromFP + static_cast<int>(argumentCount * slotSize));
@@ -352,21 +353,24 @@ private:
 
 } // namespace FFI
 
+JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatchThreadsafe, EncodedJSValue, (JSFFICallback* callback, uint64_t* slots))
+{
+    ASSERT(callback->isThreadsafe());
+    FFI::Signature& signature = callback->signature();
+    const unsigned argumentCount = signature.argumentCount();
+    auto dispatch = FFI::FFIContext::threadsafeDispatch();
+    RELEASE_ASSERT(dispatch);
+    if (callback->tryBeginThreadsafeInvocation()) [[likely]] {
+        auto invocation = FFI::ThreadsafeInvocation::create(callback, callback->embedderContext(), std::span<const uint64_t>(slots, argumentCount));
+        dispatch(invocation.get());
+    }
+    slots[argumentCount] = 0;
+    return { encodedJSUndefined(), nullptr };
+}
+
 JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* callback, uint64_t* slots))
 {
-    if (callback->isThreadsafe()) [[unlikely]] {
-        FFI::Signature& signature = callback->signature();
-        const unsigned argumentCount = signature.argumentCount();
-        auto dispatch = FFI::FFIContext::threadsafeDispatch();
-        RELEASE_ASSERT(dispatch); // creation refused a threadsafe callback with no dispatch registered
-        if (callback->tryBeginThreadsafeInvocation()) [[likely]] {
-            auto invocation = FFI::ThreadsafeInvocation::create(callback, callback->embedderContext(), std::span<const uint64_t>(slots, argumentCount));
-            dispatch(invocation.get()); // embedder queues to its JS thread; keeps its own ref
-        }
-        slots[argumentCount] = 0; // a threadsafe return value is undefined by nature: zero it
-        return { encodedJSUndefined(), nullptr };
-    }
-
+    ASSERT(!callback->isThreadsafe());
     JSGlobalObject* globalObject = callback->globalObject();
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
