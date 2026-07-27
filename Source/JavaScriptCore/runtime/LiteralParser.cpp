@@ -2012,6 +2012,16 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
         auto remaining = std::span { m_lexer.positionAfterLastToken(), m_lexer.end() };
         size_t nlIndex = WTF::find(remaining, static_cast<CharType>('\n'));
         if (nlIndex != notFound) {
+            // JSONL/NDJSON: exactly one value per line. Anything other than
+            // JSON whitespace between the value and the line terminator is an
+            // error — otherwise a second value or arbitrary garbage on the
+            // same line would be silently dropped.
+            for (size_t i = 0; i < nlIndex; ++i) {
+                if (!isJSONWhiteSpace(remaining[i])) {
+                    m_parseErrorMessage = "Unexpected content after JSON value"_s;
+                    return { lastGoodPosition, StreamingJSONParseResult::Status::Error };
+                }
+            }
             m_lexer.advanceTo(remaining.data() + nlIndex + 1);
             m_lexer.next();
         } else if (m_lexer.currentToken()->type != TokEnd) {
