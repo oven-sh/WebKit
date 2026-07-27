@@ -111,6 +111,12 @@ void JSPromiseConstructor::finishCreation(VM& vm, JSPromisePrototype* promisePro
 
     if (Options::usePromiseIsPromise())
         JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("isPromise"_s, promiseConstructorFuncIsPromise, static_cast<unsigned>(PropertyAttribute::DontEnum), 1, ImplementationVisibility::Public);
+
+    if (Options::usePromiseAllKeyed()) {
+        // https://tc39.es/proposal-await-dictionary/
+        JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION("allKeyed"_s, promiseConstructorAllKeyedCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
+        JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION("allSettledKeyed"_s, promiseConstructorAllSettledKeyedCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    }
 }
 
 #if USE(BUN_JSC_ADDITIONS)
