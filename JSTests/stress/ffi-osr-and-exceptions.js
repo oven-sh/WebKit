@@ -107,9 +107,6 @@ function main() {
     check(hotU8(300), 44, "hotU8(300) wraps mod 256");
     check(hotU8(true), 1, "hotU8(true)");
     check(hotU8(null), 0, "hotU8(null)");
-    // Numeric strings coerce via Number() (bun parity / val|0 semantics) and
-    // then wrap mod 256: "300" -> 300 -> 44. Only Symbols throw for integers.
-    
     let symbolThrew = false;
     try {
         hotU8(Symbol("bad"));

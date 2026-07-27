@@ -230,7 +230,6 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
         result = ExitsForExceptions;
         break;
 
-
     case NewRegExpUntyped: {
         if (node->child1().useKind() == StringUse && node->child2().useKind() == StringUse) {
             result = ExitsForExceptions; // SyntaxError can happen.

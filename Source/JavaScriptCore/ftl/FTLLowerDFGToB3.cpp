@@ -15236,10 +15236,7 @@ IGNORE_CLANG_WARNINGS_END
                 if (edge.useKind() != UntypedUse)
                     continue;
                 switch (type) {
-                case FFI::Type::Pointer:
                 case FFI::Type::CString:
-                case FFI::Type::Function:
-                case FFI::Type::Buffer:
                     needsArena = true;
                     break;
                 default:
@@ -23483,6 +23480,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.add(
                 m_out.shl(m_out.zeroExt(preCapacity, pointerType()), m_out.constIntPtr(3)),
                 m_out.constIntPtr(sizeof(IndexingHeader))));
+
 
         m_out.store32(publicLength, butterfly, m_heaps.Butterfly_publicLength);
         m_out.store32(vectorLength, butterfly, m_heaps.Butterfly_vectorLength);

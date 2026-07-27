@@ -69,13 +69,6 @@ function main() {
     const validView = new Uint8Array(16);
 
     // Bun parity contract (loose): the numeric types (i8..u32, f32/f64, bool)
-    // coerce like the JS glue's `val|0` / `Number(val)` -- strings, objects
-    // with valueOf, arrays, booleans, null/undefined and BigInts all COERCE
-    // (see ffi-conversion-coercions below); only Symbols (which Number()
-    // rejects) are errors there. The i64 family accepts number/BigInt/coercible
-    // primitives but rejects undefined and non-primitive objects; the pointer /
-    // buffer / function category rejects everything that is not an address,
-    // a view or a callback.
     const cases = [
         [echoI32, 1, symbol, "Symbol -> i32"],
         [echoI32, 1, "42", "string -> i32 (strings never coerce into numeric params)"],

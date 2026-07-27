@@ -49,9 +49,6 @@ static bool ffiUntypedConversionMayUseStringArena(FFI::Type type)
 {
     switch (type) {
     case FFI::Type::CString:
-    case FFI::Type::Pointer:
-    case FFI::Type::Function:
-    case FFI::Type::Buffer:
         return true;
     default:
         return false;

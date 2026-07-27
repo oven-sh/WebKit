@@ -731,6 +731,7 @@ enum OptionEquivalence {
     v(maximumInliningCallerSize, maximumInliningCallerBytecodeCost, SameOption) \
     v(validateBCE, validateBoundsCheckElimination, SameOption) \
 
+
 enum ExperimentalOptionFlags {
     LLIntAndBaselineOnly = 0,
     SupportsDFG = 1 << 0,
