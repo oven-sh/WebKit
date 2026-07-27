@@ -279,6 +279,10 @@ public:
     WriteBarrier<StringConstructor> m_stringConstructor;
 
     LazyProperty<JSGlobalObject, IntlCollator> m_defaultCollator;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<IntlCollator> m_cachedLocaleCompareCollator;
+    String m_cachedLocaleCompareLocale;
+#endif
     LazyProperty<JSGlobalObject, IntlDateTimeFormat> m_defaultDateTimeFormat;
     LazyProperty<JSGlobalObject, IntlDateTimeFormat> m_defaultDateFormat;
     LazyProperty<JSGlobalObject, IntlDateTimeFormat> m_defaultTimeFormat;
@@ -824,6 +828,13 @@ public:
 
     IntlCollator* defaultCollator() const LIFETIME_BOUND { return m_defaultCollator.get(this); }
     bool canDoASCIIUCADUCETLocaleCompare() const { return m_canDoASCIIUCADUCETLocaleCompare; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Single-entry cache for String.prototype.localeCompare(that, <string>) with undefined options.
+    // Keyed on the raw locales-string argument so that arr.sort((a, b) => a.localeCompare(b, "en"))
+    // does not rebuild a UCollator for every comparison. Mirrors V8's fast path for this shape.
+    JS_EXPORT_PRIVATE IntlCollator* cachedLocaleCompareCollator(const String& locale) const LIFETIME_BOUND;
+    JS_EXPORT_PRIVATE void setCachedLocaleCompareCollator(VM&, const String& locale, IntlCollator*);
+#endif
     IntlDateTimeFormat* defaultDateTimeFormat() const LIFETIME_BOUND { return m_defaultDateTimeFormat.get(this); }
     IntlDateTimeFormat* defaultDateFormat() const LIFETIME_BOUND { return m_defaultDateFormat.get(this); }
     IntlDateTimeFormat* defaultTimeFormat() const LIFETIME_BOUND { return m_defaultTimeFormat.get(this); }

@@ -1795,6 +1795,23 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncLocaleCompare, (JSGlobalObject* globalOb
     IntlCollator* collator = nullptr;
     if (locales.isUndefined() && options.isUndefined())
         collator = globalObject->defaultCollator();
+#if USE(BUN_JSC_ADDITIONS)
+    else if (locales.isString() && options.isUndefined()) {
+        // Constructing Intl.Collator with a primitive-string locales argument and undefined options has no
+        // observable side effects, and its result is fully determined by the locales string. This means the
+        // collator is reusable across calls, which lets the idiomatic sort comparator a.localeCompare(b, "en")
+        // avoid rebuilding a UCollator on every comparison.
+        auto localeString = asString(locales)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        collator = globalObject->cachedLocaleCompareCollator(localeString);
+        if (!collator) {
+            collator = IntlCollator::create(vm, globalObject->collatorStructure());
+            collator->initializeCollator(globalObject, locales, options);
+            RETURN_IF_EXCEPTION(scope, { });
+            globalObject->setCachedLocaleCompareCollator(vm, localeString, collator);
+        }
+    }
+#endif
     else {
         collator = IntlCollator::create(vm, globalObject->collatorStructure());
         collator->initializeCollator(globalObject, locales, options);
