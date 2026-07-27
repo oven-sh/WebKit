@@ -388,7 +388,6 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* ca
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     FFI::FFIContext& context = globalObject->ffiContext();
-    FFI::StringArena::Scope arenaScope(context);
 
     MarkedArgumentBuffer arguments;
     for (unsigned i = 0; i < argumentCount; ++i) {
@@ -420,10 +419,19 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* ca
     }
 
     if (signature.returnType() != FFI::Type::Void) {
-        FFI::writeSlotFromJSValue(globalObject, context, signature.returnType(), result, returnSlot, &context.stringArena());
-        if (scope.exception()) [[unlikely]] {
-            returnSlot = 0;
-            OPERATION_RETURN(scope, encodedJSUndefined());
+        if (signature.returnType() == FFI::Type::CString && result.isString()) {
+            String string = result.toWTFString(globalObject);
+            if (scope.exception()) [[unlikely]] {
+                returnSlot = 0;
+                OPERATION_RETURN(scope, encodedJSUndefined());
+            }
+            returnSlot = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callback->setReturnCString(string.utf8())));
+        } else {
+            FFI::writeSlotFromJSValue(globalObject, context, signature.returnType(), result, returnSlot, nullptr);
+            if (scope.exception()) [[unlikely]] {
+                returnSlot = 0;
+                OPERATION_RETURN(scope, encodedJSUndefined());
+            }
         }
     }
 

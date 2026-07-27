@@ -232,8 +232,12 @@ static bool writeCStringSlot(JSGlobalObject* globalObject, FFIContext& context, 
     auto string = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    StringArena& targetArena = arena ? *arena : context.arena();
-    ASSERT_WITH_MESSAGE(targetArena.depth(), "bun:ffi cstring conversion requires an active FFI arena bracket (StringArena::Scope / operationFFIArenaEnter)");
+    if (!arena) {
+        throwTypeError(globalObject, scope, "bun:ffi: a JavaScript string is not valid here; return it from a 'cstring'-returning callback, or pass a pointer/TypedArray"_s);
+        return false;
+    }
+    StringArena& targetArena = *arena;
+    ASSERT_WITH_MESSAGE(targetArena.depth(), "bun:ffi cstring conversion requires an active FFI arena bracket");
 
     StringImpl* impl = string->impl();
     if (!impl || !impl->length()) {
@@ -462,8 +466,14 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
         return jsNumber(purifyNaN(std::bit_cast<double>(slot)));
     case Type::Float:
         return jsNumber(purifyNaN(static_cast<double>(std::bit_cast<float>(static_cast<uint32_t>(slot)))));
+    case Type::CString: {
+        const char* string = reinterpret_cast<const char*>(static_cast<uintptr_t>(slot));
+        if (!string)
+            return jsNull();
+        String decoded = String::fromUTF8WithLatin1Fallback(std::span<const char>(string, strlen(string)));
+        return jsString(getVM(globalObject), decoded);
+    }
     case Type::Pointer:
-    case Type::CString:
     case Type::Function:
     case Type::Buffer:
         return pointerToJSValue(globalObject, static_cast<uint64_t>(slot));
@@ -484,7 +494,7 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
 
 namespace JSC {
 
-JSC_DEFINE_JIT_OPERATION(operationFFIBoxSlot, EncodedJSValue, (JSGlobalObject* globalObject, uint32_t typeTag, uint64_t slot))
+JSC_DEFINE_JIT_OPERATION(operationFFIBoxSlot, EncodedJSValue, (JSGlobalObject* globalObject, uint32_t typeTag, uint64_t slot, int32_t exitArena))
 {
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -492,7 +502,10 @@ JSC_DEFINE_JIT_OPERATION(operationFFIBoxSlot, EncodedJSValue, (JSGlobalObject* g
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(typeTag < FFI::numberOfTypes);
-    OPERATION_RETURN(scope, JSValue::encode(FFI::jsValueFromSlot(globalObject, globalObject->ffiContext(), static_cast<FFI::Type>(typeTag), slot)));
+    JSValue boxed = FFI::jsValueFromSlot(globalObject, globalObject->ffiContext(), static_cast<FFI::Type>(typeTag), slot);
+    if (exitArena)
+        globalObject->ffiContext().stringArena().exit();
+    OPERATION_RETURN(scope, JSValue::encode(boxed));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationFFIWriteSlot, void, (JSGlobalObject* globalObject, FFI::FFIContext* context, uint32_t typeTag, EncodedJSValue value, uint64_t* slot))

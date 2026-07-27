@@ -307,6 +307,7 @@ void emitBoxReturnValue(CCallHelpers& jit, VM& vm, JSGlobalObject* globalObject,
         jit.load64(returnSlot, GPRInfo::argumentGPR2);
         jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(type)), GPRInfo::argumentGPR1);
         jit.move(CCallHelpers::TrustedImmPtr(globalObject), GPRInfo::argumentGPR0);
+        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::argumentGPR3);
         jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationFFIBoxSlot)), callTargetGPR);
         jit.call(callTargetGPR, OperationPtrTag);
         exceptionChecks.append(jit.emitExceptionCheck(vm));

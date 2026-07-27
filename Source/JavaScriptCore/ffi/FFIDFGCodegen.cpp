@@ -362,7 +362,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     move(TrustedImmPtr(invokeThunk.taggedPtr()), GPRInfo::nonArgGPR0);
     call(GPRInfo::nonArgGPR0, OperationPtrTag);
 
-    if (needsArenaBracket) {
+    if (needsArenaBracket && signature.returnType() != FFI::Type::CString) {
         setupArguments<decltype(operationFFIArenaExit)>(TrustedImmPtr(frozenGlobalObject));
         appendCall(operationFFIArenaExit);
     }
@@ -461,7 +461,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
         GPRReg slotValueGPR = slotValue.gpr();
         GPRReg resultGPR = result.gpr();
         load64(returnSlot, slotValueGPR);
-        callOperation(operationFFIBoxSlot, resultGPR, TrustedImmPtr(frozenGlobalObject), TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(signature.returnType()))), slotValueGPR);
+        callOperation(operationFFIBoxSlot, resultGPR, TrustedImmPtr(frozenGlobalObject), TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(signature.returnType()))), slotValueGPR, TrustedImm32(needsArenaBracket && signature.returnType() == FFI::Type::CString ? 1 : 0));
         jsValueResult(resultGPR, node);
         break;
     }

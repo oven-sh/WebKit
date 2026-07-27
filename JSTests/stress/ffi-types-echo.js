@@ -128,7 +128,8 @@ function main() {
             [2 ** 40, 2 ** 40], [0.9, null], [-0, null], [65536.7, 65536],
         ]],
         [echoCString, "cstring", [
-            [0, null], [null, null], [undefined, null], [4096, 4096], [8, 8],
+            [0, null], [null, null], [undefined, null],
+            ["hello", "hello"], ["", ""], ["\u00e9\u2603 utf8", "\u00e9\u2603 utf8"],
         ]],
         [echoNapiValue, "napi_value", [
             [0, 0], [42, 42], [-0, -0], [NaN, NaN], [1.5, 1.5], [undefined, undefined], [null, null], [true, true],

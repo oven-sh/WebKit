@@ -147,6 +147,14 @@ void* JSFFICallback::nativeEntrypoint() const
     return untagCFunctionPtr<void*, JITThunkPtrTag>(m_entryCode.code().taggedPtr());
 }
 
+const char* JSFFICallback::setReturnCString(const CString& string)
+{
+    m_returnCString.clear();
+    m_returnCString.append(string.span());
+    m_returnCString.append('\0');
+    return m_returnCString.begin();
+}
+
 void JSFFICallback::close()
 {
     if (m_closed)

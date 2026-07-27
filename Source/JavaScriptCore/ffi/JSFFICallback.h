@@ -63,6 +63,7 @@ public:
     bool isClosed() const { return m_closed; }
 
     JSObject* callable() const { return m_callable.get(); }
+    const char* setReturnCString(const CString&);
     FFI::Signature& signature() const { return m_signature.get(); }
     bool isThreadsafe() const { return m_threadsafe; }
     void* embedderContext() const { return m_embedderContext; }
@@ -93,6 +94,7 @@ private:
 
     WriteBarrier<JSObject> m_callable;
     Ref<FFI::Signature> m_signature;
+    Vector<char, 64> m_returnCString;
     MacroAssemblerCodeRef<JITThunkPtrTag> m_entryCode;
     void* m_embedderContext { nullptr }; // opaque, embedder-owned; passed to threadsafe dispatch
     std::atomic<unsigned> m_threadsafeState { 0 }; // closedBit | pending-invocation count (see above)

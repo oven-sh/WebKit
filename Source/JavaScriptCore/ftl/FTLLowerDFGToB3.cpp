@@ -15549,11 +15549,11 @@ IGNORE_CLANG_WARNINGS_END
             LValue boxed;
             if (needsArena) {
                 callPreflight();
-                LValue result = m_out.call(toOperationType(Int64), m_out.operation(operationFFIBoxSlot), weakPointer(globalObject), typeTag, slotValue);
+                LValue result = m_out.call(toOperationType(Int64), m_out.operation(operationFFIBoxSlot), weakPointer(globalObject), typeTag, slotValue, m_out.constInt32(0));
                 boxed = m_out.extract(result, 0);
                 exceptionCheckWithArenaExit(m_out.extract(result, 1));
             } else
-                boxed = vmCall(Int64, operationFFIBoxSlot, weakPointer(globalObject), typeTag, slotValue);
+                boxed = vmCall(Int64, operationFFIBoxSlot, weakPointer(globalObject), typeTag, slotValue, m_out.constInt32(0));
             setJSValue(boxed);
             break;
         }

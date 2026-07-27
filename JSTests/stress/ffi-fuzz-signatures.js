@@ -116,7 +116,7 @@ function main() {
             return bits <= 9007199254740991n ? Number(bits) : bits;
         },
     };
-    reference["cstring"] = reference["ptr"];
+    reference["cstring"] = value => (value === null || value === undefined ? null : String(value));
 
     // ---- Value generators (per FFI type).
     const int32Edges = [0, 1, -1, 2147483647, -2147483648, 2147483646, -2147483647, 65535, 65536, -65536, 255, 256, 127, 128, -128, -129, 32767, 32768, -32768];
@@ -148,7 +148,15 @@ function main() {
             return random() < 0.8 ? pick(doubleEdges) : randomIntBits() / (1 + Math.floor(random() * 7));
         case "f32":
             return random() < 0.7 ? pick(doubleEdges) : randomIntBits() / 8;
-        case "ptr": case "cstring":
+        case "cstring":
+            switch (Math.floor(random() * 5)) {
+            case 0: return pick([null, undefined]);
+            case 1: return "";
+            case 2: return pick(["a", "hello", "with space", "0123456789".repeat(20)]);
+            case 3: return pick(["h\u00e9!", "\u2603 snowman", "\u{1F600} astral", "mix\u00e9d\u2603up"]);
+            default: return String(randomIntBits());
+            }
+        case "ptr":
             switch (Math.floor(random() * 4)) {
             case 0: return pick([0, null, undefined, 4096, 65535, 0x7fffffff, -1, -4096]);
             case 1: return pick([2 ** 40, 2 ** 47 - 1, 140737488355327, 0x00007fffdeadbee0]);
@@ -176,7 +184,7 @@ function main() {
         "f64": bind("ffi_echo_f64", ["f64"], "f64"),
         "f32": bind("ffi_echo_f32", ["f32"], "f32"),
         "ptr": bind("ffi_echo_ptr", ["ptr"], "ptr"),
-        "cstring": bind("ffi_ptr_identity", ["cstring"], "cstring"),
+        "cstring": bind("ffi_echo_cstring", ["cstring"], "cstring"),
     };
     // Echo semantics: the native fixture returns its argument unchanged, so the
     // result is the JS->native argument conversion followed by the native->JS
@@ -187,8 +195,9 @@ function main() {
         case "bool":
             return asArgument; // already a boolean
         case "ptr":
-        case "cstring":
             return asArgument; // null or number
+        case "cstring":
+            return asArgument === null || asArgument === undefined ? null : String(asArgument);
         default:
             return asArgument;
         }

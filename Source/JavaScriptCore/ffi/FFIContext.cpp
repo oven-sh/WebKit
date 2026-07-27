@@ -43,9 +43,16 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadsafeInvocation);
 
 FFIContext::ThreadsafeDispatchFunction FFIContext::s_threadsafeDispatch { nullptr };
 
-FFIContext::FFIContext() = default;
+FFIContext::FFIContext(VM& vm)
+    : m_vm(vm)
+{
+    m_vm.heap.addObserver(this);
+}
 
-FFIContext::~FFIContext() = default;
+FFIContext::~FFIContext()
+{
+    m_vm.heap.removeObserver(this);
+}
 
 void FFIContext::setThreadsafeDispatch(ThreadsafeDispatchFunction fn)
 {
@@ -112,8 +119,6 @@ const CString& FFIContext::cacheUTF8(StringImpl& impl, CString&& utf8)
 
 void StringArena::enter()
 {
-    if (!m_depth)
-        reset();
     ++m_depth;
 }
 

@@ -29,6 +29,7 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
+#include "HeapObserver.h"
 #include "JSExportMacros.h"
 #include "WriteBarrier.h"
 #include <span>
@@ -111,11 +112,19 @@ public:
     void exit()
     {
         ASSERT(m_depth);
-        --m_depth;
+        if (!--m_depth)
+            reset();
     }
     unsigned depth() const { return m_depth; }
 
     JS_EXPORT_PRIVATE std::span<char> allocate(size_t bytes);
+    void shrinkWhenIdle()
+    {
+        if (m_depth)
+            return;
+        m_offsetInLastChunk = 0;
+        m_chunks.clear();
+    }
 
 private:
     void reset();
@@ -130,12 +139,15 @@ private:
 
 using ArenaScope = StringArena::Scope;
 
-class FFIContext {
+class FFIContext final : public HeapObserver {
     WTF_MAKE_TZONE_ALLOCATED(FFIContext);
     WTF_MAKE_NONCOPYABLE(FFIContext);
 public:
-    JS_EXPORT_PRIVATE FFIContext();
+    JS_EXPORT_PRIVATE explicit FFIContext(VM&);
     JS_EXPORT_PRIVATE ~FFIContext();
+
+    void willGarbageCollect() final { }
+    void didGarbageCollect(CollectionScope) final { m_arena.shrinkWhenIdle(); }
 
     StringArena& arena() { return m_arena; }
     StringArena& stringArena() { return m_arena; }
@@ -163,6 +175,7 @@ private:
         uint64_t lastUse { 0 };
     };
 
+    VM& m_vm;
     StringArena m_arena;
     Vector<UTF8CacheEntry, utf8CacheCapacity> m_utf8Cache;
     uint64_t m_utf8CacheClock { 0 };

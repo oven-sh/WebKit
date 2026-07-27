@@ -114,19 +114,14 @@ function main() {
     check(strlen(cstringBytes), 3n, "strlen of a Uint8Array cstring");
     check(strlen(cstringBytes.subarray(1)), 2n, "strlen of a Uint8Array subarray cstring");
 
-    // ---- cstring returns and $vm.ffiCString.
     const utf8Bytes = new Uint8Array([0x68, 0xc3, 0xa9, 0x21, 0x00]); // "hé!"
-    const echoedAddress = echoCString(utf8Bytes);
-    check(echoedAddress, ptrIdentity(utf8Bytes), "ffi_echo_cstring returns the same pointer");
-    check($vm.ffiCString(echoedAddress), "hé!", "$vm.ffiCString decodes UTF-8");
+    check(echoCString(utf8Bytes), "hé!", "ffi_echo_cstring decodes the returned UTF-8 to a string");
+    check($vm.ffiCString(ptrIdentity(utf8Bytes)), "hé!", "$vm.ffiCString decodes UTF-8");
     check($vm.ffiCString(ptrIdentity(cstringBytes)), "ffi", "$vm.ffiCString stops at NUL");
-    check(echoCString(0), null, "ffi_echo_cstring(0)");
+    check(echoCString(0), null, "ffi_echo_cstring(0) is null");
+    check(echoCString("round trip"), "round trip", "a JS string round-trips through cstring");
     check(echoCString(null), null, "ffi_echo_cstring(null)");
-    // A JS string argument yields a call-scoped copy: non-null pointer.
-    const copiedAddress = echoCString("transient");
-    check(typeof copiedAddress, "number", "cstring copy address typeof");
-    if (!(copiedAddress > 0))
-        throw new Error("expected a positive cstring copy address, got " + copiedAddress);
+    check(echoCString("transient"), "transient", "arena-copied cstring argument round-trips");
 
     // ---- ffi_high_ptr: full 47-bit user-space pointer round trip.
     check(highPtr(), 0x00007fffdeadbee0, "ffi_high_ptr()");

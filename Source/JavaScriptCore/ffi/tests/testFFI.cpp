@@ -1267,7 +1267,12 @@ static void testConversions()
     FFI_CHECK(slotToJS(T::Function, 0).isNull());
     FFI_CHECK(slotToJS(T::Buffer, 0).isNull());
     expectSlotToNumber(T::Pointer, 0x00007fffdeadbee0ull, static_cast<double>(0x00007fffdeadbee0ull));
-    expectSlotToNumber(T::CString, 4096, 4096);
+    {
+        static const char kHello[] = "hello";
+        JSValue decoded = slotToJS(T::CString, reinterpret_cast<uintptr_t>(kHello));
+        FFI_CHECK(decoded.isString());
+        FFI_CHECK(asString(decoded)->value(s_globalObject) == String::fromUTF8("hello"));
+    }
     expectSlotToNumber(T::Function, 1, 1);
     expectSlotToNumber(T::Buffer, 65536, 65536);
 
@@ -1433,7 +1438,12 @@ static uint64_t edgeBitsForType(FFI::Type type, WeakRandom& random)
     case FFI::Type::Bool:
         return random.getUint32(2);
     case FFI::Type::Pointer:
-    case FFI::Type::CString:
+    case FFI::Type::CString: {
+        static const char* const strings[] = { "", "a", "hello", "0123456789", "h\xc3\xa9!" };
+        if (!random.getUint32(6))
+            return 0;
+        return reinterpret_cast<uintptr_t>(strings[random.getUint32(std::size(strings))]);
+    }
     case FFI::Type::Function:
     case FFI::Type::Buffer:
     case FFI::Type::RESERVED_WasNapiEnv: {
@@ -1648,7 +1658,6 @@ static void testInvokeThunkDifferential()
     differentialCase("ffi_mix_7"_s, ffi_mix_7, { T::Pointer, T::Char, T::Pointer, T::Char, T::Pointer, T::Char, T::Pointer, T::Char, T::Pointer, T::Char }, T::Double, 60, random);
     differentialCase("ffi_mix_8"_s, ffi_mix_8, { T::Float, T::Double, T::Float, T::Double, T::Float, T::Double, T::Float, T::Double, T::Float, T::Double, T::Float, T::Double }, T::Double, 60, random);
     differentialCase("ffi_ptr_identity"_s, ffi_ptr_identity, { T::Pointer }, T::Pointer, 30, random);
-    differentialCase("ffi_ptr_identity(as cstring)"_s, ffi_ptr_identity, { T::CString }, T::CString, 20, random);
     differentialCase("ffi_high_ptr"_s, ffi_high_ptr, { }, T::Pointer, 4, random);
     differentialCase("ffi_align_probe_0"_s, ffi_align_probe_0, { }, T::Double, 8, random);
     differentialCase("ffi_align_probe_9"_s, ffi_align_probe_9, Vector<T>(FillWith { }, 9, T::Int32), T::Double, 12, random);
