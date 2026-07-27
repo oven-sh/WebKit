@@ -207,6 +207,46 @@ bool JSFFIFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, P
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
 
+// The intrinsic slots are {value, writable:false, enumerable:false, configurable:false}. Per
+// OrdinaryDefineOwnProperty (ValidateAndApplyPropertyDescriptor) a non-configurable property
+// accepts a descriptor only if it changes nothing: configurable/enumerable/writable must stay
+// false, it must remain a data property, and any [[Value]] must be SameValue as the current one.
+// Compatible descriptors succeed WITHOUT materializing an own property (no Structure transition,
+// which is the whole point of serving ptr/native from getOwnPropertySlot); anything else is
+// rejected.
+bool JSFFIFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    JSFFIFunction* thisObject = uncheckedDowncast<JSFFIFunction>(object);
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isIntrinsicFFIProperty(vm, propertyName)) [[likely]]
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+
+    bool compatible = true;
+    if (descriptor.configurablePresent() && descriptor.configurable())
+        compatible = false;
+    if (descriptor.enumerablePresent() && descriptor.enumerable())
+        compatible = false;
+    if (descriptor.isAccessorDescriptor())
+        compatible = false;
+    if (descriptor.writablePresent() && descriptor.writable())
+        compatible = false;
+    if (compatible && descriptor.value()) {
+        // The current value is what getOwnPropertySlot serves for this name.
+        JSValue current = propertyName == Identifier::fromString(vm, "ptr"_s)
+            ? FFI::pointerToJSValue(globalObject, reinterpret_cast<uint64_t>(thisObject->target()))
+            : JSValue(thisObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool same = sameValue(globalObject, descriptor.value(), current);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!same)
+            compatible = false;
+    }
+    if (compatible)
+        return true; // a valid no-op: nothing to store, no transition
+    return typeError(globalObject, scope, shouldThrow, "Attempting to change configurable attribute of unconfigurable property."_s);
+}
+
 void JSFFIFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     // Base (JSFunction) first: indexed keys are contributed by the ordinary machinery ahead of

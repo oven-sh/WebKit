@@ -29,8 +29,8 @@
 
 #include "FFISignature.h"
 #include "JSObject.h"
-#include <atomic>
 #include "MacroAssemblerCodeRef.h"
+#include <atomic>
 
 namespace JSC {
 

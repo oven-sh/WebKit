@@ -39,12 +39,12 @@
 #include "JSExportMacros.h"
 #include "WriteBarrier.h"
 #include <span>
-#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringImpl.h>

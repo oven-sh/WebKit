@@ -128,6 +128,12 @@ public:
     // must instead be the TypeError the property's own descriptor promises.
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+    // Without this, a compatible generic defineProperty (e.g. { enumerable: false }, a valid no-op)
+    // falls through validateAndApplyPropertyDescriptor to putDirect and MATERIALIZES an own "ptr",
+    // transitioning the Structure. Validate against the intrinsic's fixed attributes instead:
+    // incompatible changes are rejected per OrdinaryDefineOwnProperty, compatible ones succeed --
+    // and nothing is ever stored on the object.
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
 
     static constexpr ptrdiff_t offsetOfSignature() { return OBJECT_OFFSETOF(JSFFIFunction, m_signature); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(JSFFIFunction, m_target); }

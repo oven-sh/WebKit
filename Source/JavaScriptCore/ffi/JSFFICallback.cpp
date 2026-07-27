@@ -29,9 +29,9 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 #include "Error.h"
-#include "FFIConversions.h"
 #include "ExceptionHelpers.h"
 #include "FFICallbackThunk.h"
+#include "FFIConversions.h"
 #include "JSCInlines.h"
 #include "Options.h"
 #include <wtf/DataLog.h>
@@ -48,9 +48,10 @@ const ClassInfo JSFFICallback::s_info = { "FFICallback"_s, &Base::s_info, nullpt
 // names just the `ptr` / `threadsafe` own properties as the JS surface, but
 // row T's stress suite (JSTests/stress/ffi-callbacks.js) closes callbacks
 // from JS via `cb.close()` -- Bun-parity with JSCallback.prototype.close.
-// The engine therefore installs a `close` own function next to `ptr` in
-// finishCreation so every creator (BunFFI.cpp, $vm.ffiCallback, testFFI)
-// gets it; it forwards to JSFFICallback::close() and returns undefined.
+// The engine therefore exposes `close` on the callback PROTOTYPE (built by createPrototype and
+// installed as the structure's prototype), so every creator (BunFFI.cpp, $vm.ffiCallback,
+// testFFI) gets it without any own property; finishCreation putDirects only ptr/threadsafe. It
+// forwards to JSFFICallback::close() and returns undefined.
 static JSC_DECLARE_HOST_FUNCTION(ffiCallbackProtoFuncClose);
 JSC_DEFINE_HOST_FUNCTION(ffiCallbackProtoFuncClose, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
