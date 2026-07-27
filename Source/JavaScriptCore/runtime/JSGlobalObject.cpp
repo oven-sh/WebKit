@@ -2984,6 +2984,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContextData);
     visitor.append(thisObject->m_internalFieldTupleStructure);
+    visitor.append(thisObject->m_cachedLocaleCompareCollator);
 #endif
 
     visitor.append(thisObject->m_globalLexicalEnvironment);
@@ -3772,6 +3773,19 @@ void JSGlobalObject::queueMicrotaskSlow(VM& vm, QueuedTask&& task)
 void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
 {
     queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
+}
+
+IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(const String& locale) const
+{
+    if (IntlCollator* collator = m_cachedLocaleCompareCollator.get(); collator && m_cachedLocaleCompareLocale == locale)
+        return collator;
+    return nullptr;
+}
+
+void JSGlobalObject::setCachedLocaleCompareCollator(VM& vm, const String& locale, IntlCollator* collator)
+{
+    m_cachedLocaleCompareLocale = locale;
+    m_cachedLocaleCompareCollator.set(vm, this, collator);
 }
 #endif
 
