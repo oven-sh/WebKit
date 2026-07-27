@@ -183,13 +183,6 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 #endif
 }
 
-
-
-
-
-
-
-
 } // namespace JSC
 
 #endif // USE(BUN_JSC_ADDITIONS)
