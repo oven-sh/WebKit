@@ -26,9 +26,6 @@
 #include "config.h"
 #include "FFICallHost.h"
 
-#include "TopExceptionScope.h"
-
-
 #if USE(BUN_JSC_ADDITIONS)
 
 // See FFICallHost.h: the host path is compiled out on 32-bit exactly like
@@ -46,6 +43,7 @@
 #include "JSCInlines.h"
 #include "JSFFIFunction.h"
 #include "JSGlobalObject.h"
+#include "TopExceptionScope.h"
 
 namespace JSC {
 
