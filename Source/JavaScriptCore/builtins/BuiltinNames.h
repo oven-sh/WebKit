@@ -214,6 +214,7 @@ namespace JSC {
     macro(getOwnPropertyDescriptor) \
     macro(getOwnPropertyNames) \
     macro(getOwnPropertySymbols) \
+    macro(ownKeys) \
     macro(hasOwn) \
     macro(indexOf) \
     macro(pop) \

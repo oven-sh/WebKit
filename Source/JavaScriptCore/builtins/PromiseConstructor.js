@@ -45,6 +45,163 @@ function try(callback /*, ...args */)
     return promiseCapability.promise;
 }
 
+// https://tc39.es/proposal-await-dictionary/#sec-promise.allkeyed
+function allKeyed(promises)
+{
+    "use strict";
+
+    var promiseCapability = @newPromiseCapability(this);
+    var promiseResolve;
+    try {
+        promiseResolve = this.resolve;
+        if (!@isCallable(promiseResolve))
+            @throwTypeError("Promise resolve is not a function");
+        if (!@isObject(promises))
+            @throwTypeError("Promise.allKeyed requires that its argument is an object");
+    } catch (error) {
+        promiseCapability.reject.@call(@undefined, error);
+        return promiseCapability.promise;
+    }
+
+    var keys = [];
+    var values = [];
+    var remainingElementsCount = 1;
+    var index = 0;
+
+    function newResolveElement(currentIndex)
+    {
+        var alreadyCalled = false;
+        return (argument) => {
+            if (alreadyCalled)
+                return @undefined;
+            alreadyCalled = true;
+            @putByValDirect(values, currentIndex, argument);
+            if (!--remainingElementsCount) {
+                var result = @Object.@create(null);
+                for (var i = 0; i < keys.length; ++i)
+                    @putByValDirect(result, keys[i], values[i]);
+                promiseCapability.resolve.@call(@undefined, result);
+            }
+            return @undefined;
+        };
+    }
+
+    try {
+        var allKeys = @Object.@ownKeys(promises);
+        for (var k = 0, length = allKeys.length; k < length; ++k) {
+            var key = allKeys[k];
+            var desc = @Object.@getOwnPropertyDescriptor(promises, key);
+            if (desc === @undefined || !desc.enumerable)
+                continue;
+            var value = promises[key];
+            @putByValDirect(keys, index, key);
+            @putByValDirect(values, index, @undefined);
+            var nextPromise = promiseResolve.@call(this, value);
+            var resolveElement = newResolveElement(index);
+            ++remainingElementsCount;
+            nextPromise.then(resolveElement, promiseCapability.reject);
+            ++index;
+        }
+        if (!--remainingElementsCount) {
+            var result = @Object.@create(null);
+            for (var i = 0; i < keys.length; ++i)
+                @putByValDirect(result, keys[i], values[i]);
+            promiseCapability.resolve.@call(@undefined, result);
+        }
+    } catch (error) {
+        promiseCapability.reject.@call(@undefined, error);
+    }
+
+    return promiseCapability.promise;
+}
+
+// https://tc39.es/proposal-await-dictionary/#sec-promise.allsettledkeyed
+function allSettledKeyed(promises)
+{
+    "use strict";
+
+    var promiseCapability = @newPromiseCapability(this);
+    var promiseResolve;
+    try {
+        promiseResolve = this.resolve;
+        if (!@isCallable(promiseResolve))
+            @throwTypeError("Promise resolve is not a function");
+        if (!@isObject(promises))
+            @throwTypeError("Promise.allSettledKeyed requires that its argument is an object");
+    } catch (error) {
+        promiseCapability.reject.@call(@undefined, error);
+        return promiseCapability.promise;
+    }
+
+    var keys = [];
+    var values = [];
+    var remainingElementsCount = 1;
+    var index = 0;
+
+    function newResolveRejectElements(currentIndex)
+    {
+        var alreadyCalled = false;
+        return [
+            (0, (argument) => {
+                if (alreadyCalled)
+                    return @undefined;
+                alreadyCalled = true;
+                var entry = { status: "fulfilled", value: argument };
+                @putByValDirect(values, currentIndex, entry);
+                if (!--remainingElementsCount) {
+                    var result = @Object.@create(null);
+                    for (var i = 0; i < keys.length; ++i)
+                        @putByValDirect(result, keys[i], values[i]);
+                    promiseCapability.resolve.@call(@undefined, result);
+                }
+                return @undefined;
+            }),
+            (0, (argument) => {
+                if (alreadyCalled)
+                    return @undefined;
+                alreadyCalled = true;
+                var entry = { status: "rejected", reason: argument };
+                @putByValDirect(values, currentIndex, entry);
+                if (!--remainingElementsCount) {
+                    var result = @Object.@create(null);
+                    for (var i = 0; i < keys.length; ++i)
+                        @putByValDirect(result, keys[i], values[i]);
+                    promiseCapability.resolve.@call(@undefined, result);
+                }
+                return @undefined;
+            }),
+        ];
+    }
+
+    try {
+        var allKeys = @Object.@ownKeys(promises);
+        for (var k = 0, length = allKeys.length; k < length; ++k) {
+            var key = allKeys[k];
+            var desc = @Object.@getOwnPropertyDescriptor(promises, key);
+            if (desc === @undefined || !desc.enumerable)
+                continue;
+            var value = promises[key];
+            @putByValDirect(keys, index, key);
+            @putByValDirect(values, index, @undefined);
+            var nextPromise = promiseResolve.@call(this, value);
+            var elements = newResolveRejectElements(index);
+            ++remainingElementsCount;
+            nextPromise.then(elements[0], elements[1]);
+            ++index;
+        }
+        if (!--remainingElementsCount) {
+            var result = @Object.@create(null);
+            for (var i = 0; i < keys.length; ++i)
+                @putByValDirect(result, keys[i], values[i]);
+            promiseCapability.resolve.@call(@undefined, result);
+        }
+    } catch (error) {
+        promiseCapability.reject.@call(@undefined, error);
+    }
+
+    return promiseCapability.promise;
+}
+
 @nakedConstructor
 function Promise(executor)
 {
