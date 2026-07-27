@@ -31,7 +31,6 @@ function check(actual, expected, message) {
         throw new Error(message + ": expected " + String(expected) + " but got " + String(actual));
 }
 
-// FFI call saw" against the view's current backing store.
 function currentPtr(view) { return identity(view); }
 
 function main() {

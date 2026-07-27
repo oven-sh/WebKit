@@ -115,7 +115,6 @@ constexpr ASCIILiteral name(Type type)
     return "invalid"_s;
 }
 
-
 inline std::optional<Type> parseType(StringView string)
 {
     if (string == "char"_s)

@@ -139,6 +139,7 @@ JS_EXPORT_PRIVATE uint64_t ffi_call_cb_ret_u64(uint64_t (*cb)(void));
 JS_EXPORT_PRIVATE int32_t ffi_call_cb_ret_bool(bool (*cb)(void)); // returns 10 if the callback returned true, else 20
 JS_EXPORT_PRIVATE float ffi_call_cb_ret_f32(float (*cb)(void));
 JS_EXPORT_PRIVATE double ffi_call_cb_ret_f64(double (*cb)(void));
+JS_EXPORT_PRIVATE const char* ffi_call_cb_ret_cstring(const char* (*cb)(void));
 JS_EXPORT_PRIVATE void* ffi_call_cb_ret_ptr(void* (*cb)(void));
 JS_EXPORT_PRIVATE uint32_t ffi_call_cb_then_read_u32(uint32_t (*cb)(void), uint32_t* p); // calls cb() (which may GC), then returns *p
 

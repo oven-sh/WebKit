@@ -967,6 +967,7 @@ private:
     {
         if (op == TailCall) {
             if (allInlineFramesAreTailCalls())
+
                 return addCallWithoutSettingResult(op, opInfo, callee, argCount, registerOffset, OpInfo());
             op = TailCallInlinedCaller;
         }
@@ -1691,6 +1692,7 @@ bool ByteCodeParser::handleRecursiveTailCall(Node* callTargetNode, CallVariant c
 
         // We must set the callee to the right value
         if (!stackEntry->m_inlineCallFrame)
+
             addToGraph(SetCallee, callTargetNode);
         else if (stackEntry->m_inlineCallFrame->isClosureCall)
             setDirect(remapOperand(stackEntry->m_inlineCallFrame, CallFrameSlot::callee), callTargetNode, NormalSet);
@@ -2294,6 +2296,7 @@ bool ByteCodeParser::handleVarargsInlining(Node* callTargetNode, Operand result,
     // calls. The prediction propagator won't be of any help because LoadVarargs obscures the data flow,
     // and there are no callsite value profiles and native function won't have callee value profiles for
     // those arguments. Even worse, if the intrinsic decides to exit, it won't really have anywhere to
+
     // exit to: LoadVarargs is effectful and it's part of the op_call_varargs, so we can't exit without
     // calling LoadVarargs twice.
     inlineCall(callTargetNode, result, callVariant, registerOffset, maxArgumentCountIncludingThis, kind, nullptr, insertChecks);
@@ -5704,6 +5707,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
     return CallOptimizationResult::DidNothing;
 }
 
+
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DOMJIT::Signature* signature, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, const ChecksFunctor& insertChecks)
 {
@@ -5833,6 +5837,7 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
 
         return true;
     }
+
 
     case TypedArrayByteOffsetIntrinsic: {
         bool mayBeLargeTypedArray = !isInt32Speculation(prediction) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow);

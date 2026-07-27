@@ -24,10 +24,9 @@
  */
 
 #include "config.h"
+#include "FFISignature.h"
 
 #if USE(BUN_JSC_ADDITIONS)
-
-#include "FFISignature.h"
 
 #include "Options.h"
 #include <mutex>

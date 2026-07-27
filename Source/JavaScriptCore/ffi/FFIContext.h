@@ -98,7 +98,6 @@ public:
             m_arena.exit();
         }
 
-
     private:
         StringArena& m_arena;
     };
@@ -134,7 +133,6 @@ private:
     size_t m_offsetInLastChunk { 0 };
     unsigned m_depth { 0 };
 };
-
 
 class FFIContext final : public HeapObserver {
     WTF_MAKE_TZONE_ALLOCATED(FFIContext);

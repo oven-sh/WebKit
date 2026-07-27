@@ -365,7 +365,8 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     if (needsArenaBracket && signature.returnType() != FFI::Type::CString) {
         setupArguments<decltype(operationFFIArenaExit)>(TrustedImmPtr(frozenGlobalObject));
         appendCall(operationFFIArenaExit);
-    }
+    } else if (needsArenaBracket)
+        emitArenaExitIfExceptionPending();
 
     exceptionCheck();
 

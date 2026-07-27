@@ -172,8 +172,9 @@ SpeculatedType speculatedResultTypeForCallFFI(DFG::Node* node)
     case Type::Int64Fast:
     case Type::Uint64Fast:
         return SpecBytecodeNumber | SpecHeapBigInt;
-    case Type::Pointer:
     case Type::CString:
+        return SpecString | SpecOther;
+    case Type::Pointer:
     case Type::Function:
     case Type::Buffer:
         return SpecBytecodeNumber | SpecOther | SpecBigInt;

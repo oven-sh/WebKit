@@ -24,10 +24,9 @@
  */
 
 #include "config.h"
+#include "FFIContext.h"
 
 #if USE(BUN_JSC_ADDITIONS)
-
-#include "FFIContext.h"
 
 #include "JSCJSValueInlines.h"
 #include "JSFFICallback.h"

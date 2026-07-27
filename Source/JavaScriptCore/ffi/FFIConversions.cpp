@@ -24,12 +24,11 @@
  */
 
 #include "config.h"
+#include "FFIConversions.h"
 
 #if USE(BUN_JSC_ADDITIONS)
 
 #if USE(JSVALUE64)
-
-#include "FFIConversions.h"
 
 #include "CallFrame.h"
 #include "Error.h"

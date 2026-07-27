@@ -396,6 +396,7 @@ public:
                     default:
                         DFG_CRASH(m_graph, nullptr, "Bad flush format for argument");
                         break;
+
                     }
                 }
             }
@@ -3005,6 +3006,7 @@ private:
 
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
         patchpoint->appendSomeRegister(left);
+
         patchpoint->appendSomeRegister(right);
         patchpoint->append(m_notCellMask, ValueRep::lateReg(GPRInfo::notCellMaskRegister));
         patchpoint->append(m_numberTag, ValueRep::lateReg(GPRInfo::numberTagRegister));
@@ -6200,6 +6202,7 @@ IGNORE_CLANG_WARNINGS_END
                 GPRReg scratch1GPR = params.gpScratch(0);
                 GPRReg scratch2GPR = params.gpScratch(1);
 
+
                 jit.loadTypedArrayLength(baseGPR, resultGPR, scratch1GPR, scratch2GPR, typedArrayType);
             });
             return patchpoint;
@@ -7560,6 +7563,7 @@ IGNORE_CLANG_WARNINGS_END
             }
 
             LBasicBlock inBoundCase = m_out.newBlock();
+
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock holeCase = m_out.newBlock();
             LBasicBlock doStoreCase = m_out.newBlock();
@@ -8979,6 +8983,7 @@ IGNORE_CLANG_WARNINGS_END
                 if (isArrayIncludes)
                     setBoolean(vmCall(Int32, operationArrayIncludesValueInt32, weakPointer(globalObject), storage, lowJSValue(searchElementEdge), startIndex));
                 else
+
                     setInt32(vmCall(Int32, operationArrayIndexOfValueInt32, weakPointer(globalObject), storage, lowJSValue(searchElementEdge), startIndex));
                 return;
             default:
@@ -9421,6 +9426,7 @@ IGNORE_CLANG_WARNINGS_END
                     return JSFunction::selectStructureForNewFuncExp(globalObject, m_node->castOperand<FunctionExecutable*>());
                 default:
                     RELEASE_ASSERT_NOT_REACHED();
+
                 }
             }());
 
@@ -11418,6 +11424,7 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock notNumber = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
+
 
         ValueFromBlock fastResult = m_out.anchor(value);
         m_out.branch(isNumber(value, provenType(m_node->child1())), unsure(continuation), unsure(notNumber));
@@ -14626,6 +14633,7 @@ IGNORE_CLANG_WARNINGS_END
         case TailCallForwardVarargsInlinedCaller:
         case ConstructForwardVarargs:
             forwarding = true;
+
             break;
         default:
             DFG_CRASH(m_graph, node, "bad node type");
@@ -15334,6 +15342,7 @@ IGNORE_CLANG_WARNINGS_END
                         directOperand = value;
                     else
                         m_out.storeDouble(value, slot);
+
                 }
                 break;
             }
@@ -18468,6 +18477,7 @@ IGNORE_CLANG_WARNINGS_END
                 speculateAndJump(continuation, LoadFromHole, noValue(), nullptr, m_out.logicalNot(notHole));
 
             m_out.appendTo(slowCase, continuation);
+
             ValueFromBlock slowResult = m_out.anchor(
                 m_out.notZero64(vmCall(Int64, slowPathOperation, weakPointer(globalObject), base, index)));
             m_out.jump(continuation);
@@ -19175,6 +19185,7 @@ IGNORE_CLANG_WARNINGS_END
                 CCallHelpers::Call slowPathCall;
                 auto operation = ecmaMode.isStrict() ? operationPutByValStrictOptimize : operationPutByValSloppyOptimize;
                 if (Options::useHandlerICInFTL()) {
+
                     jit.move(CCallHelpers::TrustedImmPtr(generator->propertyCache()), propertyCacheGPR);
                     downcast<HandlerPropertyInlineCache>(*generator->propertyCache()).m_slowOperation = operation;
                     slowPathCall = callOperation(

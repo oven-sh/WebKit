@@ -32,8 +32,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <wtf/Threading.h>
 #include <wtf/Compiler.h>
+#include <wtf/Threading.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -343,6 +343,8 @@ uint64_t ffi_call_cb_ret_u64(uint64_t (*cb)(void)) { return cb(); }
 int32_t ffi_call_cb_ret_bool(bool (*cb)(void)) { return cb() ? 10 : 20; }
 float ffi_call_cb_ret_f32(float (*cb)(void)) { return cb(); }
 double ffi_call_cb_ret_f64(double (*cb)(void)) { return cb(); }
+const char* ffi_call_cb_ret_cstring(const char* (*cb)(void)) { return cb(); }
+
 void* ffi_call_cb_ret_ptr(void* (*cb)(void)) { return cb(); }
 
 uint32_t ffi_call_cb_then_read_u32(uint32_t (*cb)(void), uint32_t* p)
@@ -774,6 +776,7 @@ std::span<const FFIFixtureEntry> ffiTestFixtures()
         FFI_FIXTURE(ffi_call_cb_ret_bool),
         FFI_FIXTURE(ffi_call_cb_ret_f32),
         FFI_FIXTURE(ffi_call_cb_ret_f64),
+        FFI_FIXTURE(ffi_call_cb_ret_cstring),
         FFI_FIXTURE(ffi_call_cb_ret_ptr),
         FFI_FIXTURE(ffi_call_cb_then_read_u32),
         FFI_FIXTURE(ffi_canary_call),

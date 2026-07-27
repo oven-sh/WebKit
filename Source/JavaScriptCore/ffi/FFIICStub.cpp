@@ -39,10 +39,10 @@
 #include "GPRInfo.h"
 #include "JITCode.h"
 #include "JITOperations.h"
-#include "JSCPtrTag.h"
 #include "JSArrayBufferView.h"
 #include "JSBigInt.h"
 #include "JSCJSValueInlines.h"
+#include "JSCPtrTag.h"
 #include "JSGlobalObject.h"
 #include "JSType.h"
 #include "LinkBuffer.h"
@@ -426,7 +426,6 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
 
     return adoptRef(new DirectJITCode(codeRef, codeRef.code(), JITType::HostCallThunk, NoIntrinsic));
 }
-
 
 #endif // USE(JSVALUE64) && !ENABLE(JIT_CAGE)
 

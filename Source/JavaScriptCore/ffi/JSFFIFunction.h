@@ -77,8 +77,6 @@ public:
     bool isHostPathOnly() const { return !!m_hooks; }
     JITCode* icCode() const { return m_icCode.get(); }
 
-    static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(JSFFIFunction, m_target); }
-
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, Ref<FFI::Signature>&&, void* target, RefPtr<JITCode>&& icCode, const FFI::CallHooks* hooks);
 

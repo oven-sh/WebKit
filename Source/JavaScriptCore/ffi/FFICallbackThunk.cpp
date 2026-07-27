@@ -459,7 +459,6 @@ void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
 
     Signature& signature = callback->signature();
     FFIContext& context = globalObject->ffiContext();
-    StringArena::Scope arenaScope(context);
 
     std::span<const uint64_t> slots = invocation.slots();
     ASSERT(slots.size() == signature.argumentCount());

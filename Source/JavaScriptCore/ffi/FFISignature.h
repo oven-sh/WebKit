@@ -112,7 +112,6 @@ public:
 
     JS_EXPORT_PRIVATE Ref<Signature> intern(std::span<const Type> arguments, Type returnType);
 
-
 private:
     Lock m_lock;
     UncheckedKeyHashSet<Ref<Signature>, SignatureHash> m_signatures WTF_GUARDED_BY_LOCK(m_lock);

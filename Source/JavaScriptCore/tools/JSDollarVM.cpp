@@ -1077,6 +1077,7 @@ public:
 
     static DOMJITNode* create(VM& vm, Structure* structure)
     {
+
         DollarVMAssertScope assertScope;
         DOMJITNode* getter = new (NotNull, allocateCell<DOMJITNode>(vm)) DOMJITNode(vm, structure);
         getter->finishCreation(vm);
@@ -1182,6 +1183,7 @@ JSC_DEFINE_CUSTOM_GETTER(domJITGetterCustomGetter, (JSGlobalObject* globalObject
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
+
     auto scope = DECLARE_THROW_SCOPE(vm);
     DOMJITNode* thisObject = dynamicDowncast<DOMJITNode>(JSValue::decode(thisValue));
     if (!thisObject)
@@ -1701,6 +1703,7 @@ public:
 
     static JSTestCustomGetterSetter* create(VM& vm, JSGlobalObject*, Structure* structure)
     {
+
         DollarVMAssertScope assertScope;
         JSTestCustomGetterSetter* result = new (NotNull, allocateCell<JSTestCustomGetterSetter>(vm)) JSTestCustomGetterSetter(vm, structure);
         result->finishCreation(vm);
@@ -2288,6 +2291,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionFFISignatureString);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIRead);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIWrite);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICString);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIArenaDepth);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICompileCounts);
 #endif
 
@@ -4367,6 +4371,7 @@ JSC_DEFINE_HOST_FUNCTION(functionResetJITSizeStatistics, (JSGlobalObject* global
 
     VM& vm = globalObject->vm();
 
+
     if (!vm.jitSizeStatistics)
         return JSValue::encode(jsUndefined());
 
@@ -4807,6 +4812,12 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainThreadsafeCallbacks, (JSGlobalObject* glob
     return JSValue::encode(jsNumber(pending.size()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionFFIArenaDepth, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->ffiContext().arena().depth()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionFFIFixture, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -5154,6 +5165,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "ffiRead"_s, functionFFIRead, 2);
     addFunction(vm, allowIfNotFuzz, "ffiWrite"_s, functionFFIWrite, 3);
     addFunction(vm, allowIfNotFuzz, "ffiCString"_s, functionFFICString, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiArenaDepth"_s, functionFFIArenaDepth, 0);
     addFunction(vm, allowIfNotFuzz, "ffiCompileCounts"_s, functionFFICompileCounts, 0);
 #endif
 
