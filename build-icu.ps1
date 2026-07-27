@@ -28,6 +28,7 @@ if (-not $OutputDir) {
 
 $ICU_LIB_DIR = Join-Path $OutputDir "lib"
 $ICU_INCLUDE_DIR = Join-Path $OutputDir "include"
+$ICU_TZDATA_DIR = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "icu/tzdata"
 
 $ICU_SOURCE_URL = "https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-src.tgz"
 
@@ -224,7 +225,10 @@ if ((Test-Path $icupkg) -and $datFile) {
     $filtered = Join-Path $datFile.DirectoryName "icudt_filtered.dat"
     & $icupkg --auto_toc_prefix -r $rmList $datFile.FullName $filtered
     if ($LASTEXITCODE -ne 0) { throw "icupkg -r failed with exit code $LASTEXITCODE" }
-    Move-Item -Force $filtered $datFile.FullName
+    # Overlay the newer tzdata bundles from icu/tzdata (see icu/tzdata/README.md).
+    & $icupkg --auto_toc_prefix -a (Join-Path $ICU_TZDATA_DIR "tz.lst") -s $ICU_TZDATA_DIR $filtered $datFile.FullName
+    if ($LASTEXITCODE -ne 0) { throw "icupkg -a (tzdata overlay) failed with exit code $LASTEXITCODE" }
+    Remove-Item -Force $filtered
     # Force makedata to repackage from the filtered .dat.
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $ICU_SOURCE_DIR "data\out")
     & $msbuildPath $buildArgs
