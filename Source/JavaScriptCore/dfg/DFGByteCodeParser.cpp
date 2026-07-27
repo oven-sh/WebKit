@@ -971,7 +971,6 @@ private:
             op = TailCallInlinedCaller;
         }
 
-
         Node* call = addCallWithoutSettingResult(op, opInfo, callee, argCount, registerOffset, OpInfo(prediction), thisValueForEval, scopeForEval);
         if (result.isValid())
             set(result, call);
@@ -1696,7 +1695,6 @@ bool ByteCodeParser::handleRecursiveTailCall(Node* callTargetNode, CallVariant c
         else if (stackEntry->m_inlineCallFrame->isClosureCall)
             setDirect(remapOperand(stackEntry->m_inlineCallFrame, CallFrameSlot::callee), callTargetNode, NormalSet);
 
-
         // We must set the arguments to the right values
         if (!stackEntry->m_inlineCallFrame)
             addToGraph(SetArgumentCountIncludingThis, OpInfo(argumentCountIncludingThis));
@@ -2299,7 +2297,6 @@ bool ByteCodeParser::handleVarargsInlining(Node* callTargetNode, Operand result,
     // exit to: LoadVarargs is effectful and it's part of the op_call_varargs, so we can't exit without
     // calling LoadVarargs twice.
     inlineCall(callTargetNode, result, callVariant, registerOffset, maxArgumentCountIncludingThis, kind, nullptr, insertChecks);
-
 
     VERBOSE_LOG("Successful inlining (varargs, monomorphic).\nStack: ", currentCodeOrigin(), "\n");
     return true;
@@ -5004,7 +5001,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
-
         case DataViewSetInt8:
         case DataViewSetUint8:
         case DataViewSetInt16:
@@ -5737,7 +5733,6 @@ bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DO
     return true;
 }
 
-
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& variant, Node* thisNode, Node* unwrapped, const ChecksFunctor& insertChecks)
 {
@@ -5867,7 +5862,6 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
             mayBeResizableOrGrowableSharedTypedArray |= isResizableOrGrowableSharedTypedArrayIncludingDataView(structure->classInfoForCells());
             ASSERT(arrayType != Array::Generic);
         });
-
 
 #if USE(JSVALUE32_64)
         if (mayBeResizableOrGrowableSharedTypedArray)
@@ -9162,7 +9156,6 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     ASSERT(identifier.isSymbol());
                     FrozenValue* frozen = m_graph.freezeStrong(identifier.cell());
                     addToGraph(CheckIsConstant, OpInfo(frozen), brand);
-
 
                     // FIXME: We should include a MultiSetPrivateBrand to handle polymorphic cases
                     // https://bugs.webkit.org/show_bug.cgi?id=221570

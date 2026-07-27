@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,37 +42,14 @@ class JSFFIFunction;
 class JSGlobalObject;
 class JSObject;
 
-// Embedder-facing entry points for the engine's FFI machinery (JSFFIFunction / JSFFICallback).
-// Every function that can fail throws (TypeError, or OOM) on the global object's scope and
-// returns nullptr / std::nullopt, so callers only need an exception check.
-// FFI-SPEC-GAP: the spec (sections 1, 3, 6) names only signatureFromJS; the remaining entry
-// points (typeFromJS, createCallback) are this row's naming for the "creation
-// entry points" the row is required to provide.
 namespace FFI {
 
-// Parses a single FFI type from JS: either a canonical name / alias string ("i32", "int32_t",
-// "ptr", "void*", ...) or a numeric FFI::Type tag (0..20, wire-compatible with Bun's FFIType).
-// Throws a TypeError and returns std::nullopt for anything else.
 JS_EXPORT_PRIVATE std::optional<Type> typeFromJS(JSGlobalObject*, JSValue);
 
-// Reads a signature descriptor of the form { args: (string|number)[], returns: string|number }
-// (numbers are the FFI::Type tag values) and returns the interned Signature. A missing/undefined
-// `args` is an empty argument list; a missing/undefined `returns` is Type::Void (Bun parity). On
-// ANY validation failure (unknown type, Void argument, buffer return, the reserved tag, more than
-// Signature::maxArguments arguments) throws a TypeError and returns nullptr.
 JS_EXPORT_PRIVATE RefPtr<Signature> signatureFromJS(JSGlobalObject*, JSValue descriptor);
 
-// Creates a JSFFIFunction calling `target` with `signature`. `length` is the signature's JS
-// argument count and `name` its function name.
-// Functions are created via JSFFIFunction::create(vm, globalObject, structure, signature, target,
-// name, owner, hooks) directly; there is no separate embedder-facing creation wrapper.
-
-// Creates a JSFFICallback wrapping `callable` (which must be callable); its native entry point
-// is available via JSFFICallback::nativeEntrypoint() / the JS-visible read-only "ptr" property.
 class ThreadsafeInvocation;
 JS_EXPORT_PRIVATE JSFFICallback* createCallback(JSGlobalObject*, Ref<Signature>&&, JSObject* callable, bool threadsafe, void* embedderContext);
-// JS-thread half of a threadsafe callback: the embedder's queued task calls this to convert the
-// copied slots and invoke the callable. See FFIContext::setThreadsafeDispatch / ThreadsafeInvocation.
 JS_EXPORT_PRIVATE void runThreadsafeInvocation(ThreadsafeInvocation&);
 
 } // namespace FFI

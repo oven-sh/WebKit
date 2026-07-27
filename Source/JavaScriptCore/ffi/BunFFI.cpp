@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,8 +42,6 @@
 
 namespace JSC { namespace FFI {
 
-
-
 std::optional<Type> typeFromJS(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -51,7 +49,6 @@ std::optional<Type> typeFromJS(JSGlobalObject* globalObject, JSValue value)
 
     if (value.isNumber()) {
         double tag = value.asNumber();
-        // Numbers are the wire-compatible FFI::Type tag values (Bun's FFIType enum).
         if (tag == std::trunc(tag) && tag >= 0 && tag < numberOfTypes)
             return static_cast<Type>(static_cast<uint8_t>(tag));
         throwTypeError(globalObject, scope, makeString("Unknown FFI type tag "_s, tag));
@@ -85,9 +82,6 @@ RefPtr<Signature> signatureFromJS(JSGlobalObject* globalObject, JSValue descript
     Vector<Type, 16> argumentTypes;
     JSValue argsValue = object->get(globalObject, Identifier::fromString(vm, "args"_s));
     RETURN_IF_EXCEPTION(scope, nullptr);
-    // FFI-SPEC-GAP: a missing/undefined `args` means "no arguments" and a missing/undefined
-    // `returns` means Type::Void, matching Bun's descriptor defaults; the spec only describes the
-    // fully-populated shape.
     if (!argsValue.isUndefinedOrNull()) {
         JSObject* argsObject = argsValue.getObject();
         if (!argsObject) {
@@ -147,8 +141,6 @@ JSFFICallback* createCallback(JSGlobalObject* globalObject, Ref<Signature>&& sig
         return nullptr;
     }
 
-    // Callback thunks are JIT-generated (spec section 0.1); the identical requirement is also
-    // enforced by JSFFIFunction::create for the function direction.
     if (!Options::useJIT()) [[unlikely]] {
         throwTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
         return nullptr;
@@ -156,7 +148,6 @@ JSFFICallback* createCallback(JSGlobalObject* globalObject, Ref<Signature>&& sig
 
     RELEASE_AND_RETURN(scope, JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), callable, WTF::move(signature), threadsafe, embedderContext));
 }
-
 
 } } // namespace JSC::FFI
 

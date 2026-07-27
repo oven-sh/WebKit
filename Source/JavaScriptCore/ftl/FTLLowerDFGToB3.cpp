@@ -403,7 +403,6 @@ public:
             m_out.jump(firstDFGBasicBlock);
         }
 
-
         m_out.appendTo(m_handleExceptions, firstDFGBasicBlock);
         Box<CCallHelpers::Label> exceptionHandler = state->exceptionHandler;
         m_out.patchpoint(Void)->setGenerator(
@@ -3021,7 +3020,6 @@ private:
         patchpoint->setGenerator(
             [=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
-
 
                 Box<CCallHelpers::JumpList> exceptions =
                     exceptionHandle->scheduleExitCreation(params)->jumps(jit);
@@ -6218,7 +6216,6 @@ IGNORE_CLANG_WARNINGS_END
 #endif
     }
 
-
     void compileGetArrayLength()
     {
         switch (m_node->arrayMode().type()) {
@@ -7578,7 +7575,6 @@ IGNORE_CLANG_WARNINGS_END
                 Void, slowPathFunction,
                 weakPointer(globalObject), base, index, value);
             m_out.jump(continuation);
-
 
             if (arrayMode.isSlowPut()) {
                 m_out.appendTo(inBoundCase, doStoreCase);
@@ -8999,7 +8995,6 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
-
     void compileArrayPop()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
@@ -9441,7 +9436,6 @@ IGNORE_CLANG_WARNINGS_END
             isAsyncFunction ? allocateObject<JSAsyncFunction>(structure, m_out.intPtrZero, slowPath) :
             isAsyncGeneratorFunction ? allocateObject<JSAsyncGeneratorFunction>(structure, m_out.intPtrZero, slowPath) :
             allocateObject<JSFunction>(structure, m_out.intPtrZero, slowPath);
-
 
         // We don't need memory barriers since we just fast-created the function, so it
         // must be young.
@@ -11439,7 +11433,6 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(continuation, lastNext);
         setJSValue(m_out.phi(Int64, fastResult, slowResult));
     }
-
 
     void compileToStringOrCallStringConstructorOrStringValueOf()
     {
@@ -14649,7 +14642,6 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
 
-
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
 
         // Append the forms of the arguments that we will use before any clobbering happens.
@@ -15194,26 +15186,12 @@ IGNORE_CLANG_WARNINGS_END
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // CallFFI (docs/ffi/SPEC.md 10.5): marshal the typed DFG operands into the canonical slot
-    // buffer (spec 4), call the signature's invoke thunk with the JSC operation calling
-    // convention, and box the return slot. This never speculates or OSR-exits: typed edges are
-    // Known*Use / DoubleRepUse (the checks were inserted at conversion time, spec 10.2) and
-    // UntypedUse children convert out of line via operationFFIWriteSlot with an exception check.
-    // read.<t>(address, byteOffset): the DataView load with the base taken from the unboxed address
-    // operand -- no vector load, no bounds/detach checks (raw caller-owned memory), native endianness.
 
     template<bool DirectCall>
     void compileCallFFIImpl()
     {
         Node* node = m_node;
         JSFFIFunction* ffiFunction = node->ffiFunction();
-        // The callee's global object is the realm every tier uses for conversions, the string
-        // arena and TypeErrors: the C++ host path receives the callee's realm (spec 8.2), the
-        // IC stub bakes the creation global (spec 8.3) and the DFG codegen uses
-        // ffiFunction->globalObject() (spec 10.4) -- never the caller's semantic-origin realm.
-        // Its FFIContext already exists (JSFFIFunction::create materializes it on the mutator
-        // thread), so reading &globalObject->ffiContext() here on the compiler thread is a
-        // plain load, never a lazy creation.
         JSGlobalObject* globalObject = ffiFunction->globalObject();
         FFI::Signature& signature = node->ffiSignature();
         void* target = ffiFunction->target();
@@ -15224,11 +15202,6 @@ IGNORE_CLANG_WARNINGS_END
 
         CodePtr<JITThunkPtrTag> invokeThunk = signature.invokeThunk();
         if (!invokeThunk) {
-            // FFI-SPEC-GAP: spec 7.2 lets invoke thunk generation fail on executable memory exhaustion
-            // but spec 10.5 does not say what the FTL does when Signature::invokeThunk() is null. We
-            // follow the FTL's own allocation-failure protocol (FTL::State::allocationFailed, checked
-            // in FTLCompile.cpp) so the whole compilation is thrown out and the callee keeps running
-            // through the lower tiers, while still emitting valid IR for this node.
             m_ftlState.allocationFailed = true;
             setJSValue(m_out.constInt64(JSValue::encode(jsUndefined())));
             return;
@@ -15272,12 +15245,6 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
 
-        // Exception check for calls made inside the arena bracket: on the exception path we must
-        // call operationFFIArenaExit BEFORE the exception jump (spec 5), then dispatch the pending
-        // exception exactly like operationExceptionCheck() does for an ordinary operation.
-        // `exception` is the operation's returned exception register when the caller has one
-        // (operation return convention, jit/OperationResult.h), or nullptr to reload
-        // vm.exception (the invoke thunk is not an operation and returns nothing).
         auto exceptionCheckWithArenaExit = [&](LValue exception) {
             if (!exception)
                 exception = m_out.load64(m_vmValue, m_heaps.VM_exception);
@@ -15352,8 +15319,6 @@ IGNORE_CLANG_WARNINGS_END
                     slotValue = m_out.zeroExt(value, Int64);
                     break;
                 case FFI::Type::Bool:
-                    // toBoolean semantics on an int32: any non-zero value is true. Never and32(1),
-                    // which would mis-convert non-zero even values (spec 8.3 step 4 / 10.4 step 4).
                     slotValue = m_out.zeroExt(m_out.notEqual(value, m_out.int32Zero), Int64);
                     break;
                 default:
@@ -15371,7 +15336,6 @@ IGNORE_CLANG_WARNINGS_END
             }
             case KnownBooleanUse: {
                 DFG_ASSERT(m_graph, node, type == FFI::Type::Bool);
-                // The boolean payload is 0/1, which is exactly the canonical bool slot encoding (spec 4).
                 if constexpr (directCall)
                     directOperand = m_out.zeroExt(lowBoolean(edge), Int32);
                 else
@@ -15400,14 +15364,6 @@ IGNORE_CLANG_WARNINGS_END
                 break;
             }
             case UntypedUse: {
-                // i64 family, pointer family, jsvalue and anything the conversion left untyped.
-                // The pointer family gets the same INLINE fast paths as the DFG (parity keeps the
-                // tiers behaviorally identical, SPEC section 5): numbers, and typed-array /
-                // DataView views resolved straight to their data pointer. Everything else -- and
-                // every case whose semantics live in C++ (detached, shared/resizable, strings,
-                // ArrayBuffers, callbacks, null/undefined) -- converts out of line via
-                // operationFFIWriteSlot, which throws (never speculates) on a bad value: an
-                // exception check, not an OSR exit.
                 LValue value = lowJSValue(edge);
                 keepAliveValues.append(value);
                 LValue typeTag = m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(type)));
@@ -15448,7 +15404,6 @@ IGNORE_CLANG_WARNINGS_END
                     m_out.jump(cellCase); // buffer: only views convert inline; numbers throw in C++.
 
                 LBasicBlock lastNext = m_out.appendTo(int32Case, notInt32Case);
-                // int32 pointers are sign-extended (spec section 5, Bun parity).
                 m_out.store64(m_out.signExt32To64(unboxInt32(value)), slot);
                 m_out.jump(done);
 
@@ -15456,8 +15411,6 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.branch(isNumber(value, provenType(edge)), unsure(doubleCase), unsure(cellCase));
 
                 m_out.appendTo(doubleCase, cellCase);
-                // MacroAssembler::truncateDoubleToInt64 is FFI::doubleToInt64 by definition
-                // (spec section 5); the DFG emits the same truncation.
                 m_out.store64(m_out.doubleToInt64(unboxDouble(value)), slot);
                 m_out.jump(done);
 
@@ -15514,7 +15467,6 @@ IGNORE_CLANG_WARNINGS_END
                     // FPR -- load64 here would send it out in a GPR and the callee would read junk.
                     directOperands.append(m_out.loadDouble(slotPointer(i)));
                 } else if (type == FFI::Type::Float) {
-                    // Same, for f32: the slot's low 32 bits are the float (SPEC section 4).
                     directOperands.append(m_out.loadFloat(slotPointer(i)));
                 } else if (FFI::nativeSizeInBytes(type) <= 4) {
                     // UntypedUse for a <=32-bit integer parameter (i32/u32 now that the speculation
@@ -15561,9 +15513,6 @@ IGNORE_CLANG_WARNINGS_END
             default: returnLType = Int64; break; // i64/u64 (+fast), pointer family, jsvalue
             }
             LValue rawReturn = m_out.call(returnLType, callee, directOperands);
-            // Normalize into the canonical return slot exactly as the thunk's return
-            // normalization does (spec 4/7.2), so the boxing switch below reads a slot with the
-            // identical encoding regardless of which path made the call.
             TypedPointer returnSlot = slotPointer(nativeArgumentCount);
             switch (returnType) {
             case FFI::Type::Void:
@@ -15626,13 +15575,9 @@ IGNORE_CLANG_WARNINGS_END
             operationExceptionCheck<void>(nullptr);
         }
 
-        // Keep-alive (spec 10.5 step 6): cell edges (e.g. typed-array views passed as pointers)
-        // must stay live across the native call even though nothing consumes them afterwards.
         if (!keepAliveValues.isEmpty())
             ensureStillAliveHere(keepAliveValues);
 
-        // Box the return slot per the spec 5 native -> JS table. The node is NodeResultJS, so
-        // always setJSValue (matches compileCallWasm's result handling).
         TypedPointer returnSlot = slotPointer(nativeArgumentCount);
         switch (returnType) {
         case FFI::Type::Void:
@@ -15644,8 +15589,6 @@ IGNORE_CLANG_WARNINGS_END
         case FFI::Type::Int16:
         case FFI::Type::Uint16:
         case FFI::Type::Int32:
-            // The invoke thunk already sign/zero-extended the return slot to 64 bits (spec 4/7.2),
-            // so its low 32 bits are the exact int32 result.
             setJSValue(boxInt32(m_out.load32(returnSlot)));
             break;
         case FFI::Type::Uint32:
@@ -15653,12 +15596,9 @@ IGNORE_CLANG_WARNINGS_END
             setJSValue(strictInt52ToJSValue(m_out.load64(returnSlot)));
             break;
         case FFI::Type::Bool:
-            // The slot is exactly 0 or 1 (spec 4).
             setJSValue(boxBoolean(m_out.load32(returnSlot)));
             break;
         case FFI::Type::Double:
-            // Every native -> JS floating-point value is purifyNaN'ed exactly once, right where it
-            // is loaded from the slot, so a native NaN payload can never forge a JSValue (spec 5).
             setJSValue(boxDouble(m_out.purifyNaN(m_out.loadDouble(returnSlot))));
             break;
         case FFI::Type::Float:
@@ -15676,8 +15616,6 @@ IGNORE_CLANG_WARNINGS_END
         case FFI::Type::CString:
         case FFI::Type::Function:
         case FFI::Type::Buffer: {
-            // Exotic boxing (BigInt / MAX_INT52 fast paths / null pointer -> jsNull()) stays out of
-            // line in operationFFIBoxSlot (spec 5, 10.5 step 5).
             LValue slotValue = m_out.load64(returnSlot);
             LValue typeTag = m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(returnType)));
             LValue boxed;
@@ -15915,7 +15853,6 @@ IGNORE_CLANG_WARNINGS_END
                 knownLength = 0;
             return m_out.constInt32(knownLength);
         }
-
 
         // We need to perform the same logical operation as the code above, but through dynamic operations.
         if (!numberOfArgumentsToSkip)
@@ -19051,7 +18988,6 @@ IGNORE_CLANG_WARNINGS_END
         // If it's an Int32 and we use it as such this boxing will be DCE'd by b3 later anyway.
         lowJSValue(propertyNameEdge, ManualOperandSpeculation);
 
-
         LValue index = lowInt32(indexEdge);
         LValue mode = lowInt32(m_graph.varArgChild(m_node, 4));
         LValue enumerator = lowCell(m_graph.varArgChild(m_node, 5));
@@ -19758,7 +19694,6 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.storePtr(scope, fastObject, m_heaps.JSScope_next);
         m_out.storePtr(weakPointer(table), fastObject, m_heaps.JSSymbolTableObject_symbolTable);
-
 
         ValueFromBlock fastResult = m_out.anchor(fastObject);
         m_out.jump(continuation);
@@ -23631,7 +23566,6 @@ IGNORE_CLANG_WARNINGS_END
             m_out.add(
                 m_out.shl(m_out.zeroExt(preCapacity, pointerType()), m_out.constIntPtr(3)),
                 m_out.constIntPtr(sizeof(IndexingHeader))));
-
 
         m_out.store32(publicLength, butterfly, m_heaps.Butterfly_publicLength);
         m_out.store32(vectorLength, butterfly, m_heaps.Butterfly_vectorLength);

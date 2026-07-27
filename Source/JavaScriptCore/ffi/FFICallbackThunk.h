@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,12 +33,6 @@
 #include "MacroAssemblerCodeRef.h"
 #include "OperationResult.h"
 
-// The callback entry thunk is JIT-emitted 64-bit code; JIT-less, 32-bit,
-// JIT-operation-validation and non-{x86-64, arm64} builds compile the entry
-// thunk AND ffiCallbackDispatch out, and JSFFICallback creation throws (SPEC
-// section 14) -- the same predicate the invoke thunk, IC stub and
-// JSFFIFunction::create use, so both halves of bun:ffi agree on whether the
-// feature exists on a given build.
 #if ENABLE(JIT) && USE(JSVALUE64) && !ENABLE(JIT_CAGE) && (CPU(X86_64) || CPU(ARM64))
 #define FFI_CALLBACK_THUNK_SUPPORTED 1
 #else
@@ -53,27 +47,12 @@ class VM;
 namespace FFI {
 
 #if FFI_CALLBACK_THUNK_SUPPORTED
-// Generates the native-ABI (hostNativeCC()) entry thunk for `callback`
-// (SPEC section 9.2). The JSFFICallback* is baked as an immediate; the thunk
-// spills the incoming native arguments into the canonical slot buffer, calls
-// ffiCallbackDispatch through the JSC operation calling convention, and
-// returns the slot-encoded result per the signature's return type. Returns
-// a null MacroAssemblerCodeRef on executable-memory allocation failure.
 MacroAssemblerCodeRef<JITThunkPtrTag> generateCallbackThunk(VM&, JSFFICallback&);
 #endif // FFI_CALLBACK_THUNK_SUPPORTED
 
 } // namespace FFI
 
 #if FFI_CALLBACK_THUNK_SUPPORTED
-// The C++ half of a callback invocation (SPEC section 9.3), entered from the
-// native-ABI entry thunk -- i.e. ultimately from FOREIGN C code. It converts
-// the slot buffer to JSValues, calls the JS callable, and writes the return
-// slot. The EncodedJSValue result (the JS call's result) is only for
-// debuggability; the thunk reads the return slot, not the return register.
-// Declared through JSC_DECLARE_JIT_OPERATION solely to get the
-// JIT_OPERATION_ATTRIBUTES (SysV on Windows x86-64) calling convention. It is
-// compiled under the same predicate as the entry thunk (its only caller) --
-// the FFIConversions / FFIContext machinery it uses is USE(JSVALUE64)-only.
 JSC_DECLARE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback*, uint64_t*));
 #endif // FFI_CALLBACK_THUNK_SUPPORTED
 

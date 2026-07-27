@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,10 +38,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 
-// The invoke-thunk generator is JIT-only, 64-bit-only, and compiled out on
-// ENABLE(JIT_OPERATION_VALIDATION) builds (spec section 14); on any other
-// configuration Signature::invokeThunk() returns a null CodePtr and the
-// JSFFIFunction/JSFFICallback creation entry points throw instead.
 #if ENABLE(JIT) && USE(JSVALUE64) && !ENABLE(JIT_CAGE)
 #include "FFIInvokeThunk.h"
 #endif
@@ -51,9 +47,6 @@ namespace JSC { namespace FFI {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Signature);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SignatureRegistry);
 
-// Zero-initialized process-global counters (constant-initialized; no static
-// initializer). Read by $vm.ffiCompileCounts() and incremented by the
-// IC-stub generator, SpeculativeJIT::compileCallFFI and the FTL lowering.
 CompileCounts g_ffiCompileCounts;
 
 Signature::Signature(std::span<const Type> arguments, Type returnType)
@@ -121,17 +114,11 @@ String Signature::toString() const
 
 CodePtr<JITThunkPtrTag> Signature::invokeThunk()
 {
-    // Fast path (every host-path FFI call): the thunk is published once and never changes,
-    // so read it lock-free; only the one-time generation takes the lock (double-checked).
     if (auto* published = m_publishedInvokeThunk.load(std::memory_order_acquire)) [[likely]]
         return CodePtr<JITThunkPtrTag>::fromTaggedPtr(published);
 
     Locker locker { m_codeLock };
 #if ENABLE(JIT) && USE(JSVALUE64) && !ENABLE(JIT_CAGE)
-    // The thunk is signature-pure (target and slots are runtime parameters),
-    // so it is generated at most once per Signature and shared process-wide.
-    // A failed generation (executable-memory exhaustion) leaves the cache
-    // empty and is retried on the next call.
     if (!m_invokeThunkCode) {
         m_invokeThunkCode = generateInvokeThunk(*this);
         if (m_invokeThunkCode) {
@@ -153,12 +140,6 @@ SignatureRegistry& SignatureRegistry::singleton()
     return registry;
 }
 
-// Lookup key for the registry's hash-consing table: a (arguments, returnType)
-// shape hashed with the same function Signature::computeHash uses for the
-// stored entry, so a structurally equal shape lands in the same bucket chain
-// and matches without materializing a Signature (WTF HashSet::ensure
-// translator pattern; see wasm/WasmTypeSectionState.cpp
-// ProjectionLookupTranslator).
 struct SignatureShape {
     std::span<const Type> arguments;
     Type returnType;
@@ -177,10 +158,6 @@ Ref<Signature> SignatureRegistry::intern(std::span<const Type> arguments, Type r
 {
     Locker locker { m_lock };
 
-    // Hash-cons on structure: probe by shape and only allocate a Signature
-    // when no structurally equal canonical entry exists yet (mirrors
-    // Wasm::TypeInformation's canonical singleton table). Structural
-    // equality therefore implies Signature* identity. Entries are immortal.
     SignatureShape shape { arguments, returnType, Signature::computeHash(arguments, returnType) };
     auto addResult = m_signatures.ensure<SignatureShapeTranslator>(shape, [&] {
         return adoptRef(*new Signature(arguments, returnType));

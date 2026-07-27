@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,17 +32,6 @@
 #include <wtf/MathExtras.h>
 
 namespace JSC::FFI {
-
-// -----------------------------------------------------------------------
-// Invoke-thunk scratch register contract (SPEC section 7.1 / 7.2 step 3).
-// The callee-saved register carries the slot buffer across the native call;
-// the volatile register carries the call target. Neither may alias an
-// argument register of any callee CC, the ABI return register, or the
-// MacroAssembler's implicit scratch registers.
-//
-// The helper and the static_asserts are compiled only for the two CPUs whose
-// register lists exist; defining the helper unconditionally would leave an
-// unused static function (-Wunused-function) on every other configuration.
 
 #if ENABLE(ASSEMBLER) && (CPU(X86_64) || CPU(ARM64))
 static constexpr bool listContains(std::span<const GPRReg> list, GPRReg reg)
@@ -89,8 +78,6 @@ std::array<GPRReg, 2> scratchGPRsForInvoke(NativeCC cc)
     switch (cc) {
     case NativeCC::SysV64:
     case NativeCC::Win64:
-        // rbx is callee-saved in both SysV and Win64; r10 is volatile in both
-        // and is never an argument register.
         return { X86Registers::ebx, X86Registers::r10 };
     case NativeCC::AAPCS64:
         break;
@@ -101,13 +88,9 @@ std::array<GPRReg, 2> scratchGPRsForInvoke(NativeCC cc)
 #else
     UNUSED_PARAM(cc);
 #endif
-    // A NativeCC that this host cannot emit code for was requested.
     RELEASE_ASSERT_NOT_REACHED();
     return { InvalidGPRReg, InvalidGPRReg };
 }
-
-// -----------------------------------------------------------------------
-// Layout computation.
 
 CallLayout computeCallLayout(NativeCC cc, const Signature& signature, Direction direction)
 {
@@ -116,15 +99,8 @@ CallLayout computeCallLayout(NativeCC cc, const Signature& signature, Direction 
 
 CallLayout computeCallLayout(NativeCC cc, StackPacking packing, const Signature& signature, Direction direction)
 {
-    // The physical locations are identical for both directions: register
-    // indices name the same argument registers, and stack offsets are byte
-    // offsets from the stack pointer at the call instruction (which is what
-    // both the outgoing store address and, via incomingStackOffset(), the
-    // callee's fp-relative load address are derived from).
     UNUSED_PARAM(direction);
 
-    // Only AAPCS64 has two packings (Apple vs. standard); the other ABIs
-    // always use one eight-byte slot per stack argument.
     if (cc != NativeCC::AAPCS64)
         packing = StackPacking::EightByteSlots;
 
@@ -137,8 +113,6 @@ CallLayout computeCallLayout(NativeCC cc, StackPacking packing, const Signature&
     const unsigned floatRegisterCount = floatArgumentRegisterCount(cc);
     unsigned gprIndex = 0;
     unsigned fprIndex = 0;
-    // Byte offset from SP-at-call of the next stacked argument (the AAPCS64
-    // "NSAA"). It starts past the Win64 shadow space, which is 0 elsewhere.
     unsigned nextStackOffset = shadowStackBytes(cc);
 
     unsigned argumentCount = signature.argumentCount();
@@ -153,10 +127,6 @@ CallLayout computeCallLayout(NativeCC cc, StackPacking packing, const Signature&
         location.type = type;
 
         if (cc == NativeCC::Win64) {
-            // Win64 has four positional argument slots: slot i uses the i'th
-            // integer or floating-point argument register according to the
-            // argument's class; arguments beyond the fourth go on the stack
-            // above the 32-byte shadow space, one 8-byte slot each.
             constexpr unsigned win64RegisterSlots = 4;
             if (i < win64RegisterSlots) {
                 location.kind = isFloatingPoint ? ArgLocation::Kind::FPR : ArgLocation::Kind::GPR;
@@ -176,14 +146,10 @@ CallLayout computeCallLayout(NativeCC cc, StackPacking packing, const Signature&
             location.kind = ArgLocation::Kind::Stack;
             switch (packing) {
             case StackPacking::EightByteSlots:
-                // SysV64 and AAPCS64 (rule C.16): every stacked argument
-                // occupies one 8-byte slot, value in the low bits.
                 location.stackOffset = nextStackOffset;
                 nextStackOffset += 8;
                 break;
             case StackPacking::Natural: {
-                // Apple arm64 (SPEC section 7.1.1): natural size and
-                // alignment, so sub-8-byte arguments pack tightly.
                 unsigned size = nativeSizeInBytes(type);
                 location.stackOffset = roundUpToMultipleOf(size, nextStackOffset);
                 nextStackOffset = location.stackOffset + size;
@@ -205,10 +171,6 @@ unsigned incomingStackOffset(const CallLayout& layout, unsigned argIndex)
     RELEASE_ASSERT(argIndex < layout.arguments.size());
     const ArgLocation& location = layout.arguments[argIndex];
     RELEASE_ASSERT(location.kind == ArgLocation::Kind::Stack);
-    // After the callee's prologue the frame pointer addresses the saved frame
-    // pointer, with the return address (x86-64) / saved link register (arm64)
-    // in the next word, so the caller's SP-at-call is fp + 16 on every
-    // supported (64-bit) target.
     constexpr unsigned savedFrameAndReturnAddressBytes = 2 * sizeof(void*);
     return location.stackOffset + savedFrameAndReturnAddressBytes;
 }

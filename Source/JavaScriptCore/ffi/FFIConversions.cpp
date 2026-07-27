@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -66,38 +66,22 @@ namespace JSC { namespace FFI {
 
 JSValue pointerToJSValue(JSGlobalObject* globalObject, uint64_t address)
 {
-    // Bun's PTR_TO_JSVALUE: null pointer -> null; an address that fits an exact double (<= 2^53-1)
-    // -> number; anything higher (5-level page tables / arm64 tagged pointers, oven-sh/bun#28068)
-    // -> exact BigInt instead of a silently rounded double.
     if (!address)
         return jsNull();
-    // 2^53-1 (Number.MAX_SAFE_INTEGER): every integer <= this is an EXACT double, so such a
-    // pointer is a plain number; a higher address (5-level page tables / tagged pointers) is
-    // surfaced as an exact BigInt. Same bound as maxInt52 below and the JS fuzz oracle.
     if (address <= static_cast<uint64_t>(9007199254740991ULL))
         return jsNumber(static_cast<double>(address));
     return JSBigInt::createFrom(globalObject, address);
 }
 
-// Bun's MAX_INT52 (FFI.h): the largest integer Bun's glue boxes as a Number
-// on the i64_fast / u64_fast paths.
 static constexpr int64_t maxInt52 = 9007199254740991;
 
 int64_t doubleToInt64(double value)
 {
 #if CPU(X86_64)
-    // cvttsd2si: NaN or |value| >= 2^63 -> 0x8000000000000000. This is the same
-    // instruction MacroAssembler::truncateDoubleToInt64 emits, so the C++ and
-    // JIT tiers agree bit-for-bit.
     return _mm_cvttsd_si64(_mm_set_sd(value));
 #elif CPU(ARM64)
-    // fcvtzs: saturates to the int64_t range, NaN -> 0 (MacroAssemblerARM64
-    // truncateDoubleToInt64).
     return vcvtd_s64_f64(value);
 #else
-    // FFI is compiled out on other CPUs (SPEC section 14); provide the ARM64
-    // saturating semantics without invoking undefined behavior so this stays
-    // a total function.
     if (std::isnan(value))
         return 0;
     if (value >= 9223372036854775808.0)
@@ -114,31 +98,16 @@ static bool throwCannotConvert(JSGlobalObject* globalObject, ThrowScope& scope, 
     return false;
 }
 
-// char, i8, u8, i16, u16, i32, u32, bool: number, boolean, undefined/null.
-// ECMAScript modular integer conversion (toInt32 / toUInt32 then truncate to
-// width) -- a deliberate divergence from the saturating clamps in Bun's JS
-// glue, SPEC section 15 item 8.
-// Bun parity: bun:ffi's shipped integer coercion is the `val|0` family
-// (ToInt32(Number(val)) / ToUint32(Number(val))), i.e. FULLY loose JS numeric
-// conversion -- strings ("42"), booleans, null/undefined and objects with
-// valueOf all coerce; BigInts are additionally accepted here (Number()-style,
-// oven-sh/bun#22751); only Symbols throw. Sub-word types then WRAP (mod 2^width,
-// sign/zero-extended), matching the C cast the callee performs -- NOT clamped
-// (the JS glue's historical clamping was the source of oven-sh/bun#7007).
 static bool writeIntegerSlot(JSGlobalObject* globalObject, Type type, JSValue value, uint64_t& slotOut)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (type == Type::Bool) {
-        // toBoolean semantics (never `& 1`); the producer normalizes the slot to
-        // exactly 0 or 1 (SPEC section 4).
         slotOut = value.toBoolean(globalObject) ? 1 : 0;
         return true;
     }
 
-    // Number(BigInt) semantics for the integer types: exact for values that
-    // fit, wrapped mod 2^64 like the eventual C cast otherwise.
     if (value.isBigInt()) [[unlikely]] {
         uint64_t bits = JSBigInt::toBigUInt64(value);
         switch (type) {
@@ -167,22 +136,16 @@ static bool writeIntegerSlot(JSGlobalObject* globalObject, Type type, JSValue va
         }
     }
 
-    // Strings and Symbols do NOT coerce into integer parameters (numbers,
-    // booleans, null/undefined and BigInts do): a string passed where an int is
-    // expected is a call-site bug, so reject it rather than silently
-    // Number()-ing "300" into a plausible wrong value.
     if (value.isString() || value.isSymbol()) [[unlikely]]
         return throwCannotConvert(globalObject, scope, type);
 
     if (type == Type::Uint32) {
-        // ToUint32(ToNumber(value)) over the remaining (numeric) inputs.
         uint32_t truncated = value.toUInt32(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         slotOut = static_cast<uint64_t>(truncated);
         return true;
     }
 
-    // ToInt32(ToNumber(value)) -- the `val|0` the JS glue used.
     int32_t truncated = value.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     switch (type) {
@@ -209,7 +172,6 @@ static bool writeIntegerSlot(JSGlobalObject* globalObject, Type type, JSValue va
     return true;
 }
 
-// i64, i64_fast, u64, u64_fast: number or BigInt.
 static bool writeInt64Slot(JSGlobalObject* globalObject, Type type, JSValue value, uint64_t& slotOut)
 {
     VM& vm = getVM(globalObject);
@@ -217,7 +179,6 @@ static bool writeInt64Slot(JSGlobalObject* globalObject, Type type, JSValue valu
 
     bool isUnsigned = type == Type::Uint64 || type == Type::Uint64Fast;
     if (value.isInt32()) {
-        // int32 -> sign-extend to 64 (then reinterpret for the unsigned types).
         slotOut = static_cast<uint64_t>(static_cast<int64_t>(value.asInt32()));
         return true;
     }
@@ -232,18 +193,11 @@ static bool writeInt64Slot(JSGlobalObject* globalObject, Type type, JSValue valu
     return throwCannotConvert(globalObject, scope, type);
 }
 
-// Bun parity: bun:ffi's shipped f64 coercion is `typeof val === "number" ?
-// val : Number(val)` -- plain JS Number() conversion: strings ("2.5" -> 2.5),
-// booleans, null (-> +0) and undefined (-> NaN) all coerce; BigInts coerce like
-// Number(5n) -> 5 (which strict ToNumber would throw on, hence the special
-// case); only Symbols throw. This is pinned by bun's cc.test.ts snapshot.
 static bool writeFloatingPointSlot(JSGlobalObject* globalObject, Type type, JSValue value, uint64_t& slotOut)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Strings and Symbols do NOT coerce into floating-point parameters (see the
-    // integer rule): reject them instead of Number()-ing "2.5" -> 2.5.
     if (value.isString() || value.isSymbol()) [[unlikely]]
         return throwCannotConvert(globalObject, scope, type);
 
@@ -253,7 +207,6 @@ static bool writeFloatingPointSlot(JSGlobalObject* globalObject, Type type, JSVa
     else if (value.isUndefined())
         number = PNaN; // Number(undefined) === NaN.
     else if (value.isBigInt()) {
-        // Number(BigInt): exact conversion (huge magnitudes go to +/-Infinity).
         number = JSBigInt::toNumber(value).asNumber();
     } else {
         number = value.toNumber(globalObject); // strings, booleans, null, objects; Symbols throw.
@@ -267,14 +220,10 @@ static bool writeFloatingPointSlot(JSGlobalObject* globalObject, Type type, JSVa
 
     ASSERT(type == Type::Float);
     float narrowed = static_cast<float>(number); // Math.fround semantics.
-    // Bits [63:32] are zero per the canonical slot encoding (SPEC section 4).
     slotOut = static_cast<uint64_t>(std::bit_cast<uint32_t>(narrowed));
     return true;
 }
 
-// A JS string passed for a Type::CString argument is transcoded to a
-// NUL-terminated UTF-8 copy owned by the call-scoped StringArena (a NEW
-// capability, not Bun parity -- SPEC section 15 item 8b).
 static bool writeCStringSlot(JSGlobalObject* globalObject, FFIContext& context, JSString* jsString, uint64_t& slotOut, StringArena* arena)
 {
     VM& vm = getVM(globalObject);
@@ -283,13 +232,6 @@ static bool writeCStringSlot(JSGlobalObject* globalObject, FFIContext& context, 
     auto string = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    // FFI-SPEC-GAP: a null `arena` selects the context's own arena; either way
-    // the conversion requires an open bracket, because arena storage is only
-    // reclaimed at the next outermost enter() and StringArena::allocate() has
-    // no owner outside a bracket. Every engine caller (host path, IC-stub slow
-    // path, DFG/FTL operationFFIWriteSlot inside operationFFIArenaEnter/Exit,
-    // callbackDispatch) is bracketed; an un-bracketed caller is a contract
-    // violation and asserts.
     StringArena& targetArena = arena ? *arena : context.arena();
     ASSERT_WITH_MESSAGE(targetArena.depth(), "bun:ffi cstring conversion requires an active FFI arena bracket (StringArena::Scope / operationFFIArenaEnter)");
 
@@ -305,8 +247,6 @@ static bool writeCStringSlot(JSGlobalObject* globalObject, FFIContext& context, 
         return true;
     }
 
-    // Fast path: an 8-bit StringImpl whose characters are all ASCII is
-    // already valid UTF-8 -- memcpy plus the NUL terminator.
     if (impl->is8Bit()) {
         auto characters = impl->span8();
         if (charactersAreAllASCII(characters)) {
@@ -322,10 +262,6 @@ static bool writeCStringSlot(JSGlobalObject* globalObject, FFIContext& context, 
         }
     }
 
-    // Slow path: UTF-8 transcode, memoized per resolved StringImpl in the
-    // context's LRU. The cached CString is copied into the arena so that the
-    // pointer handed to native code has call-scoped lifetime independent of
-    // cache eviction.
     const CString* utf8 = context.cachedUTF8(*impl);
     if (!utf8) {
         auto result = impl->tryGetUTF8();
@@ -351,10 +287,6 @@ static bool writeCStringSlot(JSGlobalObject* globalObject, FFIContext& context, 
     return true;
 }
 
-// buffer_length: the "length twin" of Type::Buffer. Accepts exactly what Buffer accepts (a
-// TypedArray or DataView, nothing else) and writes the view's byteLength() as an unsigned
-// 64-bit integer (ABI-identical to Uint64). Passing the same view for a `buffer` argument and a
-// `buffer_length` argument snapshots pointer and length off one cell at call time.
 static bool writeBufferLengthSlot(JSGlobalObject* globalObject, JSValue value, uint64_t& slotOut)
 {
     VM& vm = getVM(globalObject);
@@ -368,14 +300,12 @@ static bool writeBufferLengthSlot(JSGlobalObject* globalObject, JSValue value, u
     return false;
 }
 
-// ptr, cstring, function, buffer.
 static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, Type type, JSValue value, uint64_t& slotOut, StringArena* arena)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (type == Type::Buffer) {
-        // Type::Buffer accepts a TypedArray/DataView only.
         if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
             slotOut = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(view->vector()));
             return true;
@@ -385,10 +315,6 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
     }
 
     if (value.isUndefinedOrNull()) {
-        // A null DATA pointer is legitimate (ptr / cstring / buffer callers pass null on purpose),
-        // but a null FUNCTION pointer is never: an omitted or undefined callback argument used to
-        // marshal NULL and the C callee would call through it (SIGSEGV) instead of the TypeError
-        // the JS glue raised. Reject it here so a missing callback is a JS error, not a crash.
         if (type == Type::Function) [[unlikely]] {
             throwTypeError(globalObject, scope, "bun:ffi: expected a callback (a JSCallback or an FFI function) but got undefined/null"_s);
             return false;
@@ -398,8 +324,6 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
     }
 
     if (value.isInt32()) {
-        // int32 pointer arguments are sign-extended (Bun parity, FFI.h): -1
-        // reads back as 0xFFFFFFFFFFFFFFFF.
         slotOut = static_cast<uint64_t>(static_cast<uintptr_t>(static_cast<intptr_t>(value.asInt32())));
         return true;
     }
@@ -410,9 +334,6 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
     }
 
     if (value.isBigInt()) {
-        // Round-trips pointers that were surfaced as BigInt because they
-        // exceed 2^53 (jsValueFromSlot's pointer rule, oven-sh/bun#28068), and
-        // accepts user-constructed BigInt addresses (oven-sh/bun#22751).
         slotOut = JSBigInt::toBigUInt64(value);
         RETURN_IF_EXCEPTION(scope, false);
         return true;
@@ -422,11 +343,6 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
         JSCell* cell = value.asCell();
 
         if (auto* view = dynamicDowncast<JSArrayBufferView>(cell)) {
-            // FFI-SPEC-GAP: the section 5 table specifies "vector() (0 if
-            // detached)" for pointer-family views, while the section 11.4 test
-            // list mentions a TypeError for a detached buffer passed as ptr. The
-            // normative conversion table wins: a detached view yields a null
-            // pointer without throwing.
             slotOut = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(view->vector()));
             return true;
         }
@@ -437,12 +353,6 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
         }
 
         if (auto* callback = dynamicDowncast<JSFFICallback>(cell)) {
-            // FFI-SPEC-GAP: SPEC section 9.1 assigns rejection of a close()d
-            // callback to the $vm / Bun glue (which consults
-            // JSFFICallback::isClosed(), e.g. tools/JSDollarVM.cpp's pointer
-            // helper), so the engine-level conversion deliberately accepts a
-            // closed callback and passes its nativeEntrypoint(), which stays
-            // valid for the cell's lifetime even after close().
             slotOut = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callback->nativeEntrypoint()));
             return true;
         }
@@ -450,17 +360,10 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
         if (cell->isString()) {
             if (type == Type::CString)
                 RELEASE_AND_RETURN(scope, writeCStringSlot(globalObject, context, uncheckedDowncast<JSString>(cell), slotOut, arena));
-            // Only cstring transcodes; every other pointer-family type keeps
-            // Bun's existing guidance for strings.
             throwTypeError(globalObject, scope, "To convert a string to a pointer, encode it as a buffer"_s);
             return false;
         }
 
-        // An object carrying a numeric/BigInt `ptr` own or inherited property is accepted for the
-        // pointer family (documented Bun API: FFIType.function / pointer accept a JSCallback,
-        // Pointer or CString object, whose engine cell or address lives behind `.ptr`; the TinyCC-era
-        // shim did `val && val.ptr`). The property get can run a getter, so exceptions propagate,
-        // and only a number/BigInt result is unwrapped -- anything else falls to the type error.
         if (type != Type::Buffer && cell->isObject()) {
             JSValue ptrValue = uncheckedDowncast<JSObject>(cell)->get(globalObject, Identifier::fromString(vm, "ptr"_s));
             RETURN_IF_EXCEPTION(scope, false);
@@ -505,18 +408,14 @@ bool writeSlotFromJSValue(JSGlobalObject* globalObject, FFIContext& context, Typ
         return writeBufferLengthSlot(globalObject, value, slotOut);
 
     case Type::JSValue:
-        // Raw EncodedJSValue pass-through; no conversion.
         slotOut = static_cast<uint64_t>(JSValue::encode(value));
         return true;
 
     case Type::RESERVED_WasNapiEnv:
-        // Never present in a valid Signature (Signature::tryCreate rejects it).
         RELEASE_ASSERT_NOT_REACHED();
         return false;
 
     case Type::Void:
-        // Void is only a return type; a callback returning void leaves the
-        // return slot untouched (SPEC section 4).
         return true;
     }
 
@@ -546,9 +445,6 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
         return JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(slot));
     case Type::Uint64:
     case Type::BufferLength:
-        // BufferLength is argument-only, so it reaches here only as a callback PARAMETER: a
-        // callback receives C arguments, not views, and the value is a plain unsigned 64-bit
-        // length -- decoded exactly like Uint64.
         return JSBigInt::createFrom(globalObject, static_cast<uint64_t>(slot));
     case Type::Int64Fast: {
         int64_t value = static_cast<int64_t>(slot);
@@ -558,16 +454,11 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
     }
     case Type::Uint64Fast: {
         uint64_t value = static_cast<uint64_t>(slot);
-        // Bun's UINT64_TO_JSVALUE uses a strict `<` against MAX_INT52 (FFI.h);
-        // preserved for parity.
         if (value < static_cast<uint64_t>(maxInt52))
             return jsNumber(static_cast<double>(value));
         return JSBigInt::createFrom(globalObject, value);
     }
     case Type::Double:
-        // Every native -> JS floating point value is purified exactly once at
-        // the point it leaves its slot, so a native NaN payload can never be
-        // NaN-boxed into a forged JSValue.
         return jsNumber(purifyNaN(std::bit_cast<double>(slot)));
     case Type::Float:
         return jsNumber(purifyNaN(static_cast<double>(std::bit_cast<float>(static_cast<uint32_t>(slot)))));
@@ -575,18 +466,12 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
     case Type::CString:
     case Type::Function:
     case Type::Buffer:
-        // Bun's PTR_TO_JSVALUE returns null for a null pointer; otherwise a
-        // pointer is exposed to JS as a double. Addresses above 2^53 (5-level
-        // page tables / arm64 memory-tagged pointers, oven-sh/bun#28068) cannot be
-        // represented exactly as a double, so those are surfaced as a BigInt
-        // (the u64_fast rule) instead of silently losing bits.
         return pointerToJSValue(globalObject, static_cast<uint64_t>(slot));
     case Type::JSValue:
         return JSValue::decode(static_cast<EncodedJSValue>(slot));
     case Type::Void:
         return jsUndefined();
     case Type::RESERVED_WasNapiEnv:
-        // Never present in a valid Signature (Signature::tryCreate rejects it).
         RELEASE_ASSERT_NOT_REACHED();
         return jsUndefined();
     }
@@ -619,10 +504,6 @@ JSC_DEFINE_JIT_OPERATION(operationFFIWriteSlot, void, (JSGlobalObject* globalObj
 
     ASSERT(context);
     ASSERT(typeTag < FFI::numberOfTypes);
-    // The DFG/FTL caller brackets this operation with
-    // operationFFIArenaEnter / operationFFIArenaExit whenever a CString or
-    // pointer-family argument is UntypedUse, so the context's arena is the
-    // call-scoped storage for any JS-string transcode performed here.
     FFI::writeSlotFromJSValue(globalObject, *context, static_cast<FFI::Type>(typeTag), JSValue::decode(value), *slot, &context->arena());
     OPERATION_RETURN(scope);
 }
@@ -645,12 +526,6 @@ JSC_DEFINE_JIT_OPERATION(operationFFIArenaExit, void, (JSGlobalObject* globalObj
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // The DFG/FTL CallFFI paths also emit this call on the exception edge of
-    // operationFFIWriteSlot and right after the invoke thunk returns (SPEC
-    // section 5), so a VM exception may already be pending here. The pop must
-    // happen unconditionally and the pending exception must be left untouched:
-    // no early return precedes exit(), and OPERATION_RETURN only reports the
-    // (possibly pre-existing) exception back to the JIT caller.
     globalObject->ffiContext().arena().exit();
     OPERATION_RETURN(scope);
 }

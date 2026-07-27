@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,9 +47,6 @@
 
 namespace JSC {
 
-// FFI-SPEC-GAP: the class name is "Function" (as JSStrictFunction / JSSloppyFunction) so an FFI
-// function is indistinguishable from an ordinary function to JS, matching Bun's current bun:ffi
-// functions. Its ClassInfo is kept address-unique like every other "Function"-named ClassInfo.
 const ClassInfo JSFFIFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFFIFunction) };
 CLASSINFO_KEEP_ADDRESS_UNIQUE(JSFFIFunction);
 
@@ -60,7 +57,6 @@ JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObjec
     , m_icCode(WTF::move(icCode))
     , m_hooks(hooks)
 {
-    // A hooked function never has an IC stub: hooks run only in the C++ host path.
     ASSERT(!m_hooks || !m_icCode);
 }
 
@@ -82,11 +78,6 @@ void JSFFIFunction::destroy(JSCell* cell)
     static_cast<JSFFIFunction*>(cell)->JSFFIFunction::~JSFFIFunction();
 }
 
-// The properties are added to the STRUCTURE, not the instances: two addPropertyTransition calls
-// here yield the final structure (registered as globalObject->ffiFunctionStructure()) with fixed
-// offsets, and create() fills each instance's slots with putDirectOffset. No instance ever
-// transitions, and JSFunction has no inline capacity, so both land at the first two out-of-line
-// offsets in every VM.
 static constexpr unsigned ffiIntrinsicAttributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
 static constexpr PropertyOffset ptrOffset = firstOutOfLineOffset;
 static constexpr PropertyOffset nativeOffset = firstOutOfLineOffset + 1;
@@ -107,19 +98,12 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // bun:ffi requires the JIT (spec section 0.1): the invoke thunk and callback thunks are
-    // JIT-generated, and TinyCC (which this replaces) was itself a JIT. Options::useJIT() is
-    // false whenever the ExecutableAllocator could not be initialized, so this single check
-    // covers both conditions.
     if (!Options::useJIT()) [[unlikely]] {
         throwTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
         return nullptr;
     }
 
 #if !USE(JSVALUE64) || ENABLE(JIT_CAGE) || !(CPU(X86_64) || CPU(ARM64))
-    // FFI-SPEC-GAP: on 32-bit, JIT-operation-validation and non-x86-64/arm64 builds the FFI
-    // machinery is compiled out (spec section 14); rather than crashing, creation throws so the
-    // JS-facing entry points behave uniformly.
     UNUSED_PARAM(structure);
     UNUSED_PARAM(signatureRef);
     UNUSED_PARAM(target);
@@ -132,36 +116,18 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
     Ref<FFI::Signature> signature = WTF::move(signatureRef);
     unsigned length = signature->argumentCount();
 
-    // Materialize the per-global FFIContext eagerly on the mutator thread: DFG/FTL CallFFI
-    // codegen bakes &globalObject->ffiContext() as a compile-time constant from a compiler
-    // thread (spec sections 10.4/10.5), which must never observe the lazy first-creation.
     globalObject->ffiContext();
 
-    // A JSFunction's executable is immutable after construction, so the (possibly
-    // diversified) executable is built before the cell (spec section 8.1).
     NativeExecutable* base = vm.getHostFunction(FFI::ffiHostCall, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
 
     RefPtr<JITCode> stub;
 #if ENABLE(JIT)
-    // The stub bakes only the target and the signature, never the cell pointer (the callee cell
-    // is read from CallFrameSlot::callee), so no cell is needed to generate it. Generation
-    // failure or Options::useFFIICStub() == false yields the plain host function executable.
-    // A HOOKED function is permanently host-path-only (its before/after hooks are invoked from
-    // exactly one place, FFI::ffiHostCall), so it never gets a stub; the DFG likewise refuses to
-    // turn calls to it into CallFFI (isHostPathOnly()).
     if (Options::useFFIICStub() && !hooks)
         stub = FFI::generateICStubCode(vm, globalObject, signature.get(), target);
 #endif
 
     NativeExecutable* executable = base;
     if (stub) {
-        // Install the stub AS the executable's call code (generatedJITCodeForCall()), so every
-        // JS-initiated call site (LLInt call slow path, baseline/DFG/FTL call ICs and direct
-        // calls) enters it through the normal executable path with no Repatch.cpp special case.
-        // C++-initiated calls (Interpreter::executeCall's CallData::Type::Native branch: JSC::call,
-        // Function.prototype.call/apply reached from C++, Reflect.apply, promise reactions) invoke
-        // the executable's native function, FFI::ffiHostCall, directly and never enter the stub;
-        // behavior is identical because the stub's slow path shares ffiHostCall's body.
         executable = NativeExecutable::create(vm, Ref<JITCode>(*stub), FFI::ffiHostCall, base->generatedJITCodeForConstruct(), callHostFunctionAsConstructor, ImplementationVisibility::Public, length, name);
     }
 
@@ -170,9 +136,6 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
     if (owner)
         function->m_owner.set(vm, function, owner); // write-barriered: the owner outlives this function
 
-    // Born with the final structure (which already carries ptr/native, see createStructure), so
-    // give the instance the out-of-line storage that structure implies and write the two slots
-    // directly -- no transition, no per-instance divergence.
     function->setButterfly(vm, Butterfly::create(vm, function, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0));
     function->putDirectOffset(vm, ptrOffset, FFI::pointerToJSValue(globalObject, reinterpret_cast<uint64_t>(target)));
     function->putDirectOffset(vm, nativeOffset, function);

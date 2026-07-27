@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,15 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// testFFI -- ABI / conversion / thunk unit tests for the JSC FFI (SPEC section 11.3).
-//
-// Build and run (the target only exists in DEVELOPER_MODE builds):
-//     cmake -DDEVELOPER_MODE=ON ... && ninja testFFI && ./bin/testFFI [<filter>]
-//
-// The native fixtures come from the JavaScriptCore library itself
-// (ffi/tests/FFITestFixtures.cpp is compiled into it, SPEC section 11.1);
-// this file only links against them.
-
 #include "config.h"
 #include "FFITestFixtures.h"
 
@@ -45,9 +36,6 @@
 #include <wtf/text/StringConcatenateNumbers.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
-// Opened before the feature guard (and closed after it, at EOF) so the
-// push/pop pair stays balanced in the configurations where the guarded body
-// compiles out (32-bit, non-JIT, non-x86-64/arm64, !USE(BUN_JSC_ADDITIONS)).
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && USE(JSVALUE64) && (CPU(X86_64) || CPU(ARM64))
@@ -100,10 +88,6 @@ using namespace JSC;
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Reporting.
-// ---------------------------------------------------------------------------
-
 static unsigned s_failureCount;
 static unsigned s_checkCount;
 
@@ -151,10 +135,6 @@ static bool shouldRun(const char* testName)
         dataLogLn(s_failureCount == failuresBefore ? "PASS: " : "FAIL: ", #test); \
     } while (false)
 
-// ---------------------------------------------------------------------------
-// VM state shared by the JS-facing test groups.
-// ---------------------------------------------------------------------------
-
 static RefPtr<VM> s_vm;
 static JSGlobalObject* s_globalObject;
 
@@ -163,11 +143,6 @@ static FFI::FFIContext& ffiContext()
     return s_globalObject->ffiContext();
 }
 
-// FFI-SPEC-GAP: SPEC sections 5/6/8.2 name FFI::StringArena (with a Scope RAII
-// constructed from the FFIContext) as writeSlotFromJSValue's last argument but
-// do not name the FFIContext accessor that yields it; A3's FFIContext exposes
-// it as stringArena() (and arena()), and Scope is constructible from an
-// FFIContext&, so both spellings used below are the ones A3 published.
 static FFI::StringArena* testStringArena()
 {
     return &ffiContext().stringArena();
@@ -178,17 +153,12 @@ static const char* typeNameForLog(FFI::Type type)
     return FFI::name(type).characters();
 }
 
-// ---------------------------------------------------------------------------
-// Section 2: type traits.
-// ---------------------------------------------------------------------------
-
 static void testTypeTraits()
 {
     using FFI::Type;
 
     FFI_CHECK_EQ(FFI::numberOfTypes, 22u);
 
-    // Wire-compatible numeric tags (must never change).
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Char), 0u);
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Int8), 1u);
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Uint8), 2u);
@@ -212,7 +182,6 @@ static void testTypeTraits()
     FFI_CHECK_EQ(static_cast<unsigned>(Type::Buffer), 20u);
     FFI_CHECK_EQ(static_cast<unsigned>(Type::BufferLength), 21u);
 
-    // Canonical names and parsing round trip for every type.
     static const struct { Type type; ASCIILiteral name; } names[] = {
         { Type::Char, "char"_s }, { Type::Int8, "i8"_s }, { Type::Uint8, "u8"_s }, { Type::Int16, "i16"_s },
         { Type::Uint16, "u16"_s }, { Type::Int32, "i32"_s }, { Type::Uint32, "u32"_s }, { Type::Int64, "i64"_s },
@@ -229,15 +198,11 @@ static void testTypeTraits()
             FFI_CHECK(*parsed == entry.type);
     }
 
-    // Aliases.
     static const struct { ASCIILiteral alias; Type type; } aliases[] = {
         { "int8_t"_s, Type::Int8 }, { "uint8_t"_s, Type::Uint8 }, { "int16_t"_s, Type::Int16 }, { "uint16_t"_s, Type::Uint16 },
         { "int32_t"_s, Type::Int32 }, { "int"_s, Type::Int32 }, { "c_int"_s, Type::Int32 }, { "uint32_t"_s, Type::Uint32 },
         { "c_uint"_s, Type::Uint32 }, { "int64_t"_s, Type::Int64 }, { "isize"_s, Type::Int64 }, { "uint64_t"_s, Type::Uint64 },
         { "usize"_s, Type::Uint64 }, { "size_t"_s, Type::Uint64 }, { "double"_s, Type::Double }, { "float"_s, Type::Float },
-        // "char*" is a Pointer alias, not CString: FFIType.h maps it to tag 12
-        // (Bun's FFIType parity), the resolution A1 documented for the alias
-        // the SPEC lists without a target.
         { "void*"_s, Type::Pointer }, { "pointer"_s, Type::Pointer }, { "char*"_s, Type::Pointer }, { "callback"_s, Type::Function },
         { "fn"_s, Type::Function }, { "napi_value"_s, Type::JSValue }, // napi_value: legacy spelling of the raw-JSValue type
         { "buffer_bytelength"_s, Type::BufferLength },
@@ -252,7 +217,6 @@ static void testTypeTraits()
     FFI_CHECK(!FFI::parseType(StringView(""_s)).has_value());
     FFI_CHECK(!FFI::parseType(StringView("I32"_s)).has_value());
 
-    // Argument classes.
     for (unsigned tag = 0; tag < FFI::numberOfTypes; ++tag) {
         Type type = static_cast<Type>(tag);
         FFI::ArgClass expected = FFI::ArgClass::Int;
@@ -267,7 +231,6 @@ static void testTypeTraits()
         FFI_CHECK_EQ(FFI::isValidArgumentType(type), type != Type::Void && type != Type::RESERVED_WasNapiEnv);
     }
 
-    // Sizes and signedness (SPEC section 2). char is signed on every target.
     FFI_CHECK(FFI::isSigned(Type::Char));
     FFI_CHECK(FFI::isSigned(Type::Int8));
     FFI_CHECK(FFI::isSigned(Type::Int16));
@@ -303,10 +266,6 @@ static void testTypeTraits()
     FFI_CHECK_EQ(FFI::slotSize, 8u);
 }
 
-// ---------------------------------------------------------------------------
-// Section 3: signature interning and validation.
-// ---------------------------------------------------------------------------
-
 static void testSignatures()
 {
     using FFI::Type;
@@ -319,7 +278,6 @@ static void testSignatures()
     if (!a || !b)
         return;
 
-    // Structural hash-consing: same shape => same pointer, forever.
     FFI_CHECK(a.get() == b.get());
     FFI_CHECK(*a == *b);
     FFI_CHECK_EQ(a->hash(), b->hash());
@@ -333,7 +291,6 @@ static void testSignatures()
     FFI_CHECK(a->argumentType(1) == Type::Double);
     FFI_CHECK(a->returnType() == Type::Double);
 
-    // A different return type must be a different signature.
     RefPtr<FFI::Signature> c = FFI::Signature::tryCreate(args.span(), Type::Float);
     FFI_CHECK(!!c);
     if (c) {
@@ -342,7 +299,6 @@ static void testSignatures()
         FFI_CHECK(c->toString() == "f32(i32,f64)"_s);
     }
 
-    // Argument order matters.
     Vector<Type> reversed { Type::Double, Type::Int32 };
     RefPtr<FFI::Signature> d = FFI::Signature::tryCreate(reversed.span(), Type::Double);
     FFI_CHECK(!!d);
@@ -351,7 +307,6 @@ static void testSignatures()
         FFI_CHECK(d->toString() == "f64(f64,i32)"_s);
     }
 
-    // A jsvalue parameter is an ordinary JS-caller-supplied parameter.
     Vector<Type> withJSValue { Type::Int32, Type::JSValue };
     RefPtr<FFI::Signature> jsvalueSignature = FFI::Signature::tryCreate(withJSValue.span(), Type::JSValue);
     FFI_CHECK(!!jsvalueSignature);
@@ -361,7 +316,6 @@ static void testSignatures()
         FFI_CHECK(jsvalueSignature->toString() == "jsvalue(i32,jsvalue)"_s);
     }
 
-    // Empty signature.
     RefPtr<FFI::Signature> empty = FFI::Signature::tryCreate({ }, Type::Void);
     FFI_CHECK(!!empty);
     if (empty) {
@@ -370,31 +324,25 @@ static void testSignatures()
         FFI_CHECK(empty->toString() == "void()"_s);
     }
 
-    // Maximum arity is 32; 33 must fail.
     Vector<Type> thirtyTwo(FillWith { }, 32, Type::Int32);
     Vector<Type> thirtyThree(FillWith { }, 33, Type::Int32);
     FFI_CHECK(!!FFI::Signature::tryCreate(thirtyTwo.span(), Type::Int64));
     FFI_CHECK(!FFI::Signature::tryCreate(thirtyThree.span(), Type::Int64));
     FFI_CHECK_EQ(FFI::Signature::maxArguments, 32u);
 
-    // Void is a valid return but never an argument.
     Vector<Type> voidArg { Type::Int32, Type::Void };
     FFI_CHECK(!FFI::Signature::tryCreate(voidArg.span(), Type::Int32));
-    // buffer is a valid argument but an invalid return; the reserved tag (18)
-    // is invalid in every position.
     Vector<Type> oneInt { Type::Int32 };
     Vector<Type> reservedArg { Type::RESERVED_WasNapiEnv };
     FFI_CHECK(!FFI::Signature::tryCreate(oneInt.span(), Type::RESERVED_WasNapiEnv));
     FFI_CHECK(!FFI::Signature::tryCreate(reservedArg.span(), Type::Int32));
     FFI_CHECK(!FFI::Signature::tryCreate(oneInt.span(), Type::Buffer));
-    // buffer_length is the length twin of buffer: also argument-only.
     Vector<Type> bufferLengthArg { Type::Pointer, Type::BufferLength };
     FFI_CHECK(!FFI::Signature::tryCreate(oneInt.span(), Type::BufferLength));
     FFI_CHECK(!!FFI::Signature::tryCreate(bufferLengthArg.span(), Type::Uint64));
     FFI_CHECK(!!FFI::Signature::tryCreate(oneInt.span(), Type::JSValue));
     FFI_CHECK(!!FFI::Signature::tryCreate(oneInt.span(), Type::Void));
 
-    // Every valid argument type at once, canonical toString.
     Vector<Type> everyArg {
         Type::Char, Type::Int8, Type::Uint8, Type::Int16, Type::Uint16, Type::Int32, Type::Uint32,
         Type::Int64, Type::Uint64, Type::Double, Type::Float, Type::Bool, Type::Pointer, Type::CString,
@@ -407,17 +355,6 @@ static void testSignatures()
         FFI_CHECK(every->toString() == "char(char,i8,u8,i16,u16,i32,u32,i64,u64,f64,f32,bool,ptr,cstring,i64_fast,u64_fast,function,jsvalue,buffer,buffer_length)"_s);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Section 7.1: computeCallLayout golden tables.
-//
-// Golden format: one token per argument, in declaration order, followed by
-// "#<stackBytes>" and "r<returnClass>":
-//     g<n>  argument lives in integerArgumentRegisters(cc)[n]
-//     f<n>  argument lives in floatArgumentRegisters(cc)[n]
-//     s<n>  argument lives on the stack at byte offset n from SP-at-call
-//     rv/ri/rf/rd   Void / Int / Float / Double return class
-// ---------------------------------------------------------------------------
 
 struct GoldenCase {
     ASCIILiteral name;
@@ -484,13 +421,6 @@ static ParsedGolden parseGolden(ASCIILiteral literal)
     return result;
 }
 
-// FFI-SPEC-GAP: SPEC section 11.3 requires goldens over the CC set {SysV64,
-// AAPCS64 (8-byte slots), Darwin-arm64 packing, Win64} but the 3-argument
-// computeCallLayout only exposes the host's packing. A2 published an
-// explicit-packing overload, computeCallLayout(NativeCC, StackPacking,
-// const Signature&, Direction), for exactly this purpose; the goldens use it
-// so every build checks both AAPCS64 packings, and the host-selecting
-// overload is separately checked to agree with stackPackingForNativeCC().
 static const char* nativeCCName(FFI::NativeCC cc, FFI::StackPacking packing)
 {
     switch (cc) {
@@ -514,7 +444,6 @@ static void checkLayoutAgainstGolden(const GoldenCase& golden, FFI::NativeCC cc,
     bool ok = true;
     ok &= layout.cc == cc;
     ok &= layout.packing == packing;
-    // The host-packing overload must agree exactly when it selects this mode.
     if (FFI::stackPackingForNativeCC(cc) == packing) {
         FFI::CallLayout hostSelected = FFI::computeCallLayout(cc, *signature, FFI::Direction::Outgoing);
         ok &= hostSelected.stackBytes == layout.stackBytes;
@@ -569,9 +498,6 @@ static void checkLayoutAgainstGolden(const GoldenCase& golden, FFI::NativeCC cc,
         dataLogLn(" #", layout.stackBytes, " returnClass=", static_cast<unsigned>(layout.returnClass), " cc=", static_cast<unsigned>(layout.cc));
     }
 
-    // Incoming (callback) layouts: register assignment is identical and stack
-    // arguments are addressed FP-relative after the callee prologue
-    // (saved fp + return address / saved fp+lr pair = 16 bytes).
     FFI::CallLayout incoming = FFI::computeCallLayout(cc, packing, *signature, FFI::Direction::Incoming);
     FFI_CHECK_EQ(incoming.arguments.size(), layout.arguments.size());
     for (unsigned i = 0; i < layout.arguments.size() && i < incoming.arguments.size(); ++i) {
@@ -653,7 +579,6 @@ static Vector<GoldenCase> buildGoldenCorpus()
         "f0 f1 f2 f3 #0 rd"_s, "f0 f1 f2 f3 #0 rd"_s, "f0 f1 f2 f3 #0 rd"_s, "f0 f1 f2 f3 #32 rd"_s);
     add("f64(f64x5)"_s, Vector<T>(FillWith { }, 5, T::Double), T::Double,
         "f0 f1 f2 f3 f4 #0 rd"_s, "f0 f1 f2 f3 f4 #0 rd"_s, "f0 f1 f2 f3 f4 #0 rd"_s, "f0 f1 f2 f3 s32 #48 rd"_s);
-    // The ffi_mix_* fixture signatures.
     add("mix_1"_s, { T::Int32, T::Double, T::Int64, T::Float, T::Pointer, T::Uint8, T::Double, T::Int16, T::Double, T::Int32 }, T::Double,
         "g0 f0 g1 f1 g2 g3 f2 g4 f3 g5 #0 rd"_s,
         "g0 f0 g1 f1 g2 g3 f2 g4 f3 g5 #0 rd"_s,
@@ -694,7 +619,6 @@ static Vector<GoldenCase> buildGoldenCorpus()
         "f0 f1 f2 f3 f4 f5 f6 f7 s0 s8 s16 s24 #32 rd"_s,
         "f0 f1 f2 f3 f4 f5 f6 f7 s0 s8 s16 s24 #32 rd"_s,
         "f0 f1 f2 f3 s32 s40 s48 s56 s64 s72 s80 s88 #96 rd"_s);
-    // Sub-8-byte stack ladders (Apple arm64 natural packing vs 8-byte slots).
     add("i64(u8x10)"_s, Vector<T>(FillWith { }, 10, T::Uint8), T::Int64,
         "g0 g1 g2 g3 g4 g5 s0 s8 s16 s24 #32 ri"_s,
         "g0 g1 g2 g3 g4 g5 g6 g7 s0 s8 #16 ri"_s,
@@ -720,28 +644,24 @@ static Vector<GoldenCase> buildGoldenCorpus()
         "f0 f1 f2 f3 f4 f5 f6 f7 s0 s8 #16 rf"_s,
         "f0 f1 f2 f3 f4 f5 f6 f7 s0 s4 #16 rf"_s,
         "f0 f1 f2 f3 s32 s40 s48 s56 s64 s72 #80 rf"_s);
-    // Every integer-class exotic type is passed exactly like a 64-bit integer.
     add("u64(cstring,u64,i64_fast,u64_fast,function,buffer,jsvalue)"_s,
         { T::CString, T::Uint64, T::Int64Fast, T::Uint64Fast, T::Function, T::Buffer, T::JSValue }, T::Uint64,
         "g0 g1 g2 g3 g4 g5 s0 #16 ri"_s,
         "g0 g1 g2 g3 g4 g5 g6 #0 ri"_s,
         "g0 g1 g2 g3 g4 g5 g6 #0 ri"_s,
         "g0 g1 g2 g3 s32 s40 s48 #64 ri"_s);
-    // i8s only after the integer registers are exhausted.
     add("i64(i64x8,i8,i8,i8)"_s,
         { T::Int64, T::Int64, T::Int64, T::Int64, T::Int64, T::Int64, T::Int64, T::Int64, T::Int8, T::Int8, T::Int8 }, T::Int64,
         "g0 g1 g2 g3 g4 g5 s0 s8 s16 s24 s32 #48 ri"_s,
         "g0 g1 g2 g3 g4 g5 g6 g7 s0 s8 s16 #32 ri"_s,
         "g0 g1 g2 g3 g4 g5 g6 g7 s0 s1 s2 #16 ri"_s,
         "g0 g1 g2 g3 s32 s40 s48 s56 s64 s72 s80 #96 ri"_s);
-    // f32 stack arguments after the FP registers are exhausted.
     add("f32(f64x8,f32,f32,f32)"_s,
         { T::Double, T::Double, T::Double, T::Double, T::Double, T::Double, T::Double, T::Double, T::Float, T::Float, T::Float }, T::Float,
         "f0 f1 f2 f3 f4 f5 f6 f7 s0 s8 s16 #32 rf"_s,
         "f0 f1 f2 f3 f4 f5 f6 f7 s0 s8 s16 #32 rf"_s,
         "f0 f1 f2 f3 f4 f5 f6 f7 s0 s4 s8 #16 rf"_s,
         "f0 f1 f2 f3 s32 s40 s48 s56 s64 s72 s80 #96 rf"_s);
-    // Darwin natural-alignment probe: i8, i32, i8, i64 on the stack.
     add("i64(i32x8,i8,i32,i8,i64)"_s,
         { T::Int32, T::Int32, T::Int32, T::Int32, T::Int32, T::Int32, T::Int32, T::Int32, T::Int8, T::Int32, T::Int8, T::Int64 }, T::Int64,
         "g0 g1 g2 g3 g4 g5 s0 s8 s16 s24 s32 s40 #48 ri"_s,
@@ -759,12 +679,9 @@ static void testCallLayoutGoldens()
     for (const GoldenCase& golden : corpus) {
         checkLayoutAgainstGolden(golden, FFI::NativeCC::SysV64, FFI::StackPacking::EightByteSlots, golden.sysv64);
         checkLayoutAgainstGolden(golden, FFI::NativeCC::Win64, FFI::StackPacking::EightByteSlots, golden.win64);
-        // Both AAPCS64 packings (Linux/Windows-arm64 8-byte slots and Apple
-        // natural packing, SPEC sections 7.1 / 7.1.1) on every build.
         checkLayoutAgainstGolden(golden, FFI::NativeCC::AAPCS64, FFI::StackPacking::EightByteSlots, golden.aapcs64EightByteSlots);
         checkLayoutAgainstGolden(golden, FFI::NativeCC::AAPCS64, FFI::StackPacking::Natural, golden.darwinARM64Packed);
     }
-    // The host packing selector matches the build target.
 #if OS(DARWIN) && CPU(ARM64)
     FFI_CHECK(FFI::stackPackingForNativeCC(FFI::NativeCC::AAPCS64) == FFI::StackPacking::Natural);
 #else
@@ -773,7 +690,6 @@ static void testCallLayoutGoldens()
     FFI_CHECK(FFI::stackPackingForNativeCC(FFI::NativeCC::SysV64) == FFI::StackPacking::EightByteSlots);
     FFI_CHECK(FFI::stackPackingForNativeCC(FFI::NativeCC::Win64) == FFI::StackPacking::EightByteSlots);
 
-    // Shadow space + host CC constants.
     FFI_CHECK_EQ(FFI::shadowStackBytes(FFI::NativeCC::SysV64), 0u);
     FFI_CHECK_EQ(FFI::shadowStackBytes(FFI::NativeCC::AAPCS64), 0u);
     FFI_CHECK_EQ(FFI::shadowStackBytes(FFI::NativeCC::Win64), 32u);
@@ -785,7 +701,6 @@ static void testCallLayoutGoldens()
     FFI_CHECK(FFI::hostNativeCC() == FFI::NativeCC::SysV64);
 #endif
 
-    // Concrete register lists for the CCs whose registers exist on this CPU.
 #if CPU(X86_64)
     {
         auto ints = FFI::integerArgumentRegisters(FFI::NativeCC::SysV64);
@@ -816,9 +731,6 @@ static void testCallLayoutGoldens()
         for (unsigned i = 0; i < winFloats.size() && i < 4; ++i)
             FFI_CHECK(winFloats[i] == static_cast<FPRReg>(X86Registers::xmm0 + i));
 
-        // Invoke-thunk scratch plan (SPEC section 7.1): callee-saved slots
-        // register + volatile non-argument target register; never r11 (macro
-        // scratch), never the return register, never an argument register.
         auto scratch = FFI::scratchGPRsForInvoke(FFI::hostNativeCC());
         FFI_CHECK(scratch[0] == X86Registers::ebx);
         FFI_CHECK(scratch[1] == X86Registers::r10);
@@ -849,13 +761,6 @@ static void testCallLayoutGoldens()
     }
 #endif
 }
-
-// ---------------------------------------------------------------------------
-// Section 7.1 (continued): an independent reference model of the layout
-// rules, cross-checked against computeCallLayout over a large deterministic
-// pseudo-random corpus. The hand-written goldens above pin the reference
-// model itself.
-// ---------------------------------------------------------------------------
 
 struct ReferenceLocation {
     FFI::ArgLocation::Kind kind;
@@ -977,10 +882,6 @@ static void testCallLayoutAgainstReferenceModel()
     }
 }
 
-// ---------------------------------------------------------------------------
-// Section 5: FFI::doubleToInt64 / doubleToUInt64 hardware-truncation contract.
-// ---------------------------------------------------------------------------
-
 static void testDoubleToInt64()
 {
     constexpr int64_t indefinite = std::numeric_limits<int64_t>::min(); // 0x8000000000000000
@@ -990,7 +891,6 @@ static void testDoubleToInt64()
     constexpr double twoTo63 = 9223372036854775808.0;
     constexpr double twoTo64 = 18446744073709551616.0;
 
-    // Values every hardware truncation agrees on.
     FFI_CHECK_EQ(FFI::doubleToInt64(0.0), 0);
     FFI_CHECK_EQ(FFI::doubleToInt64(-0.0), 0);
     FFI_CHECK_EQ(FFI::doubleToInt64(-1.5), -1);
@@ -1003,9 +903,6 @@ static void testDoubleToInt64()
     FFI_CHECK_EQ(FFI::doubleToInt64(0.9999999999999999), 0);
     FFI_CHECK_EQ(FFI::doubleToInt64(-0.9999999999999999), 0);
 
-    // Values whose result IS the hardware behavior (SPEC section 5): x86-64
-    // cvttsd2si yields the integer indefinite value for NaN and anything out
-    // of range; arm64 fcvtzs saturates and maps NaN to 0.
 #if CPU(X86_64)
     FFI_CHECK_EQ(FFI::doubleToInt64(nan), indefinite);
     FFI_CHECK_EQ(FFI::doubleToInt64(inf), indefinite);
@@ -1022,16 +919,10 @@ static void testDoubleToInt64()
     FFI_CHECK_EQ(FFI::doubleToInt64(-twoTo64), std::numeric_limits<int64_t>::min());
 #endif
 
-    // doubleToUInt64 is DEFINED as the bit pattern of doubleToInt64 (Bun's
-    // C-cast lowering), including for negative and out-of-range inputs.
     static const double corpus[] = { 0.0, -0.0, 1.0, -1.0, -1.5, 1.5, 255.75, -255.75, twoTo63, -twoTo63, twoTo64, nan, inf, -inf, 4294967295.5, -4294967295.5, 1e300, -1e300, 4.9e-324 };
     for (double value : corpus)
         FFI_CHECK_EQ_HEX(FFI::doubleToUInt64(value), std::bit_cast<uint64_t>(FFI::doubleToInt64(value)));
 }
-
-// ---------------------------------------------------------------------------
-// Section 5: writeSlotFromJSValue / jsValueFromSlot conversion matrix.
-// ---------------------------------------------------------------------------
 
 enum class ExpectThrow : bool { No, Yes };
 
@@ -1051,7 +942,6 @@ static bool convertToSlot(FFI::Type type, JSValue value, uint64_t& slotOut, Expe
             s_failureCount++;
             dataLogLn("    FAIL: writeSlotFromJSValue(", typeNameForLog(type), ") threw unexpectedly");
         }
-        // Every conversion failure must be a TypeError.
         ErrorInstance* errorInstance = dynamicDowncast<ErrorInstance>(error);
         FFI_CHECK(errorInstance);
         if (errorInstance)
@@ -1149,17 +1039,12 @@ static void testConversions()
     JSGlobalObject* globalObject = s_globalObject;
     using T = FFI::Type;
 
-    // Keep one outer arena scope alive for the whole matrix so the cstring
-    // copies made by the inner (nested) scopes in convertToSlot are still
-    // readable after each call returns; storage resets only when the depth
-    // returns to zero.
     FFI::StringArena::Scope arenaScope(ffiContext());
 
     constexpr uint64_t allOnes = ~static_cast<uint64_t>(0);
     const double nan = PNaN; // JSC's canonical (pure) NaN, runtime/PureNaN.h
     const double inf = std::numeric_limits<double>::infinity();
 
-    // ---- int32-class (toInt32 modular semantics, sign-extended slots).
     expectSlot(T::Int32, jsNumber(2147483647), 0x000000007fffffffull);
     expectSlot(T::Int32, jsNumber(-2147483647 - 1), 0xffffffff80000000ull);
     expectSlot(T::Int32, jsNumber(0), 0);
@@ -1201,7 +1086,6 @@ static void testConversions()
     expectSlot(T::Uint16, jsNumber(65536), 0);
     expectSlot(T::Uint16, jsNumber(70000), 70000 - 65536);
 
-    // ---- bool (toBoolean; slot must be exactly 0/1).
     expectSlot(T::Bool, jsNumber(0), 0);
     expectSlot(T::Bool, jsNumber(2), 1);
     expectSlot(T::Bool, jsNumber(-1), 1);
@@ -1214,7 +1098,6 @@ static void testConversions()
     expectSlot(T::Bool, jsUndefined(), 0);
     expectSlot(T::Bool, jsNull(), 0);
 
-    // ---- 64-bit integers (number and BigInt inputs, mod 2^64).
     expectSlot(T::Int64, jsNumber(1), 1);
     expectSlot(T::Int64, jsNumber(-1), allOnes);
     expectSlot(T::Int64, jsNumber(-2147483647 - 1), 0xffffffff80000000ull);
@@ -1236,7 +1119,6 @@ static void testConversions()
     expectSlot(T::Uint64Fast, jsNumber(9007199254740992.0), 9007199254740992ull);
     expectSlot(T::Uint64Fast, JSBigInt::createFrom(globalObject, static_cast<uint64_t>(1) << 63), static_cast<uint64_t>(1) << 63);
 
-    // ---- floats (canonical slot bits; f32 upper half must be zero).
     expectSlot(T::Double, jsNumber(1.5), std::bit_cast<uint64_t>(1.5));
     expectSlot(T::Double, jsNumber(-0.0), 0x8000000000000000ull);
     expectSlot(T::Double, jsNumber(inf), std::bit_cast<uint64_t>(inf));
@@ -1263,7 +1145,6 @@ static void testConversions()
         }
     }
 
-    // ---- pointer family.
     static uint32_t nativeScratch[16];
     JSUint8Array* uint8Array = makeUint8Array(32);
     void* uint8ArrayVector = uint8Array ? uint8Array->vector() : nullptr;
@@ -1284,8 +1165,6 @@ static void testConversions()
     expectSlot(T::CString, jsNumber(0), 0);
     expectSlot(T::Function, jsNumber(0), 0);
     expectSlot(T::Function, jsNumber(65536), 65536);
-    // Errors: JS strings only transcode for cstring; symbols and plain objects never convert to pointers.
-    // (Symbol::create(VM&) is not exported from libJavaScriptCore; use the exported SymbolImpl overload.)
     expectSlotThrows(T::Pointer, jsString(vm, String("hello"_s)));
     expectSlotThrows(T::Buffer, jsString(vm, String("hello"_s)));
     expectSlotThrows(T::Function, jsString(vm, String("hello"_s)));
@@ -1297,7 +1176,6 @@ static void testConversions()
     expectSlotThrows(T::Buffer, jsNull());
     expectSlotThrows(T::Buffer, constructEmptyObject(globalObject));
 
-    // ---- cstring transcoding (NEW capability): NUL-terminated UTF-8 copies.
     {
         uint64_t slot = 0;
         if (convertToSlot(T::CString, jsString(vm, String("hello"_s)), slot, ExpectThrow::No)) {
@@ -1317,7 +1195,6 @@ static void testConversions()
             if (slot)
                 FFI_CHECK(!strcmp(reinterpret_cast<const char*>(slot), utf8Sample));
         }
-        // A concatenated (non-atomic, non-literal) string; JS-side stress tests cover real ropes.
         JSString* concatenated = jsString(vm, makeString("ro"_s, "pe "_s, 12345));
         if (convertToSlot(T::CString, concatenated, slot, ExpectThrow::No)) {
             FFI_CHECK(slot);
@@ -1326,7 +1203,6 @@ static void testConversions()
         }
     }
 
-    // ---- jsvalue: raw bits, no conversion.
     {
         JSObject* object = constructEmptyObject(globalObject);
         JSString* string = jsString(vm, String("napi"_s));
@@ -1342,7 +1218,6 @@ static void testConversions()
         FFI_CHECK(backNumber == jsNumber(-7));
     }
 
-    // ---- slot -> JS (native returns and callback arguments).
     expectSlotToNumber(T::Int8, 0xff, -1);
     expectSlotToNumber(T::Int8, 0xffffffffffffff80ull, -128);
     expectSlotToNumber(T::Int8, 0x7f, 127);
@@ -1361,7 +1236,6 @@ static void testConversions()
     FFI_CHECK(slotToJS(T::Bool, 0) == jsBoolean(false));
     FFI_CHECK(slotToJS(T::Void, 0xdeadbeef) == jsUndefined());
 
-    // 64-bit: i64/u64 always BigInt; the *_fast variants use Bun's MAX_INT52 cutoffs.
     expectSlotToBigInt(T::Int64, 42, 42);
     expectSlotToBigInt(T::Int64, 0x8000000000000000ull, 0x8000000000000000ull);
     expectSlotToBigInt(T::Int64, allOnes, allOnes);
@@ -1376,7 +1250,6 @@ static void testConversions()
     expectSlotToBigInt(T::Uint64Fast, 9007199254740991ull, 9007199254740991ull); // == 2^53-1 becomes a BigInt (strict <, Bun quirk)
     expectSlotToBigInt(T::Uint64Fast, allOnes, allOnes);
 
-    // Floating point: purifyNaN exactly once, sign of zero preserved, denormals intact.
     expectSlotToNumber(T::Double, std::bit_cast<uint64_t>(-0.0), -0.0);
     expectSlotToNumber(T::Double, std::bit_cast<uint64_t>(1.5), 1.5);
     expectSlotToNumber(T::Double, std::bit_cast<uint64_t>(inf), inf);
@@ -1389,7 +1262,6 @@ static void testConversions()
     expectSlotToNumber(T::Float, static_cast<uint64_t>(std::bit_cast<uint32_t>(-1.5f)), -1.5);
     expectSlotToNumber(T::Float, 0x80000000, -0.0);
 
-    // Pointer family: null pointer becomes JS null, everything else a double.
     FFI_CHECK(slotToJS(T::Pointer, 0).isNull());
     FFI_CHECK(slotToJS(T::CString, 0).isNull());
     FFI_CHECK(slotToJS(T::Function, 0).isNull());
@@ -1399,7 +1271,6 @@ static void testConversions()
     expectSlotToNumber(T::Function, 1, 1);
     expectSlotToNumber(T::Buffer, 65536, 65536);
 
-    // Round trips through both directions for every integer type.
     static const int64_t roundTripValues[] = { 0, 1, -1, 127, -128, 255, 32767, -32768, 65535, 2147483647, -2147483647 - 1, static_cast<int64_t>(4294967295u) };
     for (int64_t value : roundTripValues) {
         static const struct { T type; int64_t min; int64_t max; } integerTypes[] = {
@@ -1416,15 +1287,6 @@ static void testConversions()
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Section 7.2: invoke-thunk vs native-call differential over every fixture.
-//
-// The oracle: for the same canonical slot buffer, clang's direct C++ call of
-// the fixture and our generated invoke thunk must produce bit-identical
-// return slots. Slot buffers carry guard words on both ends so an
-// off-by-one store past the return slot is caught.
-// ---------------------------------------------------------------------------
 
 static uint64_t s_scratchMemory[64];
 
@@ -1457,8 +1319,6 @@ static R callNativeFromSlots(R (*function)(Arguments...), const uint64_t* slots)
     return callNativeFromSlotsImpl(function, slots, std::index_sequence_for<Arguments...> { });
 }
 
-// The raw bits a native return value leaves in the return register(s), as
-// clang defines them for the C++ return type.
 template<typename R>
 static uint64_t nativeReturnRawBits(R value)
 {
@@ -1476,7 +1336,6 @@ static uint64_t nativeReturnRawBits(R value)
         return static_cast<uint64_t>(value);
 }
 
-// SPEC section 4: the canonical encoding a producer must write into a slot.
 static uint64_t canonicalizeSlot(FFI::Type type, uint64_t raw)
 {
     switch (type) {
@@ -1558,7 +1417,7 @@ static uint64_t edgeBitsForType(FFI::Type type, WeakRandom& random)
         static const uint64_t values[] = {
             0, 0x8000000000000000ull, std::bit_cast<uint64_t>(1.5), std::bit_cast<uint64_t>(-1.5),
             std::bit_cast<uint64_t>(std::numeric_limits<double>::infinity()), std::bit_cast<uint64_t>(-std::numeric_limits<double>::infinity()),
-            std::bit_cast<uint64_t>(std::numeric_limits<double>::max()), 1 /* denormal */, std::bit_cast<uint64_t>(9007199254740993.0),
+            std::bit_cast<uint64_t>(std::numeric_limits<double>::max()), 1 , std::bit_cast<uint64_t>(9007199254740993.0),
             0x7ff8000000000001ull, std::bit_cast<uint64_t>(3.141592653589793),
         };
         return values[random.getUint32(std::size(values))];
@@ -1578,7 +1437,6 @@ static uint64_t edgeBitsForType(FFI::Type type, WeakRandom& random)
     case FFI::Type::Function:
     case FFI::Type::Buffer:
     case FFI::Type::RESERVED_WasNapiEnv: {
-        // Never dereferenced by the fixtures the generic differential runs on.
         static const uint64_t values[] = {
             0, 0x00007fffdeadbee0ull, ~0ull, 4096,
             reinterpret_cast<uintptr_t>(&s_scratchMemory[0]), reinterpret_cast<uintptr_t>(&s_scratchMemory[13]),
@@ -1623,7 +1481,6 @@ static void differentialCase(ASCIILiteral name, R (*function)(Arguments...), Vec
     FFI_CHECK(!!code);
     if (!code)
         return;
-    // Also make sure the cached-per-signature entry point agrees.
     CodePtr<JITThunkPtrTag> cached = signature->invokeThunk();
     FFI_CHECK(!!cached);
 
@@ -1678,7 +1535,6 @@ static void differentialCase(ASCIILiteral name, R (*function)(Arguments...), Vec
     }
 }
 
-// Static C callbacks used as function-pointer arguments in the differential.
 static int32_t staticCbI32(int32_t x) { return static_cast<int32_t>(static_cast<uint32_t>(x) * 3u + 1u); }
 static double staticCbF64x8(double a, double b, double c, double d, double e, double f, double g, double h)
 {
@@ -1716,7 +1572,6 @@ static void testInvokeThunkDifferential()
     using T = FFI::Type;
     WeakRandom random(0xF00DFEED);
 
-    // Every deref-free fixture, driven by random canonical edge slots.
     differentialCase("ffi_echo_char"_s, ffi_echo_char, { T::Char }, T::Char, 40, random);
     differentialCase("ffi_echo_char(as i8)"_s, ffi_echo_char, { T::Int8 }, T::Int8, 20, random);
     differentialCase("ffi_echo_i8"_s, ffi_echo_i8, { T::Int8 }, T::Int8, 40, random);
@@ -1798,7 +1653,6 @@ static void testInvokeThunkDifferential()
     differentialCase("ffi_align_probe_0"_s, ffi_align_probe_0, { }, T::Double, 8, random);
     differentialCase("ffi_align_probe_9"_s, ffi_align_probe_9, Vector<T>(FillWith { }, 9, T::Int32), T::Double, 12, random);
 
-    // Callback fixtures with plain C function pointers as the callback.
     {
         auto runWithCallback = [&](ASCIILiteral name, auto* fixture, Vector<FFI::Type>&& argumentTypes, FFI::Type returnType, uint64_t callbackSlot, unsigned iterations) {
             RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(argumentTypes.span(), returnType);
@@ -1859,7 +1713,6 @@ static void testInvokeThunkDifferential()
         runWithCallback("ffi_call_cb_ret_ptr"_s, ffi_call_cb_ret_ptr, { T::Function }, T::Pointer, reinterpret_cast<uintptr_t>(&staticCbRetPtr), 3);
     }
 
-    // Void-returning callback fixture: side effect count must match.
     {
         Vector<T> argumentTypes { T::Function };
         RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(argumentTypes.span(), T::Void);
@@ -1879,7 +1732,6 @@ static void testInvokeThunkDifferential()
         }
     }
 
-    // Pointer fixtures that dereference: use real memory.
     {
         Vector<T> writeTypes { T::Pointer, T::Uint32 };
         RefPtr<FFI::Signature> writeSignature = FFI::Signature::tryCreate(writeTypes.span(), T::Void);
@@ -1925,14 +1777,6 @@ static void testInvokeThunkDifferential()
     }
 }
 
-// ---------------------------------------------------------------------------
-// Callee-saved register canaries (SPEC section 11.1) and stack alignment,
-// exercised in both directions:
-//   - through a JSFFICallback (native callback thunk -> callbackDispatch -> JS)
-//   - through the invoke thunk itself (its prologue/epilogue must restore the
-//     callee-saved registers it commandeers).
-// ---------------------------------------------------------------------------
-
 static struct {
     FFI::InvokeThunkFunction thunk { nullptr };
     void* target { nullptr };
@@ -1958,8 +1802,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCanaryTargetAllocating, (JSGlobalObject* global
 {
     VM& vm = globalObject->vm();
     ++s_hostCanaryHits;
-    // Churn the heap and use plenty of registers so a callee-saved register
-    // clobber in the callback thunk is likely to show up.
     JSObject* garbage = nullptr;
     for (unsigned i = 0; i < 200; ++i) {
         JSObject* object = constructEmptyObject(globalObject);
@@ -1974,7 +1816,6 @@ static void testCanaries()
     VM& vm = *s_vm;
     JSGlobalObject* globalObject = s_globalObject;
 
-    // 1. The invoke thunk preserves its caller's callee-saved registers.
     {
         Vector<FFI::Type> argumentTypes { FFI::Type::Int64, FFI::Type::Int64 };
         RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(argumentTypes.span(), FFI::Type::Int64);
@@ -1995,10 +1836,6 @@ static void testCanaries()
         }
     }
 
-    // 2. The callback entry thunk (native ABI) preserves the caller's
-    //    callee-saved registers while re-entering the VM: install a
-    //    JSFFICallback around trivial and allocating host functions and hand
-    //    its native entrypoint to the canary.
     {
         JSFunction* trivialTarget = JSFunction::create(vm, globalObject, 0, "canaryTarget"_s, functionCanaryTarget, ImplementationVisibility::Public);
         JSFunction* allocatingTarget = JSFunction::create(vm, globalObject, 0, "canaryTargetAllocating"_s, functionCanaryTargetAllocating, ImplementationVisibility::Public);
@@ -2016,18 +1853,12 @@ static void testCanaries()
                     int32_t mask = ffi_canary_call(entry);
                     FFI_CHECK_EQ(mask, 0);
                     FFI_CHECK_EQ(s_hostCanaryHits, 1u);
-                    // The callback thunk must also keep the stack 16-byte aligned
-                    // through the whole native->JS->native round trip: call the
-                    // alignment probe from inside the same C frame afterwards.
                     entry();
                     FFI_CHECK_EQ(s_hostCanaryHits, 2u);
                     FFI_CHECK_EQ(ffi_align_probe_0(), 1.0);
                 }
             }
         }
-        // Zero arguments, jsvalue return: the JS side returns a fresh object
-        // whose bits go back out through the return register (which the canary
-        // ignores). Allocation and heap churn inside must not clobber anything.
         RefPtr<FFI::Signature> objectSignature = FFI::Signature::tryCreate({ }, FFI::Type::JSValue);
         FFI_CHECK(!!objectSignature);
         if (objectSignature) {
@@ -2044,8 +1875,6 @@ static void testCanaries()
         }
     }
 
-    // 3. Stack alignment through the invoke thunk with an odd number of
-    //    stack arguments (the probes fault on misalignment).
     {
         Vector<FFI::Type> nine(FillWith { }, 9, FFI::Type::Int32);
         RefPtr<FFI::Signature> nineSignature = FFI::Signature::tryCreate(nine.span(), FFI::Type::Double);
@@ -2068,12 +1897,6 @@ static void testCanaries()
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// End-to-end smoke tests from C++: a JSFFIFunction called through the normal
-// JS call machinery, and JSFFICallbacks around host functions invoked from
-// native code (callback thunk + callbackDispatch, SPEC section 9).
-// ---------------------------------------------------------------------------
 
 static JSC_DECLARE_HOST_FUNCTION(functionTimesThreePlusOne);
 JSC_DEFINE_HOST_FUNCTION(functionTimesThreePlusOne, (JSGlobalObject*, CallFrame* callFrame))
@@ -2163,7 +1986,6 @@ static void testJSFFIFunctionEndToEnd()
 
     auto icStubsBefore = FFI::g_ffiCompileCounts.icStub.load();
 
-    // ffi_add_i32 through the JS call machinery (IC stub or host path).
     if (JSFFIFunction* addI32 = makeFunction({ T::Int32, T::Int32 }, T::Int32, reinterpret_cast<void*>(ffi_add_i32), "ffi_add_i32"_s)) {
         FFI_CHECK_EQ(addI32->signature().argumentCount(), 2u);
         FFI_CHECK(addI32->target() == reinterpret_cast<void*>(ffi_add_i32));
@@ -2189,7 +2011,6 @@ static void testJSFFIFunctionEndToEnd()
         FFI_CHECK(callFunction(addI32, doubles) == jsNumber(-1)); // toInt32 truncation
     }
 
-    // bool argument fast/slow conversions and the return-slot normalization.
     if (JSFFIFunction* echoBool = makeFunction({ T::Bool }, T::Bool, reinterpret_cast<void*>(ffi_echo_bool), "ffi_echo_bool"_s)) {
         static const struct { double input; bool expected; } cases[] = {
             { 0, false }, { 1, true }, { 2, true }, { -1, true }, { 0.5, true }, { -0.0, false },
@@ -2211,7 +2032,6 @@ static void testJSFFIFunctionEndToEnd()
         FFI_CHECK(callFunction(twoAsBool, arguments) == jsBoolean(true));
     }
 
-    // Null pointer boxing.
     if (JSFFIFunction* nullPtr = makeFunction({ }, T::Pointer, reinterpret_cast<void*>(ffi_ret_null_ptr), "ffi_ret_null_ptr"_s)) {
         MarkedArgumentBuffer arguments;
         FFI_CHECK(callFunction(nullPtr, arguments).isNull());
@@ -2226,8 +2046,6 @@ static void testJSFFIFunctionEndToEnd()
         MarkedArgumentBuffer minusOne;
         minusOne.append(jsNumber(-1));
         JSValue signExtended = callFunction(echoPtr, minusOne);
-        // A -1 int32 pointer sign-extends to all-ones, which exceeds 2^53 and is
-        // therefore surfaced as an exact BigInt (not a lossy double).
         FFI_CHECK(signExtended.isBigInt());
         if (signExtended.isBigInt())
             FFI_CHECK_EQ(JSBigInt::toBigUInt64(signExtended), 0xFFFFFFFFFFFFFFFFull);
@@ -2242,7 +2060,6 @@ static void testJSFFIFunctionEndToEnd()
         }
     }
 
-    // f32 NaN purification (jsNumber(double) ASSERTs on impure NaN in debug).
     if (JSFFIFunction* nanF32 = makeFunction({ }, T::Float, reinterpret_cast<void*>(ffi_ret_nan_f32), "ffi_ret_nan_f32"_s)) {
         MarkedArgumentBuffer arguments;
         JSValue result = callFunction(nanF32, arguments);
@@ -2272,7 +2089,6 @@ static void testJSFFIFunctionEndToEnd()
             FFI_CHECK(std::signbit(result.asNumber()) && result.asNumber() == 0.0);
     }
 
-    // i64 return is always a BigInt; the *_fast cutoff is exercised in the conversion matrix.
     if (JSFFIFunction* negOneI64 = makeFunction({ }, T::Int64, reinterpret_cast<void*>(ffi_ret_neg_one_i64), "ffi_ret_neg_one_i64"_s)) {
         MarkedArgumentBuffer arguments;
         JSValue result = callFunction(negOneI64, arguments);
@@ -2296,7 +2112,6 @@ static void testJSFFIFunctionEndToEnd()
             FFI_CHECK_EQ(JSBigInt::toBigInt64(result), -1); // char is signed
     }
 
-    // A cstring argument transcoded from a JS string reaches strlen.
     if (JSFFIFunction* strlenFunction = makeFunction({ T::CString }, T::Uint64, reinterpret_cast<void*>(ffi_strlen), "ffi_strlen"_s)) {
         MarkedArgumentBuffer arguments;
         arguments.append(jsString(vm, String("hello"_s)));
@@ -2312,11 +2127,9 @@ static void testJSFFIFunctionEndToEnd()
             FFI_CHECK_EQ(JSBigInt::toBigUInt64(utf8Result), 6u);
     }
 
-    // The IC stub (when enabled) must have been generated for these functions.
     if (Options::useFFIICStub())
         FFI_CHECK(FFI::g_ffiCompileCounts.icStub.load() > icStubsBefore);
 
-    // Non-constructor.
     if (JSFFIFunction* addI32 = makeFunction({ T::Int32, T::Int32 }, T::Int32, reinterpret_cast<void*>(ffi_add_i32), "ffi_add_i32"_s)) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer arguments;
@@ -2329,8 +2142,6 @@ static void testJSFFIFunctionEndToEnd()
     }
 }
 
-// JSFFICallbacks around host JSFunctions, called from native code exactly the
-// way a C library would call a callback: through the raw entrypoint.
 static void testCallbackThunkEndToEnd()
 {
     VM& vm = *s_vm;
@@ -2357,15 +2168,12 @@ static void testCallbackThunkEndToEnd()
     JSFunction* returnsNaN = JSFunction::create(vm, globalObject, 0, "returnsNaN"_s, functionReturnNaN, ImplementationVisibility::Public);
     JSFunction* returnsMinusOne = JSFunction::create(vm, globalObject, 0, "returnsMinusOne"_s, functionReturnMinusOne, ImplementationVisibility::Public);
 
-    // int32_t (*)(int32_t)
     if (JSFFICallback* callback = makeCallback({ T::Int32 }, T::Int32, timesThreePlusOne)) {
         auto function = reinterpret_cast<int32_t (*)(int32_t)>(callback->nativeEntrypoint());
         FFI_CHECK_EQ(ffi_call_cb_i32(function, 7), 22);
         FFI_CHECK_EQ(ffi_call_cb_i32(function, -1), -2);
         FFI_CHECK_EQ(ffi_call_cb_i32(function, 0), 1);
-        // 2147483647 * 3 + 1 = 6442450942 -> toInt32 wraps to 0x7ffffffe... let JS decide.
         FFI_CHECK_EQ(ffi_call_cb_i32(function, 2147483647), static_cast<int32_t>(static_cast<uint32_t>(static_cast<int64_t>(2147483647.0 * 3.0 + 1.0))));
-        // Re-entrant loop.
         FFI_CHECK_EQ(ffi_call_cb_reentrant(function, 100), [] {
             int32_t sum = 0;
             for (int32_t i = 0; i < 100; ++i)
@@ -2373,7 +2181,6 @@ static void testCallbackThunkEndToEnd()
             return sum;
         }());
     }
-    // The 9-int and 9-double ladders read stack-passed callback arguments.
     if (JSFFICallback* callback = makeCallback(Vector<T>(FillWith { }, 9, T::Int32), T::Int64, weighted)) {
         auto function = reinterpret_cast<int64_t (*)(int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t)>(callback->nativeEntrypoint());
         int64_t expected = 1 * 1 + 2 * -2 + 3 * 3 + 4 * -4 + 5 * 5 + 6 * -6 + 7 * 7 + 8 * -8 + 9 * 2147483647ll;
@@ -2384,21 +2191,17 @@ static void testCallbackThunkEndToEnd()
         double expected = 1 * 0.5 + 2 * -0.25 + 3 * 3.5 + 4 * 4.5 + 5 * 5.5 + 6 * 6.5 + 7 * 7.5 + 8 * 8.5 + 9 * 1e10;
         FFI_CHECK_EQ(ffi_call_cb_f64_x9(function, 0.5, -0.25, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 1e10), expected);
     }
-    // Sub-8-byte incoming stack arguments (Darwin packing on the callback side).
     if (JSFFICallback* callback = makeCallback(Vector<T>(FillWith { }, 10, T::Uint8), T::Int64, weighted)) {
         auto function = reinterpret_cast<int64_t (*)(uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t)>(callback->nativeEntrypoint());
         int64_t expected = 1 * 255 + 2 * 0 + 3 * 128 + 4 * 1 + 5 * 200 + 6 * 17 + 7 * 254 + 8 * 3 + 9 * 99 + 10 * 250;
         FFI_CHECK_EQ(ffi_call_cb_u8_x10(function, 255, 0, 128, 1, 200, 17, 254, 3, 99, 250), expected);
     }
-    // Mixed callback arguments.
     if (JSFFICallback* callback = makeCallback({ T::Int32, T::Double, T::Int64Fast, T::Float, T::Pointer }, T::Double, weighted)) {
         auto function = reinterpret_cast<double (*)(int32_t, double, int64_t, float, void*)>(callback->nativeEntrypoint());
         void* pointer = reinterpret_cast<void*>(static_cast<uintptr_t>(8192));
-        // 2^52 keeps every weighted product exact, so FMA contraction can't matter.
         double expected = 1 * -5.0 + 2 * 2.5 + 3 * 4503599627370496.0 + 4 * static_cast<double>(1.25f) + 5 * 8192.0;
         FFI_CHECK_EQ(ffi_call_cb_mix(function, -5, 2.5, 4503599627370496ll, 1.25f, pointer), expected);
     }
-    // Callback return-value normalization by type.
     if (JSFFICallback* callback = makeCallback({ }, T::Bool, returnsTwo)) {
         auto function = reinterpret_cast<bool (*)(void)>(callback->nativeEntrypoint());
         FFI_CHECK_EQ(ffi_call_cb_ret_bool(function), 10); // JS 2 -> toBoolean -> true -> exactly 1 in the register
@@ -2431,7 +2234,6 @@ static void testCallbackThunkEndToEnd()
         auto function = reinterpret_cast<void* (*)(void)>(callback->nativeEntrypoint());
         FFI_CHECK_EQ(reinterpret_cast<uintptr_t>(ffi_call_cb_ret_ptr(function)), static_cast<uintptr_t>(0xffffffffffffffffull));
     }
-    // close() is idempotent, keeps the code alive, and leaves nativeEntrypoint stable.
     if (JSFFICallback* callback = makeCallback({ T::Int32 }, T::Int32, timesThreePlusOne)) {
         void* before = callback->nativeEntrypoint();
         callback->close();
@@ -2440,10 +2242,6 @@ static void testCallbackThunkEndToEnd()
         FFI_CHECK(callback->callable() == timesThreePlusOne);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Fixture-table sanity.
-// ---------------------------------------------------------------------------
 
 static void testFixtureTable()
 {
@@ -2461,7 +2259,6 @@ static void testFixtureTable()
     if (addI32)
         FFI_CHECK(addI32->address == reinterpret_cast<void*>(ffi_add_i32));
 
-    // Direct native calls of the assertion-level fixtures.
     FFI_CHECK_EQ(ffi_widen_char(-1), -1);
     FFI_CHECK_EQ(ffi_widen_i8(-1), -1);
     FFI_CHECK_EQ(ffi_widen_u8(255), 255);
@@ -2486,7 +2283,6 @@ static int runAll()
     JSC::initialize();
 
     if (!Options::useJIT()) {
-        // bun:ffi requires the JIT (SPEC section 0.1); nothing to test here.
         dataLogLn("testFFI: JIT is disabled; skipping.");
         return 0;
     }
@@ -2511,8 +2307,6 @@ static int runAll()
     }
 
     dataLogLn(s_failureCount ? "FAILED: " : "OK: ", s_checkCount - s_failureCount, " checks passed, ", s_failureCount, " failed.");
-    // Deliberately leak the VM: tearing it down during static destruction at
-    // process exit is not what we are here to test.
     VM& leaked = s_vm.releaseNonNull().leakRef();
     UNUSED_PARAM(leaked);
     return s_failureCount ? 1 : 0;

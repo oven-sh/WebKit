@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,62 +46,35 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
     if (!Options::useFFICallInDFG())
         return false;
 
-    // Only plain calls become CallFFI - never Construct / TailCall / TailCallInlinedCaller.
-    // (A TailCall reaching here is a block terminal; the parser feed instead emits FFI calls that
-    // were bytecode tail calls as plain Calls, so this phase only ever sees op() == Call.)
     if (node->op() != DFG::Call)
         return false;
 
-    // bun:ffi is 64-bit only (compiled out on 32-bit).
     if (!is64Bit())
         return false;
 
-    // The callee child is the constant JSFFIFunction (the ByteCodeParser feed
-    // guarantees it); anything else is not an FFI call site.
     if (!function)
         return false;
     auto* ffiFunction = dynamicDowncast<JSFFIFunction>(function);
     if (!ffiFunction)
         return false;
 
-    // A hooked function must run every call through the C++ host path (the only place its
-    // before/after hooks run); never lift it into a CallFFI node.
     if (ffiFunction->isHostPathOnly())
         return false;
 
     Signature& signature = ffiFunction->signature();
 
-    // Exact arity only: children are |callee|, |this|, then the JS arguments.
     if (node->numChildren() - 2 != signature.argumentCount())
         return false;
 
-    // The DFG/FTL CallFFI codegen calls the signature's invoke thunk; make
-    // its existence an invariant of the conversion by generating it here.
-    // The thunk is process-shared and immortal once generated (SPEC 7.2),
-    // and generation is a plain LinkBuffer emit under the Signature's own
-    // lock, so it is safe on the compiler thread. SPEC 7.2 lets generation
-    // fail on executable-memory exhaustion; then keep the plain Call so this
-    // function stays on its host path instead of degrading the whole node to
-    // a runtime OutOfMemoryError.
     if (!signature.invokeThunk())
         return false;
 
-    // The inserted argument checks and DoubleRep nodes exit, so they can only
-    // go where exiting is valid. Exactly like CallWasm's indexForChecks
-    // (DFGStrengthReductionPhase.cpp), the only candidate index is the Call
-    // node itself: it defines-after every argument child (no use-before-def)
-    // and shares the origin the inserted nodes carry, so its origin must be
-    // exitOK - otherwise refuse the conversion.
     if (!node->origin.exitOK)
         return false;
     unsigned checkIndex = nodeIndex;
 
-    // Reserve outgoing frame space for the canonical slot buffer
-    // (argumentCount() + 1 slots, SPEC section 4).
     graph.m_parameterSlots = std::max(graph.m_parameterSlots, DFG::Graph::parameterSlotsForArgCount(signature.slotCount() + 1));
 
-    // Establish argument checks and edge use kinds here and nowhere else:
-    // PredictionPropagation and FixupPhase run before strength reduction.
     for (unsigned index = 0; index < signature.argumentCount(); ++index) {
         Type type = signature.argumentType(index);
         unsigned childIndex = 2 + index;
@@ -115,12 +88,6 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
         case Type::Uint16:
         case Type::Int32:
         case Type::Uint32: {
-            // Only speculate int32 when profiling says the site actually passes int32s. The C++
-            // conversion (writeIntegerSlot) legitimately accepts doubles, booleans, null/undefined
-            // and BigInts for integer parameters, so an unconditional Int32Use check would OSR-exit
-            // on EVERY call at a site that validly passes e.g. `true` or `0.5` -- a deopt storm.
-            // Non-int32 sites keep the boxed value and convert via operationFFIWriteSlot instead
-            // (same UntypedUse path the Bool case below uses for its fallback).
             if (argumentNode->shouldSpeculateInt32()) {
                 insertionSet.insertCheck(checkIndex, node->origin, DFG::Edge(argumentNode, DFG::Int32Use));
                 graph.varArgChild(node, childIndex) = DFG::Edge(argumentNode, DFG::KnownInt32Use);
@@ -129,8 +96,6 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
             break;
         }
         case Type::Bool: {
-            // Codegen converts a KnownInt32Use bool with a `!= 0` compare
-            // (toBoolean), never `and32(1)`.
             if (argumentNode->shouldSpeculateBoolean()) {
                 insertionSet.insertCheck(checkIndex, node->origin, DFG::Edge(argumentNode, DFG::BooleanUse));
                 graph.varArgChild(node, childIndex) = DFG::Edge(argumentNode, DFG::KnownBooleanUse);
@@ -143,16 +108,6 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
         }
         case Type::Float:
         case Type::Double: {
-            // FFI-SPEC-GAP: SPEC 10.2 lists NotCellNorBigIntUse as the last
-            // resort here (copying the CallWasm F32/F64 recipe), but that use kind
-            // makes DoubleRep silently coerce null -> +0.0, booleans -> 0/1 and
-            // (for f32) undefined -> NaN with no exception, contradicting the
-            // SPEC 5 conversion table every other tier implements (f64 maps
-            // null/undefined -> NaN; booleans and any non-number f32 argument
-            // throw TypeError). SPEC 5 states all tiers are behaviorally
-            // identical and 11.4 tests that, so only the OSR-exiting number use
-            // kinds get a DoubleRep; anything else keeps the boxed value and
-            // flows through operationFFIWriteSlot (the SPEC 5 rules) in codegen.
             DFG::UseKind useKind;
             if (argumentNode->shouldSpeculateDoubleReal())
                 useKind = DFG::RealNumberUse;
@@ -176,22 +131,16 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
         case Type::Buffer:
         case Type::BufferLength:
         case Type::JSValue: {
-            // Converted at runtime through operationFFIWriteSlot; keep the value boxed.
-            // (buffer_length has no inline fast path in any tier: correctness over speed.)
             graph.varArgChild(node, childIndex) = DFG::Edge(argumentNode, DFG::UntypedUse);
             break;
         }
         case Type::RESERVED_WasNapiEnv:
         case Type::Void:
-            // Neither is a valid argument type (Signature::tryCreate rejects both).
             RELEASE_ASSERT_NOT_REACHED();
             break;
         }
     }
 
-    // Child 0 is the callee, a cell constant (dynamicCastConstant above), so it
-    // trivially satisfies KnownCellUse (SPEC section 10.1). Child 1 (|this|)
-    // stays UntypedUse and is ignored by codegen.
     graph.varArgChild(node, 0) = DFG::Edge(graph.varArgChild(node, 0).node(), DFG::KnownCellUse);
 
     node->convertToCallFFI(graph.freeze(ffiFunction));
@@ -219,10 +168,6 @@ SpeculatedType speculatedResultTypeForCallFFI(DFG::Node* node)
         return SpecOther;
     case Type::Int64:
     case Type::Uint64:
-        // FFI-SPEC-GAP: SPEC section 10.3 spells this as SpecHeapBigInt | SpecBigInt32;
-        // that is exactly SpecBigInt under USE(BIGINT32), and SpecBigInt drops
-        // SpecBigInt32 when !USE(BIGINT32) (which SpeculatedType.h requires and
-        // which matches the CallWasm I64 precedent), so use SpecBigInt.
         return SpecBigInt;
     case Type::Int64Fast:
     case Type::Uint64Fast:
@@ -231,15 +176,11 @@ SpeculatedType speculatedResultTypeForCallFFI(DFG::Node* node)
     case Type::CString:
     case Type::Function:
     case Type::Buffer:
-        // A null pointer boxes to jsNull(); an address <= 2^53 to a number; an address > 2^53
-        // to an exact HeapBigInt (SPEC section 5, oven-sh/bun#28068). All three must be in the
-        // proven type or the abstract interpreter would let `typeof x === "bigint"` fold to false.
         return SpecBytecodeNumber | SpecOther | SpecBigInt;
     case Type::JSValue:
         return SpecBytecodeTop;
     case Type::RESERVED_WasNapiEnv:
     case Type::BufferLength:
-        // Neither is a valid return type (Signature::tryCreate rejects both).
         RELEASE_ASSERT_NOT_REACHED();
         return SpecBytecodeTop;
     }

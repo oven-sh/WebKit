@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,12 +29,6 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
-// FFI-SPEC-GAP: spec section 14 asks for USE(JSVALUE64) around "everything" for
-// 32-bit, but this header (and FFISignature.h) contains no JSValue-facing or
-// JIT-emitting code, so it is guarded only by USE(BUN_JSC_ADDITIONS); the
-// JSVALUE64 / ENABLE(JIT) guards are applied by the consuming rows where they
-// are relevant (creation APIs, thunk generators, DFG/FTL).
-
 #include "JSExportMacros.h"
 #include <atomic>
 #include <optional>
@@ -43,8 +37,6 @@
 
 namespace JSC { namespace FFI {
 
-// The numeric tags are wire-compatible with Bun's existing FFIType map
-// (bun/src/js/bun/ffi.ts) and MUST NOT change.
 enum class Type : uint8_t {
     Char = 0,
     Int8 = 1,
@@ -64,27 +56,14 @@ enum class Type : uint8_t {
     Int64Fast = 15,
     Uint64Fast = 16,
     Function = 17,
-    // 18 is RESERVED and permanently invalid. It was `napi_env`, an engine-injected synthetic
-    // argument; that concept was removed (the embedder now supplies any environment pointer
-    // itself and brackets calls with JSFFIFunction's before/after hooks). The slot is kept so
-    // the wire-compatible tags below do not shift; Signature::tryCreate rejects it.
     RESERVED_WasNapiEnv = 18,
-    // A raw JSValue: the argument's boxed 64-bit encoding is passed through unchanged, and a
-    // JSValue-returning callee's raw encoding is boxed unchanged. (Historically `napi_value`,
-    // which is layout-identical to an encoded JSValue -- but nothing here is N-API-specific.)
     JSValue = 19,
     Buffer = 20,
-    // The "length twin" of Buffer: accepts exactly what Buffer accepts (a TypedArray or DataView)
-    // and marshals that view's byteLength() as an unsigned 64-bit integer (ABI-identical to
-    // Uint64). Argument-only; `args: ["buffer", "buffer_length"]` with the same view passed for
-    // both reads the pointer and the length off one cell at call time.
     BufferLength = 21,
 };
 
 constexpr unsigned numberOfTypes = 22;
 
-// Canonical name of a type (also used by Signature::toString()). Total over
-// all numberOfTypes values.
 constexpr ASCIILiteral name(Type type)
 {
     switch (type) {
@@ -143,11 +122,8 @@ constexpr std::optional<Type> typeFromTag(unsigned tag)
     return static_cast<Type>(tag);
 }
 
-// Accepts the canonical names produced by name() plus the aliases Bun's
-// FFIType map exposes. Matching is exact (case-sensitive), like Bun's map.
 inline std::optional<Type> parseType(StringView string)
 {
-    // Canonical names.
     if (string == "char"_s)
         return Type::Char;
     if (string == "i8"_s)
@@ -191,7 +167,6 @@ inline std::optional<Type> parseType(StringView string)
     if (string == "buffer_length"_s || string == "buffer_bytelength"_s) // buffer_bytelength: alias of the same length twin
         return Type::BufferLength;
 
-    // Aliases.
     if (string == "int8_t"_s)
         return Type::Int8;
     if (string == "uint8_t"_s)
@@ -206,17 +181,12 @@ inline std::optional<Type> parseType(StringView string)
         return Type::Uint32;
     if (string == "int64_t"_s || string == "isize"_s)
         return Type::Int64;
-    // FFI-SPEC-GAP: the spec lists "size_t" as an alias without a target; it
-    // is mapped to Uint64 alongside Bun's "usize"/"uint64_t" (both tag 8).
     if (string == "uint64_t"_s || string == "usize"_s || string == "size_t"_s)
         return Type::Uint64;
     if (string == "double"_s)
         return Type::Double;
     if (string == "float"_s)
         return Type::Float;
-    // FFI-SPEC-GAP: the spec lists "char*" as an alias without a target; Bun's
-    // FFIType map spells "char*" as tag 12 (ptr), so it maps to Pointer here
-    // rather than CString to keep tag parity with the JS glue.
     if (string == "void*"_s || string == "pointer"_s || string == "char*"_s)
         return Type::Pointer;
     if (string == "callback"_s || string == "fn"_s)
@@ -225,7 +195,6 @@ inline std::optional<Type> parseType(StringView string)
     return std::nullopt;
 }
 
-// The class of native location a value of a given type travels in.
 enum class ArgClass : uint8_t { Void, Int, Float, Double };
 
 constexpr ArgClass argClass(Type type)
@@ -261,22 +230,16 @@ constexpr ArgClass argClass(Type type)
     return ArgClass::Int;
 }
 
-// Buffer and its length twin BufferLength are argument-only (Bun compatibility; a "length"
-// return makes no sense); Void is a valid return type; the reserved tag is invalid in every
-// position (Signature::tryCreate rejects it).
 constexpr bool isValidReturnType(Type type)
 {
     return type != Type::RESERVED_WasNapiEnv && type != Type::Buffer && type != Type::BufferLength;
 }
 
-// Void is invalid as an argument, as is the reserved tag; everything else is a valid argument.
 constexpr bool isValidArgumentType(Type type)
 {
     return type != Type::Void && type != Type::RESERVED_WasNapiEnv;
 }
 
-// Size in bytes of the native (C ABI) representation. Void has no
-// representation; it returns 0 and callers must not query it for a location.
 constexpr unsigned nativeSizeInBytes(Type type)
 {
     switch (type) {
@@ -311,9 +274,6 @@ constexpr unsigned nativeSizeInBytes(Type type)
     return 0;
 }
 
-// Governs sub-word extension. Type::Char is a SIGNED 8-bit integer on every
-// target (identical to Int8); it deliberately does not follow the platform C
-// `char` signedness.
 constexpr bool isSigned(Type type)
 {
     switch (type) {
@@ -345,9 +305,6 @@ constexpr bool isSigned(Type type)
     return false;
 }
 
-// Process-global counters proving that each JIT tier actually compiled FFI
-// code (read by $vm.ffiCompileCounts(); incremented by the IC-stub generator,
-// SpeculativeJIT::compileCallFFI and the FTL lowering respectively).
 struct CompileCounts {
     std::atomic<uint64_t> icStub { 0 };
     std::atomic<uint64_t> dfgCallFFI { 0 };

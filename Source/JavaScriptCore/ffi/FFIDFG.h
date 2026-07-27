@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,18 +43,8 @@ struct Node;
 
 namespace FFI {
 
-// Call -> CallFFI conversion (SPEC section 10.2), invoked from
-// DFGStrengthReductionPhase's Call case with the constant callee it already
-// resolved. Handles the JSFFIFunction downcast, the useFFICallInDFG() /
-// op == Call / exact-arity gates, the parameter-slot reservation for the
-// canonical slot buffer, and the per-argument checks and edge use kinds
-// (PredictionPropagation and Fixup have already run, so they are fixed
-// here and nowhere else). Returns true if the node was converted.
 bool tryConvertCallToCallFFI(DFG::Graph&, DFG::InsertionSet&, unsigned nodeIndex, DFG::Node*, JSFunction* callee);
 
-// The AbstractInterpreter's result filter for a CallFFI node: the
-// return-type refinement of SPEC section 10.3, derived from the callee's
-// interned signature.
 SpeculatedType speculatedResultTypeForCallFFI(DFG::Node*);
 
 } // namespace FFI

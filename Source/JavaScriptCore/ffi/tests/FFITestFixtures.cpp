@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,8 +28,6 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
-// Deliberately no JSC dependencies here beyond the platform macros pulled in
-// by config.h: these fixtures model an arbitrary third-party C library.
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -40,10 +38,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 extern "C" {
-
-// ---------------------------------------------------------------------------
-// Echo family.
-// ---------------------------------------------------------------------------
 
 signed char ffi_echo_char(signed char x) { return x; }
 int8_t ffi_echo_i8(int8_t x) { return x; }
@@ -60,10 +54,6 @@ bool ffi_echo_bool(bool x) { return x; }
 void* ffi_echo_ptr(void* x) { return x; }
 const char* ffi_echo_cstring(const char* x) { return x; }
 napi_value ffi_echo_napi_value(napi_value x) { return x; }
-
-// ---------------------------------------------------------------------------
-// Widening / return-normalization probes.
-// ---------------------------------------------------------------------------
 
 int64_t ffi_widen_char(signed char x) { return x; }
 int64_t ffi_widen_i8(int8_t x) { return x; }
@@ -87,19 +77,11 @@ double ffi_ret_neg_zero_f64(void) { return -0.0; }
 float ffi_ret_denormal_f32(void) { return std::bit_cast<float>(0x00000001u); }
 double ffi_ret_inf_f64(void) { return std::bit_cast<double>(0x7ff0000000000000ull); }
 
-// ---------------------------------------------------------------------------
-// Adders.
-// ---------------------------------------------------------------------------
-
 int32_t ffi_add_i32(int32_t a, int32_t b) { return static_cast<int32_t>(static_cast<uint32_t>(a) + static_cast<uint32_t>(b)); }
 double ffi_add_f64(double a, double b) { return a + b; }
 int64_t ffi_add_i64(int64_t a, int64_t b) { return static_cast<int64_t>(static_cast<uint64_t>(a) + static_cast<uint64_t>(b)); }
 uint64_t ffi_add_u64(uint64_t a, uint64_t b) { return a + b; }
 float ffi_add_f32(float a, float b) { return a + b; }
-
-// ---------------------------------------------------------------------------
-// Arity ladders.
-// ---------------------------------------------------------------------------
 
 int64_t ffi_sum_i32_0(void) { return 0; }
 int64_t ffi_sum_i32_1(int32_t a0) { return int64_t(a0); }
@@ -172,10 +154,6 @@ int64_t ffi_sum_i16_12(int16_t a0, int16_t a1, int16_t a2, int16_t a3, int16_t a
     return int64_t(a0) + int64_t(a1) + int64_t(a2) + int64_t(a3) + int64_t(a4) + int64_t(a5) + int64_t(a6) + int64_t(a7) + int64_t(a8) + int64_t(a9)
         + int64_t(a10) + int64_t(a11);
 }
-
-// ---------------------------------------------------------------------------
-// Mixes. Formula (documented in the header): checksum = sum (k + 1) * cast(arg_k).
-// ---------------------------------------------------------------------------
 
 static inline double ffiPtrToDouble(void* p)
 {
@@ -287,10 +265,6 @@ double ffi_mix_8(float a0, double a1, float a2, double a3, float a4, double a5, 
         + 12.0 * a11;
 }
 
-// ---------------------------------------------------------------------------
-// Pointer probes.
-// ---------------------------------------------------------------------------
-
 void ffi_ptr_write_u32(uint32_t* p, uint32_t v) { *p = v; }
 uint32_t ffi_ptr_read_u32(uint32_t* p) { return *p; }
 uint64_t ffi_strlen(const char* s) { return static_cast<uint64_t>(strlen(s)); }
@@ -299,7 +273,6 @@ void* ffi_high_ptr(void) { return reinterpret_cast<void*>(static_cast<uintptr_t>
 uint64_t ffi_view_byte_length(const uint8_t*, uint64_t length) { return length; }
 int32_t ffi_view_last_byte(const uint8_t* ptr, uint64_t length) { return length ? static_cast<int32_t>(ptr[length - 1]) : -1; }
 
-// Perf-gate fixtures mirroring Bun's bench/ffi native library (noop / hash / string).
 void ffi_bench_noop(void) { }
 const char* ffi_bench_string(void) { return "Hello, world!"; }
 uint32_t ffi_bench_hash(const uint8_t* ptr, uint32_t length)
@@ -309,10 +282,6 @@ uint32_t ffi_bench_hash(const uint8_t* ptr, uint32_t length)
         hash = hash * 0x10001000u + ptr[i];
     return hash;
 }
-
-// ---------------------------------------------------------------------------
-// Callback fixtures.
-// ---------------------------------------------------------------------------
 
 int32_t ffi_call_cb_i32(int32_t (*cb)(int32_t), int32_t x) { return cb(x); }
 
@@ -353,16 +322,12 @@ int64_t ffi_call_cb_u8_x10(int64_t (*cb)(uint8_t, uint8_t, uint8_t, uint8_t, uin
 
 int64_t ffi_sum_i32_x10(int32_t a0, int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5, int32_t a6, int32_t a7, int32_t a8, int32_t a9)
 {
-    // Weight each argument by its position so a shifted/mis-strided stack slot is detectable.
     return static_cast<int64_t>(a0) * 1 + static_cast<int64_t>(a1) * 2 + static_cast<int64_t>(a2) * 3
         + static_cast<int64_t>(a3) * 4 + static_cast<int64_t>(a4) * 5 + static_cast<int64_t>(a5) * 6
         + static_cast<int64_t>(a6) * 7 + static_cast<int64_t>(a7) * 8 + static_cast<int64_t>(a8) * 9
         + static_cast<int64_t>(a9) * 10;
 }
 
-// Spawns a FOREIGN OS thread that invokes cb(a, b, c, d) exactly once, then joins it. Being
-// entered off the JS thread is the whole point: it exercises the threadsafe dispatch path, which
-// must copy raw slots and hand off to the embedder WITHOUT touching the VM off-thread.
 void ffi_call_cb_from_thread(void (*cb)(int32_t, int64_t, uint64_t, double), int32_t a, int64_t b, uint64_t c, double d)
 {
     auto thread = Thread::create("ffi-cb-from-thread"_s, [cb, a, b, c, d] {
@@ -386,21 +351,8 @@ uint32_t ffi_call_cb_then_read_u32(uint32_t (*cb)(void), uint32_t* p)
     return *p;
 }
 
-// ---------------------------------------------------------------------------
-// Callee-saved register canary.
-//
-// The canary loads distinct sentinel values into the host ABI's
-// callee-saved register set, calls the callback, captures the registers again
-// and restores the original values, all inside a single asm statement so the
-// compiler cannot interleave its own uses. It returns a bitmask of the
-// registers whose sentinel did not survive the call (0 == the callee preserved
-// everything the ABI requires). GNU extended asm is used everywhere,
-// including Windows x64 where JSC is built with clang-cl.
-// ---------------------------------------------------------------------------
-
 #if CPU(X86_64)
 
-// Layout is consumed by hard-coded offsets in the asm below; keep in sync.
 struct FFICanaryStateX64 {
     uint64_t original[7]; // rbx, r12, r13, r14, r15, rsi, rdi
     uint64_t sentinel[7];
@@ -431,11 +383,8 @@ int32_t ffi_canary_call(void (*cb)(void))
     }
 
 #if OS(WINDOWS)
-    // Win64: rbx, r12-r15, rsi, rdi and the FULL 128-bit xmm6-xmm15 are
-    // nonvolatile. The callee also gets its 32-byte shadow space.
     asm volatile(
         "movq %[state], %%rax\n\t"
-        // Save originals.
         "movq %%rbx, 0(%%rax)\n\t"
         "movq %%r12, 8(%%rax)\n\t"
         "movq %%r13, 16(%%rax)\n\t"
@@ -453,7 +402,6 @@ int32_t ffi_canary_call(void (*cb)(void))
         "movdqu %%xmm13, 280(%%rax)\n\t"
         "movdqu %%xmm14, 296(%%rax)\n\t"
         "movdqu %%xmm15, 312(%%rax)\n\t"
-        // Load sentinels.
         "movq 56(%%rax), %%rbx\n\t"
         "movq 64(%%rax), %%r12\n\t"
         "movq 72(%%rax), %%r13\n\t"
@@ -471,8 +419,6 @@ int32_t ffi_canary_call(void (*cb)(void))
         "movdqu 440(%%rax), %%xmm13\n\t"
         "movdqu 456(%%rax), %%xmm14\n\t"
         "movdqu 472(%%rax), %%xmm15\n\t"
-        // Align the stack, keep the state pointer live across the call, and
-        // provide the callee's 32-byte shadow space.
         "movq %%rsp, %%r11\n\t"
         "subq $272, %%rsp\n\t"
         "andq $-16, %%rsp\n\t"
@@ -485,7 +431,6 @@ int32_t ffi_canary_call(void (*cb)(void))
         "popq %%rax\n\t"
         "popq %%r11\n\t"
         "movq %%r11, %%rsp\n\t"
-        // Record what survived.
         "movq %%rbx, 112(%%rax)\n\t"
         "movq %%r12, 120(%%rax)\n\t"
         "movq %%r13, 128(%%rax)\n\t"
@@ -503,7 +448,6 @@ int32_t ffi_canary_call(void (*cb)(void))
         "movdqu %%xmm13, 600(%%rax)\n\t"
         "movdqu %%xmm14, 616(%%rax)\n\t"
         "movdqu %%xmm15, 632(%%rax)\n\t"
-        // Restore the originals so this function keeps its own ABI promise.
         "movq 0(%%rax), %%rbx\n\t"
         "movq 8(%%rax), %%r12\n\t"
         "movq 16(%%rax), %%r13\n\t"
@@ -528,21 +472,16 @@ int32_t ffi_canary_call(void (*cb)(void))
 #else // !OS(WINDOWS): System V AMD64
     asm volatile(
         "movq %[state], %%rax\n\t"
-        // Save originals.
         "movq %%rbx, 0(%%rax)\n\t"
         "movq %%r12, 8(%%rax)\n\t"
         "movq %%r13, 16(%%rax)\n\t"
         "movq %%r14, 24(%%rax)\n\t"
         "movq %%r15, 32(%%rax)\n\t"
-        // Load sentinels.
         "movq 56(%%rax), %%rbx\n\t"
         "movq 64(%%rax), %%r12\n\t"
         "movq 72(%%rax), %%r13\n\t"
         "movq 80(%%rax), %%r14\n\t"
         "movq 88(%%rax), %%r15\n\t"
-        // Step past the red zone, align to 16, and keep both the original
-        // stack pointer and the state pointer on the stack across the call
-        // (every caller-saved register is fair game for the callee).
         "movq %%rsp, %%r11\n\t"
         "subq $256, %%rsp\n\t"
         "andq $-16, %%rsp\n\t"
@@ -553,13 +492,11 @@ int32_t ffi_canary_call(void (*cb)(void))
         "popq %%rax\n\t"
         "popq %%r11\n\t"
         "movq %%r11, %%rsp\n\t"
-        // Record what survived.
         "movq %%rbx, 112(%%rax)\n\t"
         "movq %%r12, 120(%%rax)\n\t"
         "movq %%r13, 128(%%rax)\n\t"
         "movq %%r14, 136(%%rax)\n\t"
         "movq %%r15, 144(%%rax)\n\t"
-        // Restore the originals.
         "movq 0(%%rax), %%rbx\n\t"
         "movq 8(%%rax), %%r12\n\t"
         "movq 16(%%rax), %%r13\n\t"
@@ -583,8 +520,6 @@ int32_t ffi_canary_call(void (*cb)(void))
             mask |= 1u << (7 + i);
     }
 #else
-    // rsi/rdi (indices 5, 6) and the xmm registers are volatile in SysV; only
-    // rbx and r12-r15 are checked.
     for (unsigned i = 0; i < 5; ++i) {
         if (state.observed[i] != state.sentinel[i])
             mask |= 1u << i;
@@ -595,24 +530,12 @@ int32_t ffi_canary_call(void (*cb)(void))
 
 #elif CPU(ARM64)
 
-// x18: on ELF platforms (Linux/FreeBSD) it is an ordinary caller-saved
-// scratch register that the callee chain (JIT thunks, callbackDispatch, the
-// JS callback's host code) may clobber, and it is the compiler's cheapest
-// register for keeping &state (or the mask-loop state) live across the asm
-// once every other caller-saved GPR is declared clobbered -- so declare it
-// too. Darwin and Windows reserve x18 as the platform register (naming it in a
-// clobber list is a compile error under -Werror there), and nothing may
-// clobber it on those platforms anyway.
 #if OS(LINUX) || OS(FREEBSD)
 #define FFI_CANARY_CLOBBER_X18 "x18",
 #else
 #define FFI_CANARY_CLOBBER_X18
 #endif
 
-// The vector registers are saved and restored as full 128-bit q registers
-// so that this asm statement itself preserves everything the compiler may
-// keep in v8-v15; the canary only *checks* the ABI-callee-saved low 64 bits
-// (d8-d15) of each.
 struct FFICanaryStateARM64 {
     uint64_t originalX[10]; // x19 - x28
     uint64_t sentinelX[10];
@@ -644,7 +567,6 @@ int32_t ffi_canary_call(void (*cb)(void))
 
     asm volatile(
         "mov x9, %[state]\n\t"
-        // Save originals.
         "stp x19, x20, [x9, #0]\n\t"
         "stp x21, x22, [x9, #16]\n\t"
         "stp x23, x24, [x9, #32]\n\t"
@@ -654,7 +576,6 @@ int32_t ffi_canary_call(void (*cb)(void))
         "stp q10, q11, [x9, #272]\n\t"
         "stp q12, q13, [x9, #304]\n\t"
         "stp q14, q15, [x9, #336]\n\t"
-        // Load sentinels.
         "ldp x19, x20, [x9, #80]\n\t"
         "ldp x21, x22, [x9, #96]\n\t"
         "ldp x23, x24, [x9, #112]\n\t"
@@ -664,12 +585,10 @@ int32_t ffi_canary_call(void (*cb)(void))
         "ldp q10, q11, [x9, #400]\n\t"
         "ldp q12, q13, [x9, #432]\n\t"
         "ldp q14, q15, [x9, #464]\n\t"
-        // Keep the state pointer on the (16-byte aligned) stack across the call.
         "str x9, [sp, #-16]!\n\t"
         "ldr x10, [x9, #624]\n\t"
         "blr x10\n\t"
         "ldr x9, [sp], #16\n\t"
-        // Record what survived.
         "stp x19, x20, [x9, #160]\n\t"
         "stp x21, x22, [x9, #176]\n\t"
         "stp x23, x24, [x9, #192]\n\t"
@@ -679,7 +598,6 @@ int32_t ffi_canary_call(void (*cb)(void))
         "stp q10, q11, [x9, #528]\n\t"
         "stp q12, q13, [x9, #560]\n\t"
         "stp q14, q15, [x9, #592]\n\t"
-        // Restore the originals.
         "ldp x19, x20, [x9, #0]\n\t"
         "ldp x21, x22, [x9, #16]\n\t"
         "ldp x23, x24, [x9, #32]\n\t"
@@ -703,7 +621,6 @@ int32_t ffi_canary_call(void (*cb)(void))
             mask |= 1u << i;
     }
     for (unsigned i = 0; i < 8; ++i) {
-        // Only the low 64 bits (d8-d15) are callee-saved.
         if (memcmp(state.observedQ[i], state.sentinelQ[i], 8))
             mask |= 1u << (10 + i);
     }
@@ -712,9 +629,6 @@ int32_t ffi_canary_call(void (*cb)(void))
 
 #else
 
-// FFI-SPEC-GAP: the FFI is only supported on X86_64 and ARM64 (SPEC section
-// 14); on any other CPU the fixture still has to link, so the canary
-// degenerates to a plain call that always reports success.
 int32_t ffi_canary_call(void (*cb)(void))
 {
     cb();
@@ -722,18 +636,6 @@ int32_t ffi_canary_call(void (*cb)(void))
 }
 
 #endif
-
-// ---------------------------------------------------------------------------
-// Stack-alignment probes. On x86-64 the 16-byte-aligned local's real alignment
-// tracks the incoming stack pointer (the compiler assumes the ABI-mandated
-// 16-byte alignment and never realigns for alignas(16)), so the aligned
-// 128-bit movaps faults when the FFI caller mis-aligned the stack. AArch64
-// vector loads/stores through a general-purpose base register carry no
-// alignment check, so on arm64 the probe instead performs sp-based accesses:
-// the hardware SP-alignment check (SCTLR_EL1.SA0, enabled on Linux/macOS)
-// faults on any load/store whose base register is a misaligned sp (as does
-// the fixture's own sp-based prologue).
-// ---------------------------------------------------------------------------
 
 static inline double ffiAlignedVectorProbe()
 {
@@ -749,7 +651,6 @@ static inline double ffiAlignedVectorProbe()
         : "xmm0", "memory");
 #elif CPU(ARM64)
     asm volatile(
-        // sp-based store/load: faults if sp is not 16-byte aligned.
         "str q0, [sp, #-16]!\n\t"
         "ld1 { v0.4s }, [%[buf]]\n\t"
         "st1 { v0.4s }, [%[buf]]\n\t"
@@ -768,8 +669,6 @@ double ffi_align_probe_0(void)
 
 double ffi_align_probe_9(int32_t a0, int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5, int32_t a6, int32_t a7, int32_t a8)
 {
-    // Fold the arguments in so they are all live (and so a mis-ordered stack
-    // load would perturb the result), then normalize back to exactly 1.0.
     double folded = ffiAlignedVectorProbe();
     int64_t junk = int64_t(a0) + int64_t(a1) + int64_t(a2) + int64_t(a3) + int64_t(a4) + int64_t(a5) + int64_t(a6) + int64_t(a7) + int64_t(a8);
     return folded + (static_cast<double>(junk) * 0.0);
@@ -777,16 +676,10 @@ double ffi_align_probe_9(int32_t a0, int32_t a1, int32_t a2, int32_t a3, int32_t
 
 } // extern "C"
 
-// ---------------------------------------------------------------------------
-// Fixture table.
-// ---------------------------------------------------------------------------
-
 #define FFI_FIXTURE(name) { #name, reinterpret_cast<void*>(&name) }
 
 std::span<const FFIFixtureEntry> ffiTestFixtures()
 {
-    // Function-local static (not a namespace-scope global) so the
-    // reinterpret_casts do not turn into a load-time static initializer.
     static const FFIFixtureEntry fixtures[] = {
         FFI_FIXTURE(ffi_echo_char),
         FFI_FIXTURE(ffi_echo_i8),

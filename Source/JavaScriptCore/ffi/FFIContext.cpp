@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -54,9 +54,6 @@ void FFIContext::setThreadsafeDispatch(ThreadsafeDispatchFunction fn)
 
 void FFIContext::addLiveCallback(VM& vm, JSGlobalObject& owner, JSFFICallback* callback)
 {
-    // Barriered against the owning global object; guarded by its cellLock because the
-    // concurrent marker iterates this set from JSGlobalObject::visitChildren (append may
-    // reallocate the buffer under an unlocked iterator otherwise).
     Locker locker { owner.cellLock() };
     m_liveCallbacks.append(WriteBarrier<JSFFICallback>(vm, &owner, callback));
 }
@@ -115,11 +112,6 @@ const CString& FFIContext::cacheUTF8(StringImpl& impl, CString&& utf8)
 
 void StringArena::enter()
 {
-    // Deferred reclamation (see the class comment): storage handed out during
-    // any earlier bracket -- including a cstring returned by a callback whose
-    // own Scope was the outermost bracket -- stays valid until the next FFI
-    // activity on this context, so recycle it only when a new outermost
-    // bracket opens, never at exit().
     if (!m_depth)
         reset();
     ++m_depth;
@@ -131,8 +123,6 @@ void StringArena::reset()
     m_offsetInLastChunk = 0;
     if (m_chunks.isEmpty())
         return;
-    // Keep one modestly-sized chunk around so a steady stream of FFI calls
-    // does not churn the allocator; drop everything else.
     if (m_chunks[0].sizeInBytes() > maximumRetainedChunkBytes) {
         m_chunks.clear();
         return;
@@ -142,9 +132,6 @@ void StringArena::reset()
 
 std::span<char> StringArena::allocate(size_t bytes)
 {
-    // Storage handed out here lives until the next outermost enter(), and a
-    // caller must always be inside a bracket (StringArena::Scope or
-    // operationFFIArenaEnter/Exit) so that reclamation point is well-defined.
     ASSERT(m_depth);
 
     if (!m_chunks.isEmpty()) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Oven-sh Inc. All rights reserved.
+ * Copyright (C) 2026 Anthropic PBC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,26 +37,8 @@ namespace JSC {
 class JITCode;
 class JSGlobalObject;
 
-// A JSFunction whose call runs a native (dlopen'd) function through the FFI
-// machinery. Callable like any function: JS-initiated call sites (LLInt call
-// slow path, call ICs, DFG/FTL direct calls) enter the NativeExecutable's call
-// code -- the per-instance JIT'd IC entry stub when Options::useFFIICStub()
-// produced one (this cell keeps it alive), otherwise the C++ host path
-// (FFI::ffiHostCall) -- and C++-initiated calls (JSC::call,
-// Function.prototype.call reached from C++) always run FFI::ffiHostCall
-// directly. Both paths share the same body, so behavior is identical.
 namespace FFI {
 
-// Embedder-supplied call bracketing for a JSFFIFunction. When present the function is bound
-// PERMANENTLY to the C++ host path: it is never given an FFIICStub and the DFG never converts a
-// call to it into a CallFFI node, so before/after run around every single call from exactly one
-// place (FFI::ffiHostCall). `before` runs immediately before the native call and returns an
-// opaque token; `after` receives that token and runs immediately after the native call returns,
-// UNCONDITIONALLY -- including when the native call left a JS exception pending (e.g. a callback
-// threw) -- so a scope opened in before is always closed. The engine attaches no meaning to the
-// token or to the JSFFIFunction's owner object; both are the embedder's to interpret (e.g. Bun
-// opens/closes an N-API handle scope and finds its environment via callee->owner()). The struct
-// must have static lifetime; the cell holds a raw pointer to it.
 struct CallHooks {
     void* (*before)(JSGlobalObject*, CallFrame*);
     void (*after)(JSGlobalObject*, CallFrame*, void* token);
@@ -68,14 +50,6 @@ class JSFFIFunction final : public JSFunction {
 public:
     using Base = JSFunction;
 
-    // "ptr" (the resolved native target as an exact pointer -- double, or BigInt above 2^53)
-    // and "native" (the function itself, Bun parity) are REAL own properties putDirect'd once at
-    // creation with ReadOnly | DontEnum | DontDelete. Every JSFFIFunction takes the same two
-    // transitions in the same order, so all instances converge on ONE shared Structure via the
-    // transition cache (no per-instance divergence, no polymorphic-call blowup), and the ordinary
-    // JSObject machinery supplies correct put / delete / defineOwnProperty / ownKeys semantics
-    // with no overrides -- the same design JSFFICallback uses. No FFI fast path (host, IC stub,
-    // DFG CallFFI, FTL) checks structure identity, so a stored property costs nothing there.
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static constexpr DestructionMode needsDestruction = NeedsDestruction; // Holds Ref<Signature> + RefPtr<JITCode>.
@@ -92,16 +66,6 @@ public:
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
-    // Throws a TypeError on the global object's scope and returns nullptr when
-    // bun:ffi cannot be used (JIT disabled / executable memory unavailable /
-    // unsupported architecture); returns nullptr with an exception pending in
-    // that case, never a partially-built object.
-    // `owner` (optional): a JS object this function keeps alive via a write barrier -- e.g. the
-    // object owning the dlopen'd library handle. The GC therefore cannot finalize the owner while
-    // ANY function referencing it is reachable, which is what makes GC-driven library close safe:
-    // the owner's finalizer (dlclose) can only run once its last function is unreachable. Set once
-    // at creation and never cleared. `hooks` (optional, static lifetime): see FFI::CallHooks --
-    // presence binds the function permanently to the host path.
     JS_EXPORT_PRIVATE static JSFFIFunction* create(VM&, JSGlobalObject*, Structure*, Ref<FFI::Signature>&&, void* target, const String& name, JSObject* owner = nullptr, const FFI::CallHooks* hooks = nullptr);
 
     DECLARE_VISIT_CHILDREN;
@@ -110,13 +74,8 @@ public:
     void* target() const { return m_target; }
     JSObject* owner() const { return m_owner.get(); }
     const FFI::CallHooks* hooks() const { return m_hooks; }
-    // A hooked function must run every call through the C++ host path (the only place the
-    // hooks are invoked): no FFIICStub, no DFG/FTL CallFFI node.
     bool isHostPathOnly() const { return !!m_hooks; }
-    // The IC entry stub installed as this function's executable call code, or
-    // null when the plain host-function path is in use.
     JITCode* icCode() const { return m_icCode.get(); }
-
 
     static constexpr ptrdiff_t offsetOfSignature() { return OBJECT_OFFSETOF(JSFFIFunction, m_signature); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(JSFFIFunction, m_target); }
