@@ -82,10 +82,25 @@ void JSFFIFunction::destroy(JSCell* cell)
     static_cast<JSFFIFunction*>(cell)->JSFFIFunction::~JSFFIFunction();
 }
 
+// The properties are added to the STRUCTURE, not the instances: two addPropertyTransition calls
+// here yield the final structure (registered as globalObject->ffiFunctionStructure()) with fixed
+// offsets, and create() fills each instance's slots with putDirectOffset. No instance ever
+// transitions, and JSFunction has no inline capacity, so both land at the first two out-of-line
+// offsets in every VM.
+static constexpr unsigned ffiIntrinsicAttributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+static constexpr PropertyOffset ptrOffset = firstOutOfLineOffset;
+static constexpr PropertyOffset nativeOffset = firstOutOfLineOffset + 1;
+
 Structure* JSFFIFunction::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
     ASSERT(globalObject);
-    return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+    Structure* structure = Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+    PropertyOffset offset;
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "ptr"_s), ffiIntrinsicAttributes, offset);
+    ASSERT_UNUSED(offset, offset == ptrOffset);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "native"_s), ffiIntrinsicAttributes, offset);
+    ASSERT(offset == nativeOffset);
+    return structure;
 }
 
 JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, Ref<FFI::Signature>&& signatureRef, void* target, const String& name, JSObject* owner, const FFI::CallHooks* hooks)
@@ -155,6 +170,13 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
     if (owner)
         function->m_owner.set(vm, function, owner); // write-barriered: the owner outlives this function
 
+    // Born with the final structure (which already carries ptr/native, see createStructure), so
+    // give the instance the out-of-line storage that structure implies and write the two slots
+    // directly -- no transition, no per-instance divergence.
+    function->setButterfly(vm, Butterfly::create(vm, function, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0));
+    function->putDirectOffset(vm, ptrOffset, FFI::pointerToJSValue(globalObject, reinterpret_cast<uint64_t>(target)));
+    function->putDirectOffset(vm, nativeOffset, function);
+
     dataLogLnIf(Options::verboseFFI(), "FFI: created JSFFIFunction '", name, "' ", function->signature().toString(), " target=", RawPointer(target), " icStub=", !!function->icCode());
 
     RELEASE_AND_RETURN(scope, function);
@@ -162,105 +184,11 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 }
 
 
-// "ptr": intrinsic, read-only, non-enumerable -- served straight from m_target so no instance
-// ever carries an own property (no Structure transition; see the class comment on StructureFlags).
-bool JSFFIFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
-{
-    JSFFIFunction* thisObject = uncheckedDowncast<JSFFIFunction>(object);
-    VM& vm = thisObject->vm();
-    // "native" (Bun API parity: symbol.native is the raw callable -- for the engine-native
-    // function that is the function itself). Intrinsic for the same reason as "ptr": adding it
-    // as an own property would transition this cell's Structure and slow every polymorphic call.
-    if (propertyName == Identifier::fromString(vm, "native"_s)) [[unlikely]] {
-        slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), thisObject);
-        return true;
-    }
-    if (propertyName == Identifier::fromString(vm, "ptr"_s)) [[unlikely]] {
-        slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete),
-            FFI::pointerToJSValue(globalObject, reinterpret_cast<uint64_t>(thisObject->target())));
-        return true;
-    }
-    return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
-}
 
-static ALWAYS_INLINE bool isIntrinsicFFIProperty(VM& vm, PropertyName propertyName)
-{
-    return propertyName == Identifier::fromString(vm, "ptr"_s) || propertyName == Identifier::fromString(vm, "native"_s);
-}
 
-// ReadOnly: a write is a TypeError in strict mode and a silent no-op otherwise -- and must never
-// materialize an own property (that would transition every FFI function's Structure).
-bool JSFFIFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
-{
-    if (isIntrinsicFFIProperty(cell->vm(), propertyName)) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(cell->vm());
-        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
-    }
-    return Base::put(cell, globalObject, propertyName, value, slot);
-}
 
-// DontDelete: strict-mode delete throws (via the false return), sloppy delete returns false.
-bool JSFFIFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
-{
-    if (isIntrinsicFFIProperty(cell->vm(), propertyName)) [[unlikely]]
-        return false;
-    return Base::deleteProperty(cell, globalObject, propertyName, slot);
-}
 
-// The intrinsic slots are {value, writable:false, enumerable:false, configurable:false}. Per
-// OrdinaryDefineOwnProperty (ValidateAndApplyPropertyDescriptor) a non-configurable property
-// accepts a descriptor only if it changes nothing: configurable/enumerable/writable must stay
-// false, it must remain a data property, and any [[Value]] must be SameValue as the current one.
-// Compatible descriptors succeed WITHOUT materializing an own property (no Structure transition,
-// which is the whole point of serving ptr/native from getOwnPropertySlot); anything else is
-// rejected.
-bool JSFFIFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
-{
-    JSFFIFunction* thisObject = uncheckedDowncast<JSFFIFunction>(object);
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!isIntrinsicFFIProperty(vm, propertyName)) [[likely]]
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
 
-    bool compatible = true;
-    if (descriptor.configurablePresent() && descriptor.configurable())
-        compatible = false;
-    if (descriptor.enumerablePresent() && descriptor.enumerable())
-        compatible = false;
-    if (descriptor.isAccessorDescriptor())
-        compatible = false;
-    if (descriptor.writablePresent() && descriptor.writable())
-        compatible = false;
-    if (compatible && descriptor.value()) {
-        // The current value is what getOwnPropertySlot serves for this name.
-        JSValue current = propertyName == Identifier::fromString(vm, "ptr"_s)
-            ? FFI::pointerToJSValue(globalObject, reinterpret_cast<uint64_t>(thisObject->target()))
-            : JSValue(thisObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool same = sameValue(globalObject, descriptor.value(), current);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!same)
-            compatible = false;
-    }
-    if (compatible)
-        return true; // a valid no-op: nothing to store, no transition
-    return typeError(globalObject, scope, shouldThrow, "Attempting to change configurable attribute of unconfigurable property."_s);
-}
-
-void JSFFIFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
-{
-    // Base (JSFunction) first: indexed keys are contributed by the ordinary machinery ahead of
-    // the specials, and JSFunction adds its own intrinsic length/name here -- so appending after
-    // keeps integer indices before string keys (OrdinaryOwnPropertyKeys). Both FFI intrinsics
-    // are DontEnum (they must not perturb for-in / spread / JSON), so they appear only when
-    // non-enumerable properties are requested, matching what getOwnPropertySlot reports.
-    Base::getOwnSpecialPropertyNames(object, globalObject, propertyNames, mode);
-    VM& vm = object->vm();
-    if (mode == DontEnumPropertiesMode::Include) {
-        propertyNames.add(Identifier::fromString(vm, "ptr"_s));
-        propertyNames.add(Identifier::fromString(vm, "native"_s));
-    }
-}
 
 } // namespace JSC
 

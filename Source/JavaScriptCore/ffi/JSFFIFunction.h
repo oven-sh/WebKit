@@ -68,13 +68,15 @@ class JSFFIFunction final : public JSFunction {
 public:
     using Base = JSFunction;
 
-    // "ptr" (the resolved native target as a double-encoded pointer, Bun parity) is an
-    // INTRINSIC property served from m_target below -- never a putDirect on the instance. An
-    // own-property addition would transition this cell's Structure, and a JSFFIFunction with a
-    // non-canonical structure loses the callee fast paths on POLYMORPHIC (non-devirtualized)
-    // call sites: measured ~2.5x slower per call. Keeping the structure canonical keeps every
-    // call site fast, not just the ones the DFG turns into CallFFI.
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnSpecialPropertyNames;
+    // "ptr" (the resolved native target as an exact pointer -- double, or BigInt above 2^53)
+    // and "native" (the function itself, Bun parity) are REAL own properties putDirect'd once at
+    // creation with ReadOnly | DontEnum | DontDelete. Every JSFFIFunction takes the same two
+    // transitions in the same order, so all instances converge on ONE shared Structure via the
+    // transition cache (no per-instance divergence, no polymorphic-call blowup), and the ordinary
+    // JSObject machinery supplies correct put / delete / defineOwnProperty / ownKeys semantics
+    // with no overrides -- the same design JSFFICallback uses. No FFI fast path (host, IC stub,
+    // DFG CallFFI, FTL) checks structure identity, so a stored property costs nothing there.
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static constexpr DestructionMode needsDestruction = NeedsDestruction; // Holds Ref<Signature> + RefPtr<JITCode>.
     static void destroy(JSCell*);
@@ -115,25 +117,6 @@ public:
     // null when the plain host-function path is in use.
     JITCode* icCode() const { return m_icCode.get(); }
 
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-    // Keep enumeration coherent with the intrinsic slots above: `ptr` / `native` are real own
-    // properties, so ownKeys / `"ptr" in fn` must agree with reads. They are non-indexed STRING
-    // keys, so they belong in getOwnSpecialPropertyNames (the hook JSFunction uses for length/name)
-    // AFTER Base contributes indexed keys and its own specials -- overriding getOwnPropertyNames
-    // and prepending would order string keys before integer indices (OrdinaryOwnPropertyKeys).
-    static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
-    // The intrinsic ptr/native slots are ReadOnly|DontDelete. put/deleteProperty consult the
-    // Structure (never getOwnPropertySlot), so without these overrides a strict-mode `delete fn.ptr`
-    // would return true and `fn.ptr = 42` would silently transition this cell's Structure -- both
-    // must instead be the TypeError the property's own descriptor promises.
-    static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
-    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
-    // Without this, a compatible generic defineProperty (e.g. { enumerable: false }, a valid no-op)
-    // falls through validateAndApplyPropertyDescriptor to putDirect and MATERIALIZES an own "ptr",
-    // transitioning the Structure. Validate against the intrinsic's fixed attributes instead:
-    // incompatible changes are rejected per OrdinaryDefineOwnProperty, compatible ones succeed --
-    // and nothing is ever stored on the object.
-    static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
 
     static constexpr ptrdiff_t offsetOfSignature() { return OBJECT_OFFSETOF(JSFFIFunction, m_signature); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(JSFFIFunction, m_target); }
