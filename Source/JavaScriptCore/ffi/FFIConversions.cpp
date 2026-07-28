@@ -208,7 +208,7 @@ static bool writeFloatingPointSlot(JSGlobalObject* globalObject, Type type, JSVa
     else if (value.isBigInt())
         number = JSBigInt::toNumber(value).asNumber();
     else {
-        number = value.toNumber(globalObject); // strings, booleans, null, objects; Symbols throw.
+        number = value.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
 

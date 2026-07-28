@@ -15310,9 +15310,9 @@ IGNORE_CLANG_WARNINGS_END
                     DFG_CRASH(m_graph, node, "Bad FFI argument type for a KnownInt32Use CallFFI child");
                     break;
                 }
-                if constexpr (directCall) {
+                if constexpr (directCall)
                     directOperand = m_out.castToInt32(slotValue);
-                } else
+                else
                     m_out.store64(slotValue, slot);
                 break;
             }
@@ -15390,9 +15390,9 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.jump(done);
 
                 m_out.appendTo(cellCase, viewCase);
-                if (!numbersInline) {
+                if (!numbersInline)
                     m_out.branch(isNotCell(value, provenType(edge)), rarely(slowCase), usually(viewCase));
-                } else
+                else
                     m_out.branch(isNotCell(value, provenType(edge)), unsure(slowCase), unsure(viewCase));
 
                 m_out.appendTo(viewCase, vectorCase);
@@ -15427,13 +15427,13 @@ IGNORE_CLANG_WARNINGS_END
             if constexpr (directCall) {
                 if (directOperand)
                     directOperands.append(directOperand);
-                else if (type == FFI::Type::Double) {
+                else if (type == FFI::Type::Double)
                     directOperands.append(m_out.loadDouble(slotPointer(i)));
-                } else if (type == FFI::Type::Float) {
+                else if (type == FFI::Type::Float)
                     directOperands.append(m_out.loadFloat(slotPointer(i)));
-                } else if (FFI::nativeSizeInBytes(type) <= 4) {
+                else if (FFI::nativeSizeInBytes(type) <= 4)
                     directOperands.append(m_out.castToInt32(m_out.load64(slotPointer(i))));
-                } else
+                else
                     directOperands.append(m_out.load64(slotPointer(i)));
             }
         }
@@ -15449,11 +15449,19 @@ IGNORE_CLANG_WARNINGS_END
             case FFI::Type::Void: returnLType = Void; break;
             case FFI::Type::Float: returnLType = Float; break;
             case FFI::Type::Double: returnLType = Double; break;
-            case FFI::Type::Char: case FFI::Type::Int8: case FFI::Type::Uint8:
-            case FFI::Type::Int16: case FFI::Type::Uint16:
-            case FFI::Type::Int32: case FFI::Type::Uint32: case FFI::Type::Bool:
-                returnLType = Int32; break;
-            default: returnLType = Int64; break; // i64/u64 (+fast), pointer family, jsvalue
+            case FFI::Type::Char:
+            case FFI::Type::Int8:
+            case FFI::Type::Uint8:
+            case FFI::Type::Int16:
+            case FFI::Type::Uint16:
+            case FFI::Type::Int32:
+            case FFI::Type::Uint32:
+            case FFI::Type::Bool:
+                returnLType = Int32;
+                break;
+            default:
+                returnLType = Int64;
+                break;
             }
             LValue rawReturn = m_out.call(returnLType, callee, directOperands);
             TypedPointer returnSlot = slotPointer(nativeArgumentCount);

@@ -69,15 +69,15 @@ constexpr StackPacking stackPackingForNativeCC(NativeCC cc)
 
 struct ArgLocation {
     enum class Kind : uint8_t { GPR, FPR, Stack } kind { Kind::GPR };
-    uint8_t regIndex { 0 };      // index into the NativeCC's arg register list when GPR/FPR
-    unsigned stackOffset { 0 };  // byte offset from SP-at-call when Stack (includes Win64 shadow space)
+    uint8_t regIndex { 0 };
+    unsigned stackOffset { 0 };
     Type type { Type::Void };
 };
 
 struct CallLayout {
     NativeCC cc { hostNativeCC() };
-    Vector<ArgLocation, 8> arguments; // parallel to Signature arguments
-    unsigned stackBytes { 0 };         // bytes of outgoing stack (shadow + stack args), rounded up to 16; ASSERT(!(stackBytes % 16))
+    Vector<ArgLocation, 8> arguments;
+    unsigned stackBytes { 0 };
     ArgClass returnClass { ArgClass::Void };
     StackPacking packing { StackPacking::EightByteSlots };
 };
