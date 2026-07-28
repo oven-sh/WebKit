@@ -311,7 +311,16 @@ ptrdiff_t Decoder::offsetOf(const void* ptr)
 {
     auto* addr = static_cast<const uint8_t*>(ptr);
     auto cachedBytecodeSpan = m_cachedBytecode->span();
+#if USE(BUN_JSC_ADDITIONS)
+    // node:vm hands user-provided bytes to the decoder; an out-of-range
+    // embedded offset must fail the decode rather than read outside the span.
+    if (addr < cachedBytecodeSpan.data() || addr >= std::to_address(cachedBytecodeSpan.end())) [[unlikely]] {
+        m_failed = true;
+        return 0;
+    }
+#else
     ASSERT(addr >= cachedBytecodeSpan.data() && addr < std::to_address(cachedBytecodeSpan.end()));
+#endif
     return addr - cachedBytecodeSpan.data();
 }
 
@@ -330,7 +339,14 @@ std::optional<void*> Decoder::cachedPtrForOffset(ptrdiff_t offset)
 
 const void* Decoder::ptrForOffsetFromBase(ptrdiff_t offset)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (offset <= 0 || static_cast<size_t>(offset) >= m_cachedBytecode->size()) [[unlikely]] {
+        m_failed = true;
+        return m_cachedBytecode->span().data();
+    }
+#else
     ASSERT(offset > 0 && static_cast<size_t>(offset) < m_cachedBytecode->size());
+#endif
     return m_cachedBytecode->span().subspan(offset).data();
 }
 
@@ -521,6 +537,12 @@ public:
         }
 
         ptrdiff_t bufferOffset = decoder.offsetOf(this->buffer());
+#if USE(BUN_JSC_ADDITIONS)
+        if (decoder.failed()) [[unlikely]] {
+            isNewAllocation = false;
+            return nullptr;
+        }
+#endif
         if (std::optional<void*> ptr = decoder.cachedPtrForOffset(bufferOffset)) {
             isNewAllocation = false;
             return static_cast<Source*>(*ptr);
@@ -2661,10 +2683,20 @@ bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, Unlink
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedModuleProgramCodeBlock*>&>(result));
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
+#if USE(BUN_JSC_ADDITIONS)
+        return false;
+#else
         RELEASE_ASSERT_NOT_REACHED();
+#endif
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // node:vm cachedData is user-provided; an unknown tag is rejected, not
+    // asserted.
+    return false;
+#else
     RELEASE_ASSERT_NOT_REACHED();
     return false;
+#endif
 }
 
 bool GenericCacheEntry::decode(Decoder& decoder, SourceCodeKey& key) const
@@ -2740,14 +2772,29 @@ RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCod
     return encoder.release(error);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Minimum span size for the bit_cast<GenericCacheEntry*> to be defined. Every
+// Encoder output is at least a CacheEntry<...>, so this only rejects bytes
+// that did not come from the Encoder.
+static constexpr size_t minimumCacheEntrySize = std::max(sizeof(CacheEntry<UnlinkedProgramCodeBlock>), sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>));
+#endif
+
 std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cachedBytecode)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (cachedBytecode->size() < minimumCacheEntrySize) [[unlikely]]
+        return std::nullopt;
+#endif
     const auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
     Ref<Decoder> decoder = Decoder::create(vm, WTF::move(cachedBytecode));
 
     SourceCodeKey key;
     if (!cachedEntry->decode(decoder.get(), key))
         return std::nullopt;
+#if USE(BUN_JSC_ADDITIONS)
+    if (decoder->failed()) [[unlikely]]
+        return std::nullopt;
+#endif
     return key;
 }
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode)
@@ -2757,6 +2804,10 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     if (Options::reportBytecodeCacheDecodeTimes()) [[unlikely]]
         before = MonotonicTime::now();
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (cachedBytecodeSize < minimumCacheEntrySize) [[unlikely]]
+        return nullptr;
+#endif
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider());
     std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
@@ -2765,6 +2816,10 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
         if (!cachedEntry->decode(decoder.get(), entry))
             return nullptr;
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (decoder->failed()) [[unlikely]]
+        return nullptr;
+#endif
     if (entry.first != key)
         return nullptr;
 
@@ -2779,11 +2834,22 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
 bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, const SourceCodeKey& key, SourceCodeType type)
 {
     auto span = cachedBytecode->span();
+#if USE(BUN_JSC_ADDITIONS)
+    if (span.size() < minimumCacheEntrySize) [[unlikely]]
+        return false;
+#else
     if (span.empty())
         return false;
+#endif
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(span.data());
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode));
+#if USE(BUN_JSC_ADDITIONS)
+    if (!cachedEntry->isStillValid(decoder.get(), key, tagFromSourceCodeType(type)))
+        return false;
+    return !decoder->failed();
+#else
     return cachedEntry->isStillValid(decoder.get(), key, tagFromSourceCodeType(type));
+#endif
 }
 
 void decodeFunctionCodeBlock(Decoder& decoder, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>& codeBlock, const JSCell* owner)

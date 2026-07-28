@@ -96,6 +96,12 @@ public:
     void setHandleForTDZEnvironment(CompactTDZEnvironment*, const CompactTDZEnvironmentMap::Handle&);
     void addLeafExecutable(const UnlinkedFunctionExecutable*, ptrdiff_t);
     RefPtr<SourceProvider> NODELETE provider() const;
+#if USE(BUN_JSC_ADDITIONS)
+    // Latched when an embedded offset would take the decoder outside the
+    // CachedBytecode span. Only possible when the bytes came from somewhere
+    // other than this process's Encoder (node:vm cachedData).
+    bool failed() const { return m_failed; }
+#endif
 
     template<typename Functor>
     void addFinalizer(const Functor&);
@@ -109,6 +115,9 @@ private:
     Vector<std::function<void()>> m_finalizers;
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_failed { false };
+#endif
 };
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*);
