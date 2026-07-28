@@ -1527,7 +1527,15 @@ static void differentialCase(ASCIILiteral name, R (*function)(Arguments...), Vec
             R nativeResult = callNativeFromSlots(function, nativeSlots.span().data());
             uint64_t expected = canonicalizeSlot(returnType, nativeReturnRawBits(nativeResult));
             uint64_t actual = slots[argumentCount];
-            ok &= actual == expected;
+            bool returnsEqual = actual == expected;
+            constexpr bool operandOrderCanFlipNaNPayload = sizeof...(Arguments) >= 2;
+            if constexpr (operandOrderCanFlipNaNPayload) {
+                if (!returnsEqual && returnType == FFI::Type::Double)
+                    returnsEqual = std::isnan(std::bit_cast<double>(actual)) && std::isnan(std::bit_cast<double>(expected));
+                else if (!returnsEqual && returnType == FFI::Type::Float)
+                    returnsEqual = std::isnan(std::bit_cast<float>(static_cast<uint32_t>(actual))) && std::isnan(std::bit_cast<float>(static_cast<uint32_t>(expected)));
+            }
+            ok &= returnsEqual;
             if (!ok) {
                 s_failureCount++;
                 dataLogLn("    FAIL: invoke-thunk differential for ", name.characters(), " (", signature->toString(), ") iteration ", iteration,
