@@ -814,6 +814,7 @@ void IntlDateTimeFormat::initializeDateTimeFormat(JSGlobalObject* globalObject, 
     }
 
     hourCycle = parseHourCycle(resolved.extensions[static_cast<unsigned>(RelevantExtensionKey::Hc)]);
+    impl->m_explicitHourCycle = hourCycle;
     impl->m_numberingSystem = resolved.extensions[static_cast<unsigned>(RelevantExtensionKey::Nu)];
     impl->m_dataLocale = resolved.dataLocale;
 
@@ -1546,16 +1547,27 @@ UDateIntervalFormat* IntlDateTimeFormat::createDateIntervalFormatIfNecessary(JSG
 
     // While the pattern is including right HourCycle patterns, UDateIntervalFormat does not follow.
     // We need to enforce HourCycle by setting "hc" extension if it is specified.
+    //
+    // We only append "hc" when it was explicitly resolved from the input locale's -u-hc- extension
+    // or the hourCycle option (m_explicitHourCycle). m_hourCycle is derived from the generated
+    // pattern and is always populated when an hour field is present, so using it here would append
+    // a redundant -u-hc- that merely restates the locale default. In ICU < 76 that redundant
+    // extension triggers ICU-22669: DateTimePatternGenerator::addICUPatterns goes through
+    // DateFormat::createTimeInstance, which regenerates the style patterns from skeletons when an
+    // hc keyword is present and loses locale-specific literal separators (ja "H時mm分ss秒" becomes
+    // "H:mm:ss"), so formatRange and format would disagree. The skeleton we pass already encodes
+    // the 12/24-hour choice, and the locale default covers the h11/h12 (and h23/h24) preference,
+    // so an explicit -u-hc- is only needed to override that preference.
     StringBuilder localeBuilder;
     localeBuilder.append(m_impl->m_dataLocale);
-    if (!m_impl->m_calendar.isNull() || !m_impl->m_numberingSystem.isNull() || m_impl->m_hourCycle != HourCycle::None) {
+    if (!m_impl->m_calendar.isNull() || !m_impl->m_numberingSystem.isNull() || m_impl->m_explicitHourCycle != HourCycle::None) {
         localeBuilder.append("-u"_s);
         if (!m_impl->m_calendar.isNull())
             localeBuilder.append("-ca-"_s, m_impl->m_calendar);
         if (!m_impl->m_numberingSystem.isNull())
             localeBuilder.append("-nu-"_s, m_impl->m_numberingSystem);
-        if (m_impl->m_hourCycle != HourCycle::None)
-            localeBuilder.append("-hc-"_s, hourCycleString(m_impl->m_hourCycle));
+        if (m_impl->m_explicitHourCycle != HourCycle::None)
+            localeBuilder.append("-hc-"_s, hourCycleString(m_impl->m_explicitHourCycle));
     }
     CString dataLocaleWithExtensions = localeBuilder.toString().utf8();
 
@@ -2433,8 +2445,9 @@ IntlDateTimeFormat::createTemporalIntervalFormat(UDateFormat* tempFormat, Tempor
 
     StringBuilder localeBuilder;
     localeBuilder.append(m_impl->m_dataLocale, "-u-ca-"_s, ensureCalendar(), "-nu-"_s, ensureNumberingSystem());
-    if (m_impl->m_hourCycle != HourCycle::None)
-        localeBuilder.append("-hc-"_s, hourCycleString(m_impl->m_hourCycle));
+    // See createDateIntervalFormatIfNecessary for why this uses m_explicitHourCycle, not m_hourCycle.
+    if (m_impl->m_explicitHourCycle != HourCycle::None)
+        localeBuilder.append("-hc-"_s, hourCycleString(m_impl->m_explicitHourCycle));
     CString localeWithExt = localeBuilder.toString().utf8();
 
     return std::unique_ptr<UDateIntervalFormat, UDateIntervalFormatDeleter>(

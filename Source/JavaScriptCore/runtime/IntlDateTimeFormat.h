@@ -244,6 +244,12 @@ public:
     // primary used for ICU formatting.
     String m_timeZoneForResolvedOptions;
     IntlDateTimeFormat::HourCycle m_hourCycle { IntlDateTimeFormat::HourCycle::None };
+    // The hour cycle resolved from the locale's -u-hc- extension and the hourCycle option,
+    // before any value is derived from the generated pattern. None when neither was specified.
+    // m_hourCycle above is derived from the final pattern and is always populated when an hour
+    // field is present; this one is only populated on explicit request and is what we pass as
+    // -u-hc- when opening the UDateIntervalFormat. See ICU-22669.
+    IntlDateTimeFormat::HourCycle m_explicitHourCycle { IntlDateTimeFormat::HourCycle::None };
     IntlDateTimeFormat::Weekday m_weekday { IntlDateTimeFormat::Weekday::None };
     IntlDateTimeFormat::Era m_era { IntlDateTimeFormat::Era::None };
     IntlDateTimeFormat::Year m_year { IntlDateTimeFormat::Year::None };
