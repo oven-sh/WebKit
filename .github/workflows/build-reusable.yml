@@ -813,6 +813,16 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-freebsd-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-freebsd-amd64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-freebsd-arm64/bun-webkit.tar.gz ./out/bun-webkit-freebsd-arm64.tar.gz
           mv ${{runner.temp}}/bun-webkit-freebsd-arm64-debug/bun-webkit.tar.gz ./out/bun-webkit-freebsd-arm64-debug.tar.gz
+          for tarball in ./out/bun-webkit-*.tar.gz; do
+            platform=$(basename "$tarball" .tar.gz); platform=${platform#bun-webkit-}
+            case "$platform" in windows-*) bin="bun-webkit/bin/testFFI.exe" ;; *) bin="bun-webkit/bin/testFFI" ;; esac
+            if tar -xzf "$tarball" -O "$bin" > "./out/testFFI-$platform.tmp" 2>/dev/null && [ -s "./out/testFFI-$platform.tmp" ]; then
+              case "$platform" in windows-*) mv "./out/testFFI-$platform.tmp" "./out/testFFI-$platform.exe" ;; *) mv "./out/testFFI-$platform.tmp" "./out/testFFI-$platform"; chmod +x "./out/testFFI-$platform" ;; esac
+            else
+              rm -f "./out/testFFI-$platform.tmp"; echo "no testFFI in $tarball"
+            fi
+          done
+          ls -la ./out/testFFI-* 2>/dev/null || echo "no standalone testFFI assets produced"
 
       - name: Set release info
         id: release_info
@@ -893,3 +903,9 @@ jobs:
             ./out/bun-webkit-windows-arm64.tar.gz
             ./out/bun-webkit-windows-arm64-debug.tar.gz
             ./out/bun-webkit-windows-amd64-lto.tar.gz
+
+      - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          files: |
+            ./out/testFFI-*
