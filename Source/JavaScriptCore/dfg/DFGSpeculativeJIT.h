@@ -1516,6 +1516,9 @@ public:
     void compileGetButterfly(Node*);
     void compileCallDOMGetter(Node*);
     void compileCallDOM(Node*);
+#if USE(BUN_JSC_ADDITIONS)
+    void compileCallFFI(Node*); // Defined out-of-line in ffi/FFIDFGCodegen.cpp (JSVALUE64 only).
+#endif
     void compileCheckJSCast(Node*);
     void compileCallCustomAccessorGetter(Node*);
     void compileCallCustomAccessorSetter(Node*);

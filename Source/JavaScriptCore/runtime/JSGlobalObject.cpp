@@ -35,6 +35,11 @@
 #include "AggregateError.h"
 #include "SuppressedError.h"
 #include "InternalFieldTuple.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIContext.h"
+#include "JSFFICallback.h"
+#include "JSFFIFunction.h"
+#endif
 #include "AggregateErrorConstructorInlines.h"
 #include "SuppressedErrorConstructorInlines.h"
 #include "AggregateErrorPrototypeInlines.h"
@@ -2216,6 +2221,15 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         vm, vm.propertyNames->builtinNames().asyncContextPrivateName(),
         asyncContext, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     m_asyncContextData.set(vm, this, asyncContext);
+
+    m_ffiFunctionStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            init.set(JSFFIFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
+        });
+    m_ffiCallbackStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            init.set(JSFFICallback::createStructure(init.vm, init.owner, JSFFICallback::createPrototype(init.vm, init.owner)));
+        });
 #endif
 
     m_performProxyObjectHasFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHas)));
@@ -2984,6 +2998,10 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContextData);
     visitor.append(thisObject->m_internalFieldTupleStructure);
+    thisObject->m_ffiFunctionStructure.visit(visitor);
+    thisObject->m_ffiCallbackStructure.visit(visitor);
+    if (thisObject->m_ffiContext)
+        thisObject->m_ffiContext->visitLiveCallbacks(*thisObject, visitor);
 #endif
 
     visitor.append(thisObject->m_globalLexicalEnvironment);
@@ -3773,8 +3791,18 @@ void JSGlobalObject::queueMicrotask(VM& vm, InternalMicrotask job, uint8_t paylo
 {
     queueMicrotask(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
 }
-#endif
 
+FFI::FFIContext& JSGlobalObject::ffiContext()
+{
+    if (!m_ffiContext) [[unlikely]] {
+        ASSERT(!isCompilationThread());
+        auto context = makeUnique<FFI::FFIContext>(vm());
+        WTF::storeStoreFence();
+        m_ffiContext = WTF::move(context);
+    }
+    return *m_ffiContext;
+}
+#endif
 
 void JSGlobalObject::setMicrotaskQueue(Ref<MicrotaskQueue>&& queue)
 {

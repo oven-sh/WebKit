@@ -117,6 +117,8 @@
 #include "InternalFieldTuple.h"
 
 #if USE(BUN_JSC_ADDITIONS)
+#include "JSFFICallback.h"
+#include "JSFFIFunction.h"
 #include "JSString.h"
 #include <wtf/text/ExternalStringImpl.h>
 #endif
@@ -415,6 +417,10 @@ Heap::Heap(VM& vm, HeapType heapType)
     , intlSegmentIteratorHeapCellType(IsoHeapCellType::Args<IntlSegmentIterator>())
     , intlSegmenterHeapCellType(IsoHeapCellType::Args<IntlSegmenter>())
     , intlSegmentsHeapCellType(IsoHeapCellType::Args<IntlSegments>())
+#if USE(BUN_JSC_ADDITIONS)
+    , ffiFunctionHeapCellType(IsoHeapCellType::Args<JSFFIFunction>())
+    , ffiCallbackHeapCellType(IsoHeapCellType::Args<JSFFICallback>())
+#endif
 #if ENABLE(WEBASSEMBLY)
     , webAssemblyExceptionHeapCellType(IsoHeapCellType::Args<JSWebAssemblyException>())
     , webAssemblyFunctionHeapCellType(IsoHeapCellType::Args<WebAssemblyFunction>())

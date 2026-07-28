@@ -415,6 +415,8 @@ namespace JSC { namespace DFG {
     macro(CallDirectEval, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(CallWasm, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(TailCallInlinedCallerWasm, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
+    /* bun:ffi (USE(BUN_JSC_ADDITIONS)); the enumerators are unconditional, only their uses are guarded. */\
+    macro(CallFFI, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     \
     macro(CallCustomAccessorGetter, NodeResultJS | NodeMustGenerate) \
     macro(CallCustomAccessorSetter, NodeMustGenerate) \

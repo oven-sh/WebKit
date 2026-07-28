@@ -3798,6 +3798,7 @@ private:
         case TailCallForwardVarargsInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case ProfileControlFlow:
         case NewObject:
         case NewInternalFieldObject:

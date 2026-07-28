@@ -77,6 +77,17 @@ bool hasCapacityToUseLargeGigacage();
 // On instantiation of the first VM instance, the Options will be write protected
 // and cannot be modified thereafter.
 
+#if USE(BUN_JSC_ADDITIONS)
+#define FOR_EACH_JSC_FFI_OPTION(v) \
+    v(Bool, useFFIICStub, true, Normal, "install per-function FFI IC stubs"_s) \
+    v(Bool, useFFICallInDFG, true, Normal, "allow Call -> CallFFI in DFG/FTL"_s) \
+    v(Bool, useFFIDirectCall, true, Normal, "FTL calls the native FFI target directly (no invoke thunk)"_s) \
+    v(Bool, dumpFFIDisassembly, false, Normal, "disassemble generated FFI thunks/stubs"_s) \
+    v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
+#else
+#define FOR_EACH_JSC_FFI_OPTION(v)
+#endif
+
 #define FOR_EACH_JSC_OPTION(v)                                          \
     v(Bool, useKernTCSM, defaultTCSMValue(), Normal, "Note: this needs to go before other options since they depend on this value."_s) \
     v(Bool, validateOptions, false, Normal, "crashes if mis-typed JSC options were passed to the VM"_s) \
@@ -95,6 +106,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useV8DateParser, false, Normal, nullptr) \
     v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces."_s) \
     v(Bool, evalMode, false, Normal, "Set to true for less aggressive function call completion value discarding."_s) \
+    FOR_EACH_JSC_FFI_OPTION(v) \
     \
     v(Unsigned, maxPerThreadStackUsage, 5 * MB, Normal, "Max allowed stack usage by the VM"_s) \
     v(Unsigned, softReservedZoneSize, 128 * KB, Normal, "A buffer greater than reservedZoneSize that reserves space for stringifying exceptions."_s) \

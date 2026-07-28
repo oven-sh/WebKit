@@ -1318,3 +1318,18 @@ yarr/YarrCanonicalizeUnicode.cpp
 runtime/InternalFieldTuple.cpp
 
 heap/BunV8HeapSnapshotBuilder.cpp
+
+ffi/BunFFI.cpp
+ffi/FFICallHost.cpp
+ffi/FFICallbackThunk.cpp
+ffi/FFICallingConvention.cpp
+ffi/FFIContext.cpp
+ffi/FFIConversions.cpp
+ffi/FFIDFG.cpp
+ffi/FFIDFGCodegen.cpp
+ffi/FFIICStub.cpp
+ffi/FFIInvokeThunk.cpp
+ffi/FFISignature.cpp
+ffi/JSFFICallback.cpp
+ffi/JSFFIFunction.cpp
+ffi/tests/FFITestFixtures.cpp

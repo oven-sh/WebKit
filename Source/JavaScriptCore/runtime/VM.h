@@ -140,6 +140,7 @@ class NativeExecutable;
 #if USE(BUN_JSC_ADDITIONS)
 class QueuedTask;
 enum class InternalMicrotask : uint8_t;
+namespace FFI { class CallbackEntryScope; }
 #endif
 class Debugger;
 class DeferredWorkTimer;
@@ -1368,6 +1369,9 @@ private:
     friend class JSDollarVMHelper;
     friend class LLIntOffsetsExtractor;
     friend class SuspendExceptionScope;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class FFI::CallbackEntryScope;
+#endif
     friend class VMTraps;
 };
 

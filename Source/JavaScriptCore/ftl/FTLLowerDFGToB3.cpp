@@ -120,6 +120,13 @@
 #include "WasmModuleInformation.h"
 #include "WebAssemblyFunction.h"
 #include "YarrJITRegisters.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIContext.h"
+#include "FFIConversions.h"
+#include "FFISignature.h"
+#include "FFIType.h"
+#include "JSFFIFunction.h"
+#endif
 #include <array>
 #include <atomic>
 #include <span>
@@ -1564,6 +1571,13 @@ private:
         case CallWasm:
         case TailCallInlinedCallerWasm:
             compileCallWasm();
+            break;
+        case CallFFI:
+#if USE(BUN_JSC_ADDITIONS)
+            compileCallFFI();
+#else
+            DFG_CRASH(m_graph, m_node, "CallFFI is unreachable without USE(BUN_JSC_ADDITIONS)");
+#endif
             break;
         case CallCustomAccessorGetter:
             compileCallCustomAccessorGetter();
@@ -15176,6 +15190,423 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+
+    template<bool DirectCall>
+    void compileCallFFIImpl()
+    {
+        Node* node = m_node;
+        JSFFIFunction* ffiFunction = node->ffiFunction();
+        JSGlobalObject* globalObject = ffiFunction->globalObject();
+        FFI::Signature& signature = node->ffiSignature();
+        void* target = ffiFunction->target();
+        unsigned nativeArgumentCount = signature.argumentCount();
+
+        DFG_ASSERT(m_graph, node, node->numChildren() >= 2);
+        DFG_ASSERT(m_graph, node, node->numChildren() - 2 == nativeArgumentCount, node->numChildren(), nativeArgumentCount);
+
+        CodePtr<JITThunkPtrTag> invokeThunk = signature.invokeThunk();
+        if (!invokeThunk) {
+            m_ftlState.allocationFailed = true;
+            setJSValue(m_out.constInt64(JSValue::encode(jsUndefined())));
+            return;
+        }
+
+        FFI::g_ffiCompileCounts.ftlCallFFI++; // spec 11.2: proves an FFI call reached the FTL.
+
+        FFI::FFIContext& context = globalObject->ffiContext();
+
+        LValue slots = m_out.lockedStackSlot(signature.slotBufferBytes());
+        auto slotOffset = [](unsigned index) -> ptrdiff_t {
+            return static_cast<ptrdiff_t>(index * FFI::slotSize);
+        };
+        auto slotPointer = [&](unsigned index, ptrdiff_t extraOffset = 0) -> TypedPointer {
+            return m_out.address(m_heaps.root, slots, slotOffset(index) + extraOffset);
+        };
+        auto slotAddress = [&](unsigned index) -> LValue {
+            return m_out.addPtr(slots, slotOffset(index));
+        };
+
+        bool needsArena = false;
+        {
+            for (unsigned i = 0; i < nativeArgumentCount; ++i) {
+                FFI::Type type = signature.argumentType(i);
+                Edge edge = m_graph.varArgChild(node, 2 + i);
+                if (edge.useKind() != UntypedUse)
+                    continue;
+                switch (type) {
+                case FFI::Type::CString:
+                    needsArena = true;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+
+        auto exceptionCheckWithArenaExit = [&](LValue exception) {
+            if (!exception)
+                exception = m_out.load64(m_vmValue, m_heaps.VM_exception);
+#if ASSERT_ENABLED
+            LValue vmException = m_out.load64(m_vmValue, m_heaps.VM_exception);
+            m_out.verify(m_out.equal(exception, vmException));
+#endif
+            LBasicBlock cleanup = m_out.newBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            m_out.branch(m_out.notZero64(exception), rarely(cleanup), usually(continuation));
+
+            LBasicBlock lastNext = m_out.appendTo(cleanup, continuation);
+            callPreflight();
+            m_out.call(Void, m_out.operation(operationFFIArenaExit), weakPointer(globalObject));
+            operationExceptionCheck<void>(nullptr);
+            m_out.jump(continuation);
+
+            m_out.appendTo(continuation, lastNext);
+        };
+
+        if (needsArena)
+            vmCall(Void, operationFFIArenaEnter, weakPointer(globalObject));
+
+        Vector<LValue> keepAliveValues;
+
+        constexpr bool directCall = DirectCall;
+        Vector<LValue> directOperands;
+
+        for (unsigned i = 0; i < nativeArgumentCount; ++i) {
+            FFI::Type type = signature.argumentType(i);
+            TypedPointer slot = slotPointer(i);
+            LValue directOperand = nullptr; // set by the single-value cases; else reloaded from the slot
+
+            Edge edge = m_graph.varArgChild(node, 2 + i);
+            switch (edge.useKind()) {
+            case KnownInt32Use: {
+                LValue value = lowInt32(edge);
+                LValue slotValue = nullptr;
+                switch (type) {
+                case FFI::Type::Char:
+                case FFI::Type::Int8:
+                    slotValue = m_out.signExt32To64(m_out.aShr(m_out.shl(value, m_out.constInt32(24)), m_out.constInt32(24)));
+                    break;
+                case FFI::Type::Uint8:
+                    slotValue = m_out.zeroExt(m_out.bitAnd(value, m_out.constInt32(0xff)), Int64);
+                    break;
+                case FFI::Type::Int16:
+                    slotValue = m_out.signExt32To64(m_out.aShr(m_out.shl(value, m_out.constInt32(16)), m_out.constInt32(16)));
+                    break;
+                case FFI::Type::Uint16:
+                    slotValue = m_out.zeroExt(m_out.bitAnd(value, m_out.constInt32(0xffff)), Int64);
+                    break;
+                case FFI::Type::Int32:
+                    slotValue = m_out.signExt32To64(value);
+                    break;
+                case FFI::Type::Uint32:
+                    slotValue = m_out.zeroExt(value, Int64);
+                    break;
+                case FFI::Type::Bool:
+                    slotValue = m_out.zeroExt(m_out.notEqual(value, m_out.int32Zero), Int64);
+                    break;
+                default:
+                    DFG_CRASH(m_graph, node, "Bad FFI argument type for a KnownInt32Use CallFFI child");
+                    break;
+                }
+                if constexpr (directCall)
+                    directOperand = m_out.castToInt32(slotValue);
+                else
+                    m_out.store64(slotValue, slot);
+                break;
+            }
+            case KnownBooleanUse: {
+                DFG_ASSERT(m_graph, node, type == FFI::Type::Bool);
+                if constexpr (directCall)
+                    directOperand = m_out.zeroExt(lowBoolean(edge), Int32);
+                else
+                    m_out.store64(m_out.zeroExt(lowBoolean(edge), Int64), slot);
+                break;
+            }
+            case DoubleRepUse: {
+                LValue value = lowDouble(edge);
+                if (type == FFI::Type::Float) {
+                    if constexpr (directCall)
+                        directOperand = m_out.doubleToFloat(value); // real float operand -> FPR
+                    else {
+                        m_out.storeFloat(m_out.doubleToFloat(value), slot);
+                        m_out.store32(m_out.int32Zero, slotPointer(i, 4));
+                    }
+                } else {
+                    DFG_ASSERT(m_graph, node, type == FFI::Type::Double);
+                    if constexpr (directCall)
+                        directOperand = value;
+                    else
+                        m_out.storeDouble(value, slot);
+                }
+                break;
+            }
+            case UntypedUse: {
+                LValue value = lowJSValue(edge);
+                keepAliveValues.append(value);
+                LValue typeTag = m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(type)));
+                TypedPointer slot = slotPointer(i, 0);
+
+                auto emitSlowConversion = [&] {
+                    if (needsArena) {
+                        callPreflight();
+                        LValue exception = m_out.call(toOperationType(Void), m_out.operation(operationFFIWriteSlot), weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                        exceptionCheckWithArenaExit(exception);
+                    } else
+                        vmCall(Void, operationFFIWriteSlot, weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                };
+
+                bool numbersInline = type == FFI::Type::Pointer || type == FFI::Type::CString || type == FFI::Type::Function;
+                bool viewsInline = numbersInline || type == FFI::Type::Buffer;
+                if (!viewsInline) {
+                    emitSlowConversion();
+                    break;
+                }
+
+                LBasicBlock int32Case = m_out.newBlock();
+                LBasicBlock notInt32Case = m_out.newBlock();
+                LBasicBlock doubleCase = m_out.newBlock();
+                LBasicBlock cellCase = m_out.newBlock();
+                LBasicBlock viewCase = m_out.newBlock();
+                LBasicBlock vectorCase = m_out.newBlock();
+                LBasicBlock slowCase = m_out.newBlock();
+                LBasicBlock done = m_out.newBlock();
+
+                if (numbersInline)
+                    m_out.branch(isInt32(value, provenType(edge)), unsure(int32Case), unsure(notInt32Case));
+                else
+                    m_out.jump(cellCase); // buffer: only views convert inline; numbers throw in C++.
+
+                LBasicBlock lastNext = m_out.appendTo(int32Case, notInt32Case);
+                m_out.store64(m_out.signExt32To64(unboxInt32(value)), slot);
+                m_out.jump(done);
+
+                m_out.appendTo(notInt32Case, doubleCase);
+                m_out.branch(isNumber(value, provenType(edge)), unsure(doubleCase), unsure(cellCase));
+
+                m_out.appendTo(doubleCase, cellCase);
+                m_out.store64(m_out.doubleToInt64(unboxDouble(value)), slot);
+                m_out.jump(done);
+
+                m_out.appendTo(cellCase, viewCase);
+                if (!numbersInline)
+                    m_out.branch(isNotCell(value, provenType(edge)), rarely(slowCase), usually(viewCase));
+                else
+                    m_out.branch(isNotCell(value, provenType(edge)), unsure(slowCase), unsure(viewCase));
+
+                m_out.appendTo(viewCase, vectorCase);
+                LValue jsType = m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoType);
+                LValue isView = m_out.belowOrEqual(
+                    m_out.sub(jsType, m_out.constInt32(FirstTypedArrayType)),
+                    m_out.constInt32(LastTypedArrayType - FirstTypedArrayType));
+                LValue mode = m_out.load8ZeroExt32(value, m_heaps.JSArrayBufferView_mode);
+                LValue isPlainMode = m_out.isZero32(m_out.bitAnd(mode, m_out.constInt32(isResizableOrGrowableSharedMode)));
+                m_out.branch(m_out.bitAnd(isView, isPlainMode), usually(vectorCase), rarely(slowCase));
+
+                m_out.appendTo(vectorCase, slowCase);
+                LValue vector = m_out.loadPtr(value, m_heaps.JSArrayBufferView_vector);
+                LValue storage = caged(Gigacage::Primitive, vector, value);
+                LBasicBlock storeVector = m_out.newBlock();
+                m_out.branch(m_out.isNull(vector), rarely(slowCase), usually(storeVector));
+                m_out.appendTo(storeVector, slowCase);
+                m_out.store64(storage, slot);
+                m_out.jump(done);
+
+                m_out.appendTo(slowCase, done);
+                emitSlowConversion();
+                m_out.jump(done);
+
+                m_out.appendTo(done, lastNext);
+                break;
+            }
+            default:
+                DFG_CRASH(m_graph, node, "Bad use kind for a CallFFI argument");
+                break;
+            }
+            if constexpr (directCall) {
+                if (directOperand)
+                    directOperands.append(directOperand);
+                else if (type == FFI::Type::Double)
+                    directOperands.append(m_out.loadDouble(slotPointer(i)));
+                else if (type == FFI::Type::Float)
+                    directOperands.append(m_out.loadFloat(slotPointer(i)));
+                else if (FFI::nativeSizeInBytes(type) <= 4)
+                    directOperands.append(m_out.castToInt32(m_out.load64(slotPointer(i))));
+                else
+                    directOperands.append(m_out.load64(slotPointer(i)));
+            }
+        }
+
+        FFI::Type returnType = signature.returnType();
+        LValue targetValue = m_out.constIntPtr(target);
+        if constexpr (directCall) {
+            callPreflight();
+            m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
+            LValue callee = m_out.constIntPtr(tagCFunctionPtr<void*, CFunctionPtrTag>(target));
+            LType returnLType = Void;
+            switch (returnType) {
+            case FFI::Type::Void: returnLType = Void; break;
+            case FFI::Type::Float: returnLType = Float; break;
+            case FFI::Type::Double: returnLType = Double; break;
+            case FFI::Type::Char:
+            case FFI::Type::Int8:
+            case FFI::Type::Uint8:
+            case FFI::Type::Int16:
+            case FFI::Type::Uint16:
+            case FFI::Type::Int32:
+            case FFI::Type::Uint32:
+            case FFI::Type::Bool:
+                returnLType = Int32;
+                break;
+            default:
+                returnLType = Int64;
+                break;
+            }
+            LValue rawReturn = m_out.call(returnLType, callee, directOperands);
+            TypedPointer returnSlot = slotPointer(nativeArgumentCount);
+            switch (returnType) {
+            case FFI::Type::Void:
+                break;
+            case FFI::Type::Char: case FFI::Type::Int8:
+                m_out.store64(m_out.signExt32To64(m_out.aShr(m_out.shl(rawReturn, m_out.constInt32(24)), m_out.constInt32(24))), returnSlot);
+                break;
+            case FFI::Type::Uint8:
+                m_out.store64(m_out.zeroExt(m_out.bitAnd(rawReturn, m_out.constInt32(0xff)), Int64), returnSlot);
+                break;
+            case FFI::Type::Int16:
+                m_out.store64(m_out.signExt32To64(m_out.aShr(m_out.shl(rawReturn, m_out.constInt32(16)), m_out.constInt32(16))), returnSlot);
+                break;
+            case FFI::Type::Uint16:
+                m_out.store64(m_out.zeroExt(m_out.bitAnd(rawReturn, m_out.constInt32(0xffff)), Int64), returnSlot);
+                break;
+            case FFI::Type::Int32:
+                m_out.store64(m_out.signExt32To64(rawReturn), returnSlot);
+                break;
+            case FFI::Type::Uint32:
+                m_out.store64(m_out.zeroExt(rawReturn, Int64), returnSlot);
+                break;
+            case FFI::Type::Bool:
+                m_out.store64(m_out.zeroExt(m_out.notEqual(m_out.bitAnd(rawReturn, m_out.constInt32(0xff)), m_out.int32Zero), Int64), returnSlot);
+                break;
+            case FFI::Type::Float:
+                m_out.storeFloat(rawReturn, returnSlot);
+                m_out.store32(m_out.int32Zero, slotPointer(nativeArgumentCount, 4));
+                break;
+            case FFI::Type::Double:
+                m_out.storeDouble(rawReturn, returnSlot);
+                break;
+            default: // 64-bit integers, pointer family, jsvalue: raw 64 bits are the encoding.
+                m_out.store64(rawReturn, returnSlot);
+                break;
+            }
+            if (needsArena)
+                exceptionCheckWithArenaExit(nullptr);
+            else
+                operationExceptionCheck<void>(nullptr);
+        } else if (needsArena) {
+            callPreflight();
+            m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
+            m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots);
+            exceptionCheckWithArenaExit(nullptr);
+        } else {
+            callPreflight();
+            m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
+            m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots);
+            operationExceptionCheck<void>(nullptr);
+        }
+
+        if (!keepAliveValues.isEmpty())
+            ensureStillAliveHere(keepAliveValues);
+
+        TypedPointer returnSlot = slotPointer(nativeArgumentCount);
+        switch (returnType) {
+        case FFI::Type::Void:
+            setJSValue(m_out.constInt64(JSValue::encode(jsUndefined())));
+            break;
+        case FFI::Type::Char:
+        case FFI::Type::Int8:
+        case FFI::Type::Uint8:
+        case FFI::Type::Int16:
+        case FFI::Type::Uint16:
+        case FFI::Type::Int32:
+            setJSValue(boxInt32(m_out.load32(returnSlot)));
+            break;
+        case FFI::Type::Uint32:
+            setJSValue(strictInt52ToJSValue(m_out.load64(returnSlot)));
+            break;
+        case FFI::Type::Bool:
+            setJSValue(boxBoolean(m_out.load32(returnSlot)));
+            break;
+        case FFI::Type::Double:
+            setJSValue(boxDouble(m_out.purifyNaN(m_out.loadDouble(returnSlot))));
+            break;
+        case FFI::Type::Float:
+            setJSValue(boxDouble(m_out.purifyNaN(m_out.floatToDouble(m_out.loadFloat(returnSlot)))));
+            break;
+        case FFI::Type::JSValue:
+            setJSValue(m_out.load64(returnSlot));
+            break;
+        case FFI::Type::Int64:
+        case FFI::Type::Uint64:
+        case FFI::Type::Int64Fast:
+        case FFI::Type::Uint64Fast:
+        case FFI::Type::Pointer:
+        case FFI::Type::CString:
+        case FFI::Type::Function:
+        case FFI::Type::Buffer: {
+            LValue slotValue = m_out.load64(returnSlot);
+            LValue typeTag = m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(returnType)));
+            LValue boxed;
+            if (needsArena) {
+                callPreflight();
+                LValue result = m_out.call(toOperationType(Int64), m_out.operation(operationFFIBoxSlot), weakPointer(globalObject), typeTag, slotValue, m_out.constInt32(0));
+                boxed = m_out.extract(result, 0);
+                exceptionCheckWithArenaExit(m_out.extract(result, 1));
+            } else
+                boxed = vmCall(Int64, operationFFIBoxSlot, weakPointer(globalObject), typeTag, slotValue, m_out.constInt32(0));
+            setJSValue(boxed);
+            break;
+        }
+        case FFI::Type::RESERVED_WasNapiEnv:
+        case FFI::Type::BufferLength:
+            DFG_CRASH(m_graph, node, "the reserved tag / buffer_length is never a valid FFI return type");
+            break;
+        }
+
+        if (needsArena)
+            vmCall(Void, operationFFIArenaExit, weakPointer(globalObject));
+    }
+
+    void compileCallFFI()
+    {
+        bool directCall = Options::useFFIDirectCall();
+#if OS(WINDOWS)
+        directCall = false;
+#elif CPU(ARM64) && OS(DARWIN)
+        if (directCall) {
+            FFI::Signature& signature = m_node->ffiFunction()->signature();
+            unsigned gprCount = 0;
+            for (unsigned i = 0; i < signature.argumentCount(); ++i) {
+                FFI::Type t = signature.argumentType(i);
+                if (t == FFI::Type::Float || t == FFI::Type::Double)
+                    continue;
+                bool subWord = t == FFI::Type::Char || t == FFI::Type::Int8 || t == FFI::Type::Uint8
+                    || t == FFI::Type::Int16 || t == FFI::Type::Uint16 || t == FFI::Type::Bool;
+                if (subWord && gprCount >= GPRInfo::numberOfArgumentRegisters) {
+                    directCall = false;
+                    break;
+                }
+                ++gprCount;
+            }
+        }
+#endif
+        if (directCall)
+            compileCallFFIImpl<true>();
+        else
+            compileCallFFIImpl<false>();
+    }
+#endif // USE(BUN_JSC_ADDITIONS)
 
     void compileCallCustomAccessorGetter()
     {

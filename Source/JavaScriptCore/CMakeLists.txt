@@ -28,6 +28,8 @@ set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/disassembler/ARM64"
     "${JAVASCRIPTCORE_DIR}/disassembler/zydis"
     "${JAVASCRIPTCORE_DIR}/domjit"
+    "${JAVASCRIPTCORE_DIR}/ffi"
+    "${JAVASCRIPTCORE_DIR}/ffi/tests"
     "${JAVASCRIPTCORE_DIR}/ftl"
     "${JAVASCRIPTCORE_DIR}/fuzzilli"
     "${JAVASCRIPTCORE_DIR}/heap"
@@ -2048,6 +2050,21 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     heap/BunV8HeapSnapshotBuilder.h
     heap/HeapProfiler.h
+
+    ffi/BunFFI.h
+    ffi/FFICallHost.h
+    ffi/FFICallbackThunk.h
+    ffi/FFICallingConvention.h
+    ffi/FFIContext.h
+    ffi/FFIConversions.h
+    ffi/FFIDFG.h
+    ffi/FFIICStub.h
+    ffi/FFIInvokeThunk.h
+    ffi/FFISignature.h
+    ffi/FFIType.h
+    ffi/JSFFICallback.h
+    ffi/JSFFIFunction.h
+    ffi/tests/FFITestFixtures.h
 
     bytecode/GlobalCodeBlock.h
     bytecode/ModuleProgramCodeBlock.h

@@ -1080,6 +1080,7 @@ private:
         case TailCallForwardVarargsInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case CallCustomAccessorGetter:
         case GetGlobalVar:
         case GetGlobalLexicalVariable:

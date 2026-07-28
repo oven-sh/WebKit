@@ -322,6 +322,7 @@ bool doesGC(Graph& graph, Node* node)
     case DirectTailCallInlinedCaller:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case ForceOSRExit:

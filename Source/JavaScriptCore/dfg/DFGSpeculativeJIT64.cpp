@@ -6318,6 +6318,14 @@ void SpeculativeJIT::compile(Node* node)
         compileCallDOM(node);
         break;
 
+    case CallFFI:
+#if USE(BUN_JSC_ADDITIONS)
+        compileCallFFI(node);
+#else
+        DFG_CRASH(m_graph, node, "Unexpected node");
+#endif
+        break;
+
     case CallDOMGetter:
         compileCallDOMGetter(node);
         break;

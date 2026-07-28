@@ -182,10 +182,11 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
+    cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.json" -exec sh -c 'cp "$1" "/output/$(basename "$1")"' sh {} \; && \

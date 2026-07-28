@@ -211,6 +211,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case ConstructForwardVarargs:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case VarargsLength:

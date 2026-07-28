@@ -220,7 +220,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     # -L everywhere: WebKit's cmake stages the WTF/bmalloc framework headers
     # as *symlinks* into the source tree when the host filesystem supports

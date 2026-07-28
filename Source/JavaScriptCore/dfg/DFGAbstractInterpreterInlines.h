@@ -37,6 +37,9 @@
 #include "DOMJITCallDOMGetterSnippet.h"
 #include "DOMJITGetterSetter.h"
 #include "DOMJITSignature.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIDFG.h"
+#endif
 #include "FunctionPrototype.h"
 #include "GetByStatus.h"
 #include "GetterSetter.h"
@@ -5743,6 +5746,16 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             break;
         }
         }
+#endif
+        break;
+    }
+
+    case CallFFI: {
+#if USE(BUN_JSC_ADDITIONS)
+        clobberWorld();
+        setTypeForNode(node, FFI::speculatedResultTypeForCallFFI(node));
+#else
+        DFG_CRASH(m_graph, node, "Unexpected node type");
 #endif
         break;
     }

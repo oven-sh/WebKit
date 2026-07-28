@@ -222,6 +222,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case RegExpMatchFastGlobal:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case AllocatePropertyStorage:

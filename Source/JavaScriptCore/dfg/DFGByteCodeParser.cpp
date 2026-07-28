@@ -69,6 +69,10 @@
 #include "JSBoundFunctionInlines.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFISignature.h"
+#include "JSFFIFunction.h"
+#endif
 #include "JSIteratorHelper.h"
 #include "JSMapIterator.h"
 #include "JSModuleEnvironment.h"
@@ -2346,6 +2350,21 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                 auto* executable = callee.executable();
                 if (executable->intrinsic() == WasmFunctionIntrinsic && !Options::forceICFailure())
                     return inliningResult;
+
+#if USE(BUN_JSC_ADDITIONS)
+                if (Options::useFFICallInDFG() && (callOp == Call || callOp == TailCall) && callee.function() && callee.function()->inherits<JSFFIFunction>()
+                    && !uncheckedDowncast<JSFFIFunction>(callee.function())->isHostPathOnly() // hooked => host path only
+                    && uncheckedDowncast<JSFFIFunction>(callee.function())->signature().invokeThunk()) {
+                    auto* ffiFunction = uncheckedDowncast<JSFFIFunction>(callee.function());
+                    m_graph.m_plan.recordedStatuses().addCallLinkStatus(currentNodeOrigin().semantic, CallLinkStatus(callee));
+                    auto* frozenFunction = m_graph.freeze(ffiFunction);
+                    addToGraph(CheckIsConstant, OpInfo(frozenFunction), Edge(callTargetNode, CellUse));
+                    m_parameterSlots = std::max(m_parameterSlots, Graph::parameterSlotsForArgCount(
+                        std::max<unsigned>(ffiFunction->signature().slotCount() + 1, argumentCountIncludingThis)));
+                    addCall(result, Call, OpInfo(), jsConstant(frozenFunction), argumentCountIncludingThis, registerOffset, prediction);
+                    return CallOptimizationResult::Inlined;
+                }
+#endif
 
                 if (executable->intrinsic() == BoundFunctionCallIntrinsic)
                     return inliningResult;

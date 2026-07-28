@@ -83,6 +83,13 @@ class ExecutionCounter;
 
 class Snippet;
 
+#if USE(BUN_JSC_ADDITIONS)
+class JSFFIFunction;
+namespace FFI {
+class Signature;
+} // namespace FFI
+#endif
+
 namespace DFG {
 
 class BasicBlock;
@@ -963,6 +970,13 @@ public:
     void NODELETE convertToDirectCall(FrozenValue*);
 
     void NODELETE convertToCallWasm(FrozenValue*);
+
+#if USE(BUN_JSC_ADDITIONS)
+    void NODELETE convertToCallFFI(FrozenValue*);
+
+    JSFFIFunction* ffiFunction();
+    FFI::Signature& ffiSignature();
+#endif
 
     void NODELETE convertToCallDOM(Graph&);
 
@@ -2136,6 +2150,7 @@ public:
         case TailCallForwardVarargsInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case CallCustomAccessorGetter:
         case GetByOffset:
         case MultiGetByOffset:
@@ -2254,6 +2269,7 @@ public:
         case DirectTailCallInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case RegExpExecNonGlobalOrSticky:
         case RegExpExecSticky:
         case RegExpMatchFastGlobal:

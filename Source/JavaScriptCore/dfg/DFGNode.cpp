@@ -34,6 +34,11 @@
 #include "DOMJITSignature.h"
 #include "JSCellButterfly.h"
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFISignature.h"
+#include "JSFFIFunction.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace DFG {
@@ -326,6 +331,26 @@ void Node::convertToCallWasm(FrozenValue* callee)
     m_op = m_op == Call ? CallWasm : TailCallInlinedCallerWasm;
     m_opInfo = callee;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Node::convertToCallFFI(FrozenValue* callee)
+{
+    ASSERT(m_op == Call);
+    m_op = CallFFI;
+    m_opInfo = callee;
+}
+
+JSFFIFunction* Node::ffiFunction()
+{
+    ASSERT(op() == CallFFI);
+    return castOperand<JSFFIFunction*>();
+}
+
+FFI::Signature& Node::ffiSignature()
+{
+    return ffiFunction()->signature();
+}
+#endif
 
 void Node::convertToCallDOM(Graph& graph)
 {

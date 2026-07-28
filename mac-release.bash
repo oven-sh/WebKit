@@ -65,7 +65,7 @@ cmake \
     -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
     $THIS_DIR \
     $RUNNER_TEMP/webkit-release &&
-    cmake --build $RUNNER_TEMP/webkit-release --config $CMAKE_BUILD_TYPE --target jsc
+    cmake --build $RUNNER_TEMP/webkit-release --config $CMAKE_BUILD_TYPE --target jsc --target testFFI
 
 # JSC compares ClassInfo by address; LTO can fold byte-identical ones together.
 python3 $THIS_DIR/Tools/Scripts/check-classinfo-uniqueness.py $RUNNER_TEMP/webkit-release/bin/jsc

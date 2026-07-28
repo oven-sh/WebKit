@@ -834,6 +834,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CallDirectEval:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case ToPrimitive:
