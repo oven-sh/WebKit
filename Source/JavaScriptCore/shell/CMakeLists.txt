@@ -36,9 +36,8 @@ if (USE_BUN_JSC_ADDITIONS)
     # testmasm_* variables below. Build and run it with:
     #     ninja testFFI && ./bin/testFFI
     # Unlike testmasm this is NOT additionally gated on DEVELOPER_MODE: the
-    # standard `bun build.ts debug` configuration never enables DEVELOPER_MODE
-    # (it only configures + builds --target jsc), and testFFI must be
-    # buildable on demand from that same build directory. build.ts and the
+    # standard `bun build.ts debug` configuration never enables DEVELOPER_MODE,
+    # and testFFI must build from that same build directory. build.ts and the
     # release scripts build it alongside jsc and ship it in the artifact's bin/.
     # The native test fixtures (ffi/tests/FFITestFixtures.cpp) are NOT compiled
     # here: they live in libJavaScriptCore itself (Sources.txt) so that
