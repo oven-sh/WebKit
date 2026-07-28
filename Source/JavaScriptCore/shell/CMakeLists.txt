@@ -38,9 +38,8 @@ if (USE_BUN_JSC_ADDITIONS)
     # Unlike testmasm this is NOT additionally gated on DEVELOPER_MODE: the
     # standard `bun build.ts debug` configuration never enables DEVELOPER_MODE
     # (it only configures + builds --target jsc), and testFFI must be
-    # buildable on demand from that same build directory. It is still never
-    # built by default there because build.ts / the release scripts only build
-    # the `jsc` target.
+    # buildable on demand from that same build directory. build.ts and the
+    # release scripts build it alongside jsc and ship it in the artifact's bin/.
     # The native test fixtures (ffi/tests/FFITestFixtures.cpp) are NOT compiled
     # here: they live in libJavaScriptCore itself (Sources.txt) so that
     # $vm.ffiFixture in tools/JSDollarVM.cpp can link, and testFFI reaches them
@@ -51,11 +50,15 @@ if (USE_BUN_JSC_ADDITIONS)
     set(testFFI_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testFFI_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testFFI_FRAMEWORKS ${jsc_FRAMEWORKS})
+    set(testFFI_LIBRARIES ${CMAKE_DL_LIBS})
+    if (WIN32)
+        list(APPEND testFFI_LIBRARIES Winmm)
+    endif ()
     if (USE_EXTERNAL_MIMALLOC)
         # Same as jsc above: the shipped static archives leave mi_* unresolved
         # under USE_EXTERNAL_MIMALLOC, so any executable that links the
         # framework must supply the vendored mimalloc objects itself.
-        set(testFFI_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+        list(APPEND testFFI_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
     endif ()
 
     WEBKIT_EXECUTABLE_DECLARE(testFFI)

@@ -138,7 +138,7 @@ foreach ($file in $batFiles) {
 }
 
 Write-Host ":: Building WebKit"
-cmake --build $WebKitBuild --config Release --target jsc --verbose
+cmake --build $WebKitBuild --config Release --target jsc --target testFFI --verbose
 if ($LASTEXITCODE -ne 0) { throw "cmake --build failed with exit code $LASTEXITCODE" }
 
 Write-Host ":: Packaging ${output}"

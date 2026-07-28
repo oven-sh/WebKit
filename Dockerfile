@@ -293,7 +293,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \
-    cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" && \
+    cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \

@@ -286,7 +286,7 @@ function buildJSC() {
 
   runCommand(
     "cmake",
-    ["--build", buildDir, "--config", buildType, "--target", "jsc"],
+    ["--build", buildDir, "--config", buildType, "--target", "jsc", "--target", "testFFI"],
     {
       cwd: buildDir,
       env,
