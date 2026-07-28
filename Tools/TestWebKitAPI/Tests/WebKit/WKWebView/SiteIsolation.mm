@@ -1554,6 +1554,75 @@ TEST(SiteIsolation, IframeWithPrompt)
     EXPECT_WK_STREQ(childFrame.info.securityOrigin.host, "webkit.org");
 }
 
+// Make sure the main frame remains responsive even while a cross origin iframe is
+// displaying an alert.
+TEST(SiteIsolation, MainFrameHeartbeatContinuesWhileCrossSiteIframeDialogShown)
+{
+    HTTPServer server({
+        { "/example"_s, { "<script>"
+            "window.__heartbeat = 0;"
+            "setInterval(() => { window.__heartbeat++; }, 10);"
+            "</script>"
+            "<iframe src='https://webkit.org/webkit'></iframe>"_s } },
+        { "/webkit"_s, { "<script>alert('subframe alert')</script>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+    RetainPtr protectedWebView = webView;
+
+    // Hold the subframe's alert open; its WebContent process is now blocked in synchronous IPC.
+    __block bool receivedSubframeAlert = false;
+    __block BlockPtr<void()> heldCompletion;
+    RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    uiDelegate.get().runJavaScriptAlertPanelWithMessage = ^(WKWebView *, NSString *message, WKFrameInfo *frameInfo, void (^completionHandler)(void)) {
+        EXPECT_WK_STREQ(message, "subframe alert");
+        EXPECT_WK_STREQ(frameInfo.securityOrigin.host, "webkit.org");
+        heldCompletion = makeBlockPtr(completionHandler);
+        receivedSubframeAlert = true;
+    };
+    webView.get().UIDelegate = uiDelegate.get();
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/example"]]];
+    TestWebKitAPI::Util::run(&receivedSubframeAlert);
+
+    // Read window.__heartbeat from the main frame. Bounded wait: if the main frame's process were
+    // blocked by the subframe's dialog, evaluateJavaScript would not respond and this reports
+    // didRespond == false (a clean failure) rather than hanging.
+    auto readHeartbeat = [&](bool& didRespond) -> int {
+        __block bool done = false;
+        __block int value = -1;
+        [protectedWebView evaluateJavaScript:@"window.__heartbeat" completionHandler:^(id result, NSError *error) {
+            if (!error && [result isKindOfClass:[NSNumber class]])
+                value = [result intValue];
+            done = true;
+        }];
+        for (unsigned attempt = 0; attempt < 100 && !done; ++attempt)
+            TestWebKitAPI::Util::runFor(Seconds(0.05));
+        didRespond = done;
+        return value;
+    };
+
+    bool firstResponded = false;
+    int firstHeartbeat = readHeartbeat(firstResponded);
+    EXPECT_TRUE(firstResponded);
+
+    // The main frame's timer must keep firing while the dialog is held.
+    int laterHeartbeat = firstHeartbeat;
+    for (unsigned attempt = 0; laterHeartbeat <= firstHeartbeat && attempt < 40; ++attempt) {
+        TestWebKitAPI::Util::runFor(Seconds(0.05));
+        bool responded = false;
+        laterHeartbeat = readHeartbeat(responded);
+        if (!responded) {
+            EXPECT_TRUE(responded);
+            break;
+        }
+    }
+    EXPECT_GT(laterHeartbeat, firstHeartbeat);
+
+    if (heldCompletion)
+        heldCompletion();
+}
+
 TEST(SiteIsolation, GrandchildIframe)
 {
     HTTPServer server({
@@ -2746,6 +2815,51 @@ TEST(SiteIsolation, HandleAcceptedCandidateInCrossOriginIframe)
         [webView _handleAcceptedCandidate:candidate.get()];
         Util::runFor(10_ms);
     }
+}
+
+TEST(SiteIsolation, SetMarkedTextInCrossOriginIframe)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<iframe src='https://domain2.com/subframe'></iframe>"_s } },
+        { "/subframe"_s, { "<body><input id='input'></body>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto configuration = server.httpsProxyConfiguration();
+    enableSiteIsolation(configuration);
+    // setMarkedText:selectedRange:replacementRange: and unmarkText are NSTextInputClient methods;
+    // parameterize the type so the compiler sees them (WKWebView conforms via a private category).
+    RetainPtr webView = adoptNS([[TestWKWebView<NSTextInputClient> alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration]);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate allowAnyTLSCertificate];
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://domain1.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    RetainPtr childFrameInfo = [webView firstChildFrame];
+
+    // Set marked (composition) text while the cross-origin iframe's input is focused.
+    // setMarkedText: routes to WebViewImpl::setMarkedText -> WebPageProxy::setCompositionAsync.
+    // The IPC must reach the iframe's process; if it is routed to the main frame the composition
+    // is dropped (the main process has no local focused frame) and the input is never updated.
+    // Use WithUserGesture because Element::focus() is a no-op for cross-origin non-main-frame
+    // iframes without a user gesture. The loop is bounded so a regression fails via the assertion
+    // below rather than hanging forever.
+    bool markedTextLanded = false;
+    for (unsigned attempt = 0; attempt < 500 && !markedTextLanded; ++attempt) {
+        [webView objectByEvaluatingJavaScriptWithUserGesture:@"input.focus(); input.select()" inFrame:childFrameInfo.get()];
+        Util::runFor(10_ms);
+        [webView setMarkedText:@"hello" selectedRange:NSMakeRange(5, 0) replacementRange:NSMakeRange(NSNotFound, 0)];
+        Util::runFor(10_ms);
+        markedTextLanded = "hello"_s == String([webView stringByEvaluatingJavaScript:@"input.value" inFrame:childFrameInfo.get()]);
+    }
+    EXPECT_TRUE(markedTextLanded);
+
+    // Confirm the composition. unmarkText routes to WebViewImpl::unmarkText ->
+    // WebPageProxy::confirmCompositionAsync, which must also reach the focused (sub)frame's
+    // process; the committed value must remain in the iframe's input.
+    [webView unmarkText];
+    Util::runFor(10_ms);
+    EXPECT_WK_STREQ("hello", [webView stringByEvaluatingJavaScript:@"input.value" inFrame:childFrameInfo.get()]);
 }
 #endif
 
@@ -6750,6 +6864,8 @@ TEST(SiteIsolation, CreateWebArchiveNestedFrameForCopy)
     validateWebArchiveMainResource([actualNestedFrameArchives.firstObject objectForKey:@"WebMainResource"], expectedNestedFrameResource);
 }
 
+#if !PLATFORM(WATCHOS) && !PLATFORM(APPLETV)
+
 TEST(SiteIsolation, ReadAttributedStringFromPasteboardAfterCopyWithCrossSiteIframe)
 {
     static constexpr auto mainframeBytes = R"TESTRESOURCE(
@@ -6825,6 +6941,8 @@ TEST(SiteIsolation, ReadAttributedStringFromPasteboardAfterCopyWithCrossSiteIfra
     EXPECT_TRUE([[result string] containsString:@"mainframecontent"]);
     EXPECT_TRUE([[result string] containsString:@"subframecontent"]);
 }
+
+#endif // !PLATFORM(WATCHOS) && !PLATFORM(APPLETV)
 
 TEST(SiteIsolation, LoadWebArchive)
 {
@@ -8796,6 +8914,123 @@ TEST(SiteIsolation, ApplyAutocorrectionInCrossOriginIframe)
     Util::run(&didApplyAutocorrection);
 
     EXPECT_WK_STREQ("the", [webView stringByEvaluatingJavaScript:@"document.body.textContent" inFrame:childFrame.get()]);
+}
+
+TEST(SiteIsolation, InsertDictatedTextWithAlternativesInCrossOriginIframe)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<iframe id='iframe' src='https://domain2.com/subframe'></iframe>"_s } },
+        { "/subframe"_s, { "<body contenteditable></body>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    // Use the internals-enabled plug-in so window.internals is reachable inside the cross-origin
+    // subframe, and point the data store at the test HTTPS proxy (as the media-in-remote-frame tests
+    // do), since _test_configurationWithTestPlugInClassName: does not set one up.
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    RetainPtr storeConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initNonPersistentConfiguration]);
+    [storeConfiguration setHTTPSProxy:[NSURL URLWithString:[NSString stringWithFormat:@"https://127.0.0.1:%d/", server.port()]]];
+    [configuration setWebsiteDataStore:adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:storeConfiguration.get()]).get()];
+    enableSiteIsolation(configuration.get());
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get()]);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate allowAnyTLSCertificate];
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    // Allow an input session to begin when the subframe's editable element is focused.
+    bool didStartInputSession = false;
+    RetainPtr inputDelegate = adoptNS([[TestInputDelegate alloc] init]);
+    [inputDelegate setFocusStartsInputSessionPolicyHandler:[&] (WKWebView *, id<_WKFocusedElementInfo>) {
+        didStartInputSession = true;
+        return _WKFocusStartsInputSessionPolicyAllow;
+    }];
+    [webView _setInputDelegate:inputDelegate.get()];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://domain1.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView waitForNextPresentationUpdate];
+    [webView focusInWindow];
+
+    // Focus the cross-origin iframe's contenteditable body with a user gesture (Element::focus() is a
+    // no-op for cross-origin non-main-frame iframes without one), then wait until the UI process tracks
+    // the subframe as the focused frame and the input session has started.
+    RetainPtr childFrame = [webView firstChildFrame];
+    [webView objectByEvaluatingJavaScriptWithUserGesture:@"document.body.focus()" inFrame:childFrame.get()];
+    Util::run(&didStartInputSession);
+    while (![childFrame _isFocused]) {
+        Util::spinRunLoop();
+        childFrame = [webView firstChildFrame];
+    }
+
+    // Drive the non-empty dictationAlternatives path of insertDictatedTextAsync. Under site isolation
+    // this IPC must reach the iframe's process; if it is routed to the main frame instead (which has no
+    // local focused frame) the text is never inserted into the subframe.
+    [[webView textInputContentView] insertText:@"hello" alternatives:@[@"yellow"] style:UITextAlternativeStyleNone];
+
+    // Primary assertion: the text reaches the subframe (proves cross-process routing).
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [[webView stringByEvaluatingJavaScript:@"document.body.textContent" inFrame:childFrame.get()] isEqualToString:@"hello"];
+    }));
+    EXPECT_WK_STREQ("hello", [webView stringByEvaluatingJavaScript:@"document.body.textContent" inFrame:childFrame.get()]);
+
+    // Secondary assertion: it went through the alternatives branch specifically, so a dictation
+    // alternatives marker was added around the inserted text in the subframe.
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [[webView objectByEvaluatingJavaScript:@"internals.hasDictationAlternativesMarker(0, 5)" inFrame:childFrame.get()] boolValue];
+    }));
+}
+
+TEST(SiteIsolation, ReplaceDictatedTextInCrossOriginIframe)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<iframe id='iframe' src='https://domain2.com/subframe'></iframe>"_s } },
+        { "/subframe"_s, { "<body contenteditable></body>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    RetainPtr storeConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initNonPersistentConfiguration]);
+    [storeConfiguration setHTTPSProxy:[NSURL URLWithString:[NSString stringWithFormat:@"https://127.0.0.1:%d/", server.port()]]];
+    [configuration setWebsiteDataStore:adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:storeConfiguration.get()]).get()];
+    enableSiteIsolation(configuration.get());
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get()]);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate allowAnyTLSCertificate];
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    bool didStartInputSession = false;
+    RetainPtr inputDelegate = adoptNS([[TestInputDelegate alloc] init]);
+    [inputDelegate setFocusStartsInputSessionPolicyHandler:[&] (WKWebView *, id<_WKFocusedElementInfo>) {
+        didStartInputSession = true;
+        return _WKFocusStartsInputSessionPolicyAllow;
+    }];
+    [webView _setInputDelegate:inputDelegate.get()];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://domain1.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView waitForNextPresentationUpdate];
+    [webView focusInWindow];
+
+    RetainPtr childFrame = [webView firstChildFrame];
+    [webView objectByEvaluatingJavaScriptWithUserGesture:@"document.body.focus()" inFrame:childFrame.get()];
+    Util::run(&didStartInputSession);
+    while (![childFrame _isFocused]) {
+        Util::spinRunLoop();
+        childFrame = [webView firstChildFrame];
+    }
+
+    // Seed the subframe with dictated text, then replace it. replaceDictatedText (iOS) must likewise
+    // route to the focused frame's process under site isolation; otherwise the subframe keeps "hello".
+    [[webView textInputContentView] insertText:@"hello" alternatives:@[@"yellow"] style:UITextAlternativeStyleNone];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [[webView stringByEvaluatingJavaScript:@"document.body.textContent" inFrame:childFrame.get()] isEqualToString:@"hello"];
+    }));
+
+    [[webView textInputContentView] replaceDictatedText:@"hello" withText:@"world"];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [[webView stringByEvaluatingJavaScript:@"document.body.textContent" inFrame:childFrame.get()] isEqualToString:@"world"];
+    }));
+    EXPECT_WK_STREQ("world", [webView stringByEvaluatingJavaScript:@"document.body.textContent" inFrame:childFrame.get()]);
 }
 
 TEST(SiteIsolation, SelectionBoundingRectInCrossOriginIframeUsesMainFrameCoordinates)

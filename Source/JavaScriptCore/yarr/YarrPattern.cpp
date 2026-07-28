@@ -1572,7 +1572,8 @@ public:
 
         if (numBOLAnchoredAlts) {
             m_alternative->m_containsBOL = true;
-            // If all the alternatives in parens start with BOL, then so does this one
+            // If all the alternatives in parens start with BOL, then so does this one. Optimistic:
+            // recomputeStartsWithBOL() redoes this once the terms are final.
             if (numBOLAnchoredAlts == numParenAlternatives)
                 m_alternative->m_startsWithBOL = true;
         }
@@ -1683,9 +1684,9 @@ public:
             m_forwardReferencesInLookbehind.append(UnresolvedForwardReference(m_alternative, m_alternative->lastTermIndex(), subpatternName));
         }
     }
-    
+
     // deep copy the argument disjunction.  If filterStartsWithBOL is true,
-    // skip alternatives with m_startsWithBOL set true.
+    // skip alternatives with m_startsWithBOL set true, and those left impossible by that filtering.
     PatternDisjunction* copyDisjunction(PatternDisjunction* disjunction, bool filterStartsWithBOL)
     {
         if (!isSafeToRecurse()) [[unlikely]] {
@@ -1696,21 +1697,22 @@ public:
         std::unique_ptr<PatternDisjunction> newDisjunction;
         for (unsigned alt = 0; alt < disjunction->m_alternatives.size(); ++alt) {
             PatternAlternative* alternative = disjunction->m_alternatives[alt].get();
-            if (!filterStartsWithBOL || !alternative->m_startsWithBOL || alternative->m_direction == Backward) {
-                if (!newDisjunction) {
-                    newDisjunction = makeUnique<PatternDisjunction>();
-                    newDisjunction->m_parent = disjunction->m_parent;
-                }
-                PatternAlternative* newAlternative = newDisjunction->addNewAlternative(alternative->m_firstSubpatternId, alternative->matchDirection());
-                newAlternative->m_lastSubpatternId = alternative->m_lastSubpatternId;
-                newAlternative->m_terms.reserveCapacity(alternative->m_terms.size());
-                for (auto& term : alternative->m_terms) {
-                    if (auto copied = copyTerm(term, filterStartsWithBOL))
-                        newAlternative->m_terms.append(WTF::move(*copied));
-                }
+            if (filterStartsWithBOL && alternative->m_startsWithBOL && alternative->matchDirection() != Backward)
+                continue;
+
+            auto copiedTerms = copyTerms(alternative, filterStartsWithBOL);
+            if (!copiedTerms)
+                continue;
+
+            if (!newDisjunction) {
+                newDisjunction = makeUnique<PatternDisjunction>();
+                newDisjunction->m_parent = disjunction->m_parent;
             }
+            PatternAlternative* newAlternative = newDisjunction->addNewAlternative(alternative->m_firstSubpatternId, alternative->matchDirection());
+            newAlternative->m_lastSubpatternId = alternative->m_lastSubpatternId;
+            newAlternative->m_terms = WTF::move(*copiedTerms);
         }
-        
+
         if (hasError(error())) {
             newDisjunction = nullptr;
             return nullptr;
@@ -1724,6 +1726,33 @@ public:
         return copiedDisjunction;
     }
     
+    // True when this parenthesis has to participate in every match of its alternative. An optional
+    // one can be skipped, and a negative assertion succeeds when its content cannot match.
+    static bool parenthesesMustMatch(const PatternTerm& term)
+    {
+        ASSERT(term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion);
+        return term.quantityMinCount && !term.invert();
+    }
+
+    // Copy the terms of `alternative`, dropping the parentheses copyTerm() filtered out. Returns
+    // std::nullopt when one of those has to be matched, i.e. this alternative cannot match at all.
+    std::optional<Vector<PatternTerm>> copyTerms(PatternAlternative* alternative, bool filterStartsWithBOL)
+    {
+        Vector<PatternTerm> copiedTerms;
+        copiedTerms.reserveInitialCapacity(alternative->m_terms.size());
+        for (auto& term : alternative->m_terms) {
+            if (auto copied = copyTerm(term, filterStartsWithBOL)) {
+                copiedTerms.append(WTF::move(*copied));
+                continue;
+            }
+            // Every alternative inside this parenthesis was filtered out, so it can only match at
+            // the start of the input.
+            if (parenthesesMustMatch(term))
+                return std::nullopt;
+        }
+        return copiedTerms;
+    }
+
     std::optional<PatternTerm> copyTerm(PatternTerm& term, bool filterStartsWithBOL)
     {
         if (!isSafeToRecurse()) [[unlikely]] {
@@ -2311,12 +2340,66 @@ public:
         }
     }
 
+    // m_startsWithBOL means "every match of this alternative begins at the start of the input", which
+    // is what optimizeBOL() turns into onceThrough. This pass is the authoritative source of the flag,
+    // so it runs before any consumer of it. Returns true when every alternative of `disjunction` must
+    // begin at the start of the input.
+    bool recomputeStartsWithBOL(PatternDisjunction* disjunction)
+    {
+        if (!isSafeToRecurse()) [[unlikely]] {
+            m_error = ErrorCode::PatternTooLarge;
+            return false;
+        }
+
+        bool allAlternativesStartWithBOL = true;
+        for (auto& alternativeRef : disjunction->m_alternatives) {
+            PatternAlternative* alternative = alternativeRef.get();
+            bool startsWithBOL = false;
+            for (unsigned index = 0; index < alternative->m_terms.size(); ++index) {
+                PatternTerm& term = alternative->m_terms[index];
+                bool termStartsWithBOL = false;
+                switch (term.type) {
+                case PatternTerm::Type::AssertionBOL:
+                    termStartsWithBOL = term.matchDirection() == Forward;
+                    break;
+                case PatternTerm::Type::ParenthesesSubpattern:
+                case PatternTerm::Type::ParentheticalAssertion:
+                    // Recurse even for a non-leading term, whose result goes unused: nested
+                    // alternatives carry their own flag and copyTerms() filters on it at every
+                    // nesting depth, so all of them have to be recomputed. Only bubble the flag out
+                    // of a parenthesis that copyTerms() would let kill its alternative.
+                    termStartsWithBOL = recomputeStartsWithBOL(term.parentheses.disjunction)
+                        && term.matchDirection() == Forward
+                        && parenthesesMustMatch(term);
+                    break;
+                default:
+                    break;
+                }
+                // Only the leading term can anchor the alternative. Conservative for cases like
+                // /\b^a/, matching what the parser already did.
+                if (!index)
+                    startsWithBOL = termStartsWithBOL;
+            }
+            alternative->m_startsWithBOL = startsWithBOL;
+            if (!startsWithBOL)
+                allAlternativesStartWithBOL = false;
+        }
+        return allAlternativesStartWithBOL;
+    }
+
+    void recomputeStartsWithBOL()
+    {
+        // No leading `^` anywhere means the parser never set the flag.
+        if (m_pattern.m_containsBOL)
+            recomputeStartsWithBOL(m_pattern.m_body);
+    }
+
     void optimizeBOL()
     {
         // Look for expressions containing beginning of line (^) anchoring and unroll them.
         // e.g. /^a|^b|c/ becomes /^a|^b|c/ which is executed once followed by /c/ which loops
-        // This code relies on the parsing code tagging alternatives with m_containsBOL and
-        // m_startsWithBOL and rolling those up to containing alternatives.
+        // This code relies on recomputeStartsWithBOL() having tagged the alternatives with
+        // m_startsWithBOL, and on m_containsBOL from the parsing code.
         // At this point, this is only valid for non-multiline expressions.
         PatternDisjunction* disjunction = m_pattern.m_body;
         
@@ -2378,6 +2461,12 @@ public:
         if (alternatives.size() != 1)
             return;
 
+        // A sticky pattern must begin its match exactly at lastIndex, but the enclosure reports the
+        // position of the wrapped expression rather than of the leading `.*` it absorbs, so
+        // /^.*a.*$/y would fail on "xa" instead of matching the whole string at 0.
+        if (m_pattern.sticky())
+            return;
+
         CharacterClass* dotCharacterClass = dotAll() ? m_pattern.anyCharacterClass() : m_pattern.newlineCharacterClass();
         PatternAlternative* alternative = alternatives[0].get();
         Vector<PatternTerm>& terms = alternative->m_terms;
@@ -2427,7 +2516,9 @@ public:
                     terms.removeAt(termIndex - 1);
 
                 terms.append(PatternTerm(startsWithBOL, endsWithEOL, m_flags));
-                
+
+                // The enclosure now carries the anchoring, so the alternative no longer starts with ^.
+                alternative->m_startsWithBOL = false;
                 m_pattern.m_containsBOL = false;
             }
         }
@@ -2927,6 +3018,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
             return error;
     }
 
+    constructor.recomputeStartsWithBOL();
     constructor.checkForTerminalParentheses();
     constructor.optimizeDotStarWrappedExpressions();
     constructor.optimizeBOL();
@@ -3396,19 +3488,43 @@ private:
             m_bitmap.set(c);
     }
 
-    void addCharacterClass(const CharacterClass* cc)
+    // Collects X's Latin-1 members into `target`. Every entry is clamped to 0..0xff: BitSet::set()
+    // is unchecked, so an out-of-range member would be a wild write.
+    bool collectLatin1Members(const CharacterClass* cc, WTF::BitSet<256>& target)
     {
         if (cc->m_anyCharacter || !cc->m_strings.isEmpty()) {
             m_gaveUp = true;
-            return;
+            return false;
         }
-        for (char32_t c : cc->m_matches8)
-            setBit(c);
+        for (char32_t c : cc->m_matches8) {
+            ASSERT(isLatin1(c));
+            if (c <= 0xff)
+                target.set(c);
+        }
         for (auto& range : cc->m_ranges8) {
+            ASSERT(isLatin1(range.begin));
             char32_t end = std::min<char32_t>(range.end, 0xff);
             for (char32_t c = range.begin; c <= end; ++c)
-                setBit(c);
+                target.set(c);
         }
+        return true;
+    }
+
+    void addCharacterClass(const CharacterClass* cc)
+    {
+        collectLatin1Members(cc, m_bitmap);
+    }
+
+    void addInvertedCharacterClass(const CharacterClass* cc)
+    {
+        // For an 8-bit subject, [^X] matches byte c iff c is not in X. matches8/ranges8 fully
+        // describe X's Latin-1 membership even when an m_table is also present, so the complement
+        // over 0..0xff is a sound filter.
+        WTF::BitSet<256> positive;
+        if (!collectLatin1Members(cc, positive))
+            return;
+        positive.invert();
+        m_bitmap.merge(positive);
     }
 
     // Sets `consumes` when the term definitely consumes >= 1 character, so it fully determines the
@@ -3440,12 +3556,11 @@ private:
             consumes = term.quantityMinCount > 0;
             return;
         case Type::CharacterClass:
-            // Classes are already case-folded at construction. An inverted class is not a useful filter.
-            if (term.invert()) {
-                m_gaveUp = true;
-                return;
-            }
-            addCharacterClass(term.characterClass);
+            // Classes are already case-folded at construction.
+            if (term.invert())
+                addInvertedCharacterClass(term.characterClass);
+            else
+                addCharacterClass(term.characterClass);
             consumes = term.quantityMinCount > 0;
             return;
         case Type::ParenthesesSubpattern: {
@@ -3463,24 +3578,45 @@ private:
         }
     }
 
-    void addAlternative(PatternAlternative* alternative, unsigned depth)
+    // Returns true when the alternative definitely consumes >= 1 character. A false return with
+    // m_gaveUp unset means the alternative can complete without consuming anything (matches empty).
+    bool addAlternative(PatternAlternative* alternative, unsigned depth)
     {
+        bool consumes = false;
         for (auto& term : alternative->m_terms) {
-            bool consumes = false;
+            if (consumes) {
+                // The first character is already pinned down, so no later term can add to the
+                // bitmap - with one exception. A DotStarEnclosure is the residue left behind by
+                // optimizeDotStarWrappedExpressions(), which DELETED a leading `^` and `.*` from
+                // this alternative. The surviving first term is therefore not where the match
+                // begins, so the bitmap we just built is a lie.
+                if (term.type == PatternTerm::Type::DotStarEnclosure) {
+                    m_gaveUp = true;
+                    return false;
+                }
+                continue;
+            }
             addTerm(term, consumes, depth);
             if (m_gaveUp)
-                return;
-            if (consumes)
-                return;
+                return false;
         }
+        return consumes;
     }
 
     void addDisjunction(PatternDisjunction* disjunction, unsigned depth)
     {
         for (auto& alternative : disjunction->m_alternatives) {
-            addAlternative(alternative.get(), depth);
+            bool consumes = addAlternative(alternative.get(), depth);
             if (m_gaveUp)
                 return;
+            // A top-level alternative that can complete without consuming any character means the
+            // pattern can match empty at position 0, so no first-character filter is sound. Nested
+            // paren disjunctions are allowed to match empty; the enclosing paren term's own
+            // `consumes` flag decides whether it contributes a guaranteed character.
+            if (!depth && !consumes) {
+                m_gaveUp = true;
+                return;
+            }
         }
     }
 
@@ -3488,33 +3624,30 @@ private:
     bool m_gaveUp { false };
 };
 
-std::optional<WTF::BitSet<256>> computeStickyFirstCharacterBitmap(StringView patternString, OptionSet<Flags> flags)
+// Computes the Latin-1 first-character fast-fail bitmap for a pattern. The bitmap content is the
+// same in every mode; only the precondition on where it may be applied differs, and that is
+// selected from the flags here.
+std::optional<WTF::BitSet<256>> computeFirstCharacterBitmap(StringView patternString, OptionSet<Flags> flags)
 {
     ErrorCode errorCode = ErrorCode::NoError;
     YarrPattern pattern(patternString, flags, errorCode);
-    if (hasError(errorCode) || !pattern.m_body || pattern.m_body->m_minimumSize < 1)
+    if (hasError(errorCode) || !pattern.m_body)
         return std::nullopt;
-    WTF::BitSet<256> bitmap;
-    FirstCharacterBitmapBuilder builder(bitmap);
-    if (!builder.build(pattern.m_body))
-        return std::nullopt;
-    return bitmap;
-}
-
-std::optional<WTF::BitSet<256>> computeAnchoredFirstCharacterBitmap(StringView patternString, OptionSet<Flags> flags)
-{
-    ErrorCode errorCode = ErrorCode::NoError;
-    YarrPattern pattern(patternString, flags, errorCode);
-    if (hasError(errorCode) || !pattern.m_body || pattern.m_body->m_minimumSize < 1)
-        return std::nullopt;
-    // The bitmap describes position 0, so it is only sound when every match must begin there:
-    // ^-anchored at the start of every alternative, and neither multiline nor a modifier group can
-    // make that ^ match after a newline.
-    if (pattern.multiline() || pattern.m_containsModifiers)
-        return std::nullopt;
-    for (auto& alternative : pattern.m_body->m_alternatives) {
-        if (!alternative->m_startsWithBOL)
+    if (!pattern.sticky()) {
+        if (pattern.global())
             return std::nullopt;
+        if (pattern.multiline() || pattern.m_containsModifiers)
+            return std::nullopt;
+        // Check the leading term rather than PatternAlternative::m_startsWithBOL: the parser sets
+        // that flag optimistically and recomputeStartsWithBOL() corrects it, but here an over-eager
+        // flag is a wrong answer rather than a lost optimization.
+        for (auto& alternative : pattern.m_body->m_alternatives) {
+            if (alternative->m_terms.isEmpty())
+                return std::nullopt;
+            const PatternTerm& firstTerm = alternative->m_terms[0];
+            if (firstTerm.type != PatternTerm::Type::AssertionBOL || firstTerm.m_matchDirection != Forward)
+                return std::nullopt;
+        }
     }
     WTF::BitSet<256> bitmap;
     FirstCharacterBitmapBuilder builder(bitmap);

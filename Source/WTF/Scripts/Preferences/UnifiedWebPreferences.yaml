@@ -3798,6 +3798,21 @@ HTMLEnhancedSelectParsingQuirkEnabled:
     WebCore:
       default: false
 
+HTMLInCanvasEnabled:
+  type: bool
+  status: unstable
+  category: dom
+  webcoreOnChange: setNeedsRelayoutAllFrames
+  humanReadableName: "HTML-in-Canvas"
+  humanReadableDescription: "Enable HTML-in-Canvas"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 HTTPEquivEnabled:
   type: bool
   status: mature
@@ -10276,7 +10291,7 @@ WebLocksAPIEnabled:
 
 WebRTCAV1CodecEnabled:
   type: bool
-  status: preview
+  status: stable
   category: media
   humanReadableName: "WebRTC AV1 codec"
   humanReadableDescription: "Enable WebRTC AV1 codec"
@@ -10285,10 +10300,10 @@ WebRTCAV1CodecEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      "USE(GSTREAMER)": true
+      "USE(GSTREAMER) || PLATFORM(COCOA)": true
       default: false
     WebCore:
-      "USE(GSTREAMER)": true
+      "USE(GSTREAMER) || PLATFORM(COCOA)": true
       default: false
 
 WebRTCAudioLatencyAdaptationEnabled:

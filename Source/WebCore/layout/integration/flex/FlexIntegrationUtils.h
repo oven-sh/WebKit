@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/FlexItemContentCache.h>
 #include <WebCore/LayoutUnit.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/SetForScope.h>
@@ -53,10 +54,7 @@ namespace LayoutIntegration {
 
 class FlexIntegrationUtils {
 public:
-    FlexIntegrationUtils(RenderFlexibleBox&);
-
-    RenderFlexibleBox& flexBox() const LIFETIME_BOUND { return m_flexBox; }
-    FlexLayoutState& flexLayoutState() const;
+    FlexIntegrationUtils(RenderFlexibleBox&, FlexLayoutState&, FlexItemContentCache&);
 
     void applyStretchedLogicalHeightToFlexItem(const FlexLayoutItem&, LayoutUnit blockSize);
     void layoutFlexItemForStretchedCrossSize(const FlexLayoutItem&, LayoutUnit crossSize, LogicalBoxAxis crossAxis);
@@ -66,23 +64,19 @@ public:
     void updateAutoMarginsInMainAxis(const FlexLayoutItem&, LayoutUnit autoMarginOffset);
     bool updateAutoMarginsInCrossAxis(const FlexLayoutItem&, LayoutUnit& crossOffset, LayoutUnit availableAlignmentSpace);
     void setFlexItemOverridingBorderBoxLogicalHeight(const FlexLayoutItem&, LayoutUnit);
-    void invalidateFlexItemContentLogicalWidthsIfNeeded(const FlexLayoutItem&);
 
-    void setTrimmedMarginForChild(const FlexLayoutItem&, Style::MarginTrimSide);
     void trimMainAxisMarginStart(FlexLayoutItem&);
     void trimMainAxisMarginEnd(FlexLayoutItem&);
     void trimCrossAxisMarginStart(const FlexLayoutItem&);
     void trimCrossAxisMarginEnd(const FlexLayoutItem&);
     LayoutUnit adjustBorderBoxLogicalWidthForBoxSizing(LayoutUnit computedLogicalWidth) const;
 
-    void addItemAtFlexLineStart(const FlexLayoutItem&);
-    void addItemAtFlexLineEnd(const FlexLayoutItem&);
-    void addItemOnFirstFlexLine(const FlexLayoutItem&);
-    void addItemOnLastFlexLine(const FlexLayoutItem&);
+    bool flexItemHasPercentHeightDescendants(const RenderBox&) const;
     bool flexItemHasPercentHeightDescendants(const FlexLayoutItem&) const;
 
     LayoutUnit flexItemContentLogicalHeight(const FlexLayoutItem&) const;
     LayoutUnit computeBlockAxisContentSizeForFlexItem(const FlexLayoutItem&);
+
     template<typename SizeType> bool flexItemMainSizeIsDefinite(const FlexLayoutItem&, const SizeType&);
     template<typename SizeType> std::optional<LayoutUnit> computeMainAxisExtentForFlexItem(const FlexLayoutItem&, const SizeType&, LayoutUnit mainAxisSizeForLengthResolution);
     LayoutUnit maxContentMainAxisExtentForFlexItem(const FlexLayoutItem&);
@@ -96,7 +90,17 @@ public:
     template<typename SizeType> LayoutUnit computeLogicalWidthUsingForFlexItem(const FlexLayoutItem&, const SizeType&, LayoutUnit availableWidth) const;
 
 private:
+    RenderFlexibleBox& flexBox() const LIFETIME_BOUND { return m_flexBox; }
+    FlexLayoutState& flexLayoutState() const LIFETIME_BOUND;
+
+    void setTrimmedMarginForChild(const FlexLayoutItem&, Style::MarginTrimSide);
+    void invalidateFlexItemContentLogicalWidthsIfNeeded(const FlexLayoutItem&);
+    void resetAutoMarginsAndLogicalTopInCrossAxis(RenderBox& flexItem);
+    void dirtyPercentHeightDescendantsWithinFlexItem(RenderBox& flexItem);
+
     const CheckedRef<RenderFlexibleBox> m_flexBox;
+    FlexLayoutState& m_flexLayoutState;
+    FlexItemContentCache& m_flexItemContentCache;
 };
 
 // RAII that temporarily overrides a flex item's main-axis border-box size to its flex basis for the duration of a

@@ -33,7 +33,6 @@
 #include <WebCore/BaselineAlignment.h>
 #include <WebCore/FlexFormattingContext.h>
 #include <WebCore/FlexFormattingUtils.h>
-#include <WebCore/FlexLayoutState.h>
 #include <WebCore/LayoutIntegrationFlexLayout.h>
 #include <WebCore/RenderBlock.h>
 #include <wtf/Range.h>
@@ -61,40 +60,34 @@ public:
     std::optional<LayoutUnit> lastLineBaseline() const override;
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle*) override;
+    void flexItemWillBeRemoved(const RenderBox& flexItem);
     bool hitTestChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& adjustedLocation, HitTestAction) override;
     void paintChildren(PaintInfo& forSelf, const LayoutPoint&, PaintInfo& forChild, bool usePrintRect) override;
 
     bool willStretchItem(const RenderBox& item, LogicalBoxAxis containingAxis, StretchingMode = StretchingMode::Normal) const override;
 
-    const Vector<SingleThreadWeakPtr<RenderBox>>& flexItems() const LIFETIME_BOUND { return m_flexItems; }
+    LayoutIntegration::FlexLayout& flexLayout() LIFETIME_BOUND { return m_flexLayout; }
 
     LayoutOptionalOutsets allowedLayoutOverflow() const override;
 
     virtual bool isFlexibleBoxImpl() const { return false; };
 
-    // Flex-container queries used by non-flex layout code (RenderBox/RenderBlock/RenderBlockFlow/InspectorOverlay);
-    // thin proxies to FlexFormattingUtils, which stays internal to the flex formatting context.
+    // Used by InspectorOverlay; a thin proxy to FlexFormattingUtils, which stays internal to the flex formatting context.
     using GapType = FlexFormattingUtils::GapType;
-    bool hasStretchedFlexItemWithAspectRatio() const;
     LayoutUnit computeGap(GapType) const;
-    bool NODELETE isHorizontalFlow() const;
-    bool isMultiline() const;
 
     std::optional<LayoutUnit> usedFlexItemOverridingLogicalHeightForPercentageResolution(const RenderBox&);
     bool canUseFlexItemForPercentageResolution(const RenderBox&);
 
     void invalidateBlockAxisSizeForFlexItem(const RenderBox& flexItem);
-    void flexItemWillBeRemoved(const RenderBox& flexItem);
 
-    LayoutUnit flexItemContentLogicalHeight(const RenderBox& flexItem) const;
-    void setFlexItemContentLogicalHeightIfNeeded(const RenderBox& flexItem, LayoutUnit height);
+    void setFlexItemContentLogicalHeightFromLayout(const RenderBox& flexItem, LayoutUnit height);
 
     // Returns true if the position changed. In that case, the flexItem will have to be laid out again.
     bool setStaticPositionForPositionedLayout(const RenderBox&);
 
-    bool isComputingFlexBaseSizes() const { return m_flexLayoutState && m_flexLayoutState->phase() == FlexLayoutState::Phase::ComputingFlexBaseSizes; }
-
-    bool isInCrossAxisStretchLayout() const { return m_flexLayoutState && m_flexLayoutState->phase() == FlexLayoutState::Phase::CrossAxisItemSizing; }
+    bool NODELETE isComputingFlexBaseSizes() const;
+    bool NODELETE isInCrossAxisStretchLayout() const;
 
 protected:
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
@@ -106,60 +99,21 @@ private:
     friend class LayoutIntegration::FlexIntegrationUtils;
     friend class LayoutIntegration::FlexItemIntrinsicWidthComputationScope;
 
-    using FlexItemBorderBoxRects = Vector<LayoutRect, 4>;
-
-    void appendFlexItemBorderBoxRects(FlexItemBorderBoxRects&);
-    void repaintFlexItemsDuringLayoutIfMoved(const FlexItemBorderBoxRects&);
-
-    template<typename SizeType> bool canComputePercentageFlexBasis(const RenderBox& flexItem, const SizeType&, UpdatePercentageHeightDescendants);
-    template<typename SizeType> bool flexItemMainSizeIsDefinite(const RenderBox&, const SizeType&);
-
-    void initializeMarginTrimState();
     bool isChildEligibleForMarginTrim(Style::MarginTrimSide, const RenderBox&) const final;
 
     void clearFlexItemOverridingSizes();
 
-    void prepareFlexItemsAndMargins();
+    // The flex items' border box rects as they were before the flex algorithm ran, so layoutBlock can repaint the
+    // ones it moved. Both walk the in-flow children directly (the flex item list is built inside FlexLayout::layout).
+    using FlexItemBorderBoxRects = Vector<LayoutRect, 4>;
+    FlexItemBorderBoxRects flexItemBorderBoxRects() const;
+    void repaintFlexItemsDuringLayoutIfMoved(const FlexItemBorderBoxRects&);
 
-    FlexContainerUsedExtents updateFlexContainerLogicalHeight(LayoutUnit flexContentBlockExtent);
 
-    FlexLayoutState& flexLayoutState() LIFETIME_BOUND { ASSERT(m_flexLayoutState); return *m_flexLayoutState; }
-
-    void setBlockAxisSizeForFlexItem(const RenderBox& flexItem, LayoutUnit size) { m_blockAxisSize.set(flexItem, size); }
-    std::optional<LayoutUnit> blockAxisSizeForFlexItem(const RenderBox& flexItem) const { return m_blockAxisSize.getOptional(flexItem); }
-    void cacheFlexItemContentLogicalHeightIfAllowed(const RenderBox& flexItem, LayoutUnit height);
-    LayoutUnit computeBlockAxisContentSizeForFlexItem(RenderBox& flexItem);
-    void dirtyPercentHeightDescendantsWithinFlexItem(RenderBox& flexItem);
-    void resetAutoMarginsAndLogicalTopInCrossAxis(RenderBox& flexItem);
-    bool flexItemHasPercentHeightDescendants(const RenderBox&) const;
-    void addItemAtFlexLineStart(const RenderBox& flexItem) { m_marginTrimItems.m_itemsAtFlexLineStart.add(flexItem); }
-    void addItemAtFlexLineEnd(const RenderBox& flexItem) { m_marginTrimItems.m_itemsAtFlexLineEnd.add(flexItem); }
-    void addItemOnFirstFlexLine(const RenderBox& flexItem) { m_marginTrimItems.m_itemsOnFirstFlexLine.add(flexItem); }
-    void addItemOnLastFlexLine(const RenderBox& flexItem) { m_marginTrimItems.m_itemsOnLastFlexLine.add(flexItem); }
-
-    // Inner main size for flex items where main axis is the item's block axis (column flex or orthogonal).
-    HashMap<SingleThreadWeakRef<const RenderBox>, LayoutUnit> m_blockAxisSize;
-
-    // This is used to cache the intrinsic size on the cross axis to avoid
-    // relayouts when stretching.
-    HashMap<SingleThreadWeakRef<const RenderBox>, LayoutUnit> m_contentLogicalHeights;
-
-    Vector<SingleThreadWeakPtr<RenderBox>> m_flexItems;
     // The flex formatting context integration: RenderFlexibleBox owns it and befriends it so it can reach the
     // container's layout-phase state.
     LayoutIntegration::FlexLayout m_flexLayout { *this };
 
-    struct MarginTrimItems {
-        SingleThreadWeakHashSet<const RenderBox> m_itemsAtFlexLineStart;
-        SingleThreadWeakHashSet<const RenderBox> m_itemsAtFlexLineEnd;
-        SingleThreadWeakHashSet<const RenderBox> m_itemsOnFirstFlexLine;
-        SingleThreadWeakHashSet<const RenderBox> m_itemsOnLastFlexLine;
-    } m_marginTrimItems;
-
-    LayoutUnit m_alignContentStartOverflow { 0 };
-    LayoutUnit m_justifyContentStartOverflow { 0 };
-
-    std::optional<FlexLayoutState> m_flexLayoutState;
     bool m_inSimplifiedLayout { false };
     mutable bool m_inFlexItemIntrinsicWidthComputation { false };
 };

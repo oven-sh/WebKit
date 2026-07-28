@@ -636,6 +636,7 @@ webkit.org/b/290522 imported/w3c/web-platform-tests/html/canvas/offscreen/manual
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video [ ImageOnlyFailure ]
 
 # These are the WebVTT rendering WPT we are already passing.
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/2_cues_overlapping_partially_move_down.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/2_tracks.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/3_tracks.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/audio_has_no_subtitles.html [ Pass ]
@@ -680,6 +681,10 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-accessibility-minimum-target-size.html [ Skip ]
 imported/w3c/web-platform-tests/html/rendering/replaced-elements/the-select-element/customizable-select/min-size-empty-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/rendering/replaced-elements/the-select-element/customizable-select/min-size-empty-002.html [ ImageOnlyFailure ]
+# Intrinsic sizing of a base-select inside a flex container differs from the reference.
+imported/w3c/web-platform-tests/html/rendering/replaced-elements/the-select-element/customizable-select/min-height-in-flex.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/rendering/replaced-elements/the-select-element/customizable-select/min-width-in-flex.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-appearance-sizing-in-flex.html [ ImageOnlyFailure ]
 
 # Picker fallback positioning failures (potentially related to the max-block-size).
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-appearance-fallback-bottom-left-scroller.html [ ImageOnlyFailure ]
@@ -698,6 +703,15 @@ imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customiz
 
 # Untriaged.
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/selectedcontent-restore.optional.html [ Skip ]
+
+# <optgroup label> renders bold + black rather than as a gray legend.
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-appearance-optgroup-rendering.html [ ImageOnlyFailure ]
+# Our selectedcontent avoids overflow, but test expects it.
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-button-text-and-icon-clipping.html [ ImageOnlyFailure ]
+# Overflow handling differences.
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/select-overflow-x.tentative.html [ ImageOnlyFailure ]
+# The picker-icon's negative margin glyph adjustment (margin-block-start: -0.25em) shifts the icon, which the reference doesn't account for.
+imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-display-block.tentative.html [ ImageOnlyFailure ]
 
 # List boxes/<select multiple>.
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select-listbox/ [ Skip ]
@@ -4035,6 +4049,13 @@ imported/w3c/web-platform-tests/css/css-overflow/overflow-canvas.html [ ImageOnl
 imported/w3c/web-platform-tests/css/css-overflow/overflow-clip-margin-border-radius-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/overflow-clip-margin-border-radius.html [ ImageOnlyFailure ]
 
+imported/w3c/web-platform-tests/css/css-overflow/flex-column-container-with-scrollable-descendant.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-overflow/flex-container-multiple-items-with-scrollable-descendant.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-overflow/flex-container-with-scrollable-descendant.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-overflow/flex-nested-container-with-scrollable-descendant.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-overflow/grid-container-with-scrollable-descendant.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-overflow/grid-nested-container-with-scrollable-descendant.html [ ImageOnlyFailure ]
+
 # Tests that failed on the 2026-02-02 import of css-overflow
 imported/w3c/web-platform-tests/css/css-overflow/clip-008.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/column-style-change-triggers-relayout.html [ ImageOnlyFailure ]
@@ -5963,6 +5984,8 @@ imported/w3c/web-platform-tests/css/filter-effects/svg-mutation-object-transform
 imported/w3c/web-platform-tests/css/filter-effects/svg-mutation-single-to-multiple-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/svg-mutation-single-to-multiple-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/svg-mutation-url-to-function.html [ ImageOnlyFailure ]
+webkit.org/b/320225 imported/w3c/web-platform-tests/css/filter-effects/svg-relative-urls-001.html [ ImageOnlyFailure ]
+webkit.org/b/320225 imported/w3c/web-platform-tests/css/filter-effects/svg-relative-urls-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/svg-shorthand-drop-shadow-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/svg-shorthand-hue-rotate-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-reference-filter.html [ ImageOnlyFailure ]
@@ -8139,6 +8162,35 @@ imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/sh
 imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/shape/shape-outside-shape-003.html [ ImageOnlyFailure ]
 
 webkit.org/b/317017 imported/w3c/web-platform-tests/largest-contentful-paint/multiple-redirects-TAO.html [ Pass Failure ]
+
+# Compression Dictionary Transport is not implemented, so these time out waiting for a dictionary load that never happens.
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/compressed-large-resources-001.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/compressed-large-resources-002.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-clear-site-data-cache.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-clear-site-data-cookies.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-clear-site-data-storage.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-compressed-fetch-with-link-match-dest.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-compressed.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-decompression.tentative.https.h2.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-decompression.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-no-cors.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-timing-001.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-timing-002.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-imagesrcset.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-connect-src-nonce.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-connect-src.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element-baseURL.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element-crossorigin.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element-events.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element-in-body.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-header.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-integrity.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-referrer-and-referrerpolicy.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-type-attribute.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-match.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-registration.tentative.https.html [ Skip ]
+webkit.org/b/295249 imported/w3c/web-platform-tests/fetch/compression-dictionary/fetch-destination.tentative.https.html [ Skip ]
 
 # Early Hints preload is not implemented, so these time out waiting for a preload that never happens.
 imported/w3c/web-platform-tests/loading/early-hints/preload-finished-before-final-response.h2.window.html [ Skip ]

@@ -25,10 +25,18 @@
 
 #pragma once
 
+#include <WebCore/MobileDocumentRequest.h>
+#include <WebCore/OpenID4VPMultisignedRequest.h>
+#include <WebCore/OpenID4VPSignedRequest.h>
+#include <wtf/Variant.h>
+
 namespace WebCore {
 
-struct MobileDocumentRequest;
-
-using UnvalidatedDigitalCredentialRequest = MobileDocumentRequest;
+// Every alternative must be IPC-serializable; see WebCoreArgumentCodersAuth.serialization.in.
+using UnvalidatedDigitalCredentialRequest = Variant<
+    MobileDocumentRequest,
+    OpenID4VPSignedRequest,
+    OpenID4VPMultisignedRequest
+>;
 
 } // namespace WebCore

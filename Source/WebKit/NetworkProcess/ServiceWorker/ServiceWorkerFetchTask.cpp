@@ -160,6 +160,11 @@ ServiceWorkerFetchTask::~ServiceWorkerFetchTask()
     cancelPreloadIfNecessary();
 }
 
+NetworkResourceLoader* ServiceWorkerFetchTask::loader() const
+{
+    return m_loader.get();
+}
+
 RefPtr<IPC::Connection> ServiceWorkerFetchTask::serviceWorkerConnection()
 {
     auto* serviceWorkerConnection = m_serviceWorkerConnection.get();
@@ -464,6 +469,11 @@ void ServiceWorkerFetchTask::continueDidReceiveFetchResponse()
 
     if (RefPtr connection = serviceWorkerConnection())
         connection->send(Messages::WebSWContextManagerConnection::ContinueDidReceiveFetchResponse { *m_serverConnectionIdentifier, *m_serviceWorkerIdentifier, m_fetchIdentifier }, 0);
+}
+
+void ServiceWorkerFetchTask::cancelPendingStreamUpload()
+{
+    sendToClient(Messages::WebResourceLoader::CancelPendingStreamUpload { });
 }
 
 void ServiceWorkerFetchTask::continueFetchTaskWith(ResourceRequest&& request)

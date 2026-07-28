@@ -64,17 +64,17 @@ struct UnsizedTrack {
 using GridItemIndexes = Vector<size_t>;
 
 struct InflexibleTrackState {
-    HashSet<size_t> inflexibleTracks;
+    BitVector inflexibleTracks;
 
     bool isFlexible(size_t trackIndex, const UnsizedTrack& track) const
     {
         return track.trackSizingFunction.max.isFlex()
-            && !inflexibleTracks.contains(trackIndex);
+            && !inflexibleTracks.get(trackIndex);
     }
 
     void markAsInflexible(size_t trackIndex)
     {
-        inflexibleTracks.add(trackIndex);
+        inflexibleTracks.set(trackIndex);
     }
 };
 
@@ -102,6 +102,13 @@ struct ResolveIntrinsicTrackSizesContext {
     const TrackSizingFunctionsList& trackSizingFunctionsList;
     const AxisConstraint& axisConstraint;
 };
+
+static bool isSizedUnderMinOrMaxContentConstraint(const AxisConstraint& axisConstraint)
+{
+    auto scenario = axisConstraint.scenario();
+    return scenario == AxisConstraint::FreeSpaceScenario::MinContent
+        || scenario == AxisConstraint::FreeSpaceScenario::MaxContent;
+}
 
 // https://drafts.csswg.org/css-grid-1/#algo-find-fr-size
 // Step 1-3: Compute Hypothetical fr Size
@@ -230,7 +237,7 @@ static LayoutUnit minimumContribution(const TrackSizingItemList& trackSizingItem
     auto& trackSizingItem = trackSizingItems[gridItemIndex];
     auto& preferredSize = trackSizingItem.computedSizes.preferredSize;
     if (GridLayoutUtils::preferredSizeBehavesAsAuto(preferredSize) || GridLayoutUtils::sizeDependsOnContainingBlockSize(preferredSize))
-        return gridItemSizingFunctions.usedMinimumSize(trackSizingItem.gridItem, trackSizingFunctions, trackSizingItem.borderAndPadding, { }, trackSizingItem.oppositeAxisConstraint);
+        return gridItemSizingFunctions.usedMinimumSize(trackSizingItem.gridItem, trackSizingFunctions, trackSizingItem.borderAndPadding, trackSizingItem.oppositeAxisConstraint);
     return gridItemSizingFunctions.minContentContribution(trackSizingItem.gridItem, trackSizingItem.oppositeAxisConstraint);
 }
 
@@ -312,16 +319,12 @@ static void sizeTracksToFitNonSpanningItems(const ResolveIntrinsicTrackSizesCont
                 return std::max({ }, std::ranges::max(itemContributions));
             },
             [&](const CSS::Keyword::Auto&) -> LayoutUnit {
-                auto isBeingSizedUnderMinOrMaxContentConstraint = [] {
-                    notImplemented();
-                    return false;
-                };
                 // If the track has an auto min track sizing function and the grid container
                 // is being sized under a min-/max-content constraint, set the track’s base
                 // size to the maximum of its items’ limited min-content
                 // contributions, floored at zero.
-                if (isBeingSizedUnderMinOrMaxContentConstraint()) {
-                    ASSERT_NOT_IMPLEMENTED_YET();
+                if (isSizedUnderMinOrMaxContentConstraint(resolveIntrinsicTrackSizesContext.axisConstraint)) {
+                    notImplemented();
                     return { };
                 }
                 // Otherwise, set the track’s base size to the maximum of its items’ minimum
@@ -477,7 +480,6 @@ static void increaseSizesToAccommodateSpanningItemsCrossingFlexibleTracks(const 
         return;
 
     auto scenario = resolveIntrinsicTrackSizesContext.axisConstraint.scenario();
-    bool isSizedUnderMinOrMaxContentConstraint = scenario == AxisConstraint::FreeSpaceScenario::MinContent || scenario == AxisConstraint::FreeSpaceScenario::MaxContent;
 
     auto& trackSizingItems = resolveIntrinsicTrackSizesContext.trackSizingItems;
     auto& gridItemSizingFunctions = resolveIntrinsicTrackSizesContext.gridItemSizingFunctions;
@@ -485,7 +487,7 @@ static void increaseSizesToAccommodateSpanningItemsCrossingFlexibleTracks(const 
 
     auto minimumContributionsList = minimumContributions(trackSizingItems, spanningItems, gridItemSizingFunctions, trackSizingFunctions);
     Vector<std::optional<LayoutUnit>> fixedMaxTrackSizingFunctionSums;
-    if (isSizedUnderMinOrMaxContentConstraint) {
+    if (isSizedUnderMinOrMaxContentConstraint(resolveIntrinsicTrackSizesContext.axisConstraint)) {
         fixedMaxTrackSizingFunctionSums = spanningItems.map([&](size_t gridItemIndex) {
             return fixedMaxTrackSizingFunctionSum(trackSizingItems[gridItemIndex].spannedLines, unsizedTracks);
         });
@@ -498,7 +500,7 @@ static void increaseSizesToAccommodateSpanningItemsCrossingFlexibleTracks(const 
     auto flexibleTracksWithIntrinsicMinimums = flexibleTracksMatching(unsizedTracks, [](const auto& trackSize) {
         return trackSize.isContentSized();
     });
-    auto minimumSizeContributions = isSizedUnderMinOrMaxContentConstraint
+    auto minimumSizeContributions = isSizedUnderMinOrMaxContentConstraint(resolveIntrinsicTrackSizesContext.axisConstraint)
         ? limitedContentContributions(minContentContributions(trackSizingItems, spanningItems, gridItemSizingFunctions), fixedMaxTrackSizingFunctionSums, minimumContributionsList)
         : minimumContributionsList;
     distributeExtraSpaceToBaseSizes(unsizedTracks, spanningItems, gridItemSpanList, minimumSizeContributions, flexibleTracksWithIntrinsicMinimums);

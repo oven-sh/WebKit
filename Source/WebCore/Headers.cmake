@@ -490,6 +490,10 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/identity/protocols/ISO18013/MobileDocumentRequest.h
     Modules/identity/protocols/ISO18013/ValidatedMobileDocumentRequest.h
 
+    Modules/identity/protocols/openid/OpenID4VPMultisignedRequest.h
+    Modules/identity/protocols/openid/OpenID4VPSignature.h
+    Modules/identity/protocols/openid/OpenID4VPSignedRequest.h
+
     Modules/indexeddb/IDBActiveDOMObject.h
     Modules/indexeddb/IDBActiveDOMObjectInlines.h
     Modules/indexeddb/IDBCursor.h
@@ -1765,6 +1769,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     layout/formattingContexts/flex/FlexFormattingContext.h
     layout/formattingContexts/flex/FlexFormattingUtils.h
+    layout/formattingContexts/flex/FlexItemContentCache.h
     layout/formattingContexts/flex/FlexLayoutState.h
 
     layout/formattingContexts/grid/AxisConstraint.h
@@ -2415,6 +2420,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/audio/AudioSourceProviderClient.h
     platform/audio/AudioStreamDescription.h
     platform/audio/AudioUtilities.h
+    platform/audio/MediaSessionManagerClient.h
     platform/audio/MediaSessionManagerInterface.h
     platform/audio/NowPlayingInfo.h
     platform/audio/NowPlayingMetadataObserver.h

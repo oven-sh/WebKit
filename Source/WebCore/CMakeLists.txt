@@ -456,6 +456,9 @@ set(WebCore_NON_SVG_IDL_FILES
 
     Modules/identity/protocols/ISO18013/MobileDocumentRequest.idl
 
+    Modules/identity/protocols/openid/OpenID4VPMultisignedRequest.idl
+    Modules/identity/protocols/openid/OpenID4VPSignature.idl
+    Modules/identity/protocols/openid/OpenID4VPSignedRequest.idl
 
     Modules/indexeddb/IDBCursor.idl
     Modules/indexeddb/IDBCursorDirection.idl
@@ -3030,7 +3033,6 @@ GENERATE_BINDINGS(WebCoreBindings
     DESTINATION ${WebCore_DERIVED_SOURCES_DIR}
     GENERATOR JS
     SUPPLEMENTAL_DEPFILE ${SUPPLEMENTAL_DEPENDENCY_FILE}
-    INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE ${WebCore_DERIVED_SOURCES_DIR}/InspectorNativeFunctionParameters.json
     # Auxiliary translation unit emitted alongside JSDOMWindow.cpp by
     # CodeGeneratorJS.pm to keep JSDOMWindow.cpp's compile time off the build's
     # critical path.

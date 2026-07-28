@@ -154,6 +154,18 @@ extension WKPDFHUDView {
         saveButton.target = self
         saveButton.action = #selector(saveAction)
 
+        // FIXME: Remove this compiler guard after the Safer C++ bots have Swift 6.4+.
+        #if compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
+        if let page = webView?._protectedPage().get(), page.preferences().compositingBordersVisible() {
+            wantsLayer = true
+            layer?.borderWidth = 3
+            layer?.borderColor = NSColor.systemOrange.cgColor
+            barView.wantsLayer = true
+            barView.layer?.borderWidth = 3
+            barView.layer?.borderColor = NSColor.systemPurple.cgColor
+        }
+        #endif
+
         resetHideTimer()
     }
 
@@ -199,20 +211,20 @@ extension WKPDFHUDView {
     final override func hitTest(_ point: NSPoint) -> NSView? {
         let pointInSelf = convert(point, from: unsafe superview)
 
-        guard isBarVisible else { return webView }
+        guard bounds.contains(pointInSelf) else { return nil }
+
+        guard isBarVisible else { return nil }
 
         let pointInBar = barView.convert(pointInSelf, from: self)
-        if barView.bounds.contains(pointInBar) {
-            for button in [zoomOutButton, zoomInButton, openInPreviewButton, saveButton] {
-                let pointInButton = button.convert(pointInSelf, from: self)
-                if button.bounds.contains(pointInButton) && !button.isHidden {
-                    return button
-                }
-            }
-            return barView
-        }
+        guard barView.bounds.contains(pointInBar) else { return nil }
 
-        return webView
+        for button in [zoomOutButton, zoomInButton, openInPreviewButton, saveButton] {
+            let pointInButton = button.convert(pointInSelf, from: self)
+            if button.bounds.contains(pointInButton) && !button.isHidden {
+                return button
+            }
+        }
+        return barView
     }
 
     final override func mouseMoved(with event: NSEvent) {

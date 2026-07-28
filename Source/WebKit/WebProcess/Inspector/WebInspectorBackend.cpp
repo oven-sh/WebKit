@@ -379,6 +379,9 @@ void WebInspectorBackend::enableNetworkInstrumentation()
         m_networkInstrumentationEnabled = true;
         corePage->settings().setDeveloperExtrasEnabled(true);
         corePage->inspectorController().connectRemoteInstrumentation();
+
+        // Buffer certificates only when the page opts in, matching PageNetworkAgent.
+        CheckedRef { m_resourceDataStore.get() }->setSupportsShowingCertificate(corePage->settings().inspectorSupportsShowingCertificate());
     }
 
     corePage->forEachLocalFrame([&](LocalFrame& frame) {
@@ -426,6 +429,42 @@ void WebInspectorBackend::getResponseBody(ResourceLoaderIdentifier resourceID, C
     // Expected-based discriminator.
     ASSERT(result.has_value() || !result.error().isEmpty());
     completionHandler(WTF::move(result));
+}
+
+void WebInspectorBackend::getSerializedCertificate(ResourceLoaderIdentifier resourceID, CompletionHandler<void(Expected<String, String>&&)>&& completionHandler)
+{
+    CheckedRef resourceDataStore = m_resourceDataStore.get();
+    auto result = resourceDataStore->getSerializedCertificate(resourceID);
+    // See getResponseBody: a genuine failure must carry a non-empty message (empty is connection loss).
+    ASSERT(result.has_value() || !result.error().isEmpty());
+    completionHandler(WTF::move(result));
+}
+
+void WebInspectorBackend::loadResource(WebCore::FrameIdentifier frameID, const String& url, CompletionHandler<void(Expected<std::tuple<String, String, int>, String>&&)>&& completionHandler)
+{
+    // Site Isolation load leg for Network.loadResource: ProxyingNetworkAgent already routed this to
+    // the frame's hosting process, so resolve the frame locally and run the load in its document
+    // context. Failures carry a non-empty error string (empty is reserved for the connection-loss
+    // AsyncReplyError; see WebInspectorBackend.messages.in).
+    RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
+    if (!webFrame) {
+        completionHandler(makeUnexpected("Frame not found in this process"_s));
+        return;
+    }
+
+    RefPtr localFrame = webFrame->coreLocalFrame();
+    if (!localFrame) {
+        completionHandler(makeUnexpected("Frame is not local to this process"_s));
+        return;
+    }
+
+    RefPtr document = localFrame->document();
+    if (!document) {
+        completionHandler(makeUnexpected("No document for frame"_s));
+        return;
+    }
+
+    Inspector::ResourceUtilities::loadResource(*document, url, WTF::move(completionHandler));
 }
 
 // Convert the JSON protocol matches from ContentSearchUtilities::searchInTextByLines into the plain
