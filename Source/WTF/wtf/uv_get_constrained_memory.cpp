@@ -318,7 +318,8 @@ static int uv__get_cgroup1_constrained_cpu(char buf[1024])
     if (sscanf(quota_buf, "%lld", &period) != 1 || period <= 0)
         return 0;
 
-    return (int)((quota + period - 1) / period);
+    int cpus = (int)(quota / period);
+    return cpus < 1 ? 1 : cpus;
 }
 
 static int uv__get_cgroup2_constrained_cpu(char buf[1024])
@@ -341,7 +342,9 @@ static int uv__get_cgroup2_constrained_cpu(char buf[1024])
             && strncmp(quota_buf, "max", 3) != 0
             && sscanf(quota_buf, "%lld %lld", &quota, &period) == 2
             && period > 0 && quota > 0) {
-            int cpus = (int)((quota + period - 1) / period);
+            int cpus = (int)(quota / period);
+            if (cpus < 1)
+                cpus = 1;
             if (min_cpus == 0 || cpus < min_cpus)
                 min_cpus = cpus;
         }
