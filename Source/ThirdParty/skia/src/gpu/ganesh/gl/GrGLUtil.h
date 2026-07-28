@@ -12,9 +12,9 @@
 #include "include/gpu/ganesh/gl/GrGLConfig.h"
 #include "include/gpu/ganesh/gl/GrGLInterface.h"
 #include "include/gpu/ganesh/gl/GrGLTypes.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkMacros.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkMacros.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/ganesh/gl/GrGLDefines.h"
 
@@ -168,6 +168,7 @@ enum class GrGLRenderer {
     kAdreno5xx_other,
     kAdreno615,  // Pixel3a
     kAdreno620,  // Pixel5
+    kAdreno621,  // A650-class (A662 derivative)
     kAdreno630,  // Pixel3
     kAdreno640,  // Pixel4
     kAdreno6xx_other,

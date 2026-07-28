@@ -1140,10 +1140,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
 
 static bool NODELETE rendererIsFlexboxItem(RenderObject& renderer)
 {
-    if (auto* parentFlexRenderer = dynamicDowncast<RenderFlexibleBox>(renderer.parent()))
-        return !parentFlexRenderer->orderIterator().shouldSkipChild(renderer);
-
-    return false;
+    return is<RenderFlexibleBox>(renderer.parent()) && !renderer.isOutOfFlowPositioned() && !renderer.isExcludedFromNormalLayout();
 }
 
 static bool NODELETE rendererIsGridItem(RenderObject& renderer)
@@ -2226,8 +2223,8 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
     flexHighlightOverlay.color = flexOverlay.config.flexColor;
     flexHighlightOverlay.containerBounds = localQuadToRootQuad(renderFlex->absoluteContentQuad());
 
-    float computedMainAxisGap = renderFlex->flexLayoutUtils().computeGap(FlexLayoutUtils::GapType::BetweenItems).toFloat();
-    float computedCrossAxisGap = renderFlex->flexLayoutUtils().computeGap(FlexLayoutUtils::GapType::BetweenLines).toFloat();
+    float computedMainAxisGap = renderFlex->computeGap(RenderFlexibleBox::GapType::BetweenItems).toFloat();
+    float computedCrossAxisGap = renderFlex->computeGap(RenderFlexibleBox::GapType::BetweenLines).toFloat();
 
     // For reasoning about the edges of the flex container, use the untransformed content rect moved to the origin of the
     // inner top-left corner of padding, which is the same relative coordinate space that each item's `frameRect()` will be in.
@@ -2246,11 +2243,9 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
     Vector<RenderBox*> renderChildrenInDOMOrder;
     bool hasCustomOrder = false;
 
-    auto childOrderIterator = renderFlex->orderIterator();
-    for (CheckedPtr<RenderBox> renderChild = childOrderIterator.first(); renderChild; renderChild = childOrderIterator.next()) {
-        if (childOrderIterator.shouldSkipChild(*renderChild))
-            continue;
-        renderChildrenInFlexOrder.append(renderChild);
+    for (auto& flexItem : renderFlex->flexItems()) {
+        if (flexItem)
+            renderChildrenInFlexOrder.append(flexItem.get());
     }
 
     if (flexOverlay.config.showOrderNumbers) {

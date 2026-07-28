@@ -9,8 +9,8 @@
 
 #include "include/core/SkDrawable.h"
 #include "include/core/SkFontMetrics.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkMalloc.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkMalloc.h"
 #include "include/private/chromium/SkChromeRemoteGlyphCache.h"
 #include "src/core/SkGlyph.h"
 #include "src/core/SkReadBuffer.h"
@@ -44,7 +44,7 @@ SkScalerContext::GlyphMetrics SkScalerContextProxy::generateMetrics(const SkGlyp
     return {glyph.maskFormat()};
 }
 
-void SkScalerContextProxy::generateImage(const SkGlyph& glyph, void*) {
+void SkScalerContextProxy::generateImage(const SkGlyph& glyph, void* imageBuffer) {
     TRACE_EVENT1("skia", "generateImage", "rec", TRACE_STR_COPY(this->getRec().dump().c_str()));
     if (this->getProxyTypeface()->isLogging()) {
         SkDebugf("GlyphCacheMiss generateImage: %s\n", this->getRec().dump().c_str());
@@ -54,6 +54,8 @@ void SkScalerContextProxy::generateImage(const SkGlyph& glyph, void*) {
     // copied over with the metrics search.
     fDiscardableManager->notifyCacheMiss(
             SkStrikeClient::CacheMissType::kGlyphImage, fRec.fTextSize);
+    // Fill the glyph image with zeros so the missing glyph doesn't display unitialized memory.
+    sk_bzero(imageBuffer, glyph.imageSize());
 }
 
 std::optional<SkScalerContext::GeneratedPath> SkScalerContextProxy::generatePath(const SkGlyph&) {

@@ -167,7 +167,7 @@ public:
 
     Style::LineWidth NODELETE usedColumnRuleWidth() const;
 
-    WEBCORE_EXPORT Style::Length<CSS::AllUnzoomed> usedOutlineOffset() const;
+    WEBCORE_EXPORT Style::Length<> usedOutlineOffset() const;
     Style::LineWidth usedOutlineWidth() const;
     float usedOutlineSize(Style::ZoomFactor, float deviceScaleFactor) const; // used value combining `outline-width` and `outline-offset`
 
@@ -213,11 +213,13 @@ public:
     // MARK: - Other predicates
 
     inline bool isColumnFlexDirection() const;
+    inline bool isRowFlexDirection() const;
+    inline bool isReverseFlexDirection() const;
+    inline FlowMode flexFlowMode() const; // This is not trivial so cache it.
+
     inline bool isFixedTableLayout() const;
     inline bool isInterCharacterRubyPosition() const;
     inline bool isOverflowVisible() const;
-    inline bool isReverseFlexDirection() const;
-    inline bool isRowFlexDirection() const;
     inline bool isSkippedRootOrSkippedContent() const;
 
     bool isListItemType() const;

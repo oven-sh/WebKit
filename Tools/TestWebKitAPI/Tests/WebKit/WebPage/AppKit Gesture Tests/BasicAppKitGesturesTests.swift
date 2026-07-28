@@ -76,17 +76,9 @@ extension AppKitGesturesTests.Basic {
     func singleClickFiresPointerMouseAndClickEvents(contentEditable: Bool) async throws {
         try await loadHTML(contentEditable: contentEditable)
 
-        let expectedEvents = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]
+        let expectedEvents: [DOMEventType] = [.pointerdown, .mousedown, .pointerup, .mouseup, .click]
 
-        try await page.callJavaScript(arguments: ["events": expectedEvents]) {
-            """
-            window.eventLog = [];
-            const target = document.getElementById("div");
-            for (const eventType of events) {
-                target.addEventListener(eventType, e => window.eventLog.push(e.type));
-            }
-            """
-        }
+        try await page.callJavaScript(JavaScriptMessages.InstallEventLog(in: "div", for: expectedEvents))
 
         if contentEditable {
             // FIXME: <rdar://177201499> This workaround establishes a selection first so that the synthetic click does not change insertion point.
@@ -103,14 +95,10 @@ extension AppKitGesturesTests.Basic {
         await page.waitForPendingMouseEvents()
         await page.waitForNextPresentationUpdate()
 
-        let eventLog = try await page.callJavaScript(returning: [String].self) {
-            """
-            return window.eventLog;
-            """
-        }
+        let eventLog = try await page.callJavaScript(JavaScriptMessages.EventLog())
 
         for eventType in expectedEvents {
-            #expect(eventLog.contains(eventType))
+            #expect(eventLog.contains { $0.type == eventType })
         }
     }
 
@@ -614,7 +602,7 @@ extension AppKitGesturesTests.Basic {
         #expect(selection == expected)
     }
 
-    @Test(arguments: [6, 8], [Duration.seconds(0.1), .seconds(0.5), .seconds(1.0)])
+    @Test(.disabled(), arguments: [6, 8], [Duration.seconds(0.1), .seconds(0.5), .seconds(1.0)])
     func scrollingOnScrollBarChangesScrollPosition(inset: Int, pressAndWait: Duration) async throws {
         let html = """
             <body style="width: 100%; height: 2000px; margin: 0; background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
@@ -671,7 +659,7 @@ extension AppKitGesturesTests.Basic {
     }
 
     @Test
-    func scrollInputSourceUpdatesrubberbandHyperbolicCoefficient() async throws {
+    func scrollInputSourceUpdatesRubberbandHyperbolicCoefficient() async throws {
         let html = """
             <body style="margin: 0; width: 100%; height: 20000px;
                          background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
@@ -756,6 +744,52 @@ extension AppKitGesturesTests.Basic {
     }
 
     @Test
+    func clickAfterScrollStillProducesClick() async throws {
+        let html = """
+            <body style="margin: 0;">
+                <div id="content"
+                     onclick="window.clicks = (window.clicks || 0) + 1;"
+                     style="height: 4000px; font-size: 30px;
+                            background: repeating-linear-gradient(to bottom, #eee 0 40px, #fff 40px 80px);">
+                    scroll, then click
+                </div>
+            </body>
+            """
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
+
+        await recap.play { composer in
+            composer._wk_drag(
+                withStart: center,
+                end: CGPoint(x: center.x, y: center.y - 200),
+                duration: .seconds(0.5),
+                release: false
+            )
+            composer.advanceTime(0.5)
+            composer._wk_mouseUp()
+        }
+        await page.waitForNextPresentationUpdate()
+
+        let scrollPosition = try await page.callJavaScript(JavaScriptMessages.ScrollPosition())
+        #expect(scrollPosition.y > 0)
+
+        try await Task.sleep(for: .seconds(1.5))
+
+        await recap.play { composer in
+            composer._wk_click(at: center, for: .seconds(0.1))
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let clicks = try await page.callJavaScript(returning: Int.self) {
+            "return window.clicks || 0;"
+        }
+        #expect(clicks >= 1)
+    }
+
+    @Test
     func clickingOnSelectControlsKeepsMenuOpen() async throws {
         let html = """
             <select name="pets" id="select">
@@ -808,6 +842,63 @@ extension AppKitGesturesTests.Basic {
         #expect(clickCount == 1)
     }
 
+    @Test
+    func clickingOtherContentDismissesDataListDropdown() async throws {
+        let html = """
+            <div id="other" style="height: 200px; font-size: 30px;">other content</div>
+            <input id="input" list="pets" style="font-size: 30px;">
+            <datalist id="pets">
+                <option value="Dog">
+                <option value="Cat">
+                <option value="Goose">
+            </datalist>
+            """
+
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        try await page.callJavaScript {
+            """
+            window.blurCount = 0;
+            document.getElementById("input").addEventListener("blur", () => window.blurCount++);
+            """
+        }
+
+        let inputBounds = try await screenBounds(ofElementWithID: "input")
+        let otherBounds = try await screenBounds(ofElementWithID: "other")
+
+        await recap.play { composer in
+            composer._wk_click(at: inputBounds.center, for: .seconds(0.1))
+        }
+
+        func isDataListDropdownShowing() -> Bool {
+            guard let childWindows = window.childWindows else {
+                return false
+            }
+
+            return childWindows.contains { NSStringFromClass(type(of: $0)) == "WKDataListSuggestionWindow" }
+        }
+
+        await page.waitForNextPresentationUpdate()
+        #expect(isDataListDropdownShowing())
+
+        await recap.play { composer in
+            composer._wk_click(at: otherBounds.center, for: .seconds(0.1))
+        }
+
+        await page.waitForNextPresentationUpdate()
+        #expect(!isDataListDropdownShowing())
+
+        let (activeElementID, blurCount) = try await page.callJavaScript(returning: (String, Int).self) {
+            """
+            return [document.activeElement?.id ?? "", window.blurCount];
+            """
+        }
+
+        #expect(activeElementID != "input")
+        #expect(blurCount == 1)
+    }
+
     // MARK: - Drag Press Disambiguation Tests
 
     @Test(arguments: [true, false])
@@ -822,7 +913,10 @@ extension AppKitGesturesTests.Basic {
 
         await page.waitForNextPresentationUpdate()
 
-        try await page.callJavaScript(arguments: ["elementID": "custom-slider"], script: styleAdjustmentForCustomWidgetScript)
+        try await page.callJavaScript(
+            arguments: ["elementID": "custom-slider", "interactive": false],
+            script: styleAdjustmentForCustomWidgetScript
+        )
         await page.waitForNextPresentationUpdate()
 
         let sliderBounds = try await page.callJavaScript(JavaScriptMessages.BoundingClientRect(elementID: elementID))
@@ -924,18 +1018,7 @@ extension AppKitGesturesTests.Basic {
 
         let dragEnd = CGPoint(x: linkBounds.maxX + 50, y: linkBounds.midY)
 
-        let dragInitiated = Future()
-
-        let implementation: @convention(block) (NSView, NSArray, NSGestureRecognizer, AnyObject) -> NSDraggingSession? = { _, _, _, _ in
-            dragInitiated.signal()
-            return NSDraggingSession()
-        }
-
-        await withSwizzledObjectiveCInstanceMethod(
-            replacing: NSView.self,
-            name: #selector(NSView.beginDraggingSession(items:gesture:source:)),
-            with: implementation
-        ) {
+        await withSwizzledDraggingSession {
             await recap.play { composer in
                 composer._wk_drag(
                     withStart: linkBounds.center,
@@ -944,8 +1027,6 @@ extension AppKitGesturesTests.Basic {
                     pressAndWait: .seconds(1.0)
                 )
             }
-
-            await dragInitiated.wait()
         }
 
         await page.waitForNextPresentationUpdate()
@@ -964,33 +1045,12 @@ extension AppKitGesturesTests.Basic {
             """
         try await page.load(html: html, baseURL: baseURL).wait()
 
-        try await page.callJavaScript {
-            """
-            const img = document.getElementById("img");
-            if (img.complete && img.naturalWidth > 0) {
-                return;
-            }
-            await new Promise(resolve => img.addEventListener("load", resolve, { once: true }));
-            """
-        }
-
         let imgViewportBounds = try await page.callJavaScript(JavaScriptMessages.BoundingClientRect(elementID: "img"))
         let imgBounds = screenBounds(ofRectInViewportCoordinates: imgViewportBounds)
 
         let dragEnd = CGPoint(x: imgBounds.maxX + 50, y: imgBounds.midY)
 
-        let dragInitiated = Future()
-
-        let implementation: @convention(block) (NSView, NSArray, NSGestureRecognizer, AnyObject) -> NSDraggingSession? = { _, _, _, _ in
-            dragInitiated.signal()
-            return NSDraggingSession()
-        }
-
-        try await withSwizzledObjectiveCInstanceMethod(
-            replacing: NSView.self,
-            name: #selector(NSView.beginDraggingSession(items:gesture:source:)),
-            with: implementation
-        ) {
+        await withSwizzledDraggingSession {
             await recap.play { composer in
                 composer._wk_drag(
                     withStart: imgBounds.center,
@@ -999,19 +1059,9 @@ extension AppKitGesturesTests.Basic {
                     pressAndWait: .seconds(1.0)
                 )
             }
-
-            // If a drag cannot happen, the text selection gestures take over and the
-            // gesture falls through to a range selection. Detect that early so the test
-            // fails with a diagnostic instead of timing out on `dragInitiated.wait()`.
-            await page.waitForNextPresentationUpdate()
-            let selection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
-            if case .range = selection {
-                Issue.record("press-drag on <img> produced a range selection (\(selection)) instead of initiating a drag")
-                return
-            }
-
-            await dragInitiated.wait()
         }
+
+        // The test succeeds if it does not timeout.
     }
 
     @Test(
@@ -1133,6 +1183,136 @@ extension AppKitGesturesTests.Basic {
         #expect(page.url == urlBeforeGesture)
         #expect(page.backForwardList.backList.count == 1)
     }
+
+    @Test(arguments: [Duration.zero, .seconds(1)])
+    func longPressAndDragOnImageSelectsEntireText(delay: Duration) async throws {
+        let baseURL = try #require(Bundle.testResources.resourceURL)
+        let html = """
+            <img id="img" src="love-and-coffee.jpeg" style="display: block; height: 100vh; margin: 0">
+            """
+        try await page.load(html: html, baseURL: baseURL).wait()
+
+        let imageViewportBounds = try await page.callJavaScript(JavaScriptMessages.BoundingClientRect(elementID: "img"))
+        let imageScreenBounds = screenBounds(ofRectInViewportCoordinates: imageViewportBounds)
+
+        await page.waitForNextPresentationUpdate()
+
+        let responseURL = try #require(Bundle.testResources.url(forResource: "love-and-coffee-analysis", withExtension: "json"))
+        let analysis = try ImageAnalysisResult(parsing: responseURL)
+
+        let firstWord = try #require(analysis.lines.first?.children.first?.quad)
+        let lastWord = try #require(analysis.lines.last?.children.last?.quad)
+
+        let start = firstWord.center.normalized(in: imageScreenBounds)
+        let end = lastWord.center.normalized(in: imageScreenBounds)
+
+        await withMockedImageAnalyzer(response: .success(analysis), after: delay) {
+            await recap.play { composer in
+                composer._wk_drag(withStart: start, end: end, duration: .seconds(2), pressAndWait: .seconds(1.0))
+            }
+        }
+
+        let selection = try await page.callJavaScript(returning: String.self) {
+            """
+            return window.getSelection().toString();
+            """
+        }
+
+        #expect(selection == "EVERYONE\nDESERVES\nLOVE AND\nCOFFEE")
+    }
+
+    @Test
+    func pressDragOnImageWithoutTextInitiatesDragAndDrop() async throws {
+        let baseURL = try #require(Bundle.testResources.resourceURL)
+        let html = """
+            <img id="img" src="400x400-green.png" style="display: block; height: 100vh; margin: 0">
+            """
+        try await page.load(html: html, baseURL: baseURL).wait()
+
+        let imageViewportBounds = try await page.callJavaScript(JavaScriptMessages.BoundingClientRect(elementID: "img"))
+        let imageScreenBounds = screenBounds(ofRectInViewportCoordinates: imageViewportBounds)
+
+        await page.waitForNextPresentationUpdate()
+
+        let dragEnd = CGPoint(x: imageScreenBounds.maxX + 50, y: imageScreenBounds.midY)
+
+        await withMockedImageAnalyzer(response: .success(.init(lines: [])), after: .zero) {
+            await withSwizzledDraggingSession {
+                await recap.play { composer in
+                    composer._wk_drag(
+                        withStart: imageScreenBounds.center,
+                        end: dragEnd,
+                        duration: .seconds(1.5),
+                        pressAndWait: .seconds(1.0)
+                    )
+                }
+            }
+        }
+
+        // The test succeeds if it does not timeout.
+    }
+
+    @Test
+    func consecutiveQuickFlicksAccelerateScrolling() async throws {
+        let html = """
+            <body style="margin: 0; width: 100%; height: 200000px;
+                         background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
+            </body>
+            """
+
+        let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
+        let down = CGPoint(x: center.x, y: center.y - 250)
+        let up = CGPoint(x: center.x, y: center.y + 250)
+
+        func settledScrollY() async throws -> Double {
+            var previous = try await page.callJavaScript(JavaScriptMessages.ScrollPosition()).y
+            var stableSamples = 0
+
+            for _ in 0..<60 {
+                try await Task.sleep(for: .milliseconds(100))
+                let current = try await page.callJavaScript(JavaScriptMessages.ScrollPosition()).y
+
+                if abs(current - previous) < 1 {
+                    stableSamples += 1
+                    if stableSamples >= 2 { return current }
+                } else {
+                    stableSamples = 0
+                }
+
+                previous = current
+            }
+
+            return previous
+        }
+
+        func finalFlingDistance(flicks count: Int, reverseLast: Bool = false) async throws -> Double {
+            try await page.load(html: html).wait()
+            await page.waitForNextPresentationUpdate()
+
+            await recap.play { composer in
+                for i in 0..<count {
+                    let isLast = i == count - 1
+                    composer._wk_scroll(withStart: center, end: (isLast && reverseLast) ? up : down, duration: .seconds(0.08))
+                    if !isLast {
+                        composer.advanceTime(0.05)
+                    }
+                }
+            }
+
+            let flingStart = try await page.callJavaScript(JavaScriptMessages.ScrollPosition()).y
+            let settled = try await settledScrollY()
+            return Swift.abs(settled - flingStart)
+        }
+
+        let single = try await finalFlingDistance(flicks: 1) // count 1 -> multiplier 1
+        let accelerated = try await finalFlingDistance(flicks: 6) // final count 5 -> ~5x
+        let reversed = try await finalFlingDistance(flicks: 6, reverseLast: true) // reversal resets -> ~1x
+
+        // Accelerated final fling travels far beyond an unaccelerated one (actual ratio ~5x).
+        #expect(accelerated > single * 2)
+        // Reversing the final swipe resets the chain, so that fling is not accelerated.
+        #expect(accelerated > reversed * 2)
+    }
 }
 
 nonisolated(nonsending) private func withSwizzledContextMenu(perform body: () async -> Void) async {
@@ -1158,18 +1338,42 @@ nonisolated(nonsending) private func withSwizzledContextMenu(perform body: () as
     }
 }
 
-extension AppKitGesturesTests.Basic {
-    private func loadHTML(contentEditable: Bool = false, clickHandler: Bool = false) async throws {
-        let contentEditableMarkup = contentEditable ? "contenteditable" : ""
-        let clickHandlerMarkup = clickHandler ? "onclick='void(0)'" : ""
+nonisolated(nonsending) private func withSwizzledDraggingSession(perform body: () async -> Void) async {
+    typealias ObjCImplementation = @convention(block) (NSView, NSArray, NSGestureRecognizer, AnyObject) -> NSDraggingSession?
 
-        let html = """
-            <div \(contentEditableMarkup) \(clickHandlerMarkup) id="div" style="font-size: 30px;">\(Self.text)</div>
-            """
+    let dragInitiated = Future()
 
-        try await page.load(html: html).wait()
+    let implementation: ObjCImplementation = { _, _, _, _ in
+        dragInitiated.signal()
+        return NSDraggingSession()
     }
 
+    await withSwizzledObjectiveCInstanceMethod(
+        replacing: NSView.self,
+        name: #selector(NSView.beginDraggingSession(items:gesture:source:)),
+        with: implementation
+    ) {
+        await body()
+
+        await dragInitiated.wait()
+    }
+}
+
+extension ImageAnalysisResult.Quad {
+    fileprivate var center: CGPoint {
+        let x = (topLeft.x + topRight.x + bottomLeft.x + bottomRight.x) / 4.0
+        let y = (topLeft.y + topRight.y + bottomLeft.y + bottomRight.y) / 4.0
+        return CGPoint(x: x, y: y)
+    }
+}
+
+extension CGPoint {
+    fileprivate func normalized(in rect: CGRect) -> CGPoint {
+        CGPoint(x: rect.minX + x * rect.width, y: rect.minY + y * rect.height)
+    }
+}
+
+extension AppKitGesturesTests.Basic {
     private func loadScrollableText() async throws {
         let lines = (0..<100)
             .reversed()

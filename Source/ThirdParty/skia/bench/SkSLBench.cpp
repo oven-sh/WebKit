@@ -10,7 +10,7 @@
 #include "bench/Benchmark.h"
 #include "bench/ResultsWriter.h"
 #include "include/core/SkCanvas.h"
-#include "src/base/SkArenaAlloc.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
@@ -152,7 +152,7 @@ protected:
             std::unique_ptr<SkSL::Program> program = fCompiler.convertProgram(kind, fSrc,
                                                                               fSettings);
             if (fCompiler.errorCount()) {
-                SK_ABORT("shader compilation failed: %s\n", fCompiler.errorText().c_str());
+                SK_ABORT("shader compilation failed: %s", fCompiler.errorText().c_str());
             }
             SkSL::NativeShader result;
             switch (fOutput) {

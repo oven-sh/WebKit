@@ -1202,6 +1202,11 @@ before
 inter-character
 legacy-inter-character
 
+// ruby-overhang
+// auto
+// none (legacy alias of spaces)
+spaces
+
 // -webkit-text-combine
 // horizontal
 
@@ -1979,3 +1984,6 @@ will-change
 
 // block-ellipsis
 no-ellipsis
+
+// CSS Spatial Layout (spatial: portal)
+portal enable-if=ENABLE_SPATIAL_PORTAL

@@ -113,8 +113,8 @@ void RenderLayoutState::computeOffsets(const RenderLayoutState& ancestor, Render
     }();
     m_layoutDeltaForRepaint = isRepaintContainer ? LayoutSize() : ancestor.layoutDelta();
 #if ASSERT_ENABLED
-    m_layoutDeltaForRepaintXSaturated = isRepaintContainer ? false : ancestor.m_layoutDeltaForRepaintXSaturated;
-    m_layoutDeltaForRepaintYSaturated = isRepaintContainer ? false : ancestor.m_layoutDeltaForRepaintYSaturated;
+    m_layoutDeltaForRepaintXSaturated = !isRepaintContainer && ancestor.m_layoutDeltaForRepaintXSaturated;
+    m_layoutDeltaForRepaintYSaturated = !isRepaintContainer && ancestor.m_layoutDeltaForRepaintYSaturated;
 #endif
 }
 
@@ -344,6 +344,18 @@ FlexPercentResolveDisabler::FlexPercentResolveDisabler(LocalFrameViewLayoutConte
 FlexPercentResolveDisabler::~FlexPercentResolveDisabler()
 {
     m_layoutContext->enablePercentHeightResolveFor(m_flexItem);
+}
+
+IntrinsicLogicalHeightComputationScope::IntrinsicLogicalHeightComputationScope(LocalFrameViewLayoutContext& layoutContext, const RenderBox& box)
+    : m_layoutContext(layoutContext)
+    , m_box(box)
+{
+    m_layoutContext->addIntrinsicLogicalHeightComputationFor(box);
+}
+
+IntrinsicLogicalHeightComputationScope::~IntrinsicLogicalHeightComputationScope()
+{
+    m_layoutContext->removeIntrinsicLogicalHeightComputationFor(m_box);
 }
 
 ContentVisibilityOverrideScope::ContentVisibilityOverrideScope(LocalFrameViewLayoutContext& layoutContext, OptionSet<OverrideType> overrideTypes)

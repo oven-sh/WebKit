@@ -1157,7 +1157,7 @@ private:
                                 m_interpreter.execute(indexInBlock); // Push CFA over this node after we get the state before.
                                 alreadyHandled = true; // Don't allow the default constant folder to do things to this.
 
-                                Node* butterfly = m_insertionSet.insertNode(indexInBlock, SpecNone, NewButterflyWithSize, node->origin, OpInfo(node->indexingType()), node->child1());
+                                Node* butterfly = m_insertionSet.insertNode(indexInBlock, SpecNone, NewButterflyWithSize, node->origin, OpInfo(node->indexingType()), OpInfo(node->vectorLengthHint()), node->child1());
                                 node->convertToNewArrayWithButterfly(m_graph, butterfly);
                                 changed = true;
                         }
@@ -1352,6 +1352,8 @@ private:
                 Edge targetEdge = node->child1();
                 Edge keyEdge = node->child2();
                 Edge descriptorEdge = node->child3();
+
+                m_insertionSet.insertCheck(m_graph, indexInBlock, node);
 
                 std::array<Edge, Node::numberOfDescriptorSlots> slotEdges;
                 Node* butterfly = nullptr;

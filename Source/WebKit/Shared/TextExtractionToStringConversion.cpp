@@ -705,6 +705,11 @@ public:
         return !usePlainTextOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeSelectOptions);
     }
 
+    bool NODELETE includeTagName() const
+    {
+        return useTextTreeOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeTagName);
+    }
+
     bool NODELETE includeURLs() const
     {
         return !usePlainTextOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeURLs);
@@ -1116,7 +1121,7 @@ static std::pair<Vector<String>, String> recognizedClassesAndIdForItem(const Tex
     if (item.classNames.isEmpty() && item.idAttribute.isEmpty())
         return { };
 
-    if (!item.accessibilityRole.isEmpty() || !item.title.isEmpty())
+    if (!item.title.isEmpty())
         return { };
 
     if (!item.ariaAttributes.isEmpty() || !item.clientAttributes.isEmpty())
@@ -1158,11 +1163,10 @@ static std::pair<Vector<String>, String> recognizedClassesAndIdForItem(const Tex
         return { };
 
     if (item.children.size() == 1) {
-        auto* textData = std::get_if<TextExtraction::TextItemData>(&item.children[0].data);
-        if (!textData)
-            return { };
-        if (textData->content.trim(isASCIIWhitespace).length() > 2)
-            return { };
+        if (auto* textData = std::get_if<TextExtraction::TextItemData>(&item.children[0].data)) {
+            if (textData->content.trim(isASCIIWhitespace).length() > 2)
+                return { };
+        }
     }
 
 #if PLATFORM(COCOA)
@@ -1638,6 +1642,8 @@ static void addPartsForItem(const TextExtraction::Item& item, std::optional<Node
                 bool isGenericContainer = containerString.isEmpty();
                 if (!containerString.isEmpty())
                     parts.append(WTF::move(containerString));
+                else if (aggregator.includeTagName() && !item.nodeName.isEmpty())
+                    parts.append(item.nodeName.convertToASCIILowercase());
 
                 parts.appendVector(partsForItem(item, aggregator, includeRectForParentItem));
 

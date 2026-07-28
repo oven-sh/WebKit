@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <WebCore/BoxSides.h>
 #include <initializer_list>
 #include <limits>
 #include <optional>
@@ -278,6 +279,11 @@ enum class TableLayoutType : bool {
     Fixed
 };
 
+enum class SpatialType : bool {
+    None,
+    Portal
+};
+
 enum class TextCombine : bool {
     None,
     All
@@ -399,6 +405,9 @@ enum class FlexWrap : uint8_t {
     Wrap,
     Reverse
 };
+
+inline AxisDirection toAxisDirection(FlexDirection direction) { return static_cast<AxisDirection>(direction == FlexDirection::RowReverse || direction == FlexDirection::ColumnReverse); }
+inline AxisDirection toAxisDirection(FlexWrap wrap) { return static_cast<AxisDirection>(wrap == FlexWrap::Reverse); }
 
 enum class ItemPosition : uint8_t {
     Legacy,
@@ -862,7 +871,7 @@ enum class RubyAlign : uint8_t {
 
 enum class RubyOverhang : bool {
     Auto,
-    None
+    Spaces
 };
 
 enum class ColorScheme : uint8_t {
@@ -1023,6 +1032,12 @@ enum class BlockStepRound : uint8_t {
 enum class FieldSizing : bool {
     Fixed,
     Content
+};
+
+enum class BaselineSource : uint8_t {
+    Auto,
+    First,
+    Last
 };
 
 enum class NinePieceImageRule : uint8_t {
@@ -1211,6 +1226,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, ScrollSnapAxisAlignType);
 WTF::TextStream& operator<<(WTF::TextStream&, ScrollSnapStop);
 WTF::TextStream& operator<<(WTF::TextStream&, ScrollSnapStrictness);
 WTF::TextStream& operator<<(WTF::TextStream&, Scroller);
+WTF::TextStream& operator<<(WTF::TextStream&, SpatialType);
 WTF::TextStream& operator<<(WTF::TextStream&, TableLayoutType);
 WTF::TextStream& operator<<(WTF::TextStream&, TextCombine);
 WTF::TextStream& operator<<(WTF::TextStream&, TextDecorationSkipInk);
@@ -1242,6 +1258,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, MathShift);
 WTF::TextStream& operator<<(WTF::TextStream&, MathStyle);
 WTF::TextStream& operator<<(WTF::TextStream&, ContainIntrinsicSizeType);
 WTF::TextStream& operator<<(WTF::TextStream&, FieldSizing);
+WTF::TextStream& operator<<(WTF::TextStream&, BaselineSource);
 WTF::TextStream& operator<<(WTF::TextStream&, OverflowContinue);
 
 WTF::TextStream& operator<<(WTF::TextStream&, AlignmentBaseline);

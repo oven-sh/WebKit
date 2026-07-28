@@ -148,7 +148,8 @@ static bool shouldEnableSiteIsolation(const std::string& pathOrURL)
 static bool shouldUseBackForwardCache(const std::string& pathOrURL)
 {
     return pathContains(pathOrURL, "navigation-api/")
-        || pathContains(pathOrURL, "websockets/back-forward-cache");
+        || pathContains(pathOrURL, "websockets/back-forward-cache")
+        || pathContains(pathOrURL, "webtransport/back-forward-cache");
 }
 
 static bool shouldDisableMutationEvents(const std::string& pathOrURL)
@@ -160,6 +161,11 @@ static bool shouldDisableMutationEvents(const std::string& pathOrURL)
 static bool shouldEnableTouchEventRegions(const std::string& pathOrURL)
 {
     return pathContains(pathOrURL, "touch-event-regions-layer-tree/");
+}
+
+static bool shouldEnableGlobalPrivacyControl(const std::string& pathOrURL)
+{
+    return pathContains(pathOrURL, "/gpc/");
 }
 
 TestFeatures hardcodedFeaturesBasedOnPathForTest(const TestCommand& command)
@@ -197,6 +203,8 @@ TestFeatures hardcodedFeaturesBasedOnPathForTest(const TestCommand& command)
         features.boolWebPreferenceFeatures.insert({ "MutationEventsEnabled", false });
     if (shouldEnableTouchEventRegions(command.pathOrURL))
         features.boolWebPreferenceFeatures.insert({ "AlwaysUseTouchEventRegions", true });
+    if (shouldEnableGlobalPrivacyControl(command.pathOrURL))
+        features.boolTestRunnerFeatures.insert({ "globalPrivacyControl", true });
 
     return features;
 }

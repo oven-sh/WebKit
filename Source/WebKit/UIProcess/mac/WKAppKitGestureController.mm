@@ -30,17 +30,20 @@
 
 #import "AppKitSPI.h"
 #import "IdentifierTypes.h"
+#import "ImageAnalysisUtilities.h"
 #import "InteractionInformationAtPosition.h"
 #import "InteractionInformationRequest.h"
 #import "NativeWebWheelEvent.h"
 #import "PositionInformationManager.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
 #import "ScrollingAccelerationCurve.h"
+#import "TextRecognitionUpdateResult.h"
 #import "ViewGestureController.h"
 #import "WKDeferringGestureRecognizer.h"
 #import "WKWebView.h"
 #import "WebEventModifier.h"
 #import "WebEventType.h"
+#import "WebKit-Swift.h"
 #import "WebMouseEvent.h"
 #import "WebPageProxy.h"
 #import "WebPreferences.h"
@@ -48,6 +51,7 @@
 #import "WebWheelEvent.h"
 #import <Carbon/Carbon.h>
 #import <WebCore/Color.h>
+#import <WebCore/ElementContext.h>
 #import <WebCore/FloatPoint.h>
 #import <WebCore/FloatQuad.h>
 #import <WebCore/FloatSize.h>
@@ -56,14 +60,18 @@
 #import <WebCore/PlatformEventFactoryMac.h>
 #import <WebCore/PointerID.h>
 #import <WebCore/Scrollbar.h>
+#import <WebCore/TextRecognitionResult.h>
 #import <source_location>
 #import <wtf/BlockPtr.h>
 #import <wtf/CheckedPtr.h>
+#import <wtf/MainThread.h>
 #import <wtf/Markable.h>
 #import <wtf/MonotonicTime.h>
+#import <wtf/RefCounted.h>
 #import <wtf/RefPtr.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/UUID.h>
+#import <wtf/WeakObjCPtr.h>
 #import <wtf/WeakPtr.h>
 
 #define WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(pageID, fmt, ...) RELEASE_LOG(ViewGestures, "[pageProxyID=%llu] %s: " fmt, pageID, std::source_location::current().function_name(), ##__VA_ARGS__)
@@ -116,12 +124,68 @@ static bool representsDraggableElement(const WebKit::InteractionInformationAtPos
     return info.isLink || info.isImage || info.isAttachment || info.isDHTMLDraggable || info.isColorInput || info.prefersDraggingOverTextSelection;
 }
 
+static bool isAnalyzableImageForLiveText(const WebKit::InteractionInformationAtPosition& info)
+{
+    return info.isImage && info.image && info.hostImageOrVideoElementContext && !info.isAnimatedImage && !info.isContentEditable;
+}
+
+namespace WebKit {
+
+// The outcome of the image-analysis preflight, used to resolve the two image-analysis deferring
+// gestures. Over an image we defer both text selection and the drag / context-menu fallback until
+// analysis finishes, then resolve them oppositely.
+enum class ImageAnalysisDeferralOutcome : uint8_t {
+    NotApplicable, // Not an image (or the press was abandoned): influence neither deferral.
+    NoText, // Image without selectable text: prevent text selection; allow drag / context menu.
+    FoundText, // Image with selectable text: allow text selection; prevent drag / context menu.
+};
+
+} // namespace WebKit
+
+@interface WKAppKitGestureController (ImageAnalysisDeferralResolution)
+- (void)_resolveImageAnalysisDeferralsWithOutcome:(WebKit::ImageAnalysisDeferralOutcome)outcome;
+@end
+
+namespace WebKit {
+
+// Keeps the image-analysis deferrals open for the lifetime of an in-flight analysis. When the last
+// reference is dropped (analysis finished or abandoned), it resolves both deferrals on the main run
+// loop according to the recorded outcome. Mirrors the iOS ImageAnalysisGestureDeferralToken.
+class ImageAnalysisGestureDeferralToken final : public RefCounted<ImageAnalysisGestureDeferralToken> {
+public:
+    static RefPtr<ImageAnalysisGestureDeferralToken> create(WKAppKitGestureController *controller)
+    {
+        return adoptRef(*new ImageAnalysisGestureDeferralToken(controller));
+    }
+
+    ~ImageAnalysisGestureDeferralToken()
+    {
+        ensureOnMainRunLoop([controller = m_controller, outcome = m_outcome] {
+            if (RetainPtr strongController = controller.get())
+                [strongController _resolveImageAnalysisDeferralsWithOutcome:outcome];
+        });
+    }
+
+    void setOutcome(ImageAnalysisDeferralOutcome outcome) { m_outcome = outcome; }
+
+private:
+    explicit ImageAnalysisGestureDeferralToken(WKAppKitGestureController *controller)
+        : m_controller(controller)
+    {
+    }
+
+    WeakObjCPtr<WKAppKitGestureController> m_controller;
+    ImageAnalysisDeferralOutcome m_outcome { ImageAnalysisDeferralOutcome::NotApplicable };
+};
+
+} // namespace WebKit
+
 static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
 {
     return [WKAppKitGestureController loggingDescriptionForGestureRecognizer:gesture];
 }
 
-@interface WKAppKitGestureController () <NSGestureRecognizerDelegatePrivate, WKDeferringGestureRecognizerDelegate>
+@interface WKAppKitGestureController () <NSGestureRecognizerDelegatePrivate>
 @end
 
 @implementation WKAppKitGestureController {
@@ -164,7 +228,12 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
     BlockPtr<void(NSDraggingSession *)> _textSelectionDragCompletionHandler;
     bool _dragGestureHasSentMouseDown;
 
+    RetainPtr<NSPressGestureRecognizer> _imageAnalysisGestureRecognizer;
+    RetainPtr<WKDeferringGestureRecognizer> _imageAnalysisTextSelectionDeferringGestureRecognizer;
+    RetainPtr<WKDeferringGestureRecognizer> _imageAnalysisDragAndContextMenuDeferringGestureRecognizer;
+
     std::unique_ptr<WebKit::PositionInformationManager> _positionInformationManager;
+    std::unique_ptr<WebKit::WKFastScrollTracker> _fastScrollTracker;
 }
 
 #if __has_include(<WebKitAdditions/WKAppKitGestureControllerAdditionsImpl.mm>)
@@ -181,6 +250,7 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
     _page = page.get();
     _viewImpl = viewImpl.get();
     _positionInformationManager = makeUnique<WebKit::PositionInformationManager>(page.get());
+    _fastScrollTracker = makeUniqueWithoutFastMallocCheck<WebKit::WKFastScrollTracker>(WebKit::WKFastScrollTracker::init());
 
     [self setUpGestureRecognizers];
     [self addGesturesToWebView];
@@ -225,6 +295,9 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
 
     [self setUpDragPressGestureRecognizer];
     [self setUpDragDeferringGestureRecognizer];
+
+    [self setUpImageAnalysisGestureRecognizer];
+    [self setUpImageAnalysisDeferringGestureRecognizers];
 }
 
 - (void)setUpMouseTrackingGestureRecognizer
@@ -284,6 +357,23 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
     [_dragDeferringGestureRecognizer setName:@"WKDragDeferringGesture"];
 }
 
+- (void)setUpImageAnalysisGestureRecognizer
+{
+    _imageAnalysisGestureRecognizer = adoptNS([[NSPressGestureRecognizer alloc] initWithTarget:self action:@selector(imageAnalysisGestureRecognized:)]);
+    [self configureForImageAnalysis:_imageAnalysisGestureRecognizer];
+    [_imageAnalysisGestureRecognizer setDelegate:self];
+    [_imageAnalysisGestureRecognizer setName:@"WKImageAnalysisGesture"];
+}
+
+- (void)setUpImageAnalysisDeferringGestureRecognizers
+{
+    // One deferral holds text selection over an image until analysis resolves; the other holds the
+    // drag-press / secondary-click recognizers. See the Image Analysis design note for why both exist
+    // and why they resolve to opposite outcomes.
+    _imageAnalysisTextSelectionDeferringGestureRecognizer = [self makeImageAnalysisDeferringGestureRecognizerWithName:@"WKImageAnalysisTextSelectionDeferringGesture"];
+    _imageAnalysisDragAndContextMenuDeferringGestureRecognizer = [self makeImageAnalysisDeferringGestureRecognizerWithName:@"WKImageAnalysisDragAndContextMenuDeferringGesture"];
+}
+
 - (void)addGesturesToWebView
 {
     CheckedPtr viewImpl = _viewImpl.get();
@@ -304,6 +394,10 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
 
     [webView addGestureRecognizer:_dragPressGestureRecognizer.get()];
     [webView addGestureRecognizer:_dragDeferringGestureRecognizer.get()];
+
+    [webView addGestureRecognizer:_imageAnalysisGestureRecognizer.get()];
+    [webView addGestureRecognizer:_imageAnalysisTextSelectionDeferringGestureRecognizer.get()];
+    [webView addGestureRecognizer:_imageAnalysisDragAndContextMenuDeferringGestureRecognizer.get()];
 }
 
 - (void)enableGesturesIfNeeded
@@ -314,6 +408,7 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
     [self enableGestureIfNeeded:_doubleClickGestureRecognizer.get()];
     [self enableGestureIfNeeded:_secondaryClickGestureRecognizer.get()];
     [self enableGestureIfNeeded:_dragPressGestureRecognizer.get()];
+    [self enableGestureIfNeeded:_imageAnalysisGestureRecognizer.get()];
 
     // The deferring gesture recognizers are intentionally not enabled.
 }
@@ -328,10 +423,16 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
     [_mouseTrackingGestureRecognizer setShouldBeArchived:NO];
     [_singleClickGestureRecognizer setShouldBeArchived:NO];
     [_doubleClickGestureRecognizer setShouldBeArchived:NO];
+
     [_secondaryClickGestureRecognizer setShouldBeArchived:NO];
     [_secondaryClickDeferringGestureRecognizer setShouldBeArchived:NO];
+
     [_dragPressGestureRecognizer setShouldBeArchived:NO];
     [_dragDeferringGestureRecognizer setShouldBeArchived:NO];
+
+    [_imageAnalysisGestureRecognizer setShouldBeArchived:NO];
+    [_imageAnalysisTextSelectionDeferringGestureRecognizer setShouldBeArchived:NO];
+    [_imageAnalysisDragAndContextMenuDeferringGestureRecognizer setShouldBeArchived:NO];
 }
 
 - (void)enableGestureIfNeeded:(NSGestureRecognizer *)gesture
@@ -339,7 +440,12 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
     RefPtr page = _page.get();
     if (!page)
         return;
+
     bool gestureEnabled = protect(page->preferences())->useAppKitGestures();
+
+    if (gesture == _imageAnalysisGestureRecognizer)
+        gestureEnabled = gestureEnabled && WebKit::isLiveTextAvailableAndEnabled();
+
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(page->logIdentifier(), "%@ setEnabled:%d", gestureLogDescription(gesture), static_cast<int>(gestureEnabled));
     [gesture setEnabled:gestureEnabled];
 }
@@ -394,8 +500,10 @@ static NSString *gestureLogDescription(NSGestureRecognizer *gesture)
         return;
     }
 
-    if ([gesture state] == NSGestureRecognizerStateBegan)
+    if ([gesture state] == NSGestureRecognizerStateBegan) {
         viewImpl->dismissContentRelativeChildWindowsWithAnimation(false);
+        _fastScrollTracker->didStartGesture([gesture locationInView:nil]);
+    }
 
 #if HAVE(NSREFRESHCONTROLLER)
     viewImpl->updateRefreshControllerForPanGesture([gesture state]);
@@ -658,6 +766,141 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     }
 }
 
+#pragma mark - Image Analysis
+
+// Gesture-driven Live Text is arbitrated by three recognizers, plus the deferral token above:
+//
+//   1. _imageAnalysisGestureRecognizer (the "preflight") -- a settled 0.1s press that kicks off Vision
+//      image analysis. It's a passive observer of the interaction it measures: it recognizes
+//      simultaneously with everything, prevents nothing, and is always allowed to begin.
+//   2. _imageAnalysisTextSelectionDeferringGestureRecognizer -- holds the text-selection gestures over an image until
+//      analysis resolves.
+//   3. _imageAnalysisDragAndContextMenuDeferringGestureRecognizer -- holds the drag-press and secondary-click
+//      (context menu) recognizers over an image until analysis resolves.
+//
+// The two deferrals resolve to *opposite* booleans (see -_resolveImageAnalysisDeferralsWithOutcome:):
+// on "text found" we must ALLOW text selection while PREVENTING drag / context menu (Live Text wins),
+// and the reverse on "no text". A single WKDeferringGestureRecognizer can't express that -- its
+// -endDeferralShouldPreventGestures: applies one boolean (state = .ended / .failed) to everything it
+// defers -- so the two opposite outcomes require two separate deferrals.
+//
+// iOS needs no fallback deferral because its drag / context menu are UIKit interactions gated by a
+// ProceedWithTextSelectionInImage callback. macOS drag-press / secondary-click are NSGestureRecognizers
+// on independent timers, so they must be *deferred* to keep them from firing before analysis resolves.
+
+- (void)imageAnalysisGestureRecognized:(NSGestureRecognizer *)gesture
+{
+    RELEASE_ASSERT(_imageAnalysisGestureRecognizer == gesture);
+
+    if (gesture.state != NSGestureRecognizerStateBegan)
+        return;
+
+    CheckedPtr viewImpl = _viewImpl.get();
+    if (!viewImpl)
+        return;
+
+    RetainPtr webView = viewImpl->view();
+    if (!webView)
+        return;
+
+    RefPtr page = _page.get();
+    if (!page)
+        return;
+
+    if (viewImpl->ignoresAllEvents())
+        return;
+
+    WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(page->logIdentifier(), "%@", gestureLogDescription(gesture));
+
+    WebKit::InteractionInformationRequest request { WebCore::IntPoint { [gesture locationInView:webView.get()] } };
+    request.includeImageData = true;
+
+    // The token keeps the image-analysis deferral open until the async analysis chain finishes (or is
+    // abandoned). Capturing it through each stage means the deferral resolves exactly when the last
+    // stage completes; dropping it early (e.g. not an image) resolves it as "allow text selection".
+    _positionInformationManager->doAfterUpdate(request, [weakSelf = WeakObjCPtr<WKAppKitGestureController>(self), gestureDeferralToken = WebKit::ImageAnalysisGestureDeferralToken::create(self)](const auto& optionalInfo) mutable {
+        if (!optionalInfo)
+            return;
+
+        const auto& info = *optionalInfo;
+
+        RetainPtr strongSelf = weakSelf.get();
+        if (!strongSelf)
+            return;
+
+        CheckedPtr viewImpl = strongSelf->_viewImpl.get();
+        if (!viewImpl)
+            return;
+
+        RefPtr page = strongSelf->_page.get();
+        if (!page)
+            return;
+
+        if (!isAnalyzableImageForLiveText(info)) {
+            // Not an analyzable image: leave both image-analysis deferrals with the default
+            // NotApplicable outcome, so text selection and the drag / context-menu fallback each
+            // resolve on their own (non-image) merits.
+            return;
+        }
+
+        // This dereference is guaranteed to be non-nil due to the `isAnalyzableImageForLiveText` check above.
+        RetainPtr cgImage = info.image->createPlatformImage();
+        if (!cgImage) {
+            // An image we can't rasterize: treat it as an image without text so the press falls
+            // through to drag / context menu.
+            gestureDeferralToken->setOutcome(WebKit::ImageAnalysisDeferralOutcome::NoText);
+            return;
+        }
+
+        RELEASE_LOG(ImageAnalysis, "Image analysis preflight gesture initiated.");
+
+        const auto requestLocation = info.request.point;
+        // This dereference is guaranteed to be non-nil due to the `isAnalyzableImageForLiveText` check above.
+        const auto elementContext = *info.hostImageOrVideoElementContext;
+
+        const auto analyzerRequest = WebKit::createImageAnalyzerRequest(cgImage.get(), VKAnalysisTypeText);
+        const auto startTime = MonotonicTime::now();
+        viewImpl->processImageAnalyzerRequest(analyzerRequest.get(), [weakSelf, elementContext, requestLocation, gestureDeferralToken = WTF::move(gestureDeferralToken), startTime](RetainPtr<VKCImageAnalysis>&& result, NSError *) mutable {
+            RetainPtr strongSelf = weakSelf.get();
+            if (!strongSelf)
+                return;
+
+            RefPtr page = strongSelf->_page.get();
+            if (!page)
+                return;
+
+            auto hasTextResults = [result hasResultsForAnalysisTypes:VKAnalysisTypeText];
+            RELEASE_LOG(ImageAnalysis, "Image analysis completed in %.0f ms (found text? %d)", (MonotonicTime::now() - startTime).milliseconds(), hasTextResults);
+
+            page->updateWithTextRecognitionResult(WebKit::makeTextRecognitionResult(result.get()), elementContext, requestLocation, [gestureDeferralToken = WTF::move(gestureDeferralToken)](const auto& updateResult) mutable {
+                // Text found and injected as an image overlay -> allow the deferred text selection and
+                // prevent the drag / context-menu fallback (Live Text wins). Otherwise -> the reverse.
+                gestureDeferralToken->setOutcome(updateResult == WebKit::TextRecognitionUpdateResult::Text
+                    ? WebKit::ImageAnalysisDeferralOutcome::FoundText
+                    : WebKit::ImageAnalysisDeferralOutcome::NoText);
+            });
+        });
+    });
+}
+
+- (void)_resolveImageAnalysisDeferralsWithOutcome:(WebKit::ImageAnalysisDeferralOutcome)outcome
+{
+    // The text-selection deferral is prevented unless text was found; the drag / context-menu fallback
+    // deferral is the mirror image. NotApplicable means "not an analyzable image," so neither deferral
+    // should have any opinion -- release both.
+    BOOL preventTextSelection = outcome == WebKit::ImageAnalysisDeferralOutcome::NoText;
+    BOOL preventDragAndContextMenu = outcome == WebKit::ImageAnalysisDeferralOutcome::FoundText;
+
+    // Only resolve a deferral that's still deferring. A deferral may already be resolved by the time the
+    // analysis token drops -- e.g. it failed on lift (immediatelyFailsAfterActionEnd) before slow
+    // analysis finished -- and re-setting an already-terminal gesture state would be a no-op at best.
+    if ([_imageAnalysisTextSelectionDeferringGestureRecognizer state] == NSGestureRecognizerStatePossible)
+        [_imageAnalysisTextSelectionDeferringGestureRecognizer endDeferralShouldPreventGestures:preventTextSelection];
+
+    if ([_imageAnalysisDragAndContextMenuDeferringGestureRecognizer state] == NSGestureRecognizerStatePossible)
+        [_imageAnalysisDragAndContextMenuDeferringGestureRecognizer endDeferralShouldPreventGestures:preventDragAndContextMenu];
+}
+
 #pragma mark - WKDeferringGestureRecognizerDelegate
 
 - (BOOL)deferringGestureRecognizer:(WKDeferringGestureRecognizer *)deferringGestureRecognizer shouldDeferOtherGestureRecognizer:(NSGestureRecognizer *)gestureRecognizer
@@ -669,6 +912,12 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     RetainPtr webView = viewImpl->view();
     if (!webView)
         return NO;
+
+    // Live Text (see the Image Analysis design note): the fallback deferral holds the drag-press /
+    // secondary-click recognizers -- not text selection -- until analysis resolves, so a slow analysis
+    // can't let drag-press fire and drag the image before Live Text has a chance to win.
+    if (deferringGestureRecognizer == _imageAnalysisDragAndContextMenuDeferringGestureRecognizer)
+        return gestureRecognizer == _dragPressGestureRecognizer || gestureRecognizer == _secondaryClickGestureRecognizer;
 
     for (NSGestureRecognizer *textSelectionGesture in [[webView textSelectionManager] gesturesForFailureRequirements]) {
         if (gestureRecognizer == textSelectionGesture)
@@ -700,9 +949,10 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { _page.get() }->logIdentifier(), "deferral: deferring; awaiting position info at %@", NSStringFromPoint(locationInView));
 
     WebKit::InteractionInformationRequest request { WebCore::IntPoint { locationInView } };
-    _positionInformationManager->doAfterUpdate(request, [weakSelf = WeakObjCPtr<WKAppKitGestureController>(self), weakDeferring = WeakObjCPtr<WKDeferringGestureRecognizer>(deferringGestureRecognizer), isInScrollbar](const std::optional<WebKit::InteractionInformationAtPosition>& optionalInfo) {
+    _positionInformationManager->doAfterUpdate(request, [weakSelf = WeakObjCPtr<WKAppKitGestureController>(self), weakDeferring = WeakObjCPtr<WKDeferringGestureRecognizer>(deferringGestureRecognizer), isInScrollbar](const auto& optionalInfo) {
         if (!optionalInfo)
             return;
+
         const auto& info = *optionalInfo;
 
         RetainPtr strongSelf = weakSelf.get();
@@ -717,30 +967,47 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
             return;
         }
 
-        auto shouldPreventGestures = [&] {
-            // An event over a scrollbar should drive the scrollbar, not select text; prevent the deferred
-            // text-selection gestures so the mouse-tracking -> `Scrollbar::mouseDown` path wins.
+        const auto shouldPreventGestures = [&]() -> std::optional<bool> {
+            const auto overLiveTextImage = WebKit::isLiveTextAvailableAndEnabled() && info.isImage;
+
+            // Over a scrollbar: drive the scrollbar, not text selection -- prevent the deferred gestures
+            // so the mouse-tracking -> `Scrollbar::mouseDown` path wins.
             if (isInScrollbar) {
                 WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { strongSelf->_page.get() }->logIdentifier(), "deferral resolved: over scrollbar; preventing text-selection gestures");
                 return true;
             }
 
+            if (strongDeferring == strongSelf->_imageAnalysisTextSelectionDeferringGestureRecognizer
+                || strongDeferring == strongSelf->_imageAnalysisDragAndContextMenuDeferringGestureRecognizer) {
+                // Image-analysis deferrals (see the Image Analysis design note): over an image with Live
+                // Text available, keep deferring (std::nullopt) until the preflight's analysis token
+                // resolves both deferrals (see -_resolveImageAnalysisDeferralsWithOutcome:); otherwise this
+                // deferral has no opinion, so release. We only have basic hit-test info here (this request
+                // does not fetch image data), so key off info.isImage; the preflight does the full
+                // analyzability check.
+                if (overLiveTextImage)
+                    return std::nullopt;
+
+                return false;
+            }
+
             if (strongDeferring == strongSelf->_dragDeferringGestureRecognizer) {
-                auto isDraggable = representsDraggableElement(info);
+                const auto isDraggable = representsDraggableElement(info);
                 WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { strongSelf->_page.get() }->logIdentifier(), "deferral resolved: isDraggable=%d (link=%d image=%d attachment=%d dhtml=%d color=%d prefersDrag=%d)", isDraggable, info.isLink, info.isImage, info.isAttachment, info.isDHTMLDraggable, info.isColorInput, info.prefersDraggingOverTextSelection);
-                return isDraggable;
+                return isDraggable && !overLiveTextImage;
             }
 
             if (strongDeferring == strongSelf->_secondaryClickDeferringGestureRecognizer) {
-                bool isSelectable = info.isSelectable();
+                const auto isSelectable = info.isSelectable();
                 WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG(RefPtr { strongSelf->_page.get() }->logIdentifier(), "Resolved deferral: isSelectable=%d", isSelectable);
-                return !isSelectable;
+                return !isSelectable && !overLiveTextImage;
             }
 
             RELEASE_ASSERT_NOT_REACHED();
         }();
 
-        [strongDeferring endDeferralShouldPreventGestures:shouldPreventGestures];
+        if (shouldPreventGestures)
+            [strongDeferring endDeferralShouldPreventGestures:*shouldPreventGestures];
     });
 
     return YES;
@@ -1183,6 +1450,8 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     WebCore::IntPoint position { [gesture locationInView:webView.get()] };
     auto globalPosition = WebCore::globalPoint([gesture locationInView:nil], [webView window]);
 
+    auto fastScrollMultiplier = _fastScrollTracker->update([gesture locationInView:nil], velocity, [gesture timestamp]);
+
     WebKit::WebWheelEvent momentumEvent {
         { WebKit::WebEventType::Wheel, { }, timestamp, WTF::UUID::createVersion4() },
         position,
@@ -1199,7 +1468,8 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
         timestamp,
         std::nullopt,
         WebKit::WebWheelEvent::MomentumEndType::Unknown,
-        WebKit::WebEventInputSource::Automation
+        WebKit::WebEventInputSource::Automation,
+        static_cast<float>(fastScrollMultiplier),
     };
     WebKit::NativeWebWheelEvent nativeMomentumEvent { momentumEvent };
 
@@ -1230,6 +1500,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     if (!page)
         return;
 
+    _fastScrollTracker->didCatchMomentum();
     _caughtDeceleratingScroll = true;
     _suppressNextPanScrollDelta = true;
 
@@ -1299,6 +1570,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     _mouseTrackingHasSentMouseDown = false;
     _isMomentumActive = false;
     [self _resetCaughtDeceleratingScroll];
+    _fastScrollTracker->reset();
     _isSuppressingSingleClickGestureForTextSelection = false;
     _latestClickID.reset();
     _layerTreeTransactionIdAtLastInteractionStart.reset();
@@ -1326,6 +1598,12 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
         return YES;
 
     if ([gestureRecognizer isKindOfClass:WKDeferringGestureRecognizer.class] || [otherGestureRecognizer isKindOfClass:WKDeferringGestureRecognizer.class])
+        return YES;
+
+    // Live Text (see the Image Analysis design note): the preflight is a passive observer, so it
+    // recognizes simultaneously with everything -- it must never block, or be blocked by, the
+    // interaction it measures.
+    if (gestureRecognizer == _imageAnalysisGestureRecognizer || otherGestureRecognizer == _imageAnalysisGestureRecognizer)
         return YES;
 
     if (isSamePair(gestureRecognizer, otherGestureRecognizer, _mouseTrackingGestureRecognizer.get(), _singleClickGestureRecognizer.get()))
@@ -1426,8 +1704,6 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
     if (!webView)
         return NO;
 
-    NSPoint locationInViewCoordinates = [gestureRecognizer locationInView:webView];
-
     // While catching a decelerating scroll, only select gestures are allowed to begin:
     // - single click, so it can reset the interruption state
     // - pan, so it can continue with successive scrolls
@@ -1437,6 +1713,11 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
         if (gestureRecognizer != _panGestureRecognizer)
             return NO;
     }
+
+    if ([gestureRecognizer isKindOfClass:WKDeferringGestureRecognizer.class])
+        return YES;
+
+    NSPoint locationInViewCoordinates = [gestureRecognizer locationInView:webView];
 
     // An event over a scrollbar is a scrollbar interaction; only the mouse-tracking gesture (which drives
     // `Scrollbar::mouseDown` -> thumb drag) should handle it. The AppKit text-selection/context-menu gestures
@@ -1448,6 +1729,11 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
 
     if (gestureRecognizer == _doubleClickGestureRecognizer)
         return viewImpl->allowsMagnification();
+
+    // Live Text (see the Image Analysis design note): the preflight is a passive observer and is only
+    // enabled when Live Text is available, so it's always allowed to begin to measure the press.
+    if (gestureRecognizer == _imageAnalysisGestureRecognizer)
+        return YES;
 
     if (gestureRecognizer == _secondaryClickGestureRecognizer)
         return [self _secondaryClickShouldBeginAtLocation:locationInViewCoordinates];
@@ -1489,6 +1775,18 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
     // e.g. a scroll over a draggable <img> in a non-scrollable web view.
     if ([self _isScrollOrZoomGestureRecognizer:preventedGestureRecognizer])
         return NO;
+
+    // Live Text (see the Image Analysis design note): the preflight is a passive observer, so it prevents
+    // nothing.
+    if (preventingGestureRecognizer == _imageAnalysisGestureRecognizer)
+        return NO;
+
+    // Live Text: when the fallback deferral recognizes to block drag / context menu (text found), it must
+    // only affect the drag-press and secondary-click recognizers it defers -- never the text-selection
+    // gestures, which Live Text needs to proceed. (Its hold over drag-press / secondary-click is enforced
+    // by the deferral failure-requirement, not by this prevention hook.)
+    if (preventingGestureRecognizer == _imageAnalysisDragAndContextMenuDeferringGestureRecognizer)
+        return preventedGestureRecognizer == _dragPressGestureRecognizer || preventedGestureRecognizer == _secondaryClickGestureRecognizer;
 
     bool isOurClickGesture = preventingGestureRecognizer == _singleClickGestureRecognizer
         || preventingGestureRecognizer == _secondaryClickGestureRecognizer

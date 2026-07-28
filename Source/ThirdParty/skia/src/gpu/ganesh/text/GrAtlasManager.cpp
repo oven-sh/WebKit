@@ -10,9 +10,9 @@
 #include "include/core/SkColorType.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkTLogic.h"
-#include "src/base/SkAutoMalloc.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkTLogic.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkDistanceFieldGen.h"
 #include "src/core/SkGlyph.h"
 #include "src/core/SkMask.h"
@@ -211,6 +211,14 @@ GrDrawOpAtlas::ErrorCode GrAtlasManager::addGlyphToAtlas(const SkGlyph& skGlyph,
 
     const int width = skGlyph.width() + 2*padding;
     const int height = skGlyph.height() + 2*padding;
+
+    // Verify that the glyph data (received from potentially untrusted source) actually has room
+    // for the padding. Under normal flow, this should always be the case, but if a glyph was
+    // corrupted or manipulated it has no bearing on the code that *should* have produced the glyph.
+    // It's strict comparison since equality would imply the original glyph was empty, which should
+    // have been dropped.
+    SkASSERT_RELEASE(width > 2*srcPadding && height > 2*srcPadding);
+
     int rowBytes = width * bytesPerPixel;
     size_t size = height * rowBytes;
 

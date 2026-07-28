@@ -16,6 +16,9 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTypes.h"
+#include "include/private/SkPixelStorage.h"
+#include "src/capture/SkCaptureManager.h"
+#include "src/image/SkImage_Base.h"
 
 #include <cstdint>
 #include <memory>
@@ -38,8 +41,8 @@ struct SkImageInfo;
 
 class SkSurface_Base : public SkSurface {
 public:
-    SkSurface_Base(int width, int height, const SkSurfaceProps*);
-    SkSurface_Base(const SkImageInfo&, const SkSurfaceProps*);
+    SkSurface_Base(int width, int height, const SkSurfaceProps*, sk_sp<SkPixelStorage>);
+    SkSurface_Base(const SkImageInfo&, const SkSurfaceProps*, sk_sp<SkPixelStorage>);
     ~SkSurface_Base() override;
 
     // From SkSurface.h
@@ -58,10 +61,7 @@ public:
         kRaster,
     };
 
-    // TODO(kjlubick) Android directly subclasses SkSurface_Base for tests, so we
-    // cannot make this a pure virtual. They seem to want a surface that is spy-able
-    // or mockable, so maybe we should provide something like that.
-    virtual Type type() const { return Type::kNull; }
+    virtual Type type() const = 0;
 
     // True for surfaces instantiated by pixels in CPU memory
     bool isRasterBacked() const { return this->type() == Type::kRaster; }
@@ -166,9 +166,9 @@ public:
     virtual bool onCharacterize(GrSurfaceCharacterization*) const { return false; }
     virtual bool onIsCompatible(const GrSurfaceCharacterization&) const { return false; }
 
-    // TODO: Remove this (make it pure virtual) after updating Android (which has a class derived
-    // from SkSurface_Base).
-    virtual sk_sp<const SkCapabilities> onCapabilities();
+    virtual sk_sp<const SkCapabilities> onCapabilities() = 0;
+
+    sk_sp<SkPixelStorage> getPixelStorage() const { return fPixelStorage; }
 
     /**
      * If capturing, signals to the capture manager and capture canvas to break off the recording
@@ -193,6 +193,7 @@ private:
     std::unique_ptr<SkCanvas> fOwnedBaseCanvas = nullptr;
     sk_sp<SkImage>            fCachedImage  = nullptr;
 
+
     // Returns false if drawing should not take place (allocation failure).
     [[nodiscard]] bool aboutToDraw(ContentChangeMode mode);
 
@@ -202,6 +203,9 @@ private:
 
     friend class SkCanvas;
     friend class SkSurface;
+
+protected:
+    sk_sp<SkPixelStorage>     fPixelStorage = nullptr;
 };
 
 SkCanvas* SkSurface_Base::getCachedCanvas() {

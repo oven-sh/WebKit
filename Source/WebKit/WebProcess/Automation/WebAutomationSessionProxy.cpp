@@ -420,6 +420,21 @@ void WebAutomationSessionProxy::willDestroyGlobalObjectForFrame(WebCore::FrameId
         callback(String(errorMessage), String(errorType));
 }
 
+void WebAutomationSessionProxy::cancelPendingEvaluateJavaScriptCallbacks()
+{
+    // A script can still be pending at session teardown (e.g. one blocked on an open user prompt). Each
+    // completion handler is the evaluate message's async reply and must be called exactly once, so invoke
+    // any remaining ones with an error before they are destroyed.
+    String errorMessage = "Callback was not called before the automation session was destroyed."_s;
+    String errorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::InternalError);
+
+    auto pendingCallbacksMap = std::exchange(m_webFramePendingEvaluateJavaScriptCallbacksMap, { });
+    for (auto& frameCallbacks : pendingCallbacksMap.values()) {
+        for (auto& callback : frameCallbacks.values())
+            callback(String(errorMessage), String(errorType));
+    }
+}
+
 void WebAutomationSessionProxy::evaluateJavaScriptFunction(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> optionalFrameID, const String& function, Vector<String> arguments, bool expectsImplicitCallbackArgument, bool forceUserGesture, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&& completionHandler)
 {
     RefPtr page = WebProcess::singleton().webPage(pageID);
@@ -910,6 +925,21 @@ void WebAutomationSessionProxy::getComputedLabel(WebCore::PageIdentifier pageID,
     }
 
     completionHandler(std::nullopt, axObject->computedLabel());
+}
+
+void WebAutomationSessionProxy::consumeUserActivation(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, CompletionHandler<void(std::optional<String>, bool)>&& completionHandler)
+{
+    RefPtr page = WebProcess::singleton().webPage(pageID);
+    RefPtr frame = frameID ? WebProcess::singleton().webFrame(*frameID) : (page ? &page->mainWebFrame() : nullptr);
+    RefPtr coreLocalFrame = frame ? frame->coreLocalFrame() : nullptr;
+    RefPtr window = coreLocalFrame ? coreLocalFrame->window() : nullptr;
+    if (!window) {
+        String windowNotFoundErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::WindowNotFound);
+        completionHandler(windowNotFoundErrorType, false);
+        return;
+    }
+
+    completionHandler(std::nullopt, window->consumeTransientActivation());
 }
 
 void WebAutomationSessionProxy::selectOptionElement(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle, CompletionHandler<void(std::optional<String>)>&& completionHandler)

@@ -594,15 +594,6 @@ AbstractModuleRecord* JSModuleLoader::getImportedModule(AbstractModuleRecord* re
     return iter->value.m_module.get();
 }
 
-AbstractModuleRecord* JSModuleLoader::maybeGetImportedModule(AbstractModuleRecord* referrer, const Identifier& moduleKey)
-{
-    for (const auto& [key, loadedModuleRequest] : referrer->loadedModules()) {
-        if (loadedModuleRequest.m_specifier == moduleKey)
-            return loadedModuleRequest.m_module.get();
-    }
-    return nullptr;
-}
-
 JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, const ModuleReferrer& referrer, const ModuleRequest& moduleRequest, JSCell* payload, RefPtr<ScriptFetcher> scriptFetcher, bool useImportMap)
 {
     // HostLoadImportedModule(referrer, moduleRequest, loadState, payload)
@@ -1303,7 +1294,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     }
     ASSERT(moduleProgramNode);
 
-    ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->varDeclarations(), moduleProgramNode->lexicalVariables(), moduleProgramNode->features());
+    ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->features());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);

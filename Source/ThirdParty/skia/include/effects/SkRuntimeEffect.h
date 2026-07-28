@@ -18,11 +18,11 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
+#include "include/private/SkOnce.h"
 #include "include/private/SkSLSampleUsage.h"
-#include "include/private/base/SkOnce.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "include/private/base/SkTypeTraits.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
+#include "include/private/SkTypeTraits.h"
 #include "include/sksl/SkSLDebugTrace.h"
 #include "include/sksl/SkSLVersion.h"
 
@@ -324,8 +324,8 @@ private:
     uint32_t fStableKey = 0;
     SkString fName;
 
-    std::unique_ptr<SkSL::Program> fBaseProgram;
-    std::unique_ptr<SkSL::RP::Program> fRPProgram;
+    std::unique_ptr<const SkSL::Program> fBaseProgram;
+    std::unique_ptr<const SkSL::RP::Program> fRPProgram;
     mutable SkOnce fCompileRPProgramOnce;
     const SkSL::FunctionDefinition& fMain;
     std::vector<Uniform> fUniforms;

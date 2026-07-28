@@ -823,6 +823,7 @@ protected:
 protected:
     // ActiveDOMObject
     void stop() override;
+    void suspend(ReasonForSuspension) override;
 
 private:
     friend class Internals;
@@ -842,7 +843,6 @@ private:
     void willStopBeingFullscreenElement() override;
 
     // ActiveDOMObject.
-    void suspend(ReasonForSuspension) override;
     void resume() override;
     bool virtualHasPendingActivity() const override;
 
@@ -1006,7 +1006,8 @@ private:
     void pauseInternal();
     void completePlayInternal();
 
-    void prepareForLoad();
+    enum class IsExplicitLoad : bool { No, Yes };
+    void prepareForLoad(IsExplicitLoad = IsExplicitLoad::No);
     void allowVideoRendering();
 
     bool processingMediaPlayerCallback() const { return m_processingMediaPlayerCallback > 0; }
@@ -1224,7 +1225,9 @@ private:
     TaskCancellationGroup m_periodicTimeupdateCancellationGroup;
     TaskCancellationGroup m_volumeRevertTaskCancellationGroup;
 
+    const Ref<NativePromiseRequest> m_playRequest;
     PlayPromiseVector m_pendingPlayPromises;
+    bool m_playPromiseSettlementGuaranteed { false };
 
     double m_requestedPlaybackRate { 1 };
     double m_reportedPlaybackRate { 1 };

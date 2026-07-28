@@ -50,6 +50,7 @@
     _filterOptions = _WKTextExtractionFilterAll;
     _includeURLs = YES;
     _includeRects = YES;
+    _includeTagName = NO;
     _includeSelectOptions = YES;
     _nodeIdentifierInclusion = _WKTextExtractionNodeIdentifierInclusionInteractive;
     _eventListenerCategories = _WKTextExtractionEventListenerCategoryAll;
@@ -75,6 +76,7 @@
     _outputFormat = _WKTextExtractionOutputFormatPlainText;
     _includeURLs = NO;
     _includeRects = NO;
+    _includeTagName = NO;
     _includeSelectOptions = NO;
     _nodeIdentifierInclusion = _WKTextExtractionNodeIdentifierInclusionNone;
     _eventListenerCategories = _WKTextExtractionEventListenerCategoryNone;
@@ -282,6 +284,7 @@
 
 @implementation _WKTextExtractionInteraction {
     RetainPtr<NSString> _nodeIdentifier;
+    RetainPtr<_WKJSHandle> _elementHandle;
     RetainPtr<NSString> _text;
     RetainPtr<_WKTextExtractionResult> _extractionContext;
 }
@@ -317,6 +320,16 @@
 - (void)setNodeIdentifier:(NSString *)nodeIdentifier
 {
     _nodeIdentifier = adoptNS(nodeIdentifier.copy);
+}
+
+- (_WKJSHandle *)elementHandle
+{
+    return _elementHandle.get();
+}
+
+- (void)setElementHandle:(_WKJSHandle *)elementHandle
+{
+    _elementHandle = adoptNS([elementHandle copy]);
 }
 
 - (NSString *)text

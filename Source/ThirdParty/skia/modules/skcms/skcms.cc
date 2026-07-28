@@ -35,6 +35,12 @@
 
 using namespace skcms_private;
 
+// A potential vulnerability exists where a large CLUT can cause an integer
+// overflow in skcms's transformation logic. Limit the total number of grid
+// points to a safe value. 350 million ensures that 6 * index will not overflow
+// a 32-bit signed integer (which is what AVX2/AVX-512 gather expects).
+#define SKCMS_MAX_GRID_POINTS 350000000
+
 static bool sAllowRuntimeCPUDetection = true;
 
 void skcms_DisableRuntimeCPUDetection() {
@@ -757,11 +763,13 @@ static bool read_mft_common(const mft_CommonLayout* mftTag, skcms_A2B* a2b) {
         return false;
     }
 
+    uint64_t total_grid_points = 1;
     for (uint32_t i = 0; i < a2b->input_channels; ++i) {
         a2b->grid_points[i] = mftTag->grid_points[0];
+        total_grid_points *= a2b->grid_points[i];
     }
     // The grid only makes sense with at least two points along each axis
-    if (a2b->grid_points[0] < 2) {
+    if (a2b->grid_points[0] < 2 || total_grid_points > SKCMS_MAX_GRID_POINTS) {
         return false;
     }
     return true;
@@ -784,10 +792,12 @@ static bool read_mft_common(const mft_CommonLayout* mftTag, skcms_B2A* b2a) {
     }
 
     // Same as A2B.
+    uint64_t total_grid_points = 1;
     for (uint32_t i = 0; i < b2a->input_channels; ++i) {
         b2a->grid_points[i] = mftTag->grid_points[0];
+        total_grid_points *= b2a->grid_points[i];
     }
-    if (b2a->grid_points[0] < 2) {
+    if (b2a->grid_points[0] < 2 || total_grid_points > SKCMS_MAX_GRID_POINTS) {
         return false;
     }
     return true;
@@ -938,7 +948,8 @@ typedef struct {
     uint8_t variable             [1/*variable*/];
 } CLUT_Layout;
 
-static bool read_tag_mab(const skcms_ICCTag* tag, skcms_A2B* a2b, bool pcs_is_xyz) {
+static bool read_tag_mab(const skcms_ICCTag* tag, skcms_A2B* a2b, bool pcs_is_xyz,
+                         const uint8_t* endOfBuffer) {
     if (tag->size < SAFE_SIZEOF(mAB_or_mBA_Layout)) {
         return false;
     }
@@ -1035,6 +1046,7 @@ static bool read_tag_mab(const skcms_ICCTag* tag, skcms_A2B* a2b, bool pcs_is_xy
         }
 
         uint64_t grid_size = a2b->output_channels * clut->grid_byte_width[0];  // the payload
+        uint64_t total_grid_points = 1;
         for (uint32_t i = 0; i < a2b->input_channels; ++i) {
             a2b->grid_points[i] = clut->grid_points[i];
             // The grid only makes sense with at least two points along each axis
@@ -1042,8 +1054,25 @@ static bool read_tag_mab(const skcms_ICCTag* tag, skcms_A2B* a2b, bool pcs_is_xy
                 return false;
             }
             grid_size *= a2b->grid_points[i];
+            total_grid_points *= a2b->grid_points[i];
         }
-        if (tag->size < clut_offset + SAFE_FIXED_SIZE(CLUT_Layout) + grid_size) {
+
+        if (total_grid_points > SKCMS_MAX_GRID_POINTS) {
+            return false;
+        }
+
+        const uint64_t table_size = clut_offset + SAFE_FIXED_SIZE(CLUT_Layout) + grid_size;
+        if (table_size > tag->size) {
+            return false;
+        }
+
+        // gather_24 and gather_48 read 1 or 2 extra bytes.
+        // We must ensure that those extra bytes are within the provided buffer limit.
+        uint32_t slack = 0;
+        if (a2b->output_channels == 3) {
+            slack = clut->grid_byte_width[0] == 1 ? 1 : 2;
+        }
+        if (tag->buf + table_size + slack > endOfBuffer) {
             return false;
         }
     } else {
@@ -1065,7 +1094,8 @@ static bool read_tag_mab(const skcms_ICCTag* tag, skcms_A2B* a2b, bool pcs_is_xy
 
 // Exactly the same as read_tag_mab(), except where there are comments.
 // TODO: refactor the two to eliminate common code?
-static bool read_tag_mba(const skcms_ICCTag* tag, skcms_B2A* b2a, bool pcs_is_xyz) {
+static bool read_tag_mba(const skcms_ICCTag* tag, skcms_B2A* b2a, bool pcs_is_xyz,
+                         const uint8_t* endOfBuffer) {
     if (tag->size < SAFE_SIZEOF(mAB_or_mBA_Layout)) {
         return false;
     }
@@ -1162,14 +1192,31 @@ static bool read_tag_mba(const skcms_ICCTag* tag, skcms_B2A* b2a, bool pcs_is_xy
         }
 
         uint64_t grid_size = b2a->output_channels * clut->grid_byte_width[0];
+        uint64_t total_grid_points = 1;
         for (uint32_t i = 0; i < b2a->input_channels; ++i) {
             b2a->grid_points[i] = clut->grid_points[i];
             if (b2a->grid_points[i] < 2) {
                 return false;
             }
             grid_size *= b2a->grid_points[i];
+            total_grid_points *= b2a->grid_points[i];
         }
+
+        if (total_grid_points > SKCMS_MAX_GRID_POINTS) {
+            return false;
+        }
+
         if (tag->size < clut_offset + SAFE_FIXED_SIZE(CLUT_Layout) + grid_size) {
+            return false;
+        }
+
+        // gather_24 and gather_48 read 1 or 2 extra bytes.
+        // We must ensure that those extra bytes are within the provided buffer limit.
+        uint32_t slack = 0;
+        if (b2a->output_channels == 3) {
+            slack = clut->grid_byte_width[0] == 1 ? 1 : 2;
+        }
+        if (tag->buf + clut_offset + SAFE_FIXED_SIZE(CLUT_Layout) + grid_size + slack > endOfBuffer) {
             return false;
         }
     } else {
@@ -1258,11 +1305,11 @@ static void canonicalize_identity(skcms_Curve* curve) {
     }
 }
 
-static bool read_a2b(const skcms_ICCTag* tag, skcms_A2B* a2b, bool pcs_is_xyz) {
+static bool read_a2b(const skcms_ICCTag* tag, skcms_A2B* a2b, bool pcs_is_xyz, const uint8_t* eob) {
     bool ok = false;
     if (tag->type == skcms_Signature_mft1) { ok = read_tag_mft1(tag, a2b); }
     if (tag->type == skcms_Signature_mft2) { ok = read_tag_mft2(tag, a2b); }
-    if (tag->type == skcms_Signature_mAB ) { ok = read_tag_mab(tag, a2b, pcs_is_xyz); }
+    if (tag->type == skcms_Signature_mAB ) { ok = read_tag_mab(tag, a2b, pcs_is_xyz, eob); }
     if (!ok) {
         return false;
     }
@@ -1283,11 +1330,11 @@ static bool read_a2b(const skcms_ICCTag* tag, skcms_A2B* a2b, bool pcs_is_xyz) {
     return true;
 }
 
-static bool read_b2a(const skcms_ICCTag* tag, skcms_B2A* b2a, bool pcs_is_xyz) {
+static bool read_b2a(const skcms_ICCTag* tag, skcms_B2A* b2a, bool pcs_is_xyz, const uint8_t* eob) {
     bool ok = false;
     if (tag->type == skcms_Signature_mft1) { ok = read_tag_mft1(tag, b2a); }
     if (tag->type == skcms_Signature_mft2) { ok = read_tag_mft2(tag, b2a); }
-    if (tag->type == skcms_Signature_mBA ) { ok = read_tag_mba(tag, b2a, pcs_is_xyz); }
+    if (tag->type == skcms_Signature_mBA ) { ok = read_tag_mba(tag, b2a, pcs_is_xyz, eob); }
     if (!ok) {
         return false;
     }
@@ -1466,6 +1513,7 @@ bool skcms_ParseWithA2BPriority(const void* buf, size_t len,
         }
     }
 
+    const uint8_t* endOfBuffer = (const uint8_t*)buf + len;
     for (int i = 0; i < priorities; i++) {
         // enum { perceptual, relative_colormetric, saturation }
         if (priority[i] < 0 || priority[i] > 2) {
@@ -1474,7 +1522,7 @@ bool skcms_ParseWithA2BPriority(const void* buf, size_t len,
         uint32_t sig = skcms_Signature_A2B0 + static_cast<uint32_t>(priority[i]);
         skcms_ICCTag tag;
         if (skcms_GetTagBySignature(profile, sig, &tag)) {
-            if (!read_a2b(&tag, &profile->A2B, pcs_is_xyz)) {
+            if (!read_a2b(&tag, &profile->A2B, pcs_is_xyz, endOfBuffer)) {
                 // Malformed A2B tag
                 return false;
             }
@@ -1491,7 +1539,7 @@ bool skcms_ParseWithA2BPriority(const void* buf, size_t len,
         uint32_t sig = skcms_Signature_B2A0 + static_cast<uint32_t>(priority[i]);
         skcms_ICCTag tag;
         if (skcms_GetTagBySignature(profile, sig, &tag)) {
-            if (!read_b2a(&tag, &profile->B2A, pcs_is_xyz)) {
+            if (!read_b2a(&tag, &profile->B2A, pcs_is_xyz, endOfBuffer)) {
                 // Malformed B2A tag
                 return false;
             }

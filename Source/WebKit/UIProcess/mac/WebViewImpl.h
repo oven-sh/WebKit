@@ -750,12 +750,11 @@ public:
 #if ENABLE(IMAGE_ANALYSIS)
     void requestTextRecognition(const URL& imageURL, WebCore::ShareableBitmap::Handle&& imageData, const String& sourceLanguageIdentifier, const String& targetLanguageIdentifier, CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&);
     void computeHasVisualSearchResults(const URL& imageURL, WebCore::ShareableBitmap& imageBitmap, CompletionHandler<void(bool)>&&);
-#endif
+    int32_t processImageAnalyzerRequest(VKCImageAnalyzerRequest *, CompletionHandler<void(RetainPtr<VKCImageAnalysis>&&, NSError *)>&&);
 
-#if ENABLE(IMAGE_ANALYSIS)
     WebCore::FloatRect imageAnalysisInteractionBounds() const { return m_imageAnalysisInteractionBounds; }
     VKCImageAnalysisOverlayView *imageAnalysisOverlayView() const { return m_imageAnalysisOverlayView.get(); }
-#endif
+#endif // ENABLE(IMAGE_ANALYSIS)
 
     bool imageAnalysisOverlayViewHasCursorAtPoint(NSPoint locationInView) const;
 
@@ -937,6 +936,8 @@ private:
     void suppressContentRelativeChildViews();
     void restoreContentRelativeChildViews();
 
+    void updateCursorOverlapsSelectionAndNotifyIfNeeded();
+
     bool m_clientWantsMediaPlaybackControlsView { false };
     bool m_canCreateTouchBars { false };
     bool m_startedListeningToCustomizationEvents { false };
@@ -1015,7 +1016,6 @@ private:
 
 #if ENABLE(IMAGE_ANALYSIS)
     VKCImageAnalyzer* ensureImageAnalyzer();
-    int32_t processImageAnalyzerRequest(VKCImageAnalyzerRequest *, CompletionHandler<void(RetainPtr<VKCImageAnalysis>&&, NSError *)>&&);
 #endif
 
     std::optional<EditorState::PostLayoutData> postLayoutDataForContentEditable();
@@ -1080,6 +1080,7 @@ private:
     const UniqueRef<PAL::HysteresisActivity> m_contentRelativeViewsHysteresis;
     std::unique_ptr<PAL::HysteresisActivity> m_pageScrollingHysteresis;
     bool m_contentRelativeViewsNeedToBeRepositioned { false };
+    bool m_cursorOverlapsSelection { false };
 
     RetainPtr<NSColorSpace> m_colorSpace;
 
@@ -1233,6 +1234,7 @@ private:
     RetainPtr<CAShapeLayer> m_refreshControllerMask;
     CGFloat m_topScrollStretchForRefreshController { 0 };
     bool m_canShowRefreshController { false };
+    bool m_suppressRefreshControllerUpdates { false };
     CGFloat m_cachedTopScrollStretch { 0 };
 #endif
 

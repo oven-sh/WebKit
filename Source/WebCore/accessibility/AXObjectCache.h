@@ -402,6 +402,10 @@ public:
     void setPageActivityState(OptionSet<ActivityState> state) { m_pageActivityState = state; }
     OptionSet<ActivityState> pageActivityState() const { return m_pageActivityState; }
 
+#if ENABLE(WRITING_TOOLS)
+    WEBCORE_EXPORT void setWritingToolsAvailable(bool);
+#endif // ENABLE(WRITING_TOOLS)
+
     inline void childrenChanged(Node& node)
     {
         if (!node.renderer()) {
@@ -683,12 +687,21 @@ public:
     void NODELETE setTextSelectionIntent(const AXTextStateChangeIntent&);
     void NODELETE setIsSynchronizingSelection(bool);
 
+    // While non-std::nullopt, a focus change onto the given element will not be surfaced to assistive
+    // technology. A null target suppresses a *clearing* of focus instead.
+    void beginSuppressingFocusChange(Element* target) { m_suppressedFocusChange = WeakPtr { target }; }
+    void endSuppressingFocusChange() { m_suppressedFocusChange = std::nullopt; }
+
     void postTextStateChangeNotification(Node*, AXTextEditType, const String&, const VisiblePosition&);
     void postTextReplacementNotification(Node*, AXTextEditType deletionType, const String& deletedText, AXTextEditType insertionType, const String& insertedText, const VisiblePosition&);
     void postTextReplacementNotificationForTextControl(HTMLTextFormControlElement&, const String& deletedText, const String& insertedText);
     void postTextStateChangeNotification(Node*, const AXTextStateChangeIntent&, const VisibleSelection&);
     void postTextStateChangeNotification(const Position&, const AXTextStateChangeIntent&, const VisibleSelection&);
     void postLiveRegionChangeNotification(AccessibilityObject&);
+
+    // Testing-only: number of times a live region snapshot has been (re)computed since the last reset.
+    WEBCORE_EXPORT unsigned liveRegionSnapshotBuildCount() const;
+    WEBCORE_EXPORT void resetLiveRegionSnapshotBuildCount();
 
     void frameLoadingEventNotification(LocalFrame*, AXLoadingEvent);
 
@@ -792,6 +805,7 @@ public:
     WEBCORE_EXPORT static void initializeAXThreadIfNeeded();
     WEBCORE_EXPORT static bool NODELETE isAXThreadInitialized();
     WEBCORE_EXPORT RefPtr<AXIsolatedTree> getOrCreateIsolatedTree();
+    void initializeIsolatedTreeGeometry();
 
     static bool isAccessibilityList(Element&);
 private:
@@ -980,6 +994,7 @@ private:
     void updateLabeledBy(Element*);
     void updateRelationsIfNeeded();
     void updateRelationsForTree(ContainerNode&);
+    bool idChangeCanAffectRelations(Element*, const AtomString& oldID, const AtomString& newID) const;
     void relationsNeedUpdate(bool);
     void dirtyIsolatedTreeRelations();
     HashMap<AXID, AXRelations> relations();
@@ -1104,6 +1119,13 @@ private:
     Vector<CanvasFocusPathBoundsChange> m_deferredCanvasFocusPathBoundsChanges;
     std::optional<std::pair<WeakPtr<Element, WeakPtrImplWithEventTargetData>, WeakPtr<Element, WeakPtrImplWithEventTargetData>>> m_deferredFocusedNodeChange;
     std::optional<DeferredRemoteFrameFocus> m_deferredRemoteFrameFocus;
+    // A std::nullopt means no focus change is set up for suppression.
+    // A non-std::nullopt value of nullptr means to suppress the next focus clear.
+    // A non-std::nullopt value of an element means to suppress the focus change to that element.
+    //
+    // In all three cases, the term "suppression" refers to the act of not surfacing a focus
+    // change notification to assistive technologies.
+    std::optional<WeakPtr<Element, WeakPtrImplWithEventTargetData>> m_suppressedFocusChange;
     WeakHashSet<AccessibilityObject> m_deferredUnconnectedObjects;
 #if PLATFORM(MAC)
     HashMap<PreSortedObjectType, Vector<Ref<AccessibilityObject>>, IntHash<PreSortedObjectType>, WTF::StrongEnumHashTraits<PreSortedObjectType>> m_deferredUnsortedObjects;
@@ -1151,6 +1173,9 @@ private:
     // relations were last built. If an element with one of these ids is later inserted, we must
     // re-resolve relations.
     HashSet<AtomString> m_unresolvedRelationTargetIds;
+    // All ids referenced by a relation attribute (resolved or not) as of the last relations build.
+    // Used to decide whether an id-attribute change can affect any relation.
+    HashSet<AtomString> m_referencedRelationTargetIds;
 
 #if USE(ATSPI)
     ListHashSet<RefPtr<AccessibilityObject>> m_deferredParentChangedList;

@@ -20,7 +20,6 @@ execute_process(COMMAND plutil -insert UIDeviceFamily -json "[1,2]" ${CMAKE_CURR
 set(WebKitLegacy_POST_BUILD_COMMAND
     ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/WebKitLegacy-Info.plist
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKitLegacy.framework/Info.plist
-    COMMAND codesign --force --sign - ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKitLegacy.framework
 )
 set_target_properties(WebKitLegacy PROPERTIES
     INSTALL_NAME_DIR "${WebKitLegacy_INSTALL_NAME_DIR}"
@@ -1087,12 +1086,6 @@ foreach (_file ${WebKitLegacy_LEGACY_FORWARDING_HEADERS_FILES})
         file(WRITE "${_target_filename}" "${_migrated}")
     endif ()
 endforeach ()
-
-# Symlink WebKit/ -> WebKitLegacy/ for <WebKit/...> imports.
-if (NOT EXISTS "${WebKitLegacy_FRAMEWORK_HEADERS_DIR}/WebKit")
-    file(CREATE_LINK "${WebKitLegacy_FRAMEWORK_HEADERS_DIR}/WebKitLegacy"
-                     "${WebKitLegacy_FRAMEWORK_HEADERS_DIR}/WebKit" SYMBOLIC)
-endif ()
 
 set(_wkl_fw "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKitLegacy.framework")
 make_directory("${_wkl_fw}")

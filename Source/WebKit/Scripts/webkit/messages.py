@@ -27,7 +27,7 @@ import sys
 
 from webkit.opaque_ipc_types import opaque_ipc_types
 from webkit import parser
-from webkit.model import BUILTIN_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLYDURINGUNBOUNDEDIPC_ATTRIBUTE, MAINTHREADCALLBACK_ATTRIBUTE, STREAM_ATTRIBUTE, CALL_WITH_REPLY_ID_ATTRIBUTE, MessageReceiver, Message
+from webkit.model import BUILTIN_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLYDURINGUNBOUNDEDIPC_ATTRIBUTE, MAINTHREADCALLBACK_ATTRIBUTE, ANYTHREADCALLBACK_ATTRIBUTE, STREAM_ATTRIBUTE, CALL_WITH_REPLY_ID_ATTRIBUTE, MessageReceiver, Message
 
 _license_header = """/*
  * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
@@ -283,6 +283,8 @@ def message_to_struct_declaration(receiver, message):
             result.append('    static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::%s_%sReply; }\n' % (receiver.name, message.name))
         if message.has_attribute(MAINTHREADCALLBACK_ATTRIBUTE):
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::MainThread;\n')
+        elif message.has_attribute(ANYTHREADCALLBACK_ATTRIBUTE):
+            result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::AnyThread;\n')
         else:
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;\n')
         result.append('    using ReplyArguments = std::tuple<%s>;\n' % ', '.join([parameter.type for parameter in message.reply_parameters]))
@@ -367,6 +369,7 @@ def atomic_object_identifier(type):
         'WebCore::IDBObjectStoreIdentifierType',
         'WebCore::IDBObjectStoreIdentifier',
         'WebCore::LibWebRTCSocketIdentifier',
+        'WebCore::PendingStreamIdentifier',
         'WebCore::RenderingResourceIdentifier',
         'WebCore::ResourceLoaderIdentifier',
         'WebCore::SamplesRendererTrackIdentifier',
@@ -467,6 +470,7 @@ def serialized_identifiers():
         'WebCore::PlatformLayerIdentifierID',
         'WebCore::PlaybackTargetClientContextID',
         'WebCore::NonSerializedDataIdentifier',
+        'WebCore::PendingStreamIdentifier',
         'WebCore::PortIdentifier',
         'WebCore::ProcessIdentifier',
         'WebCore::PushSubscriptionIdentifier',
@@ -511,7 +515,6 @@ def serialized_identifiers():
         'WebKit::GPUProcessConnectionIdentifier',
         'WebKit::ImageBufferSetIdentifier',
         'WebKit::RemoteGraphicsContextGLIdentifier',
-        'WebKit::RiceBackendIdentifier',
         'WebKit::IPCConnectionTesterIdentifier',
         'WebKit::IPCStreamTesterIdentifier',
         'WebKit::JSObjectID',
@@ -1564,8 +1567,6 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::GestureRecognizerState': ['"GestureTypes.h"'],
         'WebKit::GestureType': ['"GestureTypes.h"'],
         'WebKit::InputType': ['"FocusedElementInformation.h"'],
-        'WebKit::RiceBackendIdentifier': ['"RiceBackend.h"'],
-        'WebKit::RiceGatherResult': ['"RiceBackend.h"'],
         'WebKit::JSObjectID': ['"JavaScriptEvaluationResult.h"'],
         'WebKit::SnapshotOption': ['"ImageOptions.h"'],
         'WebKit::LastNavigationWasAppInitiated': ['"AppPrivacyReport.h"'],
@@ -1674,6 +1675,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::WebGPU::VertexState': ['"WebGPUVertexState.h"'],
         'WebKit::WebGPU::XREye': ['"WebGPUXREye.h"'],
         'WebKit::WebJSBufferData': ['"WebUserContentControllerDataTypes.h"'],
+        'WebKit::WebMouseEventSyntheticClickType': ['"WebMouseEvent.h"'],
         'WebKit::WebPushD::PushMessageForTesting': ['"PushMessageForTesting.h"'],
         'WebKit::WebPushD::WebPushDaemonConnectionConfiguration': ['"WebPushDaemonConnectionConfiguration.h"'],
         'WebKit::WebScriptMessageHandlerData': ['"WebUserContentControllerDataTypes.h"'],

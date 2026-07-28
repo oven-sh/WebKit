@@ -65,8 +65,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
     ViewWillEndLiveResize()
 
     ExecuteEditCommandWithCallback(String name, String argument) -> ()
-    KeyEvent(WebCore::FrameIdentifier frameID, WebKit::WebKeyboardEvent event)
-    MouseEvent(WebCore::FrameIdentifier frameID, WebKit::WebMouseEvent event, std::optional<Vector<WebKit::SandboxExtensionHandle>> sandboxExtensions)
+    KeyEvent(WebCore::FrameIdentifier frameID, WebKit::WebKeyboardEvent event) -> (bool handled)
+    MouseEvent(WebCore::FrameIdentifier frameID, WebKit::WebMouseEvent event, std::optional<Vector<WebKit::SandboxExtensionHandle>> sandboxExtensions) -> (bool handled, struct std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData)
     SetLastKnownMousePosition(WebCore::FrameIdentifier frameID, WebCore::DoublePoint eventPoint, WebCore::DoublePoint globalPoint, enum:uint8_t std::optional<WebCore::LastKnownMousePositionSource> source);
 
 #if PLATFORM(COCOA)
@@ -82,6 +82,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     PotentialTapAtPosition(std::optional<WebCore::FrameIdentifier> frameID, WebKit::TapIdentifier requestID, WebCore::FloatPoint point, bool shouldRequestMagnificationInformation, enum:uint8_t WebKit::WebEventInputSource inputSource) -> (struct std::optional<WebCore::RemoteUserInputEventData> data)
     CommitPotentialTap(std::optional<WebCore::FrameIdentifier> frameID, OptionSet<WebKit::WebEventModifier> modifiers, WebKit::TransactionID lastLayerTreeTransactionId, WebCore::PointerID pointerId) -> (std::optional<WebCore::FrameIdentifier> remoteFrameID)
     CancelPotentialTap()
+    HandleDoubleTapForDoubleClickAtPoint(WebCore::IntPoint point, OptionSet<WebKit::WebEventModifier> modifiers, WebKit::TransactionID lastLayerTreeTransactionId, enum:uint8_t WebKit::WebEventInputSource inputSource, enum:uint8_t WebKit::WebMouseEventSyntheticClickType syntheticClickType)
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -98,7 +99,6 @@ messages -> WebPage WantsAsyncDispatchMessage {
     AttemptSyntheticClick(WebCore::IntPoint point, OptionSet<WebKit::WebEventModifier> modifiers, WebKit::TransactionID lastLayerTreeTransactionId)
     TapHighlightAtPosition(WebKit::TapIdentifier requestID, WebCore::FloatPoint point)
     DidRecognizeLongPress()
-    HandleDoubleTapForDoubleClickAtPoint(WebCore::IntPoint point, OptionSet<WebKit::WebEventModifier> modifiers, WebKit::TransactionID lastLayerTreeTransactionId)
     InspectorNodeSearchMovedToPosition(WebCore::FloatPoint point)
     InspectorNodeSearchEndedAtPosition(WebCore::FloatPoint point)
     BlurFocusedElement()
@@ -163,7 +163,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #endif
 
 #if PLATFORM(COCOA)
-    StartAutoscrollAtPosition(WebCore::FloatPoint positionInWindow)
+    StartAutoscrollAtPosition(WebCore::FloatPoint positionInWindow) -> (bool didStartAutoscrolling)
     CancelAutoscroll()
 #endif
 
@@ -933,6 +933,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
     UpdateUnderlyingTextVisibilityForTextAnimationID(WTF::UUID uuid, bool visible) -> ()
 
     IntelligenceTextAnimationsDidComplete();
+
+    SetWritingToolsAvailable(bool isAvailable)
 #endif
 
 #if ENABLE(WRITING_TOOLS) && ENABLE(WRITING_TOOLS_TEXT_EFFECTS)

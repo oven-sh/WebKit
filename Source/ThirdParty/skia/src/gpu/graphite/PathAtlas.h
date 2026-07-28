@@ -9,8 +9,8 @@
 #define skgpu_graphite_PathAtlas_DEFINED
 
 #include "include/core/SkStrokeRec.h"
-#include "src/base/SkTInternalLList.h"
 #include "src/core/SkTHash.h"
+#include "src/core/SkTInternalLList.h"
 #include "src/gpu/ResourceKey.h"
 #include "src/gpu/graphite/DrawAtlas.h"
 #include "src/gpu/graphite/geom/CoverageMaskShape.h"
@@ -45,8 +45,6 @@ public:
      */
     PathAtlas(Recorder* recorder, uint32_t requestedWidth, uint32_t requestedHeight);
     virtual ~PathAtlas();
-
-    using MaskAndOrigin = std::pair<CoverageMaskShape, SkIPoint>;
 
     // Subclasses should ensure that the recorded masks have this much padding around each entry.
     // PathAtlas passes in un-padded sizes to onAddShape and assumes that padding has been included
@@ -83,7 +81,7 @@ public:
      * The stroke-and-fill style is drawn as a single combined coverage mask containing the stroke
      * and the fill.
      */
-    std::pair<const Renderer*, std::optional<MaskAndOrigin>> addShape(
+    std::pair<const Renderer*, std::optional<CoverageMaskShape>> addShape(
             const Rect& transformedShapeBounds,
             const Shape& shape,
             const Transform& localToDevice,

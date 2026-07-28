@@ -64,7 +64,7 @@ static constexpr char g_type_message[] = "How to interpret --bytes, one of:\n"
                                          "region_deserialize\n"
                                          "region_set_path\n"
                                          "skdescriptor_deserialize\n"
-                                         "skmeshspecialization\n"
+                                         "skmeshspecification\n"
 #if defined(SK_ENABLE_SKOTTIE)
                                          "skottie_json\n"
 #endif
@@ -131,7 +131,6 @@ int main(int argc, char** argv) {
             "--help lists the valid types. If type is not specified,\n"
             "fuzz will make a guess based on the name of the file.\n");
     CommandLineFlags::Parse(argc, argv);
-    ToolUtils::UsePortableFontMgr();
 
     SkString path = SkString(FLAGS_bytes.isEmpty() ? argv[0] : FLAGS_bytes[0]);
     SkString type = SkString(FLAGS_type.isEmpty() ? "" : FLAGS_type[0]);
@@ -319,6 +318,7 @@ static std::map<std::string, std::string> cf_api_map = {
     {"api_draw_functions", "DrawFunctions"},
     {"api_ddl_threading", "DDLThreadingGL"},
     {"api_gradients", "Gradients"},
+    {"api_grshape", "GrStyledShape"},
     {"api_image_filter", "ImageFilter"},
     {"api_mock_gpu_canvas", "MockGPUCanvas"},
     {"api_null_canvas", "NullCanvas"},
@@ -329,14 +329,17 @@ static std::map<std::string, std::string> cf_api_map = {
     {"api_precompile", "Precompile"},
 #endif
     {"api_raster_n32_canvas", "RasterN32Canvas"},
+    {"api_regionop", "RegionOp"},
     {"api_skparagraph", "SkParagraph"},
     {"api_svg_canvas", "SVGCanvas"},
-    {"cubic_quad_roots", "CubicQuadRoots"},
+    {"api_triangulation", "Triangulation"},
+    {"cubic_roots", "CubicRoots"},
     {"jpeg_encoder", "JPEGEncoder"},
     // TODO(https://crbug.com/459478411): Add OSS-ClusterFuzz coverage of Rust
     // PNG encoder.  (And also decoder?  See earlier discussion about these map
     // entries at https://review.skia.org/1091836/comment/db7930d5_d2e1f030/)
     {"png_encoder", "PNGEncoder"},
+    {"quad_roots", "QuadRoots"},
     {"skia_pathop_fuzzer", "LegacyChromiumPathop"},
     {"webp_encoder", "WEBPEncoder"}
 };
@@ -346,22 +349,28 @@ static std::map<std::string, std::string> cf_map = {
     {"android_codec", "android_codec"},
     {"animated_image_decode", "animated_image_decode"},
     {"colrv1", "colrv1"},
+    {"hdr_agtm", "hdr_agtm"},
     {"image_decode", "image_decode"},
     {"image_decode_incremental", "image_decode_incremental"},
     {"image_filter_deserialize", "filter_fuzz"},
     {"image_filter_deserialize_width", "filter_fuzz"},
+    {"parse_path", "parse_path"},
     {"path_deserialize", "path_deserialize"},
     {"region_deserialize", "region_deserialize"},
     {"region_set_path", "region_set_path"},
+    {"skcolorspace", "color_deserialize"},
     {"skdescriptor_deserialize", "skdescriptor_deserialize"},
     {"skjson", "json"},
     {"skmeshspecification", "skmeshspecification"},
     {"skp", "skp"},
+    {"skruntimeblender", "skruntimeblender"},
+    {"skruntimecolorfilter", "skruntimecolorfilter"},
     {"skruntimeeffect", "skruntimeeffect"},
     {"sksl2glsl", "sksl2glsl"},
     {"sksl2metal", "sksl2metal"},
     {"sksl2spirv", "sksl2spirv"},
     {"sksl2pipeline", "sksl2pipeline"},
+    {"sksl2wgsl", "sksl2wgsl"},
 #if defined(SK_ENABLE_SKOTTIE)
     {"skottie_json", "skottie_json"},
 #endif

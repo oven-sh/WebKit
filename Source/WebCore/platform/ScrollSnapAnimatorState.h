@@ -28,6 +28,7 @@
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FloatSize.h>
 #include <WebCore/LayoutPoint.h>
+#include <WebCore/LayoutSize.h>
 #include <WebCore/PlatformWheelEvent.h>
 #include <WebCore/ScrollAnimationMomentum.h>
 #include <WebCore/ScrollSnapOffsetsInfo.h>
@@ -79,7 +80,7 @@ public:
     void setActiveSnapIndexForAxis(ScrollEventAxis, std::optional<unsigned>);
 
     std::optional<unsigned> closestSnapPointForOffset(ScrollEventAxis, ScrollOffset, const ScrollExtents&, float pageScale) const;
-    float adjustedScrollDestination(ScrollEventAxis, FloatPoint destinationOffset, float velocity, std::optional<float> originalOffset, const ScrollExtents&, float pageScale) const;
+    float adjustedScrollDestination(ScrollEventAxis, FloatPoint destinationOffset, float velocity, std::optional<float> originalOffset, const ScrollExtents&, float pageScale, ScrollSnapPointSelectionMethod = ScrollSnapPointSelectionMethod::Closest) const;
 
     // returns true if an active snap index changed.
     bool resnapAfterLayout(ScrollOffset, const ScrollExtents&, float pageScale);
@@ -101,6 +102,9 @@ private:
 
     bool preserveCurrentTargetForAxis(ScrollEventAxis, NodeIdentifier);
 
+    std::optional<unsigned> snapOffsetIndexForNode(ScrollEventAxis, NodeIdentifier) const;
+    Markable<NodeIdentifier> focusedOrTargetedNodeForAxis(ScrollEventAxis) const;
+
     Vector<SnapOffset<LayoutUnit>> currentlySnappedOffsetsForAxis(ScrollEventAxis) const;
     HashSet<NodeIdentifier> currentlySnappedBoxes(const Vector<SnapOffset<LayoutUnit>>& horizontalOffsets, const Vector<SnapOffset<LayoutUnit>>& verticalOffsets) const;
 
@@ -112,6 +116,14 @@ private:
     // The snap areas aligned at this axis's active offset with enclosing ancestors removed, in tree
     // order — the per-axis candidate list after the spec's ancestor-removal step.
     Vector<size_t, 1> innermostAlignedAreaIndicesForAxis(ScrollEventAxis) const;
+
+    // This axis's focused/targeted snapped box, skipping any whose area is off-screen in a
+    // non-snapping cross axis.
+    std::optional<NodeIdentifier> focusedOrTargetedBox(ScrollEventAxis, const HashSet<NodeIdentifier>& snappedBoxes) const;
+
+    // Whether the snap area is within the snapport in the (non-snapping) cross axis at the last known
+    // scroll position; true (no filtering) when the cross axis snaps or no viewport is known yet.
+    bool isSnapAreaVisibleInCrossAxis(size_t areaIndex, ScrollEventAxis) const;
 
     bool setNearestScrollSnapIndexForAxisAndOffsetInternal(ScrollEventAxis, ScrollOffset, const ScrollExtents&, float pageScale);
     void updateCurrentlySnappedBoxes();
@@ -135,6 +147,16 @@ private:
     HashSet<NodeIdentifier> m_currentlySnappedBoxes;
     Markable<NodeIdentifier> m_currentSnapTargetForHorizontalAxis;
     Markable<NodeIdentifier> m_currentSnapTargetForVerticalAxis;
+
+    // The focused/targeted box seen at the last re-snap, per axis, so we can tell a focus/:target
+    // change (a snap-target selection trigger) apart from a pure layout change.
+    Markable<NodeIdentifier> m_lastFocusedOrTargetedNodeX;
+    Markable<NodeIdentifier> m_lastFocusedOrTargetedNodeY;
+
+    // Scroll offset and viewport size from the last snap/re-snap, for cross-axis
+    // visibility checks.
+    LayoutPoint m_lastLayoutScrollOffset;
+    LayoutSize m_lastViewportSize;
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const ScrollSnapAnimatorState&);

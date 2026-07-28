@@ -246,6 +246,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case FunctionBind:
     case ToObject:
     case CallObjectConstructor:
+    case OpenAsyncFromSyncIterator:
     case CallStringConstructor:
     case CallNumberConstructor:
     case ObjectAssign:
@@ -332,7 +333,6 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case IsObject:
     case IsCallable:
     case IsConstructor:
-    case IsTypedArrayView:
     case ArrayIsArray:
     case CheckTypeInfoFlags:
     case HasStructureWithFlags:

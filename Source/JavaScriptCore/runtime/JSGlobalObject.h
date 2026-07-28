@@ -327,6 +327,7 @@ public:
     LazyProperty<JSGlobalObject, JSFunction> m_objectProtoToStringFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_arrayProtoToStringFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_arrayProtoValuesFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_asyncFromSyncIteratorProtoNextFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_mapProtoEntriesFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_setProtoValuesFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_stringProtoSymbolIteratorFunction;
@@ -817,7 +818,7 @@ public:
     JSCallee* globalCallee() LIFETIME_BOUND { return m_globalCallee.get(); }
     JSCallee* evalCallee() LIFETIME_BOUND { return m_evalCallee.get(); }
 
-    // The following accessors return pristine values, even if a script 
+    // The following accessors return primordial values, even if a script
     // replaces the global object's associated property.
 
     GetterSetter* arraySpeciesGetterSetter() const LIFETIME_BOUND { return m_arraySpeciesGetterSetter.get(); }
@@ -852,6 +853,7 @@ public:
     JSFunction* arrayProtoToStringFunction() const LIFETIME_BOUND { return m_arrayProtoToStringFunction.get(this); }
     JSFunction* arrayProtoValuesFunction() const LIFETIME_BOUND { return m_arrayProtoValuesFunction.get(this); }
     JSFunction* arrayProtoValuesFunctionConcurrently() const LIFETIME_BOUND { return m_arrayProtoValuesFunction.getConcurrently(); }
+    JSFunction* asyncFromSyncIteratorPrototypeNextFunction() const LIFETIME_BOUND { return m_asyncFromSyncIteratorProtoNextFunction.get(this); }
     JSFunction* mapProtoEntriesFunction() const LIFETIME_BOUND { return m_mapProtoEntriesFunction.get(this); }
     JSFunction* mapProtoEntriesFunctionConcurrently() const LIFETIME_BOUND { return m_mapProtoEntriesFunction.getConcurrently(); }
     JSFunction* setProtoValuesFunction() const LIFETIME_BOUND { return m_setProtoValuesFunction.get(this); }

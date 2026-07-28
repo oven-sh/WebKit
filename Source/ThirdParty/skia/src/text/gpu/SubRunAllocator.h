@@ -9,12 +9,12 @@
 #define sktext_gpu_SubRunAllocator_DEFINED
 
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkTLogic.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkArenaAlloc.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkTLogic.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkArenaAlloc.h"
 
 #include <algorithm>
 #include <array>
@@ -126,8 +126,8 @@ public:
     // Allocates 1 aligned byte if n == 0.
     template <size_t Size, size_t Alignment> char* allocateBytesFor(int n = 1)
         requires (Alignment <= kMaxAlignment && Size < kMaxByteSize && Size % Alignment == 0) {
+        SkASSERT_RELEASE(0 <= n && static_cast<size_t>(n) <= kMaxByteSize / Size);
         int size = n ? n * Size : 1;
-        SkASSERT_RELEASE(size <= kMaxByteSize);
         return this->allocateBytes(size, Alignment);
     }
 

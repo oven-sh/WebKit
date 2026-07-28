@@ -1103,6 +1103,16 @@ private:
         return ArrayMode::fromObserved(locker, &profile, action, makeSafe);
     }
 
+    bool profiledArrayMayBeRegExpMatchesArray()
+    {
+        CodeBlock* codeBlock = m_inlineStackTop->m_profiledBlock;
+        ConcurrentJSLocker locker(codeBlock->m_lock);
+        ArrayProfile* profile = codeBlock->getArrayProfile(locker, codeBlock->bytecodeIndex(m_currentInstruction));
+        if (!profile)
+            return false;
+        return profile->mayBeRegExpMatchesArray(locker);
+    }
+
     Node* makeSafe(Node* node)
     {
         if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow))
@@ -3010,8 +3020,17 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (!arrayMode.isJSArray())
                 return CallOptimizationResult::DidNothing;
 
-            if (!arrayMode.isJSArrayWithOriginalStructure())
-                return CallOptimizationResult::DidNothing;
+            if (!arrayMode.isJSArrayWithOriginalStructure()) {
+                if (arrayMode.type() != Array::Contiguous)
+                    return CallOptimizationResult::DidNothing;
+                if (!profiledArrayMayBeRegExpMatchesArray())
+                    return CallOptimizationResult::DidNothing;
+                JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
+                if (!globalObject->havingABadTimeWatchpointSet().isStillValid())
+                    return CallOptimizationResult::DidNothing;
+                if (globalObject->regExpMatchesArrayStructure()->indexingType() != ArrayWithContiguous || globalObject->regExpMatchesArrayWithIndicesStructure()->indexingType() != ArrayWithContiguous)
+                    return CallOptimizationResult::DidNothing;
+            }
 
             // We do not want to convert arrays into one type just to perform indexOf.
             if (arrayMode.doesConversion())
@@ -3030,6 +3049,14 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                     insertChecks();
 
                     Node* array = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+                    if (!arrayMode.isJSArrayWithOriginalStructure()) {
+                        // The guards above ensure that we get here with a non-original structure only when speculating that the array is a RegExp matches array.
+                        m_graph.watchpoints().addLazily(globalObject->havingABadTimeWatchpointSet());
+                        StructureSet structureSet;
+                        structureSet.add(globalObject->regExpMatchesArrayStructure());
+                        structureSet.add(globalObject->regExpMatchesArrayWithIndicesStructure());
+                        addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(structureSet)), array);
+                    }
                     addVarArgChild(array);
                     addVarArgChild(get(virtualRegisterForArgumentIncludingThis(1, registerOffset))); // Search element.
                     if (argumentCountIncludingThis >= 3)
@@ -3192,7 +3219,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
-            setResult(addToGraph(IsCellWithType, OpInfo(ErrorInstanceType), get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
+            setResult(addToGraph(IsCellWithType, OpInfo(JSTypeRange { ErrorInstanceType, ErrorInstanceType }), get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
             return CallOptimizationResult::Inlined;
         }
 
@@ -4018,24 +4045,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
-        case ObjectPrototypeIsPrototypeOfIntrinsic: {
-            if (argumentCountIncludingThis < 2)
-                return CallOptimizationResult::DidNothing;
-
-            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
-                return CallOptimizationResult::DidNothing;
-
-            // When |this| is an object, isPrototypeOf(V) is exactly the prototype-chain walk of
-            // OrdinaryHasInstance, so reuse the InstanceOf node. Speculate ObjectUse on |this| and
-            // OSR exit to the C++ slow path for primitive receivers.
-            insertChecks();
-            Node* prototype = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
-            Node* value = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
-            addToGraph(Check, Edge(prototype, ObjectUse));
-            setResult(addToGraph(InstanceOf, value, prototype));
-            return CallOptimizationResult::Inlined;
-        }
-
         case ReflectOwnKeysIntrinsic: {
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
@@ -4049,7 +4058,16 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             ASSERT(argumentCountIncludingThis == 2);
 
             insertChecks();
-            setResult(addToGraph(IsTypedArrayView, OpInfo(prediction), get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
+            setResult(addToGraph(IsCellWithType, OpInfo(JSTypeRange { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayTypeExcludingDataView) }), get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case ArrayBufferIsViewIntrinsic: {
+            if (argumentCountIncludingThis < 2)
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            setResult(addToGraph(IsCellWithType, OpInfo(JSTypeRange { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayType) }), get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
             return CallOptimizationResult::Inlined;
         }
 
@@ -5444,21 +5462,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSWrapForValidIterator::Field::IteratedIterator)), wrapperObject, iterator);
             addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSWrapForValidIterator::Field::IteratedNextMethod)), wrapperObject, nextMethod);
             setResult(wrapperObject);
-            return CallOptimizationResult::Inlined;
-        }
-
-        case AsyncFromSyncIteratorCreateIntrinsic: {
-            if (argumentCountIncludingThis < 3)
-                return CallOptimizationResult::DidNothing;
-
-            insertChecks();
-            JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-            Node* syncIterator = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
-            Node* nextMethod = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
-            Node* asyncIteratorObject = addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(globalObject->asyncFromSyncIteratorStructure())));
-            addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSAsyncFromSyncIterator::Field::SyncIterator)), asyncIteratorObject, syncIterator);
-            addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSAsyncFromSyncIterator::Field::NextMethod)), asyncIteratorObject, nextMethod);
-            setResult(asyncIteratorObject);
             return CallOptimizationResult::Inlined;
         }
 
@@ -8278,7 +8281,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
         case op_new_array_with_size: {
             auto bytecode = currentInstruction->as<OpNewArrayWithSize>();
             ArrayAllocationProfile& profile = bytecode.metadata(codeBlock).m_arrayAllocationProfile;
-            set(bytecode.m_dst, addToGraph(NewArrayWithSize, OpInfo(profile.selectIndexingTypeConcurrently()), get(bytecode.m_length)));
+            set(bytecode.m_dst, addToGraph(NewArrayWithSize, OpInfo(profile.selectIndexingTypeConcurrently()), OpInfo(profile.vectorLengthHintConcurrently()), get(bytecode.m_length)));
             NEXT_OPCODE(op_new_array_with_size);
         }
 
@@ -8291,7 +8294,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
             NewArrayWithSpeciesData data { };
             data.arrayMode = arrayMode.asWord();
             data.indexingMode = profile.selectIndexingTypeConcurrently();
-            set(bytecode.m_dst, addToGraph(NewArrayWithSpecies, OpInfo(data.asQuadWord()), OpInfo(prediction), Edge(get(bytecode.m_length)), Edge(get(bytecode.m_array), KnownCellUse)));
+            data.vectorLengthHint = profile.vectorLengthHintConcurrently();
+            set(bytecode.m_dst, addToGraph(NewArrayWithSpecies, OpInfo(data.asQuadWord), OpInfo(prediction), Edge(get(bytecode.m_length)), Edge(get(bytecode.m_array), KnownCellUse)));
             NEXT_OPCODE(op_new_array_with_species);
         }
 
@@ -8804,7 +8808,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
         case op_is_cell_with_type: {
             auto bytecode = currentInstruction->as<OpIsCellWithType>();
             Node* value = get(bytecode.m_operand);
-            set(bytecode.m_dst, addToGraph(IsCellWithType, OpInfo(bytecode.m_type), value));
+            set(bytecode.m_dst, addToGraph(IsCellWithType, OpInfo(JSTypeRange { bytecode.m_type, bytecode.m_type }), value));
             NEXT_OPCODE(op_is_cell_with_type);
         }
 
@@ -11657,7 +11661,7 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
             failedBlock = allocateUntargetableBlock();
 
             Node* isKnownIterFunction = addToGraph(CompareEqPtr, OpInfo(frozenSymbolIteratorFunction), get(bytecode.m_symbolIterator));
-            Node* isArray = addToGraph(IsCellWithType, OpInfo(ArrayType), get(bytecode.m_iterable));
+            Node* isArray = addToGraph(IsCellWithType, OpInfo(JSTypeRange { ArrayType, ArrayType }), get(bytecode.m_iterable));
 
             BranchData* branchData = m_graph.m_branchData.add();
             branchData->taken = BranchTarget(fastArrayBlock);
@@ -12905,12 +12909,14 @@ void ByteCodeParser::handleAsyncIteratorOpen(const JSInstruction* currentInstruc
     CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
     auto bytecode = currentInstruction->as<OpAsyncIteratorOpen>();
     auto& metadata = bytecode.metadata(m_inlineStackTop->m_codeBlock);
-    uint32_t seenModes = metadata.m_iterationMetadata.seenModes & (static_cast<uint32_t>(IterationMode::FastAsyncGenerator) | static_cast<uint32_t>(IterationMode::Generic));
+    uint32_t seenModes = metadata.m_iterationMetadata.seenModes & (static_cast<uint32_t>(IterationMode::FastAsyncGenerator) | static_cast<uint32_t>(IterationMode::AsyncFromSync) | static_cast<uint32_t>(IterationMode::Generic));
 
     JSGlobalObject* globalObject = codeBlock->globalObjectFor(currentCodeOrigin());
 
-    if (!globalObject->promiseSpeciesWatchpointSet().isStillValid())
+    if (!globalObject->promiseSpeciesWatchpointSet().isStillValid()) {
         seenModes &= ~static_cast<uint32_t>(IterationMode::FastAsyncGenerator);
+        seenModes &= ~static_cast<uint32_t>(IterationMode::AsyncFromSync);
+    }
 
     unsigned numberOfRemainingModes = std::popcount(seenModes);
     ASSERT(numberOfRemainingModes <= numberOfIterationModes);
@@ -13026,7 +13032,7 @@ void ByteCodeParser::handleAsyncIteratorOpen(const JSInstruction* currentInstruc
         }
     };
 
-    // Fast path. A genuine async generator is its own iterator, so when the fetched @@asyncIterator is the
+    // A genuine async generator is its own iterator, so when the fetched @@asyncIterator is the
     // primordial method, skip the symbolCall and set iterator = iterable.
     if (seenModes & IterationMode::FastAsyncGenerator) {
         m_graph.watchpoints().addLazily(globalObject->promiseSpeciesWatchpointSet());
@@ -13070,13 +13076,60 @@ void ByteCodeParser::handleAsyncIteratorOpen(const JSInstruction* currentInstruc
         m_currentIndex = startIndex;
     }
 
+    // AsyncFromSync path. When @@asyncIterator is absent, GetIterator(iterable, SYNC) wraps the sync iterable in
+    // %AsyncFromSyncIteratorPrototype% (built by OpenAsyncFromSyncIterator). The wrapper's next is invariantly
+    // %AsyncFromSyncIteratorPrototype%.next, so drive it through the same fast-consumer sentinel.
+    if (seenModes & IterationMode::AsyncFromSync) {
+        m_graph.watchpoints().addLazily(globalObject->promiseSpeciesWatchpointSet());
+        numberOfRemainingModes--;
+
+        connectFailedBlock();
+
+        emitExitOK();
+        if (!numberOfRemainingModes) {
+            // Only async-from-sync was seen: speculate @@asyncIterator is absent (undefined/null). A present one
+            // is a mis-speculation that deopts to the baseline (which builds the wrapper on the generic open).
+            addToGraph(Check, Edge(get(bytecode.m_symbolIterator), OtherUse));
+        } else {
+            // A later mode (Generic) handles @@asyncIterator being present, so branch there when it is present.
+            BasicBlock* asyncFromSyncBlock = allocateUntargetableBlock();
+            failedBlock = allocateUntargetableBlock();
+            BranchData* branchData = m_graph.m_branchData.add();
+            branchData->taken = BranchTarget(asyncFromSyncBlock);
+            branchData->notTaken = BranchTarget(failedBlock);
+            addToGraph(Branch, OpInfo(branchData), addToGraph(IsUndefinedOrNull, get(bytecode.m_symbolIterator)));
+            flushForTerminal();
+
+            m_currentBlock = asyncFromSyncBlock;
+            clearCaches();
+            keepUsesOfCurrentInstructionAlive(currentInstruction, m_currentIndex.checkpoint());
+            emitExitOK();
+        }
+
+        Node* wrapper = addToGraph(OpenAsyncFromSyncIterator, get(bytecode.m_iterable));
+        // iterator = wrapper (symbolCall's def, produced without a call). Set at the symbolCall checkpoint.
+        set(bytecode.m_iterator, wrapper);
+        // Advance symbolCall (0) -> getNext (1). The wrapper's next is invariantly primordial, so go straight
+        // to the fused sentinel (species watchpoint subscribed above); a later tamper deopts us.
+        progressToNextCheckpoint();
+        set(bytecode.m_next, jsConstant(m_vm->fastAsyncGeneratorSentinel()));
+        m_currentIndex = osrExitIndex;
+        m_exitOK = true;
+        processSetLocalQueue();
+        addToGraph(Jump, OpInfo(continuation));
+        generatedCase = true;
+        m_currentIndex = startIndex;
+    }
+
     // Generic path. iterator = symbolIterator.@call(iterable), then getNext.
-    // Reached when the site went generic, or as the fast path's fallthrough
-    // (@@asyncIterator was not the primordial method at runtime).
+    // Reached when the site went generic, or as a fast path's fallthrough (@@asyncIterator was not the
+    // primordial method / not absent at runtime).
     if (seenModes & IterationMode::Generic) {
         ASSERT(numberOfRemainingModes);
         connectFailedBlock();
 
+        emitExitOK();
+        addToGraph(Check, Edge(get(bytecode.m_symbolIterator), CellUse));
         {
             Node* callTarget = get(calleeFor(bytecode, m_currentIndex.checkpoint()));
             int registerOffset = -static_cast<int>(stackOffsetInRegistersForCall(bytecode, m_currentIndex.checkpoint()));
@@ -13206,7 +13259,8 @@ void ByteCodeParser::handleAsyncIteratorNext(const JSInstruction* currentInstruc
 
         Node* iterator = get(bytecode.m_iterator);
         Node* driver = get(bytecode.m_driver);
-        addToGraph(EnqueueAsyncGeneratorDriver, iterator, driver);
+        Node* resumeValue = bytecode.m_hasValue ? get(resumeValueOperandFor(bytecode)) : jsConstant(JSValue());
+        addToGraph(EnqueueAsyncGeneratorDriver, iterator, driver, resumeValue);
         set(bytecode.m_dst, jsConstant(m_vm->fastAsyncGeneratorSentinel()));
 
         m_currentIndex = osrExitIndex;
@@ -13244,11 +13298,13 @@ void ByteCodeParser::handleAsyncIteratorNext(const JSInstruction* currentInstruc
 
     if (!generatedCase) {
         // No mode observed (cold site): bail to the baseline, exactly like handleIteratorNext.
-        // Phantom every USES operand (next, iterator, driver) so all are recoverable on exit.
+        // Phantom every USES operand (next, iterator, driver, value) so all are recoverable on exit.
         addToGraph(ForceOSRExit);
         addToGraph(Phantom, get(bytecode.m_next));
         addToGraph(Phantom, get(bytecode.m_iterator));
         addToGraph(Phantom, get(bytecode.m_driver));
+        if (bytecode.m_hasValue)
+            addToGraph(Phantom, get(resumeValueOperandFor(bytecode)));
         set(bytecode.m_dst, jsConstant(jsUndefined()));
 
         m_currentIndex = osrExitIndex;

@@ -889,12 +889,30 @@ WI.Resource = class Resource extends WI.SourceCode
         } else {
             // If we have the requestIdentifier we can get the actual response for this specific resource.
             // Otherwise the content will be cached resource data, which might not exist anymore.
-            if (this._requestIdentifier)
-                return this._target.NetworkAgent.getResponseBody(this._requestIdentifier);
+            if (this._requestIdentifier) {
+                // Under Site Isolation the backend target's Network agent owns the response data for
+                // cross-process requestIds that the resource's own target can't resolve; route there.
+                // Gated on enabledNetworkForSiteIsolation rather than hasDomain("Network") alone, which
+                // is statically true on the backend target even when no Network agent is enabled on it.
+                let networkTarget = this._target;
+                if (WI.networkManager.enabledNetworkForSiteIsolation && WI.backendTarget && WI.backendTarget !== this._target && WI.backendTarget.hasDomain("Network"))
+                    networkTarget = WI.backendTarget;
+                return networkTarget.NetworkAgent.getResponseBody(this._requestIdentifier);
+            }
 
             // There is no request identifier or frame to request content from.
-            if (this._parentFrame)
-                return this._target.PageAgent.getResourceContent(this._parentFrame.id, this._url);
+            if (this._parentFrame) {
+                // Under Site Isolation a cross-origin frame's content lives in another WebContent
+                // process, unreachable from this resource's own (page) target -- its PageAgent is
+                // the in-process InspectorPageAgent, which only resolves LocalFrames and would fail
+                // assertFrame() for the remote child. WI.backendTarget's PageAgent is the UIProcess
+                // ProxyingPageAgent, which routes getResourceContent to the frame's hosting process.
+                // Without Site Isolation WI.backendTarget has no PageAgent at all, so this is unchanged.
+                // Can't use hasCommand("Page.getResourceContent") here: that only reflects the static
+                // protocol, which declares the command regardless of whether SI is actually on.
+                let contentTarget = WI.backendTarget && WI.networkManager.enabledPageForSiteIsolation ? WI.backendTarget : this._target;
+                return contentTarget.PageAgent.getResourceContent(this._parentFrame.id, this._url);
+            }
         }
 
         return Promise.reject(new Error("Content request failed."));

@@ -513,6 +513,7 @@ enum class VisitedLinkTableIdentifierType;
 enum class WebEventModifier : uint8_t;
 enum class WebEventType : uint32_t;
 enum class WebEventInputSource : uint8_t;
+enum class WebMouseEventSyntheticClickType : uint8_t;
 
 struct ContentWorldData;
 struct ContentWorldIdentifierType;
@@ -1135,6 +1136,7 @@ public:
     void sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier, WebCore::Node*, WebCore::FloatPoint);
     void handleSyntheticClick(std::optional<WebCore::FrameIdentifier>, WebCore::Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebKit::WebEventModifier>, WebCore::PointerID = WebCore::mousePointerID);
     void completeSyntheticClick(std::optional<WebCore::FrameIdentifier>, WebCore::Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebKit::WebEventModifier>, WebCore::SyntheticClickType, WebCore::PointerID = WebCore::mousePointerID);
+    void handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId, WebEventInputSource, WebMouseEventSyntheticClickType);
     void invokePendingSyntheticClickCallback(WebCore::SyntheticClickResult);
 #endif
 
@@ -1166,7 +1168,6 @@ public:
     void attemptSyntheticClick(const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId);
     void tapHighlightAtPosition(WebKit::TapIdentifier, const WebCore::FloatPoint&);
     void didRecognizeLongPress();
-    void handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId);
 
     void inspectorNodeSearchMovedToPosition(const WebCore::FloatPoint&);
     void inspectorNodeSearchEndedAtPosition(const WebCore::FloatPoint&);
@@ -1242,7 +1243,7 @@ public:
 
 #if PLATFORM(COCOA)
     WebCore::RenderObject* rendererForSelectionAutoscroll(WebCore::LocalFrame&) const;
-    void startAutoscrollAtPosition(const WebCore::FloatPoint&);
+    void startAutoscrollAtPosition(const WebCore::FloatPoint&, CompletionHandler<void(bool)>&&);
     void cancelAutoscroll();
 #endif
 
@@ -2132,6 +2133,10 @@ public:
     void addDestinationTextAnimationForActiveWritingToolsSession(const WTF::UUID& sourceAnimationUUID, const WTF::UUID& destinationAnimationUUID, const std::optional<WebCore::CharacterRange>&, const String&);
     void saveSnapshotOfTextPlaceholderForAnimation(const WebCore::SimpleRange&);
     void clearAnimationsForActiveWritingToolsSession();
+    void showWritingToolsAffordance();
+
+    bool writingToolsAvailable() const { return m_writingToolsAvailable; }
+    void setWritingToolsAvailable(bool);
 
     void createTextIndicatorForTextAnimationID(const WTF::UUID&, CompletionHandler<void(RefPtr<WebCore::TextIndicator>&&)>&&);
 
@@ -2210,6 +2215,7 @@ public:
 #endif
 
     RefPtr<WebCore::ShareableBitmap> shareableBitmapSnapshotForNode(WebCore::Node&);
+    RefPtr<WebCore::ShareableBitmap> shareableBitmapForNodeIncludingOffscreen(WebCore::Node&);
 
     void paintRemoteFrameContents(WebCore::FrameIdentifier, const WebCore::IntRect&, WebCore::GraphicsContext&);
 
@@ -2374,8 +2380,8 @@ private:
 
     void setNeedsFontAttributes(bool);
 
-    void mouseEvent(WebCore::FrameIdentifier, const WebMouseEvent&, std::optional<Vector<SandboxExtensionHandle>>&& sandboxExtensions);
-    void keyEvent(WebCore::FrameIdentifier, const WebKeyboardEvent&);
+    void mouseEvent(WebCore::FrameIdentifier, const WebMouseEvent&, std::optional<Vector<SandboxExtensionHandle>>&& sandboxExtensions, CompletionHandler<void(bool handled, std::optional<WebCore::RemoteUserInputEventData>)>&&);
+    void keyEvent(WebCore::FrameIdentifier, const WebKeyboardEvent&, CompletionHandler<void(bool handled)>&&);
 
     void setLastKnownMousePosition(WebCore::FrameIdentifier, const WebCore::DoublePoint&, const WebCore::DoublePoint&, std::optional<WebCore::LastKnownMousePositionSource>&& = std::nullopt);
 
@@ -3069,7 +3075,7 @@ private:
     unsigned m_cachedPageCount { 0 };
 
     struct DeferredDidReceiveMouseEvent {
-        std::optional<WebEventType> type;
+        CompletionHandler<void(bool handled, std::optional<WebCore::RemoteUserInputEventData>)> completionHandler;
         bool handled { false };
     };
     std::optional<DeferredDidReceiveMouseEvent> m_deferredDidReceiveMouseEvent;
@@ -3353,7 +3359,7 @@ private:
 #endif
 
 #if ENABLE(GPU_PROCESS)
-    RefPtr<RemoteRenderingBackendProxy> m_remoteRenderingBackendProxy;
+    const RefPtr<RemoteRenderingBackendProxy> m_remoteRenderingBackendProxy;
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS)
@@ -3382,6 +3388,7 @@ private:
 
 #if ENABLE(WRITING_TOOLS)
     const UniqueRef<TextAnimationController> m_textAnimationController;
+    bool m_writingToolsAvailable { false };
 #endif
 
     Vector<WebCore::TextExtraction::FilterRule> m_textExtractionFilterRules;

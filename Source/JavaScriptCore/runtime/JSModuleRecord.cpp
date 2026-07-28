@@ -32,6 +32,7 @@
 #include "JSAsyncGeneratorFunction.h"
 #include "JSCInlines.h"
 #include "JSGeneratorFunction.h"
+#include "JSMicrotask.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
@@ -39,25 +40,22 @@
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
-#include "VariableEnvironmentInlines.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
 
 const ClassInfo JSModuleRecord::s_info = { "ModuleRecord"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleRecord) };
 
-JSModuleRecord* JSModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, CodeFeatures features)
+JSModuleRecord* JSModuleRecord::create(JSGlobalObject* globalObject, VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
 {
-    JSModuleRecord* instance = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, structure, moduleKey, sourceCode, declaredVariables, lexicalVariables, features);
+    JSModuleRecord* instance = new (NotNull, allocateCell<JSModuleRecord>(vm)) JSModuleRecord(vm, structure, moduleKey, sourceCode, features);
     instance->finishCreation(globalObject, vm);
     return instance;
 }
 
-JSModuleRecord::JSModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, CodeFeatures features)
+JSModuleRecord::JSModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
     : Base(vm, structure, moduleKey)
     , m_sourceCode(sourceCode)
-    , m_declaredVariables(declaredVariables)
-    , m_lexicalVariables(lexicalVariables)
     , m_features(features)
 {
 }
@@ -102,6 +100,12 @@ void JSModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSModuleRecord);
 
+bool JSModuleRecord::isTopLevelExecutionFinished() const
+{
+    JSValue state = internalField(Field::State).get();
+    return !state.isNumber() || state.asInt32AsAnyInt() == std::to_underlying(State::Executing);
+}
+
 JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue, JSValue resumeMode)
 {
     if (!m_moduleProgramExecutable) {
@@ -121,7 +125,7 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
     JSValue resultOrAwaitedValue = vm.interpreter.executeModuleProgram(this, executable, globalObject, moduleEnvironment(), sentValue, resumeMode);
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (JSValue state = internalField(Field::State).get(); !state.isNumber() || state.asInt32AsAnyInt() == std::to_underlying(State::Executing))
+    if (isTopLevelExecutionFinished())
         m_moduleProgramExecutable.clear();
 
     RELEASE_AND_RETURN(scope, resultOrAwaitedValue);
@@ -163,12 +167,7 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
         // 10.b. Perform AsyncBlockStart(capability, module.[[ECMAScriptCode]], moduleContext).
         asyncCapability(vm, capability);
         JSValue result = globalObject->moduleLoader()->evaluate(globalObject, identifierToJSValue(vm, moduleKey()), this, nullptr, jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
-        if (scope.exception())
-            capability->rejectWithCaughtException(vm, scope);
-        else if (JSValue state = internalField(Field::State).get(); !state.isNumber() || state.asInt32AsAnyInt() == std::to_underlying(State::Executing))
-            capability->resolve(globalObject, vm, result);
-        else
-            JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, result, InternalMicrotask::AsyncModuleExecutionResume, this);
+        asyncModuleResolveEvaluation(globalObject, vm, scope, this, result);
     }
     // 11. Return unused.
 }

@@ -650,6 +650,7 @@ public:
     bool isSwitch() const { return role() == AccessibilityRole::Switch; }
     bool isToggleButton() const { return role() == AccessibilityRole::ToggleButton; }
     bool NODELETE isTextControl() const;
+    static bool isTextControl(AccessibilityRole);
     virtual bool isEditableWebArea() const = 0;
     virtual bool isNonNativeTextControl() const = 0;
     bool isTabList() const { return role() == AccessibilityRole::TabList; }
@@ -1057,6 +1058,10 @@ public:
 
     virtual CharacterRange selectedTextRange() const = 0;
     virtual int insertionPointLineNumber() const = 0;
+
+#if ENABLE(WRITING_TOOLS)
+    virtual bool writingToolsAvailable() const = 0;
+#endif // ENABLE(WRITING_TOOLS)
 
     virtual URL url() const = 0;
     virtual VisibleSelection selection() const = 0;

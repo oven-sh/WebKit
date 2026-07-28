@@ -8,14 +8,14 @@
 #ifndef SkRasterPipeline_opts_DEFINED
 #define SkRasterPipeline_opts_DEFINED
 
+#include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkSpan_impl.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkTemplates.h"
 #include "modules/skcms/skcms.h"
-#include "src/base/SkUtils.h"  // unaligned_{load,store}
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkRasterPipelineContextUtils.h"
+#include "src/core/SkUtils.h"  // unaligned_{load,store}
 #include "src/shaders/SkPerlinNoiseShaderType.h"
 #include "src/sksl/tracing/SkSLTraceHook.h"
 
@@ -5548,8 +5548,28 @@ SI F min(float a, F     b) { return min(F_(a),    b ); }
 SI I32 if_then_else(I32 c, I32 t, I32 e) {
     return (t & c) | (e & ~c);
 }
+#if defined(SKRP_CPU_AVX2)
+// Some compilers did not vectorize this, so explicitly call the intrinsics
+SI I32 max(I32 x, I32 y) {
+    __m256i x_lo, x_hi, y_lo, y_hi;
+    split(x, &x_lo, &x_hi);
+    split(y, &y_lo, &y_hi);
+    return join<I32>(_mm256_max_epi32(x_lo, y_lo), _mm256_max_epi32(x_hi, y_hi));
+}
+SI I32 min(I32 x, I32 y) {
+    __m256i x_lo, x_hi, y_lo, y_hi;
+    split(x, &x_lo, &x_hi);
+    split(y, &y_lo, &y_hi);
+    return join<I32>(_mm256_min_epi32(x_lo, y_lo), _mm256_min_epi32(x_hi, y_hi));
+}
+#elif defined(SKRP_CPU_NEON)
+// TODO(kjlubick) make sure NEON code is handled well.
 SI I32 max(I32 x, I32 y) { return if_then_else(x < y, y, x); }
 SI I32 min(I32 x, I32 y) { return if_then_else(x < y, x, y); }
+#else
+SI I32 max(I32 x, I32 y) { return if_then_else(x < y, y, x); }
+SI I32 min(I32 x, I32 y) { return if_then_else(x < y, x, y); }
+#endif
 
 SI I32 max(I32     a, int32_t b) { return max(     a , I32_(b)); }
 SI I32 max(int32_t a, I32     b) { return max(I32_(a),      b ); }

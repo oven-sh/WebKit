@@ -748,6 +748,7 @@ public:
     virtual void didEndSyntheticMomentumScrolling() { }
 
     virtual void didRestoreScrollPosition() = 0;
+    virtual void pageScaleFactorDidChange() { }
 
     virtual bool windowIsFrontWindowUnderMouse(const NativeWebMouseEvent&) { return false; }
 
@@ -825,6 +826,8 @@ public:
 
     virtual void addTextAnimationForAnimationID(const WTF::UUID&, const WebCore::TextAnimationData&) = 0;
     virtual void removeTextAnimationForAnimationID(const WTF::UUID&) = 0;
+
+    virtual void showWritingToolsAffordance() { }
 
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
     virtual void addTextEffectForID(const WTF::UUID&, WebCore::TextEffectData&&) = 0;

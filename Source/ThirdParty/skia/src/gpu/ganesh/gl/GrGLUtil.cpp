@@ -9,7 +9,7 @@
 #include "include/core/SkString.h"
 #include "include/gpu/ganesh/gl/GrGLExtensions.h"
 #include "include/gpu/ganesh/gl/GrGLFunctions.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "src/core/SkStringUtils.h"
 #include "src/gpu/ganesh/GrStencilSettings.h"
 
@@ -232,6 +232,9 @@ static GrGLRenderer get_renderer(const char* rendererString, const GrGLExtension
                 }
                 if (adrenoNumber == 620) {
                     return GrGLRenderer::kAdreno620;
+                }
+                if (adrenoNumber == 621) {
+                    return GrGLRenderer::kAdreno621;
                 }
                 if (adrenoNumber == 630) {
                     return GrGLRenderer::kAdreno630;

@@ -46,7 +46,7 @@ enum class ReasonCollectionMode : bool {
 };
 
 enum class GridAvoidanceReason : uint8_t {
-    GridHasVerticalWritingMode,
+    GridHasUnsupportedWritingMode,
     GridHasRTLDirection, // http://webkit.org/b/317334
     GridHasMarginTrim,
     GridNeedsBaseline,
@@ -71,10 +71,10 @@ enum class GridAvoidanceReason : uint8_t {
     GridHasUnsupportedMaxHeight,
     GridItemHasNonInitialMaxWidth,
     GridItemHasNonInitialMaxHeight,
-    GridItemHasBorder,
-    GridItemHasPadding,
+    GridItemHasPercentOrCalcPadding,
     GridItemHasMargin,
-    GridItemHasVerticalWritingMode,
+    GridItemHasBorderBoxSizing,
+    GridItemHasUnsupportedWritingMode,
     GridItemHasRTLDirection,
     GridItemHasAspectRatio,
     GridItemHasUnsupportedInlineAxisAlignment,
@@ -90,7 +90,6 @@ enum class GridAvoidanceReason : uint8_t {
     GridItemHasUnsupportedColumnEnd,
 
     GridNeedsImplicitColumnsForItemsLockedToRow,
-    GridItemHasAutomaticRowStartPlacement,
     GridItemRowStartHasLineName,
     GridItemRowStartHasNegativeLineNumber,
     GridItemRowStartHasSpan,
@@ -125,7 +124,6 @@ static bool avoidanceReasonIsColumnPlacementRelated(GridAvoidanceReason gridAvoi
 static bool avoidanceReasonIsRowPlacementRelated(GridAvoidanceReason gridAvoidanceReason)
 {
     switch (gridAvoidanceReason) {
-    case GridAvoidanceReason::GridItemHasAutomaticRowStartPlacement:
     case GridAvoidanceReason::GridItemRowStartHasLineName:
     case GridAvoidanceReason::GridItemRowStartHasNegativeLineNumber:
     case GridAvoidanceReason::GridItemRowStartHasSpan:
@@ -204,11 +202,31 @@ static bool hasValidColumnEnd(const CSS::Keyword::Auto& autoColumnStart, const S
     );
 }
 
+static bool hasValidRowEnd(const CSS::Keyword::Auto& autoRowStart, const Style::GridPosition rowEnd)
+{
+    UNUSED_PARAM(autoRowStart);
+
+    return WTF::switchOn(rowEnd,
+        [](const CSS::Keyword::Auto&) {
+            return true;
+        },
+        [](const Style::GridPositionExplicit&) {
+            return false;
+        },
+        [](const Style::GridPositionSpan&) {
+            return false;
+        },
+        [](const Style::CustomIdent&) {
+            return false;
+        }
+    );
+}
+
 static bool hasValidRowEnd(const Style::GridPositionExplicit& explicitRowStart, const Style::GridPosition rowEnd, size_t linesFromGridTemplateRowsCount)
 {
     return WTF::switchOn(rowEnd,
         [&](const CSS::Keyword::Auto&) {
-            return false;
+            return true;
         },
         [&](const Style::GridPositionExplicit&) {
             if (!rowEnd.namedGridLine().value.isEmpty() || rowEnd.explicitPosition() < 0 || rowEnd.explicitPosition() > static_cast<int>(linesFromGridTemplateRowsCount))
@@ -251,7 +269,7 @@ static bool gridItemHasValidWidth(const Style::PreferredSize& width)
 
 static bool canComputeAutomaticInlineSize(const RenderBox& gridItem, const StyleSelfAlignmentData& usedJustifySelf)
 {
-    return usedJustifySelf.position() == ItemPosition::Normal
+    return (usedJustifySelf.position() == ItemPosition::Normal || usedJustifySelf.position() == ItemPosition::Stretch)
         && !protect(gridItem.element())->isReplaced()
         && !gridItem.style().aspectRatio().hasRatio();
 }
@@ -273,7 +291,7 @@ static bool gridItemHasValidHeight(const Style::PreferredSize& height)
 
 static bool canComputeAutomaticBlockSize(const RenderBox& gridItem, const StyleSelfAlignmentData& usedAlignSelf)
 {
-    return usedAlignSelf.position() == ItemPosition::Normal
+    return (usedAlignSelf.position() == ItemPosition::Normal || usedAlignSelf.position() == ItemPosition::Stretch)
         && !protect(gridItem.element())->isReplaced()
         && !gridItem.style().aspectRatio().hasRatio();
 }
@@ -295,8 +313,8 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
     if (renderGridStyle->display() != Style::DisplayType::BlockGrid)
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::NotAGrid, reasons, reasonCollectionMode);
 
-    if (!renderGridStyle->writingMode().isHorizontal())
-        ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasVerticalWritingMode, reasons, reasonCollectionMode);
+    if (!renderGridStyle->writingMode().isHorizontal() || renderGridStyle->writingMode().isBlockFlipped())
+        ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedWritingMode, reasons, reasonCollectionMode);
 
     if (renderGridStyle->writingMode().bidiDirection() == TextDirection::RTL)
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasRTLDirection, reasons, reasonCollectionMode);
@@ -451,7 +469,7 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
 
         auto usedJustifySelf = gridItemStyle->justifySelf().resolve(renderGridStyle.ptr());
 
-        if ((usedJustifySelf.position() != ItemPosition::Start && usedJustifySelf.position() != ItemPosition::Normal)
+        if ((usedJustifySelf.position() != ItemPosition::Start && usedJustifySelf.position() != ItemPosition::Normal && usedJustifySelf.position() != ItemPosition::Stretch)
             || usedJustifySelf.overflow() != OverflowAlignment::Default || usedJustifySelf.positionType() != ItemPositionType::NonLegacy)
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedInlineAxisAlignment, reasons, reasonCollectionMode);
 
@@ -464,7 +482,7 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
 
         auto usedAlignSelf = gridItemStyle->alignSelf().resolve(renderGridStyle.ptr());
 
-        if ((usedAlignSelf.position() != ItemPosition::Start && usedAlignSelf.position() != ItemPosition::Normal)
+        if ((usedAlignSelf.position() != ItemPosition::Start && usedAlignSelf.position() != ItemPosition::Normal && usedAlignSelf.position() != ItemPosition::Stretch)
             || usedAlignSelf.overflow() != OverflowAlignment::Default || usedAlignSelf.positionType() != ItemPositionType::NonLegacy)
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedBlockAxisAlignment, reasons, reasonCollectionMode);
 
@@ -489,16 +507,17 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
         if (!gridItemStyle->maxHeight().isNone())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasNonInitialMaxHeight, reasons, reasonCollectionMode);
 
-        if (gridItemStyle->border().hasBorder())
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasBorder, reasons, reasonCollectionMode);
-
-        auto gridItemHasPadding = [&] {
+        // Fixed padding is threaded into item and track sizing as part of the border-box size and lays
+        // out identically to legacy RenderGrid. Percentage and calc() padding resolve against the grid
+        // item's grid area, which needs additional plumbing, so keep those items on the legacy path.
+        // FIXME: Support percentage and calc() padding on grid items and remove this restriction.
+        auto gridItemHasUnsupportedPadding = [&] {
             return gridItemStyle->paddingBox().anyOf([](const Style::PaddingEdge& paddingEdge) {
-                return !paddingEdge.isPossiblyZero();
+                return paddingEdge.isPercentOrCalculated();
             });
         };
-        if (gridItemHasPadding())
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasPadding, reasons, reasonCollectionMode);
+        if (gridItemHasUnsupportedPadding())
+            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasPercentOrCalcPadding, reasons, reasonCollectionMode);
 
         auto gridItemHasMargins = [&] {
             return gridItemStyle->marginBox().anyOf([](const Style::MarginEdge& marginEdge) {
@@ -507,6 +526,9 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
         };
         if (gridItemHasMargins())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasMargin, reasons, reasonCollectionMode);
+
+        if (gridItemStyle->boxSizing() == BoxSizing::BorderBox)
+            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasBorderBoxSizing, reasons, reasonCollectionMode);
 
         auto linesFromGridTemplateColumnsCount = gridTemplateColumns.sizes.size() + 1;
         auto linesFromGridTemplateRowsCount = gridTemplateRows.sizes.size() + 1;
@@ -545,8 +567,10 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
 
         auto& rowStart = gridItemStyle->gridItemRowStart();
         auto rowPositioningAvoidanceReason = WTF::switchOn(rowStart,
-            [&](const CSS::Keyword::Auto&) -> std::optional<GridAvoidanceReason> {
-                return GridAvoidanceReason::GridItemHasAutomaticRowStartPlacement;
+            [&](const CSS::Keyword::Auto& autoPosition) -> std::optional<GridAvoidanceReason> {
+                if (!hasValidRowEnd(autoPosition, gridItemStyle->gridItemRowEnd()))
+                    return GridAvoidanceReason::GridItemHasUnsupportedRowEnd;
+                return { };
             },
             [&](const Style::GridPositionExplicit& explicitPosition) -> std::optional<GridAvoidanceReason> {
                 auto rowStartLineNumber = explicitPosition.position.value;
@@ -592,8 +616,8 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
         if (ineligibleRowIndex != notFound)
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridNeedsImplicitColumnsForItemsLockedToRow, reasons, reasonCollectionMode);
 
-        if (gridItemStyle->writingMode().isVertical())
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasVerticalWritingMode, reasons, reasonCollectionMode);
+        if (gridItemStyle->writingMode().isVertical() || gridItemStyle->writingMode().isBlockFlipped())
+            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedWritingMode, reasons, reasonCollectionMode);
 
         if (gridItemStyle->writingMode().bidiDirection() == TextDirection::RTL)
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasRTLDirection, reasons, reasonCollectionMode);
@@ -672,8 +696,8 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
     case GridAvoidanceReason::GridFormattingContextIntegrationDisabled:
         stream << "grid formatting context integration is disabled";
         break;
-    case GridAvoidanceReason::GridHasVerticalWritingMode:
-        stream << "grid has vertical writing mode";
+    case GridAvoidanceReason::GridHasUnsupportedWritingMode:
+        stream << "grid has unsupported writing mode";
         break;
     case GridAvoidanceReason::GridHasRTLDirection:
         stream << "grid has RTL direction";
@@ -747,17 +771,17 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
     case GridAvoidanceReason::GridItemHasNonInitialMaxHeight:
         stream << "grid item has non-initial max-height";
         break;
-    case GridAvoidanceReason::GridItemHasBorder:
-        stream << "grid item has border";
-        break;
-    case GridAvoidanceReason::GridItemHasPadding:
-        stream << "grid item has padding";
+    case GridAvoidanceReason::GridItemHasPercentOrCalcPadding:
+        stream << "grid item has percent or calc padding";
         break;
     case GridAvoidanceReason::GridItemHasMargin:
         stream << "grid item has margin";
         break;
-    case GridAvoidanceReason::GridItemHasVerticalWritingMode:
-        stream << "grid item has vertical writing mode";
+    case GridAvoidanceReason::GridItemHasBorderBoxSizing:
+        stream << "grid item has border-box box-sizing";
+        break;
+    case GridAvoidanceReason::GridItemHasUnsupportedWritingMode:
+        stream << "grid item has unsupported writing mode";
         break;
     case GridAvoidanceReason::GridItemHasRTLDirection:
         stream << "grid item has RTL direction";
@@ -797,9 +821,6 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
         break;
     case GridAvoidanceReason::GridNeedsImplicitColumnsForItemsLockedToRow:
         stream << "grid needs implicit columns for items locked to row";
-        break;
-    case GridAvoidanceReason::GridItemHasAutomaticRowStartPlacement:
-        stream << "grid item has automatic row start placement";
         break;
     case GridAvoidanceReason::GridItemRowStartHasLineName:
         stream << "grid item row start has line name";

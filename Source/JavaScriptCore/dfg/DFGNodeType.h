@@ -505,7 +505,6 @@ namespace JSC { namespace DFG {
     macro(IsObject, NodeResultBoolean) \
     macro(IsCallable, NodeResultBoolean) \
     macro(IsConstructor, NodeResultBoolean) \
-    macro(IsTypedArrayView, NodeResultBoolean) \
     macro(TypeOf, NodeResultJS) \
     macro(ToBoolean, NodeResultBoolean) \
     macro(LogicalNot, NodeResultBoolean) \
@@ -519,6 +518,7 @@ namespace JSC { namespace DFG {
     macro(ToIntegerOrInfinity, NodeResultJS | NodeMustGenerate) \
     macro(ToLength, NodeResultJS | NodeMustGenerate) \
     macro(CallObjectConstructor, NodeResultJS) \
+    macro(OpenAsyncFromSyncIterator, NodeResultJS | NodeMustGenerate) \
     macro(CallStringConstructor, NodeResultJS | NodeMustGenerate) \
     macro(CallNumberConstructor, NodeResultJS | NodeMustGenerate) \
     macro(NumberToStringWithRadix, NodeResultJS | NodeMustGenerate) \

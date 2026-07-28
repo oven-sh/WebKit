@@ -8,16 +8,16 @@
 #include "src/gpu/graphite/TextureFormatXferFn.h"
 
 #include "include/core/SkColorType.h"
-#include "src/base/SkAutoMalloc.h"
-#include "src/base/SkFloatBits.h"
-#include "src/base/SkHalf.h"
-#include "src/base/SkMathPriv.h"
-#include "src/base/SkVx.h"
+#include "include/private/SkLog.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkColorSpaceXformSteps.h"
+#include "src/core/SkFloatBits.h"
+#include "src/core/SkHalf.h"
 #include "src/core/SkImageInfoPriv.h"
+#include "src/core/SkMathPriv.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkRasterPipelineOpContexts.h"
-#include "src/gpu/graphite/Log.h"
+#include "src/core/SkVx.h"
 
 #include <functional>
 
@@ -133,7 +133,7 @@ XferRowFn xfer_rows_by_channel(uint8_t ops) {
         return create_xfer_row_fn<PxVec>(N, srcBpp, dstBpp,
                                          apply_ops_by_channel<Cx, N, kPadAlpha, OpaqueAlpha>);
     } else {
-        SKGPU_LOG_F("Identity transfer should have been caught earlier");
+        SK_ABORT("Identity transfer should have been caught earlier");
     }
 
     return nullptr;
@@ -155,7 +155,7 @@ XferRowFn get_xfer_row_fn(TextureFormat format, uint8_t ops) {
         case TF::kRG32F:
             // 1 and 2 channel formats cannot be combined with colortypes in such a way to create
             // format conversions, so we should never reach here
-            SKGPU_LOG_F("Unexpected ops (%u) requested for format %s",
+            SK_ABORT("Unexpected ops (%u) requested for format %s",
                         ops, TextureFormatName(format));
             break;
 
@@ -169,7 +169,7 @@ XferRowFn get_xfer_row_fn(TextureFormat format, uint8_t ops) {
         case TF::kBGR10_XR:
             // TODO(michaelludwig): These formats could do r/b swaps and forcing-opaque, but
             // that isn't implemented yet.
-            SKGPU_LOG_F("Unsupported texture format %s", TextureFormatName(format));
+            SK_ABORT("Unsupported texture format %s", TextureFormatName(format));
             break;
 
         // The remaining formats can be operated on with each channel as a primitive
@@ -198,7 +198,7 @@ XferRowFn get_xfer_row_fn(TextureFormat format, uint8_t ops) {
         case TF::kRGBA32F:
             // TODO(michaelludwig): These formats could do r/b swaps and forcing-opaque, but
             // that isn't implemented yet.
-            SKGPU_LOG_F("Unsupported texture format %s", TextureFormatName(format));
+            SK_ABORT("Unsupported texture format %s", TextureFormatName(format));
             break;
 
         default:
@@ -292,6 +292,17 @@ std::optional<TextureFormatXferFn> TextureFormatXferFn::MakeGpuToCpu(
     }
     auto rp = RPOps::Make(baseCT, dstCT, srcToDst, csSteps);
     return TextureFormatXferFn(srcFormat, preOps, std::move(rp), /*postOps=*/0);
+}
+
+std::optional<TextureFormatXferFn> TextureFormatXferFn::MakeIdentity(TextureFormat format) {
+    auto [baseCT, xferOps] = TextureFormatColorTypeInfo(format);
+    if (xferOps & FormatXferOp::kDisabled) {
+        if (TextureFormatCompressionType(format) == SkTextureCompressionType::kNone) {
+            return std::nullopt;
+        } // else allow compressed formats through for identity conversion uploads
+    }
+
+    return TextureFormatXferFn(format, /*preOps=*/0, /*rp=*/nullptr, /*postOps=*/0);
 }
 
 template <typename... RPModifiers>

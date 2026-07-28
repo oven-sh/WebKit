@@ -540,7 +540,6 @@ class RemoteLayerTreeNode;
 class RemoteLayerTreeScrollingPerformanceData;
 class RemoteLayerTreeTransaction;
 class RemoteMediaSessionCoordinatorProxy;
-class RemoteMediaSessionManagerProxy;
 class RemoteObjectRegistry;
 class RemotePageProxy;
 class RemoteScrollingCoordinatorProxy;
@@ -612,7 +611,7 @@ class WebWheelEventCoalescer;
 class WebsiteDataStore;
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
-class ModelPresentationManagerProxy;
+class PortalPresentationManagerProxy;
 #endif
 
 struct AppPrivacyReportTestingData;
@@ -721,6 +720,7 @@ enum class WebContentMode : uint8_t;
 enum class WebEventModifier : uint8_t;
 enum class WebEventType : uint32_t;
 enum class WebEventInputSource : uint8_t;
+enum class WebMouseEventSyntheticClickType : uint8_t;
 enum class WindowKind : uint8_t;
 
 template<typename> class MonotonicObjectIdentifier;
@@ -1187,6 +1187,8 @@ public:
 #if PLATFORM(COCOA)
     void scrollingNodeScrollViewDidScroll(WebCore::ScrollingNodeID);
     WebCore::FloatRect selectionBoundingRectInRootViewCoordinates() const;
+    // Maps a selection rect from the focused frame's root-view space to main-frame coordinates.
+    void convertEditorStateSelectionRectToMainFrameCoordinates(WebCore::FloatRect, CompletionHandler<void(WebCore::FloatRect)>&&);
 #endif
 
     void processWillSuspend();
@@ -1332,7 +1334,7 @@ public:
 
     void startAutoscrollAtPosition(const WebCore::FloatPoint& positionInWindow);
     void cancelAutoscroll();
-    bool isAutoscrolling() const { return m_isAutoscrolling; }
+    bool isAutoscrolling() const { return m_autoscrollState == AutoscrollState::Active; }
 #endif
 
 #if ENABLE(DATA_DETECTION)
@@ -1569,6 +1571,7 @@ public:
     void scalePageInViewCoordinates(double scale, const WebCore::IntPoint& centerInViewCoordinates);
     void scalePageRelativeToScrollPosition(double scale, const WebCore::IntPoint& origin);
     double NODELETE pageScaleFactor() const;
+    void pageScaleFactorDidChange();
     double viewScaleFactor() const { return m_viewScaleFactor; }
     void scaleView(double scale);
     void setShouldScaleViewToFitDocument(bool);
@@ -1704,7 +1707,7 @@ public:
 #endif
 #endif
 
-    void pageScaleFactorDidChange(IPC::Connection&, double);
+    void didSetPageScaleFactor(IPC::Connection&, double);
     void viewScaleFactorDidChange(IPC::Connection&, double);
     void pluginScaleFactorDidChange(IPC::Connection&, double);
     void pluginZoomFactorDidChange(IPC::Connection&, double);
@@ -2031,6 +2034,7 @@ public:
     void handleSmartMagnificationInformationForPotentialTap(TapIdentifier, const WebCore::FloatRect& renderRect, bool fitEntireRect, double viewportMinimumScale, double viewportMaximumScale, bool nodeIsRootLevel, bool nodeIsPluginElement);
     void isPotentialTapInProgress(CompletionHandler<void(bool)>&&);
     void didGetTapHighlightGeometries(TapIdentifier requestID, const WebCore::Color&, const Vector<WebCore::FloatQuad>& geometries, const WebCore::IntSize& topLeftRadius, const WebCore::IntSize& topRightRadius, const WebCore::IntSize& bottomLeftRadius, const WebCore::IntSize& bottomRightRadius, bool nodeHasBuiltInClickHandling);
+    void handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint&, OptionSet<WebEventModifier>, TransactionID layerTreeTransactionIdAtLastInteractionStart, WebEventInputSource, WebMouseEventSyntheticClickType);
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -2041,7 +2045,6 @@ public:
     void tapHighlightAtPosition(const WebCore::FloatPoint&, TapIdentifier requestID);
     void attemptSyntheticClick(const WebCore::FloatPoint&, OptionSet<WebEventModifier>, TransactionID layerTreeTransactionIdAtLastTouchStart);
     void didRecognizeLongPress();
-    void handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint&, OptionSet<WebEventModifier>, TransactionID layerTreeTransactionIdAtLastTouchStart);
 
     void inspectorNodeSearchMovedToPosition(const WebCore::FloatPoint&);
     void inspectorNodeSearchEndedAtPosition(const WebCore::FloatPoint&);
@@ -2293,6 +2296,9 @@ public:
     bool updateEditorState(IPC::Connection&, EditorState&& newEditorState, ShouldMergeVisualEditorState = ShouldMergeVisualEditorState::Default);
     void scheduleFullEditorStateUpdate();
     void dispatchDidUpdateEditorState();
+#if ENABLE(WRITING_TOOLS)
+    void updateWritingToolsAvailability();
+#endif // ENABLE(WRITING_TOOLS)
 
     void requestStorageAccessConfirm(const WebCore::RegistrableDomain& subFrameDomain, const WebCore::RegistrableDomain& topFrameDomain, WebCore::FrameIdentifier, std::optional<WebCore::OrganizationStorageAccessPromptQuirk>&&, CompletionHandler<void(bool)>&&);
     void didCommitCrossSiteLoadWithDataTransferFromPrevalentResource();
@@ -2853,6 +2859,7 @@ public:
 
     void didEndPartialIntelligenceTextAnimation(IPC::Connection&);
     void didEndPartialIntelligenceTextAnimationImpl();
+    void showWritingToolsAffordance(IPC::Connection&);
 
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
     void updateUnderlyingTextVisibilityForTextEffectID(const WTF::UUID&, bool, CompletionHandler<void()>&&);
@@ -2884,6 +2891,7 @@ public:
     bool NODELETE hasAllowedToRunInTheBackgroundActivity() const;
 
     template<typename M> void sendToProcessContainingFrame(std::optional<WebCore::FrameIdentifier>, M&&, OptionSet<IPC::SendOption> = { });
+    template<typename M> void sendToFocusedOrMainFrameProcess(M&&, OptionSet<IPC::SendOption> = { });
     template<typename M, typename C> void sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(std::optional<WebCore::FrameIdentifier>, M&&, C&&, OptionSet<IPC::SendOption> = { });
     template<typename M, typename C> std::optional<IPC::AsyncReplyID> sendWithAsyncReplyToProcessContainingFrame(std::optional<WebCore::FrameIdentifier>, M&&, C&&, OptionSet<IPC::SendOption> = { });
     template<typename M> IPC::ConnectionSendSyncResult<M> sendSyncToProcessContainingFrame(std::optional<WebCore::FrameIdentifier>, M&&);
@@ -2964,7 +2972,7 @@ public:
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
-    RefPtr<ModelPresentationManagerProxy> modelPresentationManagerProxy() const;
+    RefPtr<PortalPresentationManagerProxy> portalPresentationManagerProxy() const;
 #endif
 
     bool canStartNavigationSwipeAtLastInteractionLocation() const;
@@ -3015,10 +3023,6 @@ public:
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(DEVICE_ORIENTATION)
     RefPtr<WebDeviceOrientationUpdateProviderProxy> NODELETE webDeviceOrientationUpdateProviderProxy();
-#endif
-
-#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    RemoteMediaSessionManagerProxy* NODELETE remoteMediaSessionManagerProxy();
 #endif
 
     friend class TextExtractionAssertionScope;
@@ -3380,13 +3384,11 @@ private:
 
     void discardQueuedMouseEvents();
 
-    void mouseEventHandlingCompleted(std::optional<WebEventType>, bool handled, std::optional<WebCore::RemoteUserInputEventData>);
-    void keyEventHandlingCompleted(std::optional<WebEventType>, bool handled);
+    void mouseEventHandlingCompleted(bool handled, std::optional<WebCore::RemoteUserInputEventData>);
+    void keyEventHandlingCompleted(bool handled);
 #if ENABLE(MAC_GESTURE_EVENTS)
     void gestureEventHandlingCompleted(std::optional<WebEventType>, bool handled, std::optional<WebCore::RemoteUserInputEventData>);
 #endif
-    void didReceiveEvent(IPC::Connection*, WebEventType, bool handled, std::optional<WebCore::RemoteUserInputEventData>&&);
-    void didReceiveEventIPC(IPC::Connection&, WebEventType, bool handled, std::optional<WebCore::RemoteUserInputEventData>&&);
     void didUpdateRenderingAfterCommittingLoad();
 #if PLATFORM(IOS_FAMILY)
     void interpretKeyEvent(IPC::Connection&, EditorState&&, KeyEventInterpretationContext&&, CompletionHandler<void(bool)>&&);
@@ -3865,7 +3867,8 @@ private:
 #endif
 
 #if PLATFORM(COCOA)
-    bool m_isAutoscrolling { false };
+    enum class AutoscrollState : uint8_t { Inactive, Pending, Active };
+    AutoscrollState m_autoscrollState { AutoscrollState::Inactive };
 #endif
 
     bool m_isTakingSnapshotsForApplicationSuspension { false };
@@ -4300,10 +4303,6 @@ private:
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
     String m_defaultSpatialTrackingLabel;
-#endif
-
-#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    RefPtr<RemoteMediaSessionManagerProxy> m_mediaSessionManagerProxy;
 #endif
 
     WeakHashSet<WebCore::NowPlayingMetadataObserver> m_nowPlayingMetadataObservers;

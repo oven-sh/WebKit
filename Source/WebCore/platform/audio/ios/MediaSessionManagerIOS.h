@@ -64,7 +64,7 @@ public:
     USING_CAN_MAKE_WEAKPTR(MediaSessionHelperClient);
 
 protected:
-    explicit MediaSessionManageriOS(PageIdentifier);
+    explicit MediaSessionManageriOS(std::optional<PageIdentifier>);
 
 #if !PLATFORM(MACCATALYST)
     void resetRestrictions() override;
@@ -74,6 +74,9 @@ protected:
 
 private:
     void configureWirelessTargetMonitoring() final;
+#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
+    void ensureMediaDeviceRouteControllerMonitoring() final;
+#endif
     void sessionWillEndPlayback(PlatformMediaSessionInterface&, DelayCallingUpdateNowPlaying) final;
 
     // AudioSessionInterruptionObserver

@@ -36,6 +36,7 @@
 #include "Document.h"
 #include "EditingInlines.h"
 #include "EventHandler.h"
+#include "FlexFormattingUtils.h"
 #include "FloatQuad.h"
 #include "FloatRoundedRect.h"
 #include "FloatingObjects.h"
@@ -342,6 +343,16 @@ void RenderBox::invalidateAncestorBackgroundObscurationStatus()
     }
 }
 
+#if ENABLE(SPATIAL_PORTAL)
+static void spatialPortalStyleDidChange(Element& element, SpatialType oldSpatial, SpatialType newSpatial)
+{
+    if (oldSpatial == SpatialType::None && newSpatial == SpatialType::Portal)
+        element.ensureSpatialPortalController();
+    else if (oldSpatial == SpatialType::Portal && newSpatial == SpatialType::None)
+        element.clearSpatialPortalController();
+}
+#endif
+
 void RenderBox::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     // Horizontal writing mode definition is updated in RenderBoxModelObject::updateFromStyle,
@@ -456,6 +467,14 @@ void RenderBox::styleDidChange(Style::Difference diff, const Style::ComputedStyl
     if ((layer() && diff == Style::DifferenceResult::Layout && hasNonVisibleOverflow())
         || (oldStyle && oldStyle->isOverflowVisible() != style().isOverflowVisible()))
         layoutContext().invalidateAnchorDependenciesForScroller(*this);
+
+#if ENABLE(SPATIAL_PORTAL)
+    auto oldSpatial = oldStyle ? oldStyle->spatial() : SpatialType::None;
+    if (oldSpatial != newStyle.spatial()) {
+        if (RefPtr element = this->element())
+            spatialPortalStyleDidChange(*element, oldSpatial, newStyle.spatial());
+    }
+#endif
 }
 
 static bool NODELETE hasEquivalentGridPositioningStyle(const Style::ComputedStyle& style, const Style::ComputedStyle& oldStyle)
@@ -639,8 +658,11 @@ int RenderBox::scrollTop() const
 
 bool RenderBox::shouldResetLogicalHeightBeforeLayout() const
 {
-    auto* flexBoxParent = dynamicDowncast<RenderFlexibleBox>(parent());
-    return flexBoxParent && flexBoxParent->shouldResetFlexItemLogicalHeightBeforeLayout();
+    // A flex item resets its logical height while its container is stretching items along the cross axis, so the
+    // stretch relayout starts from a clean height. This runs inside the item's own layout, after its LayoutRepainter
+    // has captured the pre-stretch bounds, so repaint stays minimal (see webkit.org/b/204380).
+    CheckedPtr flexBoxParent = dynamicDowncast<RenderFlexibleBox>(parent());
+    return flexBoxParent && flexBoxParent->isInCrossAxisStretchLayout();
 }
 
 void RenderBox::resetLogicalHeightBeforeLayoutIfNeeded()
@@ -1590,7 +1612,7 @@ bool RenderBox::hasTrimmedMargin(std::optional<Style::MarginTrimSide> marginTrim
     return marginTrimType ? rareData().trimmedMargins.contains(*marginTrimType) : !rareData().trimmedMargins.isEmpty();
 }
 
-LayoutUnit RenderBox::adjustBorderBoxLogicalWidthForBoxSizing(const Style::Length<CSS::NonnegativeLayoutUnitClampedUnzoomed, float>& logicalWidth) const
+LayoutUnit RenderBox::adjustBorderBoxLogicalWidthForBoxSizing(const Style::Length<CSS::NonnegativeLayoutUnitClamped, float>& logicalWidth) const
 {
     auto width = LayoutUnit { logicalWidth.resolveZoom(style().usedZoomForLength()) };
     auto bordersPlusPadding = borderAndPaddingLogicalWidth();
@@ -1615,7 +1637,7 @@ LayoutUnit RenderBox::adjustBorderBoxLogicalHeightForBoxSizing(LayoutUnit height
     return std::max(height, bordersPlusPadding);
 }
 
-LayoutUnit RenderBox::adjustContentBoxLogicalWidthForBoxSizing(const Style::Length<CSS::NonnegativeLayoutUnitClampedUnzoomed, float>& logicalWidth) const
+LayoutUnit RenderBox::adjustContentBoxLogicalWidthForBoxSizing(const Style::Length<CSS::NonnegativeLayoutUnitClamped, float>& logicalWidth) const
 {
     auto width = LayoutUnit { logicalWidth.resolveZoom(style().usedZoomForLength()) };
     if (style().boxSizing() == BoxSizing::ContentBox)
@@ -3536,6 +3558,11 @@ RenderBox::LogicalExtentComputedValues RenderBox::computeLogicalHeight(LayoutUni
     }();
 
     auto usedLogicalHeight = [&] {
+        // When this box is being laid out only to measure its intrinsic size
+        // contribution (e.g. an orthogonal child probed by its block container),
+        // its own min/max block-size must resolve per the intrinsic-size rules of
+        // CSS Sizing 3 section 5.1 rather than against the not-yet-known container.
+        auto isComputingIntrinsicSize = view().frameView().layoutContext().isComputingIntrinsicLogicalHeightFor(*this) ? IsComputingIntrinsicSize::Yes : IsComputingIntrinsicSize::No;
         if (auto heightFromFormattingContext = usedLogicalHeightFromContext())
             return *heightFromFormattingContext;
 
@@ -3546,13 +3573,13 @@ RenderBox::LogicalExtentComputedValues RenderBox::computeLogicalHeight(LayoutUni
             if (intrinsicHeight && style().boxSizing() == BoxSizing::ContentBox)
                 *intrinsicHeight -= RenderBox::borderBefore() + RenderBox::paddingBefore() + RenderBox::borderAfter() + RenderBox::paddingAfter();
             auto heightFromAspectRatio = blockSizeFromAspectRatio(horizontalBorderAndPaddingExtent(), verticalBorderAndPaddingExtent(), style().logicalAspectRatio(), style().boxSizingForAspectRatio(), logicalWidth(), style().aspectRatio(), is<RenderReplaced>(*this));
-            return constrainLogicalHeightByMinMax(heightFromAspectRatio, intrinsicHeight);
+            return constrainLogicalHeightByMinMax(heightFromAspectRatio, intrinsicHeight, isComputingIntrinsicSize);
         }
 
         if (intrinsicHeight)
             *intrinsicHeight -= borderAndPaddingLogicalHeight();
         auto mainOrPreferredHeight = computeLogicalHeightUsing(computedLogicalHeight, intrinsicHeight).value_or(computedValues.extent);
-        return constrainLogicalHeightByMinMax(mainOrPreferredHeight, intrinsicHeight);
+        return constrainLogicalHeightByMinMax(mainOrPreferredHeight, intrinsicHeight, isComputingIntrinsicSize);
     };
     computedValues.extent = usedLogicalHeight();
 
@@ -3608,6 +3635,36 @@ LayoutUnit RenderBox::computeLogicalHeightForIntrinsicWidthContribution() const
     auto intrinsicHeight = std::make_optional(estimatedHeight - borderAndPaddingLogicalHeight());
     auto logicalHeight = computeLogicalHeightUsing(style().logicalHeight(), intrinsicHeight).value_or(estimatedHeight);
     return constrainLogicalHeightByMinMax(logicalHeight, intrinsicHeight, IsComputingIntrinsicSize::Yes);
+}
+
+LayoutUnit RenderBox::computeIntrinsicLogicalHeight()
+{
+    // Mark the box as being measured for its intrinsic size so its own cyclic-percentage min/max block-size
+    // resolves per CSS Sizing 3 section 5.1 (as none/zero) instead of against the not-yet-known container.
+    auto intrinsicSizeScope = IntrinsicLogicalHeightComputationScope { view().frameView().layoutContext(), *this };
+
+    // The block-axis size of an already-laid-out box is simply its logical height.
+    if (!needsLayout())
+        return logicalHeight();
+
+    auto& styleToUse = style();
+    if (auto fixedLogicalWidth = styleToUse.logicalWidth().tryFixed(); fixedLogicalWidth && shouldComputeLogicalHeightFromAspectRatio()) {
+        return blockSizeFromAspectRatio(horizontalBorderAndPaddingExtent(), verticalBorderAndPaddingExtent(), styleToUse.logicalAspectRatio()
+            , styleToUse.boxSizingForAspectRatio(), LayoutUnit { fixedLogicalWidth->resolveZoom(styleToUse.usedZoomForLength()) }
+            , styleToUse.aspectRatio(), isRenderReplaced());
+    }
+
+    // Lay the box out to compute its content-based logical height, then setNeedsLayout() so it lays
+    // out again during the normal layout pass. Marking only this box (MarkOnlyThis), and not its
+    // descendants, is enough: a descendant whose logical height resolves against this box (a
+    // percentage/calc logical height, or stretch/fill-available) is added to this box's
+    // percentHeightDescendants while laying out here, so dirtyForLayoutFromPercentageHeightDescendants()
+    // marks it for layout when this box lays out again and it resolves against the final logical
+    // height. A descendant that does not resolve against this box's logical height is unaffected and need not lay out again.
+    layoutIfNeeded();
+    auto blockSize = logicalHeight();
+    setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    return blockSize;
 }
 
 template<typename SizeType> std::optional<LayoutUnit> RenderBox::computeLogicalHeightUsingGeneric(const SizeType& logicalHeight, std::optional<LayoutUnit> intrinsicContentHeight) const
@@ -3719,7 +3776,7 @@ template<typename SizeType> std::optional<LayoutUnit> RenderBox::computeSizingKe
                 // When the width comes from a flex cross-axis override (e.g. stretch in a
                 // column flex container), use it to compute the min-content height through
                 // the aspect ratio.
-                if (!isFlexItem() || downcast<RenderFlexibleBox>(parent())->flexLayoutUtils().isHorizontalFlow())
+                if (!isFlexItem() || downcast<RenderFlexibleBox>(parent())->isHorizontalFlow())
                     return { };
                 if (auto overridingWidth = overridingBorderBoxLogicalWidth(); overridingWidth && !preferredRatio.isEmpty())
                     return resolveHeightForRatio(borderAndPaddingLogicalWidth(), borderAndPaddingLogicalHeight(), contentBoxLogicalWidth(*overridingWidth), preferredRatio.transposedSize().aspectRatio(), BoxSizing::ContentBox);
@@ -3858,7 +3915,7 @@ template<typename SizeType> std::optional<LayoutUnit> RenderBox::computeContentA
         },
         [&](const CSS::Keyword::Auto&) -> std::optional<LayoutUnit> {
             if constexpr (std::same_as<SizeType, Style::MinimumSize>) {
-                if (intrinsicContentHeight && isFlexItem() && downcast<RenderFlexibleBox>(parent())->flexLayoutUtils().useContentBasedMinimumBlockSize(*this))
+                if (intrinsicContentHeight && isFlexItem() && FlexFormattingUtils::useContentBasedMinimumBlockSize(*this))
                     return adjustIntrinsicLogicalHeightForBoxSizing(*intrinsicContentHeight);
                 return LayoutUnit { 0 };
             } else
@@ -4052,12 +4109,12 @@ std::optional<LayoutUnit> RenderBox::computePercentageLogicalHeight(const Style:
     return computePercentageLogicalHeightGeneric(logicalHeight, updateDescendants);
 }
 
-std::optional<LayoutUnit> RenderBox::computePercentageLogicalHeight(const Style::Percentage<CSS::NonnegativeLayoutUnitClampedUnzoomed, float>& logicalHeight, UpdatePercentageHeightDescendants updateDescendants) const
+std::optional<LayoutUnit> RenderBox::computePercentageLogicalHeight(const Style::Percentage<CSS::NonnegativeLayoutUnitClamped, float>& logicalHeight, UpdatePercentageHeightDescendants updateDescendants) const
 {
     return computePercentageLogicalHeightGeneric(logicalHeight, updateDescendants);
 }
 
-std::optional<LayoutUnit> RenderBox::computePercentageLogicalHeight(const Style::UnevaluatedCalculation<CSS::LengthPercentage<CSS::NonnegativeLayoutUnitClampedUnzoomed, float>>& logicalHeight, UpdatePercentageHeightDescendants updateDescendants) const
+std::optional<LayoutUnit> RenderBox::computePercentageLogicalHeight(const Style::UnevaluatedCalculation<CSS::LengthPercentage<CSS::NonnegativeLayoutUnitClamped, float>>& logicalHeight, UpdatePercentageHeightDescendants updateDescendants) const
 {
     return computePercentageLogicalHeightGeneric(logicalHeight, updateDescendants);
 }
@@ -5321,10 +5378,8 @@ bool RenderBox::isBlockSizeResolvableForStretch() const
     // This only applies when the flex item's block axis is the cross axis (row flex).
     // For column flex, the block axis is the main axis and hasDefiniteLogicalHeight()
     // already gives the correct answer during that phase.
-    if (containingBlock->isFlexItem()) {
-        if (auto* flexContainer = dynamicDowncast<RenderFlexibleBox>(containingBlock->parent()))
-            return flexContainer->flexLayoutUtils().mainAxisIsFlexItemInlineAxis(*containingBlock) && flexContainer->flexLayoutUtils().hasDefiniteCrossSizeForFlexItem(*containingBlock);
-    }
+    if (containingBlock->isFlexItem())
+        return FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(*containingBlock) && FlexFormattingUtils::hasDefiniteCrossSizeForFlexItem(*containingBlock);
 
     return false;
 }
@@ -5531,7 +5586,7 @@ bool RenderBox::shouldIgnoreLogicalMinMaxWidthSizes() const
     if (!isFlexItem())
         return false;
     if (auto* flexBox = dynamicDowncast<RenderFlexibleBox>(parent()))
-        return flexBox->isComputingFlexBaseSizes() && writingMode().isHorizontal() == flexBox->flexLayoutUtils().isHorizontalFlow();
+        return flexBox->isComputingFlexBaseSizes() && writingMode().isHorizontal() == flexBox->isHorizontalFlow();
     ASSERT_NOT_REACHED();
     return false;
 }
@@ -5541,7 +5596,7 @@ bool RenderBox::shouldIgnoreLogicalMinMaxHeightSizes() const
     if (!isFlexItem())
         return false;
     if (auto* flexBox = dynamicDowncast<RenderFlexibleBox>(parent()))
-        return flexBox->isComputingFlexBaseSizes() && writingMode().isHorizontal() != flexBox->flexLayoutUtils().isHorizontalFlow();
+        return flexBox->isComputingFlexBaseSizes() && writingMode().isHorizontal() != flexBox->isHorizontalFlow();
     ASSERT_NOT_REACHED();
     return false;
 }
@@ -5603,6 +5658,9 @@ bool RenderBox::requiresLayer() const
         || style().specifiesColumns()
         || style().usedContain().contains(Style::ContainValue::Layout)
         || !style().usedZIndex().isAuto()
+#if ENABLE(SPATIAL_PORTAL)
+        || style().spatial() == SpatialType::Portal
+#endif
         || hasRunningAcceleratedAnimations();
 }
 

@@ -6,14 +6,14 @@
  */
 #include "src/gpu/ganesh/ops/OpsTask.h"
 
+#include "include/core/SkPoint.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/ganesh/GrRecordingContext.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "src/base/SkArenaAlloc.h"
-#include "src/base/SkScopeExit.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkRectPriv.h"
+#include "src/core/SkScopeExit.h"
 #include "src/core/SkStringUtils.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/ganesh/GrAppliedClip.h"
@@ -585,6 +585,7 @@ bool OpsTask::onExecute(GrOpFlushState* flushState) {
         stencil = renderTarget->getStencilAttachment(fUsesMSAASurface);
     }
 
+    bool markStencilCleared = false;
     GrLoadOp stencilLoadOp;
     switch (fInitialStencilContent) {
         case StencilContent::kDontCare:
@@ -602,7 +603,7 @@ bool OpsTask::onExecute(GrOpFlushState* flushState) {
             }
             if (!stencil->hasPerformedInitialClear()) {
                 stencilLoadOp = GrLoadOp::kClear;
-                stencil->markHasPerformedInitialClear();
+                markStencilCleared = true;
                 break;
             }
             // SurfaceDrawContexts are required to leave the user stencil bits in a cleared state
@@ -642,6 +643,9 @@ bool OpsTask::onExecute(GrOpFlushState* flushState) {
 
     if (!renderPass) {
         return false;
+    }
+    if (markStencilCleared) {
+        stencil->markHasPerformedInitialClear();
     }
     flushState->setOpsRenderPass(renderPass);
     renderPass->begin();

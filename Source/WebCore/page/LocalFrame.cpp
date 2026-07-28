@@ -1919,7 +1919,7 @@ RefPtr<Node> LocalFrame::nodeRespondingToDoubleClickEvent(const FloatPoint& view
         for (; node && node != terminationNode; node = node->parentInComposedTree()) {
             if (!node->hasEventListeners(eventNames().dblclickEvent))
                 continue;
-#if ENABLE(TOUCH_EVENTS)
+#if ENABLE(TWO_PHASE_CLICKS)
             if (!node->allowsDoubleTapGesture())
                 continue;
 #endif
@@ -1931,6 +1931,15 @@ RefPtr<Node> LocalFrame::nodeRespondingToDoubleClickEvent(const FloatPoint& view
     };
 
     return qualifyingNodeAtViewportLocation(viewportLocation, adjustedViewportLocation, WTF::move(ancestorRespondingToDoubleClickEvent), ShouldApproximate::Yes);
+}
+
+RefPtr<LocalDOMWindow> LocalFrame::windowWithDoubleClickEventListener() const
+{
+    RefPtr window = this->window();
+    if (!window || !window->hasEventListeners(eventNames().dblclickEvent))
+        return nullptr;
+
+    return window;
 }
 
 #endif // PLATFORM(COCOA)

@@ -8,13 +8,13 @@
 #include "modules/skottie/src/text/TextAnimator.h"
 
 #include "include/core/SkColor.h"
-#include "include/private/base/SkCPUTypes.h"
+#include "include/private/SkCPUTypes.h"
 #include "modules/jsonreader/SkJSONReader.h"
 #include "modules/skottie/src/SkottieValue.h"
 #include "modules/skottie/src/animator/Animator.h"
 #include "modules/skottie/src/text/RangeSelector.h"
-#include "src/base/SkVx.h"
 #include "src/core/SkSwizzlePriv.h"
+#include "src/core/SkVx.h"
 
 #include <algorithm>
 #include <cmath>
@@ -101,7 +101,13 @@ sk_sp<TextAnimator> TextAnimator::Make(const skjson::ObjectValue* janimator,
                 new TextAnimator(std::move(selectors), *jprops, abuilder, acontainer));
 }
 
-void TextAnimator::modulateProps(const DomainMaps& maps, ModulatorBuffer& buf) const {
+void TextAnimator::updateDomainMaps(const DomainMaps& maps, size_t fragment_count) {
+    for (auto& selector : fSelectors) {
+        selector->updateDomainMap(maps, fragment_count);
+    }
+}
+
+void TextAnimator::modulateProps(ModulatorBuffer& buf) const {
     // No selectors -> full coverage.
     const auto initial_coverage = fSelectors.empty() ? 1.f : 0.f;
 
@@ -112,7 +118,7 @@ void TextAnimator::modulateProps(const DomainMaps& maps, ModulatorBuffer& buf) c
 
     // Accumulate selector coverage.
     for (const auto& selector : fSelectors) {
-        selector->modulateCoverage(maps, buf);
+        selector->modulateCoverage(buf);
     }
 
     // Modulate animated props.

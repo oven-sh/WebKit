@@ -9,7 +9,7 @@
 
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
-#include "include/private/base/SkDebug.h"
+#include "include/private/SkDebug.h"
 #include "src/gpu/ganesh/GrDeferredUpload.h"
 #include "src/gpu/ganesh/GrGeometryProcessor.h"
 #include "src/gpu/ganesh/GrNativeRect.h"
@@ -42,8 +42,9 @@ class GrGLOpsRenderPass : public GrOpsRenderPass {
 public:
     GrGLOpsRenderPass(GrGLGpu* gpu) : fGpu(gpu) {}
 
-    void inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override {
+    bool inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override {
         state->doUpload(upload);
+        return true;
     }
 
     void set(GrRenderTarget*, bool useMSAASurface, const SkIRect& contentBounds, GrSurfaceOrigin,

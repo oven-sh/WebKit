@@ -10,10 +10,10 @@
 #include "include/core/SkColorType.h"
 #include "include/gpu/graphite/Context.h"
 #include "include/gpu/graphite/TextureInfo.h"
-#include "include/private/base/SkTArray.h"
-#include "src/base/SkFloatBits.h"
-#include "src/base/SkHalf.h"
+#include "include/private/SkTArray.h"
 #include "src/core/SkColorSpaceXformSteps.h"
+#include "src/core/SkFloatBits.h"
+#include "src/core/SkHalf.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/gpu/Swizzle.h"
 #include "src/gpu/graphite/Caps.h"
@@ -839,6 +839,38 @@ static const FormatExpectation kExpectations[] {
      .fXferSwizzle=std::nullopt,
      .fCompatibleColorTypes={{kRGBA_10x6_SkColorType, Swizzle::RGBA(), std::nullopt}}},
 
+    {.fFormat=TextureFormat::kYUV8_P2_422,
+     .fChannels={{'y', 8, UNorm}, {'u', 8, UNorm}, {'v', 8, UNorm}},
+     .fXferSwizzle=std::nullopt,
+     .fCompatibleColorTypes={{kRGB_888x_SkColorType, Swizzle::RGBA(), std::nullopt}}},
+
+    {.fFormat=TextureFormat::kYUV8_P3_422,
+     .fChannels={{'y', 8, UNorm}, {'u', 8, UNorm}, {'v', 8, UNorm}},
+     .fXferSwizzle=std::nullopt,
+     .fCompatibleColorTypes={{kRGB_888x_SkColorType, Swizzle::RGBA(), std::nullopt}}},
+
+    {.fFormat=TextureFormat::kYUV10x6_P2_422,
+     .fChannels={{'y', 10, UNorm}, {'x', 6, Pad}, {'u', 10, UNorm}, {'x', 6, Pad},
+                 {'v', 10, UNorm}, {'x', 6, Pad}},
+     .fXferSwizzle=std::nullopt,
+     .fCompatibleColorTypes={{kRGBA_10x6_SkColorType, Swizzle::RGBA(), std::nullopt}}},
+
+    {.fFormat=TextureFormat::kYUV8_P2_444,
+     .fChannels={{'y', 8, UNorm}, {'u', 8, UNorm}, {'v', 8, UNorm}},
+     .fXferSwizzle=std::nullopt,
+     .fCompatibleColorTypes={{kRGB_888x_SkColorType, Swizzle::RGBA(), std::nullopt}}},
+
+    {.fFormat=TextureFormat::kYUV8_P3_444,
+     .fChannels={{'y', 8, UNorm}, {'u', 8, UNorm}, {'v', 8, UNorm}},
+     .fXferSwizzle=std::nullopt,
+     .fCompatibleColorTypes={{kRGB_888x_SkColorType, Swizzle::RGBA(), std::nullopt}}},
+
+    {.fFormat=TextureFormat::kYUV10x6_P2_444,
+     .fChannels={{'y', 10, UNorm}, {'x', 6, Pad}, {'u', 10, UNorm}, {'x', 6, Pad},
+                 {'v', 10, UNorm}, {'x', 6, Pad}},
+     .fXferSwizzle=std::nullopt,
+     .fCompatibleColorTypes={{kRGBA_10x6_SkColorType, Swizzle::RGBA(), std::nullopt}}},
+
     {.fFormat=TextureFormat::kExternal,
      // We don't really know this, but most Skia behavior defaults to assuming 8-bit color
      .fChannels={{'r', 8, UNorm}, {'g', 8, UNorm}, {'b', 8, UNorm}, {'a', 8, UNorm}},
@@ -1109,7 +1141,7 @@ void run_texture_format_test(skiatest::Reporter* r, const Caps* caps, TextureFor
     REPORTER_ASSERT(r, foundExpectation, "Missing expectation for %s", TextureFormatName(format));
 }
 
-DEF_GRAPHITE_TEST_FOR_ALL_CONTEXTS(TextureFormatTest, r, ctx, CtsEnforcement::kNextRelease) {
+DEF_GRAPHITE_TEST_FOR_ALL_CONTEXTS(TextureFormatTest, r, ctx, CtsEnforcement::kApiLevel_202604) {
     for (int i = 0; i < kTextureFormatCount; ++i) {
         run_texture_format_test(r, ctx->priv().caps(), static_cast<TextureFormat>(i));
     }

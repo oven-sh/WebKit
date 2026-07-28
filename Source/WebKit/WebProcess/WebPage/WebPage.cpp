@@ -190,6 +190,7 @@
 #include <WebCore/BackForwardCache.h>
 #include <WebCore/BackForwardController.h>
 #include <WebCore/BitmapImage.h>
+#include <WebCore/CachedImage.h>
 #include <WebCore/CachedPage.h>
 #include <WebCore/CaptionUserPreferences.h>
 #include <WebCore/Chrome.h>
@@ -224,6 +225,7 @@
 #include <WebCore/Editing.h>
 #include <WebCore/Editor.h>
 #include <WebCore/ElementAncestorIteratorInlines.h>
+#include <WebCore/ElementChildIteratorInlines.h>
 #include <WebCore/ElementTargetingController.h>
 #include <WebCore/EventHandler.h>
 #include <WebCore/EventNames.h>
@@ -246,12 +248,14 @@
 #include <WebCore/GeometryUtilities.h>
 #include <WebCore/HTMLAttachmentElement.h>
 #include <WebCore/HTMLBodyElement.h>
+#include <WebCore/HTMLCanvasElement.h>
 #include <WebCore/HTMLFormElement.h>
 #include <WebCore/HTMLFrameOwnerElement.h>
 #include <WebCore/HTMLIFrameElement.h>
 #include <WebCore/HTMLImageElement.h>
 #include <WebCore/HTMLInputElement.h>
 #include <WebCore/HTMLModelElement.h>
+#include <WebCore/HTMLPictureElement.h>
 #include <WebCore/HTMLPlugInElement.h>
 #include <WebCore/HTMLSelectElement.h>
 #include <WebCore/HTMLTextAreaElement.h>
@@ -265,6 +269,7 @@
 #include <WebCore/HistoryItem.h>
 #include <WebCore/HitTestResult.h>
 #include <WebCore/ImageAnalysisQueue.h>
+#include <WebCore/ImageBuffer.h>
 #include <WebCore/ImageOverlay.h>
 #include <WebCore/ImageUtilities.h>
 #include <WebCore/JSDOMExceptionHandling.h>
@@ -280,6 +285,7 @@
 #include <WebCore/MediaDocument.h>
 #include <WebCore/MediaPlayer.h>
 #include <WebCore/MouseEvent.h>
+#include <WebCore/NativeImage.h>
 #include <WebCore/NavigationScheduler.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/NotificationController.h>
@@ -936,7 +942,7 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
             if (!protectedThis)
                 return nullptr;
 
-            RefPtr<PlatformMediaSessionManager> manager = RemoteMediaSessionManager::create(*protectedThis);
+            Ref<PlatformMediaSessionManager> manager = RemoteMediaSessionManager::create(*protectedThis);
             manager->resetRestrictions();
 
             return manager;
@@ -1831,8 +1837,10 @@ EditorState WebPage::editorState(ShouldPerformLayout shouldPerformLayout) const
         result.postLayoutData->canCopy = editor->canCopy();
         result.postLayoutData->canPaste = editor->canEdit();
 
-        if (!result.visualData)
-            result.visualData = std::optional<EditorState::VisualData> { EditorState::VisualData { } };
+        if (!result.visualData) {
+            result.visualData = EditorState::VisualData { };
+            result.visualData->rootFrameID = frame->rootFrame().frameID();
+        }
     }
 
     getPlatformEditorState(*frame, result);
@@ -2970,7 +2978,7 @@ void WebPage::platformDidScalePage()
 void WebPage::scalePage(double scale, const IntPoint& origin)
 {
     didScalePage(scale, origin);
-    send(Messages::WebPageProxy::PageScaleFactorDidChange(scale));
+    send(Messages::WebPageProxy::DidSetPageScaleFactor(scale));
 }
 
 double WebPage::totalScaleFactor() const
@@ -3391,6 +3399,37 @@ RefPtr<ShareableBitmap> WebPage::shareableBitmapSnapshotForNode(Node& node)
     if (RefPtr snapshot = snapshotNode(node, SnapshotOption::Shareable, 600 * 1024))
         return snapshot->bitmap();
     return nullptr;
+}
+
+RefPtr<ShareableBitmap> WebPage::shareableBitmapForNodeIncludingOffscreen(Node& node)
+{
+    RefPtr bitmap = shareableBitmapSnapshotForNode(node);
+
+    // Snapshotting requires a renderer, so an off-screen node yields no bitmap.
+    // Fall back to decoded image data for image elements, and paint canvas elements into an image buffer.
+    if (!bitmap) {
+        RefPtr imageElement = dynamicDowncast<HTMLImageElement>(node);
+        if (!imageElement) {
+            if (RefPtr pictureElement = dynamicDowncast<HTMLPictureElement>(node))
+                imageElement = childrenOfType<HTMLImageElement>(*pictureElement).first();
+        }
+
+        if (imageElement) {
+            if (RefPtr cachedImage = imageElement->cachedImage()) {
+                if (RefPtr image = cachedImage->image()) {
+                    if (RefPtr nativeImage = image->currentNativeImage())
+                        bitmap = ShareableBitmap::createFromImageDraw(*nativeImage, DestinationColorSpace::SRGB());
+                }
+            }
+        } else if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(node)) {
+            if (RefPtr imageBuffer = canvasElement->makeRenderingResultsAvailable()) {
+                if (RefPtr nativeImage = imageBuffer->copyNativeImage())
+                    bitmap = ShareableBitmap::createFromImageDraw(*nativeImage, DestinationColorSpace::SRGB());
+            }
+        }
+    }
+
+    return bitmap;
 }
 
 void WebPage::takeRemoteSnapshot(IntRect snapshotRect, IntSize bitmapSize, SnapshotOptions snapshotOptions, RemoteSnapshotIdentifier snapshotIdentifier, CompletionHandler<void(bool)>&& completionHandler)
@@ -3953,7 +3992,7 @@ void WebPage::contextMenuForKeyEvent()
 }
 #endif
 
-void WebPage::mouseEvent(FrameIdentifier frameID, const WebMouseEvent& mouseEvent, std::optional<Vector<SandboxExtension::Handle>>&& sandboxExtensions)
+void WebPage::mouseEvent(FrameIdentifier frameID, const WebMouseEvent& mouseEvent, std::optional<Vector<SandboxExtension::Handle>>&& sandboxExtensions, CompletionHandler<void(bool, std::optional<RemoteUserInputEventData>)>&& completionHandler)
 {
     SetForScope userIsInteractingChange { m_userIsInteracting, true };
 
@@ -3966,7 +4005,7 @@ void WebPage::mouseEvent(FrameIdentifier frameID, const WebMouseEvent& mouseEven
 #endif
 
     if (!shouldHandleEvent) {
-        send(Messages::WebPageProxy::DidReceiveEventIPC(mouseEvent.type(), false, std::nullopt));
+        completionHandler(false, std::nullopt);
         return;
     }
 
@@ -3988,7 +4027,7 @@ void WebPage::mouseEvent(FrameIdentifier frameID, const WebMouseEvent& mouseEven
         auto mouseEventResult = frame->handleMouseEvent(mouseEvent);
         if (auto remoteMouseEventData = mouseEventResult.remoteUserInputEventData()) {
             revokeSandboxExtensions(mouseEventSandboxExtensions);
-            send(Messages::WebPageProxy::DidReceiveEventIPC(mouseEvent.type(), false, *remoteMouseEventData));
+            completionHandler(false, *remoteMouseEventData);
             return;
         }
         handled = mouseEventResult.wasHandled();
@@ -4017,17 +4056,16 @@ void WebPage::mouseEvent(FrameIdentifier frameID, const WebMouseEvent& mouseEven
 
     if (shouldDeferDidReceiveEvent) {
         // For mousemove events where the user is only hovering (not clicking and dragging),
-        // we defer sending the DidReceiveEvent() IPC message until the end of the rendering
-        // update to throttle the rate of these events to the rendering update frequency.
-        // This logic works in tandem with the mouse event queue in the UI process, which
-        // coalesces mousemove events until the DidReceiveEvent() message is received after
-        // the rendering update.
-        m_deferredDidReceiveMouseEvent = { { mouseEvent.type(), handled } };
+        // we defer sending the mouse event reply until the end of the rendering update to
+        // throttle the rate of these events to the rendering update frequency. This logic
+        // works in tandem with the mouse event queue in the UI process, which coalesces
+        // mousemove events until the reply is received after the rendering update.
+        m_deferredDidReceiveMouseEvent = { { WTF::move(completionHandler), handled } };
         protect(corePage())->scheduleRenderingUpdate({ });
         return;
     }
 
-    send(Messages::WebPageProxy::DidReceiveEventIPC(mouseEvent.type(), handled, std::nullopt));
+    completionHandler(handled, std::nullopt);
 
 #if PLATFORM(IOS_FAMILY)
     if (mouseEvent.type() == WebEventType::MouseUp)
@@ -4077,7 +4115,7 @@ void WebPage::flushDeferredIntersectionObservations()
 void WebPage::flushDeferredDidReceiveMouseEvent()
 {
     if (auto info = std::exchange(m_deferredDidReceiveMouseEvent, std::nullopt))
-        send(Messages::WebPageProxy::DidReceiveEventIPC(*info->type, info->handled, std::nullopt));
+        info->completionHandler(info->handled, std::nullopt);
 }
 
 void WebPage::performHitTestForMouseEvent(const WebMouseEvent& event, CompletionHandler<void(WebHitTestResultData&&, OptionSet<WebEventModifier>)>&& completionHandler)
@@ -4156,7 +4194,7 @@ void WebPage::dispatchWheelEventWithoutScrolling(FrameIdentifier frameID, const 
 }
 #endif
 
-void WebPage::keyEvent(FrameIdentifier frameID, const WebKeyboardEvent& keyboardEvent)
+void WebPage::keyEvent(FrameIdentifier frameID, const WebKeyboardEvent& keyboardEvent, CompletionHandler<void(bool)>&& completionHandler)
 {
     SetForScope userIsInteractingChange { m_userIsInteracting, true };
 
@@ -4170,7 +4208,7 @@ void WebPage::keyEvent(FrameIdentifier frameID, const WebKeyboardEvent& keyboard
     if (RefPtr frame = WebProcess::singleton().webFrame(frameID))
         handled = frame->handleKeyEvent(keyboardEvent);
 
-    send(Messages::WebPageProxy::DidReceiveEventIPC(keyboardEvent.type(), handled, std::nullopt));
+    completionHandler(handled);
 }
 
 bool WebPage::handleKeyEventByRelinquishingFocusToChrome(const KeyboardEvent& event)
@@ -5455,8 +5493,8 @@ void WebPage::didUpdateRendering(OptionSet<DidUpdateRenderingFlags> flags)
 {
     if (flags & DidUpdateRenderingFlags::PaintedLayers) {
 #if ENABLE(GPU_PROCESS)
-        if (RefPtr proxy = m_remoteRenderingBackendProxy)
-            proxy->didPaintLayers();
+        if (m_remoteRenderingBackendProxy)
+            m_remoteRenderingBackendProxy->didPaintLayers();
 #endif
     }
 
@@ -5479,8 +5517,7 @@ bool WebPage::shouldTriggerRenderingUpdate(unsigned rescheduledRenderingUpdateCo
         return true;
 
     static constexpr unsigned maxDelayedRenderingUpdateCount = 2;
-    auto* proxy = m_remoteRenderingBackendProxy.get();
-    if (proxy && proxy->delayedRenderingUpdateCount() > maxDelayedRenderingUpdateCount)
+    if (m_remoteRenderingBackendProxy && m_remoteRenderingBackendProxy->delayedRenderingUpdateCount() > maxDelayedRenderingUpdateCount)
         return false;
 #endif
     return true;
@@ -5494,8 +5531,8 @@ void WebPage::finalizeRenderingUpdate(OptionSet<FinalizeRenderingUpdateFlags> fl
 
     protect(corePage())->finalizeRenderingUpdate(flags);
 #if ENABLE(GPU_PROCESS)
-    if (RefPtr proxy = m_remoteRenderingBackendProxy)
-        proxy->finalizeRenderingUpdate();
+    if (m_remoteRenderingBackendProxy)
+        m_remoteRenderingBackendProxy->finalizeRenderingUpdate();
 #endif
     flushDeferredDidReceiveMouseEvent();
 
@@ -5528,8 +5565,8 @@ void WebPage::didCompleteRenderingFrame()
 void WebPage::releaseMemory(Critical critical)
 {
 #if ENABLE(GPU_PROCESS)
-    if (RefPtr renderingBackend = m_remoteRenderingBackendProxy)
-        renderingBackend->releaseMemory();
+    if (m_remoteRenderingBackendProxy)
+        m_remoteRenderingBackendProxy->releaseMemory();
 #endif
 
 #if USE(COORDINATED_GRAPHICS)
@@ -5547,8 +5584,8 @@ void WebPage::willDestroyDecodedDataForAllImages()
 unsigned WebPage::remoteImagesCountForTesting() const
 {
 #if ENABLE(GPU_PROCESS)
-    if (auto* renderingBackend = m_remoteRenderingBackendProxy.get())
-        return renderingBackend->nativeImageCountForTesting();
+    if (m_remoteRenderingBackendProxy)
+        return m_remoteRenderingBackendProxy->nativeImageCountForTesting();
 #endif
     return 0;
 }
@@ -8121,7 +8158,7 @@ static void setUseDynamicViewportUnitsAsDefaultIfNeeded(LocalFrame* frame)
 
 void WebPage::didCommitLoad(WebFrame* frame)
 {
-#if PLATFORM(IOS_FAMILY)
+#if ENABLE(TWO_PHASE_CLICKS)
     auto firstTransactionIDAfterDidCommitLoad = downcast<RemoteLayerTreeDrawingArea>(*protect(drawingArea())).nextTransactionID();
     frame->setFirstLayerTreeTransactionIDAfterDidCommitLoad(firstTransactionIDAfterDidCommitLoad);
     cancelPotentialTapInFrame(*frame);
@@ -8582,7 +8619,7 @@ Ref<DocumentLoader> WebPage::createDocumentLoader(LocalFrame& frame, ResourceReq
             m_pendingNavigationID = std::nullopt;
         }
 
-        if (m_internals->pendingWebsitePolicies && frame.isMainFrame()) {
+        if (m_internals->pendingWebsitePolicies) {
             m_allowsContentJavaScriptFromMostRecentNavigation = m_internals->pendingWebsitePolicies->allowsContentJavaScript;
             WebsitePoliciesData::applyToDocumentLoader(*std::exchange(m_internals->pendingWebsitePolicies, std::nullopt), documentLoader);
         }
@@ -9848,7 +9885,7 @@ void WebPage::notifyPageOfAppBoundBehavior()
 RemoteRenderingBackendProxy& WebPage::ensureRemoteRenderingBackendProxy()
 {
     if (!m_remoteRenderingBackendProxy)
-        m_remoteRenderingBackendProxy = RemoteRenderingBackendProxy::create(*this);
+        lazyInitialize(m_remoteRenderingBackendProxy, RemoteRenderingBackendProxy::create(*this));
     return *m_remoteRenderingBackendProxy;
 }
 #endif

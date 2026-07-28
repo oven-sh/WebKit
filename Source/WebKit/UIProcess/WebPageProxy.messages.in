@@ -36,7 +36,6 @@ messages -> WebPageProxy {
     RunJavaScriptPrompt(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, String message, String defaultValue) -> (String result) Synchronous
     MouseDidMoveOverElement(struct WebKit::WebHitTestResultData hitTestResultData, OptionSet<WebKit::WebEventModifier> modifiers)
 
-    DidReceiveEventIPC(enum:uint32_t WebKit::WebEventType eventType, bool handled, struct std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData)
     SetCursor(WebCore::Cursor cursor)
     SetCursorHiddenUntilMouseMoves(bool hiddenUntilMouseMoves)
     SetFocus(bool focused, std::optional<WebCore::UserGestureTokenIdentifier> userGestureTokenIdentifier)
@@ -224,7 +223,7 @@ messages -> WebPageProxy {
     HandleClickForDataDetectionResult(struct WebCore::DataDetectorElementInfo info, WebCore::IntPoint location)
 #endif
 
-    PageScaleFactorDidChange(double scaleFactor)
+    DidSetPageScaleFactor(double scaleFactor)
     ViewScaleFactorDidChange(double scaleFactor)
     PluginScaleFactorDidChange(double zoomFactor)
     PluginZoomFactorDidChange(double zoomFactor)
@@ -282,6 +281,7 @@ messages -> WebPageProxy {
     AddTextAnimationForAnimationIDWithCompletionHandler(WTF::UUID uuid, struct WebCore::TextAnimationData styleData, RefPtr<WebCore::TextIndicator> textIndicator) -> (enum:uint8_t WebCore::TextAnimationRunMode runMode)
     RemoveTextAnimationForAnimationID(WTF::UUID uuid)
     DidEndPartialIntelligenceTextAnimation()
+    ShowWritingToolsAffordance()
 #endif
 
 #if ENABLE(WRITING_TOOLS) && ENABLE(WRITING_TOOLS_TEXT_EFFECTS)

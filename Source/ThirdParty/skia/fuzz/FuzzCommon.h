@@ -16,18 +16,12 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkRegion.h"
 #include "include/effects/SkRuntimeEffect.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 
 class SkData;
 
 // allows some float values for path points
-void FuzzNicePath(Fuzz* fuzz, SkPathBuilder*, int maxOps);
-
-static inline SkPath FuzzNicePath(Fuzz* fuzz, int maxOps) {
-    SkPathBuilder builder;
-    FuzzNicePath(fuzz, &builder, maxOps);
-    return builder.detach();
-}
+SkPath FuzzNicePath(Fuzz* fuzz, int maxOps);
 
 // allows all float values for path points
 SkPath FuzzEvilPath(Fuzz* fuzz, int last_verb);

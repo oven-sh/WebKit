@@ -44,12 +44,9 @@
 #include "include/core/SkTypes.h"
 #include "include/docs/SkPDFDocument.h"
 #include "include/pathops/SkPathOps.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkScopeExit.h"
-#include "src/base/SkTLazy.h"
-#include "src/base/SkUTF.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkAdvancedTypefaceMetrics.h"
 #include "src/core/SkAnnotationKeys.h"
 #include "src/core/SkBitmapDevice.h"
@@ -63,8 +60,11 @@
 #include "src/core/SkPaintPriv.h"
 #include "src/core/SkPathPriv.h"
 #include "src/core/SkRasterClip.h"
+#include "src/core/SkScopeExit.h"
 #include "src/core/SkSpecialImage.h"
 #include "src/core/SkStrikeSpec.h"
+#include "src/core/SkTLazy.h"
+#include "src/core/SkUTF.h"
 #include "src/pdf/SkBitmapKey.h"
 #include "src/pdf/SkClusterator.h"
 #include "src/pdf/SkKeyedImage.h"
@@ -739,9 +739,11 @@ void SkPDFDevice::internalDrawPath(const SkClipStack& clipStack,
            paint->getStyle() == SkPaint::kFill_Style ||
            (paint->getStrokeCap() != SkPaint::kRound_Cap &&
             paint->getStrokeCap() != SkPaint::kSquare_Cap);
-    using SkPDFUtils::EmptyPath, SkPDFUtils::EmptyVerb;
-    if (SkPDFUtils::EmitPath(modifiedPath, paint->getStyle(), EmptyPath::Discard,
+    bool discardEmptyArea = paint->getStyle() == SkPaint::kFill_Style;
+    using SkPDFUtils::EmptyPath, SkPDFUtils::EmptyVerb, SkPDFUtils::EmptyArea;
+    if (SkPDFUtils::EmitPath(modifiedPath, EmptyPath::Discard,
                              discardEmptyVerbs ? EmptyVerb::Discard : EmptyVerb::Preserve,
+                             discardEmptyArea ? EmptyArea::Discard : EmptyArea::Preserve,
                              content.stream(), tolerance))
     {
         SkPDFUtils::PaintPath(paint->getStyle(), modifiedPath.getFillType(), content.stream());

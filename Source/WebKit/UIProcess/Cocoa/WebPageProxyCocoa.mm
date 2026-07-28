@@ -1687,6 +1687,12 @@ void WebPageProxy::didEndPartialIntelligenceTextAnimation(IPC::Connection&)
     didEndPartialIntelligenceTextAnimationImpl();
 }
 
+void WebPageProxy::showWritingToolsAffordance(IPC::Connection&)
+{
+    if (RefPtr pageClient = this->pageClient())
+        pageClient->showWritingToolsAffordance();
+}
+
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
 void WebPageProxy::updateUnderlyingTextVisibilityForTextEffectID(const WTF::UUID& uuid, bool visible, CompletionHandler<void()>&& completionHandler)
 {
@@ -2246,13 +2252,21 @@ void WebPageProxy::updateSelectionWithExtentPointAndBoundary(WebCore::IntPoint p
 
 void WebPageProxy::startAutoscrollAtPosition(const WebCore::FloatPoint& positionInWindow)
 {
-    m_isAutoscrolling = true;
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::StartAutoscrollAtPosition(positionInWindow), webPageIDInMainFrameProcess());
+    if (m_autoscrollState == AutoscrollState::Inactive)
+        m_autoscrollState = AutoscrollState::Pending;
+
+    protect(m_legacyMainFrameProcess)->sendWithAsyncReply(Messages::WebPage::StartAutoscrollAtPosition(positionInWindow), [weakThis = WeakPtr { *this }](bool didStartAutoscrolling) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || protectedThis->m_autoscrollState == AutoscrollState::Inactive)
+            return;
+
+        protectedThis->m_autoscrollState = didStartAutoscrolling ? AutoscrollState::Active : AutoscrollState::Inactive;
+    }, webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::cancelAutoscroll()
 {
-    m_isAutoscrolling = false;
+    m_autoscrollState = AutoscrollState::Inactive;
     protect(m_legacyMainFrameProcess)->send(Messages::WebPage::CancelAutoscroll(), webPageIDInMainFrameProcess());
 }
 
@@ -2298,6 +2312,11 @@ void WebPageProxy::commitPotentialTapFailed()
 {
     if (RefPtr pageClient = this->pageClient())
         pageClient->commitPotentialTapFailed();
+}
+
+void WebPageProxy::handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint& point, OptionSet<WebEventModifier> modifiers, TransactionID layerTreeTransactionIdAtLastInteractionStart, WebEventInputSource inputSource, WebMouseEventSyntheticClickType syntheticClickType)
+{
+    protect(legacyMainFrameProcess())->send(Messages::WebPage::HandleDoubleTapForDoubleClickAtPoint(point, modifiers, layerTreeTransactionIdAtLastInteractionStart, inputSource, syntheticClickType), webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::didNotHandleTapAsClick(const WebCore::IntPoint& point)

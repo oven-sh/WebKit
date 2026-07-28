@@ -9,6 +9,7 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkPoint3.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
@@ -17,21 +18,20 @@
 #include "include/core/SkString.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/gpu/ganesh/GrRecordingContext.h"
-#include "include/private/base/SkAlignedStorage.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkMacros.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkOnce.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkAlignedStorage.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkMacros.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkOnce.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkSafeMath.h"
 #include "src/core/SkColorData.h"
 #include "src/core/SkGeometry.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkPointPriv.h"
+#include "src/core/SkSafeMath.h"
 #include "src/gpu/ResourceKey.h"
 #include "src/gpu/ganesh/GrAppliedClip.h"
 #include "src/gpu/ganesh/GrAuditTrail.h"
@@ -681,6 +681,14 @@ void set_conic_coeffs(const SkPoint p[3],
     }
 }
 
+static void backfill_degenerate_bezier(BezierVertex** vert) {
+    memset(*vert, 0, kQuadNumVertices * sizeof(BezierVertex));
+    for (int i = 0; i < kQuadNumVertices; ++i) {
+        (*vert)[i].fPos.set(SK_ScalarMax, SK_ScalarMax);
+    }
+    *vert += kQuadNumVertices;
+}
+
 void add_conics(const SkPoint p[3],
                 const SkScalar weight,
                 const SkMatrix* toDevice,
@@ -689,6 +697,8 @@ void add_conics(const SkPoint p[3],
     if (bloat_quad(p, toDevice, toSrc, *vert)) {
         set_conic_coeffs(p, *vert, weight);
         *vert += kQuadNumVertices;
+    } else {
+        backfill_degenerate_bezier(vert);
     }
 }
 
@@ -720,6 +730,8 @@ void add_quads(const SkPoint p[3],
             set_uv_quad(choppedQuadPts, outVerts);
             memcpy(*vert, outVerts, kQuadNumVertices * sizeof(BezierVertex));
             *vert += kQuadNumVertices;
+        } else {
+            backfill_degenerate_bezier(vert);
         }
         --stepCount;
     }
@@ -729,6 +741,8 @@ void add_quads(const SkPoint p[3],
         set_uv_quad(&choppedQuadPts[2], outVerts);
         memcpy(*vert, outVerts, kQuadNumVertices * sizeof(BezierVertex));
         *vert += kQuadNumVertices;
+    } else {
+        backfill_degenerate_bezier(vert);
     }
 }
 

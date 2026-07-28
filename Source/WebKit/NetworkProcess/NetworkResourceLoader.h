@@ -49,12 +49,17 @@
 #include <wtf/MonotonicTime.h>
 #include <wtf/WeakPtr.h>
 
+namespace IPC {
+class SharedBufferReference;
+}
+
 namespace WebCore {
 class BlobDataFileReference;
 class ContentFilter;
 class FormData;
 class LinkHeader;
 class NetworkStorageSession;
+class PendingStreamState;
 class Report;
 class ResourceRequest;
 }
@@ -114,6 +119,10 @@ public:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
     void continueWillSendRequest(WebCore::ResourceRequest&&, bool isAllowedToAskUserForCredentials, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
+
+    void pendingStreamAppendData(IPC::SharedBufferReference&&);
+    void pendingStreamEnd();
+    void pendingStreamError();
 
     void setResponse(WebCore::ResourceResponse&& response) { m_response = WTF::move(response); }
     const WebCore::ResourceResponse& response() const LIFETIME_BOUND { return m_response; }
@@ -319,6 +328,8 @@ private:
 
     std::unique_ptr<SynchronousLoadData> m_synchronousLoadData;
     Vector<Ref<WebCore::BlobDataFileReference>> m_fileReferences;
+
+    RefPtr<WebCore::PendingStreamState> m_pendingStreamState;
 
     bool m_wasStarted { false };
     bool m_didConsumeSandboxExtensions { false };

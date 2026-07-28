@@ -261,10 +261,6 @@
 #import <pal/cocoa/EnhancedSecurityCocoa.h>
 #endif
 
-#if USE(LIBRICE)
-#include "RiceBackendProxy.h"
-#endif
-
 #if PLATFORM(MAC)
 #import <wtf/spi/darwin/SandboxSPI.h>
 #endif
@@ -1350,7 +1346,7 @@ void WebProcess::setInjectedBundleParameters(std::span<const uint8_t> value)
     injectedBundle->setBundleParameters(value);
 }
 
-[[noreturn]] inline void NODELETE failedToGetNetworkProcessConnection()
+[[noreturn]] inline void failedToGetNetworkProcessConnection()
 {
 #if PLATFORM(GTK) || PLATFORM(WPE)
     // GTK and WPE ports don't exit on send sync message failure.
@@ -2170,6 +2166,8 @@ void WebProcess::ensureAutomationSessionProxy(const String& sessionIdentifier)
 
 void WebProcess::destroyAutomationSessionProxy()
 {
+    if (RefPtr automationSessionProxy = m_automationSessionProxy)
+        automationSessionProxy->cancelPendingEvaluateJavaScriptCallbacks();
     m_automationSessionProxy = nullptr;
 }
 
@@ -2631,28 +2629,6 @@ void WebProcess::removeWebTransportSession(WebTransportSessionIdentifier identif
     ASSERT(m_webTransportSessions.contains(identifier));
     m_webTransportSessions.remove(identifier);
 }
-
-#if USE(LIBRICE)
-RefPtr<RiceBackendProxy> WebProcess::gstreamerIceBackend(RiceBackendIdentifier identifier)
-{
-    ASSERT(RunLoop::isMain());
-    return m_gstreamerIceBackends.get(identifier).get();
-}
-
-void WebProcess::addRiceBackend(RiceBackendIdentifier identifier, RiceBackendProxy& backend)
-{
-    ASSERT(RunLoop::isMain());
-    ASSERT(!m_gstreamerIceBackends.contains(identifier));
-    m_gstreamerIceBackends.set(identifier, backend);
-}
-
-void WebProcess::removeRiceBackend(RiceBackendIdentifier identifier)
-{
-    ASSERT(RunLoop::isMain());
-    ASSERT(m_gstreamerIceBackends.contains(identifier));
-    m_gstreamerIceBackends.remove(identifier);
-}
-#endif // USE(LIBRICE)
 
 void WebProcess::updateCachedCookiesEnabled()
 {

@@ -9,7 +9,7 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "modules/skparagraph/include/DartTypes.h"
 #include "modules/skparagraph/include/TextStyle.h"
 #include "modules/skshaper/include/SkShaper.h"
@@ -111,6 +111,7 @@ public:
     ParagraphImpl* owner() const { return fOwner; }
 
     bool isEllipsis() const { return fEllipsis; }
+    bool isHyphen() const { return fHyphen; }
 
     void calculateMetrics();
     void updateMetrics(InternalLineMetrics* endlineMetrics);
@@ -213,6 +214,7 @@ private:
     SkScalar fCorrectLeading;
 
     bool fEllipsis;
+    bool fHyphen;
     uint8_t fBidiLevel;
     SkFourByteTag fScript;
     SkString fLanguage;
@@ -315,6 +317,7 @@ public:
     bool isIdeographic() const { return fIsIdeographic; }
 
     bool isSoftBreak() const;
+    bool isSoftHyphen() const;
     bool isGraphemeBreak() const;
     bool canBreakLineAfter() const { return isHardBreak() || isSoftBreak(); }
     size_t startPos() const { return fStart; }

@@ -440,6 +440,7 @@ void JIT::emitSlowIteratorOpenGeneric(const JSInstruction*, Vector<SlowCaseEntry
     notObject.append(branchIfNotObject(baseJSR.payloadGPR()));
 
     JITGetByIdGenerator& gen = m_getByIds[m_getByIdIndex++];
+    gen.generateDataICSlowPath(*this);
     gen.reportBaselineDataICSlowPathBegin(label());
     nearCallThunk(CodeLocationLabel { InlineCacheCompiler::generateSlowPathCode(vm(), gen.accessType()).retaggedCode<NoPtrTag>() });
     static_assert(BaselineJITRegisters::GetById::resultJSR == returnValueJSR);
@@ -582,6 +583,7 @@ void JIT::emitSlow_op_iterator_next(const JSInstruction*, Vector<SlowCaseEntry>:
 
     {
         JITGetByIdGenerator& gen = m_getByIds[m_getByIdIndex++];
+        gen.generateDataICSlowPath(*this);
         gen.reportBaselineDataICSlowPathBegin(label());
         nearCallThunk(CodeLocationLabel { InlineCacheCompiler::generateSlowPathCode(vm(), gen.accessType()).retaggedCode<NoPtrTag>() });
         static_assert(BaselineJITRegisters::GetById::resultJSR == returnValueJSR);
@@ -591,6 +593,7 @@ void JIT::emitSlow_op_iterator_next(const JSInstruction*, Vector<SlowCaseEntry>:
     {
         linkAllSlowCases(iter);
         JITGetByIdGenerator& gen = m_getByIds[m_getByIdIndex++];
+        gen.generateDataICSlowPath(*this);
         gen.reportBaselineDataICSlowPathBegin(label());
         nearCallThunk(CodeLocationLabel { InlineCacheCompiler::generateSlowPathCode(vm(), gen.accessType()).retaggedCode<NoPtrTag>() });
         static_assert(BaselineJITRegisters::GetById::resultJSR == returnValueJSR);
@@ -619,10 +622,15 @@ void JIT::emit_op_async_iterator_next(const JSInstruction* instruction)
     constexpr GPRReg globalObjectGPR = preferredArgumentGPR<SlowOperation, 0>();
     constexpr GPRReg iteratorGPR = preferredArgumentGPR<SlowOperation, 1>();
     constexpr GPRReg driverGPR = preferredArgumentGPR<SlowOperation, 2>();
+    constexpr JSValueRegs resumeValueJSR = preferredArgumentJSR<SlowOperation, 3>();
     emitGetVirtualRegisterPayload(bytecode.m_iterator, iteratorGPR);
     emitGetVirtualRegisterPayload(bytecode.m_driver, driverGPR);
+    if (bytecode.m_hasValue)
+        emitGetVirtualRegister(resumeValueOperandFor(bytecode), resumeValueJSR);
+    else
+        moveValue(JSValue(), resumeValueJSR);
     loadGlobalObject(globalObjectGPR);
-    callOperation(operationAsyncIteratorNextWithDriver, globalObjectGPR, iteratorGPR, driverGPR, TrustedImmPtr(&vm().syncResumeCallCache()));
+    callOperation(operationAsyncIteratorNextWithDriver, globalObjectGPR, iteratorGPR, driverGPR, resumeValueJSR, TrustedImmPtr(&vm().syncResumeCallCache()));
     emitPutVirtualRegister(bytecode.m_dst, returnValueJSR);
     Jump doneCase = jump();
 
@@ -771,6 +779,7 @@ void JIT::emitSlow_op_instanceof(const JSInstruction* instruction, Vector<SlowCa
     // 1.2 Get hasInstance from the constructor.
     {
         JITGetByIdGenerator& gen = m_getByIds[m_getByIdIndex++];
+        gen.generateDataICSlowPath(*this);
         gen.reportBaselineDataICSlowPathBegin(label());
         nearCallThunk(CodeLocationLabel { InlineCacheCompiler::generateSlowPathCode(vm(), gen.accessType()).retaggedCode<NoPtrTag>() });
         static_assert(GetById::resultJSR == returnValueJSR);
@@ -795,6 +804,7 @@ void JIT::emitSlow_op_instanceof(const JSInstruction* instruction, Vector<SlowCa
     // 2.3 Get prototype from the constructor.
     {
         JITGetByIdGenerator& gen = m_getByIds[m_getByIdIndex++];
+        gen.generateDataICSlowPath(*this);
         gen.reportBaselineDataICSlowPathBegin(label());
         nearCallThunk(CodeLocationLabel { InlineCacheCompiler::generateSlowPathCode(vm(), gen.accessType()).retaggedCode<NoPtrTag>() });
         static_assert(GetById::resultJSR == returnValueJSR);

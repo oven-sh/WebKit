@@ -462,6 +462,19 @@ AXObjectCache::AXObjectCache(LocalFrame& localFrame, Document* document)
     if (RefPtr page = localFrame.page())
         page->chrome().client().requestFrameScreenPosition(m_frameID);
 #endif
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    if (isIsolatedTreeEnabled() && !clientIsInTestMode()) {
+        // Proactively (and asynchronously) queue up the build of the isolated tree associated with this cache,
+        // guaranteeing it gets built rather than implicitly relying on something later calling getOrCreateIsolatedTree()
+        // on |this| instance. Doing this here is critical — otherwise, after navigation, nothing may actually
+        // call getOrCreateIsolatedTree() on |this|, leaving web content empty forever.
+        //
+        // Do not do this in test mode, for which we build the full tree synchronously in getOrCreateIsolatedTree()
+        // (unlike the real-AT path, where we serve a placeholder while the full tree gets built via this timer).
+        m_buildIsolatedTreeTimer.startOneShot(0_s);
+    }
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 }
 
 AXObjectCache::~AXObjectCache()
@@ -1240,11 +1253,6 @@ RefPtr<AXIsolatedTree> AXObjectCache::getOrCreateIsolatedTree()
         tree = nullptr;
     }
 
-    // A new isolated tree needs to be created. Initialize the GeometryManager primary screen rect to be ready when needed.
-    m_geometryManager->initializePrimaryScreenRect();
-    // Schedule a paint to cache the rects for the objects in this new isolated tree.
-    scheduleObjectRegionsUpdate(true /* scheduleImmediately */);
-
     if (clientIsInTestMode()) [[unlikely]] {
         // For test clients (LayoutTests / XCTests) build the whole isolated tree synchronously.
         // This is necessary because tests assume that APIs like accessibleElementById can
@@ -1263,6 +1271,14 @@ RefPtr<AXIsolatedTree> AXObjectCache::getOrCreateIsolatedTree()
     }
 
     return tree;
+}
+
+void AXObjectCache::initializeIsolatedTreeGeometry()
+{
+    // Cache the primary display's rect on the geometry manager (its height is exposed to AX clients as
+    // AXPrimaryScreenHeight) and schedule an immediate object-region paint to cache per-object rects.
+    m_geometryManager->initializePrimaryScreenRect();
+    scheduleObjectRegionsUpdate(true /* scheduleImmediately */);
 }
 
 void AXObjectCache::buildIsolatedTree()
@@ -2352,6 +2368,18 @@ void AXObjectCache::onPageActivityStateChange(OptionSet<ActivityState> newState)
 #endif
 }
 
+#if ENABLE(WRITING_TOOLS)
+void AXObjectCache::setWritingToolsAvailable(bool isAvailable)
+{
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    if (auto tree = AXIsolatedTree::treeForFrameID(m_frameID))
+        tree->setWritingToolsAvailable(isAvailable);
+#else
+    UNUSED_PARAM(isAvailable);
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+}
+#endif // ENABLE(WRITING_TOOLS)
+
 static bool shouldDeferFocusChange(Element* element)
 {
     if (!element)
@@ -2382,6 +2410,20 @@ static bool shouldDeferFocusChange(Element* element)
 
 void AXObjectCache::onFocusChange(Element* oldElement, Element* newElement)
 {
+    if (m_suppressedFocusChange && m_suppressedFocusChange->get() == newElement) {
+        // We deliberately don't want to surface this focus change to assistive technology.
+        // One situation where this is relevant is downstream of invoking an aria-action.
+        // Inherently, the simulated click that results from invoking the action moves
+        // focus to the action target, but the user experience for aria-actions demands
+        // that focus "stay on" (or immediately bounce back to) the originating element.
+        // We explicitly do not want assistive technologies to actually bounce back and forth
+        // as that would cause confusing announcements, so we supress the focus change.
+        //
+        // A null suppressed element matches a clearing of focus, used when the focus we're
+        // restoring had no origin (nothing was focused before the action).
+        return;
+    }
+
     if (m_deferredRemoteFrameFocus) {
         if (newElement) {
             // Focus is going to a local element, not the remote frame.
@@ -3291,15 +3333,30 @@ void AXObjectCache::frameLoadingEventNotification(LocalFrame* frame, AXLoadingEv
     }
 }
 
-void AXObjectCache::postLiveRegionChangeNotification(AccessibilityObject& object)
+unsigned AXObjectCache::liveRegionSnapshotBuildCount() const
 {
 #if PLATFORM(COCOA)
-    if (m_liveRegionManager) {
-        m_liveRegionManager->handleLiveRegionChange(object);
-        return;
-    }
+    if (m_liveRegionManager)
+        return m_liveRegionManager->snapshotBuildCount();
 #endif
+    return 0;
+}
 
+void AXObjectCache::resetLiveRegionSnapshotBuildCount()
+{
+#if PLATFORM(COCOA)
+    if (m_liveRegionManager)
+        m_liveRegionManager->resetSnapshotBuildCount();
+#endif
+}
+
+void AXObjectCache::postLiveRegionChangeNotification(AccessibilityObject& object)
+{
+    // Consolidate multiple live region changes to the same object within a run loop iteration.
+    // Web content (e.g. rebuilding a large calendar) can fire hundreds of text changes that each
+    // walk up to a live-region ancestor; deduplicating here and processing once when the timer fires
+    // collapses that into a single snapshot rebuild per region. On COCOA, the timer drives
+    // AXLiveRegionManager; elsewhere it posts a LiveRegionChanged notification.
     if (m_liveRegionChangedPostTimer.isActive())
         m_liveRegionChangedPostTimer.stop();
 
@@ -3316,6 +3373,15 @@ void AXObjectCache::liveRegionChangedNotificationPostTimerFired()
 
     if (m_changedLiveRegions.isEmpty())
         return;
+
+#if PLATFORM(COCOA)
+    if (m_liveRegionManager) {
+        for (auto& object : m_changedLiveRegions)
+            m_liveRegionManager->handleLiveRegionChange(object.get());
+        m_changedLiveRegions.clear();
+        return;
+    }
+#endif
 
     for (auto& object : m_changedLiveRegions)
         postNotification(object.ptr(), protect(object->document()).get(), AXNotification::LiveRegionChanged);
@@ -5512,7 +5578,7 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
     AXLOGDeferredCollection("AttributeChange"_s, m_deferredAttributeChange);
     for (const auto& attributeChange : borrow(m_deferredAttributeChange).get()) {
         handleAttributeChange(protect(attributeChange.element.get()), attributeChange.attrName, attributeChange.oldValue, attributeChange.newValue);
-        if (attributeChange.attrName == idAttr)
+        if (attributeChange.attrName == idAttr && idChangeCanAffectRelations(attributeChange.element.get(), attributeChange.oldValue, attributeChange.newValue))
             markRelationsDirty();
     }
     m_deferredAttributeChange.clear();
@@ -5939,8 +6005,15 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<Ref<AccessibilityO
         case AXNotification::PressedStateChanged:
         case AXNotification::TextChanged:
         case AXNotification::TextSecurityChanged:
+            tree->queueNodeUpdate(notification.first->objectID(), NodeUpdateOptions::nodeUpdate());
+            break;
         case AXNotification::ValueChanged:
             tree->queueNodeUpdate(notification.first->objectID(), NodeUpdateOptions::nodeUpdate());
+            // A text control's value and selection must stay consistent for clients that read the
+            // selection in response to this notification, so push the current selection alongside the
+            // value rather than letting it arrive later on the selection-change channel.
+            if (notification.first->isTextControl())
+                onSelectedTextChanged(notification.first->selectedVisiblePositionRange(), notification.first.ptr());
             break;
         case AXNotification::LabelChanged: {
             tree->queueNodeUpdate(notification.first->objectID(), NodeUpdateOptions::nodeUpdate());
@@ -6677,6 +6750,7 @@ void AXObjectCache::updateRelationsIfNeeded()
     m_recentlyRemovedRelations.clear();
     m_relationTargets.clear();
     m_unresolvedRelationTargetIds.clear();
+    m_referencedRelationTargetIds.clear();
     m_hasAriaOwnsRelations = false;
 
     if (!m_doneInitialRelationsBuild) {
@@ -6738,6 +6812,24 @@ void AXObjectCache::trackRelationAttributeElement(Element& element)
         relationsNeedUpdate(true);
 }
 
+bool AXObjectCache::idChangeCanAffectRelations(Element* element, const AtomString& oldID, const AtomString& newID) const
+{
+    auto isReferenced = [&](const AtomString& id) {
+        return !id.isEmpty() && m_referencedRelationTargetIds.contains(id);
+    };
+    if (isReferenced(oldID) || isReferenced(newID)) {
+        // An id change affects relations only if the old or new id is referenced by a relation attribute.
+        return true;
+    }
+
+    // A relation can also resolve through a shadow root's reference target, in which case it depends on
+    // an inner id (the reference target) rather than the relation attribute's value, so that inner id is
+    // not in m_referencedRelationTargetIds. Conservatively re-resolve when an id changes inside a shadow
+    // tree that uses a reference target.
+    RefPtr shadowRoot = element ? element->containingShadowRoot() : nullptr;
+    return shadowRoot && shadowRoot->hasReferenceTarget();
+}
+
 bool AXObjectCache::addRelation(Element& origin, const QualifiedName& attribute)
 {
     if (attribute == aria_labeledbyAttr && origin.hasAttribute(aria_labelledbyAttr)) {
@@ -6751,13 +6843,23 @@ bool AXObjectCache::addRelation(Element& origin, const QualifiedName& attribute)
         return false;
 
     // Remember any referenced ids whose target doesn't exist yet, so that if an element with one of
-    // these ids is inserted later, we know to dirty relations and re-resolve it
+    // these ids is inserted later, we know to dirty relations and re-resolve it. Also remember every
+    // referenced id (resolved or not) so that an id-attribute change can be cheaply checked against it.
     if (const auto& value = origin.attributeWithoutSynchronization(attribute); !value.isNull()) {
         Ref treeScope = origin.treeScope();
         for (auto& id : SpaceSplitString(value, SpaceSplitString::ShouldFoldCase::No)) {
+            m_referencedRelationTargetIds.add(id);
             if (!treeScope->elementByIdResolvingReferenceTarget(id))
                 m_unresolvedRelationTargetIds.add(id);
         }
+    }
+
+    if (!origin.isInTreeScope()) {
+        // When an origin is not in a tree scope, Element::elementsArrayForAttributeInternal() can't use the
+        // TreeScope id map and falls back to getElementByIdIncludingDisconnected(), which linearly scans
+        // the entire detached subtree once per referenced id. On pages with large detached subtrees this
+        // can cause performance issues.
+        return false;
     }
 
     if (Element::isElementReflectionAttribute(m_document->settings(), attribute)) {
@@ -6801,10 +6903,22 @@ bool AXObjectCache::addRelation(Element& origin, const QualifiedName& attribute)
 
 void AXObjectCache::addLabelForRelation(Element& origin)
 {
+    RefPtr label = dynamicDowncast<HTMLLabelElement>(origin);
+
+    if (label) {
+        if (const auto& controlID = label->attributeWithoutSynchronization(forAttr); !controlID.isEmpty())
+            m_referencedRelationTargetIds.add(controlID);
+    }
+
+    // A detached label has no accessibility object, so its label relations have no consumer. Skipping
+    // it here also avoids HTMLLabelElement::control()'s scan of the label's descendants.
+    if (!origin.isInTreeScope())
+        return;
+
     bool addedRelation = false;
 
     // LabelFor relations are established for <label for=...>.
-    if (RefPtr label = dynamicDowncast<HTMLLabelElement>(origin)) {
+    if (label) {
         if (RefPtr control = Accessibility::controlForLabelElement(*label)) {
             // Always add NativeLabelFor for geometry purposes.
             addedRelation = addRelation(origin, *control, AXRelation::NativeLabelFor);

@@ -39,7 +39,10 @@ class WebTransportBidirectionalStream;
 class WebTransportSendStream;
 class WebTransportSessionClient;
 
+struct ClientOrigin;
+struct WebTransportConnectionInfo;
 struct WebTransportConnectionStats;
+struct WebTransportOptions;
 struct WebTransportReceiveStreamStats;
 struct WebTransportSendGroupIdentifierType;
 struct WebTransportSendStreamStats;
@@ -47,11 +50,13 @@ struct WebTransportStreamIdentifierType;
 
 using WebTransportSendGroupIdentifier = ObjectIdentifier<WebTransportSendGroupIdentifierType>;
 using WebTransportStreamIdentifier = ObjectIdentifier<WebTransportStreamIdentifierType>;
+using WebTransportSessionInitializationPromise = NativePromise<WebTransportConnectionInfo, void>;
 using WebTransportStreamPromise = NativePromise<WebTransportStreamIdentifier, void>;
 using WebTransportSendPromise = NativePromise<std::optional<Exception>, void>;
 using WebTransportConnectionStatsPromise = NativePromise<WebTransportConnectionStats, void>;
 using WebTransportSendStreamStatsPromise = NativePromise<WebTransportSendStreamStats, void>;
 using WebTransportReceiveStreamStatsPromise = NativePromise<WebTransportReceiveStreamStats, void>;
+using WebTransportExportKeyingMaterialPromise = NativePromise<Vector<uint8_t>, void>;
 
 using WebTransportSessionErrorCode = uint32_t;
 using WebTransportStreamErrorCode = uint64_t;
@@ -60,6 +65,7 @@ class WEBCORE_EXPORT WebTransportSession : public AbstractThreadSafeRefCountedAn
 public:
     virtual ~WebTransportSession();
 
+    virtual Ref<WebTransportSessionInitializationPromise> initialize(ScriptExecutionContext&, const URL&, const WebTransportOptions&, const ClientOrigin&) = 0;
     virtual Ref<WebTransportSendPromise> sendDatagram(std::optional<WebTransportSendGroupIdentifier>, std::span<const uint8_t>) = 0;
     virtual Ref<WebTransportStreamPromise> createOutgoingUnidirectionalStream() = 0;
     virtual Ref<WebTransportStreamPromise> createBidirectionalStream() = 0;
@@ -68,6 +74,7 @@ public:
     virtual Ref<WebTransportSendStreamStatsPromise> getSendStreamStats(WebTransportStreamIdentifier) = 0;
     virtual Ref<WebTransportReceiveStreamStatsPromise> getReceiveStreamStats(WebTransportStreamIdentifier) = 0;
     virtual Ref<WebTransportSendStreamStatsPromise> getSendGroupStats(WebTransportSendGroupIdentifier) = 0;
+    virtual Ref<WebTransportExportKeyingMaterialPromise> exportKeyingMaterial(std::span<const uint8_t>, std::span<const uint8_t>, uint32_t) = 0;
 
     virtual void cancelReceiveStream(WebTransportStreamIdentifier, std::optional<WebTransportStreamErrorCode>) = 0;
     virtual void cancelSendStream(WebTransportStreamIdentifier, std::optional<WebTransportStreamErrorCode>) = 0;
@@ -75,8 +82,8 @@ public:
     virtual void terminate(WebTransportSessionErrorCode, CString&&) = 0;
     virtual void datagramIncomingMaxAgeUpdated(std::optional<double>) = 0;
     virtual void datagramOutgoingMaxAgeUpdated(std::optional<double>) = 0;
-    virtual void datagramIncomingHighWaterMarkUpdated(double) = 0;
-    virtual void datagramOutgoingHighWaterMarkUpdated(double) = 0;
+    virtual void incomingMaxBufferedDatagramsUpdated(uint32_t) = 0;
+    virtual void outgoingMaxBufferedDatagramsUpdated(uint32_t) = 0;
 };
 
 }

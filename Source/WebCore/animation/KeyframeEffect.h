@@ -177,6 +177,7 @@ public:
     void customPropertyRegistrationDidChange(const AtomString&);
 
     bool canBeAccelerated() const;
+    bool isCompletelyAccelerated() const { return m_acceleratedPropertiesState == AcceleratedProperties::All; }
     bool accelerationWasPrevented() const { return m_runningAccelerated == RunningAccelerated::Prevented; }
     bool preventsAcceleration() const;
     void effectStackNoLongerPreventsAcceleration();
@@ -225,7 +226,6 @@ private:
     void didChangeTargetStyleable(const std::optional<const Styleable>&);
     ExceptionOr<void> processKeyframes(JSC::JSGlobalObject&, Document&, JSC::Strong<JSC::JSObject>&&);
     void addPendingAcceleratedAction(AcceleratedAction);
-    bool isCompletelyAccelerated() const { return m_acceleratedPropertiesState == AcceleratedProperties::All; }
     void updateAcceleratedActions();
     void setAnimatedPropertiesInStyle(Style::ComputedStyle&, const ComputedEffectTiming&) const;
     const TimingFunction* timingFunctionForKeyframeAtIndex(size_t) const;
@@ -287,7 +287,7 @@ private:
     bool ticksContinuouslyWhileActive() const final;
     std::optional<double> progressUntilNextStep(double) const final;
     bool preventsAnimationReadiness() const final;
-    void animationProgressBasedTimelineSourceDidChangeMetrics(const Style::SingleAnimationRange&) final;
+    void animationProgressBasedTimelineSourceDidChangeMetrics(const ResolvableTimelineRange&) final;
 
     RefPtr<const ScrollTimeline> activeScrollTimeline() const;
     void updateComputedKeyframeOffsetsIfNeeded();
