@@ -47,6 +47,7 @@
 #include <unicode/udatpg.h>
 #include <unicode/uenum.h>
 #include <wtf/Range.h>
+#include <wtf/TimeZone.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/unicode/CharacterNames.h>
@@ -742,7 +743,7 @@ void IntlDateTimeFormat::initializeDateTimeFormat(JSGlobalObject* globalObject, 
     std::optional<IntlDateTimeFormatImplKey> cacheKey;
     const bool canCache = originalOptions.isUndefined() && (locales.isUndefined() || locales.isString()) && toLocaleStringTimeZone.isNull();
     if (canCache) {
-        IntlDateTimeFormatImplKey key { .locales = std::nullopt, .required = required, .defaults = defaults };
+        IntlDateTimeFormatImplKey key { .locales = std::nullopt, .required = required, .defaults = defaults, .timeZoneID = WTF::lastTimeZoneID() };
         if (locales.isString()) {
             key.locales = asString(locales)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, void());

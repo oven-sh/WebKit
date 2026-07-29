@@ -47,6 +47,7 @@ struct IntlDateTimeFormatImplKey {
     std::optional<String> locales;
     IntlDateTimeFormat::RequiredComponent required { IntlDateTimeFormat::RequiredComponent::Any };
     IntlDateTimeFormat::Defaults defaults { IntlDateTimeFormat::Defaults::All };
+    uint64_t timeZoneID { 0 };
 
     friend bool operator==(const IntlDateTimeFormatImplKey&, const IntlDateTimeFormatImplKey&) = default;
 };
