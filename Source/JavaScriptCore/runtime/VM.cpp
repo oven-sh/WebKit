@@ -1900,6 +1900,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     // module evaluates) and mark every pending task's arguments.
     for (auto* q = m_synchronousModuleQueue; q; q = q->prev) {
         for (auto& t : q->tasks) {
+            visitor.appendUnbarriered(t.globalObject);
             visitor.appendUnbarriered(t.arg0);
             visitor.appendUnbarriered(t.arg1);
             visitor.appendUnbarriered(t.arg2);

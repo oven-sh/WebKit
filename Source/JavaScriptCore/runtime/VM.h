@@ -1312,6 +1312,7 @@ public:
     struct SynchronousModuleTask {
         InternalMicrotask task;
         uint8_t payload;
+        JSGlobalObject* globalObject;
         JSValue arg0;
         JSValue arg1;
         JSValue arg2;
