@@ -340,7 +340,9 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     setNumParameters(other.numParameters(), allocateArgumentValueProfiles);
 
     ASSERT(m_couldBeTainted == (taintednessToTriState(source().provider()->sourceTaintedOrigin()) != TriState::False));
+#if USE(BUN_JSC_ADDITIONS)
     m_previousCounter = m_unlinkedCode->llintExecuteCounter().count();
+#endif
     vm.heap.codeBlockSet().add(this);
     checker().set(CrashChecker::This, checker().hash(this));
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
@@ -391,7 +393,9 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     setNumParameters(unlinkedCodeBlock->numParameters(), allocateArgumentValueProfiles);
 
     m_couldBeTainted = source().provider()->couldBeTainted();
+#if USE(BUN_JSC_ADDITIONS)
     m_previousCounter = m_unlinkedCode->llintExecuteCounter().count();
+#endif
     vm.heap.codeBlockSet().add(this);
     checker().set(CrashChecker::This, checker().hash(this));
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
@@ -1314,6 +1318,7 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
     if (Options::forceCodeBlockToJettisonDueToOldAge()) [[unlikely]]
         return true;
 
+#if USE(BUN_JSC_ADDITIONS)
     JITType type = jitType();
     Seconds ttl = timeToLive(type);
     if (timeSinceCreation() < ttl)
@@ -1360,6 +1365,10 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
             return false;
         }
     }
+#else
+    if (timeSinceCreation() < timeToLive(jitType()))
+        return false;
+#endif
 
     return true;
 }
