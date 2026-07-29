@@ -40,8 +40,10 @@ if (USE_LIBBACKTRACE)
 endif ()
 
 if (WIN32)
-    # WasmDebugServer uses winsock functions
+    # WasmDebugServer uses winsock functions;
+    # ntdll for RtlAddGrowableFunctionTable (no kernel32 forwarder).
     list(APPEND JavaScriptCore_LIBRARIES
+        ntdll
         ws2_32
     )
 endif ()

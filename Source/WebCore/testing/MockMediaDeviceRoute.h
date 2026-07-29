@@ -57,6 +57,13 @@ public:
     String deviceName() const;
     void setDeviceName(const String&);
 
+    String protocolTypeIdentifier() const;
+    void setProtocolTypeIdentifier(const String&);
+
+    String routeName() const;
+
+    bool connected() const;
+
     bool ready() const;
     void setReady(bool);
 
@@ -85,6 +92,9 @@ public:
 
     float volume() const;
     void setVolume(float);
+
+    bool muted() const;
+    void setMuted(bool);
 
 private:
     MockMediaDeviceRoute();

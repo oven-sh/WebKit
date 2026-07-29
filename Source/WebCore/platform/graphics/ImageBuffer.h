@@ -173,7 +173,7 @@ public:
     IntSize truncatedLogicalSize() const { return IntSize(m_parameters.logicalSize); } // You probably should be calling logicalSize() instead.
     float resolutionScale() const { return m_parameters.resolutionScale; }
     DestinationColorSpace colorSpace() const { return m_parameters.colorSpace; }
-    
+
     RenderingPurpose renderingPurpose() const { return m_parameters.purpose; }
     PixelFormat pixelFormat() const { return m_parameters.bufferFormat.pixelFormat; }
     const Parameters& parameters() const LIFETIME_BOUND { return m_parameters; }
@@ -189,6 +189,7 @@ public:
     // Returns NativeImage referencing the back buffer. Changes to ImageBuffer might be reflected to the NativeImage.
     // Useful when caller can guarantee the use of the NativeImage ends "immediately", before the next draw to this ImageBuffer.
     WEBCORE_EXPORT virtual RefPtr<NativeImage> createNativeImageReference() const;
+    WEBCORE_EXPORT virtual bool isRemoteImageBufferProxy() const;
 
     WEBCORE_EXPORT virtual RefPtr<NativeImage> filteredNativeImage(Filter&);
     RefPtr<NativeImage> filteredNativeImage(Filter&, Function<void(GraphicsContext&)> drawCallback);
@@ -246,6 +247,9 @@ public:
     WEBCORE_EXPORT virtual String debugDescription() const;
 
     WEBCORE_EXPORT virtual ImageBufferBackendSharing* toBackendSharing();
+
+    WEBCORE_EXPORT void replaceFontsWithRebuildData();
+    WEBCORE_EXPORT void rebuildFonts();
 
 protected:
     WEBCORE_EXPORT ImageBuffer(ImageBufferParameters, const ImageBufferBackend::Info&, const WebCore::ImageBufferCreationContext&, std::unique_ptr<ImageBufferBackend>&& = nullptr, RenderingResourceIdentifier = RenderingResourceIdentifier::generate());

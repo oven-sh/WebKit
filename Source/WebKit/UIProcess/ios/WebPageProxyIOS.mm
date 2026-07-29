@@ -428,14 +428,16 @@ void WebPageProxy::requestAutocorrectionData(const String& textForAutocorrection
     protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::RequestAutocorrectionData(textForAutocorrection), WTF::move(callback), webPageIDInMainFrameProcess());
 }
 
-void WebPageProxy::applyAutocorrection(const String& correction, const String& originalText, bool isCandidate, CompletionHandler<void(const String&)>&& callback)
+void WebPageProxy::applyAutocorrection(const String& correction, const String& originalText, bool isCandidate, CompletionHandler<void(String&&)>&& callback)
 {
-    protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::ApplyAutocorrection(correction, originalText, isCandidate), WTF::move(callback), webPageIDInMainFrameProcess());
+    auto targetFrameID = focusedOrMainFrame() ? std::optional(focusedOrMainFrame()->frameID()) : std::nullopt;
+    sendWithAsyncReplyToProcessContainingFrame(targetFrameID, Messages::WebPage::ApplyAutocorrection(correction, originalText, isCandidate), WTF::move(callback));
 }
 
 bool WebPageProxy::applyAutocorrection(const String& correction, const String& originalText, bool isCandidate)
 {
-    auto sendSync = protect(m_legacyMainFrameProcess)->sendSync(Messages::WebPage::SyncApplyAutocorrection(correction, originalText, isCandidate), webPageIDInMainFrameProcess());
+    auto targetFrameID = focusedOrMainFrame() ? std::optional(focusedOrMainFrame()->frameID()) : std::nullopt;
+    auto sendSync = sendSyncToProcessContainingFrame(targetFrameID, Messages::WebPage::SyncApplyAutocorrection(correction, originalText, isCandidate), Seconds::infinity());
     auto [autocorrectionApplied] = sendSync.takeReplyOr(false);
     return autocorrectionApplied;
 }
@@ -803,11 +805,6 @@ void WebPageProxy::attemptSyntheticClick(const FloatPoint& location, OptionSet<W
 void WebPageProxy::didRecognizeLongPress()
 {
     protect(legacyMainFrameProcess())->send(Messages::WebPage::DidRecognizeLongPress(), webPageIDInMainFrameProcess());
-}
-
-void WebPageProxy::handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint& point, OptionSet<WebEventModifier> modifiers, TransactionID layerTreeTransactionIdAtLastTouchStart)
-{
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::HandleDoubleTapForDoubleClickAtPoint(point, modifiers, layerTreeTransactionIdAtLastTouchStart), webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::inspectorNodeSearchMovedToPosition(const WebCore::FloatPoint& position)
@@ -1298,6 +1295,18 @@ WebCore::FloatRect WebPageProxy::selectionBoundingRectInRootViewCoordinates() co
         bounds = visualData.caretRectAtStart;
 
     return bounds;
+}
+
+void WebPageProxy::convertEditorStateSelectionRectToMainFrameCoordinates(WebCore::FloatRect rect, CompletionHandler<void(WebCore::FloatRect)>&& completionHandler)
+{
+    if (!editorState().hasVisualData()) {
+        completionHandler(rect);
+        return;
+    }
+
+    convertRectToMainFrameCoordinates(rect, editorState().visualData->rootFrameID, [rect, completionHandler = WTF::move(completionHandler)](std::optional<WebCore::FloatRect> convertedRect) mutable {
+        completionHandler(convertedRect.value_or(rect));
+    });
 }
 
 void WebPageProxy::requestDocumentEditingContext(WebKit::DocumentEditingContextRequest&& request, CompletionHandler<void(WebKit::DocumentEditingContext&&)>&& completionHandler)
@@ -1879,9 +1888,9 @@ void WebPageProxy::setPromisedDataForImage(IPC::Connection&, const String&, Shar
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
-RefPtr<ModelPresentationManagerProxy> WebPageProxy::modelPresentationManagerProxy() const
+RefPtr<PortalPresentationManagerProxy> WebPageProxy::portalPresentationManagerProxy() const
 {
-    return internals().modelPresentationManagerProxy;
+    return internals().portalPresentationManagerProxy;
 }
 #endif
 

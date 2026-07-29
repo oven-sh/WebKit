@@ -26,7 +26,6 @@
 #include "config.h"
 #include "ModelPlayer.h"
 
-#include "Color.h"
 #include "FloatPoint3D.h"
 #include "ImageBuffer.h"
 #include "ModelPlayerAnimationState.h"
@@ -50,6 +49,11 @@ bool ModelPlayer::isPlaceholder() const
     return false;
 }
 
+bool ModelPlayer::isWebModelPlayerInstance() const
+{
+    return false;
+}
+
 std::optional<ModelPlayerAnimationState> ModelPlayer::currentAnimationState() const
 {
     return std::nullopt;
@@ -61,6 +65,10 @@ std::optional<std::unique_ptr<ModelPlayerTransformState>> ModelPlayer::currentTr
 }
 
 void ModelPlayer::reload(Model&, LayoutSize, ModelPlayerAnimationState&, std::unique_ptr<ModelPlayerTransformState>&&)
+{
+}
+
+void ModelPlayer::adoptContentsDisplayDelegateFrom(ModelPlayer&)
 {
 }
 

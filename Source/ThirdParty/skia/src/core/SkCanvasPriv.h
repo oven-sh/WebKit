@@ -13,8 +13,8 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkTileMode.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkNoncopyable.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkNoncopyable.h"
 
 #include <cstddef>
 
@@ -38,7 +38,7 @@ private:
 class SkCanvasPriv {
 public:
     // The lattice has pointers directly into the readbuffer
-    static bool ReadLattice(SkReadBuffer&, SkCanvas::Lattice*);
+    [[nodiscard]] static bool ReadLattice(SkReadBuffer&, SkCanvas::Lattice*);
 
     static void WriteLattice(SkWriteBuffer&, const SkCanvas::Lattice&);
 

@@ -10,8 +10,7 @@
 
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSpan.h"
-#include "include/ports/SkCFObject.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "src/gpu/graphite/DrawTypes.h"
 #include "src/gpu/graphite/GraphicsPipeline.h"
 #include "src/gpu/graphite/dawn/DawnAsyncWait.h"
@@ -45,10 +44,14 @@ public:
     inline static constexpr unsigned int kTextureBindGroupIndex = 1;
     inline static constexpr unsigned int kBindGroupCount = 2;
 
+    // TODO(b/512814646): WASM does not support push constant usage, meaning that we often have 2
+    // uniform buffers within one BindGroup. This is unideal since we can store single-uniform
+    // BindGroups on DawnBuffers. Consider reorganizing uniform buffers such that we can more often
+    // only have one uniform buffer per BindGroup.
     inline static constexpr unsigned int kIntrinsicUniformBufferIndex = 0;
     inline static constexpr unsigned int kCombinedUniformIndex = 1;
     inline static constexpr unsigned int kGradientBufferIndex = 2;
-    inline static constexpr unsigned int kNumUniformBuffers = 3;
+    inline static constexpr unsigned int kMaxNumUniformBuffers = 3;
 
     inline static constexpr unsigned int kIntrinsicUniformSize = 32;
 

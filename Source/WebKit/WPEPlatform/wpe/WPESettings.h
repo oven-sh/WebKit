@@ -77,15 +77,40 @@ WPE_API GQuark wpe_settings_error_quark(void);
 #define WPE_SETTING_DARK_MODE "/wpe-platform/dark-mode"
 
 /**
- * WPE_SETTING_DISABLE_ANIMATIONS:
+ * WPE_SETTING_REDUCED_MOTION:
  *
- * Disables animations on websites.
+ * Whether the user prefers reduced animations.
  *
  * VariantType: boolean
  *
  * Default: false
  */
-#define WPE_SETTING_DISABLE_ANIMATIONS "/wpe-platform/disable-animations"
+#define WPE_SETTING_REDUCED_MOTION "/wpe-platform/reduced-motion"
+
+/**
+ * WPESettingsInterfaceContrast:
+ * @WPE_SETTINGS_INTERFACE_CONTRAST_NO_PREFERENCE: the user prefers normal contrast
+ * @WPE_SETTINGS_INTERFACE_CONTRAST_MORE: the user prefers high contrast
+ * @WPE_SETTINGS_INTERFACE_CONTRAST_LESS: the user prefers less contrast
+ *
+ * The user's preference for high contrast, low contrast, or normal contrast.
+ */
+typedef enum {
+    WPE_SETTINGS_INTERFACE_CONTRAST_NO_PREFERENCE,
+    WPE_SETTINGS_INTERFACE_CONTRAST_MORE,
+    WPE_SETTINGS_INTERFACE_CONTRAST_LESS
+} WPESettingsInterfaceContrast;
+
+/**
+ * WPE_SETTING_INTERFACE_CONTRAST:
+ *
+ * Whether the user prefers high contrast, low contrast, or normal contrast.
+ *
+ * VariantType: byte (WPESettingsInterfaceContrast)
+ *
+ * Default: WPE_SETTINGS_INTERFACE_CONTRAST_NO_PREFERENCE
+ */
+#define WPE_SETTING_INTERFACE_CONTRAST "/wpe-platform/interface-contrast"
 
 /**
  * WPE_SETTING_FONT_ANTIALIAS:
@@ -127,6 +152,7 @@ typedef enum {
 
 /**
  * WPESettingsSubpixelLayout:
+ * @WPE_SETTINGS_SUBPIXEL_LAYOUT_NONE: no known subpixel geometry.
  * @WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB: horizontal subpixels ordered red, green, blue.
  * @WPE_SETTINGS_SUBPIXEL_LAYOUT_BGR: horizontal subpixels ordered blue, green, red.
  * @WPE_SETTINGS_SUBPIXEL_LAYOUT_VRGB: vertical subpixels ordered red, green, blue.
@@ -136,6 +162,7 @@ typedef enum {
  * rendering.
  */
 typedef enum {
+    WPE_SETTINGS_SUBPIXEL_LAYOUT_NONE,
     WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB,
     WPE_SETTINGS_SUBPIXEL_LAYOUT_BGR,
     WPE_SETTINGS_SUBPIXEL_LAYOUT_VRGB,
@@ -149,7 +176,7 @@ typedef enum {
  *
  * VariantType: byte (WPESettingsSubpixelLayout)
  *
- * Default: WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB
+ * Default: WPE_SETTINGS_SUBPIXEL_LAYOUT_NONE
  */
 #define WPE_SETTING_FONT_SUBPIXEL_LAYOUT "/wpe-platform/font-subpixel-layout"
 

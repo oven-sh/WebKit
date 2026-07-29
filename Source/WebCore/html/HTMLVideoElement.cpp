@@ -152,7 +152,7 @@ void HTMLVideoElement::didAttachRenderers()
 
 void HTMLVideoElement::acceleratedRenderingStateChanged()
 {
-    computeAcceleratedRenderingStateAndUpdateMediaPlayer();
+    scheduleUpdateAcceleratedRenderingState();
 }
 
 bool HTMLVideoElement::supportsAcceleratedRendering() const
@@ -165,7 +165,7 @@ void HTMLVideoElement::mediaPlayerRenderingModeChanged()
     HTMLVIDEOELEMENT_RELEASE_LOG(MediaPlayerRenderingModeChanged);
 
     // Kick off a fake recalcStyle that will update the compositing tree.
-    computeAcceleratedRenderingStateAndUpdateMediaPlayer();
+    scheduleUpdateAcceleratedRenderingState();
     invalidateStyleAndLayerComposition();
 }
 
@@ -179,7 +179,7 @@ void HTMLVideoElement::computeAcceleratedRenderingStateAndUpdateMediaPlayer()
     // picture-in-picture window or if it is in fullscreen.
     // Otherwise, the MediaPlayerPrivate* may destroy the video layer if
     // it is no longer in the DOM.
-    bool isInFullScreen = fullscreenMode() != VideoFullscreenModeNone;
+    bool isInFullScreen = (fullscreenMode() != VideoFullscreenModeNone) || isChangingVideoFullscreenMode();
 #else
     bool isInFullScreen = false;
 #endif
@@ -409,10 +409,8 @@ void HTMLVideoElement::paintCurrentFrameInContext(GraphicsContext& context, cons
 
 bool HTMLVideoElement::hasAvailableVideoFrame() const
 {
-    if (!player())
-        return false;
-    
-    return protect(player())->hasVideo() && protect(player())->hasAvailableVideoFrame();
+    RefPtr player = this->player();
+    return player && player->hasVideo() && player->hasAvailableVideoFrame();
 }
 
 bool HTMLVideoElement::shouldGetNativeImageForCanvasDrawing() const
@@ -613,7 +611,12 @@ void HTMLVideoElement::setPresentationMode(VideoPresentationMode mode)
         return;
     }
 
-    if (!protect(mediaSession())->fullscreenPermitted() || !supportsFullscreen(videoFullscreenMode))
+#if ENABLE(PICTURE_IN_PICTURE_API)
+    bool requiresUserGesture = mode != VideoPresentationMode::PictureInPicture || !protect(document())->pictureInPictureElement();
+#else
+    bool requiresUserGesture = true;
+#endif
+    if ((requiresUserGesture && !protect(mediaSession())->fullscreenPermitted()) || !supportsFullscreen(videoFullscreenMode))
         return;
 
     if (videoFullscreenMode == VideoFullscreenModePictureInPicture)
@@ -777,6 +780,16 @@ void HTMLVideoElement::cancelVideoFrameCallback(unsigned identifier)
     }
 }
 
+void HTMLVideoElement::suspend(ReasonForSuspension reason)
+{
+#if ENABLE(PICTURE_IN_PICTURE_API)
+    if (reason == ReasonForSuspension::BackForwardCache)
+        protect(HTMLVideoElementPictureInPicture::from(*this))->didExitPictureInPicture();
+#endif
+
+    HTMLMediaElement::suspend(reason);
+}
+
 void HTMLVideoElement::stop()
 {
     m_videoFrameRequests.clear();
@@ -795,7 +808,7 @@ void HTMLVideoElement::viewportIntersectionChanged(bool isIntersecting)
     m_isIntersectingViewport = isIntersecting;
 
     isVisibleInViewportChanged();
-    computeAcceleratedRenderingStateAndUpdateMediaPlayer();
+    scheduleUpdateAcceleratedRenderingState();
 }
 
 static void processVideoFrameMetadataTimestamps(VideoFrameMetadata& metadata, Performance& performance)

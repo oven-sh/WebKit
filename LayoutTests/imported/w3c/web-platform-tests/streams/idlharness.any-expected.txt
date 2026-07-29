@@ -16,7 +16,6 @@ PASS ReadableStream interface: operation getReader(optional ReadableStreamGetRea
 PASS ReadableStream interface: operation pipeThrough(ReadableWritablePair, optional StreamPipeOptions)
 PASS ReadableStream interface: operation pipeTo(WritableStream, optional StreamPipeOptions)
 PASS ReadableStream interface: operation tee()
-PASS ReadableStream interface: async iterable<any>
 PASS ReadableStream must be primary interface of new ReadableStream()
 PASS Stringification of new ReadableStream()
 PASS ReadableStream interface: new ReadableStream() must inherit property "from(any)" with the proper type

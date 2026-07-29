@@ -63,6 +63,8 @@ JSC_DECLARE_JIT_OPERATION(operationStringFromCodePointUntyped, EncodedJSValue, (
 
 // These routines provide callbacks out to C++ implementations of operations too complex to JIT.
 JSC_DECLARE_JIT_OPERATION(operationCallObjectConstructor, JSCell*, (JSGlobalObject*, EncodedJSValue encodedTarget));
+JSC_DECLARE_JIT_OPERATION(operationOpenAsyncFromSyncIterator, JSCell*, (JSGlobalObject*, EncodedJSValue encodedIterable));
+JSC_DECLARE_JIT_OPERATION(operationEnqueueAsyncGeneratorDriver, void, (JSGlobalObject*, JSObject*, JSObject*, EncodedJSValue resumeValue, MicrotaskCallCache*));
 JSC_DECLARE_JIT_OPERATION(operationToObject, JSCell*, (JSGlobalObject*, EncodedJSValue encodedTarget, UniquedStringImpl*));
 JSC_DECLARE_JIT_OPERATION(operationObjectKeys, JSArray*, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationObjectKeysObject, JSArray*, (JSGlobalObject*, JSObject*));
@@ -182,7 +184,6 @@ JSC_DECLARE_JIT_OPERATION(operationNewMapIterator, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewSetIterator, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewIteratorHelper, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewWrapForValidIterator, JSCell*, (VM*, Structure*));
-JSC_DECLARE_JIT_OPERATION(operationNewAsyncFromSyncIterator, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewRegExpStringIterator, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewStringIterator, JSCell*, (VM*, Structure*));
 
@@ -238,6 +239,7 @@ JSC_DECLARE_JIT_OPERATION(operationRegExpExecString, EncodedJSValue, (JSGlobalOb
 JSC_DECLARE_JIT_OPERATION(operationRegExpExec, EncodedJSValue, (JSGlobalObject*, RegExpObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationRegExpExecGeneric, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationRegExpExecNonGlobalOrSticky, EncodedJSValue, (JSGlobalObject*, RegExp*, JSString*));
+JSC_DECLARE_JIT_OPERATION(operationRegExpExecStickyKnownRegExp, EncodedJSValue, (JSGlobalObject*, RegExp*, RegExpObject*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationRegExpMatchFastGlobalString, EncodedJSValue, (JSGlobalObject*, RegExp*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationRegExpMatchFastString, EncodedJSValue, (JSGlobalObject*, RegExpObject*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationRegExpSplitFast, EncodedJSValue, (JSGlobalObject*, RegExpObject*, JSString*, EncodedJSValue));
@@ -312,6 +314,9 @@ JSC_DECLARE_JIT_OPERATION(operationStringSubstring, JSString*, (JSGlobalObject*,
 JSC_DECLARE_JIT_OPERATION(operationStringSubstringWithEnd, JSString*, (JSGlobalObject*, JSString*, int32_t, int32_t));
 JSC_DECLARE_JIT_OPERATION(operationToUpperCase, JSString*, (JSGlobalObject*, JSString*, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationToLowerCase, JSString*, (JSGlobalObject*, JSString*, uint32_t));
+JSC_DECLARE_JIT_OPERATION(operationStringTrim, JSString*, (JSGlobalObject*, JSString*));
+JSC_DECLARE_JIT_OPERATION(operationStringTrimStart, JSString*, (JSGlobalObject*, JSString*));
+JSC_DECLARE_JIT_OPERATION(operationStringTrimEnd, JSString*, (JSGlobalObject*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationStringLocaleCompare, UCPUStrictInt32, (JSGlobalObject*, JSString*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationStringIndexOf, UCPUStrictInt32, (JSGlobalObject*, JSString*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationStringIndexOfWithOneChar, UCPUStrictInt32, (JSGlobalObject*, JSString*, int32_t));
@@ -496,6 +501,7 @@ JSC_DECLARE_JIT_OPERATION(operationDateGetTimezoneOffset, EncodedJSValue, (VM*, 
 JSC_DECLARE_JIT_OPERATION(operationDateGetYear, EncodedJSValue, (VM*, DateInstance*));
 
 JSC_DECLARE_JIT_OPERATION(operationInt64ToBigInt, EncodedJSValue, (JSGlobalObject*, int64_t));
+JSC_DECLARE_JIT_OPERATION(operationUInt64ToBigInt, EncodedJSValue, (JSGlobalObject*, uint64_t));
 
 JSC_DECLARE_JIT_OPERATION(operationProcessTypeProfilerLogDFG, void, (VM*));
 

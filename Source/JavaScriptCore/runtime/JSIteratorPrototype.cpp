@@ -50,6 +50,7 @@
 namespace JSC {
 
 const ClassInfo JSIteratorPrototype::s_info = { "Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSIteratorPrototype) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(JSIteratorPrototype);
 
 static JSC_DECLARE_CUSTOM_GETTER(iteratorProtoConstructorGetter);
 static JSC_DECLARE_CUSTOM_SETTER(iteratorProtoConstructorSetter);
@@ -310,7 +311,7 @@ JSC_DEFINE_HOST_FUNCTION(iteratorProtoFuncIncludes, (JSGlobalObject* globalObjec
 
         if (isEqual) {
             iteratorClose(globalObject, iterationRecord.iterator);
-            TRY_CLEAR_EXCEPTION(scope, { });
+            RETURN_IF_EXCEPTION(scope, { });
             return JSValue::encode(jsBoolean(true));
         }
     }

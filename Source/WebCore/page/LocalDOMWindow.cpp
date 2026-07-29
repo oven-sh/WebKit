@@ -587,6 +587,16 @@ void LocalDOMWindow::willDetachDocumentFromFrame()
     InspectorInstrumentation::frameWindowDiscarded(*protect(frame()), this);
 }
 
+JSDOMGlobalObject* LocalDOMWindow::cachedMainWorldGlobalObject() const
+{
+    return m_cachedMainWorldGlobalObject.get();
+}
+
+void LocalDOMWindow::setCachedMainWorldGlobalObject(JSDOMGlobalObject* globalObject)
+{
+    m_cachedMainWorldGlobalObject = JSC::Weak<JSDOMGlobalObject> { globalObject };
+}
+
 #if ENABLE(GAMEPAD)
 
 void LocalDOMWindow::incrementGamepadEventListenerCount()
@@ -851,7 +861,7 @@ VisualViewport& LocalDOMWindow::visualViewport()
 
 bool LocalDOMWindow::shouldHaveWebKitNamespaceForWorld(DOMWrapperWorld& world, JSC::JSGlobalObject* globalObject)
 {
-    if (world.allowNodeSerialization())
+    if (world.allowNodeSnapshotCreation())
         return true;
 
     if (downcast<JSDOMGlobalObject>(globalObject)->allowsJSHandleCreation())

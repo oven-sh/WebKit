@@ -33,7 +33,7 @@
 #include "JSPromise.h"
 #include "JSPromiseReaction.h"
 #if USE(BUN_JSC_ADDITIONS)
-#include "InternalFieldTuple.h"
+#include "AsyncContextSwapScope.h"
 #endif
 
 namespace JSC {
@@ -293,18 +293,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseProtoFuncFinally, (JSGlobalObject* globalObject,
             JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
             auto* context = JSSlimPromiseReaction::create(vm, resultPromise, onFinally, /* isFulfill */ false, /* next */ nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-            // Wrap context with async context in InternalFieldTuple: [context, asyncContext]
-            JSValue contextValue = context;
-            if (auto* asyncContextData = globalObject->m_asyncContextData.get()) {
-                JSValue asyncContext = asyncContextData->getInternalField(0);
-                if (!asyncContext.isUndefined()) {
-                    auto* tuple = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
-                    tuple->putInternalField(vm, 0, context);
-                    tuple->putInternalField(vm, 1, asyncContext);
-                    contextValue = tuple;
-                }
-            }
-            promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, resultPromise, contextValue);
+            promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, resultPromise, AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, context));
 #else
             promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, resultPromise, context);
 #endif

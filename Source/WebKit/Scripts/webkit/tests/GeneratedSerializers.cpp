@@ -72,14 +72,14 @@
 #include <WebCore/ScrollingStateFrameHostingNode.h>
 #include <WebCore/ScrollingStateFrameHostingNodeWithStuffAfterTuple.h>
 #include <WebCore/TimingFunction.h>
+#include <wtf/CreateUsingClass.h>
+#include <wtf/Seconds.h>
 #if USE(AVFOUNDATION)
 #include <pal/cocoa/AVFoundationSoftLink.h>
 #endif
 #if ENABLE(DATA_DETECTION)
 #include <pal/cocoa/DataDetectorsCoreSoftLink.h>
 #endif
-#include <wtf/CreateUsingClass.h>
-#include <wtf/Seconds.h>
 
 template<uint64_t...> struct BitsInIncreasingOrder;
 template<uint64_t onlyBit> struct BitsInIncreasingOrder<onlyBit> {
@@ -1637,9 +1637,8 @@ template<> bool isValidEnum<EnumNamespace::BoolEnumType>(bool value)
     case 0:
     case 1:
         return true;
-    default:
-        return false;
     }
+    return false;
 }
 #endif
 
@@ -1650,9 +1649,8 @@ template<> bool isValidEnum<EnumWithoutNamespace>(uint8_t value)
     case EnumWithoutNamespace::Value2:
     case EnumWithoutNamespace::Value3:
         return true;
-    default:
-        return false;
     }
+    return false;
 }
 
 #if ENABLE(UINT16_ENUM)
@@ -1664,14 +1662,26 @@ template<> bool isValidEnum<EnumNamespace::EnumType>(uint16_t value)
     case EnumNamespace::EnumType::SecondValue:
 #endif
         return true;
-    default:
-        return false;
     }
+    return false;
 }
 #endif
 
 template<> bool isValidOptionSet<EnumNamespace2::OptionSetEnumType>(OptionSet<EnumNamespace2::OptionSetEnumType> value)
 {
+    // Empty switch to catch missing values.
+    switch (static_cast<EnumNamespace2::OptionSetEnumType>(value.toRaw())) {
+    case EnumNamespace2::OptionSetEnumType::OptionSetFirstValue:
+#if ENABLE(OPTION_SET_SECOND_VALUE)
+    case EnumNamespace2::OptionSetEnumType::OptionSetSecondValue:
+#endif
+#if !(ENABLE(OPTION_SET_SECOND_VALUE))
+    case EnumNamespace2::OptionSetEnumType::OptionSetSecondValueElse:
+#endif
+    case EnumNamespace2::OptionSetEnumType::OptionSetThirdValue:
+        (void)0;
+    }
+
     constexpr uint8_t allValidBitsValue = 0
         | static_cast<uint8_t>(EnumNamespace2::OptionSetEnumType::OptionSetFirstValue)
 #if ENABLE(OPTION_SET_SECOND_VALUE)
@@ -1687,6 +1697,16 @@ template<> bool isValidOptionSet<EnumNamespace2::OptionSetEnumType>(OptionSet<En
 
 template<> bool isValidOptionSet<OptionSetEnumFirstCondition>(OptionSet<OptionSetEnumFirstCondition> value)
 {
+    // Empty switch to catch missing values.
+    switch (static_cast<OptionSetEnumFirstCondition>(value.toRaw())) {
+#if ENABLE(OPTION_SET_FIRST_VALUE)
+    case OptionSetEnumFirstCondition::OptionSetFirstValue:
+#endif
+    case OptionSetEnumFirstCondition::OptionSetSecondValue:
+    case OptionSetEnumFirstCondition::OptionSetThirdValue:
+        (void)0;
+    }
+
     constexpr uint32_t allValidBitsValue = 0
 #if ENABLE(OPTION_SET_FIRST_VALUE)
         | static_cast<uint32_t>(OptionSetEnumFirstCondition::OptionSetFirstValue)
@@ -1699,6 +1719,16 @@ template<> bool isValidOptionSet<OptionSetEnumFirstCondition>(OptionSet<OptionSe
 
 template<> bool isValidOptionSet<OptionSetEnumLastCondition>(OptionSet<OptionSetEnumLastCondition> value)
 {
+    // Empty switch to catch missing values.
+    switch (static_cast<OptionSetEnumLastCondition>(value.toRaw())) {
+    case OptionSetEnumLastCondition::OptionSetFirstValue:
+    case OptionSetEnumLastCondition::OptionSetSecondValue:
+#if ENABLE(OPTION_SET_THIRD_VALUE)
+    case OptionSetEnumLastCondition::OptionSetThirdValue:
+#endif
+        (void)0;
+    }
+
     constexpr uint32_t allValidBitsValue = 0
         | static_cast<uint32_t>(OptionSetEnumLastCondition::OptionSetFirstValue)
         | static_cast<uint32_t>(OptionSetEnumLastCondition::OptionSetSecondValue)
@@ -1711,6 +1741,20 @@ template<> bool isValidOptionSet<OptionSetEnumLastCondition>(OptionSet<OptionSet
 
 template<> bool isValidOptionSet<OptionSetEnumAllCondition>(OptionSet<OptionSetEnumAllCondition> value)
 {
+    // Empty switch to catch missing values.
+    switch (static_cast<OptionSetEnumAllCondition>(value.toRaw())) {
+#if ENABLE(OPTION_SET_FIRST_VALUE)
+    case OptionSetEnumAllCondition::OptionSetFirstValue:
+#endif
+#if ENABLE(OPTION_SET_SECOND_VALUE)
+    case OptionSetEnumAllCondition::OptionSetSecondValue:
+#endif
+#if ENABLE(OPTION_SET_THIRD_VALUE)
+    case OptionSetEnumAllCondition::OptionSetThirdValue:
+#endif
+        (void)0;
+    }
+
     constexpr uint32_t allValidBitsValue = 0
 #if ENABLE(OPTION_SET_FIRST_VALUE)
         | static_cast<uint32_t>(OptionSetEnumAllCondition::OptionSetFirstValue)
@@ -1737,9 +1781,8 @@ template<> bool isValidEnum<EnumNamespace::InnerEnumType>(uint8_t value)
     case EnumNamespace::InnerEnumType::OtherInnerInnerValue:
 #endif
         return true;
-    default:
-        return false;
     }
+    return false;
 }
 #endif
 
@@ -1750,9 +1793,8 @@ template<> bool isValidEnum<EnumNamespace::InnerBoolType>(bool value)
     case 0:
     case 1:
         return true;
-    default:
-        return false;
     }
+    return false;
 }
 #endif
 

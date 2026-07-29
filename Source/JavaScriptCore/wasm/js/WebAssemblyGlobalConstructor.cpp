@@ -38,6 +38,7 @@
 namespace JSC {
 
 const ClassInfo WebAssemblyGlobalConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WebAssemblyGlobalConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(WebAssemblyGlobalConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(constructJSWebAssemblyGlobal);
 static JSC_DECLARE_HOST_FUNCTION(callJSWebAssemblyGlobal);
@@ -97,7 +98,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyGlobal, (JSGlobalObject* globalOb
 
     uint64_t initialValue = 0;
     JSValue argument = callFrame->argument(1);
-    switch (type.kind) {
+    switch (type.kind()) {
     case Wasm::TypeKind::I32: {
         if (!argument.isUndefined()) {
             int32_t value = argument.toInt32(globalObject);

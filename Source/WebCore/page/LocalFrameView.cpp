@@ -3,7 +3,7 @@
  *                     1999 Lars Knoll <knoll@kde.org>
  *                     1999 Antti Koivisto <koivisto@kde.org>
  *                     2000 Dirk Mueller <mueller@kde.org>
- * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  *           (C) 2006 Graham Dennis (graham.dennis@gmail.com)
  *           (C) 2006 Alexey Proskuryakov (ap@nypop.com)
  * Copyright (C) 2009 Google Inc. All rights reserved.
@@ -90,6 +90,7 @@
 #include "PageColorSampler.h"
 #include "PageInspectorController.h"
 #include "PageOverlayController.h"
+#include "ParsedContentType.h"
 #include "PerformanceLoggingClient.h"
 #include "PlatformRenderTheme.h"
 #include "ProgressTracker.h"
@@ -152,7 +153,6 @@
 #include <wtf/text/TextStream.h>
 
 #if PLATFORM(IOS_FAMILY)
-#include "DocumentLoader.h"
 #include "LegacyTileCache.h"
 #endif
 
@@ -706,7 +706,7 @@ void LocalFrameView::applyPaginationToViewport()
         if (!columnGap.isNormal()) {
             CheckedPtr renderBox = dynamicDowncast<RenderBox>(documentOrBodyRenderer.get());
             if (CheckedPtr containerForPaginationGap = renderBox ? renderBox : documentOrBodyRenderer->containingBlock())
-                pagination.gap = Style::evaluate<LayoutUnit>(columnGap, containerForPaginationGap->contentBoxLogicalWidth(), Style::ZoomNeeded { }).toUnsigned();
+                pagination.gap = Style::evaluate<LayoutUnit>(columnGap, containerForPaginationGap->contentBoxLogicalWidth(), documentOrBodyRenderer->style().usedZoomForLength()).toUnsigned();
         }
     }
     setPagination(pagination);
@@ -2130,7 +2130,7 @@ std::optional<LayoutRect> LocalFrameView::visibleRectOfChild(const Frame& child)
     ASSERT(childOwnerRenderer->frame().frameID() == m_frame->frameID());
 
     auto rects = childOwnerRenderer->computeVisibleRectsInContainer(
-        { childOwnerRenderer->frameRect() },
+        { childOwnerRenderer->borderBoxRectInContainer() },
         &childOwnerRenderer->view(),
         {
             .hasPositionFixedDescendant = false,
@@ -3142,6 +3142,15 @@ bool LocalFrameView::scrollToTextFragment(IsRetry isRetry)
         return false;
 
     if (!m_frame->isMainFrame())
+        return false;
+
+    // Text directives are only processed in text/html and text/plain documents. Parse the
+    // content type so that a MIME parameter (e.g. "text/html; charset=UTF-8") is ignored.
+    auto parsedContentType = ParsedContentType::create(document->contentType());
+    if (!parsedContentType)
+        return false;
+    auto mimeType = parsedContentType->mimeType();
+    if (mimeType != "text/html"_s && mimeType != "text/plain"_s)
         return false;
 
     // Block text fragments in cross-origin window.open() popups
@@ -4375,7 +4384,15 @@ Color LocalFrameView::baseBackgroundColor() const
     return m_baseBackgroundColor;
 }
 
-void LocalFrameView::invalidateForBaseBackgroundOrColorSchemeChange()
+void LocalFrameView::invalidateForFrameOwnerColorSchemeChange()
+{
+    invalidateForBaseBackgroundChange();
+
+    if (RefPtr document = frame().document())
+        document->appearanceDidChange();
+}
+
+void LocalFrameView::invalidateForBaseBackgroundChange()
 {
     recalculateScrollbarOverlayStyle();
     setNeedsLayoutAfterViewConfigurationChange();
@@ -4396,7 +4413,7 @@ void LocalFrameView::setBaseBackgroundColor(const Color& backgroundColor)
     if (!isViewForDocumentInFrame())
         return;
 
-    invalidateForBaseBackgroundOrColorSchemeChange();
+    invalidateForBaseBackgroundChange();
 }
 
 #if ENABLE(DARK_MODE_CSS)
@@ -4659,14 +4676,26 @@ void LocalFrameView::scrollToAnchor()
 
     LOG_WITH_STREAM(Scrolling, stream << " anchor node rect " << rect);
 
+    CheckedRef renderer = *anchorNode->renderer();
+
     // Scroll nested layers and frames to reveal the anchor.
     // Align to the top and to the closest side (this matches other browsers).
-    if (anchorNode->renderer()->writingMode().isHorizontal())
-        scrollRectToVisible(rect, *anchorNode->renderer(), insideFixed, { SelectionRevealMode::Reveal, ScrollAlignment::alignToEdgeIfNeeded, ScrollAlignment::alignTopAlways, ShouldAllowCrossOriginScrolling::No });
-    else if (anchorNode->renderer()->writingMode().blockDirection() == FlowDirection::RightToLeft)
-        scrollRectToVisible(rect, *anchorNode->renderer(), insideFixed, { SelectionRevealMode::Reveal, ScrollAlignment::alignRightAlways, ScrollAlignment::alignToEdgeIfNeeded, ShouldAllowCrossOriginScrolling::No });
-    else
-        scrollRectToVisible(rect, *anchorNode->renderer(), insideFixed, { SelectionRevealMode::Reveal, ScrollAlignment::alignLeftAlways, ScrollAlignment::alignToEdgeIfNeeded, ShouldAllowCrossOriginScrolling::No });
+    ScrollAlignment alignX;
+    ScrollAlignment alignY;
+    if (renderer->writingMode().isHorizontal()) {
+        alignX = ScrollAlignment::alignToEdgeIfNeeded;
+        alignY = ScrollAlignment::alignTopAlways;
+    } else if (renderer->writingMode().blockDirection() == FlowDirection::RightToLeft) {
+        alignX = ScrollAlignment::alignRightAlways;
+        alignY = ScrollAlignment::alignToEdgeIfNeeded;
+    } else {
+        alignX = ScrollAlignment::alignLeftAlways;
+        alignY = ScrollAlignment::alignToEdgeIfNeeded;
+    }
+
+    adjustScrollAlignmentForScrollSnapAlign(renderer, &alignX, &alignY);
+
+    scrollRectToVisible(rect, renderer, insideFixed, { SelectionRevealMode::Reveal, alignX, alignY, ShouldAllowCrossOriginScrolling::No });
 
     if (AXObjectCache* cache = protect(m_frame->document())->existingAXObjectCache())
         cache->handleScrolledToAnchor(*anchorNode);
@@ -4945,6 +4974,13 @@ IntSize LocalFrameView::sizeForResizeEvent() const
     if (useFixedLayout() && !fixedLayoutSize().isEmpty() && delegatesScrolling())
         return fixedLayoutSize();
     return visibleContentRectIncludingScrollbars().size();
+}
+
+void LocalFrameView::primeResizeEventBaseline(IntSize size)
+{
+    m_lastViewportSize = size;
+    if (CheckedPtr renderView = this->renderView())
+        m_lastUsedZoomFactor = renderView->style().usedZoom();
 }
 
 void LocalFrameView::scheduleResizeEventIfNeeded()

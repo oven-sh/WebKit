@@ -332,7 +332,7 @@ WI.TimelineManager = class TimelineManager extends WI.Object
         }
 
         if (json.version !== WI.TimelineRecording.SerializationVersion) {
-            WI.NetworkManager.synthesizeImportError(WI.UIString("unsupported version"));
+            WI.TimelineManager.synthesizeImportError(WI.UIString("unsupported version"));
             return;
         }
 
@@ -857,6 +857,14 @@ WI.TimelineManager = class TimelineManager extends WI.Object
 
             // Pass the startTime as the endTime since this record type has no duration.
             return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.InvalidateLayout, startTime, startTime, stackTrace, sourceCodeLocation, {
+                domNode: WI.domManager.nodeForId(recordPayload.data.nodeId),
+            });
+
+        case InspectorBackend.Enum.Timeline.EventType.ScheduleLayout:
+            console.assert(isNaN(endTime));
+
+            // Pass the startTime as the endTime since this record type has no duration.
+            return new WI.LayoutTimelineRecord(WI.LayoutTimelineRecord.EventType.ScheduleLayout, startTime, startTime, stackTrace, sourceCodeLocation, {
                 domNode: WI.domManager.nodeForId(recordPayload.data.nodeId),
             });
 

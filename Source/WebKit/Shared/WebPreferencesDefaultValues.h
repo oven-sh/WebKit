@@ -76,8 +76,6 @@
 #define Modelelement_feature_status Testable
 #endif
 
-#define Web_transport_status Stable
-
 namespace WebKit {
 
 #if HAVE(LIQUID_GLASS)
@@ -198,6 +196,8 @@ bool defaultScreenTimeEnabled();
 bool defaultIFrameResourceMonitoringEnabled();
 #endif
 
+bool defaultSearchInputResultsAttributeEnabled();
+
 #if HAVE(SPATIAL_AUDIO_EXPERIENCE)
 bool defaultPreferSpatialAudioExperience();
 #endif
@@ -241,5 +241,7 @@ bool defaultContentChangeObserverEnabled();
 #if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
 bool NODELETE defaultWebContentRestrictionsAskToEnabled();
 #endif
+
+bool defaultWebTransportEnabled();
 
 } // namespace WebKit

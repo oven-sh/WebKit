@@ -1108,6 +1108,8 @@ class StyleProperty:
             return "ensureMaskLayers"
         if "scroll-timeline-" in self.name:
             return "ensureScrollTimelines"
+        if "timeline-trigger-" in self.name:
+            return "ensureTimelineTriggers"
         if "view-timeline-" in self.name:
             return "ensureViewTimelines"
         raise Exception(f"Unrecognized coordinated list value property name: '{self.name}")
@@ -1124,6 +1126,8 @@ class StyleProperty:
             return "maskLayers"
         if "scroll-timeline-" in self.name:
             return "scrollTimelines"
+        if "timeline-trigger-" in self.name:
+            return "timelineTriggers"
         if "view-timeline-" in self.name:
             return "viewTimelines"
         raise Exception(f"Unrecognized coordinated list value property name: '{self.name}")
@@ -1140,6 +1144,8 @@ class StyleProperty:
             return "setMaskLayers"
         if "scroll-timeline-" in self.name:
             return "setScrollTimelines"
+        if "timeline-trigger-" in self.name:
+            return "setTimelineTriggers"
         if "view-timeline-" in self.name:
             return "setViewTimelines"
         raise Exception(f"Unrecognized coordinated list value property name: '{self.name}")
@@ -1156,6 +1162,8 @@ class StyleProperty:
             return "initialMaskLayers"
         if "scroll-timeline-" in self.name:
             return "initialScrollTimelines"
+        if "timeline-trigger-" in self.name:
+            return "initialTimelineTriggers"
         if "view-timeline-" in self.name:
             return "initialViewTimelines"
         raise Exception(f"Unrecognized coordinated list value property name: '{self.name}")
@@ -1172,6 +1180,8 @@ class StyleProperty:
             return "MaskLayers"
         if "scroll-timeline-" in self.name:
             return "ScrollTimelines"
+        if "timeline-trigger-" in self.name:
+            return "TimelineTriggers"
         if "view-timeline-" in self.name:
             return "ViewTimelines"
         raise Exception(f"Unrecognized coordinated list value property name: '{self.name}")
@@ -11455,10 +11465,19 @@ class BNFParser:
         raise self.unexpected(token, state)
 
 
+def merge_defines(defines, defines_file):
+    names = (defines or '').split()
+    if defines_file:
+        with open(defines_file) as f:
+            names += f.read().split()
+    return ' '.join(names)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Process CSS property definitions.')
     parser.add_argument('--properties', default="CSSProperties.json")
     parser.add_argument('--defines')
+    parser.add_argument('--defines-file')
     parser.add_argument('--gperf-executable')
     parser.add_argument('-v', '--verbose', action='store_true')
     parser.add_argument('--dump-unused-grammars', action='store_true')
@@ -11468,7 +11487,7 @@ def main():
     with open(args.properties, "r", encoding="utf-8") as properties_file:
         properties_json = json.load(properties_file)
 
-    parsing_context = ParsingContext(properties_json, defines_string=args.defines, parsing_for_codegen=True, check_unused_grammars_values=args.check_unused_grammars_values, verbose=args.verbose)
+    parsing_context = ParsingContext(properties_json, defines_string=merge_defines(args.defines, args.defines_file), parsing_for_codegen=True, check_unused_grammars_values=args.check_unused_grammars_values, verbose=args.verbose)
     parsing_context.parse_shared_grammar_rules()
     parsing_context.parse_properties_and_descriptors()
 

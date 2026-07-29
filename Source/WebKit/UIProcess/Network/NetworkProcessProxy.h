@@ -71,6 +71,7 @@ class SessionID;
 
 namespace WebCore {
 class AuthenticationChallenge;
+class CertificateInfo;
 class SharedBuffer;
 class ProtectionSpace;
 class ResourceRequest;
@@ -368,6 +369,9 @@ public:
 
     void flushNetworkProcessIPC(CompletionHandler<void()>&&);
 
+    bool isWaitingForCertificateInfo() const { return m_isWaitingForCertificateInfo; }
+    void setIsWaitingForCertificateInfo(bool waiting) { m_isWaitingForCertificateInfo = waiting; }
+
 private:
     explicit NetworkProcessProxy();
 
@@ -388,7 +392,8 @@ private:
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) override;
     void didClose(IPC::Connection&) override;
     void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) override;
-    // Note: uses dispatchMessage, dispatchSyncMessage from superclass.
+    // Note: uses dispatchSyncMessage from superclass.
+    bool dispatchMessage(IPC::Connection&, IPC::Decoder&);
 
     // ResponsivenessTimer::Client
     void didBecomeUnresponsive() final;
@@ -501,6 +506,7 @@ private:
     RetainPtr<id> m_backgroundObserver;
     RetainPtr<id> m_foregroundObserver;
 #endif
+    bool m_isWaitingForCertificateInfo { false };
 };
 
 } // namespace WebKit

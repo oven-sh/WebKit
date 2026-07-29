@@ -38,7 +38,6 @@
 #include "GraphicsContext.h"
 #include "GraphicsLayerCoordinated.h"
 #include "NativeImage.h"
-#include "NotImplemented.h"
 #include "TextureMapperLayer.h"
 #include <wtf/MainThread.h>
 
@@ -119,8 +118,7 @@ SkiaCompositingLayer& CoordinatedPlatformLayer::ensureSkiaTarget()
     if (!m_skiaTarget)
         m_skiaTarget = SkiaCompositingLayer::create();
 #if ENABLE(DAMAGE_TRACKING)
-    if (m_damagePropagationEnabled)
-        m_skiaTarget->setSharedFrameDamage(m_damageInGlobalCoordinateSpace);
+    m_skiaTarget->setDamagePropagationEnabled(m_damagePropagationEnabled);
 #endif
     return *m_skiaTarget;
 }
@@ -368,6 +366,7 @@ void CoordinatedPlatformLayer::setMasksToBounds(bool masksToBounds)
 
     m_masksToBounds = masksToBounds;
     m_pendingChanges.add(Change::MasksToBounds);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -412,6 +411,7 @@ void CoordinatedPlatformLayer::setBlendMode(BlendMode blendMode)
 
     m_blendMode = blendMode;
     m_pendingChanges.add(Change::BlendMode);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -423,6 +423,7 @@ void CoordinatedPlatformLayer::setContentsVisible(bool contentsVisible)
 
     m_contentsVisible = contentsVisible;
     m_pendingChanges.add(Change::ContentsVisible);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -441,6 +442,7 @@ void CoordinatedPlatformLayer::setContentsOpaque(bool contentsOpaque)
     m_contentsOpaque = contentsOpaque;
     m_pendingChanges.add(Change::ContentsOpaque);
     // FIXME: request a full repaint?
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -452,6 +454,7 @@ void CoordinatedPlatformLayer::setContentsRect(const FloatRect& contentsRect)
 
     m_contentsRect = contentsRect;
     m_pendingChanges.add(Change::ContentsRect);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -463,6 +466,7 @@ void CoordinatedPlatformLayer::setContentsRectClipsDescendants(bool contentsRect
 
     m_contentsRectClipsDescendants = contentsRectClipsDescendants;
     m_pendingChanges.add(Change::ContentsRectClipsDescendants);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -474,6 +478,7 @@ void CoordinatedPlatformLayer::setContentsClippingRect(const FloatRoundedRect& c
 
     m_contentsClippingRect = contentsClippingRect;
     m_pendingChanges.add(Change::ContentsClippingRect);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -517,7 +522,7 @@ void CoordinatedPlatformLayer::setContentsBuffer(std::unique_ptr<CoordinatedPlat
     if (dirtyRegion)
         addDamage(WTF::move(*dirtyRegion));
     else
-        addDamage(Damage { m_size, Damage::Mode::Full });
+        damageWholeLayer();
 #else
     UNUSED_PARAM(dirtyRegion);
 #endif
@@ -566,6 +571,7 @@ void CoordinatedPlatformLayer::setContentsImage(NativeImage* image)
         m_imageBackingStore.current = nullptr;
     }
     m_pendingChanges.add(Change::ContentsImage);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -588,6 +594,7 @@ void CoordinatedPlatformLayer::setContentsTileSize(const FloatSize& contentsTile
 
     m_contentsTileSize = contentsTileSize;
     m_pendingChanges.add(Change::ContentsTiling);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -599,6 +606,7 @@ void CoordinatedPlatformLayer::setContentsTilePhase(const FloatSize& contentsTil
 
     m_contentsTilePhase = contentsTilePhase;
     m_pendingChanges.add(Change::ContentsTiling);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -627,6 +635,17 @@ void CoordinatedPlatformLayer::addDamage(Damage&& damage)
 }
 #endif
 
+void CoordinatedPlatformLayer::damageWholeLayer()
+{
+#if ENABLE(DAMAGE_TRACKING)
+    // An empty Damage rejects everything added to it later, so it must never become the layer's damage.
+    if (!m_damagePropagationEnabled || m_size.isEmpty())
+        return;
+
+    addDamage(Damage { m_size, Damage::Mode::Full });
+#endif
+}
+
 void CoordinatedPlatformLayer::setFilters(const FilterOperations& filters)
 {
     ASSERT(m_lock.isHeld());
@@ -635,6 +654,7 @@ void CoordinatedPlatformLayer::setFilters(const FilterOperations& filters)
 
     m_filters = filters;
     m_pendingChanges.add(Change::Filters);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -646,6 +666,7 @@ void CoordinatedPlatformLayer::setMask(CoordinatedPlatformLayer* mask)
 
     m_mask = mask;
     m_pendingChanges.add(Change::Mask);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -657,6 +678,7 @@ void CoordinatedPlatformLayer::setReplica(CoordinatedPlatformLayer* replica)
 
     m_replica = replica;
     m_pendingChanges.add(Change::Replica);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -674,6 +696,7 @@ void CoordinatedPlatformLayer::notifyBackdropFiltersChanged()
 {
     ASSERT(m_lock.isHeld());
     m_pendingChanges.add(Change::Backdrop);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -685,6 +708,7 @@ void CoordinatedPlatformLayer::setBackdropRect(const FloatRoundedRect& backdropR
 
     m_backdropRect = backdropRect;
     m_pendingChanges.add(Change::BackdropRect);
+    damageWholeLayer();
     notifyCompositionRequired();
 }
 
@@ -742,6 +766,7 @@ void CoordinatedPlatformLayer::setClipPath(const Path& path, WindRule windRule)
     m_clipPath.path = path;
     m_clipPath.windRule = windRule;
     m_pendingChanges.add(Change::ClipPath);
+    damageWholeLayer();
 }
 
 void CoordinatedPlatformLayer::setDebugBorder(Color&& borderColor, float borderWidth)
@@ -919,9 +944,8 @@ Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::paint(const IntRect& dirtyR
     m_client->paintingEngine().paint(*m_owner, buffer.get(), dirtyRect, enclosingIntRect(scaledDirtyRect), IntRect { { }, dirtyRect.size() }, m_contentsScale);
     return buffer;
 #elif USE(SKIA)
-    auto& paintingEngine = m_client->paintingEngine();
-    ASSERT(!paintingEngine.useThreadedRendering());
-    return paintingEngine.paint(*m_owner, dirtyRect, m_contentsOpaque, m_contentsScale);
+    UNUSED_PARAM(dirtyRect);
+    RELEASE_ASSERT_NOT_REACHED();
 #endif
 }
 
@@ -934,14 +958,12 @@ sk_sp<GrContextThreadSafeProxy> CoordinatedPlatformLayer::threadSafeGrContext() 
     return m_client->paintingEngine().threadSafeGrContext();
 }
 
-Ref<SkiaRecordingResult> CoordinatedPlatformLayer::record(const IntRect& recordRect)
+Ref<SkiaRecordingResult> CoordinatedPlatformLayer::record(const IntRect& recordRect, unsigned dirtyTilesCount)
 {
     ASSERT(m_lock.isHeld());
     ASSERT(m_client);
     ASSERT(m_owner);
-    auto& paintingEngine = m_client->paintingEngine();
-    ASSERT(paintingEngine.useThreadedRendering());
-    return paintingEngine.record(*m_owner, recordRect, m_contentsOpaque, m_contentsScale);
+    return m_client->paintingEngine().record(*m_owner, recordRect, m_contentsOpaque, m_contentsScale, dirtyTilesCount);
 }
 
 Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::replay(Ref<SkiaRecordingResult>&& recording, const IntRect& tileRect, const IntRect& dirtyRect)
@@ -949,9 +971,7 @@ Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::replay(Ref<SkiaRecordingRes
     ASSERT(m_lock.isHeld());
     ASSERT(m_client);
     ASSERT(m_owner);
-    auto& paintingEngine = m_client->paintingEngine();
-    ASSERT(paintingEngine.useThreadedRendering());
-    return paintingEngine.replay(*m_owner, WTF::move(recording), tileRect, dirtyRect);
+    return m_client->paintingEngine().replay(*m_owner, WTF::move(recording), tileRect, dirtyRect);
 }
 #endif
 
@@ -999,6 +1019,40 @@ void CoordinatedPlatformLayer::flushPendingState()
         notifyCompositionRequired();
 }
 
+void CoordinatedPlatformLayer::flushPositionChanges(const OptionSet<CompositionReason>& reasons, bool useSkiaTarget)
+{
+    ASSERT(!isMainThread());
+    if (!reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::AsyncScrolling }))
+        return;
+
+    Locker locker { m_lock };
+    if (!m_pendingChanges.containsAny({ Change::Position, Change::BoundsOrigin }))
+        return;
+
+    auto applyPositionChanges = [this](auto& layer) {
+        if (m_pendingChanges.contains(Change::Position)) {
+            layer.setPosition(m_position);
+            m_pendingChanges.remove(Change::Position);
+        }
+
+        if (m_pendingChanges.contains(Change::BoundsOrigin)) {
+            layer.setBoundsOrigin(m_boundsOrigin);
+            m_pendingChanges.remove(Change::BoundsOrigin);
+        }
+    };
+
+#if USE(SKIA)
+    if (useSkiaTarget) {
+        applyPositionChanges(ensureSkiaTarget());
+        return;
+    }
+#else
+    UNUSED_PARAM(useSkiaTarget);
+#endif
+
+    applyPositionChanges(ensureTarget());
+}
+
 void CoordinatedPlatformLayer::flushCompositingState(const OptionSet<CompositionReason>& reasons, bool useSkiaTarget)
 {
     ASSERT(!isMainThread());
@@ -1021,16 +1075,6 @@ void CoordinatedPlatformLayer::flushCompositingState(const OptionSet<Composition
 void CoordinatedPlatformLayer::flushCompositingStateOnTarget(const OptionSet<CompositionReason>& reasons, TextureMapperLayer& layer)
 {
     if (reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::AsyncScrolling })) {
-        if (m_pendingChanges.contains(Change::Position)) {
-            layer.setPosition(m_position);
-            m_pendingChanges.remove(Change::Position);
-        }
-
-        if (m_pendingChanges.contains(Change::BoundsOrigin)) {
-            layer.setBoundsOrigin(m_boundsOrigin);
-            m_pendingChanges.remove(Change::BoundsOrigin);
-        }
-
         if (m_pendingChanges.contains(Change::ContentsRect)) {
             layer.setContentsRect(m_contentsRect);
             m_pendingChanges.remove(Change::ContentsRect);
@@ -1218,16 +1262,6 @@ void CoordinatedPlatformLayer::flushCompositingStateOnTarget(const OptionSet<Com
 void CoordinatedPlatformLayer::flushCompositingStateOnSkiaTarget(const OptionSet<CompositionReason>& reasons, SkiaCompositingLayer& layer)
 {
     if (reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::AsyncScrolling })) {
-        if (m_pendingChanges.contains(Change::Position)) {
-            layer.setPosition(m_position);
-            m_pendingChanges.remove(Change::Position);
-        }
-
-        if (m_pendingChanges.contains(Change::BoundsOrigin)) {
-            layer.setBoundsOrigin(m_boundsOrigin);
-            m_pendingChanges.remove(Change::BoundsOrigin);
-        }
-
         if (m_pendingChanges.contains(Change::ContentsRect)) {
             layer.setContentsRect(m_contentsRect);
             m_pendingChanges.remove(Change::ContentsRect);
@@ -1301,8 +1335,7 @@ void CoordinatedPlatformLayer::flushCompositingStateOnSkiaTarget(const OptionSet
         }
 
         if (m_pendingChanges.contains(Change::ContentsOpaque)) {
-            // FIXME: do we need this in SkiaCompositingLayer?
-            notImplemented();
+            layer.setContentsOpaque(m_contentsOpaque);
             m_pendingChanges.remove(Change::ContentsOpaque);
         }
 

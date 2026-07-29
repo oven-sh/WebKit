@@ -12,19 +12,19 @@
 #include "include/core/SkPathTypes.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkTypes.h"
+#include "include/private/SkAssert.h" // IWYU pragma: keep
+#include "include/private/SkFloatingPoint.h"
 #include "include/private/SkPathRef.h"
-#include "include/private/base/SkAssert.h" // IWYU pragma: keep
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkSafe32.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkVx.h"
+#include "include/private/SkSafe32.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkGeometry.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkPathData.h"
 #include "src/core/SkPathEnums.h"
 #include "src/core/SkPathPriv.h"
 #include "src/core/SkPathRawShapes.h"
+#include "src/core/SkVx.h"
 
 #include <algorithm>
 #include <cmath>
@@ -202,16 +202,23 @@ SkPathBuilder& SkPathBuilder::quadTo(SkPoint pt1, SkPoint pt2) {
 SkPathBuilder& SkPathBuilder::conicTo(SkPoint pt1, SkPoint pt2, SkScalar w) {
     this->ensureMove();
 
+    if (w <= 0) {
+        return this->lineTo(pt2);
+    }
     SkPoint* p = fPts.push_back_n(2);
     p[0] = pt1;
     p[1] = pt2;
     if (w == 1) {
         fVerbs.push_back(SkPathVerb::kQuad);
         fSegmentMask |= kQuad_SkPathSegmentMask;
-    } else {
+    } else if (SkIsFinite(w)) {
         fVerbs.push_back(SkPathVerb::kConic);
         fConicWeights.push_back(w);
         fSegmentMask |= kConic_SkPathSegmentMask;
+    } else {
+        fVerbs.push_back(SkPathVerb::kLine);
+        fVerbs.push_back(SkPathVerb::kLine);
+        fSegmentMask |= kLine_SkPathSegmentMask;
     }
 
     return *this;
@@ -843,7 +850,18 @@ SkPathBuilder& SkPathBuilder::addPath(const SkPath& src, const SkMatrix& matrix,
     fConvexity = SkPathConvexity::kUnknown;
 
     if (SkPath::AddPathMode::kAppend_AddPathMode == mode && !matrix.hasPerspective()) {
-        const int lastMoveToIndex = SkPathPriv::FindLastMoveToIndex(src.verbs(), src.points().size());
+        // If the current builder ends with a moveTo and src starts with one (which is always
+        // true if non-empty), we must discard the builder moveTo in order to maintain
+        // internal consistency after append (no repeating moveTos).
+        if (!fVerbs.empty() && fVerbs.back() == SkPathVerb::kMove && !src.isEmpty()) {
+            SkASSERT(src.verbs().front() == SkPathVerb::kMove);
+            fVerbs.pop_back();
+            fPts.pop_back();
+            SkASSERT(fVerbs.empty() || fVerbs.back() != SkPathVerb::kMove);
+        }
+
+        const int lastMoveToIndex =
+            SkPathPriv::FindLastMoveToIndex(src.verbs(), src.points().size());
         SkASSERT(lastMoveToIndex >= 0);
         fLastMoveIndex = lastMoveToIndex + this->countPoints();
 

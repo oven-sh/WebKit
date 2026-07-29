@@ -40,6 +40,7 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(AggregateErrorConstructor);
 
 const ClassInfo AggregateErrorConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(AggregateErrorConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(AggregateErrorConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(callAggregateErrorConstructor);
 static JSC_DECLARE_HOST_FUNCTION(constructAggregateErrorConstructor);

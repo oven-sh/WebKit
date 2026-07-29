@@ -228,7 +228,6 @@ namespace JSC { namespace DFG {
     macro(PutPrivateNameById, NodeMustGenerate) \
     macro(CheckPrivateBrand, NodeMustGenerate) \
     macro(SetPrivateBrand, NodeMustGenerate) \
-    macro(TryGetById, NodeResultJS) \
     macro(GetById, NodeResultJS | NodeMustGenerate) \
     macro(GetByIdFlush, NodeResultJS | NodeMustGenerate) \
     macro(GetByIdWithThis, NodeResultJS | NodeMustGenerate) \
@@ -357,6 +356,7 @@ namespace JSC { namespace DFG {
     /* Optimizations for regular expression matching. */\
     macro(RegExpExec, NodeResultJS | NodeMustGenerate) \
     macro(RegExpExecNonGlobalOrSticky, NodeResultJS | NodeMustGenerate) \
+    macro(RegExpExecSticky, NodeResultJS | NodeMustGenerate) \
     macro(RegExpTest, NodeResultJS | NodeMustGenerate) \
     macro(RegExpTestInline, NodeResultJS | NodeMustGenerate) \
     macro(RegExpMatchFast, NodeResultJS | NodeMustGenerate) \
@@ -415,6 +415,8 @@ namespace JSC { namespace DFG {
     macro(CallDirectEval, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(CallWasm, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(TailCallInlinedCallerWasm, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
+    /* bun:ffi (USE(BUN_JSC_ADDITIONS)); the enumerators are unconditional, only their uses are guarded. */\
+    macro(CallFFI, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     \
     macro(CallCustomAccessorGetter, NodeResultJS | NodeMustGenerate) \
     macro(CallCustomAccessorSetter, NodeMustGenerate) \
@@ -503,7 +505,6 @@ namespace JSC { namespace DFG {
     macro(IsObject, NodeResultBoolean) \
     macro(IsCallable, NodeResultBoolean) \
     macro(IsConstructor, NodeResultBoolean) \
-    macro(IsTypedArrayView, NodeResultBoolean) \
     macro(TypeOf, NodeResultJS) \
     macro(ToBoolean, NodeResultBoolean) \
     macro(LogicalNot, NodeResultBoolean) \
@@ -517,6 +518,7 @@ namespace JSC { namespace DFG {
     macro(ToIntegerOrInfinity, NodeResultJS | NodeMustGenerate) \
     macro(ToLength, NodeResultJS | NodeMustGenerate) \
     macro(CallObjectConstructor, NodeResultJS) \
+    macro(OpenAsyncFromSyncIterator, NodeResultJS | NodeMustGenerate) \
     macro(CallStringConstructor, NodeResultJS | NodeMustGenerate) \
     macro(CallNumberConstructor, NodeResultJS | NodeMustGenerate) \
     macro(NumberToStringWithRadix, NodeResultJS | NodeMustGenerate) \
@@ -534,6 +536,7 @@ namespace JSC { namespace DFG {
     macro(ProfileType, NodeMustGenerate) \
     macro(ProfileControlFlow, NodeMustGenerate) \
     macro(SetFunctionName, NodeMustGenerate) \
+    macro(EnqueueAsyncGeneratorDriver, NodeMustGenerate) \
     macro(HasOwnProperty, NodeMustGenerate | NodeResultBoolean) \
     \
     macro(GetInternalField, NodeResultJS) \
@@ -638,6 +641,7 @@ namespace JSC { namespace DFG {
     macro(StringLocaleCompare, NodeMustGenerate | NodeResultInt32) \
     macro(ToLowerCase, NodeResultJS) \
     macro(ToUpperCase, NodeResultJS) \
+    macro(StringTrim, NodeResultJS) \
     /* Nodes for DOM JIT */\
     macro(CallDOMGetter, NodeResultJS | NodeMustGenerate) \
     macro(CallDOM, NodeResultJS | NodeMustGenerate) \

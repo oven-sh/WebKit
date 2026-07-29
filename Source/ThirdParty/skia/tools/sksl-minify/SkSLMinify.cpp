@@ -5,8 +5,8 @@
  * found in the LICENSE file.
  */
 
-#include "src/base/SkStringView.h"
 #include "src/core/SkOpts.h"
+#include "src/core/SkStringView.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLFileOutputStream.h"
 #include "src/sksl/SkSLLexer.h"
@@ -34,6 +34,13 @@ static bool gStringify = false;
 static SkSL::ProgramKind gProgramKind = SkSL::ProgramKind::kFragment;
 
 void SkDebugf(const char format[], ...) {
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+}
+
+void SkLog(SkLogPriority, const char format[], ...) {
     va_list args;
     va_start(args, format);
     vfprintf(stderr, format, args);

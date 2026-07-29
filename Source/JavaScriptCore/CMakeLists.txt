@@ -4,10 +4,12 @@ list(APPEND JavaScriptCore_UNIFIED_SOURCE_LIST_FILES
     "Sources.txt"
 )
 
-set(JavaScriptCore_INCLUDE_DIRECTORIES
-    "${JavaScriptCore_FRAMEWORK_HEADERS_DIR}"
-    "${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}"
-)
+if (NOT USE_FRAMEWORK_BUNDLES)
+    set(JavaScriptCore_INCLUDE_DIRECTORIES
+        "${JavaScriptCore_FRAMEWORK_HEADERS_DIR}"
+        "${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}"
+    )
+endif ()
 
 set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${CMAKE_BINARY_DIR}"
@@ -26,6 +28,8 @@ set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/disassembler/ARM64"
     "${JAVASCRIPTCORE_DIR}/disassembler/zydis"
     "${JAVASCRIPTCORE_DIR}/domjit"
+    "${JAVASCRIPTCORE_DIR}/ffi"
+    "${JAVASCRIPTCORE_DIR}/ffi/tests"
     "${JAVASCRIPTCORE_DIR}/ftl"
     "${JAVASCRIPTCORE_DIR}/fuzzilli"
     "${JAVASCRIPTCORE_DIR}/heap"
@@ -223,8 +227,8 @@ if (MSVC AND NOT ENABLE_C_LOOP)
     list(APPEND OFFLINE_ASM_FORMAT_ARGS --platform=Windows)
 endif ()
 if (USE_APPLE_INTERNAL_SDK)
-    list(APPEND OFFLINE_ASM_ARGS "--webkit-additions-path=${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions")
-    list(APPEND OFFLINE_ASM_INCLUDE_DIRS "-I${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions")
+    list(APPEND OFFLINE_ASM_ARGS "--webkit-additions-path=${WebKitAdditions_HEADERS_DIR}")
+    list(APPEND OFFLINE_ASM_INCLUDE_DIRS "-I${WebKitAdditions_HEADERS_DIR}")
 endif ()
 
 set(LLINT_ASM
@@ -283,11 +287,20 @@ add_custom_command(
     VERBATIM)
 add_custom_target(Bytecodes DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h")
 
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb
+    DEPENDS ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml WTF_CopyPreferences
+    COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend JavaScriptCore --outputDir "${JavaScriptCore_DERIVED_SOURCES_DIR}" --template ${JAVASCRIPTCORE_DIR}/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml
+    VERBATIM)
+add_custom_target(JSCWebPreferenceOptions DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h")
+
 string(TIMESTAMP BUILD_TIME "%s")
 
 list(APPEND JavaScriptCore_HEADERS
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeStructs.h
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h
+    ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h
 )
 
 if (WTF_CPU_X86_64)
@@ -356,12 +369,10 @@ set(BUILTINS_GENERATOR_SCRIPTS
 )
 
 set(JavaScriptCore_BUILTINS_SOURCES
-    ${JAVASCRIPTCORE_DIR}/builtins/AsyncFromSyncIteratorPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/ArrayConstructor.js
     ${JAVASCRIPTCORE_DIR}/builtins/ArrayIteratorPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/ArrayPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/AsyncDisposableStackPrototype.js
-    ${JAVASCRIPTCORE_DIR}/builtins/AsyncGeneratorPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/AsyncIteratorPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/DisposableStackPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/FunctionPrototype.js
@@ -379,7 +390,6 @@ set(JavaScriptCore_BUILTINS_SOURCES
     ${JAVASCRIPTCORE_DIR}/builtins/ReflectObject.js
     ${JAVASCRIPTCORE_DIR}/builtins/SetPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/ShadowRealmPrototype.js
-    ${JAVASCRIPTCORE_DIR}/builtins/StringConstructor.js
     ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayConstructor.js
     ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/WrapForValidIteratorPrototype.js
@@ -421,6 +431,7 @@ set(LLIntSettingsExtractor_DEPENDENCIES
     WTF_CopyHeaders
     bmalloc_CopyHeaders
 )
+set_property(TARGET LLIntSettingsExtractor PROPERTY SKIP_CODESIGN YES)
 WEBKIT_EXECUTABLE(LLIntSettingsExtractor)
 set_target_properties(LLIntSettingsExtractor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -449,6 +460,7 @@ set(LLIntOffsetsExtractor_DEPENDENCIES
     WTF_CopyHeaders
     bmalloc_CopyHeaders
 )
+set_property(TARGET LLIntOffsetsExtractor PROPERTY SKIP_CODESIGN YES)
 WEBKIT_EXECUTABLE(LLIntOffsetsExtractor)
 set_target_properties(LLIntOffsetsExtractor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -541,6 +553,7 @@ set(JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS
 set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h
+    ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOps.h
 
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorAlternateBackendDispatchers.h
@@ -1138,6 +1151,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ArrayStorage.h
     runtime/ArrayStorageInlines.h
     runtime/AssertInvariants.h
+    runtime/AsyncContextSwapScope.h
     runtime/AsyncDisposableStackConstructor.h
     runtime/AsyncDisposableStackPrototype.h
     runtime/AsyncDisposableStackPrototypeInlines.h
@@ -1236,7 +1250,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/DatePrototypeInlines.h
     runtime/DeferTermination.h
     runtime/DeferredWorkTimer.h
-    runtime/DeferredWorkTimerInlines.h
     runtime/DefinePropertyAttributes.h
     runtime/DeletePropertySlot.h
     runtime/DirectArguments.h
@@ -2039,6 +2052,21 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/BunV8HeapSnapshotBuilder.h
     heap/HeapProfiler.h
 
+    ffi/BunFFI.h
+    ffi/FFICallHost.h
+    ffi/FFICallbackThunk.h
+    ffi/FFICallingConvention.h
+    ffi/FFIContext.h
+    ffi/FFIConversions.h
+    ffi/FFIDFG.h
+    ffi/FFIICStub.h
+    ffi/FFIInvokeThunk.h
+    ffi/FFISignature.h
+    ffi/FFIType.h
+    ffi/JSFFICallback.h
+    ffi/JSFFIFunction.h
+    ffi/tests/FFITestFixtures.h
+
     bytecode/GlobalCodeBlock.h
     bytecode/ModuleProgramCodeBlock.h
     bytecode/ProgramCodeBlock.h
@@ -2145,6 +2173,7 @@ set(JavaScriptCore_INSPECTOR_DOMAINS
     ${JAVASCRIPTCORE_DIR}/inspector/protocol/ScriptProfiler.json
     ${JAVASCRIPTCORE_DIR}/inspector/protocol/Security.json
     ${JAVASCRIPTCORE_DIR}/inspector/protocol/ServiceWorker.json
+    ${JAVASCRIPTCORE_DIR}/inspector/protocol/Storage.json
     ${JAVASCRIPTCORE_DIR}/inspector/protocol/Target.json
     ${JAVASCRIPTCORE_DIR}/inspector/protocol/Timeline.json
     ${JAVASCRIPTCORE_DIR}/inspector/protocol/Worker.json
@@ -2215,17 +2244,18 @@ endif()
 
 WEBKIT_COPY_FILES(JavaScriptCore_CopyHeaders
     PRUNE_STALE
-    DESTINATION ${JavaScriptCore_FRAMEWORK_HEADERS_DIR}/JavaScriptCore
+    DESTINATION ${JavaScriptCore_HEADERS_DIR}
     FILES ${JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS}
     FLATTENED
 )
-
 WEBKIT_SYMLINK_FILES(JavaScriptCore_CopyPrivateHeaders
     PRUNE_STALE
-    DESTINATION ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/JavaScriptCore
+    DESTINATION ${JavaScriptCore_PRIVATE_HEADERS_DIR}
     FILES ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS}
     FLATTENED
 )
+
+add_dependencies(JavaScriptCore_CopyPrivateHeaders Bytecodes JSCBuiltins JSCWebPreferenceOptions)
 
 # For static JSC builds, ensure headers are always copied as part of the default build
 if (ENABLE_STATIC_JSC)
@@ -2243,8 +2273,8 @@ if(NOT INTERNAL_BUILD AND NOT ENABLE_STATIC_JSC)
 endif()
 
 target_include_directories(LowLevelInterpreterLib
-    PRIVATE "$<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>")
-add_dependencies(LowLevelInterpreterLib Bytecodes JSCBuiltins)
+    PRIVATE "$<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>" "${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/JavaScriptCore")
+add_dependencies(LowLevelInterpreterLib Bytecodes JSCBuiltins JSCWebPreferenceOptions)
 
 if(TARGET WTF_CopyHeaders)
     add_dependencies(LowLevelInterpreterLib WTF_CopyHeaders)
@@ -2328,6 +2358,10 @@ if(NOT USE_BUN_JSC_ADDITIONS)
 endif()
 
 WEBKIT_FRAMEWORK(JavaScriptCore)
+
+if (USE_APPLE_INTERNAL_SDK)
+    WEBKIT_TARGET_USE_PGO(JavaScriptCore PROFILE JavaScriptCore)
+endif ()
 
 if (USE_BUN_JSC_ADDITIONS)
     # Without the JavaScriptCoreJIT subtarget there is no second translation

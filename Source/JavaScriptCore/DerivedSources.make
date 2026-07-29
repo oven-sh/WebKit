@@ -75,7 +75,11 @@ all : \
     yarr/YarrCanonicalizeUnicode.cpp \
     WasmOps.h \
     WasmOMGIRGeneratorInlines.h \
+    JSCWebPreferenceOptions.h \
 #
+
+JSCWebPreferenceOptions.h : $(JavaScriptCore)/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb $(WTF_BUILD_SCRIPTS_DIR)/Preferences/UnifiedWebPreferences.yaml $(WTF_BUILD_SCRIPTS_DIR)/GeneratePreferences.rb
+	$(RUBY) $(WTF_BUILD_SCRIPTS_DIR)/GeneratePreferences.rb --frontend JavaScriptCore --outputDir . --template $(JavaScriptCore)/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb $(WTF_BUILD_SCRIPTS_DIR)/Preferences/UnifiedWebPreferences.yaml
 
 # JavaScript builtins.
 
@@ -102,12 +106,10 @@ BUILTINS_GENERATOR_SCRIPTS = \
 #
 
 JavaScriptCore_BUILTINS_SOURCES = \
-    $(JavaScriptCore)/builtins/AsyncFromSyncIteratorPrototype.js \
     $(JavaScriptCore)/builtins/ArrayConstructor.js \
     $(JavaScriptCore)/builtins/ArrayIteratorPrototype.js \
     $(JavaScriptCore)/builtins/ArrayPrototype.js \
     $(JavaScriptCore)/builtins/AsyncDisposableStackPrototype.js \
-    $(JavaScriptCore)/builtins/AsyncGeneratorPrototype.js \
     $(JavaScriptCore)/builtins/AsyncIteratorPrototype.js \
     $(JavaScriptCore)/builtins/DisposableStackPrototype.js \
     $(JavaScriptCore)/builtins/FunctionPrototype.js \
@@ -125,7 +127,6 @@ JavaScriptCore_BUILTINS_SOURCES = \
     $(JavaScriptCore)/builtins/ReflectObject.js \
     $(JavaScriptCore)/builtins/SetPrototype.js \
     $(JavaScriptCore)/builtins/ShadowRealmPrototype.js \
-    $(JavaScriptCore)/builtins/StringConstructor.js \
     $(JavaScriptCore)/builtins/TypedArrayConstructor.js \
     $(JavaScriptCore)/builtins/TypedArrayPrototype.js \
     $(JavaScriptCore)/builtins/WrapForValidIteratorPrototype.js \
@@ -146,7 +147,6 @@ $(JSC_BUILTINS_FILES_PATTERNS) : $(BUILTINS_GENERATOR_SCRIPTS) $(JavaScriptCore_
 # Perfect hash lookup tables for JavaScript classes.
 
 OBJECT_LUT_HEADERS = \
-    AsyncFromSyncIteratorPrototype.lut.h \
     ArrayConstructor.lut.h \
     AsyncGeneratorPrototype.lut.h \
     BigIntConstructor.lut.h \
@@ -309,6 +309,7 @@ INSPECTOR_DOMAINS := \
     $(JavaScriptCore)/inspector/protocol/ScriptProfiler.json \
     $(JavaScriptCore)/inspector/protocol/Security.json \
     $(JavaScriptCore)/inspector/protocol/ServiceWorker.json \
+    $(JavaScriptCore)/inspector/protocol/Storage.json \
     $(JavaScriptCore)/inspector/protocol/Target.json \
     $(JavaScriptCore)/inspector/protocol/Timeline.json \
     $(JavaScriptCore)/inspector/protocol/Worker.json \

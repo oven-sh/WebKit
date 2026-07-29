@@ -84,6 +84,8 @@
 
 #include <wtf/NativePromise.h>
 
+#define MESSAGE_CHECK(assertion, message) MESSAGE_CHECK_WITH_MESSAGE_BASE(assertion, m_webProcessConnection.get(), message)
+
 namespace WebKit {
 
 using namespace WebCore;
@@ -244,10 +246,30 @@ void RemoteMediaPlayerProxy::pause()
     sendCachedState();
 }
 
-void RemoteMediaPlayerProxy::seekToTarget(const WebCore::SeekTarget& target)
+static MediaTimeUpdateData timeUpdateData(const MediaPlayer& player, MediaTime time)
+{
+    return {
+        time,
+        player.timeIsProgressing() ? player.effectiveRate() : 0.0,
+        MonotonicTime::now()
+    };
+}
+
+void RemoteMediaPlayerProxy::seekToTarget(const WebCore::SeekTarget& target, CompletionHandler<void(Expected<WebCore::MediaTimeUpdateData, WebCore::PlatformMediaError>)>&& handler)
 {
     ALWAYS_LOG(LOGIDENTIFIER, target);
-    protect(m_player)->seekToTarget(target);
+    protect(m_player)->seekToTarget(target)->whenSettled(RunLoop::mainSingleton(), [weakThis = WeakPtr { *this }, handler = WTF::move(handler)](auto&& result) mutable {
+        if (!result) {
+            handler(makeUnexpected(result.error()));
+            return;
+        }
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis) {
+            handler(makeUnexpected(PlatformMediaError::Cancelled));
+            return;
+        }
+        handler(timeUpdateData(*protect(protectedThis->m_player), *result));
+    });
 }
 
 void RemoteMediaPlayerProxy::setVolumeLocked(bool volumeLocked)
@@ -412,6 +434,7 @@ void RemoteMediaPlayerProxy::mediaPlayerReadyStateChanged()
     ALWAYS_LOG(LOGIDENTIFIER, newReadyState);
     updateCachedVideoMetrics();
     updateCachedState(true);
+    updateCachedMediaCharacteristics();
     m_cachedState.networkState = player->networkState();
     m_cachedState.duration = player->duration();
 
@@ -444,21 +467,6 @@ void RemoteMediaPlayerProxy::mediaPlayerVolumeChanged()
 void RemoteMediaPlayerProxy::mediaPlayerMuteChanged()
 {
     m_webProcessConnection->send(Messages::MediaPlayerPrivateRemote::MuteChanged(m_player->muted()), m_id);
-}
-
-static MediaTimeUpdateData timeUpdateData(const MediaPlayer& player, MediaTime time)
-{
-    return {
-        time,
-        player.timeIsProgressing() ? player.effectiveRate() : 0.0,
-        MonotonicTime::now()
-    };
-}
-
-void RemoteMediaPlayerProxy::mediaPlayerSeeked(const MediaTime& time)
-{
-    ALWAYS_LOG(LOGIDENTIFIER, time);
-    protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::Seeked(timeUpdateData(*protect(m_player), time)), m_id);
 }
 
 void RemoteMediaPlayerProxy::mediaPlayerTimeChanged()
@@ -603,14 +611,18 @@ void RemoteMediaPlayerProxy::mediaPlayerCharacteristicChanged()
 {
     updateCachedVideoMetrics();
     updateCachedState();
+    updateCachedMediaCharacteristics();
 
+    protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::CharacteristicChanged(m_cachedState), m_id);
+}
+
+void RemoteMediaPlayerProxy::updateCachedMediaCharacteristics()
+{
     RefPtr player = m_player;
     m_cachedState.hasAudio = player->hasAudio();
     m_cachedState.hasVideo = player->hasVideo();
     m_cachedState.hasClosedCaptions = player->hasClosedCaptions();
     m_cachedState.languageOfPrimaryAudioTrack = player->languageOfPrimaryAudioTrack();
-
-    protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::CharacteristicChanged(m_cachedState), m_id);
 }
 
 bool RemoteMediaPlayerProxy::mediaPlayerRenderingCanBeAccelerated()
@@ -624,7 +636,7 @@ void RemoteMediaPlayerProxy::mediaPlayerRenderingModeChanged()
     protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::RenderingModeChanged(), m_id);
 }
 
-void RemoteMediaPlayerProxy::requestHostingContext(LayerHostingContextCallback&& completionHandler)
+void RemoteMediaPlayerProxy::requestHostingContext(CompletionHandler<void(WebCore::HostingContext)>&& completionHandler)
 {
     completionHandler({ });
 }
@@ -823,6 +835,7 @@ void RemoteMediaPlayerProxy::mediaPlayerCurrentPlaybackTargetIsWirelessChanged(b
 {
     RefPtr player = m_player;
     m_cachedState.wirelessPlaybackTargetName = player->wirelessPlaybackTargetName();
+    m_cachedState.wirelessPlaybackRouteName = player->wirelessPlaybackRouteName();
     m_cachedState.wirelessPlaybackTargetType = player->wirelessPlaybackTargetType();
     sendCachedState();
     protect(m_webProcessConnection)->send(Messages::MediaPlayerPrivateRemote::CurrentPlaybackTargetIsWirelessChanged(isCurrentPlaybackTargetWireless), m_id);
@@ -1220,6 +1233,8 @@ void RemoteMediaPlayerProxy::setPlatformDynamicRangeLimit(PlatformDynamicRangeLi
 void RemoteMediaPlayerProxy::createAudioSourceProvider()
 {
 #if ENABLE(WEB_AUDIO) && PLATFORM(COCOA)
+    MESSAGE_CHECK(!m_remoteAudioSourceProvider, "RemoteAudioSourceProvider already created.");
+
     RefPtr player = m_player;
     if (!player)
         return;
@@ -1370,5 +1385,7 @@ void RemoteMediaPlayerProxy::screenReservedChanged(bool reserved)
 #endif
 
 } // namespace WebKit
+
+#undef MESSAGE_CHECK
 
 #endif // ENABLE(GPU_PROCESS) && ENABLE(VIDEO)

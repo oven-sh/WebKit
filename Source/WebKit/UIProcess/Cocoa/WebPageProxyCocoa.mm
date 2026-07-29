@@ -54,10 +54,11 @@
 #import "SafeBrowsingUtilities.h"
 #import "SharedBufferReference.h"
 #import "SynapseSPI.h"
+#import "UIRemoteObjectRegistry.h"
 #import "VideoPresentationManagerProxy.h"
 #import "WKErrorInternal.h"
 #import "WKHistoryDelegatePrivate.h"
-#import "WKWebView.h"
+#import "WKWebViewPrivate.h"
 #import "WebContextMenuProxy.h"
 #import "WebEventModifier.h"
 #import "WebFrameProxy.h"
@@ -72,6 +73,7 @@
 #import "WebProcessProxy.h"
 #import "WebScreenOrientationManagerProxy.h"
 #import "WebsiteDataStore.h"
+#import "_WKRemoteObjectRegistryInternal.h"
 #import <Foundation/NSURLRequest.h>
 #import <WebCore/AXObjectCache.h>
 #import <WebCore/AppHighlight.h>
@@ -664,6 +666,18 @@ ResourceError WebPageProxy::errorForUnpermittedAppBoundDomainNavigation(const UR
 
 WebPageProxy::Internals::~Internals() = default;
 
+_WKRemoteObjectRegistry *WebPageProxy::remoteObjectRegistry()
+{
+    return [cocoaView() _remoteObjectRegistry];
+}
+
+RemoteObjectRegistry* WebPageProxy::uiRemoteObjectRegistry()
+{
+    if (RetainPtr registry = remoteObjectRegistry())
+        return &[registry remoteObjectRegistry];
+    return nullptr;
+}
+
 #if ENABLE(APPLE_PAY)
 
 std::optional<SharedPreferencesForWebProcess> WebPageProxy::Internals::sharedPreferencesForWebPaymentMessages() const
@@ -1135,15 +1149,17 @@ NSDictionary *WebPageProxy::contentsOfUserInterfaceItem(NSString *userInterfaceI
 }
 
 #if PLATFORM(MAC)
-bool WebPageProxy::isQuarantinedAndNotUserApproved(const String& fileURLString)
+bool WebPageProxy::isQuarantinedAndNotUserApproved(const URL& fileURL)
 {
-    RetainPtr fileURL = adoptNS([[NSURL alloc] initWithString:fileURLString.createNSString().get()]);
-    if ([retainPtr(fileURL.get().pathExtension) caseInsensitiveCompare:@"webarchive"] != NSOrderedSame)
+    auto filePath = fileURL.fileSystemPath();
+    if (!filePath.endsWithIgnoringASCIICase(".webarchive"_s))
         return false;
+
+    RetainPtr nsFileURL = adoptNS([[NSURL alloc] initFileURLWithPath:filePath.createNSString().get()]);
 
     qtn_file_t qf = qtn_file_alloc();
 
-    int quarantineError = qtn_file_init_with_path(qf, fileURL.get().path.fileSystemRepresentation);
+    int quarantineError = qtn_file_init_with_path(qf, nsFileURL.get().path.fileSystemRepresentation);
 
     if (quarantineError == ENOENT || quarantineError == QTN_NOT_QUARANTINED)
         return false;
@@ -1189,7 +1205,7 @@ void WebPageProxy::setCocoaView(WKWebView *view)
     internals().cocoaView = view;
 }
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 void WebPageProxy::replaceImageForRemoveBackground(const ElementContext& elementContext, const Vector<String>& types, std::span<const uint8_t> data)
 {
@@ -1671,6 +1687,12 @@ void WebPageProxy::didEndPartialIntelligenceTextAnimation(IPC::Connection&)
     didEndPartialIntelligenceTextAnimationImpl();
 }
 
+void WebPageProxy::showWritingToolsAffordance(IPC::Connection&)
+{
+    if (RefPtr pageClient = this->pageClient())
+        pageClient->showWritingToolsAffordance();
+}
+
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
 void WebPageProxy::updateUnderlyingTextVisibilityForTextEffectID(const WTF::UUID& uuid, bool visible, CompletionHandler<void()>&& completionHandler)
 {
@@ -2012,6 +2034,92 @@ void WebPageProxy::getWebArchiveDataWithSelectedFrames(WebFrameProxy& rootFrame,
     }
 }
 
+static bool validateFrameIdentifiersForAttributedStringCollection(FrameIdentifier rootFrameIdentifier, const Vector<FrameIdentifier>& frameIdentifiers)
+{
+    auto isInSubtree = [&](WebFrameProxy& frame) {
+        for (RefPtr ancestor = &frame; ancestor; ancestor = ancestor->parentFrame()) {
+            if (ancestor->frameID() == rootFrameIdentifier)
+                return true;
+        }
+        return false;
+    };
+
+    for (auto identifier : frameIdentifiers) {
+        if (identifier == rootFrameIdentifier)
+            continue;
+
+        RefPtr frame = WebFrameProxy::webFrame(identifier);
+        if (frame && !isInSubtree(*frame))
+            return false;
+    }
+
+    return true;
+}
+
+void WebPageProxy::getAttributedStringsForRemoteFrames(IPC::Connection& connection, FrameIdentifier rootFrameIdentifier, const Vector<FrameIdentifier>& frameIdentifiers, CompletionHandler<void(HashMap<FrameIdentifier, AttributedString>&&)>&& completionHandler)
+{
+    if (!hasRunningProcess() || frameIdentifiers.isEmpty()) {
+        completionHandler({ });
+        return;
+    }
+
+    RefPtr rootFrame = WebFrameProxy::webFrame(rootFrameIdentifier);
+    MESSAGE_CHECK_COMPLETION(rootFrame && rootFrame->page() == this && &rootFrame->process() == WebProcessProxy::fromConnection(connection).ptr(), connection, completionHandler({ }));
+    MESSAGE_CHECK_COMPLETION(validateFrameIdentifiersForAttributedStringCollection(rootFrameIdentifier, frameIdentifiers), connection, completionHandler({ }));
+
+    HashMap<Ref<WebProcessProxy>, Vector<FrameIdentifier>> processFrames;
+    for (auto frameIdentifier : frameIdentifiers) {
+        RefPtr frame = WebFrameProxy::webFrame(frameIdentifier);
+        if (!frame)
+            continue;
+
+        processFrames.ensure(protect(frame->process()), [] {
+            return Vector<FrameIdentifier> { };
+        }).iterator->value.append(frameIdentifier);
+    }
+
+    if (processFrames.isEmpty()) {
+        completionHandler({ });
+        return;
+    }
+
+    class AttributedStringMapCallbackAggregator final : public RefCounted<AttributedStringMapCallbackAggregator> {
+    public:
+        static Ref<AttributedStringMapCallbackAggregator> create(CompletionHandler<void(HashMap<FrameIdentifier, AttributedString>&&)>&& completionHandler)
+        {
+            return adoptRef(*new AttributedStringMapCallbackAggregator(WTF::move(completionHandler)));
+        }
+
+        ~AttributedStringMapCallbackAggregator()
+        {
+            m_completionHandler(WTF::move(m_result));
+        }
+
+        void addResult(HashMap<FrameIdentifier, AttributedString>&& result)
+        {
+            for (auto&& [frameIdentifier, attributedString] : WTF::move(result))
+                m_result.set(frameIdentifier, WTF::move(attributedString));
+        }
+
+    private:
+        AttributedStringMapCallbackAggregator(CompletionHandler<void(HashMap<FrameIdentifier, AttributedString>&&)>&& completionHandler)
+            : m_completionHandler(WTF::move(completionHandler))
+        {
+        }
+
+        HashMap<FrameIdentifier, AttributedString> m_result;
+        CompletionHandler<void(HashMap<FrameIdentifier, AttributedString>&&)> m_completionHandler;
+    };
+
+    Ref aggregator = AttributedStringMapCallbackAggregator::create(WTF::move(completionHandler));
+    for (auto& [process, frameIDs] : processFrames) {
+        protect(process)->sendWithAsyncReply(Messages::WebPage::GetContentsAsAttributedStringForFrames(frameIDs), [frameIDs, aggregator](auto&& result) {
+            if (result.size() <= frameIDs.size())
+                aggregator->addResult(WTF::move(result));
+        }, webPageIDInProcess(process.get()));
+    }
+}
+
 String WebPageProxy::presentingApplicationBundleIdentifier() const
 {
     if (std::optional auditToken = presentingApplicationAuditToken()) {
@@ -2144,13 +2252,21 @@ void WebPageProxy::updateSelectionWithExtentPointAndBoundary(WebCore::IntPoint p
 
 void WebPageProxy::startAutoscrollAtPosition(const WebCore::FloatPoint& positionInWindow)
 {
-    m_isAutoscrolling = true;
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::StartAutoscrollAtPosition(positionInWindow), webPageIDInMainFrameProcess());
+    if (m_autoscrollState == AutoscrollState::Inactive)
+        m_autoscrollState = AutoscrollState::Pending;
+
+    protect(m_legacyMainFrameProcess)->sendWithAsyncReply(Messages::WebPage::StartAutoscrollAtPosition(positionInWindow), [weakThis = WeakPtr { *this }](bool didStartAutoscrolling) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || protectedThis->m_autoscrollState == AutoscrollState::Inactive)
+            return;
+
+        protectedThis->m_autoscrollState = didStartAutoscrolling ? AutoscrollState::Active : AutoscrollState::Inactive;
+    }, webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::cancelAutoscroll()
 {
-    m_isAutoscrolling = false;
+    m_autoscrollState = AutoscrollState::Inactive;
     protect(m_legacyMainFrameProcess)->send(Messages::WebPage::CancelAutoscroll(), webPageIDInMainFrameProcess());
 }
 
@@ -2196,6 +2312,11 @@ void WebPageProxy::commitPotentialTapFailed()
 {
     if (RefPtr pageClient = this->pageClient())
         pageClient->commitPotentialTapFailed();
+}
+
+void WebPageProxy::handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint& point, OptionSet<WebEventModifier> modifiers, TransactionID layerTreeTransactionIdAtLastInteractionStart, WebEventInputSource inputSource, WebMouseEventSyntheticClickType syntheticClickType)
+{
+    protect(legacyMainFrameProcess())->send(Messages::WebPage::HandleDoubleTapForDoubleClickAtPoint(point, modifiers, layerTreeTransactionIdAtLastInteractionStart, inputSource, syntheticClickType), webPageIDInMainFrameProcess());
 }
 
 void WebPageProxy::didNotHandleTapAsClick(const WebCore::IntPoint& point)

@@ -12,7 +12,7 @@
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkFlattenable.h"
 #include "include/core/SkRefCnt.h"
-#include "include/private/base/SkAPI.h"
+#include "include/private/SkAPI.h"
 
 class SkBlender;
 class SkColorFilter;
@@ -36,12 +36,10 @@ struct SkSamplingOptions;
 class SK_API SkShader : public SkFlattenable {
 public:
     /**
-     *  Returns true if the shader is guaranteed to produce only opaque
-     *  colors, subject to the SkPaint using the shader to apply an opaque
-     *  alpha value. Subclasses should override this to allow some
-     *  optimizations.
+     *  Returns true if the shader is guaranteed to produce only opaque colors, subject to the
+     *  SkPaint using the shader to apply an opaque alpha value.
      */
-    virtual bool isOpaque() const { return false; }
+    virtual bool isOpaque() const = 0;
 
     /**
      *  Iff this shader is backed by a single SkImage, return its ptr (the caller must ref this

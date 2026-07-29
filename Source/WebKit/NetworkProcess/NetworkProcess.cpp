@@ -103,6 +103,7 @@
 #include <wtf/ProcessPrivilege.h>
 #include <wtf/RunLoop.h>
 #include <wtf/RuntimeApplicationChecks.h>
+#include <wtf/SafeStrerror.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UUID.h>
 #include <wtf/UniqueRef.h>
@@ -121,6 +122,7 @@
 #include "CookieStorageUtilsCF.h"
 #include "LaunchServicesDatabaseObserver.h"
 #include "NetworkSessionCocoa.h"
+#include "PathsBlockedForSandboxExtensions.h"
 #include <wtf/cocoa/AuditToken.h>
 #include <wtf/cocoa/Entitlements.h>
 #include <wtf/spi/darwin/SandboxSPI.h>
@@ -417,6 +419,9 @@ void NetworkProcess::createNetworkConnectionToWebProcess(ProcessIdentifier ident
     ASSERT(!m_webProcessConnections.contains(identifier));
     m_webProcessConnections.add(identifier, WTF::move(newConnection));
 
+    for (auto& path : m_pendingAllowedFilePathsByProcess.take(identifier))
+        connection->allowAccessToFile(path);
+
     CheckedPtr storage = storageSession(sessionID);
 
     RELEASE_LOG(Process, "%p - NetworkProcess::createNetworkConnectionToWebProcess: Finished creating connection for web process core identifier %" PRIu64 ", notifying the UI process", this, identifier.toUInt64());
@@ -528,10 +533,52 @@ auto NetworkProcess::allowsFirstPartyForCookies(WebCore::ProcessIdentifier proce
         return terminateOrDisallow;
     }
 
-    auto result = set.contains(firstPartyDomain);
-    ASSERT(result || terminateOrDisallow == AllowCookieAccess::Disallow);
-    return result ? AllowCookieAccess::Allow : terminateOrDisallow;
+    return set.contains(firstPartyDomain) ? AllowCookieAccess::Allow : terminateOrDisallow;
 }
+
+#if PLATFORM(COCOA)
+static void addPathsBlockedForSandboxExtensions(const WebsiteDataStoreParameters& parameters)
+{
+    String cacheDirectory = FileSystem::parentPath(parameters.networkSessionParameters.networkCacheDirectory);
+    String websiteDataDirectory = FileSystem::parentPath(parameters.networkSessionParameters.indexedDBDirectory);
+#if PLATFORM(MAC)
+    String homeDirectory = AuxiliaryProcess::getHomeDirectory();
+    String homeRelativeHTTPStoragesDirectory = makeString(homeDirectory, "/Library/HTTPStorages"_s);
+    String homeRelativeKeychainDirectory = makeString(homeDirectory, "/Library/Keychains"_s);
+#else
+    String homeDirectory = "/var/mobile"_s;
+    String containerCachesDirectory = parameters.containerCachesDirectory;
+#endif
+    String homeRelativePreferencesDirectory = makeString(homeDirectory, "/Library/Preferences"_s);
+
+    Vector<String> subPathsBlocked = {
+        "/Library/Keychains"_s,
+        "/Library/Preferences"_s,
+        "/private/var/db"_s,
+        cacheDirectory,
+#if PLATFORM(MAC)
+        homeRelativeHTTPStoragesDirectory,
+        homeRelativeKeychainDirectory,
+#else
+        "/private/var/Managed Preferences"_s,
+        "/private/var/MobileAsset"_s,
+        "/private/var/preferences"_s,
+#endif
+        homeRelativePreferencesDirectory,
+        parameters.cookieStoragePath,
+        websiteDataDirectory
+    };
+    addSubPathsBlockedForSandboxExtension(WTF::move(subPathsBlocked));
+
+    Vector<String> pathsBlocked = {
+#if PLATFORM(MAC)
+        "/private/etc/services"_s,
+        "/private/etc/hosts"_s,
+#endif
+    };
+    addPathsBlockedForSandboxExtension(WTF::move(pathsBlocked));
+}
+#endif // PLATFORM(COCOA)
 
 void NetworkProcess::addStorageSession(PAL::SessionID sessionID, const WebsiteDataStoreParameters& parameters)
 {
@@ -565,6 +612,8 @@ void NetworkProcess::addStorageSession(PAL::SessionID sessionID, const WebsiteDa
         if (!uiProcessCookieStorage && storageSession)
             uiProcessCookieStorage = adoptCF(_CFURLStorageSessionCopyCookieStorage(kCFAllocatorDefault, storageSession.get()));
     }
+
+    addPathsBlockedForSandboxExtensions(parameters);
 
     addResult.iterator->value = makeUnique<NetworkStorageSession>(sessionID, WTF::move(storageSession), WTF::move(uiProcessCookieStorage));
 #elif USE(CURL)
@@ -664,11 +713,6 @@ void NetworkProcess::setSession(PAL::SessionID sessionID, std::unique_ptr<Networ
 void NetworkProcess::destroySession(PAL::SessionID sessionID, CompletionHandler<void()>&& completionHandler)
 {
     ASSERT(RunLoop::isMain());
-#if !USE(SOUP) && !USE(CURL)
-    // cURL and Soup based ports destroy the default session right before the process exits to avoid leaking
-    // network resources like the cookies database.
-    ASSERT(sessionID != PAL::SessionID::defaultSessionID());
-#endif
 
     if (auto session = m_networkSessions.take(sessionID)) {
         auto dataStoreIdentifier = session->dataStoreIdentifier();
@@ -3305,6 +3349,13 @@ void NetworkProcess::setCORSDisablingPatternsForPage(WebCore::ProcessIdentifier 
     m_extensionCORSDisablingPatterns.set(pageIdentifier, WTF::move(parsedPatterns));
 }
 
+void NetworkProcess::recordMessagePortTransferDestinationsForSiteIsolation(Vector<WebCore::MessagePortIdentifier>&& ports, WebCore::ProcessIdentifier destination, CompletionHandler<void()>&& completionHandler)
+{
+    for (auto& port : ports)
+        m_messagePortChannelRegistry.recordPendingTransferDestination(port, destination);
+    completionHandler();
+}
+
 #if PLATFORM(COCOA)
 void NetworkProcess::appPrivacyReportTestingData(PAL::SessionID sessionID, CompletionHandler<void(const AppPrivacyReportTestingData&)>&& completionHandler)
 {
@@ -3368,14 +3419,25 @@ void NetworkProcess::allowFilesAccessFromWebProcess(WebCore::ProcessIdentifier p
     if (RefPtr connection = webProcessConnection(processID)) {
         for (auto& path : paths)
             connection->allowAccessToFile(path);
+    } else {
+        // If web process is not launched yet, buffer the grant so it can be applied
+        // once createNetworkConnectionToWebProcess() runs for this process identifier.
+        auto& pendingPaths = m_pendingAllowedFilePathsByProcess.ensure(processID, [] {
+            return HashSet<String> { };
+        }).iterator->value;
+        for (auto& path : paths)
+            pendingPaths.add(path);
     }
     completionHandler();
 }
 
-void NetworkProcess::allowFileAccessFromWebProcess(WebCore::ProcessIdentifier processID, const String& path, CompletionHandler<void()>&& completionHandler)
+void NetworkProcess::allowFileAccessFromWebProcess(WebCore::ProcessIdentifier processID, const String& path, std::optional<WebKit::SandboxExtensionHandle> handle, CompletionHandler<void()>&& completionHandler)
 {
-    if (RefPtr connection = webProcessConnection(processID))
+    if (RefPtr connection = webProcessConnection(processID)) {
+        if (handle)
+            SandboxExtension::consumePermanently(*handle);
         connection->allowAccessToFile(path);
+    }
     completionHandler();
 }
 

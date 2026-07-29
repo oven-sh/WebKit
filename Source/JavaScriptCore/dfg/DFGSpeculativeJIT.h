@@ -756,7 +756,6 @@ public:
     void compileOverridesHasInstance(Node*);
 
     void compileIsCellWithType(Node*);
-    void compileIsTypedArrayView(Node*);
     void compileArrayIsArray(Node*);
 
     void emitCall(Node*);
@@ -1516,6 +1515,9 @@ public:
     void compileGetButterfly(Node*);
     void compileCallDOMGetter(Node*);
     void compileCallDOM(Node*);
+#if USE(BUN_JSC_ADDITIONS)
+    void compileCallFFI(Node*); // Defined out-of-line in ffi/FFIDFGCodegen.cpp (JSVALUE64 only).
+#endif
     void compileCheckJSCast(Node*);
     void compileCallCustomAccessorGetter(Node*);
     void compileCallCustomAccessorSetter(Node*);
@@ -1702,6 +1704,7 @@ public:
     template <typename ClassType> void compileNewFunctionCommon(GPRReg, RegisteredStructure, GPRReg, GPRReg, GPRReg, JumpList&, size_t, FunctionExecutable*);
     void compileNewFunction(Node*);
     void compileSetFunctionName(Node*);
+    void compileEnqueueAsyncGeneratorDriver(Node*);
     void compileNewBoundFunction(Node*);
     void compileNewRegExp(Node*);
     void compileForwardVarargs(Node*);
@@ -1729,6 +1732,8 @@ public:
     void compileNotifyWrite(Node*);
     void compileRegExpExec(Node*);
     void compileRegExpExecNonGlobalOrSticky(Node*);
+    void compileRegExpExecSticky(Node*);
+    void emitFirstCharacterBitmapMatch(const uint8_t* bitmap, GPRReg characterGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, JumpList& matchMaybeCases);
     void compileRegExpMatchFast(Node*);
     void compileRegExpMatchFastGlobal(Node*);
     void compileRegExpSplitFast(Node*);
@@ -1757,6 +1762,7 @@ public:
     void compileMaterializeNewObject(Node*);
     void compileRecordRegExpCachedResult(Node*);
     void compileToObjectOrCallObjectConstructor(Node*);
+    void compileOpenAsyncFromSyncIterator(Node*);
     void compileResolveScope(Node*);
     void compileResolveScopeForHoistingFuncDeclInEval(Node*);
     void compileGetGlobalVariable(Node*);
@@ -1777,6 +1783,7 @@ public:
     void compileStringSubstr(Node*);
     void compileToUpperCase(Node*);
     void compileToLowerCase(Node*);
+    void compileStringTrim(Node*);
     void compileThrow(Node*);
     void compileThrowStaticError(Node*);
 

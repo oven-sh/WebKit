@@ -107,7 +107,7 @@ InlineContentBreaker::Result InlineContentBreaker::processInlineContent(const Co
     ASSERT(!std::isnan(lineStatus.availableWidth));
     ASSERT(isMinimumInIntrinsicWidthMode() || candidateContent.logicalWidth() > lineStatus.availableWidth);
 
-    if (auto result = simplifiedMinimumInstrinsicWidthBreak(candidateContent, lineStatus))
+    if (auto result = simplifiedMinimumIntrinsicWidthBreak(candidateContent, lineStatus))
         return *result;
 
     auto result = processOverflowingContent(candidateContent, lineStatus);
@@ -155,6 +155,19 @@ static inline InlineContentBreaker::PartialRun firstCharacterBreakRespectingLine
         breakPosition = nextPosition;
     }
     return { breakPosition, breakWidth };
+}
+
+static bool shouldRevertToEarlierWrapOpportunity(const InlineContentBreaker::LineStatus& lineStatus, const InlineContentBreaker::ContinuousContent::RunList& runs, size_t overflowingRunIndex)
+{
+    // https://drafts.csswg.org/css-text-4/#wrap-inside
+    // 'wrap-inside: avoid' suppresses the soft wrap opportunities inside the box, including those introduced by
+    // word-break: break-all and line-break: anywhere. Breaking inside the box is only a last resort, so when there
+    // is an earlier wrap opportunity to fall back to, revert to it rather than ending the line inside the box.
+    if (!lineStatus.hasWrapOpportunityAtPreviousPosition)
+        return false;
+    auto& overflowingBox = runs[overflowingRunIndex].inlineItem.layoutBox();
+    auto& styleToUse = overflowingBox.isInlineBox() ? overflowingBox.style() : overflowingBox.parent().style();
+    return styleToUse.effectiveWrapInsideAvoid();
 }
 
 InlineContentBreaker::Result InlineContentBreaker::processOverflowingContent(const ContinuousContent& continuousContent, const LineStatus& lineStatus) const
@@ -210,6 +223,8 @@ InlineContentBreaker::Result InlineContentBreaker::processOverflowingContent(con
             overflowingRunIndex = overflowingContent.runIndex;
             if (!overflowingContent.breakingPosition)
                 return { };
+            if (shouldRevertToEarlierWrapOpportunity(lineStatus, continuousContent.runs(), overflowingRunIndex))
+                return Result { Result::Action::RevertToLastWrapOpportunity, IsEndOfLine::Yes };
             auto trailingContent = overflowingContent.breakingPosition->trailingContent;
             if (!trailingContent) {
                 // We tried to break the content but the available space can't even accommodate the first glyph.
@@ -274,6 +289,10 @@ InlineContentBreaker::Result InlineContentBreaker::processOverflowingContent(con
     // If we are not allowed to break this overflowing content, we still need to decide whether keep it or wrap it to the next line.
     if (!lineStatus.hasContent)
         return { Result::Action::Keep, IsEndOfLine::No };
+
+    if (shouldRevertToEarlierWrapOpportunity(lineStatus, continuousContent.runs(), overflowingRunIndex))
+        return { Result::Action::RevertToLastWrapOpportunity, IsEndOfLine::Yes };
+
     // Now either wrap this content over to the next line or revert back to an earlier wrapping opportunity, or not wrap at all.
     auto shouldWrapUnbreakableContentToNextLine = [&] {
         // The individual runs in this continuous content don't break, let's check if we are allowed to wrap this content to next line (e.g. pre would prevent us from wrapping).
@@ -298,7 +317,7 @@ InlineContentBreaker::Result InlineContentBreaker::processOverflowingContent(con
     return { Result::Action::Keep, IsEndOfLine::No };
 }
 
-std::optional<InlineContentBreaker::Result> InlineContentBreaker::simplifiedMinimumInstrinsicWidthBreak(const ContinuousContent& candidateContent, const LineStatus& lineStatus) const
+std::optional<InlineContentBreaker::Result> InlineContentBreaker::simplifiedMinimumIntrinsicWidthBreak(const ContinuousContent& candidateContent, const LineStatus& lineStatus) const
 {
     if (!isMinimumInIntrinsicWidthMode() || !candidateContent.isTextOnlyContent())
         return { };
@@ -887,7 +906,7 @@ EnumSet<InlineContentBreaker::WordBreakRule> InlineContentBreaker::wordBreakBeha
         return { WordBreakRule::AtArbitraryPositionWithinWords };
 
     auto includeHyphenationIfAllowed = [&](std::optional<InlineContentBreaker::WordBreakRule> wordBreakRule) -> EnumSet<InlineContentBreaker::WordBreakRule> {
-        auto hyphenationIsAllowed = !n_hyphenationIsDisabled && style.hyphens() == Hyphens::Auto && canHyphenate(Style::toPlatform(style.computedLocale()));
+        auto hyphenationIsAllowed = !m_hyphenationIsDisabled && style.hyphens() == Hyphens::Auto && canHyphenate(Style::toPlatform(style.computedLocale()));
         if (hyphenationIsAllowed) {
             if (wordBreakRule)
                 return { *wordBreakRule, WordBreakRule::AtHyphenationOpportunities };

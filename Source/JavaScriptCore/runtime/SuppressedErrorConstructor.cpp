@@ -39,6 +39,7 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(SuppressedErrorConstructor);
 
 const ClassInfo SuppressedErrorConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SuppressedErrorConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(SuppressedErrorConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(callSuppressedErrorConstructor);
 static JSC_DECLARE_HOST_FUNCTION(constructSuppressedErrorConstructor);

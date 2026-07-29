@@ -27,7 +27,7 @@ import sys
 
 from webkit.opaque_ipc_types import opaque_ipc_types
 from webkit import parser
-from webkit.model import BUILTIN_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLYDURINGUNBOUNDEDIPC_ATTRIBUTE, MAINTHREADCALLBACK_ATTRIBUTE, STREAM_ATTRIBUTE, CALL_WITH_REPLY_ID_ATTRIBUTE, MessageReceiver, Message
+from webkit.model import BUILTIN_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLYDURINGUNBOUNDEDIPC_ATTRIBUTE, MAINTHREADCALLBACK_ATTRIBUTE, ANYTHREADCALLBACK_ATTRIBUTE, STREAM_ATTRIBUTE, CALL_WITH_REPLY_ID_ATTRIBUTE, MessageReceiver, Message
 
 _license_header = """/*
  * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
@@ -173,6 +173,7 @@ def types_that_must_be_moved():
         'WebKit::ModelProcessCreationParameters',
         'WebKit::NetworkProcessCreationParameters',
         'WebKit::NetworkResourceLoadParameters',
+        'WebKit::PreconnectRequest',
         'WebKit::WebsiteDataStoreParameters',
         'WebKit::GPUProcessSessionParameters',
         'WebKit::GoToBackForwardItemParameters',
@@ -282,6 +283,8 @@ def message_to_struct_declaration(receiver, message):
             result.append('    static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::%s_%sReply; }\n' % (receiver.name, message.name))
         if message.has_attribute(MAINTHREADCALLBACK_ATTRIBUTE):
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::MainThread;\n')
+        elif message.has_attribute(ANYTHREADCALLBACK_ATTRIBUTE):
+            result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::AnyThread;\n')
         else:
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;\n')
         result.append('    using ReplyArguments = std::tuple<%s>;\n' % ', '.join([parameter.type for parameter in message.reply_parameters]))
@@ -366,6 +369,7 @@ def atomic_object_identifier(type):
         'WebCore::IDBObjectStoreIdentifierType',
         'WebCore::IDBObjectStoreIdentifier',
         'WebCore::LibWebRTCSocketIdentifier',
+        'WebCore::PendingStreamIdentifier',
         'WebCore::RenderingResourceIdentifier',
         'WebCore::ResourceLoaderIdentifier',
         'WebCore::SamplesRendererTrackIdentifier',
@@ -466,6 +470,7 @@ def serialized_identifiers():
         'WebCore::PlatformLayerIdentifierID',
         'WebCore::PlaybackTargetClientContextID',
         'WebCore::NonSerializedDataIdentifier',
+        'WebCore::PendingStreamIdentifier',
         'WebCore::PortIdentifier',
         'WebCore::ProcessIdentifier',
         'WebCore::PushSubscriptionIdentifier',
@@ -510,7 +515,6 @@ def serialized_identifiers():
         'WebKit::GPUProcessConnectionIdentifier',
         'WebKit::ImageBufferSetIdentifier',
         'WebKit::RemoteGraphicsContextGLIdentifier',
-        'WebKit::RiceBackendIdentifier',
         'WebKit::IPCConnectionTesterIdentifier',
         'WebKit::IPCStreamTesterIdentifier',
         'WebKit::JSObjectID',
@@ -591,6 +595,8 @@ def types_that_cannot_be_forward_declared():
         'Inspector::FrameResource',
         'Inspector::FrameResourceData',
         'Inspector::ResourceType',
+        'Inspector::SearchMatch',
+        'Inspector::SearchResult',
         'MachSendRight',
         'MediaTime',
         'PlatformXR::CompositionLayerType',
@@ -932,7 +938,7 @@ def handler_function(receiver, message):
         return '%s::%s' % (receiver.name, 'url' + message.name[3:])
     if message.name.startswith('GPU'):
         return '%s::%s' % (receiver.name, 'gpu' + message.name[3:])
-    return '%s::%s' % (receiver.name, message.name[0].lower() + message.name[1:])
+    return '%s::%s' % (receiver.receiver_name if receiver.receiver_name else receiver.name, message.name[0].lower() + message.name[1:])
 
 def generate_enabled_by(receiver, enabled_by, enabled_by_conjunction):
     conjunction = ' %s ' % (enabled_by_conjunction or '&&')
@@ -1122,6 +1128,8 @@ def headers_for_type(type, for_implementation_file=False):
         'Inspector::FrontendChannel::ConnectionType': ['<JavaScriptCore/InspectorFrontendChannel.h>'],
         'Inspector::InspectorTargetType': ['<JavaScriptCore/InspectorTarget.h>'],
         'Inspector::ResourceType': ['<WebCore/InspectorResourceType.h>'],
+        'Inspector::SearchMatch': ['<WebCore/InspectorResourceUtilities.h>'],
+        'Inspector::SearchResult': ['<WebCore/InspectorResourceUtilities.h>'],
         'IPC::AsyncReplyID': ['"Connection.h"'],
         'IPC::Signal': ['"IPCEvent.h"'],
         'IPC::Semaphore': ['"IPCSemaphore.h"'],
@@ -1559,8 +1567,6 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::GestureRecognizerState': ['"GestureTypes.h"'],
         'WebKit::GestureType': ['"GestureTypes.h"'],
         'WebKit::InputType': ['"FocusedElementInformation.h"'],
-        'WebKit::RiceBackendIdentifier': ['"RiceBackend.h"'],
-        'WebKit::RiceGatherResult': ['"RiceBackend.h"'],
         'WebKit::JSObjectID': ['"JavaScriptEvaluationResult.h"'],
         'WebKit::SnapshotOption': ['"ImageOptions.h"'],
         'WebKit::LastNavigationWasAppInitiated': ['"AppPrivacyReport.h"'],
@@ -1669,6 +1675,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::WebGPU::VertexState': ['"WebGPUVertexState.h"'],
         'WebKit::WebGPU::XREye': ['"WebGPUXREye.h"'],
         'WebKit::WebJSBufferData': ['"WebUserContentControllerDataTypes.h"'],
+        'WebKit::WebMouseEventSyntheticClickType': ['"WebMouseEvent.h"'],
         'WebKit::WebPushD::PushMessageForTesting': ['"PushMessageForTesting.h"'],
         'WebKit::WebPushD::WebPushDaemonConnectionConfiguration': ['"WebPushDaemonConnectionConfiguration.h"'],
         'WebKit::WebScriptMessageHandlerData': ['"WebUserContentControllerDataTypes.h"'],
@@ -1850,7 +1857,10 @@ def generate_message_handler(receiver):
     if receiver.condition:
         result.append('#if %s\n' % receiver.condition)
 
-    if_swift_enabled(receiver, result, lambda x: x.append('#include "%s.h" // NOLINT\n' % 'Shared/WebKit-Swift'), lambda x: x.append('#include "%s.h"\n\n' % receiver.name))
+    if receiver.receiver_name:
+        result.append('#include "%s.h"\n\n' % receiver.receiver_name)
+    else:
+        if_swift_enabled(receiver, result, lambda x: x.append('#include "%s.h" // NOLINT\n' % 'Shared/WebKit-Swift'), lambda x: x.append('#include "%s.h"\n\n' % receiver.name))
     result += generate_header_includes_from_conditions(header_conditions)
     result.append('\n')
 
@@ -1903,7 +1913,9 @@ def generate_message_handler(receiver):
             result.append('    decoder.markInvalid();\n')
         result.append('}\n')
     else:
-        if receiver.has_attribute(NOT_USING_IPC_CONNECTION_ATTRIBUTE):
+        if receiver.receiver_name:
+            result.append('void %s::didReceiveMessageWithReceiverName(IPC::Connection& connection, IPC::Decoder& decoder)\n' % receiver.receiver_name)
+        elif receiver.has_attribute(NOT_USING_IPC_CONNECTION_ATTRIBUTE):
             append_with_potentially_swiftified_classname(receiver, result, 'void %s::didReceiveMessageWithReplyHandler(IPC::Decoder& decoder, Function<void(UniqueRef<IPC::Encoder>&&)>&& replyHandler)\n')
         else:
             append_with_potentially_swiftified_classname(receiver, result, 'void %s::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)\n')

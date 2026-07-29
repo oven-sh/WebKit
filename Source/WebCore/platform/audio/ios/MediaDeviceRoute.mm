@@ -230,9 +230,28 @@ MediaDeviceRoute::MediaDeviceRoute(WebMediaDevicePlatformRoute *platformRoute)
 {
 }
 
+void MediaDeviceRoute::disconnectFromSession()
+{
+    [m_playbackControlObserver setPlaybackControl:nil];
+
+#if HAVE(AVROUTING_FRAMEWORK)
+    if (RetainPtr routeSession = std::exchange(m_routeSession, nil)) {
+        [routeSession stop];
+        [platformRoute() removeSession:routeSession.get()];
+    }
+#else
+    [platformRoute() stop];
+#endif
+}
+
 String MediaDeviceRoute::deviceName() const
 {
     return [m_platformRoute routeDisplayName];
+}
+
+String MediaDeviceRoute::routeName() const
+{
+    return [m_platformRoute protocolType].localizedDescription;
 }
 
 WebMediaDevicePlatformRoute *MediaDeviceRoute::platformRoute() const
@@ -248,9 +267,7 @@ void MediaDeviceRoute::setPlaybackPosition(MediaTime playbackPosition)
 
 MediaDeviceRoute::~MediaDeviceRoute()
 {
-#if HAVE(AVROUTING_FRAMEWORK)
-    [m_routeSession stop];
-#endif
+    disconnectFromSession();
 }
 
 FOR_EACH_KEY_PATH(DEFINE_GETTER)

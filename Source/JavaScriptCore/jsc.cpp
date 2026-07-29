@@ -371,6 +371,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallMasquerader);
 static JSC_DECLARE_HOST_FUNCTION(functionHasCustomProperties);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpTypesForAllVariables);
 static JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);
+static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeProfile);
 static JSC_DECLARE_HOST_FUNCTION(functionSetTimeout);
 static JSC_DECLARE_HOST_FUNCTION(functionReleaseWeakRefs);
 static JSC_DECLARE_HOST_FUNCTION(functionFinalizationRegistryLiveCount);
@@ -615,6 +616,10 @@ private:
 
     void finishCreation(VM& vm, const Vector<String>& arguments)
     {
+        // This shouldn't actually throw in practice, it's a test object. That said, it creates
+        // arrays and such that can generally throw.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
         auto& filter = ensurePropertyFilter();
 
         auto addFunction = [&] (VM& vm, ASCIILiteral name, NativeFunction function, unsigned arguments, unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum)) {
@@ -639,6 +644,11 @@ private:
 
         Base::finishCreation(vm);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+#if USE(BUN_JSC_ADDITIONS) && !BUN_ENABLE_JSDOLLARVM
+        if (Options::useDollarVM()) [[unlikely]]
+            exposeDollarVM(vm);
+#endif
 
         // Set loop counts based on enabled engine tiers. When concurrent JIT is off,
         // clamp to a small multiple of the top tier's warm-up threshold so eager
@@ -742,6 +752,7 @@ private:
 
         addFunction(vm, "drainMicrotasks"_s, functionDrainMicrotasks, 0);
         addFunction(vm, "setTimeout"_s, functionSetTimeout, 2);
+        addFunction(vm, "dumpBytecodeProfile"_s, functionDumpBytecodeProfile, 1);
 
         addFunction(vm, "releaseWeakRefs"_s, functionReleaseWeakRefs, 0);
         addFunction(vm, "finalizationRegistryLiveCount"_s, functionFinalizationRegistryLiveCount, 0);
@@ -780,8 +791,11 @@ private:
 
         if (!arguments.isEmpty()) {
             JSArray* array = constructEmptyArray(this, nullptr);
-            for (size_t i = 0; i < arguments.size(); ++i)
+            scope.assertNoException();
+            for (size_t i = 0; i < arguments.size(); ++i) {
                 array->putDirectIndex(this, i, jsString(vm, arguments[i]));
+                scope.assertNoException();
+            }
             putDirect(vm, Identifier::fromString(vm, "arguments"_s), array, DontEnum);
         }
 
@@ -2994,6 +3008,25 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks, (JSGlobalObject* globalObject,
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionDumpBytecodeProfile, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!vm.m_perBytecodeProfiler)
+        return JSValue::encode(jsBoolean(false));
+
+    if (!callFrame->argumentCount())
+        return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "dumpBytecodeProfile requires a path argument."_s)));
+
+    String path = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    auto pathUtf8 = path.utf8();
+    bool ok = vm.m_perBytecodeProfiler->save(pathUtf8.data());
+    return JSValue::encode(jsBoolean(ok));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionSetTimeout, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -3004,9 +3037,10 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout, (JSGlobalObject* globalObject, Call
     if (!callback)
         return throwVMTypeError(globalObject, scope, "First argument is not a JS function"_s);
 
-    auto ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::AtSomePoint, vm, callback, { });
-    auto dispatch = [callback, ticket] {
-        callback->vm().deferredWorkTimer->scheduleWorkSoon(ticket, [callback](DeferredWorkTimer::Ticket) {
+    auto weakTicket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::AtSomePoint, vm, callback, { });
+    auto dispatch = [weakTicket = WTF::move(weakTicket), vmPtr = &vm] {
+        vmPtr->deferredWorkTimer->scheduleWorkSoonIfActive(weakTicket, [](DeferredWorkTimer::Ticket& ticket) {
+            auto* callback = uncheckedDowncast<JSFunction>(ticket.target());
             JSGlobalObject* globalObject = callback->realm();
             MarkedArgumentBuffer args;
             call(globalObject, callback, jsUndefined(), args, "You shouldn't see this..."_s);
@@ -3977,6 +4011,12 @@ static void runInteractive(GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    bool didAllowRedeclaringSymbols = vm.allowRedeclaringSymbols();
+    vm.setAllowRedeclaringSymbols(true);
+    auto resetAllowRedeclaringSymbols = makeScopeExit([&] {
+        vm.setAllowRedeclaringSymbols(didAllowRedeclaringSymbols);
+    });
+
     URL directoryName = currentWorkingDirectory();
     if (!directoryName.isValid())
         return;
@@ -4080,6 +4120,7 @@ static void runInteractive(GlobalObject* globalObject)
     fprintf(stderr, "  --footprint                Dump memory footprint after done executing\n");
     fprintf(stderr, "  --options                  Dumps all JSC VM options and exits\n");
     fprintf(stderr, "  --dumpOptions              Dumps all non-default JSC VM options before continuing\n");
+    fprintf(stderr, "  --enable-all-experimental-features  Enables all JSC feature-flag options (off-by-default in-development features)\n");
     fprintf(stderr, "  --<jsc VM option>=<value>  Sets the specified JSC VM option\n");
 #if USE(LIBPAS)
     fprintf(stderr, "  --crash-vm=<value>         Crash VM on startup due to PGM failure. Options PGMOOBLowerGuardPage, PGMOOBUpperGuardPage, or PGMUAF (For Testing Purposes).\n");
@@ -4284,6 +4325,13 @@ void CommandLine::parseArguments(int argc, char** argv, int start)
         }
         if (!strcmp(arg, "--disableOptionsFreezingForTesting")) {
             JSC::Config::disableFreezingForTesting();
+            continue;
+        }
+        if (!strcmp(arg, "--enable-all-experimental-features")) {
+#define JSC_ENABLE_EXPERIMENTAL_WEB_PREFERENCE_OPTION(name_) \
+            Options::name_() = true;
+            FOR_EACH_JSC_EXPERIMENTAL_WEB_PREFERENCE_OPTION(JSC_ENABLE_EXPERIMENTAL_WEB_PREFERENCE_OPTION)
+#undef JSC_ENABLE_EXPERIMENTAL_WEB_PREFERENCE_OPTION
             continue;
         }
 

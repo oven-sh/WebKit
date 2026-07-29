@@ -911,6 +911,15 @@ void PageClientImpl::beganExitFullScreen(const IntRect& initialFrame, const IntR
         return completionHandler();
 }
 
+WebCore::IntRect PageClientImpl::convertMainFrameCoordinatesInFullscreenPlaceholderViewToScreen(WebPageProxy& page, WebCore::IntRect mainFrameCoordinates) const
+{
+    if (RetainPtr fullScreenWindowController = protect(m_impl)->fullScreenWindowController()) {
+        if (auto screenCoordinates = [fullScreenWindowController convertMainFrameCoordinatesInFullscreenPlaceholderViewToScreen:mainFrameCoordinates])
+            return *screenCoordinates;
+    }
+    return page.syncRootViewToScreen(mainFrameCoordinates);
+}
+
 #endif // ENABLE(FULLSCREEN_API)
 
 void PageClientImpl::navigationGestureDidBegin()
@@ -1070,11 +1079,6 @@ RetainPtr<NSView> PageClientImpl::inspectorAttachmentView()
     return protect(m_impl)->inspectorAttachmentView();
 }
 
-_WKRemoteObjectRegistry *PageClientImpl::remoteObjectRegistry()
-{
-    return protect(m_impl)->remoteObjectRegistry();
-}
-
 void PageClientImpl::pageDidScroll(const WebCore::IntPoint& scrollOffset)
 {
     protect(m_impl)->pageDidScroll(scrollOffset);
@@ -1219,6 +1223,15 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 }
 
 #endif
+
+#if ENABLE(WRITING_TOOLS)
+
+void PageClientImpl::showWritingToolsAffordance()
+{
+    protect(m_impl)->showWritingTools(WTRequestedToolIndex);
+}
+
+#endif // ENABLE(WRITING_TOOLS)
 
 #if ENABLE(DATA_DETECTION)
 

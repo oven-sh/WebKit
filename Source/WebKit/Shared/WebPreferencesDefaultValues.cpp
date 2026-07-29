@@ -30,6 +30,7 @@
 
 #if PLATFORM(COCOA)
 #include "DefaultWebBrowserChecks.h"
+#include "NetworkSoftLink.h"
 #include <wtf/NumberOfCores.h>
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #if PLATFORM(IOS_FAMILY)
@@ -385,6 +386,17 @@ bool defaultIFrameResourceMonitoringEnabled()
 }
 #endif
 
+bool defaultSearchInputResultsAttributeEnabled()
+{
+#if PLATFORM(COCOA)
+    static bool result = !isFullWebBrowserOrRunningTest()
+        && !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DisableNonStandardSearchInputResultsAttribute);
+    return result;
+#else
+    return false;
+#endif
+}
+
 #if HAVE(SPATIAL_AUDIO_EXPERIENCE)
 bool defaultPreferSpatialAudioExperience()
 {
@@ -524,5 +536,14 @@ bool defaultShouldEnableScreenCapture()
     return false;
 }
 #endif
+
+bool defaultWebTransportEnabled()
+{
+#if PLATFORM(COCOA)
+    return canLoad_Network_nw_webtransport_options_set_allow_joining_before_ready();
+#else
+    return false;
+#endif
+}
 
 } // namespace WebKit

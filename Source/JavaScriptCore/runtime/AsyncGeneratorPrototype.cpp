@@ -28,10 +28,13 @@
 #include "AsyncGeneratorPrototype.h"
 
 #include "JSCInlines.h"
+#include "IteratorOperations.h"
 #include "JSAsyncGenerator.h"
+#include "JSAsyncGeneratorInlines.h"
 #include "JSGenerator.h"
 #include "JSMicrotask.h"
 #include "JSPromise.h"
+#include "MicrotaskCall.h"
 
 namespace JSC {
 
@@ -48,11 +51,62 @@ const ClassInfo AsyncGeneratorPrototype::s_info = { "AsyncGenerator"_s, &Base::s
 
 /* Source for AsyncGeneratorPrototype.lut.h
 @begin asyncGeneratorPrototypeTable
-  next      JSBuiltin                       DontEnum|Function 1
   return    asyncGeneratorPrototypeReturn   DontEnum|Function 1
   throw     asyncGeneratorPrototypeThrow    DontEnum|Function 1
 @end
 */
+
+// https://tc39.es/ecma262/#sec-asyncgenerator-prototype-next
+JSValue asyncGeneratorNext(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue argument, MicrotaskCallCache* microtaskCallCache)
+{
+    VM& vm = globalObject->vm();
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+
+    // 5. Let state be gen.[[AsyncGeneratorState]].
+    int32_t state = generator->state();
+    // 6. If state is completed, then
+    if (state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed)) {
+        // 6.a. Let iteratorResult be CreateIteratorResultObject(undefined, true).
+        // 6.b. Perform ! Call(promiseCapability.[[Resolve]], undefined, « iteratorResult »).
+        // The iterator result object belongs to the generator's realm.
+        auto* iteratorResult = createIteratorResultObject(generator->realm(), jsUndefined(), /* done */ true);
+        promise->resolve(globalObject, vm, iteratorResult);
+        return promise;
+    }
+
+    // 7. Let completion be NormalCompletion(value).
+    // 8. Perform AsyncGeneratorEnqueue(gen, completion, promiseCapability).
+    generator->enqueue(vm, argument, static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode), promise);
+
+    // 9. If state is either suspended-start or suspended-yield, then
+    if (state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Init) || JSAsyncGenerator::isSuspendedYieldState(state)) {
+        // 9.a. Perform AsyncGeneratorResume(gen, completion).
+        asyncGeneratorResume(globalObject, generator, microtaskCallCache);
+    } else {
+        // 10. Else,
+        // 10.a. Assert: state is either executing or draining-queue.
+        ASSERT(JSAsyncGenerator::isExecutingState(state) || state == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::DrainingQueue));
+    }
+
+    // 11. Return promiseCapability.[[Promise]].
+    return promise;
+}
+
+JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeNext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+
+    // 3. Let result be Completion(AsyncGeneratorValidate(gen, empty)).
+    // 4. IfAbruptRejectPromise(result, promiseCapability).
+    auto* generator = dynamicDowncast<JSAsyncGenerator>(callFrame->thisValue());
+    if (!generator) [[unlikely]] {
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        promise->reject(vm, createTypeError(globalObject, "|this| should be an async generator"_s));
+        return JSValue::encode(promise);
+    }
+
+    return JSValue::encode(asyncGeneratorNext(globalObject, generator, callFrame->argument(0), &vm.syncResumeCallCache()));
+}
 
 // https://tc39.es/ecma262/#sec-asyncgenerator-prototype-return
 JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeReturn, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -83,7 +137,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeReturn, (JSGlobalObject* globalO
     } else if (JSAsyncGenerator::isSuspendedYieldState(state)) {
         // 9. Else if state is suspended-yield, then
         // 9.a. Perform AsyncGeneratorResume(gen, completion).
-        asyncGeneratorResume(globalObject, generator);
+        asyncGeneratorResume(globalObject, generator, &vm.syncResumeCallCache());
     } else {
         // 10. Else,
         // 10.a. Assert: state is either executing or draining-queue.
@@ -134,7 +188,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeThrow, (JSGlobalObject* globalOb
     // 10. If state is suspended-yield, then
     // 10.a. Perform AsyncGeneratorResume(gen, completion).
     if (JSAsyncGenerator::isSuspendedYieldState(state))
-        asyncGeneratorResume(globalObject, generator);
+        asyncGeneratorResume(globalObject, generator, &vm.syncResumeCallCache());
     else {
         // 11. Else,
         // 11.a. Assert: state is either executing or draining-queue.
@@ -145,10 +199,11 @@ JSC_DEFINE_HOST_FUNCTION(asyncGeneratorPrototypeThrow, (JSGlobalObject* globalOb
     return JSValue::encode(promise);
 }
 
-void AsyncGeneratorPrototype::finishCreation(VM& vm)
+void AsyncGeneratorPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    putDirectWithoutTransition(vm, vm.propertyNames->next, globalObject->asyncGeneratorPrototypeNextFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

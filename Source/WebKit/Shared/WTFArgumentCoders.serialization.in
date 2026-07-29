@@ -168,7 +168,6 @@ template: struct WebKit::RemoteAudioDestinationIdentifierType
 template: struct WebKit::RemoteAudioHardwareListenerIdentifierType
 template: struct WebKit::RemoteMediaResourceLoaderIdentifierType
 template: struct WebKit::RemoteRemoteCommandListenerIdentifierType
-template: struct WebKit::RiceBackendIdentifierType
 template: struct WebKit::SampleBufferDisplayLayerIdentifierType
 template: struct WebKit::ScriptMessageHandlerIdentifierType
 template: struct WebKit::TapIdentifierType
@@ -204,6 +203,7 @@ template: struct WebCore::LibWebRTCSocketIdentifierType
 template: enum class WebCore::MainThreadPermissionObserverIdentifierType
 template: enum class WebCore::OpaqueOriginIdentifierType
 template: enum class WebCore::PortIdentifierType
+template: struct WebCore::PendingStreamIdentifierType
 template: enum class WebCore::RTCDataChannelLocalIdentifierType
 template: enum class WebCore::RTCEncodedStreamProducerIdentifierType
 template: struct WebCore::RenderingResourceIdentifierType

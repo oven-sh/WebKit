@@ -2511,6 +2511,21 @@ class CppStyleTest(CppStyleTestBase):
         self.assert_multi_line_lint('#if __has_include(<ApplicationServices/ApplicationServicesPriv.h>)\n', '')
         self.assert_multi_line_lint('#elif __has_include(<ApplicationServices/ApplicationServicesPriv.h>)\n', '')
         self.assert_multi_line_lint('#endif // __has_include(<ApplicationServices/ApplicationServicesPriv.h>)\n', '')
+        # The '/' in an include path within __has_include(<...>) is not a division operator,
+        # even when the __has_include lands on a preprocessor continuation line that does not
+        # itself begin with #if/#elif.
+        self.assert_multi_line_lint('#if !defined(HAVE_FOO) \\\n'
+                                    '    && __has_include(<Foo/Bar.h>)\n'
+                                    '#define HAVE_FOO 1\n'
+                                    '#endif\n', '')
+        self.assert_multi_line_lint('#if PLATFORM(FOO) \\\n'
+                                    '    || __has_include(<Foo/Bar/Baz.h>)\n'
+                                    '#endif\n', '')
+        # But genuine division on a continuation line is still flagged.
+        self.assert_multi_line_lint('#if FOO \\\n'
+                                    '    && (a/b)\n'
+                                    '#endif\n',
+                                    'Missing spaces around /  [whitespace/operators] [3]')
         self.assert_lint('Foo&& a = bar();', '')
 
     def test_operator_methods(self):
@@ -6205,6 +6220,28 @@ class WebKitStyleTest(CppStyleTestBase):
             'auto caps = adoptGRef(gst_caps_new_empty_simple("bleh"));',
             "Use 'GRefPtr' instead of 'auto' with 'adoptGRef()'."
             "  [runtime/auto_with_adopt] [4]",
+            'foo.cpp')
+
+    def test_adopt_of_dynamic_cast(self):
+        self.assert_lint(
+            'RetainPtr array = adoptCF(dynamic_cf_cast<CFArrayRef>(SecTaskCopyValueForEntitlement(task, key, nullptr)));',
+            "Adopt the value before casting, e.g. 'dynamic_cf_cast<>(adoptCF(...))', otherwise the value leaks on type mismatch."
+            "  [runtime/adopt_dynamic_cast] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'RetainPtr value = adoptNS(dynamic_objc_cast<NSString>([obj copyValue]));',
+            "Adopt the value before casting, e.g. 'dynamic_objc_cast<>(adoptNS(...))', otherwise the value leaks on type mismatch."
+            "  [runtime/adopt_dynamic_cast] [4]",
+            'foo.mm')
+        # The correct pattern (adopt before cast) should not be flagged.
+        self.assert_lint(
+            'RetainPtr array = dynamic_cf_cast<CFArrayRef>(adoptCF(SecTaskCopyValueForEntitlement(task, key, nullptr)));',
+            '',
+            'foo.mm')
+        # adoptCF of a plain Copy function (no cast) is fine.
+        self.assert_lint(
+            'RetainPtr context = adoptCF(CGBitmapContextCreate(0, 0, 0, 0, 0, 0, 0));',
+            '',
             'foo.cpp')
 
     def test_wtf_make_unique(self):

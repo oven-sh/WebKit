@@ -94,7 +94,7 @@ static String protocolFrameIdForFrameID(FrameIdentifier frameID)
     return IdentifierRegistry::protocolFrameId(frameID);
 }
 
-void ProxyingPageAgent::frameNavigated(FrameIdentifier frameID, const URL& url, const String& mimeType, SecurityOriginData&& securityOrigin, std::optional<FrameIdentifier> parentFrameID, const String& name, WebCore::ScriptExecutionContextIdentifier loaderId)
+void ProxyingPageAgent::frameNavigated(FrameIdentifier frameID, const URL& url, const String& mimeType, SecurityOriginData&& securityOrigin, std::optional<FrameIdentifier> parentFrameID, const String& name, const String& loaderId)
 {
     // Cache the committing frame's real document info so getResourceTree()/buildFrameTree()
     // can report it for cross-origin children, whose commit the inspectedPage's WebFrameProxy
@@ -103,7 +103,7 @@ void ProxyingPageAgent::frameNavigated(FrameIdentifier frameID, const URL& url, 
 
     auto frameObject = Protocol::Page::Frame::create()
         .setId(protocolFrameIdForFrameID(frameID))
-        .setLoaderId(IdentifierRegistry::protocolLoaderId(loaderId))
+        .setLoaderId(loaderId)
         .setUrl(url.string())
         .setMimeType(mimeType)
         .setSecurityOrigin(securityOrigin.toString())
@@ -282,7 +282,7 @@ Ref<Protocol::Page::FrameResourceTree> ProxyingPageAgent::buildFrameTree(const W
     URL url = frame.url();
     SecurityOriginData securityOrigin = frame.documentSecurityOriginData();
     String mimeType = frame.mimeType();
-    std::optional<WebCore::ScriptExecutionContextIdentifier> loaderId;
+    String loaderId;
     if (auto it = m_cachedFrameDocumentInfo.find(frame.frameID()); it != m_cachedFrameDocumentInfo.end()) {
         url = it->value.url;
         securityOrigin = it->value.securityOrigin;
@@ -298,7 +298,7 @@ Ref<Protocol::Page::FrameResourceTree> ProxyingPageAgent::buildFrameTree(const W
     // before the inspector connected (e.g. the main frame), whose live frameNavigated wasn't cached.
     auto resources = JSON::ArrayOf<Protocol::Page::FrameResource>::create();
     if (auto it = resourcesByFrame.find(frame.frameID()); it != resourcesByFrame.end()) {
-        if (!loaderId)
+        if (loaderId.isEmpty())
             loaderId = it->value.loaderId;
         for (auto& resource : it->value.resources)
             resources->addItem(ResourceUtilities::buildResourceObject(resource));
@@ -306,7 +306,7 @@ Ref<Protocol::Page::FrameResourceTree> ProxyingPageAgent::buildFrameTree(const W
 
     auto frameObject = Protocol::Page::Frame::create()
         .setId(protocolId)
-        .setLoaderId(loaderId ? IdentifierRegistry::protocolLoaderId(*loaderId) : String())
+        .setLoaderId(loaderId)
         .setUrl(url.string())
         .setMimeType(mimeType.isEmpty() ? "text/html"_s : mimeType)
         .setSecurityOrigin(securityOrigin.toString())
@@ -436,9 +436,49 @@ CommandResult<void> ProxyingPageAgent::deleteCookie(const String&, const String&
     return { };
 }
 
-CommandResultOf<String, bool> ProxyingPageAgent::getResourceContent(const Protocol::Network::FrameId&, const String&)
+void ProxyingPageAgent::getResourceContent(const Protocol::Network::FrameId& frameId, const String& url, Ref<GetResourceContentCallback>&& callback)
 {
-    return makeUnexpected("Not yet implemented under Site Isolation"_s);
+    if (!m_enabled) {
+        callback->sendFailure("Not supported without Site Isolation"_s);
+        return;
+    }
+
+    // The frameId is hosting-process-qualified by IdentifierRegistry::protocolFrameId(frameID,
+    // processID), so parseProtocolFrameId yields the hosting process directly -- same routing as
+    // searchInResource()'s frame branch. The parser validates the raw value before constructing
+    // FrameIdentifier, so a malformed/hostile id is a clean failure rather than a UIProcess crash.
+    auto parsed = IdentifierRegistry::parseProtocolFrameId(frameId);
+    if (!parsed) {
+        callback->sendFailure("Invalid frameId format"_s);
+        return;
+    }
+    auto [frameProcessIdentifier, frameID] = *parsed;
+
+    Ref inspectedPage = m_inspectedPage.get();
+
+    RefPtr<WebKit::WebProcessProxy> targetProcess;
+    std::optional<PageIdentifier> targetPageID;
+    inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+        if (webProcess.coreProcessIdentifier() == frameProcessIdentifier) {
+            targetProcess = &webProcess;
+            targetPageID = pageID;
+        }
+    });
+
+    if (!targetProcess || !targetPageID) {
+        callback->sendFailure("WebProcess not found for frameId"_s);
+        return;
+    }
+
+    targetProcess->sendWithAsyncReply(
+        Messages::WebInspectorBackend::GetFrameResourceContent { frameID, url },
+        [callback = WTF::move(callback)](String content, bool base64Encoded, String errorString) mutable {
+            if (!errorString.isEmpty())
+                callback->sendFailure(errorString);
+            else
+                callback->sendSuccess(content, base64Encoded);
+        },
+        *targetPageID);
 }
 
 // FIXME: <https://webkit.org/b/308897> Cross-process bootstrap script injection.
@@ -447,15 +487,178 @@ CommandResult<void> ProxyingPageAgent::setBootstrapScript(const String&)
     return { };
 }
 
-// FIXME: <https://webkit.org/b/308896> Cross-process resource search with result aggregation.
-CommandResult<Ref<JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>>> ProxyingPageAgent::searchInResource(const Protocol::Network::FrameId&, const String&, const String&, std::optional<bool>&&, std::optional<bool>&&, const Protocol::Network::RequestId&)
+// MARK: - Page.searchInResource / Page.searchInResources fan-out
+//
+// Under Site Isolation each WebContent process has its own frames and its own
+// BackendResourceDataStore, so both commands fan out to the hosting processes over IPC and
+// aggregate here. searchInResources gathers from every process; searchInResource routes to the
+// single process that owns the target requestId or frame.
+void ProxyingPageAgent::searchInResource(const Protocol::Network::FrameId& frameId, const String& url, const String& query, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, const Protocol::Network::RequestId& requestId, Ref<SearchInResourceCallback>&& callback)
 {
-    return JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>::create();
+    if (!m_enabled) {
+        callback->sendFailure("Not supported without Site Isolation"_s);
+        return;
+    }
+
+    bool sensitive = caseSensitive && *caseSensitive;
+    bool regex = isRegex && *isRegex;
+
+    // The frontend may send an empty string when there is no requestId; treat that as the
+    // frame+URL branch, matching the legacy InspectorPageAgent::searchInResource shape.
+    auto convertMatchesAndForward = [callback = callback.copyRef()](Vector<Inspector::SearchMatch>&& matches, String errorString) mutable {
+        if (!errorString.isEmpty()) {
+            callback->sendFailure(errorString);
+            return;
+        }
+        auto array = JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>::create();
+        for (auto& match : matches) {
+            array->addItem(Protocol::GenericTypes::SearchMatch::create()
+                .setLineNumber(match.lineNumber)
+                .setLineContent(match.lineContent)
+                .release());
+        }
+        callback->sendSuccess(WTF::move(array));
+    };
+
+    Ref inspectedPage = m_inspectedPage.get();
+
+    if (!requestId.isEmpty()) {
+        // Branch A: route to the WebProcess that owns the requestId, same shape as
+        // ProxyingNetworkAgent::getResponseBody. The protocol requestId is process-qualified
+        // (see IdentifierRegistry::protocolRequestId), so parseProtocolRequestId yields the
+        // hosting WebProcess identifier directly.
+        auto parsed = IdentifierRegistry::parseProtocolRequestId(requestId);
+        if (!parsed) {
+            callback->sendFailure("Invalid requestId format"_s);
+            return;
+        }
+        auto [processIdentifier, resourceID] = *parsed;
+
+        RefPtr<WebKit::WebProcessProxy> targetProcess;
+        std::optional<PageIdentifier> targetPageID;
+        inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+            if (webProcess.coreProcessIdentifier() == processIdentifier) {
+                targetProcess = &webProcess;
+                targetPageID = pageID;
+            }
+        });
+
+        if (!targetProcess || !targetPageID) {
+            callback->sendFailure("WebProcess not found for requestId"_s);
+            return;
+        }
+
+        targetProcess->sendWithAsyncReply(
+            Messages::WebInspectorBackend::SearchInRequest { resourceID, query, sensitive, regex },
+            WTF::move(convertMatchesAndForward),
+            *targetPageID);
+        return;
+    }
+
+    // Branch B: route to the frame's hosting process. The frameId is hosting-process-qualified by
+    // IdentifierRegistry::protocolFrameId(frameID, processID), so parseProtocolFrameId yields the
+    // hosting process directly without walking the frame tree.
+    auto parsedFrame = IdentifierRegistry::parseProtocolFrameId(frameId);
+    if (!parsedFrame) {
+        callback->sendFailure("Invalid frameId format"_s);
+        return;
+    }
+    auto [frameProcessIdentifier, frameID] = *parsedFrame;
+
+    RefPtr<WebKit::WebProcessProxy> targetProcess;
+    std::optional<PageIdentifier> targetPageID;
+    inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+        if (webProcess.coreProcessIdentifier() == frameProcessIdentifier) {
+            targetProcess = &webProcess;
+            targetPageID = pageID;
+        }
+    });
+
+    if (!targetProcess || !targetPageID) {
+        callback->sendFailure("WebProcess not found for frameId"_s);
+        return;
+    }
+
+    targetProcess->sendWithAsyncReply(
+        Messages::WebInspectorBackend::SearchInFrameResource { frameID, url, query, sensitive, regex },
+        WTF::move(convertMatchesAndForward),
+        *targetPageID);
 }
 
-CommandResult<Ref<JSON::ArrayOf<Protocol::Page::SearchResult>>> ProxyingPageAgent::searchInResources(const String&, std::optional<bool>&&, std::optional<bool>&&)
+void ProxyingPageAgent::searchInResources(const String& text, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, Ref<SearchInResourcesCallback>&& callback)
 {
-    return JSON::ArrayOf<Protocol::Page::SearchResult>::create();
+    if (!m_enabled) {
+        callback->sendFailure("Not supported without Site Isolation"_s);
+        return;
+    }
+
+    Ref inspectedPage = m_inspectedPage.get();
+    RefPtr mainFrame = inspectedPage->mainFrame();
+    if (!mainFrame) {
+        callback->sendFailure("Missing main frame"_s);
+        return;
+    }
+
+    bool sensitive = caseSensitive && *caseSensitive;
+    bool regex = isRegex && *isRegex;
+
+    // Mirrors getResourceTree's fan-out: group every frame in the authoritative WebFrameProxy
+    // tree by its hosting WebContent process, then ask each process to scan its own frames'
+    // cached resources AND its BackendResourceDataStore (XHR/Fetch).
+    struct ProcessFrames {
+        RefPtr<WebKit::WebProcessProxy> process;
+        Vector<FrameIdentifier> frameIDs;
+    };
+    HashMap<WebCore::ProcessIdentifier, ProcessFrames> framesByProcess;
+
+    Function<void(const WebKit::WebFrameProxy&)> collectFrame = [&](const WebKit::WebFrameProxy& frame) {
+        Ref process = frame.process();
+        if (frame.webPageIDInCurrentProcess()) {
+            auto& entry = framesByProcess.ensure(process->coreProcessIdentifier(), [&] {
+                return ProcessFrames { process.ptr(), { } };
+            }).iterator->value;
+            entry.frameIDs.append(frame.frameID());
+        }
+        for (auto& child : frame.childFrames())
+            collectFrame(child.get());
+    };
+    collectFrame(*mainFrame);
+
+    // Aggregate per-process results once every process has replied. Mirrors getResourceTree's
+    // CallbackAggregator + Box<...> pattern. Hosting process is captured per-entry so the
+    // protocol frame/request IDs can be qualified correctly when building the final array.
+    auto resultsByProcess = Box<HashMap<WebCore::ProcessIdentifier, Vector<Inspector::SearchResult>>>::create();
+    Ref aggregator = CallbackAggregator::create([callback, resultsByProcess]() mutable {
+        auto array = JSON::ArrayOf<Protocol::Page::SearchResult>::create();
+        for (auto& [processID, results] : *resultsByProcess) {
+            for (auto& r : results) {
+                // Page.SearchResult.frameId is required, so skip any result lacking a frameID
+                // (WebInspectorBackend always sets it; see SearchResult in InspectorResourceUtilities.h).
+                if (!r.frameID)
+                    continue;
+                auto item = Protocol::Page::SearchResult::create()
+                    .setUrl(r.url)
+                    .setFrameId(IdentifierRegistry::protocolFrameId(*r.frameID, processID))
+                    .setMatchesCount(r.matchesCount)
+                    .release();
+                if (r.resourceID)
+                    item->setRequestId(IdentifierRegistry::protocolRequestId(processID, *r.resourceID));
+                array->addItem(WTF::move(item));
+            }
+        }
+        callback->sendSuccess(WTF::move(array));
+    });
+
+    for (auto& entry : framesByProcess.values()) {
+        Ref process = *entry.process;
+        auto processID = process->coreProcessIdentifier();
+        process->sendWithAsyncReply(
+            Messages::WebInspectorBackend::SearchInFramesAndRequests { WTF::move(entry.frameIDs), text, sensitive, regex },
+            [resultsByProcess, aggregator, processID](Vector<Inspector::SearchResult>&& results) {
+                resultsByProcess->set(processID, WTF::move(results));
+            },
+            inspectedPage->webPageIDInProcess(process));
+    }
 }
 
 // FIXME: <https://webkit.org/b/308899> Forward overlay state to all WebContent processes.

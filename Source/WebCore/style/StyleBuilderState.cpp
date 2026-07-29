@@ -83,12 +83,7 @@ namespace Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BuilderState);
 
-BuilderState::BuilderState(Style::ComputedStyle& style)
-    : m_style(style)
-{
-}
-
-BuilderState::BuilderState(Style::ComputedStyle& style, BuilderContext&& context)
+BuilderState::BuilderState(ComputedStyle& style, BuilderContext&& context)
     : m_style(style)
     , m_context(WTF::move(context))
     , m_cssToLengthConversionData(style, *this)
@@ -318,9 +313,9 @@ void BuilderState::setUsesViewportUnits()
     m_style.setUsesViewportUnits();
 }
 
-void BuilderState::setUsesContainerUnits()
+void BuilderState::setIsContainerDependent()
 {
-    m_style.setUsesContainerUnits();
+    m_style.setIsContainerDependent();
 }
 
 double BuilderState::lookupCSSRandomBaseValue(const CSSCalc::RandomCachingKey& key, std::optional<CSS::Keyword::ElementScoped> elementScoped) const

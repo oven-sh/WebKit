@@ -985,7 +985,7 @@ private:
             }
         } else {
             auto unpacked = elementType.unpacked();
-            switch (unpacked.kind) {
+            switch (unpacked.kind()) {
             case Wasm::TypeKind::I32:
                 heap = &m_heaps.JSWebAssemblyArray_i32;
                 break;
@@ -2345,7 +2345,7 @@ auto OMGIRGenerator::getGlobal(uint32_t index, ExpressionType& result) -> Partia
     switch (global.bindingMode) {
     case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance: {
         auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(global.type), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
-        switch (global.type.kind) {
+        switch (global.type.kind()) {
         case TypeKind::I32:
             m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_i32[index], value);
             break;
@@ -2400,7 +2400,7 @@ auto OMGIRGenerator::setGlobal(uint32_t index, ExpressionType value) -> PartialR
     switch (global.bindingMode) {
     case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance: {
         auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store, origin(), get(value), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
-        switch (global.type.kind) {
+        switch (global.type.kind()) {
         case TypeKind::I32:
             m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_i32[index], store);
             break;
@@ -2874,7 +2874,7 @@ inline Value* OMGIRGenerator::sanitizeAtomicResult(ExtAtomicOpType op, Type valu
         }
     };
 
-    switch (valueType.kind) {
+    switch (valueType.kind()) {
     case TypeKind::I64: {
         if (accessWidth(op) == Width64)
             return result;
@@ -2942,7 +2942,7 @@ auto OMGIRGenerator::atomicLoad(ExtAtomicOpType op, Type valueType, ExpressionTy
             this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsMemoryAccess);
         });
 
-        switch (valueType.kind) {
+        switch (valueType.kind()) {
         case TypeKind::I32:
             result = push(constant(Int32, 0));
             break;
@@ -3082,7 +3082,7 @@ auto OMGIRGenerator::atomicBinaryRMW(ExtAtomicOpType op, Type valueType, Express
             this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsMemoryAccess);
         });
 
-        switch (valueType.kind) {
+        switch (valueType.kind()) {
         case TypeKind::I32:
             result = push(constant(Int32, 0));
             break;
@@ -3114,7 +3114,7 @@ Value* OMGIRGenerator::emitAtomicCompareExchange(ExtAtomicOpType op, Type valueT
     }
 
     Value* maximum = nullptr;
-    switch (valueType.kind) {
+    switch (valueType.kind()) {
     case TypeKind::I64: {
         switch (accessWidth) {
         case Width8:
@@ -3199,7 +3199,7 @@ auto OMGIRGenerator::atomicCompareExchange(ExtAtomicOpType op, Type valueType, E
             this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsMemoryAccess);
         });
 
-        switch (valueType.kind) {
+        switch (valueType.kind()) {
         case TypeKind::I32:
             result = push(constant(Int32, 0));
             break;
@@ -3677,6 +3677,7 @@ auto OMGIRGenerator::addArrayNew(TypeSignatureIndex typeIndex, ExpressionType si
 
     Ref<const RTT> rtt = m_info.rtt(typeIndex);
     int32_t allocatorsBaseOffset = safeCast<int32_t>(JSWebAssemblyInstance::offsetOfAllocatorForGCObject(m_info, 0));
+    m_proc.setUsesWasmGCArrayAllocations();
 
     auto* array = m_currentBlock->appendNew<WasmArrayNewValue>(m_proc, origin(), wasmRefType(), Ref { rtt }, typeIndex.rawIndex(), allocatorsBaseOffset, instanceValue(), structureID, sizeValue, initValue);
 
@@ -3717,6 +3718,7 @@ auto OMGIRGenerator::addArrayNewDefault(TypeSignatureIndex typeIndex, Expression
 
     Ref<const RTT> rtt = m_info.rtt(typeIndex);
     int32_t allocatorsBaseOffset = safeCast<int32_t>(JSWebAssemblyInstance::offsetOfAllocatorForGCObject(m_info, 0));
+    m_proc.setUsesWasmGCArrayAllocations();
 
     auto* array = m_currentBlock->appendNew<WasmArrayNewValue>(m_proc, origin(), wasmRefType(), Ref { rtt }, typeIndex.rawIndex(), allocatorsBaseOffset, instanceValue(), structureID, sizeValue, initValue);
 
@@ -3749,6 +3751,7 @@ auto OMGIRGenerator::addArrayNewFixed(TypeSignatureIndex typeIndex, ArgumentList
 
     Ref<const RTT> rtt = m_info.rtt(typeIndex);
     int32_t allocatorsBaseOffset = safeCast<int32_t>(JSWebAssemblyInstance::offsetOfAllocatorForGCObject(m_info, 0));
+    m_proc.setUsesWasmGCArrayAllocations();
 
     auto* object = m_currentBlock->appendNew<WasmArrayNewValue>(m_proc, origin(), wasmRefType(), Ref { rtt }, typeIndex.rawIndex(), allocatorsBaseOffset, instanceValue(), structureID, size);
 
@@ -4038,6 +4041,7 @@ auto OMGIRGenerator::addStructNew(TypeSignatureIndex typeIndex, ArgumentList& ar
     auto* structureID = loadGCObjectStructureID(typeIndex);
 
     int32_t allocatorsBaseOffset = safeCast<int32_t>(JSWebAssemblyInstance::offsetOfAllocatorForGCObject(m_info, 0));
+    m_proc.setUsesWasmGCStructAllocations();
 
     auto* structNew = m_currentBlock->appendNew<WasmStructNewValue>(m_proc, origin(), wasmRefType(), Ref { rtt }, typeIndex.rawIndex(), allocatorsBaseOffset, instanceValue(), structureID);
 
@@ -4057,6 +4061,7 @@ auto OMGIRGenerator::addStructNewDefault(TypeSignatureIndex typeIndex, Expressio
     auto* structureID = loadGCObjectStructureID(typeIndex);
 
     int32_t allocatorsBaseOffset = safeCast<int32_t>(JSWebAssemblyInstance::offsetOfAllocatorForGCObject(m_info, 0));
+    m_proc.setUsesWasmGCStructAllocations();
 
     auto* structNew = m_currentBlock->appendNew<WasmStructNewValue>(m_proc, origin(), wasmRefType(), Ref { rtt }, typeIndex.rawIndex(), allocatorsBaseOffset, instanceValue(), structureID);
 
@@ -4151,10 +4156,10 @@ void OMGIRGenerator::emitRefTestOrCast(CastKind castKind, TypedExpression refere
 
     RefPtr<const Wasm::RTT> targetRTT;
     int32_t originalTypeIndex = toHeapType;
-    if (!typeIndexIsType(static_cast<Wasm::TypeIndex>(toHeapType))) {
+    if (isTypeIndexHeapType(toHeapType)) {
         targetRTT = &m_info.rtt(ModuleInformation::typeSignatureIndexFromHeapType(toHeapType));
         toHeapType = 0;
-        ASSERT(!typeIndexIsType(static_cast<Wasm::TypeIndex>(toHeapType)));
+        ASSERT(isTypeIndexHeapType(toHeapType));
     }
 
     OptionSet<B3::WasmRefTypeCheckFlag> flags;
@@ -4900,7 +4905,7 @@ auto OMGIRGenerator::addCatchToUnreachable(unsigned exceptionIndex, const RTT& s
         Type type = signature.argumentType(i);
         Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), payload, safeCast<int32_t>(offset * sizeof(uint64_t)));
         results.append(push(value));
-        offset += type.kind == TypeKind::V128 ? 2 : 1;
+        offset += type.kind() == TypeKind::V128 ? 2 : 1;
     }
     TRACE_CF("CATCH");
     return { };
@@ -4990,13 +4995,13 @@ auto OMGIRGenerator::emitCatchTableImpl(ControlData& data, const ControlData::Tr
             Type type = signature->argumentType(i);
             Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), buffer, safeCast<int32_t>(offset * sizeof(uint64_t)));
             resultStack.constructAndAppend(type, value);
-            offset += type.kind == TypeKind::V128 ? 2 : 1;
+            offset += type.kind() == TypeKind::V128 ? 2 : 1;
         }
     }
 
     if (target.type == CatchKind::CatchRef || target.type == CatchKind::CatchAllRef) {
         exception = wasmRefOfCell(exception);
-        resultStack.constructAndAppend(Type { TypeKind::RefNull, static_cast<TypeIndex>(TypeKind::Exnref) }, exception);
+        resultStack.constructAndAppend(Type { TypeKind::RefNull, typeIndexFromTypeKind(TypeKind::Exnref) }, exception);
     }
 
     auto& targetControl = m_parser->resolveControlRef(target.target).controlData;
@@ -6257,7 +6262,6 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
     auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args);
     emitUnlinkedWasmToWasmCall(patchpoint, handle, prepareForCall);
     // We need to clobber the size register since the IPInt always bounds checks
-    // FIXME(wasm-multimemory): is this the right way to handle a memoryCount of 0?
     if (useSignalingMemory0() || (m_info.memoryCount() && m_info.memory(0).isShared()))
         patchpoint->clobberLate(RegisterSet { GPRInfo::wasmBoundsCheckingSizeRegister });
 

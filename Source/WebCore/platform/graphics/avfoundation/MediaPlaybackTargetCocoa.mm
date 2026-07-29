@@ -30,10 +30,6 @@
 
 #import <pal/spi/cocoa/AVFoundationSPI.h>
 
-#if HAVE(AVROUTING_FRAMEWORK)
-#import <WebKitAdditions/MediaPlaybackTargetCocoaAdditions.mm>
-#endif
-
 #import <pal/cocoa/AVFoundationSoftLink.h>
 
 namespace WebCore {
@@ -59,6 +55,11 @@ String MediaPlaybackTargetCocoa::deviceName() const
         [outputDeviceNames addObject:retainPtr([outputDevice deviceName]).get()];
 
     return [outputDeviceNames componentsJoinedByString:@" + "];
+}
+
+String MediaPlaybackTargetCocoa::routeName() const
+{
+    return { };
 }
 
 bool MediaPlaybackTargetCocoa::hasActiveRoute() const

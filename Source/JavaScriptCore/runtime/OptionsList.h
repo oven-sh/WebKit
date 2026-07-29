@@ -25,9 +25,10 @@
 
 #pragma once
 
-#include "GCLogging.h"
-#include "JSExportMacros.h"
-#include "OSCheck.h"
+#include <JavaScriptCore/GCLogging.h>
+#include <JavaScriptCore/JSCWebPreferenceOptions.h>
+#include <JavaScriptCore/JSExportMacros.h>
+#include <JavaScriptCore/OSCheck.h>
 #include <wtf/MathExtras.h>
 
 #if OS(DARWIN)
@@ -76,6 +77,17 @@ bool hasCapacityToUseLargeGigacage();
 // On instantiation of the first VM instance, the Options will be write protected
 // and cannot be modified thereafter.
 
+#if USE(BUN_JSC_ADDITIONS)
+#define FOR_EACH_JSC_FFI_OPTION(v) \
+    v(Bool, useFFIICStub, true, Normal, "install per-function FFI IC stubs"_s) \
+    v(Bool, useFFICallInDFG, true, Normal, "allow Call -> CallFFI in DFG/FTL"_s) \
+    v(Bool, useFFIDirectCall, true, Normal, "FTL calls the native FFI target directly (no invoke thunk)"_s) \
+    v(Bool, dumpFFIDisassembly, false, Normal, "disassemble generated FFI thunks/stubs"_s) \
+    v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
+#else
+#define FOR_EACH_JSC_FFI_OPTION(v)
+#endif
+
 #define FOR_EACH_JSC_OPTION(v)                                          \
     v(Bool, useKernTCSM, defaultTCSMValue(), Normal, "Note: this needs to go before other options since they depend on this value."_s) \
     v(Bool, validateOptions, false, Normal, "crashes if mis-typed JSC options were passed to the VM"_s) \
@@ -94,6 +106,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useV8DateParser, false, Normal, nullptr) \
     v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces."_s) \
     v(Bool, evalMode, false, Normal, "Set to true for less aggressive function call completion value discarding."_s) \
+    FOR_EACH_JSC_FFI_OPTION(v) \
     \
     v(Unsigned, maxPerThreadStackUsage, 5 * MB, Normal, "Max allowed stack usage by the VM"_s) \
     v(Unsigned, softReservedZoneSize, 128 * KB, Normal, "A buffer greater than reservedZoneSize that reserves space for stringifying exceptions."_s) \
@@ -131,8 +144,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, alwaysUseShadowChicken, false, Normal, nullptr) \
     v(Unsigned, shadowChickenLogSize, 1000, Normal, nullptr) \
     v(Unsigned, shadowChickenMaxTailDeletedFramesSize, 128, Normal, nullptr) \
-    \
-    v(Bool, useIterationIntrinsics, true, Normal, nullptr) \
     \
     v(OSLogType, useOSLog, OSLogType::None, Normal, "Log dataLog()s to os_log instead of stderr"_s) \
     /* dumpDisassembly implies dumpDFGDisassembly. */ \
@@ -230,6 +241,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, miniVMHeapGrowthFactor, 1.20, Normal, nullptr) \
     v(Double, heapGrowthSteepnessFactor, 2.00, Normal, nullptr) \
     v(Double, heapGrowthMaxIncrease, 3.00, Normal, nullptr) \
+    v(Double, minEdenToOldGenerationRatio, 1.0 / 3.0, Normal, "after an eden GC, schedule a full collection if remainingHeapSize / maxHeapSize falls below this; bounds the usable heap growth factor below at 1 / (1 - value)"_s) \
     v(Unsigned, heapGrowthFunctionThresholdInMB, 16 * 1024, Normal, nullptr) \
     v(Double, criticalGCMemoryThreshold, 0.80, Normal, "percent memory in use the GC considers critical.  The collector is much more aggressive above this threshold"_s) \
     v(Double, customFullGCCallbackBailThreshold, -1.0, Normal, "percent of memory paged out before we bail out of timer based Full GCs. -1.0 means use (maxHeapGrowthFactor - 1)"_s) \
@@ -352,6 +364,9 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, wasmInliningSmallFunctionThreshold, 50, Normal, "Wasm size threshold for small wasm functions"_s) \
     \
     v(Double, jitPolicyScale, 1.0, Normal, "scale JIT thresholds to this specified ratio between 0.0 (compile ASAP) and 1.0 (compile like normal)."_s) \
+    v(Int32, numberOfP0CoresOverrides, 0, Normal, "If non-zero, overrides the number of P0 (highest-performance) cores reported by hwNumberOfP0Cores(); 0 means use the value reported by the hardware."_s) \
+    v(Double, dfgThresholdScaleForLowP0Cores, 2.0, Normal, "On low P0-core-count Apple silicon Macs, scale the DFG tier-up thresholds (thresholdForOptimize*) by this factor."_s) \
+    v(Double, ftlThresholdScaleForLowP0Cores, 1.5, Normal, "On low P0-core-count Apple silicon Macs, scale the FTL tier-up thresholds (thresholdForFTLOptimize*) by this factor."_s) \
     v(Bool, forceEagerCompilation, false, Normal, nullptr) \
     v(Int32, thresholdForJITAfterWarmUp, 500, Normal, nullptr) \
     v(Int32, thresholdForJITSoon, 100, Normal, nullptr) \
@@ -531,6 +546,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maxB3TailDupBlockSuccessors, 3, Normal, nullptr) \
     v(Bool, useB3HoistLoopInvariantValues, true, Normal, nullptr) \
     v(Bool, useB3CanonicalizePrePostIncrements, false, Normal, nullptr) \
+    v(Bool, useB3EliminateWasmGCAllocations, true, Normal, "eliminate non-escaping wasm-GC struct allocations in B3"_s) \
     v(Bool, useB3ReduceStrengthFixpoint, false, Normal, "iterate B3 reduceStrength to a fixpoint instead of a single pass (for debugging)"_s) \
     v(Bool, useAirOptimizePairedLoadStore, true, Normal, nullptr) \
     \
@@ -580,6 +596,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maximumOMGCandidateCost, 100000, Normal, nullptr) \
     v(Int32, omgTierUpCounterIncrementForLoop, 1, Normal, "The amount the tier up counter is incremented on each loop backedge."_s) \
     v(Int32, omgTierUpCounterIncrementForEntry, 15, Normal, "The amount the tier up counter is incremented on each function entry."_s) \
+    v(Int32, wasmOMGEntryIncrementSizeReference, 128, Normal, "If non-zero, the BBQ->OMG function-entry tier-up increment is scaled down for functions whose bytecode size is below this reference (work-proportional tier-up): increment = clamp(entryIncrement * size / reference, 1, entryIncrement). 0 disables (flat increment)."_s) \
     v(Bool, useWasmFastMemory, true, Normal, "If true, we will try to use a 32-bit address space with a signal handler to bounds check wasm memory."_s) \
     v(Bool, logWasmMemory, false, Normal, nullptr) \
     v(Unsigned, wasmFastMemoryRedzonePages, 128, Normal, "Wasm fast memories use 4GiB virtual allocations, plus a redzone (counted as multiple of 64KiB Wasm pages) at the end to catch reg+imm accesses which exceed 32-bit, anything beyond the redzone is explicitly bounds-checked"_s) \
@@ -668,32 +685,14 @@ bool hasCapacityToUseLargeGigacage();
     \
     /* Feature Flags */\
     \
+    /* Feature-flag options whose source of truth is UnifiedWebPreferences.yaml. */ \
+    FOR_EACH_JSC_WEB_PREFERENCE_OPTION(v) \
     /* Restricted so some app doesn't set this environment variable and start using it. */ \
-    v(Bool, useAsyncStackTrace, true, Normal, "Enable async stack traces") \
     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
-    v(Bool, useBigIntMathMethods, false, Normal, "Enable BigInt math helper methods."_s) \
-    v(Bool, useExplicitResourceManagement, false, Normal, "Enable explicit resource management builtins and syntax."_s) \
-    v(Bool, useImportDefer, false, Normal, "Enable deferred module import."_s) \
-    v(Bool, useIteratorChunking, false, Normal, "Expose the Iterator.prototype.chunks and Iterator.prototype.windows methods."_s) \
-    v(Bool, useIteratorSequencing, true, Normal, "Expose the Iterator.concat method."_s) \
-    v(Bool, useIteratorIncludes, false, Normal, "Expose the Iterator.includes method."_s) \
-    v(Bool, useIteratorJoin, false, Normal, "Expose the Iterator.prototype.join method."_s) \
-    v(Bool, useJSONSourceTextAccess, true, Normal, "Expose JSON source text access feature."_s) \
-    v(Bool, useJSPI, true, Normal, "Enable the implementation of JavaScript Promise Integration."_s) \
-    v(Bool, useMoreCurrencyDisplayChoices, false, Normal, "Enable more currencyDisplay choices for Intl.NumberFormat"_s) \
-    v(Bool, usePromiseIsPromise, false, Normal, nullptr) \
+    /* Not sourced from UnifiedWebPreferences.yaml: force-enabled via the cross-origin-isolation path and consumed in WebCore. */ \
     v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \
-    v(Bool, useShadowRealm, false, Normal, "Expose the ShadowRealm object."_s) \
-    v(Bool, useTemporal, false, Normal, "Expose the Temporal object."_s) \
+    /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
-    v(Bool, useWasmJSStringBuiltins, true, Normal, "Enable the implementation of the JS String Builtins proposal."_s) \
-    v(Bool, useWasmMemory64, false, Normal, "Allow the Memory64 proposal for WebAssembly. This feature is currently only supported in the IPInt tier."_s) \
-    v(Bool, useWasmMemoryToBufferAPIs, true, Normal, "Enable the toFixedLengthBuffer() and toResizableBuffer() Wasm Memory.prototype functions."_s) \
-    v(Bool, useWasmMultiMemory, false, Normal, "Allow wasm code to access multiple linear memories") \
-    v(Bool, useWasmRelaxedSIMD, false, Normal, "Allow the relaxed simd instructions and types from the wasm relaxed simd spec."_s) \
-    v(Bool, useWasmSIMD, true, Normal, "Allow the new simd instructions and types from the wasm simd spec."_s) \
-    v(Bool, useWasmTailCalls, true, Normal, "Allow the new instructions from the wasm tail calls spec."_s) \
-    v(Bool, useWasmWideArithmetic, false, Normal, "Allow the wide arithmetic instructions from the wasm wide-arithmetic spec."_s) \
 
 
 

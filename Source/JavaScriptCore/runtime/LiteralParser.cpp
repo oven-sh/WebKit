@@ -94,11 +94,20 @@ bool LiteralParser<CharType, reviverMode>::tryJSONPParse(Vector<JSONPData>& resu
             switch (tokenType) {
             case TokLBracket: {
                 entry.m_type = JSONPPathEntryTypeLookup;
-                if (m_lexer.next() != TokNumber)
+                TokenType numberType = m_lexer.next();
+                if (numberType != TokNumber && numberType != TokNumberInt32)
                     return false;
-                double doubleIndex = m_lexer.currentToken()->numberToken;
-                int index = truncateDoubleToInt32(doubleIndex);
-                if (index != doubleIndex || index < 0)
+                auto token = m_lexer.currentToken();
+                int index;
+                if (token->type == TokNumberInt32)
+                    index = token->int32Token;
+                else {
+                    double doubleIndex = token->numberToken;
+                    index = truncateDoubleToInt32(doubleIndex);
+                    if (index != doubleIndex)
+                        return false;
+                }
+                if (index < 0)
                     return false;
                 entry.m_pathIndex = index;
                 if (m_lexer.next() != TokRBracket)
@@ -183,11 +192,11 @@ ALWAYS_INLINE Identifier LiteralParser<CharType, reviverMode>::makeIdentifier(VM
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
-ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::makeJSString(VM& vm, typename Lexer::LiteralParserTokenPtr token)
+ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::tryMakeJSString(VM& vm, typename Lexer::LiteralParserTokenPtr token)
 {
     if (token->stringIs8Bit)
-        return vm.jsonAtomStringCache.makeJSString(token->string8());
-    return vm.jsonAtomStringCache.makeJSString(token->string16());
+        return vm.jsonAtomStringCache.tryMakeJSString(token->string8());
+    return vm.jsonAtomStringCache.tryMakeJSString(token->string16());
 }
 
 [[maybe_unused]] static ALWAYS_INLINE bool NODELETE cannotBeIdentPartOrEscapeStart(Latin1Character)
@@ -1142,21 +1151,24 @@ TokenType LiteralParser<CharType, reviverMode>::Lexer::lexNumber(LiteralParserTo
     const int numberOfDigitsForSafeInt32 = 9; // The numbers from -999999999 to 999999999 are always in range of Int32.
     if (m_ptr < m_end && (*m_ptr != '.' && *m_ptr != 'e' && *m_ptr != 'E') && (m_ptr - start) <= numberOfDigitsForSafeInt32) {
         int32_t result = 0;
-        token.type = TokNumber;
         const CharType* cursor = start;
         do {
             result = result * 10 + (*cursor++) - '0';
         } while (cursor < m_ptr);
 
-        if (!negative)
-            token.numberToken = result;
-        else {
-            if (!result)
-                token.numberToken = -0.0;
-            else
-                token.numberToken = -result;
+        if (!negative) [[likely]] {
+            token.type = TokNumberInt32;
+            token.int32Token = result;
+            return TokNumberInt32;
         }
-        return TokNumber;
+        if (!result) [[unlikely]] {
+            token.type = TokNumber;
+            token.numberToken = -0.0;
+            return TokNumber;
+        }
+        token.type = TokNumberInt32;
+        token.int32Token = -result;
+        return TokNumberInt32;
     }
 
     size_t parsedLength = 0;
@@ -1236,7 +1248,17 @@ ALWAYS_INLINE JSValue LiteralParser<CharType, reviverMode>::parsePrimitiveValue(
 {
     switch (m_lexer.currentToken()->type) {
     case TokString: {
-        JSString* result = makeJSString(vm, m_lexer.currentToken());
+        JSString* result = tryMakeJSString(vm, m_lexer.currentToken());
+        if (!result) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwOutOfMemoryError(m_globalObject, scope);
+            return { };
+        }
+        m_lexer.next();
+        return result;
+    }
+    case TokNumberInt32: {
+        JSValue result = jsNumber(m_lexer.currentToken()->int32Token);
         m_lexer.next();
         return result;
     }
@@ -1862,6 +1884,7 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
             switch (m_lexer.currentToken()->type) {
             case TokLBracket:
             case TokNumber:
+            case TokNumberInt32:
             case TokString: {
                 lastValue = parsePrimitiveValue(vm);
                 if (!lastValue) [[unlikely]]
@@ -1989,6 +2012,16 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
         auto remaining = std::span { m_lexer.positionAfterLastToken(), m_lexer.end() };
         size_t nlIndex = WTF::find(remaining, static_cast<CharType>('\n'));
         if (nlIndex != notFound) {
+            // JSONL/NDJSON: exactly one value per line. Anything other than
+            // JSON whitespace between the value and the line terminator is an
+            // error — otherwise a second value or arbitrary garbage on the
+            // same line would be silently dropped.
+            for (size_t i = 0; i < nlIndex; ++i) {
+                if (!isJSONWhiteSpace(remaining[i])) {
+                    m_parseErrorMessage = "Unexpected content after JSON value"_s;
+                    return { lastGoodPosition, StreamingJSONParseResult::Status::Error };
+                }
+            }
             m_lexer.advanceTo(remaining.data() + nlIndex + 1);
             m_lexer.next();
         } else if (m_lexer.currentToken()->type != TokEnd) {

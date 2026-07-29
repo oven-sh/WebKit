@@ -24,6 +24,7 @@ import argparse
 import os
 import re
 import sys
+import time
 
 from .command import Command
 from .commit import Commit
@@ -127,8 +128,8 @@ class PullRequest(Command):
         )
         parser.add_argument(
             '--update-title', '--no-update-title',
-            dest='update_title', default=True,
-            help="When updating a pull request, update (or do not update) its title with the commits' common prefix.",
+            dest='update_title', default=None,
+            help="When updating a pull request, update (or don't update) its title with the commits' common prefix (also configurable via webkitscmpy.update-title).",
             action=arguments.NoAction,
         )
         parser.add_argument(
@@ -453,13 +454,18 @@ class PullRequest(Command):
     @classmethod
     def add_comment_to_issue(cls, issue, pr, commit_class=None):
         log.info('Checking issue assignee...')
+        assigned = False
         if issue.assignee != issue.tracker.me() and commit_class != 'Gardening':
             issue.assign(issue.tracker.me())
+            assigned = True
             print('Assigning associated issue to {}'.format(issue.tracker.me()))
         log.info('Checking for pull request link in associated issue...')
         pr_label = 'Test gardening pull request' if commit_class == 'Gardening' else 'Pull request'
         if pr.url and not any([pr.url in comment.content for comment in issue.comments]):
             if issue.opened:
+                # Wait until the next second so Bugzilla sends a notification for the PR opening comment
+                if assigned:
+                    time.sleep(1.1)
                 issue.add_comment('{}: {}'.format(pr_label, pr.url))
             elif commit_class != 'Gardening':
                 issue.open(why='Re-opening for {} {}'.format(pr_label.lower(), pr.url))
@@ -499,6 +505,24 @@ class PullRequest(Command):
             for commit in commits
             for issue in commit.issues
         ]
+
+        unreviewed_match = re.compile(r'(Unreviewed|Versioning.)', re.IGNORECASE)
+        bad_commits = [c for c in commits if c.message and unreviewed_match.search(c.message) and 'Reviewed by' in c.message]
+        if bad_commits:
+            if len(bad_commits) > 1:
+                sys.stderr.write("Multiple commits are marked 'Unreviewed' or 'Versioning' but contain a 'Reviewed by' line, please fix before posting\n")
+                return 1
+            response = Terminal.choose(
+                "Commit message is marked 'Unreviewed' or 'Versioning' but contains a 'Reviewed by' line. Remove it?",
+                options=('Yes', 'No'),
+                default='Yes',
+            )
+            if response == 'Yes':
+                cleaned = re.sub(r'Reviewed by .+\n?', '', bad_commits[0].message)
+                if run([repository.executable(), 'commit', '--amend', '-m', cleaned], cwd=repository.root_path).returncode:
+                    sys.stderr.write("Failed to amend commit message\n")
+                    return 1
+                commits = list(repository.commits(begin={'hash': branch_point.hash}, end={'branch': repository.branch}))
 
         radar_issue = next(iter(filter(lambda issue: isinstance(issue.tracker, radar.Tracker), issues)), None)
         not_radar = next(iter(filter(lambda issue: not isinstance(issue.tracker, radar.Tracker), issues)), None)
@@ -735,6 +759,8 @@ class PullRequest(Command):
             sys.stderr.write("'{}' does not support draft pull requests, aborting\n".format(remote_repo.url))
             return 1
 
+        if args.update_title is None:
+            args.update_title = repository.config().get('webkitscmpy.update-title', 'true') == 'true'
 
         if existing_pr:
             log.info("Updating pull-request for '{}'...".format(repository.branch))
@@ -785,11 +811,12 @@ class PullRequest(Command):
         if radar_issue and update_issue and radar_issue.tracker.radarclient():
             if args.update_radar and radar_issue.state == 'Analyze' and radar_issue.substate in ['Investigate', 'Fix']:
                 try:
-                    radar_issue.set_state(state='Analyze', substate='Review')
-                    print('Updated {} to Analyze/Review'.format(radar_issue.link))
+                    new_state = 'Fix' if pr.draft else 'Review'
+                    radar_issue.set_state(state='Analyze', substate=new_state)
+                    print(f'Updated {radar_issue.link} to Analyze/{new_state}')
                 except radar_issue.tracker.radarclient().exceptions.UnsuccessfulResponseException as e:
-                    sys.stderr.write('Failed to update {}:\n'.format(radar_issue.link))
-                    sys.stderr.write('{}\n'.format(e))
+                    sys.stderr.write(f'Failed to update {radar_issue.link}:\n')
+                    sys.stderr.write(f'{e}\n')
 
         if issue and pr._metadata and pr._metadata.get('issue'):
             log.info('Syncing PR labels with issue component...')

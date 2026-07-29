@@ -29,12 +29,11 @@
 #pragma once
 
 #include <JavaScriptCore/Forward.h>
-#include <WebCore/ByteArrayPixelBuffer.h>
-#include <WebCore/Float16ArrayPixelBuffer.h>
 #include <WebCore/ImageDataArray.h>
 #include <WebCore/ImageDataSettings.h>
 #include <WebCore/IntSize.h>
 #include <WebCore/PredefinedColorSpace.h>
+#include <WebCore/TypedArrayPixelBuffer.h>
 #include <wtf/Forward.h>
 
 namespace WebCore {
@@ -68,7 +67,7 @@ public:
     PredefinedColorSpace colorSpace() const { return m_colorSpace; }
     ImageDataPixelFormat pixelFormat() const { return m_data.pixelFormat(); }
 
-    Ref<ByteArrayPixelBuffer> byteArrayPixelBuffer() const;
+    WEBCORE_EXPORT Ref<ByteArrayPixelBuffer> byteArrayPixelBuffer() const;
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     Ref<Float16ArrayPixelBuffer> float16ArrayPixelBuffer() const;
 #endif

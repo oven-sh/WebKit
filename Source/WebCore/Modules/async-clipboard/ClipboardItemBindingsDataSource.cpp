@@ -45,6 +45,7 @@
 #include "JSDOMPromiseDeferred.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
+#include "NodeName.h"
 #include "Page.h"
 #include "PasteboardCustomData.h"
 #include "SharedBuffer.h"
@@ -133,10 +134,9 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
 
 void ClipboardItemBindingsDataSource::clearItemTypeLoaders()
 {
-    for (auto& itemTypeLoader : m_itemTypeLoaders)
+    auto itemTypeLoaders = std::exchange(m_itemTypeLoaders, { });
+    for (auto& itemTypeLoader : itemTypeLoaders)
         itemTypeLoader->invokeCompletionHandler();
-
-    m_itemTypeLoaders.clear();
 }
 
 void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard& destination, CompletionHandler<void(std::optional<PasteboardCustomData>)>&& completion)
@@ -316,6 +316,15 @@ void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::sanitizeDataIfNee
 
         RefPtr document = documentFromClipboard(m_writingDestination.get());
         m_data = { sanitizeMarkup(markupToSanitize, document.get()) };
+    }
+
+    if (m_type == imageSVGContentTypeAtom()) {
+        auto markupToSanitize = dataAsString();
+        if (markupToSanitize.isEmpty())
+            return;
+
+        RefPtr document = documentFromClipboard(m_writingDestination.get());
+        m_data = { sanitizeSVG(markupToSanitize, document.get()) };
     }
 
     if (m_type == "image/png"_s) {

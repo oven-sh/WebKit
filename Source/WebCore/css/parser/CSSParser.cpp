@@ -1177,9 +1177,17 @@ RefPtr<StyleRuleFunction> CSSParser::consumeFunctionRule(CSSParserTokenRange pre
 
                 auto defaultRange = defaultRangeStart.rangeUntil(parametersRange);
 
-                // "If a default value and a parameter type are both provided, then the default value must parse
-                // successfully according to that parameter type’s syntax. Otherwise, the @function rule is invalid."
-                if (!CSSPropertyParser::isValidCustomPropertyValueForSyntax(parameter.type, defaultRange, m_context))
+                auto isValidDefault = [&] {
+                    // "If a default value and a parameter type are both provided, then the default value
+                    // must parse successfully according to that parameter type's syntax. Otherwise, the
+                    // @function rule is invalid." A default containing arbitrary substitution functions
+                    // (var(), a dashed-function) is assumed valid at parse time and validated after
+                    // substitution.
+                    if (CSSSubstitutionParser::containsSubstitutionFunctions(defaultRange, m_context))
+                        return true;
+                    return CSSPropertyParser::isValidCustomPropertyValueForSyntax(parameter.type, defaultRange, m_context);
+                };
+                if (!isValidDefault())
                     return { };
 
                 parameter.defaultValue = CSSVariableData::create(defaultRange);
@@ -1278,12 +1286,15 @@ RefPtr<StyleRuleScope> CSSParser::consumeScopeRule(CSSParserTokenRange prelude, 
         observerWrapper->observer().startRuleHeader(StyleRuleType::Scope, observerWrapper->startOffset(preludeRangeCopy));
         observerWrapper->observer().endRuleHeader(observerWrapper->endOffset(prelude));
         observerWrapper->observer().startRuleBody(observerWrapper->previousTokenStartOffset(block));
-        observerWrapper->observer().endRuleBody(observerWrapper->endOffset(block));
     }
 
     m_ancestorRuleTypeStack.append(CSSParserEnum::NestedContextType::Scope);
     auto rules = consumeNestedGroupRules(block);
     m_ancestorRuleTypeStack.removeLast();
+
+    if (RefPtr observerWrapper = m_observerWrapper.get())
+        observerWrapper->observer().endRuleBody(observerWrapper->endOffset(block));
+
     Ref rule = StyleRuleScope::create(WTF::move(scopeStart), WTF::move(scopeEnd), WTF::move(rules));
     if (auto* styleSheet = m_styleSheet.get())
         rule->setStyleSheetContents(*styleSheet);

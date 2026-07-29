@@ -839,12 +839,6 @@ RetainPtr<NSView> WebPageProxy::inspectorAttachmentView()
     return pageClient ? pageClient->inspectorAttachmentView() : nullptr;
 }
 
-_WKRemoteObjectRegistry *WebPageProxy::remoteObjectRegistry()
-{
-    RefPtr pageClient = this->pageClient();
-    return pageClient ? pageClient->remoteObjectRegistry() : nullptr;
-}
-
 #if ENABLE(CONTEXT_MENUS)
 
 NSMenu *WebPageProxy::activeContextMenu() const
@@ -1050,7 +1044,7 @@ void WebPageProxy::showImageInQuickLookPreviewPanel(ShareableBitmap& imageBitmap
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 void WebPageProxy::handleContextMenuCopySubject(const String& preferredMIMEType)
 {
@@ -1075,7 +1069,7 @@ void WebPageProxy::handleContextMenuCopySubject(const String& preferredMIMEType)
     [pasteboard setData:data.get() forType:pasteboardType.get()];
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 #if ENABLE(WRITING_TOOLS)
 

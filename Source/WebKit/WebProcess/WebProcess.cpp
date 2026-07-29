@@ -261,10 +261,6 @@
 #import <pal/cocoa/EnhancedSecurityCocoa.h>
 #endif
 
-#if USE(LIBRICE)
-#include "RiceBackendProxy.h"
-#endif
-
 #if PLATFORM(MAC)
 #import <wtf/spi/darwin/SandboxSPI.h>
 #endif
@@ -694,7 +690,24 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
     setMemoryCacheDisabled(parameters.memoryCacheDisabled);
 
     WebCore::DeprecatedGlobalSettings::setAttrStyleEnabled(parameters.attrStyleEnabled);
-    
+
+    // Push the launching page's feature-flag options into the process-global JSC::Options
+    // before the first VM is created. On first VM creation JSC::Options freeze and, in
+    // production, the config page is made read-only, so this is the only point at which
+    // these options can be set for this process; there is no safe later write. A page that
+    // needs different values is given a different web process by the UI process's process
+    // matching, so a single apply here is correct for the life of the process. For a
+    // pageless launch (prewarm/dummy) jscOptions is default-constructed to the option
+    // defaults, so this apply is a no-op. See commonVM() below, which creates the VM.
+    if (!WebCore::commonVMOrNull()) {
+        const auto& jscOptions = parameters.jscOptions;
+        JSC::Options::AllowUnfinalizedAccessScope scope;
+#define WEBKIT_APPLY_JSC_OPTION_FROM_SHARED_PREFERENCE(jscOption, preferenceField) JSC::Options::jscOption() = jscOptions.preferenceField;
+        FOR_EACH_JSC_OPTION_SHARED_PREFERENCE(WEBKIT_APPLY_JSC_OPTION_FROM_SHARED_PREFERENCE)
+#undef WEBKIT_APPLY_JSC_OPTION_FROM_SHARED_PREFERENCE
+        JSC::Options::notifyOptionsChanged();
+    }
+
     commonVM().setGlobalConstRedeclarationShouldThrow(parameters.shouldThrowExceptionForGlobalConstantRedeclaration);
 
     ScriptExecutionContext::setCrossOriginMode(parameters.crossOriginMode);
@@ -1333,7 +1346,7 @@ void WebProcess::setInjectedBundleParameters(std::span<const uint8_t> value)
     injectedBundle->setBundleParameters(value);
 }
 
-[[noreturn]] inline void NODELETE failedToGetNetworkProcessConnection()
+[[noreturn]] inline void failedToGetNetworkProcessConnection()
 {
 #if PLATFORM(GTK) || PLATFORM(WPE)
     // GTK and WPE ports don't exit on send sync message failure.
@@ -2153,6 +2166,8 @@ void WebProcess::ensureAutomationSessionProxy(const String& sessionIdentifier)
 
 void WebProcess::destroyAutomationSessionProxy()
 {
+    if (RefPtr automationSessionProxy = m_automationSessionProxy)
+        automationSessionProxy->cancelPendingEvaluateJavaScriptCallbacks();
     m_automationSessionProxy = nullptr;
 }
 
@@ -2615,28 +2630,6 @@ void WebProcess::removeWebTransportSession(WebTransportSessionIdentifier identif
     m_webTransportSessions.remove(identifier);
 }
 
-#if USE(LIBRICE)
-RefPtr<RiceBackendProxy> WebProcess::gstreamerIceBackend(RiceBackendIdentifier identifier)
-{
-    ASSERT(RunLoop::isMain());
-    return m_gstreamerIceBackends.get(identifier).get();
-}
-
-void WebProcess::addRiceBackend(RiceBackendIdentifier identifier, RiceBackendProxy& backend)
-{
-    ASSERT(RunLoop::isMain());
-    ASSERT(!m_gstreamerIceBackends.contains(identifier));
-    m_gstreamerIceBackends.set(identifier, backend);
-}
-
-void WebProcess::removeRiceBackend(RiceBackendIdentifier identifier)
-{
-    ASSERT(RunLoop::isMain());
-    ASSERT(m_gstreamerIceBackends.contains(identifier));
-    m_gstreamerIceBackends.remove(identifier);
-}
-#endif // USE(LIBRICE)
-
 void WebProcess::updateCachedCookiesEnabled()
 {
     for (auto& document : Document::allDocuments())
@@ -2656,11 +2649,6 @@ bool WebProcess::shouldAllowScriptAccess(const URL& url, const SecurityOrigin& t
 bool WebProcess::requiresConsistentPrivacyQuirkForDomain(const URL& url) const
 {
     return m_consistentPrivacyQuirkFilter && m_consistentPrivacyQuirkFilter->matches(url, SecurityOrigin::create(url));
-}
-
-bool WebProcess::shouldBlockRequest(const URL& url, const WebCore::SecurityOrigin& topOrigin)
-{
-    return m_scriptTrackingPrivacyFilter && m_scriptTrackingPrivacyFilter->shouldBlockRequest(url, topOrigin);
 }
 
 void WebProcess::enableMediaPlayback()

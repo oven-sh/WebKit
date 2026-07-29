@@ -62,9 +62,13 @@ class Frame;
 class FrameTreeSyncData;
 class HTMLFrameOwnerElement;
 class HandleUserInputEventResult;
+class ImageData;
 class IntPoint;
 class IntRect;
 class LocalFrame;
+#if ENABLE(OFFSCREEN_CANVAS)
+class OffscreenCanvas;
+#endif
 class PlatformMouseEvent;
 class RemoteFrame;
 class TextIndicator;
@@ -307,7 +311,9 @@ private:
     uint64_t messageSenderDestinationID() const final;
 
     void setLayerHostingContextIdentifier(WebCore::LayerHostingContextIdentifier identifier) { m_layerHostingContextIdentifier = identifier; }
-    void updateLocalFrameRect(WebCore::LocalFrame&, WebCore::IntRect);
+    enum class IsInitialFrameRect : bool { No, Yes };
+    void updateLocalFrameRect(WebCore::LocalFrame&, WebCore::IntRect, IsInitialFrameRect);
+    IsInitialFrameRect consumeIsInitialFrameRect() { return std::exchange(m_hasAppliedInitialRemoteFrameRect, true) ? IsInitialFrameRect::No : IsInitialFrameRect::Yes; }
 
     inline WebCore::DocumentLoader* policySourceDocumentLoader() const;
 
@@ -334,6 +340,7 @@ private:
 
     const WebCore::FrameIdentifier m_frameID;
     bool m_wasRemovedInAnotherProcess { false };
+    bool m_hasAppliedInitialRemoteFrameRect { false };
 
 #if ENABLE(TWO_PHASE_CLICKS)
     std::optional<TransactionID> m_firstLayerTreeTransactionIDAfterDidCommitLoad;
@@ -345,6 +352,11 @@ private:
 
     std::unique_ptr<FrameInspectorTarget> m_inspectorTarget;
 };
+
+RefPtr<WebCore::ShareableBitmap> shareableBitmapFromImageData(WebCore::ImageData&);
+#if ENABLE(OFFSCREEN_CANVAS)
+RefPtr<WebCore::ShareableBitmap> shareableBitmapFromOffscreenCanvas(WebCore::OffscreenCanvas&);
+#endif
 
 } // namespace WebKit
 

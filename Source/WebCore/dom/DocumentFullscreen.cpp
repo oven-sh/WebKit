@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -253,7 +253,7 @@ void DocumentFullscreen::requestFullscreen(Ref<Element>&& element, FullscreenChe
 
         // Don't allow fullscreen if document is hidden.
         Ref document = protectedThis->document();
-        if ((document->hidden() && mode != HTMLMediaElementEnums::VideoFullscreenModeInWindow) || protectedThis->m_pendingFullscreenElement != element.ptr())
+        if (document->hidden() && mode != HTMLMediaElementEnums::VideoFullscreenModeInWindow)
             return handleError("Cannot request fullscreen in a hidden document."_s, EmitErrorEvent::Yes, WTF::move(completionHandler));
 
         // Fullscreen element ready check.
@@ -372,8 +372,7 @@ void DocumentFullscreen::elementEnterFullscreen(Element& element)
     if (&element == protect(document->fullscreen())->fullscreenElement())
         return;
 
-    RefPtr hideUntil = element.topmostPopoverAncestor(Element::TopLayerElementType::Other);
-    document->hideAllPopoversUntil(hideUntil.get(), FocusPreviousElement::No, FireEvents::No);
+    document->hidePopoversForTopLayerElement(element, FireEvents::No);
 
     auto containingBlockBeforeStyleResolution = SingleThreadWeakPtr<RenderBlock> { };
     if (CheckedPtr renderer = element.renderer())

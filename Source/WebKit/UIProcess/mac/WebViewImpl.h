@@ -192,6 +192,12 @@ using FrameIdentifier = ObjectIdentifier<FrameIdentifierType>;
 #if ENABLE(DRAG_SUPPORT)
 - (WKDragDestinationAction)_web_dragDestinationActionForDraggingInfo:(id <NSDraggingInfo>)draggingInfo;
 - (void)_web_didPerformDragOperation:(BOOL)handled;
+#if ENABLE(DRAG_SOURCE_CUSTOMIZATION)
+- (void)_web_draggingItemsForDraggingItem:(NSDraggingItem *)draggingItem atLocation:(NSPoint)viewLocation completionHandler:(void (^)(NSArray<NSDraggingItem *> *draggingItems))completionHandler;
+- (NSDragOperation)_web_dragSourceOperationMaskForDraggingContext:(NSDraggingContext)context defaultMask:(NSDragOperation)defaultMask;
+- (void)_web_draggingSession:(NSDraggingSession *)session willBeginAtPoint:(NSPoint)point;
+- (void)_web_draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)point operation:(NSDragOperation)operation;
+#endif
 #endif
 
 @optional
@@ -292,6 +298,7 @@ public:
     RetainPtr<NSSet> pdfHUDs();
     bool isPointOnPDFHUD(WebCore::FloatPoint locationInView);
     RetainPtr<NSView> hitTestPDFHUD(WebCore::FloatPoint locationInView);
+    bool isPointInScrollbar(CGPoint locationInView);
 
     bool isViewVisible(NSView *);
 
@@ -608,6 +615,7 @@ public:
     void registerDraggedTypes();
 
     NSDragOperation dragSourceOperationMask(NSDraggingSession *, NSDraggingContext);
+    void draggingSessionWillBegin(NSDraggingSession *, NSPoint);
     void draggingSessionEnded(NSDraggingSession *, NSPoint, NSDragOperation);
     void cancelDrag();
 
@@ -742,12 +750,11 @@ public:
 #if ENABLE(IMAGE_ANALYSIS)
     void requestTextRecognition(const URL& imageURL, WebCore::ShareableBitmap::Handle&& imageData, const String& sourceLanguageIdentifier, const String& targetLanguageIdentifier, CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&);
     void computeHasVisualSearchResults(const URL& imageURL, WebCore::ShareableBitmap& imageBitmap, CompletionHandler<void(bool)>&&);
-#endif
+    int32_t processImageAnalyzerRequest(VKCImageAnalyzerRequest *, CompletionHandler<void(RetainPtr<VKCImageAnalysis>&&, NSError *)>&&);
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     WebCore::FloatRect imageAnalysisInteractionBounds() const { return m_imageAnalysisInteractionBounds; }
     VKCImageAnalysisOverlayView *imageAnalysisOverlayView() const { return m_imageAnalysisOverlayView.get(); }
-#endif
+#endif // ENABLE(IMAGE_ANALYSIS)
 
     bool imageAnalysisOverlayViewHasCursorAtPoint(NSPoint locationInView) const;
 
@@ -914,7 +921,7 @@ private:
     bool useMediaPlaybackControlsView() const;
     bool isRichlyEditableForTouchBar() const;
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     void installImageAnalysisOverlayView(RetainPtr<VKCImageAnalysis>&&);
     void uninstallImageAnalysisOverlayView();
     void performOrDeferImageAnalysisOverlayViewHierarchyTask(std::function<void()>&&);
@@ -928,6 +935,8 @@ private:
 
     void suppressContentRelativeChildViews();
     void restoreContentRelativeChildViews();
+
+    void updateCursorOverlapsSelectionAndNotifyIfNeeded();
 
     bool m_clientWantsMediaPlaybackControlsView { false };
     bool m_canCreateTouchBars { false };
@@ -1006,8 +1015,7 @@ private:
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS)
-    CocoaImageAnalyzer* ensureImageAnalyzer();
-    int32_t processImageAnalyzerRequest(CocoaImageAnalyzerRequest *, CompletionHandler<void(RetainPtr<CocoaImageAnalysis>&&, NSError *)>&&);
+    VKCImageAnalyzer* ensureImageAnalyzer();
 #endif
 
     std::optional<EditorState::PostLayoutData> postLayoutDataForContentEditable();
@@ -1071,6 +1079,8 @@ private:
 
     const UniqueRef<PAL::HysteresisActivity> m_contentRelativeViewsHysteresis;
     std::unique_ptr<PAL::HysteresisActivity> m_pageScrollingHysteresis;
+    bool m_contentRelativeViewsNeedToBeRepositioned { false };
+    bool m_cursorOverlapsSelection { false };
 
     RetainPtr<NSColorSpace> m_colorSpace;
 
@@ -1185,10 +1195,10 @@ private:
 
 #if ENABLE(IMAGE_ANALYSIS)
     const RefPtr<WorkQueue> m_imageAnalyzerQueue;
-    const RetainPtr<CocoaImageAnalyzer> m_imageAnalyzer;
+    const RetainPtr<VKCImageAnalyzer> m_imageAnalyzer;
 #endif
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     RetainPtr<VKCImageAnalysisOverlayView> m_imageAnalysisOverlayView;
     RetainPtr<WKImageAnalysisOverlayViewDelegate> m_imageAnalysisOverlayViewDelegate;
     uint32_t m_currentImageAnalysisRequestID { 0 };
@@ -1224,6 +1234,7 @@ private:
     RetainPtr<CAShapeLayer> m_refreshControllerMask;
     CGFloat m_topScrollStretchForRefreshController { 0 };
     bool m_canShowRefreshController { false };
+    bool m_suppressRefreshControllerUpdates { false };
     CGFloat m_cachedTopScrollStretch { 0 };
 #endif
 

@@ -156,8 +156,7 @@ public:
 
     void setPageIsVisible(bool) final { }
 
-    void seekToTarget(const SeekTarget&) final { }
-    bool seeking() const final { return false; }
+    Ref<MediaTimePromise> seekToTarget(const SeekTarget&) final { return MediaTimePromise::createAndReject(PlatformMediaError::Cancelled); }
 
     void setRateDouble(double) final { }
     void setPreservesPitch(bool) final { }
@@ -868,11 +867,11 @@ void MediaPlayer::willSeekToTarget(const MediaTime& time)
     protect(m_private)->willSeekToTarget(time);
 }
 
-void MediaPlayer::seekToTarget(const SeekTarget& target)
+Ref<MediaTimePromise> MediaPlayer::seekToTarget(const SeekTarget& target)
 {
     RefPtr playerPrivate = m_private;
     playerPrivate->willSeekToTarget(MediaTime::invalidTime());
-    playerPrivate->seekToTarget(target);
+    return playerPrivate->seekToTarget(target);
 }
 
 void MediaPlayer::seekToTime(const MediaTime& time)
@@ -888,19 +887,9 @@ void MediaPlayer::seekWhenPossible(const MediaTime& time)
         seekToTime(time);
 }
 
-void MediaPlayer::seeked(const MediaTime& time)
-{
-    protect(client())->mediaPlayerSeeked(time);
-}
-
 bool MediaPlayer::paused() const
 {
     return protect(m_private)->paused();
-}
-
-bool MediaPlayer::seeking() const
-{
-    return protect(m_private)->seeking();
 }
 
 bool MediaPlayer::supportsFullscreen() const
@@ -1323,6 +1312,11 @@ String MediaPlayer::wirelessPlaybackTargetName() const
     return protect(m_private)->wirelessPlaybackTargetName();
 }
 
+String MediaPlayer::wirelessPlaybackRouteName() const
+{
+    return protect(m_private)->wirelessPlaybackRouteName();
+}
+
 MediaPlayer::WirelessPlaybackTargetType MediaPlayer::wirelessPlaybackTargetType() const
 {
     return protect(m_private)->wirelessPlaybackTargetType();
@@ -1385,9 +1379,9 @@ void MediaPlayer::setShouldMaintainAspectRatio(bool maintainAspectRatio)
     protect(m_private)->setShouldMaintainAspectRatio(maintainAspectRatio);
 }
 
-void MediaPlayer::requestHostingContext(LayerHostingContextCallback&& callback)
+Ref<MediaPlayer::HostingContextPromise> MediaPlayer::requestHostingContext()
 {
-    return protect(m_private)->requestHostingContext(WTF::move(callback));
+    return protect(m_private)->requestHostingContext();
 }
 
 HostingContext MediaPlayer::hostingContext() const

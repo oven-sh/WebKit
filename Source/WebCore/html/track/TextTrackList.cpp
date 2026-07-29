@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011, 2012 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -128,10 +128,14 @@ RefPtr<TextTrack> TextTrackList::getTrackById(const AtomString& id) const
     // The getTrackById(id) method must return the first TextTrack in the
     // TextTrackList object whose id IDL attribute would return a value equal
     // to the value of the id argument.
-    for (unsigned i = 0; i < length(); ++i) {
-        Ref track = *item(i);
-        if (track->id() == id)
-            return track;
+    // Iterate the member vectors in the same order as item(): element tracks,
+    // then addTextTrack() tracks, then in-band tracks.
+    for (auto* tracks : { &m_elementTracks, &m_addTrackTracks, &m_inbandTracks }) {
+        for (auto& trackBase : *tracks) {
+            Ref track = downcast<TextTrack>(trackBase);
+            if (track->id() == id)
+                return track;
+        }
     }
 
     // When no tracks match the given argument, the method must return null.
@@ -140,10 +144,12 @@ RefPtr<TextTrack> TextTrackList::getTrackById(const AtomString& id) const
 
 RefPtr<TextTrack> TextTrackList::getTrackById(TrackID id) const
 {
-    for (unsigned i = 0; i < length(); ++i) {
-        auto& track = *item(i);
-        if (track.trackId() == id)
-            return track;
+    for (auto* tracks : { &m_elementTracks, &m_addTrackTracks, &m_inbandTracks }) {
+        for (auto& trackBase : *tracks) {
+            Ref track = downcast<TextTrack>(trackBase);
+            if (track->trackId() == id)
+                return track;
+        }
     }
     return nullptr;
 }
@@ -176,8 +182,8 @@ void TextTrackList::invalidateTrackIndexesAfterTrack(TextTrack& track)
     if (index == notFound)
         return;
 
-    for (size_t i = index; i < tracks->size(); ++i)
-        downcast<TextTrack>(tracks->at(index).get()).invalidateTrackIndex();
+    for (auto& trackToInvalidate : tracks->subspan(index))
+        downcast<TextTrack>(trackToInvalidate.get()).invalidateTrackIndex();
 }
 
 void TextTrackList::append(Ref<TextTrack>&& track)

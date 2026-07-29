@@ -55,6 +55,7 @@ OBJC_CLASS NSColor;
 OBJC_CLASS NSString;
 OBJC_CLASS UIKeyboardInputMode;
 OBJC_CLASS UIPasteboardConsistencyEnforcer;
+OBJC_CLASS GCMouse;
 OBJC_CLASS WKMouseDeviceObserver;
 OBJC_CLASS WKWebViewConfiguration;
 
@@ -66,6 +67,20 @@ class TestInvocation;
 class TestOptions;
 struct Options;
 struct TestCommand;
+
+#if HAVE(MOUSE_DEVICE_OBSERVATION)
+class FakeMouseDevice {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FakeMouseDevice);
+    WTF_MAKE_NONCOPYABLE(FakeMouseDevice);
+public:
+    FakeMouseDevice();
+    ~FakeMouseDevice();
+private:
+    RetainPtr<GCMouse> m_fakeMouse;
+    std::unique_ptr<ClassMethodSwizzler> m_currentSwizzler;
+    std::unique_ptr<ClassMethodSwizzler> m_miceSwizzler;
+};
+#endif
 
 class AsyncTask {
 public:
@@ -202,6 +217,9 @@ public:
     void setShouldSwapToEphemeralSessionOnNextNavigation(bool value) { m_shouldSwapToEphemeralSessionOnNextNavigation = value; }
     void setShouldSwapToDefaultSessionOnNextNavigation(bool value) { m_shouldSwapToDefaultSessionOnNextNavigation = value; }
 
+    void setGlobalPrivacyControl(bool value) { m_globalPrivacyControlEnabled = value; }
+    bool globalPrivacyControl() const { return m_globalPrivacyControlEnabled.value_or(false); }
+
     void setBlockAllPlugins(bool shouldBlock);
     void setPluginSupportedMode(const String&);
 
@@ -209,6 +227,7 @@ public:
     void dumpResourceResponseMIMETypes(String&&);
     void dumpPolicyDelegateCallbacks() { m_dumpPolicyDelegateCallbacks = true; }
     void dumpFullScreenCallbacks() { m_dumpFullScreenCallbacks = true; }
+    void dumpFullScreenOrigin() { m_dumpFullScreenOrigin = true; }
     void waitBeforeFinishingFullscreenExit() { m_waitBeforeFinishingFullscreenExit = true; }
     void scrollDuringEnterFullscreen() { m_scrollDuringEnterFullscreen = true; }
     void finishFullscreenExit();
@@ -454,6 +473,7 @@ public:
     void resumeBackgroundFetch(WKStringRef);
     void simulateClickBackgroundFetch(WKStringRef);
     void setBackgroundFetchPermission(bool);
+    void setVirtualWalletBehavior(WKStringRef action, WKStringRef protocol, WKStringRef responseJSON);
     WKRetainPtr<WKStringRef> lastAddedBackgroundFetchIdentifier() const;
     WKRetainPtr<WKStringRef> lastRemovedBackgroundFetchIdentifier() const;
     WKRetainPtr<WKStringRef> lastUpdatedBackgroundFetchIdentifier() const;
@@ -476,6 +496,10 @@ public:
 
     void setHasMouseDeviceForTesting(bool);
 
+#if HAVE(MOUSE_DEVICE_OBSERVATION)
+    std::unique_ptr<FakeMouseDevice> m_fakeMouseDevice;
+#endif
+
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     void exitImmersive();
 #endif
@@ -491,6 +515,11 @@ public:
 #if !PLATFORM(COCOA)
     void doAfterProcessingAllPendingMouseEvents(CompletionHandler<void()>&&);
     void doAfterProcessingAllPendingKeyEvents(CompletionHandler<void()>&&);
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+    void doAfterProcessingAllPendingWheelEvents(CompletionHandler<void()>&&);
+    void doAfterProcessingAllPendingTouchEvents(CompletionHandler<void()>&&);
+    void doAfterProcessingAllPendingTouchAndWheelEvents(CompletionHandler<void()>&&);
+#endif
 #endif
 
     static uint64_t responseHeaderCount(WKURLResponseRef);
@@ -879,6 +908,7 @@ private:
     bool m_allowsAnySSLCertificate { true };
     bool m_shouldSwapToEphemeralSessionOnNextNavigation { false };
     bool m_shouldSwapToDefaultSessionOnNextNavigation { false };
+    std::optional<bool> m_globalPrivacyControlEnabled;
     
 #if PLATFORM(COCOA)
     bool m_hasSetApplicationBundleIdentifier { false };
@@ -904,6 +934,7 @@ private:
     String m_resourceResponseMIMETypesToDump;
     bool m_dumpFullScreenCallbacks { false };
     bool m_dumpAllHTTPRedirectedResponseHeaders { false };
+    bool m_dumpFullScreenOrigin { false };
     bool m_waitBeforeFinishingFullscreenExit { false };
     bool m_scrollDuringEnterFullscreen { false };
     bool m_useWorkQueue { false };

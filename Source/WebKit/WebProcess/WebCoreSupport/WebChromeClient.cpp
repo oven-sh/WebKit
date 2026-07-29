@@ -207,6 +207,10 @@
 #include <WebCore/HTMLMediaElement.h>
 #endif
 
+#if PLATFORM(IOS_FAMILY) && ENABLE(VIDEO_PRESENTATION_MODE)
+#include <WebCore/PictureInPictureSupport.h>
+#endif
+
 namespace WebKit {
 using namespace WebCore;
 using namespace HTMLNames;
@@ -404,7 +408,6 @@ RefPtr<Page> WebChromeClient::createWindow(LocalFrame& frame, const String& open
         mouseEventData ? mouseEventData->locationInRootViewCoordinates : FloatPoint { },
         { }, /* redirectResponse */
         navigationAction.isRequestFromClientOrUserInput(),
-        false, /* treatAsSameOriginNavigation */
         false, /* hasOpenedFrames */
         false, /* openedByDOMWithOpener */
         navigationAction.newFrameOpenerPolicy() == NewFrameOpenerPolicy::Allow, /* hasOpener */
@@ -1064,7 +1067,7 @@ void WebChromeClient::showContactPicker(WebCore::ContactsRequestData&& requestDa
 void WebChromeClient::showDigitalCredentialsChooser(const WebCore::DigitalCredentialsRequestData& requestData, WTF::CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)>&& callback)
 {
     if (RefPtr page = m_page.get())
-        page->showDigitalCredentialsChooser(requestData, WTF::move(callback));
+        page->showDigitalCredentialsChooser(std::nullopt, requestData, WTF::move(callback));
 }
 
 void WebChromeClient::dismissDigitalCredentialsChooser(WTF::CompletionHandler<void(bool)>&& completionHandler)
@@ -1491,6 +1494,9 @@ bool WebChromeClient::supportsVideoFullscreenStandby()
 
 void WebChromeClient::setMockVideoPresentationModeEnabled(bool enabled)
 {
+#if PLATFORM(IOS_FAMILY) && ENABLE(VIDEO_PRESENTATION_MODE)
+    setSupportsPictureInPicture(enabled);
+#endif
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::SetMockVideoPresentationModeEnabled(enabled));
 }
@@ -2392,6 +2398,18 @@ void WebChromeClient::clearAnimationsForActiveWritingToolsSession()
 {
     if (RefPtr page = m_page.get())
         page->clearAnimationsForActiveWritingToolsSession();
+}
+
+void WebChromeClient::showWritingToolsAffordance()
+{
+    if (RefPtr page = m_page.get())
+        page->showWritingToolsAffordance();
+}
+
+bool WebChromeClient::writingToolsAvailable() const
+{
+    RefPtr page = m_page.get();
+    return page && page->writingToolsAvailable();
 }
 
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)

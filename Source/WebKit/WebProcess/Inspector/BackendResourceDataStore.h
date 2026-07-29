@@ -25,10 +25,12 @@
 
 #pragma once
 
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/InspectorResourceType.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/TextResourceDecoder.h>
+#include <utility>
 #include <wtf/CheckedRef.h>
 #include <wtf/Expected.h>
 #include <wtf/ListHashSet.h>
@@ -72,6 +74,9 @@ public:
 
         ResourceID resourceID() const { return m_resourceID; }
 
+        std::optional<WebCore::FrameIdentifier> frameID() const { return m_frameID; }
+        void setFrameID(WebCore::FrameIdentifier frameID) { m_frameID = frameID; }
+
         const String& url() const LIFETIME_BOUND { return m_url; }
         void setURL(const String& url) { m_url = url; }
 
@@ -80,6 +85,9 @@ public:
 
         const String& textEncodingName() const LIFETIME_BOUND { return m_textEncodingName; }
         void setTextEncodingName(const String& textEncodingName) { m_textEncodingName = textEncodingName; }
+
+        const String& sourceMapURL() const LIFETIME_BOUND { return m_sourceMapURL; }
+        void setSourceMapURL(const String& sourceMapURL) { m_sourceMapURL = sourceMapURL; }
 
         int httpStatusCode() const { return m_httpStatusCode; }
         void setHTTPStatusCode(int code) { m_httpStatusCode = code; }
@@ -117,9 +125,11 @@ public:
         void decodeDataToContent();
 
         WebCore::ResourceLoaderIdentifier m_resourceID;
+        std::optional<WebCore::FrameIdentifier> m_frameID;
         String m_url;
         String m_mimeType;
         String m_textEncodingName;
+        String m_sourceMapURL;
         String m_content;
         String m_httpStatusText;
         RefPtr<WebCore::TextResourceDecoder> m_decoder;
@@ -142,7 +152,7 @@ public:
     BackendResourceDataStore(const Settings&);
     ~BackendResourceDataStore();
 
-    void resourceCreated(WebCore::ResourceLoaderIdentifier, Inspector::ResourceType);
+    void resourceCreated(WebCore::ResourceLoaderIdentifier, WebCore::FrameIdentifier, Inspector::ResourceType);
     void responseReceived(WebCore::ResourceLoaderIdentifier, const WebCore::ResourceResponse&, Inspector::ResourceType);
     void setResourceType(WebCore::ResourceLoaderIdentifier, Inspector::ResourceType);
     void setResourceContent(WebCore::ResourceLoaderIdentifier, const String& content, bool base64Encoded = false);
@@ -152,7 +162,11 @@ public:
     ResourceData const* data(WebCore::ResourceLoaderIdentifier);
     void clear();
 
-    Expected<std::tuple<String, bool>, String> getResponseBody(WebCore::ResourceLoaderIdentifier);
+    // Visit every stored entry. Used by Page.searchInResources (Site Isolation) to scan this
+    // process's buffered response bodies for matches.
+    template<typename Visitor> void forEach(NOESCAPE const Visitor&) const;
+
+    Expected<std::pair<String, bool>, String> getResponseBody(WebCore::ResourceLoaderIdentifier);
 
 private:
     ResourceData* resourceDataForId(WebCore::ResourceLoaderIdentifier);
@@ -164,5 +178,11 @@ private:
     size_t m_contentSize { 0 };
     Settings m_settings;
 };
+
+template<typename Visitor> void BackendResourceDataStore::forEach(NOESCAPE const Visitor& visitor) const
+{
+    for (auto& entry : m_resourceDataMap.values())
+        visitor(entry.get());
+}
 
 } // namespace WebKit

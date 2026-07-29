@@ -20,6 +20,7 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkSurface.h"
 #include "src/capture/SkCaptureCanvas.h"
+#include "src/capture/SkCaptureManager.h"
 #include "src/image/SkRescaleAndReadPixels.h"
 
 #include <atomic>
@@ -30,11 +31,13 @@ class SkPaint;
 class SkSurfaceProps;
 namespace skgpu { namespace graphite { class Recorder; } }
 
-SkSurface_Base::SkSurface_Base(int width, int height, const SkSurfaceProps* props)
-        : SkSurface(width, height, props) {}
+SkSurface_Base::SkSurface_Base(int width, int height, const SkSurfaceProps* props,
+                               sk_sp<SkPixelStorage> storage)
+        : SkSurface(width, height, props), fPixelStorage(std::move(storage)) {}
 
-SkSurface_Base::SkSurface_Base(const SkImageInfo& info, const SkSurfaceProps* props)
-        : SkSurface(info, props) {}
+SkSurface_Base::SkSurface_Base(const SkImageInfo& info, const SkSurfaceProps* props,
+                               sk_sp<SkPixelStorage> storage)
+        : SkSurface(info, props), fPixelStorage(std::move(storage)) {}
 
 SkSurface_Base::~SkSurface_Base() {
     // in case the canvas outsurvives us, we null the callback

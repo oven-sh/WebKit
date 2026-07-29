@@ -1,4 +1,4 @@
-set(jsc_SOURCES ../jsc.cpp)
+set(jsc_SOURCES ../jsc.cpp ../tools/JSDollarVMShell.cpp)
 set(jsc_LIBRARIES ${CMAKE_DL_LIBS})
 set(jsc_FRAMEWORKS
     JavaScriptCore
@@ -18,11 +18,50 @@ if (WIN32)
     list(APPEND jsc_LIBRARIES Winmm)
 endif ()
 
+if (USE_EXTERNAL_MIMALLOC)
+    # The shipped static archives intentionally leave mi_* unresolved so the
+    # consumer links its own mimalloc. The jsc shell still needs a working
+    # allocator, so link the vendored mimalloc object library here only.
+    list(APPEND jsc_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+endif ()
+
 if (ENABLE_FUZZILLI)
   list(APPEND jsc_SOURCES ../fuzzilli/Fuzzilli.cpp)
 endif ()
 
 WEBKIT_EXECUTABLE_DECLARE(jsc)
+
+if (USE_BUN_JSC_ADDITIONS)
+    # bun:ffi (JSC FFI) C++ unit / ABI test executable, modeled on the
+    # testmasm_* variables below. Build and run it with:
+    #     ninja testFFI && ./bin/testFFI
+    # Unlike testmasm this is NOT additionally gated on DEVELOPER_MODE: the
+    # standard `bun build.ts debug` configuration never enables DEVELOPER_MODE,
+    # and testFFI must build from that same build directory. build.ts and the
+    # release scripts build it alongside jsc and ship it in the artifact's bin/.
+    # The native test fixtures (ffi/tests/FFITestFixtures.cpp) are NOT compiled
+    # here: they live in libJavaScriptCore itself (Sources.txt) so that
+    # $vm.ffiFixture in tools/JSDollarVM.cpp can link, and testFFI reaches them
+    # through the framework it links.
+    # FFI-SPEC-GAP: the target is gated on USE_BUN_JSC_ADDITIONS because
+    # testFFI.cpp compiles to nothing (no main) without the feature.
+    set(testFFI_SOURCES ../ffi/tests/testFFI.cpp)
+    set(testFFI_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
+    set(testFFI_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
+    set(testFFI_FRAMEWORKS ${jsc_FRAMEWORKS})
+    set(testFFI_LIBRARIES ${CMAKE_DL_LIBS})
+    if (WIN32)
+        list(APPEND testFFI_LIBRARIES Winmm)
+    endif ()
+    if (USE_EXTERNAL_MIMALLOC)
+        # Same as jsc above: the shipped static archives leave mi_* unresolved
+        # under USE_EXTERNAL_MIMALLOC, so any executable that links the
+        # framework must supply the vendored mimalloc objects itself.
+        list(APPEND testFFI_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+    endif ()
+
+    WEBKIT_EXECUTABLE_DECLARE(testFFI)
+endif ()
 
 if (DEVELOPER_MODE)
     set(testapi_SOURCES
@@ -52,6 +91,8 @@ if (DEVELOPER_MODE)
     set(testmasm_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testmasm_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testmasm_FRAMEWORKS ${jsc_FRAMEWORKS})
+
+    # (testFFI is declared above, outside DEVELOPER_MODE; see the comment there.)
 
     set(testRegExp_SOURCES ../testRegExp.cpp)
     set(testRegExp_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
@@ -125,6 +166,10 @@ WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
 
 WEBKIT_EXECUTABLE(jsc)
 set_target_properties(jsc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if (USE_BUN_JSC_ADDITIONS)
+    WEBKIT_EXECUTABLE(testFFI)
+endif ()
 
 if (SHOULD_INSTALL_JS_SHELL)
     install(TARGETS jsc DESTINATION "${LIBEXEC_INSTALL_DIR}")

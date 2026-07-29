@@ -3,7 +3,7 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
  *           (C) 2006 Alexey Proskuryakov (ap@webkit.org)
- * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
  * Copyright (C) 2008-2014 Google Inc. All rights reserved.
  * Copyright (C) 2010 Nokia Corporation and/or its subsidiary(-ies)
@@ -423,7 +423,6 @@
 #include "DeviceOrientationClientIOS.h"
 #include "DeviceOrientationController.h"
 #include "Geolocation.h"
-#include "Navigator.h"
 #include "NavigatorGeolocation.h"
 #endif
 
@@ -443,6 +442,10 @@
 
 #if ENABLE(MODEL_ELEMENT)
 #include "LazyLoadModelObserver.h"
+#endif
+
+#if ENABLE(PICTURE_IN_PICTURE_API)
+#include "HTMLVideoElementPictureInPicture.h"
 #endif
 
 #if USE(QUICK_LOOK)
@@ -1229,7 +1232,7 @@ void Document::setMarkupUnsafe(const String& markup, OptionSet<ParserContentPoli
 
 ExceptionOr<Ref<Document>> Document::parseHTMLUnsafe(Document& context, Variant<Ref<TrustedHTML>, String>&& html)
 {
-    auto stringValueHolder = trustedTypeCompliantString(context.contextDocument(), WTF::move(html), "Document parseHTMLUnsafe"_s);
+    auto stringValueHolder = trustedTypeCompliantString(protect(context.contextDocument()), WTF::move(html), "Document parseHTMLUnsafe"_s);
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
 
@@ -1944,9 +1947,19 @@ CustomElementNameValidationStatus Document::validateCustomElementName(const Atom
     return CustomElementNameValidationStatus::Valid;
 }
 
-void Document::setActiveCustomElementRegistry(CustomElementRegistry* registry)
+CustomElementRegistry* Document::activeCustomElementConstructorRegistry(JSC::JSObject* constructor)
 {
-    m_activeCustomElementRegistry = registry;
+    return m_activeCustomElementConstructorMap.get(reinterpret_cast<uintptr_t>(constructor));
+}
+
+void Document::addToActiveCustomElementConstructorMap(JSC::JSObject* constructor, CustomElementRegistry& registry)
+{
+    m_activeCustomElementConstructorMap.set(reinterpret_cast<uintptr_t>(constructor), registry);
+}
+
+void Document::removeFromActiveCustomElementConstructorMap(JSC::JSObject* constructor)
+{
+    m_activeCustomElementConstructorMap.remove(reinterpret_cast<uintptr_t>(constructor));
 }
 
 ExceptionOr<Ref<Element>> Document::createElementNS(const AtomString& namespaceURI, const AtomString& qualifiedName, Variant<String, ElementCreationOptions>&& argument)
@@ -2653,10 +2666,11 @@ void Document::forEachMediaElement(NOESCAPE const Function<void(HTMLMediaElement
 Vector<CueMatch> Document::findCueMatches(const String& target, FindOptions options)
 {
     Vector<CueMatch> results;
+    if (!settings().findInVideoEnabled())
+        return results;
     if (target.isEmpty())
         return results;
 
-    // Order this document's media elements by tree position.
     Vector<Ref<HTMLMediaElement>> elements;
     forEachMediaElement([&](HTMLMediaElement& element) {
         if (element.isConnected())
@@ -2678,7 +2692,6 @@ Vector<CueMatch> Document::findCueMatches(const String& target, FindOptions opti
             RefPtr track = tracks->item(i);
             if (!track)
                 continue;
-            // Only search tracks that are currently rendered on screen.
             if (track->mode() != TextTrack::Mode::Showing)
                 continue;
             // Only search tracks whose cues carry text the user reads or hears, skip chapters and metadata tracks.
@@ -2712,6 +2725,14 @@ Vector<CueMatch> Document::findCueMatches(const String& target, FindOptions opti
         std::ranges::stable_sort(results.mutableSubspan(firstMatchForElement), [](auto& a, auto& b) {
             return a.seekTime < b.seekTime;
         });
+
+        // Collapse cues that share a start time
+        MediaTime previousSeekTime = MediaTime::invalidTime();
+        results.removeAllMatching([&previousSeekTime](auto& match) {
+            bool isDuplicate = match.seekTime == previousSeekTime;
+            previousSeekTime = match.seekTime;
+            return isDuplicate;
+        }, firstMatchForElement);
     }
 
     return results;
@@ -3432,9 +3453,10 @@ void Document::pageSizeAndMarginsInPixels(int pageIndex, IntSize& pageSize, int&
             return pageSize;
         },
         [&](const Style::PageSize::Lengths& lengths) -> IntSize {
+            // FIXME: Document why <length> `page-size` ignores `zoom`.
             return {
-                static_cast<int>(lengths.width().resolveZoom(Style::ZoomNeeded { })),
-                static_cast<int>(lengths.height().resolveZoom(Style::ZoomNeeded { })),
+                Style::evaluate<int>(lengths.width(), Style::ZoomFactor::none()),
+                Style::evaluate<int>(lengths.height(), Style::ZoomFactor::none()),
             };
         }
     );
@@ -3724,6 +3746,11 @@ void Document::willBeRemovedFromFrame()
                 removePlaybackTargetPickerClient(*client);
         }
     }
+#endif
+
+#if ENABLE(PICTURE_IN_PICTURE_API)
+    if (RefPtr pictureInPictureElement = m_pictureInPictureElement)
+        HTMLVideoElementPictureInPicture::from(*pictureInPictureElement).didExitPictureInPicture();
 #endif
 
     protect(cachedResourceLoader())->stopUnusedPreloadsTimer();
@@ -4161,10 +4188,36 @@ bool Document::isFullyActive() const
     if (!frame || frame->document() != this)
         return false;
 
-    RefPtr parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent());
-    if (!parentFrame)
-        return true;
-    return parentFrame->document() && protect(parentFrame->document())->isFullyActive();
+    // Walk the ancestor chain: the document is fully active only if it reaches the main
+    // frame. A RemoteFrame ancestor lives in another process, but if it became parentless
+    // without being the main frame, its iframe was removed in the parent process and the
+    // chain was severed. (The local chain may briefly lag that removal until this process
+    // receives the IPC; we treat it as up to date.)
+    for (RefPtr ancestor = frame->tree().parent(); ancestor; ancestor = ancestor->tree().parent()) {
+        if (RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor.get())) {
+            if (!localAncestor->document() || localAncestor->document()->frame() != localAncestor)
+                return false;
+        }
+
+        if (!ancestor->tree().parent())
+            return ancestor->isMainFrame();
+    }
+    return frame->isMainFrame();
+}
+
+// https://html.spec.whatwg.org/multipage/interaction.html#fully-active-descendant-of-a-top-level-traversable-with-user-attention
+// "System focus" here is a property of the top-level traversable (the window), not of this
+// frame's subtree, so it checks FocusController window state rather than Document::hasFocus().
+// FIXME: the spec also grants user attention while UA widgets (e.g. the URL bar) hold keyboard
+// input; that disjunct is not yet modeled here (webkit.org/b/256299).
+bool Document::isFullyActiveAndHasUserAttention() const
+{
+    if (!isFullyActive() || visibilityState() != VisibilityState::Visible)
+        return false;
+    RefPtr page = this->page();
+    if (!page)
+        return false;
+    return page->focusController().isActive() && page->focusController().isFocused();
 }
 
 void Document::detachParser()
@@ -4562,7 +4615,7 @@ ExceptionOr<void> Document::write(Document* entryDocument, FixedVector<Variant<R
     }
 
     String textString = text.toString();
-    auto stringValueHolder = trustedTypeCompliantString(TrustedType::TrustedHTML, contextDocument(), textString, lineFeed.isEmpty() ? "Document write"_s : "Document writeln"_s);
+    auto stringValueHolder = trustedTypeCompliantString(TrustedType::TrustedHTML, protect(contextDocument()), textString, lineFeed.isEmpty() ? "Document write"_s : "Document writeln"_s);
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
     SegmentedString trustedText(stringValueHolder.releaseReturnValue());
@@ -5709,23 +5762,27 @@ bool Document::canAcceptChild(const Node& newChild, const Node* refChild, Accept
     }
     case NodeType::DocumentType: {
         auto* existingDocType = childrenOfType<DocumentType>(*this).first();
+        if (operation == AcceptChildOperation::ReplaceAll)
+            break;
         if (operation == AcceptChildOperation::Replace) {
             //  parent has a doctype child that is not child, or an element is preceding child.
             if (existingDocType && existingDocType != refChild)
                 return false;
             if (refChild->previousElementSibling())
                 return false;
-        } else {
-            ASSERT(operation == AcceptChildOperation::InsertOrAdd);
-            if (existingDocType)
-                return false;
-            if ((refChild && refChild->previousElementSibling()) || (!refChild && firstElementChild()))
-                return false;
+            break;
         }
+        ASSERT(operation == AcceptChildOperation::InsertOrAdd);
+        if (existingDocType)
+            return false;
+        if ((refChild && refChild->previousElementSibling()) || (!refChild && firstElementChild()))
+            return false;
         break;
     }
     case NodeType::Element: {
         auto* existingElementChild = firstElementChild();
+        if (operation == AcceptChildOperation::ReplaceAll)
+            break;
         if (operation == AcceptChildOperation::Replace) {
             if (existingElementChild && existingElementChild != refChild)
                 return false;
@@ -5733,14 +5790,14 @@ bool Document::canAcceptChild(const Node& newChild, const Node* refChild, Accept
                 if (is<DocumentType>(*child))
                     return false;
             }
-        } else {
-            ASSERT(operation == AcceptChildOperation::InsertOrAdd);
-            if (existingElementChild)
+            break;
+        }
+        ASSERT(operation == AcceptChildOperation::InsertOrAdd);
+        if (existingElementChild)
+            return false;
+        for (auto* child = refChild; child; child = child->nextSibling()) {
+            if (is<DocumentType>(*child))
                 return false;
-            for (auto* child = refChild; child; child = child->nextSibling()) {
-                if (is<DocumentType>(*child))
-                    return false;
-            }
         }
         break;
     }
@@ -6725,7 +6782,7 @@ bool Document::setFocusedElement(Element* newFocusedElement, const FocusOptions&
             window()->navigation().setFocusChanged(FocusDidChange::Yes);
     }
 
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) || PLATFORM(WPE)
     // GTK relies on creating the AXObjectCache when a focus change happens.
     if (CheckedPtr cache = axObjectCache())
 #else
@@ -7707,6 +7764,13 @@ void Document::resume(ReasonForSuspension reason)
 
     if (settings().serviceWorkersEnabled() && reason == ReasonForSuspension::BackForwardCache)
         setServiceWorkerConnection(&ServiceWorkerProvider::singleton().serviceWorkerConnection());
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    if (reason == ReasonForSuspension::BackForwardCache) {
+        if (RefPtr immersive = immersiveIfExists())
+            immersive->didResumeFromBackForwardCache();
+    }
+#endif
 }
 
 void Document::registerForDocumentSuspensionCallbacks(Element& element)
@@ -7853,7 +7917,7 @@ ExceptionOr<bool> Document::execCommand(const String& commandName, bool userInte
         [&commandName, this](const String& str) -> ExceptionOr<String> {
             if (commandName != "insertHTML"_s)
                 return String(str);
-            return trustedTypeCompliantString(TrustedType::TrustedHTML, contextDocument(), str, "Document execCommand"_s);
+            return trustedTypeCompliantString(TrustedType::TrustedHTML, protect(contextDocument()), str, "Document execCommand"_s);
         },
         [](const Ref<TrustedHTML>& trustedHtml) -> ExceptionOr<String> {
             return trustedHtml->toString();
@@ -7915,9 +7979,6 @@ void Document::popCurrentScript()
 
 bool Document::shouldDeferAsynchronousScriptsUntilParsingFinishes() const
 {
-    if (!settings().shouldDeferAsynchronousScriptsUntilAfterDocumentLoadOrFirstPaint())
-        return false;
-
     if (quirks().shouldBypassAsyncScriptDeferring())
         return false;
 
@@ -7943,6 +8004,14 @@ void Document::applyPendingXSLTransformsNowIfScheduled()
     applyPendingXSLTransformsTimerFired();
 }
 
+void Document::logXSLTDeprecationWarningIfNeeded()
+{
+    if (m_hasLoggedXSLTDeprecationWarning)
+        return;
+    m_hasLoggedXSLTDeprecationWarning = true;
+    addConsoleMessage(MessageSource::JS, MessageLevel::Warning, "XSLT is deprecated and will be removed in a future version of WebKit."_s);
+}
+
 void Document::applyPendingXSLTransformsTimerFired()
 {
     ASSERT(settings().isXSLTEnabled());
@@ -7959,10 +8028,18 @@ void Document::applyPendingXSLTransformsTimerFired()
         if (transformSourceDocument() || !processingInstruction->sheet())
             return;
 
+        // Don't attempt to compile a stylesheet whose import chain is still loading.
+        // Compiling a partially-loaded tree can cause libxslt to free imported docs
+        // that WebKit still references, leading to use-after-free.
+        if (processingInstruction->sheet()->isLoading())
+            continue;
+
         // If the Document has already been detached from the frame, or the frame is currently in the process of
         // changing to a new document, don't attempt to create a new Document from the XSLT.
         if (!frame() || frame()->documentIsBeingReplaced())
             return;
+
+        logXSLTDeprecationWarningIfNeeded();
 
         Ref processor = XSLTProcessor::create();
         processor->setXSLStyleSheet(downcast<XSLStyleSheet>(processingInstruction->sheet()));
@@ -8940,6 +9017,13 @@ void Document::reveal()
 {
     if (m_hasBeenRevealed)
         return;
+
+    // A navigation away from this document that will replace it is in progress, so this
+    // document is being discarded before it was ever revealed. Do not reveal it (and do
+    // not mark it revealed, so it can still reveal if the navigation is aborted).
+    if (RefPtr frame = this->frame(); frame && frame->loader().provisionalDocumentLoader())
+        return;
+
     m_hasBeenRevealed = true;
 
     PageRevealEvent::Init init;
@@ -9543,23 +9627,28 @@ bool Document::mainFrameDocumentHasHadUserInteraction() const
 
 bool Document::processingUserGestureForMedia() const
 {
+    return mediaUserGestureReason() != MediaGestureReason::None;
+}
+
+Document::MediaGestureReason Document::mediaUserGestureReason() const
+{
     if (UserGestureIndicator::processingUserGestureForMedia())
-        return true;
+        return MediaGestureReason::ActiveToken;
 
     if (m_domWindow && m_domWindow->hasTransientActivation())
-        return true;
+        return MediaGestureReason::TransientActivation;
 
     if (m_userActivatedMediaFinishedPlayingTimestamp + maxIntervalForUserGestureForwardingAfterMediaFinishesPlaying >= MonotonicTime::now())
-        return true;
+        return MediaGestureReason::MediaFinishedGrace;
 
     if (settings().mediaUserGestureInheritsFromDocument())
-        return mainFrameDocumentHasHadUserInteraction();
+        return mainFrameDocumentHasHadUserInteraction() ? MediaGestureReason::InheritsFromDocumentSetting : MediaGestureReason::None;
 
     RefPtr loader = this->loader();
     if (loader && loader->allowedAutoplayQuirks().contains(AutoplayQuirk::InheritedUserGestures))
-        return mainFrameDocumentHasHadUserInteraction();
+        return mainFrameDocumentHasHadUserInteraction() ? MediaGestureReason::InheritedUserGesturesQuirk : MediaGestureReason::None;
 
-    return false;
+    return MediaGestureReason::None;
 }
 
 bool Document::hasRecentUserInteractionForNavigationFromJS() const
@@ -9586,7 +9675,7 @@ bool Document::hasTouchEventHandlers() const
     auto touchEventHandlerCountsIsEmpty = true;
 
 #if ENABLE(TOUCH_EVENTS) && ENABLE(TOUCH_EVENT_REGIONS)
-    touchEventHandlerCountsIsEmpty = shouldUseTouchEventRegions() ? m_touchEventHandlerCounts.isEmptyIgnoringNullReferences() : true;
+    touchEventHandlerCountsIsEmpty = !shouldUseTouchEventRegions() || m_touchEventHandlerCounts.isEmptyIgnoringNullReferences();
 #endif
 
     return !m_touchEventTargets.isEmptyIgnoringNullReferences() || !touchEventHandlerCountsIsEmpty;
@@ -10000,6 +10089,12 @@ bool Document::useDarkAppearance([[maybe_unused]] const Style::ComputedStyle* st
 
 void Document::appearanceDidChange()
 {
+    styleScope().didChangeStyleSheetEnvironment();
+    styleScope().evaluateMediaQueriesForAppearanceChange();
+    updateElementsAffectedByMediaQueries();
+    scheduleRenderingUpdate(RenderingUpdateStep::MediaQueryEvaluation);
+    invalidateScrollbars();
+
     if (std::exchange(m_cachedThemeColor, Color()) != themeColor())
         themeColorChanged();
 }
@@ -10449,7 +10544,7 @@ void Document::updateIntersectionObservers()
     updateAndNotifyIntersectionObservers(m_localIntersectionObservers, *frame);
     updateRemoteIntersectionObservers();
 
-    if (frame->isMainFrame())
+    if (settings().siteIsolationEnabled())
         page->chrome().client().updateRemoteIntersectionObserversInOtherWebProcesses();
 }
 
@@ -10890,6 +10985,11 @@ AnimationTimelinesController& Document::ensureTimelinesController()
     return *m_timelinesController.get();
 }
 
+bool Document::hasProgressBasedScrollDrivenAnimation() const
+{
+    return m_timelinesController && m_timelinesController->hasProgressBasedScrollDrivenAnimation();
+}
+
 StyleOriginatedTimelinesController& Document::ensureStyleOriginatedTimelinesController()
 {
     if (!m_styleOriginatedTimelinesController)
@@ -10989,30 +11089,55 @@ void Document::keyframesRuleDidChange(const String& name)
     }
 }
 
+void Document::addPopoverToList(PopoverListType listType, HTMLElement& popover)
+{
+    auto& list = listType == PopoverListType::Auto ? m_autoPopoverList : m_hintPopoverList;
+#if ENABLE(IOS_TOUCH_EVENTS)
+    bool neededEventHandling = needsPointerEventHandlingForPopoverOrDialog();
+#endif
+    auto result = list.add(popover);
+#if ENABLE(IOS_TOUCH_EVENTS)
+    if (!neededEventHandling) {
+        invalidateRenderingDependentRegions();
+        invalidateEventListenerRegions();
+    }
+#endif
+    RELEASE_ASSERT(result.isNewEntry);
+}
+
+void Document::removePopoverFromList(PopoverListType listType, HTMLElement& popover)
+{
+    auto& list = listType == PopoverListType::Auto ? m_autoPopoverList : m_hintPopoverList;
+    list.remove(popover);
+#if ENABLE(IOS_TOUCH_EVENTS)
+    if (!needsPointerEventHandlingForPopoverOrDialog()) {
+        invalidateRenderingDependentRegions();
+        invalidateEventListenerRegions();
+    }
+#endif
+}
+
 void Document::addTopLayerElement(Element& element)
 {
     RELEASE_ASSERT(&element.document() == this && !element.isInTopLayer());
     auto result = m_topLayerElements.add(element);
     RELEASE_ASSERT(result.isNewEntry);
-    if (auto* candidatePopover = dynamicDowncast<HTMLElement>(element); candidatePopover && candidatePopover->popoverState() == PopoverState::Auto) {
+    RefPtr candidatePopover = dynamicDowncast<HTMLElement>(element);
+    if (!candidatePopover)
+        return;
+
 #if ENABLE(FULLSCREEN_API)
-        if (candidatePopover->hasFullscreenFlag())
-            return;
+    if (candidatePopover->hasFullscreenFlag())
+        return;
 #endif
-        CheckedPtr dialogElement = dynamicDowncast<HTMLDialogElement>(*candidatePopover);
-        if (dialogElement && dialogElement->isModal())
-            return;
-#if ENABLE(IOS_TOUCH_EVENTS)
-        bool neededEventHandling = needsPointerEventHandlingForPopoverOrDialog();
-#endif
-        auto result = m_autoPopoverList.add(*candidatePopover);
-#if ENABLE(IOS_TOUCH_EVENTS)
-        if (!neededEventHandling) {
-            invalidateRenderingDependentRegions();
-            invalidateEventListenerRegions();
-        }
-#endif
-        RELEASE_ASSERT(result.isNewEntry);
+
+    RefPtr dialogElement = dynamicDowncast<HTMLDialogElement>(*candidatePopover);
+    if (dialogElement && dialogElement->isModal())
+        return;
+
+    if (candidatePopover->popoverState() == PopoverState::Auto || candidatePopover->popoverState() == PopoverState::Hint) {
+        bool asHint = candidatePopover->popoverData() && candidatePopover->popoverData()->showingAsHint();
+        addPopoverToList(asHint ? PopoverListType::Hint : PopoverListType::Auto, *candidatePopover);
     }
 }
 
@@ -11021,14 +11146,11 @@ void Document::removeTopLayerElement(Element& element)
     RELEASE_ASSERT(&element.document() == this && element.isInTopLayer());
     auto didRemove = m_topLayerElements.remove(element);
     RELEASE_ASSERT(didRemove);
-    if (auto* candidatePopover = dynamicDowncast<HTMLElement>(element); candidatePopover && candidatePopover->isPopoverShowing() && candidatePopover->popoverState() == PopoverState::Auto) {
-        m_autoPopoverList.remove(*candidatePopover);
-#if ENABLE(IOS_TOUCH_EVENTS)
-        if (!needsPointerEventHandlingForPopoverOrDialog()) {
-            invalidateRenderingDependentRegions();
-            invalidateEventListenerRegions();
+    if (RefPtr candidatePopover = dynamicDowncast<HTMLElement>(element); candidatePopover && candidatePopover->isPopoverShowing()) {
+        if (candidatePopover->popoverState() == PopoverState::Auto || candidatePopover->popoverState() == PopoverState::Hint) {
+            bool asHint = candidatePopover->popoverData() && candidatePopover->popoverData()->showingAsHint();
+            removePopoverFromList(asHint ? PopoverListType::Hint : PopoverListType::Auto, *candidatePopover);
         }
-#endif
     }
 }
 
@@ -11047,6 +11169,60 @@ HTMLElement* Document::topmostAutoPopover() const
     if (m_autoPopoverList.isEmpty())
         return nullptr;
     return m_autoPopoverList.last().ptr();
+}
+
+HTMLElement* Document::topmostHintPopover() const
+{
+    if (m_hintPopoverList.isEmpty())
+        return nullptr;
+    return m_hintPopoverList.last().ptr();
+}
+
+// Popover ancestor relationships are defined over the flat/composed tree, so a hint popover
+// slotted into shadow content is still considered nested inside its host's popover. See the
+// "nearest inclusive open popover" definition: https://html.spec.whatwg.org/#nearest-inclusive-open-popover
+HTMLElement* Document::nearestOpenHintAncestor(Element& element) const
+{
+    for (Ref ancestor : composedTreeLineage(element)) {
+        auto* htmlElement = dynamicDowncast<HTMLElement>(ancestor.ptr());
+        if (htmlElement && htmlElement->popoverData()
+            && htmlElement->popoverData()->showingAsHint()
+            && htmlElement->popoverData()->visibilityState() == PopoverVisibilityState::Showing)
+            return htmlElement;
+    }
+    return nullptr;
+}
+
+void Document::closeAllHintPopovers(FocusPreviousElement focusPreviousElement, FireEvents fireEvents)
+{
+    while (RefPtr popover = topmostHintPopover())
+        popover->hidePopoverInternal(focusPreviousElement, fireEvents);
+    m_popoverHintPointerDownTarget = nullptr;
+}
+
+void Document::closeHintPopoversUntil(const HTMLElement* endpoint, FocusPreviousElement focusPreviousElement, FireEvents fireEvents)
+{
+    if (!endpoint)
+        return closeAllHintPopovers(focusPreviousElement, fireEvents);
+
+    while (RefPtr topHint = topmostHintPopover()) {
+        if (topHint == endpoint)
+            break;
+        topHint->hidePopoverInternal(focusPreviousElement, fireEvents);
+    }
+}
+
+// Used when a dialog is shown or an element enters fullscreen. Such an element joins the top layer
+// and must light-dismiss every popover that is not one of its ancestors: auto popovers up to the
+// nearest ancestor auto, and hint popovers up to the nearest ancestor hint. Both are dismissed
+// unconditionally — an unrelated auto must still be hidden even when the element is nested inside a
+// hint (in which case there is no ancestor auto and every auto is hidden).
+void Document::hidePopoversForTopLayerElement(Element& element, FireEvents fireEvents)
+{
+    RefPtr hideUntil = element.topmostPopoverAncestor(Element::TopLayerElementType::Other);
+    RefPtr hintAncestor = nearestOpenHintAncestor(element);
+    hideAutoPopoversUntil(hideUntil.get(), FocusPreviousElement::No, fireEvents);
+    closeHintPopoversUntil(hintAncestor.get(), FocusPreviousElement::No, fireEvents);
 }
 
 RefPtr<HTMLDialogElement> Document::nearestClickedDialog(const PointerEvent& event, Node& target) const
@@ -11078,14 +11254,17 @@ RefPtr<HTMLDialogElement> Document::nearestClickedDialog(const PointerEvent& eve
 }
 
 // https://html.spec.whatwg.org/#hide-all-popovers-until
-void Document::hideAllPopoversUntil(HTMLElement* endpoint, FocusPreviousElement focusPreviousElement, FireEvents fireEvents)
+void Document::hideAutoPopoversUntil(HTMLElement* endpoint, FocusPreviousElement focusPreviousElement, FireEvents fireEvents)
 {
-    auto closeAllOpenPopovers = [&]() {
+    auto closeAllAutoPopovers = [&]() {
         while (RefPtr popover = topmostAutoPopover())
             popover->hidePopoverInternal(focusPreviousElement, fireEvents);
     };
-    if (!endpoint)
-        return closeAllOpenPopovers();
+
+    if (!endpoint) {
+        closeAllAutoPopovers();
+        return;
+    }
 
     bool repeatingHide = false;
     do {
@@ -11099,8 +11278,10 @@ void Document::hideAllPopoversUntil(HTMLElement* endpoint, FocusPreviousElement 
                 break;
             }
         }
-        if (!foundEndPoint)
-            return closeAllOpenPopovers();
+        if (!foundEndPoint) {
+            closeAllAutoPopovers();
+            return;
+        }
         while (lastToHide && lastToHide->isPopoverShowing()) {
             RefPtr topmostAutoPopover = this->topmostAutoPopover();
             if (!topmostAutoPopover)
@@ -11119,20 +11300,23 @@ void Document::handlePopoverLightDismiss(const PointerEvent& event, Node& target
     ASSERT(event.isTrusted());
 
     RefPtr topmostAutoPopover = this->topmostAutoPopover();
-    if (!topmostAutoPopover)
+    RefPtr topmostHintPopover = this->topmostHintPopover();
+    if (!topmostAutoPopover && !topmostHintPopover)
         return;
 
     RefPtr popoverToAvoidHiding = [&]() -> HTMLElement* {
-        auto* targetElement = dynamicDowncast<Element>(target);
-        RefPtr startElement = targetElement ? targetElement : target.parentElement();
         auto [clickedPopover, invokerPopover] = [&]() {
             RefPtr<HTMLElement> clickedPopover;
             RefPtr<HTMLElement> invokerPopover;
             auto isShowingAutoPopover = [](HTMLElement& element) -> bool {
-                return element.popoverState() == PopoverState::Auto && element.popoverData()->visibilityState() == PopoverVisibilityState::Showing;
+                // A popover=auto demoted into the hint stack (showingAsHint()) lives in
+                // m_hintPopoverList, not m_autoPopoverList, so it must not be treated as an
+                // "effective auto" here -- hideAutoPopoversUntil() would never find it as an
+                // endpoint and would fall back to closing every unrelated auto popover.
+                return element.popoverState() == PopoverState::Auto && !element.popoverData()->showingAsHint() && element.popoverData()->visibilityState() == PopoverVisibilityState::Showing;
             };
-            for (RefPtr element = WTF::move(startElement); element; element = element->parentElementInComposedTree()) {
-                if (RefPtr htmlElement = dynamicDowncast<HTMLElement>(*element)) {
+            auto checkElement = [&](Element& element) {
+                if (RefPtr htmlElement = dynamicDowncast<HTMLElement>(element)) {
                     if (!clickedPopover && isShowingAutoPopover(*htmlElement))
                         clickedPopover = htmlElement;
 
@@ -11152,6 +11336,13 @@ void Document::handlePopoverLightDismiss(const PointerEvent& event, Node& target
                             }
                         }
                     }
+                }
+            };
+            if (auto* targetElement = dynamicDowncast<Element>(target))
+                checkElement(*targetElement);
+            if (!clickedPopover || !invokerPopover) {
+                for (Ref element : composedTreeAncestors(target)) {
+                    checkElement(element);
                     if (clickedPopover && invokerPopover)
                         break;
                 }
@@ -11174,15 +11365,40 @@ void Document::handlePopoverLightDismiss(const PointerEvent& event, Node& target
         return highestInTopLayer(clickedPopover.get(), invokerPopover.get());
     }();
 
+    // Find the showing hint popover (if any) that contains the pointer target.
+    RefPtr<HTMLElement> clickedHintPopover;
+    if (RefPtr targetElement = dynamicDowncast<Element>(target))
+        clickedHintPopover = nearestOpenHintAncestor(*targetElement);
+    else if (RefPtr parent = target.parentElementInComposedTree())
+        clickedHintPopover = nearestOpenHintAncestor(*parent);
+
     if (event.type() == eventNames().pointerdownEvent) {
         m_popoverPointerDownTarget = popoverToAvoidHiding;
+        m_popoverHintPointerDownTarget = clickedHintPopover;
         return;
     }
 
     ASSERT(event.type() == eventNames().pointerupEvent);
-    if (m_popoverPointerDownTarget == popoverToAvoidHiding.get())
-        hideAllPopoversUntil(popoverToAvoidHiding.get(), FocusPreviousElement::No, FireEvents::Yes);
+
+    bool clickedInsideHint = clickedHintPopover || m_popoverHintPointerDownTarget;
+
+    if (clickedInsideHint) {
+        // Click was inside a hint popover — close hints stacked above the clicked one, keep the
+        // clicked hint, but still light-dismiss auto popovers that are not ancestors of the click
+        // (popoverToAvoidHiding is the nearest auto containing the click).
+        if (clickedHintPopover && m_popoverHintPointerDownTarget == clickedHintPopover)
+            closeHintPopoversUntil(clickedHintPopover.get(), FocusPreviousElement::No, FireEvents::Yes);
+        if (m_popoverPointerDownTarget == popoverToAvoidHiding.get())
+            hideAutoPopoversUntil(popoverToAvoidHiding.get(), FocusPreviousElement::No, FireEvents::Yes);
+    } else {
+        // Click was outside all hint popovers — perform auto and hint light dismiss.
+        if (m_popoverPointerDownTarget == popoverToAvoidHiding.get())
+            hideAutoPopoversUntil(popoverToAvoidHiding.get(), FocusPreviousElement::No, FireEvents::Yes);
+        closeAllHintPopovers(FocusPreviousElement::No, FireEvents::Yes);
+    }
+
     m_popoverPointerDownTarget = nullptr;
+    m_popoverHintPointerDownTarget = nullptr;
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#dialog-light-dismiss
@@ -11382,7 +11598,7 @@ void Document::navigateFromServiceWorker(const URL& url, CompletionHandler<void(
             callback(ScheduleLocationChangeResult::Stopped);
             return;
         }
-        protect(frame->navigationScheduler())->scheduleLocationChange(*weakThis, weakThis->securityOrigin(), url, frame->loader().outgoingReferrer(), LockHistory::Yes, LockBackForwardList::No, NavigationHistoryBehavior::Auto, [callback = WTF::move(callback)](auto result) mutable {
+        protect(frame->navigationScheduler())->scheduleLocationChange(*weakThis, protect(weakThis->securityOrigin()), url, frame->loader().outgoingReferrer(), LockHistory::Yes, LockBackForwardList::No, NavigationHistoryBehavior::Auto, [callback = WTF::move(callback)](auto result) mutable {
             callback(result);
         });
     });

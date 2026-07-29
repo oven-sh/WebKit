@@ -65,8 +65,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
     ViewWillEndLiveResize()
 
     ExecuteEditCommandWithCallback(String name, String argument) -> ()
-    KeyEvent(WebCore::FrameIdentifier frameID, WebKit::WebKeyboardEvent event)
-    MouseEvent(WebCore::FrameIdentifier frameID, WebKit::WebMouseEvent event, std::optional<Vector<WebKit::SandboxExtensionHandle>> sandboxExtensions)
+    KeyEvent(WebCore::FrameIdentifier frameID, WebKit::WebKeyboardEvent event) -> (bool handled)
+    MouseEvent(WebCore::FrameIdentifier frameID, WebKit::WebMouseEvent event, std::optional<Vector<WebKit::SandboxExtensionHandle>> sandboxExtensions) -> (bool handled, struct std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData)
     SetLastKnownMousePosition(WebCore::FrameIdentifier frameID, WebCore::DoublePoint eventPoint, WebCore::DoublePoint globalPoint, enum:uint8_t std::optional<WebCore::LastKnownMousePositionSource> source);
 
 #if PLATFORM(COCOA)
@@ -82,6 +82,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     PotentialTapAtPosition(std::optional<WebCore::FrameIdentifier> frameID, WebKit::TapIdentifier requestID, WebCore::FloatPoint point, bool shouldRequestMagnificationInformation, enum:uint8_t WebKit::WebEventInputSource inputSource) -> (struct std::optional<WebCore::RemoteUserInputEventData> data)
     CommitPotentialTap(std::optional<WebCore::FrameIdentifier> frameID, OptionSet<WebKit::WebEventModifier> modifiers, WebKit::TransactionID lastLayerTreeTransactionId, WebCore::PointerID pointerId) -> (std::optional<WebCore::FrameIdentifier> remoteFrameID)
     CancelPotentialTap()
+    HandleDoubleTapForDoubleClickAtPoint(WebCore::IntPoint point, OptionSet<WebKit::WebEventModifier> modifiers, WebKit::TransactionID lastLayerTreeTransactionId, enum:uint8_t WebKit::WebEventInputSource inputSource, enum:uint8_t WebKit::WebMouseEventSyntheticClickType syntheticClickType)
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -98,7 +99,6 @@ messages -> WebPage WantsAsyncDispatchMessage {
     AttemptSyntheticClick(WebCore::IntPoint point, OptionSet<WebKit::WebEventModifier> modifiers, WebKit::TransactionID lastLayerTreeTransactionId)
     TapHighlightAtPosition(WebKit::TapIdentifier requestID, WebCore::FloatPoint point)
     DidRecognizeLongPress()
-    HandleDoubleTapForDoubleClickAtPoint(WebCore::IntPoint point, OptionSet<WebKit::WebEventModifier> modifiers, WebKit::TransactionID lastLayerTreeTransactionId)
     InspectorNodeSearchMovedToPosition(WebCore::FloatPoint point)
     InspectorNodeSearchEndedAtPosition(WebCore::FloatPoint point)
     BlurFocusedElement()
@@ -163,7 +163,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #endif
 
 #if PLATFORM(COCOA)
-    StartAutoscrollAtPosition(WebCore::FloatPoint positionInWindow)
+    StartAutoscrollAtPosition(WebCore::FloatPoint positionInWindow) -> (bool didStartAutoscrolling)
     CancelAutoscroll()
 #endif
 
@@ -276,6 +276,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #if PLATFORM(COCOA)
     GetWebArchiveData() -> (std::optional<IPC::SharedBufferReference> dataReference)
     GetWebArchivesForFrames(Vector<WebCore::FrameIdentifier> frameIdentifiers) -> (HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>> frameArchives)
+    GetContentsAsAttributedStringForFrames(Vector<WebCore::FrameIdentifier> frameIdentifiers) -> (HashMap<WebCore::FrameIdentifier, WebCore::AttributedString> frameAttributedStrings)
 #endif
 
     RunJavaScriptInFrameInScriptWorld(struct WebKit::RunJavaScriptParameters parameters, std::optional<WebCore::FrameIdentifier> frameID, struct WebKit::ContentWorldData world, bool wantsResult) -> (Expected<WebKit::JavaScriptEvaluationResult, std::optional<WebCore::ExceptionDetails>> result)
@@ -394,10 +395,10 @@ messages -> WebPage WantsAsyncDispatchMessage {
     RemoveLayerForFindOverlay() -> ()
 
     # Drag and drop.
-#if PLATFORM(GTK) && ENABLE(DRAG_SUPPORT)
+#if (PLATFORM(GTK) || PLATFORM(WPE)) && ENABLE(DRAG_SUPPORT)
     PerformDragControllerAction(enum:uint8_t WebKit::DragControllerAction action, WebCore::IntPoint clientPosition, WebCore::IntPoint globalPosition, OptionSet<WebCore::DragOperation> draggingSourceOperationMask, WebCore::SelectionData selection, OptionSet<WebCore::DragApplicationFlags> flags) -> (enum:uint8_t std::optional<WebCore::DragOperation> dragOperation, enum:uint8_t WebCore::DragHandlingMethod dragHandlingMethod, bool mouseIsOverFileInput, unsigned numberOfItemsToBeAccepted, WebCore::IntRect insertionRect, WebCore::IntRect editableElementRect, struct std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData)
 #endif
-#if !PLATFORM(GTK) && ENABLE(DRAG_SUPPORT)
+#if !PLATFORM(GTK) && !PLATFORM(WPE) && ENABLE(DRAG_SUPPORT)
     PerformDragControllerAction(std::optional<WebCore::FrameIdentifier> frameID, enum:uint8_t WebKit::DragControllerAction action, WebCore::DragData dragData) -> (enum:uint8_t std::optional<WebCore::DragOperation> dragOperation, enum:uint8_t WebCore::DragHandlingMethod dragHandlingMethod, bool mouseIsOverFileInput, unsigned numberOfItemsToBeAccepted, WebCore::IntRect insertionRect, WebCore::IntRect editableElementRect, struct std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData)
     PerformDragOperation(std::optional<WebCore::FrameIdentifier> frameID, WebCore::DragData dragData, WebKit::SandboxExtensionHandle sandboxExtensionHandle, Vector<WebKit::SandboxExtensionHandle> sandboxExtensionsForUpload) -> (WebKit::DragOperationResult dragOperationResult)
 #endif
@@ -623,7 +624,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     SetCaretBlinkingSuspended(bool blinkSuspended)
 #endif
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     ReplaceImageForRemoveBackground(struct WebCore::ElementContext context, Vector<String> types, std::span<const uint8_t> data)
     ShouldAllowRemoveBackground(struct WebCore::ElementContext context) -> (bool result)
 #endif
@@ -932,6 +933,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
     UpdateUnderlyingTextVisibilityForTextAnimationID(WTF::UUID uuid, bool visible) -> ()
 
     IntelligenceTextAnimationsDidComplete();
+
+    SetWritingToolsAvailable(bool isAvailable)
 #endif
 
 #if ENABLE(WRITING_TOOLS) && ENABLE(WRITING_TOOLS_TEXT_EFFECTS)

@@ -55,6 +55,7 @@ enum class TextExtractionOptionFlag : uint8_t {
     IncludeRects         = 1 << 1,
     ShortenURLs          = 1 << 2,
     IncludeSelectOptions = 1 << 3,
+    IncludeTagName       = 1 << 4,
 };
 
 enum class TextExtractionOutputFormat : uint8_t {
@@ -130,5 +131,7 @@ String formatPDFMarkdownForOutput(const String& pdfText, TextExtractionOutputFor
 std::optional<ExtractedNodeInfo> parseExtractedNodeInfo(StringView);
 
 String foldTextForReplacement(const String& source);
+
+String applyReplacements(const String& text, const Vector<std::pair<String, String>>& replacementStrings);
 
 } // namespace WebKit

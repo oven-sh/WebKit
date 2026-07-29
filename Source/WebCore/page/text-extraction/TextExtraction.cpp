@@ -38,6 +38,7 @@
 #include "Editing.h"
 #include "Editor.h"
 #include "ElementAncestorIteratorInlines.h"
+#include "ElementChildIteratorInlines.h"
 #include "ElementInlines.h"
 #include "EventHandler.h"
 #include "EventListenerMap.h"
@@ -67,6 +68,7 @@
 #include "JSNode.h"
 #include "LocalFrame.h"
 #include "NodeList.h"
+#include "NodeTraversal.h"
 #include "Page.h"
 #include "PlatformKeyboardEvent.h"
 #include "PlatformMouseEvent.h"
@@ -80,6 +82,9 @@
 #include "RenderLayerScrollableArea.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
+#include "SVGElementTypeHelpers.h"
+#include "SVGSVGElement.h"
+#include "SVGTitleElement.h"
 #include "Settings.h"
 #include "SimpleRange.h"
 #include "StaticRange.h"
@@ -287,6 +292,7 @@ struct TraversalContext {
     const ClientNodeAttributesMap clientNodeAttributes;
     const TextAndSelectedRangeMap visibleText;
     const HashSet<Ref<Node>> nodesToSkip;
+    const RefPtr<Node> contextMenuTargetNode;
     const std::optional<FloatRect> rectInRootView;
     const FrameIdentifier frameIdentifier;
     Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>> enclosingBlocks;
@@ -570,6 +576,8 @@ static bool NODELETE shouldTreatAsPasswordField(const Element* element)
 
 enum class FallbackPolicy : bool { Skip, Extract };
 
+static bool looksVisuallyClickable(const RenderObject&);
+
 static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(Node& node, FallbackPolicy policy, TraversalContext& context)
 {
     CheckedPtr renderer = node.renderer();
@@ -618,14 +626,26 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
                     return { WTF::move(url) };
 
                 auto shortenedString = shortenedURLString(url);
-                bool linksToCurrentURL = [&] {
-                    auto urlAsView = [](const URL& url) -> StringView {
-                        if (url.hasFragmentIdentifier() && url.fragmentIdentifier().isEmpty())
-                            return url.viewWithoutFragmentIdentifier();
-                        return url.string();
-                    };
-                    return urlAsView(url) == urlAsView(protect(element->document())->url());
-                }();
+                bool linksToCurrentURL = url.viewWithoutQueryOrFragmentIdentifier() == element->document().url().viewWithoutQueryOrFragmentIdentifier();
+
+                String shortenedSelfLinkURLString;
+                if (linksToCurrentURL) {
+                    using namespace StringEntropyHelpers;
+                    String tail;
+                    auto params = queryParameters(url);
+                    if (params.size() == 1 && isProbablyHumanReadable(params[0].key) && isProbablyHumanReadable(params[0].value))
+                        tail = url.queryWithLeadingQuestionMark().toString();
+                    else if (url.hasFragmentIdentifier() && !url.fragmentIdentifier().isEmpty() && isProbablyHumanReadable(url.fragmentIdentifier()))
+                        tail = url.fragmentIdentifierWithLeadingNumberSign().toString();
+
+                    if (!tail.isEmpty()) {
+                        auto lastPathComponent = url.lastPathComponent();
+                        if (isProbablyHumanReadable(lastPathComponent))
+                            shortenedSelfLinkURLString = makeString(lastPathComponent, WTF::move(tail));
+                        else
+                            shortenedSelfLinkURLString = WTF::move(tail);
+                    }
+                }
 
                 String target;
                 if (RefPtr anchor = dynamicDowncast<HTMLAnchorElement>(*element))
@@ -636,6 +656,7 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
                     WTF::move(url),
                     WTF::move(shortenedString),
                     linksToCurrentURL,
+                    WTF::move(shortenedSelfLinkURLString),
                 } };
             }
         }
@@ -679,6 +700,22 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
             .completedSource = completedSourceURL,
             .shortenedName = StringEntropyHelpers::lowEntropyLastPathComponent(completedSourceURL, "image"_s, mimeType),
             .altText = image->altText(),
+        } };
+    }
+
+    if (RefPtr svg = dynamicDowncast<SVGSVGElement>(element)) {
+        auto altText = normalizeText(element->attributeWithoutSynchronization(HTMLNames::aria_labelAttr));
+        if (altText.isEmpty()) {
+            for (Ref title : childrenOfType<SVGTitleElement>(*svg)) {
+                altText = normalizeText(title->textContent());
+                break;
+            }
+        }
+
+        return { ImageItemData {
+            .completedSource = { },
+            .shortenedName = { },
+            .altText = WTF::move(altText),
         } };
     }
 
@@ -916,7 +953,7 @@ static bool looksVisuallyClickable(const RenderObject& renderer)
     if (style->pointerEvents() == PointerEvents::None)
         return false;
 
-    if (!hasVisuallyDistinctStyling(protect(style)))
+    if (!hasVisuallyDistinctStyling(protect(style)) && !renderer.isRenderReplaced())
         return false;
 
     CheckedPtr parent = renderer.parent();
@@ -1116,6 +1153,15 @@ static inline void extractRecursive(Node& node, Item& parentItem, TraversalConte
         if (shouldIdentifyClickableElement)
             return FallbackPolicy::Extract;
 
+        // With tag names requested, also extract a generic block that renders its own inline content like
+        // a paragraph, heading, caption, etc so its tag prefixes that text. Semantic containers are already
+        // extracted above; a generic structural wrapper (block-level children) still collapses.
+        if (context.originalRequest.includeTagName && isBlock) {
+            CheckedPtr renderer = node.renderer();
+            if (renderer->childrenInline())
+                return FallbackPolicy::Extract;
+        }
+
         return FallbackPolicy::Skip;
     }();
 
@@ -1160,7 +1206,7 @@ static inline void extractRecursive(Node& node, Item& parentItem, TraversalConte
             isScrollable = std::holds_alternative<ScrollableItemData>(result);
 
             std::optional<NodeIdentifier> nodeIdentifier;
-            if (shouldIdentifyClickableElement || shouldIncludeNodeIdentifier(context.nodeIdentifierInclusion, eventListeners, AccessibilityObject::ariaRoleToWebCoreRole(role), result))
+            if (shouldIdentifyClickableElement || context.contextMenuTargetNode == &node || shouldIncludeNodeIdentifier(context.nodeIdentifierInclusion, eventListeners, AccessibilityObject::ariaRoleToWebCoreRole(role), result))
                 nodeIdentifier = node.nodeIdentifier();
 
             item = { {
@@ -1207,8 +1253,10 @@ static inline void extractRecursive(Node& node, Item& parentItem, TraversalConte
         context.onlyCollectTextAndLinksCount++;
     }
 
-    if (auto* renderer = node.renderer(); renderer && item)
+    if (CheckedPtr renderer = node.renderer(); renderer && item) {
         item->hasLineThrough = renderer->style().textDecorationLineInEffect().hasLineThrough();
+        item->isVisuallyClickable = looksVisuallyClickable(*renderer);
+    }
 
     if (item)
         item->visualBlockContainerNumber = context.currentVisualBlockContainerNumber();
@@ -1486,6 +1534,10 @@ Result extractItem(Request&& request, LocalFrame& frame)
                 nodesToSkip.add(node.releaseNonNull());
         }
 
+        RefPtr<Node> contextMenuTargetNode;
+        if (request.contextMenuTargetNodeIdentifier)
+            contextMenuTargetNode = Node::fromIdentifier(*request.contextMenuTargetNodeIdentifier);
+
         HashSet<Ref<Node>> additionalContainersToCollect;
         RefPtr extractionRoot = dynamicDowncast<ContainerNode>(*extractionRootNode);
         if (extractionRoot && request.includeOffscreenPasswordFields && request.collectionRectInRootView) {
@@ -1516,6 +1568,7 @@ Result extractItem(Request&& request, LocalFrame& frame)
             .clientNodeAttributes = WTF::move(clientNodeAttributes),
             .visibleText = collectText(*extractionRootNode, includeTextInAutoFilledControls),
             .nodesToSkip = WTF::move(nodesToSkip),
+            .contextMenuTargetNode = WTF::move(contextMenuTargetNode),
             .rectInRootView = request.collectionRectInRootView,
             .frameIdentifier = WTF::move(frameID),
             .enclosingBlocks = { },
@@ -1883,6 +1936,27 @@ static String searchTextNotFoundDescription(const String& searchText)
     return makeString('\'', searchText, "' not found inside the target node"_s);
 }
 
+static bool searchTextMatchesElementLabelOrRenderedText(Element& element, const String& searchText)
+{
+    auto withoutWhitespace = [](const String& string) {
+        return normalizeText(string).removeCharacters([](char16_t character) {
+            return isUnicodeWhitespace(character);
+        });
+    };
+
+    auto strippedSearchText = withoutWhitespace(searchText);
+    if (strippedSearchText.isEmpty()) {
+        // Err on the side of allowing the interaction.
+        return true;
+    }
+
+    if (withoutWhitespace(normalizedLabelText(element)).containsIgnoringASCIICase(strippedSearchText))
+        return true;
+
+    auto range = makeRangeSelectingNodeContents(element);
+    return withoutWhitespace(plainText(range, behaviorsForTextExtraction)).containsIgnoringASCIICase(strippedSearchText);
+}
+
 static constexpr auto nullFrameDescription = "Browsing context has been detached"_s;
 static constexpr auto interactedWithSelectElementDescription = "Successfully updated option in select element"_s;
 
@@ -1922,6 +1996,30 @@ static Node* findNodeAtRootViewLocation(const LocalFrameView& view, Document& do
 
     HitTestResult result { view.rootViewToContents(roundedIntPoint(locationInRootView)) };
     return document.hitTest(defaultHitTestOptions, result) ? result.innerNode() : nullptr;
+}
+
+static RefPtr<Element> frontmostHitTestedElementInSubtree(const LocalFrameView& view, Document& document, FloatPoint locationInRootView, const Element& target)
+{
+    static constexpr OptionSet listBasedHitTestOptions {
+        HitTestRequest::Type::ReadOnly,
+        HitTestRequest::Type::DisallowUserAgentShadowContent,
+        HitTestRequest::Type::CollectMultipleElements,
+        HitTestRequest::Type::IncludeAllElementsUnderPoint,
+    };
+
+    HitTestResult result { view.rootViewToContents(roundedIntPoint(locationInRootView)) };
+    document.hitTest(listBasedHitTestOptions, result);
+
+    for (auto& node : result.listBasedTestResult()) {
+        RefPtr element = dynamicDowncast<Element>(node.get());
+        if (!element)
+            element = node->parentElementInComposedTree();
+
+        if (element && (element == &target || element->isShadowIncludingDescendantOf(target)))
+            return element;
+    }
+
+    return nullptr;
 }
 
 struct ResolvedMouseTarget {
@@ -1968,8 +2066,12 @@ static Expected<ResolvedMouseTarget, String> resolveMouseTarget(Node& targetNode
     std::optional<SimpleRange> foundRange;
     if (!searchText.isEmpty()) {
         foundRange = searchForClickTarget(*element, searchText);
-        if (!foundRange)
-            return makeUnexpected(searchTextNotFoundDescription(searchText));
+        if (!foundRange) {
+            bool targetIsWholePage = element == document->body() || element.get() == document->documentElement();
+            bool matched = targetIsWholePage ? normalizedLabelText(*element).containsIgnoringASCIICase(normalizeText(searchText)) : searchTextMatchesElementLabelOrRenderedText(*element, searchText);
+            if (!matched)
+                return makeUnexpected(searchTextNotFoundDescription(searchText));
+        }
     }
 
     if (scrollTargetIntoView == ScrollTargetIntoView::Yes) {
@@ -2015,8 +2117,11 @@ static void dispatchSimulatedClick(Node& targetNode, const String& searchText, C
 
     UserGestureIndicator indicator { IsProcessingUserGesture::Yes, document.ptr() };
 
-    // Fall back to dispatching a programmatic click.
-    if (protect(element)->dispatchSimulatedClick(nullptr, SendMouseUpDownEvents))
+    Ref clickTarget = element;
+    if (RefPtr descendant = frontmostHitTestedElementInSubtree(view, document, centerInRootView, element))
+        clickTarget = descendant.releaseNonNull();
+
+    if (protect(clickTarget)->dispatchSimulatedClick(nullptr, SendMouseUpDownEvents))
         completion(true, { });
     else
         completion(false, "Failed to click (tried falling back to dispatching programmatic click since target could not be hit-tested)"_s);
@@ -2178,6 +2283,55 @@ static RefPtr<Element> closestLinkOrButtonAncestor(const Element& element)
     return nullptr;
 }
 
+static bool containsLetterOrDigit(StringView text)
+{
+    return text.contains([](auto character) {
+        return u_isalpha(character) || u_isdigit(character);
+    });
+}
+
+static String precedingRenderedTextLabel(const Element& element)
+{
+    static constexpr unsigned maximumPrecedingTextNodesToSearch = 16;
+    static constexpr unsigned maximumAdjacentTextLength = 40;
+
+    RefPtr stayWithin = element.document().documentElement();
+    unsigned examinedTextNodes = 0;
+    Vector<String> collectedInReverse;
+    for (RefPtr node = NodeTraversal::previous(element, stayWithin.get()); node; node = NodeTraversal::previous(*node, stayWithin.get())) {
+        RefPtr text = dynamicDowncast<Text>(*node);
+        if (!text || !text->renderer())
+            continue;
+
+        if (shouldTreatAsPasswordField(text->shadowHost()))
+            continue;
+
+        if (++examinedTextNodes > maximumPrecedingTextNodesToSearch)
+            break;
+
+        auto normalized = normalizeText(text->data());
+        if (normalized.isEmpty())
+            continue;
+
+        collectedInReverse.append(normalized);
+        if (containsLetterOrDigit(normalized))
+            break;
+    }
+
+    collectedInReverse.reverse();
+    if (collectedInReverse.isEmpty())
+        return { };
+
+    auto joined = makeStringByJoining(collectedInReverse, " "_s);
+    if (!containsLetterOrDigit(joined))
+        return { };
+
+    if (joined.length() > maximumAdjacentTextLength)
+        joined = makeString(StringView { joined }.left(maximumAdjacentTextLength - 3), "..."_s);
+
+    return joined;
+}
+
 static String textDescription(const Element& element, Vector<String>& stringsToValidate, bool isTargetElement = true)
 {
     StringBuilder description;
@@ -2192,30 +2346,35 @@ static String textDescription(const Element& element, Vector<String>& stringsToV
         description.append(tagName);
 
     auto needsParentContext = true;
+    auto hasAccessibleName = false;
 
     if (element.isLink()) {
         if (auto text = normalizeText(element.attributeWithoutSynchronization(HTMLNames::hrefAttr)); !text.isEmpty()) {
             description.append(makeString(" with href "_s, wrapWithDoubleQuotes(WTF::move(text))));
             stringsToValidate.append(WTF::move(text));
             needsParentContext = false;
+            hasAccessibleName = true;
         }
     }
 
     if (auto text = normalizeText(element.attributeWithoutSynchronization(HTMLNames::roleAttr)); !text.isEmpty() && text != tagName) {
         description.append(makeString(" with role "_s, wrapWithDoubleQuotes(WTF::move(text))));
         needsParentContext = false;
+        hasAccessibleName = true;
     }
 
     if (auto text = normalizedLabelText(element); !text.isEmpty()) {
         description.append(makeString(" labeled "_s, wrapWithDoubleQuotes(WTF::move(text))));
         stringsToValidate.append(WTF::move(text));
         needsParentContext = false;
+        hasAccessibleName = true;
     }
 
     if (auto text = normalizeText(element.attributeWithoutSynchronization(HTMLNames::titleAttr)); !text.isEmpty()) {
         description.append(makeString(" titled "_s, wrapWithDoubleQuotes(WTF::move(text))));
         stringsToValidate.append(WTF::move(text));
         needsParentContext = false;
+        hasAccessibleName = true;
     }
 
     if (auto text = element.attributeWithoutSynchronization(HTMLNames::typeAttr); !text.isEmpty() && text != tagName)
@@ -2225,6 +2384,7 @@ static String textDescription(const Element& element, Vector<String>& stringsToV
         description.append(makeString(" with placeholder "_s, wrapWithDoubleQuotes(WTF::move(text))));
         stringsToValidate.append(WTF::move(text));
         needsParentContext = false;
+        hasAccessibleName = true;
     }
 
     if (RefPtr input = dynamicDowncast<HTMLInputElement>(element)) {
@@ -2237,6 +2397,7 @@ static String textDescription(const Element& element, Vector<String>& stringsToV
                 description.append(makeString(" with value "_s, wrapWithDoubleQuotes(WTF::move(text))));
                 stringsToValidate.append(WTF::move(text));
                 needsParentContext = false;
+                hasAccessibleName = true;
             }
         }
     }
@@ -2273,6 +2434,19 @@ static String textDescription(const Element& element, Vector<String>& stringsToV
             auto ancestorDescription = textDescription(*ancestor, stringsToValidate, false);
             if (!ancestorDescription.isEmpty())
                 return makeString(WTF::move(elementDescription), " under "_s, WTF::move(ancestorDescription));
+        }
+    }
+
+    if (isTargetElement && !hasAccessibleName && (is<HTMLImageElement>(element) || element.isSVGElement())) {
+        bool hasImageAltText = false;
+        if (RefPtr image = dynamicDowncast<HTMLImageElement>(element))
+            hasImageAltText = !normalizeText(image->altText()).isEmpty();
+
+        if (!hasImageAltText) {
+            if (auto neighborText = precedingRenderedTextLabel(element); !neighborText.isEmpty()) {
+                stringsToValidate.append(neighborText);
+                return makeString(WTF::move(elementDescription), " after rendered text "_s, wrapWithDoubleQuotes(WTF::move(neighborText)));
+            }
         }
     }
 
@@ -2362,16 +2536,19 @@ static String textDescription(LocalFrame& frame, std::optional<NodeIdentifier> i
     auto searchTextPrefix = emptyString();
     if (!searchText.isEmpty()) {
         auto range = action == Action::Click ? searchForClickTarget(*target, searchText) : searchForText(*target, searchText);
-        if (!range)
-            return { };
+        if (range) {
+            target = commonInclusiveAncestor<ComposedTree>(*range);
+            if (!target)
+                return { };
 
-        target = commonInclusiveAncestor<ComposedTree>(*range);
-        if (!target)
-            return { };
-
-        auto escapedSearchText = normalizeText(searchText);
-        stringsToValidate.append(escapedSearchText);
-        searchTextPrefix = makeString(wrapWithDoubleQuotes(escapedSearchText), " in "_s);
+            auto escapedSearchText = normalizeText(searchText);
+            stringsToValidate.append(escapedSearchText);
+            searchTextPrefix = makeString(wrapWithDoubleQuotes(escapedSearchText), " in "_s);
+        } else {
+            RefPtr element = dynamicDowncast<Element>(target.get());
+            if (!identifier || !element || !searchTextMatchesElementLabelOrRenderedText(*element, searchText))
+                return { };
+        }
     }
 
     return makeString(WTF::move(searchTextPrefix), textDescription(target.get(), stringsToValidate));

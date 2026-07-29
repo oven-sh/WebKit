@@ -29,7 +29,6 @@
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
-#include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <wtf/Forward.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RobinHoodHashMap.h>
@@ -136,9 +135,39 @@ public:
         };
     }
 
-    static inline String protocolLoaderId(WebCore::ScriptExecutionContextIdentifier contextID)
+    // Reverse-parse a protocol frameId string back into its components (hosting process, frame).
+    // Returns nullopt if the string doesn't match the expected "frame-processID.frameID" format,
+    // if either segment isn't a valid uint64, or -- crucially -- if the frame segment isn't a
+    // valid FrameIdentifier raw value. The FrameIdentifier(uint64_t) constructor RELEASE_ASSERTs
+    // on an invalid raw value (see ObjectIdentifier.h), so a malformed or hostile id arriving from
+    // the frontend would crash the UIProcess; validating with isValidIdentifier() first keeps this
+    // a clean parse failure. The 2-arg protocolFrameId(frameID, processID) is the inverse.
+    static inline std::optional<std::pair<WebCore::ProcessIdentifier, WebCore::FrameIdentifier>> parseProtocolFrameId(const String& frameId)
     {
-        return makeString("loader-"_s, contextID.processIdentifier().toUInt64(), '.', contextID.object().toString());
+        // Format: "frame-processID.frameID"
+        if (!frameId.startsWith("frame-"_s))
+            return std::nullopt;
+
+        auto rest = StringView(frameId).substring(6); // skip "frame-"
+        auto dotIndex = rest.find('.');
+        if (dotIndex == notFound)
+            return std::nullopt;
+
+        auto pidPart = rest.left(dotIndex);
+        auto framePart = rest.substring(dotIndex + 1);
+
+        auto pidValue = parseInteger<uint64_t>(pidPart);
+        if (!pidValue || !WebCore::ProcessIdentifier::isValidIdentifier(*pidValue))
+            return std::nullopt;
+
+        auto frameValue = parseInteger<uint64_t>(framePart);
+        if (!frameValue || !WebCore::FrameIdentifier::isValidIdentifier(*frameValue))
+            return std::nullopt;
+
+        return std::pair {
+            ObjectIdentifier<WebCore::ProcessIdentifierType>(*pidValue),
+            WebCore::FrameIdentifier(*frameValue)
+        };
     }
 };
 

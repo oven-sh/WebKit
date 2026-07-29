@@ -610,12 +610,8 @@ void HTMLInputElement::updateType(const AtomString& typeAttributeValue)
     bool nowSelectable = m_inputType->supportsSelectionAPI();
     // 9. If previouslySelectable is false and nowSelectable is true, set the element's text entry cursor position to the beginning of the text control, and set its selection direction to "none".
     if (!previouslySelectable && nowSelectable) {
-        TextFieldSelectionDirection direction = SelectionHasNoDirection;
         // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#set-the-selection-direction
-        RefPtr frame = document().frame();
-        if (isTextField() && frame && frame->editor().behavior().shouldConsiderSelectionAsDirectional())
-            direction = SelectionHasForwardDirection;
-        cacheSelection(0, 0, direction);
+        cacheSelection(0, 0, normalizeSelectionDirection(SelectionHasNoDirection));
     }
 
     updateValidity();
@@ -850,7 +846,8 @@ void HTMLInputElement::attributeChanged(const QualifiedName& name, const AtomStr
         break;
     }
     case AttributeNames::resultsAttr:
-        m_maxResults = newValue.isNull() ? -1 : std::min(parseHTMLInteger(newValue).value_or(0), maxSavedResults);
+        if (document().settings().searchInputResultsAttributeEnabled())
+            m_maxResults = newValue.isNull() ? -1 : std::min(parseHTMLInteger(newValue).value_or(0), maxSavedResults);
         break;
     case AttributeNames::autosaveAttr:
         invalidateStyleForSubtree();
@@ -1093,8 +1090,6 @@ void HTMLInputElement::setChecked(bool isChecked, WasSetByJavaScript wasCheckedB
         if (CheckedPtr cache = renderer->document().existingAXObjectCache())
             cache->checkedStateChanged(*this);
     }
-
-    invalidateStyle();
 }
 
 void HTMLInputElement::setIndeterminate(bool newValue)

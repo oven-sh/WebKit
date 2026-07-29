@@ -650,6 +650,7 @@ public:
     bool isSwitch() const { return role() == AccessibilityRole::Switch; }
     bool isToggleButton() const { return role() == AccessibilityRole::ToggleButton; }
     bool NODELETE isTextControl() const;
+    static bool isTextControl(AccessibilityRole);
     virtual bool isEditableWebArea() const = 0;
     virtual bool isNonNativeTextControl() const = 0;
     bool isTabList() const { return role() == AccessibilityRole::TabList; }
@@ -762,6 +763,7 @@ public:
 
     unsigned blockquoteLevel() const;
     unsigned headingLevel() const;
+    virtual unsigned computedHeadingLevel() const { return 0; }
     virtual AccessibilityButtonState checkboxOrRadioValue() const = 0;
     virtual String valueDescription() const = 0;
     virtual float valueForRange() const = 0;
@@ -1057,6 +1059,10 @@ public:
     virtual CharacterRange selectedTextRange() const = 0;
     virtual int insertionPointLineNumber() const = 0;
 
+#if ENABLE(WRITING_TOOLS)
+    virtual bool writingToolsAvailable() const = 0;
+#endif // ENABLE(WRITING_TOOLS)
+
     virtual URL url() const = 0;
     virtual VisibleSelection selection() const = 0;
     virtual String selectedText() const = 0;
@@ -1081,6 +1087,8 @@ public:
     virtual String language() const = 0;
     String languageIncludingAncestors() const;
     virtual unsigned ariaLevel() const = 0;
+    // True only when the author explicitly set role="group" on this object.
+    virtual bool hasExplicitGroupRole() const = 0;
     // 1-based, to match the aria-level spec.
     unsigned hierarchicalLevel() const;
     virtual bool isInlineText() const = 0;

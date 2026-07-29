@@ -48,7 +48,6 @@
 #import <wtf/text/StringBuilder.h>
 
 SOFT_LINK_FRAMEWORK(Network)
-SOFT_LINK_MAY_FAIL(Network, nw_webtransport_options_set_allow_joining_before_ready, void, (nw_protocol_options_t options, bool allow), (options, allow))
 SOFT_LINK_MAY_FAIL(Network, nw_webtransport_metadata_set_local_draining, void, (nw_protocol_metadata_t metadata), (metadata))
 SOFT_LINK_MAY_FAIL(Network, nw_webtransport_metadata_get_session_closed, bool, (nw_protocol_metadata_t metadata), (metadata))
 SOFT_LINK_MAY_FAIL(Network, nw_webtransport_metadata_get_transport_mode, nw_webtransport_transport_mode_t, (nw_protocol_metadata_t metadata), (metadata))
@@ -145,6 +144,56 @@ TEST(WebTransport, ClientBidirectional)
         ", writable threw after closing: true"
         ", readable threw after closing: true";
     EXPECT_WK_STREQ([webView _test_waitForAlert], expected);
+    EXPECT_TRUE(challenged);
+}
+
+TEST(WebTransport, ClientBidirectionalBYOB)
+{
+    if (!WebTransportServer::isAvailable())
+        return;
+
+    WebTransportServer echoServer([](ConnectionGroup group) -> ConnectionTask {
+        auto connection = co_await group.receiveIncomingConnection();
+        auto request = co_await connection.awaitableReceiveBytes();
+        request.append('d');
+        request.append('e');
+        request.append('f');
+        co_await connection.awaitableSend(WTF::move(request));
+    });
+
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    enableWebTransport(configuration.get());
+    RetainPtr webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+    RetainPtr delegate = adoptNS([TestNavigationDelegate new]);
+    [webView setNavigationDelegate:delegate.get()];
+    __block bool challenged { false };
+    __block uint16_t port = echoServer.port();
+    delegate.get().didReceiveAuthenticationChallenge = ^(WKWebView *, NSURLAuthenticationChallenge *challenge, void (^completionHandler)(NSURLSessionAuthChallengeDisposition, NSURLCredential *)) {
+        validateChallenge(challenge, port);
+        challenged = true;
+        completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+    };
+
+    NSString *html = [NSString stringWithFormat:@""
+        "<script>async function test() {"
+        "  try {"
+        "    let t = new WebTransport('https://127.0.0.1:%d/');"
+        "    await t.ready;"
+        "    let s = await t.createBidirectionalStream();"
+        "    let w = s.writable.getWriter();"
+        "    await w.write(new TextEncoder().encode('abc'));"
+        "    let r = s.readable.getReader({ mode: 'byob' });"
+        "    const { value, done } = await r.read(new Uint8Array(6));"
+        "    await w.close();"
+        "    r.releaseLock();"
+        "    t.close();"
+        "    alert('successfully read ' + new TextDecoder().decode(value) + ' done: ' + done);"
+        "  } catch (e) { alert('caught ' + e); }"
+        "}; test();"
+        "</script>",
+        port];
+    [webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abcdef done: false");
     EXPECT_TRUE(challenged);
 }
 
@@ -510,7 +559,6 @@ TEST(WebTransport, Worker)
         "async function test() {"
         "  try {"
         "    let t = new WebTransport('https://127.0.0.1:%d/');"
-        "    %s"
         "    let c = await t.createBidirectionalStream();"
         "    let w = c.writable.getWriter();"
         "    await w.write(new TextEncoder().encode('abc'));"
@@ -520,7 +568,7 @@ TEST(WebTransport, Worker)
         "    const { value, done } = await r.read();"
         "    self.postMessage('successfully read ' + new TextDecoder().decode(value));"
         "  } catch (e) { self.postMessage('caught ' + e); }"
-        "}; test();", transportServer.port(), canLoadnw_webtransport_options_set_allow_joining_before_ready() ? "" : "await t.ready;"];
+        "}; test();", transportServer.port()];
 
     HTTPServer loadingServer({
         { "/"_s, { mainHTML } },
@@ -600,8 +648,6 @@ TEST(WebTransport, ServiceWorker)
 {
     if (!WebTransportServer::isAvailable())
         return;
-    if (!canLoadnw_webtransport_options_set_allow_joining_before_ready())
-        return;
 
     WebTransportServer datagramServer([](ConnectionGroup group) -> ConnectionTask {
         auto datagramConnection = group.createWebTransportConnection(ConnectionGroup::ConnectionType::Datagram);
@@ -673,8 +719,6 @@ TEST(WebTransport, ServiceWorker)
 TEST(WebTransport, CreateStreamsBeforeReady)
 {
     if (!WebTransportServer::isAvailable())
-        return;
-    if (!canLoadnw_webtransport_options_set_allow_joining_before_ready())
         return;
 
     WebTransportServer datagramServer([](ConnectionGroup group) -> ConnectionTask {

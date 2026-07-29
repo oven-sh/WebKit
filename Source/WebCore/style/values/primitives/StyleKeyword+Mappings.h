@@ -67,6 +67,7 @@
 #include "StyleWebKitLineBoxContain.h"
 #include "StyleWebKitOverflowScrolling.h"
 #include "StyleWebKitTouchCallout.h"
+#include "StyleWhiteSpaceTrim.h"
 #include "TextFlags.h"
 #include "TextSpacing.h"
 #include "ThemeTypes.h"
@@ -411,6 +412,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
 
+#define TYPE BaselineSource
+#define FOR_EACH(CASE) CASE(Auto) CASE(First) CASE(Last)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
 constexpr CSSValueID toCSSValueID(FillAttachment e)
 {
     switch (e) {
@@ -751,6 +758,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
 
+#define TYPE Style::WhiteSpaceTrimValue
+#define FOR_EACH(CASE) CASE(DiscardBefore) CASE(DiscardAfter) CASE(DiscardInner)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
 #define TYPE ListStylePosition
 #define FOR_EACH(CASE) CASE(Outside) CASE(Inside)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
@@ -990,6 +1003,14 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
+
+#if ENABLE(SPATIAL_PORTAL)
+#define TYPE SpatialType
+#define FOR_EACH(CASE) CASE(None) CASE(Portal)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+#endif
 
 constexpr CSSValueID toCSSValueID(Style::TextAlign e)
 {
@@ -1404,7 +1425,7 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef FOR_EACH
 
 #define TYPE RubyOverhang
-#define FOR_EACH(CASE) CASE(Auto) CASE(None)
+#define FOR_EACH(CASE) CASE(Auto) CASE(Spaces)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
@@ -1443,6 +1464,12 @@ template<> constexpr TextWrapMode fromCSSValueID(CSSValueID valueID)
 
 #define TYPE TextWrapStyle
 #define FOR_EACH(CASE) CASE(Auto) CASE(Balance) CASE(Pretty) CASE(Stable)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+#define TYPE WrapInside
+#define FOR_EACH(CASE) CASE(Auto) CASE(Avoid)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH

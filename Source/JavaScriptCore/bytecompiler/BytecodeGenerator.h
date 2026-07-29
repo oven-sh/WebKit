@@ -787,6 +787,10 @@ namespace JSC {
         void emitSetFunctionName(RegisterID* value, RegisterID* name);
         void emitSetFunctionName(RegisterID* value, const Identifier&);
 
+        void emitAsyncIteratorOpen(RegisterID* iterator, RegisterID* next, RegisterID* symbolIterator, CallArguments& iterable, const ThrowableExpressionData* node);
+        void emitGetGenericAsyncIterator(RegisterID* iterator, RegisterID* next, RegisterID* subject, const ThrowableExpressionData* node);
+        RegisterID* emitAsyncIteratorNext(RegisterID* dst, RegisterID* next, RegisterID* iterator, RegisterID* value, const ThrowableExpressionData* node);
+
         RegisterID* moveLinkTimeConstant(RegisterID* dst, LinkTimeConstant);
         RegisterID* moveEmptyValue(RegisterID* dst);
 
@@ -896,7 +900,6 @@ namespace JSC {
         void emitUsingBodyScope(unsigned usingCount, bool hasAwaitUsing, const ScopedLambda<void(BytecodeGenerator&)>& emitBody);
         void emitBodyWithUsingIfNeeded(unsigned usingCount, bool hasAwaitUsing, const ScopedLambda<void(BytecodeGenerator&)>& emitBody);
 
-        void emitGenericEnumeration(ThrowableExpressionData* enumerationNode, ExpressionNode* subjectNode, const ScopedLambda<void(BytecodeGenerator&, RegisterID*)>& callBack, ForOfNode* = nullptr, RegisterID* forLoopSymbolTable = nullptr);
         void emitEnumeration(ThrowableExpressionData* enumerationNode, ExpressionNode* subjectNode, const ScopedLambda<void(BytecodeGenerator&, RegisterID*)>& callBack, ForOfNode* = nullptr, RegisterID* forLoopSymbolTable = nullptr);
 
         RegisterID* emitGetTemplateObject(RegisterID* dst, TaggedTemplateNode*);
@@ -950,7 +953,6 @@ namespace JSC {
         RegisterID* emitIsCellWithType(RegisterID* dst, RegisterID* src, JSType);
         RegisterID* emitIsGenerator(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSGeneratorType); }
         RegisterID* emitIsIteratorHelper(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSIteratorHelperType); }
-        RegisterID* emitIsAsyncGenerator(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSAsyncGeneratorType); }
         RegisterID* emitIsJSArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, ArrayType); }
         RegisterID* emitIsPromise(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSPromiseType); }
         RegisterID* emitIsProxyObject(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, ProxyObjectType); }
@@ -970,7 +972,6 @@ namespace JSC {
         RegisterID* emitIsUndefinedOrNull(RegisterID* dst, RegisterID* src);
         RegisterID* emitIsEmpty(RegisterID* dst, RegisterID* src);
         RegisterID* emitIsDerivedArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DerivedArrayType); }
-        RegisterID* emitIsAsyncFromSyncIterator(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSAsyncFromSyncIteratorType); }
         RegisterID* emitIsDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DisposableStackType); }
         RegisterID* emitIsAsyncDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, AsyncDisposableStackType); }
         void emitRequireObjectCoercible(RegisterID* value, ASCIILiteral error);
@@ -980,7 +981,6 @@ namespace JSC {
         void emitIteratorNext(RegisterID* done, RegisterID* value, RegisterID* iterable, RegisterID* nextOrIndex, CallArguments& iterator, const ThrowableExpressionData*);
 
         RegisterID* emitGetGenericIterator(RegisterID*, ThrowableExpressionData*);
-        RegisterID* emitGetAsyncIterator(RegisterID*, ThrowableExpressionData*);
 
         RegisterID* emitIteratorGenericNext(RegisterID* dst, RegisterID* nextMethod, RegisterID* iterator, const ThrowableExpressionData* node, JSC::EmitAwait = JSC::EmitAwait::No);
         RegisterID* emitIteratorGenericNextWithValue(RegisterID* dst, RegisterID* nextMethod, RegisterID* iterator, RegisterID* value, const ThrowableExpressionData* node);

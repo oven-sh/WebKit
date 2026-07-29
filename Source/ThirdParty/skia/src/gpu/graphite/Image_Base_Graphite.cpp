@@ -11,11 +11,12 @@
 #include "include/gpu/graphite/Image.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/Surface.h"
+#include "include/private/SkLog.h"
+#include "include/private/SkPixelStorage.h"
 #include "src/gpu/graphite/Device.h"
 #include "src/gpu/graphite/DrawContext.h"
 #include "src/gpu/graphite/Image_Graphite.h"
 #include "src/gpu/graphite/Image_YUVA_Graphite.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/Surface_Graphite.h"
 #include "src/gpu/graphite/TextureUtils.h"
@@ -23,8 +24,8 @@
 
 namespace skgpu::graphite {
 
-Image_Base::Image_Base(const SkImageInfo& info, uint32_t uniqueID)
-    : SkImage_Base(info, uniqueID) {}
+Image_Base::Image_Base(const SkImageInfo& info, uint32_t uniqueID, sk_sp<SkPixelStorage> storage)
+    : SkImage_Base(info, uniqueID, std::move(storage)) {}
 
 Image_Base::~Image_Base() = default;
 
@@ -207,7 +208,7 @@ void Image_Base::onAsyncRescaleAndReadPixels(const SkImageInfo& info,
                                              RescaleMode rescaleMode,
                                              ReadPixelsCallback callback,
                                              ReadPixelsContext context) const {
-    SKGPU_LOG_W("Cannot use Ganesh async API with Graphite-backed image, use API on Context");
+    SKIA_LOG_W("Cannot use Ganesh async API with Graphite-backed image, use API on Context");
     callback(context, nullptr);
 }
 
@@ -220,7 +221,7 @@ void Image_Base::onAsyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvColorSpace
                                                    RescaleMode rescaleMode,
                                                    ReadPixelsCallback callback,
                                                    ReadPixelsContext context) const {
-    SKGPU_LOG_W("Cannot use Ganesh async API with Graphite-backed image, use API on Context");
+    SKIA_LOG_W("Cannot use Ganesh async API with Graphite-backed image, use API on Context");
     callback(context, nullptr);
 }
 

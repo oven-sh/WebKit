@@ -48,6 +48,7 @@
 #import <WebCore/DocumentView.h>
 #import <WebCore/Event.h>
 #import <WebCore/EventNames.h>
+#import <WebCore/FloatQuad.h>
 #import <WebCore/HTMLVideoElement.h>
 #import <WebCore/HostingContext.h>
 #import <WebCore/LocalFrameView.h>
@@ -489,10 +490,11 @@ void VideoPresentationManager::enterVideoFullscreenForVideoElement(HTMLVideoElem
     if (blockMediaLayerRehosting) {
         hostingContext = videoElement.layerHostingContext();
         if (!hostingContext.contextID) {
-            videoElement.requestHostingContext([protectedThis = Ref { *this }, videoElement = Ref { videoElement }, setupFullscreenHandler = WTF::move(setupFullscreen)] (WebCore::HostingContext hostingContext) {
-                if (!hostingContext.contextID)
+            videoElement.requestHostingContext()->whenSettled(RunLoop::mainSingleton(), [protectedThis = Ref { *this }, videoElement = Ref { videoElement }, setupFullscreenHandler = WTF::move(setupFullscreen)](auto&& result) {
+                if (!result)
                     return;
-                setupFullscreenHandler(hostingContext, FloatSize(videoElement->videoWidth(), videoElement->videoHeight()));
+                ASSERT(result->contextID);
+                setupFullscreenHandler(*result, FloatSize(videoElement->videoWidth(), videoElement->videoHeight()));
             });
             return;
         }

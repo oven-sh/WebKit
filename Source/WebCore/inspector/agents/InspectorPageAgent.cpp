@@ -62,6 +62,7 @@
 #include "MemoryCache.h"
 #include "Page.h"
 #include "PageInspectorController.h"
+#include "PageRuntimeAgent.h"
 #include "RemoteFrame.h"
 #include "RenderObjectInlines.h"
 #include "RenderTheme.h"
@@ -159,15 +160,23 @@ Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::disable()
 
     auto& inspectedPageSettings = m_inspectedPage->settings();
     inspectedPageSettings.setAuthorAndUserStylesEnabledInspectorOverride(std::nullopt);
+    inspectedPageSettings.setFixedBackgroundsPaintRelativeToDocumentInspectorOverride(std::nullopt);
+    inspectedPageSettings.setFullScreenEnabledInspectorOverride(std::nullopt);
     inspectedPageSettings.setICECandidateFilteringEnabledInspectorOverride(std::nullopt);
     inspectedPageSettings.setImagesEnabledInspectorOverride(std::nullopt);
+    inspectedPageSettings.setInputTypeMonthEnabledInspectorOverride(std::nullopt);
+    inspectedPageSettings.setInputTypeWeekEnabledInspectorOverride(std::nullopt);
     inspectedPageSettings.setMediaCaptureRequiresSecureConnectionInspectorOverride(std::nullopt);
     inspectedPageSettings.setMockCaptureDevicesEnabledInspectorOverride(std::nullopt);
     inspectedPageSettings.setNeedsSiteSpecificQuirksInspectorOverride(std::nullopt);
+    inspectedPageSettings.setNotificationsEnabledInspectorOverride(std::nullopt);
+    inspectedPageSettings.setPointerLockEnabledInspectorOverride(std::nullopt);
+    inspectedPageSettings.setPushAPIEnabledInspectorOverride(std::nullopt);
     inspectedPageSettings.setScriptEnabledInspectorOverride(std::nullopt);
     inspectedPageSettings.setShowDebugBordersInspectorOverride(std::nullopt);
     inspectedPageSettings.setShowRepaintCounterInspectorOverride(std::nullopt);
     inspectedPageSettings.setWebSecurityEnabledInspectorOverride(std::nullopt);
+
     inspectedPageSettings.setForcedPrefersReducedMotionAccessibilityValue(ForcedAccessibilityValue::System);
     inspectedPageSettings.setForcedPrefersContrastAccessibilityValue(ForcedAccessibilityValue::System);
 
@@ -220,6 +229,14 @@ Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::overrideSetting(Ins
         inspectedPageSettings.setAuthorAndUserStylesEnabledInspectorOverride(value);
         return { };
 
+    case Inspector::Protocol::Page::Setting::FixedBackgroundsPaintRelativeToDocument:
+        inspectedPageSettings.setFixedBackgroundsPaintRelativeToDocumentInspectorOverride(value);
+        return { };
+
+    case Inspector::Protocol::Page::Setting::FullScreenEnabled:
+        inspectedPageSettings.setFullScreenEnabledInspectorOverride(value);
+        return { };
+
     case Inspector::Protocol::Page::Setting::ICECandidateFilteringEnabled:
         inspectedPageSettings.setICECandidateFilteringEnabledInspectorOverride(value);
         return { };
@@ -230,6 +247,14 @@ Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::overrideSetting(Ins
 
     case Inspector::Protocol::Page::Setting::ImagesEnabled:
         inspectedPageSettings.setImagesEnabledInspectorOverride(value);
+        return { };
+
+    case Inspector::Protocol::Page::Setting::InputTypeMonthEnabled:
+        inspectedPageSettings.setInputTypeMonthEnabledInspectorOverride(value);
+        return { };
+
+    case Inspector::Protocol::Page::Setting::InputTypeWeekEnabled:
+        inspectedPageSettings.setInputTypeWeekEnabledInspectorOverride(value);
         return { };
 
     case Inspector::Protocol::Page::Setting::MediaCaptureRequiresSecureConnection:
@@ -244,6 +269,18 @@ Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::overrideSetting(Ins
     case Inspector::Protocol::Page::Setting::NeedsSiteSpecificQuirks:
         inspectedPageSettings.setNeedsSiteSpecificQuirksInspectorOverride(value);
         m_client->setDeveloperPreferenceOverride(InspectorBackendClient::DeveloperPreference::NeedsSiteSpecificQuirks, value);
+        return { };
+
+    case Inspector::Protocol::Page::Setting::NotificationsEnabled:
+        inspectedPageSettings.setNotificationsEnabledInspectorOverride(value);
+        return { };
+
+    case Inspector::Protocol::Page::Setting::PointerLockEnabled:
+        inspectedPageSettings.setPointerLockEnabledInspectorOverride(value);
+        return { };
+
+    case Inspector::Protocol::Page::Setting::PushAPIEnabled:
+        inspectedPageSettings.setPushAPIEnabledInspectorOverride(value);
         return { };
 
     case Inspector::Protocol::Page::Setting::ScriptEnabled:
@@ -458,7 +495,7 @@ static std::optional<Cookie> parseCookieObject(Inspector::Protocol::ErrorString&
         return std::nullopt;
     }
 
-    cookie.session = *session;
+    cookie.session = session.value_or(false);
 
     auto sameSiteString = cookieObject->getString("sameSite"_s);
     if (!sameSiteString) {
@@ -546,20 +583,27 @@ void InspectorPageAgent::getResourceTree(Ref<GetResourceTreeCallback>&& callback
     callback->sendSuccess(buildObjectForFrameTree(localMainFrame.get()));
 }
 
-Inspector::Protocol::ErrorStringOr<std::tuple<String, bool /* base64Encoded */>> InspectorPageAgent::getResourceContent(const Inspector::Protocol::Network::FrameId& frameId, const String& url)
+void InspectorPageAgent::getResourceContent(const Inspector::Protocol::Network::FrameId& frameId, const String& url, Ref<GetResourceContentCallback>&& callback)
 {
     Inspector::Protocol::ErrorString errorString;
 
     RefPtr frame = assertFrame(errorString, frameId);
-    if (!frame)
-        return makeUnexpected(errorString);
+    if (!frame) {
+        callback->sendFailure(errorString);
+        return;
+    }
 
     String content;
-    bool base64Encoded;
+    bool base64Encoded = false;
 
-    ResourceUtilities::resourceContent(errorString, frame, URL({ }, url), &content, &base64Encoded);
+    // Behavior is identical to the previous synchronous implementation: on a resource-lookup
+    // miss resourceContent() sets errorString but leaves content empty, and we still report
+    // success with that empty content (the frontend tolerates empty content on this path).
+    // Only the return mechanism changed (sync tuple -> async callback) for the Page.json
+    // "async" flip required by ProxyingPageAgent's cross-process implementation.
+    ResourceUtilities::resourceContent(errorString, frame.get(), URL({ }, url), &content, &base64Encoded);
 
-    return { { content, base64Encoded } };
+    callback->sendSuccess(content, base64Encoded);
 }
 
 Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::setBootstrapScript(const String& source)
@@ -569,7 +613,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::setBootstrapScript(
     return { };
 }
 
-Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::GenericTypes::SearchMatch>>> InspectorPageAgent::searchInResource(const Inspector::Protocol::Network::FrameId& frameId, const String& url, const String& query, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, const Inspector::Protocol::Network::RequestId& requestId)
+void InspectorPageAgent::searchInResource(const Inspector::Protocol::Network::FrameId& frameId, const String& url, const String& query, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, const Inspector::Protocol::Network::RequestId& requestId, Ref<SearchInResourceCallback>&& callback)
 {
     Inspector::Protocol::ErrorString errorString;
 
@@ -577,29 +621,36 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::Generi
         if (CheckedPtr networkAgent = Ref { m_instrumentingAgents.get() }->enabledNetworkAgent()) {
             RefPtr<JSON::ArrayOf<Inspector::Protocol::GenericTypes::SearchMatch>> result;
             networkAgent->searchInRequest(errorString, requestId, query, caseSensitive && *caseSensitive, isRegex && *isRegex, result);
-            if (!result)
-                return makeUnexpected(errorString);
-            return result.releaseNonNull();
+            if (!result) {
+                callback->sendFailure(errorString);
+                return;
+            }
+            callback->sendSuccess(result.releaseNonNull());
+            return;
         }
     }
 
     RefPtr frame = assertFrame(errorString, frameId);
-    if (!frame)
-        return makeUnexpected(errorString);
+    if (!frame) {
+        callback->sendFailure(errorString);
+        return;
+    }
 
-    RefPtr loader = ResourceUtilities::assertDocumentLoader(errorString, frame);
-    if (!loader)
-        return makeUnexpected(errorString);
+    RefPtr loader = ResourceUtilities::assertDocumentLoader(errorString, frame.get());
+    if (!loader) {
+        callback->sendFailure(errorString);
+        return;
+    }
 
     URL kurl({ }, url);
 
     String content;
     bool success = false;
     if (equalIgnoringFragmentIdentifier(kurl, loader->url()))
-        success = ResourceUtilities::mainResourceContent(frame, false, &content);
+        success = ResourceUtilities::mainResourceContent(frame.get(), false, &content);
 
     if (!success) {
-        if (RefPtr resource = ResourceUtilities::cachedResource(frame, kurl)) {
+        if (RefPtr resource = ResourceUtilities::cachedResource(frame.get(), kurl)) {
             if (auto textContent = ResourceUtilities::textContentForCachedResource(*resource)) {
                 content = *textContent;
                 success = true;
@@ -607,10 +658,12 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::Generi
         }
     }
 
-    if (!success)
-        return JSON::ArrayOf<Inspector::Protocol::GenericTypes::SearchMatch>::create();
+    if (!success) {
+        callback->sendSuccess(JSON::ArrayOf<Inspector::Protocol::GenericTypes::SearchMatch>::create());
+        return;
+    }
 
-    return ContentSearchUtilities::searchInTextByLines(content, query, caseSensitive && *caseSensitive, isRegex && *isRegex);
+    callback->sendSuccess(ContentSearchUtilities::searchInTextByLines(content, query, caseSensitive && *caseSensitive, isRegex && *isRegex));
 }
 
 static Ref<Inspector::Protocol::Page::SearchResult> buildObjectForSearchResult(const Inspector::Protocol::Network::FrameId& frameId, const String& url, int matchesCount)
@@ -622,7 +675,7 @@ static Ref<Inspector::Protocol::Page::SearchResult> buildObjectForSearchResult(c
         .release();
 }
 
-Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::Page::SearchResult>>> InspectorPageAgent::searchInResources(const String& text, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex)
+void InspectorPageAgent::searchInResources(const String& text, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, Ref<SearchInResourcesCallback>&& callback)
 {
     auto result = JSON::ArrayOf<Inspector::Protocol::Page::SearchResult>::create();
 
@@ -635,11 +688,11 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::Page::
         RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
         if (!localFrame)
             continue;
-        for (RefPtr cachedResource : ResourceUtilities::cachedResourcesForFrame(localFrame)) {
+        for (RefPtr cachedResource : ResourceUtilities::cachedResourcesForFrame(localFrame.get())) {
             if (auto textContent = ResourceUtilities::textContentForCachedResource(*cachedResource)) {
                 int matchesCount = ContentSearchUtilities::countRegularExpressionMatches(regex, *textContent);
                 if (matchesCount)
-                    result->addItem(buildObjectForSearchResult(frameId(localFrame), cachedResource->url().string(), matchesCount));
+                    result->addItem(buildObjectForSearchResult(frameId(localFrame.get()), cachedResource->url().string(), matchesCount));
             }
         }
     }
@@ -647,7 +700,7 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::Page::
     if (CheckedPtr networkAgent = Ref { m_instrumentingAgents.get() }->enabledNetworkAgent())
         networkAgent->searchOtherRequests(regex, result);
 
-    return result;
+    callback->sendSuccess(WTF::move(result));
 }
 
 #if !PLATFORM(IOS_FAMILY)
@@ -739,7 +792,7 @@ void InspectorPageAgent::defaultUserPreferencesDidChange()
 
     defaultUserPreferences->addItem(WTF::move(prefersReducedMotionUserPreference));
 
-    bool prefersContrast = Theme::singleton().userPrefersContrast();
+    bool prefersContrast = Theme::singleton().userPreferredContrast() == InterfaceContrastPreference::MoreContrast;
 
     auto prefersContrastUserPreference = Inspector::Protocol::Page::UserPreference::create()
         .setName(Inspector::Protocol::Page::UserPreferenceName::PrefersContrast)
@@ -774,6 +827,11 @@ void InspectorPageAgent::didClearWindowObjectInWorld(LocalFrame& frame, DOMWrapp
 
     if (m_bootstrapScript.isEmpty())
         return;
+
+    if (auto* pageRuntimeAgent = Ref { m_instrumentingAgents.get() }->enabledPageRuntimeAgent()) {
+        if (pageRuntimeAgent->ignoreDidClearWindowObject())
+            return;
+    }
 
     frame.script().evaluateIgnoringException(ScriptSourceCode(m_bootstrapScript, JSC::SourceTaintedOrigin::Untainted, URL { "web-inspector://bootstrap.js"_str }));
 }

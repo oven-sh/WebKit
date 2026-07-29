@@ -14,10 +14,10 @@
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/TextureInfo.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTPin.h"
-#include "src/base/SkMathPriv.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTPin.h"
+#include "src/core/SkMathPriv.h"
 #include "src/core/SkSwizzlePriv.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/MaskFormat.h"
@@ -184,21 +184,11 @@ bool DrawAtlas::recordUploads(DrawContext* dc, Recorder* recorder) {
                     continue;
                 }
 
-                std::vector<MipLevel> levels;
-                levels.push_back({dataPtr, plot->rowBytes()});
-
+                MipLevel level{dataPtr, plot->rowBytes()};
                 const UploadSource uploadSource = UploadSource::Make(
-                        recorder->priv().caps(), view, colorInfo, colorInfo, levels, dstRect);
-                if (!uploadSource.isValid()) {
-                    return false;
-                }
-                if (!dc->recordUpload(recorder,
-                                      view,
-                                      colorInfo,
-                                      colorInfo,
-                                      uploadSource,
-                                      dstRect,
-                                      /*ConditionalUploadContext=*/nullptr)) {
+                        recorder->priv().caps(), view, colorInfo, colorInfo,
+                        SkSpan(&level, 1), dstRect);
+                if (!dc->recordUpload(recorder, uploadSource)) {
                     return false;
                 }
             }

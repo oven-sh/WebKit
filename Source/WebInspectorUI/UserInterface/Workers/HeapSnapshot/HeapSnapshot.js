@@ -257,10 +257,10 @@ HeapSnapshot = class HeapSnapshot
 
             let classNameTableIndex = nodes[nodeIndex + nodeClassNameOffset];
             if (nodeClassNamesTable[classNameTableIndex] === className)
-                instances.push(nodeIndex);
+                instances.push(snapshot.serializeNode(nodeIndex));
         }
 
-        return instances.map(snapshot.serializeNode, snapshot);
+        return instances;
     }
 
     // Worker Methods
@@ -331,10 +331,10 @@ HeapSnapshot = class HeapSnapshot
         let targetNodeOrdinal = this._nodeIdentifierToOrdinal.get(nodeIdentifier);
         for (let nodeOrdinal = 0; nodeOrdinal < this._nodeCount; ++nodeOrdinal) {
             if (this._nodeOrdinalToDominatorNodeOrdinal[nodeOrdinal] === targetNodeOrdinal)
-                dominatedNodes.push(nodeOrdinal * this._nodeFieldCount);
+                dominatedNodes.push(this.serializeNode(nodeOrdinal * this._nodeFieldCount));
         }
 
-        return dominatedNodes.map(this.serializeNode, this);
+        return dominatedNodes;
     }
 
     retainedNodes(nodeIdentifier)
@@ -348,14 +348,11 @@ HeapSnapshot = class HeapSnapshot
             let toNodeIdentifier = this._edges[edgeIndex + edgeToIdOffset];
             let toNodeOrdinal = this._nodeIdentifierToOrdinal.get(toNodeIdentifier);
             let toNodeIndex = toNodeOrdinal * this._nodeFieldCount;
-            retainedNodes.push(toNodeIndex);
-            edges.push(edgeIndex);
+            retainedNodes.push(this.serializeNode(toNodeIndex));
+            edges.push(this.serializeEdge(edgeIndex));
         }
 
-        return {
-            retainedNodes: retainedNodes.map(this.serializeNode, this),
-            edges: edges.map(this.serializeEdge, this),
-        };
+        return {retainedNodes, edges};
     }
 
     retainers(nodeIdentifier)
@@ -369,14 +366,11 @@ HeapSnapshot = class HeapSnapshot
         for (let edgeIndex = incomingEdgeIndex; edgeIndex < incomingEdgeIndexEnd; ++edgeIndex) {
             let fromNodeOrdinal = this._incomingNodes[edgeIndex];
             let fromNodeIndex = fromNodeOrdinal * this._nodeFieldCount;
-            retainers.push(fromNodeIndex);
-            edges.push(this._incomingEdges[edgeIndex]);
+            retainers.push(this.serializeNode(fromNodeIndex));
+            edges.push(this.serializeEdge(this._incomingEdges[edgeIndex]));
         }
 
-        return {
-            retainers: retainers.map(this.serializeNode, this),
-            edges: edges.map(this.serializeEdge, this),
-        };
+        return {retainers, edges};
     }
 
     updateDeadNodesAndGatherCollectionData(snapshots)
@@ -401,8 +395,12 @@ HeapSnapshot = class HeapSnapshot
         }
 
         // Determine which node identifiers have since been deleted.
+        // Walk the previous snapshot using its own field count. This snapshot and the
+        // previous one may have been serialized with different layouts (e.g. an "Inspector"
+        // snapshot has 4 fields per node while a "GCDebugging" snapshot has 7), so striding
+        // by this._nodeFieldCount would read node identifiers from misaligned offsets.
         let collectedNodesList = [];
-        for (let nodeIndex = 0; nodeIndex < previousSnapshot._nodes.length; nodeIndex += this._nodeFieldCount) {
+        for (let nodeIndex = 0; nodeIndex < previousSnapshot._nodes.length; nodeIndex += previousSnapshot._nodeFieldCount) {
             let nodeIdentifier = previousSnapshot._nodes[nodeIndex + nodeIdOffset];
             let wasDeleted = !known.has(nodeIdentifier);
             if (wasDeleted)

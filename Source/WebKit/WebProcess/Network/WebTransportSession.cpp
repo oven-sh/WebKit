@@ -31,7 +31,10 @@
 #include "NetworkProcessConnection.h"
 #include "NetworkTransportSessionMessages.h"
 #include "WebProcess.h"
+#include <WebCore/ContentSecurityPolicy.h>
+#include <WebCore/Document.h>
 #include <WebCore/Exception.h>
+#include <WebCore/ScriptExecutionContext.h>
 #include <WebCore/WebTransportConnectionInfo.h>
 #include <WebCore/WebTransportConnectionStats.h>
 #include <WebCore/WebTransportOptions.h>
@@ -40,26 +43,20 @@
 #include <WebCore/WebTransportSessionClient.h>
 #include <wtf/Ref.h>
 #include <wtf/RunLoop.h>
+#include <wtf/text/TextPosition.h>
 
 namespace WebKit {
 
-std::pair<Ref<WebTransportSession>, Ref<WebCore::WebTransportSessionPromise>> WebTransportSession::initialize(Ref<IPC::Connection>&& connection, ThreadSafeWeakPtr<WebCore::WebTransportSessionClient>&& client, const URL& url, const WebCore::WebTransportOptions& options, const WebPageProxyIdentifier& pageID, const WebCore::ClientOrigin& clientOrigin)
+Ref<WebTransportSession> WebTransportSession::create(Ref<IPC::Connection>&& connection, ThreadSafeWeakPtr<WebCore::WebTransportSessionClient>&& client, const WebPageProxyIdentifier& pageID)
 {
-    auto identifier = WebTransportSessionIdentifier::generate();
-    return {
-        adoptRef(*new WebTransportSession(connection.copyRef(), WTF::move(client), identifier)),
-        connection->sendWithPromisedReply(Messages::NetworkConnectionToWebProcess::InitializeWebTransportSession(identifier, url, options, pageID, clientOrigin))->whenSettled(RunLoop::mainSingleton(), [] (auto&& result) {
-            if (result && *result)
-                return WebCore::WebTransportSessionPromise::createAndResolve(WTF::move(**result));
-            return WebCore::WebTransportSessionPromise::createAndReject();
-        })
-    };
+    return adoptRef(*new WebTransportSession(connection.copyRef(), WTF::move(client), WebTransportSessionIdentifier::generate(), pageID));
 }
 
-WebTransportSession::WebTransportSession(Ref<IPC::Connection>&& connection, ThreadSafeWeakPtr<WebCore::WebTransportSessionClient>&& client, WebTransportSessionIdentifier identifier)
+WebTransportSession::WebTransportSession(Ref<IPC::Connection>&& connection, ThreadSafeWeakPtr<WebCore::WebTransportSessionClient>&& client, WebTransportSessionIdentifier identifier, WebPageProxyIdentifier pageID)
     : m_connection(WTF::move(connection))
     , m_client(WTF::move(client))
     , m_identifier(identifier)
+    , m_pageID(pageID)
 {
     WebProcess::singleton().addWebTransportSession(m_identifier, *this);
 }
@@ -136,6 +133,20 @@ void WebTransportSession::didDrain()
         strongClient->didDrain();
 }
 
+Ref<WebCore::WebTransportSessionInitializationPromise> WebTransportSession::initialize(WebCore::ScriptExecutionContext& context, const URL& url, const WebCore::WebTransportOptions& options, const WebCore::ClientOrigin& origin)
+{
+    std::optional<TextPosition> sourcePosition;
+    if (RefPtr document = dynamicDowncast<WebCore::Document>(context))
+        sourcePosition = document->currentParserSourcePosition();
+    if (CheckedPtr csp = context.contentSecurityPolicy(); !csp || !csp->allowConnectToSource(url, WTF::move(sourcePosition)))
+        return WebCore::WebTransportSessionInitializationPromise::createAndReject();
+    return sendWithPromisedReply(Messages::NetworkConnectionToWebProcess::InitializeWebTransportSession(m_identifier, url, options, m_pageID, origin))->whenSettled(RunLoop::mainSingleton(), [] (auto&& result) {
+        if (result && *result)
+            return WebCore::WebTransportSessionInitializationPromise::createAndResolve(WTF::move(**result));
+        return WebCore::WebTransportSessionInitializationPromise::createAndReject();
+    });
+}
+
 Ref<WebCore::WebTransportSendPromise> WebTransportSession::sendDatagram(std::optional<WebCore::WebTransportSendGroupIdentifier> identifier, std::span<const uint8_t> datagram)
 {
     return sendWithPromisedReply(Messages::NetworkTransportSession::SendDatagram(identifier, datagram))->whenSettled(RunLoop::mainSingleton(), [] (auto&& exception) {
@@ -170,9 +181,9 @@ Ref<WebCore::WebTransportConnectionStatsPromise> WebTransportSession::getStats()
 {
     return sendWithPromisedReply(Messages::NetworkTransportSession::GetStats())->whenSettled(RunLoop::mainSingleton(), [] (auto&& stats) mutable {
         ASSERT(RunLoop::isMain());
-        if (!stats)
+        if (!stats || !*stats)
             return WebCore::WebTransportConnectionStatsPromise::createAndReject();
-        return WebCore::WebTransportConnectionStatsPromise::createAndResolve(WTF::move(*stats));
+        return WebCore::WebTransportConnectionStatsPromise::createAndResolve(WTF::move(**stats));
     });
 }
 
@@ -203,6 +214,16 @@ Ref<WebCore::WebTransportSendStreamStatsPromise> WebTransportSession::getSendGro
         if (!stats || !*stats)
             return WebCore::WebTransportSendStreamStatsPromise::createAndReject();
         return WebCore::WebTransportSendStreamStatsPromise::createAndResolve(WTF::move(**stats));
+    });
+}
+
+Ref<WebCore::WebTransportExportKeyingMaterialPromise> WebTransportSession::exportKeyingMaterial(std::span<const uint8_t> label, std::span<const uint8_t> context, uint32_t outputLength)
+{
+    return sendWithPromisedReply(Messages::NetworkTransportSession::ExportKeyingMaterial(label, context, outputLength))->whenSettled(RunLoop::mainSingleton(), [] (auto&& keyingMaterial) mutable {
+        ASSERT(RunLoop::isMain());
+        if (!keyingMaterial || !*keyingMaterial)
+            return WebCore::WebTransportExportKeyingMaterialPromise::createAndReject();
+        return WebCore::WebTransportExportKeyingMaterialPromise::createAndResolve(WTF::move(**keyingMaterial));
     });
 }
 
@@ -245,14 +266,14 @@ void WebTransportSession::datagramOutgoingMaxAgeUpdated(std::optional<double> ma
     send(Messages::NetworkTransportSession::DatagramOutgoingMaxAgeUpdated(maxAge));
 }
 
-void WebTransportSession::datagramIncomingHighWaterMarkUpdated(double watermark)
+void WebTransportSession::incomingMaxBufferedDatagramsUpdated(uint32_t value)
 {
-    send(Messages::NetworkTransportSession::DatagramIncomingHighWaterMarkUpdated(watermark));
+    send(Messages::NetworkTransportSession::IncomingMaxBufferedDatagramsUpdated(value));
 }
 
-void WebTransportSession::datagramOutgoingHighWaterMarkUpdated(double watermark)
+void WebTransportSession::outgoingMaxBufferedDatagramsUpdated(uint32_t value)
 {
-    send(Messages::NetworkTransportSession::DatagramOutgoingHighWaterMarkUpdated(watermark));
+    send(Messages::NetworkTransportSession::OutgoingMaxBufferedDatagramsUpdated(value));
 }
 
 }

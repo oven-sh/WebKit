@@ -9,46 +9,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 endif ()
 
-set(WebCore_POST_BUILD_COMMAND
-    codesign --force --sign - ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework
-)
-
 make_directory("${CMAKE_BINARY_DIR}/WebCore/Modules")
 configure_file(${WEBCORE_DIR}/WebCore.modulemap ${CMAKE_BINARY_DIR}/WebCore/Modules/module.modulemap COPYONLY)
-set(_webcore_fw "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework")
-if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    make_directory("${_webcore_fw}")
-    if (NOT EXISTS "${_webcore_fw}/PrivateHeaders")
-        file(CREATE_LINK "${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore"
-                         "${_webcore_fw}/PrivateHeaders" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/Modules")
-        file(CREATE_LINK "${CMAKE_BINARY_DIR}/WebCore/Modules"
-                         "${_webcore_fw}/Modules" SYMBOLIC)
-    endif ()
-else ()
-    make_directory("${_webcore_fw}/Versions/A")
-    if (NOT EXISTS "${_webcore_fw}/Versions/Current")
-        file(CREATE_LINK "A" "${_webcore_fw}/Versions/Current" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/Versions/A/PrivateHeaders")
-        file(CREATE_LINK "${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore"
-                         "${_webcore_fw}/Versions/A/PrivateHeaders" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/Versions/A/Modules")
-        file(CREATE_LINK "${CMAKE_BINARY_DIR}/WebCore/Modules"
-                         "${_webcore_fw}/Versions/A/Modules" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/PrivateHeaders")
-        file(CREATE_LINK "Versions/Current/PrivateHeaders"
-                         "${_webcore_fw}/PrivateHeaders" SYMBOLIC)
-    endif ()
-    if (NOT EXISTS "${_webcore_fw}/Modules")
-        file(CREATE_LINK "Versions/Current/Modules"
-                         "${_webcore_fw}/Modules" SYMBOLIC)
-    endif ()
-endif ()
-unset(_webcore_fw)
+configure_file(${WEBCORE_DIR}/WebCore_Private.modulemap ${CMAKE_BINARY_DIR}/WebCore/Modules/module.private.modulemap COPYONLY)
 
 target_compile_options(WebCore PRIVATE
     "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/WebCorePrefix.h>")
@@ -101,6 +64,11 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         "SourcesCMakeCocoa.txt"
     )
 endif ()
+if (USE_APPLE_INTERNAL_SDK)
+    list(APPEND WebCore_UNIFIED_SOURCE_LIST_FILES
+        "SourcesCocoaInternalSDK.txt"
+    )
+endif ()
 
 list(APPEND WebCore_LIBRARIES
     ${ACCELERATE_LIBRARY}
@@ -123,6 +91,16 @@ list(APPEND WebCore_LIBRARIES
     ${VIDEOTOOLBOX_LIBRARY}
     ${XML2_LIBRARY}
 )
+
+if (USE_APPLE_INTERNAL_SDK AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
+    # FIXME: WebCore's precompiled header, when built with -fpch-codegen,
+    # compiles an inline function from CoreGraphics which references a symbol
+    # from libCrashReporterClient. Work around by linking aginst the library,
+    # but really, it's hazardous for WebCore to generate code from other system
+    # libraries, and we should find away to keep these out of the prefix.
+    # Debug-only because the code is dead-stripped in Release.
+    list(APPEND WebCore_LIBRARIES -lCrashReporterClient)
+endif ()
 
 if (ACCESSIBILITYSUPPORT_LIBRARY)
     list(APPEND WebCore_LIBRARIES ${ACCESSIBILITYSUPPORT_LIBRARY})
@@ -375,6 +353,7 @@ list(APPEND WebCore_SOURCES
     platform/graphics/avfoundation/objc/VideoTrackPrivateMediaSourceAVFObjC.mm
     platform/graphics/avfoundation/objc/WebCoreAVFResourceLoader.mm
 
+    platform/graphics/ca/FrameProcessIndicators.cpp
     platform/graphics/ca/GraphicsLayerCA.cpp
     platform/graphics/ca/LayerPool.cpp
     platform/graphics/ca/PlatformCAAnimation.cpp
@@ -791,7 +770,7 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
     html/HTMLArticleElement.h
     html/HTMLAudioElement.h
     html/Origin.h
-    html/PDFDocument.h
+    html/PDFJSDocument.h
 
     layout/FormattingState.h
 
@@ -809,8 +788,6 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingContext.h
     layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingQuirks.h
 
-    layout/formattingContexts/flex/FlexFormattingContext.h
-    layout/formattingContexts/flex/FlexFormattingUtils.h
 
     layout/formattingContexts/grid/AxisConstraint.h
     layout/formattingContexts/grid/GridAreaLines.h
@@ -842,8 +819,6 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     layout/integration/LayoutIntegrationBoxGeometryUpdater.h
     layout/integration/LayoutIntegrationBoxTreeUpdater.h
-
-    layout/integration/flex/LayoutIntegrationFlexLayout.h
 
     layout/integration/grid/LayoutIntegrationGridLayout.h
 
@@ -1164,6 +1139,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/avfoundation/objc/MediaSampleAVFObjC.h
     platform/graphics/avfoundation/objc/VideoLayerManagerObjC.h
 
+    platform/graphics/ca/FrameProcessIndicators.h
     platform/graphics/ca/GraphicsLayerCA.h
     platform/graphics/ca/LayerPool.h
     platform/graphics/ca/PlatformCAAnimation.h
@@ -1209,6 +1185,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cocoa/HEVCUtilitiesCocoa.h
     platform/graphics/cocoa/IOSurface.h
     platform/graphics/cocoa/IOSurfaceDrawingBuffer.h
+    platform/graphics/cocoa/ISOBMFFTrackInfoParser.h
     platform/graphics/cocoa/MediaPlayerEnumsCocoa.h
     platform/graphics/cocoa/NullPlaybackSessionInterface.h
     platform/graphics/cocoa/NullVideoPresentationInterface.h

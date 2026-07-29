@@ -25,26 +25,23 @@
 
 #pragma once
 
-#include "UIProcess/Media/RemoteMediaSessionManagerProxy.h"
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
 
-#include "RemoteMediaSessionClientProxy.h"
-#include "RemoteMediaSessionManagerProxy.h"
+#include "MessageSender.h"
 #include "RemoteMediaSessionState.h"
 #include <WebCore/PlatformMediaSession.h>
 
 namespace WebKit {
-class RemoteMediaSessionManagerProxy;
+
+class RemoteMediaSessionClientProxy;
+class WebProcessProxy;
 
 class RemoteMediaSessionProxy final
-    : public WebCore::PlatformMediaSession {
+    : public WebCore::PlatformMediaSession
+    , public IPC::MessageSender {
     WTF_MAKE_TZONE_ALLOCATED(RemoteMediaSessionProxy);
 public:
-    static Ref<RemoteMediaSessionProxy> create(RemoteMediaSessionState& state, RemoteMediaSessionManagerProxy& manager)
-    {
-        return adoptRef(*new RemoteMediaSessionProxy(state, manager));
-    }
-
+    static Ref<RemoteMediaSessionProxy> create(RemoteMediaSessionState&, WebProcessProxy&);
     ~RemoteMediaSessionProxy();
 
     void updateState(const RemoteMediaSessionState&);
@@ -52,10 +49,8 @@ public:
     WebCore::MediaSessionIdentifier sessionIdentifier() const { return m_sessionState.sessionIdentifier; }
     WebCore::PageIdentifier pageIdentifier() const { return m_sessionState.pageIdentifier; }
 
-    WeakPtr<RemoteMediaSessionManagerProxy> manager() const { return m_manager; }
-
 private:
-    RemoteMediaSessionProxy(const RemoteMediaSessionState&, RemoteMediaSessionManagerProxy&);
+    RemoteMediaSessionProxy(Ref<RemoteMediaSessionClientProxy>&&, const RemoteMediaSessionState&, WebProcessProxy&);
 
     WebCore::PlatformMediaSessionState state() const  final { return m_sessionState.state; }
     void setState(WebCore::PlatformMediaSessionState) final;
@@ -81,12 +76,16 @@ private:
 
     bool isRemoteSessionProxy() const final { return true; }
 
+    IPC::Connection* messageSenderConnection() const final;
+    uint64_t messageSenderDestinationID() const final;
+
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const { return m_logger; }
     uint64_t logIdentifier() const { return m_sessionState.logIdentifier; }
 #endif
 
-    WeakPtr<RemoteMediaSessionManagerProxy> m_manager;
+    const Ref<RemoteMediaSessionClientProxy> m_client;
+    const WeakPtr<WebProcessProxy> m_process;
     RemoteMediaSessionState m_sessionState;
 #if !RELEASE_LOG_DISABLED
     const Ref<const Logger> m_logger;

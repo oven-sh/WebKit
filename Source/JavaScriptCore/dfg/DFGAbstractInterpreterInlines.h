@@ -37,6 +37,9 @@
 #include "DOMJITCallDOMGetterSnippet.h"
 #include "DOMJITGetterSetter.h"
 #include "DOMJITSignature.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIDFG.h"
+#endif
 #include "FunctionPrototype.h"
 #include "GetByStatus.h"
 #include "GetterSetter.h"
@@ -1640,7 +1643,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
     case StringSubstring:
     case StringSlice:
-    case StringSubstr: {
+    case StringSubstr:
+    case StringTrim: {
         setTypeForNode(node, SpecString);
         break;
     }
@@ -1767,14 +1771,13 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case IsObject:
     case IsCallable:
     case IsConstructor:
-    case IsCellWithType:
-    case IsTypedArrayView: {
+    case IsCellWithType: {
         AbstractValue& child = forNode(node->child1());
         if (child.value()) {
             bool constantWasSet = true;
             switch (node->op()) {
             case IsCellWithType:
-                setConstant(node, jsBoolean(child.value().isCell() && child.value().asCell()->type() == node->queriedType()));
+                setConstant(node, jsBoolean(child.value().isCell() && node->queriedType().contains(child.value().asCell()->type())));
                 break;
             case TypeOfIsUndefined:
                 setConstant(node, jsBoolean(
@@ -1835,9 +1838,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             case IsEmpty:
                 setConstant(node, jsBoolean(child.value().isEmpty()));
                 break;
-            case IsTypedArrayView:
-                setConstant(node, jsBoolean(child.value().isObject() && isTypedView(child.value().getObject()->type())));
-                break;
             default:
                 constantWasSet = false;
                 break;
@@ -1855,7 +1855,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                     std::optional<bool> result;
                     child.m_structure.forEach(
                         [&] (RegisteredStructure structure) {
-                            bool matched = structure->typeInfo().type() == node->queriedType();
+                            bool matched = node->queriedType().contains(structure->typeInfo().type());
                             if (!result)
                                 result = matched;
                             else {
@@ -2068,19 +2068,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             }
             break;
         }
-
-        case IsTypedArrayView:
-            if (!(child.m_type & ~SpecTypedArrayView)) {
-                setConstant(node, jsBoolean(true));
-                constantWasSet = true;
-                break;
-            }
-            if (!(child.m_type & SpecTypedArrayView)) {
-                setConstant(node, jsBoolean(false));
-                constantWasSet = true;
-                break;
-            }
-            break;
 
         default:
             break;
@@ -3433,6 +3420,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             
     case RegExpExec:
     case RegExpExecNonGlobalOrSticky:
+    case RegExpExecSticky:
         if (node->op() == RegExpExec) {
             // Even if we've proven known input types as RegExpObject and String,
             // accessing lastIndex is effectful if it's a global regexp.
@@ -4222,6 +4210,12 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case OpenAsyncFromSyncIterator: {
+        clobberWorld();
+        setTypeForNode(node, SpecObjectOther);
+        break;
+    }
+
     case ToObject:
     case CallObjectConstructor: {
         AbstractValue& source = forNode(node->child1());
@@ -4532,96 +4526,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case GetArgument:
         makeHeapTopForNode(node);
         break;
-
-    case TryGetById: {
-        // This is very adhoc, but @tryGetById is not used in user code, and it is used adhocly in very limited places.
-        // So adhoc one is fine.
-        AbstractValue& value = forNode(node->child1());
-        if (value.m_structure.isFinite()
-            && (node->child1().useKind() == CellUse || !(value.m_type & ~SpecCell))) {
-            if (RegisteredStructure structure = value.m_structure.onlyStructure()) {
-                JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
-                if (structure->typeInfo().type() == RegExpObjectType
-                    && !structure->hasPolyProto()
-                    && structure->storedPrototype() == globalObject->regExpPrototype()
-                    && !structure->isDictionary()
-                    && structure->propertyAccessesAreCacheable()
-                    && structure->propertyAccessesAreCacheableForAbsence()
-                    && m_graph.isWatchingRegExpPrimordialPropertiesWatchpoint(node)) {
-                    UniquedStringImpl* uid = node->cacheableIdentifier().uid();
-
-                    auto attemptToFold = [&](UniquedStringImpl* name, JSValue constant) -> bool {
-                        if (uid != name)
-                            return false;
-                        unsigned attributes;
-                        PropertyOffset offset = structure->getConcurrently(uid, attributes);
-                        if (isValidOffset(offset))
-                            return false;
-                        didFoldClobberWorld();
-                        setConstant(node, *m_graph.freeze(constant));
-                        return true;
-                    };
-
-                    if (attemptToFold(m_vm.propertyNames->exec.impl(), globalObject->regExpProtoExecFunction()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->flags.impl(), globalObject->regExpProtoFlagsGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->dotAll.impl(), globalObject->regExpProtoDotAllGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->global.impl(), globalObject->regExpProtoGlobalGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->hasIndices.impl(), globalObject->regExpProtoHasIndicesGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->ignoreCase.impl(), globalObject->regExpProtoIgnoreCaseGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->multiline.impl(), globalObject->regExpProtoMultilineGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->sticky.impl(), globalObject->regExpProtoStickyGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->unicode.impl(), globalObject->regExpProtoUnicodeGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->unicodeSets.impl(), globalObject->regExpProtoUnicodeSetsGetter()))
-                        break;
-
-                    if (attemptToFold(m_vm.propertyNames->replaceSymbol.impl(), globalObject->regExpProtoSymbolReplaceFunction()))
-                        break;
-                }
-                if (structure->typeInfo().type() == JSPromiseType
-                    && !structure->hasPolyProto()
-                    && structure->storedPrototype() == globalObject->promisePrototype()
-                    && !structure->isDictionary()
-                    && structure->propertyAccessesAreCacheable()
-                    && structure->propertyAccessesAreCacheableForAbsence()
-                    && m_graph.isWatchingPromiseThenWatchpoint(node)) {
-                    UniquedStringImpl* uid = node->cacheableIdentifier().uid();
-                    if (uid == m_vm.propertyNames->then.impl()) {
-                        unsigned attributes;
-                        PropertyOffset offset = structure->getConcurrently(uid, attributes);
-                        if (!isValidOffset(offset)) {
-                            didFoldClobberWorld();
-                            setConstant(node, *m_graph.freeze(globalObject->promiseProtoThenFunction()));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // FIXME: This should constant fold at least as well as the normal GetById case.
-        // https://bugs.webkit.org/show_bug.cgi?id=156422
-        clobberWorld();
-        makeHeapTopForNode(node);
-        break;
-    }
 
     case GetPrivateNameById:
     case GetByIdDirect:
@@ -5804,7 +5708,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
         ASSERT(signature->returnCount() == 1);
         auto type = signature->returnType(0);
-        switch (type.kind) {
+        switch (type.kind()) {
         case Wasm::TypeKind::I32: {
             setNonCellTypeForNode(node, SpecInt32Only);
             break;
@@ -5831,6 +5735,16 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             break;
         }
         }
+#endif
+        break;
+    }
+
+    case CallFFI: {
+#if USE(BUN_JSC_ADDITIONS)
+        clobberWorld();
+        setTypeForNode(node, FFI::speculatedResultTypeForCallFFI(node));
+#else
+        DFG_CRASH(m_graph, node, "Unexpected node type");
 #endif
         break;
     }
@@ -5964,6 +5878,11 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case EnqueueAsyncGeneratorDriver: {
+        clobberWorld();
+        break;
+    }
+
     case StoreBarrier:
     case FencedStoreBarrier: {
         filter(node->child1(), SpecCell);
@@ -5974,12 +5893,14 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         DataViewData data = node->dataViewData();
         if (data.byteSize < 4)
             setNonCellTypeForNode(node, SpecInt32Only);
-        else {
-            ASSERT(data.byteSize == 4);
+        else if (data.byteSize == 4) {
             if (data.isSigned)
                 setNonCellTypeForNode(node, SpecInt32Only);
             else
                 setNonCellTypeForNode(node, SpecInt52Any);
+        } else {
+            ASSERT(data.byteSize == 8);
+            setTypeForNode(node, SpecHeapBigInt);
         }
         break;
     }

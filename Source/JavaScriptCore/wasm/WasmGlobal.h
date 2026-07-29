@@ -73,6 +73,11 @@ public:
     Wasm::Type type() const { return m_type; }
     Wasm::Mutability mutability() const { return m_mutability; }
     JSValue get(JSGlobalObject*) const;
+    JSValue getReference() const
+    {
+        ASSERT(isRefType(m_type));
+        return m_value.m_externref.get();
+    }
     uint64_t getPrimitive() const { return m_value.m_primitive; }
     v128_t getVector() const { return m_value.m_vector; }
     void set(JSGlobalObject*, JSValue);
@@ -99,7 +104,7 @@ public:
 private:
     Global(Wasm::Type type, Wasm::Mutability mutability, uint64_t initialValue)
         : m_type(type)
-        , m_typeRTT(TypeInformation::tryGetRTT(type.index))
+        , m_typeRTT(TypeInformation::tryGetRTT(type.index()))
         , m_mutability(mutability)
     {
         ASSERT(m_type != Types::V128);
@@ -108,7 +113,7 @@ private:
 
     Global(Wasm::Type type, Wasm::Mutability mutability, v128_t initialValue)
         : m_type(type)
-        , m_typeRTT(TypeInformation::tryGetRTT(type.index))
+        , m_typeRTT(TypeInformation::tryGetRTT(type.index()))
         , m_mutability(mutability)
     {
         ASSERT(m_type == Types::V128);

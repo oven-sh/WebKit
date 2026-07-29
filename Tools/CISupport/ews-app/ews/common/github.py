@@ -219,13 +219,13 @@ class GitHubEWS(GitHub):
     STATUS_BUBBLE_ROWS = [['style', 'ios', 'mac', 'wpe', 'win'],  # FIXME: generate this list dynamically to have merge queue show up on top
                           ['bindings', 'ios-sim', 'mac-AS-debug', 'wpe-wk2', 'win-tests'],
                           ['webkitperl', 'ios-wk2', 'api-mac', 'api-wpe', ''],
-                          ['webkitpy', 'ios-wk2-wpt', 'api-mac-debug', 'gtk3-libwebrtc', ''],
-                          ['jsc-x86-64', 'api-ios', 'mac-wk2', 'gtk', ''],
-                          ['jsc-debug-arm64', 'ios-safer-cpp', 'mac-AS-debug-wk2', 'gtk-wk2', ''],
-                          ['services', 'vision', 'mac-wk2-stress', 'api-gtk', ''],
-                          ['merge', 'vision-sim', 'mac-intel-wk2', 'playstation', ''],
-                          ['unsafe-merge', 'vision-wk2', 'mac-safer-cpp', 'jsc-armv7', ''],
-                          ['', 'tv', 'mac-site-isolation', 'jsc-armv7-tests', ''],
+                          ['webkitpy', 'ios-wk2-wpt', 'api-mac-debug', 'jsc-wpe', ''],
+                          ['jsc-x86-64', 'api-ios', 'mac-wk2', 'gtk3-libwebrtc', ''],
+                          ['jsc-debug-arm64', 'ios-safer-cpp', 'mac-AS-debug-wk2', 'gtk', ''],
+                          ['services', 'vision', 'mac-wk2-stress', 'gtk-wk2', ''],
+                          ['merge', 'vision-sim', 'mac-intel-wk2', 'api-gtk', ''],
+                          ['unsafe-merge', 'vision-wk2', 'mac-safer-cpp', 'playstation', ''],
+                          ['', 'tv', 'mac-site-isolation', '', ''],
                           ['', 'tv-sim', '', '', ''],
                           ['', 'watch', '', '', ''],
                           ['', 'watch-sim', '', '', '']]
@@ -416,8 +416,12 @@ class GitHubEWS(GitHub):
             hover_over_text = 'Build is being retried. Recent messages:' + self._steps_messages(build)
             icon = GitHubEWS.ICON_BUILD_ONGOING
         elif build.result == Buildbot.EXCEPTION:
-            hover_over_text = 'An unexpected error occured. Recent messages:' + self._steps_messages(build)
             icon = GitHubEWS.ICON_BUILD_ERROR
+            exception_message = self._most_recent_exception_message(build)
+            if exception_message:
+                hover_over_text = 'An unexpected error occured in step: ' + exception_message
+            else:
+                hover_over_text = 'An unexpected error occured. Recent messages:' + self._steps_messages(build)
         else:
             icon = GitHubEWS.ICON_BUILD_ERROR
             hover_over_text = 'An unexpected error occured. Recent messages:' + self._steps_messages(build)
@@ -482,5 +486,11 @@ class GitHubEWS(GitHub):
             if step.result == Buildbot.SUCCESS and 'retrying build' in step.state_string:
                 return step.state_string
             if step.result == Buildbot.FAILURE:
+                return step.state_string
+        return ''
+
+    def _most_recent_exception_message(self, build):
+        for step in build.step_set.all().order_by('-uid'):
+            if step.result == Buildbot.EXCEPTION:
                 return step.state_string
         return ''

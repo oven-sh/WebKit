@@ -1,8 +1,6 @@
 param(
     [ValidateSet("x64", "ARM64")]
-    [string]$Platform = "x64",
-
-    [switch]$Baseline
+    [string]$Platform = "x64"
 )
 $ErrorActionPreference = "Stop"
 
@@ -45,10 +43,9 @@ $env:CXX = "clang-cl"
 
 if ($Platform -eq "ARM64") {
     $MarchFlag = "/clang:-march=armv8-a+crc /clang:-mtune=ampere1"
-} elseif ($Baseline) {
-    $MarchFlag = "/clang:-march=nehalem"
 } else {
-    $MarchFlag = "/clang:-march=haswell"
+    # One x64 floor. See windows-cross-release.sh for why the haswell variant went away.
+    $MarchFlag = "/clang:-march=nehalem"
 }
 Write-Host ":: WebKit codegen floor: $MarchFlag"
 
@@ -63,7 +60,7 @@ $ICU_STATIC_LIBRARY = Join-Path $ICU_STATIC_ROOT "lib"
 $ICU_STATIC_INCLUDE_DIR = Join-Path $ICU_STATIC_ROOT "include"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-& "$ScriptDir/build-icu.ps1" -Platform $Platform -BuildType $CMAKE_BUILD_TYPE -OutputDir $ICU_STATIC_ROOT -Baseline:$Baseline
+& "$ScriptDir/build-icu.ps1" -Platform $Platform -BuildType $CMAKE_BUILD_TYPE -OutputDir $ICU_STATIC_ROOT
 if ($LASTEXITCODE -ne 0) { throw "build-icu.ps1 failed with exit code $LASTEXITCODE" }
 
 Write-Host ":: Configuring WebKit"
@@ -141,7 +138,7 @@ foreach ($file in $batFiles) {
 }
 
 Write-Host ":: Building WebKit"
-cmake --build $WebKitBuild --config Release --target jsc --verbose
+cmake --build $WebKitBuild --config Release --target jsc --target testFFI --verbose
 if ($LASTEXITCODE -ne 0) { throw "cmake --build failed with exit code $LASTEXITCODE" }
 
 Write-Host ":: Packaging ${output}"

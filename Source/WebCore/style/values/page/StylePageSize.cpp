@@ -140,10 +140,9 @@ auto CSSValueConversion<PageSize>::operator()(BuilderState& state, const CSSValu
         RefPtr primitiveValueFirst = dynamicDowncast<CSSPrimitiveValue>(first);
         RefPtr primitiveValueSecond = dynamicDowncast<CSSPrimitiveValue>(second);
         if (primitiveValueFirst && primitiveValueSecond) {
-            auto conversionData = state.cssToLengthConversionData().copyWithAdjustedZoom(1.0f);
             return PageSize::Lengths {
-                toStyleFromCSSValue<Length<CSS::Nonnegative>>(conversionData, *primitiveValueFirst),
-                toStyleFromCSSValue<Length<CSS::Nonnegative>>(conversionData, *primitiveValueSecond),
+                toStyleFromCSSValue<Length<CSS::Nonnegative>>(state, *primitiveValueFirst),
+                toStyleFromCSSValue<Length<CSS::Nonnegative>>(state, *primitiveValueSecond),
             };
         }
 
@@ -162,8 +161,7 @@ auto CSSValueConversion<PageSize>::operator()(BuilderState& state, const CSSValu
     // <length [0,∞]> | auto | <page-size> | [ portrait | landscape]
     if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
         // <length [0,∞]>
-        auto conversionData = state.cssToLengthConversionData().copyWithAdjustedZoom(1.0f);
-        auto length = toStyleFromCSSValue<Length<CSS::Nonnegative>>(conversionData, *primitiveValue);
+        auto length = toStyleFromCSSValue<Length<CSS::Nonnegative>>(state, *primitiveValue);
         return PageSize::Lengths { length, length };
     }
 

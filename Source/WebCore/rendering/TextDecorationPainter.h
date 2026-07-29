@@ -27,7 +27,9 @@
 #include "GraphicsContext.h"
 #include "InlineTextBoxStyle.h"
 #include "RenderStyleConstants.h"
+#include "StyleTextDecorationInset.h"
 #include "StyleTextDecorationThickness.h"
+#include "StyleTextUnderlineOffset.h"
 #include <wtf/OptionSet.h>
 
 namespace WebCore {
@@ -61,6 +63,11 @@ public:
         DecorationStyleAndColor underline;
         DecorationStyleAndColor overline;
         DecorationStyleAndColor linethrough;
+
+        std::optional<Style::TextUnderlineOffset> underlineOffset;
+
+        std::optional<Style::TextDecorationInset> inset;
+        BoxDecorationBreak boxDecorationBreak { BoxDecorationBreak::Slice };
     };
     struct BackgroundDecorationGeometry {
         FloatPoint textOrigin;

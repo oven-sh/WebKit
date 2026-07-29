@@ -316,6 +316,9 @@ public:
     void storeProperty(JSValueRegs value, GPRReg object, GPRReg offset, GPRReg scratch);
 
     JumpList loadMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    JumpList loadMegamorphicGetterSetter(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    template<uint32_t primaryMask, ptrdiff_t primaryEntriesOffset, uint32_t secondaryMask, ptrdiff_t secondaryEntriesOffset>
+    JumpList findMegamorphicCacheEntry(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     std::tuple<JumpList, JumpList> storeMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList hasMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList loadCacheableIdentifierImpl(GPRReg propertyGPR, GPRReg destGPR, bool propertyIsString, bool propertyIsSymbol, bool canBeRope = true);
@@ -2104,6 +2107,39 @@ public:
     {
         emitAllocateVariableSizedCell<ClassType>(vm, resultGPR, structure, allocationSize, scratchGPR1, scratchGPR2, slowPath, slowAllocationResult);
         storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSObject::butterflyOffset()));
+    }
+
+    template<typename StructureType>
+    void emitAllocateJSBigInt64(VM& vm, GPRReg resultGPR, GPRReg valueGPR, GPRReg scratchGPR1, GPRReg scratchGPR2, StructureType structure, bool isSigned, JumpList& slowCases)
+    {
+        // A zero value maps to the shared, immortal heapBigIntConstantZero held by the VM, so we
+        // can avoid allocating (and taking the slow path) entirely for it.
+        auto isZero = branchTest64(Zero, valueGPR);
+
+        Allocator allocator = allocatorForConcurrently<JSBigInt>(vm, JSBigInt::allocationSize(1), AllocatorForMode::AllocatorIfExists);
+        emitAllocateJSCell(resultGPR, JITAllocator::constant(allocator), scratchGPR1, structure, scratchGPR2, slowCases, SlowAllocationResult::UndefinedBehavior);
+
+        store64(TrustedImm64(1), Address(resultGPR, JSBigInt::offsetOfLength()));
+
+        if (isSigned) {
+            neg64(valueGPR, scratchGPR1);
+            moveConditionally64(LessThan, valueGPR, TrustedImm32(0), scratchGPR1, valueGPR, scratchGPR1);
+            store64(scratchGPR1, Address(resultGPR, JSBigInt::offsetOfData()));
+
+            load8(Address(resultGPR, JSCell::typeInfoFlagsOffset()), scratchGPR1);
+            or32(TrustedImm32(TypeInfoPerCellBit), scratchGPR1, scratchGPR2);
+            moveConditionally64(LessThan, valueGPR, TrustedImm32(0), scratchGPR2, scratchGPR1, scratchGPR1);
+            store8(scratchGPR1, Address(resultGPR, JSCell::typeInfoFlagsOffset()));
+        } else
+            store64(valueGPR, Address(resultGPR, JSBigInt::offsetOfData()));
+
+        mutatorFence(vm);
+        auto done = jump();
+
+        isZero.link(this);
+        move(TrustedImmPtr(vm.heapBigIntConstantZero.get()), resultGPR);
+
+        done.link(this);
     }
 
     enum LazyGlobalObjectLoadTag { LazyBaselineGlobalObject };

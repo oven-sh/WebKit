@@ -32,6 +32,7 @@
 #include <WebCore/Credential.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/NetworkLoadMetrics.h>
+#include <WebCore/PendingStreamIdentifier.h>
 #include <WebCore/ResourceLoaderOptions.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/StoredCredentialsPolicy.h>
@@ -156,6 +157,8 @@ public:
     virtual void setTimingAllowFailedFlag() { }
 
     size_t bytesTransferredOverNetwork() const { return m_bytesTransferredOverNetwork; }
+
+    bool hasPendingStreamBody() const;
 
 protected:
     NetworkDataTask(NetworkSession&, NetworkDataTaskClient&, const WebCore::ResourceRequest&, WebCore::StoredCredentialsPolicy, bool shouldClearReferrerOnHTTPSToHTTPRedirect, bool dataTaskIsForMainFrameNavigation, bool isInitiatedByDedicatedWorker);

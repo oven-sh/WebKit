@@ -2,6 +2,7 @@
  * Copyright (C) 2015 Andy VanWagoner (andy@vanwagoner.family)
  * Copyright (C) 2016 Sukolsak Sakshuwong (sukolsak@gmail.com)
  * Copyright (C) 2016-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  * Copyright (C) 2020 Sony Interactive Entertainment Inc.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -457,12 +458,11 @@ void IntlNumberFormat::initializeNumberFormat(JSGlobalObject* globalObject, JSVa
         // The measure-unit stem takes one required option: the unit identifier of the unit to be formatted.
         // The full unit identifier is required: both the type and the subtype (for example, length-meter).
         // https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit
-        skeletonBuilder.append(" measure-unit/"_s);
         auto numeratorUnit = wellFormedUnit->numerator;
-        skeletonBuilder.append(numeratorUnit.type, '-', numeratorUnit.subType);
+        skeletonBuilder.append(" unit/"_s, numeratorUnit.subType);
         if (auto denominatorUnitValue = wellFormedUnit->denominator) {
             auto denominatorUnit = denominatorUnitValue.value();
-            skeletonBuilder.append(" per-measure-unit/"_s, denominatorUnit.type, '-', denominatorUnit.subType);
+            skeletonBuilder.append("-per-"_s, denominatorUnit.subType);
         }
 
         // https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit-width
@@ -934,7 +934,7 @@ void IntlNumberFormat::formatRangeToPartsInternal(JSGlobalObject* globalObject, 
         auto fieldType = field.m_field;
         auto partType = fieldType == literalField ? literalString : jsNontrivialString(vm, partTypeString(UNumberFormatFields(fieldType), style, sign, numberType));
         JSObject* part = createPart(partType, field.m_range.begin(), field.m_range.distance());
-        parts->push(globalObject, part);
+        parts->putDirectIndex(globalObject, parts->length(), part);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -1319,7 +1319,7 @@ void IntlNumberFormat::formatToPartsInternal(JSGlobalObject* globalObject, Style
             part = createIntlPartObjectWithSource(globalObject, partType, partValue, sourceType);
         else
             part = createIntlPartObject(globalObject, partType, partValue);
-        parts->push(globalObject, part);
+        parts->putDirectIndex(globalObject, parts->length(), part);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }

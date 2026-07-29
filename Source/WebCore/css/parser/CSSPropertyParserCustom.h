@@ -172,6 +172,8 @@ public:
     static bool consumeContainerShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeContainIntrinsicSizeShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeAnimationRangeShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeTimelineTriggerActivationRangeShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeTimelineTriggerActiveRangeShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeScrollTimelineShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeViewTimelineShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeLineClampShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
@@ -1922,7 +1924,7 @@ inline bool PropertyParserCustom::consumeLineClampShorthand(CSSParserTokenRange&
         // Sets max-lines to none, continue to auto, and block-ellipsis to none.
         result.addPropertyForCurrentShorthand(state, CSSPropertyMaxLines, CSSKeywordValue::create(CSSValueNone));
         result.addPropertyForCurrentShorthand(state, CSSPropertyContinue, CSSKeywordValue::create(CSSValueAuto));
-        result.addPropertyForCurrentShorthand(state, CSSPropertyBlockEllipsis, CSSKeywordValue::create(CSSValueNone));
+        result.addPropertyForCurrentShorthand(state, CSSPropertyBlockEllipsis, CSSKeywordValue::create(CSSValueNoEllipsis));
         consumeIdent(range);
         return range.atEnd();
     }
@@ -2078,7 +2080,7 @@ inline bool PropertyParserCustom::consumeWhiteSpaceShorthand(CSSParserTokenRange
     return true;
 }
 
-inline bool PropertyParserCustom::consumeAnimationRangeShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)
+inline bool PropertyParserCustom::consumeAnimationRangeShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
 {
     CSSValueListBuilder startList;
     CSSValueListBuilder endList;
@@ -2119,9 +2121,20 @@ inline bool PropertyParserCustom::consumeAnimationRangeShorthand(CSSParserTokenR
     if (!range.atEnd())
         return false;
 
-    result.addPropertyForCurrentShorthand(state, CSSPropertyAnimationRangeStart, CSSValueList::createCommaSeparated(WTF::move(startList)));
-    result.addPropertyForCurrentShorthand(state, CSSPropertyAnimationRangeEnd, CSSValueList::createCommaSeparated(WTF::move(endList)));
+    ASSERT(shorthand.properties().size() == 2);
+    result.addPropertyForCurrentShorthand(state, shorthand.properties()[0], CSSValueList::createCommaSeparated(WTF::move(startList)));
+    result.addPropertyForCurrentShorthand(state, shorthand.properties()[1], CSSValueList::createCommaSeparated(WTF::move(endList)));
     return true;
+}
+
+inline bool PropertyParserCustom::consumeTimelineTriggerActivationRangeShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    return consumeAnimationRangeShorthand(range, state, shorthand, result);
+}
+
+inline bool PropertyParserCustom::consumeTimelineTriggerActiveRangeShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    return consumeAnimationRangeShorthand(range, state, shorthand, result);
 }
 
 inline bool PropertyParserCustom::consumeScrollTimelineShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand&, PropertyParserResult& result)

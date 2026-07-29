@@ -76,11 +76,13 @@
 #include "ExceptionHelpers.h"
 #include "ISO8601.h"
 #include "IntlObject.h"
+#include "Lexer.h"
 #include "VM.h"
 #include <limits>
 #include <wtf/DateMath.h>
 #include <wtf/Language.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/TimeZone.h>
 #include <wtf/unicode/CharacterNames.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
@@ -95,10 +97,6 @@ namespace JSC {
 namespace JSDateMathInternal {
 static constexpr bool verbose = false;
 }
-
-#if PLATFORM(COCOA) || USE(BUN_JSC_ADDITIONS)
-std::atomic<uint64_t> lastTimeZoneID { 1 };
-#endif
 
 class OpaqueICUTimeZone {
     WTF_MAKE_TZONE_ALLOCATED(OpaqueICUTimeZone);
@@ -393,11 +391,26 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
     if (date == m_cachedDateString)
         return m_cachedDateStringValue;
 
-    // After ICU 72, CLDR generates narrowNoBreakSpace for date time format. Thus, `new Date().toLocaleString('en-US')` starts generating
-    // a string including narrowNoBreakSpaces instead of simple spaces. However since code in the wild assumes `new Date(new Date().toLocaleString('en-US'))`
-    // works, we need to maintain the ability to parse string including narrowNoBreakSpaces. Rough consensus among implementaters is replacing narrowNoBreakSpaces
-    // with simple spaces before parsing.
-    String updatedString = makeStringByReplacingAll(date, narrowNoBreakSpace, space);
+    // V8's date parser (and useful web compat) treats every ECMAScript WhiteSpace code point as a
+    // separator: TAB/VT/FF/SP, NBSP, BOM, and every Unicode Zs character including the
+    // narrowNoBreakSpace that ICU >= 72 emits from toLocaleString. Both parsers below scan the
+    // UTF-8 encoding one byte at a time, so fold all of those into ASCII spaces here. Line
+    // terminators (LS/PS) are intentionally left alone so they continue to reject, matching V8.
+    String updatedString = date;
+    if (!date.containsOnlyASCII()) {
+        if (date.is8Bit())
+            updatedString = makeStringByReplacingAll(date, noBreakSpace, space);
+        else {
+            auto characters = date.span16();
+            std::span<char16_t> buffer;
+            auto result = StringImpl::createUninitialized(characters.size(), buffer);
+            for (size_t i = 0; i < characters.size(); ++i) {
+                char16_t c = characters[i];
+                buffer[i] = Lexer<char16_t>::isWhiteSpace(c) ? static_cast<char16_t>(space) : c;
+            }
+            updatedString = WTF::move(result);
+        }
+    }
 
     auto expectedString = updatedString.tryGetUTF8();
     if (!expectedString) {
@@ -468,36 +481,27 @@ String DateCache::timeZoneDisplayName(bool isDST)
 
 static Lock timeZoneCacheLock;
 
-#if PLATFORM(COCOA)
-static void timeZoneChangeNotification(CFNotificationCenterRef, void*, CFStringRef, const void*, CFDictionaryRef)
-{
-    Locker locker { timeZoneCacheLock };
-    ASSERT(isMainThread());
-    ++lastTimeZoneID;
-}
-#endif
-
 // To confine icu::TimeZone destructor invocation in this file.
 DateCache::DateCache()
 {
-#if PLATFORM(COCOA)
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [&] {
-        CFNotificationCenterAddObserver(CFNotificationCenterGetLocalCenter(), nullptr, timeZoneChangeNotification, kCFTimeZoneSystemTimeZoneDidChangeNotification, nullptr, CFNotificationSuspensionBehaviorDeliverImmediately);
-    });
-#endif
+    WTF::listenForTimeZoneChangeNotifications();
 }
+
+struct CachedHostTimeZone {
+    TimeZone timeZone;
+    uint64_t timeZoneID { 0 };
+};
 
 static TimeZone retrieveTimeZoneInformation()
 {
     Locker locker { timeZoneCacheLock };
-    static NeverDestroyed<std::tuple<TimeZone, uint64_t>> globalCache;
+    static NeverDestroyed<CachedHostTimeZone> globalCache;
 
+    uint64_t currentID = WTF::lastTimeZoneID();
+#if USE(TIME_ZONE_CHANGE_NOTIFICATIONS)
+    bool isCacheStale = globalCache->timeZoneID != currentID;
+#else
     bool isCacheStale = true;
-    uint64_t currentID = 0;
-#if PLATFORM(COCOA)
-    currentID = lastTimeZoneID.load();
-    isCacheStale = std::get<1>(globalCache.get()) != currentID;
 #endif
     if (isCacheStale) {
         Vector<char16_t, 32> timeZoneID;
@@ -517,9 +521,9 @@ static TimeZone retrieveTimeZoneInformation()
                 canonical = TimeZone::fromID(id.value());
         }
 
-        globalCache.get() = std::tuple { canonical, currentID };
+        globalCache.get() = CachedHostTimeZone { canonical, currentID };
     }
-    return std::get<0>(globalCache.get());
+    return globalCache->timeZone;
 }
 
 DateCache::~DateCache() = default;
@@ -560,10 +564,8 @@ void DateCache::timeZoneCacheSlow()
     m_timeZoneCache = std::unique_ptr<OpaqueICUTimeZone, OpaqueICUTimeZoneDeleter>(cache);
 }
 
-void DateCache::resetIfNecessarySlow()
+void DateCache::clearForTimeZoneChange()
 {
-    // FIXME: We should clear it only when we know the timezone has been changed on Non-Cocoa platforms.
-    // https://bugs.webkit.org/show_bug.cgi?id=218365
     m_timeZoneCache.reset();
     for (auto& cache : m_caches)
         cache.reset();
@@ -573,6 +575,7 @@ void DateCache::resetIfNecessarySlow()
     m_dateInstanceCache.reset();
     m_timeZoneStandardDisplayNameCache = String();
     m_timeZoneDSTDisplayNameCache = String();
+    m_cachedTimeZoneID = WTF::lastTimeZoneID();
 }
 
 } // namespace JSC

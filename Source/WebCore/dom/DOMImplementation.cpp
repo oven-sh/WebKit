@@ -31,7 +31,6 @@
 #include "DocumentPage.h"
 #include "DocumentType.h"
 #include "Element.h"
-#include "FTPDirectoryDocument.h"
 #include "FrameLoader.h"
 #include "HTMLBodyElement.h"
 #include "HTMLDocument.h"
@@ -47,7 +46,7 @@
 #include "MediaPlayer.h"
 #include "MediaQueryParser.h"
 #include "NameValidation.h"
-#include "PDFDocument.h"
+#include "PDFJSDocument.h"
 #include "ParserContentPolicy.h"
 #include "PluginData.h"
 #include "PluginDocument.h"
@@ -175,7 +174,7 @@ Ref<Document> DOMImplementation::createDocument(const String& contentType, Local
 
 #if ENABLE(PDFJS)
     if (frame && settings.pdfJSViewerEnabled() && MIMETypeRegistry::isPDFMIMEType(contentType))
-        return PDFDocument::create(*frame, url);
+        return PDFJSDocument::create(*frame, url);
 #endif
 
     bool isImage = MIMETypeRegistry::isSupportedImageMIMEType(contentType);
@@ -194,11 +193,6 @@ Ref<Document> DOMImplementation::createDocument(const String& contentType, Local
 #if ENABLE(MODEL_ELEMENT)
     if (MIMETypeRegistry::isUSDMIMEType(contentType) && DeprecatedGlobalSettings::modelDocumentEnabled())
         return ModelDocument::create(frame, settings, url);
-#endif
-
-#if ENABLE(FTPDIR)
-    if (equalLettersIgnoringASCIICase(contentType, "application/x-ftp-directory"_s))
-        return FTPDirectoryDocument::create(frame, settings, url);
 #endif
 
     // The following is the relatively costly lookup that requires initializing the plug-in database.

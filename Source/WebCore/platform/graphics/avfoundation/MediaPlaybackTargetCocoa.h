@@ -46,10 +46,6 @@ public:
 
     RetainPtr<AVOutputContext> outputContext() const { return m_outputContext.get(); }
 
-#if HAVE(AVROUTING_FRAMEWORK)
-    bool hasAirPlayDevice() const;
-#endif
-
     // MediaPlaybackTarget
     bool supportsRemoteVideoPlayback() const final;
 
@@ -58,6 +54,7 @@ private:
 
     // MediaPlaybackTarget
     String deviceName() const final;
+    String routeName() const final;
     bool hasActiveRoute() const final;
 
     RetainPtr<AVOutputContext> m_outputContext;

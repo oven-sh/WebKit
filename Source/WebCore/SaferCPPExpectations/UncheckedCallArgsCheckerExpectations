@@ -150,7 +150,9 @@ inspector/agents/InspectorLayerTreeAgent.cpp
 inspector/agents/InspectorNetworkAgent.cpp
 inspector/agents/InspectorPageAgent.cpp
 inspector/agents/WebHeapAgent.cpp
+inspector/agents/frame/FrameCSSAgent.cpp
 inspector/agents/page/PageCanvasAgent.cpp
+inspector/agents/page/PageDOMDebuggerAgent.cpp
 inspector/agents/page/PageRuntimeAgent.cpp
 inspector/agents/worker/WorkerAuditAgent.cpp
 inspector/agents/worker/WorkerDebuggerAgent.cpp
@@ -162,7 +164,6 @@ layout/formattingContexts/block/BlockFormattingContext.cpp
 layout/formattingContexts/block/BlockFormattingQuirks.cpp
 layout/formattingContexts/block/PrecomputedBlockMarginCollapse.cpp
 layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingContext.cpp
-layout/formattingContexts/flex/FlexLayout.cpp
 layout/formattingContexts/inline/AbstractLineBuilder.cpp
 layout/formattingContexts/inline/InlineContentAligner.cpp
 layout/formattingContexts/inline/InlineContentBreaker.cpp
@@ -240,7 +241,6 @@ page/LocalFrame.cpp
 page/LocalFrameView.cpp
 page/LocalFrameViewLayoutContext.cpp
 page/MemoryRelease.cpp
-page/NavigateEvent.cpp
 [ iOS ] page/Page.cpp
 page/PageSerializer.cpp
 page/Performance.cpp
@@ -265,6 +265,7 @@ platform/ScrollingEffectsController.cpp
 [ Mac ] platform/cocoa/DragImageCocoa.mm
 platform/cocoa/LowPowerModeNotifier.mm
 platform/cocoa/WebAVPlayerLayer.mm
+platform/graphics/ca/FrameProcessIndicators.cpp
 platform/graphics/ca/GraphicsLayerCA.cpp
 platform/graphics/ca/PlatformCALayer.mm
 platform/graphics/ca/TileController.cpp
@@ -306,7 +307,6 @@ rendering/LegacyInlineIteratorInlines.h
 rendering/LegacyInlineTextBox.cpp
 rendering/LegacyLineLayout.cpp
 rendering/LegacyRootInlineBox.cpp
-rendering/LineClampUpdater.h
 rendering/LogicalSelectionOffsetCachesInlines.h
 rendering/MarkedText.cpp
 rendering/MarkedText.h
@@ -374,7 +374,6 @@ rendering/RenderTextControlSingleLine.cpp
 rendering/RenderTextControlSingleLine.h
 rendering/RenderTextFragment.cpp
 rendering/RenderTextLineBoxes.cpp
-[ iOS ] rendering/RenderTheme.cpp
 rendering/RenderTreeAsText.cpp
 rendering/RenderVTTCue.cpp
 rendering/RenderView.cpp

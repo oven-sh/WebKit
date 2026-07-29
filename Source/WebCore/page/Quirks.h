@@ -273,7 +273,6 @@ public:
 
     bool NODELETE shouldDisableElementFullscreenQuirk() const;
     bool NODELETE shouldIgnorePlaysInlineRequirementQuirk() const;
-    WEBCORE_EXPORT bool shouldUseEphemeralPartitionedStorageForDOMCookies(const URL&) const;
 
 #if PLATFORM(IOS_FAMILY)
     bool shouldAllowPopupFromMicrosoftOfficeToOneDrive() const { return m_quirksData.quirkIsEnabled(QuirksData::SiteSpecificQuirk::ShouldAllowPopupFromMicrosoftOfficeToOneDrive); }
@@ -364,6 +363,7 @@ public:
 
     bool shouldLimitHLSPlaybackRate() const;
     bool shouldSuppressHLSSubtitles() const;
+    bool shouldBlockAudiblePlaybackWhileAudioIsPlaying() const;
 
     bool shouldSuppressMediaSessionPauseActionOnInterruption() const;
 

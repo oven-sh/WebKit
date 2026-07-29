@@ -48,6 +48,7 @@ class AbortSignal;
 class FetchRequest;
 class FetchResponseBodyLoader;
 class ReadableStreamSource;
+class ReadableStreamToSharedBufferSink;
 
 class FetchResponse final : public FetchBodyOwner {
 public:
@@ -72,7 +73,7 @@ public:
 
     using NotificationCallback = Function<void(ExceptionOr<Ref<FetchResponse>>&&)>;
     static void fetch(ScriptExecutionContext&, FetchRequest&, NotificationCallback&&, const String& initiator);
-    static Ref<FetchResponse> createFetchResponse(ScriptExecutionContext&, FetchRequest&, NotificationCallback&&);
+    static Ref<FetchResponse> createFetchResponse(ScriptExecutionContext&, FetchRequest&, NotificationCallback&&, RefPtr<ReadableStreamToSharedBufferSink>&& = { });
 
     void startConsumingStream(unsigned);
     void consumeChunk(Ref<JSC::Uint8Array>&&);
@@ -152,7 +153,7 @@ private:
     class Loader final : public RefCounted<Loader>, public FetchLoaderClient {
         WTF_MAKE_TZONE_ALLOCATED(Loader);
     public:
-        static Ref<Loader> create(FetchResponse&, NotificationCallback&&);
+        static Ref<Loader> create(FetchResponse&, NotificationCallback&&, RefPtr<ReadableStreamToSharedBufferSink>&&);
         ~Loader();
 
         // FetchLoaderClient.
@@ -161,7 +162,7 @@ private:
 
         bool start(ScriptExecutionContext&, const FetchRequest&, const String& initiator);
         void stop();
-
+        void abortUpload(JSDOMGlobalObject&, JSC::JSValue);
         void consumeDataByChunk(ConsumeDataByChunkCallback&&);
 
         bool hasLoader() const { return !!m_loader; }
@@ -170,8 +171,10 @@ private:
         NotificationCallback takeNotificationCallback() { return WTF::move(m_responseCallback); }
         ConsumeDataByChunkCallback takeConsumeDataCallback() { return WTF::move(m_consumeDataCallback); }
 
+        void setUploadSink(Ref<ReadableStreamToSharedBufferSink>&& sink) { m_uploadSink = WTF::move(sink); }
+
     private:
-        Loader(FetchResponse&, NotificationCallback&&);
+        Loader(FetchResponse&, NotificationCallback&&, RefPtr<ReadableStreamToSharedBufferSink>&&);
 
         // FetchLoaderClient API
         void didSucceed(const NetworkLoadMetrics&) final;
@@ -183,9 +186,11 @@ private:
         NotificationCallback m_responseCallback;
         ConsumeDataByChunkCallback m_consumeDataCallback;
         RefPtr<FetchLoader> m_loader;
+        RefPtr<ReadableStreamToSharedBufferSink> m_uploadSink;
         const Ref<PendingActivity<FetchResponse>> m_pendingActivity;
         FetchOptions::Credentials m_credentials;
         bool m_shouldStartStreaming { false };
+        const RefPtr<ReadableStreamToSharedBufferSink> m_pendingUpload;
     };
 
     Loader* loader() const { return m_loader.get(); }

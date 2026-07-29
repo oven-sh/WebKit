@@ -45,6 +45,7 @@
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/Uint16Array.h>
 #include <wtf/MainThread.h>
+#include <wtf/NativePromise.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SoftLinking.h>
 #include <wtf/SortedArrayMap.h>
@@ -262,16 +263,25 @@ MediaTime MediaPlayerPrivateAVFoundation::duration() const
     return m_cachedDuration;
 }
 
-void MediaPlayerPrivateAVFoundation::seekToTarget(const SeekTarget& target)
+Ref<MediaTimePromise> MediaPlayerPrivateAVFoundation::seekToTarget(const SeekTarget& target)
 {
+    m_seekPromise.emplace(PlatformMediaError::Cancelled);
     if (m_seeking) {
         ALWAYS_LOG(LOGIDENTIFIER, "saving pending seek");
-        m_pendingSeek = [weakThis = ThreadSafeWeakPtr { * this }, target]() {
+        m_pendingSeek = [weakThis = ThreadSafeWeakPtr { * this }, target] {
             if (RefPtr protectedThis = weakThis.get())
-                protectedThis->seekToTarget(target);
+                protectedThis->seekInternal(target);
         };
-        return;
+        return *m_seekPromise;
     }
+
+    Ref promise = m_seekPromise->promise();
+    seekInternal(target);
+    return promise;
+}
+
+void MediaPlayerPrivateAVFoundation::seekInternal(const SeekTarget& target)
+{
     m_seeking = true;
 
     if (!metaDataAvailable())
@@ -375,6 +385,7 @@ void MediaPlayerPrivateAVFoundation::setReadyState(MediaPlayer::ReadyState state
         return;
 
     auto oldState = std::exchange(m_readyState, state);
+    resolveSeekPromiseIfNeeded();
     RefPtr player = m_player.get();
     if (player)
         player->readyStateChanged();
@@ -694,9 +705,16 @@ void MediaPlayerPrivateAVFoundation::seekCompleted(bool finished)
 
     updateStates();
 
-    if (RefPtr player = m_player.get()) {
-        player->seeked(m_lastSeekTime);
-        player->timeChanged();
+    resolveSeekPromiseIfNeeded();
+}
+
+void MediaPlayerPrivateAVFoundation::resolveSeekPromiseIfNeeded()
+{
+    if (m_readyState < MediaPlayer::ReadyState::HaveCurrentData || m_seeking)
+        return;
+    if (auto seekPromise = std::exchange(m_seekPromise, std::nullopt)) {
+        ALWAYS_LOG(LOGIDENTIFIER, "resolving seekPromise at time: ", m_lastSeekTime);
+        seekPromise->resolve(m_lastSeekTime);
     }
 }
 
@@ -704,8 +722,11 @@ void MediaPlayerPrivateAVFoundation::didEnd(double now)
 {
     // Hang onto the current time and use it as duration from now on since we are definitely at
     // the end of the movie. Do this because the initial duration is sometimes an estimate.
-    ALWAYS_LOG(LOGIDENTIFIER, "currentTime: ", now, ", seeking: ", m_seeking);
-    if (now > 0 && !m_seeking) {
+    // Never do this for a live stream: its duration is unbounded (positive infinity), and
+    // demoting it to a finite value here would make endedPlayback() treat reaching the live
+    // edge as the end of the media and fire a spurious 'ended' event.
+    ALWAYS_LOG(LOGIDENTIFIER, "currentTime: ", now, ", seeking: ", m_seeking, ", isLiveStream: ", isLiveStream());
+    if (now > 0 && !m_seeking && !isLiveStream()) {
         ALWAYS_LOG(LOGIDENTIFIER, "Updating cached duration to ", now);
         m_cachedDuration = MediaTime::createWithDouble(now);
     }

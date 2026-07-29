@@ -32,7 +32,9 @@
 #include "WebFullScreenManagerProxy.h"
 #include "WebPageProxy.h"
 #include <WebCore/ActivityState.h>
+#include <WebCore/SelectionData.h>
 #include <memory>
+#include <optional>
 #include <wtf/OptionSet.h>
 #include <wtf/RefPtr.h>
 
@@ -74,6 +76,7 @@ public:
     void setInputMethodState(std::optional<WebKit::InputMethodState>&&);
 
     void themeColorDidChange();
+    void pageScaleFactorDidChange();
 
 #if ENABLE(FULLSCREEN_API)
     bool isFullScreen() const;
@@ -85,6 +88,11 @@ public:
     void close();
 
     WebKit::WebPageProxy& page() { return *m_pageProxy; }
+
+#if ENABLE(DRAG_SUPPORT)
+    void setDragData(WebCore::SelectionData&&, OptionSet<WebCore::DragOperation>);
+    bool updateDrag(const WebKit::NativeWebMouseEvent&);
+#endif
     API::ViewClient& client() const { return *m_client; }
     const WebCore::IntSize& size() const LIFETIME_BOUND { return m_size; }
     OptionSet<WebCore::ActivityState> viewState() const { return m_viewStateFlags; }
@@ -111,6 +119,10 @@ protected:
     std::unique_ptr<API::ViewClient> m_client;
     const std::unique_ptr<WebKit::PageClientImpl> m_pageClient;
     RefPtr<WebKit::WebPageProxy> m_pageProxy;
+#if ENABLE(DRAG_SUPPORT)
+    std::optional<WebCore::SelectionData> m_dragData;
+    OptionSet<WebCore::DragOperation> m_dragMask;
+#endif
     WebCore::IntSize m_size;
     OptionSet<WebCore::ActivityState> m_viewStateFlags;
 #if ENABLE(FULLSCREEN_API)

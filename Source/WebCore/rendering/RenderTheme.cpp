@@ -234,13 +234,12 @@ static bool NODELETE isAppearanceAllowedForAllElements(StyleAppearance appearanc
     return false;
 }
 
-static bool devolvableWidgetsEnabledAndSupported(const Element* element)
+static bool devolvableWidgetsSupported()
 {
-    bool devolvableWidgetsEnabled = element->document().settings().devolvableWidgetsEnabled();
 #if PLATFORM(COCOA)
-    return devolvableWidgetsEnabled && WTF::linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DevolvableWidgets);
+    return WTF::linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DevolvableWidgets);
 #else
-    return devolvableWidgetsEnabled;
+    return true;
 #endif
 }
 
@@ -290,7 +289,7 @@ void RenderTheme::adjustStyle(Style::ComputedStyle& style, const Style::Computed
     else if (style.display() == Style::DisplayType::BlockFlowListItem || style.display() == Style::DisplayType::BlockTable)
         style.setDisplayMaintainingOriginalDisplay(Style::DisplayType::BlockFlow);
 
-    bool widgetMayDevolve = devolvableWidgetsEnabledAndSupported(element);
+    bool widgetMayDevolve = devolvableWidgetsSupported();
     bool widgetHasNativeAppearanceDisabled = widgetMayDevolve && element->isDevolvableWidget() && style.nativeAppearanceDisabled() && !isAppearanceAllowedForAllElements(appearance);
     bool hasAppearanceFromUAStyle = element && hasAppearanceForElementTypeFromUAStyle(*element);
 
@@ -1870,10 +1869,6 @@ Color RenderTheme::systemColor(CSSValueID cssValueId, OptionSet<StyleColorOption
 
     // Non-standard addition.
     case CSSValueActivebuttontext:
-        return Color::black;
-
-    // Non-standard addition.
-    case CSSValueText:
         return Color::black;
 
     // Non-standard addition.

@@ -42,6 +42,13 @@ unsigned valueProfileOffsetFor(const Bytecode& bytecode, unsigned checkpointInde
         default: RELEASE_ASSERT_NOT_REACHED();
         }
 
+    } else if constexpr (Bytecode::opcodeID == op_async_iterator_open) {
+        switch (checkpointIndex) {
+        case OpAsyncIteratorOpen::symbolCall: return bytecode.m_iteratorValueProfile;
+        case OpAsyncIteratorOpen::getNext: return bytecode.m_nextValueProfile;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+
     } else if constexpr (Bytecode::opcodeID == op_iterator_next) {
         switch (checkpointIndex) {
         case OpIteratorNext::computeNext: return bytecode.m_nextResultValueProfile;
@@ -67,6 +74,13 @@ Operand destinationFor(const Bytecode& bytecode, unsigned checkpointIndex, JITTy
         switch (checkpointIndex) {
         case OpIteratorOpen::symbolCall: return bytecode.m_iterator;
         case OpIteratorOpen::getNext: return bytecode.m_next;
+        default: RELEASE_ASSERT_NOT_REACHED();
+        }
+        return { };
+    } else if constexpr (Bytecode::opcodeID == op_async_iterator_open) {
+        switch (checkpointIndex) {
+        case OpAsyncIteratorOpen::symbolCall: return bytecode.m_iterator;
+        case OpAsyncIteratorOpen::getNext: return bytecode.m_next;
         default: RELEASE_ASSERT_NOT_REACHED();
         }
         return { };
@@ -97,8 +111,13 @@ VirtualRegister calleeFor(const Bytecode& bytecode, unsigned checkpointIndex)
     if constexpr (Bytecode::opcodeID == op_iterator_open) {
         ASSERT(checkpointIndex == OpIteratorOpen::symbolCall);
         return bytecode.m_symbolIterator;
+    } else if constexpr (Bytecode::opcodeID == op_async_iterator_open) {
+        ASSERT(checkpointIndex == OpAsyncIteratorOpen::symbolCall);
+        return bytecode.m_symbolIterator;
     } else if constexpr (Bytecode::opcodeID == op_iterator_next) {
         ASSERT(checkpointIndex == OpIteratorNext::computeNext);
+        return bytecode.m_next;
+    } else if constexpr (Bytecode::opcodeID == op_async_iterator_next) {
         return bytecode.m_next;
     } else
         return bytecode.m_callee;
@@ -111,9 +130,15 @@ unsigned argumentCountIncludingThisFor(const Bytecode& bytecode, unsigned checkp
     if constexpr (Bytecode::opcodeID == op_iterator_open) {
         ASSERT(checkpointIndex == OpIteratorOpen::symbolCall);
         return 1;
+    } else if constexpr (Bytecode::opcodeID == op_async_iterator_open) {
+        ASSERT(checkpointIndex == OpAsyncIteratorOpen::symbolCall);
+        return 1;
     } else if constexpr (Bytecode::opcodeID == op_iterator_next) {
         ASSERT(checkpointIndex == OpIteratorNext::computeNext);
         return 1;
+    } else if constexpr (Bytecode::opcodeID == op_async_iterator_next) {
+        // yield* forwards a resume value to next() (m_hasValue); for-await calls next() with just `this`.
+        return bytecode.m_hasValue ? 2 : 1;
     } else
         return bytecode.m_argc;
 }
@@ -125,8 +150,13 @@ ptrdiff_t stackOffsetInRegistersForCall(const Bytecode& bytecode, unsigned check
     if constexpr (Bytecode::opcodeID == op_iterator_open) {
         ASSERT(checkpointIndex == OpIteratorOpen::symbolCall);
         return CallFrame::headerSizeInRegisters - bytecode.m_iterable.offset();
+    } else if constexpr (Bytecode::opcodeID == op_async_iterator_open) {
+        ASSERT(checkpointIndex == OpAsyncIteratorOpen::symbolCall);
+        return CallFrame::headerSizeInRegisters - bytecode.m_iterable.offset();
     } else if constexpr (Bytecode::opcodeID == op_iterator_next) {
         ASSERT(checkpointIndex == OpIteratorNext::computeNext);
+        return CallFrame::headerSizeInRegisters - bytecode.m_iterator.offset();
+    } else if constexpr (Bytecode::opcodeID == op_async_iterator_next) {
         return CallFrame::headerSizeInRegisters - bytecode.m_iterator.offset();
     } else
         return bytecode.m_argv;
@@ -137,6 +167,14 @@ CallLinkInfo& callLinkInfoFor(BytecodeMetadata& metadata, unsigned checkpointInd
 {
     UNUSED_PARAM(checkpointIndex);
     return metadata.m_callLinkInfo;
+}
+
+// op_async_iterator_next has no stored VirtualRegister for its optional resume value: like op_call's
+// argc/argv model, it's call argument index 1, addressed via m_stackOffset. Only valid when m_hasValue.
+inline VirtualRegister resumeValueOperandFor(const OpAsyncIteratorNext& bytecode)
+{
+    ASSERT(bytecode.m_hasValue);
+    return virtualRegisterForArgumentIncludingThis(1, -static_cast<int>(bytecode.m_stackOffset));
 }
 
 } // namespace JSC

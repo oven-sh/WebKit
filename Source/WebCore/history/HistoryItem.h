@@ -227,8 +227,8 @@ public:
     WEBCORE_EXPORT void setWasCreatedByJSWithoutUserInteraction(bool);
     bool wasCreatedByJSWithoutUserInteraction() const { return m_wasCreatedByJSWithoutUserInteraction; }
 
-    void setIsInitialAboutBlank(bool isInitialAboutBlank) { m_isInitialAboutBlank = isInitialAboutBlank; }
-    bool isInitialAboutBlank() const { return m_isInitialAboutBlank; }
+    void setIsInitialAboutBlank(IsInitialAboutBlank isInitialAboutBlank) { m_isInitialAboutBlank = isInitialAboutBlank; }
+    IsInitialAboutBlank isInitialAboutBlank() const { return m_isInitialAboutBlank; }
 
 #if !LOG_DISABLED
     String logString() const;
@@ -263,7 +263,7 @@ private:
     bool m_lastVisitWasFailure { false };
     bool m_wasRestoredFromSession { false };
     bool m_wasCreatedByJSWithoutUserInteraction { false };
-    bool m_isInitialAboutBlank { false };
+    IsInitialAboutBlank m_isInitialAboutBlank { IsInitialAboutBlank::No };
     bool m_shouldRestoreScrollPosition { true };
     bool m_isTargetItem { false };
 

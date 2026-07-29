@@ -10,9 +10,11 @@ export FREEBSD_ARCH="${FREEBSD_ARCH:-x86_64}"
 export FREEBSD_VERSION="${FREEBSD_VERSION:-14.3}"
 export WEBKIT_RELEASE_TYPE="${WEBKIT_RELEASE_TYPE:-Release}"
 export LTO_FLAG="${LTO_FLAG:-}"
+export USE_MIMALLOC="${USE_MIMALLOC:-OFF}"
+export USE_EXTERNAL_MIMALLOC="${USE_EXTERNAL_MIMALLOC:-OFF}"
 
 case "$FREEBSD_ARCH" in
-    x86_64)  : "${MARCH_FLAG:="-march=haswell"}" ;;
+    x86_64)  : "${MARCH_FLAG:="-march=nehalem"}" ;;
     aarch64) : "${MARCH_FLAG:="-march=armv8-a+crc -mtune=ampere1"}" ;;
     *) echo "error: FREEBSD_ARCH must be x86_64 or aarch64, got '$FREEBSD_ARCH'" >&2; exit 1 ;;
 esac
@@ -33,6 +35,8 @@ docker buildx build -f Dockerfile.freebsd -t "$CONTAINER_NAME" \
     --build-arg LTO_FLAG="$LTO_FLAG" \
     --build-arg MARCH_FLAG="$MARCH_FLAG" \
     --build-arg WEBKIT_RELEASE_TYPE="$WEBKIT_RELEASE_TYPE" \
+    --build-arg USE_MIMALLOC="$USE_MIMALLOC" \
+    --build-arg USE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     --progress=plain \
     --platform=linux/amd64 \
     --target=artifact \

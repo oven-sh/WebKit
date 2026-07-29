@@ -53,22 +53,14 @@ using namespace WebCore;
 
 #if ENABLE(IMAGE_ANALYSIS)
 
-RetainPtr<CocoaImageAnalyzer> createImageAnalyzer()
+RetainPtr<VKCImageAnalyzer> createImageAnalyzer()
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     return adoptNS([PAL::allocVKCImageAnalyzerInstance() init]);
-#else
-    return adoptNS([PAL::allocVKImageAnalyzerInstance() init]);
-#endif
 }
 
-RetainPtr<CocoaImageAnalyzerRequest> createImageAnalyzerRequest(CGImageRef image, VKAnalysisTypes types)
+RetainPtr<VKCImageAnalyzerRequest> createImageAnalyzerRequest(CGImageRef image, VKAnalysisTypes types)
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     return adoptNS([(PAL::allocVKCImageAnalyzerRequestInstance()) initWithCGImage:image orientation:VKImageOrientationUp requestType:types]);
-#else
-    return adoptNS([PAL::allocVKImageAnalyzerRequestInstance() initWithCGImage:image orientation:VKImageOrientationUp requestType:types]);
-#endif
 }
 
 static FloatQuad floatQuad(VKQuad *quad)
@@ -83,7 +75,7 @@ static Vector<FloatQuad> floatQuads(NSArray<VKQuad *> *vkQuads)
     });
 }
 
-TextRecognitionResult makeTextRecognitionResult(CocoaImageAnalysis *analysis)
+TextRecognitionResult makeTextRecognitionResult(VKCImageAnalysis *analysis)
 {
     RetainPtr<NSArray<VKWKLineInfo *>> allLines = analysis.allLines;
     TextRecognitionResult result;
@@ -140,26 +132,19 @@ TextRecognitionResult makeTextRecognitionResult(CocoaImageAnalysis *analysis)
     }
 #endif // ENABLE(DATA_DETECTION)
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     if ([analysis isKindOfClass:PAL::getVKCImageAnalysisClassSingleton()])
         result.imageAnalysisData = TextRecognitionResult::extractAttributedString(analysis);
-#endif
 
     return result;
 }
-
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
 static String languageCodeForLocale(NSString *localeIdentifier)
 {
     return [NSLocale localeWithLocaleIdentifier:localeIdentifier].languageCode;
 }
 
-#endif
-
 bool languageIdentifierSupportsLiveText(NSString *languageIdentifier)
 {
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     auto languageCode = languageCodeForLocale(languageIdentifier);
     if (languageCode.isEmpty())
         return true;
@@ -173,13 +158,7 @@ bool languageIdentifierSupportsLiveText(NSString *languageIdentifier)
         return set;
     }();
     return supportedLanguages->contains(languageCode);
-#else
-    UNUSED_PARAM(languageIdentifier);
-    return true;
-#endif
 }
-
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
 static TextRecognitionResult makeTextRecognitionResult(VKCImageAnalysisTranslation *translation, TransactionID transactionID)
 {
@@ -219,7 +198,7 @@ static bool shouldLogFullImageTranslationResults()
     return shouldLog;
 }
 
-void requestVisualTranslation(CocoaImageAnalyzer *analyzer, NSURL *imageURL, const String& sourceLocale, const String& targetLocale, CGImageRef image, CompletionHandler<void(TextRecognitionResult&&)>&& completion)
+void requestVisualTranslation(VKCImageAnalyzer *analyzer, NSURL *imageURL, const String& sourceLocale, const String& targetLocale, CGImageRef image, CompletionHandler<void(TextRecognitionResult&&)>&& completion)
 {
     auto startTime = MonotonicTime::now();
     static auto imageAnalysisRequestID = TransactionID::generateMonotonic();
@@ -229,7 +208,7 @@ void requestVisualTranslation(CocoaImageAnalyzer *analyzer, NSURL *imageURL, con
     else
         RELEASE_LOG(Translation, "[#%{public}s] Image translation started", currentRequestID.loggingString().utf8().data());
     auto request = createImageAnalyzerRequest(image, VKAnalysisTypeText);
-    [analyzer processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([completion = WTF::move(completion), sourceLocale, targetLocale, currentRequestID, startTime] (CocoaImageAnalysis *analysis, NSError *analysisError) mutable {
+    [analyzer processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([completion = WTF::move(completion), sourceLocale, targetLocale, currentRequestID, startTime] (VKCImageAnalysis *analysis, NSError *analysisError) mutable {
         callOnMainRunLoop([completion = WTF::move(completion), analysis = RetainPtr { analysis }, analysisError = RetainPtr { analysisError }, sourceLocale, targetLocale, currentRequestID, startTime] () mutable {
             auto imageAnalysisDelay = MonotonicTime::now() - startTime;
             if (!analysis) {
@@ -345,14 +324,10 @@ void prepareImageAnalysisForOverlayView(PlatformImageAnalysisObject *interaction
     [interactionOrView setActionInfoViewHidden:NO animated:YES];
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-
 bool isLiveTextAvailableAndEnabled()
 {
     return PAL::isVisionKitCoreFrameworkAvailable();
 }
-
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
 std::pair<RetainPtr<NSData>, RetainPtr<CFStringRef>> imageDataForRemoveBackground(CGImageRef image, const String& sourceMIMEType)
 {
@@ -370,8 +345,6 @@ std::pair<RetainPtr<NSData>, RetainPtr<CFStringRef>> imageDataForRemoveBackgroun
 
     return transcodeWithPreferredMIMEType(image, CFSTR("image/png"));
 }
-
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 

@@ -58,7 +58,7 @@ function macOS {
 }
 
 function iOS {
-    minVersion=$(printf '%s\n' $1 ${IPHONEOS_DEPLOYMENT_TARGET} | sort -V | head -1)
+    minVersion=$(printf '%s\n' $1 ${LLVM_TARGET_TRIPLE_OS_VERSION#ios} | sort -V | head -1)
     echo iOS ${minVersion}
 }
 
@@ -75,6 +75,7 @@ anyAppleOSAndDownlevels 17.0: $(macOS 14.0), $(iOS 17.0), $(visionOS 1.0)
 anyAppleOSAndDownlevels 18.4: $(macOS 15.4), $(iOS 18.4), $(visionOS 2.4)
 anyAppleOSAndDownlevels 26.0: $(macOS 26.0), $(iOS 26.0), $(visionOS 26.0)
 anyAppleOSAndDownlevels 26.4: $(macOS 26.4), $(iOS 26.4), $(visionOS 26.4)
+anyAppleOSAndDownlevels 27.0: $(macOS 27.0), $(iOS 27.0), $(visionOS 27.0)
 
 # Upcoming API, release version unspecified.
 TBA: macOS ${OSX_VERSION}, iOS ${IOS_VERSION}, visionOS ${XROS_VERSION}

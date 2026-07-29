@@ -47,6 +47,7 @@ my $idlFileNamesList;
 my $generator;
 my @generatorDependency;
 my $defines;
+my $definesFile;
 my $supplementalDependencyFile;
 my @ppExtraOutput;
 my @ppExtraArgs;
@@ -63,6 +64,7 @@ GetOptions('outputDir=s' => \$outputDirectory,
            'generator=s' => \$generator,
            'generatorDependency=s@' => \@generatorDependency,
            'defines=s' => \$defines,
+           'defines-file=s' => \$definesFile,
            'supplementalDependencyFile=s' => \$supplementalDependencyFile,
            'ppExtraOutput=s@' => \@ppExtraOutput,
            'ppExtraArgs=s@' => \@ppExtraArgs,
@@ -71,6 +73,16 @@ GetOptions('outputDir=s' => \$outputDirectory,
            'exclude=s@' => \@exclude,
            'showProgress' => \$showProgress,
            'ignoreStandaloneConstructorAttributes' => \$ignoreStandaloneConstructorAttributes);
+
+if (defined $definesFile) {
+    open(my $df, '<', $definesFile) or die "Cannot open --defines-file $definesFile: $!";
+    local $/;
+    my $extra = <$df>;
+    close($df);
+    $extra =~ s/^\s+|\s+$//g;
+    $defines = join(' ', grep { length } (defined($defines) ? $defines : ''), $extra);
+    $defines =~ s/\s+/ /g;
+}
 
 if (!defined $numOfJobs) {
     $numOfJobs = `sysctl -n hw.activecpu 2>/dev/null` || `nproc 2>/dev/null` || 4;
@@ -123,9 +135,10 @@ buildDirectoryCache();
 
 my @idlFilesToUpdate = grep &{sub {
     my $absPath = Cwd::abs_path($_) || $_;
-    if (defined($oldSupplements{$absPath})
-        && @{$oldSupplements{$absPath}} ne @{$newSupplements{$absPath} or []}) {
-        # Re-process the IDL file if its supplemental dependencies were added or removed
+    my $oldSupplement = $oldSupplements{$absPath};
+    if (defined($oldSupplement)
+        && join("\0", @$oldSupplement) ne join("\0", @{$newSupplements{$absPath} || []})) {
+        # Re-process the IDL file if its supplemental dependencies were added, removed, or changed.
         return 1;
     }
     my ($filename, $dirs, $suffix) = fileparse($_, '.idl');

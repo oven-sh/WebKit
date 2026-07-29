@@ -364,12 +364,14 @@ constexpr OptionSet<RenderingUpdateStep> updateRenderingSteps = {
     RenderingUpdateStep::AdjustVisibility,
 };
 
-constexpr auto allRenderingUpdateSteps = updateRenderingSteps | OptionSet<RenderingUpdateStep> {
+constexpr auto perRootFrameRenderingUpdateSteps = OptionSet<RenderingUpdateStep> {
     RenderingUpdateStep::LayerFlush,
 #if ENABLE(ASYNC_SCROLLING)
     RenderingUpdateStep::ScrollingTreeUpdate,
 #endif
 };
+
+constexpr auto allRenderingUpdateSteps = updateRenderingSteps | perRootFrameRenderingUpdateSteps;
 
 using WeakElementEdges = RectEdges<WeakPtr<Element, WeakPtrImplWithEventTargetData>>;
 
@@ -386,7 +388,7 @@ public:
     WEBCORE_EXPORT static void updateStyleForAllPagesAfterGlobalChangeInEnvironment();
     WEBCORE_EXPORT static void clearPreviousItemFromAllPages(BackForwardFrameItemIdentifier);
 
-    WEBCORE_EXPORT void setupForRemoteWorker(const URL& scriptURL, const SecurityOriginData& topOrigin, const String& referrerPolicy, OptionSet<AdvancedPrivacyProtections>);
+    WEBCORE_EXPORT void setupForRemoteWorker(const URL& scriptURL, const SecurityOriginData& topOrigin, const String& referrerPolicy, OptionSet<AdvancedPrivacyProtections>, std::optional<bool> globalPrivacyControlEnabled);
 
     WEBCORE_EXPORT void updateStyleAfterChangeInEnvironment();
 

@@ -46,11 +46,6 @@
 namespace WebCore {
 namespace Layout {
 
-struct UsedMargins {
-    LayoutUnit marginStart;
-    LayoutUnit marginEnd;
-};
-
 struct UsedGridItemSizes {
     LayoutUnit inlineAxisSize;
     LayoutUnit blockAxisSize;
@@ -204,7 +199,7 @@ static GridAreaSizes computeGridAreaSizes(const PlacedGridItems& gridItems, cons
 }
 
 // https://drafts.csswg.org/css-grid-1/#layout-algorithm
-std::pair<UsedTrackSizes, GridItemRects> GridLayout::layout(UnplacedGridItems& unplacedGridItems, const GridLayoutState& gridLayoutState)
+GridLayoutResult GridLayout::layout(UnplacedGridItems& unplacedGridItems, const GridLayoutState& gridLayoutState, GridLayoutScope scope)
 {
     auto& gridDefinition = gridLayoutState.gridDefinition;
     auto& gridTemplateColumnsTrackSizes = gridDefinition.gridTemplateColumns.sizes;
@@ -215,8 +210,18 @@ std::pair<UsedTrackSizes, GridItemRects> GridLayout::layout(UnplacedGridItems& u
     auto [ gridAreas, columnsCount, rowsCount ] = placeGridItems(unplacedGridItems, gridTemplateColumnsTrackSizes, gridTemplateRowsTrackSizes, gridDefinition.autoFlowOptions);
     auto placedGridItems = formattingContext.constructPlacedGridItems(gridAreas);
 
-    auto columnTrackSizingFunctionsList = trackSizingFunctions(columnsCount, gridTemplateColumnsTrackSizes, gridDefinition.gridAutoColumns);
-    auto rowTrackSizingFunctionsList = trackSizingFunctions(rowsCount, gridTemplateRowsTrackSizes, gridDefinition.gridAutoRows);
+    auto columnTrackSizingFunctionsList = trackSizingFunctions(columnsCount, gridTemplateColumnsTrackSizes, gridDefinition.gridAutoColumns, gridDefinition.zoom);
+    auto rowTrackSizingFunctionsList = trackSizingFunctions(rowsCount, gridTemplateRowsTrackSizes, gridDefinition.gridAutoRows, gridDefinition.zoom);
+
+    // https://drafts.csswg.org/css-grid-1/#algo-grid-sizing
+    // Fast path: the caller only needs the column sizes resolved by step 1 of the grid sizing
+    // algorithm (e.g. intrinsic width computation where no grid item's inline contribution depends
+    // on its block size). Steps 2-4 cannot change the column sizes, so size the columns alone and
+    // skip row sizing, grid-item layout, and alignment.
+    if (scope == GridLayoutScope::ColumnSizingOnly) {
+        TrackSizes columnSizes = sizeColumnTracks(placedGridItems, columnTrackSizingFunctionsList, rowTrackSizingFunctionsList, gridLayoutState);
+        return { { columnSizes, { } }, { } };
+    }
 
     // 2. FIXME: Find the size of the grid container.
 
@@ -268,6 +273,10 @@ BorderBoxPositions GridLayout::performInlineAxisSelfAlignment(const PlacedGridIt
         // Stretching should be handled by GridLayout::layoutGridItems.
         auto marginBoxPosition = StyleSelfAlignmentData::adjustmentFromStartEdge(remainingSpace, gridItem.inlineAxisAlignment().position(), LogicalBoxAxis::Inline, formattingContextWritingMode, gridItem.writingMode());
 
+        // Safe alignment must never overflow the start edge, so clamp any negative start-edge offset back to the start.
+        if (gridItem.inlineAxisAlignment().overflow() == OverflowAlignment::Safe)
+            marginBoxPosition = std::max(0_lu, marginBoxPosition);
+
         borderBoxPositions.append(marginBoxPosition + inlineMargins[gridItemIndex].marginStart);
     }
 
@@ -296,13 +305,17 @@ BorderBoxPositions GridLayout::performBlockAxisSelfAlignment(const PlacedGridIte
         // Stretching should be handled by GridLayout::layoutGridItems.
         auto marginBoxPosition = StyleSelfAlignmentData::adjustmentFromStartEdge(remainingSpace, gridItem.blockAxisAlignment().position(), LogicalBoxAxis::Block, formattingContextWritingMode, gridItem.writingMode());
 
+        // Safe alignment must never overflow the start edge, so clamp any negative start-edge offset back to the start.
+        if (gridItem.blockAxisAlignment().overflow() == OverflowAlignment::Safe)
+            marginBoxPosition = std::max(0_lu, marginBoxPosition);
+
         borderBoxPositions.append(marginBoxPosition + blockMargins[gridItemIndex].marginStart);
     }
 
     return borderBoxPositions;
 }
 
-TrackSizingFunctions GridLayout::convertGridTrackSizeToTrackSizingFunctions(const Style::GridTrackSize& gridTrackSize)
+TrackSizingFunctions GridLayout::convertGridTrackSizeToTrackSizingFunctions(const Style::GridTrackSize& gridTrackSize, const Style::ZoomFactor& zoom)
 {
     auto minTrackSizingFunction = [&]() {
         // If the track was sized with a minmax() function, this is the first argument to that function.
@@ -328,12 +341,12 @@ TrackSizingFunctions GridLayout::convertGridTrackSizeToTrackSizingFunctions(cons
         return gridTrackSize.maxTrackBreadth();
     };
 
-    return TrackSizingFunctions { minTrackSizingFunction(), maxTrackSizingFunction() };
+    return TrackSizingFunctions { minTrackSizingFunction(), maxTrackSizingFunction(), zoom };
 }
 
 // Generates track sizing functions for implicit tracks using grid-auto-{columns,rows}
 // FIXME: This function only supports appended tracks but not prepended tracks.
-TrackSizingFunctionsList GridLayout::generateImplicitTrackSizingFunctions(size_t explicitTracksCount, size_t totalTracksCount, const Style::GridTrackSizes& gridAutoTrackSizes)
+TrackSizingFunctionsList GridLayout::generateImplicitTrackSizingFunctions(size_t explicitTracksCount, size_t totalTracksCount, const Style::GridTrackSizes& gridAutoTrackSizes, const Style::ZoomFactor& zoom)
 {
     // https://drafts.csswg.org/css-grid-1/#auto-tracks
     size_t implicitTracksCount = totalTracksCount - explicitTracksCount;
@@ -344,13 +357,13 @@ TrackSizingFunctionsList GridLayout::generateImplicitTrackSizingFunctions(size_t
     // Cycle through grid-auto-{columns,rows} values using modulo.
     for (size_t i = 0; i < implicitTracksCount; ++i) {
         size_t autoTrackIndex = i % gridAutoTrackSizes.size();
-        trackSizingFunctionsForImplicitGrid.append(convertGridTrackSizeToTrackSizingFunctions(gridAutoTrackSizes[autoTrackIndex]));
+        trackSizingFunctionsForImplicitGrid.append(convertGridTrackSizeToTrackSizingFunctions(gridAutoTrackSizes[autoTrackIndex], zoom));
     }
 
     return trackSizingFunctionsForImplicitGrid;
 }
 
-TrackSizingFunctionsList GridLayout::trackSizingFunctions(size_t totalTracksCount, const Vector<Style::GridTrackSize>& gridTemplateTrackSizes, const Style::GridTrackSizes& gridAutoTrackSizes)
+TrackSizingFunctionsList GridLayout::trackSizingFunctions(size_t totalTracksCount, const Vector<Style::GridTrackSize>& gridTemplateTrackSizes, const Style::GridTrackSizes& gridAutoTrackSizes, const Style::ZoomFactor& zoom)
 {
     // FIXME: This function only supports appended tracks but not prepended tracks.
     // Per spec, we should support both forward and backward implicit tracks.
@@ -362,12 +375,12 @@ TrackSizingFunctionsList GridLayout::trackSizingFunctions(size_t totalTracksCoun
     // https://drafts.csswg.org/css-grid-1/#algo-terms
     // Map explicit tracks from grid-template-{columns,rows}
     for (auto& gridTrackSize : gridTemplateTrackSizes)
-        trackSizingFunctions.append(convertGridTrackSizeToTrackSizingFunctions(gridTrackSize));
+        trackSizingFunctions.append(convertGridTrackSizeToTrackSizingFunctions(gridTrackSize, zoom));
 
     // Generate implicit tracks using grid-auto-{columns,rows}
     // https://drafts.csswg.org/css-grid-1/#auto-tracks
     // "The first track after the last explicitly-sized track receives the first specified size, and so on forwards"
-    auto implicitTrackSizingFunctions = generateImplicitTrackSizingFunctions(gridTemplateTrackSizes.size(), totalTracksCount, gridAutoTrackSizes);
+    auto implicitTrackSizingFunctions = generateImplicitTrackSizingFunctions(gridTemplateTrackSizes.size(), totalTracksCount, gridAutoTrackSizes, zoom);
     trackSizingFunctions.appendVector(implicitTrackSizingFunctions);
 
     ASSERT(trackSizingFunctions.size() == totalTracksCount);
@@ -381,16 +394,16 @@ static Vector<LayoutUnit> rowSizesForFirstIterationColumnSizing(const TrackSizin
 {
     return rowTrackSizingFunctionsList.map([&gridContainerInnerInlineSize](const TrackSizingFunctions& trackSizingFunctions) {
         return WTF::switchOn(trackSizingFunctions.max,
-            [](const Style::GridTrackBreadthLength::Fixed& fixedValue) {
-                return Style::evaluate<LayoutUnit>(fixedValue, Style::ZoomNeeded { });
+            [&](const Style::GridTrackBreadthLength::Fixed& fixedValue) {
+                return Style::evaluate<LayoutUnit>(fixedValue, trackSizingFunctions.zoom);
             },
-            [&gridContainerInnerInlineSize](const Style::GridTrackBreadthLength::Percentage& percentageValue) {
+            [&](const Style::GridTrackBreadthLength::Percentage& percentageValue) {
                 ASSERT(gridContainerInnerInlineSize, "The formatting context should have transformed this track size to auto");
                 return Style::evaluate<LayoutUnit>(percentageValue, *gridContainerInnerInlineSize);
             },
-            [&gridContainerInnerInlineSize](const Style::GridTrackBreadth::Calc calculatedValue) -> LayoutUnit {
+            [&](const Style::GridTrackBreadth::Calc calculatedValue) -> LayoutUnit {
                 ASSERT(gridContainerInnerInlineSize, "The formatting context should have transformed this track size to auto");
-                return Style::evaluate<LayoutUnit>(calculatedValue, *gridContainerInnerInlineSize, Style::ZoomNeeded { });
+                return Style::evaluate<LayoutUnit>(calculatedValue, *gridContainerInnerInlineSize, trackSizingFunctions.zoom);
             },
             [](const CSS::Keyword::MinContent&) -> LayoutUnit {
                 return LayoutUnit::max();
@@ -414,7 +427,7 @@ static Vector<LayoutUnit> rowSizesForFirstIterationColumnSizing(const TrackSizin
 // During track sizing we may need to get different types of size contributions for a grid item.
 // Getting a contribution in a specific dimension may require knowing the available space in
 // the opposite dimension. For each of these cases, the spec defines how to compute the available space.
-static LayoutUnit NODELETE oppositeAxisConstraintForTrackSizing(Vector<LayoutUnit> oppositeAxisTrackSizes, const WTF::Range<size_t> oppositeAxisSpan)
+static LayoutUnit NODELETE oppositeAxisConstraintForTrackSizing(const Vector<LayoutUnit>& oppositeAxisTrackSizes, const WTF::Range<size_t> oppositeAxisSpan)
 {
     auto totalAvailableSpaceFromSpannedTracks = 0_lu;
     for (auto oppositeAxisLineIndex : std::views::iota(oppositeAxisSpan.begin(), oppositeAxisSpan.end())) {
@@ -447,12 +460,14 @@ TrackSizes GridLayout::sizeColumnTracks(const PlacedGridItems& placedGridItems, 
 
     auto columnTrackSizingItems = placedGridItems.map([&](const PlacedGridItem& gridItem) -> TrackSizingItem {
         auto rowSpan = WTF::Range<size_t> { gridItem.rowStartLine(), gridItem.rowEndLine() };
-        return { gridItem, gridItem.inlineAxisSizes(), gridItem.usedInlineBorderAndPadding(),
+        // The inline grid area is indefinite while sizing columns, so the item's cyclic percentage padding resolves against zero.
+        auto usedInlineBorderAndPadding = formattingContext().integrationUtils().borderAndPaddingForGridItem(gridItem.layoutBox(), 0_lu).first;
+        return { gridItem, gridItem.inlineAxisSizes(), usedInlineBorderAndPadding,
             { gridItem.columnStartLine(), gridItem.columnEndLine() }, oppositeAxisConstraintForTrackSizing(rowSizesForFirstColumnSizing, rowSpan) };
     });
 
     return TrackSizingAlgorithm::sizeTracks(columnTrackSizingItems, columnTrackSizingFunctionsList,
-        layoutConstraints.inlineAxis, GridLayoutUtils::inlineAxisGridItemSizingFunctions(formattingContext().integrationUtils()),
+        layoutConstraints.inlineAxis, GridItemSizingFunctions::inlineAxis(formattingContext().integrationUtils()),
         layoutState.usedColumnGap, layoutState.usedJustifyContent);
 }
 
@@ -467,12 +482,15 @@ TrackSizes GridLayout::sizeRowTracks(const PlacedGridItems& placedGridItems, con
 
     auto rowTrackSizingItems = placedGridItems.map([&](const PlacedGridItem& gridItem) -> TrackSizingItem {
         auto columnSpan = WTF::Range<size_t> { gridItem.columnStartLine(), gridItem.columnEndLine() };
-        return { gridItem, gridItem.blockAxisSizes(), gridItem.usedBlockBorderAndPadding(),
-            { gridItem.rowStartLine(), gridItem.rowEndLine() }, oppositeAxisConstraintForTrackSizing(columnSizes, columnSpan) };
+        auto columnConstraint = oppositeAxisConstraintForTrackSizing(columnSizes, columnSpan);
+        auto gridAreaInlineSize = GridLayoutUtils::gridAreaDimensionSize(gridItem.columnStartLine(), gridItem.columnEndLine(), columnSizes, layoutState.usedColumnGap);
+        auto usedBlockBorderAndPadding = formattingContext().integrationUtils().borderAndPaddingForGridItem(gridItem.layoutBox(), gridAreaInlineSize).second;
+        return { gridItem, gridItem.blockAxisSizes(), usedBlockBorderAndPadding,
+            { gridItem.rowStartLine(), gridItem.rowEndLine() }, columnConstraint };
     });
 
     return TrackSizingAlgorithm::sizeTracks(rowTrackSizingItems, rowTrackSizingFunctionsList,
-        layoutConstraints.blockAxis, GridLayoutUtils::blockAxisGridItemSizingFunctions(formattingContext()),
+        layoutConstraints.blockAxis, GridItemSizingFunctions::blockAxis(formattingContext()),
         layoutState.usedRowGap, layoutState.usedAlignContent);
 }
 
@@ -508,7 +526,9 @@ UsedTrackSizes GridLayout::performGridSizingAlgorithm(const GridLayoutState& lay
     return { columnSizes, rowSizes };
 }
 
-// Helper to compute margins from axis sizes
+// Resolves a grid item's used margins in one axis. This is intended to be used only after track
+// sizing is complete — i.e. for grid item sizing and alignment — since the grid area sizes it
+// relies on are not known until then.
 static UsedMargins computeMarginsForAxis(const ComputedSizes& axisSizes, const Style::ZoomFactor& zoomFactor)
 {
     auto marginStart = [&] -> LayoutUnit {
@@ -562,15 +582,19 @@ std::pair<UsedInlineSizes, UsedBlockSizes> GridLayout::layoutGridItems(const Pla
         auto& gridAreaInlineSize = gridAreaSizes.inlineSizes[gridItemIndex];
         auto& gridAreaBlockSize = gridAreaSizes.blockSizes[gridItemIndex];
 
-        auto usedInlineSizeForGridItem = GridLayoutUtils::usedInlineSizeForGridItem(gridItem, gridItem.usedInlineBorderAndPadding(), columnTrackSizingFunctions, gridAreaInlineSize, integrationUtils);
-        usedInlineSizes.append(usedInlineSizeForGridItem);
+        auto inlineMargins = computeMarginsForAxis(gridItem.inlineAxisSizes(), gridItem.usedZoom());
+        auto blockMargins = computeMarginsForAxis(gridItem.blockAxisSizes(), gridItem.usedZoom());
 
-        // FIXME: investigate to check if we should use the usedInlineSize or the size of the grid are in the inline direction.
-        auto usedBlockSizeForGridItem = GridLayoutUtils::usedBlockSizeForGridItem(gridItem, gridItem.usedBlockBorderAndPadding(), rowTrackSizingFunctions, gridAreaBlockSize, formattingContext, usedInlineSizeForGridItem);
-        usedBlockSizes.append(usedBlockSizeForGridItem);
+        auto [inlineBorderAndPadding, blockBorderAndPadding] = integrationUtils.borderAndPaddingForGridItem(gridItem.layoutBox(), gridAreaInlineSize);
 
-        auto& layoutBox = gridItem.layoutBox();
-        integrationUtils.layoutWithFormattingContextForBox(layoutBox, usedInlineSizeForGridItem, usedBlockSizeForGridItem);
+        auto inlineUsedSize = GridLayoutUtils::inlineUsedSize(gridItem, columnTrackSizingFunctions, inlineBorderAndPadding, gridAreaInlineSize, integrationUtils, inlineMargins);
+        usedInlineSizes.append(inlineUsedSize);
+
+        // FIXME: investigate to check if we should use the inlineUsedSize or the size of the grid area in the inline direction.
+        auto blockUsedSize = GridLayoutUtils::blockUsedSize(gridItem, rowTrackSizingFunctions, blockBorderAndPadding, gridAreaBlockSize, formattingContext, inlineUsedSize, blockMargins);
+        usedBlockSizes.append(blockUsedSize);
+
+        integrationUtils.layoutGridItem(gridItem.layoutBox(), inlineUsedSize, blockUsedSize, gridAreaInlineSize);
     }
     return { usedInlineSizes, usedBlockSizes };
 }

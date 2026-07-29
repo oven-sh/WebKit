@@ -11,11 +11,11 @@
 #include "include/gpu/graphite/BackendSemaphore.h"
 #include "include/gpu/graphite/vk/VulkanGraphiteTypes.h"
 #include "include/gpu/vk/VulkanMutableTextureState.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkLog.h"
+#include "include/private/SkTArray.h"
 #include "src/gpu/DataUtils.h"
 #include "src/gpu/graphite/ContextUtils.h"
 #include "src/gpu/graphite/DescriptorData.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/PipelineData.h"
 #include "src/gpu/graphite/RenderPassDesc.h"
 #include "src/gpu/graphite/Surface_Graphite.h"
@@ -131,7 +131,7 @@ VulkanCommandBuffer::~VulkanCommandBuffer() {
 
 bool VulkanCommandBuffer::startStatsQuery(GpuStatsFlags flags) {
     if (fHasStatsQuery) {
-        SKGPU_LOG_W(
+        SKIA_LOG_W(
                 "startTimerQuery called more than once for the same command "
                 "buffer. Currently, stats queries are only supported when "
                 "each recording gets its own submission.");
@@ -571,8 +571,7 @@ bool VulkanCommandBuffer::isFinished() {
             return false;
 
         default:
-            SKGPU_LOG_F("Error calling vkGetFenceStatus. Error: %d", err);
-            SK_ABORT("Got an invalid fence status");
+            SK_ABORT("Error calling vkGetFenceStatus. Error: %d", err);
             return false;
     }
 }
@@ -615,6 +614,11 @@ bool VulkanCommandBuffer::onAddRenderPass(const RenderPassDesc& rpDesc,
                                           const DrawPassList& drawPasses) {
     SkASSERT(resolveOffset.isZero());
     for (const auto& drawPass : drawPasses) {
+        // Track resources now since the barriers will reference them.
+        if (!drawPass->addResourceRefs(fResourceProvider, this)) SK_UNLIKELY {
+            return false;
+        }
+
         // Our current implementation of setting texture image layouts does not allow layout changes
         // once we have already begun a render pass, so prior to any other commands, set the layout
         // of all sampled textures from the drawpass so they can be sampled from the shader.
@@ -649,10 +653,7 @@ bool VulkanCommandBuffer::onAddRenderPass(const RenderPassDesc& rpDesc,
             viewport, rpDesc.fDstReadStrategy == DstReadStrategy::kReadFromInput);
 
     for (const auto& drawPass : drawPasses) {
-        if (!this->addDrawPass(drawPass.get())) SK_UNLIKELY {
-            this->endRenderPass();
-            return false;
-        }
+        this->addDrawPass(drawPass.get());
     }
 
     this->endRenderPass();
@@ -745,7 +746,7 @@ bool VulkanCommandBuffer::loadMSAAFromResolve(const RenderPassDesc& rpDesc,
     sk_sp<VulkanGraphicsPipeline> loadPipeline =
             fResourceProvider->findOrCreateLoadMSAAPipeline(rpDesc);
     if (!loadPipeline) {
-        SKGPU_LOG_E("Unable to create pipeline to load resolve texture into MSAA attachment");
+        SKIA_LOG_E("Unable to create pipeline to load resolve texture into MSAA attachment");
         return false;
     }
 
@@ -784,7 +785,7 @@ bool VulkanCommandBuffer::loadMSAAFromResolve(const RenderPassDesc& rpDesc,
             resolveTexture,
             VulkanGraphicsPipeline::kLoadMsaaFromResolveInputDescSetIndex,
             fActiveGraphicsPipeline->layout())) {
-        SKGPU_LOG_E("Unable to update and bind an input attachment descriptor for loading MSAA "
+        SKIA_LOG_E("Unable to update and bind an input attachment descriptor for loading MSAA "
                     "from resolve");
         return false;
     }
@@ -1005,7 +1006,7 @@ bool VulkanCommandBuffer::beginRenderPass(const RenderPassDesc& rpDesc,
     const bool loadMSAAFromResolve = RenderPassDescWillLoadMSAAFromResolve(rpDesc);
     if (loadMSAAFromResolve && (!vulkanResolveTexture || !fTargetTexture ||
                                 !vulkanResolveTexture->supportsInputAttachmentUsage())) {
-        SKGPU_LOG_E("Cannot begin render pass. In order to load MSAA from resolve, the color "
+        SKIA_LOG_E("Cannot begin render pass. In order to load MSAA from resolve, the color "
                     "attachment must have input attachment usage and both the color and resolve "
                     "attachments must be valid.");
         return false;
@@ -1028,7 +1029,7 @@ bool VulkanCommandBuffer::beginRenderPass(const RenderPassDesc& rpDesc,
     sk_sp<VulkanRenderPass> vulkanRenderPass =
             fResourceProvider->findOrCreateRenderPass(rpDesc, /*compatibleOnly=*/false);
     if (!vulkanRenderPass) {
-        SKGPU_LOG_W("Could not create Vulkan RenderPass");
+        SKIA_LOG_W("Could not create Vulkan RenderPass");
         return false;
     }
     this->submitPipelineBarriers();
@@ -1053,7 +1054,7 @@ bool VulkanCommandBuffer::beginRenderPass(const RenderPassDesc& rpDesc,
                                                        frameBufferWidth,
                                                        frameBufferHeight);
     if (!framebuffer) {
-        SKGPU_LOG_W("Could not find or create Vulkan Framebuffer");
+        SKIA_LOG_W("Could not find or create Vulkan Framebuffer");
         return false;
     }
 
@@ -1094,7 +1095,7 @@ bool VulkanCommandBuffer::beginRenderPass(const RenderPassDesc& rpDesc,
                                                           *vulkanResolveTexture,
                                                           fTargetTexture->dimensions(),
                                                           nativeBounds)) {
-        SKGPU_LOG_E("Failed to load MSAA from resolve");
+        SKIA_LOG_E("Failed to load MSAA from resolve");
         this->endRenderPass();
         return false;
     }
@@ -1111,15 +1112,11 @@ void VulkanCommandBuffer::endRenderPass() {
     fTargetTexture = nullptr;
 }
 
-bool VulkanCommandBuffer::addDrawPass(DrawPass* drawPass) {
+void VulkanCommandBuffer::addDrawPass(DrawPass* drawPass) {
     // If there is gradient data to bind, it must be done prior to draws.
     if (drawPass->floatStorageManager()->hasData()) {
         this->recordBufferBindingInfo(drawPass->floatStorageManager()->getBufferInfo(),
                                       UniformSlot::kGradient);
-    }
-
-    if (!drawPass->addResourceRefs(fResourceProvider, this)) SK_UNLIKELY {
-        return false;
     }
 
     for (auto [type, cmdPtr] : drawPass->commands()) {
@@ -1220,8 +1217,6 @@ bool VulkanCommandBuffer::addDrawPass(DrawPass* drawPass) {
             }
         }
     }
-
-    return true;
 }
 
 void VulkanCommandBuffer::bindGraphicsPipeline(const GraphicsPipeline* graphicsPipeline) {
@@ -1319,70 +1314,146 @@ void VulkanCommandBuffer::syncDescriptorSets() {
     }
 }
 
+namespace {
+void update_uniform_descriptor_set(SkSpan<DescriptorData> requestedDescriptors,
+                                   SkSpan<BindBufferInfo> bindUniformBufferInfo,
+                                   VkDescriptorSet descSet,
+                                   const VulkanSharedContext* sharedContext) {
+    for (size_t i = 0; i < requestedDescriptors.size(); i++) {
+        int descriptorBindingIndex = requestedDescriptors[i].fBindingIndex;
+        SkASSERT(SkTo<unsigned long>(descriptorBindingIndex) < bindUniformBufferInfo.size());
+        const auto& bindInfo = bindUniformBufferInfo[descriptorBindingIndex];
+        if (bindInfo.fBuffer) {
+#if defined(SK_DEBUG)
+            static uint64_t maxBufferRange =
+                sharedContext->caps()->storageBufferSupport()
+                    ? sharedContext->vulkanCaps().maxStorageBufferRange()
+                    : sharedContext->vulkanCaps().maxUniformBufferRange();
+            SkASSERT(bindInfo.fSize <= maxBufferRange);
+#endif
+            VkDescriptorBufferInfo bufferInfo = {};
+            auto vulkanBuffer = static_cast<const VulkanBuffer*>(bindInfo.fBuffer);
+            bufferInfo.buffer = vulkanBuffer->vkBuffer();
+            bufferInfo.offset = 0; // We always use dynamic ubos so we set the base offset to 0
+            bufferInfo.range = bindInfo.fSize;
+
+            VkWriteDescriptorSet writeInfo = {};
+            writeInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writeInfo.dstSet = descSet;
+            writeInfo.dstBinding = descriptorBindingIndex;
+            writeInfo.dstArrayElement = 0;
+            writeInfo.descriptorCount = requestedDescriptors[i].fCount;
+            writeInfo.descriptorType = DsTypeEnumToVkDs(requestedDescriptors[i].fType);
+            writeInfo.pBufferInfo = &bufferInfo;
+
+            // TODO(b/293925059): Migrate to updating all the uniform descriptors with one driver
+            // call. Calling UpdateDescriptorSets once to encapsulate updates to all uniform
+            // descriptors would be ideal, but that led to issues with draws where all the UBOs
+            // within that set would unexpectedly be assigned the same offset. Updating them one at
+            // a time within this loop works in the meantime but is suboptimal.
+            VULKAN_CALL(sharedContext->interface(),
+                        UpdateDescriptorSets(sharedContext->device(),
+                                             /*descriptorWriteCount=*/1,
+                                             &writeInfo,
+                                             /*descriptorCopyCount=*/0,
+                                             /*pDescriptorCopies=*/nullptr));
+        }
+    }
+}
+
+} // anonymous namespace
+
 void VulkanCommandBuffer::bindUniformBuffers() {
     fBindUniformBuffers = false;
+    using Pipeline = VulkanGraphicsPipeline;
 
-    // Define a container with size reserved for up to kNumUniformBuffers descriptors. Only add
-    // DescriptorData for uniforms that actually are used and need to be bound.
-    STArray<VulkanGraphicsPipeline::kNumUniformBuffers, DescriptorData> descriptors;
+    const bool hasCombinedUbo =
+            fActiveGraphicsPipeline->hasCombinedUniforms() &&
+            fUniformBuffersToBind[Pipeline::kCombinedUniformIndex].fBuffer;
+    const bool hasGradientBuffer =
+            fActiveGraphicsPipeline->hasGradientBuffer() &&
+            fUniformBuffersToBind[Pipeline::kGradientBufferIndex].fBuffer;
 
-    // Up to kNumUniformBuffers can be used and require rebinding depending upon render pass info.
+    // We should never have a gradient buffer without having a combined uniform buffer as well.
+    SkASSERT(!hasGradientBuffer || hasCombinedUbo);
+
+    // If no uniforms are used, we can go ahead and return since no descriptors need to be bound.
+    if (!hasCombinedUbo) {
+        return;
+    }
+
+    const auto& combinedUboInfo = fUniformBuffersToBind[Pipeline::kCombinedUniformIndex];
+    auto vulkanBuffer = static_cast<const VulkanBuffer*>(combinedUboInfo.fBuffer);
+
     DescriptorType uniformBufferType =
             fSharedContext->caps()->storageBufferSupport() ? DescriptorType::kStorageBuffer
                                                            : DescriptorType::kUniformBuffer;
-    if (fActiveGraphicsPipeline->hasCombinedUniforms() &&
-        fUniformBuffersToBind[VulkanGraphicsPipeline::kCombinedUniformIndex].fBuffer) {
-        descriptors.push_back({
-                uniformBufferType,
-                /*count=*/1,
-                VulkanGraphicsPipeline::kCombinedUniformIndex,
-                PipelineStageFlags::kVertexShader | PipelineStageFlags::kFragmentShader });
-    }
 
-    if (fActiveGraphicsPipeline->hasGradientBuffer() &&
-        fUniformBuffersToBind[VulkanGraphicsPipeline::kGradientBufferIndex].fBuffer) {
+    // If we determine that we should use storage buffers, we expect that the actual VkBuffer
+    // supports that usage.
+    SkASSERT(uniformBufferType != DescriptorType::kStorageBuffer ||
+             vulkanBuffer->bufferUsageFlags() | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+    // We expect to have up to 2 descriptors within this set. Fill out DescriptorData (for
+    // interfacing with backend-agnostic graphite calls) and dynamic offset information for each
+    // uniform, starting with the combined uniform buffer.
+    skia_private::STArray<2, DescriptorData> uniformDescriptorData;
+    skia_private::STArray<2, uint32_t> dynamicOffsets;
+
+    uniformDescriptorData.push_back({
+            uniformBufferType,
+            /*count=*/1,
+            Pipeline::kCombinedUniformIndex,
+            PipelineStageFlags::kVertexShader | PipelineStageFlags::kFragmentShader });
+    dynamicOffsets.push_back(combinedUboInfo.fOffset);
+
+    if (hasGradientBuffer) {
         SkASSERT(fSharedContext->caps()->gradientBufferSupport() &&
                  fSharedContext->caps()->storageBufferSupport());
-        descriptors.push_back({ DescriptorType::kStorageBuffer, /*count=*/1,
-                                VulkanGraphicsPipeline::kGradientBufferIndex,
-                                PipelineStageFlags::kFragmentShader });
+
+        uniformDescriptorData.push_back({DescriptorType::kStorageBuffer,
+                                         /*count=*/1,
+                                         Pipeline::kGradientBufferIndex,
+                                         PipelineStageFlags::kFragmentShader});
+        dynamicOffsets.push_back(fUniformBuffersToBind[Pipeline::kGradientBufferIndex].fOffset);
     }
 
-    // If no uniforms are used, we can go ahead and return since no descriptors need to be bound.
-    if (descriptors.empty()) {
-        return;
-    }
+    // Now obtain an actual descriptor set. In the case of using only one buffer, we can query
+    // the VulkanBuffer for an existing cached set with the appropriate sizing and can avoid
+    // performing an update call on the set. Otherwise, obtain a new set and update before binding.
+    sk_sp<VulkanDescriptorSet> descSet;
+    if (hasGradientBuffer ||
+        !(descSet = vulkanBuffer->getCachedSingleBufferDescriptorSet(combinedUboInfo.fSize))) {
 
-    skia_private::AutoSTMalloc<VulkanGraphicsPipeline::kNumUniformBuffers, uint32_t>
-            dynamicOffsets(descriptors.size());
-    for (int i = 0; i < descriptors.size(); i++) {
-        int descriptorBindingIndex = descriptors[i].fBindingIndex;
-        SkASSERT(static_cast<unsigned long>(descriptorBindingIndex) < fUniformBuffersToBind.size());
-        const auto& bindInfo = fUniformBuffersToBind[descriptorBindingIndex];
-#ifdef SK_DEBUG
-        if (descriptors[i].fPipelineStageFlags & PipelineStageFlags::kVertexShader) {
-            SkASSERT(bindInfo.fBuffer->isProtected() == Protected::kNo);
+        descSet = fResourceProvider->findOrCreateDescriptorSet(uniformDescriptorData);
+        if (!descSet) {
+            SKIA_LOG_E("Unable to find or create uniform descriptor set");
+            return;
         }
-#endif
-        dynamicOffsets[i] = bindInfo.fOffset;
-    }
 
-    sk_sp<VulkanDescriptorSet> descSet = fResourceProvider->findOrCreateUniformBuffersDescriptorSet(
-            descriptors, fUniformBuffersToBind);
-    if (!descSet) {
-        SKGPU_LOG_E("Unable to find or create uniform descriptor set");
-        return;
+        // Update the set before binding.
+        update_uniform_descriptor_set(uniformDescriptorData,
+                                      fUniformBuffersToBind,
+                                      *descSet->descriptorSet(),
+                                      fSharedContext);
+
+        // If we ended up creating a new single-buffer descriptor set, cache it on the VulkanBuffer.
+        if (!hasGradientBuffer) {
+            const_cast<VulkanBuffer*>(vulkanBuffer)->
+                    addCachedSingleBufferDescriptorSet(combinedUboInfo.fSize, descSet);
+        }
     }
 
     VULKAN_CALL(fSharedContext->interface(),
                 CmdBindDescriptorSets(fPrimaryCommandBuffer,
                                       VK_PIPELINE_BIND_POINT_GRAPHICS,
                                       fActiveGraphicsPipeline->layout(),
-                                      VulkanGraphicsPipeline::kUniformBufferDescSetIndex,
+                                      Pipeline::kUniformBufferDescSetIndex,
                                       /*setCount=*/1,
                                       descSet->descriptorSet(),
-                                      descriptors.size(),
-                                      dynamicOffsets.get()));
+                                      uniformDescriptorData.size(),
+                                      dynamicOffsets.data()));
+
     this->trackResource(std::move(descSet));
 }
 
@@ -1481,7 +1552,7 @@ void VulkanCommandBuffer::recordTextureAndSamplerDescSet(
         set = fResourceProvider->findOrCreateDescriptorSet(
                 {&descriptors.front(), (size_t)descriptors.size()});
         if (!set) {
-            SKGPU_LOG_E("Unable to find or create descriptor set");
+            SKIA_LOG_E("Unable to find or create descriptor set");
             resetTextureAndSamplerState();
             return;
         }
@@ -1494,7 +1565,7 @@ void VulkanCommandBuffer::recordTextureAndSamplerDescSet(
                 // TODO(b/294198324): Investigate the root cause for null texture or samplers on
                 // Ubuntu QuadP400 GPU
                 if (!texture) {
-                    SKGPU_LOG_E("Invalid texture in BindTexturesAndSamplers command.");
+                    SKIA_LOG_E("Invalid texture in BindTexturesAndSamplers command.");
                     resetTextureAndSamplerState();
                     return;
                 }
@@ -1508,7 +1579,7 @@ void VulkanCommandBuffer::recordTextureAndSamplerDescSet(
                                     command->fSamplers[i]));
                     // b/294198324, see above
                     if (!sampler) {
-                        SKGPU_LOG_E("Invalid dynamic sampler.");
+                        SKIA_LOG_E("Invalid dynamic sampler.");
                         resetTextureAndSamplerState();
                         return;
                     }
@@ -1523,7 +1594,7 @@ void VulkanCommandBuffer::recordTextureAndSamplerDescSet(
             auto sampler = static_cast<const VulkanSampler*>(fDstCopy.second);
             // b/294198324, see above
             if (!texture || !sampler) {
-                SKGPU_LOG_E("Invalid texture or sampler for dst-copy path.");
+                SKIA_LOG_E("Invalid texture or sampler for dst-copy path.");
                 resetTextureAndSamplerState();
                 return;
             }

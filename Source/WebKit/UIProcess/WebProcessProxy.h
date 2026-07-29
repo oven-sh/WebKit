@@ -194,6 +194,7 @@ public:
     enum class ShouldLaunchProcess : bool { No, Yes };
     enum class LockdownMode : bool { Disabled, Enabled };
     enum class EnableWebAssemblyDebugger : bool { No, Yes };
+    enum class CreateSandboxExtensionForNetworkingProcess : bool { No, Yes };
 
     enum class IsolatedProcessType : uint8_t {
         Unspecified,
@@ -336,7 +337,7 @@ public:
     void updateTextCheckerState();
 
     void willAcquireUniversalFileReadSandboxExtension() { m_mayHaveUniversalFileReadSandboxExtension = true; }
-    void assumeReadAccessToBaseURL(WebPageProxy&, const String&, CompletionHandler<void()>&&, bool directoryOnly = false);
+    void assumeReadAccessToBaseURL(WebPageProxy&, const String&, CompletionHandler<void()>&&, CreateSandboxExtensionForNetworkingProcess = CreateSandboxExtensionForNetworkingProcess::No);
     void assumeReadAccessToBaseURLs(WebPageProxy&, const Vector<String>&, CompletionHandler<void()>&&);
     bool hasAssumedReadAccessToURL(const URL&) const;
 
@@ -637,7 +638,7 @@ public:
     bool isEligibleForWebProcessCache() const { return m_isEligibleForWebProcessCache; }
 
     void incrementFrameProcessCount() { ++m_frameProcessCount; }
-    void decrementFrameProcessCount() { --m_frameProcessCount; }
+    void decrementFrameProcessCount();
     uint64_t frameProcessCount() const { return m_frameProcessCount; }
 
     enum class FirstPartyAccessResult {
@@ -660,9 +661,9 @@ private:
     void connectionWillOpen(IPC::Connection&) override;
     void processWillShutDown(IPC::Connection&) override;
     bool shouldSendPendingMessage(const IPC::Encoder&) final;
-    
+
 #if PLATFORM(COCOA)
-    void cacheMediaMIMETypesInternal(const Vector<String>&);
+    bool handleRemoteObjectRegistryMessage(IPC::Connection&, IPC::Decoder&);
 #endif
 
     // ProcessLauncher::Client
@@ -780,6 +781,7 @@ private:
 #else
     void createLogStream(LogStreamIdentifier, CompletionHandler<void()>&&);
 #endif
+    void stopLogStream();
 #endif
 
 #if ENABLE(REMOTE_INSPECTOR) && PLATFORM(COCOA)

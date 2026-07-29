@@ -28,6 +28,7 @@
 
 #if ENABLE(WPE_PLATFORM)
 
+#include <WebCore/Theme.h>
 #include <wpe/WPEDisplay.h>
 #include <wpe/WPESettings.h>
 #include <wtf/glib/GUniquePtr.h>
@@ -137,7 +138,9 @@ String SystemSettingsManagerProxy::xftHintStyle() const
 
 String SystemSettingsManagerProxy::xftRGBA() const
 {
-    switch (getUint8(m_settings, WPE_SETTING_FONT_SUBPIXEL_LAYOUT, WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB)) {
+    switch (getUint8(m_settings, WPE_SETTING_FONT_SUBPIXEL_LAYOUT, WPE_SETTINGS_SUBPIXEL_LAYOUT_NONE)) {
+    case WPE_SETTINGS_SUBPIXEL_LAYOUT_NONE:
+        return { };
     case WPE_SETTINGS_SUBPIXEL_LAYOUT_RGB:
         return "rgb"_s;
     case WPE_SETTINGS_SUBPIXEL_LAYOUT_BGR:
@@ -148,7 +151,7 @@ String SystemSettingsManagerProxy::xftRGBA() const
         return "vbgr"_s;
     }
     ASSERT_NOT_REACHED();
-    return "rgb"_s;
+    return { };
 }
 
 int SystemSettingsManagerProxy::xftDPI() const
@@ -181,9 +184,23 @@ bool SystemSettingsManagerProxy::overlayScrolling() const
     return getBool(m_settings, WPE_SETTING_OVERLAY_SCROLLBARS, true);
 }
 
-bool SystemSettingsManagerProxy::enableAnimations() const
+bool SystemSettingsManagerProxy::reducedMotion() const
 {
-    return !getBool(m_settings, WPE_SETTING_DISABLE_ANIMATIONS, false);
+    return !getBool(m_settings, WPE_SETTING_REDUCED_MOTION, false);
+}
+
+WebCore::InterfaceContrastPreference SystemSettingsManagerProxy::interfaceContrast() const
+{
+    switch (getUint8(m_settings, WPE_SETTING_INTERFACE_CONTRAST, WPE_SETTINGS_INTERFACE_CONTRAST_NO_PREFERENCE)) {
+    case WPE_SETTINGS_INTERFACE_CONTRAST_NO_PREFERENCE:
+        return WebCore::InterfaceContrastPreference::NoPreference;
+    case WPE_SETTINGS_INTERFACE_CONTRAST_MORE:
+        return WebCore::InterfaceContrastPreference::MoreContrast;
+    case WPE_SETTINGS_INTERFACE_CONTRAST_LESS:
+        return WebCore::InterfaceContrastPreference::LessContrast;
+    }
+    ASSERT_NOT_REACHED();
+    return WebCore::InterfaceContrastPreference::NoPreference;
 }
 
 SystemSettingsManagerProxy::SystemSettingsManagerProxy()

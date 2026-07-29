@@ -72,6 +72,7 @@
 #include "HTMLDataListElement.h"
 #include "HTMLDetailsElement.h"
 #include "HTMLFormControlElement.h"
+#include "HTMLHeadingElement.h"
 #include "HTMLInputElement.h"
 #include "HTMLModelElement.h"
 #include "HTMLNames.h"
@@ -96,6 +97,7 @@
 #include "PositionInlines.h"
 #include "ProgressTracker.h"
 #include "Range.h"
+#include "RemoteFrame.h"
 #include "RenderElementInlines.h"
 #include "RenderImage.h"
 #include "RenderImageResource.h"
@@ -591,20 +593,52 @@ FloatRect AccessibilityObject::convertFrameToSpace(const FloatRect& frameRect, A
 
         auto geometry = rootScrollView->frameGeometry();
 
-        auto scaledRect = geometry.screenTransform.mapRect(FloatRect(snappedFrameRect));
+        // The top-level page scroll view's own frame is in view/device space (the viewport). Every other
+        // object's frame is content-space. screenTransform is the content->screen page-zoom scale, so
+        // applying it to the already-device-space viewport double-scales it (viewport * pageZoom),
+        // shrinking the frame that Voice Control, Switch Control, etc. clips its set of visible elements
+        // against. Skip the transform for the top page scroll view's own frame only.
+        //
+        // Guard on "no ancestor scroll view" -- NOT isRoot(), which is also true for local iframe roots under
+        // ACCESSIBILITY_LOCAL_FRAME -- so iframe scroll views (content-space elementRect) are still scaled.
+        // No-op at page zoom 1.0 (screenTransform is identity).
+        const bool isTopPageScrollViewOwnFrame = this == rootScrollView.get() && !parentAccessibilityScrollView;
+        auto scaledRect = isTopPageScrollViewOwnFrame
+            ? FloatRect(snappedFrameRect)
+            : geometry.screenTransform.mapRect(FloatRect(snappedFrameRect));
 
         auto screenPosition = geometry.screenPosition;
-        // screenPosition tracks the document origin, which moves with scroll.
-        // The viewport is fixed on screen, so subtract the scroll and content
-        // inset offsets that contentsToView baked into screenPosition.
-        if (this == rootScrollView.get()) {
-            if (RefPtr scrollView = rootScrollView->scrollView()) {
-                auto viewOriginScrollPosition = geometry.screenTransform.mapPoint(FloatPoint(scrollView->documentScrollPositionRelativeToViewOrigin()));
-                screenPosition.move(-roundToInt(viewOriginScrollPosition.x()), -roundToInt(viewOriginScrollPosition.y()));
-            }
-        }
+
+        IntPoint currentScrollOffset;
+        if (RefPtr scrollView = rootScrollView->scrollView())
+            currentScrollOffset = scrollView->documentScrollPositionRelativeToViewOrigin();
+        auto currentScroll = geometry.screenTransform.mapPoint(FloatPoint(currentScrollOffset));
+
+        // This was the scroll at the time |geometry.screenPosition| was taken. The scroll
+        // may have changed since then, and we may not have gotten the corresponding AXFrameGeometry
+        // update yet. We can avoid serving stale geometry in this scenario by taking |cachedScroll|
+        // and undo'ing it from the screen position, and then applying the current-scroll offset (which we
+        // can do in this context, being on the main-thread). This prevents ATs from temporarily reading
+        // a stale value.
+        auto cachedScroll = geometry.screenTransform.mapPoint(FloatPoint(rootScrollView->frameViewOriginScrollPosition()));
 
         // macOS uses bottom-left origin, non-macOS assumes top-left origin.
+        // FIXME: It would be cleaner to store screenPosition as one canonical value
+        // and apply the Mac transformations only as a final step.
+#if PLATFORM(MAC)
+        // accessibility/mac/webkit-scrollarea-position.html demands that we don't
+        // apply the current scroll for the root.
+        const bool applyCurrentScroll = this != rootScrollView.get();
+        constexpr int yScale = -1;
+#else
+        const bool applyCurrentScroll = true;
+        constexpr int yScale = 1;
+#endif
+        FloatPoint scrollDelta = cachedScroll;
+        if (applyCurrentScroll)
+            scrollDelta.move(-currentScroll.x(), -currentScroll.y());
+        screenPosition.move(roundToInt(scrollDelta.x()), yScale * roundToInt(scrollDelta.y()));
+
         FloatPoint position = {
             screenPosition.x() + scaledRect.x(),
 #if PLATFORM(MAC)
@@ -882,6 +916,14 @@ std::optional<SimpleRange> AccessibilityObject::selectionRange() const
     Ref document = *frame->document();
     return { { { document.get(), 0 }, { document.get(), 0 } } };
 }
+
+#if ENABLE(WRITING_TOOLS)
+bool AccessibilityObject::writingToolsAvailable() const
+{
+    RefPtr page = this->page();
+    return page && page->chrome().client().writingToolsAvailable();
+}
+#endif // ENABLE(WRITING_TOOLS)
 
 std::optional<SimpleRange> AccessibilityObject::simpleRange() const
 {
@@ -1582,6 +1624,73 @@ bool AccessibilityObject::press()
     return pressElement->accessKeyAction(true) || pressElement->dispatchSimulatedClick(nullptr, SendMouseUpDownEvents);
 }
 
+bool AccessibilityObject::pressPreservingFocus()
+{
+    RefPtr document = this->document();
+    RefPtr page = document ? document->page() : nullptr;
+    WeakPtr cache = axObjectCache();
+    if (!cache || !document || !page) {
+        // Without a cache to suppress notifications through, or a document / page to reason about
+        // focus within, there's nothing to preserve, so just perform the press.
+        return press();
+    }
+
+    // The focus we want to preserve is the page's focused element, which need not live in the
+    // action target's document. If it's in a remote (out-of-process) frame we can't reach it as an
+    // Element at all. If it's in a different local frame, we can't cleanly suppress its notifications
+    // from here (a cross-document focus change fires onFocusChange on both documents' caches). In
+    // either case, fall back to a plain press, which may move focus to the target as it did before
+    // this change.
+    // FIXME: Preserve focus across frames (local *and* remote) too.
+    auto& focusController = page->focusController();
+    if (is<RemoteFrame>(focusController.focusedFrame()))
+        return press();
+    RefPtr focusedLocalFrame = focusController.localFocusedFrame();
+    RefPtr originalFocusedElement = focusedLocalFrame ? focusedLocalFrame->document()->focusedElement() : nullptr;
+    if (originalFocusedElement && &originalFocusedElement->document() != document.get())
+        return press();
+
+    RefPtr actionTarget = dynamicDowncast<Element>(node());
+    cache->beginSuppressingFocusChange(actionTarget.get());
+    bool result = press();
+
+    if (!cache) {
+        // press() can run author script that tears down the cache, in which case the WeakPtr is nulled
+        // and there's nothing left to clean up.
+        return result;
+    }
+    cache->endSuppressingFocusChange();
+
+    if (!actionTarget || document->focusedElement() != actionTarget) {
+        // Pressing didn't move focus, or author script moved it somewhere else (which we don't
+        // want to overwrite).
+        return result;
+    }
+
+    // Pressing the action target moved focus onto it. Restore focus to where it was (the original
+    // element, or nothing if nothing was focused). We suppress that notification too, since as far
+    // as assistive technology is concerned, focus never left where it was before the action.
+    cache->beginSuppressingFocusChange(originalFocusedElement.get());
+    if (originalFocusedElement)
+        originalFocusedElement->focus();
+    else
+        document->setFocusedElement(nullptr);
+
+    if (!cache) {
+        // focus() / setFocusedElement() can also run author script that tears down the cache.
+        return result;
+    }
+    cache->endSuppressingFocusChange();
+
+    // If focus didn't end up where we intended (e.g. author script disconnected the origin during
+    // the press so it couldn't take focus back), surface the real focus now so assistive technology
+    // moves to it, rather than being left pointed at the stale origin whose focus change we suppressed above.
+    if (RefPtr currentFocusedElement = document->focusedElement(); currentFocusedElement && currentFocusedElement != originalFocusedElement)
+        cache->onFocusChange(nullptr, currentFocusedElement.get());
+
+    return result;
+}
+
 bool AccessibilityObject::performShowMenuAction()
 {
 #if ENABLE(CONTEXT_MENUS) && USE(ACCESSIBILITY_CONTEXT_MENUS)
@@ -1643,6 +1752,13 @@ RenderView* AccessibilityObject::topRenderer() const
 unsigned AccessibilityObject::ariaLevel() const
 {
     return std::max(0, integralAttribute(aria_levelAttr));
+}
+
+unsigned AccessibilityObject::computedHeadingLevel() const
+{
+    if (RefPtr heading = dynamicDowncast<HTMLHeadingElement>(node()))
+        return heading->level();
+    return 0;
 }
 
 String AccessibilityObject::language() const
@@ -1934,8 +2050,19 @@ std::optional<SimpleRange> AccessibilityObject::rangeForCharacterRange(const Cha
 VisiblePositionRange AccessibilityObject::lineRangeForPosition(const VisiblePosition& visiblePosition) const
 {
     auto start = startOfLine(visiblePosition);
-    if (start.isNull())
+    if (start.isNull()) {
+        // An out-of-flow (floated or positioned) replaced element generates no inline line
+        // box, so startOfLine() is null and the caret has no line to read. Give it a line of
+        // its own by selecting the element's node. Select the node itself, not its contents,
+        // which are empty for a replaced element, so that reading the line emits the element's
+        // object-replacement attachment.
+        CheckedPtr renderer = this->renderer();
+        if (RefPtr node = this->node(); node && renderer && isReplacedElement()
+            && isRendererReplacedElement(renderer.get())
+            && renderer->isFloatingOrOutOfFlowPositioned())
+            return makeVisiblePositionRange(makeRangeSelectingNode(*node));
         return { };
+    }
 
     // Move from the given visiblePosition forward until it hits the start of the next line or cross over a line break.
     auto end = visiblePosition;

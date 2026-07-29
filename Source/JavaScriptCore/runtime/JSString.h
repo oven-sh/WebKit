@@ -353,6 +353,7 @@ public:
     }
 
     // We use lower 3bits of fiber0 for flags. These bits are usable due to alignment, and it is OK even in 32bit architecture.
+    static constexpr unsigned s_maxInternalRopeLength = 3;
     static constexpr uintptr_t is8BitInPointer = static_cast<uintptr_t>(StringImpl::flagIs8Bit());
     static constexpr uintptr_t isSubstringInPointer = 0x2;
     static_assert(is8BitInPointer == 0b100);
@@ -468,11 +469,12 @@ public:
 
         bool append(JSString* jsString)
         {
+            static_assert(3 == JSRopeString::s_maxInternalRopeLength);
             if (this->hasOverflowed()) [[unlikely]]
                 return false;
             if (!jsString->length())
                 return true;
-            if (m_strings.size() == JSRopeString::s_maxInternalRopeLength)
+            if (m_index == JSRopeString::s_maxInternalRopeLength)
                 expand();
 
             static_assert(JSString::MaxLength == std::numeric_limits<int32_t>::max());
@@ -482,7 +484,7 @@ public:
                 return false;
             }
             ASSERT(static_cast<unsigned>(sum) <= MaxLength);
-            m_strings.append(jsString);
+            m_strings[m_index++] = jsString;
             m_length = static_cast<unsigned>(sum);
             return true;
         }
@@ -491,22 +493,23 @@ public:
         {
             RELEASE_ASSERT(!this->hasOverflowed());
             JSString* result = nullptr;
-            switch (m_strings.size()) {
+            static_assert(3 == JSRopeString::s_maxInternalRopeLength);
+            switch (m_index) {
             case 0: {
                 ASSERT(!m_length);
                 result = jsEmptyString(m_vm);
                 break;
             }
             case 1: {
-                result = asString(m_strings.at(0));
+                result = m_strings[0];
                 break;
             }
             case 2: {
-                result = JSRopeString::create(m_vm, asString(m_strings.at(0)), asString(m_strings.at(1)));
+                result = JSRopeString::create(m_vm, m_strings[0], m_strings[1]);
                 break;
             }
             case 3: {
-                result = JSRopeString::create(m_vm, asString(m_strings.at(0)), asString(m_strings.at(1)), asString(m_strings.at(2)));
+                result = JSRopeString::create(m_vm, m_strings[0], m_strings[1], m_strings[2]);
                 break;
             }
             default:
@@ -514,7 +517,7 @@ public:
                 break;
             }
             ASSERT(result->length() == m_length);
-            m_strings.clear();
+            m_index = 0;
             m_length = 0;
             return result;
         }
@@ -529,7 +532,8 @@ public:
         void expand();
 
         VM& m_vm;
-        MarkedArgumentBuffer m_strings;
+        std::array<JSString*, JSRopeString::s_maxInternalRopeLength> m_strings { };
+        unsigned m_index { 0 };
         unsigned m_length { 0 };
     };
 
@@ -631,8 +635,6 @@ public:
     static constexpr ptrdiff_t offsetOfFiber1Lower() { return OBJECT_OFFSETOF(JSRopeString, m_compactFibers) + CompactFibers::offsetOfFiber1Lower(); }
     static constexpr ptrdiff_t offsetOfFiber2Lower() { return OBJECT_OFFSETOF(JSRopeString, m_compactFibers) + CompactFibers::offsetOfFiber2Lower(); }
 #endif
-
-    static constexpr unsigned s_maxInternalRopeLength = 3;
 
     // If nullOrExecForOOM is null, resolveRope() will be do nothing in the event of an OOM error.
     // The rope value will remain a null string in that case.
@@ -980,6 +982,13 @@ inline JSString* JSString::getIndex(JSGlobalObject* globalObject, unsigned i)
     auto view = this->view(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return jsSingleCharacterString(vm, view[i]);
+}
+
+// (1) Cost of making JSString    : sizeof(JSString) (for new string) + sizeof(StringImpl header) + totalLength
+// (2) Cost of making JSRopeString: sizeof(JSRopeString) + newFiberCount * sizeof(JSString) (for fibers not already wrapped in a JSString)
+ALWAYS_INLINE bool shouldMakeRope(size_t totalLength, unsigned newFiberCount)
+{
+    return StringImpl::headerSize<Latin1Character>() + totalLength >= sizeof(JSRopeString) + (newFiberCount - 1) * sizeof(JSString);
 }
 
 inline JSString* jsString(VM& vm, const String& s)

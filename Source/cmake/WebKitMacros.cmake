@@ -2,12 +2,15 @@
 # exclusively needed in only one subdirectory of Source (e.g. only needed by
 # WebCore), then put it there instead.
 
+set(SWIFT_FATAL_DIAGNOSTIC_FLAGS "-Werror ExistentialAny -Werror StrictMemorySafety -Werror ForeignReferenceType -Werror NoUseUnstructuredThrowingTask -Werror NoUsage")
+
 macro(WEBKIT_COMPUTE_SOURCES _framework)
     set(_derivedSourcesPath ${${_framework}_DERIVED_SOURCES_DIR})
 
     foreach (_sourcesListFile IN LISTS ${_framework}_UNIFIED_SOURCE_LIST_FILES)
       if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_sourcesListFile}")
           set(_sourcesListInput "${CMAKE_CURRENT_SOURCE_DIR}/${_sourcesListFile}")
+          set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_sourcesListInput}")
       else ()
           set(_sourcesListInput "${_derivedSourcesPath}/${_sourcesListFile}")
       endif ()
@@ -369,7 +372,7 @@ macro(_WEBKIT_TARGET_SETUP _target _logical_name)
         target_compile_options(${_target} PRIVATE
             "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:${DEVELOPER_MODE_CXX_FLAGS}>")
         target_compile_options(${_target} PRIVATE
-            "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Werror ExistentialAny -Werror StrictMemorySafety -Werror ForeignReferenceType>")
+            "$<$<COMPILE_LANGUAGE:Swift>:SHELL:${SWIFT_FATAL_DIAGNOSTIC_FLAGS}>")
     endif ()
 
     target_compile_definitions(${_target} PRIVATE "BUILDING_${_logical_name}")
@@ -548,7 +551,9 @@ macro(_WEBKIT_TARGET_LINK_FRAMEWORK _target)
         get_property(_linked_into GLOBAL PROPERTY ${framework}_LINKED_INTO)
 
         # See if the target is linking a framework that the specified framework is already linked into
-        if ((NOT _linked_into) OR (${framework} STREQUAL ${_linked_into}) OR (NOT ${_linked_into} IN_LIST ${_target}_FRAMEWORKS))
+        # Quoted: _LINKED_INTO is unset for every framework in a static build, and CMake 4.4 rejects
+        # the resulting empty STREQUAL/IN_LIST operands at parse time before the NOT can short-circuit.
+        if ((NOT _linked_into) OR ("${framework}" STREQUAL "${_linked_into}") OR (NOT "${_linked_into}" IN_LIST ${_target}_FRAMEWORKS))
             list(APPEND ${_target}_PRIVATE_LIBRARIES WebKit::${framework})
 
             # The WebKit:: alias targets do not propagate OBJECT libraries so the
@@ -570,13 +575,103 @@ macro(_WEBKIT_LIBRARY_LINK_FRAMEWORK _target)
     else ()
         # Include the framework headers but don't try and link the frameworks
         foreach (framework IN LISTS ${_target}_FRAMEWORKS)
-            list(APPEND ${_target}_INCLUDE_DIRECTORIES
-                ${${framework}_FRAMEWORK_HEADERS_DIR}
-                ${${framework}_PRIVATE_FRAMEWORK_HEADERS_DIR}
-            )
+            get_target_property(_is_framework ${framework} FRAMEWORK)
+            if (_is_framework)
+                target_compile_options(${_target} PRIVATE -F${CMAKE_BINARY_DIR})
+            else ()
+                list(APPEND ${_target}_INCLUDE_DIRECTORIES
+                    ${${framework}_FRAMEWORK_HEADERS_DIR}
+                    ${${framework}_PRIVATE_FRAMEWORK_HEADERS_DIR}
+                )
+            endif ()
         endforeach ()
     endif ()
 endmacro()
+
+function(_WEBKIT_ADD_CODE_SIGN _target)
+    # Bun cross-compiles the macOS JSC from a Linux Docker image where codesign
+    # is unavailable and /bin/sh is dash (no `set -o pipefail`). Skip signing
+    # when cross-compiling; ld64.lld already produces an ad-hoc signature.
+    if (CMAKE_CROSSCOMPILING)
+        return()
+    endif ()
+    get_target_property(_skip_codesign ${_target} SKIP_CODESIGN)
+    if (_skip_codesign)
+        return()
+    endif ()
+    set(_identity ${WEBKIT_CODE_SIGN_IDENTITY})
+    if (NOT _identity)
+        set(_identity "-")
+    endif ()
+    cmake_parse_arguments(_arg "" "" "DEPENDS" ${ARGN})
+    get_target_property(_is_framework ${_target} FRAMEWORK)
+    if (_is_framework)
+        set(_sign_path "$<TARGET_BUNDLE_DIR:${_target}>")
+        if (PORT STREQUAL Mac)
+            set(_cstemp_path "${_sign_path}/Versions/A/$<TARGET_FILE_BASE_NAME:${_target}>.cstemp")
+        else ()
+            set(_cstemp_path "${_sign_path}/$<TARGET_FILE_BASE_NAME:${_target}>.cstemp")
+        endif ()
+    else ()
+        set(_sign_path "$<TARGET_FILE:${_target}>")
+        set(_cstemp_path "${_sign_path}.cstemp")
+    endif ()
+    if (${_target}_CODE_SIGN_ENTITLEMENTS)
+        set(_entitlements --entitlements ${${_target}_CODE_SIGN_ENTITLEMENTS})
+        list(APPEND _arg_DEPENDS ${${_target}_CODE_SIGN_ENTITLEMENTS})
+    endif ()
+
+    get_target_property(_target_type ${_target} TYPE)
+    if (_target_type STREQUAL "EXECUTABLE")
+        # Executables have no "sign last" ordering constraint (unlike a
+        # framework, which must sign after its embedded bundles). Attach the
+        # signing as a POST_BUILD step so that building the target directly,
+        # e.g. `cmake --build . --target jsc`, always signs it. A stamp-based
+        # target that only runs during an `all` build would leave a directly
+        # built executable unsigned and unable to JIT (webkit.org/b/320034).
+        add_custom_command(
+            TARGET ${_target} POST_BUILD
+            # Work around rdar://145010536 when a previous codesign task was interrupted.
+            COMMAND rm -f ${_cstemp_path}
+            COMMAND set -o pipefail &&
+                ${WEBKITADDITIONS_CODESIGN_PRELUDE}
+                /usr/bin/codesign --force --sign ${_identity} ${_entitlements} ${_sign_path} 2>&1 |
+                sed "/replacing existing signature/d"
+            VERBATIM
+            COMMENT "Code signing ${_target}")
+        # A POST_BUILD command only re-runs when the target relinks, so make a
+        # change to the entitlements force a relink; otherwise editing the
+        # entitlements would leave the binary signed with the stale set.
+        if (${_target}_CODE_SIGN_ENTITLEMENTS)
+            set_property(TARGET ${_target} APPEND PROPERTY
+                LINK_DEPENDS ${${_target}_CODE_SIGN_ENTITLEMENTS})
+        endif ()
+        # Preserve a named ${_target}_CodeSign target so ordering edges elsewhere
+        # (e.g. WebKit.framework signing after its XPC services) keep resolving.
+        # The POST_BUILD command above performs the actual signing when the
+        # target builds, so this target only needs to depend on it.
+        add_custom_target(${_target}_CodeSign ALL)
+        add_dependencies(${_target}_CodeSign ${_target})
+        return()
+    endif ()
+
+    set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_target}-codesign.stamp")
+
+    add_custom_command(
+        OUTPUT ${_stamp}
+        DEPENDS $<TARGET_FILE:${_target}> ${_arg_DEPENDS}
+        # Work around rdar://145010536 when a previous codesign task was interrupted.
+        COMMAND rm -f ${_cstemp_path}
+        COMMAND set -o pipefail &&
+            ${WEBKITADDITIONS_CODESIGN_PRELUDE}
+            /usr/bin/codesign --force --sign ${_identity} ${_entitlements} ${_sign_path} 2>&1 |
+            sed "/replacing existing signature/d"
+        COMMAND ${CMAKE_COMMAND} -E touch ${_stamp}
+        VERBATIM
+        COMMENT "Code signing ${_target}")
+    add_custom_target(${_target}_CodeSign ALL DEPENDS ${_stamp})
+    add_dependencies(${_target}_CodeSign ${_target})
+endfunction()
 
 macro(_WEBKIT_TARGET_INTERFACE _target)
     add_library(${_target}_PostBuild INTERFACE)
@@ -591,6 +686,9 @@ macro(_WEBKIT_TARGET_INTERFACE _target)
     endif ()
     if (NOT ${_target}_LIBRARY_TYPE STREQUAL "SHARED")
         target_compile_definitions(${_target}_PostBuild INTERFACE "STATICALLY_LINKED_WITH_${_target}")
+    endif ()
+    if (TARGET ${_target}_CodeSign)
+        add_dependencies(${_target}_PostBuild ${_target}_CodeSign)
     endif ()
     add_library(WebKit::${_target} ALIAS ${_target}_PostBuild)
 endmacro()
@@ -619,9 +717,12 @@ macro(WEBKIT_FRAMEWORK _target)
         add_custom_command(TARGET ${_target} POST_BUILD COMMAND ${${_target}_POST_BUILD_COMMAND} VERBATIM)
     endif ()
 
-    if (APPLE AND NOT PORT STREQUAL "GTK" AND NOT ${${_target}_LIBRARY_TYPE} MATCHES STATIC)
+    if (APPLE AND NOT PORT STREQUAL "GTK" AND ${${_target}_LIBRARY_TYPE} MATCHES SHARED)
         set_target_properties(${_target} PROPERTIES FRAMEWORK TRUE)
+        target_compile_options(${_target} BEFORE PUBLIC -F${CMAKE_BINARY_DIR})
         install(TARGETS ${_target} FRAMEWORK DESTINATION ${LIB_INSTALL_DIR})
+        _WEBKIT_CREATE_FRAMEWORK_BUNDLE_STRUCTURE(${_target})
+        _WEBKIT_ADD_CODE_SIGN(${_target} DEPENDS ${${_target}_CODE_SIGN_INPUTS})
     endif ()
 
     _WEBKIT_TARGET_INTERFACE(${_target})
@@ -642,6 +743,10 @@ macro(WEBKIT_LIBRARY _target)
         set_target_properties(${_target} PROPERTIES OUTPUT_NAME ${${_target}_OUTPUT_NAME})
     endif ()
 
+    if (APPLE AND ${${_target}_LIBRARY_TYPE} MATCHES SHARED)
+        _WEBKIT_ADD_CODE_SIGN(${_target} DEPENDS ${${_target}_CODE_SIGN_INPUTS})
+    endif ()
+
     _WEBKIT_TARGET_INTERFACE(${_target})
 endmacro()
 
@@ -652,6 +757,10 @@ macro(WEBKIT_EXECUTABLE _target)
 
     if (${_target}_OUTPUT_NAME)
         set_target_properties(${_target} PROPERTIES OUTPUT_NAME ${${_target}_OUTPUT_NAME})
+    endif ()
+
+    if (APPLE)
+        _WEBKIT_ADD_CODE_SIGN(${_target} DEPENDS ${${_target}_CODE_SIGN_INPUTS})
     endif ()
 endmacro()
 
@@ -677,10 +786,29 @@ function(WEBKIT_PRUNE_STALE_DESTINATION destination flattened)
     endforeach ()
 endfunction()
 
+function(_WEBKIT_CREATE_FRAMEWORK_BUNDLE_STRUCTURE _target)
+    if (PORT STREQUAL Mac)
+        set(_version "Versions/A/")
+        file(MAKE_DIRECTORY
+            "${CMAKE_BINARY_DIR}/${_target}.framework/Versions/A")
+        file(CREATE_LINK "A"
+            "${CMAKE_BINARY_DIR}/${_target}.framework/Versions/Current" SYMBOLIC)
+    endif ()
+
+    foreach (_name Headers Modules PrivateHeaders)
+        file(MAKE_DIRECTORY
+            "${CMAKE_BINARY_DIR}/${_target}.framework/${_version}${_name}")
+        if (PORT STREQUAL Mac)
+            file(CREATE_LINK "Versions/Current/${_name}"
+                "${CMAKE_BINARY_DIR}/${_target}.framework/${_name}" SYMBOLIC)
+        endif ()
+    endforeach ()
+endfunction()
+
 function(WEBKIT_COPY_FILES target_name)
     set(options FLATTENED NO_SYMLINK PRUNE_STALE)
     set(oneValueArgs DESTINATION)
-    set(multiValueArgs FILES)
+    set(multiValueArgs FILES COMMAND)
     cmake_parse_arguments(opt "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     set(files ${opt_FILES})
     set(dst_files)
@@ -706,19 +834,18 @@ function(WEBKIT_COPY_FILES target_name)
         # On macOS, symlink instead of copy so #import deduplicates headers reachable
         # via both forwarded (<WebKit/X.h>) and source-tree paths.
         # NO_SYMLINK for destinations post-processed in-place (e.g. ANGLE headers).
-        if (APPLE AND NOT opt_NO_SYMLINK)
-            add_custom_command(OUTPUT ${dst_file}
-                COMMAND ${CMAKE_COMMAND} -E create_symlink ${src_file} ${dst_file}
-                MAIN_DEPENDENCY ${src_file}
-                VERBATIM
-            )
+        if (opt_COMMAND)
+            set(command ${opt_COMMAND})
+        elseif (APPLE AND NOT opt_NO_SYMLINK)
+            set(command ${CMAKE_COMMAND} -E create_symlink)
         else ()
-            add_custom_command(OUTPUT ${dst_file}
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${src_file} ${dst_file}
-                MAIN_DEPENDENCY ${src_file}
-                VERBATIM
-            )
+            set(command ${CMAKE_COMMAND} -E copy_if_different)
         endif ()
+        add_custom_command(OUTPUT ${dst_file}
+            COMMAND ${command} ${src_file} ${dst_file}
+            MAIN_DEPENDENCY ${src_file}
+            VERBATIM
+        )
         list(APPEND dst_files ${dst_file})
     endforeach ()
     add_custom_target(${target_name} ALL DEPENDS ${dst_files})
@@ -817,6 +944,106 @@ macro(WEBKIT_CREATE_SYMLINK target src dest)
         COMMENT "Create symlink from ${src} to ${dest}")
 endmacro()
 
+# Empty translation unit for the wtf/Platform.h preprocess steps below. Not
+# /dev/null, whose mtime is always "now" and would keep consumers looking dirty.
+function(_webkit_platform_args_empty_input _outvar)
+    set(_empty_input "${CMAKE_BINARY_DIR}/DerivedSources/empty.cpp")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/DerivedSources")
+    # Rewriting it would bump its mtime on every reconfigure.
+    if (NOT EXISTS "${_empty_input}")
+        file(WRITE "${_empty_input}" "")
+    endif ()
+    set(${_outvar} "${_empty_input}" PARENT_SCOPE)
+endfunction()
+
+# Shared clang preprocess prefix for the two functions below, so the clang-cl
+# workaround lives in one place. Each caller adds its own flags after this.
+function(_webkit_platform_args_clang_prefix _outvar _depfile _mt_target _wtf_include_dir)
+    set(_cmd ${CMAKE_CXX_COMPILER})
+    if (COMPILER_IS_CLANG_CL)
+        # clang-cl's default MSVC driver ignores the GCC-style flags below and
+        # treats their operands as inputs. Flip it to the GCC driver.
+        list(APPEND _cmd --driver-mode=gcc)
+    endif ()
+    # Kept on one line: the style checker alphabetizes multi-line list items.
+    # RELEASE_WITHOUT_OPTIMIZATIONS avoids wtf/Compiler.h's non-Debug #error.
+    list(APPEND _cmd -x c++ -std=c++2b -E -P -dM
+        -MD -MF "${_depfile}" -MT "${_mt_target}"
+        -D __WK_GENERATING_PLATFORM_ARGS__
+        -D RELEASE_WITHOUT_OPTIMIZATIONS
+        -I "${_wtf_include_dir}"
+        -I "${CMAKE_BINARY_DIR}"
+        -include cmakeconfig.h
+        -include wtf/Platform.h
+    )
+    # Custom commands don't inherit add_compile_options; mirror the SDK stubs
+    # OptionsCocoa.cmake feeds C-family compiles, which Platform.h needs too.
+    if (WEBKIT_GENERATED_STUBS_INCLUDE_DIR)
+        list(APPEND _cmd -isystem "${WEBKIT_GENERATED_STUBS_INCLUDE_DIR}")
+    endif ()
+    set(${_outvar} ${_cmd} PARENT_SCOPE)
+endfunction()
+
+# Build-time command deriving the generators' --defines-file (the truthy feature
+# names) by preprocessing wtf/Platform.h, like Xcode's FEATURE_AND_PLATFORM_DEFINES.
+function(webkit_generate_platform_feature_defines_file _out_path_var)
+    set(_defines_file "${CMAKE_BINARY_DIR}/DerivedSources/platform-feature-defines.txt")
+    set(_depfile "${CMAKE_BINARY_DIR}/DerivedSources/platform-feature-defines.d")
+    _webkit_platform_args_empty_input(_empty_input)
+    _webkit_platform_args_clang_prefix(_clang_cmd
+        "${_depfile}" "${_defines_file}" "${CMAKE_SOURCE_DIR}/Source/WTF")
+    # Match what a real C-family compile sees (globals, frameworks, arch, stubs).
+    # Read from a fixed directory so the result doesn't depend on the caller's.
+    get_directory_property(_dir_defs DIRECTORY "${CMAKE_SOURCE_DIR}/Source" COMPILE_DEFINITIONS)
+    foreach (_d IN LISTS _dir_defs)
+        if (NOT _d MATCHES "^(BUILDING_WITH_CMAKE|HAVE_CONFIG_H)($|=)")
+            list(APPEND _clang_cmd "-D${_d}")
+        endif ()
+    endforeach ()
+    if (CMAKE_OSX_SYSROOT)
+        list(APPEND _clang_cmd "-isysroot" "${CMAKE_OSX_SYSROOT}"
+            "-F" "${CMAKE_BINARY_DIR}"
+            "-iframework" "${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks")
+    endif ()
+    if (CMAKE_OSX_ARCHITECTURES)
+        list(GET CMAKE_OSX_ARCHITECTURES 0 _arch)
+        list(APPEND _clang_cmd "-arch" "${_arch}")
+    endif ()
+    if (CMAKE_OSX_DEPLOYMENT_TARGET)
+        list(APPEND _clang_cmd "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    endif ()
+    if (WEBKIT_AVAILABILITY_VFS_OVERLAY_FILE)
+        list(APPEND _clang_cmd "-ivfsoverlay" "${WEBKIT_AVAILABILITY_VFS_OVERLAY_FILE}")
+    endif ()
+    # Platform.h reads WebKitAdditions headers; prefer the copies staged into the
+    # build directory over the SDK's, and wait for the target that stages them.
+    set(_command_deps "")
+    if (USE_APPLE_INTERNAL_SDK)
+        list(APPEND _clang_cmd "-I" "${WebKitAdditions_FRAMEWORK_HEADERS_DIR}")
+        list(APPEND _command_deps WebKitAdditions_CopyHeaders)
+    endif ()
+    # NDEBUG affects ASSERT_ENABLED -> ENABLE_SECURITY_ASSERTIONS, and
+    # -fsanitize=* drives ASAN_ENABLED -> ENABLE_IPC_TESTING_API.
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type_upper)
+    if (CMAKE_CXX_FLAGS_${_build_type_upper} MATCHES "NDEBUG" OR CMAKE_CXX_FLAGS MATCHES "NDEBUG")
+        list(APPEND _clang_cmd "-DNDEBUG")
+    endif ()
+    list(APPEND _clang_cmd ${ENABLED_COMPILER_SANITIZERS})
+    list(APPEND _clang_cmd "${_empty_input}")
+
+    set(_script "${CMAKE_SOURCE_DIR}/Source/WTF/Scripts/generate-platform-args")
+    add_custom_command(
+        OUTPUT "${_defines_file}"
+        COMMAND ${Python_EXECUTABLE} "${_script}"
+            --print-feature-defines --output "${_defines_file}" -- ${_clang_cmd}
+        DEPFILE "${_depfile}"
+        DEPENDS "${_script}" "${CMAKE_BINARY_DIR}/cmakeconfig.h" ${_command_deps}
+        COMMENT "Deriving generator feature defines from wtf/Platform.h"
+        VERBATIM
+    )
+    set(${_out_path_var} "${_defines_file}" PARENT_SCOPE)
+endfunction()
+
 function(_WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS _outvar)
     # All Swift C++-interop targets pass the same -Xcc -D set so the clang
     # importer's module-cache hash matches and bmalloc/wtf/SDK PCMs build once.
@@ -874,26 +1101,9 @@ endfunction()
 # for every cmakeconfig.h entry. DEPFILE re-runs it on Platform header changes.
 function(_webkit_generate_platform_swift_args _target _resp_path _ordering_dep)
     set(_depfile "${_resp_path}.d")
-    # Stable empty file; /dev/null's mtime is "now" and would always look dirty.
-    set(_empty_input "${CMAKE_BINARY_DIR}/DerivedSources/empty.cpp")
-    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/DerivedSources")
-    if (NOT EXISTS "${_empty_input}")
-        file(WRITE "${_empty_input}" "")
-    endif ()
-    set(_clang_cmd
-        ${CMAKE_CXX_COMPILER}
-        -x c++ -std=c++2b
-        -E -P -dM
-        -MD -MF "${_depfile}" -MT "${_resp_path}"
-        -D __WK_GENERATING_PLATFORM_ARGS__
-        # Mirrors Xcode's generate-platform-args: avoids wtf/Compiler.h's
-        # #error in non-Debug since the preprocessor never sets __OPTIMIZE__.
-        -D RELEASE_WITHOUT_OPTIMIZATIONS
-        -I "${WTF_FRAMEWORK_HEADERS_DIR}"
-        -I "${CMAKE_BINARY_DIR}"
-        -include cmakeconfig.h
-        -include wtf/Platform.h
-    )
+    _webkit_platform_args_empty_input(_empty_input)
+    _webkit_platform_args_clang_prefix(_clang_cmd
+        "${_depfile}" "${_resp_path}" "${WTF_FRAMEWORK_HEADERS_DIR}")
     if (CMAKE_OSX_SYSROOT)
         list(APPEND _clang_cmd "-isysroot" "${CMAKE_OSX_SYSROOT}")
     endif ()
@@ -903,17 +1113,13 @@ function(_webkit_generate_platform_swift_args _target _resp_path _ordering_dep)
     if (WEBKIT_ADDITIONS_INCLUDE_PATH)
         list(APPEND _clang_cmd "-I" "${WEBKIT_ADDITIONS_INCLUDE_PATH}")
     endif ()
-    # Custom commands don't inherit add_compile_options, so mirror the -isystem
-    # stub OptionsCocoa.cmake feeds C-family compiles: an empty AppleFeatures.h
-    # for SDKs lacking it, which Platform.h's preprocessing needs.
-    if (EXISTS "${CMAKE_BINARY_DIR}/generated-stubs")
-        list(APPEND _clang_cmd "-isystem" "${CMAKE_BINARY_DIR}/generated-stubs")
-    endif ()
     # NDEBUG affects ASSERT_ENABLED -> ENABLE_SECURITY_ASSERTIONS -> struct layouts.
     string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type_upper)
     if (CMAKE_CXX_FLAGS_${_build_type_upper} MATCHES "NDEBUG" OR CMAKE_CXX_FLAGS MATCHES "NDEBUG")
         list(APPEND _clang_cmd "-DNDEBUG")
     endif ()
+    # -fsanitize=* drives ASAN_ENABLED etc; keep this preprocess in sync with C++.
+    list(APPEND _clang_cmd ${ENABLED_COMPILER_SANITIZERS})
     list(APPEND _clang_cmd "${_empty_input}")
 
     # Order resp generation after the framework's headers are staged: the
@@ -1079,6 +1285,12 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
         # apinotes version is keyed off the effective Swift language mode, so
         # this also keeps PAL/WebGPU/WebKit on the same module-cache hash.
         list(APPEND _swift_options "-swift-version" "6")
+        if (APPLE)
+            # Swift modules extend their underlying ObjC++ module.
+            list(APPEND _swift_options "-import-underlying-module")
+            # Don't fire the module's own cross-import overlay while compiling it.
+            list(APPEND _swift_options "-Xfrontend" "-disable-cross-import-overlays")
+        endif ()
         if (${_target}_SWIFT_INTEROP_MODULE_PATH_SWIFT_ONLY)
             list(APPEND _swift_options "-I${_interop_module_path}")
         else ()

@@ -255,7 +255,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case IsBigInt:
     case NumberIsInteger:
     case IsObject:
-    case IsTypedArrayView:
     case CheckInBounds:
     case CheckInBoundsInt52:
     case DoubleRep:
@@ -362,7 +361,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         return;
 
     case IsCellWithType:
-        def(PureValue(node, node->queriedType()));
+        def(PureValue(node, node->queriedType().rawValue()));
         return;
 
     case ValueBitNot:
@@ -784,19 +783,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         return;
     }
 
-    case TryGetById:
-        read(World);
-#define ABSTRACT_HEAP_NOT_RegExpObject_lastIndex(name) if (name != InvalidAbstractHeap && \
-    name != InvalidAbstractHeap && \
-    name != World && \
-    name != Stack && \
-    name != Heap && \
-    name != RegExpObject_lastIndex) \
-        write(name);
-    FOR_EACH_ABSTRACT_HEAP_KIND(ABSTRACT_HEAP_NOT_RegExpObject_lastIndex)
-#undef ABSTRACT_HEAP_NOT_RegExpObject_lastIndex
-        return;
-
     case GetById:
     case GetByIdFlush:
     case GetByIdMegamorphic:
@@ -847,6 +833,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CallDirectEval:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case ToPrimitive:
@@ -863,11 +850,13 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case HasOwnProperty:
     case ValueNegate:
     case SetFunctionName:
+    case EnqueueAsyncGeneratorDriver:
     case GetDynamicVar:
     case PutDynamicVar:
     case ResolveScopeForHoistingFuncDeclInEval:
     case ResolveScope:
     case ToObject:
+    case OpenAsyncFromSyncIterator:
     case GetPropertyEnumerator:
     case InstanceOfCustom:
     case ToNumeric:
@@ -2352,6 +2341,13 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         write(RegExpObject_lastIndex);
         return;
 
+    case RegExpExecSticky:
+        read(RegExpState);
+        read(RegExpObject_lastIndex);
+        write(RegExpState);
+        write(RegExpObject_lastIndex);
+        return;
+
     case RegExpExecNonGlobalOrSticky:
     case RegExpMatchFastGlobal:
         read(RegExpState);
@@ -2665,6 +2661,10 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case ToUpperCase:
     case ToLowerCase:
         def(PureValue(node));
+        return;
+
+    case StringTrim:
+        def(PureValue(node, static_cast<uint64_t>(node->intrinsic())));
         return;
 
     case NumberToStringWithValidRadixConstant:

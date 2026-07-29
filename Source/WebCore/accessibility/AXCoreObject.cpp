@@ -241,7 +241,12 @@ bool AXCoreObject::isButton() const
 
 bool AXCoreObject::isTextControl() const
 {
-    switch (role()) {
+    return isTextControl(role());
+}
+
+bool AXCoreObject::isTextControl(AccessibilityRole role)
+{
+    switch (role) {
     case AccessibilityRole::ComboBox:
     case AccessibilityRole::SearchField:
     case AccessibilityRole::TextArea:
@@ -1653,21 +1658,7 @@ unsigned AXCoreObject::headingLevel() const
         if (level > 0)
             return level;
     }
-
-    auto elementName = this->elementName();
-    if (elementName == ElementName::HTML_h1)
-        return 1;
-    if (elementName == ElementName::HTML_h2)
-        return 2;
-    if (elementName == ElementName::HTML_h3)
-        return 3;
-    if (elementName == ElementName::HTML_h4)
-        return 4;
-    if (elementName == ElementName::HTML_h5)
-        return 5;
-    if (elementName == ElementName::HTML_h6)
-        return 6;
-    return 0;
+    return computedHeadingLevel();
 }
 
 unsigned AXCoreObject::hierarchicalLevel() const
@@ -1684,10 +1675,12 @@ unsigned AXCoreObject::hierarchicalLevel() const
     // We measure tree hierarchy by the number of groups that the item is within.
     level = 1;
     for (RefPtr ancestor = parentObject(); ancestor; ancestor = ancestor->parentObject()) {
-        auto ancestorRole = ancestor->role();
-        if (ancestorRole == AccessibilityRole::Group)
+        // Only an explicitly-authored role="group" establishes a tree grouping level. A native list
+        // (e.g. a plain <ul>) that the list heuristic demoted to a generic Group role is not an
+        // authored grouping and must not add a level, nor should any other implicit Group.
+        if (ancestor->hasExplicitGroupRole())
             level++;
-        else if (ancestorRole == AccessibilityRole::Tree)
+        else if (ancestor->role() == AccessibilityRole::Tree)
             break;
     }
 
@@ -2347,7 +2340,7 @@ bool performCustomActionPress(AXTreeID treeID, AXID targetID)
     return retrieveValueFromMainThreadWithTimeoutAndDefault([treeID, targetID] () -> bool {
         if (WeakPtr<AXObjectCache> cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID)) {
             if (RefPtr object = cache->objectForID(targetID))
-                return object->press();
+                return object->pressPreservingFocus();
         }
         return false;
     }, InteractiveTimeout, false);

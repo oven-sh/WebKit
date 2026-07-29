@@ -27,7 +27,6 @@
 #include "PlacedGridItem.h"
 
 #include "GridAreaLines.h"
-#include "LayoutBoxGeometry.h"
 #include "StyleAlignSelf.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleJustifySelf.h"
@@ -36,63 +35,21 @@
 namespace WebCore {
 namespace Layout {
 
-PlacedGridItem::PlacedGridItem(const ElementBox& gridItem, const GridAreaLines& gridAreaLines, const BoxGeometry& gridItemGeometry, const Style::ComputedStyle& gridContainerStyle)
-    : PlacedGridItem(gridItem, gridAreaLines, gridItemGeometry, gridContainerStyle, gridItem.style())
+PlacedGridItem::PlacedGridItem(const ElementBox& gridItem, const GridAreaLines& gridAreaLines, const Style::ComputedStyle& gridContainerStyle)
+    : PlacedGridItem(gridItem, gridAreaLines, gridContainerStyle, gridItem.style())
 {
 }
 
-PlacedGridItem::PlacedGridItem(const ElementBox& gridItem, const GridAreaLines& gridAreaLines, const BoxGeometry& gridItemGeometry, const Style::ComputedStyle& gridContainerStyle, const Style::ComputedStyle& gridItemStyle)
+PlacedGridItem::PlacedGridItem(const ElementBox& gridItem, const GridAreaLines& gridAreaLines, const Style::ComputedStyle& gridContainerStyle, const Style::ComputedStyle& gridItemStyle)
     : m_layoutBox(gridItem)
     , m_inlineAxisSizes({ gridItemStyle.width(), gridItemStyle.minWidth(), gridItemStyle.maxWidth(), gridItemStyle.marginLeft(), gridItemStyle.marginRight() })
     , m_blockAxisSizes({ gridItemStyle.height(), gridItemStyle.minHeight(), gridItemStyle.maxHeight(), gridItemStyle.marginTop(), gridItemStyle.marginBottom() })
-    , m_usedInlineBorderAndPadding(gridItemGeometry.horizontalBorderAndPadding())
-    , m_usedBlockBorderAndPadding(gridItemGeometry.verticalBorderAndPadding())
     , m_inlineAxisAlignment(gridItemStyle.justifySelf().resolve(&gridContainerStyle))
     , m_blockAxisAlignment(gridItemStyle.alignSelf().resolve(&gridContainerStyle))
     , m_writingMode(gridItemStyle.writingMode())
     , m_usedZoom(gridItemStyle.usedZoomForLength())
     , m_gridAreaLines(gridAreaLines)
 {
-}
-
-// https://drafts.csswg.org/css-sizing-4/#aspect-ratio
-std::optional<double> PlacedGridItem::preferredAspectRatio() const
-{
-    auto& computedAspectRatio = protect(m_layoutBox->style())->aspectRatio();
-
-    auto isDegenerateRatio = [&] {
-        auto ratio = computedAspectRatio.tryRatio();
-        return !ratio || !ratio->numerator.value || !ratio->denominator.value;
-    };
-
-    // "If the <ratio> is degenerate, the property instead behaves as auto."
-    //
-    // auto: "Replaced elements with a natural aspect ratio use that aspect ratio;
-    // otherwise the box has no preferred aspect ratio."
-    if (computedAspectRatio.isAuto() || isDegenerateRatio()) {
-        if (m_layoutBox->isReplacedBox() && m_layoutBox->hasIntrinsicRatio())
-            return m_layoutBox->intrinsicRatio();
-        return { };
-    }
-
-    // <ratio>: "The box's preferred aspect ratio is the specified ratio of width / height."
-    if (computedAspectRatio.isRatio()) {
-        auto ratio = *computedAspectRatio.tryRatio();
-        return ratio.numerator.value / ratio.denominator.value;
-    }
-
-    // auto && <ratio>: "The preferred aspect ratio is the specified ratio of width / height
-    // unless it is a replaced element with a natural aspect ratio, in which case that aspect
-    // ratio is used instead."
-    if (computedAspectRatio.isAutoAndRatio()) {
-        if (m_layoutBox->isReplacedBox() && m_layoutBox->hasIntrinsicRatio())
-            return m_layoutBox->intrinsicRatio();
-        auto ratio = *computedAspectRatio.tryRatio();
-        return ratio.numerator.value / ratio.denominator.value;
-    }
-
-    ASSERT_NOT_REACHED();
-    return { };
 }
 
 } // namespace Layout

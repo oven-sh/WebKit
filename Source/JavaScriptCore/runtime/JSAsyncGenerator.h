@@ -31,11 +31,9 @@
 
 namespace JSC {
 
-class JSPromise;
-
-class JSAsyncGenerator final : public JSInternalFieldObjectImpl<8> {
+class JSAsyncGenerator final : public JSInternalFieldObjectImpl<10> {
 public:
-    using Base = JSInternalFieldObjectImpl<8>;
+    using Base = JSInternalFieldObjectImpl<10>;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -86,8 +84,10 @@ public:
         ResumeValue,
         ResumeMode,
         ResumePromise,
+        CachedDriverResult,
+        CachedDriverResultTarget,
     };
-    static_assert(numberOfInternalFields == 8);
+    static_assert(numberOfInternalFields == 10);
     static std::array<JSValue, numberOfInternalFields> initialValues()
     {
         return { {
@@ -98,6 +98,8 @@ public:
             jsNull(),
             jsUndefined(),
             jsNumber(static_cast<int32_t>(AsyncGeneratorResumeMode::Empty)),
+            jsUndefined(),
+            jsUndefined(),
             jsUndefined(),
         } };
     }
@@ -175,6 +177,26 @@ public:
         Base::internalField(static_cast<unsigned>(Field::ResumePromise)).set(vm, this, value);
     }
 
+    JSValue cachedDriverResult() const
+    {
+        return Base::internalField(static_cast<unsigned>(Field::CachedDriverResult)).get();
+    }
+
+    void setCachedDriverResult(VM& vm, JSValue value)
+    {
+        Base::internalField(static_cast<unsigned>(Field::CachedDriverResult)).set(vm, this, value);
+    }
+
+    JSValue cachedDriverResultTarget() const
+    {
+        return Base::internalField(static_cast<unsigned>(Field::CachedDriverResultTarget)).get();
+    }
+
+    void setCachedDriverResultTarget(VM& vm, JSValue value)
+    {
+        Base::internalField(static_cast<unsigned>(Field::CachedDriverResultTarget)).set(vm, this, value);
+    }
+
     bool isQueueEmpty() const
     {
         return resumeMode() == static_cast<int32_t>(AsyncGeneratorResumeMode::Empty);
@@ -195,8 +217,12 @@ public:
         return false;
     }
 
-    void enqueue(VM&, JSValue value, int32_t resumeMode, JSPromise*);
-    std::tuple<JSValue, int32_t, JSPromise*> dequeue(VM&);
+    // A queued request settles one of two ways, distinguished by the settlement target's type:
+    //   - a real .next()/.throw()/.return() carries its result JSPromise; or
+    //   - a for-await driver carries its own generator/async-function driver (never a
+    //     JSPromise), resumed directly via an AsyncGeneratorDriverResume microtask.
+    void enqueue(VM&, JSValue value, int32_t resumeMode, JSObject* settlementTarget);
+    JSObject* dequeue(VM&);
 
     DECLARE_EXPORT_INFO;
 
@@ -206,5 +232,7 @@ private:
     JSAsyncGenerator(VM&, Structure*);
     void finishCreation(VM&);
 };
+
+JSValue asyncGeneratorNext(JSGlobalObject*, JSAsyncGenerator*, JSValue argument, MicrotaskCallCache*);
 
 } // namespace JSC

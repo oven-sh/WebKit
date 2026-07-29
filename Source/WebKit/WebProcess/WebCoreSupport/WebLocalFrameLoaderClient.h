@@ -70,6 +70,7 @@ public:
     WebCore::AllowsContentJavaScript allowsContentJavaScriptFromMostRecentNavigation() const final;
 
     void removeStorageAccess();
+    void removeStorageAccessOnCommit(WebCore::DocumentLoader&);
 
 private:
     bool hasHTMLView() const final;
@@ -178,7 +179,8 @@ private:
     bool supportsAsyncShouldGoToHistoryItem() const final;
     void shouldGoToHistoryItemAsync(WebCore::HistoryItem&, CompletionHandler<void(WebCore::ShouldGoToHistoryItem)>&&) const final;
 
-    void dispatchGoToBackForwardItemAtIndex(int steps, WebCore::FrameLoadType) final;
+    void dispatchGoToBackForwardItemAtIndex(int steps) final;
+    void dispatchEnqueueHistoryTraversalDelta(int delta) final;
 
     void didFinishServiceWorkerPageRegistration(bool success) final;
     

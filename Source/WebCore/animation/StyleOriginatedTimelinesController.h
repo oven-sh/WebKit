@@ -65,7 +65,7 @@ public:
     ~StyleOriginatedTimelinesController() = default;
 
     void registerNamedScrollTimeline(const AtomString&, const Styleable&, ScrollAxis);
-    void registerNamedViewTimeline(const AtomString&, const Styleable&, ScrollAxis, const Style::ViewTimelineInsetItem&);
+    void registerNamedViewTimeline(const AtomString&, const Styleable&, ScrollAxis, const Style::ViewTimelineInsetItem&, const Style::ZoomFactor&);
     void unregisterNamedTimeline(const AtomString&, const Styleable&);
     void attachAnimation(CSSAnimation&);
     void updateNamedTimelineMapForTimelineScope(const Style::NameScope&, const Styleable&);
@@ -83,8 +83,8 @@ private:
 
     enum class AllowsDeferral : bool { No, Yes };
     void attachAnimation(CSSAnimation&, AllowsDeferral);
-    ScrollTimeline* determineTimelineForElement(const Vector<Ref<ScrollTimeline>>&, const Styleable&, const Vector<WeakStyleable>&);
-    ScrollTimeline* determineTreeOrder(const Vector<Ref<ScrollTimeline>>&, const Styleable&, const Vector<WeakStyleable>&);
+    ScrollTimeline* determineTimelineForElement(const Vector<Ref<ScrollTimeline>>&, const Styleable&, const Element*);
+    ScrollTimeline* determineTreeOrder(const Vector<Ref<ScrollTimeline>>&, const Styleable&, const Element*);
     ScrollTimeline& inactiveNamedTimeline(const AtomString&);
 
     Vector<Ref<CSSAnimation>> m_cssAnimationsPendingAttachment;

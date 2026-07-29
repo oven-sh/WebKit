@@ -135,11 +135,16 @@ public:
         RELEASE_LOG_ERROR_IF(!session->isActive() || session->category() != AudioSession::CategoryType::PlayAndRecord, WebRTC, "Audio session should be active (%d) and category should be play and record (%d)", session->isActive(), session->category() != AudioSession::CategoryType::PlayAndRecord);
 
         session->setCategory(AudioSession::CategoryType::PlayAndRecord, AudioSession::Mode::VideoChat, RouteSharingPolicy::Default);
-        session->tryToSetActive(true);
+        session->tryToSetActive(true)->whenSettled(RunLoop::mainSingleton(), [](auto&&) { });
     }
 
     void start()
     {
+        // A compromised WebContent process may send StartProducingData repeatedly. Once we are
+        // observing, prepareAudioDescription() would race the capture thread's audioSamplesAvailable().
+        if (m_isObservingMedia)
+            return;
+
         m_shouldReset = true;
         m_isStopped = false;
         m_source->start();

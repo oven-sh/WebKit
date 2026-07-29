@@ -64,14 +64,20 @@ void CoordinatedSceneState::setRootLayerChildren(Vector<Ref<CoordinatedPlatformL
 void CoordinatedSceneState::addLayer(CoordinatedPlatformLayer& layer)
 {
     ASSERT(isMainRunLoop());
-    m_layers.add(layer);
+    {
+        Locker locker { m_layersLock };
+        m_layers.add(layer);
+    }
     m_didChangeLayers = true;
 }
 
 void CoordinatedSceneState::removeLayer(CoordinatedPlatformLayer& layer)
 {
     ASSERT(isMainRunLoop());
-    m_layers.remove(layer);
+    {
+        Locker locker { m_layersLock };
+        m_layers.remove(layer);
+    }
     m_layersToRemove.add(layer);
     m_didChangeLayers = true;
 }
@@ -83,7 +89,10 @@ bool CoordinatedSceneState::flush()
     bool didChangeLayers = m_didChangeLayers.exchange(false);
     if (didChangeLayers) {
         Locker pendingLayersLock { m_pendingLayersLock };
-        m_pendingLayers = m_layers;
+        {
+            Locker locker { m_layersLock };
+            m_pendingLayers = m_layers;
+        }
         if (m_pendingLayersToRemove.isEmpty())
             m_pendingLayersToRemove = WTF::move(m_layersToRemove);
         else
@@ -98,7 +107,8 @@ bool CoordinatedSceneState::flush()
 void CoordinatedSceneState::flushPendingState()
 {
     Locker stateLock { m_stateLock };
-    for (auto& layer : m_layers)
+    Locker layersLock { m_layersLock };
+    for (Ref layer : m_layers)
         layer->flushPendingState();
 }
 
@@ -119,16 +129,19 @@ void CoordinatedSceneState::flushCompositingState(const OptionSet<CompositionRea
 {
     commitPendingLayers();
 
-    // We update the tiles after flushing to release the state lock as early as possible.
-    Vector<Ref<CoordinatedPlatformLayer>, 16> layersWithPendingTileUpdates;
     {
         Locker stateLock { m_stateLock };
-        m_rootLayer->flushCompositingState(reasons, useSkia);
-        for (auto& layer : m_committedLayers) {
-            layer->flushCompositingState(reasons, useSkia);
-            if (layer->hasPendingBackingStoreTileUpdates())
-                layersWithPendingTileUpdates.append(Ref { layer });
-        }
+        m_rootLayer->flushPositionChanges(reasons, useSkia);
+        for (auto& layer : m_committedLayers)
+            layer->flushPositionChanges(reasons, useSkia);
+    }
+
+    Vector<Ref<CoordinatedPlatformLayer>, 16> layersWithPendingTileUpdates;
+    m_rootLayer->flushCompositingState(reasons, useSkia);
+    for (auto& layer : m_committedLayers) {
+        layer->flushCompositingState(reasons, useSkia);
+        if (layer->hasPendingBackingStoreTileUpdates())
+            layersWithPendingTileUpdates.append(Ref { layer });
     }
 
     for (auto& layer : layersWithPendingTileUpdates)
@@ -150,10 +163,13 @@ void CoordinatedSceneState::invalidate()
 {
     ASSERT(isMainRunLoop());
     // Root layer doesn't have client nor backing stores to invalidate.
-    while (!m_layers.isEmpty()) {
-        auto layer = m_layers.takeAny();
-        layer->invalidateClient();
+    HashSet<Ref<CoordinatedPlatformLayer>> layers;
+    {
+        Locker locker { m_layersLock };
+        layers = WTF::move(m_layers);
     }
+    for (Ref layer : layers)
+        layer->invalidateClient();
 
     Locker pendingLayersLock { m_pendingLayersLock };
     m_pendingLayers = { };

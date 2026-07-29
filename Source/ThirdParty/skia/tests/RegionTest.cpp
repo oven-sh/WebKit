@@ -15,9 +15,9 @@
 #include "include/core/SkRegion.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkDebug.h"
-#include "src/base/SkAutoMalloc.h"
-#include "src/base/SkRandom.h"
+#include "include/private/SkDebug.h"
+#include "src/core/SkAutoMalloc.h"
+#include "src/core/SkRandom.h"
 #include "src/core/SkScan.h"
 #include "tests/Test.h"
 
@@ -33,7 +33,7 @@ static void Union(SkRegion* rgn, const SkIRect& rect) {
 #define TEST_INTERSECT(rgn, rect)       REPORTER_ASSERT(reporter, rgn.intersects(rect))
 #define TEST_NO_CONTAINS(rgn, rect)     REPORTER_ASSERT(reporter, !rgn.contains(rect))
 
-// inspired by http://code.google.com/p/skia/issues/detail?id=958
+// inspired by https://issues.skia.org/issues/40032017
 //
 static void test_fromchrome(skiatest::Reporter* reporter) {
     SkRegion r;
@@ -217,62 +217,7 @@ static void test_proc(skiatest::Reporter* reporter,
     }
 }
 
-static void rand_rect(SkIRect* rect, SkRandom& rand) {
-    int bits = 6;
-    int shift = 32 - bits;
-    rect->setLTRB(rand.nextU() >> shift, rand.nextU() >> shift,
-                  rand.nextU() >> shift, rand.nextU() >> shift);
-    rect->sort();
-}
-
-static bool test_rects(const SkIRect rect[], int count) {
-    SkRegion rgn0, rgn1;
-
-    for (int i = 0; i < count; i++) {
-        rgn0.op(rect[i], SkRegion::kUnion_Op);
-    }
-    rgn1.setRects(rect, count);
-
-    if (rgn0 != rgn1) {
-        SkDebugf("\n");
-        for (int i = 0; i < count; i++) {
-            SkDebugf(" { %d, %d, %d, %d },\n",
-                     rect[i].fLeft, rect[i].fTop,
-                     rect[i].fRight, rect[i].fBottom);
-        }
-        SkDebugf("\n");
-        return false;
-    }
-    return true;
-}
-
 DEF_TEST(Region, reporter) {
-    const SkIRect r2[] = {
-        { 0, 0, 1, 1 },
-        { 2, 2, 3, 3 },
-    };
-    REPORTER_ASSERT(reporter, test_rects(r2, std::size(r2)));
-
-    const SkIRect rects[] = {
-        { 0, 0, 1, 2 },
-        { 2, 1, 3, 3 },
-        { 4, 0, 5, 1 },
-        { 6, 0, 7, 4 },
-    };
-    REPORTER_ASSERT(reporter, test_rects(rects, std::size(rects)));
-
-    SkRandom rand;
-    for (int i = 0; i < 1000; i++) {
-        SkRegion rgn0, rgn1;
-
-        const int N = 8;
-        SkIRect rect[N];
-        for (int j = 0; j < N; j++) {
-            rand_rect(&rect[j], rand);
-        }
-        REPORTER_ASSERT(reporter, test_rects(rect, N));
-    }
-
     test_proc(reporter, contains_proc);
     test_proc(reporter, intersects_proc);
     test_empties(reporter);
@@ -587,4 +532,178 @@ DEF_TEST(region_very_large, reporter) {
     REPORTER_ASSERT(reporter, smallRegion.contains(0, 499));
     REPORTER_ASSERT(reporter, smallRegion.contains(499, 0));
     REPORTER_ASSERT(reporter, smallRegion.contains(499, 499));
+}
+
+DEF_TEST(SkRegion_Iterator_StepsThroughAllScanlines, reporter) {
+    SkRegion rgn1;
+    rgn1.op({12, 10, 17, 20}, SkRegion::kUnion_Op);
+    rgn1.op({31, 10, 39, 25}, SkRegion::kUnion_Op);
+    rgn1.op({16, 30, 23, 40}, SkRegion::kUnion_Op);
+
+    int32_t buffer[32];
+    memset(&buffer, 0, 128);
+    size_t len = rgn1.writeToMemory(&buffer);
+    SkASSERT_RELEASE(len < 128);
+    SkRegion rgn2;
+    size_t len2 = rgn2.readFromMemory(&buffer, len);
+    REPORTER_ASSERT(reporter, len == len2);
+
+    // Make sure the serialized/deserialzed version is the same as the original.
+    for (const auto& rgn : {rgn1, rgn2}) {
+        SkRegion::Iterator iter(rgn);
+
+        // The first scanline strip starts at Y=10 and ends at Y=20.
+        //   The first rectangle there starts at X=12 and ends at X=17
+        REPORTER_ASSERT(reporter, !iter.done());
+        REPORTER_ASSERT(reporter, iter.rect() == SkIRect::MakeLTRB(12, 10, 17, 20));
+
+        //    There's a second rectangle in that section from X=31 to X=39.
+        iter.next();
+        REPORTER_ASSERT(reporter, !iter.done());
+        REPORTER_ASSERT(reporter, iter.rect() == SkIRect::MakeLTRB(31, 10, 39, 20));
+
+        // The next scanline strip continues at Y=20 and goes til Y=25
+        //     The one and only rectangle here starts at X=31 and goes to X=39
+        iter.next();
+        REPORTER_ASSERT(reporter, !iter.done());
+        REPORTER_ASSERT(reporter, iter.rect() == SkIRect::MakeLTRB(31, 20, 39, 25));
+
+        // There's a jump to the final scanline strip from Y=30 to Y=40
+        //     The one and only rectangle here starts at X=16 and goes to X=23
+        iter.next();
+        REPORTER_ASSERT(reporter, !iter.done());
+        REPORTER_ASSERT(reporter, iter.rect() == SkIRect::MakeLTRB(16, 30, 23, 40));
+
+        // Call next() -> no more rectangles
+        iter.next();
+        REPORTER_ASSERT(reporter, iter.done());
+    }
+}
+
+DEF_TEST(SkRegion_ReadFromMemory_ConsecutiveEmptySlices_Invalid, reporter) {
+    constexpr int32_t kSentinel = 0x7FFFFFFF;
+    const int32_t corrupt[] = {
+        42,             // number of int32s in the RLE portion (after 7 metadata int32s)
+        0, 0, 100, 100, // bounds
+        12,             // 12 spans (10 are empty)
+        2,              // 2 rectangles
+        0, 5,           // first stripe is from Y=0 to Y=5,
+        1,              // 1 rectangle
+        0, 100,         // from x = 0 to 100 (arbitrary)
+        kSentinel,
+        10, 0, kSentinel, // Empty from  5-10
+        20, 0, kSentinel, // Empty from 10-20...
+        30, 0, kSentinel,
+        40, 0, kSentinel,
+        50, 0, kSentinel,
+        60, 0, kSentinel,
+        70, 0, kSentinel,
+        80, 0, kSentinel,
+        90, 0, kSentinel,
+        95, 0, kSentinel,
+        100, 1, 20, 30, kSentinel, // one final real rectangle until Y=100
+        kSentinel, // final sentinal
+    };
+
+    SkRegion rgn;
+    size_t len = rgn.readFromMemory(&corrupt, sizeof(corrupt));
+    REPORTER_ASSERT(reporter, len == 0);  // len == 0 means "could not read"
+
+    // When there was a buggy version of this, the following iteration caused a crash.
+    SkRegion::Iterator iter(rgn);
+    while (!iter.done()) {
+        iter.next();
+    }
+}
+
+DEF_TEST(SkRegion_ReadFromMemory_SingleEmptySlice_Valid, reporter) {
+    constexpr int32_t kSentinel = 0x7FFFFFFF;
+    const int32_t valid[] = {
+        15,             // number of int32s in the RLE portion (after 7 metadata int32s)
+        0, 0, 100, 100, // bounds
+        3,              // 3 spans (1 is empty)
+        2,              // 2 rectangles
+        0, 5,           // first stripe is from Y=0 to Y=5,
+        1,              // 1 rectangle
+        0, 100,         // from x = 0 to 100 (arbitrary)
+        kSentinel,
+        80, 0, kSentinel, // Empty from  5-80
+        100, 1, 20, 30, kSentinel, // one final real rectangle
+        kSentinel, // final sentinal
+    };
+
+    SkRegion rgn;
+    size_t len = rgn.readFromMemory(&valid, sizeof(valid));
+    REPORTER_ASSERT(reporter, len > 0);  // len == 0 means "could not read"
+
+    // Make sure we don't read any memory we aren't supposed to.
+    SkRegion::Iterator iter(rgn);
+    while (!iter.done()) {
+        iter.next();
+    }
+}
+
+static bool test_rects(SkSpan<const SkIRect> rects) {
+    SkRegion rgn0, rgn1;
+
+    for (size_t i = 0; i < rects.size(); i++) {
+        rgn0.op(rects[i], SkRegion::kUnion_Op);
+    }
+    rgn1.setRects(rects);
+
+    if (rgn0 != rgn1) {
+        SkDebugf("\n");
+        for (size_t i = 0; i < rects.size(); i++) {
+            SkDebugf(" { %d, %d, %d, %d },\n",
+                     rects[i].fLeft, rects[i].fTop,
+                     rects[i].fRight, rects[i].fBottom);
+        }
+        SkDebugf("\n");
+        return false;
+    }
+    return true;
+}
+
+DEF_TEST(Region_setRects, reporter) {
+    auto test = [&](const char* name, SkSpan<const SkIRect> rects) {
+        skiatest::ReporterContext ctx(reporter, SkString(name));
+        REPORTER_ASSERT(reporter, test_rects(rects));
+
+        SkRegion rgn;
+        bool nonEmpty = rgn.setRects(rects);
+        REPORTER_ASSERT(reporter, nonEmpty == !rgn.isEmpty());
+    };
+
+    test("0_rects", {});
+
+    const SkIRect r1[] = {{0, 0, 10, 10}};
+    test("1_rect", r1);
+
+    const SkIRect r2[] = {{0, 0, 1, 1}, {2, 2, 3, 3}};
+    test("2_rects", r2);
+
+    const SkIRect r3[] = {{0, 0, 1, 1}, {2, 2, 3, 3}, {4, 4, 5, 5}};
+    test("3_rects", r3);
+
+    const SkIRect r4[] = {
+        { 0, 0, 1, 2 },
+        { 2, 1, 3, 3 },
+        { 4, 0, 5, 1 },
+        { 6, 0, 7, 4 },
+    };
+    test("4_rects", r4);
+
+    const SkIRect rOverlap[] = {{0, 0, 10, 10}, {5, 0, 15, 10}, {0, 5, 10, 15}, {5, 5, 15, 15}};
+    test("overlapping_rects", rOverlap);
+
+    const SkIRect rEmpty[] = {{0, 0, 0, 0}, {10, 10, 10, 10}};
+    test("empty_rects", rEmpty);
+
+    SkIRect grid[100];
+    for (int y = 0; y < 10; ++y) {
+        for (int x = 0; x < 10; ++x) {
+            grid[y * 10 + x] = SkIRect::MakeXYWH(x * 20, y * 20, 10, 10);
+        }
+    }
+    test("100_rects_grid", grid);
 }

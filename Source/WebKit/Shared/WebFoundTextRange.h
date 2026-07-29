@@ -26,6 +26,8 @@
 #pragma once
 
 #include "ArgumentCoders.h"
+#include <WebCore/MediaPlayerClientIdentifier.h>
+#include <limits>
 #include <wtf/HashTraits.h>
 #include <wtf/text/WTFString.h>
 
@@ -54,7 +56,16 @@ struct WebFoundTextRange {
         static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
     };
 
-    Variant<DOMData, PDFData> data { DOMData { } };
+    struct CueData {
+        WebCore::MediaPlayerClientIdentifier mediaElementIdentifier;
+        uint64_t documentOffset { 0 };
+        uint64_t seekTimeMilliseconds { 0 };
+
+        bool operator==(const CueData& other) const = default;
+        unsigned NODELETE hash() const;
+    };
+
+    Variant<DOMData, PDFData, CueData> data { DOMData { } };
     Vector<uint64_t> pathToFrame;
     uint64_t order { 0 };
 
@@ -66,6 +77,7 @@ struct WebFoundTextRange {
 TextStream& operator<<(TextStream&, const WebFoundTextRange&);
 TextStream& operator<<(TextStream&, const WebFoundTextRange::DOMData&);
 TextStream& operator<<(TextStream&, const WebFoundTextRange::PDFData&);
+TextStream& operator<<(TextStream&, const WebFoundTextRange::CueData&);
 
 } // namespace WebKit
 
@@ -103,10 +115,16 @@ public:
 };
 
 template<> struct HashTraits<WebKit::WebFoundTextRange> : GenericHashTraits<WebKit::WebFoundTextRange> {
-    static WebKit::WebFoundTextRange emptyValue() { return { }; }
+    static WebKit::WebFoundTextRange emptyValue()
+    {
+        return {
+            WebKit::WebFoundTextRange::DOMData { std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max() },
+            Vector<uint64_t> { },
+            0
+        };
+    }
 
     static void constructDeletedValue(WebKit::WebFoundTextRange& slot) { slot.pathToFrame = Vector<uint64_t> { HashTableDeletedValue }; }
     static bool isDeletedValue(const WebKit::WebFoundTextRange& range) { return range.pathToFrame.isHashTableDeletedValue(); }
 };
-
 }

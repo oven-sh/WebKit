@@ -35,6 +35,9 @@
 #include "DFGInsertionSet.h"
 #include "DFGJITCode.h"
 #include "DFGPhase.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIDFG.h"
+#endif
 #include "JSBoundFunctionInlines.h"
 #include "JSObjectInlines.h"
 #include "JSWebAssemblyInstance.h"
@@ -820,6 +823,7 @@ private:
             ASSERT(m_node->op() != RegExpMatchFast);
 
             bool needLastIndexTypeCheck = false;
+            bool stickyRuntimeLastIndex = false;
             auto insertLastIndexTypeCheckIfNecessary = [&](NodeOrigin origin) {
                 if (needLastIndexTypeCheck) {
                     ASSERT(m_node->op() != RegExpExecNonGlobalOrSticky);
@@ -862,9 +866,18 @@ private:
                     // We cannot statically prove lastIndex. But still there is a chance.
                     // If RegExp is not global and not sticky, then only thing we care is ToIntegerOrInfinity(regExp.lastIndex).
                     // Thus, we can emit Int32Use check to protect further when conversion happens.
-                    if (regExp->globalOrSticky()) {
+                    if (regExp->global()) {
                         dataLogLnIf(verbose, "Giving up because the last index is not known.");
                         break;
+                    }
+
+                    if (regExp->sticky()) {
+                        // Sticky (non-global) RegExpExec does not need to prove its value here.
+                        if (m_node->op() != RegExpExec) {
+                            dataLogLnIf(verbose, "Giving up because the last index is not known.");
+                            break;
+                        }
+                        stickyRuntimeLastIndex = true;
                     }
 
                     if (m_graph.hasExitSite(m_node->origin.semantic, BadType)) {
@@ -1187,8 +1200,26 @@ private:
                 return true;
             };
 
-            if (foldToConstant())
-                break;
+            auto convertToSticky = [&] {
+                if (m_node->op() != RegExpExec)
+                    return false;
+                if (!regExp->sticky() || regExp->global())
+                    return false;
+                if (m_node->child3().useKind() != StringUse)
+                    return false;
+
+                NodeOrigin origin = m_node->origin;
+                m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, origin, m_node->children.justChecks());
+                insertLastIndexTypeCheckIfNecessary(origin);
+                m_node->convertToRegExpExecStickyWithoutChecks(m_graph.freeze(regExp));
+                m_changed = true;
+                return true;
+            };
+
+            if (!stickyRuntimeLastIndex) {
+                if (foldToConstant())
+                    break;
+            }
 
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
             if (convertTestToTestInline())
@@ -1196,6 +1227,9 @@ private:
 #endif
 
             if (convertToStatic())
+                break;
+
+            if (convertToSticky())
                 break;
 
             break;
@@ -1679,6 +1713,19 @@ private:
                 keyEdge->setOp(MakeAtomString);
                 m_changed = true;
             }
+
+            Node* object = m_graph.child(m_node, 0).node();
+            Node* key = keyEdge.node();
+            if (key->op() == EnumeratorNextUpdatePropertyName && key->child3()->op() == GetPropertyEnumerator && key->child3()->child1().node() == object) {
+                Node* indexNode = key->child1().node();
+                if (indexNode->op() == ExtractFromTuple && indexNode->child1()->op() == EnumeratorNextUpdateIndexAndMode) {
+                    m_node->convertToEnumeratorHasOwnProperty(
+                        m_graph, Edge(object, CellUse), Edge(key, UntypedUse),
+                        key->child1(), key->child2(), key->child3(),
+                        indexNode->child1()->arrayMode(), key->enumeratorMetadata().toRaw());
+                    m_changed = true;
+                }
+            }
             break;
         }
 
@@ -1810,7 +1857,7 @@ private:
                 for (unsigned index = 0; index < signature->argumentCount(); ++index) {
                     auto type = signature->argumentType(index);
                     Edge argument = m_graph.varArgChild(m_node, 2 + index);
-                    switch (type.kind) {
+                    switch (type.kind()) {
                     case Wasm::TypeKind::I32: {
                         if (!argument->shouldSpeculateInt32())
                             success = false;
@@ -1846,7 +1893,7 @@ private:
                 if (!signature->returnsVoid()) {
                     ASSERT(signature->returnCount() == 1);
                     auto type = signature->returnType(0);
-                    switch (type.kind) {
+                    switch (type.kind()) {
                     case Wasm::TypeKind::I32:
                     case Wasm::TypeKind::I64:
                     case Wasm::TypeKind::Ref:
@@ -1890,7 +1937,7 @@ private:
                     auto type = signature->argumentType(index);
                     Edge argument = m_graph.varArgChild(m_node, 2 + index);
                     Node* argumentNode = argument.node();
-                    switch (type.kind) {
+                    switch (type.kind()) {
                     case Wasm::TypeKind::I32: {
                         m_insertionSet.insertCheck(checkIndex, m_node->origin, Edge(argumentNode, Int32Use));
                         m_graph.varArgChild(m_node, 2 + index) = Edge(argumentNode, KnownInt32Use);
@@ -1928,7 +1975,7 @@ private:
 
                 if (!signature->returnsVoid()) {
                     auto type = signature->returnType(0);
-                    switch (type.kind) {
+                    switch (type.kind()) {
                     case Wasm::TypeKind::I32: {
                         m_node->setResult(NodeResultInt32);
                         break;
@@ -1954,6 +2001,13 @@ private:
                 }
 
                 m_node->convertToCallWasm(m_graph.freeze(wasmFunction));
+                break;
+            }
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+            if (FFI::tryConvertCallToCallFFI(m_graph, m_insertionSet, m_nodeIndex, m_node, function)) {
+                m_changed = true;
                 break;
             }
 #endif

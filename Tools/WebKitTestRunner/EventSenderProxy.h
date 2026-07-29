@@ -39,6 +39,10 @@
 OBJC_CLASS NSEvent;
 #endif
 
+#if PLATFORM(GTK)
+enum class WheelEventPhase;
+#endif
+
 namespace WebCore {
 enum class MouseButton : int8_t;
 }
@@ -73,6 +77,7 @@ public:
     void mouseScrollByWithWheelAndMomentumPhases(int x, int y, int phase, int momentum);
 #if PLATFORM(GTK)
     void setWheelHasPreciseDeltas(bool);
+    void sendWheelEvent(double x, double y, double deltaX, double deltaY, WheelEventPhase, WheelEventPhase momentumPhase);
 #endif
     void continuousMouseScrollBy(int x, int y, bool paged);
 
@@ -89,6 +94,19 @@ public:
     using EventTimestamp = uint64_t; // mach_absolute_time units.
 
     void sendWheelEvent(EventTimestamp, double globalX, double globalY, double deltaX, double deltaY, WheelEventPhase, WheelEventPhase momentumPhase);
+#endif
+
+#if PLATFORM(WPE)
+    enum class WheelEventPhase : uint8_t {
+        None,
+        Began,
+        Changed,
+        Ended,
+        Cancelled,
+        MayBegin,
+    };
+
+    void sendWheelEvent(double time, double x, double y, double deltaX, double deltaY, WheelEventPhase, WheelEventPhase momentumPhase);
 #endif
 
     void leapForward(int milliseconds);
@@ -108,10 +126,10 @@ public:
     void updateTouchPoint(int index, int x, int y);
     void setTouchModifier(WKEventModifiers, bool enable);
     void setTouchPointRadius(int radiusX, int radiusY);
-    void touchStart();
-    void touchMove();
-    void touchEnd();
-    void touchCancel();
+    void touchStart(CompletionHandler<void()>&& = nullptr);
+    void touchMove(CompletionHandler<void()>&& = nullptr);
+    void touchEnd(CompletionHandler<void()>&& = nullptr);
+    void touchCancel(CompletionHandler<void()>&& = nullptr);
     void clearTouchPoints();
     void releaseTouchPoint(int index);
     void cancelTouchPoint(int index);

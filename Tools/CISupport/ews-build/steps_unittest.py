@@ -2659,6 +2659,71 @@ class TestRunWebKitTestsWithoutChange(BuildStepMixinAdditions, unittest.TestCase
         with current_hostname(EWS_BUILD_HOSTNAMES[0]):
             return self.run_step()
 
+    def test_run_subtest_skips_results_db_pre_existing(self):
+        self.configureStep()
+        self.setProperty('fullPlatform', 'ios-simulator')
+        self.setProperty('configuration', 'release')
+        self.setProperty('first_run_failures', ['test1.html', 'test2.html', 'test3.html'])
+        self.setProperty('second_run_failures', ['test3.html', 'test4.html', 'test5.html'])
+        # results-db flagged test1/test5 as pre-existing; the clean tree should only run the filtered union.
+        self.setProperty('first_run_failures_filtered', ['test2.html', 'test3.html'])
+        self.setProperty('second_run_failures_filtered', ['test3.html', 'test4.html'])
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        logfiles={'json': self.jsonFileName},
+                        log_environ=False,
+                        timeout=19800,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --release --results-directory layout-test-results --debug-rwt-logging --exit-after-n-failures 60 --skip-failing-tests --builder-name iOS-13-Simulator-WK2-Tests-EWS --build-number 123 --buildbot-worker ews126 --buildbot-master {EWS_BUILD_HOSTNAMES[0]} --report https://results.webkit.org/ --skipped=always test2.html test3.html test4.html 2>&1 | Tools/Scripts/filter-test-logs layout'],
+                        env={'RESULTS_SERVER_API_KEY': 'test-api-key'},
+                        )
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='layout-tests')
+        with current_hostname(EWS_BUILD_HOSTNAMES[0]):
+            return self.run_step()
+
+    def test_run_subtest_tests_strips_wpt_directory_from_additional_arguments(self):
+        self.configureStep()
+        self.setProperty('fullPlatform', 'ios-simulator')
+        self.setProperty('configuration', 'release')
+        self.setProperty('additionalArguments', ['--child-processes=4', 'imported/w3c/web-platform-tests'])
+        self.setProperty('first_run_failures', ['imported/w3c/web-platform-tests/test1.html', 'imported/w3c/web-platform-tests/test2.html'])
+        self.setProperty('second_run_failures', ['imported/w3c/web-platform-tests/test2.html', 'imported/w3c/web-platform-tests/test3.html'])
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        logfiles={'json': self.jsonFileName},
+                        log_environ=False,
+                        timeout=19800,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --release --results-directory layout-test-results --debug-rwt-logging --exit-after-n-failures 60 --skip-failing-tests --child-processes=4 --builder-name iOS-13-Simulator-WK2-Tests-EWS --build-number 123 --buildbot-worker ews126 --buildbot-master {EWS_BUILD_HOSTNAMES[0]} --report https://results.webkit.org/ --skipped=always imported/w3c/web-platform-tests/test1.html imported/w3c/web-platform-tests/test2.html imported/w3c/web-platform-tests/test3.html 2>&1 | Tools/Scripts/filter-test-logs layout'],
+                        env={'RESULTS_SERVER_API_KEY': 'test-api-key'},
+                        )
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='layout-tests')
+        with current_hostname(EWS_BUILD_HOSTNAMES[0]):
+            return self.run_step()
+
+    def test_run_subtest_tests_preserves_flags_and_exclude_value(self):
+        self.configureStep()
+        self.setProperty('fullPlatform', 'ios-simulator')
+        self.setProperty('configuration', 'release')
+        self.setProperty('additionalArguments', ['imported/w3c/web-platform-tests', '--site-isolation-enabled-by-default', '--exclude-tests', 'imported/w3c/web-platform-tests/css'])
+        self.setProperty('first_run_failures', ['imported/w3c/web-platform-tests/test1.html'])
+        self.setProperty('second_run_failures', ['imported/w3c/web-platform-tests/test1.html'])
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        logfiles={'json': self.jsonFileName},
+                        log_environ=False,
+                        timeout=19800,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --release --results-directory layout-test-results --debug-rwt-logging --exit-after-n-failures 60 --skip-failing-tests --site-isolation-enabled-by-default --exclude-tests imported/w3c/web-platform-tests/css --builder-name iOS-13-Simulator-WK2-Tests-EWS --build-number 123 --buildbot-worker ews126 --buildbot-master {EWS_BUILD_HOSTNAMES[0]} --report https://results.webkit.org/ --skipped=always imported/w3c/web-platform-tests/test1.html 2>&1 | Tools/Scripts/filter-test-logs layout'],
+                        env={'RESULTS_SERVER_API_KEY': 'test-api-key'},
+                        )
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='layout-tests')
+        with current_hostname(EWS_BUILD_HOSTNAMES[0]):
+            return self.run_step()
+
     def test_run_subtest_tests_removes_skipped_that_fails(self):
         self.configureStep()
         self.setProperty('fullPlatform', 'ios-simulator')
@@ -3018,6 +3083,112 @@ class TestAnalyzeLayoutTestsResults(BuildStepMixinAdditions, unittest.TestCase):
         self.setProperty('clean_tree_run_status', SUCCESS)
         self.expect_outcome(result=FAILURE, state_string='Found 1 new test failure: test-was-skipped-change-removed-expectation-but-still-fails.html (failure)')
         return self.run_step()
+
+    def test_pre_existing_flaky_failure_not_blamed(self):
+        # A pre-existing flaky test fails with the change (both runs) but passes on the clean tree.
+        # results-db flagged it, so it is stripped from the *_filtered lists and must not be blamed.
+        self.configureStep()
+        self.setProperty('first_run_failures', ['pre-existing-flaky.html'])
+        self.setProperty('second_run_failures', ['pre-existing-flaky.html'])
+        self.setProperty('first_run_failures_filtered', [])
+        self.setProperty('second_run_failures_filtered', [])
+        self.setProperty('clean_tree_run_failures', [])
+        self.expect_outcome(result=SUCCESS, state_string='Passed layout tests')
+        return self.run_step()
+
+    def test_new_failure_still_reported_with_filtered_lists(self):
+        # A genuinely new failure stays in the *_filtered lists and must still be reported, while the
+        # pre-existing flaky one (stripped by results-db) is not blamed.
+        self.configureStep()
+        self.setProperty('first_run_failures', ['pre-existing-flaky.html', 'real-regression.html'])
+        self.setProperty('second_run_failures', ['pre-existing-flaky.html', 'real-regression.html'])
+        self.setProperty('first_run_failures_filtered', ['real-regression.html'])
+        self.setProperty('second_run_failures_filtered', ['real-regression.html'])
+        self.setProperty('clean_tree_run_failures', [])
+        self.expect_outcome(result=FAILURE, state_string='Found 1 new test failure: real-regression.html (failure)')
+        return self.run_step()
+
+    def test_flaky_limit_ignores_pre_existing(self):
+        # >10 tests flake between the two runs, but all are pre-existing (excluded by the filtered
+        # lists), so we must not report 'Too many flaky failures' and block the PR.
+        self.configureStep()
+        self.setProperty('first_run_failures', [f'test{i}' for i in range(0, 5)])
+        self.setProperty('second_run_failures', [f'test{i}' for i in range(5, 12)])
+        self.setProperty('first_run_failures_filtered', [])
+        self.setProperty('second_run_failures_filtered', [])
+        self.expect_outcome(result=SUCCESS, state_string='Passed layout tests')
+        return self.run_step()
+
+
+class TestFilterLayoutTestFailuresUsingResultsDB(BuildStepMixinAdditions, unittest.TestCase):
+    def setUp(self):
+        self.longMessage = True
+        return self.setup_test_build_step()
+
+    def tearDown(self):
+        return self.tear_down_test_build_step()
+
+    def _configure(self, pre_existing):
+        # pre_existing: set of test names results-db considers pre-existing failures.
+        self.setup_step(RunWebKitTests())
+        step = self.get_nth_step(0)
+        step._addToLog = lambda logName, message: defer.succeed(None)
+
+        def fake_is_pre_existing(cls, test, **kwargs):
+            return defer.succeed({
+                'is_existing_failure': test in pre_existing,
+                'pass_rate': 0 if test in pre_existing else 100,
+                'raw_data': {},
+                'logs': '',
+                'request_failed': False,
+            })
+
+        self.patch(ResultsDatabase, 'is_test_pre_existing_failure', classmethod(fake_is_pre_existing))
+        self.patch(ResultsDatabase, 'has_commit', classmethod(lambda cls, commit=None: defer.succeed(False)))
+        return step
+
+    @defer.inlineCallbacks
+    def _check_order(self, failing_tests, pre_existing):
+        step = self._configure(pre_existing)
+        yield step.filter_failures_using_results_db(failing_tests)
+        self.assertEqual(step.failing_tests_filtered, ['real.html'])
+        self.assertEqual(sorted(step.preexisting_failures_in_results_db), ['flaky1.html', 'flaky2.html'])
+
+    def test_pre_existing_after_real_failure_still_stripped(self):
+        # Regression guard: a pre-existing failure listed after a non-pre-existing one must still be
+        # filtered out (previously an early-break stopped at the first non-pre-existing test).
+        return self._check_order(
+            ['real.html', 'flaky1.html', 'flaky2.html'],
+            {'flaky1.html', 'flaky2.html'},
+        )
+
+    def test_pre_existing_interleaved_with_real_failure_stripped(self):
+        return self._check_order(
+            ['flaky1.html', 'real.html', 'flaky2.html'],
+            {'flaky1.html', 'flaky2.html'},
+        )
+
+    @defer.inlineCallbacks
+    def test_caps_number_of_results_db_queries(self):
+        # Only the first MAX_FAILURES_TO_CHECK_RESULTS_DB failures are checked against results-db.
+        queried = []
+
+        def fake_is_pre_existing(cls, test, **kwargs):
+            queried.append(test)
+            return defer.succeed({
+                'is_existing_failure': True, 'pass_rate': 0, 'raw_data': {}, 'logs': '', 'request_failed': False,
+            })
+
+        self.setup_step(RunWebKitTests())
+        step = self.get_nth_step(0)
+        step._addToLog = lambda logName, message: defer.succeed(None)
+        self.patch(ResultsDatabase, 'is_test_pre_existing_failure', classmethod(fake_is_pre_existing))
+        self.patch(ResultsDatabase, 'has_commit', classmethod(lambda cls, commit=None: defer.succeed(False)))
+
+        cap = RunWebKitTests.MAX_FAILURES_TO_CHECK_RESULTS_DB
+        failing_tests = [f'test{i}.html' for i in range(cap + 10)]
+        yield step.filter_failures_using_results_db(failing_tests)
+        self.assertEqual(len(queried), cap)
 
 
 class MockLayoutTestFailures(object):
@@ -5721,6 +5892,72 @@ All tests successfully passed!
         self.expect_outcome(result=SUCCESS, state_string='run-api-tests')
         return self.run_step()
 
+    def test_expected_failures_only_not_blocking(self):
+        self.setup_step(RunAPITests())
+        self.setProperty('fullPlatform', 'mac-catalina')
+        self.setProperty('platform', 'mac')
+        self.setProperty('configuration', 'debug')
+
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        logfiles={'json': self.jsonFileName},
+                        timeout=20 * 60
+                        )
+            .log('stdio', stdout='''...
+worker/0 TestWTF.WTF_Variant.VisitorUsingSwitchOn Passed
+worker/0 exiting
+Ran 1888 tests of 1888 with 1882 successful (6 expected failures)
+------------------------------
+All tests passed! (6 expected failures)
+
+Expected failures (not blocking):
+    TestWebKitAPI.MediaSessionTest.MinimalCommands
+    TestWebKitAPI.NowPlayingTest.VideoElementWithMutedAudio
+    TestWebKitAPI.NowPlayingTest.VideoElementWithoutAudio
+    TestWebKitAPI.NowPlayingTest.VideoElementWithoutAudioPlayWithUserGesture
+    TestWebKitAPI.WKHTTPCookieStore.WebSocketCookiesFromRedirect
+    TestWebKitAPI.WKHTTPCookieStore.WebSocketCookiesThroughRedirect
+''')
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='run-api-tests')
+        return self.run_step()
+
+    def test_unexpected_failures_counted_excluding_expected(self):
+        self.setup_step(RunAPITests())
+        self.setProperty('fullPlatform', 'mac-catalina')
+        self.setProperty('platform', 'mac')
+        self.setProperty('configuration', 'debug')
+
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        logfiles={'json': self.jsonFileName},
+                        timeout=20 * 60
+                        )
+            .log('stdio', stdout='''...
+worker/0 TestWTF.WTF_Variant.VisitorUsingSwitchOn Passed
+worker/0 exiting
+Ran 1888 tests of 1888 with 1880 successful (6 expected failures)
+------------------------------
+Test suite failed
+
+** UNEXPECTED FAILURES **
+
+    TestWTF.WTF.StringConcatenate_Unsigned
+    TestWTF.WTF_Expected.Unexpected
+
+Expected failures (not blocking):
+    TestWebKitAPI.MediaSessionTest.MinimalCommands
+''')
+            .exit(2),
+        )
+        self.expect_outcome(result=FAILURE, state_string='2 api tests failed or timed out')
+        return self.run_step()
+
 
 class TestRunAPITestsWithoutChange(BuildStepMixinAdditions, unittest.TestCase):
     def setUp(self):
@@ -5930,6 +6167,183 @@ Ran 1296 tests of 1298 with 1293 successful
         )
         self.expect_outcome(result=FAILURE, state_string='3 api tests failed or timed out')
         return self.run_step()
+
+
+class TestAnalyzeAPITestsResults(BuildStepMixinAdditions, unittest.TestCase):
+    def setUp(self):
+        self.longMessage = True
+        return self.setup_test_build_step()
+
+    def tearDown(self):
+        return self.tear_down_test_build_step()
+
+    def configureStep(self):
+        self.setup_step(AnalyzeAPITestsResults())
+        self.setProperty('clean_tree_run_failures', [])
+
+    def test_new_failure_introduced_by_change(self):
+        self.configureStep()
+        self.setProperty('first_run_failures', ['suite.test1'])
+        self.setProperty('second_run_failures', ['suite.test1'])
+        self.expect_outcome(result=FAILURE, state_string='Found 1 new API test failure: suite.test1 (failure)')
+        return self.run_step()
+
+    def test_pre_existing_failure_on_clean_tree(self):
+        self.configureStep()
+        self.setProperty('first_run_failures', ['suite.test1'])
+        self.setProperty('second_run_failures', ['suite.test1'])
+        self.setProperty('clean_tree_run_failures', ['suite.test1'])
+        self.expect_outcome(result=SUCCESS, state_string='Passed API tests')
+        return self.run_step()
+
+    def test_flaky_failure(self):
+        # test1 and test2 fail in different runs (never both), so they are flaky, not new failures.
+        self.configureStep()
+        self.setProperty('first_run_failures', ['suite.test1'])
+        self.setProperty('second_run_failures', ['suite.test2'])
+        self.expect_outcome(result=SUCCESS, state_string='Passed API tests')
+        return self.run_step()
+
+    def test_retry_when_both_runs_empty(self):
+        # This step runs only after both runs failed, so empty failure lists mean the results could
+        # not be parsed (an infrastructure issue), which should retry.
+        self.configureStep()
+        self.setProperty('first_run_failures', [])
+        self.setProperty('second_run_failures', [])
+        self.expect_outcome(result=RETRY, state_string='analyze-api-tests-results (retry)')
+        return self.run_step()
+
+    def test_retry_when_results_missing(self):
+        # A missing first_run_failures/second_run_failures property means the run step produced no
+        # parseable results, which is an infrastructure issue that should retry.
+        self.configureStep()
+        self.expect_outcome(result=RETRY, state_string='analyze-api-tests-results (retry)')
+        return self.run_step()
+
+    def test_retry_when_second_run_results_missing(self):
+        self.configureStep()
+        self.setProperty('first_run_failures', ['suite.test1'])
+        self.expect_outcome(result=RETRY, state_string='analyze-api-tests-results (retry)')
+        return self.run_step()
+
+    def test_pre_existing_flaky_failure_not_blamed_on_author(self):
+        # A pre-existing flaky failure fails in both runs but passes on the clean tree. It is stripped
+        # from the *_filtered lists by results-db, so it must not be reported as a new failure.
+        self.configureStep()
+        self.setProperty('first_run_failures', ['suite.MultipleAccounts', 'suite.real_failure'])
+        self.setProperty('second_run_failures', ['suite.MultipleAccounts', 'suite.real_failure'])
+        self.setProperty('first_run_failures_filtered', ['suite.real_failure'])
+        self.setProperty('second_run_failures_filtered', ['suite.real_failure'])
+        self.setProperty('clean_tree_run_failures', ['suite.real_failure'])
+        self.expect_outcome(result=SUCCESS, state_string='Passed API tests')
+        return self.run_step()
+
+    def test_new_failure_still_reported_with_filtered_lists(self):
+        # A genuinely new failure remains in the *_filtered lists, so it must still be reported.
+        self.configureStep()
+        self.setProperty('first_run_failures', ['suite.MultipleAccounts', 'suite.real_failure'])
+        self.setProperty('second_run_failures', ['suite.MultipleAccounts', 'suite.real_failure'])
+        self.setProperty('first_run_failures_filtered', ['suite.real_failure'])
+        self.setProperty('second_run_failures_filtered', ['suite.real_failure'])
+        self.setProperty('clean_tree_run_failures', [])
+        self.expect_outcome(result=FAILURE, state_string='Found 1 new API test failure: suite.real_failure (failure)')
+        return self.run_step()
+
+    def test_all_failures_pre_existing_filtered_lists_empty(self):
+        # If every failure was pre-existing, both *_filtered lists are empty and the build passes.
+        self.configureStep()
+        self.setProperty('first_run_failures', ['suite.MultipleAccounts'])
+        self.setProperty('second_run_failures', ['suite.MultipleAccounts'])
+        self.setProperty('first_run_failures_filtered', [])
+        self.setProperty('second_run_failures_filtered', [])
+        self.setProperty('clean_tree_run_failures', [])
+        self.expect_outcome(result=SUCCESS, state_string='Passed API tests')
+        return self.run_step()
+
+    def test_falls_back_to_unfiltered_when_filtered_absent(self):
+        # When the *_filtered properties are absent, behavior degrades to the unfiltered lists.
+        self.configureStep()
+        self.setProperty('first_run_failures', ['suite.test1'])
+        self.setProperty('second_run_failures', ['suite.test1'])
+        self.expect_outcome(result=FAILURE, state_string='Found 1 new API test failure: suite.test1 (failure)')
+        return self.run_step()
+
+
+class TestFilterAPITestFailuresUsingResultsDB(BuildStepMixinAdditions, unittest.TestCase):
+    def setUp(self):
+        self.longMessage = True
+        return self.setup_test_build_step()
+
+    def tearDown(self):
+        return self.tear_down_test_build_step()
+
+    def _configure(self, pre_existing):
+        # pre_existing: set of test names results-db considers pre-existing failures.
+        self.setup_step(RunAPITests())
+        step = self.get_nth_step(0)
+        step._addToLog = lambda logName, message: defer.succeed(None)
+
+        def fake_is_pre_existing(cls, test, **kwargs):
+            return defer.succeed({
+                'is_existing_failure': test in pre_existing,
+                'pass_rate': 0 if test in pre_existing else 100,
+                'raw_data': {},
+                'logs': '',
+                'request_failed': False,
+            })
+
+        self.patch(ResultsDatabase, 'is_test_pre_existing_failure', classmethod(fake_is_pre_existing))
+        self.patch(ResultsDatabase, 'has_commit', classmethod(lambda cls, commit=None: defer.succeed(False)))
+        return step
+
+    @defer.inlineCallbacks
+    def _check_order(self, failing_tests, pre_existing):
+        step = self._configure(pre_existing)
+        yield step.filter_api_test_failures_using_results_db(failing_tests)
+        self.assertEqual(step.failing_tests_filtered, ['suite.real_failure'])
+        self.assertEqual(sorted(step.preexisting_failures_in_results_db), ['suite.AlsoFlaky', 'suite.MultipleAccounts'])
+
+    def test_pre_existing_after_real_failure_still_stripped(self):
+        # Regression guard: a pre-existing failure listed after a non-pre-existing one must still be
+        # filtered out (previously an early-break would stop at the first non-pre-existing test).
+        return self._check_order(
+            ['suite.real_failure', 'suite.MultipleAccounts', 'suite.AlsoFlaky'],
+            {'suite.MultipleAccounts', 'suite.AlsoFlaky'},
+        )
+
+    def test_pre_existing_before_real_failure_stripped(self):
+        return self._check_order(
+            ['suite.MultipleAccounts', 'suite.real_failure', 'suite.AlsoFlaky'],
+            {'suite.MultipleAccounts', 'suite.AlsoFlaky'},
+        )
+
+    def test_pre_existing_interleaved_with_real_failure_stripped(self):
+        return self._check_order(
+            ['suite.AlsoFlaky', 'suite.MultipleAccounts', 'suite.real_failure'],
+            {'suite.MultipleAccounts', 'suite.AlsoFlaky'},
+        )
+
+    @defer.inlineCallbacks
+    def test_caps_number_of_results_db_queries(self):
+        # Only the first MAX_FAILURES_TO_CHECK_RESULTS_DB failures are checked against results-db.
+        queried = []
+
+        def fake_is_pre_existing(cls, test, **kwargs):
+            queried.append(test)
+            return defer.succeed({
+                'is_existing_failure': True, 'pass_rate': 0, 'raw_data': {}, 'logs': '', 'request_failed': False,
+            })
+
+        self.setup_step(RunAPITests())
+        step = self.get_nth_step(0)
+        step._addToLog = lambda logName, message: defer.succeed(None)
+        self.patch(ResultsDatabase, 'is_test_pre_existing_failure', classmethod(fake_is_pre_existing))
+        self.patch(ResultsDatabase, 'has_commit', classmethod(lambda cls, commit=None: defer.succeed(False)))
+
+        cap = RunAPITests.MAX_FAILURES_TO_CHECK_RESULTS_DB
+        failing_tests = [f'suite.test{i}' for i in range(cap + 10)]
+        yield step.filter_api_test_failures_using_results_db(failing_tests)
+        self.assertEqual(len(queried), cap)
 
 
 class TestRunAPITestsParallelSafety(BuildStepMixinAdditions, unittest.TestCase):
@@ -6491,46 +6905,31 @@ class TestCleanGitRepo(BuildStepMixinAdditions, unittest.TestCase):
     def tearDown(self):
         return self.tear_down_test_build_step()
 
+    def default_remote_commands(self, branch='main', remote='origin', platform='unix', switch_exit=0):
+        shell = 'bash' if platform == 'win' else '/bin/bash'
+        exit_0 = 'exit 0' if platform == 'win' else 'true'
+        stale_files = ['gc.log', 'index.lock', 'packed-refs.lock', 'packed-refs.new', 'HEAD.lock', 'config.lock', 'FETCH_HEAD.lock']
+        if platform == 'win':
+            stale_commands = [ExpectShell(command=[shell, '--posix', '-o', 'pipefail', '-c', rf'del .git\{f} || {exit_0}'], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout='') for f in stale_files]
+        else:
+            stale_commands = [ExpectShell(command=[shell, '--posix', '-o', 'pipefail', '-c', f'rm -f .git/{f} || {exit_0}'], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout='') for f in stale_files]
+        return [
+            *stale_commands,
+            ExpectShell(command=[shell, '--posix', '-o', 'pipefail', '-c', f'git rebase --abort || {exit_0}'], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout=''),
+            ExpectShell(command=[shell, '--posix', '-o', 'pipefail', '-c', f'git am --abort || {exit_0}'], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout=''),
+            ExpectShell(command=[shell, '--posix', '-o', 'pipefail', '-c', f'git cherry-pick --abort || {exit_0}'], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout=''),
+            ExpectShell(command=['git', 'clean', '-f', '-d'], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout=''),
+            ExpectShell(command=[shell, '--posix', '-o', 'pipefail', '-c', f'git switch --progress -d --discard-changes {remote}/{branch} || git switch --progress -d --discard-changes {branch} || git switch --progress -d --discard-changes'], workdir='wkdir', timeout=300, log_environ=False).exit(switch_exit).log('stdio', stdout='' if switch_exit else 'HEAD is now at 57015967fef9'),
+            ExpectShell(command=[shell, '--posix', '-o', 'pipefail', '-c', f"git for-each-ref --format='delete %(refname) %(objectname)' refs/heads | git update-ref --stdin || {exit_0}"], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout=''),
+            ExpectShell(command=['git', 'branch', '--no-track', branch], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout=''),
+            ExpectShell(command=[shell, '--posix', '-o', 'pipefail', '-c', f"git remote | grep -v '{remote}$' | xargs -L 1 git remote rm || {exit_0}"], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout=''),
+            ExpectShell(command=['git', 'prune'], workdir='wkdir', timeout=300, log_environ=False).exit(0).log('stdio', stdout=''),
+        ]
+
     def test_success(self):
         self.setup_step(CleanGitRepo())
         self.setProperty('buildername', 'Style-EWS')
-
-        self.expectRemoteCommands(
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/gc.log || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/index.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/packed-refs.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/packed-refs.new || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/HEAD.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/config.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/FETCH_HEAD.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git rebase --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git am --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git cherry-pick --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'clean', '-f', '-d'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'checkout', '--progress', 'origin/main', '-f'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout='You are in detached HEAD state.'),
-            ExpectShell(command=['git', 'branch', '-D', 'main'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout='Deleted branch main (was 57015967fef9).'),
-            ExpectShell(command=['git', 'branch', 'main'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout="Switched to a new branch 'main'"),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git branch | grep -v ' main$' | grep -v 'HEAD detached at' | xargs git branch -D || true"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git remote | grep -v 'origin$' | xargs -L 1 git remote rm || true"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'prune'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-        )
+        self.expectRemoteCommands(*self.default_remote_commands())
         self.expect_outcome(result=SUCCESS, state_string='Cleaned up git repository')
         return self.run_step()
 
@@ -6538,129 +6937,21 @@ class TestCleanGitRepo(BuildStepMixinAdditions, unittest.TestCase):
         self.setup_step(CleanGitRepo())
         self.setProperty('buildername', 'Win-Build-EWS')
         self.setProperty('platform', 'win')
-
-        self.expectRemoteCommands(
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', r'del .git\gc.log || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', r'del .git\index.lock || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', r'del .git\packed-refs.lock || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', r'del .git\packed-refs.new || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', r'del .git\HEAD.lock || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', r'del .git\config.lock || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', r'del .git\FETCH_HEAD.lock || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', 'git rebase --abort || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', 'git am --abort || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', 'git cherry-pick --abort || exit 0'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'clean', '-f', '-d'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'checkout', '--progress', 'origin/main', '-f'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout='You are in detached HEAD state.'),
-            ExpectShell(command=['git', 'branch', '-D', 'main'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout='Deleted branch main (was 57015967fef9).'),
-            ExpectShell(command=['git', 'branch', 'main'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout="Switched to a new branch 'main'"),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', "git branch | grep -v ' main$' | grep -v 'HEAD detached at' | xargs git branch -D || exit 0"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['bash', '--posix', '-o', 'pipefail', '-c', "git remote | grep -v 'origin$' | xargs -L 1 git remote rm || exit 0"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'prune'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-        )
+        self.expectRemoteCommands(*self.default_remote_commands(platform='win'))
         self.expect_outcome(result=SUCCESS, state_string='Cleaned up git repository')
         return self.run_step()
 
     def test_success_master(self):
         self.setup_step(CleanGitRepo(default_branch='master'))
         self.setProperty('buildername', 'Commit-Queue')
-
-        self.expectRemoteCommands(
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/gc.log || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/index.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/packed-refs.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/packed-refs.new || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/HEAD.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/config.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/FETCH_HEAD.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git rebase --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git am --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git cherry-pick --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'clean', '-f', '-d'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'checkout', '--progress', 'origin/master', '-f'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout='You are in detached HEAD state.'),
-            ExpectShell(command=['git', 'branch', '-D', 'master'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout='Deleted branch master (was 57015967fef9).'),
-            ExpectShell(command=['git', 'branch', 'master'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout="Switched to a new branch 'master'"),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git branch | grep -v ' master$' | grep -v 'HEAD detached at' | xargs git branch -D || true"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git remote | grep -v 'origin$' | xargs -L 1 git remote rm || true"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'prune'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-        )
+        self.expectRemoteCommands(*self.default_remote_commands(branch='master'))
         self.expect_outcome(result=SUCCESS, state_string='Cleaned up git repository')
         return self.run_step()
 
     def test_failure(self):
         self.setup_step(CleanGitRepo())
         self.setProperty('buildername', 'Commit-Queue')
-
-        self.expectRemoteCommands(
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/gc.log || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/index.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/packed-refs.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/packed-refs.new || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/HEAD.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/config.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/FETCH_HEAD.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git rebase --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git am --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git cherry-pick --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'clean', '-f', '-d'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'checkout', '--progress', 'origin/main', '-f'], workdir='wkdir', timeout=300, log_environ=False).exit(128)
-            .log('stdio', stdout='You are in detached HEAD state.'),
-            ExpectShell(command=['git', 'branch', '-D', 'main'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout='Deleted branch main (was 57015967fef9).'),
-            ExpectShell(command=['git', 'branch', 'main'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout="Switched to a new branch 'main'"),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git branch | grep -v ' main$' | grep -v 'HEAD detached at' | xargs git branch -D || true"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git remote | grep -v 'origin$' | xargs -L 1 git remote rm || true"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'prune'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-        )
+        self.expectRemoteCommands(*self.default_remote_commands(switch_exit=128))
         self.expect_outcome(result=FAILURE, state_string='Encountered some issues during cleanup')
         return self.run_step()
 
@@ -6668,44 +6959,52 @@ class TestCleanGitRepo(BuildStepMixinAdditions, unittest.TestCase):
         self.setup_step(CleanGitRepo())
         self.setProperty('buildername', 'Commit-Queue')
         self.setProperty('basename', 'safari-612-branch')
+        self.expectRemoteCommands(*self.default_remote_commands())
+        self.expect_outcome(result=SUCCESS, state_string='Cleaned up git repository')
+        return self.run_step()
+
+
+class TestCleanWebKitBuildIfBaseChanged(BuildStepMixinAdditions, unittest.TestCase):
+    def setUp(self):
+        self.longMessage = True
+        return self.setup_test_build_step()
+
+    def tearDown(self):
+        return self.tear_down_test_build_step()
+
+    def test_passes_base_ref_to_script(self):
+        self.setup_step(CleanWebKitBuildIfBaseChanged())
+        self.setProperty('github.base.ref', 'safari-7625-branch')
 
         self.expectRemoteCommands(
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/gc.log || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/index.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/packed-refs.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/packed-refs.new || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/HEAD.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/config.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -f .git/FETCH_HEAD.lock || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git rebase --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git am --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'git cherry-pick --abort || true'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'clean', '-f', '-d'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'checkout', '--progress', 'origin/main', '-f'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout='You are in detached HEAD state.'),
-            ExpectShell(command=['git', 'branch', '-D', 'main'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout='Deleted branch main (was 57015967fef9).'),
-            ExpectShell(command=['git', 'branch', 'main'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout="Switched to a new branch 'main'"),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git branch | grep -v ' main$' | grep -v 'HEAD detached at' | xargs git branch -D || true"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git remote | grep -v 'origin$' | xargs -L 1 git remote rm || true"], workdir='wkdir', timeout=300, log_environ=False).exit(0)
-            .log('stdio', stdout=''),
-            ExpectShell(command=['git', 'prune'], workdir='wkdir', timeout=300, log_environ=False).exit(0)
+            ExpectShell(command=['python3', 'Tools/CISupport/clean-webkitbuild-if-base-changed', '--current-branch', 'safari-7625-branch'], workdir='wkdir', timeout=900, log_environ=False).exit(0)
+            .log('stdio', stdout="Base branch unchanged or first build ('safari-7625-branch'); keeping WebKitBuild\n"),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='Checked base branch for WebKitBuild reuse')
+        return self.run_step()
+
+    def test_defaults_to_main_when_base_ref_unset(self):
+        self.setup_step(CleanWebKitBuildIfBaseChanged())
+
+        self.expectRemoteCommands(
+            ExpectShell(command=['python3', 'Tools/CISupport/clean-webkitbuild-if-base-changed', '--current-branch', DEFAULT_BRANCH], workdir='wkdir', timeout=900, log_environ=False).exit(0)
+            .log('stdio', stdout="Base branch unchanged or first build ('main'); keeping WebKitBuild\n"),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='Checked base branch for WebKitBuild reuse')
+        return self.run_step()
+
+    def test_failure_does_not_flunk_build(self):
+        # The script always exits 0 in practice, and the step sets
+        # haltOnFailure/flunkOnFailure/warnOnFailure to False, so even if the script
+        # were to fail it reports an ignored issue rather than blaming the change.
+        self.setup_step(CleanWebKitBuildIfBaseChanged())
+        self.setProperty('github.base.ref', 'main')
+
+        self.expectRemoteCommands(
+            ExpectShell(command=['python3', 'Tools/CISupport/clean-webkitbuild-if-base-changed', '--current-branch', 'main'], workdir='wkdir', timeout=900, log_environ=False).exit(2)
             .log('stdio', stdout=''),
         )
-        self.expect_outcome(result=SUCCESS, state_string='Cleaned up git repository')
+        self.expect_outcome(result=FAILURE, state_string='Encountered an issue checking the base branch (ignored)')
         return self.run_step()
 
 
@@ -7211,6 +7510,37 @@ class TestCheckStatusOfPR(BuildStepMixinAdditions, unittest.TestCase):
         rc = self.run_step()
         return rc
 
+    def test_glib_branch_checks_only_linux(self):
+        self.setup_step(CheckStatusOfPR())
+        self.setProperty('github.number', 12345)
+        self.setProperty('repository', 'https://github.com/WebKit/WebKit')
+        self.setProperty('github.base.ref', 'webkitglib/2.46')
+        self.setProperty('project', 'WebKit/WebKit')
+        self.setProperty('list_of_prs', [])
+        self.setProperty('passed_status_check', [])
+        self.setProperty('unsafe_passed_status_check', [])
+        self.setProperty('failed_status_check', [])
+        self.setProperty('pending_prs', [])
+
+        CheckStatusOfPR.query_graph_ql = lambda self, query: {
+            'data': {'repository': {'pullRequest': {'commits': {'edges': [
+                {'node': {'commit': {'oid': '7496f8ecc4cc8011f19c8cc1bc7b18fe4a88ad5c'}}}
+            ]}}}}
+        }
+
+        # All Linux checks pass; Apple and Windows checks fail to prove they are not required for glib branches
+        queue_statuses = {queue: {'state': 0} for queue in CheckStatusOfPR.LINUX_CHECKS}
+        for queue in CheckStatusOfPR.MACOS_CHECKS + CheckStatusOfPR.EMBEDDED_CHECKS + CheckStatusOfPR.WINDOWS_CHECKS:
+            queue_statuses[queue] = {'state': 2}
+
+        TwistedAdditions.request = lambda *args, **kwargs: TwistedAdditions.Response(
+            status_code=200,
+            content=json.dumps(queue_statuses).encode('utf-8'),
+        )
+
+        self.expect_outcome(result=SUCCESS, state_string='PR 12345 marked safe for merge-queue')
+        return self.run_step()
+
 
 class TestAddMergeLabelsToPRs(BuildStepMixinAdditions, unittest.TestCase):
     def setUp(self):
@@ -7226,6 +7556,14 @@ class TestAddMergeLabelsToPRs(BuildStepMixinAdditions, unittest.TestCase):
         self.expect_outcome(result=SUCCESS, state_string="Started PR labelling process successfully")
         rc = self.run_step()
         return rc
+
+    def test_glib_stable_branch(self):
+        self.setup_step(AddMergeLabelsToPRs())
+        self.setProperty('passed_status_check', [])
+        self.setProperty('failed_status_check', [])
+        self.setProperty('unsafe_passed_status_check', [12345])
+        self.expect_outcome(result=SUCCESS, state_string='Started PR labelling process successfully')
+        return self.run_step()
 
 
 class TestRemoveAndAddLabels(BuildStepMixinAdditions, unittest.TestCase):
@@ -7277,6 +7615,27 @@ class TestRemoveAndAddLabels(BuildStepMixinAdditions, unittest.TestCase):
         self.expect_outcome(result=FAILURE, state_string='Failed to label PR  with merge-queue')
         rc = self.run_step()
         self.expect_property('passed_status_check', [])
+        return rc
+
+    def test_success_unsafe_merge_queue(self):
+        self.setup_step(RemoveAndAddLabels(label_to_add='unsafe-merge-queue'))
+        self.setProperty('buildername', 'Safe-Merge-Queue')
+        self.setProperty('repository', 'https://github.com/WebKit/WebKit')
+        self.setProperty('unsafe_passed_status_check', [17451])
+        RemoveAndAddLabels.update_labels = lambda self, pr_number: SUCCESS
+        self.expect_outcome(result=SUCCESS, state_string='Labelled PR 17451 with unsafe-merge-queue')
+        rc = self.run_step()
+        self.expect_property('unsafe_passed_status_check', [])
+        return rc
+
+    def test_failure_unsafe_merge_queue(self):
+        self.setup_step(RemoveAndAddLabels(label_to_add='unsafe-merge-queue'))
+        self.setProperty('buildername', 'Safe-Merge-Queue')
+        self.setProperty('repository', 'https://github.com/WebKit/WebKit')
+        self.setProperty('unsafe_passed_status_check', [])
+        self.expect_outcome(result=FAILURE, state_string='Failed to label PR  with unsafe-merge-queue')
+        rc = self.run_step()
+        self.expect_property('unsafe_passed_status_check', [])
         return rc
 
 
@@ -7764,6 +8123,29 @@ class TestDetermineLabelOwner(BuildStepMixinAdditions, unittest.TestCase):
             self.expect_outcome(result=FAILURE, state_string='Unable to determine owner of PR 17518\n')
             yield self.run_step()
             self.assertTrue(any(isinstance(step, RemoveLabelsFromPullRequest) for step in next_steps))
+
+    def test_safe_merge_queue_sets_base_ref(self):
+        self.setup_step(DetermineLabelOwner())
+        self.setProperty('buildername', 'Safe-Merge-Queue')
+        self.setProperty('list_of_prs', [17519])
+        self.setProperty('all_pr_data', [{'node': {
+            'number': 17519,
+            'title': 'Fix a bug in WPE',
+            'baseRefName': 'webkitglib/2.46',
+            'commits': {'nodes': [{'commit': {
+                'commitUrl': 'https://github.com/WebKit/WebKit/commit/7496f8ecc4cc8011f19c8cc1bc7b18fe4a88ad5c'
+            }}]},
+        }}])
+        response = {'data': {'repository': {'pullRequest': {'timelineItems': {'nodes': [{
+            'actor': {'login': 'csaavedra'},
+            'label': {'name': 'safe-merge-queue'},
+            'createdAt': '2024-01-01T00:00:00Z',
+        }]}}}}}
+        GitHubMixin.query_graph_ql = lambda self, query: response
+        Contributors.load = lambda *args, **kwargs: ({}, [])
+        self.expect_outcome(result=SUCCESS, state_string='Owner of PR 17519 determined to be csaavedra\n')
+        self.run_step()
+        self.expect_property('github.base.ref', 'webkitglib/2.46')
 
 
 class TestDetermineLandedIdentifier(BuildStepMixinAdditions, unittest.TestCase):
@@ -10511,6 +10893,42 @@ class TestScanBuild(BuildStepMixinAdditions, unittest.TestCase):
             .exit(0)
         )
         self.expect_outcome(result=SUCCESS, state_string='Found 0 issues')
+        return self.run_step()
+
+    def test_compile_failure(self):
+        self.configureStep()
+        self.expectRemoteCommands(
+            ExpectShell(workdir=self.WORK_DIR,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'/bin/rm -rf wkdir/build/{SCAN_BUILD_OUTPUT_DIR}'],
+                        log_environ=False,
+                        timeout=2 * 60 * 60)
+            .exit(0),
+            ExpectShell(workdir=self.WORK_DIR,
+                        command=self.EXPECTED_BUILD_COMMAND,
+                        log_environ=False,
+                        timeout=2 * 60 * 60)
+            .log('stdio', stdout='error: use of undeclared identifier\nANALYZE FAILED\n')
+            .exit(2)
+        )
+        self.expect_outcome(result=FAILURE, state_string='Failed to build and analyze WebKit')
+        return self.run_step()
+
+    def test_partial_compile_failure(self):
+        self.configureStep()
+        self.expectRemoteCommands(
+            ExpectShell(workdir=self.WORK_DIR,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'/bin/rm -rf wkdir/build/{SCAN_BUILD_OUTPUT_DIR}'],
+                        log_environ=False,
+                        timeout=2 * 60 * 60)
+            .exit(0),
+            ExpectShell(workdir=self.WORK_DIR,
+                        command=self.EXPECTED_BUILD_COMMAND,
+                        log_environ=False,
+                        timeout=2 * 60 * 60)
+            .log('stdio', stdout='ANALYZE SUCCEEDED\nThe following build commands failed:\n')
+            .exit(2)
+        )
+        self.expect_outcome(result=FAILURE, state_string='Failed to build and analyze WebKit')
         return self.run_step()
 
 

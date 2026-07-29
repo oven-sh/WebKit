@@ -32,6 +32,7 @@ import logging
 from webkitcorepy import Version, OutputCapture
 
 from webkitpy.port.mac import MacPort
+from webkitpy.api_tests.test_expectations import APITestExpectations
 from webkitpy.port import darwin_testcase
 from webkitpy.port import port_testcase
 from webkitpy.tool.mocktool import MockOptions
@@ -188,14 +189,14 @@ class MacTest(darwin_testcase.DarwinTest):
         self.assertEqual(search_path[5], '/mock-checkout/LayoutTests/platform/mac-mountainlion-wk2')
 
     def test_latest_baseline_search_path(self):
-        search_path = self.make_port(port_name='macos-tahoe').default_baseline_search_path()
+        search_path = self.make_port(port_name='macos-golden-gate').default_baseline_search_path()
         self.assertEqual(search_path[0], '/mock-checkout/LayoutTests/platform/mac-wk2')
         self.assertEqual(search_path[1], '/mock-checkout/LayoutTests/platform/mac')
 
     def test_downlevel_baseline_search_path(self):
-        search_path = self.make_port(port_name='macos-sequoia').default_baseline_search_path()
-        self.assertEqual(search_path[0], '/mock-checkout/LayoutTests/platform/mac-sequoia-wk2')
-        self.assertEqual(search_path[1], '/mock-checkout/LayoutTests/platform/mac-sequoia')
+        search_path = self.make_port(port_name='macos-tahoe').default_baseline_search_path()
+        self.assertEqual(search_path[0], '/mock-checkout/LayoutTests/platform/mac-tahoe-wk2')
+        self.assertEqual(search_path[1], '/mock-checkout/LayoutTests/platform/mac-tahoe')
         self.assertEqual(search_path[2], '/mock-checkout/LayoutTests/platform/mac-wk2')
         self.assertEqual(search_path[3], '/mock-checkout/LayoutTests/platform/mac')
 
@@ -271,6 +272,16 @@ class MacTest(darwin_testcase.DarwinTest):
             ),
             port.configuration_for_upload(),
         )
+
+    def test_api_test_current_configuration_omits_flavor_without_site_isolation(self):
+        port = self.make_port(options=MockOptions(configuration='Release'))
+        self.assertNotIn('flavor', port.api_test_current_configuration())
+        self.assertNotIn('siteisolation', APITestExpectations(port).get_current_configuration())
+
+    def test_api_test_current_configuration_adds_site_isolation_flavor(self):
+        port = self.make_port(options=MockOptions(configuration='Release', site_isolation_enabled_by_default=True))
+        self.assertEqual('siteisolation', port.api_test_current_configuration().get('flavor'))
+        self.assertIn('siteisolation', APITestExpectations(port).get_current_configuration())
 
     def test_rosetta_expectations(self):
         mock_host = MockSystemHost()

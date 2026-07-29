@@ -280,7 +280,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case IsCallable:
     case IsConstructor:
     case IsCellWithType:
-    case IsTypedArrayView:
     case ArrayIsArray:
     case HasStructureWithFlags:
     case TypeOf:
@@ -324,6 +323,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case StringSubstr:
     case ToUpperCase:
     case ToLowerCase:
+    case StringTrim:
     case MapGet:
     case LoadMapValue:
     case MapOrSetSize:
@@ -643,6 +643,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case CheckBadValue:
     case RegExpExec:
     case RegExpExecNonGlobalOrSticky:
+    case RegExpExecSticky:
     case RegExpTest:
     case RegExpTestInline:
     case RegExpMatchFast:
@@ -665,6 +666,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case ConstructVarargs:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case VarargsLength:
@@ -705,9 +707,11 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case ToNumber:
     case ToNumeric:
     case ToObject:
+    case OpenAsyncFromSyncIterator:
     case CallNumberConstructor:
     case NumberToStringWithRadix:
     case SetFunctionName:
+    case EnqueueAsyncGeneratorDriver:
     case NewStringObject:
     case NewRegExpUntyped:
     case InByVal:
@@ -828,7 +832,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case ArithRandom:
     case DateNow:
     case ArithIMul:
-    case TryGetById:
     case StringLocaleCompare:
     case FunctionBind:
     case DateSetTime:

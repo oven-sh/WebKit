@@ -33,8 +33,10 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSStringInlines.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/StructureInlines.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
 #include <pal/SessionID.h>
@@ -173,7 +175,6 @@
 #include "BlobPropertyBag.h"
 #include "BlobResourceHandle.h"
 #include "BlobResourceHandleBase.h"
-#include "ByteArrayPixelBuffer.h"
 #include "CDMClient.h"
 #include "CDMTypesForward.h"
 #include "CSSCustomPropertyValue.h"
@@ -212,7 +213,6 @@
 #include "File.h"
 #include "FileReaderLoader.h"
 #include "FileStreamClient.h"
-#include "Float16ArrayPixelBuffer.h"
 #include "FormAssociatedElement.h"
 #include "FormState.h"
 #include "FormSubmission.h"
@@ -421,6 +421,7 @@
 #include "ThreadableLoaderClient.h"
 #include "TrackBase.h"
 #include "TrackPrivateBaseClient.h"
+#include "TypedArrayPixelBuffer.h"
 #include "URLRegistry.h"
 #include "UserAgent.h"
 #include "VideoColorSpaceInit.h"

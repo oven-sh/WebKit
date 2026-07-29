@@ -83,6 +83,13 @@ class ExecutionCounter;
 
 class Snippet;
 
+#if USE(BUN_JSC_ADDITIONS)
+class JSFFIFunction;
+namespace FFI {
+class Signature;
+} // namespace FFI
+#endif
+
 namespace DFG {
 
 class BasicBlock;
@@ -142,13 +149,18 @@ static_assert(sizeof(IndexingType) <= sizeof(unsigned));
 static_assert(sizeof(NewArrayBufferData) == sizeof(uint64_t));
 
 struct NewArrayWithSpeciesData {
-    unsigned arrayMode { 0 };
-    unsigned indexingMode { 0 };
-
-    uint64_t asQuadWord() const { return std::bit_cast<uint64_t>(*this); }
+    union {
+        struct {
+            unsigned arrayMode;
+            uint8_t indexingMode;
+            uint8_t vectorLengthHint;
+        };
+        uint64_t asQuadWord;
+    };
 };
-static_assert(sizeof(IndexingType) <= sizeof(unsigned));
+static_assert(sizeof(IndexingType) <= sizeof(uint8_t));
 static_assert(sizeof(ArrayMode) <= sizeof(unsigned));
+static_assert(sizeof(NewArrayWithSpeciesData) == sizeof(uint64_t));
 
 struct DataViewData {
     union {
@@ -947,6 +959,12 @@ public:
         return m_opInfo.as<bool>();
     }
 
+    void setResolvedValueKnownNonThenable()
+    {
+        ASSERT(op() == NewResolvedPromise);
+        m_opInfo = static_cast<uint32_t>(true);
+    }
+
     void NODELETE convertToNewArrayBuffer(FrozenValue* immutableButterfly);
     void NODELETE convertToNewArrayWithSize();
     void NODELETE convertToNewArrayWithButterfly(Graph&, Node* butterfly);
@@ -958,9 +976,17 @@ public:
 
     void NODELETE convertToCallWasm(FrozenValue*);
 
+#if USE(BUN_JSC_ADDITIONS)
+    void NODELETE convertToCallFFI(FrozenValue*);
+
+    JSFFIFunction* ffiFunction();
+    FFI::Signature& ffiSignature();
+#endif
+
     void NODELETE convertToCallDOM(Graph&);
 
     void NODELETE convertToRegExpExecNonGlobalOrStickyWithoutChecks(FrozenValue* regExp);
+    void NODELETE convertToRegExpExecStickyWithoutChecks(FrozenValue* regExp);
     void NODELETE convertToRegExpMatchFastGlobalWithoutChecks(FrozenValue* regExp);
     void NODELETE convertToRegExpMatchFast(Node* globalObjectNode);
     void NODELETE convertToRegExpSearch(Node* globalObjectNode);
@@ -979,6 +1005,7 @@ public:
     void convertToDefineAccessorProperty(Graph&, Edge base, Edge property, Edge getter, Edge setter, Edge attributes);
     void convertToObjectDefinePropertyFromFields(Graph&, Edge target, Edge key, Edge enumerable, Edge configurable, Edge value, Edge writable, Edge getter, Edge setter);
     void convertToPutByIdDirect(Graph&, Edge base, Edge value, CacheableIdentifier, ECMAMode);
+    void convertToEnumeratorHasOwnProperty(Graph&, Edge base, Edge propertyName, Edge index, Edge mode, Edge enumerator, ArrayMode, unsigned enumeratorMetadata);
 
     void convertToSetRegExpObjectLastIndex()
     {
@@ -1240,7 +1267,6 @@ public:
     bool hasCacheableIdentifier()
     {
         switch (op()) {
-        case TryGetById:
         case GetById:
         case GetByIdFlush:
         case GetByIdMegamorphic:
@@ -1270,7 +1296,6 @@ public:
     {
         ASSERT(hasCacheableIdentifier());
         switch (op()) {
-        case TryGetById:
         case GetById:
         case GetByIdFlush:
         case GetByIdWithThis:
@@ -1319,7 +1344,6 @@ public:
     bool hasGetByIdData() const
     {
         switch (op()) {
-        case TryGetById:
         case GetById:
         case GetByIdFlush:
         case GetByIdWithThis:
@@ -1489,18 +1513,30 @@ public:
         case NewArray:
         case NewArrayBuffer:
         case PhantomNewArrayBuffer:
+        case NewArrayWithSize:
+        case NewButterflyWithSize:
+        case PhantomNewButterflyWithSize:
+        case NewArrayWithSpecies:
             return true;
         default:
             return false;
         }
     }
-    
+
     unsigned vectorLengthHint()
     {
         ASSERT(hasVectorLengthHint());
-        if (op() == NewArray)
+        switch (op()) {
+        case NewArray:
+        case NewArrayWithSize:
+        case NewButterflyWithSize:
+        case PhantomNewButterflyWithSize:
             return m_opInfo2.as<unsigned>();
-        return newArrayBufferData().vectorLengthHint;
+        case NewArrayWithSpecies:
+            return newArrayWithSpeciesData().vectorLengthHint;
+        default:
+            return newArrayBufferData().vectorLengthHint;
+        }
     }
 
     bool hasIndexingType()
@@ -1696,10 +1732,11 @@ public:
         return op() == IsCellWithType;
     }
 
-    JSType queriedType()
+    JSTypeRange queriedType()
     {
+        ASSERT(hasQueriedType());
         static_assert(std::same_as<uint8_t, std::underlying_type_t<JSType>>);
-        return static_cast<JSType>(m_opInfo.as<uint32_t>());
+        return JSTypeRange::fromRawValue(m_opInfo.as<uint32_t>());
     }
 
     bool hasSpeculatedTypeForQuery()
@@ -1709,7 +1746,7 @@ public:
 
     std::optional<SpeculatedType> speculatedTypeForQuery()
     {
-        return speculationFromJSType(queriedType());
+        return speculationFromJSTypeRange(queriedType());
     }
 
     bool hasStructureFlags()
@@ -1966,6 +2003,8 @@ public:
         case CPUIntrinsic:
         case DateGetTime:
         case DateGetInt32OrNaN:
+        case StringTrim:
+        case StrCat:
             return true;
         default:
             return false;
@@ -2107,7 +2146,6 @@ public:
         case GetByIdDirect:
         case GetByIdDirectFlush:
         case GetPrototypeOf:
-        case TryGetById:
         case EnumeratorGetByVal:
         case GetByVal:
         case GetByValMegamorphic:
@@ -2130,6 +2168,7 @@ public:
         case TailCallForwardVarargsInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case CallCustomAccessorGetter:
         case GetByOffset:
         case MultiGetByOffset:
@@ -2144,6 +2183,7 @@ public:
         case ArraySplice:
         case RegExpExec:
         case RegExpExecNonGlobalOrSticky:
+        case RegExpExecSticky:
         case RegExpTest:
         case RegExpTestInline:
         case RegExpMatchFast:
@@ -2247,7 +2287,9 @@ public:
         case DirectTailCallInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case RegExpExecNonGlobalOrSticky:
+        case RegExpExecSticky:
         case RegExpMatchFastGlobal:
         case RegExpTestInline:
             return true;
@@ -2812,7 +2854,7 @@ public:
         case NewArrayWithSpecies: {
             auto data = newArrayWithSpeciesData();
             data.arrayMode = arrayMode.asWord();
-            m_opInfo = data.asQuadWord();
+            m_opInfo = data.asQuadWord;
             return true;
         }
         case MultiGetByVal:

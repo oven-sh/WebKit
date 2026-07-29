@@ -1157,7 +1157,7 @@ private:
                                 m_interpreter.execute(indexInBlock); // Push CFA over this node after we get the state before.
                                 alreadyHandled = true; // Don't allow the default constant folder to do things to this.
 
-                                Node* butterfly = m_insertionSet.insertNode(indexInBlock, SpecNone, NewButterflyWithSize, node->origin, OpInfo(node->indexingType()), node->child1());
+                                Node* butterfly = m_insertionSet.insertNode(indexInBlock, SpecNone, NewButterflyWithSize, node->origin, OpInfo(node->indexingType()), OpInfo(node->vectorLengthHint()), node->child1());
                                 node->convertToNewArrayWithButterfly(m_graph, butterfly);
                                 changed = true;
                         }
@@ -1352,6 +1352,8 @@ private:
                 Edge targetEdge = node->child1();
                 Edge keyEdge = node->child2();
                 Edge descriptorEdge = node->child3();
+
+                m_insertionSet.insertCheck(m_graph, indexInBlock, node);
 
                 std::array<Edge, Node::numberOfDescriptorSlots> slotEdges;
                 Node* butterfly = nullptr;
@@ -2003,6 +2005,33 @@ private:
                     if (conditionSet.isValid()) {
                         if (m_graph.watchConditions(conditionSet)) {
                             node->setOpAndDefaultFlags(FulfillPromiseFirstResolving);
+                            changed = true;
+                            break;
+                        }
+                    }
+                }
+
+                break;
+            }
+
+            case NewResolvedPromise: {
+                if (node->isResolvedValueKnownNonThenable())
+                    break;
+
+                AbstractValue& argument = m_state.forNode(node->child1());
+                if (argument.isType(~SpecObject)) {
+                    node->setResolvedValueKnownNonThenable();
+                    changed = true;
+                    break;
+                }
+
+                auto& structureSet = argument.m_structure;
+                if (structureSet.isFinite() && structureSet.size() == 1) {
+                    JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
+                    auto conditionSet = m_graph.tryEnsureAbsence(globalObject, structureSet.toStructureSet(), CacheableIdentifier::createFromImmortalIdentifier(m_graph.m_vm.propertyNames->then.impl()));
+                    if (conditionSet.isValid()) {
+                        if (m_graph.watchConditions(conditionSet)) {
+                            node->setResolvedValueKnownNonThenable();
                             changed = true;
                             break;
                         }

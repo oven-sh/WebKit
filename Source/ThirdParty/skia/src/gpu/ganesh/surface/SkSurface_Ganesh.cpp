@@ -22,7 +22,7 @@
 #include "include/gpu/ganesh/GrRecordingContext.h"
 #include "include/gpu/ganesh/GrTypes.h"
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkTo.h"
 #include "include/private/chromium/GrDeferredDisplayList.h"
 #include "include/private/chromium/GrSurfaceCharacterization.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
@@ -58,7 +58,7 @@ class SkPaint;
 class SkPixmap;
 
 SkSurface_Ganesh::SkSurface_Ganesh(sk_sp<skgpu::ganesh::Device> device)
-        : INHERITED(device->width(), device->height(), &device->surfaceProps())
+        : INHERITED(device->width(), device->height(), &device->surfaceProps(), nullptr)
         , fDevice(std::move(device)) {
     SkASSERT(fDevice->targetProxy()->priv().isExact());
 }

@@ -138,7 +138,7 @@ private:
     // Repaint needs those positions relative to the repaint container (e.g. the RenderView), and a repaint rect is built by walking up
     // the containing-block chain to that container, accumulating each ancestor's position.
     // During layout, though, some of those ancestors may have already moved, so their current positions can no longer be used to recover the _old_ rect.
-    // (We don't retain previous paint positions; the closest we have is each renderer's m_frameRect, and that is overwritten during layout.)
+    // (We don't retain previous paint positions; the closest we have is each renderer's m_borderBoxRectInContainer, and that is overwritten during layout.)
     // This delta helps to recover the last layout's (paint) position by keeping track of position changes during _this_ layout.
     LayoutSize m_layoutDeltaForRepaint;
 
@@ -196,6 +196,19 @@ public:
 private:
     const CheckedRef<LocalFrameViewLayoutContext> m_layoutContext;
     const CheckedRef<const RenderBox> m_flexItem;
+};
+
+// Marks a box as being laid out solely to measure its intrinsic block-axis size, so its
+// own cyclic-percentage min/max block-size resolves per CSS Sizing 3 section 5.1.
+// See RenderBox::computeIntrinsicLogicalHeight and RenderBox::computeLogicalHeight.
+class IntrinsicLogicalHeightComputationScope {
+public:
+    IntrinsicLogicalHeightComputationScope(LocalFrameViewLayoutContext&, const RenderBox&);
+    ~IntrinsicLogicalHeightComputationScope();
+
+private:
+    const CheckedRef<LocalFrameViewLayoutContext> m_layoutContext;
+    const CheckedRef<const RenderBox> m_box;
 };
 
 class ContentVisibilityOverrideScope {

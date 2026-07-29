@@ -39,6 +39,16 @@ set_target_properties(TestRunnerInjectedBundle PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/InjectedBundle-Info.plist"
 )
 
+if (USE_APPLE_INTERNAL_SDK)
+    set(WebKitTestRunner_CODE_SIGN_ENTITLEMENTS
+        "${WebKitTestRunner_DIR}/Configurations/WebKitTestRunner-internal.entitlements"
+    )
+else ()
+    set(WebKitTestRunner_CODE_SIGN_ENTITLEMENTS
+        "${WebKitTestRunner_DIR}/Configurations/WebKitTestRunner.entitlements"
+    )
+endif ()
+
 # ActivateFontsCocoa.mm registers fonts from the bundle's Resources/.
 # AHEM is the critical one -- layout tests assume it for pixel-perfect metric consistency.
 file(GLOB _wtr_fonts
@@ -145,6 +155,8 @@ list(APPEND WebKitTestRunner_SOURCES
     ${WebKitTestRunner_DIR}/mac/WebKitTestRunnerPasteboard.mm
     ${WebKitTestRunner_DIR}/mac/WebKitTestRunnerWindow.mm
     ${WebKitTestRunner_DIR}/mac/main.mm
+
+    ${WebKitTestRunner_SHARED_DIR}/mac/NSPasteboardAdditions.mm
 
     ${WebKitTestRunner_SHARED_DIR}/cocoa/ClassMethodSwizzler.mm
     ${WebKitTestRunner_SHARED_DIR}/cocoa/InstanceMethodSwizzler.mm

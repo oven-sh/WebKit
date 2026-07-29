@@ -33,14 +33,15 @@
 #include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
 #include "include/encode/SkPngEncoder.h"
-#include "include/private/base/SkLog.h"
-#include "include/private/base/SkMacros.h"
-#include "src/base/SkAutoMalloc.h"
-#include "src/base/SkLeanWindows.h"
-#include "src/base/SkTime.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkLog.h"
+#include "include/private/SkMacros.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkColorSpacePriv.h"
+#include "src/core/SkLeanWindows.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkTaskGroup.h"
+#include "src/core/SkTime.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/utils/SkJSONWriter.h"
 #include "src/utils/SkOSPath.h"
@@ -1498,14 +1499,14 @@ int main(int argc, char** argv) {
 #if defined(SK_USE_PPROF)
         ProfilerStart(FLAGS_cpuprofile[0]);
 #else
-        SKIA_LOG_F("Must be compiled with -DSK_USE_PPROF (e.g. skia_use_pprof");
+        SK_ABORT("Must be compiled with -DSK_USE_PPROF (e.g. skia_use_pprof)");
 #endif
     }
     if (!FLAGS_memprofile.isEmpty()) {
 #if defined(SK_USE_PPROF)
         HeapProfilerStart(FLAGS_memprofile[0]);
 #else
-        SKIA_LOG_F("Must be compiled with -DSK_USE_PPROF (e.g. skia_use_pprof");
+        SK_ABORT("Must be compiled with -DSK_USE_PPROF (e.g. skia_use_pprof)");
 #endif
     }
 

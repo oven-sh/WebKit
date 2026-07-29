@@ -49,6 +49,7 @@
 #include "CacheStorageConnection.h"
 #include "CacheStorageProvider.h"
 #include "CachedImage.h"
+#include "CachedMatchFinder.h"
 #include "CanvasBase.h"
 #include "CertificateInfo.h"
 #include "Chrome.h"
@@ -200,7 +201,6 @@
 #include "PushSubscriptionData.h"
 #include "RTCController.h"
 #include "RTCNetworkManager.h"
-#include "RTCRtpSFrameTransform.h"
 #include "Range.h"
 #include "ReadableStream.h"
 #include "RenderEmbeddedObject.h"
@@ -250,6 +250,7 @@
 #include "StringCallback.h"
 #include "StyleDocumentScope.h"
 #include "StyleGridPosition.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StyleResolver.h"
 #include "StyleRule.h"
 #include "StyleSheetContents.h"
@@ -346,6 +347,9 @@
 #endif
 
 #if ENABLE(MEDIA_STREAM)
+#if PLATFORM(COCOA)
+#include "AudioMediaStreamTrackRendererUnit.h"
+#endif
 #include "MediaStream.h"
 #include "MockRealtimeMediaSourceCenter.h"
 #include "VideoFrame.h"
@@ -620,6 +624,8 @@ void Internals::resetToConsistentState(Page& page)
     page.setPageScaleFactor(1, IntPoint(0, 0));
     page.setPagination(Pagination());
 
+    CachedMatchFinder::setMaximumRunCountForTesting(std::nullopt);
+
     page.setDefersLoading(false);
     page.setResourceCachingDisabledByWebInspector(false);
     page.setConsoleMessageListenerForTesting(nullptr);
@@ -727,9 +733,6 @@ void Internals::resetToConsistentState(Page& page)
     rtcProvider.setH265Support(true);
     rtcProvider.setVP9Support(true, true);
     rtcProvider.clearFactory();
-#if USE(GSTREAMER_WEBRTC)
-    page.settings().setPeerConnectionEnabled(true);
-#endif
 #endif
 
     page.setFullscreenAutoHideDuration(0_s);
@@ -769,7 +772,7 @@ void Internals::resetToConsistentState(Page& page)
 
 #if USE(AUDIO_SESSION)
     AudioSession::singleton().setCategoryOverride(AudioSessionCategory::None);
-    AudioSession::singleton().tryToSetActive(false);
+    AudioSession::singleton().tryToSetActive(false)->whenSettled(RunLoop::mainSingleton(), [](auto&&) { });
     AudioSession::singleton().endInterruptionForTesting();
 #endif
 
@@ -1634,6 +1637,15 @@ Ref<CSSComputedStyleDeclaration> Internals::computedStyleIncludingVisitedInfo(El
     return CSSComputedStyleDeclaration::create(element, CSSComputedStyleDeclaration::AllowVisited::Yes);
 }
 
+float Internals::usedOutlineOffset(Element& element)
+{
+    element.document().updateStyleIfNeeded();
+    auto* style = element.computedStyle();
+    if (!style)
+        return 0;
+    return Style::evaluate<float>(style->usedOutlineOffset(), style->usedZoomForLength());
+}
+
 Node& Internals::ensureUserAgentShadowRoot(Element& host)
 {
     return host.ensureUserAgentShadowRoot();
@@ -2050,22 +2062,6 @@ void Internals::isVP9HardwareDecoderUsed(RTCPeerConnection& connection, DOMPromi
     });
 }
 
-void Internals::setSFrameCounter(RTCRtpSFrameTransform& transform, const String& counter)
-{
-    if (auto value = parseInteger<uint64_t>(counter))
-        transform.setCounterForTesting(*value);
-}
-
-uint64_t Internals::sframeCounter(const RTCRtpSFrameTransform& transform)
-{
-    return transform.counterForTesting();
-}
-
-uint64_t Internals::sframeKeyId(const RTCRtpSFrameTransform& transform)
-{
-    return transform.keyIdForTesting();
-}
-
 void Internals::setEnableWebRTCEncryption(bool value)
 {
 #if USE(LIBWEBRTC)
@@ -2162,6 +2158,12 @@ Ref<DOMRect> Internals::boundingBox(Element& element)
     if (!renderer)
         return DOMRect::create();
     return DOMRect::create(renderer->absoluteBoundingBoxRectIgnoringTransforms());
+}
+
+Ref<DOMRect> Internals::boundingBoxInRootViewCoordinates(Element& element)
+{
+    element.document().updateLayout(LayoutOptions::IgnorePendingStylesheets);
+    return DOMRect::create(element.boundingBoxInRootViewCoordinates());
 }
 
 ExceptionOr<unsigned> Internals::inspectorGridOverlayCount()
@@ -3347,6 +3349,11 @@ ExceptionOr<unsigned> Internals::countMatchesForText(const String& text, const V
 
     bool mark = markMatches == "mark"_s;
     return document->editor().countMatchesForText(text, std::nullopt, parsedOptions.releaseReturnValue(), 1000, mark, nullptr);
+}
+
+void Internals::setCachedFindMatchBufferLimitForTesting(unsigned maximumRunCount)
+{
+    CachedMatchFinder::setMaximumRunCountForTesting(maximumRunCount);
 }
 
 ExceptionOr<unsigned> Internals::countFindMatches(const String& text, const Vector<String>& findOptions)
@@ -4760,6 +4767,23 @@ void Internals::forceAXObjectCacheUpdate() const
     }
 }
 
+unsigned Internals::liveRegionSnapshotBuildCount() const
+{
+    if (RefPtr document = contextDocument()) {
+        if (CheckedPtr cache = document->axObjectCache())
+            return cache->liveRegionSnapshotBuildCount();
+    }
+    return 0;
+}
+
+void Internals::resetLiveRegionSnapshotBuildCount() const
+{
+    if (RefPtr document = contextDocument()) {
+        if (CheckedPtr cache = document->axObjectCache())
+            cache->resetLiveRegionSnapshotBuildCount();
+    }
+}
+
 void Internals::setShouldMockParentSearchResultsForTesting(bool enabled)
 {
     WebCore::setShouldMockParentSearchResultsForTesting(enabled);
@@ -4917,9 +4941,9 @@ bool Internals::elementShouldBufferData(HTMLMediaElement& element)
     return element.bufferingPolicy() < MediaPlayer::BufferingPolicy::LimitReadAhead;
 }
 
-String Internals::elementBufferingPolicy(HTMLMediaElement& element)
+static String bufferingPolicyToString(MediaPlayer::BufferingPolicy policy)
 {
-    switch (element.bufferingPolicy()) {
+    switch (policy) {
     case MediaPlayer::BufferingPolicy::Default:
         return "Default"_s;
     case MediaPlayer::BufferingPolicy::LimitReadAhead:
@@ -4932,6 +4956,20 @@ String Internals::elementBufferingPolicy(HTMLMediaElement& element)
 
     ASSERT_NOT_REACHED();
     return "UNKNOWN"_s;
+}
+
+String Internals::elementBufferingPolicy(HTMLMediaElement& element)
+{
+    return bufferingPolicyToString(element.bufferingPolicy());
+}
+
+// The live-computed preferred policy, in contrast to the cached applied policy
+// returned by elementBufferingPolicy(). Comparing the two, together with
+// mediaSessionState(), disambiguates "session state stuck at Playing" from
+// "applied policy stale (update never re-triggered)". rdar://181274857.
+String Internals::elementPreferredBufferingPolicy(HTMLMediaElement& element)
+{
+    return bufferingPolicyToString(element.mediaSession().preferredBufferingPolicy());
 }
 
 void Internals::setMediaElementBufferingPolicy(HTMLMediaElement& element, const String& policy)
@@ -6909,6 +6947,13 @@ bool Internals::supportsMultiMicrophoneCaptureWithoutEchoCancellation() const
 #endif
 }
 
+void Internals::deleteAudioUnit()
+{
+#if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
+    AudioMediaStreamTrackRendererUnit::singleton().deleteUnitForTesting();
+#endif
+}
+
 bool Internals::isMediaStreamSourceInterrupted(MediaStreamTrack& track) const
 {
     return track.source().interrupted();
@@ -7286,9 +7331,7 @@ void Internals::installImageOverlay(Element& element, Vector<ImageOverlayLine>&&
         , blocks.map([] (auto& block) {
             return TextRecognitionBlockData { block.text, getQuad(block) };
         })
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
         , TextRecognitionResult::extractAttributedString(fakeImageAnalysisResultForTesting(lines).get())
-#endif
     });
 #else
     UNUSED_PARAM(blocks);

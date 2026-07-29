@@ -97,7 +97,7 @@ template<> struct Blending<TabSize> {
 
 // MARK: - Platform
 
-template<> struct ToPlatform<TabSize> { auto operator()(const TabSize&) -> WebCore::TabSize; };
+template<> struct ToPlatform<TabSize> { auto operator()(const TabSize&, ZoomFactor) -> WebCore::TabSize; };
 
 } // namespace Style
 } // namespace WebCore

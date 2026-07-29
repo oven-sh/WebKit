@@ -305,6 +305,8 @@ public:
     WEBCORE_EXPORT void setFrameInheritedState(LocalFrame&, const InheritedFrameState&);
     WEBCORE_EXPORT void setFrameGeometry(LocalFrame&, const AXFrameGeometry&);
     const std::optional<AXFrameGeometry>& frameGeometry() const LIFETIME_BOUND { return m_frameGeometry; }
+    // The scroll value that was implicitly baked into the latest frameGeometry().screenPosition.
+    IntPoint frameViewOriginScrollPosition() const { return m_frameViewOriginScrollPosition; }
     const std::optional<AXFrameGeometry>& getAndUpdateFrameGeometry() LIFETIME_BOUND;
 #endif
 
@@ -399,6 +401,10 @@ public:
     void onPageActivityStateChange(OptionSet<ActivityState>);
     void setPageActivityState(OptionSet<ActivityState> state) { m_pageActivityState = state; }
     OptionSet<ActivityState> pageActivityState() const { return m_pageActivityState; }
+
+#if ENABLE(WRITING_TOOLS)
+    WEBCORE_EXPORT void setWritingToolsAvailable(bool);
+#endif // ENABLE(WRITING_TOOLS)
 
     inline void childrenChanged(Node& node)
     {
@@ -681,12 +687,21 @@ public:
     void NODELETE setTextSelectionIntent(const AXTextStateChangeIntent&);
     void NODELETE setIsSynchronizingSelection(bool);
 
+    // While non-std::nullopt, a focus change onto the given element will not be surfaced to assistive
+    // technology. A null target suppresses a *clearing* of focus instead.
+    void beginSuppressingFocusChange(Element* target) { m_suppressedFocusChange = WeakPtr { target }; }
+    void endSuppressingFocusChange() { m_suppressedFocusChange = std::nullopt; }
+
     void postTextStateChangeNotification(Node*, AXTextEditType, const String&, const VisiblePosition&);
     void postTextReplacementNotification(Node*, AXTextEditType deletionType, const String& deletedText, AXTextEditType insertionType, const String& insertedText, const VisiblePosition&);
     void postTextReplacementNotificationForTextControl(HTMLTextFormControlElement&, const String& deletedText, const String& insertedText);
     void postTextStateChangeNotification(Node*, const AXTextStateChangeIntent&, const VisibleSelection&);
     void postTextStateChangeNotification(const Position&, const AXTextStateChangeIntent&, const VisibleSelection&);
     void postLiveRegionChangeNotification(AccessibilityObject&);
+
+    // Testing-only: number of times a live region snapshot has been (re)computed since the last reset.
+    WEBCORE_EXPORT unsigned liveRegionSnapshotBuildCount() const;
+    WEBCORE_EXPORT void resetLiveRegionSnapshotBuildCount();
 
     void frameLoadingEventNotification(LocalFrame*, AXLoadingEvent);
 
@@ -790,6 +805,7 @@ public:
     WEBCORE_EXPORT static void initializeAXThreadIfNeeded();
     WEBCORE_EXPORT static bool NODELETE isAXThreadInitialized();
     WEBCORE_EXPORT RefPtr<AXIsolatedTree> getOrCreateIsolatedTree();
+    void initializeIsolatedTreeGeometry();
 
     static bool isAccessibilityList(Element&);
 private:
@@ -803,6 +819,13 @@ private:
     // Propagates the root of the isolated tree back into the Core and WebKit.
     void setIsolatedTree(Ref<AXIsolatedTree>);
     void setIsolatedTreeFocusedObject(AccessibilityObject*);
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    // Refreshes the isolated-tree focused object of each ancestor local frame, keeping an ancestor
+    // tree (e.g. the main frame's, which VoiceOver queries) pointed at the AXLocalFrame leading
+    // toward the focused subframe. Only the focused frame's own cache handles its focus change, so
+    // ancestor trees would otherwise never learn focus moved into a descendant local frame.
+    void updateAncestorFramesFocusedObject();
+#endif
     void buildIsolatedTree();
     void updateIsolatedTree(AccessibilityObject&, AXNotification);
     void updateIsolatedTree(AccessibilityObject*, AXNotification);
@@ -932,6 +955,12 @@ private:
     enum class UpdateModal : bool { No, Yes };
     void handleFocusedUIElementChanged(Element* oldFocus, Element* newFocus, UpdateModal = UpdateModal::Yes);
     void handleRemoteFrameGainedFocus(RemoteFrame&, Element* oldFocusedElement);
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    // Returns the AXLocalFrame in this cache's tree that proxies the direct child frame leading toward
+    // the focused subframe, or nullptr if focus is not in a descendant local frame. Resolves the frame
+    // owner element via TreeScope::focusedElementInScope() (as Document::activeElement() does).
+    AccessibilityObject* localFrameLeadingToFocusedFrame();
+#endif
     void handleMenuListValueChanged(Element&);
     void handleTextChanged(AccessibilityObject*);
     void handleRecomputeCellSlots(AccessibilityNodeObject&);
@@ -965,6 +994,7 @@ private:
     void updateLabeledBy(Element*);
     void updateRelationsIfNeeded();
     void updateRelationsForTree(ContainerNode&);
+    bool idChangeCanAffectRelations(Element*, const AtomString& oldID, const AtomString& newID) const;
     void relationsNeedUpdate(bool);
     void dirtyIsolatedTreeRelations();
     HashMap<AXID, AXRelations> relations();
@@ -984,6 +1014,7 @@ private:
     const FrameIdentifier m_frameID; // constant for object's lifetime.
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     std::optional<AXFrameGeometry> m_frameGeometry;
+    IntPoint m_frameViewOriginScrollPosition;
 #endif
     OptionSet<ActivityState> m_pageActivityState;
     HashMap<AXID, Ref<AccessibilityObject>> m_objects;
@@ -1088,6 +1119,13 @@ private:
     Vector<CanvasFocusPathBoundsChange> m_deferredCanvasFocusPathBoundsChanges;
     std::optional<std::pair<WeakPtr<Element, WeakPtrImplWithEventTargetData>, WeakPtr<Element, WeakPtrImplWithEventTargetData>>> m_deferredFocusedNodeChange;
     std::optional<DeferredRemoteFrameFocus> m_deferredRemoteFrameFocus;
+    // A std::nullopt means no focus change is set up for suppression.
+    // A non-std::nullopt value of nullptr means to suppress the next focus clear.
+    // A non-std::nullopt value of an element means to suppress the focus change to that element.
+    //
+    // In all three cases, the term "suppression" refers to the act of not surfacing a focus
+    // change notification to assistive technologies.
+    std::optional<WeakPtr<Element, WeakPtrImplWithEventTargetData>> m_suppressedFocusChange;
     WeakHashSet<AccessibilityObject> m_deferredUnconnectedObjects;
 #if PLATFORM(MAC)
     HashMap<PreSortedObjectType, Vector<Ref<AccessibilityObject>>, IntHash<PreSortedObjectType>, WTF::StrongEnumHashTraits<PreSortedObjectType>> m_deferredUnsortedObjects;
@@ -1107,6 +1145,8 @@ private:
 #endif
     bool m_isSynchronizingSelection { false };
     bool m_performingDeferredCacheUpdate { false };
+    // True while remove(AXID) is tearing down an object.
+    bool m_isRemovingNode { false };
     double m_loadingProgress { 0 };
 
     // Tracks focus landing inside an aria-hidden region. After one rendering update
@@ -1129,6 +1169,13 @@ private:
     HashSet<AXID> m_relationTargets;
     HashMap<AXID, AXRelations> m_recentlyRemovedRelations;
     WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_elementsWithRelationAttributes;
+    // Ids referenced by a relation attribute (e.g. aria-labelledby) whose target didn't exist when
+    // relations were last built. If an element with one of these ids is later inserted, we must
+    // re-resolve relations.
+    HashSet<AtomString> m_unresolvedRelationTargetIds;
+    // All ids referenced by a relation attribute (resolved or not) as of the last relations build.
+    // Used to decide whether an id-attribute change can affect any relation.
+    HashSet<AtomString> m_referencedRelationTargetIds;
 
 #if USE(ATSPI)
     ListHashSet<RefPtr<AccessibilityObject>> m_deferredParentChangedList;

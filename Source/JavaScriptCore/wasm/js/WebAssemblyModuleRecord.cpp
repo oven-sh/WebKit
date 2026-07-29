@@ -308,7 +308,7 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
                     if (globalValue->global()->mutability() != Wasm::Immutable)
                         return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "imported global"_s, "must be a same mutability"_s)));
                     const auto& declaredGlobalType = moduleInformation.globals[import.kindIndex].type;
-                    switch (declaredGlobalType.kind) {
+                    switch (declaredGlobalType.kind()) {
                     case Wasm::TypeKind::I32:
                     case Wasm::TypeKind::I64:
                     case Wasm::TypeKind::F32:
@@ -336,18 +336,20 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
                             }
 
                             if (Wasm::isRefWithTypeIndex(declaredGlobalType) && !value.isNull()) {
-                                Wasm::TypeIndex paramIndex = global.type.index;
+                                Wasm::TypeIndex paramIndex = global.type.index();
                                 Wasm::TypeIndex argIndex = (wasmFunction ? wasmFunction->rtt() : wasmWrapperFunction->rtt())->asTypeIndex();
                                 if (paramIndex != argIndex)
                                     return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "imported global"_s, "Argument value did not match the reference type"_s)));
                             }
 
                             m_instance->setGlobal(import.kindIndex, value);
+                        } else if (Wasm::isExnref(declaredGlobalType)) {
+                            m_instance->setGlobal(import.kindIndex, globalValue->global()->getReference());
                         } else {
                             auto global = globalValue->global()->get(globalObject);
                             RETURN_IF_EXCEPTION(scope, void());
                             value = Wasm::internalizeExternref(global);
-                            if (!Wasm::TypeInformation::isReferenceValueAssignable(value, declaredGlobalType.isNullable(), declaredGlobalType.index))
+                            if (!Wasm::TypeInformation::isReferenceValueAssignable(value, declaredGlobalType.isNullable(), declaredGlobalType.index()))
                                 return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "imported global"_s, "Argument value did not match the reference type"_s)));
                             m_instance->setGlobal(import.kindIndex, value);
                         }
@@ -366,7 +368,7 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
                     }
 
                     // iii. Append ToWebAssemblyValue(v) to imports.
-                    switch (globalType.kind) {
+                    switch (globalType.kind()) {
                     case Wasm::TypeKind::I32:
                         m_instance->setGlobal(import.kindIndex, value.toInt32(globalObject));
                         break;
@@ -399,7 +401,7 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
                             }
 
                             if (Wasm::isRefWithTypeIndex(globalType) && !value.isNull()) {
-                                Wasm::TypeIndex paramIndex = global.type.index;
+                                Wasm::TypeIndex paramIndex = global.type.index();
                                 Wasm::TypeIndex argIndex = (wasmFunction ? wasmFunction->rtt() : wasmWrapperFunction->rtt())->asTypeIndex();
                                 if (paramIndex != argIndex)
                                     return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "imported global"_s, "Argument value did not match the reference type"_s)));
@@ -410,7 +412,7 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
                             return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "imported global"_s, "cannot be exnref"_s)));
                         else {
                             value = Wasm::internalizeExternref(value);
-                            if (!Wasm::TypeInformation::isReferenceValueAssignable(value, global.type.isNullable(), global.type.index))
+                            if (!Wasm::TypeInformation::isReferenceValueAssignable(value, global.type.isNullable(), global.type.index()))
                                 return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "imported global"_s, "Argument value did not match the reference type"_s)));
                             m_instance->setGlobal(import.kindIndex, value);
                         }
@@ -500,6 +502,9 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
             if ((memory->memory().sharingMode() == MemorySharingMode::Shared) != moduleInformation.memory(import.kindIndex).isShared())
                 return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "Memory import"_s, "provided a 'shared' that is different from the module's declared 'shared' import memory attribute"_s)));
 
+            if (memory->memory().addressType() != moduleInformation.memory(import.kindIndex).addressType())
+                return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "Memory import"_s, "provided an 'index' that is different from the module's declared 'index' import memory attribute"_s)));
+
             // ii. Append v to memories.
             // iii. Append v.[[Memory]] to imports.
             m_instance->setMemory(vm, import.kindIndex, memory);
@@ -524,7 +529,6 @@ void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
         throwException(globalObject, scope, error);
     };
 
-    // FIXME(wasm-multimemory): will need to change this to make BBQ/OMG work with multiple memories
     // FIXME(wasm-multimemory): should we get rid of hasMemoryImport()?
     if (moduleInformation.hasMemoryImport()) {
         // Usually at this point the module's code block in any memory mode should be
@@ -567,7 +571,7 @@ void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
         if (!m_instance->table(i)) {
             RELEASE_ASSERT(!moduleInformation.tables[i].isImport());
             // We create a Table when it's a Table definition.
-            RefPtr<Wasm::Table> wasmTable = Wasm::Table::tryCreate(vm, moduleInformation.tables[i].initial(), moduleInformation.tables[i].maximum(), moduleInformation.tables[i].type(), moduleInformation.tables[i].wasmType());
+            RefPtr<Wasm::Table> wasmTable = Wasm::Table::tryCreate(vm, moduleInformation.tables[i].initial(), moduleInformation.tables[i].maximum(), moduleInformation.tables[i].type(), moduleInformation.tables[i].wasmType(), moduleInformation.tables[i].addressType() );
             if (!wasmTable)
                 return exception(createJSWebAssemblyLinkError(globalObject, vm, "couldn't create Table"_s));
 
@@ -706,7 +710,7 @@ void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
         }
         case Wasm::ExternalKind::Global: {
             const Wasm::GlobalInformation& global = moduleInformation.globals[exp.kindIndex];
-            switch (global.type.kind) {
+            switch (global.type.kind()) {
             case Wasm::TypeKind::Externref:
             case Wasm::TypeKind::Funcref:
             case Wasm::TypeKind::Ref:
@@ -720,7 +724,7 @@ void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
                 // But we need to create a binding just to export it. This binding is not actually connected. But this is OK since it is immutable.
                 if (global.bindingMode == Wasm::GlobalInformation::BindingMode::EmbeddedInInstance) {
                     RefPtr<Wasm::Global> globalRef;
-                    if (global.type.kind == Wasm::TypeKind::V128) {
+                    if (global.type.kind() == Wasm::TypeKind::V128) {
                         v128_t initialValue = m_instance->loadV128Global(exp.kindIndex);
                         globalRef = Wasm::Global::create(global.type, global.mutability, initialValue);
                     } else {
@@ -868,16 +872,23 @@ JSValue WebAssemblyModuleRecord::evaluate(JSGlobalObject* globalObject)
             uint8_t* memory = static_cast<uint8_t*>(wasmMemory.basePointer());
             uint64_t sizeInBytes = wasmMemory.size();
 
+            const bool isMemory64 = moduleInformation.memory(segment->memoryIndex()).isMemory64();
             uint64_t offset = 0;
-            if (segment->offsetIfActive()->isGlobalImport())
-                offset = static_cast<uint64_t>(m_instance->loadI32Global(segment->offsetIfActive()->globalImportIndex()));
-            else if (segment->offsetIfActive()->isConst())
-                offset = segment->offsetIfActive()->constValue();
-            else {
+            if (segment->offsetIfActive()->isGlobalImport()) {
+                if (isMemory64)
+                    offset = static_cast<uint64_t>(m_instance->loadI64Global(segment->offsetIfActive()->globalImportIndex()));
+                else
+                    offset = static_cast<uint32_t>(m_instance->loadI32Global(segment->offsetIfActive()->globalImportIndex()));
+            } else if (segment->offsetIfActive()->isConst()) {
+                if (isMemory64)
+                    offset = segment->offsetIfActive()->constValue();
+                else
+                    offset = static_cast<uint32_t>(segment->offsetIfActive()->constValue());
+            } else {
                 uint64_t result;
-                evaluateConstantExpression(globalObject, moduleInformation.constantExpressions[segment->offsetIfActive()->constantExpressionIndex()], moduleInformation, Wasm::Types::I32, result);
+                evaluateConstantExpression(globalObject, moduleInformation.constantExpressions[segment->offsetIfActive()->constantExpressionIndex()], moduleInformation, isMemory64 ? Wasm::Types::I64 : Wasm::Types::I32, result);
                 RETURN_IF_EXCEPTION(scope, void());
-                offset = result;
+                offset = isMemory64 ? result : static_cast<uint32_t>(result);
             }
 
             if (fn(memory, sizeInBytes, segment, offset) == IterationStatus::Done)

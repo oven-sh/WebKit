@@ -666,6 +666,20 @@ void TestController::beganEnterFullScreen(WKPageRef page, WKRect initialFrame, W
             "}\n"_s
         ));
     }
+
+    if (m_dumpFullScreenOrigin) {
+        protectedCurrentInvocation()->outputText(makeString(
+            "beganEnterFullScreen() - initialRect.origin: {"_s,
+            (initialFrame.origin.x - finalFrame.origin.x),
+            ", "_s,
+            (initialFrame.origin.y - finalFrame.origin.y),
+            "}, finalRect.origin: {"_s,
+            (finalFrame.origin.x - initialFrame.origin.x),
+            ", "_s,
+            (finalFrame.origin.y - initialFrame.origin.y),
+            "}\n"_s
+        ));
+    }
 }
 
 void TestController::exitFullScreen(WKPageRef page, const void* clientInfo)
@@ -696,6 +710,20 @@ void TestController::beganExitFullScreen(WKPageRef, WKRect initialFrame, WKRect 
         finalFrame.size.width,
         ", "_s,
         finalFrame.size.height,
+        "}\n"_s
+        ));
+    }
+
+    if (m_dumpFullScreenOrigin) {
+        protectedCurrentInvocation()->outputText(makeString(
+        "beganExitFullScreen() - initialRect.origin: {"_s,
+        (initialFrame.origin.x - finalFrame.origin.x),
+        ", "_s,
+        (initialFrame.origin.y - finalFrame.origin.y),
+        "}, finalRect.origin: {"_s,
+        (finalFrame.origin.x - initialFrame.origin.x),
+        ", "_s,
+        (finalFrame.origin.y - initialFrame.origin.y),
         "}\n"_s
         ));
     }
@@ -1430,10 +1458,9 @@ void TestController::resetPreferencesToConsistentValues(const TestOptions& optio
         WKPreferencesSetProcessSwapOnNavigationEnabled(preferences, options.shouldEnableProcessSwapOnNavigation());
         WKPreferencesSetStorageBlockingPolicy(preferences, kWKAllowAllStorage); // FIXME: We should be testing the default.
         WKPreferencesSetMinimumFontSize(preferences, 0);
+        WKPreferencesSetAllowsPictureInPictureMediaPlayback(preferences, true);
 
         WKPreferencesSetBoolValueForKeyForTesting(preferences, options.allowTestOnlyIPC(), toWK("AllowTestOnlyIPC").get());
-        WKPreferencesSetBoolValueForKeyForTesting(preferences, false, toWK("GlobalPrivacyControlStatus").get());
-        WKPreferencesSetBoolValueForKeyForTesting(preferences, false, toWK("GlobalPrivacyControlFeatureEnabled").get());
         WKPreferencesSetBoolValueForKeyForTesting(preferences, options.allowTestOnlyMockContentFilterIPC(), toWK("AllowTestOnlyMockContentFilterIPC").get());
         WKPreferencesSetBoolValueForKeyForTesting(preferences, options.allowTestOnlyOriginAccessAllowListIPC(), toWK("AllowTestOnlyOriginAccessAllowListIPC").get());
 
@@ -1455,6 +1482,8 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 {
     SetForScope changeState(m_state, Resetting);
     m_beforeUnloadReturnValue = true;
+
+    m_globalPrivacyControlEnabled = std::nullopt;
 
     for (auto& auxiliaryWebView : std::exchange(m_auxiliaryWebViews, { }))
         WKPageClose(auxiliaryWebView->page());
@@ -1670,6 +1699,7 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
     m_hasResourceLoadClient = false;
     m_dumpResourceLoadCallbacks = false;
 
+    m_dumpFullScreenOrigin = false;
     m_waitBeforeFinishingFullscreenExit = false;
     m_scrollDuringEnterFullscreen = false;
     if (m_finishExitFullscreenHandler)
@@ -2033,6 +2063,12 @@ ASCIILiteral TestController::serviceWorkerProcessName()
 #endif
 }
 
+void TestController::setVirtualWalletBehavior(WKStringRef action, WKStringRef protocol, WKStringRef responseJSON)
+{
+    if (auto* webView = mainWebView())
+        WKPageSetVirtualWalletBehaviorForTesting(webView->page(), action, protocol, responseJSON);
+}
+
 #if !PLATFORM(COCOA)
 
 void TestController::setAllowsAnySSLCertificate(bool allows)
@@ -2203,6 +2239,18 @@ if (window.eventSender) {
     eventSender.asyncKeyDown = async (key, modifiers) => { // NOLINT
         await post(['AsyncKeyDown', key, modifiers]);
     };
+    eventSender.asyncTouchStart = async () => { // NOLINT
+        await post(['AsyncTouchStart']);
+    };
+    eventSender.asyncTouchMove = async () => { // NOLINT
+        await post(['AsyncTouchMove']);
+    };
+    eventSender.asyncTouchEnd = async () => { // NOLINT
+        await post(['AsyncTouchEnd']);
+    };
+    eventSender.asyncTouchCancel = async () => { // NOLINT
+        await post(['AsyncTouchCancel']);
+    };
 }
 )eventSenderJS";
 
@@ -2245,6 +2293,7 @@ if (window.testRunner) {
     testRunner.setBlockAllPlugins = value => post(['SetBlockAllPlugins', value]);
     testRunner.stopLoading = () => post(['StopLoading']);
     testRunner.dumpFullScreenCallbacks = () => post(['DumpFullScreenCallbacks']);
+    testRunner.dumpFullScreenOrigin = () => post(['DumpFullScreenOrigin']);
     testRunner.displayAndTrackRepaints = () => post(['DisplayAndTrackRepaints']);
     testRunner.clearBackForwardList = () => post(['ClearBackForwardList']);
     testRunner.addChromeInputField = async (callback) => { await post(['AddChromeInputField']); callback?.(); }; // NOLINT
@@ -2830,6 +2879,11 @@ void TestController::didReceiveScriptMessage(WKScriptMessageRef message, Complet
         return completionHandler(nullptr);
     }
 
+    if (WKStringIsEqualToUTF8CString(command, "DumpFullScreenOrigin")) {
+        dumpFullScreenOrigin();
+        return completionHandler(nullptr);
+    }
+
     if (WKStringIsEqualToUTF8CString(command, "StopLoading")) {
         WKPageStopLoading(mainWebView()->page());
         return completionHandler(nullptr);
@@ -3065,6 +3119,33 @@ void TestController::didReceiveScriptMessage(WKScriptMessageRef message, Complet
             [completionHandler = WTF::move(completionHandler)] mutable { completionHandler(nullptr); });
         return;
     }
+
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+    if (WKStringIsEqualToUTF8CString(command, "AsyncTouchStart")) {
+        m_eventSenderProxy->touchStart([completionHandler = WTF::move(completionHandler)] mutable {
+            completionHandler(nullptr);
+        });
+        return;
+    }
+    if (WKStringIsEqualToUTF8CString(command, "AsyncTouchMove")) {
+        m_eventSenderProxy->touchMove([completionHandler = WTF::move(completionHandler)] mutable {
+            completionHandler(nullptr);
+        });
+        return;
+    }
+    if (WKStringIsEqualToUTF8CString(command, "AsyncTouchEnd")) {
+        m_eventSenderProxy->touchEnd([completionHandler = WTF::move(completionHandler)] mutable {
+            completionHandler(nullptr);
+        });
+        return;
+    }
+    if (WKStringIsEqualToUTF8CString(command, "AsyncTouchCancel")) {
+        m_eventSenderProxy->touchCancel([completionHandler = WTF::move(completionHandler)] mutable {
+            completionHandler(nullptr);
+        });
+        return;
+    }
+#endif
 
     ASSERT_NOT_REACHED();
 }
@@ -4476,12 +4557,18 @@ void TestController::decidePolicyForNavigationAction(WKPageRef page, WKNavigatio
     WKRetainPtr<WKFramePolicyListenerRef> retainedListener { listener };
     WKRetainPtr<WKNavigationActionRef> retainedNavigationAction { navigationAction };
     const bool shouldIgnore { m_policyDelegateEnabled && !m_policyDelegatePermissive };
+
+    auto globalPrivacyControlEnabled = m_globalPrivacyControlEnabled;
+    if (!globalPrivacyControlEnabled && m_currentInvocation && protectedCurrentInvocation()->options().globalPrivacyControl())
+        globalPrivacyControlEnabled = false;
+
     auto decisionFunction = [
         shouldIgnore,
         retainedListener,
         retainedNavigationAction,
         shouldSwapToEphemeralSessionOnNextNavigation = m_shouldSwapToEphemeralSessionOnNextNavigation,
         shouldSwapToDefaultSessionOnNextNavigation = m_shouldSwapToDefaultSessionOnNextNavigation,
+        globalPrivacyControlEnabled,
         page = WKRetainPtr { page }
     ] {
         if (shouldIgnore)
@@ -4493,6 +4580,8 @@ void TestController::decidePolicyForNavigationAction(WKPageRef page, WKNavigatio
                 ASSERT(shouldSwapToEphemeralSessionOnNextNavigation != shouldSwapToDefaultSessionOnNextNavigation);
                 WKRetainPtr policies = adoptWK(WKWebsitePoliciesCreate());
                 WKWebsitePoliciesSetAllowsJSHandleCreationInPageWorld(policies.get(), true);
+                if (globalPrivacyControlEnabled)
+                    WKWebsitePoliciesSetGlobalPrivacyControlEnabled(policies.get(), *globalPrivacyControlEnabled);
                 WKRetainPtr<WKWebsiteDataStoreRef> newSession = TestController::defaultWebsiteDataStore();
                 if (shouldSwapToEphemeralSessionOnNextNavigation)
                     newSession = adoptWK(WKWebsiteDataStoreCreateNonPersistentDataStore());
@@ -4501,6 +4590,8 @@ void TestController::decidePolicyForNavigationAction(WKPageRef page, WKNavigatio
             } else {
                 WKRetainPtr policies = WKPageConfigurationGetDefaultWebsitePolicies(adoptWK(WKPageCopyPageConfiguration(page.get())).get());
                 WKWebsitePoliciesSetAllowsJSHandleCreationInPageWorld(policies.get(), true);
+                if (globalPrivacyControlEnabled)
+                    WKWebsitePoliciesSetGlobalPrivacyControlEnabled(policies.get(), *globalPrivacyControlEnabled);
                 WKFramePolicyListenerUseWithPolicies(retainedListener.get(), policies.get());
             }
         }
@@ -6038,6 +6129,35 @@ void TestController::doAfterProcessingAllPendingKeyEvents(CompletionHandler<void
         delete completionHandler;
     });
 }
+
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+void TestController::doAfterProcessingAllPendingWheelEvents(CompletionHandler<void()>&& handler)
+{
+    auto* completionHandler = new CompletionHandler<void()>(WTF::move(handler));
+    WKPageDoAfterProcessingAllPendingWheelEvents(targetView()->page(), completionHandler, [](void* userData) {
+        auto* completionHandler = static_cast<CompletionHandler<void()>*>(userData);
+        (*completionHandler)();
+        delete completionHandler;
+    });
+}
+
+void TestController::doAfterProcessingAllPendingTouchEvents(CompletionHandler<void()>&& handler)
+{
+    auto* completionHandler = new CompletionHandler<void()>(WTF::move(handler));
+    WKPageDoAfterProcessingAllPendingTouchEvents(targetView()->page(), completionHandler, [](void* userData) {
+        auto* completionHandler = static_cast<CompletionHandler<void()>*>(userData);
+        (*completionHandler)();
+        delete completionHandler;
+    });
+}
+
+void TestController::doAfterProcessingAllPendingTouchAndWheelEvents(CompletionHandler<void()>&& handler)
+{
+    doAfterProcessingAllPendingTouchEvents([this, handler = WTF::move(handler)] mutable {
+        doAfterProcessingAllPendingWheelEvents(WTF::move(handler));
+    });
+}
+#endif
 #endif
 
 } // namespace WTR

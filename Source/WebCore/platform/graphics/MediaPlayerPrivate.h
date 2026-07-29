@@ -97,8 +97,8 @@ public:
     virtual void videoFullscreenStandbyChanged() { }
 #endif
 
-    using LayerHostingContextCallback = CompletionHandler<void(HostingContext)>;
-    virtual void requestHostingContext(LayerHostingContextCallback&& completionHandler) { completionHandler({ }); }
+    using HostingContextPromise = MediaPlayer::HostingContextPromise;
+    virtual Ref<HostingContextPromise> requestHostingContext();
     virtual HostingContext hostingContext() const { return { }; }
     virtual FloatSize videoLayerSize() const { return { }; }
     virtual void setVideoLayerSizeFenced(const FloatSize&, WTF::MachSendRightAnnotated&&) { }
@@ -146,8 +146,7 @@ public:
 
     virtual void willSeekToTarget(const MediaTime& time) { m_pendingSeekTime = time; }
     virtual MediaTime pendingSeekTime() const { return m_pendingSeekTime; }
-    virtual void seekToTarget(const SeekTarget&) = 0;
-    virtual bool seeking() const = 0;
+    virtual Ref<MediaTimePromise> seekToTarget(const SeekTarget&) = 0;
 
     virtual MediaTime startTime() const { return MediaTime::zeroTime(); }
     virtual MediaTime initialTime() const { return MediaTime::zeroTime(); }
@@ -225,6 +224,7 @@ public:
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
 
     virtual String wirelessPlaybackTargetName() const { return emptyString(); }
+    virtual String wirelessPlaybackRouteName() const { return emptyString(); }
     virtual MediaPlayer::WirelessPlaybackTargetType wirelessPlaybackTargetType() const { return MediaPlayer::WirelessPlaybackTargetType::TargetTypeNone; }
 
     virtual bool wirelessVideoPlaybackDisabled() const { return true; }

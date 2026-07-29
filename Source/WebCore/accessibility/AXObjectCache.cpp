@@ -462,6 +462,19 @@ AXObjectCache::AXObjectCache(LocalFrame& localFrame, Document* document)
     if (RefPtr page = localFrame.page())
         page->chrome().client().requestFrameScreenPosition(m_frameID);
 #endif
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    if (isIsolatedTreeEnabled() && !clientIsInTestMode()) {
+        // Proactively (and asynchronously) queue up the build of the isolated tree associated with this cache,
+        // guaranteeing it gets built rather than implicitly relying on something later calling getOrCreateIsolatedTree()
+        // on |this| instance. Doing this here is critical — otherwise, after navigation, nothing may actually
+        // call getOrCreateIsolatedTree() on |this|, leaving web content empty forever.
+        //
+        // Do not do this in test mode, for which we build the full tree synchronously in getOrCreateIsolatedTree()
+        // (unlike the real-AT path, where we serve a placeholder while the full tree gets built via this timer).
+        m_buildIsolatedTreeTimer.startOneShot(0_s);
+    }
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 }
 
 AXObjectCache::~AXObjectCache()
@@ -819,15 +832,22 @@ AccessibilityObject* AXObjectCache::focusedObjectForLocalFrame()
         return nullptr;
 
     RefPtr page = document->page();
-#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
-    RefPtr focusedOrMainFrame = page ? page->focusController().focusedOrMainFrame() : nullptr;
-    if (!focusedOrMainFrame || focusedOrMainFrame->document() != document.get()) {
-        // Return null if focus is in a different local frame (which would have a different AXObjectCache).
+    if (!page)
         return nullptr;
-    }
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    // If focus is in a different local (in-process) frame, return the AXLocalFrame proxying the direct
+    // child frame leading toward it (or nullptr if it isn't a descendant of this cache's frame), so this
+    // tree's focus chains into the focused subframe and assistive technologies can descend cross-frame to
+    // the real focused element (see AXIsolatedObject::focusedUIElementInAnyLocalFrame()). A null
+    // localFocusedFrame means focus is in a remote (site-isolated) frame or nowhere; fall through to the
+    // RemoteFrame branch below.
+    RefPtr localFocusedFrame = page->focusController().localFocusedFrame();
+    if (localFocusedFrame && localFocusedFrame->document() != document.get())
+        return localFrameLeadingToFocusedFrame();
 #endif // ENABLE(ACCESSIBILITY_LOCAL_FRAME)
 
-    if (RefPtr remoteFrame = page ? dynamicDowncast<RemoteFrame>(page->focusController().focusedFrame()) : nullptr) {
+    if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(page->focusController().focusedFrame())) {
         // Check if focus is in a site-isolated sub-frame. If so, return the AXRemoteFrame
         // so ATs can follow it to the remote process to get the actual focused element.
         if (RefPtr remoteFrameView = remoteFrame->view()) {
@@ -841,6 +861,52 @@ AccessibilityObject* AXObjectCache::focusedObjectForLocalFrame()
         return focusedObjectForNode(focusedElement.get());
     return focusedObjectForNode(document.get());
 }
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+AccessibilityObject* AXObjectCache::localFrameLeadingToFocusedFrame()
+{
+    AX_ASSERT(isMainThread());
+
+    RefPtr document = this->document();
+    if (!document)
+        return nullptr;
+
+    // focusedElementInScope() (the resolution behind Document::activeElement()) returns the frame owner
+    // element (the <iframe>) in this document on the path toward the focused subframe, walking the frame
+    // tree via focusedFrameOwnerElement(). Map that element to the AXLocalFrame proxying the child frame's
+    // content, so this cache's tree chains its focus into the focused subframe. Anything that is not a
+    // local frame owner (focus is in this document, or in a remote/non-descendant frame) yields nullptr.
+    RefPtr owner = dynamicDowncast<HTMLFrameOwnerElement>(document->focusedElementInScope());
+    RefPtr childLocalFrame = dynamicDowncast<LocalFrame>(owner ? owner->contentFrame() : nullptr);
+    RefPtr childFrameView = childLocalFrame ? childLocalFrame->view() : nullptr;
+    if (!childFrameView)
+        return nullptr;
+
+    // The AXLocalFrame lives on this (parent) cache's FrameHost scroll view for the child frame view.
+    RefPtr scrollView = dynamicDowncast<AccessibilityScrollView>(getOrCreate(childFrameView.get()));
+    return scrollView ? scrollView->localFrame() : nullptr;
+}
+#endif // ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE) && ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+void AXObjectCache::updateAncestorFramesFocusedObject()
+{
+    AX_ASSERT(isMainThread());
+
+    RefPtr document = this->document();
+    RefPtr frame = document ? document->frame() : nullptr;
+    for (RefPtr<Frame> ancestor = frame ? frame->tree().parent() : nullptr; ancestor; ancestor = ancestor->tree().parent()) {
+        RefPtr localAncestorFrame = dynamicDowncast<LocalFrame>(ancestor.get());
+        RefPtr ancestorDocument = localAncestorFrame ? localAncestorFrame->document() : nullptr;
+        // focusedObjectForLocalFrame() returns the AXLocalFrame leading toward the focused subframe
+        // for an ancestor cache, so this points each ancestor tree's focus at the correct child frame.
+        if (CheckedPtr ancestorCache = ancestorDocument ? ancestorDocument->existingAXObjectCache() : nullptr) {
+            RefPtr ancestorFocus = ancestorCache->focusedObjectForLocalFrame();
+            ancestorCache->setIsolatedTreeFocusedObject(ancestorFocus.get());
+        }
+    }
+}
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE) && ENABLE(ACCESSIBILITY_LOCAL_FRAME)
 
 AccessibilityObject* AXObjectCache::focusedObjectForNode(Node* focusedNode)
 {
@@ -1187,11 +1253,6 @@ RefPtr<AXIsolatedTree> AXObjectCache::getOrCreateIsolatedTree()
         tree = nullptr;
     }
 
-    // A new isolated tree needs to be created. Initialize the GeometryManager primary screen rect to be ready when needed.
-    m_geometryManager->initializePrimaryScreenRect();
-    // Schedule a paint to cache the rects for the objects in this new isolated tree.
-    scheduleObjectRegionsUpdate(true /* scheduleImmediately */);
-
     if (clientIsInTestMode()) [[unlikely]] {
         // For test clients (LayoutTests / XCTests) build the whole isolated tree synchronously.
         // This is necessary because tests assume that APIs like accessibleElementById can
@@ -1210,6 +1271,14 @@ RefPtr<AXIsolatedTree> AXObjectCache::getOrCreateIsolatedTree()
     }
 
     return tree;
+}
+
+void AXObjectCache::initializeIsolatedTreeGeometry()
+{
+    // Cache the primary display's rect on the geometry manager (its height is exposed to AX clients as
+    // AXPrimaryScreenHeight) and schedule an immediate object-region paint to cache per-object rects.
+    m_geometryManager->initializePrimaryScreenRect();
+    scheduleObjectRegionsUpdate(true /* scheduleImmediately */);
 }
 
 void AXObjectCache::buildIsolatedTree()
@@ -1274,16 +1343,16 @@ void AXObjectCache::setFrameInheritedState(LocalFrame& frame, const InheritedFra
 
 void AXObjectCache::setFrameGeometry(LocalFrame& frame, const AXFrameGeometry& geometry)
 {
-    UNUSED_PARAM(frame);
     m_frameGeometry = geometry;
 
+    // Reset to zero to avoid leaving a stale value in the case of a null frame.view().
+    m_frameViewOriginScrollPosition = { };
+    if (CheckedPtr view = frame.view())
+        m_frameViewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
+
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID)) {
-        IntPoint viewOriginScrollPosition;
-        if (CheckedPtr view = frame.view())
-            viewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
-        tree->setFrameGeometry(AXFrameGeometry { geometry }, viewOriginScrollPosition);
-    }
+    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID))
+        tree->setFrameGeometry(AXFrameGeometry { geometry }, m_frameViewOriginScrollPosition);
 #endif
 }
 
@@ -1353,6 +1422,7 @@ void AXObjectCache::remove(AXID axID)
     if (!object)
         return;
 
+    SetForScope removingNode(m_isRemovingNode, true);
 #if PLATFORM(COCOA)
     if (m_liveRegionManager)
         m_liveRegionManager->unregisterLiveRegion(axID);
@@ -1473,12 +1543,14 @@ void AXObjectCache::handleTextChanged(AccessibilityObject* object)
                 // Inform this ancestor its textUnderElement-dependent data is now out-of-date.
                 postNotification(ancestor.get(), nullptr, AXNotification::TextUnderElementChanged);
             }
-
-            // Any objects this ancestor labeled now also need new AccessibilityText.
-            auto labeledObjects = ancestor->labelForObjects();
-            for (const auto& labeledObject : labeledObjects)
-                postNotification(&downcast<AccessibilityObject>(labeledObject.get()), nullptr, AXNotification::TextChanged);
         }
+
+        // Any objects this ancestor labeled now also need new AccessibilityText. This must run even
+        // when |object| is not static text: a name-source change like aria-label, alt, or title on an
+        // element referenced via aria-labelledby alters the referrer's accessible name just the same.
+        auto labeledObjects = ancestor->labelForObjects();
+        for (const auto& labeledObject : labeledObjects)
+            postNotification(&downcast<AccessibilityObject>(labeledObject.get()), nullptr, AXNotification::TextChanged);
     }
 
     postNotification(object, protect(object->document()).get(), AXNotification::TextChanged);
@@ -2296,6 +2368,18 @@ void AXObjectCache::onPageActivityStateChange(OptionSet<ActivityState> newState)
 #endif
 }
 
+#if ENABLE(WRITING_TOOLS)
+void AXObjectCache::setWritingToolsAvailable(bool isAvailable)
+{
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    if (auto tree = AXIsolatedTree::treeForFrameID(m_frameID))
+        tree->setWritingToolsAvailable(isAvailable);
+#else
+    UNUSED_PARAM(isAvailable);
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+}
+#endif // ENABLE(WRITING_TOOLS)
+
 static bool shouldDeferFocusChange(Element* element)
 {
     if (!element)
@@ -2326,6 +2410,20 @@ static bool shouldDeferFocusChange(Element* element)
 
 void AXObjectCache::onFocusChange(Element* oldElement, Element* newElement)
 {
+    if (m_suppressedFocusChange && m_suppressedFocusChange->get() == newElement) {
+        // We deliberately don't want to surface this focus change to assistive technology.
+        // One situation where this is relevant is downstream of invoking an aria-action.
+        // Inherently, the simulated click that results from invoking the action moves
+        // focus to the action target, but the user experience for aria-actions demands
+        // that focus "stay on" (or immediately bounce back to) the originating element.
+        // We explicitly do not want assistive technologies to actually bounce back and forth
+        // as that would cause confusing announcements, so we supress the focus change.
+        //
+        // A null suppressed element matches a clearing of focus, used when the focus we're
+        // restoring had no origin (nothing was focused before the action).
+        return;
+    }
+
     if (m_deferredRemoteFrameFocus) {
         if (newElement) {
             // Focus is going to a local element, not the remote frame.
@@ -2463,6 +2561,14 @@ void AXObjectCache::handleFocusedUIElementChanged(Element* oldElement, Element* 
     // Use focusedObjectForLocalFrame() instead of focusedObjectForNode() to properly handle
     // the case where focus is in a site-isolated sub-frame (returns the AXRemoteFrame).
     setIsolatedTreeFocusedObject(focusedObjectForLocalFrame());
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    // Only the focused frame's own cache runs this handler, so also refresh the isolated-tree focus
+    // of each ancestor local frame. This keeps an ancestor tree (e.g. the main frame's, which
+    // VoiceOver queries for the focused element) pointed at the AXLocalFrame leading toward the
+    // focused subframe, so AXIsolatedObject::focusedUIElementInAnyLocalFrame() can descend
+    // cross-frame to the real focused element.
+    updateAncestorFramesFocusedObject();
+#endif
 #endif
     platformHandleFocusedUIElementChanged(protect(getOrCreate(oldElement)), protect(getOrCreate(newElement)));
 
@@ -3227,15 +3333,30 @@ void AXObjectCache::frameLoadingEventNotification(LocalFrame* frame, AXLoadingEv
     }
 }
 
-void AXObjectCache::postLiveRegionChangeNotification(AccessibilityObject& object)
+unsigned AXObjectCache::liveRegionSnapshotBuildCount() const
 {
 #if PLATFORM(COCOA)
-    if (m_liveRegionManager) {
-        m_liveRegionManager->handleLiveRegionChange(object);
-        return;
-    }
+    if (m_liveRegionManager)
+        return m_liveRegionManager->snapshotBuildCount();
 #endif
+    return 0;
+}
 
+void AXObjectCache::resetLiveRegionSnapshotBuildCount()
+{
+#if PLATFORM(COCOA)
+    if (m_liveRegionManager)
+        m_liveRegionManager->resetSnapshotBuildCount();
+#endif
+}
+
+void AXObjectCache::postLiveRegionChangeNotification(AccessibilityObject& object)
+{
+    // Consolidate multiple live region changes to the same object within a run loop iteration.
+    // Web content (e.g. rebuilding a large calendar) can fire hundreds of text changes that each
+    // walk up to a live-region ancestor; deduplicating here and processing once when the timer fires
+    // collapses that into a single snapshot rebuild per region. On COCOA, the timer drives
+    // AXLiveRegionManager; elsewhere it posts a LiveRegionChanged notification.
     if (m_liveRegionChangedPostTimer.isActive())
         m_liveRegionChangedPostTimer.stop();
 
@@ -3252,6 +3373,15 @@ void AXObjectCache::liveRegionChangedNotificationPostTimerFired()
 
     if (m_changedLiveRegions.isEmpty())
         return;
+
+#if PLATFORM(COCOA)
+    if (m_liveRegionManager) {
+        for (auto& object : m_changedLiveRegions)
+            m_liveRegionManager->handleLiveRegionChange(object.get());
+        m_changedLiveRegions.clear();
+        return;
+    }
+#endif
 
     for (auto& object : m_changedLiveRegions)
         postNotification(object.ptr(), protect(object->document()).get(), AXNotification::LiveRegionChanged);
@@ -5377,6 +5507,13 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
             handleMenuOpened(*element);
             handleLiveRegionCreated(*element);
 
+            if (element->hasID() && m_unresolvedRelationTargetIds.contains(element->getIdAttribute())) {
+                // A previously-unresolved relation target (e.g. an aria-labelledby target that didn't
+                // exist when relations were last built) was just inserted, so dirty relations to
+                // re-resolve them.
+                markRelationsDirty();
+            }
+
             if (RefPtr label = dynamicDowncast<HTMLLabelElement>(*element)) {
                 // A label was added or removed. Update its LabelFor relationships.
                 m_elementsWithRelationAttributes.add(*label);
@@ -5441,7 +5578,7 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
     AXLOGDeferredCollection("AttributeChange"_s, m_deferredAttributeChange);
     for (const auto& attributeChange : borrow(m_deferredAttributeChange).get()) {
         handleAttributeChange(protect(attributeChange.element.get()), attributeChange.attrName, attributeChange.oldValue, attributeChange.newValue);
-        if (attributeChange.attrName == idAttr)
+        if (attributeChange.attrName == idAttr && idChangeCanAffectRelations(attributeChange.element.get(), attributeChange.oldValue, attributeChange.newValue))
             markRelationsDirty();
     }
     m_deferredAttributeChange.clear();
@@ -5756,6 +5893,9 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<Ref<AccessibilityO
         case AXNotification::LevelChanged:
             tree->queueNodeUpdate(notification.first->objectID(), { AXProperty::ARIALevel });
             break;
+        case AXNotification::HeadingLevelChanged:
+            tree->queueNodeUpdate(notification.first->objectID(), { AXProperty::HeadingLevel });
+            break;
         case AXNotification::MaximumValueChanged:
             tree->queueNodeUpdate(notification.first->objectID(), { { AXProperty::MaxValueForRange, AXProperty::ValueForRange } });
             break;
@@ -5865,8 +6005,15 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<Ref<AccessibilityO
         case AXNotification::PressedStateChanged:
         case AXNotification::TextChanged:
         case AXNotification::TextSecurityChanged:
+            tree->queueNodeUpdate(notification.first->objectID(), NodeUpdateOptions::nodeUpdate());
+            break;
         case AXNotification::ValueChanged:
             tree->queueNodeUpdate(notification.first->objectID(), NodeUpdateOptions::nodeUpdate());
+            // A text control's value and selection must stay consistent for clients that read the
+            // selection in response to this notification, so push the current selection alongside the
+            // value rather than letting it arrive later on the selection-change channel.
+            if (notification.first->isTextControl())
+                onSelectedTextChanged(notification.first->selectedVisiblePositionRange(), notification.first.ptr());
             break;
         case AXNotification::LabelChanged: {
             tree->queueNodeUpdate(notification.first->objectID(), NodeUpdateOptions::nodeUpdate());
@@ -6581,10 +6728,29 @@ void AXObjectCache::updateRelationsIfNeeded()
 {
     if (!m_relationsNeedUpdate)
         return;
+
+    if (m_isRemovingNode) {
+        // Don't rebuild relations while removing a node (see remove(AXID)). Besides being crash-unsafe
+        // mid-destruction, reading the current (stale) relations here is correct: the parent ID that
+        // queueNodeRemoval() records must match the isolated tree's m_nodeMap, which reflects the same
+        // last-built relations. A fresh rebuild would desync from it and make removeSubtreeFromNodeMap()
+        // bail. m_relationsNeedUpdate stays set, so relations are rebuilt on the next update cycle.
+        //
+        // In the future, we should consider changing queueNodeRemoval()'s bail-if-parent-doesn't-match
+        // mechanism to something more robust. Presumably we can determine whether to bail purely based
+        // on whether the object is connected in the AX tree at all, catching the re-parenting scenario
+        // while avoiding the issues with our current mechanism (which can leak subtrees if we read the
+        // parent at the wrong time (the DOM has changed, relations have changed, etc). If we find a way
+        // to do that, we can probably remove this m_isRemovingNode flag.
+        return;
+    }
+
     relationsNeedUpdate(false);
     m_relations.clear();
     m_recentlyRemovedRelations.clear();
     m_relationTargets.clear();
+    m_unresolvedRelationTargetIds.clear();
+    m_referencedRelationTargetIds.clear();
     m_hasAriaOwnsRelations = false;
 
     if (!m_doneInitialRelationsBuild) {
@@ -6646,6 +6812,24 @@ void AXObjectCache::trackRelationAttributeElement(Element& element)
         relationsNeedUpdate(true);
 }
 
+bool AXObjectCache::idChangeCanAffectRelations(Element* element, const AtomString& oldID, const AtomString& newID) const
+{
+    auto isReferenced = [&](const AtomString& id) {
+        return !id.isEmpty() && m_referencedRelationTargetIds.contains(id);
+    };
+    if (isReferenced(oldID) || isReferenced(newID)) {
+        // An id change affects relations only if the old or new id is referenced by a relation attribute.
+        return true;
+    }
+
+    // A relation can also resolve through a shadow root's reference target, in which case it depends on
+    // an inner id (the reference target) rather than the relation attribute's value, so that inner id is
+    // not in m_referencedRelationTargetIds. Conservatively re-resolve when an id changes inside a shadow
+    // tree that uses a reference target.
+    RefPtr shadowRoot = element ? element->containingShadowRoot() : nullptr;
+    return shadowRoot && shadowRoot->hasReferenceTarget();
+}
+
 bool AXObjectCache::addRelation(Element& origin, const QualifiedName& attribute)
 {
     if (attribute == aria_labeledbyAttr && origin.hasAttribute(aria_labelledbyAttr)) {
@@ -6657,6 +6841,27 @@ bool AXObjectCache::addRelation(Element& origin, const QualifiedName& attribute)
     auto relation = attributeToRelationType(attribute);
     if (!m_document)
         return false;
+
+    // Remember any referenced ids whose target doesn't exist yet, so that if an element with one of
+    // these ids is inserted later, we know to dirty relations and re-resolve it. Also remember every
+    // referenced id (resolved or not) so that an id-attribute change can be cheaply checked against it.
+    if (const auto& value = origin.attributeWithoutSynchronization(attribute); !value.isNull()) {
+        Ref treeScope = origin.treeScope();
+        for (auto& id : SpaceSplitString(value, SpaceSplitString::ShouldFoldCase::No)) {
+            m_referencedRelationTargetIds.add(id);
+            if (!treeScope->elementByIdResolvingReferenceTarget(id))
+                m_unresolvedRelationTargetIds.add(id);
+        }
+    }
+
+    if (!origin.isInTreeScope()) {
+        // When an origin is not in a tree scope, Element::elementsArrayForAttributeInternal() can't use the
+        // TreeScope id map and falls back to getElementByIdIncludingDisconnected(), which linearly scans
+        // the entire detached subtree once per referenced id. On pages with large detached subtrees this
+        // can cause performance issues.
+        return false;
+    }
+
     if (Element::isElementReflectionAttribute(m_document->settings(), attribute)) {
         if (auto reflectedElement = origin.elementForAttributeInternal(attribute))
             return addRelation(origin, *reflectedElement, relation);
@@ -6698,10 +6903,22 @@ bool AXObjectCache::addRelation(Element& origin, const QualifiedName& attribute)
 
 void AXObjectCache::addLabelForRelation(Element& origin)
 {
+    RefPtr label = dynamicDowncast<HTMLLabelElement>(origin);
+
+    if (label) {
+        if (const auto& controlID = label->attributeWithoutSynchronization(forAttr); !controlID.isEmpty())
+            m_referencedRelationTargetIds.add(controlID);
+    }
+
+    // A detached label has no accessibility object, so its label relations have no consumer. Skipping
+    // it here also avoids HTMLLabelElement::control()'s scan of the label's descendants.
+    if (!origin.isInTreeScope())
+        return;
+
     bool addedRelation = false;
 
     // LabelFor relations are established for <label for=...>.
-    if (RefPtr label = dynamicDowncast<HTMLLabelElement>(origin)) {
+    if (label) {
         if (RefPtr control = Accessibility::controlForLabelElement(*label)) {
             // Always add NativeLabelFor for geometry purposes.
             addedRelation = addRelation(origin, *control, AXRelation::NativeLabelFor);

@@ -510,8 +510,10 @@ bool CachedResourceLoader::allowedByContentSecurityPolicy(CachedResource::Type t
         return true;
 
     contentSecurityPolicy->setIsReportingToConsoleEnabled(shouldReportViolationAsConsoleMessage);
+    contentSecurityPolicy->setIsReportingEnabled(shouldReportViolationAsConsoleMessage);
     auto scope = makeScopeExit([&] {
         contentSecurityPolicy->setIsReportingToConsoleEnabled(true);
+        contentSecurityPolicy->setIsReportingEnabled(true);
     });
 
     // Only object-src governs object/embed elements, regardless of resource type (CSP3 §6.1.9).
@@ -1277,6 +1279,8 @@ ResourceErrorOr<Ref<CachedResource>> CachedResourceLoader::requestResource(Cache
 
     if (resource && request.isLinkPreload() && !resource->isLinkPreload())
         resource->setLinkPreload();
+    if (resource && request.isLinkModulePreload() && !resource->isLinkModulePreload())
+        resource->setLinkModulePreload();
 
     Ref cookieJar = page->cookieJar();
 

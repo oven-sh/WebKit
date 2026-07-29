@@ -45,12 +45,16 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
     bool isDHTMLDraggable,
     bool isColorInput,
     bool isRangeInput,
+    bool isARIASlider,
     bool isNearMarkedText,
 #if PLATFORM(IOS_FAMILY)
     bool touchCalloutEnabled,
 #endif
     bool isLink,
     bool isImage,
+#if PLATFORM(IOS_FAMILY)
+    bool hasSaveableImage,
+#endif
 #if ENABLE(MODEL_PROCESS)
     bool isInteractiveModel,
 #endif
@@ -111,12 +115,16 @@ InteractionInformationAtPosition::InteractionInformationAtPosition(
     , isDHTMLDraggable(isDHTMLDraggable)
     , isColorInput(isColorInput)
     , isRangeInput(isRangeInput)
+    , isARIASlider(isARIASlider)
     , isNearMarkedText(isNearMarkedText)
 #if PLATFORM(IOS_FAMILY)
     , touchCalloutEnabled(touchCalloutEnabled)
 #endif
     , isLink(isLink)
     , isImage(isImage)
+#if PLATFORM(IOS_FAMILY)
+    , hasSaveableImage(hasSaveableImage)
+#endif
 #if ENABLE(MODEL_PROCESS)
     , isInteractiveModel(isInteractiveModel)
 #endif

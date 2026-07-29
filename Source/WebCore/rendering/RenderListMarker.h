@@ -27,6 +27,7 @@
 namespace WebCore {
 
 class CSSRegisteredCounterStyle;
+class RenderBlockFlow;
 class RenderListItem;
 class StyleRuleCounterStyle;
 
@@ -64,15 +65,19 @@ public:
 
     bool NODELETE isInside() const;
     bool isDisclosureMarker() const;
-    bool NODELETE shouldPaintInAssociatedListItemLayer() const;
 
     void updateInlineMarginsAndContent();
 
     bool isImage() const final;
 
+    // True when the ::marker's `content` property generates the marker box contents
+    // (css-lists-3 §3.3). In that case the contents live in an anonymous inline-block
+    // child (contentContainer()) that this marker lays out and paints itself.
+    bool hasContent() const;
+    RenderBlockFlow* contentContainer() const;
+
     LayoutUnit lineLogicalOffsetForListItem() const { return m_lineLogicalOffsetForListItem; }
     const RenderListItem* NODELETE listItem() const;
-    void paintFromAssociatedListItemLayer(PaintInfo&, const LayoutPoint&);
 
     std::pair<float, float> layoutBounds() const { return m_layoutBounds; }
 
@@ -91,7 +96,7 @@ private:
     void willBeDestroyed() final;
     ASCIILiteral renderName() const final { return "RenderListMarker"_s; }
     void computeIntrinsicLogicalWidthContributions() final;
-    bool canHaveChildren() const final { return false; }
+    bool canHaveChildren() const final { return hasContent(); }
     void paint(PaintInfo&, const LayoutPoint&) final;
     void layout() final;
     void imageChanged(WrappedImagePtr, const IntRect*) final;
@@ -108,6 +113,8 @@ private:
     void updateInlineMargins();
     void updateContent();
     RenderBox* parentBox(RenderBox&);
+    void layoutContentContainer(RenderBlockFlow&);
+
     FloatRect relativeMarkerRect();
     LayoutRect NODELETE localSelectionRect();
     void paintDisclosureMarker(GraphicsContext&, const FloatRect& markerRect);

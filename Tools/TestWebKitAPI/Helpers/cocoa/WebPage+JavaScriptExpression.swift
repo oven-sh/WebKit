@@ -129,22 +129,67 @@ extension WebPage {
         return decodedResult
     }
 
+    /// Evaluates the provided JavaScript expression whose result is an array of decodable values.
+    ///
+    /// - Parameter expression: The expression to evaluate.
+    /// - Returns: The result of evaluating the expression.
+    /// - Throws: An error if the JavaScript evaluation or decoding fails.
+    public func callJavaScript<Expression, Element>(
+        _ expression: Expression
+    ) async throws(JavaScriptEvaluationError) -> [Element]
+    where Expression: JavaScriptExpression, Expression.Output == [Element], Element: JavaScriptDecodable {
+        let arguments = expression.encoded() as [String: Any]
+        let result: Any?
+        do {
+            result = try await self.callJavaScript(Expression.expression, arguments: arguments)
+        } catch {
+            throw .scriptError(underlyingError: error)
+        }
+
+        guard let result else {
+            throw .noResult
+        }
+
+        guard let array = result as? [Any] else {
+            throw .mismatchedType(expected: [Any].self, actual: type(of: result))
+        }
+
+        var decodedElements: [Element] = []
+        for element in array {
+            guard let dictionary = element as? [String: Any?] else {
+                throw .mismatchedType(expected: [String: Any?].self, actual: type(of: element))
+            }
+
+            guard let decodedElement = Element(decodedRepresentation: dictionary) else {
+                throw .decodingFailure("failed to decode array element")
+            }
+
+            decodedElements.append(decodedElement)
+        }
+
+        return decodedElements
+    }
+
     /// Executes the specified string as an async JavaScript function.
     ///
     /// - Parameters:
     ///   - returnType: The type the expression returns.
     ///   - arguments: A dictionary of the arguments to pass to the function call.
+    ///   - frame: The frame in which to evaluate the JavaScript code.
+    ///   - contentWorld: The namespace in which to evaluate the JavaScript code.
     ///   - script: The JavaScript string to use as the function body.
     /// - Returns: The result of the script evaluation. If the type of the result is not the type of `returnType`, an error is thrown.
     /// - Throws: A `JavaScriptEvaluationError` error if there was a problem evaluating the script, or if a serialization failure occurred.
     public func callJavaScript<Result>(
         returning returnType: Result.Type,
         arguments: [String: Any] = [:],
+        in frame: WebPage.FrameInfo? = nil,
+        contentWorld: WKContentWorld? = nil,
         script: () -> String
     ) async throws(JavaScriptEvaluationError) -> Result {
         let result: Any?
         do {
-            result = try await callJavaScript(script(), arguments: arguments)
+            result = try await callJavaScript(script(), arguments: arguments, in: frame, contentWorld: contentWorld)
         } catch {
             throw .scriptError(underlyingError: error)
         }
@@ -165,17 +210,21 @@ extension WebPage {
     /// - Parameters:
     ///   - returnType: The type the expression returns.
     ///   - arguments: A dictionary of the arguments to pass to the function call.
+    ///   - frame: The frame in which to evaluate the JavaScript code.
+    ///   - contentWorld: The namespace in which to evaluate the JavaScript code.
     ///   - script: The JavaScript string to use as the function body.
     /// - Returns: The result of the script evaluation. If the type of the result is not the type of `returnType`, an error is thrown.
     /// - Throws: A `JavaScriptEvaluationError` error if there was a problem evaluating the script, or if a serialization failure occurred.
     public func callJavaScript<First, each Rest, Last>(
         returning returnType: (First, repeat each Rest, Last).Type,
         arguments: [String: Any] = [:],
+        in frame: WebPage.FrameInfo? = nil,
+        contentWorld: WKContentWorld? = nil,
         script: () -> String
     ) async throws(JavaScriptEvaluationError) -> (First, repeat each Rest, Last) {
         let result: Any?
         do {
-            result = try await callJavaScript(script(), arguments: arguments)
+            result = try await callJavaScript(script(), arguments: arguments, in: frame, contentWorld: contentWorld)
         } catch {
             throw .scriptError(underlyingError: error)
         }
@@ -196,17 +245,21 @@ extension WebPage {
     /// - Parameters:
     ///   - returnType: The type the expression returns.
     ///   - arguments: A dictionary of the arguments to pass to the function call.
+    ///   - frame: The frame in which to evaluate the JavaScript code.
+    ///   - contentWorld: The namespace in which to evaluate the JavaScript code.
     ///   - script: The JavaScript string to use as the function body.
     /// - Returns: The result of the script evaluation. If the type of the result is not the type of `returnType`, an error is thrown.
     /// - Throws: A `JavaScriptEvaluationError` error if there was a problem evaluating the script, or if a serialization failure occurred.
     public func callJavaScript<Result>(
         returning returnType: Result?.Type,
         arguments: [String: Any] = [:],
+        in frame: WebPage.FrameInfo? = nil,
+        contentWorld: WKContentWorld? = nil,
         script: () -> String
     ) async throws(JavaScriptEvaluationError) -> Result? {
         let result: Any?
         do {
-            result = try await callJavaScript(script(), arguments: arguments)
+            result = try await callJavaScript(script(), arguments: arguments, in: frame, contentWorld: contentWorld)
         } catch {
             throw .scriptError(underlyingError: error)
         }
@@ -227,16 +280,20 @@ extension WebPage {
     /// - Parameters:
     ///   - returnType: The type the expression returns.
     ///   - arguments: A dictionary of the arguments to pass to the function call.
+    ///   - frame: The frame in which to evaluate the JavaScript code.
+    ///   - contentWorld: The namespace in which to evaluate the JavaScript code.
     ///   - script: The JavaScript string to use as the function body.
     /// - Throws: A `JavaScriptEvaluationError` error if there was a problem evaluating the script, or if a serialization failure occurred.
     public func callJavaScript(
         returning returnType: Void.Type = Void.self,
         arguments: [String: Any] = [:],
+        in frame: WebPage.FrameInfo? = nil,
+        contentWorld: WKContentWorld? = nil,
         script: () -> String
     ) async throws(JavaScriptEvaluationError) {
         let result: Any?
         do {
-            result = try await callJavaScript(script(), arguments: arguments)
+            result = try await callJavaScript(script(), arguments: arguments, in: frame, contentWorld: contentWorld)
         } catch {
             throw .scriptError(underlyingError: error)
         }

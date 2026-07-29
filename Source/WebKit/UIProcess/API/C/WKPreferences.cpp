@@ -104,7 +104,7 @@ void WKPreferencesSetBoolValueForKeyForTesting(WKPreferencesRef preferencesRef, 
 
 void WKPreferencesSetDoubleValueForKeyForTesting(WKPreferencesRef preferencesRef, double value, WKStringRef key)
 {
-    protect(toImpl(preferencesRef))->setBoolValueForKey(toWTFString(key), value, true);
+    protect(toImpl(preferencesRef))->setDoubleValueForKey(toWTFString(key), value, true);
 }
 
 void WKPreferencesSetUInt32ValueForKeyForTesting(WKPreferencesRef preferencesRef, uint32_t value, WKStringRef key)
@@ -433,26 +433,6 @@ void WKPreferencesSetNeedsSiteSpecificQuirks(WKPreferencesRef preferencesRef, bo
 bool WKPreferencesGetNeedsSiteSpecificQuirks(WKPreferencesRef preferencesRef)
 {
     return protect(toImpl(preferencesRef))->needsSiteSpecificQuirks();
-}
-
-void WKPreferencesSetForceFTPDirectoryListings(WKPreferencesRef preferencesRef, bool flag)
-{
-    protect(toImpl(preferencesRef))->setForceFTPDirectoryListings(flag);
-}
-
-bool WKPreferencesGetForceFTPDirectoryListings(WKPreferencesRef preferencesRef)
-{
-    return protect(toImpl(preferencesRef))->forceFTPDirectoryListings();
-}
-
-void WKPreferencesSetFTPDirectoryTemplatePath(WKPreferencesRef preferencesRef, WKStringRef pathRef)
-{
-    protect(toImpl(preferencesRef))->setFTPDirectoryTemplatePath(toWTFString(pathRef));
-}
-
-WKStringRef WKPreferencesCopyFTPDirectoryTemplatePath(WKPreferencesRef preferencesRef)
-{
-    return toCopiedAPI(protect(toImpl(preferencesRef))->ftpDirectoryTemplatePath());
 }
 
 void WKPreferencesSetTabsToLinks(WKPreferencesRef preferencesRef, bool tabsToLinks)
@@ -2118,4 +2098,22 @@ void WKPreferencesSetMediaStreamEnabled(WKPreferencesRef preferencesRef, bool en
 bool WKPreferencesGetMediaStreamEnabled(WKPreferencesRef preferencesRef)
 {
     return true;
+}
+
+void WKPreferencesSetForceFTPDirectoryListings(WKPreferencesRef, bool)
+{
+}
+
+bool WKPreferencesGetForceFTPDirectoryListings(WKPreferencesRef)
+{
+    return false;
+}
+
+void WKPreferencesSetFTPDirectoryTemplatePath(WKPreferencesRef, WKStringRef)
+{
+}
+
+WKStringRef WKPreferencesCopyFTPDirectoryTemplatePath(WKPreferencesRef)
+{
+    return toCopiedAPI(String { });
 }

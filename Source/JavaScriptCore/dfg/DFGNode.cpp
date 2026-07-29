@@ -34,6 +34,11 @@
 #include "DOMJITSignature.h"
 #include "JSCellButterfly.h"
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFISignature.h"
+#include "JSFFIFunction.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace DFG {
@@ -263,9 +268,11 @@ void Node::convertToNewArrayWithSize()
 {
     ASSERT(op() == NewArrayWithSpecies);
     IndexingType indexingType = this->indexingType();
+    unsigned vectorLengthHint = this->vectorLengthHint();
     setOpAndDefaultFlags(NewArrayWithSize);
     children.child2() = Edge();
     m_opInfo = indexingType;
+    m_opInfo2 = vectorLengthHint;
 }
 
 void Node::convertToNewArrayWithButterfly(Graph&, Node* butterfly)
@@ -327,6 +334,26 @@ void Node::convertToCallWasm(FrozenValue* callee)
     m_opInfo = callee;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void Node::convertToCallFFI(FrozenValue* callee)
+{
+    ASSERT(m_op == Call);
+    m_op = CallFFI;
+    m_opInfo = callee;
+}
+
+JSFFIFunction* Node::ffiFunction()
+{
+    ASSERT(op() == CallFFI);
+    return castOperand<JSFFIFunction*>();
+}
+
+FFI::Signature& Node::ffiSignature()
+{
+    return ffiFunction()->signature();
+}
+#endif
+
 void Node::convertToCallDOM(Graph& graph)
 {
     ASSERT(op() == Call);
@@ -354,6 +381,16 @@ void Node::convertToRegExpExecNonGlobalOrStickyWithoutChecks(FrozenValue* regExp
     children.child1() = Edge(children.child1().node(), KnownCellUse);
     children.child2() = Edge(children.child3().node(), KnownStringUse);
     children.child3() = Edge();
+    m_opInfo = regExp;
+}
+
+void Node::convertToRegExpExecStickyWithoutChecks(FrozenValue* regExp)
+{
+    ASSERT(op() == RegExpExec);
+    setOpAndDefaultFlags(RegExpExecSticky);
+    children.child1() = Edge(children.child1().node(), KnownCellUse);
+    children.child2() = Edge(children.child2().node(), RegExpObjectUse);
+    children.child3() = Edge(children.child3().node(), KnownStringUse);
     m_opInfo = regExp;
 }
 
@@ -409,6 +446,22 @@ void Node::convertToDefineAccessorProperty(Graph& graph, Edge base, Edge propert
     graph.m_varArgChildren.append(getter);
     graph.m_varArgChildren.append(setter);
     graph.m_varArgChildren.append(attributes);
+    children = AdjacencyList(AdjacencyList::Variable, firstChild, 5);
+}
+
+void Node::convertToEnumeratorHasOwnProperty(Graph& graph, Edge base, Edge propertyName, Edge index, Edge mode, Edge enumerator, ArrayMode arrayMode, unsigned enumeratorMetadata)
+{
+    ASSERT(op() == HasOwnProperty);
+    setOpAndDefaultFlags(EnumeratorHasOwnProperty);
+    m_opInfo = arrayMode.asWord();
+    m_opInfo2 = enumeratorMetadata;
+
+    unsigned firstChild = graph.m_varArgChildren.size();
+    graph.m_varArgChildren.append(base);
+    graph.m_varArgChildren.append(propertyName);
+    graph.m_varArgChildren.append(index);
+    graph.m_varArgChildren.append(mode);
+    graph.m_varArgChildren.append(enumerator);
     children = AdjacencyList(AdjacencyList::Variable, firstChild, 5);
 }
 

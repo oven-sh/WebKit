@@ -40,7 +40,6 @@
 #include "AirLogRegisterPressure.h"
 #include "AirLowerAfterRegAlloc.h"
 #include "AirLowerEntrySwitch.h"
-#include "AirLowerMacros.h"
 #include "AirLowerStackArgs.h"
 #include "AirOpcodeUtils.h"
 #include "AirOptimizeBlockOrder.h"
@@ -77,8 +76,6 @@ void prepareForGeneration(Code& code)
         validate(code);
 
     if (!code.optLevel()) {
-        lowerMacros(code);
-
         // FIXME: The name of this phase doesn't make much sense in O0 since we do this before
         // register allocation.
         lowerAfterRegAlloc(code);
@@ -105,8 +102,6 @@ void prepareForGeneration(Code& code)
     }
 
     simplifyCFG(code);
-
-    lowerMacros(code);
 
     // This is where we run our optimizations and transformations.
     // FIXME: Add Air optimizations.
@@ -146,20 +141,21 @@ void prepareForGeneration(Code& code)
 
     // This is needed to satisfy a requirement of B3::StackmapValue. This also removes dead
     // code. We can avoid running this when certain optimizations are disabled.
+    bool cfgMayHaveChanged = false;
     if (code.optLevel() >= 2 || code.needsUsedRegisters())
-        reportUsedRegisters(code);
+        cfgMayHaveChanged |= reportUsedRegisters(code);
 
     // Attempt to remove false dependencies between instructions created by partial register changes.
     // This must be executed as late as possible as it depends on the instructions order and register
     // use. We _must_ run this after reportUsedRegisters(), since that kills variable assignments
     // that seem dead. Luckily, this phase does not change register liveness, so that's OK.
     fixPartialRegisterStalls(code);
-    
+
     // Actually create entrypoints.
-    lowerEntrySwitch(code);
-    
-    // The control flow graph can be simplified further after we have lowered EntrySwitch.
-    simplifyCFG(code);
+    cfgMayHaveChanged |= lowerEntrySwitch(code);
+
+    if (cfgMayHaveChanged)
+        simplifyCFG(code);
 
     // We do this optimization at the very end of Air generation pipeline since it can be beneficial after
     // spills are lowered to load/store with the frame pointer or the stack pointer. And this is block-local

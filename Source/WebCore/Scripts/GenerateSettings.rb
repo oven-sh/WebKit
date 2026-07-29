@@ -113,7 +113,7 @@ class Setting
       name[0..1].downcase + name[2..name.length]
     elsif name.start_with?("CSSOM", "HTTPS")
       name
-    elsif name.start_with?("URL","CSS", "XSS", "FTP", "DOM", "DNS", "PDF", "ICE", "HDR", "RTC")
+    elsif name.start_with?("URL","CSS", "XSS", "FTP", "DOM", "DNS", "PDF", "ICE", "HDR", "RTC", "SVG")
       name[0..2].downcase + name[3..name.length]
     elsif name.start_with?("HTTP", "HTML")
       name[0..3].downcase + name[4..name.length]
@@ -150,17 +150,13 @@ class Setting
   end
 
   def hasComplexSetter?
-    @onChange != nil
-  end
-
-  def hasComplexGetter?
-    hasInspectorOverride?
+    @onChange != nil || hasInspectorOverride?
   end
 
   def setterFunctionName
     if @name.start_with?("html")
       "set" + @name[0..3].upcase + @name[4..@name.length]
-    elsif @name.start_with?("url", "css", "xss", "ftp", "dom", "dns", "ice", "hdr", "pdf", "rtc")
+    elsif @name.start_with?("url", "css", "xss", "ftp", "dom", "dns", "ice", "hdr", "pdf", "rtc", "svg")
       "set" + @name[0..2].upcase + @name[3..@name.length]
     elsif @name.start_with?("vp")
       "set" + @name[0..1].upcase + @name[2..@name.length]
@@ -194,8 +190,6 @@ class Conditional
   attr_accessor :boolSettingsNeedingImplementation
   attr_accessor :nonBoolSettings
   attr_accessor :nonBoolSettingsNeedingImplementation
-  attr_accessor :settingsWithComplexGetters
-  attr_accessor :settingsWithComplexGettersNeedingImplementation
   attr_accessor :settingsWithComplexSetters
   attr_accessor :settingsWithComplexSettersNeedingImplementation
 
@@ -210,9 +204,6 @@ class Conditional
   
     @nonBoolSettings = @settings.reject { |setting| setting.type == "bool" }
     @nonBoolSettingsNeedingImplementation = @nonBoolSettings.reject { |setting| setting.customImplementation }
-
-    @settingsWithComplexGetters = @settings.select { |setting| setting.hasComplexGetter? }
-    @settingsWithComplexGettersNeedingImplementation = @settingsWithComplexGetters.reject { |setting| setting.customImplementation }
 
     @settingsWithComplexSetters = @settings.select { |setting| setting.hasComplexSetter? }
     @settingsWithComplexSettersNeedingImplementation = @settingsWithComplexSetters.reject { |setting| setting.customImplementation }

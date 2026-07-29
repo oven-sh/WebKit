@@ -1,5 +1,11 @@
 const isDebug = false;
 
+// Mock video presentation mode is required so tests that enter Picture-in-Picture
+// (or otherwise transition presentation mode) do not compete for the singleton system
+// PiP window when tests run in parallel.
+if (window.internals && window.internals.setMockVideoPresentationModeEnabled)
+    window.internals.setMockVideoPresentationModeEnabled(true);
+
 function logDebug(msg) {
     if (isDebug)
         console.log(msg);
@@ -227,14 +233,13 @@ async function dispatchWheelActions(actions)
             await pause(action.duration);
             break;
         case "scroll":
-            // FIXME(261810): Follow tick-based event dispatch logic rather than sending scroll events instantaneously
             // https://w3c.github.io/webdriver/#dfn-perform-a-scroll
             let { x, y, origin, deltaX, deltaY, duration } = action;
             if ((x < 0) || (x > window.innerWidth) || (y < 0) || (y > window.innerHeight))
                 throw new Error('Move target out of bounds');
             if (duration === undefined)
                 duration = computeTickDuration(actions, "wheel");
-
+ 
             const originWindow = origin?.ownerDocument?.defaultView;
             if (originWindow && origin instanceof originWindow.Element) {
                 const bounds = origin.getBoundingClientRect();
@@ -242,26 +247,68 @@ async function dispatchWheelActions(actions)
                 x += bounds.left + (bounds.width / 2.0);
                 y += bounds.top + (bounds.height / 2.0);
             }
-            const scrollEvents = [
-                {
-                    type : "wheel",
-                    viewX : x,
-                    viewY : y,
-                    deltaX : 0,
-                    deltaY : -deltaY,
-                    phase : "began"
-                },
-                {
-                    type : "wheel",
-                    deltaX : -deltaX,
-                    deltaY : 0,
-                    phase : "changed"
-                },
-                {
-                    type : "wheel",
-                    momentumPhase : "ended"
+
+            const eventInterval = 1000. / 60.; // Matches the hardcoded interval in sendEventStream()
+            const eventCount = Math.ceil(duration / eventInterval);
+            const scrollEvents = [];
+
+            if (eventCount === 1 && deltaX && deltaY) {
+                // Special-case single-event cases; separate out the X and Y deltas into different events,
+                // to avoid the axis-locking code from zeroing out one of them.
+                scrollEvents.push({
+                        type : "wheel",
+                        viewX : x,
+                        viewY : y,
+                        deltaX : 0,
+                        deltaY : -deltaY,
+                        phase : "began"
+                    });
+                scrollEvents.push({
+                        type : "wheel",
+                        deltaX : -deltaX,
+                        deltaY : 0,
+                        phase : "changed"
+                    });
+            } else {
+                const perEventDeltaX = Math.floor(deltaX / eventCount);
+                const perEventDeltaY = Math.floor(deltaY / eventCount);
+
+                scrollEvents.push({
+                        type : "wheel",
+                        viewX : x,
+                        viewY : y,
+                        deltaX : -perEventDeltaX,
+                        deltaY : -perEventDeltaY,
+                        phase : "began"
+                    });
+
+                for (let i = 1; i < eventCount; ++i) {
+                    scrollEvents.push({
+                            type : "wheel",
+                            deltaX : -perEventDeltaX,
+                            deltaY : -perEventDeltaY,
+                            phase : "changed"
+                        });
                 }
-            ];
+
+                const remainingDeltaX = deltaX - (eventCount * perEventDeltaX);
+                const remainingDeltaY = deltaY - (eventCount * perEventDeltaY);
+
+                if (remainingDeltaX || remainingDeltaY) {
+                    scrollEvents.push({
+                            type : "wheel",
+                            deltaX : -remainingDeltaX,
+                            deltaY : -remainingDeltaY,
+                            phase : "changed"
+                        });
+                }
+            }
+
+            scrollEvents.push({
+                    type : "wheel",
+                    phase : "ended"
+                });
+
             eventSender.monitorWheelEvents();
             await ensurePresentationUpdate();
             const eventStreamAsString = JSON.stringify({ events: scrollEvents });
@@ -357,12 +404,9 @@ window.test_driver_internal.send_keys = async function(element, keys)
     if (testRunner.isIOSFamily && testRunner.isWebKit2) {
         await new Promise((resolve) => {
             testRunner.runUIScript(`
-            {
                 const keyList = JSON.parse('${JSON.stringify(keyList)}');
-                const modifiers = JSON.parse('${JSON.stringify(modifiers)}');
                 for (const key of keyList)
-                    uiController.keyDown(key, modifiers);
-            }`, resolve);
+                    uiController.keyDown(key, modifiers);`, resolve);
         });
         return;
     }
@@ -379,22 +423,36 @@ window.test_driver_internal.send_keys = async function(element, keys)
  */
 window.test_driver_internal.click = async function (element, coords)
 {
-    if (testRunner.isIOSFamily && testRunner.isWebKit2) {
+    // Use the eventSender from the element's window so that events are
+    // dispatched to the correct view (e.g. a popup opened via window.open).
+    const targetWindow = element.ownerDocument.defaultView || window;
+    const targetEventSender = targetWindow.eventSender || eventSender;
+
+    // coords are frame-local; when the element is in a subframe, shift them to root-view
+    // coordinates since the click is hit-tested from the top window. A top-level element needs no
+    // shift. The shift ignores CSS transforms on an ancestor <iframe> (webkit.org/b/318752).
+    let point = coords;
+    const elementWindow = element.ownerDocument.defaultView;
+    if (elementWindow && elementWindow !== elementWindow.top) {
+        const rootView = targetWindow.internals.boundingBoxInRootViewCoordinates(element);
+        const frameLocal = element.getBoundingClientRect();
+        point = {
+            x: coords.x + rootView.left - frameLocal.left,
+            y: coords.y + rootView.top - frameLocal.top,
+        };
+    }
+
+    if (testRunner?.isIOSFamily && testRunner?.isWebKit2) {
         await new Promise((resolve) => {
             testRunner.runUIScript(`
-                uiController.singleTapAtPoint(${coords.x}, ${coords.y}, function() {
+                uiController.singleTapAtPoint(${point.x}, ${point.y}, function() {
                     uiController.uiScriptComplete();
                 });`, resolve);
         });
         return;
     }
 
-    // Use the eventSender from the element's window so that events are
-    // dispatched to the correct view (e.g. a popup opened via window.open).
-    const targetWindow = element.ownerDocument.defaultView || window;
-    const targetEventSender = targetWindow.eventSender || eventSender;
-
-    await targetEventSender.asyncMouseMoveTo(coords.x, coords.y);
+    await targetEventSender.asyncMouseMoveTo(point.x, point.y);
     await targetEventSender.asyncMouseDown();
     await targetEventSender.asyncMouseUp();
 }
@@ -560,6 +618,15 @@ window.test_driver_internal.set_permission = async function(permission_params)
     default:
         throw new Error(`Unsupported permission name "${permission_params.descriptor.name}".`);
     }
+};
+
+// Digital Credentials virtual wallet actuation; see webkit.org/b/306292.
+window.test_driver_internal.set_virtual_wallet_behavior = async function(action, protocol = null, response = null, context = null)
+{
+    context = context ?? window;
+    if (!context.testRunner || !context.testRunner.setVirtualWalletBehavior)
+        throw new Error("set_virtual_wallet_behavior is not supported.");
+    context.testRunner.setVirtualWalletBehavior(String(action), protocol != null ? String(protocol) : "", response != null ? JSON.stringify(response) : "");
 };
 
 /**

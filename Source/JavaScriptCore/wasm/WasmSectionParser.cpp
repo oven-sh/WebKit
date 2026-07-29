@@ -339,12 +339,13 @@ auto SectionParser::parseTableHelper(bool isImport) -> PartialResult
     uint64_t initial;
     std::optional<uint64_t> maximum;
     bool isShared = false;
-    bool isTable64;
+    bool isTable64 = false;
     PartialResult limits = parseResizableLimits<LimitsType::Table>(initial, maximum, isShared, isTable64);
     ASSERT(!isShared);
     if (!limits) [[unlikely]]
         return makeUnexpected(WTF::move(limits.error()));
-    WASM_PARSER_FAIL_IF(initial > maxTableEntries, "Table's initial page count of "_s, initial, " is too big, maximum "_s, maxTableEntries);
+
+    uint32_t clampedInitial = initial > maxTableEntries ? static_cast<uint32_t>(maxTableEntries) : static_cast<uint32_t>(initial);
 
     ASSERT(!maximum || *maximum >= initial);
 
@@ -354,7 +355,7 @@ auto SectionParser::parseTableHelper(bool isImport) -> PartialResult
         bool isExtendedConstantExpression;
         v128_t unusedVector { };
         WASM_FAIL_IF_HELPER_FAILS(parseInitExpr(initOpcode, isExtendedConstantExpression, initialBitsOrImportNumber, unusedVector, type, typeForInitOpcode));
-        WASM_PARSER_FAIL_IF(!isSubtype(typeForInitOpcode, type), "Table init_expr opcode of type "_s, typeForInitOpcode.kind, " doesn't match table's type "_s, type.kind);
+        WASM_PARSER_FAIL_IF(!isSubtype(typeForInitOpcode, type), "Table init_expr opcode of type "_s, typeForInitOpcode.kind(), " doesn't match table's type "_s, type.kind());
 
         if (isExtendedConstantExpression)
             tableInitType = TableInformation::FromExtendedExpression;
@@ -369,7 +370,7 @@ auto SectionParser::parseTableHelper(bool isImport) -> PartialResult
     }
 
     TableElementType tableType = isSubtype(type, funcrefType()) ? TableElementType::Funcref : TableElementType::Externref;
-    m_info->tables.append(TableInformation(initial, maximum, isImport, tableType, type, tableInitType, initialBitsOrImportNumber));
+    m_info->tables.append(TableInformation(clampedInitial, maximum, isImport, tableType, type, tableInitType, initialBitsOrImportNumber, isTable64));
 
     return { };
 }
@@ -485,7 +486,7 @@ auto SectionParser::parseGlobal() -> PartialResult
             global.initializationType = GlobalInformation::FromRefFunc;
         else
             global.initializationType = GlobalInformation::FromExpression;
-        WASM_PARSER_FAIL_IF(!isSubtype(typeForInitOpcode, global.type), "Global init_expr opcode of type "_s, typeForInitOpcode.kind, " doesn't match global's type "_s, global.type.kind);
+        WASM_PARSER_FAIL_IF(!isSubtype(typeForInitOpcode, global.type), "Global init_expr opcode of type "_s, typeForInitOpcode.kind(), " doesn't match global's type "_s, global.type.kind());
 
         if (initOpcode == RefFunc) {
             ASSERT(global.initializationType != GlobalInformation::FromVector);
@@ -586,7 +587,10 @@ auto SectionParser::parseElement() -> PartialResult
             WASM_FAIL_IF_HELPER_FAILS(validateElementTableIdx(tableIndex, nonNullFuncrefType()));
 
             std::optional<I32InitExpr> initExpr;
-            WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForElementSection(initExpr));
+            if (m_info->table(tableIndex).addressType().is64Bit())
+                WASM_FAIL_IF_HELPER_FAILS(parseI64InitExprForElementSection(initExpr));
+            else
+                WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForElementSection(initExpr));
 
             uint32_t indexCount;
             WASM_FAIL_IF_HELPER_FAILS(parseIndexCountForElementSection(indexCount, elementNum));
@@ -620,7 +624,10 @@ auto SectionParser::parseElement() -> PartialResult
             WASM_FAIL_IF_HELPER_FAILS(validateElementTableIdx(tableIndex, nonNullFuncrefType()));
 
             std::optional<I32InitExpr> initExpr;
-            WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForElementSection(initExpr));
+            if (m_info->table(tableIndex).addressType().is64Bit())
+                WASM_FAIL_IF_HELPER_FAILS(parseI64InitExprForElementSection(initExpr));
+            else
+                WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForElementSection(initExpr));
 
             uint8_t elementKind;
             WASM_FAIL_IF_HELPER_FAILS(parseElementKind(elementKind));
@@ -656,7 +663,10 @@ auto SectionParser::parseElement() -> PartialResult
             WASM_FAIL_IF_HELPER_FAILS(validateElementTableIdx(tableIndex, funcrefType()));
 
             std::optional<I32InitExpr> initExpr;
-            WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForElementSection(initExpr));
+            if (m_info->table(tableIndex).addressType().is64Bit())
+                WASM_FAIL_IF_HELPER_FAILS(parseI64InitExprForElementSection(initExpr));
+            else
+                WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForElementSection(initExpr));
 
             uint32_t indexCount;
             WASM_FAIL_IF_HELPER_FAILS(parseIndexCountForElementSection(indexCount, elementNum));
@@ -688,9 +698,13 @@ auto SectionParser::parseElement() -> PartialResult
         case 0x06: {
             uint32_t tableIndex;
             WASM_PARSER_FAIL_IF(!parseVarUInt32(tableIndex), "can't get "_s, elementNum, "th Element table index"_s);
+            WASM_PARSER_FAIL_IF(tableIndex >= m_info->tableCount(), "Element section for Table "_s, tableIndex, " exceeds available Table "_s, m_info->tableCount());
 
             std::optional<I32InitExpr> initExpr;
-            WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForElementSection(initExpr));
+            if (m_info->table(tableIndex).addressType().is64Bit())
+                WASM_FAIL_IF_HELPER_FAILS(parseI64InitExprForElementSection(initExpr));
+            else
+                WASM_FAIL_IF_HELPER_FAILS(parseI32InitExprForElementSection(initExpr));
 
             Type refType;
             WASM_PARSER_FAIL_IF(!parseRefType(m_info, refType), "can't parse reftype in elem section"_s);
@@ -816,7 +830,7 @@ auto SectionParser::parseInitExpr(uint8_t& opcode, bool& isExtendedConstantExpre
             TypeIndex typeIndex = m_info->rtt(ModuleInformation::typeSignatureIndexFromHeapType(heapType)).asTypeIndex();
             typeOfNull = Type { TypeKind::RefNull, typeIndex };
         } else
-            typeOfNull = Type { TypeKind::RefNull, static_cast<TypeIndex>(heapType) };
+            typeOfNull = Type { TypeKind::RefNull, typeIndexFromTypeKind(static_cast<TypeKind>(heapType)) };
         resultType = typeOfNull;
         bitsOrImportNumber = JSValue::encode(jsNull());
         break;
@@ -1239,6 +1253,11 @@ auto SectionParser::parseI32InitExprForElementSection(std::optional<I32InitExpr>
     return parseI32InitExpr(initExpr, "Element init_expr must produce an i32"_s);
 }
 
+auto SectionParser::parseI64InitExprForElementSection(std::optional<I64InitExpr>& initExpr) -> PartialResult
+{
+    return parseI64InitExpr(initExpr, "Element init_expr must produce an i64"_s);
+}
+
 auto SectionParser::parseElementKind(uint8_t& resultElementKind) -> PartialResult
 {
     uint8_t elementKind;
@@ -1272,7 +1291,7 @@ auto SectionParser::parseElementSegmentVectorOfExpressions(Type elementType, Vec
         bool isExtendedConstantExpression;
         v128_t unusedVector { };
         WASM_FAIL_IF_HELPER_FAILS(parseInitExpr(initOpcode, isExtendedConstantExpression, initialBitsOrIndex, unusedVector, elementType, typeForInitOpcode));
-        WASM_PARSER_FAIL_IF(!isSubtype(typeForInitOpcode, elementType), "Element section's "_s, elementNum, "th element's init_expr opcode of type "_s, typeForInitOpcode.kind, " doesn't match element's type "_s, elementType.kind);
+        WASM_PARSER_FAIL_IF(!isSubtype(typeForInitOpcode, elementType), "Element section's "_s, elementNum, "th element's init_expr opcode of type "_s, typeForInitOpcode.kind(), " doesn't match element's type "_s, elementType.kind());
 
         if (isExtendedConstantExpression)
             initType = Element::InitializationType::FromExtendedExpression;

@@ -10,10 +10,10 @@
 
 #include "include/core/SkRefCnt.h"
 #include "include/gpu/ganesh/GrDirectContext.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkArenaAlloc.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/gpu/ganesh/GrAppliedClip.h"
 #include "src/gpu/ganesh/GrBuffer.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
@@ -76,7 +76,7 @@ public:
     void* makeVertexSpace(size_t vertexSize, int vertexCount, sk_sp<const GrBuffer>* buffer,
                           int* startVertex) override {
         if (vertexSize * vertexCount > sizeof(fStaticVertexData)) {
-            SK_ABORT("FATAL: wanted %zu bytes of static vertex data; only have %zu.\n",
+            SK_ABORT("FATAL: wanted %zu bytes of static vertex data; only have %zu.",
                      vertexSize * vertexCount, sizeof(fStaticVertexData));
         }
         *buffer = fStaticVertexBuffer;
@@ -88,7 +88,7 @@ public:
                                  sk_sp<const GrBuffer>* buffer, int* startVertex,
                                  int* actualVertexCount) override {
         if (vertexSize * minVertexCount > sizeof(fStaticVertexData)) {
-            SK_ABORT("FATAL: wanted %zu bytes of static vertex data; only have %zu.\n",
+            SK_ABORT("FATAL: wanted %zu bytes of static vertex data; only have %zu.",
                      vertexSize * minVertexCount, sizeof(fStaticVertexData));
         }
         *buffer = fStaticVertexBuffer;
@@ -100,7 +100,7 @@ public:
     GrDrawIndirectWriter makeDrawIndirectSpace(int drawCount, sk_sp<const GrBuffer>* buffer,
                                                size_t* offsetInBytes) override {
         if (sizeof(GrDrawIndirectCommand) * drawCount > sizeof(fStaticIndirectData)) {
-            SK_ABORT("FATAL: wanted %zu bytes of static indirect data; only have %zu.\n",
+            SK_ABORT("FATAL: wanted %zu bytes of static indirect data; only have %zu.",
                      sizeof(GrDrawIndirectCommand) * drawCount, sizeof(fStaticIndirectData));
         }
         *buffer = fStaticIndirectBuffer;
@@ -114,7 +114,7 @@ public:
                                                              sk_sp<const GrBuffer>* buffer,
                                                              size_t* offsetInBytes) override {
         if (sizeof(GrDrawIndexedIndirectCommand) * drawCount > sizeof(fStaticIndirectData)) {
-            SK_ABORT("FATAL: wanted %zu bytes of static indirect data; only have %zu.\n",
+            SK_ABORT("FATAL: wanted %zu bytes of static indirect data; only have %zu.",
                      sizeof(GrDrawIndexedIndirectCommand) * drawCount, sizeof(fStaticIndirectData));
         }
         *buffer = fStaticIndirectBuffer;

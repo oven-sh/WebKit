@@ -174,7 +174,7 @@ static void buildRendererHighlight(RenderObject* renderer, const InspectorOverla
             auto& renderBox = downcast<RenderBox>(*renderer);
 
             LayoutBoxExtent margins(renderBox.marginTop(), renderBox.marginRight(), renderBox.marginBottom(), renderBox.marginLeft());
-            paddingBox = renderBox.clientBoxRect();
+            paddingBox = LayoutRect(renderBox.borderLeft(), renderBox.borderTop(), renderBox.paddingBoxWidth(), renderBox.paddingBoxHeight());
             contentBox = LayoutRect(paddingBox.x() + renderBox.paddingLeft(), paddingBox.y() + renderBox.paddingTop(),
                 paddingBox.width() - renderBox.paddingLeft() - renderBox.paddingRight(), paddingBox.height() - renderBox.paddingTop() - renderBox.paddingBottom());
             borderBox = LayoutRect(paddingBox.x() - renderBox.borderLeft(), paddingBox.y() - renderBox.borderTop(),
@@ -1140,10 +1140,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
 
 static bool NODELETE rendererIsFlexboxItem(RenderObject& renderer)
 {
-    if (auto* parentFlexRenderer = dynamicDowncast<RenderFlexibleBox>(renderer.parent()))
-        return !parentFlexRenderer->orderIterator().shouldSkipChild(renderer);
-
-    return false;
+    return is<RenderFlexibleBox>(renderer.parent()) && !renderer.isOutOfFlowPositioned() && !renderer.isExcludedFromNormalLayout();
 }
 
 static bool NODELETE rendererIsGridItem(RenderObject& renderer)
@@ -1699,7 +1696,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     gridHighlightOverlay.color = gridOverlay.config.gridColor;
 
     // Draw columns and rows.
-    auto columnWidths = renderGrid->trackSizesForComputedStyle(Style::GridTrackSizingDirection::Columns);
+    auto& columnWidths = renderGrid->trackSizesForComputedStyle(Style::GridTrackSizingDirection::Columns);
     auto columnLineNames = gridLineNames(node->renderStyle(), Style::GridTrackSizingDirection::Columns, columnPositions.size());
     auto authoredTrackColumnSizes = authoredGridTrackSizes(node, Style::GridTrackSizingDirection::Columns, columnWidths.size());
     FloatLine previousColumnEndLine;
@@ -1788,7 +1785,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
         }
     }
 
-    auto rowHeights = renderGrid->trackSizesForComputedStyle(Style::GridTrackSizingDirection::Rows);
+    auto& rowHeights = renderGrid->trackSizesForComputedStyle(Style::GridTrackSizingDirection::Rows);
     auto rowLineNames = gridLineNames(node->renderStyle(), Style::GridTrackSizingDirection::Rows, rowPositions.size());
     auto authoredTrackRowSizes = authoredGridTrackSizes(node, Style::GridTrackSizingDirection::Rows, rowHeights.size());
     FloatLine previousRowEndLine;
@@ -2157,7 +2154,7 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
 
     auto isRowDirection = wasRowDirection ^ !computedStyle->writingMode().isHorizontal();
     auto isMainAxisDirectionReversed = computedStyle->isReverseFlexDirection() ^ (wasRowDirection ? isRightToLeftDirection : isBlockFlipped);
-    auto isCrossAxisDirectionReversed = (computedStyle->flexWrap() == FlexWrap::Reverse) ^ (wasRowDirection ? isBlockFlipped : isBlockFlipped);
+    auto isCrossAxisDirectionReversed = (computedStyle->flexWrap() == FlexWrap::Reverse) ^ (wasRowDirection ? isBlockFlipped : isRightToLeftDirection);
 
     auto localQuadToRootQuad = [&](const FloatQuad& quad) {
         return FloatQuad(
@@ -2246,11 +2243,9 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
     Vector<RenderBox*> renderChildrenInDOMOrder;
     bool hasCustomOrder = false;
 
-    auto childOrderIterator = renderFlex->orderIterator();
-    for (CheckedPtr<RenderBox> renderChild = childOrderIterator.first(); renderChild; renderChild = childOrderIterator.next()) {
-        if (childOrderIterator.shouldSkipChild(*renderChild))
-            continue;
-        renderChildrenInFlexOrder.append(renderChild);
+    for (auto& flexItem : renderFlex->flexItems()) {
+        if (flexItem)
+            renderChildrenInFlexOrder.append(flexItem.get());
     }
 
     if (flexOverlay.config.showOrderNumbers) {
@@ -2271,7 +2266,7 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
     for (CheckedPtr renderChild : renderChildrenInFlexOrder) {
         // Build bounds for each child and collect children on the same logical line.
         {
-            auto childRect = renderChild->frameRect();
+            auto childRect = renderChild->borderBoxRectInContainer();
             renderFlex->flipForWritingMode(childRect);
             childRect.expand(renderChild->marginBox());
 

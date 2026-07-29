@@ -39,6 +39,7 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(FunctionConstructor);
 
 const ClassInfo FunctionConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(FunctionConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(FunctionConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(constructWithFunctionConstructor);
 static JSC_DECLARE_HOST_FUNCTION(callFunctionConstructor);

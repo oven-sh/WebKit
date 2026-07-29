@@ -181,9 +181,6 @@
             },
             "/webkit/WebKitWebView/cut-copy-paste/editable": {
                 "expected": {"gtk": {"status": ["FAIL", "PASS"], "bug": "webkit.org/b/263417"}}
-            },
-            "/webkit/WebKitWebView/is-playing-audio": {
-                "expected": {"all": {"status": ["FAIL", "TIMEOUT"], "bug": "webkit.org/b/274344"}}
             }
         }
     },
@@ -267,6 +264,9 @@
     },
     "TestWTF": {
         "subtests": {
+            "WTF_GUniquePtr.Basic": {
+                "expected": {"all@Debug": {"status": ["FAIL"], "bug": "webkit.org/b/319221"}}
+            },
             "ThreadMessage.MultipleSenders": {
                 "expected": {"all": {"slow": true, "bug": "webkit.org/b/246472" }}
             },
@@ -457,6 +457,20 @@
         "subtests": {
             "/webkit/WebKitWebsiteData/configuration": {
                 "expected": {"all" : { "status": ["PASS", "FAIL", "TIMEOUT"], "bug": "webkit.org/b/301570"}}
+            }
+        }
+    },
+    "TestInputMethodContext": {
+        "subtests": {
+            "/webkit/WebKitInputMethodContext/simple": {
+                "expected": {"gtk": {"status": ["PASS", "FAIL"], "bug": "webkit.org/b/318892"}}
+            }
+        }
+    },
+    "TestMultiprocess": {
+        "subtests": {
+            "/webkit/WebKitWebContext/process-per-web-view": {
+                "expected": {"gtk": {"status": ["TIMEOUT", "FAIL"], "bug": "webkit.org/b/319955"}}
             }
         }
     }

@@ -41,6 +41,7 @@
 namespace JSC {
 
 const ClassInfo TemporalInstant::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TemporalInstant) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(TemporalInstant);
 
 Structure* TemporalInstant::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {

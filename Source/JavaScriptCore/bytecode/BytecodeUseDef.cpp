@@ -26,6 +26,8 @@
 #include "config.h"
 #include "BytecodeUseDef.h"
 
+#include "BytecodeOperandsForCheckpoint.h"
+
 namespace JSC {
 
 #define CALL_FUNCTOR(__arg) \
@@ -304,10 +306,29 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
         return;
     }
 
+    case op_async_iterator_open: {
+        auto bytecode = instruction->as<OpAsyncIteratorOpen>();
+        useAtEachCheckpointStartingWith(OpAsyncIteratorOpen::symbolCall, bytecode.m_symbolIterator, bytecode.m_iterable);
+        useAtEachCheckpointStartingWith(OpAsyncIteratorOpen::getNext, bytecode.m_iterator);
+        return;
+    }
+
     case op_iterator_next: {
         auto bytecode = instruction->as<OpIteratorNext>();
         useAtEachCheckpoint(bytecode.m_iterator, bytecode.m_next);
         useAtEachCheckpointStartingWith(OpIteratorNext::computeNext, bytecode.m_iterable);
+        return;
+    }
+
+    case op_async_iterator_next: {
+        auto bytecode = instruction->as<OpAsyncIteratorNext>();
+        functor(bytecode.m_next);
+        functor(bytecode.m_iterator);
+        functor(bytecode.m_driver);
+        // The resume value isn't a stored field (see BytecodeList.rb); it's call argument index 1,
+        // derived from m_stackOffset, and only present when m_hasValue.
+        if (bytecode.m_hasValue)
+            functor(resumeValueOperandFor(bytecode));
         return;
     }
 
@@ -506,6 +527,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpConstruct, dst)
     DEFS(OpSuperConstruct, dst)
     DEFS(OpGetById, dst)
+    DEFS(OpAsyncIteratorNext, dst)
     DEFS(OpGetLength, dst)
     DEFS(OpGetByIdDirect, dst)
     DEFS(OpGetByIdWithThis, dst)
@@ -595,6 +617,14 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
 
         defAt(OpIteratorOpen::symbolCall, bytecode.m_iterator);
         defAt(OpIteratorOpen::getNext, bytecode.m_next);
+        return;
+    }
+
+    case op_async_iterator_open: {
+        auto bytecode = instruction->as<OpAsyncIteratorOpen>();
+
+        defAt(OpAsyncIteratorOpen::symbolCall, bytecode.m_iterator);
+        defAt(OpAsyncIteratorOpen::getNext, bytecode.m_next);
         return;
     }
 

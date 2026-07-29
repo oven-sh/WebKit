@@ -481,6 +481,7 @@ $(PROJECT_DIR)/Modules/fetch/FetchRequest.idl
 $(PROJECT_DIR)/Modules/fetch/FetchRequestCache.idl
 $(PROJECT_DIR)/Modules/fetch/FetchRequestCredentials.idl
 $(PROJECT_DIR)/Modules/fetch/FetchRequestDestination.idl
+$(PROJECT_DIR)/Modules/fetch/FetchRequestDuplex.idl
 $(PROJECT_DIR)/Modules/fetch/FetchRequestInit.idl
 $(PROJECT_DIR)/Modules/fetch/FetchRequestMode.idl
 $(PROJECT_DIR)/Modules/fetch/FetchRequestRedirect.idl
@@ -663,7 +664,6 @@ $(PROJECT_DIR)/Modules/mediastream/RTCRtpHeaderExtensionParameters.idl
 $(PROJECT_DIR)/Modules/mediastream/RTCRtpParameters.idl
 $(PROJECT_DIR)/Modules/mediastream/RTCRtpReceiver+Transform.idl
 $(PROJECT_DIR)/Modules/mediastream/RTCRtpReceiver.idl
-$(PROJECT_DIR)/Modules/mediastream/RTCRtpSFrameTransform.idl
 $(PROJECT_DIR)/Modules/mediastream/RTCRtpSFrameTransformErrorEvent.idl
 $(PROJECT_DIR)/Modules/mediastream/RTCRtpScriptTransform.idl
 $(PROJECT_DIR)/Modules/mediastream/RTCRtpScriptTransformProvider.idl
@@ -916,7 +916,6 @@ $(PROJECT_DIR)/Modules/streams/WritableStream.idl
 $(PROJECT_DIR)/Modules/streams/WritableStreamDefaultController.idl
 $(PROJECT_DIR)/Modules/streams/WritableStreamDefaultController.js
 $(PROJECT_DIR)/Modules/streams/WritableStreamDefaultWriter.idl
-$(PROJECT_DIR)/Modules/streams/WritableStreamDefaultWriter.js
 $(PROJECT_DIR)/Modules/streams/WritableStreamInternals.js
 $(PROJECT_DIR)/Modules/streams/WritableStreamSink.idl
 $(PROJECT_DIR)/Modules/url-pattern/URLPattern.idl
@@ -1102,7 +1101,6 @@ $(PROJECT_DIR)/Modules/webdatabase/SQLTransactionErrorCallback.idl
 $(PROJECT_DIR)/Modules/webdriver/Navigator+WebDriver.idl
 $(PROJECT_DIR)/Modules/websockets/CloseEvent.idl
 $(PROJECT_DIR)/Modules/websockets/WebSocket.idl
-$(PROJECT_DIR)/Modules/webtransport/DatagramsReadableMode.idl
 $(PROJECT_DIR)/Modules/webtransport/WebTransport.idl
 $(PROJECT_DIR)/Modules/webtransport/WebTransportBidirectionalStream.idl
 $(PROJECT_DIR)/Modules/webtransport/WebTransportCloseInfo.idl
@@ -1124,6 +1122,7 @@ $(PROJECT_DIR)/Modules/webtransport/WebTransportSendOptions.idl
 $(PROJECT_DIR)/Modules/webtransport/WebTransportSendStream.idl
 $(PROJECT_DIR)/Modules/webtransport/WebTransportSendStreamOptions.idl
 $(PROJECT_DIR)/Modules/webtransport/WebTransportSendStreamStats.idl
+$(PROJECT_DIR)/Modules/webtransport/WebTransportWriter.idl
 $(PROJECT_DIR)/Modules/webxr/Navigator+WebXR.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRBoundedReferenceSpace.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRFrame+HandInput.idl
@@ -1995,7 +1994,7 @@ $(PROJECT_DIR)/page/WebKitBufferNamespace.idl
 $(PROJECT_DIR)/page/WebKitJSHandle.idl
 $(PROJECT_DIR)/page/WebKitNamespace.idl
 $(PROJECT_DIR)/page/WebKitPoint.idl
-$(PROJECT_DIR)/page/WebKitSerializedNode.idl
+$(PROJECT_DIR)/page/WebKitNodeSnapshot.idl
 $(PROJECT_DIR)/page/WindowEventHandlers.idl
 $(PROJECT_DIR)/page/WindowLocalStorage.idl
 $(PROJECT_DIR)/page/WindowOrWorkerGlobalScope+Crypto.idl

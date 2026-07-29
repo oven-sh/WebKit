@@ -29,6 +29,7 @@
 #include "FetchBody.h"
 #include "FetchHeaders.h"
 #include "FetchOptions.h"
+#include "FetchRequestDuplex.h"
 #include "IPAddressSpace.h"
 #include "RequestPriority.h"
 #include <JavaScriptCore/JSCJSValue.h>
@@ -50,10 +51,11 @@ struct FetchRequestInit {
     std::optional<bool> keepalive;
     JSC::JSValue signal;
     std::optional<RequestPriority> priority;
+    std::optional<FetchRequestDuplex> duplex;
     JSC::JSValue window;
     std::optional<IPAddressSpace> targetAddressSpace;
 
-    bool hasMembers() const { return !method.isEmpty() || headers || body || !referrer.isEmpty() || referrerPolicy || mode || credentials || cache || redirect || !integrity.isEmpty() || keepalive || !window.isUndefined() || !signal.isUndefined() || (targetAddressSpace && *targetAddressSpace != IPAddressSpace::Public); }
+    bool hasMembers() const { return !method.isEmpty() || headers || body || !referrer.isEmpty() || referrerPolicy || mode || credentials || cache || redirect || !integrity.isEmpty() || keepalive || duplex || !window.isUndefined() || !signal.isUndefined() || (targetAddressSpace && *targetAddressSpace != IPAddressSpace::Public); }
 };
 
 }

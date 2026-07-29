@@ -582,7 +582,6 @@ struct ImageAnalysisContextMenuActionData {
     BOOL _isChangingFocusUsingAccessoryTab;
     BOOL _didAccessoryTabInitiateFocus;
     BOOL _isExpectingFastSingleTapCommit;
-    BOOL _blurringFocusedElementForLoupeSelection;
     BOOL _showDebugTapHighlightsForFastClicking;
     BOOL _textInteractionDidChangeFocusedElement;
     BOOL _treatAsContentEditableUntilNextEditorStateUpdate;
@@ -686,8 +685,7 @@ struct ImageAnalysisContextMenuActionData {
     std::optional<WebKit::ImageAnalysisRequestIdentifier> _pendingImageAnalysisRequestIdentifier;
     std::optional<WebCore::ElementContext> _elementPendingImageAnalysis;
     Vector<BlockPtr<void(WebKit::ProceedWithTextSelectionInImage)>> _actionsToPerformAfterPendingImageAnalysis;
-    BOOL _isProceedingWithTextSelectionInImage;
-    RetainPtr<CocoaImageAnalyzer> _imageAnalyzer;
+    RetainPtr<VKCImageAnalyzer> _imageAnalyzer;
 #if USE(QUICK_LOOK)
     RetainPtr<QLPreviewController> _visualSearchPreviewController;
     RetainPtr<UIImage> _visualSearchPreviewImage;
@@ -700,7 +698,7 @@ struct ImageAnalysisContextMenuActionData {
     std::optional<WebKit::ImageAnalysisContextMenuActionData> _imageAnalysisContextMenuActionData;
 #endif // ENABLE(IMAGE_ANALYSIS)
     uint32_t _fullscreenVideoImageAnalysisRequestIdentifier;
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
     RetainPtr<VKCImageAnalysisInteraction> _imageAnalysisInteraction;
     RetainPtr<NSMutableSet<UIButton *>> _imageAnalysisActionButtons;
     WebCore::FloatRect _imageAnalysisInteractionBounds;
@@ -750,6 +748,7 @@ struct ImageAnalysisContextMenuActionData {
 @property (nonatomic, readonly) BOOL shouldHideSelectionInFixedPositionWhenScrolling;
 @property (nonatomic, readonly) BOOL shouldIgnoreKeyboardWillHideNotification;
 @property (nonatomic, readonly) const WebKit::InteractionInformationAtPosition& positionInformation;
+@property (nonatomic, readonly) std::optional<WebCore::ElementContext> activeContextMenuElementContext;
 @property (nonatomic, readonly) const WebKit::WKAutoCorrectionData& autocorrectionData;
 @property (nonatomic, readonly) const WebKit::FocusedElementInformation& focusedElementInformation;
 @property (nonatomic, readonly) WKFormAccessoryView *formAccessoryView;

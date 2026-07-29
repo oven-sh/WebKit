@@ -49,6 +49,7 @@
 #include "B3WasmRefTypeCheckValue.h"
 #include "B3WasmStructGetValue.h"
 #include "B3WasmStructSetValue.h"
+#include "JSCJSValueInlines.h"
 #include "Options.h"
 #include "SIMDShuffle.h"
 #include <wtf/HashMap.h>
@@ -60,6 +61,25 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace B3 {
 
 namespace {
+
+ALWAYS_INLINE bool areDistinctWasmGCReferences(Value* a, Value* b)
+{
+    auto isFreshWasmGCReference = [](Value* value) {
+        return value->opcode() == WasmStructNew || value->opcode() == WasmArrayNew;
+    };
+
+    auto isWasmGCNull = [](Value* value) {
+        return value->isInt64(JSValue::encode(jsNull()));
+    };
+
+    if (isFreshWasmGCReference(a) && isFreshWasmGCReference(b))
+        return a != b;
+    if (isFreshWasmGCReference(a) && isWasmGCNull(b))
+        return true;
+    if (isFreshWasmGCReference(b) && isWasmGCNull(a))
+        return true;
+    return false;
+}
 
 // The goal of this phase is to:
 //
@@ -97,6 +117,16 @@ namespace {
 
 namespace B3ReduceStrengthInternal {
 static constexpr bool verbose = false;
+}
+
+static inline std::optional<SIMDLane> wideningLaneFor(SIMDLane lane)
+{
+    switch (lane) {
+    case SIMDLane::i8x16: return SIMDLane::i16x8;
+    case SIMDLane::i16x8: return SIMDLane::i32x4;
+    case SIMDLane::i32x4: return SIMDLane::i64x2;
+    default: return std::nullopt;
+    }
 }
 
 struct CanonicalShuffleInfo {
@@ -2850,6 +2880,13 @@ private:
                 break;
             }
 
+            // Two distinct freshly-allocated wasm-GC references, or a fresh reference and
+            // null, are never the same object.
+            if (areDistinctWasmGCReferences(m_value->child(0), m_value->child(1))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::False));
+                break;
+            }
+
             // Turn this: Equal(const1, const2)
             // Into this: const1 == const2
             replaceWithNewValue(
@@ -2883,6 +2920,13 @@ private:
                 auto* constant = m_proc.addBoolConstant(m_value->origin(), TriState::False);
                 ASSERT(constant);
                 replaceWithNewValue(constant);
+                break;
+            }
+
+            // Two distinct freshly-allocated wasm-GC references, or a fresh reference and
+            // null, are never the same object.
+            if (areDistinctWasmGCReferences(m_value->child(0), m_value->child(1))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::True));
                 break;
             }
 
@@ -3889,6 +3933,20 @@ private:
         }
 
         case VectorZipLower: {
+            // Turn this: VectorZipLower(x, zeroConstant) with a widenable integer lane
+            // Into this: VectorExtendLow(x, widerLane, Unsigned)
+            //
+            // zip1(x, 0) interleaves each narrow element of x's low half with a zero
+            // element, which is exactly an unsigned widening of the low half (uxtl / pmovzx).
+            //   zip i8x16  -> i8 ->i16 zero extension
+            //   zip i16x8  -> i16->i32 zero extension
+            //   zip i32x4  -> i32->i64 zero extension
+            if (SIMDValue* zip = m_value->as<SIMDValue>(); zip->child(1)->isV128(vectorAllZeros())) {
+                if (auto widerLane = wideningLaneFor(zip->simdLane())) {
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorExtendLow, B3::V128, *widerLane, SIMDSignMode::Unsigned, zip->child(0));
+                    break;
+                }
+            }
             // Turn this: VectorZipLower(i64x2, i64x2)
             // Into this: VectorDupElement(i64x2, 0)
             if (tryReduceSameInputShuffleToDup(0))
@@ -3897,6 +3955,14 @@ private:
         }
 
         case VectorZipHigher: {
+            // Turn this: VectorZipHigher(x, zeroConstant) with a widenable integer lane
+            // Into this: VectorExtendHigh(x, widerLane, Unsigned)
+            if (SIMDValue* zip = m_value->as<SIMDValue>(); zip->child(1)->isV128(vectorAllZeros())) {
+                if (auto widerLane = wideningLaneFor(zip->simdLane())) {
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorExtendHigh, B3::V128, *widerLane, SIMDSignMode::Unsigned, zip->child(0));
+                    break;
+                }
+            }
             // Turn this: VectorZipHigher(i64x2, i64x2)
             // Into this: VectorDupElement(i64x2, 1)
             if (tryReduceSameInputShuffleToDup(1))
@@ -4105,7 +4171,7 @@ private:
                 auto rtt = structNew->rtt();
                 int32_t toHeapType = cast->targetHeapType();
                 RefPtr targetRTT = cast->targetRTT();
-                if (!Wasm::typeIndexIsType(static_cast<Wasm::TypeIndex>(toHeapType))) {
+                if (Wasm::isTypeIndexHeapType(toHeapType)) {
                     if (rtt->isSubRTT(*targetRTT)) {
                         // shouldNegate can only be set on WasmRefTest.
                         ASSERT(!cast->shouldNegate());
@@ -4177,7 +4243,7 @@ private:
                 auto rtt = structNew->rtt();
                 int32_t toHeapType = cast->targetHeapType();
                 RefPtr targetRTT = cast->targetRTT();
-                if (!Wasm::typeIndexIsType(static_cast<Wasm::TypeIndex>(toHeapType))) {
+                if (Wasm::isTypeIndexHeapType(toHeapType)) {
                     const bool isSubtype = rtt->isSubRTT(*targetRTT);
                     replaceWithNewValue(m_proc.addIntConstant(m_value, cast->shouldNegate() ? !isSubtype : isSubtype));
                     break;

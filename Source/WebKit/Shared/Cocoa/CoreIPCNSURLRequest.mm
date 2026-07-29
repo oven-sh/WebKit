@@ -119,7 +119,7 @@ static bool isReservedProtocolPropertyKeyPrefix(NSString *key)
 
 static bool isTypedAllowlistKey(NSString *key)
 {
-    static NSSet<NSString *> *allowlist = [[NSSet alloc] initWithArray:@[
+    static NeverDestroyed<RetainPtr<NSSet<NSString *>>> allowlist = adoptNS([[NSSet alloc] initWithArray:@[
         @"_kCFHTTPCookiePolicyPropertyIsTopLevelNavigation",
         @"kCFURLRequestAllowAllPOSTCaching",
         @"_kCFHTTPCookiePolicyPropertySiteForCookies",
@@ -132,8 +132,8 @@ static bool isTypedAllowlistKey(NSString *key)
         @"maximumRequestCount",
         @"com.apple.ap.pc.proxy-is-recursive",
         @"requestType",
-    ]];
-    return [allowlist containsObject:key];
+    ]]);
+    return [allowlist.get() containsObject:key];
 }
 
 static void populateAppProperties(NSDictionary *protocolPropertiesDict, ProtocolProperties& props)
@@ -144,7 +144,7 @@ static void populateAppProperties(NSDictionary *protocolPropertiesDict, Protocol
             continue;
 
         if (isReservedProtocolPropertyKeyPrefix(key.get()) || isTypedAllowlistKey(key.get())) {
-            RELEASE_LOG_ERROR(API, "NSURLRequest property key '%@' not allowed. Skipping this property.", key.get());
+            RELEASE_LOG_INFO_FORWARDABLE(API, CoreIpcNsurlRequestPropertyKeyNotAllowed, String(key.get()).utf8().data());
             continue;
         }
 

@@ -30,28 +30,28 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-#include "ConcurrentJSLock.h"
-#include "DFGDoesGCCheck.h"
-#include "ExceptionEventLocation.h"
-#include "FunctionHasExecutedCache.h"
-#include "Heap.h"
-#include "ImplementationVisibility.h"
-#include "IndexingType.h"
-#include "Integrity.h"
-#include "Interpreter.h"
-#include "JSDateMath.h"
-#include "JSONAtomStringCache.h"
-#include "KeyAtomStringCache.h"
-#include "NativeFunction.h"
-#include "NumericStrings.h"
-#include "SmallStrings.h"
-#include "StringReplaceCache.h"
-#include "StringSplitCache.h"
-#include "StrongForward.h"
-#include "VMThreadContext.h"
-#include "VMTraps.h"
-#include "WeakGCMap.h"
-#include "WriteBarrier.h"
+#include <JavaScriptCore/ConcurrentJSLock.h>
+#include <JavaScriptCore/DFGDoesGCCheck.h>
+#include <JavaScriptCore/ExceptionEventLocation.h>
+#include <JavaScriptCore/FunctionHasExecutedCache.h>
+#include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/ImplementationVisibility.h>
+#include <JavaScriptCore/IndexingType.h>
+#include <JavaScriptCore/Integrity.h>
+#include <JavaScriptCore/Interpreter.h>
+#include <JavaScriptCore/JSDateMath.h>
+#include <JavaScriptCore/JSONAtomStringCache.h>
+#include <JavaScriptCore/KeyAtomStringCache.h>
+#include <JavaScriptCore/NativeFunction.h>
+#include <JavaScriptCore/NumericStrings.h>
+#include <JavaScriptCore/SmallStrings.h>
+#include <JavaScriptCore/StringReplaceCache.h>
+#include <JavaScriptCore/StringSplitCache.h>
+#include <JavaScriptCore/StrongForward.h>
+#include <JavaScriptCore/VMThreadContext.h>
+#include <JavaScriptCore/WeakGCMap.h>
+#include <JavaScriptCore/WriteBarrier.h>
+#include <wtf/ApproximateTime.h>
 #include <wtf/BumpPointerAllocator.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/Compiler.h>
@@ -134,11 +134,13 @@ class JSPropertyNameEnumerator;
 class JITSizeStatistics;
 class JITThunks;
 class MegamorphicCache;
+class MicrotaskCallCache;
 class MicrotaskQueue;
 class NativeExecutable;
 #if USE(BUN_JSC_ADDITIONS)
 class QueuedTask;
 enum class InternalMicrotask : uint8_t;
+namespace FFI { class CallbackEntryScope; }
 #endif
 class Debugger;
 class DeferredWorkTimer;
@@ -369,7 +371,7 @@ public:
         NeedStopTheWorld = 1 << 1, // FIXME rdar://161576886
     };
 
-    bool hasAnyEntryScopeServiceRequest() { return m_entryScopeServicesRawBits; }
+    bool hasAnyEntryScopeServiceRequest() { return m_entryScopeServicesRawBits || hasTimeZoneChange() || hasLanguageChange(); }
     void executeEntryScopeServicesOnEntry();
     void executeEntryScopeServicesOnExit();
 
@@ -385,7 +387,7 @@ public:
     enum class SchedulerOptions : uint8_t {
         HasImminentlyScheduledWork = 1 << 0,
     };
-    JS_EXPORT_PRIVATE void performOpportunisticallyScheduledTasks(MonotonicTime deadline, OptionSet<SchedulerOptions>);
+    JS_EXPORT_PRIVATE void performOpportunisticallyScheduledTasks(ApproximateTime deadline, OptionSet<SchedulerOptions>);
 
     Structure* cellButterflyStructure(IndexingType indexingType) { return rawImmutableButterflyStructure(indexingType).get(); }
 
@@ -605,6 +607,7 @@ public:
     WriteBarrier<JSSentinel> m_fastSetValuesSentinel;
     WriteBarrier<JSSentinel> m_fastSetEntriesSentinel;
     WriteBarrier<JSSentinel> m_fastStringValuesSentinel;
+    WriteBarrier<JSSentinel> m_fastAsyncGeneratorSentinel;
 
     WriteBarrier<JSCell> m_cachedSortScratch;
     WriteBarrier<JSCell> m_sortScratchSentinel;
@@ -674,6 +677,7 @@ public:
     JSSentinel* fastSetValuesSentinel() { return m_fastSetValuesSentinel.get(); }
     JSSentinel* fastSetEntriesSentinel() { return m_fastSetEntriesSentinel.get(); }
     JSSentinel* fastStringValuesSentinel() { return m_fastStringValuesSentinel.get(); }
+    JSSentinel* fastAsyncGeneratorSentinel() { return m_fastAsyncGeneratorSentinel.get(); }
 
     inline JSPropertyNameEnumerator* emptyPropertyNameEnumerator();
 
@@ -941,6 +945,9 @@ public:
     ALWAYS_INLINE MegamorphicCache* megamorphicCache() { return m_megamorphicCache.getIfExists(); }
     MegamorphicCache& ensureMegamorphicCache() { return m_megamorphicCache.get(*this); }
 
+    const UniqueRef<MicrotaskCallCache> m_syncResumeCallCache;
+    MicrotaskCallCache& syncResumeCallCache() { return m_syncResumeCallCache.get(); }
+
     enum class StructureChainIntegrityEvent : uint8_t {
         Add,
         Remove,
@@ -957,6 +964,7 @@ public:
 #endif
 
     bool hasTimeZoneChange() { return dateCache.hasTimeZoneChange(); }
+    JS_EXPORT_PRIVATE bool hasLanguageChange();
 
     RegExpCache* regExpCache() LIFETIME_BOUND { return m_regExpCache.get(); }
 
@@ -973,6 +981,11 @@ public:
     JS_EXPORT_PRIVATE JSLock& apiLock();
     CodeCache* codeCache() LIFETIME_BOUND { return m_codeCache.get(); }
     IntlCache& intlCache() { return *m_intlCache; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Clears both dateCache and intlCache; callable without including IntlCache.h
+    // (which transitively includes ICU headers that Bun's C++ cannot see on macOS).
+    JS_EXPORT_PRIVATE void clearForTimeZoneChange();
+#endif
 
     JS_EXPORT_PRIVATE void whenIdle(Function<void()>&&);
 
@@ -1046,6 +1059,9 @@ public:
 
     void setGlobalConstRedeclarationShouldThrow(bool globalConstRedeclarationThrow) { m_globalConstRedeclarationShouldThrow = globalConstRedeclarationThrow; }
     ALWAYS_INLINE bool globalConstRedeclarationShouldThrow() const { return m_globalConstRedeclarationShouldThrow; }
+
+    void setAllowRedeclaringSymbols(bool allowRedeclaringSymbols) { m_allowRedeclaringSymbols = allowRedeclaringSymbols; }
+    ALWAYS_INLINE bool allowRedeclaringSymbols() const { return m_allowRedeclaringSymbols; }
 
     void setShouldBuildPCToCodeOriginMapping() { m_shouldBuildPCToCodeOriginMapping = true; }
     bool shouldBuilderPCToCodeOriginMapping() const { return m_shouldBuildPCToCodeOriginMapping; }
@@ -1137,6 +1153,7 @@ public:
 #endif
 
     void beginMarking();
+    void finalizeUnconditionally();
     DECLARE_VISIT_AGGREGATE;
 
     void NODELETE addDebugger(Debugger&);
@@ -1158,6 +1175,7 @@ public:
     int64_t incrementModuleAsyncEvaluationCount() { return m_moduleAsyncEvaluationCount++; }
 
 #if ENABLE(WEBASSEMBLY_DEBUGGER)
+    Wasm::DebugState* debugStateIfExists() { return m_debugState.get(); }
     JS_EXPORT_PRIVATE Wasm::DebugState* NODELETE debugState();
 #endif
 
@@ -1251,6 +1269,7 @@ public:
 private:
     bool m_failNextNewCodeBlock { false };
     bool m_globalConstRedeclarationShouldThrow { true };
+    bool m_allowRedeclaringSymbols { false };
     bool m_shouldBuildPCToCodeOriginMapping { false };
     DeletePropertyMode m_deletePropertyMode { DeletePropertyMode::Default };
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
@@ -1356,6 +1375,9 @@ private:
     friend class JSDollarVMHelper;
     friend class LLIntOffsetsExtractor;
     friend class SuspendExceptionScope;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class FFI::CallbackEntryScope;
+#endif
     friend class VMTraps;
 };
 

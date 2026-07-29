@@ -5,5 +5,5 @@
   "sources": ["empty-original.js"],
   "sourcesContent": [""],
   "mappings": "",
-  "rangeMappings": { x: "foo" }
+  "rangeMappings": { "x": "foo" }
 }

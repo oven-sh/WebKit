@@ -20,7 +20,10 @@
 #include "config.h"
 #include "SVGResources.h"
 
+#include "Document.h"
+#include "DocumentInlines.h"
 #include "FilterOperation.h"
+#include "IsolatedSVGDocumentContext.h"
 #include "LegacyRenderSVGResourceClipperInlines.h"
 #include "LegacyRenderSVGResourceContainerInlines.h"
 #include "LegacyRenderSVGResourceFilterInlines.h"
@@ -29,6 +32,7 @@
 #include "LegacyRenderSVGRoot.h"
 #include "PathOperation.h"
 #include "RenderElementInlines.h"
+#include "SVGDocumentExtensions.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGFilterElement.h"
 #include "SVGGradientElement.h"
@@ -36,6 +40,7 @@
 #include "SVGNames.h"
 #include "SVGPatternElement.h"
 #include "SVGURIReference.h"
+#include "Settings.h"
 #include "StyleCachedImage.h"
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/SetForScope.h>
@@ -183,16 +188,12 @@ static inline bool NODELETE isChainableResource(const SVGElement& element, const
     return false;
 }
 
-static inline CheckedPtr<LegacyRenderSVGResourceContainer> paintingResourceFromSVGPaint(TreeScope& treeScope, const Style::SVGPaint& paint, AtomString& id, bool& hasPendingResource)
+static CheckedPtr<LegacyRenderSVGResourceContainer> paintingResourceFromTreeScopeAndId(TreeScope& treeScope, const AtomString& id, bool* hasPendingResource)
 {
-    auto paintURL = paint.tryAnyURL();
-    if (!paintURL)
-        return nullptr;
-
-    id = SVGURIReference::fragmentIdentifierFromIRIString(*paintURL, protect(treeScope.documentScope()));
     CheckedPtr container = getRenderSVGResourceContainerById(treeScope, id);
     if (!container) {
-        hasPendingResource = true;
+        if (hasPendingResource)
+            *hasPendingResource = true;
         return nullptr;
     }
 
@@ -201,6 +202,29 @@ static inline CheckedPtr<LegacyRenderSVGResourceContainer> paintingResourceFromS
         return nullptr;
 
     return container;
+}
+
+static inline CheckedPtr<LegacyRenderSVGResourceContainer> paintingResourceFromSVGPaint(TreeScope& treeScope, const Style::SVGPaint& paint, AtomString& id, bool& hasPendingResource)
+{
+    auto paintURL = paint.tryAnyURL();
+    if (!paintURL)
+        return nullptr;
+
+    Ref document = treeScope.documentScope();
+
+    if (auto externalDocument = document->svgExtensions().externalResourceDocument(paintURL->resolved)) {
+        id = paintURL->resolved.fragmentIdentifier().toAtomString();
+        RefPtr resolvedDocument = *externalDocument;
+        if (id.isEmpty() || !resolvedDocument)
+            return nullptr;
+
+        // The resource lives in the isolated document, which is realized separately and does not use
+        // this document's pending-resource mechanism so no hasPendingResource.
+        return paintingResourceFromTreeScopeAndId(*resolvedDocument, id, nullptr);
+    }
+
+    id = SVGURIReference::fragmentIdentifierFromIRIString(*paintURL, document);
+    return paintingResourceFromTreeScopeAndId(treeScope, id, &hasPendingResource);
 }
 
 std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderElement& renderer, const Style::ComputedStyle& style)
@@ -228,8 +252,13 @@ std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderEle
     if (clipperFilterMaskerTags().contains(tagName)) {
         WTF::switchOn(style.clipPath(),
             [&](const Style::ReferencePath& clipPath) {
-                // FIXME: -webkit-clip-path should support external resources
-                // https://bugs.webkit.org/show_bug.cgi?id=127032
+                if (auto externalDocument = document->svgExtensions().externalResourceDocument(clipPath.url().resolved)) {
+                    if (RefPtr resolvedDocument = *externalDocument) {
+                        if (auto* clipper = getRenderSVGResourceById<LegacyRenderSVGResourceClipper>(*resolvedDocument, clipPath.fragment()))
+                            ensureResources(foundResources).setClipper(clipper);
+                    }
+                    return;
+                }
                 if (auto* clipper = getRenderSVGResourceById<LegacyRenderSVGResourceClipper>(treeScope, clipPath.fragment()))
                     ensureResources(foundResources).setClipper(clipper);
                 else
@@ -242,6 +271,13 @@ std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderEle
             WTF::switchOn(style.filter().first(),
                 [&](const Style::FilterReference& filterReference) {
                     auto& id = filterReference.cachedFragment;
+                    if (auto externalDocument = document->svgExtensions().externalResourceDocument(filterReference.url.resolved)) {
+                        if (RefPtr resolvedDocument = *externalDocument) {
+                            if (auto* filter = getRenderSVGResourceById<LegacyRenderSVGResourceFilter>(*resolvedDocument, id))
+                                ensureResources(foundResources).setFilter(filter);
+                        }
+                        return;
+                    }
                     if (auto* filter = getRenderSVGResourceById<LegacyRenderSVGResourceFilter>(treeScope, id))
                         ensureResources(foundResources).setFilter(filter);
                     else
@@ -265,6 +301,16 @@ std::unique_ptr<SVGResources> SVGResources::buildCachedResources(const RenderEle
 
     if (markerTags().contains(tagName) && style.hasMarkers()) {
         auto buildCachedMarkerResource = [&](const Style::SVGMarkerResource& markerResource, bool (SVGResources::*setMarker)(LegacyRenderSVGResourceMarker*)) {
+            if (auto markerURL = markerResource.tryURL()) {
+                if (auto externalDocument = document->svgExtensions().externalResourceDocument(markerURL->resolved)) {
+                    if (RefPtr resolvedDocument = *externalDocument) {
+                        auto markerId = markerURL->resolved.fragmentIdentifier().toAtomString();
+                        if (auto* marker = getRenderSVGResourceById<LegacyRenderSVGResourceMarker>(*resolvedDocument, markerId))
+                            (ensureResources(foundResources).*setMarker)(marker);
+                    }
+                    return;
+                }
+            }
             auto markerId = SVGURIReference::fragmentIdentifierFromIRIString(markerResource, document);
             if (auto* marker = getRenderSVGResourceById<LegacyRenderSVGResourceMarker>(treeScope, markerId))
                 (ensureResources(foundResources).*setMarker)(marker);

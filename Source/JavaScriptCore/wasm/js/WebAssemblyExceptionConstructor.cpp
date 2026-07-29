@@ -39,6 +39,7 @@
 namespace JSC {
 
 const ClassInfo WebAssemblyExceptionConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WebAssemblyExceptionConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(WebAssemblyExceptionConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(constructJSWebAssemblyException);
 static JSC_DECLARE_HOST_FUNCTION(callJSWebAssemblyException);
@@ -74,7 +75,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyException, (JSGlobalObject* globa
     FixedVector<uint64_t> payload(values.size());
     for (unsigned i = 0; i < values.size(); ++i) {
         auto type = tagFunctionType.argumentType(i);
-        if (type.kind == Wasm::TypeKind::V128 || isExnref(type)) [[unlikely]]
+        if (type.kind() == Wasm::TypeKind::V128 || isExnref(type)) [[unlikely]]
             return throwVMTypeError(globalObject, scope, "WebAssembly.Exception constructor expects payload includes neither v128 nor exnref."_s);
         payload[i] = toWebAssemblyValue(globalObject, type, values.at(i));
         RETURN_IF_EXCEPTION(scope, { });

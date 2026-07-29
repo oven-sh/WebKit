@@ -25,17 +25,17 @@
 #include "include/core/SkSurfaceProps.h"
 #include "include/core/SkTileMode.h"
 #include "include/effects/SkRuntimeEffect.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkFeatures.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkArenaAlloc.h"
-#include "src/base/SkVx.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkFeatures.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkBitmapDevice.h"
 #include "src/core/SkDevice.h"
 #include "src/core/SkKnownRuntimeEffects.h"
 #include "src/core/SkSpecialImage.h"
+#include "src/core/SkVx.h"
 
 #include <algorithm>
 #include <array>
@@ -203,19 +203,21 @@ static sk_sp<SkSpecialImage> eval_blur_passes(PassMaker* makerX, PassMaker* make
         loopStart = std::max(srcBounds.top(),    dstBounds.top());
         loopEnd   = std::min(srcBounds.bottom(), dstBounds.bottom());
 
-        auto srcAddr = reinterpret_cast<T*>(src.getAddr(0, loopStart - srcBounds.top()));
-        auto dstAddr = reinterpret_cast<T*>(dst.getAddr(0, loopStart - dstBounds.top()));
+        if (loopStart < loopEnd) {
+            auto srcAddr = reinterpret_cast<T*>(src.getAddr(0, loopStart - srcBounds.top()));
+            auto dstAddr = reinterpret_cast<T*>(dst.getAddr(0, loopStart - dstBounds.top()));
 
-        // Iterate over each row to calculate 1D blur along X.
-        Pass* pass = makerX->makePass(buffer, alloc);
-        for (int y = loopStart; y < loopEnd; ++y) {
-            pass->blur<T>(srcBounds.left()  - dstBounds.left(),
-                          srcBounds.right() - dstBounds.left(),
-                          dstBounds.width(),
-                          srcAddr, 1,
-                          dstAddr, 1);
-            srcAddr += src.rowBytesAsPixels();
-            dstAddr += dst.rowBytesAsPixels();
+            // Iterate over each row to calculate 1D blur along X.
+            Pass* pass = makerX->makePass(buffer, alloc);
+            for (int y = loopStart; y < loopEnd; ++y) {
+                pass->blur<T>(srcBounds.left()  - dstBounds.left(),
+                              srcBounds.right() - dstBounds.left(),
+                              dstBounds.width(),
+                              srcAddr, 1,
+                              dstAddr, 1);
+                srcAddr += src.rowBytesAsPixels();
+                dstAddr += dst.rowBytesAsPixels();
+            }
         }
 
         // Set up the Y pass to blur from the full dst into the non-outset portion of dst
@@ -235,18 +237,20 @@ static sk_sp<SkSpecialImage> eval_blur_passes(PassMaker* makerX, PassMaker* make
     // into dst for a 1D blur; or it's blurring from dst into dst for the second pass of a 2D
     // blur.
     if (makerY->window() > 1) {
-        auto srcAddr = reinterpret_cast<T*>(src.getAddr(loopStart - srcBounds.left(), 0));
-        auto dstAddr = reinterpret_cast<T*>(dst.getAddr(loopStart - dstBounds.left(), dstYOffset));
+        if (loopStart < loopEnd) {
+            auto srcAddr = reinterpret_cast<T*>(src.getAddr(loopStart - srcBounds.left(), 0));
+            auto dstAddr = reinterpret_cast<T*>(dst.getAddr(loopStart - dstBounds.left(), dstYOffset));
 
-        Pass* pass = makerY->makePass(buffer, alloc);
-        for (int x = loopStart; x < loopEnd; ++x) {
-            pass->blur<T>(srcBounds.top()    - dstBounds.top(),
-                          srcBounds.bottom() - dstBounds.top(),
-                          dstBounds.height(),
-                          srcAddr, src.rowBytesAsPixels(),
-                          dstAddr, dst.rowBytesAsPixels());
-            srcAddr += 1;
-            dstAddr += 1;
+            Pass* pass = makerY->makePass(buffer, alloc);
+            for (int x = loopStart; x < loopEnd; ++x) {
+                pass->blur<T>(srcBounds.top()    - dstBounds.top(),
+                              srcBounds.bottom() - dstBounds.top(),
+                              dstBounds.height(),
+                              srcAddr, src.rowBytesAsPixels(),
+                              dstAddr, dst.rowBytesAsPixels());
+                srcAddr += 1;
+                dstAddr += 1;
+            }
         }
     }
 

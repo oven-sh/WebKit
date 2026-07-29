@@ -94,7 +94,7 @@ InlineDisplayContentBuilder::InlineDisplayContentBuilder(InlineFormattingContext
     , m_displayLine(displayLine)
 {
     auto& initialContainingBlockGeometry = m_formattingContext.geometryForBox(FormattingContext::initialContainingBlock(root()), InlineFormattingContext::EscapeReason::InkOverflowNeedsInitialContiningBlockForStrokeWidth);
-    m_initialContaingBlockSize = ceiledIntSize(LayoutSize { initialContainingBlockGeometry.contentBoxWidth(), initialContainingBlockGeometry.contentBoxHeight() });
+    m_initialContainingBlockSize = ceiledIntSize(LayoutSize { initialContainingBlockGeometry.contentBoxWidth(), initialContainingBlockGeometry.contentBoxHeight() });
 }
 
 InlineDisplay::Boxes InlineDisplayContentBuilder::build(const LineLayoutResult& lineLayoutResult)
@@ -225,7 +225,7 @@ void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun,
         addLetterSpacingOverflow();
 
         auto addStrokeOverflow = [&] {
-            inkOverflow.inflate(ceilf(style.usedStrokeWidth(m_initialContaingBlockSize)));
+            inkOverflow.inflate(ceilf(style.usedStrokeWidth(m_initialContainingBlockSize)));
         };
         addStrokeOverflow();
 
@@ -246,8 +246,8 @@ void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun,
             if (glyphOverflow.top == maximumAscent || glyphOverflow.bottom == maximumDescent) {
                 auto enclosingAscentAndDescent = TextUtil::enclosingGlyphBoundsForText(StringView(content).substring(text.start, text.length), style, inlineTextBox->shouldUseSimpleGlyphOverflowCodePath() ? TextUtil::ShouldUseSimpleGlyphOverflowCodePath::Yes : TextUtil::ShouldUseSimpleGlyphOverflowCodePath::No);
                 auto& fontMetrics = style.metricsOfPrimaryFont();
-                glyphOverflow.top = std::max(0.f, InlineFormattingUtils::snapToInt(-enclosingAscentAndDescent.ascent, inlineTextBox) - InlineFormattingUtils::ascent(fontMetrics, FontBaseline::Alphabetic, inlineTextBox));
-                glyphOverflow.bottom = std::max(0.f, InlineFormattingUtils::snapToInt(enclosingAscentAndDescent.descent, inlineTextBox) - InlineFormattingUtils::descent(fontMetrics, FontBaseline::Alphabetic, inlineTextBox));
+                glyphOverflow.top = std::max(0.f, -enclosingAscentAndDescent.ascent - fontMetrics.ascent(FontBaseline::Alphabetic));
+                glyphOverflow.bottom = std::max(0.f, enclosingAscentAndDescent.descent - fontMetrics.descent(FontBaseline::Alphabetic));
             }
             inkOverflow.inflate(glyphOverflow.top, { }, glyphOverflow.bottom, { });
         };

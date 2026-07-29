@@ -132,7 +132,7 @@ AnchorScrollAdjuster::AnchorScrollAdjuster(RenderBox& anchored, const RenderBoxM
     if (!m_needsYAdjustment) {
         m_needsYAdjustment = containingWritingMode.isHorizontal()
             ? style.alignSelf().isAnchorCenter()
-            : style.alignSelf().isAnchorCenter();
+            : style.justifySelf().isAnchorCenter();
     }
 
     m_isHidden = style.isForceHidden();
@@ -260,6 +260,10 @@ void AnchorScrollAdjuster::removeMatchingSnapshots(const AnchorScrollAdjuster& c
 {
     if (m_adjustmentForViewport != containerAdjuster.m_adjustmentForViewport)
         return;
+    if (containerAdjuster.m_adjustmentForViewport) {
+        ASSERT(!containerAdjuster.m_scrollSnapshots.first().m_scroller && !m_scrollSnapshots.first().m_scroller);
+        m_adjustmentForViewport = 0;
+    }
     for (auto containerSnapshot : containerAdjuster.m_scrollSnapshots) {
         m_scrollSnapshots.removeFirstMatching([containerSnapshot](const auto& selfSnapshot) {
             return selfSnapshot.m_scroller.get() == containerSnapshot.m_scroller.get();

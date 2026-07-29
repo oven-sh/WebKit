@@ -70,13 +70,14 @@ struct NetworkResourceLoadParameters {
     bool shouldClearReferrerOnHTTPSToHTTPRedirect { true };
     bool needsCertificateInfo { false };
     bool isMainFrameNavigation { false };
+    bool navigationLosesFrameSpecificStorageAccess { false };
     std::optional<NavigationActionData> mainResourceNavigationDataForAnyFrame { };
     PreconnectOnly shouldPreconnectOnly { PreconnectOnly::No };
     std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain { NavigatingToAppBoundDomain::No };
     bool hadMainFrameMainResourcePrivateRelayed { false };
     bool allowPrivacyProxy { true };
     OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections { };
-    std::optional<bool> mayBlockNetworkRequest { false };
+    bool mayBlockNetworkRequest { false };
 
     uint64_t requiredCookiesVersion { 0 };
 
@@ -130,7 +131,7 @@ struct NetworkResourceLoadParameters {
 
     bool isInitiatorPrefetch { false };
     bool isInitiatedByDedicatedWorker { false };
-    bool globalPrivacyControlStatus { false };
+    bool globalPrivacyControlEnabled { false };
     bool shouldConsiderEnhancedSecurityForInsecureResponse { false };
 };
 

@@ -34,6 +34,7 @@
 #include <wtf/Forward.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/URL.h>
 #include <wtf/text/TextPosition.h>
 
 namespace JSC {
@@ -42,12 +43,17 @@ class CallFrame;
 class CodeBlock;
 class DebuggerCallFrame;
 class Exception;
+class InternalFunction;
 class JSAsyncFunctionGenerator;
 class JSGlobalObject;
 class Microtask;
 class NativeExecutable;
 class SourceProvider;
 class VM;
+
+#if ENABLE(WEBASSEMBLY)
+class JSWebAssemblyModule;
+#endif
 
 enum class ProfilingReason : uint8_t;
 
@@ -147,6 +153,9 @@ public:
     void setSuppressAllPauses(bool suppress) { m_suppressAllPauses = suppress; }
 
     JS_EXPORT_PRIVATE virtual void sourceParsed(JSGlobalObject*, SourceProvider*, int errorLineNumber, const WTF::String& errorMessage);
+#if ENABLE(WEBASSEMBLY)
+    JS_EXPORT_PRIVATE virtual void sourceParsed(JSGlobalObject*, JSWebAssemblyModule*);
+#endif
 
     void exception(JSGlobalObject*, CallFrame*, JSValue exceptionValue, bool hasCatchHandler);
     void atStatement(CallFrame*);
@@ -169,6 +178,8 @@ public:
 
     void didCreateNativeExecutable(NativeExecutable&);
     void willCallNativeExecutable(CallFrame*);
+    void didCreateInternalFunction(InternalFunction&);
+    void willCallInternalFunction(InternalFunction&);
 
     class Client {
     public:
@@ -188,6 +199,7 @@ public:
     struct Script {
         String url;
         String source;
+        String displayName;
         String sourceURL;
         String sourceMappingURL;
         RefPtr<SourceProvider> sourceProvider;
@@ -202,11 +214,13 @@ public:
     public:
         virtual ~Observer() { }
 
-        virtual void didParseSource(SourceID, const Debugger::Script&) { }
+        virtual void didParseSource(JSGlobalObject*, SourceID, const Debugger::Script&) { }
         virtual void failedToParseSource(const String& /* url */, const String& /* data */, int /* firstLine */, int /* errorLine */, const String& /* errorMessage */) { }
 
         virtual void didCreateNativeExecutable(NativeExecutable&) { }
         virtual void willCallNativeExecutable(CallFrame*) { }
+        virtual void didCreateInternalFunction(InternalFunction&) { }
+        virtual void willCallInternalFunction(InternalFunction&) { }
 
         virtual void willEnter(CallFrame*) { }
 
@@ -267,6 +281,8 @@ protected:
 
     virtual bool isContentScript(JSGlobalObject*) const { return false; }
 
+    virtual URL sourceURLBase(JSGlobalObject*) const { return { }; }
+
     // NOTE: Currently all exceptions are reported at the API boundary through reportAPIException.
     // Until a time comes where an exception can be caused outside of the API (e.g. setTimeout
     // or some other async operation in a pure JSContext) we can ignore exceptions reported here.
@@ -323,6 +339,7 @@ private:
     VM& m_vm;
     UncheckedKeyHashSet<JSGlobalObject*> m_globalObjects;
     UncheckedKeyHashMap<SourceID, DebuggerParseData, WTF::IntHash<SourceID>, WTF::UnsignedWithZeroKeyHashTraits<SourceID>> m_parseDataMap;
+    UncheckedKeyHashSet<SourceID, WTF::IntHash<SourceID>, WTF::UnsignedWithZeroKeyHashTraits<SourceID>> m_reportedSourceIDs;
     UncheckedKeyHashMap<SourceID, BlackboxConfiguration, WTF::IntHash<SourceID>, WTF::UnsignedWithZeroKeyHashTraits<SourceID>> m_blackboxConfigurations;
     bool m_blackboxBreakpointEvaluations : 1;
 

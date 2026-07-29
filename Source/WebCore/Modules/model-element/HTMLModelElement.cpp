@@ -31,6 +31,7 @@
 
 #include "ARKitBadgeSystemImage.h"
 #include "AbortSignal.h"
+#include "CommonAtomStrings.h"
 #include "ContainerNodeInlines.h"
 #include "DOMMatrixReadOnly.h"
 #include "DOMPointReadOnly.h"
@@ -50,7 +51,6 @@
 #include "FrameDestructionObserverInlines.h"
 #include "GraphicsContext.h"
 #include "GraphicsLayer.h"
-#include "GraphicsLayerCA.h"
 #include "HTMLAnchorElement.h"
 #include "HTMLModelElementCamera.h"
 #include "HTMLNames.h"
@@ -69,6 +69,7 @@
 #include "LegacySchemeRegistry.h"
 #include "Logging.h"
 #include "MIMETypeRegistry.h"
+#include "MediaQueryEvaluator.h"
 #include "Model.h"
 #include "ModelPlayer.h"
 #include "ModelPlayerAnimationState.h"
@@ -229,8 +230,13 @@ URL HTMLModelElement::selectModelSource() const
     if (auto src = getNonEmptyURLAttribute(srcAttr); src.isValid())
         return src;
 
+    Ref document = this->document();
     for (Ref element : childrenOfType<HTMLSourceElement>(*this)) {
         if (!isSupportedModelType(element->attributeWithoutSynchronization(typeAttr)))
+            continue;
+
+        auto& queries = element->parsedMediaAttribute(document);
+        if (!queries.isEmpty() && !MQ::MediaQueryEvaluator { screenAtom(), document }.evaluate(queries))
             continue;
 
         if (auto src = element->getNonEmptyURLAttribute(srcAttr); src.isValid())
@@ -696,7 +702,7 @@ void HTMLModelElement::createModelPlayer()
     modelPlayer->setStageMode(stageMode());
 #endif
 
-#if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
+#if ENABLE(GPU_PROCESS_MODEL) && HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
     modelPlayer->setDynamicRangeLimit(m_dynamicRangeLimit, m_currentEDRHeadroom, m_suppressEDR);
 #endif
 
@@ -808,8 +814,15 @@ void HTMLModelElement::reloadModelPlayer()
 #if ENABLE(MODEL_PROCESS) || ENABLE(GPU_PROCESS_MODEL)
     if (!m_modelPlayerProvider)
         m_modelPlayerProvider = document().page()->modelPlayerProvider();
+#if ENABLE(GPU_PROCESS_MODEL)
+    RefPtr<ModelPlayer> previousPlayer = modelPlayer;
+#endif
     if (RefPtr modelPlayerProvider = m_modelPlayerProvider) {
         modelPlayer = modelPlayerProvider->createModelPlayer(*this);
+#if ENABLE(GPU_PROCESS_MODEL)
+        if (modelPlayer && previousPlayer)
+            modelPlayer->adoptContentsDisplayDelegateFrom(*previousPlayer);
+#endif
         m_modelPlayer = modelPlayer.copyRef();
     }
     if (!modelPlayer) {
@@ -819,6 +832,11 @@ void HTMLModelElement::reloadModelPlayer()
 #endif
 
     RELEASE_LOG(ModelElement, "%p - HTMLModelElement: Reloading previous states to new model player: %p", this, modelPlayer.get());
+
+#if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
+    modelPlayer->setDynamicRangeLimit(m_dynamicRangeLimit, m_currentEDRHeadroom, m_suppressEDR);
+#endif
+
     modelPlayer->reload(*model, contentSize(), *animationState, WTF::move(*transformState));
 
 #if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)

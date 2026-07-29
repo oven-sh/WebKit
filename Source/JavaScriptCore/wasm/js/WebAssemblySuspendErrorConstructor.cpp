@@ -35,6 +35,7 @@
 namespace JSC {
 
 const ClassInfo WebAssemblySuspendErrorConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WebAssemblySuspendErrorConstructor) };
+CLASSINFO_KEEP_ADDRESS_UNIQUE(WebAssemblySuspendErrorConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(constructJSWebAssemblySuspendError);
 static JSC_DECLARE_HOST_FUNCTION(callJSWebAssemblySuspendError);

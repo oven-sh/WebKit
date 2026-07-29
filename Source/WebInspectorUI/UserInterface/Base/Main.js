@@ -113,6 +113,7 @@ WI.loaded = function()
         WI.targetManager = new WI.TargetManager,
         WI.networkManager = new WI.NetworkManager,
         WI.domStorageManager = new WI.DOMStorageManager,
+        WI.storageManager = new WI.StorageManager,
         WI.indexedDBManager = new WI.IndexedDBManager,
         WI.domManager = new WI.DOMManager,
         WI.cssManager = new WI.CSSManager,
@@ -143,6 +144,7 @@ WI.loaded = function()
     WI.networkManager.addEventListener(WI.NetworkManager.Event.MainFrameDidChange, WI._mainFrameDidChange, WI);
     WI.networkManager.addEventListener(WI.NetworkManager.Event.FrameWasAdded, WI._frameWasAdded, WI);
     WI.browserManager.enable();
+    WI.storageManager.enable();
 
     WI.Frame.addEventListener(WI.Frame.Event.MainResourceDidChange, WI._mainResourceDidChange, WI);
 
@@ -2688,6 +2690,7 @@ WI._resourceCachingDisabledSettingChanged = function(event)
 WI._clearResourceDataOnNavigateSettingChanged = function(event)
 {
     for (let target of WI.targets) {
+        // COMPATIBILITY (macOS 26.4, iOS 26.4): Network.setClearResourceDataOnNavigate did not exist yet.
         if (target.hasCommand("Network.setClearResourceDataOnNavigate"))
             target.NetworkAgent.setClearResourceDataOnNavigate(WI.settings.clearNetworkOnNavigate.value);
     }
@@ -3213,6 +3216,14 @@ Object.defineProperty(WI, "targets",
 WI.assumingMainTarget = function()
 {
     return WI.mainTarget;
+};
+
+// Site Isolation runs cross-origin iframes in separate WebContent processes, each surfaced to the
+// frontend as its own WI.FrameTarget (rather than a WI.Frame in the page tree). The presence of any
+// FrameTarget is therefore the signal that Site Isolation is active for this inspection.
+WI.isSiteIsolationEnabled = function()
+{
+    return WI.targets.some((target) => target instanceof WI.FrameTarget);
 };
 
 WI.reset = async function()

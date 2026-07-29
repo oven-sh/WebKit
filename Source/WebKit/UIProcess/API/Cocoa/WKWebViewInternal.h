@@ -52,6 +52,7 @@
 #import <wtf/NakedPtr.h>
 #import <wtf/RefPtr.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/UniqueRef.h>
 #import <wtf/Variant.h>
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/spi/cocoa/NSObjCRuntimeSPI.h>
@@ -159,9 +160,11 @@ class IconLoadingDelegate;
 class NavigationState;
 class PointerTouchCompatibilitySimulator;
 class ResourceLoadDelegate;
+class TextExtractionAssertionScope;
 class TextExtractionURLCache;
 class UIDelegate;
 class ViewSnapshot;
+class WebFrameProxy;
 class WebPageProxy;
 struct PrintInfo;
 #if PLATFORM(MAC)
@@ -200,6 +203,10 @@ enum class AdjustedColorExtensionsForBannerViewOverlaysEnablement : uint8_t {
 @class _WKFrameHandle;
 @class _WKJSHandle;
 @class _WKWarningView;
+
+namespace WebKit {
+std::optional<WebCore::JSHandleIdentifier> jsHandleIdentifierInFrame(const WebFrameProxy&, _WKJSHandle *);
+}
 
 #if ENABLE(WEB_AUTHN)
 @class WKDigitalCredentialsPicker;
@@ -290,6 +297,7 @@ struct PerWebProcessState {
     BOOL viewportMetaTagWidthWasExplicit { NO };
     BOOL viewportMetaTagCameFromImageDocument { NO };
     BOOL lastTransactionWasInStableState { NO };
+    BOOL hasMainThreadScrollDrivenAnimations { NO };
 
     std::optional<WebCore::FloatSize> lastSentViewLayoutSize;
     std::optional<WebCore::IntDegrees> lastSentDeviceOrientation;
@@ -324,6 +332,7 @@ struct PerWebProcessState {
 struct LiveResizeSnapshotState {
     RetainPtr<UIView> snapshotView;
     CGFloat initialWidth { 0 };
+    BOOL didForceEndLiveResize { NO };
 };
 #endif
 
@@ -586,6 +595,7 @@ struct LiveResizeSnapshotState {
     std::optional<HashSet<String>> _textExtractionRecognizedWords;
 #endif
     RefPtr<WebKit::TextExtractionURLCache> _textExtractionURLCache;
+    Vector<std::pair<String, String>> _lastTextExtractionReplacementStrings;
 
 #if ENABLE(SYSTEM_TEXT_EXTRACTION)
     std::optional<WTF::UUID> _textExtractionIdentifier;
@@ -778,6 +788,14 @@ struct LiveResizeSnapshotState {
 
 - (void)_requestTextExtractionInternal:(nullable _WKTextExtractionConfiguration *)configuration completion:(CompletionHandler<void(std::optional<WebCore::TextExtraction::Result>&&)>&&)completion;
 
+#if USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
+- (void)_ensureTextExtractionFilterRulesWithCompletionHandler:(CompletionHandler<void()>&&)completionHandler;
+#endif
+- (void)_extractDebugTextWithConfigurationWithoutUpdatingFilterRules:(_WKTextExtractionConfiguration *)configuration assertionScope:(UniqueRef<WebKit::TextExtractionAssertionScope>&&)assertionScope completionHandler:(void(^)(_WKTextExtractionResult *))completionHandler;
+- (void)_filterExtractedStringWithoutUpdatingFilterRules:(NSString *)string options:(_WKTextExtractionFilterOptions)options completionHandler:(void(^)(NSString *))completionHandler;
+- (Expected<std::pair<RefPtr<WebKit::WebFrameProxy>, WebCore::TextExtraction::Interaction>, RetainPtr<NSString>>)_convertToWebCoreInteraction:(_WKTextExtractionInteraction *)wkInteraction nodeIdentifier:(const String&)nodeIdentifierString;
+- (void)_performInteraction:(WebCore::TextExtraction::Interaction)interaction inFrame:(RefPtr<WebKit::WebFrameProxy>)targetFrame actionType:(_WKTextExtractionAction)actionType nodeIdentifier:(const String&)nodeIdentifier staleNodeNote:(const String&)staleNodeNote shouldResolveStaleNodeIdentifier:(BOOL)shouldResolveStaleNodeIdentifier completionHandler:(void(^)(_WKTextExtractionInteractionResult *))completionHandler;
+
 #if ENABLE(TEXT_EXTRACTION_FILTER)
 - (void)_validateText:(const String&)text inFrame:(std::optional<WebCore::FrameIdentifier>&&)frameIdentifier inNode:(std::optional<WebCore::NodeIdentifier>&&)nodeIdentifier completionHandler:(CompletionHandler<void(const String&)>&&)completionHandler;
 #endif
@@ -786,6 +804,7 @@ struct LiveResizeSnapshotState {
 
 - (void)_requestTextExtraction:(nullable _WKTextExtractionConfiguration *)configuration completionHandler:(NS_SWIFT_UI_ACTOR void (^)(WKTextExtractionItem * _Nullable))completionHandler;
 - (void)_describeInteraction:(nullable _WKTextExtractionInteraction *)interaction completionHandler:(NS_SWIFT_UI_ACTOR void (^)(NSString * _Nullable_result, NSError * _Nullable))completionHandler;
+@property (nonatomic, readonly, nullable) NSString *_activeContextMenuTargetNodeIdentifier;
 
 @end
 

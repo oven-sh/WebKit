@@ -1321,7 +1321,7 @@ void FrameLoader::updateURLAndHistory(const URL& newURL, RefPtr<SerializedScript
 {
     ASSERT(m_frame->document() && documentLoader());
 
-    if (documentLoader()->isInitialAboutBlank())
+    if (documentLoader()->isInitialAboutBlank() == IsInitialAboutBlank::Yes)
         historyHandling = NavigationHistoryBehavior::Replace;
 
     Ref history = m_history.get();
@@ -1639,9 +1639,13 @@ void FrameLoader::loadURL(FrameLoadRequest&& frameLoadRequest, const String& ref
 
     // The search for a target frame is done earlier in the case of form submission.
     RefPtr effectiveTargetFrame = findFrameForNavigation(effectiveFrameName);
-    if (is<RemoteFrame>(effectiveTargetFrame)) {
-        updateRequestAndAddExtraFields(*effectiveTargetFrame, frameLoadRequest.resourceRequest(), IsMainResource::Yes, newLoadType, ShouldUpdateAppInitiatedValue::Yes, FrameLoader::IsServiceWorkerNavigationLoad::No, WillOpenInNewWindow::No, protect(frameLoadRequest.requester()).ptr());
-        effectiveTargetFrame->changeLocation(WTF::move(frameLoadRequest));
+    if (RefPtr remoteEffectiveTargetFrame = dynamicDowncast<RemoteFrame>(effectiveTargetFrame)) {
+        updateRequestAndAddExtraFields(*remoteEffectiveTargetFrame, frameLoadRequest.resourceRequest(), IsMainResource::Yes, newLoadType, ShouldUpdateAppInitiatedValue::Yes, FrameLoader::IsServiceWorkerNavigationLoad::No, WillOpenInNewWindow::No, protect(frameLoadRequest.requester()).ptr());
+        // The local-frame path below attaches Private Click Measurement to the NavigationAction once the load
+        // reaches the main frame (see the frame->isMainFrame() check below). When the main frame is remote (site
+        // isolation) that path is never reached, so hand the data to the RemoteFrameClient directly to be
+        // re-attached to the cross-process NavigationAction.
+        remoteEffectiveTargetFrame->client().changeLocation(WTF::move(frameLoadRequest), remoteEffectiveTargetFrame->isMainFrame() ? WTF::move(privateClickMeasurement) : std::nullopt);
         return;
     }
 
@@ -1685,7 +1689,7 @@ void FrameLoader::loadURL(FrameLoadRequest&& frameLoadRequest, const String& ref
             else
                 historyHandling = NavigationHistoryBehavior::Push;
         }
-        if (newURL.protocolIsJavaScript() || (documentLoader() && documentLoader()->isInitialAboutBlank()))
+        if (newURL.protocolIsJavaScript() || (documentLoader() && documentLoader()->isInitialAboutBlank() == IsInitialAboutBlank::Yes))
             historyHandling = NavigationHistoryBehavior::Replace;
     }
     frameLoadRequest.setNavigationHistoryBehavior(historyHandling);
@@ -2400,7 +2404,7 @@ void FrameLoader::setState(FrameState newState)
 
 void FrameLoader::clearProvisionalLoad()
 {
-    FRAMELOADER_RELEASE_LOG(ResourceLoading, "clearProvisionalLoad: Clearing provisional document loader (m_provisionalDocumentLoader=%p)", m_provisionalDocumentLoader.get());
+    FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderClearProvisionalLoad, m_provisionalDocumentLoader && m_provisionalDocumentLoader->navigationID() ? m_provisionalDocumentLoader->navigationID()->toUInt64() : 0);
     setProvisionalDocumentLoader(nullptr);
     if (CheckedPtr progressTracker = m_progressTracker.get())
         progressTracker->progressCompleted(FrameProgressTracker::LoadCompletionStatus::Failure);
@@ -3554,7 +3558,8 @@ void FrameLoader::updateRequestAndAddExtraFields(Frame& targetFrame, ResourceReq
         request.setIsTopSite(isMainFrameMainResource);
 
     bool hasSpecificCachePolicy = request.cachePolicy() != ResourceRequestCachePolicy::UseProtocolCachePolicy;
-    if (page && page->isResourceCachingDisabledByWebInspector()) {
+    bool cachingDisabledByWebInspector = page && page->isResourceCachingDisabledByWebInspector();
+    if (cachingDisabledByWebInspector) {
         request.setCachePolicy(ResourceRequestCachePolicy::ReloadIgnoringCacheData);
         loadType = FrameLoadType::ReloadFromOrigin;
     } else if (!hasSpecificCachePolicy)
@@ -3565,11 +3570,18 @@ void FrameLoader::updateRequestAndAddExtraFields(Frame& targetFrame, ResourceReq
         return;
 
     if (!hasSpecificCachePolicy && request.cachePolicy() == ResourceRequestCachePolicy::ReloadIgnoringCacheData) {
+        auto overrideHeaderIfNeeded = [&] (HTTPHeaderName name, const String& value) {
+            if (cachingDisabledByWebInspector)
+                request.addHTTPHeaderFieldIfNotPresent(name, value);
+            else
+                request.setHTTPHeaderField(name, value);
+        };
+
         if (loadType == FrameLoadType::Reload)
-            request.setHTTPHeaderField(HTTPHeaderName::CacheControl, HTTPHeaderValues::maxAge0());
+            overrideHeaderIfNeeded(HTTPHeaderName::CacheControl, HTTPHeaderValues::maxAge0());
         else if (loadType == FrameLoadType::ReloadFromOrigin) {
-            request.setHTTPHeaderField(HTTPHeaderName::CacheControl, HTTPHeaderValues::noCache());
-            request.setHTTPHeaderField(HTTPHeaderName::Pragma, HTTPHeaderValues::noCache());
+            overrideHeaderIfNeeded(HTTPHeaderName::CacheControl, HTTPHeaderValues::noCache());
+            overrideHeaderIfNeeded(HTTPHeaderName::Pragma, HTTPHeaderValues::noCache());
         }
     }
 

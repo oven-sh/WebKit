@@ -490,6 +490,7 @@ static FoldedTextResult foldForReplacement(const String& source)
         appendCodePoint(quoteFoldedView.substring(start, i - start), start);
     }
     sourceOffsetByFoldedIndex.append(quoteFolded.length());
+    ASSERT(sourceOffsetByFoldedIndex.size() == builder.length() + 1);
 
     return { builder.toString(), WTF::move(sourceOffsetByFoldedIndex) };
 }
@@ -497,6 +498,46 @@ static FoldedTextResult foldForReplacement(const String& source)
 String foldTextForReplacement(const String& source)
 {
     return foldForReplacement(source).text;
+}
+
+String applyReplacements(const String& text, const Vector<std::pair<String, String>>& replacementStrings)
+{
+    if (replacementStrings.isEmpty())
+        return text;
+
+    auto folded = foldForReplacement(text);
+    StringBuilder result;
+    result.reserveCapacity(text.length());
+    unsigned cursor = 0;
+    while (cursor < folded.text.length()) {
+        bool matched = false;
+        for (auto [foldedKey, replacement] : replacementStrings) {
+            if (foldedKey.isEmpty()) {
+                ASSERT_NOT_REACHED();
+                break;
+            }
+
+            if (foldedKey.length() > folded.text.length() - cursor)
+                continue;
+
+            if (StringView { folded.text }.substring(cursor, foldedKey.length()) != foldedKey)
+                continue;
+
+            result.append(replacement);
+            cursor += foldedKey.length();
+            matched = true;
+            break;
+        }
+
+        if (matched)
+            continue;
+
+        unsigned originalStart = folded.sourceOffsetByFoldedIndex[cursor];
+        unsigned originalEnd = folded.sourceOffsetByFoldedIndex[cursor + 1];
+        result.append(StringView { text }.substring(originalStart, originalEnd - originalStart));
+        ++cursor;
+    }
+    return result.toString();
 }
 
 class TextExtractionAggregator : public RefCounted<TextExtractionAggregator> {
@@ -664,6 +705,11 @@ public:
         return !usePlainTextOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeSelectOptions);
     }
 
+    bool NODELETE includeTagName() const
+    {
+        return useTextTreeOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeTagName);
+    }
+
     bool NODELETE includeURLs() const
     {
         return !usePlainTextOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeURLs);
@@ -716,38 +762,8 @@ public:
 
     void applyReplacements(String& text)
     {
-        if (m_options.replacementStrings.isEmpty())
-            return;
-
-        auto folded = foldForReplacement(text);
-        StringBuilder result;
-        result.reserveCapacity(text.length());
-        unsigned cursor = 0;
-        while (cursor < folded.text.length()) {
-            bool matched = false;
-            for (auto& [foldedKey, replacement] : m_options.replacementStrings) {
-                if (foldedKey.length() > folded.text.length() - cursor)
-                    continue;
-                if (StringView { folded.text }.substring(cursor, foldedKey.length()) != foldedKey)
-                    continue;
-
-                result.append(replacement);
-                cursor += foldedKey.length();
-                matched = true;
-                break;
-            }
-
-            if (matched)
-                continue;
-
-            unsigned originalStart = folded.sourceOffsetByFoldedIndex[cursor];
-            unsigned originalEnd = folded.sourceOffsetByFoldedIndex[cursor + 1];
-            result.append(StringView { text }.substring(originalStart, originalEnd - originalStart));
-            ++cursor;
-        }
-        text = result.toString();
+        text = WebKit::applyReplacements(text, m_options.replacementStrings);
     }
-
 
     void truncateTextByWordLimitIfNeeded(String& text, const Vector<CharacterRange>& linkCharacterRanges = { }, HasAdjacentLinkAfter hasAdjacentLinkAfter = HasAdjacentLinkAfter::No)
     {
@@ -858,6 +874,13 @@ public:
 
         if (auto identifiers = ExtractedNodeInfo { frameIdentifier, *nodeIdentifier, interactivity }; containers.isEmpty() || containers.last() != identifiers)
             containers.append(WTF::move(identifiers));
+    }
+
+    String shortenedURLStringForLink(const TextExtraction::LinkItemData& data)
+    {
+        if (shortenURLs() && data.linksToCurrentURL)
+            return data.shortenedSelfLinkURLString;
+        return stringForURL(data);
     }
 
 private:
@@ -1098,7 +1121,7 @@ static std::pair<Vector<String>, String> recognizedClassesAndIdForItem(const Tex
     if (item.classNames.isEmpty() && item.idAttribute.isEmpty())
         return { };
 
-    if (!item.accessibilityRole.isEmpty() || !item.title.isEmpty())
+    if (!item.title.isEmpty())
         return { };
 
     if (!item.ariaAttributes.isEmpty() || !item.clientAttributes.isEmpty())
@@ -1140,11 +1163,10 @@ static std::pair<Vector<String>, String> recognizedClassesAndIdForItem(const Tex
         return { };
 
     if (item.children.size() == 1) {
-        auto* textData = std::get_if<TextExtraction::TextItemData>(&item.children[0].data);
-        if (!textData)
-            return { };
-        if (textData->content.trim(isASCIIWhitespace).length() > 2)
-            return { };
+        if (auto* textData = std::get_if<TextExtraction::TextItemData>(&item.children[0].data)) {
+            if (textData->content.trim(isASCIIWhitespace).length() > 2)
+                return { };
+        }
     }
 
 #if PLATFORM(COCOA)
@@ -1546,7 +1568,7 @@ static void addPartsForText(const TextExtraction::TextItemData& textItem, Vector
                     auto escapedText = escapeStringForMarkdown(trimmedContent);
                     if (valueOrDefault(urlString).containsIgnoringASCIICase(escapedText))
                         escapedText = { };
-                    escapedText = urlString ? makeString('[', WTF::move(escapedText), "]("_s, WTF::move(*urlString), ')') : escapedText;
+                    escapedText = (urlString && !urlString->isEmpty()) ? makeString('[', WTF::move(escapedText), "]("_s, WTF::move(*urlString), ')') : escapedText;
                     if (isStrikethrough)
                         escapedText = makeString("~~"_s, WTF::move(escapedText), "~~"_s);
                     textParts.append(WTF::move(escapedText));
@@ -1617,10 +1639,16 @@ static void addPartsForItem(const TextExtraction::Item& item, std::optional<Node
                     parts.append("-"_s);
                 }
             } else {
+                bool isGenericContainer = containerString.isEmpty();
                 if (!containerString.isEmpty())
                     parts.append(WTF::move(containerString));
+                else if (aggregator.includeTagName() && !item.nodeName.isEmpty())
+                    parts.append(item.nodeName.convertToASCIILowercase());
 
                 parts.appendVector(partsForItem(item, aggregator, includeRectForParentItem));
+
+                if (isGenericContainer && item.isVisuallyClickable)
+                    parts.append("clickable"_s);
             }
             aggregator.addResult(line, WTF::move(parts));
         },
@@ -1807,8 +1835,11 @@ static void addPartsForItem(const TextExtraction::Item& item, std::optional<Node
             if (aggregator.useHTMLOutput()) {
                 auto attributes = partsForItem(item, aggregator, includeRectForParentItem);
 
-                if (!linkData.completedURL.isEmpty() && aggregator.includeURLs())
-                    attributes.append(makeString("href='"_s, aggregator.stringForURL(linkData), '\''));
+                if (!linkData.completedURL.isEmpty() && aggregator.includeURLs()) {
+                    auto urlString = aggregator.shortenedURLStringForLink(linkData);
+                    if (!urlString.isEmpty())
+                        attributes.append(makeString("href='"_s, urlString, '\''));
+                }
 
                 if (attributes.isEmpty())
                     parts.append(makeString('<', item.nodeName.convertToASCIILowercase(), '>'));
@@ -1818,9 +1849,11 @@ static void addPartsForItem(const TextExtraction::Item& item, std::optional<Node
                 parts.append("link"_s);
                 parts.appendVector(partsForItem(item, aggregator, includeRectForParentItem));
 
-                bool omitSelfLinkURL = aggregator.useTextTreeOutput() && aggregator.shortenURLs() && linkData.linksToCurrentURL;
-                if (!linkData.completedURL.isEmpty() && aggregator.includeURLs() && !omitSelfLinkURL)
-                    parts.append(makeString("url="_s, quoteValue(aggregator.stringForURL(linkData), streamlined)));
+                if (!linkData.completedURL.isEmpty() && aggregator.includeURLs()) {
+                    auto urlString = aggregator.shortenedURLStringForLink(linkData);
+                    if (!urlString.isEmpty())
+                        parts.append(makeString("url="_s, quoteValue(urlString, streamlined)));
+                }
             }
 
             aggregator.addResult(line, WTF::move(parts));
@@ -1953,6 +1986,9 @@ static void addPartsForItem(const TextExtraction::Item& item, std::optional<Node
 
                 if (!imageData.altText.isEmpty())
                     parts.append(makeString("alt="_s, quoteValue(escapeString(imageData.altText), streamlined)));
+
+                if (item.isVisuallyClickable)
+                    parts.append("clickable"_s);
             }
 
             aggregator.addResult(line, WTF::move(parts));
@@ -2009,7 +2045,7 @@ static void addTextRepresentationRecursive(const TextExtraction::Item& item, std
         if (auto attributeFromClient = item.clientAttributes.get("href"_s); !attributeFromClient.isEmpty())
             linkURLString = WTF::move(attributeFromClient);
         else if (aggregator.includeURLs())
-            linkURLString = aggregator.stringForURL(*link);
+            linkURLString = aggregator.shortenedURLStringForLink(*link);
         aggregator.pushURLString(WTF::move(linkURLString));
         isLink = true;
     }

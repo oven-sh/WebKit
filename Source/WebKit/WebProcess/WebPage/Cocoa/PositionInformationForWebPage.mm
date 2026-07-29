@@ -33,6 +33,7 @@
 #import "PluginView.h"
 #import "ShareableBitmapUtilities.h"
 #import "WebPage.h"
+#import <WebCore/AccessibilityObject.h>
 #import <WebCore/ContainerNodeInlines.h>
 #import <WebCore/DataDetection.h>
 #import <WebCore/DataDetectionResultsStorage.h>
@@ -250,6 +251,10 @@ static void imagePositionInformation(WebPage& page, WebCore::Element& element, c
 
     auto& [renderImage, image] = *rendererAndImage;
     info.isImage = true;
+#if PLATFORM(IOS_FAMILY)
+    // UIImageDataWriteToSavedPhotosAlbum works with resource data, and thus only for bitmap images.
+    info.hasSaveableImage = image.isBitmapImage() && !image.isNull();
+#endif
     info.imageURL = page.applyLinkDecorationFiltering(protect(element.document())->encodingParseURL(protect(renderImage.cachedImage())->url().string()), WebCore::LinkDecorationFilteringTrigger::Unspecified);
     info.imageMIMEType = image.mimeType();
     info.isAnimatedImage = image.isAnimated();
@@ -347,16 +352,24 @@ static void elementPositionInformation(WebPage& page, WebCore::Element& element,
 
 static void selectionPositionInformation(WebPage& page, const InteractionInformationRequest& request, InteractionInformationAtPosition& info)
 {
+    // `request.point` is in the root-view coordinate space.
+
     RefPtr localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page.corePage()->mainFrame());
     if (!localMainFrame)
         return;
 
-    constexpr OptionSet<WebCore::HitTestRequest::Type> hitType {
+    RefPtr frameView = localMainFrame->view();
+    if (!frameView)
+        return;
+
+    auto contentsPoint = frameView->rootViewToContents(request.point);
+
+    constexpr OptionSet hitType {
         WebCore::HitTestRequest::Type::ReadOnly,
         WebCore::HitTestRequest::Type::Active,
         WebCore::HitTestRequest::Type::AllowVisibleChildFrameContentOnly
     };
-    WebCore::HitTestResult result = localMainFrame->eventHandler().hitTestResultAtPoint(request.point, hitType);
+    WebCore::HitTestResult result = localMainFrame->eventHandler().hitTestResultAtPoint(contentsPoint, hitType);
     RefPtr hitNode = result.innerNode();
 
     // Hit test could return HTMLHtmlElement that has no renderer, if the body is smaller than the document.
@@ -426,9 +439,31 @@ static void selectionPositionInformation(WebPage& page, const InteractionInforma
         if (info.prefersDraggingOverTextSelection || info.isDHTMLDraggable || info.isColorInput || info.isRangeInput)
             break;
     }
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+    if (!info.isRangeInput) {
+        constexpr auto sliderHitType = hitType | OptionSet {
+            WebCore::HitTestRequest::Type::CollectMultipleElements,
+            WebCore::HitTestRequest::Type::IncludeAllElementsUnderPoint,
+        };
+        const auto sliderResult = localMainFrame->eventHandler().hitTestResultAtPoint(contentsPoint, sliderHitType);
+        for (Ref node : sliderResult.listBasedTestResult()) {
+            const RefPtr element = dynamicDowncast<WebCore::Element>(node);
+            if (!element)
+                continue;
+
+            const auto ariaRole = element->attributeWithoutSynchronization(WebCore::HTMLNames::roleAttr);
+            if (WebCore::AccessibilityObject::ariaRoleToWebCoreRole(ariaRole) == WebCore::AccessibilityRole::Slider) {
+                info.isARIASlider = true;
+                break;
+            }
+        }
+    }
+#endif // HAVE(APPKIT_GESTURES_SUPPORT)
+
 #if PLATFORM(MACCATALYST)
     bool isInsideFixedPosition;
-    WebCore::VisiblePosition caretPosition(renderer->visiblePositionForPoint(request.point, WebCore::HitTestSource::User));
+    WebCore::VisiblePosition caretPosition(renderer->visiblePositionForPoint(contentsPoint, WebCore::HitTestSource::User));
     info.caretRect = caretPosition.absoluteCaretBounds(&isInsideFixedPosition);
 #endif
 
@@ -440,6 +475,8 @@ static void selectionPositionInformation(WebPage& page, const InteractionInforma
 
 static void textInteractionPositionInformation(WebPage& page, const WebCore::HTMLInputElement& input, const InteractionInformationRequest& request, InteractionInformationAtPosition& info)
 {
+    // `request.point` is in the root-view coordinate space.
+
     if (!input.list())
         return;
 
@@ -447,7 +484,12 @@ static void textInteractionPositionInformation(WebPage& page, const WebCore::HTM
     RefPtr localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page.corePage()->mainFrame());
     if (!localMainFrame)
         return;
-    WebCore::HitTestResult result = localMainFrame->eventHandler().hitTestResultAtPoint(request.point, hitType);
+
+    RefPtr frameView = localMainFrame->view();
+    if (!frameView)
+        return;
+
+    WebCore::HitTestResult result = localMainFrame->eventHandler().hitTestResultAtPoint(frameView->rootViewToContents(request.point), hitType);
     if (result.innerNode() == input.dataListButtonElement())
         info.preventTextInteraction = true;
 }
@@ -583,20 +625,10 @@ static void animationPositionInformation(WebPage& page, const InteractionInforma
 #endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 }
 
-static RefPtr<WebCore::LocalDOMWindow> windowWithDoubleClickEventListener(RefPtr<WebCore::LocalFrame> frame)
-{
-    if (!frame)
-        return nullptr;
-
-    RefPtr window = frame->window();
-    if (!window || !window->hasEventListeners(WebCore::eventNames().dblclickEvent))
-        return nullptr;
-
-    return window;
-}
-
 InteractionInformationAtPosition positionInformationForWebPage(WebPage& page, const InteractionInformationRequest& request)
 {
+    // `request.point` is in the root-view coordinate space.
+
     InteractionInformationAtPosition info;
     info.request = request;
 
@@ -605,13 +637,17 @@ InteractionInformationAtPosition positionInformationForWebPage(WebPage& page, co
     if (!localMainFrame)
         return info;
 
+    RefPtr mainFrameView = localMainFrame->view();
+    if (!mainFrameView)
+        return info;
+
     RefPtr nodeRespondingToClickEvents = localMainFrame->nodeRespondingToClickEvents(request.point, adjustedPoint);
 
     info.isContentEditable = nodeRespondingToClickEvents && nodeRespondingToClickEvents->isContentEditable();
     info.adjustedPointForNodeRespondingToClickEvents = adjustedPoint;
 
     if (request.includeHasDoubleClickHandler)
-        info.hitNodeOrWindowHasDoubleClickListener = localMainFrame->nodeRespondingToDoubleClickEvent(request.point, adjustedPoint) || windowWithDoubleClickEventListener(localMainFrame);
+        info.hitNodeOrWindowHasDoubleClickListener = localMainFrame->nodeRespondingToDoubleClickEvent(request.point, adjustedPoint) || localMainFrame->windowWithDoubleClickEventListener();
 
     auto hitTestRequestTypes = OptionSet<WebCore::HitTestRequest::Type> {
         WebCore::HitTestRequest::Type::ReadOnly,
@@ -627,7 +663,9 @@ InteractionInformationAtPosition positionInformationForWebPage(WebPage& page, co
 #endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 
     auto& eventHandler = localMainFrame->eventHandler();
-    auto hitTestResult = eventHandler.hitTestResultAtPoint(request.point, hitTestRequestTypes);
+
+    auto hitTestPoint = mainFrameView->rootViewToContents(request.point);
+    auto hitTestResult = eventHandler.hitTestResultAtPoint(hitTestPoint, hitTestRequestTypes);
 
 #if ENABLE(PDF_PLUGIN)
     RefPtr pluginView = hitTestResult.isOverWidget() ? WebPage::pluginViewForFrame(WTF::protect(hitTestResult.innerNodeFrame())) : nullptr;

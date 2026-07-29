@@ -1705,7 +1705,7 @@ void RenderLayer::dirtyAncestorChainHasAlwaysIncludedInZOrderListsDescendants()
 
 FloatRect RenderLayer::referenceBoxRectForClipPath(CSSBoxType boxType, const LayoutSize& offsetFromRoot, const LayoutRect& rootRelativeBounds) const
 {
-    bool isReferenceBox = m_svgData ? true : renderer().isRenderBox();
+    bool isReferenceBox = m_svgData || renderer().isRenderBox();
 
     // FIXME: Support different reference boxes for inline content.
     // https://bugs.webkit.org/show_bug.cgi?id=129047
@@ -2086,8 +2086,8 @@ static LayoutRect computeLayerPositionAndIntegralSize(const RenderLayerModelObje
         return { LayoutPoint(), inlineRenderer->linesBoundingBox().size() };
 
     if (auto* boxRenderer = dynamicDowncast<RenderBox>(renderer)) {
-        const auto& frameRect = boxRenderer->frameRect();
-        return { boxRenderer->topLeftLocation(), snappedIntSize(frameRect.size(), frameRect.location()) };
+        const auto& borderBox = boxRenderer->borderBoxRectInContainer();
+        return { boxRenderer->topLeftLocation(), snappedIntSize(borderBox.size(), borderBox.location()) };
     }
 
     if (auto* svgModelObjectRenderer = dynamicDowncast<RenderSVGModelObject>(renderer)) {
@@ -3078,7 +3078,7 @@ IntSize RenderLayer::visibleSize() const
     if (!box)
         return IntSize();
 
-    return IntSize(roundToInt(box->clientWidth()), roundToInt(box->clientHeight()));
+    return IntSize(roundToInt(box->paddingBoxWidth()), roundToInt(box->paddingBoxHeight()));
 }
 
 RenderLayer::OverflowControlRects RenderLayer::overflowControlsRects() const
@@ -5434,29 +5434,6 @@ LayoutRect RenderLayer::selfClipRect() const
     return clippingRootLayer->renderer().localToAbsoluteQuad(FloatQuad(clipRect)).enclosingBoundingBox();
 }
 
-LayoutRect RenderLayer::localClipRect(bool& clipExceedsBounds, LocalClipRectMode mode) const
-{
-    clipExceedsBounds = false;
-    // FIXME: border-radius not accounted for.
-    // FIXME: Regions not accounted for.
-    const RenderLayer* clippingRootLayer = mode == LocalClipRectMode::ExcludeCompositingState ? this : clippingRootForPainting();
-    LayoutSize offsetFromRoot = offsetFromAncestor(clippingRootLayer);
-    LayoutRect clipRect = clipRectRelativeToAncestor(clippingRootLayer, offsetFromRoot, LayoutRect::infiniteRect());
-    if (clipRect.isInfinite())
-        return clipRect;
-
-    if (renderer().hasClip()) {
-        if (CheckedPtr box = dynamicDowncast<RenderBox>(renderer())) {
-            // CSS clip may be larger than our border box.
-            LayoutRect cssClipRect = box->clipRect({ });
-            clipExceedsBounds = !cssClipRect.isEmpty() && (clipRect.width() < cssClipRect.width() || clipRect.height() < cssClipRect.height());
-        }
-    }
-
-    clipRect.move(-offsetFromRoot);
-    return clipRect;
-}
-
 void RenderLayer::addBlockSelectionGapsBounds(const LayoutRect& bounds)
 {
     m_blockSelectionGapsBounds.unite(enclosingIntRect(bounds));
@@ -5677,16 +5654,39 @@ LayoutRect RenderLayer::calculateLayerBounds(const RenderLayer* ancestorLayer, c
 
     LayoutRect unionBounds = boundingBoxRect;
 
-    if (flags.containsAny({ UseLocalClipRectIfPossible, UseLocalClipRectExcludingCompositingIfPossible })) {
-        bool clipExceedsBounds = false;
-        LayoutRect localClipRect = this->localClipRect(clipExceedsBounds, flags.contains(UseLocalClipRectExcludingCompositingIfPossible) ? LocalClipRectMode::ExcludeCompositingState : LocalClipRectMode::IncludeCompositingState);
-        if (!localClipRect.isInfinite() && !clipExceedsBounds) {
-            if ((flags & IncludeSelfTransform) && paintsWithTransform(PaintBehavior::Normal))
-                localClipRect = transform()->mapRect(localClipRect);
+    auto computeLocalClipBounds = [this, flags] -> LayoutRect {
+        auto infiniteRect = LayoutRect::infiniteRect();
+        if (!flags.containsAny({ UseLocalClipRectIfPossible, UseLocalClipRectExcludingCompositingIfPossible }))
+            return infiniteRect;
 
-            localClipRect.move(offsetFromAncestor(ancestorLayer));
-            return localClipRect;
+        // FIXME: border-radius not accounted for.
+        // FIXME: Regions not accounted for.
+        const RenderLayer* clippingRootLayer = flags & UseLocalClipRectExcludingCompositingIfPossible ? this : clippingRootForPainting();
+        LayoutSize offsetFromRoot = offsetFromAncestor(clippingRootLayer);
+        LayoutRect clipRect = clipRectRelativeToAncestor(clippingRootLayer, offsetFromRoot, infiniteRect);
+        if (clipRect == infiniteRect)
+            return infiniteRect;
+
+        if (renderer().hasClip()) {
+            if (CheckedPtr box = dynamicDowncast<RenderBox>(renderer())) {
+                // CSS clip may be larger than our border box.
+                LayoutRect cssClipRect = box->clipRect({ });
+                if (!cssClipRect.isEmpty() && (clipRect.width() < cssClipRect.width() || clipRect.height() < cssClipRect.height()))
+                    return infiniteRect;
+            }
         }
+
+        clipRect.move(-offsetFromRoot);
+        return clipRect;
+    };
+
+    auto localClipRect = computeLocalClipBounds();
+    if (!localClipRect.isInfinite()) {
+        if ((flags & IncludeSelfTransform) && paintsWithTransform(PaintBehavior::Normal))
+            localClipRect = transform()->mapRect(localClipRect);
+
+        localClipRect.move(offsetFromAncestor(ancestorLayer));
+        return localClipRect;
     }
 
     // FIXME: should probably just pass 'flags' down to descendants.
@@ -5861,9 +5861,8 @@ bool RenderLayer::backgroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect)
     if (renderer().isFieldset())
         return false;
 
-    // FIXME: We currently only check the immediate renderer,
-    // which will miss many cases.
-    if (renderer().backgroundIsKnownToBeOpaqueInRect(localRect))
+    // FIXME: We currently only check the immediate renderer, which will miss many cases.
+    if (CheckedPtr renderer = renderBox(); renderer && renderer->backgroundIsKnownToBeOpaqueInRect(localRect))
         return true;
     
     // We can't consult child layers if we clip, since they might cover
@@ -6305,7 +6304,7 @@ RenderLayer* RenderLayer::reflectionLayer() const
 
 bool RenderLayer::isReflectionLayer(const RenderLayer& layer) const
 {
-    return m_reflection ? &layer == m_reflection->layer() : false;
+    return m_reflection && &layer == m_reflection->layer();
 }
 
 void RenderLayer::createReflection()

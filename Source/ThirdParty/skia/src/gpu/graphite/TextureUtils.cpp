@@ -13,6 +13,7 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkSurface.h"
 #include "include/effects/SkRuntimeEffect.h"
+#include "include/private/SkTArray.h"
 #include "src/core/SkBlurEngine.h"
 #include "src/core/SkCompressedDataUtils.h"
 #include "src/core/SkDevice.h"
@@ -31,6 +32,7 @@
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/Recording.h"
 #include "include/gpu/graphite/Surface.h"
+#include "include/private/SkLog.h"
 #include "src/gpu/BlurUtils.h"
 #include "src/gpu/RefCntedCallback.h"
 #include "src/gpu/SkBackingFit.h"
@@ -41,7 +43,6 @@
 #include "src/gpu/graphite/DrawContext.h"
 #include "src/gpu/graphite/Image_Base_Graphite.h"
 #include "src/gpu/graphite/Image_Graphite.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/ResourceProvider.h"
 #include "src/gpu/graphite/ResourceTypes.h"
@@ -182,7 +183,7 @@ bool valid_client_provided_image(const SkImage* clientProvided,
     // We require provided images to have a TopLeft origin
     auto graphiteImage = static_cast<const Image*>(clientProvided);
     if (graphiteImage->textureProxyView().origin() != Origin::kTopLeft) {
-        SKGPU_LOG_E("Client provided image must have a TopLeft origin.");
+        SKIA_LOG_E("Client provided image must have a TopLeft origin.");
         return false;
     }
 
@@ -220,7 +221,7 @@ public:
         // Invoke the fulfill proc to get the promised backend texture.
         auto [ backendTexture, textureReleaseCtx ] = fFulfillProc(fFulfillContext);
         if (!backendTexture.isValid()) {
-            SKGPU_LOG_W("FulfillProc returned an invalid backend texture");
+            SKIA_LOG_W("FulfillProc returned an invalid backend texture");
             return nullptr;
         }
 
@@ -230,7 +231,7 @@ public:
         sk_sp<Texture> texture = resourceProvider->createWrappedTexture(backendTexture,
                                                                         std::move(fLabel));
         if (!texture) {
-            SKGPU_LOG_W("Failed to wrap BackendTexture returned by fulfill proc");
+            SKIA_LOG_W("Failed to wrap BackendTexture returned by fulfill proc");
             return nullptr;
         }
         texture->setReleaseCallback(std::move(textureReleaseCB));
@@ -275,33 +276,19 @@ TextureProxyView MakeBitmapProxyView(Recorder* recorder,
             SkMipmap::ComputeLevelCount(bitmap.width(), bitmap.height()) + 1 : 1;
 
     // setup MipLevels
-    sk_sp<SkMipmap> mipmaps;
-    std::vector<MipLevel> texels;
-    if (mipLevelCount == 1) {
-        texels.resize(mipLevelCount);
-        texels[0].fPixels = bitmap.getPixels();
-        texels[0].fRowBytes = bitmap.rowBytes();
-    } else {
-        mipmaps = SkToBool(mipmapsIn)
-                          ? mipmapsIn
-                          : sk_sp<SkMipmap>(SkMipmap::Build(bitmap.pixmap(), nullptr));
-        if (!mipmaps) {
+    sk_sp<SkMipmap> mipmaps = mipmapsIn;
+    skia_private::STArray<16, MipLevel> levels(mipLevelCount);
+    levels.push_back({bitmap.getPixels(), bitmap.rowBytes()}); // base level is always included
+    if (mipLevelCount > 1) {
+        if (!mipmaps && !(mipmaps = sk_sp<SkMipmap>(SkMipmap::Build(bitmap.pixmap(), nullptr)))) {
+            SKIA_LOG_E("Generating mipmaps failed");
             return {};
         }
-
         SkASSERT(mipLevelCount == mipmaps->countLevels() + 1);
-        texels.resize(mipLevelCount);
-
-        texels[0].fPixels = bitmap.getPixels();
-        texels[0].fRowBytes = bitmap.rowBytes();
-
         for (int i = 1; i < mipLevelCount; ++i) {
-            SkMipmap::Level generatedMipLevel;
-            mipmaps->getLevel(i - 1, &generatedMipLevel);
-            texels[i].fPixels = generatedMipLevel.fPixmap.addr();
-            texels[i].fRowBytes = generatedMipLevel.fPixmap.rowBytes();
-            SkASSERT(texels[i].fPixels);
-            SkASSERT(generatedMipLevel.fPixmap.colorType() == bitmap.colorType());
+            SkMipmap::Level mipLevel;
+            SkAssertResult(mipmaps->getLevel(i - 1, &mipLevel));
+            levels.push_back({mipLevel.fPixmap.addr(), mipLevel.fPixmap.rowBytes()});
         }
     }
 
@@ -329,24 +316,27 @@ TextureProxyView MakeBitmapProxyView(Recorder* recorder,
     // no need to coordinate resource sharing. It is better to then group them into a single task
     // at the start of the Recording.
     const SkIRect dimensions = SkIRect::MakeSize(bitmap.dimensions());
+    // Move the view into `uploadSource` so that it is the unique holder of the proxy
     UploadSource uploadSource = UploadSource::Make(
-            recorder->priv().caps(), view, colorInfo, colorInfo, texels, dimensions);
+            recorder->priv().caps(), std::move(view), colorInfo, colorInfo, levels, dimensions);
     if (!uploadSource.isValid()) {
-        SKGPU_LOG_E("MakeBitmapProxyView: Could not create UploadSource");
-        return {};
-    }
-    if (!recorder->priv().rootUploadList()->recordUpload(recorder,
-                                                         view,
-                                                         colorInfo,
-                                                         colorInfo,
-                                                         uploadSource,
-                                                         dimensions,
-                                                         std::make_unique<ImageUploadContext>())) {
-        SKGPU_LOG_E("MakeBitmapProxyView: Could not create UploadInstance");
+        SKIA_LOG_E("MakeBitmapProxyView: Could not create UploadSource");
         return {};
     }
 
-    return view;
+    if (uploadSource.attemptUploadOnhost()) {
+        return uploadSource.view();
+    }
+    // else it failed or was unavailable, so use a task on the root upload list
+
+    if (!recorder->priv().rootUploadList()->recordUpload(recorder,
+                                                         uploadSource,
+                                                         std::make_unique<ImageUploadContext>())) {
+        SKIA_LOG_E("MakeBitmapProxyView: Could not create UploadInstance");
+        return {};
+    }
+
+    return uploadSource.view();
 }
 
 sk_sp<TextureProxy> MakePromiseImageLazyProxy(

@@ -56,8 +56,6 @@ NetworkProcess/webrtc/NetworkRTCMonitor.cpp
 NetworkProcess/webrtc/NetworkRTCProvider.cpp
 NetworkProcess/webrtc/NetworkRTCSharedMonitor.cpp
 
-NetworkProcess/webrtc/rice/RiceBackend.cpp
-
 Platform/IPC/android/ArgumentCodersAndroid.cpp
 
 Platform/IPC/glib/ConnectionGLib.cpp
@@ -174,6 +172,7 @@ UIProcess/API/glib/WebKitOptionMenu.cpp @no-unify
 UIProcess/API/glib/WebKitOptionMenuItem.cpp @no-unify
 UIProcess/API/glib/WebKitPermissionRequest.cpp @no-unify
 UIProcess/API/glib/WebKitPermissionStateQuery.cpp @no-unify
+UIProcess/API/glib/WebKitPointerLockPermissionRequest.cpp @no-unify
 UIProcess/API/glib/WebKitPolicyDecision.cpp @no-unify
 UIProcess/API/glib/WebKitPrivate.cpp @no-unify
 UIProcess/API/glib/WebKitProtocolHandler.cpp @no-unify
@@ -323,8 +322,6 @@ WebProcess/InjectedBundle/glib/InjectedBundleGlib.cpp
 WebProcess/Inspector/wpe/WebInspectorUIWPE.cpp
 
 WebProcess/MediaCache/WebMediaKeyStorageManager.cpp
-
-WebProcess/Network/webrtc/rice/RiceBackendProxy.cpp
 
 WebProcess/WebCoreSupport/glib/WebEditorClientGLib.cpp
 

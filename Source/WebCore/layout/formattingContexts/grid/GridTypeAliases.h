@@ -52,18 +52,15 @@ using BorderBoxPositions = Vector<LayoutUnit>;
 using FlexTracks = Vector<FlexTrack>;
 using GridAreas = HashMap<UnplacedGridItem, GridAreaLines>;
 using GridCell = Vector<UnplacedGridItem, 1>;
-using ComputedSizesList = Vector<ComputedSizes>;
 using GridItemRects = Vector<GridItemRect>;
 using GridMatrix = Vector<Vector<GridCell>>;
 using PlacedGridItems = Vector<PlacedGridItem>;
 using PlacedGridItemSpanList = Vector<WTF::Range<size_t>>;
 using TrackSizes = Vector<LayoutUnit>;
 using TrackSizingFunctionsList = Vector<TrackSizingFunctions>;
-using TrackSizingGridItemConstraintList = Vector<LayoutUnit>;
 using TrackSizingItemList = Vector<TrackSizingItem>;
 using UnsizedTracks = Vector<UnsizedTrack>;
 using UsedBlockSizes = Vector<LayoutUnit>;
-using UsedBorderAndPaddingList = Vector<LayoutUnit>;
 using UsedInlineSizes = Vector<LayoutUnit>;
 } // namespace Layout
 } // namespace WebCore

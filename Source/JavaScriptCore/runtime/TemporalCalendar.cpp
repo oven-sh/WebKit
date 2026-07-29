@@ -38,6 +38,7 @@
 #include "TemporalPlainDate.h"
 #include "TemporalPlainDateTime.h"
 #include "TemporalPlainMonthDay.h"
+#include "TemporalPlainTime.h"
 #include "TemporalPlainYearMonth.h"
 #include "TemporalZonedDateTime.h"
 #include "TimeZoneICUBridge.h"
@@ -47,28 +48,40 @@ namespace JSC {
 
 std::optional<CalendarID> isBuiltinCalendar(StringView string)
 {
-    // FIXME: bare "islamic" is accepted via ICU's keyword set but V8/temporal_rs reject it;
-    // canonicalize to "islamic-civil" (CLDR alias) or filter out.
-    const auto& calendars = intlAvailableCalendars();
-    for (unsigned index = 0; index < calendars.size(); ++index) {
-        if (WTF::equalIgnoringASCIICase(calendars[index], string))
-            return index;
-    }
-    // Legacy alias: "islamicc" → "islamic-civil" (per CLDR/BCP 47).
-    if (WTF::equalIgnoringASCIICase(string, "islamicc"_s)) {
-        for (unsigned index = 0; index < calendars.size(); ++index) {
-            if (calendars[index] == "islamic-civil"_s)
-                return index;
-        }
-    }
-    // Legacy alias: "ethiopic-amete-alem" → "ethioaa".
-    if (WTF::equalIgnoringASCIICase(string, "ethiopic-amete-alem"_s)) {
-        for (unsigned index = 0; index < calendars.size(); ++index) {
-            if (calendars[index] == "ethioaa"_s)
-                return index;
-        }
-    }
-    return std::nullopt;
+    const auto& index = intlAvailableCalendarIndex();
+    auto entry = index.find<ASCIICaseInsensitiveStringViewHashTranslator>(string);
+    if (entry == index.end())
+        return std::nullopt;
+    return entry->value;
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal-gettemporalcalendarslotvaluewithisodefault
+CalendarID getTemporalCalendarIdentifierWithISODefault(JSGlobalObject* globalObject, JSObject* item)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Step 1: If item has an [[InitializedTemporalDate/DateTime/MonthDay/YearMonth/ZonedDateTime]]
+    // internal slot, return item.[[Calendar]].
+    if (auto* pd = dynamicDowncast<TemporalPlainDate>(item))
+        return pd->calendarID();
+    if (auto* pdt = dynamicDowncast<TemporalPlainDateTime>(item))
+        return pdt->calendarID();
+    if (auto* pmd = dynamicDowncast<TemporalPlainMonthDay>(item))
+        return pmd->calendarID();
+    if (auto* pym = dynamicDowncast<TemporalPlainYearMonth>(item))
+        return pym->calendarID();
+    if (auto* zdt = dynamicDowncast<TemporalZonedDateTime>(item))
+        return zdt->calendarID();
+
+    // Step 2: Let calendarLike be ? Get(item, "calendar").
+    JSValue calendarLike = item->get(globalObject, vm.propertyNames->calendar);
+    RETURN_IF_EXCEPTION(scope, iso8601CalendarID());
+    // Step 3: If calendarLike is undefined, return "iso8601".
+    if (calendarLike.isUndefined())
+        return iso8601CalendarID();
+    // Step 4: Return ? ToTemporalCalendarIdentifier(calendarLike).
+    RELEASE_AND_RETURN(scope, toTemporalCalendarIdentifier(globalObject, calendarLike));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-calendarresolvefields
@@ -105,26 +118,12 @@ static void calendarResolveFields(JSGlobalObject* globalObject, std::optional<in
 
 // temporal_rs: CalendarFields::from_prop_bag
 // https://tc39.es/proposal-temporal/#sec-temporal-preparecalendarfields
-template<FieldSetType type, CalendarRead calendarRead>
-TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject(JSGlobalObject* globalObject, JSObject* bag, CalendarID& outCalendarId)
+template<FieldSetType type>
+TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject(JSGlobalObject* globalObject, JSObject* bag, CalendarID calendarId)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     TemporalCore::CalendarFieldsIn fields;
-
-    // Alphabetical order per spec: calendar, day, era, eraYear, month, monthCode, year.
-
-    // calendar
-    if constexpr (calendarRead == CalendarRead::Read) {
-        outCalendarId = iso8601CalendarID();
-        JSValue calProp = bag->get(globalObject, vm.propertyNames->calendar);
-        RETURN_IF_EXCEPTION(scope, fields);
-        if (!calProp.isUndefined()) {
-            outCalendarId = toTemporalCalendarIdentifier(globalObject, calProp);
-            RETURN_IF_EXCEPTION(scope, fields);
-        }
-        // For non-ISO calendars, monthCode validation is handled by the ICU calendar.
-    }
 
     // day (not read for YearMonth per spec)
     if constexpr (type != FieldSetType::YearMonth) {
@@ -142,7 +141,7 @@ TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject(JSGlobalObject* glob
     }
 
     // era, eraYear (only for calendars with eras)
-    if (TemporalCore::calendarHasEras(outCalendarId)) {
+    if (TemporalCore::calendarHasEras(calendarId)) {
         JSValue eraProp = bag->get(globalObject, Identifier::fromString(vm, "era"_s));
         RETURN_IF_EXCEPTION(scope, fields);
         if (!eraProp.isUndefined()) {
@@ -232,26 +231,12 @@ TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject(JSGlobalObject* glob
 // mode == Full: from() — timeZone is the only required field; day/year/month checked later
 //               in CalendarDateFromFields/CalendarResolveFields.
 // mode == Partial: with() — all fields optional; anyFieldSet tracks whether anything was present.
-template<ZonedDateTimeFieldMode mode, CalendarRead calendarRead>
-ZonedDateTimeFields readZonedDateTimeFieldsFromObject(JSGlobalObject* globalObject, JSObject* bag, CalendarID& outCalendarId)
+template<ZonedDateTimeFieldMode mode>
+ZonedDateTimeFields readZonedDateTimeFieldsFromObject(JSGlobalObject* globalObject, JSObject* bag, CalendarID calendarId)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ZonedDateTimeFields result; // step 6: all fields ~unset~, step 7: any = false
-
-    // Steps 2-8: calendar read first (per ToTemporalZonedDateTime step 4.b), then fields in
-    // lexicographic order (step 8). Steps 1/5 are static assertions; steps 3-4/6-7 are trivial.
-
-    // calendar — outside PrepareCalendarFields proper (ToTemporalZonedDateTime step 4.b).
-    if constexpr (calendarRead == CalendarRead::Read) {
-        outCalendarId = iso8601CalendarID();
-        JSValue calProp = bag->get(globalObject, vm.propertyNames->calendar);
-        RETURN_IF_EXCEPTION(scope, result);
-        if (!calProp.isUndefined()) {
-            outCalendarId = toTemporalCalendarIdentifier(globalObject, calProp);
-            RETURN_IF_EXCEPTION(scope, result);
-        }
-    }
 
     // Step 9: for each field in lexicographic order — Get, convert (step 9.c), check required (step 9.d).
 
@@ -275,7 +260,7 @@ ZonedDateTimeFields readZonedDateTimeFieldsFromObject(JSGlobalObject* globalObje
 
     // era (~to-string~), eraYear (~to-integer-with-truncation~)
     // CalendarExtraFields contributes these for era-based calendars (alphabetically between day and hour).
-    if (TemporalCore::calendarHasEras(outCalendarId)) {
+    if (TemporalCore::calendarHasEras(calendarId)) {
         JSValue eraVal = bag->get(globalObject, Identifier::fromString(vm, "era"_s));
         RETURN_IF_EXCEPTION(scope, result);
         if (!eraVal.isUndefined()) {
@@ -510,6 +495,39 @@ ISO8601::PlainDate isoDateFromFields(JSGlobalObject* globalObject, TemporalDateF
     return plainDate;
 }
 
+// https://tc39.es/proposal-temporal/#sec-temporal-interprettemporaldatetimefields
+ISO8601::PlainDateTime interpretTemporalDateTimeFields(JSGlobalObject* globalObject, CalendarID calendarId,
+    const TemporalCore::CalendarFieldsIn& dateFields, const TemporalCore::TimeFieldsIn& timeFields,
+    TemporalOverflow overflow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Step 1: isoDate = ? CalendarDateFromFields(calendar, fields, overflow).
+    auto dateResult = TemporalCore::dateFromFields(calendarId, dateFields, overflow);
+    if (!dateResult) [[unlikely]] {
+        if (dateResult.error().kind == TemporalErrorKind::TypeError)
+            throwTypeError(globalObject, scope, String(dateResult.error().message));
+        else
+            throwRangeError(globalObject, scope, String(dateResult.error().message));
+        return { };
+    }
+
+    // Step 2: time = ? RegulateTime(...).
+    ISO8601::Duration timeDur;
+    timeDur.setField(TemporalUnit::Hour, timeFields.hour.value_or(0));
+    timeDur.setField(TemporalUnit::Minute, timeFields.minute.value_or(0));
+    timeDur.setField(TemporalUnit::Second, timeFields.second.value_or(0));
+    timeDur.setField(TemporalUnit::Millisecond, timeFields.millisecond.value_or(0));
+    timeDur.setField(TemporalUnit::Microsecond, timeFields.microsecond.value_or(0));
+    timeDur.setField(TemporalUnit::Nanosecond, timeFields.nanosecond.value_or(0));
+    auto plainTime = TemporalPlainTime::regulateTime(globalObject, WTF::move(timeDur), overflow);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    // Step 3: Return CombineISODateAndTimeRecord(isoDate, time).
+    return ISO8601::PlainDateTime(dateResult->isoDate, plainTime);
+}
+
 ISO8601::PlainDate isoDateAdd(JSGlobalObject* globalObject, const ISO8601::PlainDate& plainDate, const ISO8601::Duration& duration, TemporalOverflow overflow)
 {
     auto result = TemporalCore::isoDateAdd(plainDate, duration, overflow);
@@ -548,80 +566,11 @@ ISO8601::Duration calendarDateUntil(CalendarID calendarId, const ISO8601::PlainD
     return *result;
 }
 
-// https://tc39.es/proposal-temporal/#sec-temporal-differencetemporalplainyearmonth
-template<DifferenceOperation op>
-ISO8601::Duration differenceTemporalPlainYearMonth(JSGlobalObject* globalObject, const ISO8601::PlainYearMonth& yearMonth, const ISO8601::PlainYearMonth& other, unsigned increment, TemporalUnit smallestUnit, TemporalUnit largestUnit, RoundingMode roundingMode, CalendarID calendarId)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::Date>(JSGlobalObject*, JSObject*, CalendarID);
+template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::YearMonth>(JSGlobalObject*, JSObject*, CalendarID);
+template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::MonthDay>(JSGlobalObject*, JSObject*, CalendarID);
 
-    if (largestUnit == TemporalUnit::Week || largestUnit == TemporalUnit::Day) [[unlikely]] {
-        throwRangeError(globalObject, scope, "largestUnit must be one of year, years, month, months"_s);
-        return { };
-    }
-
-    if (smallestUnit == TemporalUnit::Week || smallestUnit == TemporalUnit::Day) [[unlikely]] {
-        throwRangeError(globalObject, scope, "smallestUnit must be one of year, years, month, months"_s);
-        return { };
-    }
-
-    auto sign = TemporalCore::isoDateCompare(yearMonth.isoPlainDate(), other.isoPlainDate());
-    if (!sign)
-        return { };
-
-    auto thisDate = yearMonth.isoPlainDate();
-    auto otherDate = other.isoPlainDate();
-
-    auto thisWithinLimits = ISO8601::isDateTimeWithinLimits(thisDate.year(), thisDate.month(), thisDate.day(), 12, 0, 0, 0, 0, 0);
-    auto otherWithinLimits = ISO8601::isDateTimeWithinLimits(otherDate.year(), otherDate.month(), otherDate.day(), 12, 0, 0, 0, 0, 0);
-    if (!thisWithinLimits || !otherWithinLimits) [[unlikely]] {
-        throwRangeError(globalObject, scope, "date/time value is outside of supported range"_s);
-        return { };
-    }
-    // Use temporal/core differenceYearMonth which resolves both to day=1 via dateFromFields.
-    auto dateDiffResult = TemporalCore::differenceYearMonth(calendarId, thisDate, otherDate, largestUnit);
-    ISO8601::Duration dateDifference;
-    if (!dateDiffResult) {
-        // Fallback to direct calendarDateUntil if differenceYearMonth fails.
-        if (calendarId != iso8601CalendarID())
-            dateDifference = calendarDateUntil(calendarId, thisDate, otherDate, largestUnit);
-        else
-            dateDifference = TemporalCore::calendarDateUntil(thisDate, otherDate, largestUnit);
-    } else
-        dateDifference = *dateDiffResult;
-    auto duration = ISO8601::InternalDuration::combineDateAndTimeDuration(ISO8601::Duration { dateDifference.years(), dateDifference.months(), 0LL, 0LL, 0LL, 0LL, 0LL, 0LL, Int128(0), Int128(0) }, 0);
-
-    if (smallestUnit != TemporalUnit::Month || increment != 1) {
-        auto originEpochNs = TemporalCore::getUTCEpochNanoseconds(thisDate, ISO8601::PlainTime());
-        auto destEpochNs = TemporalCore::getUTCEpochNanoseconds(otherDate, ISO8601::PlainTime());
-        auto roundResult = TemporalCore::roundRelativeDuration(duration, originEpochNs, destEpochNs, thisDate, ISO8601::PlainTime(), largestUnit, increment, smallestUnit, roundingMode, nullptr, calendarId);
-        if (!roundResult) [[unlikely]] {
-            throwTemporalError(globalObject, scope, roundResult.error());
-            return { };
-        }
-    }
-    auto durResult = TemporalCore::temporalDurationFromInternal(duration, TemporalUnit::Day);
-    if (!durResult) [[unlikely]] {
-        throwTemporalError(globalObject, scope, durResult.error());
-        return { };
-    }
-    ISO8601::Duration result = *durResult;
-    if (op == DifferenceOperation::Since)
-        result = -result;
-    return result;
-}
-
-template ISO8601::Duration differenceTemporalPlainYearMonth<DifferenceOperation::Since>(JSGlobalObject*, const ISO8601::PlainYearMonth&, const ISO8601::PlainYearMonth&, unsigned, TemporalUnit, TemporalUnit, RoundingMode, CalendarID);
-template ISO8601::Duration differenceTemporalPlainYearMonth<DifferenceOperation::Until>(JSGlobalObject*, const ISO8601::PlainYearMonth&, const ISO8601::PlainYearMonth&, unsigned, TemporalUnit, TemporalUnit, RoundingMode, CalendarID);
-
-template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::Date, CalendarRead::Read>(JSGlobalObject*, JSObject*, CalendarID&);
-template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::Date, CalendarRead::Skip>(JSGlobalObject*, JSObject*, CalendarID&);
-template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::YearMonth, CalendarRead::Read>(JSGlobalObject*, JSObject*, CalendarID&);
-template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::YearMonth, CalendarRead::Skip>(JSGlobalObject*, JSObject*, CalendarID&);
-template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::MonthDay, CalendarRead::Read>(JSGlobalObject*, JSObject*, CalendarID&);
-template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::MonthDay, CalendarRead::Skip>(JSGlobalObject*, JSObject*, CalendarID&);
-
-template ZonedDateTimeFields readZonedDateTimeFieldsFromObject<ZonedDateTimeFieldMode::Full, CalendarRead::Read>(JSGlobalObject*, JSObject*, CalendarID&);
-template ZonedDateTimeFields readZonedDateTimeFieldsFromObject<ZonedDateTimeFieldMode::Partial, CalendarRead::Skip>(JSGlobalObject*, JSObject*, CalendarID&);
+template ZonedDateTimeFields readZonedDateTimeFieldsFromObject<ZonedDateTimeFieldMode::Full>(JSGlobalObject*, JSObject*, CalendarID);
+template ZonedDateTimeFields readZonedDateTimeFieldsFromObject<ZonedDateTimeFieldMode::Partial>(JSGlobalObject*, JSObject*, CalendarID);
 
 } // namespace JSC

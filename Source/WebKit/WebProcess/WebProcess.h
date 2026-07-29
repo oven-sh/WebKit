@@ -180,12 +180,6 @@ struct WebTransportSessionIdentifierType;
 struct WebsiteData;
 struct WebsiteDataStoreParameters;
 
-#if USE(LIBRICE)
-class RiceBackendProxy;
-struct RiceBackendIdentifierType;
-using RiceBackendIdentifier = ObjectIdentifier<RiceBackendIdentifierType>;
-#endif
-
 enum class RemoteWorkerType : uint8_t;
 enum class WebsiteDataType : uint32_t;
 
@@ -301,12 +295,6 @@ public:
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_sharedPreferencesForWebProcess; }
     const SharedPreferencesForWebProcess& sharedPreferencesForWebProcessValue() const LIFETIME_BOUND { return m_sharedPreferencesForWebProcess; }
     void updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess sharedPreferencesForWebProcess) { m_sharedPreferencesForWebProcess = WTF::move(sharedPreferencesForWebProcess); }
-
-#if USE(LIBRICE)
-    RefPtr<RiceBackendProxy> gstreamerIceBackend(RiceBackendIdentifier);
-    void addRiceBackend(RiceBackendIdentifier, RiceBackendProxy&);
-    void removeRiceBackend(RiceBackendIdentifier);
-#endif
 
 #if ENABLE(GPU_PROCESS)
     GPUProcessConnection& ensureGPUProcessConnection();
@@ -494,7 +482,6 @@ public:
     bool requiresScriptTrackingPrivacyProtections(const URL&, const WebCore::SecurityOrigin& topOrigin) const;
     bool shouldAllowScriptAccess(const URL&, const WebCore::SecurityOrigin& topOrigin, WebCore::ScriptTrackingPrivacyCategory) const;
     bool requiresConsistentPrivacyQuirkForDomain(const URL&) const;
-    bool shouldBlockRequest(const URL&, const WebCore::SecurityOrigin& topOrigin);
 
     bool isLockdownModeEnabled() const { return m_isLockdownModeEnabled.value(); }
     bool imageAnimationEnabled() const { return m_imageAnimationEnabled; }
@@ -972,10 +959,6 @@ private:
 
     Lock m_webTransportSessionsLock;
     HashMap<WebTransportSessionIdentifier, ThreadSafeWeakPtr<WebTransportSession>> m_webTransportSessions WTF_GUARDED_BY_LOCK(m_webTransportSessionsLock);
-
-#if USE(LIBRICE)
-    HashMap<RiceBackendIdentifier, ThreadSafeWeakPtr<RiceBackendProxy>> m_gstreamerIceBackends;
-#endif
 
     HashSet<WebCore::RegistrableDomain> m_domainsWithStorageAccessQuirks;
     std::unique_ptr<ScriptTrackingPrivacyFilter> m_scriptTrackingPrivacyFilter;

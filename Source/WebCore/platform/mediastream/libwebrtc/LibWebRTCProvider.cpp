@@ -350,7 +350,7 @@ Ref<webrtc::PeerConnectionFactoryInterface> LibWebRTCProvider::createPeerConnect
 #endif
     );
     dependencies.network_thread = networkThread;
-    dependencies.worker_thread = signalingThread;
+    dependencies.worker_thread = networkThread;
     dependencies.signaling_thread = signalingThread;
     dependencies.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>();
 
@@ -583,9 +583,7 @@ std::optional<PlatformMediaCapabilitiesDecodingInfo> LibWebRTCProvider::videoDec
         }
         info.powerEfficient = decodingInfo ? decodingInfo->powerEfficient : isSupportingVP9HardwareDecoder();
         info.smooth = decodingInfo ? decodingInfo->smooth : isVPSoftwareDecoderSmooth(configuration);
-    } else if (equalLettersIgnoringASCIICase(containerType, "video/h264"_s))
-        info.powerEfficient = info.smooth = true;
-    else if (equalLettersIgnoringASCIICase(containerType, "video/h265"_s))
+    } else if (equalLettersIgnoringASCIICase(containerType, "video/h264"_s) || equalLettersIgnoringASCIICase(containerType, "video/h265"_s))
         info.powerEfficient = info.smooth = true;
     else if (equalLettersIgnoringASCIICase(containerType, "video/av1"_s))
         info.powerEfficient = info.smooth = isSupportingAV1HardwareDecoder();

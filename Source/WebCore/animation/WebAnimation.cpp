@@ -117,7 +117,12 @@ WebAnimation::WebAnimation(Document& document)
     : ActiveDOMObject(document)
     , m_readyPromise(makeUniqueRef<ReadyPromise>(*this, &WebAnimation::readyPromiseResolve))
     , m_finishedPromise(makeUniqueRef<FinishedPromise>(*this, &WebAnimation::finishedPromiseResolve))
-    , m_timelineRange({ Style::SingleAnimationRangeStart { CSS::Keyword::Normal { } }, Style::SingleAnimationRangeEnd { CSS::Keyword::Normal { } } })
+    , m_timelineRange({
+        .start = Style::SingleAnimationRangeStart { CSS::Keyword::Normal { } },
+        .end = Style::SingleAnimationRangeEnd { CSS::Keyword::Normal { } },
+        .startZoom = Style::ZoomFactor::none(),
+        .endZoom = Style::ZoomFactor::none(),
+    })
 {
     instances().add(*this);
 }
@@ -259,6 +264,14 @@ void WebAnimation::setEffectInternal(RefPtr<AnimationEffect>&& newEffect, bool d
 KeyframeEffect* WebAnimation::keyframeEffect() const
 {
     return dynamicDowncast<KeyframeEffect>(m_effect.get());
+}
+
+AnimationTimeline* WebAnimation::bindingsTimeline() const
+{
+    RefPtr scrollTimeline = dynamicDowncast<ScrollTimeline>(m_timeline);
+    if (scrollTimeline && scrollTimeline->isInactiveStyleOriginatedTimeline())
+        return nullptr;
+    return m_timeline.get();
 }
 
 void WebAnimation::setBindingsTimeline(RefPtr<AnimationTimeline>&& timeline)
@@ -1236,10 +1249,13 @@ ExceptionOr<void> WebAnimation::play(AutoRewind autoRewind)
         m_holdTime = zeroTime();
     }
 
-    // 7. If has finite timeline and previous current time is unresolved:
+    // 7. If has finite timeline and auto-rewind is true:
     // Set the flag auto align start time to true.
-    if (hasFiniteTimeline && !previousCurrentTime)
+    // Set hold time to previous current time.
+    if (hasFiniteTimeline && autoRewind == AutoRewind::Yes) {
         m_autoAlignStartTime = true;
+        m_holdTime = previousCurrentTime;
+    }
 
     // 8. If animation’s hold time is resolved, let its start time be unresolved.
     if (m_holdTime)
@@ -1543,7 +1559,10 @@ void WebAnimation::autoAlignStartTime()
     // 7. Set start time to start offset if effective playback rate ≥ 0, and end offset otherwise.
     auto previousStartTime = std::exchange(m_startTime, effectivePlaybackRate() >= 0 ? startOffset : endOffset);
 
-    // 8. Clear hold time.
+    // 8. Apply any pending playback rate on animation.
+    applyPendingPlaybackRate();
+
+    // 9. Clear hold time.
     m_holdTime = std::nullopt;
 
     if (previousStartTime != m_startTime)
@@ -1679,7 +1698,21 @@ void WebAnimation::stop()
 bool WebAnimation::virtualHasPendingActivity() const
 {
     // Keep the JS wrapper alive if the animation is considered relevant or could become relevant again by virtue of having a timeline.
-    return m_timeline || m_isRelevant;
+
+    if (m_isRelevant)
+        return true;
+    if (!m_timeline)
+        return false;
+
+    // Progress-based (scroll/view) timelines can make an animation relevant again without script, so their wrappers must stay alive.
+    if (m_timeline->isProgressBased())
+        return true;
+
+    ASSERT(m_timeline->isMonotonic());
+
+    // On a monotonic timeline, a canceled (idle) animation cannot become relevant again unless script holds a reference to it.
+    auto playStateIsIdle = !m_holdTime && !m_startTime && !pending();
+    return !playStateIsIdle;
 }
 
 void WebAnimation::updateRelevance()
@@ -2019,41 +2052,51 @@ void WebAnimation::setBindingsRangeEnd(TimelineRangeValue&& rangeEndValue)
         effect->animationRangeDidChange();
 }
 
-void WebAnimation::setRangeStart(Style::SingleAnimationRangeStart&& rangeStart)
+void WebAnimation::setRangeStart(Style::SingleAnimationRangeStart&& start, Style::ZoomFactor startZoom)
 {
-    if (m_timelineRange.start == rangeStart)
+    if (m_timelineRange.start == start && m_timelineRange.startZoom == startZoom)
         return;
 
-    m_timelineRange.start = WTF::move(rangeStart);
+    m_timelineRange.start = WTF::move(start);
+    m_timelineRange.startZoom = WTF::move(startZoom);
+
     if (auto* effect = this->effect())
         effect->animationRangeDidChange();
 }
 
-void WebAnimation::setRangeEnd(Style::SingleAnimationRangeEnd&& rangeEnd)
+void WebAnimation::setRangeEnd(Style::SingleAnimationRangeEnd&& end, Style::ZoomFactor endZoom)
 {
-    if (m_timelineRange.end == rangeEnd)
+    if (m_timelineRange.end == end && m_timelineRange.endZoom == endZoom)
         return;
 
-    m_timelineRange.end = WTF::move(rangeEnd);
+    m_timelineRange.end = WTF::move(end);
+    m_timelineRange.endZoom = WTF::move(endZoom);
+
     if (auto* effect = this->effect())
         effect->animationRangeDidChange();
 }
 
-const Style::SingleAnimationRange& WebAnimation::range()
+const ResolvableTimelineRange& WebAnimation::range()
 {
-    if (RefPtr keyframeEffect = this->keyframeEffect()) {
-        auto conversionData = CSSToLengthConversionData::tryCreateForNonStyleBuildingResolution(keyframeEffect->target());
+    if (m_specifiedRangeStart || m_specifiedRangeEnd) {
+        if (RefPtr keyframeEffect = this->keyframeEffect()) {
+            auto conversionData = CSSToLengthConversionData::tryCreateForNonStyleBuildingResolution(keyframeEffect->target());
 
-        auto computedEdge = [&]<typename To>(const CSSValue& specifiedEdge, To&& defaultValue) {
-            if (!conversionData)
-                return Style::deprecatedToStyleFromCSSValue<To>(specifiedEdge).value_or(defaultValue);
-            return Style::toStyleFromCSSValue<To>(*conversionData, specifiedEdge);
-        };
+            auto computedEdge = [&]<typename To>(const CSSValue& specifiedEdge, To&& defaultValue) {
+                if (!conversionData)
+                    return Style::deprecatedToStyleFromCSSValue<To>(specifiedEdge).value_or(defaultValue);
+                return Style::toStyleFromCSSValue<To>(*conversionData, specifiedEdge);
+            };
 
-        if (m_specifiedRangeStart)
-            m_timelineRange.start = computedEdge(protect(*m_specifiedRangeStart), Style::SingleAnimationRangeStart { CSS::Keyword::Normal { } });
-        if (m_specifiedRangeEnd)
-            m_timelineRange.end = computedEdge(protect(*m_specifiedRangeEnd), Style::SingleAnimationRangeEnd { CSS::Keyword::Normal { } });
+            if (m_specifiedRangeStart) {
+                m_timelineRange.start = computedEdge(protect(*m_specifiedRangeStart), Style::SingleAnimationRangeStart { CSS::Keyword::Normal { } });
+                m_timelineRange.startZoom = Style::ZoomFactor::none();
+            }
+            if (m_specifiedRangeEnd) {
+                m_timelineRange.end = computedEdge(protect(*m_specifiedRangeEnd), Style::SingleAnimationRangeEnd { CSS::Keyword::Normal { } });
+                m_timelineRange.endZoom = Style::ZoomFactor::none();
+            }
+        }
     }
 
     return m_timelineRange;

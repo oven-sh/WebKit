@@ -143,6 +143,7 @@
 #include "ScriptDisallowedScope.h"
 #include "ScrollIntoViewOptions.h"
 #include "ScrollLatchingController.h"
+#include "ScrollSnapOffsetsInfo.h"
 #include "ScrollToOptions.h"
 #include "SecurityPolicyViolationEvent.h"
 #include "SelectorQuery.h"
@@ -193,6 +194,10 @@
 
 #if PLATFORM(IOS_FAMILY)
 #import <pal/system/ios/UserInterfaceIdiom.h>
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+#include "SpatialPortalController.h"
 #endif
 
 template class mpark::variant<WebCore::CSSPropertyID, WTF::AtomString>;
@@ -1258,8 +1263,9 @@ void Element::scrollIntoView(Variant<bool, ScrollIntoViewOptions>&& arg)
     auto options = WTF::switchOn(arg,
         [&](bool boolArg) -> ScrollIntoViewOptions {
             ScrollIntoViewOptions options;
-            if (!boolArg)
-                options.blockPosition = ScrollLogicalPosition::End;
+            // The legacy boolean argument explicitly requests top (true) or bottom (false) alignment,
+            // so treat the block axis as author-specified (not eligible for scroll-snap adjustment).
+            options.blockPosition = boolArg ? ScrollLogicalPosition::Start : ScrollLogicalPosition::End;
             return options;
         },
         [](ScrollIntoViewOptions options) -> ScrollIntoViewOptions {
@@ -1273,10 +1279,21 @@ void Element::scrollIntoView(Variant<bool, ScrollIntoViewOptions>&& arg)
     alignX.disableLegacyHorizontalVisibilityThreshold();
 
     bool isHorizontal = writingMode.isHorizontal();
+    auto physicalAlignX = isHorizontal ? alignX : alignY;
+    auto physicalAlignY = isHorizontal ? alignY : alignX;
+
+    // Honor the target's scroll-snap-align even when the scroll container has scroll-snap-type: none, but only
+    // for an axis whose alignment the author did not explicitly specify. https://drafts.csswg.org/cssom-view/#determine-the-scroll-into-view-position
+    bool blockSpecified = options.blockPosition.has_value();
+    bool inlineSpecified = options.inlinePosition.has_value();
+    bool adjustX = isHorizontal ? !inlineSpecified : !blockSpecified;
+    bool adjustY = isHorizontal ? !blockSpecified : !inlineSpecified;
+    adjustScrollAlignmentForScrollSnapAlign(*renderer, adjustX ? &physicalAlignX : nullptr, adjustY ? &physicalAlignY : nullptr);
+
     auto visibleOptions = ScrollRectToVisibleOptions {
         .revealMode = SelectionRevealMode::Reveal,
-        .alignX = isHorizontal ? alignX : alignY,
-        .alignY = isHorizontal ? alignY : alignX,
+        .alignX = physicalAlignX,
+        .alignY = physicalAlignY,
         .behavior = options.behavior,
         .skipScrollingTargetElement = SkipScrollingTargetElement::Yes
     };
@@ -1612,7 +1629,7 @@ int Element::clientLeft()
     protect(document())->updateLayoutIfDimensionsOutOfDate(*this, DimensionsCheck::Left, { LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible, LayoutOptions::IgnorePendingStylesheets });
 
     if (CheckedPtr renderer = renderBox()) {
-        auto clientLeft = LayoutUnit { roundToInt(renderer->clientLeft()) };
+        auto clientLeft = LayoutUnit { roundToInt(renderer->borderLeft()) };
         return convertToNonSubpixelValue(Style::adjustLayoutUnitForAbsoluteZoom(clientLeft, *renderer).toDouble());
     }
     return 0;
@@ -1623,7 +1640,7 @@ int Element::clientTop()
     protect(document())->updateLayoutIfDimensionsOutOfDate(*this, DimensionsCheck::Top, { LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible, LayoutOptions::IgnorePendingStylesheets });
 
     if (CheckedPtr renderer = renderBox()) {
-        auto clientTop = LayoutUnit { roundToInt(renderer->clientTop()) };
+        auto clientTop = LayoutUnit { roundToInt(renderer->borderTop()) };
         return convertToNonSubpixelValue(Style::adjustLayoutUnitForAbsoluteZoom(clientTop, *renderer).toDouble());
     }
     return 0;
@@ -1646,7 +1663,7 @@ int Element::clientWidth()
         return Style::adjustForAbsoluteZoom(protect(renderView->frameView())->layoutWidth(), renderView);
     
     if (CheckedPtr renderer = renderBox()) {
-        auto clientWidth = LayoutUnit { roundToInt(renderer->clientWidth()) };
+        auto clientWidth = LayoutUnit { roundToInt(renderer->paddingBoxWidth()) };
         // clientWidth/Height is the visual portion of the box content, not including
         // borders or scroll bars, but includes padding. And per
         // https://www.w3.org/TR/CSS2/tables.html#model,
@@ -1683,7 +1700,7 @@ int Element::clientHeight()
         return Style::adjustForAbsoluteZoom(protect(renderView->frameView())->layoutHeight(), renderView);
 
     if (CheckedPtr renderer = renderBox()) {
-        auto clientHeight = LayoutUnit { roundToInt(renderer->clientHeight()) };
+        auto clientHeight = LayoutUnit { roundToInt(renderer->paddingBoxHeight()) };
         // clientWidth/Height is the visual portion of the box content, not including
         // borders or scroll bars, but includes padding. And per
         // https://www.w3.org/TR/CSS2/tables.html#model,
@@ -2822,6 +2839,12 @@ bool Element::hasDisplayNone() const
     return style && style->display() == Style::DisplayType::None;
 }
 
+bool Element::computedStyleIsDisplayNone()
+{
+    CheckedPtr style = computedStyle();
+    return style && style->display() == Style::DisplayType::None;
+}
+
 void Element::storeDisplayContentsOrNoneStyle(std::unique_ptr<Style::ComputedStyle> style)
 {
     // This is used by RenderTreeUpdater to store the style for Elements with display:{contents|none}.
@@ -3476,7 +3499,7 @@ ExceptionOr<ShadowRoot&> Element::attachShadow(const ShadowRootInit& init, std::
     }
     auto scopedRegistry = ShadowRootScopedCustomElementRegistry::No;
     if (!registryKind)
-        registryKind = !registry && usesNullCustomElementRegistry() ? CustomElementRegistryKind::Null : CustomElementRegistryKind::Window;
+        registryKind = CustomElementRegistryKind::Window;
     if (registryKind == CustomElementRegistryKind::Null) {
         ASSERT(!registry);
         scopedRegistry = ShadowRootScopedCustomElementRegistry::Yes;
@@ -4460,7 +4483,7 @@ ExceptionOr<void> Element::replaceChildrenWithMarkup(const String& markup, Optio
         return { };
     }
 
-    auto fragment = createFragmentForInnerOuterHTML(*this, markup, policy, protect(CustomElementRegistry::registryForNodeOrTreeScope(container, protect(container->treeScope()))));
+    auto fragment = createFragmentForInnerOuterHTML(*this, markup, policy, protect(CustomElementRegistry::registryForNodeOrTreeScope(container, protect(container->treeScope()))), container->usesNullCustomElementRegistry() ? CustomElementRegistryKind::Null : CustomElementRegistryKind::Window);
     if (fragment.hasException())
         return fragment.releaseException();
 
@@ -4526,7 +4549,7 @@ ExceptionOr<void> Element::setOuterHTML(Variant<Ref<TrustedHTML>, String>&& html
     RefPtr previous = previousSibling();
     RefPtr next = nextSibling();
 
-    auto fragment = createFragmentForInnerOuterHTML(*contextElement, stringValueHolder.releaseReturnValue(), { ParserContentPolicy::AllowScriptingContent }, protect(CustomElementRegistry::registryForElement(*contextElement)));
+    auto fragment = createFragmentForInnerOuterHTML(*contextElement, stringValueHolder.releaseReturnValue(), { ParserContentPolicy::AllowScriptingContent }, protect(CustomElementRegistry::registryForElement(*contextElement)), contextElement->usesNullCustomElementRegistry() ? CustomElementRegistryKind::Null : CustomElementRegistryKind::Window);
     if (fragment.hasException())
         return fragment.releaseException();
 
@@ -5492,7 +5515,7 @@ bool Element::hasPendingKeyframesUpdate(const std::optional<Style::PseudoElement
 
 void Element::disconnectFromResizeObserversSlow(ResizeObserverData& observerData)
 {
-    for (const auto& observer : observerData.observers)
+    for (RefPtr observer : observerData.observers)
         observer->targetDestroyed(*this);
     observerData.observers.clear();
 }
@@ -5757,6 +5780,29 @@ void Element::clearShouldNotifyTextManipulationControllerIfDisplayed()
 {
     clearStateFlag(StateFlag::ShouldNotifyTextManipulationControllerIfDisplayed);
 }
+
+#if ENABLE(SPATIAL_PORTAL)
+SpatialPortalController& Element::ensureSpatialPortalController()
+{
+    auto& rareData = ensureElementRareData();
+    if (!rareData.spatialPortalController())
+        rareData.setSpatialPortalController(makeUnique<SpatialPortalController>());
+    return *rareData.spatialPortalController();
+}
+
+SpatialPortalController* Element::spatialPortalController() const
+{
+    if (!hasRareData())
+        return nullptr;
+    return elementRareData()->spatialPortalController();
+}
+
+void Element::clearSpatialPortalController()
+{
+    if (hasRareData())
+        elementRareData()->setSpatialPortalController(nullptr);
+}
+#endif
 
 void Element::willModifyAttribute(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue)
 {
@@ -6167,8 +6213,12 @@ static ExceptionOr<Ref<Element>> contextElementForInsertion(const String& where,
         return contextNodeResult.releaseException();
     CheckedRef contextNode = contextNodeResult.releaseReturnValue();
     RefPtr contextElement = dynamicDowncast<Element>(contextNode.get());
-    if (!contextElement || (contextNode->document().isHTMLDocument() && is<HTMLHtmlElement>(contextNode.get())))
-        return Ref<Element> { HTMLBodyElement::create(protect(contextNode->document())) };
+    if (!contextElement || (contextNode->document().isHTMLDocument() && is<HTMLHtmlElement>(contextNode.get()))) {
+        Ref bodyElement = HTMLBodyElement::create(protect(contextNode->document()));
+        if (contextNode->usesNullCustomElementRegistry())
+            bodyElement->setUsesNullCustomElementRegistry();
+        return Ref<Element> { WTF::move(bodyElement) };
+    }
     return contextElement.releaseNonNull();
 }
 
@@ -6181,7 +6231,8 @@ ExceptionOr<void> Element::insertAdjacentHTML(const String& where, const String&
         return contextElement.releaseException();
     // Step 3.
     RefPtr registry = CustomElementRegistry::registryForElement(contextElement.returnValue());
-    auto fragment = createFragmentForInnerOuterHTML(contextElement.releaseReturnValue(), markup, { ParserContentPolicy::AllowScriptingContent }, registry.get());
+    auto registryKind = contextElement.returnValue()->usesNullCustomElementRegistry() ? CustomElementRegistryKind::Null : CustomElementRegistryKind::Window;
+    auto fragment = createFragmentForInnerOuterHTML(contextElement.releaseReturnValue(), markup, { ParserContentPolicy::AllowScriptingContent }, registry.get(), registryKind);
     if (fragment.hasException())
         return fragment.releaseException();
 
@@ -6527,11 +6578,22 @@ TextStream& operator<<(TextStream& ts, ContentRelevancy relevancy)
 // Use top layer positions to disambiguate the topmost one when both exist.
 RefPtr<HTMLElement> Element::topmostPopoverAncestor(TopLayerElementType topLayerType)
 {
-    // Store positions to avoid having to do O(n) search for every popover invoker.
+    // Hint popovers only participate in the popover stack when computing the ancestor for another
+    // popover being shown. For dialog/fullscreen top-layer nesting, only auto popovers are
+    // considered (matching the behavior before popover=hint).
+    bool considerHints = topLayerType == TopLayerElementType::Popover;
+
+    // Store positions to avoid having to do O(n) search for every popover invoker, ordered by
+    // position in the top layer.
     HashMap<Ref<const Element>, size_t> topLayerPositions;
     size_t i = 0;
-    for (auto& element : document().autoPopoverList())
-        topLayerPositions.add(element, i++);
+    for (auto& element : document().topLayerElements()) {
+        if (auto* htmlElement = dynamicDowncast<HTMLElement>(element.get())) {
+            if (htmlElement->popoverData() && htmlElement->popoverData()->visibilityState() == PopoverVisibilityState::Showing
+                && (htmlElement->popoverState() == PopoverState::Auto || (considerHints && htmlElement->popoverState() == PopoverState::Hint)))
+                topLayerPositions.add(element, i++);
+        }
+    }
 
     if (topLayerType == TopLayerElementType::Popover)
         topLayerPositions.add(*this, i);
@@ -6545,10 +6607,11 @@ RefPtr<HTMLElement> Element::topmostPopoverAncestor(TopLayerElementType topLayer
             return;
 
         // https://html.spec.whatwg.org/#nearest-inclusive-open-popover
-        auto nearestInclusiveOpenPopover = [](Element& candidate) -> HTMLElement* {
+        auto nearestInclusiveOpenPopover = [&](Element& candidate) -> HTMLElement* {
             for (Ref element : composedTreeLineage(candidate)) {
                 if (auto* htmlElement = dynamicDowncast<HTMLElement>(element.get())) {
-                    if (htmlElement->popoverState() == PopoverState::Auto && htmlElement->popoverData()->visibilityState() == PopoverVisibilityState::Showing)
+                    if ((htmlElement->popoverState() == PopoverState::Auto || (considerHints && htmlElement->popoverState() == PopoverState::Hint))
+                        && htmlElement->popoverData()->visibilityState() == PopoverVisibilityState::Showing)
                         return htmlElement;
                 }
             }

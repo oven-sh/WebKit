@@ -107,6 +107,7 @@ private:
     WeakPtr<PlatformXRCoordinatorSessionEventClient> m_sessionEventClient;
     PlatformXR::Device::RequestFrameCallback m_onFrameUpdate;
     PlatformXR::DepthRange m_depthRange = { 0.1f, 1000.0f };
+    float m_minimumDepth = { -1.0f };
     std::unique_ptr<BinarySemaphore> m_renderSemaphore;
     RefPtr<Thread> m_updateThread;
     std::atomic<bool> m_terminationPending { false };
@@ -126,7 +127,6 @@ private:
 #endif // HAVE(VISIBILITY_PROPAGATION_VIEW)
     bool m_foveationEnabled { false };
     bool m_layeredModeEnabled { false };
-    bool m_forwardDepthAvailable { false };
     Vector<std::tuple<WeakObjCPtr<id<MTLTexture>>, WeakObjCPtr<id<MTLTexture>>>> m_compositorTextures;
 #if HAVE(SPATIAL_CONTROLLERS)
     RetainPtr<WKXRControllerManager> m_controllerManager;

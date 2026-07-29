@@ -313,11 +313,11 @@ RefPtr<CSSValue> consumeRotate(CSSParserTokenRange& range, CSS::PropertyParserSt
         return nullptr;
 
     auto knownToBeZero = [](std::optional<bool> value) -> bool {
-        return !value ? false : *value == true;
+        return value && *value;
     };
 
     auto knownToBeNotZero = [](std::optional<bool> value) -> bool {
-        return !value ? false : *value == false;
+        return value && !*value;
     };
 
     if (list.size() == 3) {
@@ -410,7 +410,7 @@ RefPtr<CSSValue> consumeScale(CSSParserTokenRange& range, CSS::PropertyParserSta
     return CSSValueList::createSpaceSeparated(x.releaseNonNull());
 }
 
-std::optional<Style::Transform> parseTransformRaw(const String& string, const CSSParserContext& context)
+std::optional<Style::Transform> parseTransformRaw(const String& string, const CSSParserContext& context, const Document& document)
 {
     auto tokenizer = CSSTokenizer(string);
     auto range = tokenizer.tokenRange();
@@ -418,7 +418,7 @@ std::optional<Style::Transform> parseTransformRaw(const String& string, const CS
     // Handle leading whitespace.
     range.consumeWhitespace();
 
-    auto state = CSS::PropertyParserState { .context = context };
+    auto state = CSS::PropertyParserState { .context = context, .absoluteLengthUnitsOnly = true };
     auto parsedValue = CSSPropertyParsing::consumeTransform(range, state);
     if (!parsedValue)
         return { };
@@ -430,10 +430,9 @@ std::optional<Style::Transform> parseTransformRaw(const String& string, const CS
         return { };
 
     auto dummyStyle = Style::ComputedStyle::create();
-    auto dummyState = Style::BuilderState::create(dummyStyle);
+    auto dummyState = Style::BuilderState::create(dummyStyle, Style::BuilderContext { document });
 
-    if (!parsedValue->canResolveDependenciesWithConversionData(dummyState->cssToLengthConversionData()))
-        return { };
+    ASSERT(parsedValue->canResolveDependenciesWithConversionData(dummyState->cssToLengthConversionData()));
 
     return Style::toStyleFromCSSValue<Style::Transform>(*CheckedPtr { dummyState.ptr() }, *parsedValue);
 }

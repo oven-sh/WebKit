@@ -279,7 +279,6 @@ public:
 #endif
 
     void scheduleSubstituteResourceLoad(ResourceLoader&, SubstituteResource&);
-    void scheduleCannotShowURLError(ResourceLoader&);
 
     // FrameDestructionObserver.
     WEBCORE_EXPORT void frameDestroyed() final;
@@ -501,6 +500,9 @@ public:
     OptionSet<AdvancedPrivacyProtections> navigationalAdvancedPrivacyProtections() const { return m_originatorAdvancedPrivacyProtections.value_or(m_advancedPrivacyProtections); }
     std::optional<OptionSet<AdvancedPrivacyProtections>> originatorAdvancedPrivacyProtections() const { return m_originatorAdvancedPrivacyProtections; }
 
+    void setGlobalPrivacyControlEnabled(std::optional<bool> enabled) { m_globalPrivacyControlEnabled = enabled; }
+    std::optional<bool> globalPrivacyControlEnabled() const { return m_globalPrivacyControlEnabled; }
+
     void setIdempotentModeAutosizingOnlyHonorsPercentages(bool idempotentModeAutosizingOnlyHonorsPercentages) { m_idempotentModeAutosizingOnlyHonorsPercentages = idempotentModeAutosizingOnlyHonorsPercentages; }
     bool idempotentModeAutosizingOnlyHonorsPercentages() const { return m_idempotentModeAutosizingOnlyHonorsPercentages; }
 
@@ -541,7 +543,7 @@ public:
     std::optional<NavigationIdentifier> navigationID() const { return m_navigationID.asOptional(); }
     WEBCORE_EXPORT void NODELETE setNavigationID(NavigationIdentifier);
 
-    bool isInitialAboutBlank() const { return m_isInitialAboutBlank; }
+    IsInitialAboutBlank isInitialAboutBlank() const { return m_isInitialAboutBlank; }
 
     CanTriggerCrossDocumentViewTransition navigationCanTriggerCrossDocumentViewTransition(Document& oldDocument, bool fromBackForwardCache);
     WEBCORE_EXPORT void whenDocumentIsCreated(Function<void(Document*)>&&);
@@ -768,6 +770,7 @@ private:
 
     OptionSet<AdvancedPrivacyProtections> m_advancedPrivacyProtections;
     std::optional<OptionSet<AdvancedPrivacyProtections>> m_originatorAdvancedPrivacyProtections;
+    std::optional<bool> m_globalPrivacyControlEnabled;
     AutoplayPolicy m_autoplayPolicy { AutoplayPolicy::Default };
     OptionSet<AutoplayQuirk> m_allowedAutoplayQuirks;
     PopUpPolicy m_popUpPolicy { PopUpPolicy::Default };
@@ -807,7 +810,7 @@ private:
     bool m_isClientRedirect { false };
     bool m_isLoadingMultipartContent { false };
     bool m_isInFinishedLoadingOfEmptyDocument { false };
-    bool m_isInitialAboutBlank { false };
+    IsInitialAboutBlank m_isInitialAboutBlank { IsInitialAboutBlank::No };
 
     // FIXME: Document::m_processingLoadEvent and DocumentLoader::m_wasOnloadDispatched are roughly the same
     // and should be merged.

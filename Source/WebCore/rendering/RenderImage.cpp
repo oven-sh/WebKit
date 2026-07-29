@@ -82,7 +82,6 @@
 
 #if USE(CG)
 #include "PDFDocumentImage.h"
-#include "Settings.h"
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_CONTROLS)
@@ -589,7 +588,7 @@ void RenderImage::paintMissingImageState(PaintInfo& paintInfo, const LayoutPoint
         if (availableLogicalWidth < textWidth)
             return false;
         auto availableLogicalHeight = isHorizontal ? (errorPictureDrawn ? imageOffset.height() : usableSize.height()) : usableSize.width();
-        return availableLogicalHeight >= (settings().subpixelInlineLayoutEnabled() ? fontMetrics.height() : fontMetrics.intHeight());
+        return availableLogicalHeight >= fontMetrics.height();
     };
 
     if (!hasRoomForAltText())
@@ -599,7 +598,7 @@ void RenderImage::paintMissingImageState(PaintInfo& paintInfo, const LayoutPoint
     if (isHorizontal) {
         auto altTextLocation = [&]() -> LayoutPoint {
             auto contentHorizontalOffset = LayoutUnit { borderWidths.left() + padding.left() + (paddingWidth / 2) - missingImageBorderWidth };
-            auto contentVerticalOffset = LayoutUnit { borderWidths.top() + padding.top() + (settings().subpixelInlineLayoutEnabled() ? fontMetrics.ascent() : fontMetrics.intAscent()) + (paddingHeight / 2) - missingImageBorderWidth };
+            auto contentVerticalOffset = LayoutUnit { borderWidths.top() + padding.top() + fontMetrics.ascent() + (paddingHeight / 2) - missingImageBorderWidth };
             if (!style.writingMode().isInlineLeftToRight())
                 contentHorizontalOffset += contentSize.width() - textWidth;
             return paintOffset + LayoutPoint { contentHorizontalOffset, contentVerticalOffset };
@@ -609,7 +608,7 @@ void RenderImage::paintMissingImageState(PaintInfo& paintInfo, const LayoutPoint
         context.drawBidiText(fontCascade, textRun, textOrigin);
     } else {
         // FIXME: TextBoxPainter has this logic already, maybe we should transition to some painter class.
-        auto contentLogicalHeight = settings().subpixelInlineLayoutEnabled() ? fontMetrics.height() : fontMetrics.intHeight();
+        auto contentLogicalHeight = fontMetrics.height();
         auto adjustedPaintOffset = LayoutPoint { paintOffset.x(), paintOffset.y() - contentLogicalHeight };
 
         auto visualLeft = borderBoxSize().width() / 2 - contentLogicalHeight / 2;
@@ -623,7 +622,7 @@ void RenderImage::paintMissingImageState(PaintInfo& paintInfo, const LayoutPoint
 
         auto rotationRect = LayoutRect { visualLeft, adjustedPaintOffset.y(), textWidth, contentLogicalHeight };
         context.concatCTM(rotation(rotationRect, RotationDirection::Clockwise));
-        auto textOrigin = LayoutPoint { visualLeft, adjustedPaintOffset.y() + (settings().subpixelInlineLayoutEnabled() ? fontCascade.metricsOfPrimaryFont().ascent() : fontCascade.metricsOfPrimaryFont().intAscent()) };
+        auto textOrigin = LayoutPoint { visualLeft, adjustedPaintOffset.y() + fontCascade.metricsOfPrimaryFont().ascent() };
         context.drawBidiText(fontCascade, textRun, roundPointToDevicePixels(textOrigin, protect(document())->deviceScaleFactor()));
         context.concatCTM(rotation(rotationRect, RotationDirection::Counterclockwise));
     }
@@ -686,18 +685,22 @@ void RenderImage::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
         replacedContentRect.moveBy(paintOffset);
     }
 
-    bool clip = !contentBoxRect.contains(replacedContentRect);
+    LayoutRect paintRect = replacedContentRect;
+    if (!isDimensionlessSVG())
+        paintRect = computePaintRectForObjectViewBox(replacedContentRect);
+
+    bool clip = !contentBoxRect.contains(paintRect);
     GraphicsContextStateSaver stateSaver(context, clip);
     if (clip)
         context.clip(contentBoxRect);
 
-    ImageDrawResult result = paintIntoRect(paintInfo, snapRectToDevicePixels(replacedContentRect, deviceScaleFactor));
+    ImageDrawResult result = paintIntoRect(paintInfo, snapRectToDevicePixels(paintRect, deviceScaleFactor));
 
     if (showBorderForIncompleteImage && (result != ImageDrawResult::DidDraw || (cachedImage() && cachedImage()->isLoading())))
         paintIncompleteImageOutline(paintInfo, paintOffset, missingImageBorderWidth);
-    
+
     if (cachedImage() && paintInfo.phase == PaintPhase::Foreground && !context.paintingDisabled()) {
-        // For now, count images as unpainted if they are still progressively loading. We may want 
+        // For now, count images as unpainted if they are still progressively loading. We may want
         // to refine this in the future to account for the portion of the image that has painted.
         LayoutRect visibleRect = intersection(replacedContentRect, contentBoxRect);
         if (cachedImage()->isLoading() || result == ImageDrawResult::DidRequestDecoding)
@@ -843,6 +846,11 @@ bool RenderImage::foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect,
     if (auto objectFit = style().objectFit(); objectFit != ObjectFit::Fill && objectFit != ObjectFit::Cover)
         return false;
 
+    // object-view-box's inset() can be negative, making the view box a superset of the natural
+    // size, in which case the painted image is smaller than replacedContentRect() and leaves gaps.
+    if (!objectViewBoxIsContainedWithinNaturalSize())
+        return false;
+
     if (style().objectPosition() != Style::ComputedStyle::initialObjectPosition())
         return false;
 
@@ -854,7 +862,7 @@ bool RenderImage::computeBackgroundIsKnownToBeObscured(const LayoutPoint& paintO
 {
     if (!hasBackground())
         return false;
-    
+
     LayoutRect paintedExtent;
     if (!getBackgroundPaintedExtent(paintOffset, paintedExtent))
         return false;

@@ -14,7 +14,7 @@
 #include "include/gpu/ganesh/d3d/GrD3DBackendContext.h"
 #include "include/gpu/ganesh/d3d/GrD3DBackendSurface.h"
 #include "include/gpu/ganesh/d3d/GrD3DDirectContext.h"
-#include "include/private/base/SkLog.h"
+#include "include/private/SkLog.h"
 #include "tools/ganesh/d3d/D3DTestUtils.h"
 #include "tools/window/DisplayParams.h"
 #include "tools/window/WindowContext.h"
@@ -23,13 +23,13 @@
 #include <dxgi1_4.h>
 #include <wrl/client.h>
 
-#define GR_D3D_CALL_ERRCHECK(X)                                         \
-    do {                                                                \
-        HRESULT result = X;                                             \
-        SkASSERT(SUCCEEDED(result));                                    \
-        if (!SUCCEEDED(result)) {                                       \
-            SkDebugf("Failed Direct3D call. Error: 0x%08lx\n", result); \
-        }                                                               \
+#define GR_D3D_CALL_ERRCHECK(X)                                                        \
+    do {                                                                               \
+        HRESULT result = X;                                                            \
+        SkASSERT(SUCCEEDED(result));                                                   \
+        if (!SUCCEEDED(result)) {                                                      \
+            SkDebugf("Failed Direct3D call. Error: 0x%08lx\n", (unsigned long)result); \
+        }                                                                              \
     } while (false)
 
 using namespace Microsoft::WRL;

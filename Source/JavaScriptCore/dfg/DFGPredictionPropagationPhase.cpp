@@ -1041,6 +1041,7 @@ private:
         case ArraySplice:
         case RegExpExec:
         case RegExpExecNonGlobalOrSticky:
+        case RegExpExecSticky:
         case RegExpTest:
         case RegExpTestInline:
         case RegExpMatchFast:
@@ -1058,7 +1059,6 @@ private:
         case GetByIdWithThisMegamorphic:
         case GetByIdDirect:
         case GetByIdDirectFlush:
-        case TryGetById:
         case GetByValWithThis:
         case GetByValWithThisMegamorphic:
         case GetByOffset:
@@ -1080,6 +1080,7 @@ private:
         case TailCallForwardVarargsInlinedCaller:
         case CallWasm:
         case TailCallInlinedCallerWasm:
+        case CallFFI:
         case CallCustomAccessorGetter:
         case GetGlobalVar:
         case GetGlobalLexicalVariable:
@@ -1249,6 +1250,7 @@ private:
         case StringSubstr:
         case ToUpperCase:
         case ToLowerCase:
+        case StringTrim:
         case ArrayJoin:
             setPrediction(SpecString);
             break;
@@ -1323,7 +1325,6 @@ private:
         case IsCallable:
         case IsConstructor:
         case IsCellWithType:
-        case IsTypedArrayView:
         case ArrayIsArray:
         case HasStructureWithFlags:
         case MatchStructure: {
@@ -1399,6 +1400,10 @@ private:
 
         case CreatePromise:
             setPrediction(SpecPromiseObject);
+            break;
+
+        case OpenAsyncFromSyncIterator:
+            setPrediction(SpecObjectOther);
             break;
 
         case NewResolvedPromise:
@@ -1810,6 +1815,7 @@ private:
         case SetArgumentDefinitely:
         case SetArgumentMaybe:
         case SetFunctionName:
+        case EnqueueAsyncGeneratorDriver:
         case CheckStructure:
         case CheckIsConstant:
         case CheckNotEmpty:

@@ -52,6 +52,7 @@
 #include "RemoteFrame.h"
 #include "RemoteFrameView.h"
 #include "RenderBlockFlow.h"
+#include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderCounter.h"
 #include "RenderElementInlines.h"
@@ -231,7 +232,7 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
         auto rowOffset = cell->parent() ? downcast<RenderBox>(*cell->parent()).location() : LayoutPoint();
         r = LayoutRect(cell->x() + rowOffset.x(), cell->y() + rowOffset.y() + cell->intrinsicPaddingBefore(), cell->borderBoxWidth(), cell->borderBoxHeight() - cell->intrinsicPaddingBefore() - cell->intrinsicPaddingAfter());
     } else if (auto* box = dynamicDowncast<RenderBox>(o))
-        r = box->frameRect();
+        r = box->borderBoxRectInContainer();
     else if (auto* svgModelObject = dynamicDowncast<RenderSVGModelObject>(o)) {
         r = svgModelObject->frameRectEquivalent();
         ASSERT(r.location() == svgModelObject->currentSVGLayoutLocation());
@@ -594,9 +595,9 @@ inline void writeLayerUsingGeometryType(TextStream& ts, const RenderLayer& layer
                 ts << " scrollX "_s << scrollableArea->scrollOffset().x();
             if (scrollableArea->scrollOffset().y())
                 ts << " scrollY "_s << scrollableArea->scrollOffset().y();
-            if (layer.renderBox() && roundToInt(layer.renderBox()->clientWidth()) != scrollableArea->scrollWidth())
+            if (layer.renderBox() && roundToInt(layer.renderBox()->paddingBoxWidth()) != scrollableArea->scrollWidth())
                 ts << " scrollWidth "_s << scrollableArea->scrollWidth();
-            if (layer.renderBox() && roundToInt(layer.renderBox()->clientHeight()) != scrollableArea->scrollHeight())
+            if (layer.renderBox() && roundToInt(layer.renderBox()->paddingBoxHeight()) != scrollableArea->scrollHeight())
                 ts << " scrollHeight "_s << scrollableArea->scrollHeight();
         }
 #if PLATFORM(MAC)
@@ -682,8 +683,7 @@ static void writeLayers(TextStream& ts, const RenderLayer& rootLayer, RenderLaye
     // chain, so it sits in a different space than the damage rect and on-screen layers get wrongly
     // culled. Empty SVG layers keep the normal cull so they stay out of the dump.
     bool isNonEmptySVGLayer = layer.renderer().isSVGLayerAwareRenderer() && !rects.layerBounds().isEmpty();
-    bool shouldPaint = (behavior.contains(RenderAsTextFlag::ShowAllLayers) || isNonEmptySVGLayer)
-        ? true : layer.intersectsDamageRect(rects.layerBounds(), rects.dirtyBackgroundRect().rect(), &rootLayer, layer.offsetFromAncestor(&rootLayer));
+    bool shouldPaint = behavior.contains(RenderAsTextFlag::ShowAllLayers) || isNonEmptySVGLayer || layer.intersectsDamageRect(rects.layerBounds(), rects.dirtyBackgroundRect().rect(), &rootLayer, layer.offsetFromAncestor(&rootLayer));
     auto negativeZOrderLayers = layer.negativeZOrderLayers();
     bool paintsBackgroundSeparately = negativeZOrderLayers.size() > 0;
     if (shouldPaint && paintsBackgroundSeparately) {

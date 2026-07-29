@@ -30,9 +30,17 @@
 
 namespace JSC {
 
+// JSGenericTypedArrayViewConstructor<ViewClass> overrides nothing in InternalFunction's method
+// table, so every instantiation's s_info is byte-identical to the others (and to the other
+// InternalFunction boilerplate). Nothing in this TU takes their addresses -- the only reader is
+// constructorClassInfoForType() over in TypedArrayType.cpp -- so clang marks them
+// local_unnamed_addr and LTO is free to fold them onto one address. DFG's
+// handleTypedArrayConstructor() then matches `new Uint8Array(n)` against the first type in the
+// loop (Int8) and allocates the wrong view type, so keep each address distinct.
 #undef MAKE_S_INFO
 #define MAKE_S_INFO(type) \
-    template<> const ClassInfo JS##type##Constructor::s_info = { "Function"_s, &JS##type##Constructor::Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JS##type##Constructor) }
+    template<> const ClassInfo JS##type##Constructor::s_info = { "Function"_s, &JS##type##Constructor::Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JS##type##Constructor) }; \
+    CLASSINFO_KEEP_ADDRESS_UNIQUE(JS##type##Constructor)
 
 MAKE_S_INFO(Int8Array);
 MAKE_S_INFO(Int16Array);

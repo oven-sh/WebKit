@@ -500,7 +500,7 @@ void HistoryController::recursiveGatherFramesToNavigate(LocalFrame& frame, Vecto
 
         RefPtr subframe = dynamicDowncast<LocalFrame>(frame.tree().descendantByFrameID(*frameID));
         if (!subframe)
-            return;
+            continue;
 
         recursiveGatherFramesToNavigate(*subframe, framesToNavigate, childItem, fromChildItem.get());
     }
@@ -965,7 +965,7 @@ void HistoryController::recursiveSetProvisionalItem(HistoryItem& item, HistoryIt
         m_provisionalItem = item;
     }
 
-    for (Ref childItem : item.children()) {
+    for (Ref childItem : copyToVector(item.children())) {
         auto frameID = childItem->frameID();
         if (!frameID)
             continue;
@@ -987,7 +987,7 @@ void HistoryController::recursiveGoToItem(HistoryItem& item, HistoryItem* fromIt
         return m_frame->loader().loadItem(item, fromItem, type, shouldTreatAsContinuingLoad, shouldRestoreFromBackForwardCache);
 
     // Just iterate over the rest, looking for frames to navigate.
-    for (Ref childItem : item.children()) {
+    for (Ref childItem : copyToVector(item.children())) {
         auto frameID = childItem->frameID();
         if (!frameID)
             continue;

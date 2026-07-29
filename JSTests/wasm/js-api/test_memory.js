@@ -1,3 +1,4 @@
+//@ requireOptions("--useWasmJSTypes=true")
 import Builder from '../Builder.js';
 import * as assert from '../assert.js';
 
@@ -13,34 +14,6 @@ function binaryShouldNotParse(builder) {
         threw = true;
     }
     assert.truthy(threw);
-}
-
-{
-    // Can't declare more than one memory.
-    const builder = (new Builder())
-        .Type().End()
-        .Import().Memory("imp", "memory", {initial: 20}).End()
-        .Function().End()
-        .Memory().InitialMaxPages(1, 1).End()
-        .Export().End()
-        .Code()
-        .End();
-    binaryShouldNotParse(builder);
-}
-
-{
-    // Can't declare more than one memory.
-    const builder = (new Builder())
-        .Type().End()
-        .Import()
-            .Memory("imp", "memory", {initial: 20})
-            .Memory("imp", "memory", {initial: 30})
-        .End()
-        .Function().End()
-        .Export().End()
-        .Code()
-        .End();
-    binaryShouldNotParse(builder);
 }
 
 {

@@ -1,3 +1,4 @@
+//@ requireOptions("--useWasmJSTypes=true")
 import Builder from '../Builder.js';
 import * as assert from '../assert.js';
 
@@ -45,16 +46,21 @@ import * as assert from '../assert.js';
     const builder = new Builder()
         .Type().End()
         .Function().End()
+        .Table()
+            .Table({initial: 2**31, element: "funcref"})
+        .End()
         .Export()
             .Function("foo")
         .End()
         .Code()
             .Function("foo", {params: ["i32"]})
                 .GetLocal(0)
+                .GetLocal(0)
                 .CallIndirect(0, 0)
             .End()
         .End();
-    assert.throws(() => new WebAssembly.Module(builder.WebAssembly().get()), WebAssembly.CompileError, "WebAssembly.Module doesn't parse at byte 4: call_indirect is only valid when a table is defined or imported, in function at index 0 (evaluating 'new WebAssembly.Module(builder.WebAssembly().get())')");
+    const module = new WebAssembly.Module(builder.WebAssembly().get());
+    assert.throws(() => new WebAssembly.Instance(module), WebAssembly.LinkError, "couldn't create Table");
 }
 
 {
@@ -186,9 +192,6 @@ function assertBadTableImport(tableDescription, message) {
         [{initial: 2**32 - 1, maximum: 2**32 - 2, element: "funcref"},
          "WebAssembly.Module doesn't parse at byte 29: resizable limits has an initial page count of 4294967295 which is greater than its maximum 4294967294 (evaluating 'new WebAssembly.Module(builder.WebAssembly().get())')",
          "WebAssembly.Module doesn't parse at byte 37: resizable limits has an initial page count of 4294967295 which is greater than its maximum 4294967294 (evaluating 'new WebAssembly.Module(builder.WebAssembly().get())')"],
-        [{initial: 2**31, element: "funcref"},
-         "WebAssembly.Module doesn't parse at byte 24: Table's initial page count of 2147483648 is too big, maximum 10000000 (evaluating 'new WebAssembly.Module(builder.WebAssembly().get())')",
-         "WebAssembly.Module doesn't parse at byte 32: Table's initial page count of 2147483648 is too big, maximum 10000000 (evaluating 'new WebAssembly.Module(builder.WebAssembly().get())')"],
     ];
 
     for (const d of badDescriptions) {
@@ -398,25 +401,29 @@ assert.throws(() => WebAssembly.Table.prototype.grow(undefined), TypeError, `exp
     }, TypeError, "expected |this| value to be an instance of WebAssembly.Table");
 
     const t0 = new WebAssembly.Table({minimum: 5, element: "funcref"}).type();
-    assert.eq(Object.keys(t0).length, 2);
+    assert.eq(Object.keys(t0).length, 3);
     assert.eq(t0.minimum, 5);
     assert.eq(t0.element, "funcref");
+    assert.eq(t0.address, "i32");
 
     const t1 = new WebAssembly.Table({minimum: 5, maximum: 10, element: "funcref"}).type();
-    assert.eq(Object.keys(t1).length, 3);
+    assert.eq(Object.keys(t1).length, 4);
     assert.eq(t1.minimum, 5);
     assert.eq(t1.maximum, 10)
     assert.eq(t1.element, "funcref");
+    assert.eq(t1.address, "i32");
 
     const t2 = new WebAssembly.Table({minimum: 5, maximum: 10, element: "externref"}).type();
-    assert.eq(Object.keys(t2).length, 3);
+    assert.eq(Object.keys(t2).length, 4);
     assert.eq(t2.minimum, 5);
     assert.eq(t2.maximum, 10)
     assert.eq(t2.element, "externref");
+    assert.eq(t2.address, "i32");
 
     const t3 = new WebAssembly.Table(t2).type();
     assert.eq(Object.keys(t2).length, Object.keys(t3).length);
     assert.eq(t2.minimum, t3.minimum);
     assert.eq(t2.maximum, t3.maximum)
     assert.eq(t2.element, t3.element);
+    assert.eq(t2.address, "i32");
 }

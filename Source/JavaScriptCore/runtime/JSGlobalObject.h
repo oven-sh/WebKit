@@ -131,6 +131,12 @@ class SymbolTable;
 class WrapperMap;
 class WrapForValidIteratorPrototype;
 
+#if USE(BUN_JSC_ADDITIONS)
+namespace FFI {
+class FFIContext;
+} // namespace FFI
+#endif
+
 enum class ArrayBufferSharingMode : bool;
 enum class CodeGenerationMode : uint8_t;
 enum class ErrorType : uint8_t;
@@ -302,14 +308,14 @@ public:
     LazyClassStructure m_dateTimeFormatStructure;
     LazyClassStructure m_numberFormatStructure;
 
-    LazyProperty<JSGlobalObject, Structure> m_durationStructure;
-    LazyProperty<JSGlobalObject, Structure> m_instantStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainDateStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainDateTimeStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainMonthDayStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainTimeStructure;
-    LazyProperty<JSGlobalObject, Structure> m_plainYearMonthStructure;
-    LazyProperty<JSGlobalObject, Structure> m_zonedDateTimeStructure;
+    LazyClassStructure m_durationStructure;
+    LazyClassStructure m_instantStructure;
+    LazyClassStructure m_plainDateStructure;
+    LazyClassStructure m_plainDateTimeStructure;
+    LazyClassStructure m_plainMonthDayStructure;
+    LazyClassStructure m_plainTimeStructure;
+    LazyClassStructure m_plainYearMonthStructure;
+    LazyClassStructure m_zonedDateTimeStructure;
 
     WriteBarrier<NullGetterFunction> m_nullGetterFunction;
     WriteBarrier<NullSetterFunction> m_nullSetterFunction;
@@ -321,6 +327,7 @@ public:
     LazyProperty<JSGlobalObject, JSFunction> m_objectProtoToStringFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_arrayProtoToStringFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_arrayProtoValuesFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_asyncFromSyncIteratorProtoNextFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_mapProtoEntriesFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_setProtoValuesFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_stringProtoSymbolIteratorFunction;
@@ -382,6 +389,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrierStructureID m_internalFieldTupleStructure;
+    LazyProperty<JSGlobalObject, Structure> m_ffiFunctionStructure;
+    LazyProperty<JSGlobalObject, Structure> m_ffiCallbackStructure;
 #endif
 
     // Lists the actual structures used for having these particular indexing shapes.
@@ -505,6 +514,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isAsyncContextTrackingEnabled { false };
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
+    std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -602,9 +612,9 @@ public:
     inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& NODELETE typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
     inline std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>& NODELETE typedArrayPrototypeConstructorWatchpoint(TypedArrayType);
 
-    void addWeakTicket(DeferredWorkTimer::Ticket);
+    void addWeakTicket(DeferredWorkTimer::Ticket&);
     void clearWeakTickets();
-    std::unique_ptr<ThreadSafeWeakHashSet<DeferredWorkTimer::TicketData>> m_weakTickets;
+    std::unique_ptr<ThreadSafeWeakHashSet<DeferredWorkTimer::Ticket>> m_weakTickets;
 
 public:
     JSCallee* zombieFrameCallee() const LIFETIME_BOUND { return m_zombieFrameCallee.get(); }
@@ -724,6 +734,8 @@ public:
 
     const Ref<ImportMap> m_importMap;
 
+    Ref<SymbolImpl> m_intlLegacyConstructedSymbol;
+
     UncheckedKeyHashMap<String, JSCJSGlobalObjectSignpostIdentifier> m_signposts;
 
 #if ASSERT_ENABLED
@@ -753,6 +765,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTrackingEnabled; }
     void setAsyncContextTrackingEnabled(bool isEnabled) { m_isAsyncContextTrackingEnabled = isEnabled; }
+    static constexpr ptrdiff_t offsetOfAsyncContextData() { return OBJECT_OFFSETOF(JSGlobalObject, m_asyncContextData); }
 #endif
 
     bool hasDebugger() const { return m_debugger; }
@@ -805,7 +818,7 @@ public:
     JSCallee* globalCallee() LIFETIME_BOUND { return m_globalCallee.get(); }
     JSCallee* evalCallee() LIFETIME_BOUND { return m_evalCallee.get(); }
 
-    // The following accessors return pristine values, even if a script 
+    // The following accessors return primordial values, even if a script
     // replaces the global object's associated property.
 
     GetterSetter* arraySpeciesGetterSetter() const LIFETIME_BOUND { return m_arraySpeciesGetterSetter.get(); }
@@ -840,6 +853,7 @@ public:
     JSFunction* arrayProtoToStringFunction() const LIFETIME_BOUND { return m_arrayProtoToStringFunction.get(this); }
     JSFunction* arrayProtoValuesFunction() const LIFETIME_BOUND { return m_arrayProtoValuesFunction.get(this); }
     JSFunction* arrayProtoValuesFunctionConcurrently() const LIFETIME_BOUND { return m_arrayProtoValuesFunction.getConcurrently(); }
+    JSFunction* asyncFromSyncIteratorPrototypeNextFunction() const LIFETIME_BOUND { return m_asyncFromSyncIteratorProtoNextFunction.get(this); }
     JSFunction* mapProtoEntriesFunction() const LIFETIME_BOUND { return m_mapProtoEntriesFunction.get(this); }
     JSFunction* mapProtoEntriesFunctionConcurrently() const LIFETIME_BOUND { return m_mapProtoEntriesFunction.getConcurrently(); }
     JSFunction* setProtoValuesFunction() const LIFETIME_BOUND { return m_setProtoValuesFunction.get(this); }
@@ -917,6 +931,7 @@ public:
     AsyncGeneratorPrototype* asyncGeneratorPrototype() const LIFETIME_BOUND { return m_asyncGeneratorPrototype.get(); }
     AsyncGeneratorFunctionPrototype* asyncGeneratorFunctionPrototype() const LIFETIME_BOUND { return m_asyncGeneratorFunctionPrototype.get(); }
     JSValue nullPrototype() const { return jsNull(); }
+    SymbolImpl* intlLegacyConstructedSymbol() const { return m_intlLegacyConstructedSymbol.ptr(); }
 
     Structure* debuggerScopeStructure() const { return m_debuggerScopeStructure.get(this); }
     Structure* withScopeStructure() const { return m_withScopeStructure.get(this); }
@@ -1084,8 +1099,20 @@ public:
     Structure* plainYearMonthStructure() { return m_plainYearMonthStructure.get(this); }
     Structure* zonedDateTimeStructure() { return m_zonedDateTimeStructure.get(this); }
 
+    JSObject* durationConstructor() { return m_durationStructure.constructor(this); }
+    JSObject* instantConstructor() { return m_instantStructure.constructor(this); }
+    JSObject* plainDateConstructor() { return m_plainDateStructure.constructor(this); }
+    JSObject* plainDateTimeConstructor() { return m_plainDateTimeStructure.constructor(this); }
+    JSObject* plainMonthDayConstructor() { return m_plainMonthDayStructure.constructor(this); }
+    JSObject* plainTimeConstructor() { return m_plainTimeStructure.constructor(this); }
+    JSObject* plainYearMonthConstructor() { return m_plainYearMonthStructure.constructor(this); }
+    JSObject* zonedDateTimeConstructor() { return m_zonedDateTimeStructure.constructor(this); }
+
 #if USE(BUN_JSC_ADDITIONS)
     Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }
+    Structure* ffiFunctionStructure() const { return m_ffiFunctionStructure.get(this); }
+    Structure* ffiCallbackStructure() const { return m_ffiCallbackStructure.get(this); }
+    JS_EXPORT_PRIVATE FFI::FFIContext& ffiContext();
 #endif
 
     JS_EXPORT_PRIVATE void setInspectable(bool);
@@ -1184,10 +1211,14 @@ public:
     template<TypedArrayType type> Structure* resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType() const { return typedArrayStructure(type, /* isResizableOrGrowableShared */ true); }
 
     inline JSObject* typedArrayConstructor(TypedArrayType) const;
+    inline JSObject* typedArrayConstructorConcurrently(TypedArrayType) const;
     inline JSObject* typedArrayPrototype(TypedArrayType) const;
 
     inline JSCell* linkTimeConstant(LinkTimeConstant) const;
     template<typename Type> inline Type linkTimeConstantConcurrently(LinkTimeConstant) const;
+
+    inline JSObject* asyncGeneratorPrototypeNextFunction() const;
+    inline JSObject* asyncIteratorPrototypeSymbolAsyncIteratorFunction() const;
 
     WatchpointSet& masqueradesAsUndefinedWatchpointSet() { return m_masqueradesAsUndefinedWatchpointSet.get(); }
     WatchpointSet& havingABadTimeWatchpointSet() { return m_havingABadTimeWatchpointSet.get(); }

@@ -24,8 +24,12 @@
  */
 
 #include "config.h"
+
+#if !USE(BUN_JSC_ADDITIONS) || BUN_ENABLE_JSDOLLARVM || defined(BUN_JSDOLLARVM_FORCE)
+
 #include "JSDollarVM.h"
 
+#include "AccessCase.h"
 #include "ArrayPrototype.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
@@ -54,15 +58,19 @@
 #include "JSString.h"
 #include "LinkBuffer.h"
 #include "NativeCallee.h"
+#include "ObjectPropertyCondition.h"
 #include "OperationResult.h"
 #include "Options.h"
 #include "Parser.h"
 #include "ProbeContext.h"
+#include "PropertyInlineCacheClearingWatchpoint.h"
+#include "Scribble.h"
 #include "ShadowChicken.h"
 #include "Snippet.h"
 #include "SnippetParams.h"
 #include "Strong.h"
 #include "StructureCreateInlines.h"
+#include "TopExceptionScope.h"
 #include "TypeProfiler.h"
 #include "TypeProfilerLog.h"
 #include "VMEntryScopeInlines.h"
@@ -79,6 +87,7 @@
 #include <wtf/ProcessID.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/TimeZone.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
@@ -102,6 +111,22 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include "WasmDebugServer.h"
 #endif
 
+#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+#include "BunFFI.h"
+#include "FFIContext.h"
+#include "FFIConversions.h"
+#include "FFISignature.h"
+#include "FFITestFixtures.h"
+#include "FFIType.h"
+#include "JSFFICallback.h"
+#include "JSFFIFunction.h"
+#include "ObjectConstructor.h"
+#include <bit>
+#include <cmath>
+#include <cstring>
+#include <optional>
+#endif
+
 #if PLATFORM(COCOA)
 #include <wtf/cocoa/CrashReporter.h>
 #endif
@@ -123,6 +148,8 @@ public:
     { }
 
     void updateVMStackLimits() { return m_vm.updateStackLimits(); };
+
+    static void setOwnerIsDead(GCAwareJITStubRoutine& stub) { stub.m_ownerIsDead = true; }
 
     VM& m_vm;
 };
@@ -2205,6 +2232,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateCustomTestGetterSetter);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateCustomTestGetterSetterWithSharedStructure);
+static JSC_DECLARE_HOST_FUNCTION(functionInstallPropertyInlineCacheClearingWatchpointWithDeadOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionDeltaBetweenButterflies);
 static JSC_DECLARE_HOST_FUNCTION(functionCurrentCPUTime);
 static JSC_DECLARE_HOST_FUNCTION(functionTotalGCTime);
@@ -2221,6 +2250,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionSetUserPreferredLanguages);
 static JSC_DECLARE_HOST_FUNCTION(functionICUVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUMinorVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUHeaderVersion);
+static JSC_DECLARE_HOST_FUNCTION(functionSetHostTimeZone);
 static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionAsanEnabled);
@@ -2255,6 +2285,18 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallFromCPP);
 static JSC_DECLARE_HOST_FUNCTION(functionCachedCallFromCPP);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpLineBreakData);
 static JSC_DECLARE_HOST_FUNCTION(functionWeakCreate);
+#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
+static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIFixtures);
+static JSC_DECLARE_HOST_FUNCTION(functionFFISignatureString);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIRead);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIWrite);
+static JSC_DECLARE_HOST_FUNCTION(functionFFICString);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIArenaDepth);
+static JSC_DECLARE_HOST_FUNCTION(functionFFICompileCounts);
+#endif
 
 const ClassInfo JSDollarVM::s_info = { "DollarVM"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDollarVM) };
 
@@ -3730,6 +3772,13 @@ private:
     {
         DollarVMAssertScope assertScope;
     }
+
+#if ENABLE(WEBASSEMBLY)
+    void sourceParsed(JSGlobalObject*, JSWebAssemblyModule*) final
+    {
+        DollarVMAssertScope assertScope;
+    }
+#endif
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DoNothingDebugger);
@@ -3851,6 +3900,81 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateCustomTestGetterSetter, (JSGlobalObject* 
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     return JSValue::encode(JSTestCustomGetterSetter::create(vm, globalObject, JSTestCustomGetterSetter::createStructure(vm, globalObject)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCreateCustomTestGetterSetterWithSharedStructure, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto* dollarVM = dynamicDowncast<JSDollarVM>(callFrame->thisValue());
+    RELEASE_ASSERT(dollarVM);
+    return JSValue::encode(JSTestCustomGetterSetter::create(vm, globalObject, dollarVM->testCustomGetterSetterStructure()));
+}
+
+// Usage: $vm.installPropertyInlineCacheClearingWatchpointWithDeadOwner(proto, "propertyName") Creates a
+//
+// PolymorphicAccessJITStubRoutine with an AdaptiveValuePropertyInlineCacheClearingWatchpoint installed on
+// proto's Structure for the given Equivalence property condition, then simulates the dead-owner
+// state.
+JSC_DEFINE_HOST_FUNCTION(functionInstallPropertyInlineCacheClearingWatchpointWithDeadOwner, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+#if ENABLE(JIT)
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+
+    JSObject* proto = dynamicDowncast<JSObject>(callFrame->argument(0));
+    RELEASE_ASSERT(proto);
+    JSString* propNameStr = dynamicDowncast<JSString>(callFrame->argument(1));
+    RELEASE_ASSERT(propNameStr);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto propertyName = propNameStr->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    Structure* structure = proto->structure();
+    PropertyOffset offset = structure->get(vm, propertyName);
+    RELEASE_ASSERT(isValidOffset(offset));
+    JSValue value = proto->getDirect(offset);
+    RELEASE_ASSERT(value.isCell() && value.asCell()->type() == CustomGetterSetterType);
+
+    // Create Equivalence ObjectPropertyCondition: "property on proto equals value".
+    ObjectPropertyCondition condition = ObjectPropertyCondition::equivalence(
+        vm, proto, proto, propertyName.impl(), value);
+    RELEASE_ASSERT(condition);
+    RELEASE_ASSERT(condition.kind() == PropertyCondition::Equivalence);
+
+    // Create a PolymorphicAccessJITStubRoutine.
+    // Use isCodeImmutable=true so JITStubRoutineSet::add doesn't read the (empty) code address.
+    MacroAssemblerCodeRef<JITStubRoutinePtrTag> emptyCode;
+    Ref<PolymorphicAccessJITStubRoutine> stub = adoptRef(*new PolymorphicAccessJITStubRoutine(
+        JITStubRoutine::Type::PolymorphicAccessJITStubRoutineType, emptyCode, vm,
+        FixedVector<Ref<AccessCase>> { }, FixedVector<StructureID> { }, proto, true));
+    stub->makeGCAware(vm);
+
+    // Install the AdaptiveValuePropertyInlineCacheClearingWatchpoint on proto's Structure.
+    // Must start watching property replacements first (as the IC does).
+    structure->startWatchingPropertyForReplacements(vm, offset);
+    auto& watchpointVariant = *stub->watchpoints().add(
+        WTF::InPlaceType<AdaptiveValuePropertyInlineCacheClearingWatchpoint>,
+        stub.ptr(), condition, stub->watchpointSet());
+    auto& adaptiveWp = std::get<AdaptiveValuePropertyInlineCacheClearingWatchpoint>(watchpointVariant);
+    adaptiveWp.install(vm);
+
+    // Store the stub on $vm and set the owner as dead, simulating the window
+    // between GC marking-end and CodeBlock sweep.
+    JSDollarVMHelper::setOwnerIsDead(stub.get());
+    auto* dollarVM = dynamicDowncast<JSDollarVM>(callFrame->thisValue());
+    RELEASE_ASSERT(dollarVM);
+    dollarVM->m_testStubRoutine = WTF::move(stub);
+
+    // Scribble proto's cell header to simulate a swept dead cell.
+    scribble(proto, sizeof(JSCell));
+
+    return JSValue::encode(jsUndefined());
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsUndefined());
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionDeltaBetweenButterflies, (JSGlobalObject*, CallFrame* callFrame))
@@ -4040,6 +4164,21 @@ JSC_DEFINE_HOST_FUNCTION(functionICUHeaderVersion, (JSGlobalObject*, CallFrame*)
 {
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(U_ICU_VERSION_MAJOR_NUM));
+}
+
+// Usage: $vm.setHostTimeZone("Asia/Tokyo")
+// Overrides the host time zone process-wide and invalidates dependent caches.
+// Returns false (changing nothing) for an invalid identifier.
+JSC_DEFINE_HOST_FUNCTION(functionSetHostTimeZone, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String tz { callFrame->argument(0).toWTFString(globalObject) };
+    RETURN_IF_EXCEPTION(scope, { });
+
+    return JSValue::encode(jsBoolean(WTF::setHostTimeZoneForTesting(tz)));
 }
 
 // Returns true if Debug ASSERTs are enabled.
@@ -4395,6 +4534,419 @@ JSC_DEFINE_HOST_FUNCTION(functionWeakCreate, (JSGlobalObject* globalObject, Call
     return JSValue::encode(jsUndefined());
 }
 
+#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+
+static bool dollarVMFFIJITIsUnavailable()
+{
+    return !Options::useJIT() || !VM::canUseAssembler();
+}
+
+static std::optional<FFI::Type> dollarVMParseFFIType(JSGlobalObject* globalObject, JSValue value)
+{
+    return FFI::typeFromJS(globalObject, value);
+}
+
+static void* dollarVMFFIPointerFromJS(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* callback = dynamicDowncast<JSFFICallback>(value); callback && callback->isClosed()) {
+        throwTypeError(globalObject, scope, "bun:ffi: the JSFFICallback has been closed"_s);
+        return nullptr;
+    }
+
+    uint64_t slot = 0;
+    FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), FFI::Type::Pointer, value, slot, nullptr);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(slot));
+}
+
+static bool dollarVMFFIIsRawMemoryType(FFI::Type type)
+{
+    switch (type) {
+    case FFI::Type::Char:
+    case FFI::Type::Int8:
+    case FFI::Type::Uint8:
+    case FFI::Type::Int16:
+    case FFI::Type::Uint16:
+    case FFI::Type::Int32:
+    case FFI::Type::Uint32:
+    case FFI::Type::Int64:
+    case FFI::Type::Uint64:
+    case FFI::Type::Double:
+    case FFI::Type::Float:
+    case FFI::Type::Bool:
+    case FFI::Type::Pointer:
+    case FFI::Type::Int64Fast:
+    case FFI::Type::Uint64Fast:
+        return true;
+    case FFI::Type::Void:
+    case FFI::Type::CString:
+    case FFI::Type::Function:
+    case FFI::Type::RESERVED_WasNapiEnv:
+    case FFI::Type::JSValue:
+    case FFI::Type::Buffer:
+    case FFI::Type::BufferLength:
+        return false;
+    }
+    return false;
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+static uint64_t dollarVMFFILoadSlot(FFI::Type type, const void* address)
+{
+    switch (type) {
+    case FFI::Type::Char:
+    case FFI::Type::Int8: {
+        int8_t value;
+        memcpy(&value, address, sizeof(value));
+        return static_cast<uint64_t>(static_cast<int64_t>(value));
+    }
+    case FFI::Type::Uint8: {
+        uint8_t value;
+        memcpy(&value, address, sizeof(value));
+        return value;
+    }
+    case FFI::Type::Bool: {
+        uint8_t value;
+        memcpy(&value, address, sizeof(value));
+        return value ? 1 : 0;
+    }
+    case FFI::Type::Int16: {
+        int16_t value;
+        memcpy(&value, address, sizeof(value));
+        return static_cast<uint64_t>(static_cast<int64_t>(value));
+    }
+    case FFI::Type::Uint16: {
+        uint16_t value;
+        memcpy(&value, address, sizeof(value));
+        return value;
+    }
+    case FFI::Type::Int32: {
+        int32_t value;
+        memcpy(&value, address, sizeof(value));
+        return static_cast<uint64_t>(static_cast<int64_t>(value));
+    }
+    case FFI::Type::Uint32:
+    case FFI::Type::Float: {
+        uint32_t value;
+        memcpy(&value, address, sizeof(value));
+        return value;
+    }
+    case FFI::Type::Int64:
+    case FFI::Type::Uint64:
+    case FFI::Type::Int64Fast:
+    case FFI::Type::Uint64Fast:
+    case FFI::Type::Double:
+    case FFI::Type::Pointer: {
+        uint64_t value;
+        memcpy(&value, address, sizeof(value));
+        return value;
+    }
+    case FFI::Type::Void:
+    case FFI::Type::CString:
+    case FFI::Type::Function:
+    case FFI::Type::RESERVED_WasNapiEnv:
+    case FFI::Type::JSValue:
+    case FFI::Type::Buffer:
+    case FFI::Type::BufferLength:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return 0;
+}
+
+static void dollarVMFFIStoreSlot(FFI::Type type, uint64_t slot, void* address)
+{
+    static_assert(std::endian::native == std::endian::little, "bun:ffi $vm raw memory helpers assume little-endian");
+    memcpy(address, &slot, FFI::nativeSizeInBytes(type));
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+static void* dollarVMTestHookBefore(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    static uintptr_t tokenCounter = 0;
+    uintptr_t token = ++tokenCounter;
+    if (JSObject* owner = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee())->owner()) {
+        JSValue logValue = owner->get(globalObject, Identifier::fromString(vm, "hookLog"_s));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (auto* log = dynamicDowncast<JSArray>(logValue)) {
+            log->push(globalObject, jsString(vm, makeString("before:"_s, token)));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+    }
+    return reinterpret_cast<void*>(token);
+}
+static void dollarVMTestHookAfter(JSGlobalObject* globalObject, CallFrame* callFrame, void* token)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (JSObject* owner = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee())->owner()) {
+        JSValue logValue = owner->get(globalObject, Identifier::fromString(vm, "hookLog"_s));
+        if (scope.exception()) {
+            scope.clearException();
+            return;
+        }
+        if (auto* log = dynamicDowncast<JSArray>(logValue)) {
+            log->push(globalObject, jsString(vm, makeString("after:"_s, reinterpret_cast<uintptr_t>(token))));
+            if (scope.exception())
+                scope.clearException();
+        }
+    }
+}
+static const FFI::CallHooks dollarVMTestHooks { dollarVMTestHookBefore, dollarVMTestHookAfter };
+
+JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (dollarVMFFIJITIsUnavailable())
+        return throwVMTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
+
+    RefPtr<FFI::Signature> signature = FFI::signatureFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_ASSERT(signature); // FFI::signatureFromJS throws on every failure.
+
+    void* target = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!target)
+        return throwVMTypeError(globalObject, scope, "$vm.ffiFunction: null pointer"_s);
+
+    String name;
+    JSValue nameValue = callFrame->argument(2);
+    if (nameValue.isUndefinedOrNull())
+        name = signature->toString();
+    else {
+        name = nameValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+
+    JSObject* owner = nullptr;
+    const FFI::CallHooks* hooks = nullptr;
+    if (JSObject* options = callFrame->argument(3).getObject()) {
+        JSValue ownerValue = options->get(globalObject, Identifier::fromString(vm, "owner"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!ownerValue.isUndefinedOrNull()) {
+            owner = ownerValue.getObject();
+            if (!owner)
+                return throwVMTypeError(globalObject, scope, "$vm.ffiFunction: owner must be an object"_s);
+        }
+        JSValue hooksValue = options->get(globalObject, Identifier::fromString(vm, "hooks"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!hooksValue.isUndefinedOrNull()) {
+            String kind = hooksValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (kind != "test"_s)
+                return throwVMTypeError(globalObject, scope, "$vm.ffiFunction: hooks must be \"test\""_s);
+            hooks = &dollarVMTestHooks;
+        }
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name, owner, hooks)));
+}
+
+static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation&); // defined below with the queue/drain model
+JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (dollarVMFFIJITIsUnavailable())
+        return throwVMTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
+
+    RefPtr<FFI::Signature> signature = FFI::signatureFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_ASSERT(signature); // FFI::signatureFromJS throws on every failure.
+
+    JSValue callableValue = callFrame->argument(1);
+    if (!callableValue.isCallable())
+        return throwVMTypeError(globalObject, scope, "$vm.ffiCallback: expected a callable"_s);
+
+    bool threadsafe = false;
+    if (JSObject* options = callFrame->argument(2).getObject()) {
+        JSValue threadsafeValue = options->get(globalObject, Identifier::fromString(vm, "threadsafe"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        threadsafe = threadsafeValue.toBoolean(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (threadsafe && !FFI::FFIContext::threadsafeDispatch())
+        FFI::FFIContext::setThreadsafeDispatch(dollarVMThreadsafeDispatch);
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), asObject(callableValue), signature.releaseNonNull(), threadsafe, nullptr)));
+}
+
+static Lock s_threadsafeQueueLock;
+static Vector<RefPtr<FFI::ThreadsafeInvocation>>& threadsafeQueue()
+{
+    static NeverDestroyed<Vector<RefPtr<FFI::ThreadsafeInvocation>>> queue;
+    return queue.get();
+}
+static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation& invocation)
+{
+    Locker locker { s_threadsafeQueueLock };
+    threadsafeQueue().append(&invocation);
+}
+static JSC_DECLARE_HOST_FUNCTION(functionDrainThreadsafeCallbacks);
+JSC_DEFINE_HOST_FUNCTION(functionDrainThreadsafeCallbacks, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<RefPtr<FFI::ThreadsafeInvocation>> pending;
+    {
+        Locker locker { s_threadsafeQueueLock };
+        pending = std::exchange(threadsafeQueue(), { });
+    }
+    unsigned index = 0;
+    for (; index < pending.size(); ++index) {
+        FFI::runThreadsafeInvocation(*pending[index]);
+        if (scope.exception()) [[unlikely]] {
+            ++index;
+            break;
+        }
+    }
+    for (; index < pending.size(); ++index) {
+        JSFFICallback* callback = pending[index]->callback();
+        if (callback->endThreadsafeInvocation())
+            callback->unroot();
+    }
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsNumber(pending.size()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFFIArenaDepth, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->ffiContext().arena().depth()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFFIFixture, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    for (auto& entry : ffiTestFixtures()) {
+        if (name == String::fromLatin1(entry.name))
+            return JSValue::encode(jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(entry.address))));
+    }
+
+    return throwVMTypeError(globalObject, scope, makeString("Unknown FFI fixture '"_s, name, "'"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFFIFixtures, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& entry : ffiTestFixtures()) {
+        result->push(globalObject, jsString(vm, String::fromUTF8(entry.name)));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFFISignatureString, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    RefPtr<FFI::Signature> signature = FFI::signatureFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_ASSERT(signature); // FFI::signatureFromJS throws on every failure.
+
+    return JSValue::encode(jsString(vm, signature->toString()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFFIRead, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    void* address = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!address)
+        return throwVMTypeError(globalObject, scope, "$vm.ffiRead: null pointer"_s);
+
+    auto type = dollarVMParseFFIType(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    ASSERT(type);
+    if (!dollarVMFFIIsRawMemoryType(*type))
+        return throwVMTypeError(globalObject, scope, makeString("$vm.ffiRead: unsupported type "_s, FFI::name(*type)));
+
+    uint64_t slot = dollarVMFFILoadSlot(*type, address);
+    RELEASE_AND_RETURN(scope, JSValue::encode(FFI::jsValueFromSlot(globalObject, globalObject->ffiContext(), *type, slot)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFFIWrite, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    void* address = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!address)
+        return throwVMTypeError(globalObject, scope, "$vm.ffiWrite: null pointer"_s);
+
+    auto type = dollarVMParseFFIType(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    ASSERT(type);
+    if (!dollarVMFFIIsRawMemoryType(*type))
+        return throwVMTypeError(globalObject, scope, makeString("$vm.ffiWrite: unsupported type "_s, FFI::name(*type)));
+
+    uint64_t slot = 0;
+    FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), *type, callFrame->argument(2), slot, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    dollarVMFFIStoreSlot(*type, slot, address);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFFICString, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    void* address = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!address)
+        return JSValue::encode(jsNull());
+
+    return JSValue::encode(jsString(vm, String::fromUTF8(static_cast<const char*>(address))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+
+    JSObject* counts = constructEmptyObject(globalObject);
+    counts->putDirect(vm, Identifier::fromString(vm, "icStub"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.icStub.load())));
+    counts->putDirect(vm, Identifier::fromString(vm, "dfgCallFFI"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.dfgCallFFI.load())));
+    counts->putDirect(vm, Identifier::fromString(vm, "ftlCallFFI"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.ftlCallFFI.load())));
+    return JSValue::encode(counts);
+}
+
+#endif // USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+
 constexpr unsigned jsDollarVMPropertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
 
 void JSDollarVM::finishCreation(VM& vm)
@@ -4541,6 +5093,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);
     addFunction(vm, allowIfNotFuzz, "loadGetterFromGetterSetter"_s, functionLoadGetterFromGetterSetter, 1);
     addFunction(vm, alwaysAllow, "createCustomTestGetterSetter"_s, functionCreateCustomTestGetterSetter, 1);
+    addFunction(vm, allowIfNotFuzz, "createCustomTestGetterSetterWithSharedStructure"_s, functionCreateCustomTestGetterSetterWithSharedStructure, 0);
+    addFunction(vm, allowIfNotFuzz, "installPropertyInlineCacheClearingWatchpointWithDeadOwner"_s, functionInstallPropertyInlineCacheClearingWatchpointWithDeadOwner, 2);
 
     addFunction(vm, allowIfNotFuzz, "deltaBetweenButterflies"_s, functionDeltaBetweenButterflies, 2);
     
@@ -4564,6 +5118,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "icuVersion"_s, functionICUVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuMinorVersion"_s, functionICUMinorVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuHeaderVersion"_s, functionICUHeaderVersion, 0);
+    addFunction(vm, alwaysAllow, "setHostTimeZone"_s, functionSetHostTimeZone, 1);
 
     addFunction(vm, alwaysAllow, "assertEnabled"_s, functionAssertEnabled, 0);
     addFunction(vm, alwaysAllow, "securityAssertEnabled"_s, functionSecurityAssertEnabled, 0);
@@ -4610,8 +5165,24 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "dumpLineBreakData"_s, functionDumpLineBreakData, 0);
     addFunction(vm, alwaysAllow, "weakCreate"_s, functionWeakCreate, 0);
 
-    if (allowIfNotFuzz)
+#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+    addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
+    addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
+    addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);
+    addFunction(vm, allowIfNotFuzz, "ffiFixture"_s, functionFFIFixture, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiFixtures"_s, functionFFIFixtures, 0);
+    addFunction(vm, allowIfNotFuzz, "ffiSignatureString"_s, functionFFISignatureString, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiRead"_s, functionFFIRead, 2);
+    addFunction(vm, allowIfNotFuzz, "ffiWrite"_s, functionFFIWrite, 3);
+    addFunction(vm, allowIfNotFuzz, "ffiCString"_s, functionFFICString, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiArenaDepth"_s, functionFFIArenaDepth, 0);
+    addFunction(vm, allowIfNotFuzz, "ffiCompileCounts"_s, functionFFICompileCounts, 0);
+#endif
+
+    if (allowIfNotFuzz) {
         m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID.set(vm, this, ObjectDoingSideEffectPutWithoutCorrectSlotStatus::createStructure(vm, globalObject, jsNull()));
+        m_testCustomGetterSetterStructureID.set(vm, this, JSTestCustomGetterSetter::createStructure(vm, globalObject));
+    }
 }
 
 void JSDollarVM::addFunction(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction function, unsigned arguments)
@@ -4639,6 +5210,7 @@ void JSDollarVM::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSDollarVM* thisObject = uncheckedDowncast<JSDollarVM>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID);
+    visitor.append(thisObject->m_testCustomGetterSetterStructureID);
 }
 
 Structure* JSDollarVM::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -4652,6 +5224,25 @@ REFTRACKER_IMPL(StrongRefTracker, {
     JSC::initialize();
 });
 
+SUPPRESS_ASAN void JSGlobalObject::exposeDollarVM(VM& vm)
+{
+    RELEASE_ASSERT(g_jscConfig.restrictedOptionsEnabled && Options::useDollarVM());
+    PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    if (getOwnPropertySlot(this, this, vm.propertyNames->builtinNames().dollarVMPrivateName(), slot))
+        return;
+
+    JSDollarVM* dollarVM = JSDollarVM::create(vm, JSDollarVM::createStructure(vm, this, m_objectPrototype.get()));
+
+    GlobalPropertyInfo extraStaticGlobals[] = {
+        GlobalPropertyInfo(vm.propertyNames->builtinNames().dollarVMPrivateName(), dollarVM, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+    };
+    addStaticGlobals(extraStaticGlobals);
+
+    putDirect(vm, Identifier::fromString(vm, "$vm"_s), dollarVM, static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
 } // namespace JSC
 
 IGNORE_WARNINGS_END
+
+#endif // !USE(BUN_JSC_ADDITIONS) || BUN_ENABLE_JSDOLLARVM || defined(BUN_JSDOLLARVM_FORCE)

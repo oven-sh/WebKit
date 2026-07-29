@@ -177,7 +177,7 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
 
     add_library(GLESv2Framework INTERFACE)
     target_link_libraries(GLESv2Framework INTERFACE GLESv2)
-    target_include_directories(GLESv2Framework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR})
+    target_include_directories(GLESv2Framework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR} ${ANGLE_HEADERS_DIR})
     target_compile_definitions(GLESv2Framework INTERFACE USE_SYSTEM_EGL)
     add_dependencies(GLESv2Framework GLSLANGHeaders ANGLEHeaders)
     add_library(ANGLE::GLES ALIAS GLESv2Framework)
@@ -203,7 +203,7 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
         endif ()
 
         add_library(EGLFramework INTERFACE)
-        target_include_directories(EGLFramework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR}/)
+        target_include_directories(EGLFramework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR}/ ${ANGLE_HEADERS_DIR})
         target_compile_definitions(EGLFramework INTERFACE ${gl_prototypes})
         target_link_libraries(EGLFramework INTERFACE EGL)
         add_dependencies(EGLFramework GLSLANGHeaders ANGLEHeaders)
@@ -232,7 +232,7 @@ if (ENABLE_WEBGL)
     )
 
     WEBKIT_COPY_FILES(LibGLESv2EntryPointsHeaders
-        DESTINATION ${ANGLE_FRAMEWORK_HEADERS_DIR}/ANGLE
+        DESTINATION ${ANGLE_HEADERS_DIR}
         FILES ${libglesv2_entry_points_headers}
         FLATTENED NO_SYMLINK  # adjust-angle-include-paths.py rewrites these in-place
     )
@@ -272,6 +272,6 @@ if (COMPILER_IS_GCC_OR_CLANG)
 endif ()
 
 target_link_libraries(ANGLEFramework INTERFACE ANGLE)
-target_include_directories(ANGLEFramework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR})
+target_include_directories(ANGLEFramework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR} ${ANGLE_HEADERS_DIR})
 
 add_library(ANGLE::ANGLE ALIAS ANGLEFramework)

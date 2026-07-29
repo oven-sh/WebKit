@@ -1015,6 +1015,7 @@ localizedStrings["Layout @ Styles Sidebar"] = "Layout";
 /* Layout phase timeline records */
 localizedStrings["Layout @ Timeline record"] = "Layout";
 localizedStrings["Layout Invalidated"] = "Layout Invalidated";
+localizedStrings["Layout Scheduled"] = "Layout Scheduled";
 /* Property title for `font-variant-ligatures`. */
 localizedStrings["Ligatures @ Font Details Sidebar Property"] = "Ligatures";
 /* Label of dropdown item used for forcing Web Inspector to be shown using a light theme */
@@ -1450,6 +1451,7 @@ localizedStrings["Resource Size"] = "Resource Size";
 localizedStrings["Resource Type"] = "Resource Type";
 localizedStrings["Resource does not have timing data"] = "Resource does not have timing data";
 localizedStrings["Resource failed to load."] = "Resource failed to load.";
+localizedStrings["Resource has binary content."] = "Resource has binary content.";
 /* An error message shown when there is no cached content for a HTTP 304 Not Modified resource response. */
 localizedStrings["Resource has no cached content. @ Resource Preview"] = "Resource has no cached content.";
 localizedStrings["Resource has no content."] = "Resource has no content.";

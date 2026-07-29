@@ -3695,10 +3695,10 @@ void testTernarySubInstructionSelection(B3::Opcode valueModifier, Type valueType
     unsigned numberOfSubInstructions = 0;
     for (auto instruction : *block) {
         if (instruction.kind.opcode == expectedOpcode) {
-            CHECK_EQ(instruction.args.size(), 3ul);
-            CHECK_EQ(instruction.args[0].kind(), Air::Arg::Tmp);
-            CHECK_EQ(instruction.args[1].kind(), Air::Arg::Tmp);
-            CHECK_EQ(instruction.args[2].kind(), Air::Arg::Tmp);
+            CHECK_EQ(instruction.args().size(), 3ul);
+            CHECK_EQ(instruction.args()[0].kind(), Air::Arg::Tmp);
+            CHECK_EQ(instruction.args()[1].kind(), Air::Arg::Tmp);
+            CHECK_EQ(instruction.args()[2].kind(), Air::Arg::Tmp);
             numberOfSubInstructions++;
         }
     }
@@ -7849,6 +7849,8 @@ void addBitTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testInsertSignedBitfieldInZero64());
     RUN(testExtractSignedBitfield32());
     RUN(testExtractSignedBitfield64());
+    RUN(testExtractSignedBitfieldNonCanonical32());
+    RUN(testExtractSignedBitfieldNonCanonical64());
     RUN(testAddWithLeftShift32());
     RUN(testAddWithRightShift32());
     RUN(testAddWithUnsignedRightShift32());

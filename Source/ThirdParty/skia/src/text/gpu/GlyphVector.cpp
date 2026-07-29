@@ -7,8 +7,8 @@
 
 #include "src/text/gpu/GlyphVector.h"
 
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkGlyph.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkStrike.h"
@@ -73,14 +73,14 @@ std::optional<GlyphVector> GlyphVector::MakeFromBuffer(SkReadBuffer& buffer,
         return std::nullopt;
     }
 
-    // Make sure we can multiply without overflow in the check below.
-    static constexpr int kMaxCount = (int)(INT_MAX / sizeof(uint32_t));
-    if (!buffer.validate(glyphCount <= kMaxCount)) {
+    // Make sure we won't overflow the glyphCount math or allocation below.
+    if (!buffer.validate(BagOfBytes::WillCountFit<GlyphBytes>(glyphCount))) {
         return std::nullopt;
     }
 
     // Check for enough bytes to populate the packedGlyphID array. If not enough something has
     // gone wrong.
+    static_assert(sizeof(GlyphBytes) >= sizeof(uint32_t));
     if (!buffer.validate(glyphCount * sizeof(uint32_t) <= buffer.available())) {
         return std::nullopt;
     }

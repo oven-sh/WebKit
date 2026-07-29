@@ -1194,17 +1194,20 @@ static void changeContentOffsetBoundedInValidRange(UIScrollView *scrollView, Web
         [self _trackTransactionCommit:transactionID];
 
         _perProcessState.lastTransactionID = transactionID;
+        _perProcessState.hasMainThreadScrollDrivenAnimations = mainFrameCommitData.hasMainThreadScrollDrivenAnimations;
 
 #if ENABLE(RESPONSIVE_LIVE_RESIZE_UPDATE)
         auto transactionIDForEndLiveResize = _perProcessState.transactionIDForEndLiveResize;
         if (transactionIDForEndLiveResize && transactionID.greaterThanOrEqualSameProcess(*transactionIDForEndLiveResize)) {
             _perProcessState.waitingForEndLiveResizePresentationUpdate = YES;
             _perProcessState.transactionIDForEndLiveResize = std::nullopt;
-            [self _doAfterNextPresentationUpdate:makeBlockPtr([weakSelf = WeakObjCPtr<WKWebView>(self)] {
+            [self _doAfterNextPresentationUpdate:makeBlockPtr([transactionIDForEndLiveResize, weakSelf = WeakObjCPtr<WKWebView>(self)] {
                 RetainPtr strongSelf = weakSelf.get();
                 if (!strongSelf)
                     return;
                 strongSelf->_perProcessState.waitingForEndLiveResizePresentationUpdate = NO;
+                if (strongSelf->_liveResizeSnapshotState && strongSelf->_liveResizeSnapshotState->first == *transactionIDForEndLiveResize && !strongSelf->_liveResizeSnapshotState->second.didForceEndLiveResize)
+                    [strongSelf _removeLiveSnapshotState];
             }).get()];
         }
 #endif
@@ -1934,7 +1937,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
     [self _invalidateResizeAssertions];
 #endif
 #if HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
-    [self _endLiveResize];
+    [self _endLiveResize:NO];
 #endif
     [self _updateLastKnownWindowSizeAndOrientation];
 }
@@ -2693,7 +2696,7 @@ static CGFloat liveResizeMinimumWidthDifference()
     [_endLiveResizeTimer invalidate];
 
     auto endLiveResizeHysteresis = 500_ms;
-    bool didEndLiveResizeImmediately = false;
+    BOOL didForceEndLiveResize = NO;
 #if ENABLE(RESPONSIVE_LIVE_RESIZE_UPDATE)
     if ([self _shouldForceEndLiveResize]
 #if ENABLE(FULLSCREEN_API)
@@ -2701,21 +2704,24 @@ static CGFloat liveResizeMinimumWidthDifference()
 #endif
     ) {
         endLiveResizeHysteresis = 0_ms;
-        didEndLiveResizeImmediately = true;
+        didForceEndLiveResize = YES;
     }
 #endif
 
     _endLiveResizeTimer = [NSTimer
         scheduledTimerWithTimeInterval:endLiveResizeHysteresis.seconds()
         repeats:NO
-        block:makeBlockPtr([didEndLiveResizeImmediately, weakSelf = WeakObjCPtr<WKWebView>(self)](NSTimer *) {
-            auto strongSelf = weakSelf.get();
-            [strongSelf _endLiveResize];
+        block:makeBlockPtr([didForceEndLiveResize, weakSelf = WeakObjCPtr<WKWebView>(self)](NSTimer *) {
+            RetainPtr strongSelf = weakSelf.get();
+            if (!strongSelf)
+                return;
+
+            [strongSelf _endLiveResize:didForceEndLiveResize];
 #if ENABLE(RESPONSIVE_LIVE_RESIZE_UPDATE)
-            if (!didEndLiveResizeImmediately)
+            if (!didForceEndLiveResize)
                 [strongSelf _resetResponsiveResizeState];
 #else
-            UNUSED_PARAM(didEndLiveResizeImmediately);
+            UNUSED_PARAM(didForceEndLiveResize);
 #endif
         }).get()];
 }
@@ -2901,6 +2907,13 @@ static CGFloat liveResizeMinimumWidthDifference()
 }
 
 #endif // HAVE(UIKIT_RESIZABLE_WINDOWS)
+
+- (CGRect)_inputViewBoundsForViewportCalculations
+{
+    if (_perProcessState.viewportMetaTagInteractiveWidget == WebCore::InteractiveWidget::OverlaysContent)
+        return CGRectZero;
+    return _inputViewBoundsInWindow;
+}
 
 // Unobscured content rect where the user can interact. When the keyboard is up, this should be the area above or below the keyboard, wherever there is enough space.
 - (CGRect)_contentRectForUserInteraction
@@ -3187,7 +3200,7 @@ static bool scrollViewCanScroll(UIScrollView *scrollView)
         velocityData = { 0, 0, 0, timestamp };
     }
 
-    CGRect unobscuredContentRectRespectingInputViewBounds = [_contentView _computeUnobscuredContentRectRespectingInputViewBounds:unobscuredRectInContentCoordinates inputViewBounds:_inputViewBoundsInWindow];
+    CGRect unobscuredContentRectRespectingInputViewBounds = [_contentView _computeUnobscuredContentRectRespectingInputViewBounds:unobscuredRectInContentCoordinates inputViewBounds:[self _inputViewBoundsForViewportCalculations]];
     WebCore::FloatRect fixedPositionRectForLayout = _page->computeLayoutViewportRect(unobscuredRectInContentCoordinates, unobscuredContentRectRespectingInputViewBounds, _page->layoutViewportRect(), scaleFactor, WebCore::LayoutViewportConstraint::ConstrainedToDocumentRect);
 
     return { {
@@ -3247,7 +3260,10 @@ static bool scrollViewCanScroll(UIScrollView *scrollView)
         return;
     }
 
-    if (_isChangingObscuredInsetsInteractively) {
+    // If we're changing obscured insets interactively we want to throttle visible content rect updates to save power.
+    // But we must send them anyway if there are unaccelerated scroll-driven animations as they need the visible content rect
+    // updates every frame in order to avoid jitter.
+    if (_isChangingObscuredInsetsInteractively && !_perProcessState.hasMainThreadScrollDrivenAnimations) {
         auto timeSinceLastUpdate = timeNow - _timeOfLastVisibleContentRectUpdate;
         if (timeSinceLastUpdate < delayBeforeUpdatingVisibleContentRectsWhenChangingObscuredInsetsInteractively) {
             auto delay = delayBeforeUpdatingVisibleContentRectsWhenChangingObscuredInsetsInteractively - timeSinceLastUpdate;
@@ -3512,7 +3528,9 @@ static WebCore::IntDegrees activeOrientation(WKWebView *webView)
         return [self.window convertRect:keyboardFrameInScreen fromCoordinateSpace:self.window.screen.coordinateSpace];
     })();
 
-    if (adjustScrollView) {
+    BOOL keyboardShouldOverlayContent = _perProcessState.viewportMetaTagInteractiveWidget == WebCore::InteractiveWidget::OverlaysContent;
+
+    if (adjustScrollView && !keyboardShouldOverlayContent) {
         CGFloat bottomInsetBeforeAdjustment = [_scrollView contentInset].bottom;
         SetForScope insetAdjustmentGuard(_perProcessState.currentlyAdjustingScrollViewInsetsForKeyboard, YES);
         [_scrollView _adjustForAutomaticKeyboardInfo:keyboardInfo animated:YES lastAdjustment:&_lastAdjustmentForScroller];
@@ -3806,7 +3824,7 @@ static WebCore::UserInterfaceLayoutDirection toUserInterfaceLayoutDirection(UISe
 }
 
 #if ENABLE(RESPONSIVE_LIVE_RESIZE_UPDATE)
-- (void)_endLiveResizeWithResponsiveRelayout
+- (void)_endLiveResizeWithResponsiveRelayout:(BOOL)didForceEndLiveResize
 {
     if (_liveResizeSnapshotState)
         [self _removeLiveSnapshotState];
@@ -3833,7 +3851,7 @@ static WebCore::UserInterfaceLayoutDirection toUserInterfaceLayoutDirection(UISe
     [liveResizeSnapshotView layer].position = CGPointZero;
     [self addSubview:liveResizeSnapshotView.get()];
     auto transactionIDForEndLiveResize = *_perProcessState.transactionIDForEndLiveResize;
-    _liveResizeSnapshotState = { { transactionIDForEndLiveResize, { liveResizeSnapshotView, self.bounds.size.width } } };
+    _liveResizeSnapshotState = { { transactionIDForEndLiveResize, { liveResizeSnapshotView, self.bounds.size.width, didForceEndLiveResize } } };
 
     _perProcessState.lastResizeTimestamp = [NSDate now];
     _perProcessState.lastResizedViewWidth = self.bounds.size.width;
@@ -3881,7 +3899,7 @@ static WebCore::UserInterfaceLayoutDirection toUserInterfaceLayoutDirection(UISe
     });
 }
 
-- (void)_endLiveResize
+- (void)_endLiveResize:(BOOL)didForceEndLiveResize
 {
     WKWEBVIEW_RELEASE_LOG("%p (pageProxyID=%llu) -[WKWebView _endLiveResize]", self, _page->identifier().toUInt64());
 
@@ -3892,8 +3910,9 @@ static WebCore::UserInterfaceLayoutDirection toUserInterfaceLayoutDirection(UISe
     _endLiveResizeTimer = nil;
 
 #if ENABLE(RESPONSIVE_LIVE_RESIZE_UPDATE)
-    [self _endLiveResizeWithResponsiveRelayout];
+    [self _endLiveResizeWithResponsiveRelayout:didForceEndLiveResize];
 #else
+    UNUSED_PARAM(didForceEndLiveResize);
     [self _endLiveResizeDefault];
 #endif
 }

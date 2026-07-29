@@ -58,8 +58,7 @@
       }
       const rangeBoundaries1 = getRangeBoundariesForSubject(subject1,
           scroller);
-      const rangeBoundaries2 = getRangeBoundariesForSubject(subject2,
-          scroller);
+
 
       const ANIMATION_DURATION_MS = 1;
       const view_timeline1 = new ViewTimeline({ subject: subject1 });
@@ -111,15 +110,14 @@
         assert_array_equals(trigger1.getAnimations(), [animation],
           "trigger1 has animation attached");
 
-        await rangeBoundaries1.enterTriggerRange();
+        await enter(rangeBoundaries1);
         await animation.finished;
         assert_equals(animation.playState, "finished",
           "animation is played by trigger1");
         assert_times_equal(animation.currentTime, ANIMATION_DURATION_MS,
           `currentTime is ${ANIMATION_DURATION_MS}`);
 
-        await rangeBoundaries1.exitExitRangeBelow();
-        await waitForNextFrame();
+        await exit(rangeBoundaries1, /*exitAbove=*/false);
         assert_equals(animation.playState, "paused",
           "animation should be reset by trigger1");
         assert_times_equal(animation.currentTime, 0, "currentTime is 0");

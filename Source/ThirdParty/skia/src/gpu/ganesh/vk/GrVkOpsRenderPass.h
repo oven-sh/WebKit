@@ -11,8 +11,8 @@
 #include "include/core/SkDrawable.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/vk/SkiaVulkan.h"
 #include "src/gpu/ganesh/GrDeferredUpload.h"
 #include "src/gpu/ganesh/GrGeometryProcessor.h"
@@ -46,7 +46,8 @@ public:
 
     ~GrVkOpsRenderPass() override;
 
-    void inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override;
+    // Returns true upon successful upload and false upon failure.
+    bool inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override;
 
     void onExecuteDrawable(std::unique_ptr<SkDrawable::GpuDrawHandler>) override;
 

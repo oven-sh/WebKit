@@ -36,6 +36,7 @@
 #include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
+#include "ScrollAlignment.h"
 #include "ScrollableArea.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include <ranges>
@@ -183,7 +184,7 @@ static void adjustPreviousAndNextForOnScreenSnapAreas(const InfoType& info, Scro
 }
 
 template <typename InfoType, typename SizeType, typename LayoutType, typename PointType>
-static std::pair<LayoutType, std::optional<unsigned>> closestSnapOffsetWithInfoAndAxis(const InfoType& info, ScrollEventAxis axis, const SizeType& viewportSize, PointType scrollDestinationOffsetPoint, float velocity, std::optional<LayoutType> originalOffsetForDirectionalSnapping)
+static std::pair<LayoutType, std::optional<unsigned>> closestSnapOffsetWithInfoAndAxis(const InfoType& info, ScrollEventAxis axis, const SizeType& viewportSize, PointType scrollDestinationOffsetPoint, float velocity, std::optional<LayoutType> originalOffsetForDirectionalSnapping, ScrollSnapPointSelectionMethod selectionMethod)
 {
     auto scrollDestinationOffset = axis == ScrollEventAxis::Horizontal ? scrollDestinationOffsetPoint.x() : scrollDestinationOffsetPoint.y();
     const auto& snapOffsets = info.offsetsForAxis(axis);
@@ -259,6 +260,18 @@ static std::pair<LayoutType, std::optional<unsigned>> closestSnapOffsetWithInfoA
     if (!next)
         return *previous;
 
+    // Paging (Page Down / Space) must not skip over snap points.
+    // https://drafts.csswg.org/css-scroll-snap-1/#snap-overflow : the UA may use the specified
+    // alignment as a more precise target for explicit paging. The directional filtering above
+    // discarded any snap offset at or behind the original offset, so `previous` is the farthest snap
+    // point within one page in the scroll direction and `next` is the nearest one beyond the page.
+    // Land on the within-page candidate so paging advances at most a page without skipping content;
+    // when there is none the fallbacks above already picked the nearest snap point beyond the page.
+    if (selectionMethod == ScrollSnapPointSelectionMethod::Paging && originalOffsetForDirectionalSnapping) {
+        bool scrollingForward = velocity ? velocity > 0 : scrollDestinationOffset > *originalOffsetForDirectionalSnapping;
+        return scrollingForward ? *previous : *next;
+    }
+
     // The directional filtering above has already discarded any snap offset that would trap the
     // scroll (i.e. one at or behind the original offset), so both remaining candidates are valid
     // targets in the scroll direction. Among them, prefer whichever is closest to the scroll
@@ -298,6 +311,43 @@ static LayoutUnit NODELETE computeScrollSnapAlignOffset(LayoutUnit minLocation, 
         ASSERT_NOT_REACHED();
         return 0;
     }
+}
+
+// https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-align
+void adjustScrollAlignmentForScrollSnapAlign(const RenderElement& renderer, ScrollAlignment* alignX, ScrollAlignment* alignY)
+{
+    if (!alignX && !alignY)
+        return;
+
+    auto snapAlign = renderer.style().scrollSnapAlign();
+    if (snapAlign.isNone())
+        return;
+
+    auto writingMode = renderer.writingMode();
+    bool hasVerticalWritingMode = writingMode.isVertical();
+
+    auto alignmentForAxis = [](ScrollSnapAxisAlignType type, bool axisIsFlipped, const ScrollAlignment& startAlignment, const ScrollAlignment& endAlignment, const ScrollAlignment& fallback) -> ScrollAlignment {
+        switch (type) {
+        case ScrollSnapAxisAlignType::Start:
+            return axisIsFlipped ? endAlignment : startAlignment;
+        case ScrollSnapAxisAlignType::Center:
+            return ScrollAlignment::alignCenterAlways;
+        case ScrollSnapAxisAlignType::End:
+            return axisIsFlipped ? startAlignment : endAlignment;
+        case ScrollSnapAxisAlignType::None:
+            break;
+        }
+        return fallback;
+    };
+
+    // scroll-snap-align is specified as block / inline; resolve to physical axes and directions.
+    auto xAlignType = hasVerticalWritingMode ? snapAlign.blockAlign : snapAlign.inlineAlign;
+    auto yAlignType = hasVerticalWritingMode ? snapAlign.inlineAlign : snapAlign.blockAlign;
+
+    if (alignX)
+        *alignX = alignmentForAxis(xAlignType, !writingMode.isAnyLeftToRight(), ScrollAlignment::alignLeftAlways, ScrollAlignment::alignRightAlways, *alignX);
+    if (alignY)
+        *alignY = alignmentForAxis(yAlignType, !writingMode.isAnyTopToBottom(), ScrollAlignment::alignTopAlways, ScrollAlignment::alignBottomAlways, *alignY);
 }
 
 bool mayHaveScrollSnappedBoxes(const RenderBox& scrollingElementBox)
@@ -415,8 +465,8 @@ void updateSnapOffsetsForScrollableArea(ScrollableArea& scrollableArea, const Re
             areaYAxisFlipped = !child->writingMode().isAnyTopToBottom();
         }
 
-        ScrollSnapAxisAlignType xAlign = scrollerHasVerticalWritingMode ? alignment.blockAlign : alignment.inlineAlign;
-        ScrollSnapAxisAlignType yAlign = scrollerHasVerticalWritingMode ? alignment.inlineAlign : alignment.blockAlign;
+        auto xAlign = scrollerHasVerticalWritingMode ? alignment.blockAlign : alignment.inlineAlign;
+        auto yAlign = scrollerHasVerticalWritingMode ? alignment.inlineAlign : alignment.blockAlign;
         bool snapsHorizontally = hasHorizontalSnapOffsets && xAlign != ScrollSnapAxisAlignType::None;
         bool snapsVertically = hasVerticalSnapOffsets && yAlign != ScrollSnapAxisAlignType::None;
 
@@ -553,18 +603,18 @@ std::pair<UnitType, std::optional<unsigned>> static ensureVisibleTarget(const In
 }
 
 template <> template <>
-std::pair<LayoutUnit, std::optional<unsigned>> LayoutScrollSnapOffsetsInfo::closestSnapOffset(ScrollEventAxis axis, const LayoutSize& viewportSize, LayoutPoint scrollDestinationOffset, float velocity, std::optional<LayoutUnit> originalPositionForDirectionalSnapping) const
+std::pair<LayoutUnit, std::optional<unsigned>> LayoutScrollSnapOffsetsInfo::closestSnapOffset(ScrollEventAxis axis, const LayoutSize& viewportSize, LayoutPoint scrollDestinationOffset, float velocity, std::optional<LayoutUnit> originalPositionForDirectionalSnapping, ScrollSnapPointSelectionMethod selectionMethod) const
 {
-    auto horizontal = closestSnapOffsetWithInfoAndAxis(*this, ScrollEventAxis::Horizontal, viewportSize, scrollDestinationOffset, velocity, originalPositionForDirectionalSnapping);
-    auto vertical = closestSnapOffsetWithInfoAndAxis(*this, ScrollEventAxis::Vertical, viewportSize, scrollDestinationOffset, velocity, originalPositionForDirectionalSnapping);
+    auto horizontal = closestSnapOffsetWithInfoAndAxis(*this, ScrollEventAxis::Horizontal, viewportSize, scrollDestinationOffset, velocity, originalPositionForDirectionalSnapping, selectionMethod);
+    auto vertical = closestSnapOffsetWithInfoAndAxis(*this, ScrollEventAxis::Vertical, viewportSize, scrollDestinationOffset, velocity, originalPositionForDirectionalSnapping, selectionMethod);
     return ensureVisibleTarget(*this, horizontal, vertical, axis, viewportSize, scrollDestinationOffset);
 }
 
 template <> template<>
-std::pair<float, std::optional<unsigned>> FloatScrollSnapOffsetsInfo::closestSnapOffset(ScrollEventAxis axis, const FloatSize& viewportSize, FloatPoint scrollDestinationOffset, float velocity, std::optional<float> originalPositionForDirectionalSnapping) const
+std::pair<float, std::optional<unsigned>> FloatScrollSnapOffsetsInfo::closestSnapOffset(ScrollEventAxis axis, const FloatSize& viewportSize, FloatPoint scrollDestinationOffset, float velocity, std::optional<float> originalPositionForDirectionalSnapping, ScrollSnapPointSelectionMethod selectionMethod) const
 {
-    auto horizontal = closestSnapOffsetWithInfoAndAxis(*this, ScrollEventAxis::Horizontal, viewportSize, scrollDestinationOffset, velocity, originalPositionForDirectionalSnapping);
-    auto vertical = closestSnapOffsetWithInfoAndAxis(*this, ScrollEventAxis::Vertical, viewportSize, scrollDestinationOffset, velocity, originalPositionForDirectionalSnapping);
+    auto horizontal = closestSnapOffsetWithInfoAndAxis(*this, ScrollEventAxis::Horizontal, viewportSize, scrollDestinationOffset, velocity, originalPositionForDirectionalSnapping, selectionMethod);
+    auto vertical = closestSnapOffsetWithInfoAndAxis(*this, ScrollEventAxis::Vertical, viewportSize, scrollDestinationOffset, velocity, originalPositionForDirectionalSnapping, selectionMethod);
     return ensureVisibleTarget(*this, horizontal, vertical, axis, viewportSize, scrollDestinationOffset);
 }
 

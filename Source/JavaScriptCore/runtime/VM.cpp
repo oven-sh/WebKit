@@ -46,7 +46,6 @@
 #include "DOMAttributeGetterSetterInlines.h"
 #include "Debugger.h"
 #include "DeferredWorkTimer.h"
-#include "DeferredWorkTimerInlines.h"
 #include "Disassembler.h"
 #include "DoublePredictionFuzzerAgent.h"
 #include "ErrorInstance.h"
@@ -96,6 +95,7 @@
 #include "LLIntExceptions.h"
 #include "MarkedBlockInlines.h"
 #include "MegamorphicCache.h"
+#include "MicrotaskCall.h"
 #include "MicrotaskQueueInlines.h"
 #include "MinimumReservedZoneSize.h"
 #include "ModuleGraphLoadingStateInlines.h"
@@ -272,6 +272,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 #endif
     , m_regExpCache(makeUnique<RegExpCache>())
     , m_compactVariableMap(adoptRef(*new CompactTDZEnvironmentMap))
+    , m_syncResumeCallCache(makeUniqueRef<MicrotaskCallCache>())
     , m_codeCache(makeUnique<CodeCache>())
     , m_intlCache(makeUnique<IntlCache>())
     , m_builtinExecutables(makeUnique<BuiltinExecutables>(*this))
@@ -399,6 +400,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         m_fastSetValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastSetEntriesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastStringValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
+        m_fastAsyncGeneratorSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
     }
 
     // Eagerly initialize constant cells since the concurrent compiler can access them.
@@ -545,11 +547,21 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     Config::finalize();
 
+#if !USE(BUN_JSC_ADDITIONS)
+    // Upstream (311982@main) warms the IANA timezone table and the local-zone
+    // display name here so the cost lands at process start instead of on a later
+    // critical path. For Bun that tradeoff is backwards: a short-lived CLI process
+    // may never format a date, and on Linux the timeZoneDisplayName warm drags in
+    // ucal_getHostTimeZone, which walks /usr/share/zoneinfo when /etc/localtime is
+    // a regular file (Amazon Linux, many container images). Both underlying caches
+    // are std::call_once / per-VM, so skip the prewarm and let the first Date /
+    // Intl access pay for it.
     if (!isInMiniMode()) {
         initializeAvailableTimeZones();
         if (heapType == HeapType::Large)
             dateCache.timeZoneDisplayName(/* isDST */ false);
     }
+#endif
 
     // We must set this at the end only after the VM is fully initialized.
     WTF::storeStoreFence();
@@ -809,6 +821,12 @@ static ThunkGenerator NODELETE thunkGeneratorForIntrinsic(Intrinsic intrinsic)
         return logThunkGenerator;
     case IMulIntrinsic:
         return imulThunkGenerator;
+#if CPU(ARM64)
+    case MaxIntrinsic:
+        return maxThunkGenerator;
+    case MinIntrinsic:
+        return minThunkGenerator;
+#endif
     case RandomIntrinsic:
         return randomThunkGenerator;
 #if USE(JSVALUE64)
@@ -1217,7 +1235,15 @@ void VM::updateStackLimits()
         // In contrast, we do not need to worry about VM::m_stackLimit because that limit is
         // used exclusively by C++ code, and the C++ compiler will automatically commit the
         // needed stack pages.
-        preCommitStackMemory(newSoftStackLimit);
+        //
+        // LLInt/JIT code cannot run before the VM has been entered, at which point
+        // setStackPointerAtVMEntry() recomputes the limit here against maxPerThreadStackUsage.
+        // Skipping the pre-entry commit avoids eagerly committing the entire stack reserve
+        // (StackBounds on Windows reports the full reserve via GetCurrentThreadStackLimits),
+        // which raises EXCEPTION_STACK_OVERFLOW on commit-constrained hosts when the reserve
+        // is large.
+        if (m_stackPointerAtVMEntry)
+            preCommitStackMemory(newSoftStackLimit);
 #endif
     }
 }
@@ -1750,6 +1776,19 @@ NativeExecutable* VM::promiseAnySlowRejectFunctionExecutableSlow()
     return executable;
 }
 
+bool VM::hasLanguageChange()
+{
+    return m_intlCache->hasLanguageChange();
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+void VM::clearForTimeZoneChange()
+{
+    intlCache().clearForTimeZoneChange();
+    dateCache.clearForTimeZoneChange();
+}
+#endif
+
 void VM::executeEntryScopeServicesOnEntry()
 {
     if (hasEntryScopeServiceRequest(EntryScopeService::FirePrimitiveGigacageEnabled)) [[unlikely]] {
@@ -1757,9 +1796,13 @@ void VM::executeEntryScopeServicesOnEntry()
         clearEntryScopeService(EntryScopeService::FirePrimitiveGigacageEnabled);
     }
 
-    // Reset the date cache between JS invocations to force the VM to
-    // observe time zone changes.
-    dateCache.resetIfNecessary();
+    if (dateCache.hasTimeZoneChange()) [[unlikely]] {
+        intlCache().clearForTimeZoneChange();
+        dateCache.clearForTimeZoneChange();
+    }
+
+    if (intlCache().hasLanguageChange()) [[unlikely]]
+        intlCache().clearForLanguageChange();
 
     RefPtr watchdog = this->watchdog();
     if (watchdog) [[unlikely]]
@@ -1863,6 +1906,11 @@ void VM::beginMarking()
     });
 }
 
+void VM::finalizeUnconditionally()
+{
+    m_syncResumeCallCache->finalizeUnconditionally(*this);
+}
+
 template<typename Visitor>
 void VM::visitAggregateImpl(Visitor& visitor)
 {
@@ -1957,6 +2005,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_fastSetValuesSentinel);
     visitor.append(m_fastSetEntriesSentinel);
     visitor.append(m_fastStringValuesSentinel);
+    visitor.append(m_fastAsyncGeneratorSentinel);
     visitor.append(m_cachedSortScratch);
     visitor.append(m_sortScratchSentinel);
     visitor.append(m_fastCanConstructBoundExecutable);
@@ -1995,7 +2044,7 @@ void VM::removeDebugger(Debugger& debugger)
     m_debuggers.remove(&debugger);
 }
 
-void VM::performOpportunisticallyScheduledTasks(MonotonicTime deadline, OptionSet<SchedulerOptions> options)
+void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, OptionSet<SchedulerOptions> options)
 {
     constexpr bool verbose = false;
 

@@ -281,15 +281,15 @@ void RenderDeprecatedFlexibleBox::computeIntrinsicLogicalWidthContributions()
 }
 
 // Use an inline capacity of 8, since flexbox containers usually have less than 8 children.
-typedef Vector<LayoutRect, 8> ChildFrameRects;
+typedef Vector<LayoutRect, 8> ChildBorderBoxRects;
 typedef Vector<LayoutSize, 8> ChildLayoutDeltas;
 
-static void appendChildFrameRects(RenderDeprecatedFlexibleBox* box, ChildFrameRects& childFrameRects)
+static void appendChildBorderBoxRects(RenderDeprecatedFlexibleBox* box, ChildBorderBoxRects& childBorderBoxRects)
 {
     FlexBoxIterator iterator(box);
     for (RenderBox* child = iterator.first(); child; child = iterator.next()) {
         if (!child->isOutOfFlowPositioned())
-            childFrameRects.append(child->frameRect());
+            childBorderBoxRects.append(child->borderBoxRectInContainer());
     }
 }
 
@@ -302,7 +302,7 @@ static void appendChildLayoutDeltas(RenderDeprecatedFlexibleBox* box, ChildLayou
     }
 }
 
-static void repaintChildrenDuringLayoutIfMoved(RenderDeprecatedFlexibleBox* box, const ChildFrameRects& oldChildRects)
+static void repaintChildrenDuringLayoutIfMoved(RenderDeprecatedFlexibleBox* box, const ChildBorderBoxRects& oldChildRects)
 {
     size_t childIndex = 0;
     FlexBoxIterator iterator(box);
@@ -383,8 +383,8 @@ void RenderDeprecatedFlexibleBox::layoutBlock(RelayoutChildren relayoutChildren,
         // It doesn't get included in the normal layout process but is instead skipped.
         layoutExcludedChildren(relayoutChildren);
 
-        ChildFrameRects oldChildRects;
-        appendChildFrameRects(this, oldChildRects);
+        ChildBorderBoxRects oldChildRects;
+        appendChildBorderBoxRects(this, oldChildRects);
 
         if (isHorizontal())
             layoutHorizontalBox(relayoutChildren);

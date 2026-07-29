@@ -3,12 +3,14 @@
 *.iml
 *.perfetto-trace
 .DS_Store
+.agents
 .android_config
 .gclient*
 .gradle
 .idea
 .cproject
 .clwb/
+.jetskicli
 .project
 .recipe_deps/
 .settings/
@@ -16,6 +18,8 @@
 .vs/
 .win_toolchain/
 TAGS
+agents/internal/
+agents/shared/
 bower_components
 imgui.ini
 infra/bots/gen_tasks_aux.go

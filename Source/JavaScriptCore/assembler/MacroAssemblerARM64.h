@@ -2471,6 +2471,21 @@ public:
         store64(getCachedDataTempRegisterIDAndInvalidate(), dest);
     }
 
+    void transfer64(PostIndexAddress src, PostIndexAddress dest)
+    {
+        auto temp = getCachedDataTempRegisterIDAndInvalidate();
+        load64(src, temp);
+        store64(temp, dest);
+    }
+
+    void transferPair64(PostIndexAddress src, PostIndexAddress dest)
+    {
+        auto temp1 = getCachedDataTempRegisterIDAndInvalidate();
+        auto temp2 = getCachedMemoryTempRegisterIDAndInvalidate();
+        loadPair64(src, temp1, temp2);
+        storePair64(temp1, temp2, dest);
+    }
+
     void transferPtr(auto src, auto dest) { transfer64(src, dest); }
     void transferFloat(auto src, auto dest) { transfer32(src, dest); }
     void transferDouble(auto src, auto dest) { transfer64(src, dest); }
@@ -5007,9 +5022,9 @@ public:
         move(TrustedImmPtr(reinterpret_cast<void*>(address.offset)), getCachedMemoryTempRegisterIDAndInvalidate());
 
         if (MacroAssemblerHelpers::isUnsigned<MacroAssemblerARM64>(cond))
-            m_assembler.ldrb(memoryTempRegister, address.base, memoryTempRegister);
+            m_assembler.ldrb(memoryTempRegister, memoryTempRegister, address.base);
         else
-            m_assembler.ldrsb<32>(memoryTempRegister, address.base, memoryTempRegister);
+            m_assembler.ldrsb<32>(memoryTempRegister, memoryTempRegister, address.base);
 
         return branchTest32(cond, memoryTempRegister, mask8);
     }
@@ -5041,9 +5056,9 @@ public:
         move(TrustedImmPtr(reinterpret_cast<void*>(address.offset)), getCachedMemoryTempRegisterIDAndInvalidate());
 
         if (MacroAssemblerHelpers::isUnsigned<MacroAssemblerARM64>(cond))
-            m_assembler.ldrh(memoryTempRegister, address.base, memoryTempRegister);
+            m_assembler.ldrh(memoryTempRegister, memoryTempRegister, address.base);
         else
-            m_assembler.ldrsh<32>(memoryTempRegister, address.base, memoryTempRegister);
+            m_assembler.ldrsh<32>(memoryTempRegister, memoryTempRegister, address.base);
 
         return branchTest32(cond, memoryTempRegister, mask16);
     }

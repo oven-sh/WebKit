@@ -64,6 +64,7 @@
 #include "HTMLElementFactory.h"
 #include "HTMLFieldSetElement.h"
 #include "HTMLFormElement.h"
+#include "HTMLHeadingElement.h"
 #include "HTMLInputElement.h"
 #include "HTMLMaybeFormAssociatedCustomElement.h"
 #include "HTMLNames.h"
@@ -392,6 +393,13 @@ void HTMLElement::attributeChanged(const QualifiedName& name, const AtomString& 
             setTabIndexExplicitly(optionalTabIndex.value());
         else
             setTabIndexExplicitly(std::nullopt);
+        return;
+    case AttributeNames::headingoffsetAttr:
+    case AttributeNames::headingresetAttr:
+        if (document().settings().headingOffsetEnabled()) {
+            document().setUsesHeadingOffsetAttribute();
+            updateEffectiveHeadingOffsetForElementAndDescendants(*this, computedHeadingOffset(*this));
+        }
         return;
     case AttributeNames::inertAttr:
         invalidateStyle();
@@ -1162,10 +1170,16 @@ void HTMLElement::queuePopoverToggleEventTask(ToggleState oldState, ToggleState 
 {
     if (auto* popoverData = this->popoverData())
         popoverData->ensureToggleEventTask(*this)->queue(oldState, newState, source);
+    else
+        ToggleEventTask::create(*this)->queue(oldState, newState, source);
 }
 
 ExceptionOr<void> HTMLElement::showPopover(const ShowPopoverOptions& options)
 {
+    // A scripted showPopover() during another popover's show/hide (e.g. from a beforetoggle
+    // handler) is not allowed. See popover-open-in-beforetoggle.html.
+    if (document().isRunningPopoverShowOrHide())
+        return Exception { ExceptionCode::InvalidStateError, "Cannot show a popover while a popover is being shown or hidden"_s };
     return showPopoverInternal(options.source.get());
 }
 
@@ -1177,6 +1191,10 @@ ExceptionOr<void> HTMLElement::showPopoverInternal(HTMLElement* source)
     if (!check.returnValue())
         return { };
 
+    Ref document = this->document();
+
+    Document::PopoverShowOrHideScope popoverShowOrHideScope(document);
+
     if (popoverData())
         setInvoker(source);
 
@@ -1185,7 +1203,6 @@ ExceptionOr<void> HTMLElement::showPopoverInternal(HTMLElement* source)
     PopoverData::ScopedStartShowingOrHiding showOrHidingPopoverScope(*this);
     auto fireEvents = showOrHidingPopoverScope.wasShowingOrHiding() ? FireEvents::No : FireEvents::Yes;
 
-    Ref document = this->document();
     ToggleEvent::Init init;
     init.oldState = "closed"_s;
     init.newState = "open"_s;
@@ -1205,10 +1222,29 @@ ExceptionOr<void> HTMLElement::showPopoverInternal(HTMLElement* source)
 
     bool shouldRestoreFocus = false;
 
-    if (popoverState() == PopoverState::Auto) {
-        auto originalState = popoverState();
-        RefPtr hideUntil = topmostPopoverAncestor(TopLayerElementType::Popover);
-        document->hideAllPopoversUntil(hideUntil.get(), FocusPreviousElement::No, fireEvents);
+    auto originalState = popoverState();
+    if (originalState == PopoverState::Auto || originalState == PopoverState::Hint) {
+        RefPtr ancestor = topmostPopoverAncestor(TopLayerElementType::Popover);
+
+        auto isShowingAsHint = [](const HTMLElement& element) {
+            return element.popoverData() && element.popoverData()->showingAsHint();
+        };
+
+        // A popover=auto shown with a hint ancestor is "demoted" to a hint and joins the hint
+        // stack. See https://github.com/whatwg/html/issues/12304.
+        bool showingAsHint = originalState == PopoverState::Hint || (ancestor && isShowingAsHint(*ancestor));
+
+        if (!showingAsHint) {
+            // Effective auto: close every hint popover first (hints are dismissed before autos),
+            // then hide auto popovers up to the ancestor (all of them when there is no ancestor).
+            document->closeAllHintPopovers(FocusPreviousElement::No, fireEvents);
+            document->hideAutoPopoversUntil(ancestor.get(), FocusPreviousElement::No, fireEvents);
+        } else {
+            // Effective hint: close hints down to the nearest ancestor hint (all hints when the
+            // ancestor is an auto or there is none). Showing a hint never dismisses auto popovers.
+            RefPtr<HTMLElement> nearestAncestorHint = (ancestor && isShowingAsHint(*ancestor)) ? ancestor : nullptr;
+            document->closeHintPopoversUntil(nearestAncestorHint.get(), FocusPreviousElement::No, fireEvents);
+        }
 
         if (popoverState() != originalState)
             return Exception { ExceptionCode::InvalidStateError, "The value of the popover attribute was changed while hiding the popover."_s };
@@ -1219,7 +1255,16 @@ ExceptionOr<void> HTMLElement::showPopoverInternal(HTMLElement* source)
         if (!check.returnValue())
             return { };
 
-        shouldRestoreFocus = !document->topmostAutoPopover();
+        popoverData()->setShowingAsHint(showingAsHint);
+        popoverData()->setHintStackParent(showingAsHint ? ancestor.get() : nullptr);
+
+        if (!showingAsHint) {
+            // Auto popovers restore focus only when no other autos remain.
+            shouldRestoreFocus = !document->topmostAutoPopover();
+        } else {
+            // Hints restore focus only when no auto or hint popovers remain.
+            shouldRestoreFocus = !document->topmostAutoPopover() && !document->topmostHintPopover();
+        }
 
         if (document->settings().closeWatcherEnabled()) {
             if (RefPtr closeWatcher = CloseWatcher::create(document)) {
@@ -1244,11 +1289,9 @@ ExceptionOr<void> HTMLElement::showPopoverInternal(HTMLElement* source)
 
     runPopoverFocusingSteps(*this);
 
-    if (shouldRestoreFocus) {
-        if (auto* popoverData = this->popoverData()) {
-            ASSERT(popoverState() == PopoverState::Auto);
-            popoverData->setPreviouslyFocusedElement(previouslyFocusedElement.get());
-        }
+    if (shouldRestoreFocus && popoverData()) {
+        ASSERT(popoverState() == PopoverState::Auto || popoverState() == PopoverState::Hint);
+        popoverData()->setPreviouslyFocusedElement(previouslyFocusedElement.get());
     }
 
     queuePopoverToggleEventTask(ToggleState::Closed, ToggleState::Open, source);
@@ -1282,14 +1325,39 @@ ExceptionOr<void> HTMLElement::hidePopoverInternal(FocusPreviousElement focusPre
     if (showOrHidingPopoverScope.wasShowingOrHiding())
         fireEvents = FireEvents::No;
 
-    if (popoverState() == PopoverState::Auto) {
-        Ref<Document> { document() }->hideAllPopoversUntil(this, focusPreviousElement, fireEvents);
+    Ref document = this->document();
+
+    Document::PopoverShowOrHideScope popoverShowOrHideScope(document);
+
+    // Only an "effective auto" popover hides other auto popovers when it is hidden. A manual
+    // popover hides nothing, and a hint (including an auto demoted to a hint) only closes the
+    // hints stacked above it, handled below.
+    if (popoverState() == PopoverState::Auto && !popoverData()->showingAsHint()) {
+        document->hideAutoPopoversUntil(this, focusPreviousElement, fireEvents);
 
         check = checkPopoverValidity(*this, PopoverVisibilityState::Showing);
         if (check.hasException())
             return check.releaseException();
         if (!check.returnValue())
             return { };
+    }
+
+    // Hiding any popover also closes every hint whose hint-stack-parent chain reaches it.
+    {
+        Vector<Ref<HTMLElement>> descendantHints;
+        descendantHints.reserveCapacity(document->hintPopoverList().size());
+        for (auto& hint : document->hintPopoverList()) {
+            if (hint.ptr() == this)
+                continue;
+            for (RefPtr parent = hint->popoverData() ? hint->popoverData()->hintStackParent() : nullptr; parent; parent = parent->popoverData() ? parent->popoverData()->hintStackParent() : nullptr) {
+                if (parent == this) {
+                    descendantHints.append(hint);
+                    break;
+                }
+            }
+        }
+        for (auto& hint : descendantHints)
+            hint->hidePopoverInternal(focusPreviousElement, fireEvents);
     }
 
     setInvoker(nullptr);
@@ -1319,26 +1387,31 @@ ExceptionOr<void> HTMLElement::hidePopoverInternal(FocusPreviousElement focusPre
         styleInvalidation.emplace(*this, CSSSelector::PseudoClass::PopoverOpen, false);
     popoverWasHidden();
     popoverData()->setVisibilityState(PopoverVisibilityState::Hidden);
+    popoverData()->setShowingAsHint(false);
+    popoverData()->setHintStackParent(nullptr);
 
     if (fireEvents == FireEvents::Yes)
         queuePopoverToggleEventTask(ToggleState::Open, ToggleState::Closed, source);
 
-    Ref document = this->document();
     if (RefPtr element = popoverData()->previouslyFocusedElement()) {
         if (focusPreviousElement == FocusPreviousElement::Yes && isShadowIncludingInclusiveAncestorOf(document->focusedElement())) {
             FocusOptions options;
             options.preventScroll = true;
             element->focus(options);
         }
-        popoverData()->setPreviouslyFocusedElement(nullptr);
+
+        if (auto* popoverData = this->popoverData())
+            popoverData->setPreviouslyFocusedElement(nullptr);
     }
 
     if (CheckedPtr cache = document->existingAXObjectCache())
         cache->onPopoverToggle(*this);
 
-    if (RefPtr closeWatcher = popoverData()->closeWatcher()) {
-        closeWatcher->destroy();
-        popoverData()->setCloseWatcher(nullptr);
+    if (auto* popoverData = this->popoverData()) {
+        if (RefPtr closeWatcher = popoverData->closeWatcher()) {
+            closeWatcher->destroy();
+            popoverData->setCloseWatcher(nullptr);
+        }
     }
 
     return { };
@@ -1369,6 +1442,8 @@ ExceptionOr<bool> HTMLElement::togglePopover(Variant<WebCore::HTMLElement::Toggl
         if (returnValue.hasException())
             return returnValue.releaseException();
     } else if (!isPopoverShowing() && force.value_or(true)) {
+        if (document().isRunningPopoverShowOrHide())
+            return Exception { ExceptionCode::InvalidStateError, "Cannot show a popover while a popover is being shown or hidden"_s };
         auto returnValue = showPopoverInternal(source);
         if (returnValue.hasException())
             return returnValue.releaseException();
@@ -1382,12 +1457,15 @@ ExceptionOr<bool> HTMLElement::togglePopover(Variant<WebCore::HTMLElement::Toggl
 
 void HTMLElement::popoverAttributeChanged(const AtomString& value)
 {
-    auto computePopoverState = [](const AtomString& value) -> PopoverState {
+    auto computePopoverState = [hintEnabled = document().settings().popoverHintEnabled()](const AtomString& value) -> PopoverState {
         if (!value || value.isNull())
             return PopoverState::None;
 
         if (value == emptyString() || equalIgnoringASCIICase(value, autoAtom()))
             return PopoverState::Auto;
+
+        if (hintEnabled && equalIgnoringASCIICase(value, hintAtom()))
+            return PopoverState::Hint;
 
         return PopoverState::Manual;
     };
@@ -1447,6 +1525,8 @@ const AtomString& HTMLElement::popover() const
         return autoAtom();
     case PopoverState::Manual:
         return manualAtom();
+    case PopoverState::Hint:
+        return hintAtom();
     }
     return nullAtom();
 }

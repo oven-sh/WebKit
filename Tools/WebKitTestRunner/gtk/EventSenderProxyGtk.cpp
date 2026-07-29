@@ -394,6 +394,12 @@ void EventSenderProxy::setWheelHasPreciseDeltas(bool hasPreciseDeltas)
     m_hasPreciseDeltas = hasPreciseDeltas;
 }
 
+void EventSenderProxy::sendWheelEvent(double x, double y, double deltaX, double deltaY, WheelEventPhase phase, WheelEventPhase momentumPhase)
+{
+    webkitWebViewBaseSynthesizeWheelEvent(toWebKitGLibAPI(m_testController->targetView()->platformView()),
+        deltaX, deltaY, x, y, phase, momentumPhase, true);
+}
+
 void EventSenderProxy::leapForward(int milliseconds)
 {
     m_time += milliseconds / 1000.0;
@@ -408,20 +414,28 @@ void EventSenderProxy::updateTouchPoint(int, int, int)
 {
 }
 
-void EventSenderProxy::touchStart()
+void EventSenderProxy::touchStart(CompletionHandler<void()>&& completionHandler)
 {
+    if (completionHandler)
+        completionHandler();
 }
 
-void EventSenderProxy::touchMove()
+void EventSenderProxy::touchMove(CompletionHandler<void()>&& completionHandler)
 {
+    if (completionHandler)
+        completionHandler();
 }
 
-void EventSenderProxy::touchEnd()
+void EventSenderProxy::touchEnd(CompletionHandler<void()>&& completionHandler)
 {
+    if (completionHandler)
+        completionHandler();
 }
 
-void EventSenderProxy::touchCancel()
+void EventSenderProxy::touchCancel(CompletionHandler<void()>&& completionHandler)
 {
+    if (completionHandler)
+        completionHandler();
 }
 
 void EventSenderProxy::clearTouchPoints()

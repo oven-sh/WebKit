@@ -12,20 +12,30 @@ use read_fonts::{
 
 use font_types::{BoundingBox, GlyphId};
 use skrifa::{
+    bitmap::MaskData,
     instance::{LocationRef, Size},
     metrics::GlyphMetrics,
 };
 
-use crate::{ffi::BitmapMetrics as FfiBitmapMetrics, BridgeFontRef};
+use crate::{
+    ffi::{AlphaBitmapSize, BitmapMetrics as FfiBitmapMetrics},
+    BridgeFontRef,
+};
 
 pub enum BitmapPixelData<'a> {
     PngData(&'a [u8]),
+    AlphaMask {
+        data: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
 }
 
-struct CblcGlyph<'a> {
+struct BitmapTableGlyph<'a> {
     bitmap_data: BitmapData<'a>,
     ppem_x: u8,
     ppem_y: u8,
+    bit_depth: u8,
 }
 
 struct SbixGlyph<'a> {
@@ -101,7 +111,7 @@ fn cblc_glyph<'a>(
     font_ref: &'a FontRef,
     glyph_id: GlyphId,
     font_size: Option<f32>,
-) -> Option<CblcGlyph<'a>> {
+) -> Option<BitmapTableGlyph<'a>> {
     let cblc = font_ref.cblc().ok()?;
     let cbdt = font_ref.cbdt().ok()?;
 
@@ -112,11 +122,60 @@ fn cblc_glyph<'a>(
 
     let location = best_strike.location(cblc.offset_data(), glyph_id).ok()?;
 
-    Some(CblcGlyph {
+    Some(BitmapTableGlyph {
         bitmap_data: cbdt.data(&location).ok()?,
         ppem_x: best_strike.ppem_x,
         ppem_y: best_strike.ppem_y,
+        bit_depth: best_strike.bit_depth,
     })
+}
+
+fn eblc_glyph<'a>(
+    font_ref: &'a FontRef,
+    glyph_id: GlyphId,
+    font_size: Option<f32>,
+) -> Option<BitmapTableGlyph<'a>> {
+    let eblc = font_ref.eblc().ok()?;
+    let ebdt = font_ref.ebdt().ok()?;
+
+    let strikes = &eblc.bitmap_sizes();
+    let best_strike = font_size
+        .and_then(|size| best_strike_size(strikes.iter(), size))
+        .or(strikes.get(0))?;
+
+    let location = best_strike.location(eblc.offset_data(), glyph_id).ok()?;
+
+    Some(BitmapTableGlyph {
+        bitmap_data: ebdt.data(&location).ok()?,
+        ppem_x: best_strike.ppem_x,
+        ppem_y: best_strike.ppem_y,
+        bit_depth: best_strike.bit_depth,
+    })
+}
+
+fn bitmap_table_glyph<'a>(
+    font_ref: &'a FontRef,
+    glyph_id: GlyphId,
+    font_size: Option<f32>,
+) -> Option<BitmapTableGlyph<'a>> {
+    cblc_glyph(font_ref, glyph_id, font_size)
+        .or_else(|| eblc_glyph(font_ref, glyph_id, font_size))
+}
+
+struct AlphaBitmapDimensions {
+    width: u32,
+    height: u32,
+}
+
+fn bitmap_dimensions(metrics: &BitmapMetrics) -> Option<AlphaBitmapDimensions> {
+    let (width, height) = match metrics {
+        BitmapMetrics::Small(m) => (m.width as u32, m.height as u32),
+        BitmapMetrics::Big(m) => (m.width as u32, m.height as u32),
+    };
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some(AlphaBitmapDimensions { width, height })
 }
 
 pub fn has_bitmap_glyph(font_ref: &BridgeFontRef, glyph_id: u16) -> bool {
@@ -124,8 +183,8 @@ pub fn has_bitmap_glyph(font_ref: &BridgeFontRef, glyph_id: u16) -> bool {
         .with_font(|font| {
             let glyph_id = GlyphId::from(glyph_id);
             let has_sbix = sbix_glyph(font, glyph_id, None).is_some();
-            let has_cblc = cblc_glyph(font, glyph_id, None).is_some();
-            Some(has_sbix || has_cblc)
+            let has_cblc_or_eblc = bitmap_table_glyph(font, glyph_id, None).is_some();
+            Some(has_sbix || has_cblc_or_eblc)
         })
         .unwrap_or_default()
 }
@@ -177,7 +236,7 @@ pub unsafe fn bitmap_glyph<'a>(
                         advance: f32::NAN,
                     },
                 }));
-            } else if let Some(cblc_glyph) = cblc_glyph(font, glyph_id, Some(font_size)) {
+            } else if let Some(cblc_glyph) = bitmap_table_glyph(font, glyph_id, Some(font_size)) {
                 let (bearing_x, bearing_y, advance) = match cblc_glyph.bitmap_data.metrics {
                     BitmapMetrics::Small(small_metrics) => (
                         small_metrics.bearing_x() as f32,
@@ -190,22 +249,48 @@ pub unsafe fn bitmap_glyph<'a>(
                         big_metrics.hori_advance as f32,
                     ),
                 };
-                if let BitmapContent::Data(BitmapDataFormat::Png, png_buffer) =
-                    cblc_glyph.bitmap_data.content
-                {
-                    return Some(Box::new(BridgeBitmapGlyph {
-                        data: Some(BitmapPixelData::PngData(png_buffer)),
-                        metrics: FfiBitmapMetrics {
-                            bearing_x: 0.0,
-                            bearing_y: 0.0,
-                            inner_bearing_x: bearing_x,
-                            inner_bearing_y: bearing_y,
-                            ppem_x: cblc_glyph.ppem_x as f32,
-                            ppem_y: cblc_glyph.ppem_y as f32,
-                            placement_origin_bottom_left: false,
-                            advance: advance,
-                        },
-                    }));
+
+                let metrics = FfiBitmapMetrics {
+                    bearing_x: 0.0,
+                    bearing_y: 0.0,
+                    inner_bearing_x: bearing_x,
+                    inner_bearing_y: bearing_y,
+                    ppem_x: cblc_glyph.ppem_x as f32,
+                    ppem_y: cblc_glyph.ppem_y as f32,
+                    placement_origin_bottom_left: false,
+                    advance: advance,
+                };
+                match cblc_glyph.bitmap_data.content {
+                    BitmapContent::Data(BitmapDataFormat::Png, png_buffer) => {
+                        return Some(Box::new(BridgeBitmapGlyph {
+                            data: Some(BitmapPixelData::PngData(png_buffer)),
+                            metrics,
+                        }));
+                    }
+                    BitmapContent::Data(format, raw_data) => {
+                        let dims = bitmap_dimensions(&cblc_glyph.bitmap_data.metrics)?;
+                        let is_packed = match format {
+                            BitmapDataFormat::BitAligned => true,
+                            BitmapDataFormat::ByteAligned => false,
+                            _ => return None,
+                        };
+                        let mask = MaskData {
+                            bpp: cblc_glyph.bit_depth,
+                            is_packed,
+                            data: raw_data,
+                        };
+                        if let Ok(alpha_data) = mask.decode(dims.width, dims.height) {
+                            return Some(Box::new(BridgeBitmapGlyph {
+                                data: Some(BitmapPixelData::AlphaMask {
+                                    data: alpha_data,
+                                    width: dims.width,
+                                    height: dims.height,
+                                }),
+                                metrics,
+                            }));
+                        }
+                    }
+                    _ => {}
                 }
             }
             None
@@ -222,4 +307,25 @@ pub unsafe fn png_data<'a>(bitmap_glyph: &'a BridgeBitmapGlyph) -> &'a [u8] {
 
 pub unsafe fn bitmap_metrics<'a>(bitmap_glyph: &'a BridgeBitmapGlyph) -> &'a FfiBitmapMetrics {
     &bitmap_glyph.metrics
+}
+
+pub fn has_alpha_mask(bitmap_glyph: &BridgeBitmapGlyph) -> bool {
+    matches!(&bitmap_glyph.data, Some(BitmapPixelData::AlphaMask { .. }))
+}
+
+pub unsafe fn alpha_mask_data<'a>(bitmap_glyph: &'a BridgeBitmapGlyph) -> &'a [u8] {
+    match &bitmap_glyph.data {
+        Some(BitmapPixelData::AlphaMask { data, .. }) => data.as_slice(),
+        _ => &[],
+    }
+}
+
+pub fn alpha_mask_size(bitmap_glyph: &BridgeBitmapGlyph) -> AlphaBitmapSize {
+    match &bitmap_glyph.data {
+        Some(BitmapPixelData::AlphaMask { width, height, .. }) => AlphaBitmapSize {
+            width: *width,
+            height: *height,
+        },
+        _ => AlphaBitmapSize::default(),
+    }
 }

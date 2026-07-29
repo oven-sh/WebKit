@@ -396,6 +396,7 @@ public:
     virtual void recomputeAriaRole() { }
     virtual AccessibilityRole ariaRoleAttribute() const { return AccessibilityRole::Unknown; }
     bool hasExplicitGenericRole() const { return ariaRoleAttribute() == AccessibilityRole::Generic; }
+    bool hasExplicitGroupRole() const final { return ariaRoleAttribute() == AccessibilityRole::Group; }
     bool hasImplicitGenericRole() const { return role() == AccessibilityRole::Generic && !hasExplicitGenericRole(); }
     bool ariaRoleHasPresentationalChildren() const;
     bool inheritsPresentationalRole() const override { return false; }
@@ -520,6 +521,9 @@ public:
     static TextIterator textIteratorIgnoringFullSizeKana(const SimpleRange&);
     CharacterRange selectedTextRange() const override { return { }; }
     int insertionPointLineNumber() const override { return -1; }
+#if ENABLE(WRITING_TOOLS)
+    bool writingToolsAvailable() const final;
+#endif // ENABLE(WRITING_TOOLS)
 
     URL url() const override { return URL(); }
     VisibleSelection selection() const final;
@@ -553,6 +557,7 @@ public:
     RenderView* topRenderer() const;
     virtual ScrollView* scrollView() const { return nullptr; }
     unsigned ariaLevel() const final;
+    unsigned computedHeadingLevel() const final;
     String language() const final;
     // 1-based, to match the aria-level spec.
     bool isInlineText() const final;
@@ -576,6 +581,11 @@ public:
     void performDismissActionIgnoringResult() final { performDismissAction(); }
     bool press() override;
     bool syncPress() override { return press(); }
+    // Presses this object as an aria-actions action target, then restores focus to wherever it was
+    // beforehand (not only when the action's host was focused) if pressing moved focus onto this
+    // object, e.g. because it's a focusable button. The intervening focus movement is not surfaced
+    // to assistive technology, so invoking an action never moves the user's focus.
+    bool pressPreservingFocus();
     bool performShowMenuAction();
 
     std::optional<AccessibilityOrientation> explicitOrientation() const override { return std::nullopt; }

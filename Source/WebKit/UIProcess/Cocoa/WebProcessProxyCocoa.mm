@@ -125,17 +125,8 @@ void WebProcessProxy::cacheMediaMIMETypes(const Vector<String>& types)
     mediaTypeCache() = types;
     for (Ref process : processPool().processes()) {
         if (process.ptr() != this)
-            cacheMediaMIMETypesInternal(types);
+            process->send(Messages::WebProcess::SetMediaMIMETypes(types), 0);
     }
-}
-
-void WebProcessProxy::cacheMediaMIMETypesInternal(const Vector<String>& types)
-{
-    if (!mediaTypeCache().isEmpty())
-        return;
-
-    mediaTypeCache() = types;
-    send(Messages::WebProcess::SetMediaMIMETypes(types), 0);
 }
 
 const Vector<String>& WebProcessProxy::mediaMIMETypes()
@@ -385,15 +376,21 @@ void WebProcessProxy::platformDestroy()
 #endif // PLATFORM(IOS_FAMILY)
 
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
-    if (m_logStream.get()) {
-#if !ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
-        removeMessageReceiver(Messages::LogStream::messageReceiverName(), m_logStream->identifier());
-#endif
-        m_logStream.reset();
-    }
-
+    stopLogStream();
 #endif
 }
+
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+void WebProcessProxy::stopLogStream()
+{
+    if (!m_logStream.get())
+        return;
+#if !ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
+    removeMessageReceiver(Messages::LogStream::messageReceiverName(), m_logStream->identifier());
+#endif
+    m_logStream.reset();
+}
+#endif
 
 void WebProcessProxy::platformResumeProcess()
 {

@@ -45,7 +45,7 @@ float euclidianDistance(const FloatPoint& p1, const FloatPoint& p2)
     return euclidianDistance(p1 - p2);
 }
 
-bool findIntersection(const FloatPoint& p1, const FloatPoint& p2, const FloatPoint& d1, const FloatPoint& d2, FloatPoint& intersection) 
+std::optional<FloatPoint> findIntersection(const FloatPoint& p1, const FloatPoint& p2, const FloatPoint& d1, const FloatPoint& d2)
 {
     float pxLength = p2.x() - p1.x();
     float pyLength = p2.y() - p1.y();
@@ -55,13 +55,11 @@ bool findIntersection(const FloatPoint& p1, const FloatPoint& p2, const FloatPoi
 
     float denom = pxLength * dyLength - pyLength * dxLength;
     if (!denom)
-        return false;
-    
+        return std::nullopt;
+
     float param = ((d1.x() - p1.x()) * dyLength - (d1.y() - p1.y()) * dxLength) / denom;
 
-    intersection.setX(p1.x() + param * pxLength);
-    intersection.setY(p1.y() + param * pyLength);
-    return true;
+    return FloatPoint(p1.x() + param * pxLength, p1.y() + param * pyLength);
 }
 
 IntRect unionRect(const Vector<IntRect>& rects)
@@ -164,6 +162,18 @@ FloatRect smallestRectWithAspectRatioAroundRect(float aspectRatio, const FloatRe
     return destRect;
 }
 
+FloatRect fullRectFromSubrectAndSize(const FloatSize& naturalSize, const FloatRect& subrect, const FloatRect& destRect)
+{
+    float scaleX = destRect.width() / subrect.width();
+    float scaleY = destRect.height() / subrect.height();
+    return {
+        destRect.x() - subrect.x() * scaleX,
+        destRect.y() - subrect.y() * scaleY,
+        naturalSize.width() * scaleX,
+        naturalSize.height() * scaleY
+    };
+}
+
 FloatSize sizeWithAreaAndAspectRatio(float area, float aspectRatio)
 {
     auto scaledWidth = std::sqrt(area * aspectRatio);
@@ -197,14 +207,29 @@ bool ellipseContainsPoint(const FloatPoint& center, const FloatSize& radii, cons
     return std::abs(transformedPoint.x()) + std::abs(transformedPoint.y()) <= transformedRadius || transformedPoint.lengthSquared() <= transformedRadius * transformedRadius;
 }
 
+float eccentricAngle(FloatPoint point, FloatPoint center, float radiusX, float radiusY)
+{
+    return atan2((point.y() - center.y()) / radiusY, (point.x() - center.x()) / radiusX);
+}
+
 FloatPoint midPoint(const FloatPoint& first, const FloatPoint& second)
 {
     return { std::midpoint(first.x(), second.x()), std::midpoint(first.y(), second.y()) };
 }
 
-static float NODELETE dotProduct(const FloatSize& u, const FloatSize& v)
+FloatPoint linearInterpolation(const FloatPoint& from, const FloatPoint& to, float t)
+{
+    return { from.x() + (to.x() - from.x()) * t, from.y() + (to.y() - from.y()) * t };
+}
+
+float dotProduct(const FloatSize& u, const FloatSize& v)
 {
     return u.width() * v.width() + u.height() * v.height();
+}
+
+float signedDistanceToLine(const FloatPoint& point, const FloatPoint& lineStart, const FloatPoint& lineEnd)
+{
+    return dotProduct(point - lineStart, (lineEnd - lineStart).perpendicular());
 }
 
 static float NODELETE angleBetweenVectors(const FloatSize& u, const FloatSize& v)

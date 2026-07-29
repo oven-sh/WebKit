@@ -133,9 +133,9 @@ WI.RemoteObject = class RemoteObject
         if (node.destroyed)
             return Promise.reject("ERROR: node is destroyed");
 
-        let target = WI.assumingMainTarget();
-        return target.DOMAgent.resolveNode(node.id, objectGroup)
-            .then(({object}) => WI.RemoteObject.fromPayload(object, WI.mainTarget));
+        let target = node.owningTarget || WI.assumingMainTarget();
+        return target.DOMAgent.resolveNode(node.backendNodeId, objectGroup)
+            .then(({object}) => WI.RemoteObject.fromPayload(object, target));
     }
 
     static resolveWebSocket(webSocketResource, objectGroup, callback)
@@ -395,6 +395,11 @@ WI.RemoteObject = class RemoteObject
 
         // COMPATIBILITY (iOS 13): `startIndex` and `numberToFetch` were renamed to `fetchStart` and `fetchCount` (but kept in the same position).
         this._target.RuntimeAgent.getCollectionEntries(this._objectId, objectGroup, fetchStart, fetchCount, (error, entries) => {
+            if (error) {
+                callback(null);
+                return;
+            }
+
             callback(entries.map((x) => WI.CollectionEntry.fromPayload(x, this._target)));
         });
     }
@@ -409,7 +414,7 @@ WI.RemoteObject = class RemoteObject
     pushNodeToFrontend(callback)
     {
         if (this._objectId && InspectorBackend.hasCommand("DOM.requestNode"))
-            WI.domManager.pushNodeToFrontend(this._objectId, callback);
+            WI.domManager.pushNodeToFrontend(this._objectId, callback, this._target);
         else
             callback(0);
     }

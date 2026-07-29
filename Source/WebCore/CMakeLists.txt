@@ -274,6 +274,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/svg/graphics"
     "${WEBCORE_DIR}/svg/graphics/filters"
     "${WEBCORE_DIR}/svg/properties"
+    "${WEBCORE_DIR}/testing"
     "${WEBCORE_DIR}/websockets"
     "${WEBCORE_DIR}/workers"
     "${WEBCORE_DIR}/workers/service"
@@ -423,6 +424,7 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/fetch/FetchRequestCache.idl
     Modules/fetch/FetchRequestCredentials.idl
     Modules/fetch/FetchRequestDestination.idl
+    Modules/fetch/FetchRequestDuplex.idl
     Modules/fetch/FetchRequestInit.idl
     Modules/fetch/FetchRequestMode.idl
     Modules/fetch/FetchRequestRedirect.idl
@@ -588,7 +590,6 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/mediastream/RTCRtpHeaderExtensionParameters.idl
     Modules/mediastream/RTCRtpParameters.idl
     Modules/mediastream/RTCRtpReceiver.idl
-    Modules/mediastream/RTCRtpSFrameTransform.idl
     Modules/mediastream/RTCRtpSFrameTransformErrorEvent.idl
     Modules/mediastream/RTCRtpScriptTransform.idl
     Modules/mediastream/RTCRtpScriptTransformer.idl
@@ -903,7 +904,6 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/websockets/CloseEvent.idl
     Modules/websockets/WebSocket.idl
 
-    Modules/webtransport/DatagramsReadableMode.idl
     Modules/webtransport/WebTransport.idl
     Modules/webtransport/WebTransportBidirectionalStream.idl
     Modules/webtransport/WebTransportCloseInfo.idl
@@ -925,6 +925,7 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/webtransport/WebTransportSendStream.idl
     Modules/webtransport/WebTransportSendStreamOptions.idl
     Modules/webtransport/WebTransportSendStreamStats.idl
+    Modules/webtransport/WebTransportWriter.idl
 
 
     animation/AnimationEffect.idl
@@ -1470,8 +1471,8 @@ set(WebCore_NON_SVG_IDL_FILES
     page/WebKitBuffer.idl
     page/WebKitBufferNamespace.idl
     page/WebKitJSHandle.idl
+    page/WebKitNodeSnapshot.idl
     page/WebKitPoint.idl
-    page/WebKitSerializedNode.idl
     page/WindowPostMessageOptions.idl
     page/WorkerNavigator.idl
 
@@ -2167,10 +2168,10 @@ if (USE_APPLE_INTERNAL_SDK)
         dom/Document+Touch.idl
     )
     list(APPEND WebCore_NON_SVG_IDL_FILES
-        ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/GestureEvent.idl
-        ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/Touch.idl
-        ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/TouchEvent.idl
-        ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/TouchList.idl
+        ${WebKitAdditions_HEADERS_DIR}/GestureEvent.idl
+        ${WebKitAdditions_HEADERS_DIR}/Touch.idl
+        ${WebKitAdditions_HEADERS_DIR}/TouchEvent.idl
+        ${WebKitAdditions_HEADERS_DIR}/TouchList.idl
     )
     list(APPEND WebCore_SUPPLEMENTAL_IDL_FILES
         ${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions/DocumentTouch.idl
@@ -2235,7 +2236,7 @@ set(WebCore_FRAMEWORKS
 )
 if (USE_APPLE_INTERNAL_SDK)
     list(APPEND WebCore_FRAMEWORKS WebKitAdditions)
-    list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES "${WebKitAdditions_FRAMEWORK_HEADERS_DIR}/WebKitAdditions")
+    list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES ${WebKitAdditions_HEADERS_DIR})
 endif ()
 
 if (ENABLE_XSLT)
@@ -2278,7 +2279,11 @@ endif ()
 
 set(WebCoreTestSupport_FRAMEWORKS ${WebCore_FRAMEWORKS})
 set(WebCoreTestSupport_DEPENDENCIES WebCoreTestSupportBindings)
-set(WebCoreTestSupport_PRIVATE_HEADERS testing/js/WebCoreTestSupport.h)
+set(WebCoreTestSupport_PRIVATE_HEADERS
+    testing/TestPage.h
+
+    testing/js/WebCoreTestSupport.h
+)
 
 if (ENABLE_LEGACY_ENCRYPTED_MEDIA)
     list(APPEND WebCore_SOURCES
@@ -2614,6 +2619,7 @@ list(APPEND WebCoreTestSupport_SOURCES
     testing/MockPageOverlay.cpp
     testing/MockPageOverlayClient.cpp
     testing/ServiceWorkerInternals.cpp
+    testing/TestPage.cpp
     testing/js/WebCoreTestSupport.cpp
 )
 
@@ -2813,7 +2819,9 @@ set(PAINTWORKLETGLOBALSCOPE_CONSTRUCTORS_FILE ${WebCore_DERIVED_SOURCES_DIR}/Pai
 set(AUDIOWORKLETGLOBALSCOPE_CONSTRUCTORS_FILE ${WebCore_DERIVED_SOURCES_DIR}/AudioWorkletGlobalScopeConstructors.idl)
 
 set(WebCore_INTERFACE_LIBRARIES WebCore)
-set(WebCore_INTERFACE_INCLUDE_DIRECTORIES ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR})
+if (NOT USE_FRAMEWORK_BUNDLES)
+    set(WebCore_INTERFACE_INCLUDE_DIRECTORIES ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR})
+endif ()
 
 set(WebCoreTestSupport_INTERFACE_LIBRARIES WebCoreTestSupport)
 set(WebCoreTestSupport_INTERFACE_INCLUDE_DIRECTORIES
@@ -2902,14 +2910,24 @@ add_custom_command(
     VERBATIM)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/WebCoreLogDefinitions.h)
 
+# The generators never include Platform.h, so pass its feature defines through
+# --defines-file. Mac-only. Tools' bindings have no [Conditional] IDL to gate.
+set(_platform_defines_file_arg)
+set(_platform_defines_file_dep)
+if (PORT STREQUAL "Mac")
+    webkit_generate_platform_feature_defines_file(WEBKIT_PLATFORM_FEATURE_DEFINES_FILE)
+    set(_platform_defines_file_arg --defines-file "${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}")
+    set(_platform_defines_file_dep "${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}")
+endif ()
+
 # Generate CSS property names
 add_custom_command(
     OUTPUT ${WebCore_DERIVED_SOURCES_DIR}/CSSProperties.json ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyInitialValuesGeneratedInlines.h ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyNames.h ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyNames.cpp ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyNames.gperf ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyParsing.h ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyParsing.cpp ${WebCore_DERIVED_SOURCES_DIR}/StyleBuilderGenerated.cpp ${WebCore_DERIVED_SOURCES_DIR}/StyleChangedAnimatablePropertiesGenerated.cpp ${WebCore_DERIVED_SOURCES_DIR}/StyleComputedStyleProperties.h ${WebCore_DERIVED_SOURCES_DIR}/StyleComputedStyleProperties.cpp ${WebCore_DERIVED_SOURCES_DIR}/StyleComputedStyleProperties+ConstructionInlines.h ${WebCore_DERIVED_SOURCES_DIR}/StyleComputedStyleProperties+GettersInlines.h ${WebCore_DERIVED_SOURCES_DIR}/StyleComputedStyleProperties+InitialInlines.h ${WebCore_DERIVED_SOURCES_DIR}/StyleComputedStyleProperties+SettersInlines.h ${WebCore_DERIVED_SOURCES_DIR}/StyleExtractorGenerated.cpp ${WebCore_DERIVED_SOURCES_DIR}/StyleInterpolationWrapperMap.h ${WebCore_DERIVED_SOURCES_DIR}/StyleInterpolationWrapperMap.cpp ${WebCore_DERIVED_SOURCES_DIR}/StylePropertyShorthandFunctions.h ${WebCore_DERIVED_SOURCES_DIR}/StylePropertyShorthandFunctions.cpp ${WebCore_DERIVED_SOURCES_DIR}/CSSStyleProperties+PropertyNames.idl
     MAIN_DEPENDENCY ${WEBCORE_DIR}/css/scripts/process-css-properties.py
-    DEPENDS ${WebCore_CSS_PROPERTY_NAMES}
+    DEPENDS ${WebCore_CSS_PROPERTY_NAMES} ${_platform_defines_file_dep}
     WORKING_DIRECTORY ${WebCore_DERIVED_SOURCES_DIR}
     COMMAND ${PERL_EXECUTABLE} -ne "print" ${WebCore_CSS_PROPERTY_NAMES} > ${WebCore_DERIVED_SOURCES_DIR}/CSSProperties.json
-    COMMAND ${PYTHON_EXECUTABLE} ${WEBCORE_DIR}/css/scripts/process-css-properties.py --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR} ${CSS_VALUE_PLATFORM_DEFINES}" --gperf-executable "${GPERF_EXECUTABLE}"
+    COMMAND ${PYTHON_EXECUTABLE} ${WEBCORE_DIR}/css/scripts/process-css-properties.py --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR} ${CSS_VALUE_PLATFORM_DEFINES}" ${_platform_defines_file_arg} --gperf-executable "${GPERF_EXECUTABLE}"
     VERBATIM)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyNames.cpp)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyParsing.cpp)
@@ -2925,10 +2943,10 @@ list(APPEND WebCore_SUPPLEMENTAL_IDL_FILES ${WebCore_DERIVED_SOURCES_DIR}/CSSSty
 add_custom_command(
     OUTPUT ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.in ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.h ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.cpp ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.gperf
     MAIN_DEPENDENCY ${WEBCORE_DIR}/css/scripts/process-css-values.py
-    DEPENDS ${WebCore_CSS_VALUE_KEYWORDS}
+    DEPENDS ${WebCore_CSS_VALUE_KEYWORDS} ${_platform_defines_file_dep}
     WORKING_DIRECTORY ${WebCore_DERIVED_SOURCES_DIR}
     COMMAND ${PERL_EXECUTABLE} -ne "print" ${WebCore_CSS_VALUE_KEYWORDS} > ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.in
-    COMMAND ${PYTHON_EXECUTABLE} ${WEBCORE_DIR}/css/scripts/process-css-values.py --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR} ${CSS_VALUE_PLATFORM_DEFINES}" --gperf-executable "${GPERF_EXECUTABLE}"
+    COMMAND ${PYTHON_EXECUTABLE} ${WEBCORE_DIR}/css/scripts/process-css-values.py --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR} ${CSS_VALUE_PLATFORM_DEFINES}" ${_platform_defines_file_arg} --gperf-executable "${GPERF_EXECUTABLE}"
     VERBATIM)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.cpp)
 
@@ -2936,10 +2954,10 @@ list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.cpp)
 add_custom_command(
     OUTPUT ${WebCore_DERIVED_SOURCES_DIR}/CSSSelectorEnums.h ${WebCore_DERIVED_SOURCES_DIR}/CSSSelectorInlines.h ${WebCore_DERIVED_SOURCES_DIR}/SelectorPseudoClassAndCompatibilityElementMap.gperf ${WebCore_DERIVED_SOURCES_DIR}/SelectorPseudoClassAndCompatibilityElementMap.cpp ${WebCore_DERIVED_SOURCES_DIR}/SelectorPseudoElementMap.gperf ${WebCore_DERIVED_SOURCES_DIR}/SelectorPseudoElementMap.cpp ${WebCore_DERIVED_SOURCES_DIR}/UserAgentParts.cpp ${WebCore_DERIVED_SOURCES_DIR}/UserAgentParts.h
     MAIN_DEPENDENCY ${WEBCORE_DIR}/css/scripts/process-css-pseudo-selectors.py
-    DEPENDS ${WebCore_CSS_PSEUDO_SELECTORS}
+    DEPENDS ${WebCore_CSS_PSEUDO_SELECTORS} ${_platform_defines_file_dep}
     WORKING_DIRECTORY ${WebCore_DERIVED_SOURCES_DIR}
     COMMAND ${PERL_EXECUTABLE} -ne "print" ${WebCore_CSS_PSEUDO_SELECTORS} > ${WebCore_DERIVED_SOURCES_DIR}/CSSPseudoSelectors.json
-    COMMAND ${PYTHON_EXECUTABLE} ${WEBCORE_DIR}/css/scripts/process-css-pseudo-selectors.py --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" --gperf-executable "${GPERF_EXECUTABLE}"
+    COMMAND ${PYTHON_EXECUTABLE} ${WEBCORE_DIR}/css/scripts/process-css-pseudo-selectors.py --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${_platform_defines_file_arg} --gperf-executable "${GPERF_EXECUTABLE}"
     VERBATIM)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/SelectorPseudoClassAndCompatibilityElementMap.cpp)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/SelectorPseudoElementMap.cpp)
@@ -2950,8 +2968,8 @@ list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/UserAgentParts.h)
 add_custom_command(
     OUTPUT ${WebCore_DERIVED_SOURCES_DIR}/UserAgentStyleSheetsData.cpp ${WebCore_DERIVED_SOURCES_DIR}/UserAgentStyleSheets.h
     MAIN_DEPENDENCY ${WEBCORE_DIR}/css/make-css-file-arrays.pl
-    DEPENDS ${WebCore_USER_AGENT_STYLE_SHEETS} ${WEBCORE_DIR}/bindings/scripts/preprocessor.pm
-    COMMAND ${PERL_EXECUTABLE} ${WEBCORE_DIR}/css/make-css-file-arrays.pl --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${WebCore_DERIVED_SOURCES_DIR}/UserAgentStyleSheets.h ${WebCore_DERIVED_SOURCES_DIR}/UserAgentStyleSheetsData.cpp ${WebCore_USER_AGENT_STYLE_SHEETS}
+    DEPENDS ${WebCore_USER_AGENT_STYLE_SHEETS} ${WEBCORE_DIR}/bindings/scripts/preprocessor.pm ${_platform_defines_file_dep}
+    COMMAND ${PERL_EXECUTABLE} ${WEBCORE_DIR}/css/make-css-file-arrays.pl --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${_platform_defines_file_arg} ${WebCore_DERIVED_SOURCES_DIR}/UserAgentStyleSheets.h ${WebCore_DERIVED_SOURCES_DIR}/UserAgentStyleSheetsData.cpp ${WebCore_USER_AGENT_STYLE_SHEETS}
     VERBATIM)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/UserAgentStyleSheetsData.cpp)
 
@@ -3012,6 +3030,7 @@ GENERATE_BINDINGS(WebCoreBindings
     DESTINATION ${WebCore_DERIVED_SOURCES_DIR}
     GENERATOR JS
     SUPPLEMENTAL_DEPFILE ${SUPPLEMENTAL_DEPENDENCY_FILE}
+    INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE ${WebCore_DERIVED_SOURCES_DIR}/InspectorNativeFunctionParameters.json
     # Auxiliary translation unit emitted alongside JSDOMWindow.cpp by
     # CodeGeneratorJS.pm to keep JSDOMWindow.cpp's compile time off the build's
     # critical path.
@@ -3069,7 +3088,6 @@ set(WebCore_BUILTINS_SOURCES
     ${WEBCORE_DIR}/Modules/streams/TransformStreamDefaultController.js
     ${WEBCORE_DIR}/Modules/streams/TransformStreamInternals.js
     ${WEBCORE_DIR}/Modules/streams/WritableStreamDefaultController.js
-    ${WEBCORE_DIR}/Modules/streams/WritableStreamDefaultWriter.js
     ${WEBCORE_DIR}/Modules/streams/WritableStreamInternals.js
     ${WEBCORE_DIR}/dom/TextDecoderStream.js
     ${WEBCORE_DIR}/dom/TextEncoderStream.js
@@ -3232,7 +3250,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 
 WEBKIT_SYMLINK_FILES(WebCore_CopyPrivateHeaders
     PRUNE_STALE
-    DESTINATION ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCore
+    DESTINATION ${WebCore_PRIVATE_HEADERS_DIR}
     FILES ${WebCore_PRIVATE_FRAMEWORK_HEADERS}
     FLATTENED
 )
@@ -3244,6 +3262,10 @@ if (NOT USE_HEADER_MAPS)
 endif ()
 
 WEBKIT_FRAMEWORK(WebCore)
+
+if (USE_APPLE_INTERNAL_SDK)
+    WEBKIT_TARGET_USE_PGO(WebCore PROFILE WebCore)
+endif ()
 
 # Specify dependencies explicitly so we can generate derived sources before our
 # upstream targets finish linking.

@@ -50,6 +50,7 @@
 #import "WebEventConversion.h"
 #import "WebFrame.h"
 #import "WebImage.h"
+#import "WebMouseEvent.h"
 #import "WebPageInternals.h"
 #import "WebPageProxyMessages.h"
 #import "WebPasteboardOverrides.h"
@@ -110,6 +111,7 @@
 #import <WebCore/ImageUtilities.h>
 #import <WebCore/JSNode.h>
 #import <WebCore/LegacyWebArchive.h>
+#import <WebCore/LocalDOMWindow.h>
 #import <WebCore/LocalFrameInlines.h>
 #import <WebCore/LocalFrameView.h>
 #import <WebCore/MIMETypeRegistry.h>
@@ -819,6 +821,16 @@ void WebPage::getContentsAsAttributedString(CompletionHandler<void(const WebCore
     completionHandler(localFrame ? attributedString(makeRangeSelectingNodeContents(*protect(localFrame->document())), IgnoreUserSelectNone::No) : AttributedString { });
 }
 
+HashMap<WebCore::FrameIdentifier, WebCore::AttributedString> WebPage::attributedStringsForRemoteFrames(WebCore::FrameIdentifier rootFrameIdentifier, const Vector<WebCore::FrameIdentifier>& frameIdentifiers)
+{
+    if (frameIdentifiers.isEmpty())
+        return { };
+
+    auto sendResult = sendSync(Messages::WebPageProxy::GetAttributedStringsForRemoteFrames(rootFrameIdentifier, frameIdentifiers));
+    auto [result] = sendResult.takeReplyOr(HashMap<WebCore::FrameIdentifier, WebCore::AttributedString> { });
+    return result;
+}
+
 void WebPage::setRemoteObjectRegistry(WebRemoteObjectRegistry* registry)
 {
     m_remoteObjectRegistry = registry;
@@ -1065,7 +1077,7 @@ private:
     Vector<String> m_types;
 };
 
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#if ENABLE(IMAGE_ANALYSIS)
 
 void WebPage::replaceImageForRemoveBackground(const ElementContext& elementContext, const Vector<String>& types, std::span<const uint8_t> data)
 {
@@ -1135,7 +1147,7 @@ void WebPage::replaceImageForRemoveBackground(const ElementContext& elementConte
     protect(frame->selection())->setSelection(newSelectionRange, restoreSelectionOptions);
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+#endif // ENABLE(IMAGE_ANALYSIS)
 
 void WebPage::replaceSelectionWithPasteboardData(const Vector<String>& types, std::span<const uint8_t> data)
 {
@@ -1395,6 +1407,21 @@ void WebPage::saveSnapshotOfTextPlaceholderForAnimation(const WebCore::SimpleRan
 void WebPage::clearAnimationsForActiveWritingToolsSession()
 {
     m_textAnimationController->clearAnimationsForActiveWritingToolsSession();
+}
+
+void WebPage::showWritingToolsAffordance()
+{
+    send(Messages::WebPageProxy::ShowWritingToolsAffordance());
+}
+
+void WebPage::setWritingToolsAvailable(bool isAvailable)
+{
+    m_writingToolsAvailable = isAvailable;
+
+    RefPtr frame = corePage()->focusController().focusedOrMainFrame();
+    RefPtr document = frame ? frame->document() : nullptr;
+    if (CheckedPtr cache = document ? document->axObjectCache() : nullptr)
+        cache->setWritingToolsAvailable(isAvailable);
 }
 
 void WebPage::createTextIndicatorForTextAnimationID(const WTF::UUID& uuid, CompletionHandler<void(RefPtr<WebCore::TextIndicator>&&)>&& completionHandler)
@@ -1741,6 +1768,27 @@ void WebPage::getWebArchivesForFrames(const Vector<WebCore::FrameIdentifier>& fr
         };
         if (RefPtr archive = WebCore::LegacyWebArchive::create(*document, WTF::move(options)))
             result.add(localFrame->frameID(), archive.releaseNonNull());
+    }
+    completionHandler(WTF::move(result));
+}
+
+void WebPage::getContentsAsAttributedStringForFrames(const Vector<FrameIdentifier>& frameIdentifiers, CompletionHandler<void(HashMap<FrameIdentifier, AttributedString>&&)>&& completionHandler)
+{
+    HashMap<FrameIdentifier, AttributedString> result;
+    for (auto& frameIdentifier : frameIdentifiers) {
+        RefPtr frame = WebFrame::webFrame(frameIdentifier);
+        if (!frame)
+            continue;
+
+        RefPtr localFrame = frame->coreLocalFrame();
+        if (!localFrame)
+            continue;
+
+        RefPtr document = localFrame->document();
+        if (!document)
+            continue;
+
+        result.add(frameIdentifier, attributedString(makeRangeSelectingNodeContents(*document), IgnoreUserSelectNone::No));
     }
     completionHandler(WTF::move(result));
 }
@@ -2336,6 +2384,8 @@ void WebPage::willCommitMainFrameData(MainFrameData& data, const TransactionID& 
     data.viewportMetaTagCameFromImageDocument = m_viewportConfiguration.viewportArguments().type == ViewportArguments::Type::ImageDocument;
     data.avoidsUnsafeArea = m_viewportConfiguration.avoidsUnsafeArea();
     data.isInStableState = m_isInStableState;
+    if (RefPtr document = mainFrameView->frame().document())
+        data.hasMainThreadScrollDrivenAnimations = document->hasProgressBasedScrollDrivenAnimation();
     data.allowsUserScaling = allowsUserScaling();
     if (m_pendingDynamicViewportSizeUpdateID) {
         data.dynamicViewportSizeUpdateID = *m_pendingDynamicViewportSizeUpdateID;
@@ -2376,8 +2426,8 @@ void WebPage::didFlushLayerTreeAtTime(MonotonicTime timestamp, bool flushSucceed
 #endif
 #if ENABLE(GPU_PROCESS)
     if (!flushSucceeded) {
-        if (RefPtr proxy = m_remoteRenderingBackendProxy)
-            proxy->didBecomeUnresponsive();
+        if (m_remoteRenderingBackendProxy)
+            m_remoteRenderingBackendProxy->didBecomeUnresponsive();
     }
 #endif
 }
@@ -2905,14 +2955,17 @@ RenderObject* WebPage::rendererForSelectionAutoscroll(LocalFrame& frame) const
     return range->start.container->renderer();
 }
 
-void WebPage::startAutoscrollAtPosition(const WebCore::FloatPoint& positionInWindow)
+void WebPage::startAutoscrollAtPosition(const WebCore::FloatPoint& positionInWindow, CompletionHandler<void(bool)>&& completionHandler)
 {
     RefPtr frame = m_page->focusController().focusedOrMainFrame();
     if (!frame)
-        return;
+        return completionHandler(false);
 
-    if (CheckedPtr renderer = rendererForSelectionAutoscroll(*frame))
-        frame->eventHandler().startSelectionAutoscroll(renderer.get(), positionInWindow);
+    CheckedPtr renderer = rendererForSelectionAutoscroll(*frame);
+    if (!renderer)
+        return completionHandler(false);
+
+    completionHandler(frame->eventHandler().startSelectionAutoscroll(renderer.get(), positionInWindow));
 }
 
 void WebPage::cancelAutoscroll()
@@ -3145,6 +3198,19 @@ Awaitable<std::optional<WebCore::FrameIdentifier>> WebPage::commitPotentialTap(s
 
     RefPtr localRootFrame = this->localRootFrame(frameID);
 
+    auto reportFailedTap = [&] {
+#if ENABLE(FOCUS_ADJUSTMENT_IN_SYNTHETIC_CLICK)
+        if (localRootFrame) {
+            m_page->focusController().setFocusedElement(nullptr, localRootFrame.get(), { .trigger = FocusTrigger::Click });
+
+            // Clearing the focused element can run script that closes the page.
+            if (m_isClosed)
+                return;
+        }
+#endif // ENABLE(FOCUS_ADJUSTMENT_IN_SYNTHETIC_CLICK)
+        commitPotentialTapFailed();
+    };
+
     if (invalidTargetForSingleClick) {
 #if PLATFORM(IOS_FAMILY)
         if (localRootFrame) {
@@ -3155,7 +3221,7 @@ Awaitable<std::optional<WebCore::FrameIdentifier>> WebPage::commitPotentialTap(s
         }
 #endif
 
-        commitPotentialTapFailed();
+        reportFailedTap();
         co_return std::nullopt;
     }
 
@@ -3169,7 +3235,7 @@ Awaitable<std::optional<WebCore::FrameIdentifier>> WebPage::commitPotentialTap(s
     RefPtr frameRespondingToClick = nodeRespondingToClick ? nodeRespondingToClick->document().frame() : nullptr;
 
     if (!frameRespondingToClick) {
-        commitPotentialTapFailed();
+        reportFailedTap();
         co_return std::nullopt;
     }
 
@@ -3448,6 +3514,47 @@ void WebPage::completeSyntheticClick(std::optional<WebCore::FrameIdentifier> fra
 #if PLATFORM(IOS_FAMILY)
     scheduleLayoutViewportHeightExpansionUpdate();
 #endif
+}
+
+void WebPage::handleDoubleTapForDoubleClickAtPoint(const IntPoint& point, OptionSet<WebEventModifier> modifiers, TransactionID lastLayerTreeTransactionId, WebEventInputSource inputSource, WebMouseEventSyntheticClickType webSyntheticClickType)
+{
+    FloatPoint adjustedPoint;
+    RefPtr localMainFrame = protect(*m_page)->localMainFrame();
+    RefPtr nodeRespondingToDoubleClick = localMainFrame ? localMainFrame->nodeRespondingToDoubleClickEvent(point, adjustedPoint) : nullptr;
+
+    RefPtr windowListeningToDoubleClickEvents = localMainFrame ? localMainFrame->windowWithDoubleClickEventListener() : nullptr;
+
+    if (!nodeRespondingToDoubleClick && !windowListeningToDoubleClickEvents)
+        return;
+
+    RefPtr<LocalFrame> frameRespondingToDoubleClick;
+    if (nodeRespondingToDoubleClick)
+        frameRespondingToDoubleClick = nodeRespondingToDoubleClick->document().frame();
+    else if (windowListeningToDoubleClickEvents) {
+        RefPtr document = windowListeningToDoubleClickEvents->documentIfLocal();
+        frameRespondingToDoubleClick = document ? document->frame() : nullptr;
+    }
+
+    if (!frameRespondingToDoubleClick)
+        return;
+
+    auto firstTransactionID = WebFrame::fromCoreFrame(*frameRespondingToDoubleClick)->firstLayerTreeTransactionIDAfterDidCommitLoad();
+    // FIXME: We should probably guard the comparison with a processIdentifier() equality
+    // check (as commitPotentialTap() does) so that a cross-process transaction ID doesn't
+    // yield a meaningless comparison.
+    if (!firstTransactionID || lastLayerTreeTransactionId.lessThanSameProcess(*firstTransactionID))
+        return;
+
+    SetForScope userIsInteractingChange { m_userIsInteracting, true };
+
+    auto platformModifiers = platform(modifiers);
+    auto platformInputSource = platform(inputSource);
+    auto syntheticClickType = coreSyntheticClickType(webSyntheticClickType);
+    auto roundedAdjustedPoint = roundedIntPoint(adjustedPoint);
+    frameRespondingToDoubleClick->eventHandler().handleMousePressEvent(PlatformMouseEvent(roundedAdjustedPoint, roundedAdjustedPoint, MouseButton::Left, PlatformEvent::Type::MousePressed, 2, platformModifiers, MonotonicTime::now(), 0, syntheticClickType, platformInputSource));
+    if (m_isClosed)
+        return;
+    frameRespondingToDoubleClick->eventHandler().handleMouseReleaseEvent(PlatformMouseEvent(roundedAdjustedPoint, roundedAdjustedPoint, MouseButton::Left, PlatformEvent::Type::MouseReleased, 2, platformModifiers, MonotonicTime::now(), 0, syntheticClickType, platformInputSource));
 }
 
 #endif // ENABLE(TWO_PHASE_CLICKS)

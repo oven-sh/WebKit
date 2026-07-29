@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -59,6 +59,12 @@ public:
     HTMLElement* invoker() const { return m_invoker.get(); }
     void setInvoker(const HTMLElement* element) { m_invoker = element; }
 
+    bool showingAsHint() const { return m_showingAsHint; }
+    void setShowingAsHint(bool showingAsHint) { m_showingAsHint = showingAsHint; }
+
+    HTMLElement* hintStackParent() const { return m_hintStackParent.get(); }
+    void setHintStackParent(HTMLElement* element) { m_hintStackParent = element; }
+
     CloseWatcher* closeWatcher() { return m_closeWatcher.get(); };
     void setCloseWatcher(RefPtr<CloseWatcher>&& closeWatcher) { m_closeWatcher = WTF::move(closeWatcher); }
 
@@ -96,12 +102,14 @@ public:
     };
 
 private:
-    PopoverState m_popoverState;
-    PopoverVisibilityState m_visibilityState;
+    PopoverState m_popoverState { PopoverState::None };
+    PopoverVisibilityState m_visibilityState { PopoverVisibilityState::Hidden };
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_previouslyFocusedElement;
     RefPtr<ToggleEventTask> m_toggleEventTask;
     WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData> m_invoker;
+    WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData> m_hintStackParent;
     bool m_isHidingOrShowingPopover = false;
+    bool m_showingAsHint = false;
     RefPtr<CloseWatcher> m_closeWatcher;
 };
 

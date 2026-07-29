@@ -100,14 +100,14 @@ extension WebPage {
 
         private var backingAllowsImmersiveEnvironments = false
 
-        /// Indicates whether website immersive environments are allowed.
+        /// A Boolean value that indicates whether website immersive environments are allowed.
         ///
         /// Set this property to `true` to enable support for website immersive environments.
         /// If `false`, requests to present immersive environments are ignored.
         /// If `true`, requests are routed through the `onWebViewImmersiveEnvironmentRequest` view modifier callbacks.
         ///
         /// The default value is `false`.
-        @available(WK_XROS_TBA, *)
+        @available(visionOS 27.0, *)
         @available(iOS, unavailable)
         @available(macOS, unavailable)
         @available(watchOS, unavailable)

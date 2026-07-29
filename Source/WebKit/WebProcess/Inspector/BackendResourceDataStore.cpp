@@ -27,8 +27,10 @@
 #include "BackendResourceDataStore.h"
 
 #include <WebCore/CertificateInfo.h>
+#include <WebCore/HTTPHeaderNames.h>
 #include <WebCore/InspectorResourceUtilities.h>
 #include <WebCore/ResourceResponse.h>
+#include <utility>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/Base64.h>
 
@@ -164,10 +166,12 @@ bool BackendResourceDataStore::ensureFreeSpace(size_t size)
     return true;
 }
 
-void BackendResourceDataStore::resourceCreated(ResourceLoaderIdentifier resourceID, Inspector::ResourceType type)
+void BackendResourceDataStore::resourceCreated(ResourceLoaderIdentifier resourceID, FrameIdentifier frameID, Inspector::ResourceType type)
 {
     ensureNoDataForId(resourceID);
-    m_resourceDataMap.set(resourceID, makeUniqueRef<ResourceData>(resourceID, type));
+    auto entry = makeUniqueRef<ResourceData>(resourceID, type);
+    entry->setFrameID(frameID);
+    m_resourceDataMap.set(resourceID, WTF::move(entry));
 }
 
 void BackendResourceDataStore::responseReceived(ResourceLoaderIdentifier resourceID, const ResourceResponse& response, Inspector::ResourceType type)
@@ -182,6 +186,12 @@ void BackendResourceDataStore::responseReceived(ResourceLoaderIdentifier resourc
     resourceData->setType(type);
     resourceData->setMIMEType(response.mimeType());
     resourceData->m_responseTimestamp = WallTime::now();
+
+    // Capture the source map URL header now, since the response is not retained.
+    String sourceMapURL = response.httpHeaderField(HTTPHeaderName::SourceMap);
+    if (sourceMapURL.isEmpty())
+        sourceMapURL = response.httpHeaderField(HTTPHeaderName::XSourceMap);
+    resourceData->setSourceMapURL(sourceMapURL);
 
     if (ResourceUtilities::shouldTreatAsText(response.mimeType()))
         resourceData->setDecoder(ResourceUtilities::createTextDecoder(response.mimeType(), response.textEncodingName()));
@@ -298,14 +308,14 @@ void BackendResourceDataStore::clear()
     m_contentSize = 0;
 }
 
-Expected<std::tuple<String, bool>, String> BackendResourceDataStore::getResponseBody(ResourceLoaderIdentifier resourceID)
+Expected<std::pair<String, bool>, String> BackendResourceDataStore::getResponseBody(ResourceLoaderIdentifier resourceID)
 {
     ResourceData const* resourceData = data(resourceID);
     if (!resourceData)
         return makeUnexpected("Missing resource for given requestId"_s);
 
     if (resourceData->hasContent())
-        return std::tuple<String, bool> { resourceData->content(), resourceData->base64Encoded() };
+        return std::pair<String, bool> { resourceData->content(), resourceData->base64Encoded() };
 
     if (resourceData->isContentEvicted())
         return makeUnexpected("Resource content was evicted from inspector cache"_s);
@@ -313,7 +323,7 @@ Expected<std::tuple<String, bool>, String> BackendResourceDataStore::getResponse
     if (resourceData->buffer() && !resourceData->textEncodingName().isNull()) {
         String body;
         if (ResourceUtilities::sharedBufferContent(resourceData->buffer(), resourceData->textEncodingName(), false, &body))
-            return std::tuple<String, bool> { body, false };
+            return std::pair<String, bool> { body, false };
     }
 
     return makeUnexpected("Missing content of resource for given requestId"_s);

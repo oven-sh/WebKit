@@ -494,7 +494,7 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
             keys.reserveInitialCapacity(std::min(map->size(), static_cast<size_t>(length - newLength)));
             SparseArrayValueMap::const_iterator end = map->end();
             for (SparseArrayValueMap::const_iterator it = map->begin(); it != end; ++it) {
-                unsigned index = static_cast<unsigned>(it->key);
+                unsigned index = it->index();
                 if (index < length && index >= newLength)
                     keys.append(index);
             }
@@ -509,7 +509,7 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
                     unsigned index = keys[--i];
                     SparseArrayValueMap::iterator it = map->find(index);
                     ASSERT(it != map->notFound());
-                    if (it->value.attributes() & PropertyAttribute::DontDelete) {
+                    if (it->attributes() & PropertyAttribute::DontDelete) {
                         storage->setLength(index + 1);
                         return typeError(globalObject, scope, throwException, UnableToDeletePropertyError);
                     }
@@ -2442,7 +2442,7 @@ static uint64_t calculateFlattenedLength(JSGlobalObject* globalObject, JSArray* 
 }
 
 template<typename T>
-static uint64_t fastFlatIntoBuffer(JSGlobalObject* globalObject, T* resultBuffer, uint64_t& resultIndex, JSArray* sourceArray, uint64_t sourceLength, uint64_t depth, uint64_t vectorLength)
+static uint64_t fastFlatIntoBuffer(JSGlobalObject* globalObject, T* resultBuffer, uint64_t startIndex, JSArray* sourceArray, uint64_t sourceLength, uint64_t depth, uint64_t vectorLength)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2454,6 +2454,7 @@ static uint64_t fastFlatIntoBuffer(JSGlobalObject* globalObject, T* resultBuffer
 
     IndexingType sourceType = sourceArray->indexingType();
 
+    uint64_t resultIndex = startIndex;
     switch (sourceType) {
     case ArrayWithInt32: {
         auto* sourceBuffer = sourceArray->butterfly()->contiguous().data();
@@ -2569,10 +2570,10 @@ JSArray* JSArray::fastFlat(JSGlobalObject* globalObject, uint64_t depth, uint64_
         uint64_t resultIndex = 0;
         if (indexingType == ArrayWithDouble) {
             auto* resultBuffer = butterfly->contiguousDouble().data();
-            resultIndex = fastFlatIntoBuffer(globalObject, resultBuffer, resultIndex, this, length, depth, vectorLength);
+            resultIndex = fastFlatIntoBuffer(globalObject, resultBuffer, 0, this, length, depth, vectorLength);
         } else {
             auto* resultBuffer = butterfly->contiguous().data();
-            resultIndex = fastFlatIntoBuffer(globalObject, resultBuffer, resultIndex, this, length, depth, vectorLength);
+            resultIndex = fastFlatIntoBuffer(globalObject, resultBuffer, 0, this, length, depth, vectorLength);
         }
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (resultIndex == std::numeric_limits<uint64_t>::max())

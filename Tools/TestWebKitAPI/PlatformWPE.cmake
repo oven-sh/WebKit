@@ -19,10 +19,12 @@ list(APPEND TestWTF_SOURCES
     ${test_main_SOURCES}
 
     Tests/WTF/glib/ActivityObserver.cpp
+    Tests/WTF/glib/FilePathWatcher.cpp
     Tests/WTF/glib/GMallocString.cpp
     Tests/WTF/glib/GRefPtr.cpp
     Tests/WTF/glib/GUniquePtr.cpp
     Tests/WTF/glib/GWeakPtr.cpp
+    Tests/WTF/glib/TimeZoneGLib.cpp
     Tests/WTF/glib/WorkQueueGLib.cpp
 )
 
@@ -40,6 +42,7 @@ list(APPEND TestWebCore_SOURCES
     Tests/WebCore/glib/Damage.cpp
     Tests/WebCore/glib/GraphicsContextGLTextureMapper.cpp
     Tests/WebCore/glib/RunLoopObserver.cpp
+    Tests/WebCore/glib/SkiaCompositingLayerDamage.cpp
 
     Tests/WebCore/gstreamer/GStreamerTest.cpp
     Tests/WebCore/gstreamer/GstElementHarness.cpp

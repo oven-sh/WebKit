@@ -1611,11 +1611,14 @@ void SpeculativeJIT::compileToBoolean(Node* node, bool invert)
         SpeculateDoubleOperand value(this, node->child1());
         FPRTemporary scratch(this);
         GPRTemporary resultPayload(this);
-        move(invert ? TrustedImm32(0) : TrustedImm32(1), resultPayload.gpr());
-        Jump nonZero = branchDoubleNonZero(value.fpr(), scratch.fpr());
-        move(invert ? TrustedImm32(1) : TrustedImm32(0), resultPayload.gpr());
-        nonZero.link(this);
-        booleanResult(resultPayload.gpr(), node);
+
+        FPRReg valueFPR = value.fpr();
+        FPRReg scratchFPR = scratch.fpr();
+        GPRReg resultGPR = resultPayload.gpr();
+
+        moveZeroToDouble(scratchFPR);
+        compareDouble(invert ? DoubleEqualOrUnordered : DoubleNotEqualAndOrdered, valueFPR, scratchFPR, resultGPR);
+        booleanResult(resultGPR, node);
         return;
     }
 
@@ -2726,6 +2729,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case StringTrim: {
+        compileStringTrim(node);
+        break;
+    }
+
     case NumberToStringWithRadix: {
         compileNumberToStringWithRadix(node);
         break;
@@ -2799,6 +2807,11 @@ void SpeculativeJIT::compile(Node* node)
 
     case RegExpExecNonGlobalOrSticky: {
         compileRegExpExecNonGlobalOrSticky(node);
+        break;
+    }
+
+    case RegExpExecSticky: {
+        compileRegExpExecSticky(node);
         break;
     }
 
@@ -3346,6 +3359,11 @@ void SpeculativeJIT::compile(Node* node)
         compileToObjectOrCallObjectConstructor(node);
         break;
     }
+
+    case OpenAsyncFromSyncIterator: {
+        compileOpenAsyncFromSyncIterator(node);
+        break;
+    }
         
     case ToThis: {
         compileToThis(node);
@@ -3482,11 +3500,6 @@ void SpeculativeJIT::compile(Node* node)
 
     case CallCustomAccessorSetter: {
         compileCallCustomAccessorSetter(node);
-        break;
-    }
-
-    case TryGetById: {
-        compileGetById(node, AccessType::TryGetById);
         break;
     }
 
@@ -3970,11 +3983,6 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
-    case IsTypedArrayView: {
-        compileIsTypedArrayView(node);
-        break;
-    }
-
     case ArrayIsArray: {
         compileArrayIsArray(node);
         break;
@@ -4197,6 +4205,10 @@ void SpeculativeJIT::compile(Node* node)
 
     case SetFunctionName:
         compileSetFunctionName(node);
+        break;
+
+    case EnqueueAsyncGeneratorDriver:
+        compileEnqueueAsyncGeneratorDriver(node);
         break;
 
     case InById:
@@ -4614,6 +4626,7 @@ void SpeculativeJIT::compile(Node* node)
     case DateSetTime:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case FunctionBind:
     case NewBoundFunction:
     case EnumeratorPutByVal:
@@ -4716,7 +4729,7 @@ void SpeculativeJIT::compileCreateClonedArguments(Node* node)
 
 void SpeculativeJIT::compileGetById(Node* node, AccessType accessType)
 {
-    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect || accessType == AccessType::TryGetById);
+    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect);
 
     switch (node->child1().useKind()) {
     case CellUse: {

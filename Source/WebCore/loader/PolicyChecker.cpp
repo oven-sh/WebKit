@@ -203,9 +203,9 @@ void PolicyChecker::checkNavigationPolicy(ResourceRequest&& request, const Resou
 
     ASSERT(frameOwnerElement == m_frame->ownerElement());
 
-    // Only the PDFDocument iframe is allowed to navigate to webkit-pdfjs-viewer URLs
-    bool isInPDFDocumentFrame = frameOwnerElement && frameOwnerElement->document().isPDFDocument();
-    if (isInPDFDocumentFrame && request.url().protocolIs("webkit-pdfjs-viewer"_s)) {
+    // Only the PDFJSDocument iframe is allowed to navigate to webkit-pdfjs-viewer URLs
+    bool isInPDFJSDocumentFrame = frameOwnerElement && frameOwnerElement->document().isPDFJSDocument();
+    if (isInPDFJSDocumentFrame && request.url().protocolIs("webkit-pdfjs-viewer"_s)) {
         POLICYCHECKER_RELEASE_LOG("checkNavigationPolicy: continuing because PDFJS URL");
         return function(WTF::move(request), formSubmission, NavigationPolicyDecision::ContinueLoad);
     }
@@ -379,9 +379,10 @@ void PolicyChecker::checkNewWindowPolicy(NavigationAction&& navigationAction, Re
 
         switch (policyAction) {
         case PolicyAction::Download:
-            if (!frame->effectiveSandboxFlags().contains(SandboxFlag::Downloads))
+            if (!frame->effectiveSandboxFlags().contains(SandboxFlag::Downloads)) {
+                frame->loader().setOriginalURLForDownloadRequest(request);
                 frame->loader().client().startDownload(request);
-            else if (RefPtr document = frame->document())
+            } else if (RefPtr document = frame->document())
                 document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, "Not allowed to download due to sandboxing"_s);
             [[fallthrough]];
         case PolicyAction::Ignore:

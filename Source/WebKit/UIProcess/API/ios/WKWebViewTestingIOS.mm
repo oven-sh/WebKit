@@ -242,7 +242,7 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
     };
 
     auto pointToString = [] (auto point) {
-        return makeString("[x: "_s, point.x, " y: "_s, point.x, ']');
+        return makeString("[x: "_s, point.x, " y: "_s, point.y, ']');
     };
 
 
@@ -441,6 +441,13 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
 - (CGRect)_focusedElementInteractionRect
 {
     return [_contentView focusedElementInformation].interactionRect;
+}
+
+- (void)_selectionBoundingRectInMainFrameCoordinatesForTesting:(void (^)(CGRect))completionHandler
+{
+    _page->convertEditorStateSelectionRectToMainFrameCoordinates(_page->selectionBoundingRectInRootViewCoordinates(), [completionHandler = makeBlockPtr(completionHandler)](WebCore::FloatRect rect) {
+        completionHandler(rect);
+    });
 }
 
 - (UIGestureRecognizer *)_imageAnalysisGestureRecognizer

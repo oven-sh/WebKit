@@ -2315,6 +2315,7 @@ class DetermineLabelOwner(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
             self.setProperty('list_of_prs', list_of_prs)
             self.setProperty('github.title', pr_title)
             self.setProperty('github.head.sha', commit_hash)
+            self.setProperty('github.base.ref', pr_data['node']['baseRefName'])
 
         if not pr_number:
             yield self._addToLog('stdio', 'Unable to fetch PR number.\n')
@@ -2531,6 +2532,8 @@ class RemoveAndAddLabels(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
     def run(self):
         if self.label_to_add == GitHub.MERGE_QUEUE_LABEL:
             pr_status = 'passed_status_check'
+        elif self.label_to_add == GitHub.UNSAFE_MERGE_QUEUE_LABEL:
+            pr_status = 'unsafe_passed_status_check'
         elif self.label_to_add == GitHub.BLOCKED_LABEL:
             pr_status = 'failed_status_check'
         else:
@@ -2609,6 +2612,7 @@ class RetrievePRDataFromLabel(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
             return defer.returnValue(FAILURE)
 
         self.setProperty('passed_status_check', [])
+        self.setProperty('unsafe_passed_status_check', [])
         self.setProperty('failed_status_check', [])
         self.setProperty('pending_prs', [])
 
@@ -2628,7 +2632,7 @@ class RetrievePRDataFromLabel(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
     @defer.inlineCallbacks
     def getAllPRData(self, limit, label, retry=0):
         project = self.getProperty('project') or CANONICAL_GITHUB_PROJECT
-        query_body = '{search(query: "repo:%s is:pr label:%s", type: ISSUE, last: %s) { edges { node { ... on PullRequest { title number commits(last: 3) { nodes { commit { commitUrl status { state contexts { context state } } } } } } } } } }' % (project, label, limit)
+        query_body = '{search(query: "repo:%s is:pr label:%s", type: ISSUE, last: %s) { edges { node { ... on PullRequest { title number baseRefName commits(last: 3) { nodes { commit { commitUrl status { state contexts { context state } } } } } } } } } }' % (project, label, limit)
         query = {'query': query_body}
 
         yield self._addToLog('stdio', f"Fetching all PRs with label {label}...\n")
@@ -2670,7 +2674,7 @@ class CheckStatusOfPR(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
     haltOnFailure = False
     EMBEDDED_CHECKS = ['ios', 'ios-safer-cpp', 'ios-sim', 'ios-wk2', 'ios-wk2-wpt', 'api-ios', 'vision', 'vision-sim', 'vision-wk2', 'tv', 'tv-sim', 'watch', 'watch-sim']
     MACOS_CHECKS = ['mac', 'mac-AS-debug', 'api-mac', 'api-mac-debug', 'mac-wk2', 'mac-AS-debug-wk2', 'mac-wk2-stress', 'mac-safer-cpp', 'jsc-x86-64', 'jsc-debug-arm64']
-    LINUX_CHECKS = ['gtk', 'gtk-wk2', 'api-gtk', 'wpe', 'gtk3-libwebrtc', 'wpe-wk2', 'api-wpe']
+    LINUX_CHECKS = ['gtk', 'gtk-wk2', 'api-gtk', 'wpe', 'gtk3-libwebrtc', 'wpe-wk2', 'api-wpe', 'jsc-wpe']
     WINDOWS_CHECKS = ['win']
     EWS_WEBKIT_FAILED = 0
     EWS_WEBKIT_PASSED = 1
@@ -2758,17 +2762,19 @@ class CheckStatusOfPR(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
                     break
 
         # FIXME: safe-merge-queue should obtain skipped status from EWS instead of hardcoding
-        queues_for_safe_merge = self.EMBEDDED_CHECKS + self.MACOS_CHECKS
-        if self.getProperty('project') == CANONICAL_GITHUB_PROJECT:
-            queues_for_safe_merge += self.LINUX_CHECKS
-            queues_for_safe_merge += self.WINDOWS_CHECKS
+        branch = self.getProperty('github.base.ref', DEFAULT_BRANCH)
+        is_glib_stable_branch = bool(re.match(r'webkitglib/\d+\.\d+', branch))
+        if is_glib_stable_branch:
+            queues_for_safe_merge = self.LINUX_CHECKS
+        else:
+            queues_for_safe_merge = self.EMBEDDED_CHECKS + self.MACOS_CHECKS
+            if self.getProperty('project') == CANONICAL_GITHUB_PROJECT:
+                queues_for_safe_merge += self.LINUX_CHECKS
+                queues_for_safe_merge += self.WINDOWS_CHECKS
 
         for queue in queues_for_safe_merge:
             queue_data = response.json().get(queue, None)
-            # jsc-arm7-tests will not set its status if skipped, so we condition on jsc-armv7
-            if queue == 'jsc-armv7-tests' and response.json().get('jsc-armv7', {}).get('state', None) == 3:
-                yield self._addToLog('stdio', f'{queue}: Skipped\n')
-            elif queue_data:
+            if queue_data:
                 status = queue_data.get('state', None)
                 if status == 0:  # success
                     yield self._addToLog('stdio', f'{queue}: Success\n')
@@ -2807,8 +2813,13 @@ class CheckStatusOfPR(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
             self.steps_to_add += [LeaveComment()]
             defer.returnValue(self.EWS_WEBKIT_FAILED)
         else:
-            passed_status_check.append(pr_number)
-            self.setProperty('passed_status_check', passed_status_check)
+            if is_glib_stable_branch:
+                unsafe_passed_status_check = self.getProperty('unsafe_passed_status_check')
+                unsafe_passed_status_check.append(pr_number)
+                self.setProperty('unsafe_passed_status_check', unsafe_passed_status_check)
+            else:
+                passed_status_check.append(pr_number)
+                self.setProperty('passed_status_check', passed_status_check)
             yield self._addToLog('stdio', 'Passed status check.\n')
             defer.returnValue(self.EWS_WEBKIT_PASSED)
 
@@ -2823,6 +2834,8 @@ class AddMergeLabelsToPRs(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
         steps_to_add = []
         label_as_safe = self.getProperty('passed_status_check', '')
         yield self._addToLog('stdio', f'PRs to merge: {label_as_safe}.\n')
+        label_as_unsafe = self.getProperty('unsafe_passed_status_check', '')
+        yield self._addToLog('stdio', f'PRs to add to unsafe-merge-queue: {label_as_unsafe}.\n')
         label_as_blocked = self.getProperty('failed_status_check', '')
         yield self._addToLog('stdio', f'PRs to block: {label_as_blocked}.\n')
         pending_prs = self.getProperty('pending_prs', '')
@@ -2830,6 +2843,8 @@ class AddMergeLabelsToPRs(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
 
         if len(label_as_safe):
             steps_to_add.append(RemoveAndAddLabels(label_to_add=GitHub.MERGE_QUEUE_LABEL, labels_to_remove=[GitHub.SAFE_MERGE_QUEUE_LABEL]))
+        if len(label_as_unsafe):
+            steps_to_add.append(RemoveAndAddLabels(label_to_add=GitHub.UNSAFE_MERGE_QUEUE_LABEL, labels_to_remove=[GitHub.SAFE_MERGE_QUEUE_LABEL]))
         if len(label_as_blocked):
             steps_to_add.append(RemoveAndAddLabels(label_to_add=GitHub.BLOCKED_LABEL, labels_to_remove=[GitHub.SAFE_MERGE_QUEUE_LABEL]))
         self.build.addStepsAfterCurrentStep(steps_to_add)
@@ -3803,9 +3818,6 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
         if platform in ('gtk', 'wpe', 'jsc-only'):
             self.command.extend(['--memory-limited', '--verbose'])
 
-        if self.getProperty('architecture') in ["armv7"]:
-            self.command = ["linux32"] + self.command
-
         self.command += customBuildFlag(self.getProperty('platform'), self.getProperty('fullPlatform'))
         self.command.extend(self.command_extra)
 
@@ -4188,6 +4200,7 @@ class RunWebKitTests(shell.Test, AddToLogMixin, ShellMixin):
     ENABLE_GUARD_MALLOC = False
     ENABLE_ADDITIONAL_ARGUMENTS = True
     EXIT_AFTER_FAILURES = '60'
+    MAX_FAILURES_TO_CHECK_RESULTS_DB = 60
     STRESS_MODE = False
     command = ['python3', 'Tools/Scripts/run-webkit-tests',
                '--no-build',
@@ -4347,7 +4360,7 @@ class RunWebKitTests(shell.Test, AddToLogMixin, ShellMixin):
             if not has_commit:
                 yield self._addToLog(self.results_db_log_name, f"'{identifier}' could not be found on the results database, falling back to tip-of-tree\n")
 
-        for test in failing_tests:
+        for test in failing_tests[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]:
             data = yield ResultsDatabase.is_test_pre_existing_failure(
                 test, configuration=configuration,
                 commit=identifier if has_commit else None,
@@ -4356,10 +4369,6 @@ class RunWebKitTests(shell.Test, AddToLogMixin, ShellMixin):
             if data['is_existing_failure']:
                 self.preexisting_failures_in_results_db.append(test)
                 self.failing_tests_filtered.remove(test)
-            else:
-                # Optimization to skip consulting results-db for every failure if we encounter any new failure,
-                # since until there is atleast one failure which is not pre-existing, we will anayways have to continue with retry logic.
-                break
 
     def evaluateResult(self, cmd):
         result = SUCCESS
@@ -4856,11 +4865,35 @@ class RunWebKitTestsWithoutChange(RunWebKitTests):
         first_results_did_exceed_test_failure_limit = self.getProperty('first_results_exceed_failure_limit', False)
         second_results_did_exceed_test_failure_limit = self.getProperty('second_results_exceed_failure_limit', False)
         if not first_results_did_exceed_test_failure_limit and not second_results_did_exceed_test_failure_limit:
-            first_results_failing_tests = set(self.getProperty('first_run_failures', set()))
-            second_results_failing_tests = set(self.getProperty('second_run_failures', set()))
+            # Skip tests that results-db already flagged as pre-existing (use the filtered lists); the
+            # analysis step ignores them anyways, so re-running them on the clean tree is wasted work.
+            first_run_failures_filtered = self.getProperty('first_run_failures_filtered', None)
+            first_results_failing_tests = set(first_run_failures_filtered if first_run_failures_filtered is not None else self.getProperty('first_run_failures', []))
+            second_run_failures_filtered = self.getProperty('second_run_failures_filtered', None)
+            second_results_failing_tests = set(second_run_failures_filtered if second_run_failures_filtered is not None else self.getProperty('second_run_failures', []))
             list_failed_tests_with_change = sorted(first_results_failing_tests.union(second_results_failing_tests))
             if list_failed_tests_with_change:
+                positional_test_paths = self.positional_test_paths_from_additional_arguments()
+                if positional_test_paths:
+                    self.command = [argument for argument in self.command if argument not in positional_test_paths]
                 self.command += ['--skipped=always'] + list_failed_tests_with_change
+
+    def positional_test_paths_from_additional_arguments(self) -> list[str]:
+        if not self.ENABLE_ADDITIONAL_ARGUMENTS:
+            return []
+        additional_arguments = self.getProperty('additionalArguments') or []
+        positional_test_paths = []
+        skip_next_argument = False
+        for argument in additional_arguments:
+            if skip_next_argument:
+                skip_next_argument = False
+                continue
+            if argument.startswith('-'):
+                if argument == '--exclude-tests':
+                    skip_next_argument = True
+                continue
+            positional_test_paths.append(argument)
+        return positional_test_paths
 
 
 class AnalyzeLayoutTestsResults(buildstep.BuildStep, BugzillaMixin, GitHubMixin):
@@ -5056,9 +5089,6 @@ class AnalyzeLayoutTestsResults(buildstep.BuildStep, BugzillaMixin, GitHubMixin)
         second_results_failing_tests = set(self.getProperty('second_run_failures', []))
         clean_tree_results_did_exceed_test_failure_limit = self.getProperty('clean_tree_results_exceed_failure_limit')
         clean_tree_results_failing_tests = set(self.getProperty('clean_tree_run_failures', []))
-        flaky_failures = first_results_failing_tests.union(second_results_failing_tests) - first_results_failing_tests.intersection(second_results_failing_tests)
-        num_flaky_failures = len(flaky_failures)
-        flaky_failures_string = ', '.join(sorted(flaky_failures)[:self.NUM_FAILURES_TO_DISPLAY])
 
         if (not first_results_failing_tests) and (not second_results_failing_tests):
             # If we've made it here, then layout-tests and re-run-layout-tests failed, which means
@@ -5075,6 +5105,19 @@ class AnalyzeLayoutTestsResults(buildstep.BuildStep, BugzillaMixin, GitHubMixin)
                 self.setProperty('build_summary', message)
                 return defer.returnValue(SUCCESS)
             return defer.returnValue(self.retry_build('Unexpected infrastructure issue, retrying build'))
+
+        # Ignore failures results-db already flagged as pre-existing (use the filtered lists) so a
+        # pre-existing flaky test is not blamed on the change. Done after the empty-check above, which
+        # must use the raw lists to detect the infrastructure 'no results' case.
+        first_run_failures_filtered = self.getProperty('first_run_failures_filtered', None)
+        if first_run_failures_filtered is not None:
+            first_results_failing_tests = set(first_run_failures_filtered)
+        second_run_failures_filtered = self.getProperty('second_run_failures_filtered', None)
+        if second_run_failures_filtered is not None:
+            second_results_failing_tests = set(second_run_failures_filtered)
+        flaky_failures = first_results_failing_tests.union(second_results_failing_tests) - first_results_failing_tests.intersection(second_results_failing_tests)
+        num_flaky_failures = len(flaky_failures)
+        flaky_failures_string = ', '.join(sorted(flaky_failures)[:self.NUM_FAILURES_TO_DISPLAY])
 
         if first_results_did_exceed_test_failure_limit and second_results_did_exceed_test_failure_limit:
             if (len(first_results_failing_tests) - len(clean_tree_results_failing_tests)) <= 5:
@@ -5919,6 +5962,7 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
     test_failures_log_name = 'test-failures'
     results_db_log_name = 'results-db'
     suffix = 'first_run'
+    MAX_FAILURES_TO_CHECK_RESULTS_DB = 50
     command = ['python3', 'Tools/Scripts/run-api-tests', '--timestamps', '--no-build',
                WithProperties('--%(configuration)s'), '--verbose', '--json-output={0}'.format(jsonFileName)]
     failedTestsFormatString = '%d api test%s failed or timed out'
@@ -5968,7 +6012,8 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
         if self.failedTestCount:
             rc = FAILURE
 
-        yield self.analyze_failures_using_results_db()
+        failures = yield self.parse_and_set_failures()
+        yield self.analyze_failures_using_results_db(failures)
 
         if SHOULD_FILTER_LOGS is True:
             self.steps_to_add += [
@@ -6021,9 +6066,10 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
             self.handleExcessiveLogging()
             return
 
-        match = re.search(r'Ran (?P<ran>\d+) tests of (?P<total>\d+) with (?P<passed>\d+) successful', line)
+        match = re.search(r'Ran (?P<ran>\d+) tests of (?P<total>\d+) with (?P<passed>\d+) successful(?: \((?P<expected>\d+) expected failures?\))?', line)
         if match:
-            self.failedTestCount = int(match.group('ran')) - int(match.group('passed'))
+            expected = int(match.group('expected')) if match.group('expected') else 0
+            self.failedTestCount = int(match.group('ran')) - int(match.group('passed')) - expected
 
     def handleExcessiveLogging(self):
         build_url = f'{self.master.config.buildbotURL}#/builders/{self.build._builderid}/builds/{self.build.number}'
@@ -6047,12 +6093,14 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
         return {'step': status}
 
     @defer.inlineCallbacks
-    def analyze_failures_using_results_db(self):
+    def parse_and_set_failures(self):
         yield self._addToLog('json', '\n')
-        logTextJson = self.log_observer_json.getStdout().rstrip()
-
-        failures = self.parse_api_failures_from_string(logTextJson)
+        failures = self.parse_api_failures_from_string(self.log_observer_json.getStdout().rstrip())
         self.setProperty(f'{self.suffix}_failures', sorted(failures))
+        defer.returnValue(failures)
+
+    @defer.inlineCallbacks
+    def analyze_failures_using_results_db(self, failures):
         if failures:
             yield self._addToLog(self.test_failures_log_name, '\n'.join(failures))
             yield self.filter_api_test_failures_using_results_db(failures)
@@ -6111,7 +6159,7 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
             if not has_commit:
                 yield self._addToLog(self.results_db_log_name, f"'{identifier}' could not be found on the results database, falling back to tip-of-tree\n")
 
-        for test in failing_tests:
+        for test in failing_tests[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]:
             data = yield ResultsDatabase.is_test_pre_existing_failure(
                 test, configuration=configuration,
                 commit=identifier if has_commit else None,
@@ -6121,10 +6169,6 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
             if data['is_existing_failure']:
                 self.preexisting_failures_in_results_db.append(test)
                 self.failing_tests_filtered.remove(test)
-            else:
-                # Optimization to skip consulting results-db for every failure if we encounter any new failure,
-                # since until there is atleast one failure which is not pre-existing, we will anayways have to continue with retry logic.
-                break
 
 
 class ReRunAPITests(RunAPITests):
@@ -6152,11 +6196,12 @@ class ReRunAPITests(RunAPITests):
 
 class RunAPITestsWithoutChange(RunAPITests):
     name = 'run-api-tests-without-change'
+    suffix = 'clean_tree_run'
 
     def doOnFailure(self):
         pass
 
-    def analyze_failures_using_results_db(self):
+    def analyze_failures_using_results_db(self, failures):
         pass
 
 
@@ -6168,42 +6213,27 @@ class AnalyzeAPITestsResults(buildstep.BuildStep, AddToLogMixin):
 
     @defer.inlineCallbacks
     def run(self):
-        self.results = {}
-        yield self.getTestsResults(RunAPITests.name)
-        yield self.getTestsResults(ReRunAPITests.name)
-        yield self.getTestsResults(RunAPITestsWithoutChange.name)
-        result = yield self.analyzeResults()
+        first_run_failures = set(self.getProperty('first_run_failures', []))
+        second_run_failures = set(self.getProperty('second_run_failures', []))
 
-        defer.returnValue(result)
-
-    @defer.inlineCallbacks
-    def analyzeResults(self):
-        if not self.results or len(self.results) == 0:
-            yield self._addToLog('stderr', 'Unable to parse API test results: {}'.format(self.results))
+        # This step runs only after both runs failed, so a missing or empty failure list means a run
+        # failed without producing parseable results: an infrastructure issue that should retry.
+        if not first_run_failures or not second_run_failures:
+            yield self._addToLog('stderr', 'Unable to parse API test results')
             self.build.buildFinished(['Unable to parse API test results'], RETRY)
             defer.returnValue(RETRY)
             return
 
-        first_run_results = self.results.get(RunAPITests.name)
-        second_run_results = self.results.get(ReRunAPITests.name)
-        clean_tree_results = self.results.get(RunAPITestsWithoutChange.name)
+        # Prefer the results-db-filtered lists (pre-existing failures already removed) so a known
+        # pre-existing flaky failure is not reported as new even if it passed on the clean tree.
+        first_run_failures_filtered = self.getProperty('first_run_failures_filtered', None)
+        if first_run_failures_filtered is not None:
+            first_run_failures = set(first_run_failures_filtered)
+        second_run_failures_filtered = self.getProperty('second_run_failures_filtered', None)
+        if second_run_failures_filtered is not None:
+            second_run_failures = set(second_run_failures_filtered)
 
-        if not (first_run_results and second_run_results):
-            self.build.buildFinished(['Unable to parse API test results'], RETRY)
-            defer.returnValue(RETRY)
-            return
-
-        def getAPITestFailures(result):
-            if not result:
-                return set([])
-            # TODO: Analyze Time-out, Crash and Failure independently
-            return set([failure.get('name') for failure in result.get('Timedout', [])] +
-                       [failure.get('name') for failure in result.get('Crashed', [])] +
-                       [failure.get('name') for failure in result.get('Failed', [])])
-
-        first_run_failures = getAPITestFailures(first_run_results)
-        second_run_failures = getAPITestFailures(second_run_results)
-        clean_tree_failures = getAPITestFailures(clean_tree_results)
+        clean_tree_failures = set(self.getProperty('clean_tree_run_failures', []))
         clean_tree_failures_to_display = list(clean_tree_failures)[:self.NUM_FAILURES_TO_DISPLAY]
         clean_tree_failures_string = ', '.join(clean_tree_failures_to_display)
 
@@ -6248,38 +6278,6 @@ class AnalyzeAPITestsResults(buildstep.BuildStep, AddToLogMixin):
                     self.send_email_for_flaky_failure(flaky_failure)
             self.build.buildFinished([message], SUCCESS)
             defer.returnValue(SUCCESS)
-
-    def getBuildStepByName(self, name):
-        for step in self.build.executedSteps:
-            if step.name == name:
-                return step
-        return None
-
-    @defer.inlineCallbacks
-    def getTestsResults(self, name):
-        step = self.getBuildStepByName(name)
-        if not step:
-            yield self._addToLog('stderr', 'ERROR: step not found: {}'.format(step))
-            defer.returnValue(None)
-            return
-
-        logs = yield self.master.db.logs.getLogs(step.stepid)
-        log = next((log for log in logs if log['name'] == 'json'), None)
-        if not log:
-            yield self._addToLog('stderr', 'ERROR: log for step not found: {}'.format(step))
-            defer.returnValue(None)
-            return
-
-        lastline = int(max(0, log['num_lines'] - 1))
-        logLines = yield self.master.db.logs.getLogLines(log['id'], 0, lastline)
-        if log['type'] == 's':
-            logLines = ''.join([line[1:] for line in logLines.splitlines()])
-
-        try:
-            self.results[name] = json.loads(logLines)
-            defer.returnValue(self.results[name])
-        except Exception as ex:
-            yield self._addToLog('stderr', 'ERROR: unable to parse data, exception: {}'.format(ex))
 
     def send_email_for_flaky_failure(self, test_name):
         try:
@@ -6475,7 +6473,7 @@ class FilterAPITestsForPlatform(shell.ShellCommand, AddToLogMixin):
         configuration = self.getProperty('configuration', 'debug')
 
         # iOS simulators have significant boot overhead, so use a lower cap
-        MAX_TESTS = 5 if platform == 'ios' else 30
+        MAX_TESTS = 2 if platform == 'ios' else 30
 
         self.log_observer = logobserver.BufferLogObserver(wantStdout=True, wantStderr=True)
         self.addLogObserver('stdio', self.log_observer)
@@ -6656,7 +6654,7 @@ class RunAPITestsParallelSafety(RunAPITests):
         # No retry needed for parallel safety tests - failures are legitimate
         pass
 
-    def analyze_failures_using_results_db(self):
+    def analyze_failures_using_results_db(self, failures):
         # Skip results DB checking for parallel safety tests
         pass
 
@@ -6893,10 +6891,9 @@ class CleanGitRepo(steps.ShellSequence, ShellMixin):
             self.shell_command('git am --abort || {}'.format(self.shell_exit_0())),
             self.shell_command('git cherry-pick --abort || {}'.format(self.shell_exit_0())),
             ['git', 'clean', '-f', '-d'],  # Remove any left-over layout test results, added files, etc.
-            ['git', 'checkout', '--progress', '{}/{}'.format(self.git_remote, self.default_branch), '-f'],  # Checkout branch from specific remote
-            ['git', 'branch', '-D', self.default_branch],  # Delete any local cache of the specified branch
-            ['git', 'branch', self.default_branch],  # Create local instance of branch from remote, but don't track it
-            self.shell_command("git branch | grep -v ' {}$' | grep -v 'HEAD detached at' | xargs git branch -D || {}".format(self.default_branch, self.shell_exit_0())),
+            self.shell_command(f'git switch --progress -d --discard-changes {self.git_remote}/{self.default_branch} || git switch --progress -d --discard-changes {self.default_branch} || git switch --progress -d --discard-changes'),  # Detach to either origin/main or main or HEAD
+            self.shell_command(f"git for-each-ref --format='delete %(refname) %(objectname)' refs/heads | git update-ref --stdin || {self.shell_exit_0()}"),  # Delete all local branches
+            ['git', 'branch', '--no-track', self.default_branch],  # Create local instance of branch from HEAD, but don't track it
             self.shell_command("git remote | grep -v '{}$' | xargs -L 1 git remote rm || {}".format(self.git_remote, self.shell_exit_0())),
             ['git', 'prune'],
         ]:
@@ -6907,6 +6904,37 @@ class CleanGitRepo(steps.ShellSequence, ShellMixin):
         if self.results != SUCCESS:
             return {'step': 'Encountered some issues during cleanup'}
         return {'step': 'Cleaned up git repository'}
+
+
+class CleanWebKitBuildIfBaseChanged(steps.ShellSequence):
+    # EWS workers reuse a worker's build directory across consecutive builds, keyed by builder
+    # rather than base branch. A build whose base branch differs from the previous build on the
+    # same worker+builder would otherwise reuse a stale, incompatible WebKitBuild and fail to
+    # compile with unrelated errors (e.g. mismatched installed headers). This step deletes
+    # WebKitBuild whenever the base branch changes, so such builds start clean, while preserving
+    # incremental builds when the base branch is unchanged. On single-branch queues (e.g.
+    # main-only) it is a no-op. It never fails the build.
+    name = 'clean-webkitbuild-if-base-changed'
+    description = ['Checking base branch for WebKitBuild reuse']
+    descriptionDone = ['Checked base branch for WebKitBuild reuse']
+    haltOnFailure = False
+    flunkOnFailure = False
+    warnOnFailure = False
+    logEnviron = False
+
+    def __init__(self, **kwargs):
+        super().__init__(timeout=15 * 60, **kwargs)
+
+    def run(self):
+        base_ref = self.getProperty('github.base.ref', DEFAULT_BRANCH) or DEFAULT_BRANCH
+        command = ['python3', 'Tools/CISupport/clean-webkitbuild-if-base-changed', '--current-branch', base_ref]
+        self.commands = [util.ShellArg(command=command, logname='stdio')]
+        return super().run()
+
+    def getResultSummary(self):
+        if self.results != SUCCESS:
+            return {'step': 'Encountered an issue checking the base branch (ignored)'}
+        return {'step': self.descriptionDone[0]}
 
 
 class PushCommitToWebKitRepo(shell.ShellCommand):
@@ -8044,7 +8072,7 @@ class ScanBuild(steps.ShellSequence, ShellMixin):
                 self.bugs += int(match.group(1))
 
         f_index = log_text.rfind('ANALYZE SUCCEEDED')
-        if f_index == -1:
+        if rc != SUCCESS or f_index == -1:
             self.analyze_failed = True
             rc = FAILURE
 

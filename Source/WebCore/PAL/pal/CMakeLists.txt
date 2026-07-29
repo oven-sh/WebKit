@@ -95,17 +95,16 @@ endif ()
 
 WEBKIT_COPY_FILES(PAL_CopyHeaders
     PRUNE_STALE
-    DESTINATION ${PAL_FRAMEWORK_HEADERS_DIR}/pal
+    DESTINATION ${PAL_HEADERS_DIR}
     FILES ${PAL_PUBLIC_HEADERS}
 )
 
 if (SWIFT_REQUIRED AND NOT (PORT STREQUAL GTK OR PORT STREQUAL WPE))
     target_sources(PAL PRIVATE
         ${PAL_DIR}/pal/pal.swift
-        ${PAL_DIR}/pal/crypto/CryptoKit+UnsafeOverlays.swift
-        ${PAL_DIR}/pal/crypto/CryptoTypes.swift
         ${PAL_DIR}/pal/system/cocoa/RegexHelper.swift
         ${PAL_DIR}/pal/crypto/CryptoKitShim.swift
+        ${PAL_DIR}/pal/crypto/WTFExtras.swift
     )
 
     if (APPLE)
@@ -120,7 +119,7 @@ if (SWIFT_REQUIRED AND NOT (PORT STREQUAL GTK OR PORT STREQUAL WPE))
     set(PAL_SWIFT_INTEROP_HEADERS ${PAL_PUBLIC_HEADERS})
 
     WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(PAL pal
-        "${PAL_FRAMEWORK_HEADERS_DIR}/pal"
+        "${PAL_HEADERS_DIR}"
         "PALSwift-Generated.h")
 
     # SHELL: keeps multi-token groups (-swift-version 6, -Xcc -I<path>) together;
@@ -149,4 +148,4 @@ if (DEFINED PAL_SWIFT_INTEROP_SOURCES)
 endif ()
 
 # Must come after WEBKIT_FRAMEWORK() which adds -warnings-as-errors.
-target_compile_options(PAL PRIVATE "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -no-warnings-as-errors>")
+target_compile_options(PAL PRIVATE "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-no-warnings-as-errors ${SWIFT_FATAL_DIAGNOSTIC_FLAGS}>")

@@ -35,14 +35,17 @@
 
 namespace WebKit {
 
-class RemoteMediaSessionManagerProxy;
+class RemoteMediaSessionProxy;
+class WebProcessProxy;
 
 class RemoteMediaSessionClientProxy final
     : public WebCore::PlatformMediaSessionClient
     , public RefCounted<RemoteMediaSessionClientProxy> {
     WTF_MAKE_TZONE_ALLOCATED(RemoteMediaSessionClientProxy);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteMediaSessionClientProxy);
 public:
-    RemoteMediaSessionClientProxy(const RemoteMediaSessionState&, RemoteMediaSessionManagerProxy&);
+    static Ref<RemoteMediaSessionClientProxy> create(const RemoteMediaSessionState& state, WebProcessProxy& process) { return adoptRef(*new RemoteMediaSessionClientProxy(state, process)); }
+
     virtual ~RemoteMediaSessionClientProxy();
 
     WebCore::MediaSessionIdentifier sessionIdentifier() const { return m_state.sessionIdentifier; }
@@ -57,7 +60,10 @@ public:
 
     bool isRemoteSessionClientProxy() const final { return true; }
 
+    void attachToSession(RemoteMediaSessionProxy&);
+
 protected:
+    RemoteMediaSessionClientProxy(const RemoteMediaSessionState&, WebProcessProxy&);
 
     RefPtr<WebCore::MediaSessionManagerInterface> sessionManager() const final;
 
@@ -104,7 +110,7 @@ protected:
 #endif
 
 private:
-    WeakPtr<RemoteMediaSessionManagerProxy> m_manager;
+    WeakPtr<RemoteMediaSessionProxy> m_session;
     RemoteMediaSessionState m_state;
 #if !RELEASE_LOG_DISABLED
     const Ref<const Logger> m_logger;
