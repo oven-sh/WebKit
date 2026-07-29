@@ -21,7 +21,7 @@ ARG NDK_VERSION
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget unzip xz-utils ca-certificates \
-    cmake ninja-build make git \
+    cmake ninja-build make git patch \
     ruby ruby-getoptlong perl python3 rsync file cpio \
     lsb-release software-properties-common gnupg \
     && rm -rf /var/lib/apt/lists/*
