@@ -80,6 +80,7 @@ ARG ICU_VERSION
 ARG ICU_RELEASE_TAG
 ARG ICU_SHA256
 ADD --checksum=sha256:${ICU_SHA256} https://github.com/unicode-org/icu/releases/download/${ICU_RELEASE_TAG}/icu4c-${ICU_VERSION}-src.tgz /icu.tgz
+COPY icu/icu-23110-numrange-percent.patch /icu-bun/
 
 # Host build (tools only — no LTO, fast).
 RUN mkdir -p /icu-host && cd /icu-host \
@@ -106,7 +107,9 @@ RUN --mount=type=tmpfs,target=/icu \
     export CFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c17 ${LTO_FLAG}" && \
     export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
     export LDFLAGS="${CROSS_FLAGS} -fuse-ld=lld" && \
-    cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && cd source && \
+    cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && \
+    patch -p1 < /icu-bun/icu-23110-numrange-percent.patch && \
+    cd source && \
     /icu-host/source/bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
     /icu-host/source/bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
     mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
