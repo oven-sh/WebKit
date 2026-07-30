@@ -38,6 +38,7 @@
 #include "JSLock.h"
 #include "JSNativeStdFunction.h"
 #include "ScriptFunctionCall.h"
+#include "TopExceptionScope.h"
 #include <wtf/JSONValues.h>
 #include <wtf/text/MakeString.h>
 
@@ -67,25 +68,33 @@ static RefPtr<JSON::Value> jsToInspectorValue(JSC::JSGlobalObject* globalObject,
         return JSON::Value::create(asString(value)->value(globalObject).data);
 
     if (value.isObject()) {
+        JSC::VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
         if (isJSArray(value)) {
             auto inspectorArray = JSON::Array::create();
             auto& array = *asArray(value);
             unsigned length = array.length();
             for (unsigned i = 0; i < length; i++) {
-                auto elementValue = jsToInspectorValue(globalObject, array.getIndex(globalObject, i), maxDepth);
+                auto element = array.getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                auto elementValue = jsToInspectorValue(globalObject, element, maxDepth);
+                RETURN_IF_EXCEPTION(scope, nullptr);
                 if (!elementValue)
                     return nullptr;
                 inspectorArray->pushValue(elementValue.releaseNonNull());
             }
             return inspectorArray;
         }
-        JSC::VM& vm = globalObject->vm();
         auto inspectorObject = JSON::Object::create();
         auto& object = *value.getObject();
         JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
         object.methodTable()->getOwnPropertyNames(&object, globalObject, propertyNames, JSC::DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         for (auto& name : propertyNames) {
-            auto inspectorValue = jsToInspectorValue(globalObject, object.get(globalObject, name), maxDepth);
+            auto propertyValue = object.get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            auto inspectorValue = jsToInspectorValue(globalObject, propertyValue, maxDepth);
+            RETURN_IF_EXCEPTION(scope, nullptr);
             if (!inspectorValue)
                 return nullptr;
             inspectorObject->setValue(name.string(), inspectorValue.releaseNonNull());
@@ -102,7 +111,14 @@ RefPtr<JSON::Value> toInspectorValue(JSC::JSGlobalObject* globalObject, JSC::JSV
     // FIXME: Maybe we should move the JSLockHolder stuff to the callers since this function takes a JSValue directly.
     // Doing the locking here made sense when we were trying to abstract the difference between multiple JavaScript engines.
     JSC::JSLockHolder holder(globalObject);
-    return jsToInspectorValue(globalObject, value, JSON::Value::maxDepth);
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto result = jsToInspectorValue(globalObject, value, JSON::Value::maxDepth);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return nullptr;
+    }
+    return result;
 }
 
 InjectedScriptBase::InjectedScriptBase(const InjectedScriptBase&) = default;
