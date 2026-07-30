@@ -340,6 +340,9 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     setNumParameters(other.numParameters(), allocateArgumentValueProfiles);
 
     ASSERT(m_couldBeTainted == (taintednessToTriState(source().provider()->sourceTaintedOrigin()) != TriState::False));
+#if USE(BUN_JSC_ADDITIONS)
+    m_previousCounter = m_unlinkedCode->llintExecuteCounter().count();
+#endif
     vm.heap.codeBlockSet().add(this);
     checker().set(CrashChecker::This, checker().hash(this));
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
@@ -390,6 +393,9 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     setNumParameters(unlinkedCodeBlock->numParameters(), allocateArgumentValueProfiles);
 
     m_couldBeTainted = source().provider()->couldBeTainted();
+#if USE(BUN_JSC_ADDITIONS)
+    m_previousCounter = m_unlinkedCode->llintExecuteCounter().count();
+#endif
     vm.heap.codeBlockSet().add(this);
     checker().set(CrashChecker::This, checker().hash(this));
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
@@ -1311,10 +1317,59 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
 
     if (Options::forceCodeBlockToJettisonDueToOldAge()) [[unlikely]]
         return true;
-    
+
+#if USE(BUN_JSC_ADDITIONS)
+    JITType type = jitType();
+    Seconds ttl = timeToLive(type);
+    if (timeSinceCreation() < ttl)
+        return false;
+
+    if (Options::useExecutionCountForCodeBlockAging()) {
+        // LLInt and Baseline CodeBlocks already tick an execution counter on
+        // function entry and loop back-edges. If that counter has moved since we
+        // last sampled it, the block is demonstrably still running regardless of
+        // wall-clock age, so renew its lease instead of throwing away a warm block
+        // that the next iteration will immediately relink, re-profile and re-JIT.
+        // Optimizing-tier blocks have no cheap per-entry counter and keep the
+        // existing pure-TTL policy.
+        //
+        // The snapshot lives in m_previousCounter, which updateActivity() in
+        // finalizeUnconditionally also writes for UnlinkedCodeBlock aging when
+        // VM::useUnlinkedCodeBlockJettisoning() is enabled. Both sites store the
+        // same current count for the same tier, so they agree; outside that mode
+        // updateActivity() never touches the field.
+        float currentCount = 0;
+        bool hasCounter = false;
+        switch (type) {
+        case JITType::InterpreterThunk:
+            currentCount = m_unlinkedCode->llintExecuteCounter().count();
+            hasCounter = true;
+            break;
+#if ENABLE(JIT)
+        case JITType::BaselineJIT:
+            if (auto* jitData = baselineJITData()) {
+                currentCount = jitData->executeCounter().count();
+                hasCounter = true;
+            }
+            break;
+#endif
+        default:
+            break;
+        }
+        if (hasCounter && currentCount != m_previousCounter) {
+            m_previousCounter = currentCount;
+            // Push the effective creation time forward so the block is not
+            // considered for old-age jettison again until leaseMultiplier * ttl
+            // has elapsed with no observed execution.
+            m_creationTime = ApproximateTime::now() + ttl * (Options::codeBlockAgingLeaseMultiplier() - 1.0);
+            return false;
+        }
+    }
+#else
     if (timeSinceCreation() < timeToLive(jitType()))
         return false;
-    
+#endif
+
     return true;
 }
 
