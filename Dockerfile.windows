@@ -79,11 +79,23 @@ ENV CXX=clang++-${LLVM_VERSION}
 # arches are splatted so one image serves x64 and arm64 builds.
 # --preserve-ms-arch-notation keeps the lib dirs named x64/arm64, which is
 # what OptionsMSVC.cmake's WIN_LIB_ARCH expects.
+#
+# Two-phase `unpack` then `splat`: xwin processes payloads (one SdkLibs MSI
+# per arch) on a rayon pool and each SdkLibs completion creates the same
+# sdk/lib/<version> -> . compatibility symlink behind an `exists()` check, so
+# with --arch x86_64,aarch64 the two can race and one dies on EEXIST. The
+# unpack pass does the downloading/extracting (network- and CPU-bound) on all
+# cores; the splat pass then runs with RAYON_NUM_THREADS=1 so the symlinks are
+# created serially, and is cheap because the cache is already warm.
 ADD --checksum=sha256:${XWIN_SHA256} \
     https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/xwin-${XWIN_VERSION}-x86_64-unknown-linux-musl.tar.gz /xwin.tar.gz
 RUN tar -xzf /xwin.tar.gz -C /usr/local/bin --strip-components=1 xwin-${XWIN_VERSION}-x86_64-unknown-linux-musl/xwin && \
     rm /xwin.tar.gz && xwin --version
 RUN xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache \
+         --crt-version ${MSVC_CRT_VERSION} --sdk-version ${WIN_SDK_VERSION} \
+      unpack && \
+    RAYON_NUM_THREADS=1 \
+    xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache \
          --crt-version ${MSVC_CRT_VERSION} --sdk-version ${WIN_SDK_VERSION} \
       splat --preserve-ms-arch-notation --include-debug-libs --output /winsdk && \
     rm -rf /xwin-cache && \
