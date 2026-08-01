@@ -61,12 +61,21 @@ public:
 
     JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues);
 
+#if USE(BUN_JSC_ADDITIONS)
+    JSObject* liveExportsSource() const { return m_liveExportsSource.get(); }
+    void setLiveExportsSource(VM& vm, JSObject* source) { m_liveExportsSource.set(vm, this, source); }
+#endif
+
 private:
     SyntheticModuleRecord(VM&, Structure*, const Identifier& moduleKey);
 
     static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, const Identifier& moduleKey, JSValue);
 
     void finishCreation(JSGlobalObject*, VM&);
+
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<JSObject> m_liveExportsSource;
+#endif
 };
 
 } // namespace JSC

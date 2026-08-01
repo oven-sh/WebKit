@@ -31,6 +31,9 @@
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "SyntheticModuleRecord.h"
+#endif
 
 namespace JSC {
 
@@ -194,6 +197,25 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
             throwVMError(globalObject, scope, createTDZError(globalObject, *uid));
             return false;
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        // Bun's mock.module / loader:"object" may back a synthetic module with the
+        // factory-returned object so that accessor exports stay live. The module
+        // environment slots still hold the first-read snapshot for static imports
+        // (which read slots directly), but dynamic import namespace access
+        // re-evaluates through the source object on every read. Returning a plain
+        // uncacheable value here keeps the JIT's module-namespace IC (which would
+        // inline the raw slot) from being installed.
+        if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(exportEntry.moduleRecord.get())) {
+            if (JSObject* source = synthetic->liveExportsSource()) [[unlikely]] {
+                slot.disableCaching();
+                JSValue liveValue = source->get(globalObject, propertyName);
+                RETURN_IF_EXCEPTION(scope, false);
+                slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), liveValue);
+                return true;
+            }
+        }
+#endif
 
         slot.setValueModuleNamespace(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value, environment, scopeOffset);
         return true;
