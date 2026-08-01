@@ -474,6 +474,17 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     putResult = moduleNamespaceObject->put(moduleNamespaceObject, globalObject, name, value, putter);
     RETURN_IF_EXCEPTION(scope, {});
     moduleNamespaceObject->m_isOverridingValue = false;
+
+    // Keep the live-exports backing object (if any) consistent with the env
+    // slot so spyOn / re-mock writes are observed by namespace reads that
+    // forward through it.
+    if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(record)) {
+        if (JSObject* source = synthetic->liveExportsSource()) {
+            source->putDirect(vm, name, value, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
     return putResult;
 }
 
