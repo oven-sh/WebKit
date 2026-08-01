@@ -148,13 +148,12 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
 #if USE(BUN_JSC_ADDITIONS)
 void SyntheticModuleRecord::setLiveExportsSource(VM& vm, JSObject* source)
 {
-    bool firstInstall = !m_liveExportsSource && source;
-    m_liveExportsSource.set(vm, this, source);
+    m_liveExportsSource.setMayBeNull(vm, this, source);
     // Any ModuleNamespaceAccessCase / DFG GetClosureVar compiled while no live
     // source was installed reads the environment slot directly. Invalidate them
-    // on the first install so those sites re-enter getOwnPropertySlotCommon and
-    // observe the live-source forwarding.
-    if (firstInstall)
+    // the first time a source is installed so those sites re-enter
+    // getOwnPropertySlotCommon and observe the live-source forwarding.
+    if (source && m_liveExportsSourceWatchpointSet.isStillValid())
         m_liveExportsSourceWatchpointSet.fireAll(vm, "SyntheticModuleRecord live-exports source installed");
 }
 #endif
