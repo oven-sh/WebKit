@@ -4713,11 +4713,6 @@ namedProperty:
             semanticFailureDueToKeywordCheckingToken(identToken, "shorthand property name");
             JSTextPosition start = tokenStartPosition();
             JSTokenLocation location(tokenLocation());
-            // If `ident` is `eval`, useVariable() sets m_usesEval and the scope-pop
-            // handler (setInnerArrowFunctionUsesEvalAndUseArgumentsIfNeeded) propagates it.
-            // Calling setInnerArrowFunctionUsesEval() here unconditionally is wrong: it
-            // marks every shorthand property in an arrow as an eval use, which forces the
-            // enclosing function to allocate and capture `arguments` in its activation.
             currentScope()->useVariable(ident, m_vm.propertyNames->eval == *ident);
             TreeExpression node = context.createResolve(location, *ident, start, lastTokenEndPosition());
             return context.createProperty(ident, node, static_cast<PropertyNode::Type>(PropertyNode::Constant | PropertyNode::Shorthand), SuperBinding::NotNeeded, InferName::Allowed, ClassElementTag::No);
