@@ -89,6 +89,50 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     ASSERT(jsModule);
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    auto throwLinkSyntaxError = [&](String&& message, unsigned sourceOffset = 0) {
+        JSObject* error = createSyntaxError(globalObject, message);
+        auto attrs = static_cast<unsigned>(PropertyAttribute::DontEnum);
+        unsigned line = 0;
+        unsigned column = 0;
+        String sourceURL;
+        if (jsModule && jsModule->sourceCode().provider()) {
+            auto& sourceCode = jsModule->sourceCode();
+            sourceURL = sourceCode.provider()->sourceURL();
+            if (sourceOffset) {
+                StringView source = sourceCode.provider()->source();
+                unsigned end = std::min<unsigned>(sourceOffset, source.length());
+                unsigned lineStart = 0;
+                line = sourceCode.firstLine().oneBasedInt();
+                for (unsigned i = 0; i < end; ++i) {
+                    if (source[i] == '\n') {
+                        ++line;
+                        lineStart = i + 1;
+                    }
+                }
+                column = end - lineStart + 1;
+            }
+        }
+        if (sourceURL.isEmpty())
+            sourceURL = moduleKey().string();
+        if (auto* errorInstance = dynamicDowncast<ErrorInstance>(error)) {
+            if (!sourceURL.isEmpty())
+                errorInstance->setSourceURL(sourceURL);
+            if (line) {
+                errorInstance->setLine(line);
+                errorInstance->setColumn(column);
+            }
+        }
+        if (!sourceURL.isEmpty())
+            error->putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(sourceURL)), attrs);
+        if (line) {
+            error->putDirect(vm, vm.propertyNames->line, jsNumber(line), attrs);
+            error->putDirect(vm, vm.propertyNames->column, jsNumber(column), attrs);
+        }
+        throwException(globalObject, scope, error);
+    };
+#endif
+
     ModuleProgramExecutable* moduleProgramExecutable = nullptr;
     JSModuleEnvironment* env = nullptr;
 
@@ -106,7 +150,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         case Resolution::Type::NotFound:
 #if USE(BUN_JSC_ADDITIONS)
             if (m_isTypeScript) break;
-            throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(e.exportName.impl()), "' not found in '"_s, StringView(e.moduleName.impl()), "'"_s));
+            throwLinkSyntaxError(makeString("export '"_s, StringView(e.exportName.impl()), "' not found in '"_s, StringView(e.moduleName.impl()), "'"_s));
 #else
             throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' is not found."_s));
 #endif
@@ -114,7 +158,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
         case Resolution::Type::Ambiguous:
 #if USE(BUN_JSC_ADDITIONS)
-            throwSyntaxError(globalObject, scope, makeString("Cannot export '"_s, StringView(e.exportName.impl()), "' multiple times in '"_s, StringView(e.moduleName.impl()), "'"_s));
+            throwLinkSyntaxError(makeString("Cannot export '"_s, StringView(e.exportName.impl()), "' multiple times in '"_s, StringView(e.moduleName.impl()), "'"_s));
 #else
             throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
 #endif
@@ -122,7 +166,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
         case Resolution::Type::Error:
 #if USE(BUN_JSC_ADDITIONS)
-            throwSyntaxError(globalObject, scope, "export default cannot be used with export *"_s);
+            throwLinkSyntaxError("export default cannot be used with export *"_s);
 #else
             throwSyntaxError(globalObject, scope, "Indirectly exported binding name 'default' cannot be resolved by star export entries."_s);
 #endif
@@ -209,11 +253,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                         Resolution otherResolution = importedModule->resolveExport(globalObject, vm.propertyNames->defaultKeyword);
                         RETURN_IF_EXCEPTION(scope, void());
                         if (otherResolution.type == Resolution::Type::Resolved && otherResolution.localName == in.localName) {
-                            throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'. Did you mean to import default?"_s));
+                            throwLinkSyntaxError(makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'. Did you mean to import default?"_s), in.sourceOffset);
                             return;
                         }
                     }
-                    throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                    throwLinkSyntaxError(makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'."_s), in.sourceOffset);
 #else
                     throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' is not found."_s));
 #endif
@@ -221,7 +265,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
                 case Resolution::Type::Ambiguous:
 #if USE(BUN_JSC_ADDITIONS)
-                    throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' cannot be resolved due to ambiguous multiple bindings in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                    throwLinkSyntaxError(makeString("Export named '"_s, in.importName.string(), "' cannot be resolved due to ambiguous multiple bindings in module '"_s, importedModule->moduleKey().string(), "'."_s), in.sourceOffset);
 #else
                     throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
 #endif
@@ -233,11 +277,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                         Resolution otherResolution = importedModule->resolveExport(globalObject, in.localName);
                         RETURN_IF_EXCEPTION(scope, void());
                         if (otherResolution.type == Resolution::Type::Resolved) {
-                            throwSyntaxError(globalObject, scope, makeString("module '"_s, importedModule->moduleKey().string(), "' does not have an export named 'default'. Did you mean '"_s, String(in.localName.impl()), "'?"_s));
+                            throwLinkSyntaxError(makeString("module '"_s, importedModule->moduleKey().string(), "' does not have an export named 'default'. Did you mean '"_s, String(in.localName.impl()), "'?"_s), in.sourceOffset);
                             return;
                         }
                     }
-                    throwSyntaxError(globalObject, scope, makeString("Missing 'default' export in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                    throwLinkSyntaxError(makeString("Missing 'default' export in module '"_s, importedModule->moduleKey().string(), "'."_s), in.sourceOffset);
 #else
                     throwSyntaxError(globalObject, scope, "Importing binding name 'default' cannot be resolved by star export entries."_s);
 #endif

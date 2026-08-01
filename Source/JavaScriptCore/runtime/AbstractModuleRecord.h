@@ -111,6 +111,9 @@ public:
         Identifier moduleRequest;
         Identifier importName;
         Identifier localName;
+#if USE(BUN_JSC_ADDITIONS)
+        unsigned sourceOffset { 0 };
+#endif
     };
 
     using OrderedIdentifierSet = OrderedHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
