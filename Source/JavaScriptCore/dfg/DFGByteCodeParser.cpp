@@ -77,6 +77,9 @@
 #include "JSMapIterator.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "SyntheticModuleRecord.h"
+#endif
 #include "JSPromise.h"
 #include "JSPromiseConstructor.h"
 #include "JSPromiseCombinatorsContext.h"
@@ -6036,6 +6039,18 @@ bool ByteCodeParser::handleModuleNamespaceLoad(VirtualRegister result, Speculate
 {
     if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
         return false;
+#if USE(BUN_JSC_ADDITIONS)
+    // Bun may later install a live-exports source on a SyntheticModuleRecord
+    // (mock.module re-mock with an accessor), after which namespace reads must
+    // go back through getOwnPropertySlotCommon. Watch the record's invalidation
+    // set so this lowering jettisons instead of continuing to read the raw slot.
+    if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(getById.moduleEnvironment()->moduleRecord())) {
+        InlineWatchpointSet& set = synthetic->liveExportsSourceWatchpointSet();
+        if (!set.isStillValid())
+            return false;
+        m_graph.watchpoints().addLazily(set);
+    }
+#endif
     addToGraph(CheckIsConstant, OpInfo(m_graph.freeze(getById.moduleNamespaceObject())), Edge(base, CellUse));
 
     addToGraph(FilterGetByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addGetByStatus(currentCodeOrigin(), getById)), base);

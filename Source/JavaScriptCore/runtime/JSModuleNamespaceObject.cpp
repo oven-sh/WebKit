@@ -207,7 +207,9 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
         // the source fall through to the environment slot so partial re-mocks keep
         // un-overridden exports. Returning a plain uncacheable value keeps the
         // JIT's module-namespace IC (which would inline the raw slot) from being
-        // installed.
+        // installed; once the record's watchpoint has fired, the env-slot
+        // fallthrough is also returned uncacheable so the IC is never
+        // re-installed on a record that has ever had a live source.
         if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(exportEntry.moduleRecord.get())) {
             if (JSObject* source = synthetic->liveExportsSource()) [[unlikely]] {
                 PropertySlot sourceSlot(source, PropertySlot::InternalMethodType::GetOwnProperty);
@@ -220,6 +222,11 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
                     slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), liveValue);
                     return true;
                 }
+            }
+            if (!synthetic->liveExportsSourceWatchpointSet().isStillValid()) [[unlikely]] {
+                slot.disableCaching();
+                slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+                return true;
             }
         }
 #endif

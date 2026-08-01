@@ -28,6 +28,9 @@
 #include "AbstractModuleRecord.h"
 #include "ArgList.h"
 #include "SourceCode.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "Watchpoint.h"
+#endif
 
 namespace JSC {
 
@@ -63,7 +66,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     JSObject* liveExportsSource() const { return m_liveExportsSource.get(); }
-    void setLiveExportsSource(VM& vm, JSObject* source) { m_liveExportsSource.set(vm, this, source); }
+    JS_EXPORT_PRIVATE void setLiveExportsSource(VM&, JSObject* source);
+    InlineWatchpointSet& liveExportsSourceWatchpointSet() { return m_liveExportsSourceWatchpointSet; }
 #endif
 
 private:
@@ -75,6 +79,7 @@ private:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<JSObject> m_liveExportsSource;
+    InlineWatchpointSet m_liveExportsSourceWatchpointSet { IsWatched };
 #endif
 };
 

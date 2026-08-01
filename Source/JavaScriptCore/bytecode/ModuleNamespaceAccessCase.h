@@ -47,12 +47,19 @@ public:
 
     static Ref<AccessCase> create(VM&, JSCell* owner, CacheableIdentifier, JSModuleNamespaceObject*, JSModuleEnvironment*, ScopeOffset);
 
+#if USE(BUN_JSC_ADDITIONS)
+    WatchpointSet* additionalSetImpl() const { return m_additionalSet.get(); }
+#endif
+
 private:
     ModuleNamespaceAccessCase(VM&, JSCell* owner, CacheableIdentifier, JSModuleNamespaceObject*, JSModuleEnvironment*, ScopeOffset);
 
     WriteBarrier<JSModuleNamespaceObject> m_moduleNamespaceObject;
     WriteBarrier<JSModuleEnvironment> m_moduleEnvironment;
     ScopeOffset m_scopeOffset;
+#if USE(BUN_JSC_ADDITIONS)
+    RefPtr<WatchpointSet> m_additionalSet;
+#endif
 };
 
 } // namespace JSC

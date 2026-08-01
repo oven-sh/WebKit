@@ -145,6 +145,20 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
 
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void SyntheticModuleRecord::setLiveExportsSource(VM& vm, JSObject* source)
+{
+    bool firstInstall = !m_liveExportsSource && source;
+    m_liveExportsSource.set(vm, this, source);
+    // Any ModuleNamespaceAccessCase / DFG GetClosureVar compiled while no live
+    // source was installed reads the environment slot directly. Invalidate them
+    // on the first install so those sites re-enter getOwnPropertySlotCommon and
+    // observe the live-source forwarding.
+    if (firstInstall)
+        m_liveExportsSourceWatchpointSet.fireAll(vm, "SyntheticModuleRecord live-exports source installed");
+}
+#endif
+
 SyntheticModuleRecord* SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(JSGlobalObject* globalObject, const Identifier& moduleKey, JSValue defaultExport)
 {
     VM& vm = globalObject->vm();
