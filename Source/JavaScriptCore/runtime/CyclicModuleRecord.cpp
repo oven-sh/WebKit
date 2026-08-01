@@ -105,8 +105,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 unsigned lineStart = 0;
                 line = sourceCode.firstLine().oneBasedInt();
                 for (unsigned i = 0; i < end; ++i) {
-                    if (source[i] == '\n') {
+                    auto c = source[i];
+                    if (c == '\r' || c == '\n' || c == 0x2028 || c == 0x2029) {
                         ++line;
+                        if (c == '\r' && i + 1 < end && source[i + 1] == '\n')
+                            ++i;
                         lineStart = i + 1;
                     }
                 }
