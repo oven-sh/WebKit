@@ -203,16 +203,23 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
         // factory-returned object so that accessor exports stay live. The module
         // environment slots still hold the first-read snapshot for static imports
         // (which read slots directly), but dynamic import namespace access
-        // re-evaluates through the source object on every read. Returning a plain
-        // uncacheable value here keeps the JIT's module-namespace IC (which would
-        // inline the raw slot) from being installed.
+        // re-evaluates through the source object on every read. Keys absent from
+        // the source fall through to the environment slot so partial re-mocks keep
+        // un-overridden exports. Returning a plain uncacheable value keeps the
+        // JIT's module-namespace IC (which would inline the raw slot) from being
+        // installed.
         if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(exportEntry.moduleRecord.get())) {
             if (JSObject* source = synthetic->liveExportsSource()) [[unlikely]] {
-                slot.disableCaching();
-                JSValue liveValue = source->get(globalObject, propertyName);
+                PropertySlot sourceSlot(source, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool hasOwn = source->methodTable()->getOwnPropertySlot(source, globalObject, propertyName, sourceSlot);
                 RETURN_IF_EXCEPTION(scope, false);
-                slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), liveValue);
-                return true;
+                if (hasOwn) {
+                    slot.disableCaching();
+                    JSValue liveValue = sourceSlot.getValue(globalObject, propertyName);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), liveValue);
+                    return true;
+                }
             }
         }
 #endif
