@@ -189,6 +189,10 @@ private:
     int matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, std::span<int> ovector);
     template<Yarr::MatchFrom thread>
     MatchResult matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset);
+    template<Yarr::MatchFrom thread>
+    int matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, std::span<int> ovector);
+    template<Yarr::MatchFrom thread>
+    MatchResult matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset);
 
     friend class RegExpCache;
     RegExp(VM&, const String&, OptionSet<Yarr::Flags>);

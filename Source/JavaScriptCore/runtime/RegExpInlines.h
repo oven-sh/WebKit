@@ -112,10 +112,8 @@ ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, s
 }
 
 template<Yarr::MatchFrom matchFrom>
-ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
+NEVER_INLINE int RegExp::matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
 {
-    if (!eitherUnicode() || s.is8Bit())
-        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
     if (splitsSurrogatePair(s, startOffset))
         --startOffset;
     int result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
@@ -124,6 +122,14 @@ ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm
         result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
     }
     return result;
+}
+
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
+{
+    if (!eitherUnicode() || s.is8Bit())
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+    return matchInlineAtCodePointBoundaries<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
 }
 
 template<Yarr::MatchFrom matchFrom>
@@ -258,10 +264,8 @@ ALWAYS_INLINE void RegExp::compileIfNecessaryMatchOnly(VM& vm, Yarr::CharSize ch
 }
 
 template<Yarr::MatchFrom matchFrom>
-ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
+NEVER_INLINE MatchResult RegExp::matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
 {
-    if (!eitherUnicode() || s.is8Bit())
-        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
     if (splitsSurrogatePair(s, startOffset))
         --startOffset;
     MatchResult result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
@@ -270,6 +274,14 @@ ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject
         result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
     }
     return result;
+}
+
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
+{
+    if (!eitherUnicode() || s.is8Bit())
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+    return matchInlineAtCodePointBoundaries<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
 }
 
 template<Yarr::MatchFrom matchFrom>
