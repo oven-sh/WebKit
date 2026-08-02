@@ -6445,6 +6445,10 @@ class YarrGenerator final : public YarrJITInfo {
 
     bool assignAlternativeOffsets(PatternAlternative* alternative, unsigned initialInputPosition)
     {
+        if (!isSafeToRecurse()) [[unlikely]] {
+            m_failureReason = JITFailureReason::ParenthesisNestedTooDeep;
+            return false;
+        }
         CheckedUint32 currentInputPosition = initialInputPosition;
 
         for (auto& term : alternative->m_terms) {
