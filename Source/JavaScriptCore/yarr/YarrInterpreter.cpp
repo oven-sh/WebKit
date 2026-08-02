@@ -666,24 +666,20 @@ public:
             } else
                 ch = term.matchDirection() == Forward ? input.readCheckedDontAdvance(negativeInputOffset) : input.tryReadBackward(negativeInputOffset);
 
-            if (oldCh == errorCodePoint || ch == errorCodePoint) {
-                if (term.matchDirection() == Backward)
-                    input.setPos(savedPos);
-                return false;
-            }
-
-            if (oldCh == ch)
-                continue;
-
-            if (term.ignoreCase()) {
-                // See ES 6.0, 21.2.2.8.2 for the definition of Canonicalize(). For non-Unicode
-                // patterns, Unicode values are never allowed to match against ASCII ones.
-                // For Unicode, we need to check all canonical equivalents of a character.
-                if (isLegacyCompilation() && (isASCII(oldCh) || isASCII(ch))) {
-                    if (toASCIIUpper(oldCh) == toASCIIUpper(ch))
-                        continue;
-                } else if (areCanonicallyEquivalent(oldCh, ch, isEitherUnicodeCompilation() ? CanonicalMode::Unicode : CanonicalMode::UCS2))
+            if (oldCh != errorCodePoint && ch != errorCodePoint) {
+                if (oldCh == ch)
                     continue;
+
+                if (term.ignoreCase()) {
+                    // See ES 6.0, 21.2.2.8.2 for the definition of Canonicalize(). For non-Unicode
+                    // patterns, Unicode values are never allowed to match against ASCII ones.
+                    // For Unicode, we need to check all canonical equivalents of a character.
+                    if (isLegacyCompilation() && (isASCII(oldCh) || isASCII(ch))) {
+                        if (toASCIIUpper(oldCh) == toASCIIUpper(ch))
+                            continue;
+                    } else if (areCanonicallyEquivalent(oldCh, ch, isEitherUnicodeCompilation() ? CanonicalMode::Unicode : CanonicalMode::UCS2))
+                        continue;
+                }
             }
 
             if (term.matchDirection() == Forward)
@@ -868,19 +864,17 @@ public:
             // matchDirection is Backward
             if (isEitherUnicodeCompilation()) {
                 backTrack->begin = input.getPos();
+                bool pairsOnly = !term.invert() && term.atom.characterClass->hasOnlyNonBMPCharacters();
                 for (unsigned matchAmount = 0; matchAmount < term.atom.quantityMaxCount; ++matchAmount) {
                     unsigned matchOffset = term.atom.quantityMaxCount - 1 - matchAmount;
-                    if (term.invert()) {
-                        if (!checkCharacterClass(term, term.inputPosition - matchOffset)) {
+                    if (pairsOnly) {
+                        if (!checkCharacterClassDontAdvanceInputForNonBMP(term, term.inputPosition - 2 * matchOffset)) {
                             input.setPos(backTrack->begin);
                             return false;
                         }
-                    } else {
-                        matchOffset = matchOffset * (term.atom.characterClass->hasOnlyNonBMPCharacters() ? 2 : 1);
-                        if (!checkCharacterClassDontAdvanceInputForNonBMP(term, term.inputPosition - matchOffset)) {
-                            input.setPos(backTrack->begin);
-                            return false;
-                        }
+                    } else if (!checkCharacterClass(term, term.inputPosition - matchOffset)) {
+                        input.setPos(backTrack->begin);
+                        return false;
                     }
                 }
 
@@ -917,6 +911,7 @@ public:
             if (input.getPos() < term.inputPosition)
                 return false;
 
+            backTrack->begin = position;
             while ((matchAmount < term.atom.quantityMaxCount) && input.tryUncheckInput(1)) {
                 if (!checkCharacterClass(term, term.inputPosition)) {
                     input.setPos(position);
@@ -962,6 +957,10 @@ public:
                     }
                     // matchDirection Backwards
                     --backTrack->matchAmount;
+                    if (!backTrack->matchAmount) {
+                        input.setPos(backTrack->begin);
+                        return true;
+                    }
                     input.readChecked(term.inputPosition);
                     input.checkInput(1);
                     return true;
@@ -1844,7 +1843,7 @@ public:
                 if (isEitherUnicodeCompilation()) {
                     if (!U_IS_BMP(term.atom.patternCharacter)) {
                         for (unsigned matchAmount = 0; matchAmount < currentTerm().atom.quantityMaxCount; ++matchAmount) {
-                            auto inputPosition = term.inputPosition + 2 * matchAmount;
+                            auto inputPosition = term.inputPosition - 2 * matchAmount;
                             if (input.getPos() < inputPosition)
                                 BACKTRACK();
                             if (!checkSurrogatePair(term, inputPosition))
