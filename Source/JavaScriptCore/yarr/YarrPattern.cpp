@@ -476,7 +476,7 @@ public:
         characterClass->m_matches32.swap(m_matches32);
         characterClass->m_ranges32.swap(m_ranges32);
         characterClass->m_anyCharacter = anyCharacter();
-        characterClass->m_characterWidths = characterWidths();
+        characterClass->m_characterWidths = computeCharacterWidths(*characterClass);
 
         buildLatin1TableIfBeneficial(*characterClass);
 
@@ -1113,6 +1113,22 @@ private:
     CharacterClassWidths NODELETE characterWidths()
     {
         return m_characterWidths;
+    }
+
+    static CharacterClassWidths computeCharacterWidths(const CharacterClass& characterClass)
+    {
+        CharacterClassWidths widths = CharacterClassWidths::Unknown;
+        if (!characterClass.m_matches8.isEmpty() || !characterClass.m_ranges8.isEmpty())
+            widths |= CharacterClassWidths::HasBMPChars;
+        for (char32_t ch : characterClass.m_matches32)
+            widths |= U_IS_BMP(ch) ? CharacterClassWidths::HasBMPChars : CharacterClassWidths::HasNonBMPChars;
+        for (auto& range : characterClass.m_ranges32) {
+            if (U_IS_BMP(range.begin))
+                widths |= CharacterClassWidths::HasBMPChars;
+            if (!U_IS_BMP(range.end))
+                widths |= CharacterClassWidths::HasNonBMPChars;
+        }
+        return widths;
     }
 
     bool NODELETE anyCharacter()

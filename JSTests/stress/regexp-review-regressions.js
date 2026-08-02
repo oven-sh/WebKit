@@ -32,6 +32,10 @@ shouldBe(execSummary(/^(?:a\u{1F600}c|q)/u, "azkc\u0101"), null);
 shouldBe(execSummary(/^(?:a\u{1F600}c|q)/u, "a\u{1F600}c\u0101"), [0, "a\u{1F600}c"]);
 shouldBe(execSummary(/^(?:ab\u{1F600}cd|abzz)$/u, "ab\u{1F600}cd"), [0, "ab\u{1F600}cd"]);
 shouldBe(execSummary(/(?<=^(?:a\u{1F600}|qa))k/u, "a\u{1F600}k"), [3, "k"]);
+shouldBe(execSummary(/[az\D]/v, "\u{10428}"), [0, "\u{10428}"]);
+shouldBe(execSummary(/[az\S]/v, "\u{10428}"), [0, "\u{10428}"]);
+shouldBe(/^[az\D]$/v.test("\u{10428}"), true);
+shouldBe(execSummary(/[\D--[a-z]]/v, "\u{10428}"), [0, "\u{10428}"]);
 
 shouldBe(execSummary(/(?<=X[^"]*)!/u, "X ab\u{1F600}de!"), [8, "!"]);
 shouldBe(execSummary(/(?<=a[^x]*b[^x]*)!/u, "a\u{1F600}b\u{1F600}c!"), [7, "!"]);
