@@ -2415,6 +2415,19 @@ public:
     // SIMD scan, frame-free inlinable groups) beat the rewrites; the transforms
     // pay for themselves only on wide alternations.
     static constexpr size_t alternationFactoringMinRun = 8; // prefix factoring / top-level fold
+    static constexpr size_t factoringBudgetBase = 1 << 16;
+    static constexpr size_t factoringBudgetPerTerm = 16;
+    size_t m_factoringBudget { 0 };
+
+    bool chargeFactoringBudget(size_t cost)
+    {
+        if (cost > m_factoringBudget) {
+            m_factoringBudget = 0;
+            return false;
+        }
+        m_factoringBudget -= cost;
+        return true;
+    }
 
     // Alternation prefix factoring.
     //
@@ -2504,13 +2517,17 @@ public:
             PatternAlternative* suffix = suffixDisjunction->addNewAlternative(member->m_firstSubpatternId);
             suffix->m_lastSubpatternId = member->m_lastSubpatternId;
             suffix->m_containsBOL = member->m_containsBOL;
+            suffix->m_terms.reserveInitialCapacity(member->m_terms.size() - prefixLength);
             for (size_t i = prefixLength; i < member->m_terms.size(); ++i)
-                suffix->m_terms.append(member->m_terms[i]);
+                suffix->m_terms.append(WTF::move(member->m_terms[i]));
+            chargeFactoringBudget(member->m_terms.size());
+            member->m_terms.clear();
             reparentNestedDisjunctions(*suffix);
             clearTerminalMarks(*suffix);
-            accumulateCaptureRange(*member, firstCaptureId, lastCaptureId);
+            accumulateCaptureRange(*suffix, firstCaptureId, lastCaptureId);
             containsBOL |= member->m_containsBOL;
         }
+        members.clear();
         suffixDisjunction->m_alternatives.last()->m_isLastAlternative = true;
 
         // Factor the suffixes themselves (a shared second character, and so on).
@@ -2578,6 +2595,8 @@ public:
             return;
 
         auto& alternatives = disjunction.m_alternatives;
+        if (!chargeFactoringBudget(alternatives.size()))
+            return;
         Vector<std::unique_ptr<PatternAlternative>> result;
         result.reserveInitialCapacity(alternatives.size());
 
@@ -2672,6 +2691,9 @@ public:
     {
         if (!Options::useRegExpAlternationFactoring())
             return;
+        m_factoringBudget = factoringBudgetBase;
+        for (auto& alternative : m_pattern.m_body->m_alternatives)
+            m_factoringBudget += factoringBudgetPerTerm * alternative->m_terms.size();
         factorAlternatives(*m_pattern.m_body);
         wrapAlternativesForDispatch();
     }
