@@ -117,3 +117,11 @@ shouldBe(execSummary(/(?<=\1{2,}(q))x/, "aqqx"), null);
 shouldBe(execSummary(/(?<=\k<n>+(?<n>q))x/, "aqx"), null);
 shouldBe(execSummary(/(?<=\k<n>+(?<n>q))x/, "qqx"), [2, "x", "q"]);
 shouldBe(execSummary(/(?<=\1*(q))x/, "aqx"), [2, "x", "q"]);
+
+shouldBe(execSummary(/(?<n>b)a(?<=\k<n>)/, "ba"), null);
+shouldBe(execSummary(/(?<n>b)a(?<=a\k<n>|\k<n>a)/, "ba"), [0, "ba", "b"]);
+shouldBe(execSummary(/(?<n>b)(?<=\k<n>)/, "b"), [0, "b", "b"]);
+shouldBe(execSummary(/(?<n>b)a(?<=(?<=\k<n>)a)/, "ba"), [0, "ba", "b"]);
+shouldBe(execSummary(/(?<=\k<n>(?<n>q))x/, "aqx"), null);
+shouldBe(execSummary(/(?<=(?<n>q)\k<n>)x/, "aqx"), [2, "x", "q"]);
+shouldBe(execSummary(/(?:(?<n>a)|(?<n>b))(?<=\k<n>)c/, "bc"), [0, "bc", null, "b"]);

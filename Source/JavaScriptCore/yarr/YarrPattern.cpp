@@ -1680,7 +1680,18 @@ public:
             }
         }
 
-        if (parenthesisMatchDirection() == Forward) {
+        bool capturedBeforeLookbehind = false;
+        if (parenthesisMatchDirection() == Backward && parenIndices.size() == 2) {
+            unsigned outermostLookbehindFirstSubpatternId = m_pattern.m_numSubpatterns + 1;
+            for (PatternAlternative* ancestor = m_alternative; ancestor->m_parent->m_parent; ancestor = ancestor->m_parent->m_parent) {
+                PatternTerm& enclosing = ancestor->m_parent->m_parent->lastTerm();
+                if (enclosing.type == PatternTerm::Type::ParentheticalAssertion && enclosing.matchDirection() == Backward)
+                    outermostLookbehindFirstSubpatternId = enclosing.parentheses.subpatternId;
+            }
+            capturedBeforeLookbehind = parenIndices.last() < outermostLookbehindFirstSubpatternId;
+        }
+
+        if (parenthesisMatchDirection() == Forward || capturedBeforeLookbehind) {
             m_alternative->m_terms.append(PatternTerm::NamedBackReference(parenIndices.last(), m_flags));
             PatternTerm& lastTerm = m_alternative->lastTerm();
             lastTerm.m_matchDirection = parenthesisMatchDirection();
