@@ -3860,6 +3860,7 @@ class YarrGenerator final : public YarrJITInfo {
         }
 #endif
 
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
         if (m_direction == Backward && m_decodeSurrogatePairs) {
             // Backward + unicode: read the code point that ends at the term's
             // position (its last unit is at frame offset checkedOffset - position).
@@ -3880,6 +3881,7 @@ class YarrGenerator final : public YarrJITInfo {
             }
             return;
         }
+#endif
 
         readCharacter(op.m_checkedOffset - term->inputPosition, character);
 
@@ -3965,6 +3967,7 @@ class YarrGenerator final : public YarrJITInfo {
         Checked<unsigned> baseOffset = op.m_checkedOffset - term->inputPosition - scaledMaxCount;
 
         MacroAssembler::Label loop(&m_jit);
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
         if (m_direction == Backward && m_decodeSurrogatePairs) {
             // Backward + unicode. At loop entry countRegister addresses the last
             // unit of the next-lower occurrence; decode the code point ending
@@ -3996,6 +3999,7 @@ class YarrGenerator final : public YarrJITInfo {
             done.link(&m_jit);
             return;
         }
+#endif
 
         readCharacter(baseOffset, character, countRegister);
 
@@ -4104,6 +4108,7 @@ class YarrGenerator final : public YarrJITInfo {
         MacroAssembler::Label loop(&m_jit);
         failures.append(atEndOfInput());
 
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
         if (m_direction == Backward && m_decodeSurrogatePairs) {
             // Backward + unicode: decode the code point ending just left of the
             // frontier (frame offset 0), class-match it (frontier untouched, so a
@@ -4122,7 +4127,9 @@ class YarrGenerator final : public YarrJITInfo {
             failuresDecrementIndex.append(atEndOfInput());
             m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index); // the pair's lead unit
             isBMPChar.link(&m_jit);
-        } else {
+        } else
+#endif
+        {
             readCharacter(op.m_checkedOffset - term->inputPosition, character);
 
             matchCharacterClassTermInner(term, failures, character, scratch);
@@ -4259,6 +4266,7 @@ class YarrGenerator final : public YarrJITInfo {
         nonGreedyFailures.append(atEndOfInput());
         nonGreedyFailures.append(m_jit.branch32(MacroAssembler::Equal, countRegister, MacroAssembler::Imm32(term->quantityMaxCount)));
 
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
         if (m_direction == Backward && m_decodeSurrogatePairs) {
             // Backward + unicode: as in the greedy loop, decode the code point
             // ending just left of the frontier, class-match it, then consume it by
@@ -4274,7 +4282,9 @@ class YarrGenerator final : public YarrJITInfo {
             nonGreedyFailuresDecrementIndex.append(atEndOfInput());
             m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index); // the pair's lead unit
             isBMPChar.link(&m_jit);
-        } else {
+        } else
+#endif
+        {
             readCharacter(op.m_checkedOffset - term->inputPosition, character);
 
             matchCharacterClassTermInner(term, nonGreedyFailures, character, scratch);
