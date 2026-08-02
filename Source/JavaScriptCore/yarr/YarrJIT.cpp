@@ -2907,9 +2907,14 @@ class YarrGenerator final : public YarrJITInfo {
                 loadDuplicateNamedGroupSubpatternId(duplicateNamedGroupId, subpatternIdReg);
             }
             loadSubPatternEnd(subpatternIdReg, endIndex);
+            if (m_decodeSurrogatePairs)
+                characterMatchFails.append(m_jit.branch32(MacroAssembler::Above, patternIndex, endIndex));
             m_jit.branch32(MacroAssembler::NotEqual, patternIndex, endIndex).linkTo(loop, &m_jit);
-        } else
+        } else {
+            if (m_decodeSurrogatePairs)
+                characterMatchFails.append(m_jit.branch32(MacroAssembler::Above, patternIndex, subpatternEndAddress(subpatternId)));
             m_jit.branch32(MacroAssembler::NotEqual, patternIndex, subpatternEndAddress(subpatternId)).linkTo(loop, &m_jit);
+        }
     }
 
     void generateBackReference(bool isNamed, size_t opIndex)

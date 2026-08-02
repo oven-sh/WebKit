@@ -84,3 +84,25 @@ shouldBe(execSummary(/(?<=[^a]+?a[^a]+)z/u, "\u{1F600}a\u{1F600}\u{1F600}z"), [7
     shouldBe(m[16], "alert");
     shouldBe(m.filter((x, i) => i > 0 && x !== undefined).length, 1);
 }
+
+{
+    let re = /(?<=(.?))(?<!\1)/su;
+    let subjects = ["\u{10428}", "a\u{10428}", "\u{10428}\u{10428}", "ab", "\uD801", "\uDC28", "xxxx\u{10428}", "x\uDC28x"];
+    for (let n = 0; n < 600; ++n) {
+        let s = subjects[n % subjects.length];
+        for (let i = 0; i < n % 7; ++i)
+            s = "x" + s;
+        for (let k = 0; k <= s.length; ++k) {
+            re.lastIndex = k;
+            re.exec(s);
+        }
+    }
+    let sticky = /(?<=(\P{L}?)\1?)(\1{0,2}\W\1{2}){0,2}(?<!\1{1,2}|.)/uy;
+    for (let n = 0; n < 600; ++n) {
+        let s = subjects[n % subjects.length];
+        for (let k = 0; k <= s.length; ++k) {
+            sticky.lastIndex = k;
+            sticky.exec(s);
+        }
+    }
+}
