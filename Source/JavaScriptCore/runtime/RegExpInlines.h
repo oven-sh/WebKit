@@ -114,6 +114,21 @@ ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, s
 template<Yarr::MatchFrom matchFrom>
 ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
 {
+    if (!eitherUnicode() || s.is8Bit())
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+    if (splitsSurrogatePair(s, startOffset))
+        --startOffset;
+    int result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+    while (result > static_cast<int>(startOffset) && splitsSurrogatePair(s, result)) {
+        startOffset = result + 1;
+        result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+    }
+    return result;
+}
+
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
+{
 #if ENABLE(REGEXP_TRACING)
     m_rtMatchCallCount++;
     m_rtMatchTotalSubjectStringLen += (double)(s.length() - startOffset);
@@ -244,6 +259,21 @@ ALWAYS_INLINE void RegExp::compileIfNecessaryMatchOnly(VM& vm, Yarr::CharSize ch
 
 template<Yarr::MatchFrom matchFrom>
 ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
+{
+    if (!eitherUnicode() || s.is8Bit())
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+    if (splitsSurrogatePair(s, startOffset))
+        --startOffset;
+    MatchResult result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+    while (result && result.start > startOffset && splitsSurrogatePair(s, result.start)) {
+        startOffset = result.start + 1;
+        result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+    }
+    return result;
+}
+
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
 {
 #if ENABLE(REGEXP_TRACING)
     m_rtMatchOnlyCallCount++;

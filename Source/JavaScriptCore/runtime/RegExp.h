@@ -91,6 +91,11 @@ public:
     int matchInline(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, std::span<int> ovector);
     template<Yarr::MatchFrom thread = Yarr::MatchFrom::VMThread>
     MatchResult matchInline(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset);
+
+    static bool splitsSurrogatePair(StringView s, unsigned offset)
+    {
+        return offset && offset < s.length() && U16_IS_TRAIL(s[offset]) && U16_IS_LEAD(s[offset - 1]);
+    }
     
     unsigned numSubpatterns() const { return m_numSubpatterns; }
 
@@ -180,6 +185,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
 
 private:
+    template<Yarr::MatchFrom thread>
+    int matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, std::span<int> ovector);
+    template<Yarr::MatchFrom thread>
+    MatchResult matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset);
+
     friend class RegExpCache;
     RegExp(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreation(VM&);
