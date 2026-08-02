@@ -2415,6 +2415,27 @@ public:
     // SIMD scan, frame-free inlinable groups) beat the rewrites; the transforms
     // pay for themselves only on wide alternations.
     static constexpr size_t alternationFactoringMinRun = 8; // prefix factoring / top-level fold
+    static constexpr size_t alternationWrapMinRunWhenFrameFree = 16;
+
+    static bool alternativeNeedsFrame(const PatternAlternative& alternative)
+    {
+        for (auto& term : alternative.m_terms) {
+            switch (term.type) {
+            case PatternTerm::Type::AssertionBOL:
+            case PatternTerm::Type::AssertionEOL:
+            case PatternTerm::Type::AssertionWordBoundary:
+                continue;
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass:
+                if (term.quantityType == QuantifierType::FixedCount)
+                    continue;
+                return true;
+            default:
+                return true;
+            }
+        }
+        return false;
+    }
     static constexpr size_t factoringBudgetBase = 1 << 16;
     static constexpr size_t factoringBudgetPerTerm = 16;
     size_t m_factoringBudget { 0 };
@@ -2710,6 +2731,13 @@ public:
         size_t repeatedCount = alternatives.size() - firstRepeated;
         if (repeatedCount < alternationFactoringMinRun)
             return;
+        if (repeatedCount < alternationWrapMinRunWhenFrameFree) {
+            bool needsFrame = false;
+            for (size_t i = firstRepeated; i < alternatives.size() && !needsFrame; ++i)
+                needsFrame = alternativeNeedsFrame(*alternatives[i]);
+            if (!needsFrame)
+                return;
+        }
 
         // A DotStarEnclosure records match bounds through the enclosing body
         // alternative; keep such bodies in their existing shape.

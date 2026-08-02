@@ -264,7 +264,7 @@ std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequenc
                 break;
             candidates.map().forEachSetBit([&](unsigned character) {
                 if (!map.testAndSet(character))
-                    frequency += sampler.frequency(character);
+                    frequency += sampler.canResolveCandidateFrequency() ? sampler.frequency(character) : 1;
             });
 
             // An empty union is not searchable -- the caller needs at least one candidate character to
@@ -7334,6 +7334,7 @@ class YarrGenerator final : public YarrJITInfo {
     // First-character dispatch pays for its extra read only from a handful of
     // alternatives up; below that the sequential chain is faster.
     static constexpr size_t alternationDispatchMinAlternatives = 4;
+    static constexpr size_t alternationDispatchMinTotalSize = 12;
 
     DispatchInfo* tryPrepareDispatch(PatternTerm* term, Checked<unsigned> checkedOffset)
     {
@@ -7357,6 +7358,11 @@ class YarrGenerator final : public YarrJITInfo {
         // The first character is only guaranteed inside claimed input when every
         // alternative must consume at least one character.
         if (!disjunction->m_minimumSize)
+            return nullptr;
+        size_t totalMinimumSize = 0;
+        for (auto& alternative : alternatives)
+            totalMinimumSize += alternative->m_minimumSize;
+        if (totalMinimumSize < alternationDispatchMinTotalSize)
             return nullptr;
 
         auto info = makeUniqueRef<DispatchInfo>();
