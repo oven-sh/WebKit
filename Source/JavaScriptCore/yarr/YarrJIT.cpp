@@ -3230,7 +3230,10 @@ class YarrGenerator final : public YarrJITInfo {
                 readCodeUnit(offset, character);
                 defaultMatchTargets.appendFailed(m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::Imm32(U16_TRAIL(firstChar))));
                 readCodeUnit(offset - 1, character);
-                defaultMatchTargets.appendFailed(m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::Imm32(U16_LEAD(firstChar))));
+                if (!matchTargets.hasSucceedTarget() || m_ops[opIndex + 1].m_op == YarrOpCode::Term)
+                    defaultMatchTargets.appendFailed(m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::Imm32(U16_LEAD(firstChar))));
+                else
+                    matchTargets.appendSucceeded(m_jit.branch32(MacroAssembler::Equal, character, MacroAssembler::Imm32(U16_LEAD(firstChar))));
                 return;
             }
 
@@ -3335,6 +3338,11 @@ class YarrGenerator final : public YarrJITInfo {
             opList.removeLast();
 
         RELEASE_ASSERT(!opList.isEmpty());
+
+        YarrOp* lastFusedOp = opList[0];
+        for (YarrOp* fusedOp : opList)
+            lastFusedOp = std::max(lastFusedOp, fusedOp);
+        bool fusedRunEndsAlternative = lastFusedOp[1].m_op != YarrOpCode::Term;
 
         auto checkedOffset = opList[0]->m_checkedOffset;
 
@@ -3459,7 +3467,7 @@ class YarrGenerator final : public YarrJITInfo {
             }
 #endif
 
-            MatchTargets* matchTargetForFinalComparison = (opListIdx + numCharsToCheck >= opList.size()) ? &lastMatchTargets : &defaultMatchTargets;
+            MatchTargets* matchTargetForFinalComparison = (fusedRunEndsAlternative && opListIdx + numCharsToCheck >= opList.size()) ? &lastMatchTargets : &defaultMatchTargets;
 
             if (m_charSize == CharSize::Char8) {
                 auto check1 = [&] (Checked<unsigned> offset, char32_t characters, uint16_t caseMask, MatchTargets& matchTargets) {

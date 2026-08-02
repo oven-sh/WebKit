@@ -27,6 +27,11 @@ shouldBe(execSummary(/y|a[a-z]b/u, "ay\u{1F600}"), [1, "y"]);
 shouldBe(execSummary(/y|a.b/su, "ay\u{1F600}"), [1, "y"]);
 shouldBe(execSummary(/y|a\Sb/u, "ay\u{1F600}"), [1, "y"]);
 shouldBe(execSummary(/y|[a-z][a-z]b/u, "ay\u{1F600}"), [1, "y"]);
+shouldBe(execSummary(/^(?:a\u{1F600}|qa)/u, "azk\u0101"), null);
+shouldBe(execSummary(/^(?:a\u{1F600}c|q)/u, "azkc\u0101"), null);
+shouldBe(execSummary(/^(?:a\u{1F600}c|q)/u, "a\u{1F600}c\u0101"), [0, "a\u{1F600}c"]);
+shouldBe(execSummary(/^(?:ab\u{1F600}cd|abzz)$/u, "ab\u{1F600}cd"), [0, "ab\u{1F600}cd"]);
+shouldBe(execSummary(/(?<=^(?:a\u{1F600}|qa))k/u, "a\u{1F600}k"), [3, "k"]);
 
 shouldBe(execSummary(/(?<=X[^"]*)!/u, "X ab\u{1F600}de!"), [8, "!"]);
 shouldBe(execSummary(/(?<=a[^x]*b[^x]*)!/u, "a\u{1F600}b\u{1F600}c!"), [7, "!"]);
