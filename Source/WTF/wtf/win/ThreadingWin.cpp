@@ -231,9 +231,6 @@ auto Thread::suspend(const ThreadSuspendLocker&) -> Expected<void, PlatformSuspe
     // currentMayBeNull, not currentSingleton: the libpas scavenger calls this while holding
     // the heap lock, and currentSingleton would lazy-allocate a Thread for it.
     RELEASE_ASSERT_WITH_MESSAGE(this != Thread::currentMayBeNull(), "We do not support suspending the current thread itself.");
-    DWORD result = SuspendThread(m_handle);
-    if (result == (DWORD)-1)
-        return makeUnexpected(result);
     // SuspendThread only requests a suspension; on multi-core Windows the target may
     // continue to execute in user mode briefly after SuspendThread returns. Callers that
     // read registers (MachineStackMarker) happen to force a sync via GetThreadContext,
@@ -241,14 +238,32 @@ auto Thread::suspend(const ThreadSuspendLocker&) -> Expected<void, PlatformSuspe
     // pasSuspenderBeginSuspend -- would otherwise decommit TLC pages while the mutator
     // is still writing to them. Force the suspension to complete synchronously here so
     // every Thread::suspend caller can rely on the invariant.
-    CONTEXT ctx;
-    ctx.ContextFlags = CONTEXT_INTEGER;
-    if (!GetThreadContext(m_handle, &ctx)) {
-        DWORD error = GetLastError();
-        ResumeThread(m_handle);
-        return makeUnexpected(error);
+    //
+    // GetThreadContext can fail transiently (the target is in early start, in exit, or in
+    // certain kernel transitions). CoreCLR and Go both retry SuspendThread/GetThreadContext
+    // with a short backoff for exactly this reason. Follow the same pattern here rather
+    // than immediately returning failure, because a failure here causes MachineThreads to
+    // skip scanning this thread's stack for the current GC cycle, dropping its roots.
+    constexpr unsigned maxAttempts = 100;
+    constexpr unsigned spinAttempts = 8;
+    DWORD lastError = 0;
+    for (unsigned attempt = 0; attempt < maxAttempts; ++attempt) {
+        DWORD result = SuspendThread(m_handle);
+        if (result != (DWORD)-1) {
+            CONTEXT ctx;
+            ctx.ContextFlags = CONTEXT_INTEGER;
+            if (GetThreadContext(m_handle, &ctx))
+                return { };
+            lastError = GetLastError();
+            ResumeThread(m_handle);
+        } else
+            lastError = GetLastError();
+        if (attempt < spinAttempts)
+            SwitchToThread();
+        else
+            Sleep(1);
     }
-    return { };
+    return makeUnexpected(lastError);
 }
 
 // During resume, suspend or resume should not be executed from the other threads.

@@ -178,6 +178,16 @@ bool MachineThreads::tryCopyOtherThreadStacks(const AbstractLocker& locker, void
                         WTFReportError(__FILE__, __LINE__, WTF_PRETTY_FUNCTION,
                             "JavaScript garbage collection encountered an invalid thread (err 0x%x): Thread [%d/%d: %p].",
                             result.error(), index, threads.size(), thread.ptr());
+#elif OS(WINDOWS)
+                        // Thread::suspend already retries transient SuspendThread /
+                        // GetThreadContext failures. A thread that has finished didExit() is
+                        // no longer in this set (removal happens under the group lock we hold),
+                        // so any thread we iterate is live at the WTF level. If it still cannot
+                        // be suspended, proceeding would skip scanning its stack for this GC
+                        // cycle, dropping its roots; objects it references could then be swept
+                        // while still live. Crash now with a real signature rather than risk a
+                        // use-after-free several GCs later.
+                        RELEASE_ASSERT_NOT_REACHED(static_cast<uint64_t>(result.error()), index, threads.size());
 #endif
                     }
                 }
