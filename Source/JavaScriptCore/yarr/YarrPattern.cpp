@@ -154,6 +154,17 @@ public:
             m_invertedStrings = true;
         }
 
+        if (m_setOp != CharacterClassSetOp::Default) {
+            Vector<char32_t> matches8;
+            Vector<CharacterRange> ranges8;
+            Vector<char32_t> matches32;
+            Vector<CharacterRange> ranges32;
+            addSortedInverted(0, 0xff, other->m_matches8, other->m_ranges8, matches8, ranges8);
+            addSortedInverted(0x100, UCHAR_MAX_VALUE, other->m_matches32, other->m_ranges32, matches32, ranges32);
+            performSetOpWithMatches(matches8, ranges8, matches32, ranges32);
+            return;
+        }
+
         addSortedInverted(0, 0xff, other->m_matches8, other->m_ranges8, m_matches8, m_ranges8);
         addSortedInverted(0x100, UCHAR_MAX_VALUE, other->m_matches32, other->m_ranges32, m_matches32, m_ranges32);
     }

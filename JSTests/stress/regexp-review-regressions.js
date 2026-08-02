@@ -125,3 +125,16 @@ shouldBe(execSummary(/(?<n>b)a(?<=(?<=\k<n>)a)/, "ba"), [0, "ba", "b"]);
 shouldBe(execSummary(/(?<=\k<n>(?<n>q))x/, "aqx"), null);
 shouldBe(execSummary(/(?<=(?<n>q)\k<n>)x/, "aqx"), [2, "x", "q"]);
 shouldBe(execSummary(/(?:(?<n>a)|(?<n>b))(?<=\k<n>)c/, "bc"), [0, "bc", null, "b"]);
+
+shouldBe(/[\P{Number}&&\P{Alphabetic}]/v.test("A"), false);
+shouldBe(/[\P{Number}&&\P{Alphabetic}]/v.test("1"), false);
+shouldBe(/[\P{Number}&&\P{Alphabetic}]/v.test("!"), true);
+shouldBe(/[\P{Number}&&\P{Alphabetic}]/v.test("\u{1D7D8}"), false);
+shouldBe(/[\P{Number}&&\P{Alphabetic}]/v.test("\u{1F600}"), true);
+shouldBe(/[\p{L}&&\P{Lu}]/v.test("a"), true);
+shouldBe(/[\p{L}&&\P{Lu}]/v.test("A"), false);
+shouldBe(/[\P{Lu}--\P{L}]/v.test("a"), true);
+shouldBe(/[\P{Lu}--\P{L}]/v.test("A"), false);
+shouldBe(/[\P{Lu}--\P{L}]/v.test("1"), false);
+shouldBe(/[^\P{L}&&\P{N}]/v.test("a"), true);
+shouldBe(/[^\P{L}&&\P{N}]/v.test("!"), false);
