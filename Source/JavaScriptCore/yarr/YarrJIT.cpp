@@ -7044,7 +7044,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         // Emit the repeated alternatives.
         size_t firstRepeatedAlternative = currentAlternativeIndex;
-        BodyDispatchInfo* bodyDispatch = tryPrepareBodyDispatch(disjunction, firstRepeatedAlternative);
+        BodyDispatchInfo* bodyDispatch = Options::useRegExpAlternationDispatch() ? tryPrepareBodyDispatch(disjunction, firstRepeatedAlternative) : nullptr;
         if (bodyDispatch)
             dataLogLnIf(Options::verboseRegExpCompilation(), "Body first-character dispatch enabled: ", bodyDispatch->alternativeCount, " alternatives");
 
