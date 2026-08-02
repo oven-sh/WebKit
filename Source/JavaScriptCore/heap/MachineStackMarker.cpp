@@ -118,7 +118,13 @@ static void NODELETE copyMemory(void* dst, const void* src, size_t size)
 // See: https://bugs.webkit.org/show_bug.cgi?id=146297
 void MachineThreads::tryCopyOtherThreadStack(const ThreadSuspendLocker& locker, Thread& thread, void* buffer, size_t capacity, size_t* size)
 {
-    PlatformRegisters registers;
+    // Value-initialize so that any bytes getRegisters() does not populate are zero rather
+    // than uninitialized collector-thread stack. On Windows in particular, PlatformRegisters
+    // is the full CONTEXT struct but only the integer/control portion is requested; the
+    // remainder otherwise carries stale JSCell* from prior SlotVisitor frames and gets
+    // scanned as false roots. This must stay malloc-free (the target thread is suspended),
+    // which value-initialization of an aggregate is.
+    PlatformRegisters registers { };
     size_t registersSize = thread.getRegisters(locker, registers);
 
     // This is a workaround for <rdar://problem/27607384>. libdispatch recycles work
