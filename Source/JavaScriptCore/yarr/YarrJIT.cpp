@@ -6349,7 +6349,7 @@ class YarrGenerator final : public YarrJITInfo {
         // alternatives (its ops are the ParenthesesSubpatternOnce + Nested* set).
         // The sets must be computed before opCompileAlternative reorders terms.
         DispatchInfo* dispatch = nullptr;
-        if (parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternOnceBegin && alternativeBeginOpCode == YarrOpCode::NestedAlternativeBegin)
+        if (parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternOnceBegin && alternativeBeginOpCode == YarrOpCode::NestedAlternativeBegin && Options::useRegExpAlternationDispatch())
             dispatch = tryPrepareDispatch(term, checkedOffset);
         if (Options::verboseRegExpCompilation() && term->parentheses.disjunction->m_alternatives.size() >= alternationDispatchMinAlternatives) {
             dumpFirstCharacterSets(*term->parentheses.disjunction);

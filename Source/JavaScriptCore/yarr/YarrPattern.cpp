@@ -2670,6 +2670,8 @@ public:
     // this) lays out the group like any hand-written one.
     void factorAndWrapAlternatives()
     {
+        if (!Options::useRegExpAlternationFactoring())
+            return;
         factorAlternatives(*m_pattern.m_body);
         wrapAlternativesForDispatch();
     }
