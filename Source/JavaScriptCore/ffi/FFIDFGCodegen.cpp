@@ -29,7 +29,7 @@
 
 #include "DFGSpeculativeJIT.h"
 
-#if ENABLE(DFG_JIT) && USE(JSVALUE64)
+#if ENABLE(DFG_JIT)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -477,6 +477,6 @@ void SpeculativeJIT::compileCallFFI(Node* node)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(DFG_JIT) && USE(JSVALUE64)
+#endif // ENABLE(DFG_JIT)
 
 #endif // USE(BUN_JSC_ADDITIONS)

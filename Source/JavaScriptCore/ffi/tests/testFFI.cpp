@@ -38,7 +38,7 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-#if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && USE(JSVALUE64) && (CPU(X86_64) || CPU(ARM64))
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
 
 #include "CallData.h"
 #include "CallFrameInlines.h"
@@ -2334,7 +2334,7 @@ static int runAll()
 static int runAll()
 {
     JSC::initialize();
-    dataLogLn("testFFI: bun:ffi is not supported in this configuration (requires USE(BUN_JSC_ADDITIONS), ENABLE(JIT), USE(JSVALUE64), x86-64 or arm64).");
+    dataLogLn("testFFI: bun:ffi is not supported in this configuration (requires USE(BUN_JSC_ADDITIONS), ENABLE(JIT), x86-64 or arm64).");
     return 0;
 }
 
@@ -2342,7 +2342,7 @@ static int runAll()
 
 int main(int argc, char** argv)
 {
-#if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && USE(JSVALUE64) && (CPU(X86_64) || CPU(ARM64))
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
     if (argc == 2)
         s_filter = argv[1];
     else if (argc > 2) {

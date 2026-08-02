@@ -111,7 +111,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include "WasmDebugServer.h"
 #endif
 
-#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+#if USE(BUN_JSC_ADDITIONS)
 #include "BunFFI.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
@@ -2285,7 +2285,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallFromCPP);
 static JSC_DECLARE_HOST_FUNCTION(functionCachedCallFromCPP);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpLineBreakData);
 static JSC_DECLARE_HOST_FUNCTION(functionWeakCreate);
-#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+#if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -4534,7 +4534,7 @@ JSC_DEFINE_HOST_FUNCTION(functionWeakCreate, (JSGlobalObject* globalObject, Call
     return JSValue::encode(jsUndefined());
 }
 
-#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+#if USE(BUN_JSC_ADDITIONS)
 
 static bool dollarVMFFIJITIsUnavailable()
 {
@@ -4945,7 +4945,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject
     return JSValue::encode(counts);
 }
 
-#endif // USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+#endif // USE(BUN_JSC_ADDITIONS)
 
 constexpr unsigned jsDollarVMPropertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
 
@@ -5165,7 +5165,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "dumpLineBreakData"_s, functionDumpLineBreakData, 0);
     addFunction(vm, alwaysAllow, "weakCreate"_s, functionWeakCreate, 0);
 
-#if USE(BUN_JSC_ADDITIONS) && USE(JSVALUE64)
+#if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);

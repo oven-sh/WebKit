@@ -1722,7 +1722,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/StringObjectInlines.h
     runtime/StringPrototype.h
     runtime/StringPrototypeInlines.h
-    runtime/StringRecursionChecker.h
     runtime/StringReplaceCache.h
     runtime/StringReplaceCacheInlines.h
     runtime/StringSplitCache.h

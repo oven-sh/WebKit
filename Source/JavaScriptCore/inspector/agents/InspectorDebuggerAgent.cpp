@@ -97,6 +97,10 @@ static Protocol::Debugger::ScriptType scriptTypeForScript(const JSC::Debugger::S
 
     switch (script.sourceProvider->sourceType()) {
     case JSC::SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+    case JSC::SourceProviderSourceType::BunTranspiledModule:
+    case JSC::SourceProviderSourceType::Synthetic:
+#endif
         return Protocol::Debugger::ScriptType::Module;
     case JSC::SourceProviderSourceType::WebAssembly:
         return Protocol::Debugger::ScriptType::WebAssembly;
