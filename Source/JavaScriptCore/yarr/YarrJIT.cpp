@@ -3408,6 +3408,11 @@ class YarrGenerator final : public YarrJITInfo {
                 startPosition -= negativeOffset;
             }
 
+#if ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
+            if (startPosition)
+                m_useFirstNonBMPCharacterOptimization = false;
+#endif
+
             ASSERT(numCharsToCheck == 1 || numCharsToCheck == 2 || numCharsToCheck == 4 || numCharsToCheck == 8);
 
             auto calcShiftAmount = [&] (unsigned positionInLoad) {

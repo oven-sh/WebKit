@@ -23,6 +23,10 @@ shouldBe("x\u{1F600} y\u{1F600} z-".match(/\p{Extended_Pictographic}|[a-z]-/gu),
 shouldBe(execSummary(/\u{1F600}|k_/iu, "a\u{1F600}"), [1, "\u{1F600}"]);
 shouldBe(execSummary(/\u{1F600}|[ab]x/u, "c\u{1F600}"), [1, "\u{1F600}"]);
 shouldBe(execSummary(/\u{1F600}|-?a/u, "-\u{1F600}"), [1, "\u{1F600}"]);
+shouldBe(execSummary(/y|a[a-z]b/u, "ay\u{1F600}"), [1, "y"]);
+shouldBe(execSummary(/y|a.b/su, "ay\u{1F600}"), [1, "y"]);
+shouldBe(execSummary(/y|a\Sb/u, "ay\u{1F600}"), [1, "y"]);
+shouldBe(execSummary(/y|[a-z][a-z]b/u, "ay\u{1F600}"), [1, "y"]);
 
 shouldBe(execSummary(/(?<=X[^"]*)!/u, "X ab\u{1F600}de!"), [8, "!"]);
 shouldBe(execSummary(/(?<=a[^x]*b[^x]*)!/u, "a\u{1F600}b\u{1F600}c!"), [7, "!"]);
