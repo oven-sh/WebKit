@@ -260,8 +260,24 @@ void Thread::resume(const ThreadSuspendLocker&)
 size_t Thread::getRegisters(const ThreadSuspendLocker&, PlatformRegisters& registers)
 {
     registers.ContextFlags = CONTEXT_INTEGER | CONTEXT_CONTROL;
-    GetThreadContext(m_handle, &registers);
+    if (!GetThreadContext(m_handle, &registers)) [[unlikely]] {
+        // On failure the CONTEXT (including the stack pointer) is undefined; the caller
+        // would compute a bogus stack range and OOM in MachineThreads::growBuffer. Crash
+        // with the Win32 error instead of wandering off into a huge allocation.
+        RELEASE_ASSERT_NOT_REACHED(static_cast<uint64_t>(GetLastError()));
+    }
+    // We only requested CONTEXT_INTEGER | CONTEXT_CONTROL, so only that prefix of CONTEXT
+    // is populated. Return just that range so the conservative root scan does not copy the
+    // remainder of the struct (which the caller zero-initializes; see MachineStackMarker).
+#if CPU(X86_64)
+    static_assert(offsetof(CONTEXT, Rax) < offsetof(CONTEXT, Rsp) && offsetof(CONTEXT, Rsp) < offsetof(CONTEXT, Rip));
+    return offsetof(CONTEXT, Rip) + sizeof(registers.Rip);
+#elif CPU(ARM64)
+    static_assert(offsetof(CONTEXT, Sp) < offsetof(CONTEXT, Pc));
+    return offsetof(CONTEXT, Pc) + sizeof(registers.Pc);
+#else
     return sizeof(CONTEXT);
+#endif
 }
 
 void Thread::barrierInstructionCache()
