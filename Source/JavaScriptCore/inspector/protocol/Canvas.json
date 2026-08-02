@@ -11,7 +11,6 @@
         },
         {
             "id": "ProgramId",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
             "type": "string",
             "description": "Unique shader program identifier."
         },
@@ -27,19 +26,18 @@
                 "canvas-2d", "offscreen-canvas-2d",
                 "bitmaprenderer", "offscreen-bitmaprenderer",
                 "webgl", "offscreen-webgl",
-                "webgl2", "offscreen-webgl2"
+                "webgl2", "offscreen-webgl2",
+                "webgpu"
             ],
             "description": "The type of rendering context backing the canvas element."
         },
         {
             "id": "ProgramType",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
             "type": "string",
-            "enum": ["compute", "render"]
+            "enum": ["compute", "render", "vertex"]
         },
         {
             "id": "ShaderType",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
             "type": "string",
             "enum": ["compute", "fragment", "vertex"]
         },
@@ -68,24 +66,25 @@
             "properties": [
                 { "name": "canvasId", "$ref": "CanvasId", "description": "Canvas identifier." },
                 { "name": "contextType", "$ref": "ContextType", "description": "The type of rendering context backing the canvas." },
-                { "name": "width", "type": "number", "description": "Width of the canvas in pixels." },
-                { "name": "height", "type": "number", "description": "Height of the canvas in pixels." },
+                { "name": "width", "type": "number", "optional": true, "description": "Width of the canvas in pixels." },
+                { "name": "height", "type": "number", "optional": true, "description": "Height of the canvas in pixels." },
                 { "name": "nodeId", "$ref": "DOM.NodeId", "optional": true, "description": "The corresponding DOM node id." },
                 { "name": "cssCanvasName", "type": "string", "optional": true, "description": "The CSS canvas identifier, for canvases created with <code>document.getCSSCanvasContext</code>." },
                 { "name": "contextAttributes", "$ref": "ContextAttributes", "optional": true, "description": "Context attributes for rendering contexts." },
+                { "name": "features", "type": "array", "items": { "type": "string" }, "optional": true, "description": "Enabled WebGPU device features." },
                 { "name": "memoryCost", "type": "number", "optional": true, "description": "Memory usage of the canvas in bytes." },
                 { "name": "stackTrace", "$ref": "Console.StackTrace", "optional": true, "description": "Backtrace that was captured when this canvas context was created." }
             ]
         },
         {
             "id": "ShaderProgram",
-            "description": "Information about a WebGL/WebGL2 shader program.",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
+            "description": "Information about a WebGL/WebGL2 shader program or WebGPU shader pipeline.",
             "type": "object",
             "properties": [
                 { "name": "programId", "$ref": "ProgramId" },
                 { "name": "programType", "$ref": "ProgramType" },
-                { "name": "canvasId", "$ref": "CanvasId"}
+                { "name": "canvasId", "$ref": "CanvasId" },
+                { "name": "sharesVertexFragmentShader", "type": "boolean", "optional": true, "description": "Indicates whether the vertex and fragment shader modules are the same object for a WebGPU render pipeline." }
             ]
         }
     ],
@@ -167,7 +166,6 @@
         {
             "name": "requestShaderSource",
             "description": "Requests the source of the shader of the given type from the program with the given id.",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
             "parameters": [
                 { "name": "programId", "$ref": "ProgramId" },
                 { "name": "shaderType", "$ref": "ShaderType" }
@@ -189,7 +187,6 @@
         {
             "name": "setShaderProgramDisabled",
             "description": "Enable/disable the visibility of the given shader program.",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
             "parameters": [
                 { "name": "programId", "$ref": "ProgramId" },
                 { "name": "disabled", "type": "boolean" }
@@ -235,6 +232,7 @@
         },
         {
             "name": "extensionEnabled",
+            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
             "parameters": [
                 { "name": "canvasId", "$ref": "CanvasId" },
                 { "name": "extension", "type": "string", "description": "Name of the extension that was enabled." }
@@ -271,14 +269,12 @@
         },
         {
             "name": "programCreated",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
             "parameters": [
                 { "name": "shaderProgram", "$ref": "ShaderProgram" }
             ]
         },
         {
             "name": "programDeleted",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
             "parameters": [
                 { "name": "programId", "$ref": "ProgramId" }
             ]

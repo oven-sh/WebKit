@@ -41,6 +41,7 @@
 #include "JITScannable.h"
 #include "JumpTable.h"
 #include "MethodOfGettingAValueProfile.h"
+#include <wtf/BitSet.h>
 #include <wtf/BitVector.h>
 #include <wtf/GenericHashKey.h>
 #include <wtf/HashMap.h>
@@ -58,6 +59,9 @@ namespace JSC {
 class CodeBlock;
 class CallFrame;
 class IRDumpDebugInfo;
+class RegExp;
+
+enum class FirstCharacterFilterPosition : uint8_t;
 
 namespace DFG {
 
@@ -1092,6 +1096,9 @@ public:
     DesiredIdentifiers& identifiers() LIFETIME_BOUND { return m_plan.identifiers(); }
     DesiredWatchpoints& watchpoints() LIFETIME_BOUND { return m_plan.watchpoints(); }
 
+    const WTF::BitSet<256>* tryGetConstantRegExpFirstCharacterBitmap(Node*, FirstCharacterFilterPosition);
+    const WTF::BitSet<256>* regExpFirstCharacterBitmap(RegExp*, FirstCharacterFilterPosition);
+
     // Returns false if the key is already invalid or unwatchable. If this is a Presence condition,
     // this also makes it cheap to query if the condition holds. Also makes sure that the GC knows
     // what's going on.
@@ -1471,11 +1478,6 @@ public:
 
     UncheckedKeyHashSet<String> m_localStrings;
     UncheckedKeyHashSet<String> m_copiedStrings;
-
-#if USE(JSVALUE32_64)
-    UncheckedKeyHashMap<GenericHashKey<int64_t>, double*> m_doubleConstantsMap;
-    Bag<double> m_doubleConstants;
-#endif
 
     Vector<LinkerIR::Value> m_constantPool;
     UncheckedKeyHashMap<LinkerIR::Value, LinkerIR::Constant, LinkerIR::ValueHash, LinkerIR::ValueTraits> m_constantPoolMap;

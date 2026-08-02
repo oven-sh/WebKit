@@ -1160,10 +1160,22 @@ void InspectorInstrumentation::consoleStartRecordingCanvasImpl(InstrumentingAgen
         canvasAgent->consoleStartRecordingCanvas(context, exec, options);
 }
 
+void InspectorInstrumentation::consoleStartRecordingCanvasImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device, JSC::JSGlobalObject& exec, JSC::JSObject* options)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->consoleStartRecordingCanvas(device, exec, options);
+}
+
 void InspectorInstrumentation::consoleStopRecordingCanvasImpl(InstrumentingAgents& instrumentingAgents, CanvasRenderingContext& context)
 {
     if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
         canvasAgent->consoleStopRecordingCanvas(context);
+}
+
+void InspectorInstrumentation::consoleStopRecordingCanvasImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->consoleStopRecordingCanvas(device);
 }
 
 void InspectorInstrumentation::didDispatchDOMStorageEventImpl(InstrumentingAgents& instrumentingAgents, const String& key, const String& oldValue, const String& newValue, StorageType storageType, const SecurityOrigin& securityOrigin)
@@ -1309,6 +1321,55 @@ bool InspectorInstrumentation::isWebGLProgramHighlightedImpl(InstrumentingAgents
     return false;
 }
 #endif
+
+void InspectorInstrumentation::didCreateWebGPUDeviceImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->didCreateWebGPUDevice(device);
+}
+
+void InspectorInstrumentation::willDestroyWebGPUDeviceImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->willDestroyWebGPUDevice(device);
+}
+
+void InspectorInstrumentation::didChangeGPUDeviceClientNodesImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device)
+{
+    if (CheckedPtr pageCanvasAgent = instrumentingAgents.enabledPageCanvasAgent())
+        pageCanvasAgent->didChangeGPUDeviceClientNodes(device);
+}
+
+void InspectorInstrumentation::didCreateWebGPUComputePipelineImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device, GPUComputePipeline& pipeline)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->didCreateWebGPUComputePipeline(device, pipeline);
+}
+
+void InspectorInstrumentation::willDestroyWebGPUComputePipelineImpl(InstrumentingAgents& instrumentingAgents, GPUComputePipeline& pipeline)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->willDestroyWebGPUComputePipeline(pipeline);
+}
+
+void InspectorInstrumentation::didCreateWebGPURenderPipelineImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device, GPURenderPipeline& pipeline)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->didCreateWebGPURenderPipeline(device, pipeline);
+}
+
+void InspectorInstrumentation::willDestroyWebGPURenderPipelineImpl(InstrumentingAgents& instrumentingAgents, GPURenderPipeline& pipeline)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->willDestroyWebGPURenderPipeline(pipeline);
+}
+
+bool InspectorInstrumentation::isWebGPURenderPipelineDisabledImpl(InstrumentingAgents& instrumentingAgents, GPURenderPipeline& pipeline)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        return canvasAgent->isWebGPURenderPipelineDisabled(pipeline);
+    return false;
+}
 
 void InspectorInstrumentation::willApplyKeyframeEffectImpl(InstrumentingAgents& instrumentingAgents, const Styleable& target, KeyframeEffect& effect, const ComputedEffectTiming& computedTiming)
 {

@@ -73,7 +73,7 @@ class CMakeParser:
             "include/dawn/webgpu.h"                           -> "include/dawn/webgpu.h"
             "generator/dawn_json_generator.py"                -> "generator/dawn_json_generator.py"
         """
-        path = self.expand_string(path)
+        path = self.expand_string(path).replace("\\", "/")
         # Handle generator and other paths starting with variables or specific directories
         if path.startswith("${Dawn_SOURCE_DIR}/"):
             path = path[len("${Dawn_SOURCE_DIR}/"):]
@@ -93,7 +93,7 @@ class CMakeParser:
 
         if not path.startswith("include/") and not path.startswith("src/") and not path.startswith("generator/"):
             path = os.path.join(self.rel_path, path)
-        return os.path.normpath(path)
+        return os.path.normpath(path).replace("\\", "/")
 
     def _find_closing_paren(self, content, start_pos):
         """Finds the index of the matching closing parenthesis, handling nested ones."""
@@ -159,8 +159,14 @@ class CMakeParser:
             # Split outputs on any combination of whitespace or semicolons
             outputs = re.split(r'[\s;]+', res.stdout.strip())
             return [os.path.normpath(o) for o in outputs if o]
-        except Exception:
-            return []
+        except subprocess.CalledProcessError as e:
+            msg = (f"Error running generator {script}:\n"
+                   f"Command: {' '.join(cmd)}\n"
+                   f"Stderr: {e.stderr}\n"
+                   f"Stdout: {e.stdout}")
+            raise RuntimeError(msg) from e
+        except Exception as e:
+            raise RuntimeError(f"Unexpected error running generator {script}: {e}") from e
 
     def handle_command(self, name, args):
         """Dispatches CMake commands to their respective specialized handler methods."""
@@ -241,6 +247,12 @@ class CMakeParser:
                 "--dawn-json", "src/dawn/dawn.json",
                 "--wire-json", "src/dawn/dawn_wire.json",
             ])
+            # Once https://crbug.com/dawn/878ee25c690101566294e1ddcfd34a152adc9dc2 lands
+            # we no longer need to support Dawn versions older than the commit above,
+            # we can make this mandatory and remove the os.path.exists check.
+            native_json = "src/dawn/dawn_native.json"
+            if os.path.exists(os.path.join(self.dawn_root, native_json)):
+                extra_params.extend(["--native-json", native_json])
 
         i = 0
         while i < len(args):
@@ -369,7 +381,10 @@ class CMakeParser:
         # 1. Android Specifics (including Android Vulkan/OpenGL files)
         if any(kw in lower_path for kw in ["android", "ahb", "ahardwarebuffer"]):
             backend_suffix = "_ANDROID"
-        # 2. Core Backends (Vulkan / OpenGL / Metal / D3D / Null / WebGPU)
+        # 2. Unix / POSIX specific Vulkan/System files (FD, DmaBuf, OpaqueFD, Zircon)
+        elif any(kw in lower_path for kw in ["dmabuf", "opaque_fd", "zircon"]) or lower_path.endswith("fd.cpp") or lower_path.endswith("fd.h"):
+            backend_suffix = "_UNIX"
+        # 3. Core Backends (Vulkan / OpenGL / Metal / D3D / Null / WebGPU)
         elif "/vulkan/" in cleaned:
             backend_suffix = "_VULKAN"
         elif "/metal/" in cleaned or "_metal" in lower_path:

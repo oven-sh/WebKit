@@ -219,9 +219,8 @@ my $nativeFunctionParametersScript = File::Spec->catfile($scriptsRoot, 'update-N
 my $nativeFunctionParametersOverrides = File::Spec->catfile($uiRoot, 'Models', 'NativeFunctionParameters-overrides.json');
 my $generatedNativeFunctionParameters = File::Spec->catfile($derivedModelsDir, 'NativeFunctionParameters.js');
 
-my $nativeFunctionParametersJSON = $ENV{'INSPECTOR_NATIVE_FUNCTION_PARAMETERS_JSON'};
-$nativeFunctionParametersJSON = File::Spec->catfile($ENV{'BUILT_PRODUCTS_DIR'}, 'DerivedSources', 'WebCore', 'InspectorNativeFunctionParameters.json') if !$nativeFunctionParametersJSON && defined $ENV{'BUILT_PRODUCTS_DIR'};
-$nativeFunctionParametersJSON = '' unless defined $nativeFunctionParametersJSON;
+my $nativeFunctionParametersJSON = '';
+$nativeFunctionParametersJSON = File::Spec->catfile($ENV{'WEBCORE_PRIVATE_HEADERS_DIR'}, 'InspectorNativeFunctionParameters.json') if defined $ENV{'WEBCORE_PRIVATE_HEADERS_DIR'};
 
 make_path($derivedModelsDir);
 system($python, $nativeFunctionParametersScript, '--overrides', $nativeFunctionParametersOverrides, '--output', $generatedNativeFunctionParameters, '--json', $nativeFunctionParametersJSON) == 0 or die "Generating NativeFunctionParameters.js failed: $!";

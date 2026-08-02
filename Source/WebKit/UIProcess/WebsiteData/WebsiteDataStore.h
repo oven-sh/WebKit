@@ -27,6 +27,7 @@
 
 #include "EnhancedSecurity.h"
 #include "FrameInfoData.h"
+#include "IsolatedSiteStore.h"
 #include "NetworkActivityTracker.h"
 #include "NetworkSessionCreationParameters.h"
 #include "WebDeviceOrientationAndMotionAccessController.h"
@@ -231,6 +232,8 @@ public:
     void dumpResourceLoadStatistics(CompletionHandler<void(const String&)>&&);
     void logTestingEvent(const String&);
     void didHaveUserInteractionForSiteIsolation(const URL&);
+    IsolatedSiteStore& isolatedSiteStore() { return m_isolatedSiteStore; }
+    bool isIsolatedSiteForTesting(const URL&) const;
     void logUserInteraction(const URL&, CompletionHandler<void()>&&);
     void getAllStorageAccessEntries(WebPageProxyIdentifier, CompletionHandler<void(Vector<String>&& domains)>&&);
     void hasHadUserInteraction(const URL&, CompletionHandler<void(bool)>&&);
@@ -321,10 +324,6 @@ public:
     void flushCookies(CompletionHandler<void()>&&);
 
     void dispatchOnQueue(Function<void()>&&);
-
-#if PLATFORM(COCOA)
-    static std::optional<bool> useNetworkLoader();
-#endif
 
 #if USE(CURL)
     void setNetworkProxySettings(WebCore::CurlProxySettings&&);
@@ -529,7 +528,7 @@ public:
     void isStorageSuspendedForTesting(CompletionHandler<void(bool)>&&) const;
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
-    void installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, CompletionHandler<void()>&&);
+    void installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, std::span<const uint8_t> replacementData, CompletionHandler<void()>&&);
 #endif
 
     void trackEnhancedSecurityForDomain(WebCore::RegistrableDomain&&, EnhancedSecurity);
@@ -626,6 +625,7 @@ private:
     std::optional<HashSet<WebCore::RegistrableDomain>> m_domainsWithUserInteractions;
     Vector<WebCore::RegistrableDomain> m_pendingDomainsWithUserInteractions;
     Vector<CompletionHandler<void(const HashSet<WebCore::RegistrableDomain>&)>> m_domainsWithUserInteractionsCompletionHandler;
+    IsolatedSiteStore m_isolatedSiteStore;
 
     bool m_trackingPreventionDebugMode { false };
     enum class TrackingPreventionEnabled : uint8_t { Default, No, Yes };

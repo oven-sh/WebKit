@@ -7001,6 +7001,8 @@ webkit.org/b/257182 imported/w3c/web-platform-tests/css/css-text/white-space/tra
 # Layout tests that fail for iOS only for css-highlights
 imported/w3c/web-platform-tests/css/css-highlight-api/painting/custom-highlight-painting-iframe-003.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-highlight-api/painting/custom-highlight-painting-iframe-004.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-highlight-api/painting/custom-highlight-painting-vertical-writing-mode-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-highlight-api/painting/custom-highlight-painting-020.html [ ImageOnlyFailure ]
 
 webkit.org/b/264063 platform/ios/mediastream/video-muted-in-background-tab.html [ Skip ]
 
@@ -7418,10 +7420,12 @@ webkit.org/b/275963 [ x86_64 ] svg/custom/use-on-symbol-inside-pattern.svg [ Fai
 # rdar://130594018 (REGRESSION (278344@main?): [ iOS 18 Release ] 2 http/tests/xmlhttprequest/* layout tests are constantly failing.)
 [ Release ] http/tests/xmlhttprequest/resetting-timeout-to-zero.html [ Failure ]
 [ Release ] http/tests/xmlhttprequest/timeout-greater-than-default-network-timeout.html [ Failure ]
-imported/w3c/web-platform-tests/xhr/access-control-basic-post-success-no-content-type.htm [ Failure ]
 imported/w3c/web-platform-tests/xhr/content-type-unmodified.any.worker.html [ Failure ]
 imported/w3c/web-platform-tests/xhr/request-content-length.any.html [ Failure ]
 imported/w3c/web-platform-tests/xhr/request-content-length.any.worker.html [ Failure ]
+
+# rdar://180452179
+imported/w3c/web-platform-tests/xhr/access-control-basic-post-success-no-content-type.htm [ Failure ]
 
 # rdar://127374397 (REGRESSION: [ iOS 18 ]  18X imported/w3c/web-platform-tests/css/css-counter-styles  test are consistent image failures)
 imported/w3c/web-platform-tests/css/css-counter-styles/japanese-formal/css3-counter-styles-050.html [ ImageOnlyFailure ]
@@ -8054,8 +8058,6 @@ fast/forms/input-password-logical-widths.html [ Failure ]
 # <rdar://160314418> Tap-and-half selection gesture is broken in WebKit
 editing/selection/ios/select-text-using-tap-and-half.html [ Skip ]
 
-webkit.org/b/296338 http/tests/site-isolation/fullscreen.html [ Pass Failure ]
-
 webkit.org/b/310677 [ Release ] compositing/iframes/overlapped-nested-iframes.html [ Pass Failure ]
 
 # webkit.org/b/296017 7x imported/w3c/web-platform-tests/css/css-shapes/shape-outside/shape-image/shape-image (layout-tests) are flakey image failures
@@ -8485,8 +8487,6 @@ webkit.org/b/316218 fast/scrolling/ios/scroll-into-view-smooth-after-snap.html [
 
 webkit.org/b/316228 fast/dom/Orientation/no-orientation-change-event-when-unparenting-view.html [ Pass Timeout Failure ]
 
-webkit.org/b/316118 imported/w3c/web-platform-tests/url/IdnaTestV2.any.html [ Failure ]
-
 fast/events/pointerleave-after-ancestor-removal.html [ Skip ]
 
 webkit.org/b/316446 imported/w3c/web-platform-tests/css/css-borders/border-width-rounding.tentative.html [ Failure ]
@@ -8604,6 +8604,7 @@ fast/forms/ios/zoom-to-reveal-focused-element-after-delay.html [ Timeout ] # web
 editing/caret/ios/place-caret-after-autocorrected-word.html [ Failure ] # webkit.org/b/318253
 editing/input/ios/typing-with-inline-predictions.html [ Pass Timeout ] # webkit.org/b/318254
 imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Failure ] # webkit.org/b/318255
+imported/w3c/web-platform-tests/content-security-policy/inheritance/blob-url-inherits-from-initiator.sub.html [ Skip ] # webkit.org/b/320543
 http/wpt/identity/formats/ISO18013/mixed-requests.https.html [ Failure ] # webkit.org/b/318256
 imported/w3c/web-platform-tests/html/semantics/forms/the-input-element/number-constraint-validation.html [ Pass Failure ] # webkit.org/b/318257
 
@@ -8628,3 +8629,60 @@ webkit.org/b/318157 [ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-c
 webkit.org/b/318375 imported/w3c/web-platform-tests/css/css-anchor-position/scroll-to-anchored-fixed-001.html [ Pass ImageOnlyFailure ]
 
 webkit.org/b/318258 [ Debug ] ipc/fecolormatrix-type-values-mismatch-crash.html [ Failure ]
+
+# rdar://179251021
+imported/w3c/web-platform-tests/xhr/send-entity-body-document.htm [ Pass Failure ]
+
+# rdar://178007417
+imported/w3c/web-platform-tests/trusted-types/should-sink-type-mismatch-violation-be-blocked-by-csp-001.html [ Pass Failure ]
+imported/w3c/web-platform-tests/trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-002.html [ Pass Failure ]
+
+# rdar://172426568
+imported/w3c/web-platform-tests/websockets/constructor/013.html?default [ Pass Failure ]
+imported/w3c/web-platform-tests/websockets/constructor/013.html?wss [ Pass Failure ]
+http/tests/websocket/tests/hybi/websocket-blocked-sending-cookie-as-third-party-after-ws-redirect.html [ Pass Failure ]
+
+# rdar://172401706
+imported/w3c/web-platform-tests/service-workers/service-worker/navigation-preload/broken-chunked-encoding.https.html [ Pass Failure ]
+
+imported/w3c/web-platform-tests/storage-access-api/requestStorageAccess-web-socket.sub.https.window.html [ Pass Failure ]
+
+# Need to investigate since it is subpixel difference from 0.01% to 0.04%
+imported/w3c/web-platform-tests/css/CSS2/css1/c412-blockw-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c412-hz-box-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c42-ibx-pad-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c44-ln-box-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c44-ln-box-001.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c44-ln-box-002.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c44-ln-box-003.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c534-bgreps-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c534-bgreps-001.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c534-bgreps-002.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c534-bgreps-003.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c534-bgreps-004.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c534-bgreps-005.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c544-valgn-001.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c545-txttrans-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c548-ln-ht-001.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c548-ln-ht-002.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c548-ln-ht-003.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c548-ln-ht-004.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5502-imrgn-r-005.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5502-imrgn-r-006.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5504-imrgn-l-002.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5504-imrgn-l-005.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5504-imrgn-l-006.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5505-imrgn-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5507-ipadn-r-004.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5509-ipadn-l-002.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5509-ipadn-l-004.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5510-ipadn-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5512-brdr-rw-001.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5514-brdr-lw-001.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5525-fltblck-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5525-fltinln-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5525-fltmrgn-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5525-fltwidth-003.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5526-fltclr-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c562-white-sp-000.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c62-percent-000.xht [ ImageOnlyFailure ]

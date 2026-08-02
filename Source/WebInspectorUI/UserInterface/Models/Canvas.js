@@ -25,7 +25,7 @@
 
 WI.Canvas = class Canvas extends WI.Object
 {
-    constructor(target, identifier, contextType, size, {domNode, cssCanvasName, contextAttributes, memoryCost, stackTrace} = {})
+    constructor(target, identifier, contextType, size, {domNode, cssCanvasName, contextAttributes, features, memoryCost, stackTrace} = {})
     {
         super();
 
@@ -42,6 +42,7 @@ WI.Canvas = class Canvas extends WI.Object
         this._domNode = domNode || null;
         this._cssCanvasName = cssCanvasName || "";
         this._contextAttributes = contextAttributes || {};
+        this._features = features || [];
         this._extensions = new Set;
         this._memoryCost = memoryCost || NaN;
         this._stackTrace = stackTrace || null;
@@ -105,9 +106,6 @@ WI.Canvas = class Canvas extends WI.Object
         case InspectorBackend.Enum.Canvas.ContextType.WebGPU:
             contextType = WI.Canvas.ContextType.WebGPU;
             break;
-        case InspectorBackend.Enum.Canvas.ContextType.WebMetal:
-            contextType = WI.Canvas.ContextType.WebMetal;
-            break;
         default:
             console.error("Invalid canvas context type", payload.contextType);
         }
@@ -124,6 +122,7 @@ WI.Canvas = class Canvas extends WI.Object
             domNode: payload.nodeId ? WI.domManager.nodeForId(payload.nodeId) : null,
             cssCanvasName: payload.cssCanvasName,
             contextAttributes: payload.contextAttributes,
+            features: payload.features,
             memoryCost: payload.memoryCost,
             stackTrace: WI.StackTrace.fromPayload(target, payload.stackTrace),
         });
@@ -150,8 +149,6 @@ WI.Canvas = class Canvas extends WI.Object
             return WI.UIString("WebGL2 (Offscreen)", "WebGL2 @ Offscreen Canvas Context Type", "WebGL2 is a type of rendering context associated with a OffscreenCanvas.");
         case WI.Canvas.ContextType.WebGPU:
             return WI.UIString("WebGPU", "WebGPU @ Canvas Context Type", "WebGPU is a type of rendering context associated with a <canvas> element.");
-        case WI.Canvas.ContextType.WebMetal:
-            return WI.UIString("WebMetal", "WebMetal @ Canvas Context Type", "WebMetal is a type of rendering context associated with a <canvas> element.");
         }
 
         console.assert(false, "Unknown canvas context type", contextType);
@@ -181,16 +178,6 @@ WI.Canvas = class Canvas extends WI.Object
         Canvas._nextDeviceUniqueDisplayNameNumber = 1;
     }
 
-    static supportsRequestContentForContextType(contextType)
-    {
-        switch (contextType) {
-        case Canvas.ContextType.WebGPU:
-        case Canvas.ContextType.WebMetal:
-            return false;
-        }
-        return true;
-    }
-
     // Public
 
     get target() { return this._target; }
@@ -200,34 +187,13 @@ WI.Canvas = class Canvas extends WI.Object
     get memoryCost() { return this._memoryCost; }
     get cssCanvasName() { return this._cssCanvasName; }
     get contextAttributes() { return this._contextAttributes; }
+    get features() { return this._features; }
     get extensions() { return this._extensions; }
     get stackTrace() { return this._stackTrace; }
     get shaderProgramCollection() { return this._shaderProgramCollection; }
     get recordingCollection() { return this._recordingCollection; }
     get recordingFrameCount() { return this._recordingFrames.length; }
     get recordingBufferUsed() { return this._recordingBufferUsed; }
-
-    get supportsRecording()
-    {
-        switch (this._contextType) {
-        case WI.Canvas.ContextType.Canvas2D:
-        case WI.Canvas.ContextType.OffscreenCanvas2D:
-        case WI.Canvas.ContextType.BitmapRenderer:
-        case WI.Canvas.ContextType.OffscreenBitmapRenderer:
-        case WI.Canvas.ContextType.WebGL:
-        case WI.Canvas.ContextType.OffscreenWebGL:
-        case WI.Canvas.ContextType.WebGL2:
-        case WI.Canvas.ContextType.OffscreenWebGL2:
-            return true;
-
-        case WI.Canvas.ContextType.WebGPU:
-        case WI.Canvas.ContextType.WebMetal:
-            return false;
-        }
-
-        console.assert(false, "not reached");
-        return false;
-    }
 
     get recordingActive()
     {
@@ -308,9 +274,6 @@ WI.Canvas = class Canvas extends WI.Object
 
     requestContent()
     {
-        if (!Canvas.supportsRequestContentForContextType(this._contextType))
-            return Promise.resolve(null);
-
         return this._target.CanvasAgent.requestContent(this._identifier).then((result) => result.content).catch((error) => console.error(error));
     }
 
@@ -446,7 +409,8 @@ WI.Canvas = class Canvas extends WI.Object
     {
         // Called from WI.CanvasManager.
 
-        this._recordingFrames.pushAll(framesPayload.map(WI.RecordingFrame.fromPayload));
+        let version = InspectorBackend.getVersion("Recording");
+        this._recordingFrames.pushAll(framesPayload.map((frame) => WI.RecordingFrame.fromPayload(frame, version)));
 
         this._recordingBufferUsed = bufferUsed;
 
@@ -522,7 +486,6 @@ WI.Canvas.ContextType = {
     WebGL2: "webgl2",
     OffscreenWebGL2: "offscreen-webgl2",
     WebGPU: "webgpu",
-    WebMetal: "webmetal",
 };
 
 WI.Canvas.ColorSpace = {

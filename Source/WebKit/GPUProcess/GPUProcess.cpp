@@ -124,7 +124,7 @@ void GPUProcess::createGPUConnectionToWebProcess(WebCore::ProcessIdentifier iden
 #if ENABLE(MEDIA_STREAM)
     // FIXME: We should refactor code to go from WebProcess -> GPUProcess -> UIProcess when getUserMedia is called instead of going from WebProcess -> UIProcess directly.
     auto access = m_mediaCaptureAccessMap.take(identifier);
-    newConnection->updateCaptureAccess(access.allowAudioCapture, access.allowVideoCapture, access.allowDisplayCapture);
+    newConnection->updateCaptureAccess(access.allowAudioCapture, access.allowVideoCapture, access.allowDisplayCapture, access.willUseEchoCancellation);
     newConnection->setOrientationForMediaCapture(m_orientation);
 #endif
 
@@ -453,23 +453,24 @@ void GPUProcess::rotationAngleForCaptureDeviceChanged(const String& persistentId
         connection->rotationAngleForCaptureDeviceChanged(persistentId, rotation);
 }
 
-void GPUProcess::updateCaptureAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture, WebCore::ProcessIdentifier processID, CompletionHandler<void()>&& completionHandler)
+void GPUProcess::updateCaptureAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture, bool willUseEchoCancellation, WebCore::ProcessIdentifier processID, CompletionHandler<void()>&& completionHandler)
 {
-    RELEASE_LOG(WebRTC, "GPUProcess::updateCaptureAccess: Entering (audio=%d, video=%d, display=%d)", allowAudioCapture, allowVideoCapture, allowDisplayCapture);
+    RELEASE_LOG(WebRTC, "GPUProcess::updateCaptureAccess: Entering (audio=%d, video=%d, display=%d, echoCancellation=%d)", allowAudioCapture, allowVideoCapture, allowDisplayCapture, willUseEchoCancellation);
 
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
     ensureAVCaptureServerConnection();
 #endif
 
     if (RefPtr connection = webProcessConnection(processID)) {
-        connection->updateCaptureAccess(allowAudioCapture, allowVideoCapture, allowDisplayCapture);
+        connection->updateCaptureAccess(allowAudioCapture, allowVideoCapture, allowDisplayCapture, willUseEchoCancellation);
         return completionHandler();
     }
 
-    auto& access = m_mediaCaptureAccessMap.add(processID, MediaCaptureAccess { allowAudioCapture, allowVideoCapture, allowDisplayCapture }).iterator->value;
+    auto& access = m_mediaCaptureAccessMap.add(processID, MediaCaptureAccess { allowAudioCapture, allowVideoCapture, allowDisplayCapture, willUseEchoCancellation }).iterator->value;
     access.allowAudioCapture |= allowAudioCapture;
     access.allowVideoCapture |= allowVideoCapture;
     access.allowDisplayCapture |= allowDisplayCapture;
+    access.willUseEchoCancellation = willUseEchoCancellation;
 
     completionHandler();
 }
@@ -604,6 +605,21 @@ RemoteAudioSessionProxyManager& GPUProcess::audioSessionManager() const
     if (!m_audioSessionManager)
         m_audioSessionManager = RemoteAudioSessionProxyManager::create(const_cast<GPUProcess&>(*this));
     return *m_audioSessionManager;
+}
+#endif
+
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+void GPUProcess::tryToSetAudioSessionActiveForProcess(WebCore::ProcessIdentifier identifier, bool active, CompletionHandler<void(GenericPromise::Result&&)>&& completionHandler)
+{
+#if USE(AUDIO_SESSION)
+    protect(audioSessionManager())->tryToSetActiveForProcess(identifier, active)->whenSettled(RunLoop::mainSingleton(), [completionHandler = WTF::move(completionHandler)](auto&& result) mutable {
+        completionHandler(WTF::move(result));
+    });
+#else
+    UNUSED_PARAM(identifier);
+    UNUSED_PARAM(active);
+    completionHandler(makeUnexpected(GenericPromise::RejectValueType { }));
+#endif
 }
 #endif
 

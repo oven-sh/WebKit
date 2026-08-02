@@ -225,7 +225,7 @@ MacroAssemblerCodeRef<JSEntryPtrTag> defaultCallThunk()
     static LazyNeverDestroyed<MacroAssemblerCodeRef<JSEntryPtrTag>> codeRef;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&] {
-        // The callee is in regT0 (for JSVALUE32_64, the tag is in regT1).
+        // The callee is in regT0.
         // The return address is on the stack, or in the link register. We will hence
         // jump to the callee, or save the return address to the call frame while we
         // make a C++ function call to the appropriate JIT operation.
@@ -397,7 +397,6 @@ MacroAssemblerCodeRef<JITThunkPtrTag> arityFixupThunk()
         // Caller's linkRegister in argumentGPR1
         // argumentCountIncludingThis in argumentGPR2
         // We have the guarantee that a0, a1, a2, t3, t4 and t5 (or t0 for Windows) are all distinct :-)
-#if USE(JSVALUE64)
         static_assert(noOverlap(GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, GPRInfo::argumentGPR2, GPRInfo::regT3, GPRInfo::regT4, GPRInfo::regT5));
 #if CPU(X86_64)
         jit.pop(JSInterfaceJIT::regT4);
@@ -466,61 +465,6 @@ MacroAssemblerCodeRef<JITThunkPtrTag> arityFixupThunk()
         jit.push(JSInterfaceJIT::regT4);
 #endif
         jit.ret();
-
-#else // USE(JSVALUE64) section above, USE(JSVALUE32_64) section below.
-        jit.subPtr(JSInterfaceJIT::stackPointerRegister, CCallHelpers::TrustedImm32(static_cast<int32_t>(sizeof(CallerFrameAndPC))), JSInterfaceJIT::regT3); // Initially expected callFramePointer after prologue.
-        jit.add32(JSInterfaceJIT::TrustedImm32(CallFrame::headerSizeInRegisters), JSInterfaceJIT::argumentGPR2);
-
-        // Check to see if we have extra slots we can use
-        jit.move(JSInterfaceJIT::argumentGPR0, GPRInfo::regT4);
-        jit.and32(JSInterfaceJIT::TrustedImm32(stackAlignmentRegisters() - 1), GPRInfo::regT4);
-        JSInterfaceJIT::Jump noExtraSlot = jit.branchTest32(MacroAssembler::Zero, GPRInfo::regT4);
-        JSInterfaceJIT::Label fillExtraSlots(jit.label());
-        jit.move(JSInterfaceJIT::TrustedImm32(0), JSInterfaceJIT::regT5);
-        jit.store32(JSInterfaceJIT::regT5, MacroAssembler::BaseIndex(JSInterfaceJIT::regT3, JSInterfaceJIT::argumentGPR2, JSInterfaceJIT::TimesEight, PayloadOffset));
-        jit.move(JSInterfaceJIT::TrustedImm32(JSValue::UndefinedTag), JSInterfaceJIT::regT5);
-        jit.store32(JSInterfaceJIT::regT5, MacroAssembler::BaseIndex(JSInterfaceJIT::regT3, JSInterfaceJIT::argumentGPR2, JSInterfaceJIT::TimesEight, TagOffset));
-        jit.add32(JSInterfaceJIT::TrustedImm32(1), JSInterfaceJIT::argumentGPR2);
-        jit.branchSub32(JSInterfaceJIT::NonZero, JSInterfaceJIT::TrustedImm32(1), GPRInfo::regT4).linkTo(fillExtraSlots, &jit);
-        jit.and32(JSInterfaceJIT::TrustedImm32(-stackAlignmentRegisters()), JSInterfaceJIT::argumentGPR0);
-        JSInterfaceJIT::Jump done = jit.branchTest32(MacroAssembler::Zero, JSInterfaceJIT::argumentGPR0);
-        noExtraSlot.link(&jit);
-
-        jit.neg32(JSInterfaceJIT::argumentGPR0);
-
-        // Adjust call frame register and stack pointer to account for missing args.
-        // We need to change the stack pointer first before performing copy/fill loops.
-        // This stack space below the stack pointer is considered unused by OS. Therefore,
-        // OS may corrupt this space when constructing a signal stack.
-        jit.move(JSInterfaceJIT::argumentGPR0, JSInterfaceJIT::regT5);
-        jit.lshift32(JSInterfaceJIT::TrustedImm32(3), JSInterfaceJIT::regT5);
-        jit.addPtr(JSInterfaceJIT::regT5, JSInterfaceJIT::stackPointerRegister);
-
-        // Move current frame down argumentGPR0 number of slots
-        JSInterfaceJIT::Label copyLoop(jit.label());
-        jit.load32(MacroAssembler::Address(JSInterfaceJIT::regT3, PayloadOffset), JSInterfaceJIT::regT5);
-        jit.store32(JSInterfaceJIT::regT5, MacroAssembler::BaseIndex(JSInterfaceJIT::regT3, JSInterfaceJIT::argumentGPR0, JSInterfaceJIT::TimesEight, PayloadOffset));
-        jit.load32(MacroAssembler::Address(JSInterfaceJIT::regT3, TagOffset), JSInterfaceJIT::regT5);
-        jit.store32(JSInterfaceJIT::regT5, MacroAssembler::BaseIndex(JSInterfaceJIT::regT3, JSInterfaceJIT::argumentGPR0, JSInterfaceJIT::TimesEight, TagOffset));
-        jit.addPtr(JSInterfaceJIT::TrustedImm32(8), JSInterfaceJIT::regT3);
-        jit.branchSub32(MacroAssembler::NonZero, JSInterfaceJIT::TrustedImm32(1), JSInterfaceJIT::argumentGPR2).linkTo(copyLoop, &jit);
-
-        // Fill in argumentGPR0 missing arg slots with undefined
-        jit.move(JSInterfaceJIT::argumentGPR0, JSInterfaceJIT::argumentGPR2);
-        JSInterfaceJIT::Label fillUndefinedLoop(jit.label());
-        jit.move(JSInterfaceJIT::TrustedImm32(0), JSInterfaceJIT::regT5);
-        jit.store32(JSInterfaceJIT::regT5, MacroAssembler::BaseIndex(JSInterfaceJIT::regT3, JSInterfaceJIT::argumentGPR0, JSInterfaceJIT::TimesEight, PayloadOffset));
-        jit.move(JSInterfaceJIT::TrustedImm32(JSValue::UndefinedTag), JSInterfaceJIT::regT5);
-        jit.store32(JSInterfaceJIT::regT5, MacroAssembler::BaseIndex(JSInterfaceJIT::regT3, JSInterfaceJIT::argumentGPR0, JSInterfaceJIT::TimesEight, TagOffset));
-
-        jit.addPtr(JSInterfaceJIT::TrustedImm32(8), JSInterfaceJIT::regT3);
-        jit.branchAdd32(MacroAssembler::NonZero, JSInterfaceJIT::TrustedImm32(1), JSInterfaceJIT::argumentGPR2).linkTo(fillUndefinedLoop, &jit);
-
-        done.link(&jit);
-
-        jit.tagReturnAddress();
-        jit.ret();
-#endif // End of USE(JSVALUE32_64) section.
 
         LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::LLIntThunk);
         codeRef.construct(FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "arityFixup"_s, "fixup arity"));
@@ -852,16 +796,6 @@ namespace LLInt {
 #if ENABLE(WEBASSEMBLY)
 #if ENABLE(JIT)
 
-MacroAssemblerCodeRef<JITThunkPtrTag> inPlaceInterpreterEntryThunk()
-{
-    static LazyNeverDestroyed<MacroAssemblerCodeRef<JITThunkPtrTag>> codeRef;
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [&] {
-        codeRef.construct(generateThunkWithJumpToPrologue<JITThunkPtrTag>(ipint_entry, "function for IPInt entry"));
-    });
-    return codeRef;
-}
-
 #if CPU(ARM64E)
 MacroAssemblerCodeRef<NativeToJITGatePtrTag> relocateJITReturnPCThunk(void* returnLocation)
 {
@@ -904,6 +838,17 @@ MacroAssemblerCodeRef<NativeToJITGatePtrTag> getSentinelFrameReturnPCGateThunk(v
 }
 #endif // CPU(ARM64E)
 
+#define DEFINE_IPINT_THUNK_FOR_ENTRY(funcName, target) \
+    MacroAssemblerCodeRef<JITThunkPtrTag> funcName() \
+    { \
+        static LazyNeverDestroyed<MacroAssemblerCodeRef<JITThunkPtrTag>> codeRef; \
+        static std::once_flag onceKey; \
+        std::call_once(onceKey, [&] { \
+            codeRef.construct(generateThunkWithJumpToPrologue<JITThunkPtrTag>(target, #target)); \
+        }); \
+        return codeRef; \
+    }
+
 #define DEFINE_IPINT_THUNK_FOR_CATCH(funcName, target) \
     MacroAssemblerCodeRef<JITThunkPtrTag> funcName() \
     { \
@@ -933,6 +878,9 @@ MacroAssemblerCodeRef<NativeToJITGatePtrTag> getSentinelFrameReturnPCGateThunk(v
 
 #endif
 
+#if ENABLE(JIT)
+DEFINE_IPINT_THUNK_FOR_ENTRY(inPlaceInterpreterEntryThunk, ipint_entry)
+#endif
 DEFINE_IPINT_THUNK_FOR_CATCH(inPlaceInterpreterCatchEntryThunk, ipint_catch_entry)
 DEFINE_IPINT_THUNK_FOR_CATCH(inPlaceInterpreterCatchAllEntryThunk, ipint_catch_all_entry)
 DEFINE_IPINT_THUNK_FOR_CATCH(inPlaceInterpreterTableCatchEntryThunk, ipint_table_catch_entry)

@@ -1274,7 +1274,7 @@ bool webkitGstSetElementStateSynchronously(GstElement* pipeline, GstState target
 
 GstBuffer* /* (transfer full) */ gstBufferNewWrappedFast(void* data, size_t length)
 {
-    return gst_buffer_new_wrapped_full(static_cast<GstMemoryFlags>(0), data, length, 0, length, data, fastFree);
+    return gst_buffer_new_wrapped_full(static_cast<GstMemoryFlags>(0), data, length, 0, length, data, fastFreeCallback);
 }
 
 GstElement* /* (transfer floating) */ makeGStreamerElement(CStringView factoryName, const String& name)
@@ -2199,6 +2199,12 @@ void dumpBinToDotFile(const GRefPtr<GstElement>& element, const String& filename
 {
     ASSERT(GST_IS_BIN(element.get()));
     dumpBinToDotFile(GST_BIN_CAST(element.get()), filename, details);
+}
+
+bool enableMSEAdditionalPipelineDumps()
+{
+    static bool result = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_MSE_VERBOSE_PIPELINE_DUMPS")) == "1"_s;
+    return result;
 }
 
 GstDebugLevel gstDebugLevelFromWTFLogLevel(WTFLogLevel level)

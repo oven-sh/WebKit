@@ -605,7 +605,7 @@ void NetworkProcessProxy::didBlockLoadToKnownTracker(WebPageProxyIdentifier page
         page->didBlockLoadToKnownTracker(url);
 }
 
-void NetworkProcessProxy::considerProcessSwapForNavigationResponse(WebPageProxyIdentifier pageID, WebCore::NavigationIdentifier navigationID, BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecision, NavigationResponseProcessSwapReason reason, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, CompletionHandler<void(bool success)>&& completionHandler)
+void NetworkProcessProxy::considerProcessSwapForNavigationResponse(WebPageProxyIdentifier pageID, WebCore::NavigationIdentifier navigationID, BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecision, NavigationResponseProcessSwapReason reason, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(bool success)>&& completionHandler)
 {
     RELEASE_LOG(ProcessSwapping, "%p - NetworkProcessProxy::considerProcessSwapForNavigationResponse: pageID=%" PRIu64 ", navigationID=%" PRIu64 ", reason=%u, browsingContextGroupSwitchDecision=%u, existingNetworkResourceLoadIdentifierToResume=%" PRIu64, this, pageID.toUInt64(), navigationID.toUInt64(), (unsigned)reason, (unsigned)browsingContextGroupSwitchDecision, existingNetworkResourceLoadIdentifierToResume.toUInt64());
 
@@ -615,10 +615,10 @@ void NetworkProcessProxy::considerProcessSwapForNavigationResponse(WebPageProxyI
 
     switch (reason) {
     case NavigationResponseProcessSwapReason::EnhancedSecurity:
-        page->triggerProcessSwapForEnhancedSecurity(navigationID, responseSite, existingNetworkResourceLoadIdentifierToResume, WTF::move(completionHandler));
+        page->triggerProcessSwapForEnhancedSecurity(navigationID, responseSite, existingNetworkResourceLoadIdentifierToResume, originalNavigationStartTime, WTF::move(completionHandler));
         break;
     case NavigationResponseProcessSwapReason::COOP:
-        page->triggerBrowsingContextGroupSwitchForNavigation(navigationID, browsingContextGroupSwitchDecision, responseSite, existingNetworkResourceLoadIdentifierToResume, WTF::move(completionHandler));
+        page->triggerBrowsingContextGroupSwitchForNavigation(navigationID, browsingContextGroupSwitchDecision, responseSite, existingNetworkResourceLoadIdentifierToResume, originalNavigationStartTime, WTF::move(completionHandler));
         break;
     }
 }
@@ -2141,9 +2141,9 @@ void NetworkProcessProxy::allowEvaluatedURL(const WebCore::ParentalControlsURLFi
     sendWithAsyncReply(Messages::NetworkProcess::AllowEvaluatedURL(parameters), WTF::move(completionHandler));
 }
 
-void NetworkProcessProxy::installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, CompletionHandler<void()>&& completionHandler)
+void NetworkProcessProxy::installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, std::span<const uint8_t> replacementData, CompletionHandler<void()>&& completionHandler)
 {
-    sendWithAsyncReply(Messages::NetworkProcess::InstallMockParentalControlsURLFilterForTesting(WTF::move(blockedURLs)), WTF::move(completionHandler));
+    sendWithAsyncReply(Messages::NetworkProcess::InstallMockParentalControlsURLFilterForTesting { WTF::move(blockedURLs), replacementData }, WTF::move(completionHandler));
 }
 #endif
 

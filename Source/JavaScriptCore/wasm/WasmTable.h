@@ -81,13 +81,14 @@ public:
     Wasm::AddressType addressType() const { return m_addressType; }
     FuncRefTable* NODELETE asFuncrefTable();
 
-    static bool isValidLength(uint32_t length) { return length < maxTableEntries; }
+    static bool isValidLength(uint64_t length) { return length < maxTableEntries; }
 
     void clear(uint32_t);
     void set(uint32_t, JSValue);
+    void fill(VM&, JSValue);
     JSValue get(uint32_t);
 
-    std::optional<uint32_t> grow(uint32_t delta, JSValue defaultValue);
+    std::optional<uint32_t> grow(uint64_t delta, JSValue defaultValue);
     void copy(Table* srcTable, uint32_t dstIndex, uint32_t srcIndex);
 
     DECLARE_VISIT_AGGREGATE;
@@ -123,6 +124,7 @@ public:
 
     void clear(uint32_t);
     void set(uint32_t, JSValue);
+    void fill(VM&, JSValue);
     JSValue get(uint32_t index) const { return m_jsValues.get()[index].get(); }
 
 private:
@@ -164,6 +166,7 @@ public:
 
     void clear(uint32_t);
     void set(uint32_t, JSValue);
+    void fill(VM&, JSValue);
     WebAssemblyFunctionBase* get(uint32_t index);
 
     void registerInstance(JSWebAssemblyInstance&);

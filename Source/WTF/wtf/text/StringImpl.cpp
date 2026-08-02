@@ -434,11 +434,13 @@ Ref<StringImpl> StringImpl::convertToLowercaseWithoutLocaleStartingAtFailingInde
     auto newImpl = createUninitializedInternalNonEmpty(m_length, data8);
 
     auto span = span8();
+    copyCharacters(data8, span.first(failingIndex));
+#if ASSERT_ENABLED
     for (unsigned i = 0; i < failingIndex; ++i) {
         ASSERT(isASCII(span[i]));
         ASSERT(!isASCIIUpper(span[i]));
-        data8[i] = span[i];
     }
+#endif
 
     for (unsigned i = failingIndex; i < span.size(); ++i) {
         Latin1Character character = span[i];
@@ -483,11 +485,13 @@ Ref<StringImpl> StringImpl::convertToUppercaseWithoutLocaleStartingAtFailingInde
     auto newImpl = createUninitialized(m_length, destination);
 
     auto span = span8();
+    copyCharacters(destination, span.first(failingIndex));
+#if ASSERT_ENABLED
     for (unsigned i = 0; i < failingIndex; ++i) {
         ASSERT(isASCII(span[i]));
         ASSERT(!isASCIILower(span[i]));
-        destination[i] = span[i];
     }
+#endif
 
     // Do a faster loop for the case where all the characters are ASCII.
     unsigned ored = 0;
@@ -1571,11 +1575,7 @@ Expected<size_t, UTF8ConversionError> StringImpl::utf8ForCharactersIntoBuffer(st
 {
     ASSERT(bufferVector.size() == span.size() * 3);
 
-#if CPU(BIG_ENDIAN)
-    auto conversionResult = simdutf::convert_utf16be_to_utf8_with_errors(span, bufferVector.mutableSpan());
-#else
     auto conversionResult = simdutf::convert_utf16le_to_utf8_with_errors(span, bufferVector.mutableSpan());
-#endif
 
     if (conversionResult.error == simdutf::error_code::SUCCESS)
         return conversionResult.count;
@@ -1598,20 +1598,12 @@ Expected<size_t, UTF8ConversionError> StringImpl::utf8ForCharactersIntoBuffer(st
 
 size_t StringImpl::utf8LengthFromUTF16(std::span<const char16_t> characters)
 {
-#if CPU(BIG_ENDIAN)
-    return simdutf::utf8_length_from_utf16be(characters);
-#else
     return simdutf::utf8_length_from_utf16le(characters);
-#endif
 }
 
 size_t StringImpl::tryConvertUTF16ToUTF8(std::span<const char16_t> source, std::span<char8_t> destination)
 {
-#if CPU(BIG_ENDIAN)
-    auto result = simdutf::convert_utf16be_to_utf8_with_errors(source, destination);
-#else
     auto result = simdutf::convert_utf16le_to_utf8_with_errors(source, destination);
-#endif
     if (result.error == simdutf::error_code::SUCCESS)
         return result.count;
     return notFound;

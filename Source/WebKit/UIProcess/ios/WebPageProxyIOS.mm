@@ -260,7 +260,9 @@ WebCore::FloatRect WebPageProxy::computeLayoutViewportRect(const FloatRect& unob
         constrainedUnobscuredRect.setHeight(adjustedUnexposedMaxEdge(documentRect.maxY(), constrainedUnobscuredRect.maxY(), factor) - constrainedUnobscuredRect.y());
     }
 
-    FloatSize constrainedSize = isBelowMinimumScale ? constrainedUnobscuredRect.size() : unobscuredContentRect.size();
+    bool resizesContent = pageClient->viewportMetaTagInteractiveWidget() == WebCore::InteractiveWidget::ResizesContent;
+    FloatRect sizeSourceRect = resizesContent ? unobscuredContentRectRespectingInputViewBounds : unobscuredContentRect;
+    FloatSize constrainedSize = isBelowMinimumScale ? constrainedUnobscuredRect.size() : sizeSourceRect.size();
     FloatRect unobscuredContentRectForViewport = isBelowMinimumScale ? constrainedUnobscuredRect : unobscuredContentRectRespectingInputViewBounds;
 
     double heightExpansionFactor = internals().allowsLayoutViewportHeightExpansion ? protect(m_preferences)->layoutViewportHeightExpansionFactor() : 0;
@@ -411,7 +413,10 @@ void WebPageProxy::didInsertFinalDictationResult()
 
 void WebPageProxy::replaceDictatedText(const String& oldText, const String& newText)
 {
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::ReplaceDictatedText(oldText, newText), webPageIDInMainFrameProcess());
+    RefPtr frame = focusedOrMainFrame();
+    if (!frame)
+        return;
+    sendToProcessContainingFrame(frame->frameID(), Messages::WebPage::ReplaceDictatedText(oldText, newText));
 }
 
 void WebPageProxy::replaceSelectedText(const String& oldText, const String& newText)
@@ -1195,7 +1200,7 @@ void WebPageProxy::didUpdateEditorState(const EditorState& oldEditorState, const
     
     if (newEditorState.shouldIgnoreSelectionChanges)
         return;
-    
+
     updateFontAttributesAfterEditorStateChange();
     // We always need to notify the client on iOS to make sure the selection is redrawn,
     // even during composition to support phrase boundary gesture.
@@ -1295,18 +1300,6 @@ WebCore::FloatRect WebPageProxy::selectionBoundingRectInRootViewCoordinates() co
         bounds = visualData.caretRectAtStart;
 
     return bounds;
-}
-
-void WebPageProxy::convertEditorStateSelectionRectToMainFrameCoordinates(WebCore::FloatRect rect, CompletionHandler<void(WebCore::FloatRect)>&& completionHandler)
-{
-    if (!editorState().hasVisualData()) {
-        completionHandler(rect);
-        return;
-    }
-
-    convertRectToMainFrameCoordinates(rect, editorState().visualData->rootFrameID, [rect, completionHandler = WTF::move(completionHandler)](std::optional<WebCore::FloatRect> convertedRect) mutable {
-        completionHandler(convertedRect.value_or(rect));
-    });
 }
 
 void WebPageProxy::requestDocumentEditingContext(WebKit::DocumentEditingContextRequest&& request, CompletionHandler<void(WebKit::DocumentEditingContext&&)>&& completionHandler)

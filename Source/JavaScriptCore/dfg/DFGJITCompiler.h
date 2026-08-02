@@ -139,7 +139,7 @@ public:
 
     void emitStoreCallSiteIndex(CallSiteIndex callSite)
     {
-        store32(TrustedImm32(callSite.bits()), tagFor(CallFrameSlot::argumentCountIncludingThis));
+        store32(TrustedImm32(callSite.bits()), highWordFor(CallFrameSlot::argumentCountIncludingThis));
     }
 
     // Add a call out from JIT code, without an exception check.
@@ -176,10 +176,6 @@ public:
         m_exitCompilationInfo.append(info);
         return m_exitCompilationInfo.last();
     }
-
-#if USE(JSVALUE32_64)
-    void* addressOfDoubleConstant(Node*);
-#endif
 
     void addGetById(const JITGetByIdGenerator& gen, SlowPathGenerator* slowPath)
     {
@@ -261,12 +257,8 @@ public:
     Jump branchWeakStructure(RelationalCondition cond, T left, RegisteredStructure weakStructure)
     {
         Structure* structure = weakStructure.get();
-#if USE(JSVALUE64)
         Jump result = branch32(cond, left, TrustedImm32(structure->id().bits()));
         return result;
-#else
-        return branchPtr(cond, left, TrustedImmPtr(structure));
-#endif
     }
 
     void noticeOSREntry(BasicBlock&, JITCompiler::Label blockHead, LinkBuffer&);
@@ -332,13 +324,11 @@ public:
         void* pointer() const { return m_pointer; }
         LinkerIR::Constant index() const { return m_index; }
 
-#if USE(JSVALUE64)
         Address unlinkedAddress()
         {
             ASSERT(isUnlinked());
             return Address(GPRInfo::jitDataRegister, JITData::offsetOfTrailingData() + sizeof(void*) * m_index);
         }
-#endif
 
     private:
         LinkableConstant(JITCompiler&, void*, NonCellTag);
@@ -355,19 +345,15 @@ public:
 
     Jump branchLinkableConstant(RelationalCondition cond, GPRReg left, LinkableConstant constant)
     {
-#if USE(JSVALUE64)
         if (constant.isUnlinked())
             return CCallHelpers::branchPtr(cond, left, constant.unlinkedAddress());
-#endif
         return CCallHelpers::branchPtr(cond, left, CCallHelpers::TrustedImmPtr(constant.pointer()));
     }
 
     Jump branchLinkableConstant(RelationalCondition cond, Address left, LinkableConstant constant)
     {
-#if USE(JSVALUE64)
         if (constant.isUnlinked())
             return CCallHelpers::branchPtr(cond, left, constant.unlinkedAddress());
-#endif
         return CCallHelpers::branchPtr(cond, left, CCallHelpers::TrustedImmPtr(constant.pointer()));
     }
 

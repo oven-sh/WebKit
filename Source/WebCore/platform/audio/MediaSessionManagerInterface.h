@@ -44,6 +44,7 @@
 
 namespace WebCore {
 
+class MediaSessionManagerClient;
 class Page;
 class PlatformMediaSessionInterface;
 struct NowPlayingMetadata;
@@ -177,6 +178,9 @@ public:
 protected:
     explicit MediaSessionManagerInterface(std::optional<PageIdentifier>);
 
+    MediaSessionManagerClient& client() const;
+    void setClient(std::unique_ptr<MediaSessionManagerClient>&&);
+
     virtual WeakListHashSet<PlatformMediaSessionInterface>& sessions() const = 0;
     virtual Vector<WeakPtr<PlatformMediaSessionInterface>> copySessionsToVector() const = 0;
 
@@ -193,7 +197,7 @@ protected:
     void nowPlayingMetadataChanged(const NowPlayingMetadata&);
     void enqueueTaskOnMainThread(Function<void()>&&);
 
-    int countActiveAudioCaptureSources();
+    virtual int countActiveAudioCaptureSources();
 
     bool computeSupportsSeeking() const;
 
@@ -226,6 +230,7 @@ private:
     TaskCancellationGroup m_taskGroup;
 
     Markable<PageIdentifier> m_pageIdentifier;
+    std::unique_ptr<MediaSessionManagerClient> m_client;
 #if !RELEASE_LOG_DISABLED
     UniqueRef<Timer> m_stateLogTimer;
     const Ref<AggregateLogger> m_logger;

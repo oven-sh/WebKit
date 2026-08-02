@@ -882,6 +882,7 @@ void GraphicsLayerCoordinated::computePixelAlignmentIfNeeded(float pageScaleFact
 
 void GraphicsLayerCoordinated::updateGeometry(float pageScaleFactor, const FloatPoint& positionRelativeToBase)
 {
+    assertIsHeld(m_platformLayer->lock());
     FloatPoint adjustedPosition;
     FloatPoint adjustedBoundsOrigin;
     FloatPoint3D adjustedAnchorPoint;
@@ -920,17 +921,16 @@ void GraphicsLayerCoordinated::computeLayerTransformIfNeeded(bool affectedByTran
     m_layerTransform.current.setChildrenTransform(childrenTransform());
     m_layerTransform.current.combineTransforms(parent() ? downcast<GraphicsLayerCoordinated>(*parent()).m_layerTransform.current.combinedForChildren() : TransformationMatrix());
 
-    m_layerTransform.cachedCombined = m_layerTransform.current.combined();
-    m_layerTransform.cachedInverse = m_layerTransform.cachedCombined.inverse().value_or(TransformationMatrix());
-
     m_layerTransform.future = m_layerTransform.current;
+
+    m_layerTransform.cachedInverse = m_layerTransform.current.combined().inverse();
     m_layerTransform.cachedFutureInverse = m_layerTransform.cachedInverse;
 
     auto* parentLayer = downcast<GraphicsLayerCoordinated>(parent());
     if (currentTransform != futureTransform || (parentLayer && parentLayer->m_layerTransform.current.combinedForChildren() != parentLayer->m_layerTransform.future.combinedForChildren())) {
         m_layerTransform.future.setLocalTransform(futureTransform);
         m_layerTransform.future.combineTransforms(parentLayer ? parentLayer->m_layerTransform.future.combinedForChildren() : TransformationMatrix());
-        m_layerTransform.cachedFutureInverse = m_layerTransform.future.combined().inverse().value_or(TransformationMatrix());
+        m_layerTransform.cachedFutureInverse = m_layerTransform.future.combined().inverse();
     }
 
     m_platformLayer->didUpdateLayerTransform();
@@ -951,34 +951,33 @@ void GraphicsLayerCoordinated::clampToSizeIfRectIsInfinite(FloatRect& rect, cons
 
 void GraphicsLayerCoordinated::updateVisibleRect(const FloatRect& rect)
 {
+    assertIsHeld(m_platformLayer->lock());
     m_platformLayer->setVisibleRect(rect);
 
-    IntRect visibleRect;
-    IntRect visibleRectFuture;
     // Non-invertible layers are not visible.
-    if (!m_layerTransform.current.combined().isInvertible()) {
-        m_platformLayer->setTransformedVisibleRect(WTF::move(visibleRect), WTF::move(visibleRect));
+    if (!m_layerTransform.cachedInverse) {
+        m_platformLayer->setTransformedVisibleRect({ });
         return;
     }
 
     // Return a projection of the rect (surface coordinates) onto the layer's plane (layer coordinates).
     // The resulting quad might be squewed and the result is the bounding box of this quad,
     // so it might spread further than the real visible area (and then even more amplified by the cover rect multiplier).
-    ASSERT(m_layerTransform.cachedInverse == m_layerTransform.current.combined().inverse().value_or(TransformationMatrix()));
+    ASSERT(m_layerTransform.cachedInverse == m_layerTransform.current.combined().inverse());
     auto transformedRect = [&](const TransformationMatrix& matrix) -> IntRect {
         FloatRect result = matrix.clampedBoundsOfProjectedQuad(FloatQuad(rect));
         clampToSizeIfRectIsInfinite(result, m_size);
         return enclosingIntRect(result);
     };
-    visibleRect = transformedRect(m_layerTransform.cachedInverse);
-    visibleRectFuture = visibleRect;
-    if (m_layerTransform.cachedInverse != m_layerTransform.cachedFutureInverse)
-        visibleRectFuture.unite(transformedRect(m_layerTransform.cachedFutureInverse));
-    m_platformLayer->setTransformedVisibleRect(WTF::move(visibleRect), WTF::move(visibleRectFuture));
+    auto visibleRect = transformedRect(*m_layerTransform.cachedInverse);
+    if (m_layerTransform.cachedFutureInverse && m_layerTransform.cachedInverse != m_layerTransform.cachedFutureInverse)
+        visibleRect.unite(transformedRect(*m_layerTransform.cachedFutureInverse));
+    m_platformLayer->setTransformedVisibleRect(WTF::move(visibleRect));
 }
 
 void GraphicsLayerCoordinated::updateBackdropFilters()
 {
+    assertIsHeld(m_platformLayer->lock());
     bool canHaveBackdropFilters = needsBackdrop();
     if (!canHaveBackdropFilters) {
         m_platformLayer->setBackdrop(nullptr);
@@ -1018,6 +1017,7 @@ void GraphicsLayerCoordinated::updateBackdropFilters()
 
 void GraphicsLayerCoordinated::updateBackdropFiltersRect()
 {
+    assertIsHeld(m_platformLayer->lock());
     if (!m_backdropLayer)
         return;
 
@@ -1032,6 +1032,8 @@ void GraphicsLayerCoordinated::updateBackdropFiltersRect()
 
 void GraphicsLayerCoordinated::updateAnimations()
 {
+    assertIsHeld(m_platformLayer->lock());
+
     m_animations.setTranslate(client().transformMatrixForProperty(AnimatedProperty::Translate));
     m_animations.setRotate(client().transformMatrixForProperty(AnimatedProperty::Rotate));
     m_animations.setScale(client().transformMatrixForProperty(AnimatedProperty::Scale));
@@ -1042,6 +1044,8 @@ void GraphicsLayerCoordinated::updateAnimations()
 
 void GraphicsLayerCoordinated::updateIndicators()
 {
+    assertIsHeld(m_platformLayer->lock());
+
     Color borderColor;
     float borderWidth = 0;
     if (m_showDebugBorder)

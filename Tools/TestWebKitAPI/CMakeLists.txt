@@ -245,6 +245,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/LayoutUnitTests.cpp
         Tests/WebCore/MIMESniffer.cpp
         Tests/WebCore/MIMETypeRegistry.cpp
+        Tests/WebCore/MediaConstraintsTests.cpp
         Tests/WebCore/MediaReorderQueue.cpp
         Tests/WebCore/MixedContentChecker.cpp
         Tests/WebCore/MonospaceFontTests.cpp
@@ -254,6 +255,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/PathTests.cpp
         Tests/WebCore/PixelBufferConversionTests.cpp
         Tests/WebCore/PlatformDynamicRangeLimitTests.cpp
+        Tests/WebCore/PlatformMediaSessionManagerTests.cpp
         Tests/WebCore/PublicSuffix.cpp
         Tests/WebCore/RegionTests.cpp
         Tests/WebCore/RenderStyleChange.cpp

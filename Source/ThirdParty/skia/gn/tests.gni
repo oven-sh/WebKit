@@ -60,6 +60,7 @@ tests_sources = [
   "$_tests/DequeTest.cpp",
   "$_tests/DescriptorTest.cpp",
   "$_tests/DeviceTest.cpp",
+  "$_tests/DirectMaskLimitTest.cpp",
   "$_tests/DiscardableMemoryPoolTest.cpp",
   "$_tests/DiscardableMemoryTest.cpp",
   "$_tests/DrawBitmapRectTest.cpp",
@@ -362,6 +363,7 @@ precompile_tests_sources = [
 
 sparse_strips_test_sources = [
   "$_tests/graphite/sparse_strips/ClipTest.cpp",
+  "$_tests/graphite/sparse_strips/CoverageTest.cpp",
   "$_tests/graphite/sparse_strips/FlattenTest.cpp",
   "$_tests/graphite/sparse_strips/LUTTest.cpp",
   "$_tests/graphite/sparse_strips/PolylineTest.cpp",
@@ -512,6 +514,7 @@ ganesh_tests_sources = [
   "$_tests/SlugTest.cpp",
   "$_tests/SmallPathRendererTest.cpp",
   "$_tests/SrcSrcOverBatchTest.cpp",
+  "$_tests/StencilClearTest.cpp",
   "$_tests/SurfaceDrawContextTest.cpp",
   "$_tests/SurfaceSemaphoreTest.cpp",
   "$_tests/TextBlobCacheTest.cpp",

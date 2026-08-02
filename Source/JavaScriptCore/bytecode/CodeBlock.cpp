@@ -311,8 +311,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     , m_isJettisoned(false)
     , m_numCalleeLocals(other.m_numCalleeLocals)
     , m_numVars(other.m_numVars)
-    , m_numberOfArgumentsToSkip(other.m_numberOfArgumentsToSkip)
-    , m_couldBeTainted(other.m_couldBeTainted)
+    , m_numberOfArgumentsToSkipAndCouldBeTainted(other.m_numberOfArgumentsToSkipAndCouldBeTainted)
     , m_hasDebuggerStatement(false)
     , m_steppingMode(SteppingModeDisabled)
     , m_numBreakpoints(0)
@@ -393,6 +392,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     setNumParameters(unlinkedCodeBlock->numParameters(), allocateArgumentValueProfiles);
 
     m_couldBeTainted = source().provider()->couldBeTainted();
+    ASSERT(couldBeTainted() == !!(m_numberOfArgumentsToSkipAndCouldBeTainted & 0x80000000));
 #if USE(BUN_JSC_ADDITIONS)
     m_previousCounter = m_unlinkedCode->llintExecuteCounter().count();
 #endif
@@ -2271,14 +2271,8 @@ bool CodeBlock::hasOpDebugForLineAndColumn(unsigned line, std::optional<unsigned
 
 void CodeBlock::shrinkToFit(const ConcurrentJSLocker&, ShrinkMode shrinkMode)
 {
-#if USE(JSVALUE32_64)
-    // Only 32bit Baseline JIT is touching m_constantRegisters address directly.
-    if (shrinkMode == ShrinkMode::EarlyShrink)
-        m_constantRegisters.shrinkToFit();
-#else
     UNUSED_PARAM(shrinkMode);
     m_constantRegisters.shrinkToFit();
-#endif
 }
 
 void CodeBlock::linkIncomingCall(JSCell* caller, CallLinkInfoBase* incoming)
@@ -3126,10 +3120,6 @@ void CodeBlock::updateAllNonLazyValueProfilePredictions(const ConcurrentJSLocker
 
 void CodeBlock::updateAllLazyValueProfilePredictions(const ConcurrentJSLocker& locker)
 {
-#if USE(JSVALUE32_64)
-    // JSVALUE64 does not need a lock.
-    ASSERT(m_lock.isLocked());
-#endif
 #if ENABLE(DFG_JIT)
     lazyValueProfiles().computeUpdatedPredictions(locker, this);
 #else

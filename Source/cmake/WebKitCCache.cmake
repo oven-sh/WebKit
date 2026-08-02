@@ -22,6 +22,8 @@ if (NOT "$ENV{WK_USE_CCACHE}" STREQUAL "NO" AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
 export CCACHE_BASEDIR='${CMAKE_SOURCE_DIR}'
 export CCACHE_NOHASHDIR=true
 export CCACHE_PCH_EXTSUM=true
+# Hash the -MD depfile rather than preprocessing, so a cache miss is cheap.
+export CCACHE_DEPEND=true
 export CCACHE_SLOPPINESS='pch_defines,time_macros,include_file_mtime,include_file_ctime'
 for arg; do
     if [ \"$arg\" = \"-emit-pch\" ]; then
@@ -38,6 +40,29 @@ exec '${CCACHE_FOUND}' \"$@\"
             set(CMAKE_ASM_COMPILER_LAUNCHER "${_ccache_launcher}")
             set(CMAKE_OBJC_COMPILER_LAUNCHER "${_ccache_launcher}")
             set(CMAKE_OBJCXX_COMPILER_LAUNCHER "${_ccache_launcher}")
+        elseif (WIN32)
+            # Pass the ccache configuration inline as "KEY=VALUE ... compiler" arguments (a core
+            # ccache feature), so it is baked into every ninja compile command and applied per
+            # invocation. This avoids relying on environment set at configure time -- which does not
+            # survive to the ninja-spawned compile -- and avoids a launcher script: a .cmd wrapper
+            # would hit cmd.exe's 8191-char command-line limit on WebCore's long compile lines.
+            set(_ccache_config
+                base_dir=${CMAKE_SOURCE_DIR}
+                hash_dir=false
+                sloppiness=time_macros,include_file_mtime,include_file_ctime
+            )
+            message(STATUS "Enabling ccache: ${CCACHE_FOUND} with inline config (base_dir=${CMAKE_SOURCE_DIR}).")
+            set(CMAKE_C_COMPILER_LAUNCHER   ${CCACHE_FOUND} ${_ccache_config})
+            set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_FOUND} ${_ccache_config})
+            set(CMAKE_ASM_COMPILER_LAUNCHER ${CCACHE_FOUND} ${_ccache_config})
+            # Disable precompiled headers when ccache is in use, matching the GTK/WPE developer-mode
+            # ports (OptionsGTK.cmake / OptionsWPE.cmake set CMAKE_DISABLE_PRECOMPILE_HEADERS ON).
+            # Caching a PCH under clang-cl is fragile: ccache can restore a PCH built against a
+            # different-sized generated header (e.g. PlatformEnable.h drifts as feature flags change),
+            # which clang then rejects ("... has been modified since the precompiled header was built").
+            # Dropping PCH removes that whole failure class; ccache still serves unchanged objects as
+            # hits, so the clean-rebuild speedup is retained (PCH only accelerates ccache misses).
+            set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)
         else ()
             if (NOT DEFINED ENV{CCACHE_SLOPPINESS})
                 set(ENV{CCACHE_SLOPPINESS} time_macros)

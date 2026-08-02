@@ -181,6 +181,7 @@
 #include "NavigatorBeacon.h"
 #include "NavigatorMediaDevices.h"
 #include "NetworkLoadInformation.h"
+#include "NetworkingContext.h"
 #include "Page.h"
 #include "PageInspectorController.h"
 #include "PageOverlay.h"
@@ -442,6 +443,10 @@
 
 #if ENABLE(MODEL_ELEMENT)
 #include "HTMLModelElement.h"
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+#include "SpatialPortalController.h"
 #endif
 
 #if ENABLE(SERVICE_CONTROLS)
@@ -982,6 +987,19 @@ bool Internals::isLoadingFromMemoryCache(const String& url)
 {
     CachedResource* resource = resourceFromMemoryCache(url);
     return resource && resource->status() == CachedResource::Cached;
+}
+
+ExceptionOr<bool> Internals::frameNetworkingContextIsValid() const
+{
+    RefPtr document = contextDocument();
+    if (!document || !document->frame())
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    RefPtr context = document->frame()->loader().networkingContext();
+    if (!context)
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    return context->isValid();
 }
 
 CachedResource* Internals::resourceFromMemoryCache(const String& url)
@@ -3384,6 +3402,12 @@ ExceptionOr<Vector<double>> Internals::findCueMatches(const String& text, const 
     return WTF::map(matches, [](const auto& match) -> double {
         return match.seekTime.toDouble();
     });
+}
+
+void Internals::clearFindCaptionTracks()
+{
+    if (RefPtr document = contextDocument(); document && document->page())
+        document->page()->clearFindCaptionTracks();
 }
 #endif
 
@@ -8735,6 +8759,25 @@ String Internals::modelElementState(HTMLModelElement& element)
 bool Internals::isModelElementIntersectingViewport(HTMLModelElement& element)
 {
     return element.isIntersectingViewport();
+}
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+unsigned Internals::numberOfHostedModelsInSpatialPortal(Element& element)
+{
+    CheckedPtr controller = element.spatialPortalController();
+    return controller ? controller->numberOfHostedModels() : 0;
+}
+
+unsigned Internals::numberOfLoadedModelsInSpatialPortal(Element& element)
+{
+    CheckedPtr controller = element.spatialPortalController();
+    return controller ? controller->numberOfLoadedModels() : 0;
+}
+
+bool Internals::establishesSpatialPortal(Element& element)
+{
+    return element.establishesSpatialPortal();
 }
 #endif
 

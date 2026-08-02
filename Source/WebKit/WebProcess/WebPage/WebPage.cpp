@@ -1418,24 +1418,42 @@ void WebPage::frameTreeSyncDataChangedInAnotherProcess(FrameIdentifier frameID, 
         return;
 
     RefPtr coreFrame = frame->coreFrame();
-    if (coreFrame) {
-        coreFrame->updateFrameTreeSyncData(data);
+    if (!coreFrame)
+        return;
 
-        switch (static_cast<FrameTreeSyncDataType>(data.value.index())) {
-        case FrameTreeSyncDataType::FrameRect:
-            frame->updateFrameRectFromRemote(coreFrame->frameTreeSyncData().frameRect);
-            break;
+    coreFrame->updateFrameTreeSyncData(data);
+    auto dataType = static_cast<FrameTreeSyncDataType>(data.value.index());
 
-        case FrameTreeSyncDataType::FrameScrollPosition:
-            if (RefPtr view = coreFrame->virtualView())
-                view->scrollTo(coreFrame->frameTreeSyncData().frameScrollPosition);
+    switch (dataType) {
+    case FrameTreeSyncDataType::FrameRect:
+        frame->updateFrameRectFromRemote(coreFrame->frameTreeSyncData().frameRect);
+        break;
 
-            break;
+    case FrameTreeSyncDataType::FrameScrollPosition:
+        if (RefPtr view = coreFrame->virtualView())
+            view->scrollTo(coreFrame->frameTreeSyncData().frameScrollPosition);
+        break;
 
-        default:
-            break;
-        }
+    case FrameTreeSyncDataType::ChildrenFrameLayoutInfo:
+        updateExposedRectFromParent(*coreFrame);
+        break;
+
+    default:
+        break;
     }
+
+#if ENABLE(PDF_HUD)
+    switch (dataType) {
+    case FrameTreeSyncDataType::FrameRect:
+    case FrameTreeSyncDataType::FrameScrollPosition:
+    case FrameTreeSyncDataType::FrameLayoutViewportRect:
+    case FrameTreeSyncDataType::ChildrenFrameLayoutInfo:
+        updatePDFHUDLocationsAfterRemoteFrameGeometryChange();
+        break;
+    default:
+        break;
+    }
+#endif
 }
 
 void WebPage::allFrameTreeSyncDataChangedInAnotherProcess(FrameIdentifier frameID, Ref<WebCore::FrameTreeSyncData>&& data)
@@ -1447,8 +1465,76 @@ void WebPage::allFrameTreeSyncDataChangedInAnotherProcess(FrameIdentifier frameI
         return;
 
     RefPtr coreFrame = frame->coreFrame();
-    if (coreFrame)
+    if (coreFrame) {
         coreFrame->updateFrameTreeSyncData(WTF::move(data));
+        updateExposedRectFromParent(*coreFrame);
+    }
+}
+
+void WebPage::updateExposedRectFromParent(WebCore::Frame& parentCoreFrame)
+{
+    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=320601 - Align iOS and macOS behavior regarding m_exposedContentRect
+#if PLATFORM(IOS_FAMILY)
+    // When a RemoteFrame parent broadcasts childrenFrameLayoutInfo, each entry carries the child's visible
+    // rect in the parent (already clamped to the top-level viewport on the sender side).
+    // Project that rect into the child's own root-content coords and use it as the frame's exposedContentRect,
+    // so its tiled backing covers only the on-screen portion, matching the rect with site isolation off.
+    if (!m_page || !m_page->settings().siteIsolationEnabled())
+        return;
+
+    auto& childrenInfo = parentCoreFrame.frameTreeSyncData().childrenFrameLayoutInfo;
+    if (childrenInfo.isEmpty())
+        return;
+
+    bool needsRenderingUpdate = false;
+    for (RefPtr child = parentCoreFrame.tree().firstChild(); child; child = child->tree().nextSibling()) {
+        RefPtr localChild = dynamicDowncast<LocalFrame>(child.get());
+        if (!localChild)
+            continue;
+        RefPtr childView = localChild->view();
+        if (!childView)
+            continue;
+        auto it = childrenInfo.find(localChild->frameID());
+        if (it == childrenInfo.end())
+            continue;
+
+        // Project the parent-supplied visible rect into this child's root-content coordinates. A missing
+        // rect (fully below the fold / clipped out) maps to an empty rect so all tiles can be released.
+        Ref layoutInfo = it->value;
+        auto visibleRectInParent = layoutInfo->visibleRectInParent();
+        bool visibleRectInParentIsEmpty = !visibleRectInParent || visibleRectInParent->isEmpty();
+        auto projected = layoutInfo->projectVisibleRectToChildContent().value_or(FloatRect { });
+        projected.intersect(FloatRect { { }, childView->size() });
+
+        // If the main WCP says this frame is visible but the projection is empty, fallback to the full
+        // rect until we get updated geometry from the main WCP
+        if (!visibleRectInParentIsEmpty && projected.isEmpty())
+            projected = FloatRect { { }, childView->size() };
+
+        // This runs once per parent rendering update, so only touch the frame (and schedule a rendering
+        // update) when the coverage rect actually changes — or the first time the embedder supplies a rect,
+        // which flips WebFrame's full-size fallback off. This keeps steady-state (no scroll/resize)
+        // broadcasts from scheduling redundant rendering updates.
+        // exposedContentRect tracks the main WCP visible region, while unobscured content size stays at
+        // the child view's size (setUnobscuredContentSize is itself a no-op when unchanged).
+        if (childView->exposedContentRect() != projected) {
+            childView->setExposedContentRect(projected);
+            needsRenderingUpdate = true;
+        }
+        childView->setUnobscuredContentSize(childView->size());
+        if (!childView->hasEverSetExposedContentRectFromEmbedder()) {
+            childView->setHasSetExposedContentRectFromEmbedder();
+            needsRenderingUpdate = true;
+        }
+    }
+
+    if (needsRenderingUpdate) {
+        if (RefPtr drawingArea = this->drawingArea())
+            drawingArea->triggerRenderingUpdate();
+    }
+#else
+    UNUSED_PARAM(parentCoreFrame);
+#endif
 }
 
 void WebPage::updateUserActivationState(const Vector<FrameIdentifier>& frameIDs, MonotonicTime activationTime)
@@ -1913,7 +1999,7 @@ void WebPage::resolveAccessibilityHitTestForTesting(WebCore::FrameIdentifier, co
     completionHandler({ });
 }
 
-void WebPage::updateRemotePageAccessibilityOffset(WebCore::FrameIdentifier, WebCore::IntPoint)
+void WebPage::updateRemotePageOffsetInMainFrame(WebCore::FrameIdentifier, WebCore::IntPoint)
 {
 }
 
@@ -2473,6 +2559,7 @@ void WebPage::loadRequest(LoadParameters&& loadParameters)
     // Initate the load in WebCore.
     ASSERT(localFrame->document());
     FrameLoadRequest frameLoadRequest { *localFrame, WTF::move(loadParameters.request) };
+    frameLoadRequest.setOriginalNavigationStartTime(loadParameters.originalNavigationStartTime);
     frameLoadRequest.setShouldOpenExternalURLsPolicy(loadParameters.shouldOpenExternalURLsPolicy);
     frameLoadRequest.setShouldTreatAsContinuingLoad(loadParameters.shouldTreatAsContinuingLoad);
     frameLoadRequest.setLockHistory(loadParameters.lockHistory);
@@ -8945,8 +9032,8 @@ void WebPage::setIsSuspended(bool suspended, CompletionHandler<void(std::optiona
 
 void WebPage::suspendWithFrameItem(BackForwardFrameItemIdentifier identifier, CompletionHandler<void(bool)>&& completionHandler)
 {
-    if (m_isSuspended)
-        return completionHandler(BackForwardCache::singleton().isInBackForwardCache(identifier));
+    if (BackForwardCache::singleton().isInBackForwardCache(identifier))
+        return completionHandler(true);
 
     RefPtr page = corePage();
     if (!page) {
@@ -8954,7 +9041,6 @@ void WebPage::suspendWithFrameItem(BackForwardFrameItemIdentifier identifier, Co
         return completionHandler(false);
     }
 
-    freezeLayerTree(LayerTreeFreezeReason::PageSuspended);
     unfreezeLayerTree(LayerTreeFreezeReason::BackgroundApplication);
     flushDeferredDidReceiveMouseEvent();
 
@@ -8963,6 +9049,16 @@ void WebPage::suspendWithFrameItem(BackForwardFrameItemIdentifier identifier, Co
         return completionHandler(false);
     }
 
+    // Detach the current root frames instead of freezing the whole page, so a same-site navigation
+    // later reusing this WebPage for a new root frame doesn't get frozen too.
+    HashSet<WeakRef<WebCore::LocalFrame>> detachedFrames;
+    for (auto& weakFrame : copyToVector(page->rootFrames())) {
+        Ref frame = weakFrame.get();
+        detachedFrames.add(weakFrame);
+        page->removeRootFrame(frame);
+    }
+    BackForwardCache::singleton().setDetachedRootFramesForFrameItem(identifier, WTF::move(detachedFrames));
+
     m_isSuspended = true;
     WEBPAGE_RELEASE_LOG(ProcessSwapping, "suspendWithFrameItem: Successfully cached page");
     completionHandler(true);
@@ -8970,7 +9066,7 @@ void WebPage::suspendWithFrameItem(BackForwardFrameItemIdentifier identifier, Co
 
 void WebPage::restoreWithFrameItem(BackForwardFrameItemIdentifier identifier, std::optional<std::pair<URL, SecurityOriginData>>&& mainFrameURLAndOrigin, CompletionHandler<void(bool)>&& completionHandler)
 {
-    if (!m_isSuspended)
+    if (!BackForwardCache::singleton().isInBackForwardCache(identifier))
         return completionHandler(true);
 
     RefPtr page = corePage();
@@ -8982,6 +9078,7 @@ void WebPage::restoreWithFrameItem(BackForwardFrameItemIdentifier identifier, st
     auto cachedPage = BackForwardCache::singleton().take(identifier, page);
     if (!cachedPage) {
         WEBPAGE_RELEASE_LOG_ERROR(ProcessSwapping, "restoreWithFrameItem: take failed, cache entry missing or expired");
+        m_isSuspended = false;
         return completionHandler(false);
     }
 
@@ -8992,8 +9089,15 @@ void WebPage::restoreWithFrameItem(BackForwardFrameItemIdentifier identifier, st
         page->setMainFrameURLAndOrigin(mainFrameURLAndOrigin->first, mainFrameURLAndOrigin->second.securityOrigin());
 
     m_isSuspended = false;
-    unfreezeLayerTree(LayerTreeFreezeReason::PageSuspended);
+    auto restoredFrames = cachedPage->takeDetachedRootFrames();
     detachResidualSubframesForBackForwardCacheRestore(*page);
+
+    // Resume rendering for the frames detached in suspendWithFrameItem.
+    for (auto& weakFrame : restoredFrames) {
+        Ref frame = weakFrame.get();
+        page->addRootFrame(frame);
+    }
+
     cachedPage->restore(*page);
     completionHandler(true);
 }

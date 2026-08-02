@@ -294,7 +294,7 @@ RefPtr<FormData> FetchBody::bodyAsFormData() const
     return nullptr;
 }
 
-Ref<ReadableStreamToSharedBufferSink> FetchBody::startPendingStreamUpload()
+Ref<ReadableStreamToSharedBufferSink> FetchBody::startPendingStreamUpload(ScriptExecutionContext& context)
 {
     ASSERT(isReadableStream());
     ASSERT(!m_pendingStreamState);
@@ -302,17 +302,44 @@ Ref<ReadableStreamToSharedBufferSink> FetchBody::startPendingStreamUpload()
     Ref state = PendingStreamState::create();
     m_pendingStreamState = state.copyRef();
 
-    Ref sink = ReadableStreamToSharedBufferSink::create([state = WTF::move(state)](auto&& result) mutable {
+    static constexpr size_t desiredBufferingSize = 64 * 1024;
+    Ref sink = ReadableStreamToSharedBufferSink::create([state](auto&& result) mutable {
         WTF::switchOn(result,
             [&](std::nullptr_t) { state->endStream(); },
             [&](std::span<const uint8_t> chunk) { state->appendData(SharedBuffer::create(chunk)); },
             [&](JSC::JSValue) { state->errorStream(-1); },
             [&](Exception&) { state->errorStream(-1); }
         );
+    }, desiredBufferingSize);
+
+    state->setQueueDrainedHandler([weakSink = WeakPtr { sink.get() }, identifier = context.identifier()] {
+        ScriptExecutionContext::postTaskTo(identifier, [weakSink](auto&) {
+            if (RefPtr sink = weakSink)
+                sink->resumeReading();
+        });
+    });
+    state->setCancelCallback([weakSink = WeakPtr { sink }, contextIdentifier = context.identifier()] {
+        ScriptExecutionContext::postTaskTo(contextIdentifier, [weakSink](auto& context) {
+            auto* globalObject = downcast<JSDOMGlobalObject>(context.globalObject());
+            if (!globalObject)
+                return;
+
+            if (RefPtr sink = weakSink) {
+                JSC::JSLockHolder lock(globalObject->vm());
+                // FIXME: Provide a meaningful reason.
+                sink->cancel(*globalObject, JSC::jsUndefined());
+            }
+        });
     });
 
     sink->pipeFrom(protect(readableStreamBody()));
     return sink;
+}
+
+void FetchBody::cancelReadableStream()
+{
+    if (m_consumer)
+        protect(m_consumer)->cancelReadableStream();
 }
 
 void FetchBody::convertReadableStreamToArrayBuffer(FetchBodyOwner& owner, CompletionHandler<void(std::optional<Exception>&&)>&& completionHandler)

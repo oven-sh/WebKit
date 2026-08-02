@@ -324,7 +324,7 @@ static bool NODELETE shouldDumpCSSJITDisassembly()
     return JSC::Options::dumpDisassembly() || JSC::Options::dumpCSSJITDisassembly();
 }
 
-enum class BacktrackingAction {
+enum class BacktrackingAction : uint8_t {
     NoBacktracking,
     JumpToDescendantEntryPoint,
     JumpToIndirectAdjacentEntryPoint,
@@ -347,7 +347,7 @@ struct BacktrackingFlag {
     };
 };
 
-enum class FragmentRelation {
+enum class FragmentRelation : uint8_t {
     Rightmost,
     Descendant,
     Child,
@@ -362,7 +362,7 @@ enum class FunctionType {
     CannotCompile
 };
 
-enum class FragmentPositionInRootFragments {
+enum class FragmentPositionInRootFragments : uint8_t {
     Rightmost,
     AdjacentToRightmost,
     Other
@@ -449,6 +449,22 @@ struct SelectorFragment {
     BacktrackingAction matchingTagNameBacktrackingAction = BacktrackingAction::NoBacktracking;
     BacktrackingAction matchingPostTagNameBacktrackingAction = BacktrackingAction::NoBacktracking;
     unsigned char backtrackingFlags = 0;
+
+    bool matchesHasScope { false };
+
+    // For quirks mode, follow this: http://quirks.spec.whatwg.org/#the-:active-and-:hover-quirk
+    // In quirks mode, a compound selector 'selector' that matches the following conditions must not match elements that would not also match the ':any-link' selector.
+    //
+    //    selector uses the ':active' or ':hover' pseudo-classes.
+    //    selector does not use a type selector.
+    //    selector does not use an attribute selector.
+    //    selector does not use an ID selector.
+    //    selector does not use a class selector.
+    //    selector does not use a pseudo-class selector other than ':active' and ':hover'.
+    //    selector does not use a pseudo-element selector.
+    //    selector is not part of an argument to a functional pseudo-class or pseudo-element.
+    bool onlyMatchesLinksInQuirksMode = true;
+
     unsigned tagNameMatchedBacktrackingStartHeightFromDescendant = invalidHeight;
     unsigned tagNameNotMatchedBacktrackingStartHeightFromDescendant = invalidHeight;
     unsigned heightFromDescendant = 0;
@@ -475,21 +491,6 @@ struct SelectorFragment {
     Vector<SelectorList> matchesFilters;
     Vector<Vector<SelectorFragment>> anyFilters;
     const CSSSelector* pseudoElementSelector = nullptr;
-
-    bool matchesHasScope { false };
-
-    // For quirks mode, follow this: http://quirks.spec.whatwg.org/#the-:active-and-:hover-quirk
-    // In quirks mode, a compound selector 'selector' that matches the following conditions must not match elements that would not also match the ':any-link' selector.
-    //
-    //    selector uses the ':active' or ':hover' pseudo-classes.
-    //    selector does not use a type selector.
-    //    selector does not use an attribute selector.
-    //    selector does not use an ID selector.
-    //    selector does not use a class selector.
-    //    selector does not use a pseudo-class selector other than ':active' and ':hover'.
-    //    selector does not use a pseudo-element selector.
-    //    selector is not part of an argument to a functional pseudo-class or pseudo-element.
-    bool onlyMatchesLinksInQuirksMode = true;
 };
 
 class SelectorFragmentList : public Vector<SelectorFragment, 4> {
@@ -1505,9 +1506,11 @@ inline SelectorCodeGenerator::SelectorCodeGenerator(const CSSSelector& rootSelec
     , m_purpose(purpose)
     , m_originalSelector(rootSelector)
 {
-    auto selectorTextUTF8 = m_originalSelector.selectorText().utf8();
-    auto selectorTextSpan = selectorTextUTF8.span();
-    dataLogFIf(shouldDumpCSSJITDisassembly(), "Compiling \"%.*s\"\n", static_cast<int>(selectorTextSpan.size()), selectorTextSpan.data());
+    if (shouldDumpCSSJITDisassembly()) [[unlikely]] {
+        auto selectorTextUTF8 = m_originalSelector.selectorText().utf8();
+        auto selectorTextSpan = selectorTextUTF8.span();
+        dataLogF("Compiling \"%.*s\"\n", static_cast<int>(selectorTextSpan.size()), selectorTextSpan.data());
+    }
 
     // In QuerySelector context, :visited always has no effect due to security issues.
     // :has() argument selectors also disable visited matching (see SelectorChecker::matchHasPseudoClass).
@@ -1640,10 +1643,6 @@ static FunctionType constructFragmentsInternal(const CSSSelector& rootSelector, 
             [[fallthrough]];
         case CSSSelector::Match::Exact:
         case CSSSelector::Match::Hyphen:
-            fragment->onlyMatchesLinksInQuirksMode = false;
-            fragment->attributes.append(AttributeMatchingInfo(*selector));
-            break;
-
         case CSSSelector::Match::Set:
             fragment->onlyMatchesLinksInQuirksMode = false;
             fragment->attributes.append(AttributeMatchingInfo(*selector));
@@ -4311,12 +4310,12 @@ void SelectorCodeGenerator::generateElementIsNthChildOf(Assembler::JumpList& fai
     for (const NthChildOfSelectorInfo& nthChildOfSelectorInfo : fragment.nthChildOfFilters)
         generateElementMatchesSelectorList(failureCases, elementAddressRegister, nthChildOfSelectorInfo.selectorList);
 
-    Vector<const NthChildOfSelectorInfo*> validSubsetFilters;
-    for (const NthChildOfSelectorInfo& nthChildOfSelectorInfo : fragment.nthChildOfFilters) {
+    auto validSubsetFilters = WTF::compactMap(fragment.nthChildOfFilters, [](auto& nthChildOfSelectorInfo) -> std::optional<const NthChildOfSelectorInfo*> {
         if (nthFilterIsAlwaysSatisified(nthChildOfSelectorInfo.a, nthChildOfSelectorInfo.b))
-            continue;
-        validSubsetFilters.append(&nthChildOfSelectorInfo);
-    }
+            return std::nullopt;
+        return &nthChildOfSelectorInfo;
+    });
+
     if (validSubsetFilters.isEmpty())
         return;
 

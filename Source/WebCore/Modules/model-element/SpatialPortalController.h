@@ -27,16 +27,83 @@
 
 #if ENABLE(SPATIAL_PORTAL)
 
+#include "LayoutSize.h"
+#include <WebCore/NodeIdentifier.h>
+#include <wtf/CheckedPtr.h>
+#include <wtf/HashMap.h>
+#include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakPtr.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
+class Color;
+class Element;
+class GraphicsLayer;
+class HTMLModelElement;
+class IntersectionObserver;
+class Model;
+class ModelPlayer;
+class ModelPlayerProvider;
+class PortalModelPlayerClient;
+class ResourceError;
+class WeakPtrImplWithEventTargetData;
+
 // Manages the portal / ModelPlayer for an element with `spatial: portal`.
-class SpatialPortalController {
+class SpatialPortalController : public CanMakeWeakPtr<SpatialPortalController>, public CanMakeCheckedPtr<SpatialPortalController> {
     WTF_MAKE_TZONE_ALLOCATED(SpatialPortalController);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SpatialPortalController);
+    friend class PortalModelPlayerClient;
+    friend class PortalIntersectionObserverCallback;
 public:
-    SpatialPortalController();
+    explicit SpatialPortalController(Element&);
     ~SpatialPortalController();
+
+    void unregisterChildModel(HTMLModelElement&);
+    void registerChildModel(HTMLModelElement&);
+    void childModelDidChange(HTMLModelElement&);
+
+    ModelPlayer* modelPlayer() const { return m_modelPlayer.get(); }
+    unsigned numberOfHostedModels() const { return m_hostedModels.size(); }
+    WEBCORE_EXPORT unsigned numberOfLoadedModels() const;
+    void configureGraphicsLayer(GraphicsLayer&, const Color& backgroundColor);
+    void sizeMayHaveChanged();
+
+    bool isPortalVisible() const;
+
+private:
+    void modelDidFinishLoading(ModelPlayer&, NodeIdentifier);
+    void modelDidFailLoading(ModelPlayer&, NodeIdentifier, const ResourceError&);
+    void modelDidUnload(ModelPlayer&);
+    void modelDidUpdate(ModelPlayer&);
+    void logWarning(ModelPlayer&, const String&);
+    RefPtr<GraphicsLayer> portalGraphicsLayer() const;
+    void viewportIntersectionChanged(bool isIntersecting);
+
+    ModelPlayer* ensureModelPlayer();
+    void loadChildModelsIfReady();
+    void loadChildModelIfReady(HTMLModelElement&);
+    void deleteModelPlayer();
+    void unloadChildModel(NodeIdentifier);
+    HTMLModelElement* hostedModelElement(NodeIdentifier) const;
+    void reconfigurePortalLayer();
+    void observePortalVisibility();
+    LayoutSize portalContentSize() const;
+
+    const WeakPtr<Element, WeakPtrImplWithEventTargetData> m_portalElement;
+
+    struct HostedModel {
+        WeakPtr<HTMLModelElement, WeakPtrImplWithEventTargetData> element;
+        RefPtr<Model> loadedModel;
+    };
+    HashMap<NodeIdentifier, HostedModel> m_hostedModels;
+
+    WeakPtr<ModelPlayerProvider> m_modelPlayerProvider;
+    RefPtr<ModelPlayer> m_modelPlayer;
+    const RefPtr<PortalModelPlayerClient> m_playerClient;
+    RefPtr<IntersectionObserver> m_intersectionObserver;
+    bool m_isIntersectingViewport { false };
 };
 
 } // namespace WebCore

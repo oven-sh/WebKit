@@ -2807,9 +2807,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case ArrayUnshiftIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
-
             if (static_cast<unsigned>(argumentCountIncludingThis) >= MIN_SPARSE_ARRAY_INDEX)
                 return CallOptimizationResult::DidNothing;
 
@@ -3164,9 +3161,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case ArrayShiftIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
-
             ArrayMode arrayMode = getArrayMode(Array::Write);
             if (!arrayMode.isJSArray())
                 return CallOptimizationResult::DidNothing;
@@ -3233,8 +3227,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case AtomicsStoreIntrinsic:
         case AtomicsSubIntrinsic:
         case AtomicsXorIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
             
             NodeType op = LastNodeType;
             Array::Action action = Array::Write;
@@ -3911,9 +3903,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case RegExpStringIteratorNextIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
-
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
@@ -4187,8 +4176,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case DateNowIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
             insertChecks();
             setResult(addToGraph(DateNow));
             return CallOptimizationResult::Inlined;
@@ -4253,7 +4240,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case JSMapGetIntrinsic: {
-            if (argumentCountIncludingThis < 2 || !is64Bit())
+            if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -4270,7 +4257,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case JSSetHasIntrinsic:
         case JSMapHasIntrinsic: {
-            if (argumentCountIncludingThis < 2 || !is64Bit())
+            if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -4344,9 +4331,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case JSMapValuesIntrinsic:
         case JSSetEntriesIntrinsic:
         case JSSetValuesIntrinsic: {
-            if (!is64Bit()) // JSEmpty must be nullptr.
-                return CallOptimizationResult::DidNothing;
-
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
@@ -4409,9 +4393,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case JSStringIteratorIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
-
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
@@ -4432,9 +4413,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case JSStringIteratorNextIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
-
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
                 return CallOptimizationResult::DidNothing;
 
@@ -4526,9 +4504,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
         case JSSetIteratorNextIntrinsic:
         case JSMapIteratorNextIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
-
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
                 return CallOptimizationResult::DidNothing;
 
@@ -4849,8 +4824,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case DatePrototypeGetTimeIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
             insertChecks();
             Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             setResult(addToGraph(DateGetTime, OpInfo(intrinsic), OpInfo(), base));
@@ -4858,8 +4831,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case DatePrototypeSetTimeIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
             if (argumentCountIncludingThis < 2)
@@ -4891,8 +4862,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case DatePrototypeGetUTCMillisecondsIntrinsic:
         case DatePrototypeGetTimezoneOffsetIntrinsic:
         case DatePrototypeGetYearIntrinsic: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
             insertChecks();
             Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             setResult(addToGraph(DateGetInt32OrNaN, OpInfo(intrinsic), OpInfo(prediction), base));
@@ -4910,9 +4879,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case DataViewGetFloat64:
         case DataViewGetBigInt64:
         case DataViewGetBigUint64: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
-
             // To inline data view accesses, we assume the architecture we're running on:
             // - Is little endian.
             // - Allows unaligned loads/stores without crashing. 
@@ -5022,9 +4988,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case DataViewSetFloat64:
         case DataViewSetBigInt64:
         case DataViewSetBigUint64: {
-            if (!is64Bit())
-                return CallOptimizationResult::DidNothing;
-
             if (argumentCountIncludingThis < 3)
                 return CallOptimizationResult::DidNothing;
 
@@ -5276,7 +5239,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         }
 
         case FunctionBindIntrinsic: {
-#if USE(JSVALUE64)
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
@@ -5296,9 +5258,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             Node* resultNode = addToGraph(Node::VarArg, FunctionBind, OpInfo(0), OpInfo(static_cast<unsigned>(argumentCountIncludingThis >= 2 ? argumentCountIncludingThis - 2 : 0)));
             setResult(resultNode);
             return CallOptimizationResult::Inlined;
-#else
-            return CallOptimizationResult::DidNothing;
-#endif
         }
 
         case NumberConstructorIntrinsic: {
@@ -5789,11 +5748,6 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
             ASSERT(arrayType != Array::Generic);
         });
 
-#if USE(JSVALUE32_64)
-        if (mayBeResizableOrGrowableSharedTypedArray)
-            return false;
-#endif
-
         insertChecks();
         NodeType op = mayBeLargeTypedArray ? GetTypedArrayLengthAsInt52 : GetArrayLength;
         Node* lengthNode = addToGraph(op, OpInfo(ArrayMode(arrayType, Array::NonArray, Array::InBounds, Array::AsIs, Array::Read, mayBeLargeTypedArray, mayBeResizableOrGrowableSharedTypedArray).asWord()), thisNode);
@@ -5829,11 +5783,6 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
             ASSERT(arrayType != Array::Generic);
         });
 
-#if USE(JSVALUE32_64)
-        if (mayBeResizableOrGrowableSharedTypedArray)
-            return false;
-#endif
-
         insertChecks();
         NodeType op = mayBeLargeTypedArray ? GetTypedArrayLengthAsInt52 : GetArrayLength;
         set(result, addToGraph(op, OpInfo(ArrayMode(arrayType, Array::NonArray, Array::InBounds, Array::AsIs, Array::Read, mayBeLargeTypedArray, mayBeResizableOrGrowableSharedTypedArray).asWord()), thisNode));
@@ -5859,11 +5808,6 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
             ASSERT(arrayType != Array::Generic);
         });
 
-
-#if USE(JSVALUE32_64)
-        if (mayBeResizableOrGrowableSharedTypedArray)
-            return false;
-#endif
 
         insertChecks();
         NodeType op = mayBeLargeTypedArray ? GetTypedArrayByteOffsetAsInt52 : GetTypedArrayByteOffset;
@@ -7065,50 +7009,46 @@ void ByteCodeParser::handleGetById(
             return;
         }
     }
-#if USE(JSVALUE64)
     if (type == AccessType::GetById) {
         if (getByStatus.isMegamorphic() && canUseMegamorphicGetById(*m_vm, identifier.uid())) {
             set(destination, addToGraph(GetByIdMegamorphic, OpInfo(data), OpInfo(prediction), base));
             return;
         }
     }
-#endif
 
     // Special path for custom accessors since custom's offset does not have any meaning.
     // So, this is completely different from Simple one. But we have a chance to optimize it when we use DOMJIT.
-    if (is64Bit()) {
-        if (getByStatus.numVariants() == 1) {
-            GetByVariant variant = getByStatus[0];
-            if (getByStatus.isCustomAccessor()) {
-                // DOMGetter does not perform type check for base. So if we found variant.domAttribute(), we must use CallDOMGetter.
-                if (Options::useDOMJIT() && variant.domAttribute()) {
-                    ASSERT(!getByStatus.makesCalls());
-                    if (handleDOMJITGetter(destination, variant, base, unwrapped, identifierNumber, prediction)) {
-                        if (m_graph.compilation()) [[unlikely]]
-                            m_graph.compilation()->noticeInlinedGetById();
-                        return;
-                    }
-                    set(destination, addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+    if (getByStatus.numVariants() == 1) {
+        GetByVariant variant = getByStatus[0];
+        if (getByStatus.isCustomAccessor()) {
+            // DOMGetter does not perform type check for base. So if we found variant.domAttribute(), we must use CallDOMGetter.
+            if (Options::useDOMJIT() && variant.domAttribute()) {
+                ASSERT(!getByStatus.makesCalls());
+                if (handleDOMJITGetter(destination, variant, base, unwrapped, identifierNumber, prediction)) {
+                    if (m_graph.compilation()) [[unlikely]]
+                        m_graph.compilation()->noticeInlinedGetById();
                     return;
                 }
-
-                if (!check(variant.conditionSet())) {
-                    set(destination, addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
-                    return;
-                }
-
-                if (m_graph.compilation()) [[unlikely]]
-                    m_graph.compilation()->noticeInlinedGetById();
-
-                addToGraph(FilterGetByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addGetByStatus(currentCodeOrigin(), getByStatus)), base);
-                addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.structureSet())), unwrapped);
-                auto* customData = m_graph.m_callCustomAccessorData.add();
-                customData->m_customAccessor = variant.customAccessorGetter();
-                customData->m_identifier = identifier;
-                set(destination, addToGraph(CallCustomAccessorGetter, OpInfo(customData), OpInfo(prediction), base));
+                set(destination, addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
                 return;
-
             }
+
+            if (!check(variant.conditionSet())) {
+                set(destination, addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+                return;
+            }
+
+            if (m_graph.compilation()) [[unlikely]]
+                m_graph.compilation()->noticeInlinedGetById();
+
+            addToGraph(FilterGetByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addGetByStatus(currentCodeOrigin(), getByStatus)), base);
+            addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.structureSet())), unwrapped);
+            auto* customData = m_graph.m_callCustomAccessorData.add();
+            customData->m_customAccessor = variant.customAccessorGetter();
+            customData->m_identifier = identifier;
+            set(destination, addToGraph(CallCustomAccessorGetter, OpInfo(customData), OpInfo(prediction), base));
+            return;
+
         }
     }
 
@@ -7516,26 +7456,24 @@ void ByteCodeParser::handlePutById(
     if (putByStatus.viaGlobalProxy())
         unwrapped = addToGraph(UnwrapGlobalProxy, Edge(base, GlobalProxyUse));
 
-    if (is64Bit()) {
-        if (putByStatus.isCustomAccessor()) {
-            if (putByStatus.numVariants() == 1) {
-                // Special path for custom accessors since custom's offset does not have any meanings.
-                // So, this is completely different from Simple one. But we have a chance to optimize it.
-                auto variant = putByStatus[0];
-                if (m_graph.compilation()) [[unlikely]]
-                    m_graph.compilation()->noticeInlinedPutById();
-                addToGraph(FilterPutByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addPutByStatus(currentCodeOrigin(), putByStatus)), base);
-                if (!check(variant.conditionSet())) {
-                    emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
-                    return;
-                }
-                auto* data = m_graph.m_callCustomAccessorData.add();
-                data->m_customAccessor = variant.customAccessorSetter();
-                data->m_identifier = identifier;
-                addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.oldStructure())), unwrapped);
-                addToGraph(CallCustomAccessorSetter, OpInfo(data), OpInfo(SpecNone), base, value);
+    if (putByStatus.isCustomAccessor()) {
+        if (putByStatus.numVariants() == 1) {
+            // Special path for custom accessors since custom's offset does not have any meanings.
+            // So, this is completely different from Simple one. But we have a chance to optimize it.
+            auto variant = putByStatus[0];
+            if (m_graph.compilation()) [[unlikely]]
+                m_graph.compilation()->noticeInlinedPutById();
+            addToGraph(FilterPutByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addPutByStatus(currentCodeOrigin(), putByStatus)), base);
+            if (!check(variant.conditionSet())) {
+                emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
                 return;
             }
+            auto* data = m_graph.m_callCustomAccessorData.add();
+            data->m_customAccessor = variant.customAccessorSetter();
+            data->m_identifier = identifier;
+            addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.oldStructure())), unwrapped);
+            addToGraph(CallCustomAccessorSetter, OpInfo(data), OpInfo(SpecNone), base, value);
+            return;
         }
     }
 
@@ -13346,9 +13284,6 @@ auto ByteCodeParser::handleArraySort(Node* callee, Operand resultOperand, CallVa
     //            of committing the actual result to the input array.
 
     UNUSED_PARAM(resultOperand);
-
-    if (!is64Bit())
-        return CallOptimizationResult::DidNothing;
 
     if (argumentCountIncludingThis < 2)
         return CallOptimizationResult::DidNothing;

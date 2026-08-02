@@ -1,2 +1,1 @@
-NetworkProcess/ServiceWorker/WebSWServerConnection.cpp
-WebProcess/WebPage/WebFrame.cpp
+[ macOS ] UIProcess/mac/ViewGestureControllerMac.mm

@@ -396,8 +396,6 @@ webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/attr-all-type
 
 webkit.org/b/219614 inspector/css/getComputedPrimaryFontForNode.html [ Failure ]
 
-webkit.org/b/236298 fast/inline-block/hidpi-margin-top-with-subpixel-value-and-overflow-hidden.html [ ImageOnlyFailure ]
-
 webkit.org/b/131347 svg/custom/hidpi-masking-clipping.svg [ ImageOnlyFailure ]
 
 webkit.org/b/131934 fast/dom/Window/mozilla-focus-blur.html [ Failure ]
@@ -949,8 +947,6 @@ webkit.org/b/196061 editing/pasteboard/smart-paste-paragraph-001.html [ Failure 
 webkit.org/b/196061 editing/pasteboard/smart-paste-paragraph-002.html [ Failure ]
 webkit.org/b/196061 editing/pasteboard/smart-paste-paragraph-004.html [ Failure ]
 
-webkit.org/b/196197 http/wpt/cache-storage/cache-quota-after-restart.any.html [ Failure ]
-
 webkit.org/b/199868 accessibility/gtk/aria-haspopup.html [ Failure ]
 
 webkit.org/b/201260 http/wpt/service-workers/server-trust-evaluation.https.html [ Failure ]
@@ -1059,8 +1055,6 @@ webgl/2.0.y/conformance2/textures/image_bitmap_from_video [ Skip ]
 webgl/2.0.y/conformance2/textures/misc/tex-image-with-bad-args-from-dom-elements.html [ Skip ]
 
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-plus-filter.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/filter-effects/filtered-block-is-container.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/filter-effects/filtered-inline-is-container.html [ ImageOnlyFailure ]
 
 [ Debug ] media/video-concurrent-playback.html [ Pass Failure ]
 
@@ -1098,6 +1092,11 @@ imported/w3c/web-platform-tests/css/css-view-transitions/window-resize-aborts-tr
 http/tests/login-status/login-status-api-getter-setter-functions.html [ Failure ]
 
 imported/w3c/web-platform-tests/css/css-overflow/overflow-auto-scrolling-with-margin-and-transform.html [ Skip ]
+
+webkit.org/b/278719 fast/events/touch/basic-multi-touch-events.html [ Failure ]
+webkit.org/b/278719 fast/events/touch/basic-multi-touch-events-limited.html [ Failure ]
+webkit.org/b/278719 fast/events/touch/touch-target.html [ Timeout ]
+webkit.org/b/278719 fast/events/touch/touch-target-limited.html [ Timeout ]
 
 webkit.org/b/278719 fast/events/touch/basic-single-touch-events.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/emulate-touch-events.html [ Failure ]
@@ -1321,3 +1320,8 @@ webkit.org/b/320214 [ Debug ] inspector/debugger/async-stack-trace-truncate.html
 webkit.org/b/320215 compositing/absolute-inside-out-of-view-fixed.html [ Pass Timeout ]
 webkit.org/b/319067 imported/w3c/web-platform-tests/media-source/mediasource-config-change-webm-v-framerate.html [ Failure Pass ]
 webkit.org/b/173419 fast/events/wheel/wheelevent-in-horizontal-scrollbar-in-rtl.html [ Failure Pass ]
+
+webkit.org/b/137698 media/video-controls-drag.html [ Timeout ]
+
+webkit.org/b/320354 compositing/animation/animated-composited-inside-hidden.html [ Timeout Pass ]
+webkit.org/b/320354 compositing/backgrounds/fixed-background-on-descendant.html [ Timeout Pass ]

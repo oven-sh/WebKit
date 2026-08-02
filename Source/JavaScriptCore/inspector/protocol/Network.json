@@ -230,7 +230,7 @@
         {
             "name": "loadResource",
             "description": "Loads a resource in the context of a frame on the inspected page without cross origin checks.",
-            "targetTypes": ["page"],
+            "targetTypes": ["page", "web-page"],
             "async": true,
             "parameters": [
                 { "name": "frameId", "$ref": "FrameId", "description": "Frame to load the resource from." },
@@ -245,7 +245,8 @@
         {
             "name": "getSerializedCertificate",
             "description": "Fetches a serialized secure certificate for the given requestId to be displayed via InspectorFrontendHost.showCertificate.",
-            "targetTypes": ["page"],
+            "targetTypes": ["page", "web-page"],
+            "async": true,
             "parameters": [
                 { "name": "requestId", "$ref": "RequestId" }
             ],

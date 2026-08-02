@@ -434,6 +434,10 @@ func (b *TaskBuilder) dmFlags(internalHardwareLabel string) {
 			skip(ALL, "test", ALL, "UserDefinedStableKeyTest")
 		}
 
+		if b.ExtraConfig("AvoidDepth") {
+			args = append(args, "--avoidDepth")
+		}
+
 		// The Tegra3 doesn't support MSAA
 		if b.GPU("Tegra3") ||
 			// We aren't interested in fixing msaa bugs on current iOS devices.
@@ -612,18 +616,24 @@ func (b *TaskBuilder) dmFlags(internalHardwareLabel string) {
 					}
 
 					if b.MatchOs("Win11") &&
-						b.GPU("RTX3060", "GTX1660", "IntelIrisXe", "IntelUHDGraphics770", "IntelIris540") {
+						b.GPU("RTX3060", "GTX1660", "IntelArcB570", "IntelIrisXe", "IntelUHDGraphics770", "IntelIris540") {
 						// These GPUs are failing this test on Win11 (b/462240488)
 						skip(ALL, "test", ALL, "PersistentPipelineStorageTest")
 					}
 					if b.MatchOs("Win11") && b.GPU("IntelIris540") {
 						skip(ALL, "test", ALL, "NotifyInUseTestLayer") // b/485241813
 					}
-					if b.MatchOs("Win11") && b.GPU("IntelIrisXe", "IntelUHDGraphics770") {
+					if b.MatchOs("Win11") && b.GPU("IntelArc140V", "IntelArcB570", "IntelIrisXe", "IntelUHDGraphics770") {
 						// skbug.com/470073298
 						skip(ALL, "gm", ALL, "ycbcrimage")
 					}
 				}
+			}
+			// b/524993720 Graphite (Native|Dawn) Vulkan on IntelArc140V fails the following tests:
+			if b.GPU("IntelArc140V") && b.ExtraConfig("Vulkan") {
+				skip(ALL, "test", ALL, "GraphiteTimeLimitedPurgeTest")
+				skip(ALL, "test", ALL, "PersistentPipelineStorageTest")
+				skip(ALL, "test", ALL, "SimplifyPaintTest")
 			}
 		} else {
 			if b.GPU("QuadroP400") && b.MatchOs("Ubuntu24.04") {
@@ -1621,6 +1631,11 @@ func (b *TaskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "test", ALL, "SurfaceClear_Gpu")
 	}
 
+	if b.IsWindows() && b.GPU("IntelArcB570") && b.ExtraConfig("ANGLE") {
+		// skbug.com/535536995
+		skip(ALL, "test", ALL, "BigImageTest_Ganesh")
+	}
+
 	if b.GPU("PowerVRGX6250") {
 		match = append(match, "~gradients_view_perspective_nodither") //skbug.com/40038203
 	}
@@ -1719,6 +1734,7 @@ func (b *TaskBuilder) dmFlags(internalHardwareLabel string) {
 			"RustEncodePng",
 			"RustExif",
 			"RustIcc",
+			"RustIcoCodec",
 			"RustPngCodec",
 		}
 	}

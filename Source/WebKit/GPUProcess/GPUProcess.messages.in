@@ -47,7 +47,7 @@ messages -> GPUProcess : AuxiliaryProcess {
     SetOrientationForMediaCapture(WebCore::IntDegrees orientation);
     RotationAngleForCaptureDeviceChanged(String persistentId, enum:uint16_t WebCore::VideoFrameRotation rotation);
 
-    UpdateCaptureAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture, WebCore::ProcessIdentifier processID) -> ()
+    UpdateCaptureAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture, bool willUseEchoCancellation, WebCore::ProcessIdentifier processID) -> ()
     UpdateCaptureOrigin(WebCore::SecurityOriginData originData, WebCore::ProcessIdentifier processID)
     AddMockMediaDevice(struct WebCore::MockMediaDevice device)
     ClearMockMediaDevices()
@@ -72,6 +72,10 @@ messages -> GPUProcess : AuxiliaryProcess {
 #if HAVE(SCREEN_CAPTURE_KIT)
     PromptForGetDisplayMedia(enum:uint8_t WebCore::DisplayCapturePromptType type) -> (std::optional<WebCore::CaptureDevice> device)
     CancelGetDisplayMediaPrompt()
+#endif
+
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    TryToSetAudioSessionActiveForProcess(WebCore::ProcessIdentifier processID, bool active) -> (GenericPromise::Result result)
 #endif
 
 #if PLATFORM(MAC)

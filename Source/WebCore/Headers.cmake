@@ -472,7 +472,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/identity/DigitalCredentialPresentationProtocol.h
     Modules/identity/DigitalCredentialRequestOptions.h
     Modules/identity/DigitalCredentialsMobileDocumentRequestData.h
-    Modules/identity/DigitalCredentialsMobileDocumentRequestDataWithRequestInfo.h
     Modules/identity/DigitalCredentialsRequestData.h
     Modules/identity/DigitalCredentialsResponseData.h
     Modules/identity/DigitalCredentialsSecurityOriginData.h
@@ -489,6 +488,10 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/identity/protocols/ISO18013/ISO18013PresentmentRequest.h
     Modules/identity/protocols/ISO18013/MobileDocumentRequest.h
     Modules/identity/protocols/ISO18013/ValidatedMobileDocumentRequest.h
+
+    Modules/identity/protocols/openid/OpenID4VPMultisignedRequest.h
+    Modules/identity/protocols/openid/OpenID4VPSignature.h
+    Modules/identity/protocols/openid/OpenID4VPSignedRequest.h
 
     Modules/indexeddb/IDBActiveDOMObject.h
     Modules/indexeddb/IDBActiveDOMObjectInlines.h
@@ -1819,6 +1822,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/integration/LayoutIntegrationUtils.h
 
     layout/integration/flex/FlexIntegrationUtils.h
+    layout/integration/flex/FlexItemContentCache.h
     layout/integration/flex/LayoutIntegrationFlexLayout.h
 
     layout/integration/grid/LayoutIntegrationGridLayout.h
@@ -2415,6 +2419,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/audio/AudioSourceProviderClient.h
     platform/audio/AudioStreamDescription.h
     platform/audio/AudioUtilities.h
+    platform/audio/MediaSessionManagerClient.h
     platform/audio/MediaSessionManagerInterface.h
     platform/audio/NowPlayingInfo.h
     platform/audio/NowPlayingMetadataObserver.h

@@ -46,6 +46,8 @@ NetworkTransportSession::~NetworkTransportSession()
 {
     for (auto&& statsRequest : std::exchange(m_statsRequestsBeforeInitialization, { }))
         statsRequest(std::nullopt);
+    for (auto&& streamRequest : std::exchange(m_streamRequestsBeforeInitialization, { }))
+        streamRequest.completionHandler(std::nullopt);
 }
 
 IPC::Connection* NetworkTransportSession::messageSenderConnection() const
@@ -185,7 +187,6 @@ void NetworkTransportSession::getStats(CompletionHandler<void(std::optional<WebC
         break;
     }
 
-    // FIXME: Get better stats from the network implementation.
     uint64_t bytesSent = m_bytesSentOnClosedStreams;
     uint64_t bytesReceived = m_bytesReceivedOnClosedStreams;
     for (Ref stream : m_streams.values()) {
@@ -196,44 +197,31 @@ void NetworkTransportSession::getStats(CompletionHandler<void(std::optional<WebC
         bytesSent += datagramBytesSent;
     bytesReceived += m_datagramBytesReceived;
 
-    // https://www.w3.org/TR/hr-time-3/#dfn-coarsen-time
-    auto roundTo100Microseconds = [] (Seconds time) {
-        return ReducedResolutionSeconds::reduce(time, 100_us).milliseconds();
-    };
-
     completionHandler(WebCore::WebTransportConnectionStats {
         bytesSent,
-        0, /* packetsSent */
-        0, /* bytesLost */
-        0, /* packetsLost */
-        bytesReceived,
-        0, /* packetsReceived */
-        roundTo100Microseconds(m_initializationTime), /* smoothedRtt */
-        0, /* rttVariation */
-        roundTo100Microseconds(m_initializationTime), /* minRtt */
-        WebCore::WebTransportDatagramStats { },
-        std::nullopt, /* estimatedSendRate */
-        false /* atSendCapacity */
+        bytesReceived
     });
 }
 
-void NetworkTransportSession::completeStatsRequestsAfterInitialization(std::optional<Seconds> initializationTime)
+void NetworkTransportSession::completeRequestsAfterInitialization(std::optional<Seconds> initializationTime)
 {
-    ASSERT(!m_initializationTime);
     ASSERT(m_initializationState == InitializationState::Waiting);
     if (!initializationTime) {
         m_initializationState = InitializationState::Failed;
         for (auto&& statsRequest : std::exchange(m_statsRequestsBeforeInitialization, { }))
             statsRequest(std::nullopt);
+        for (auto&& streamRequest : std::exchange(m_streamRequestsBeforeInitialization, { }))
+            streamRequest.completionHandler(std::nullopt);
         return;
     }
     m_initializationState = InitializationState::Succeeded;
-    m_initializationTime = *initializationTime;
     for (auto&& statsRequest : std::exchange(m_statsRequestsBeforeInitialization, { }))
         getStats(WTF::move(statsRequest));
+    for (auto&& streamRequest : std::exchange(m_streamRequestsBeforeInitialization, { }))
+        createStream(streamRequest.streamType, WTF::move(streamRequest.completionHandler));
 }
 
-#if !PLATFORM(COCOA)
+#if !HAVE(WEBTRANSPORT)
 RefPtr<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectionToWebProcess&, WebTransportSessionIdentifier, URL&&, WebCore::WebTransportOptions&&, WebKit::WebPageProxyIdentifier&&, WebCore::ClientOrigin&&)
 {
     return nullptr;
@@ -260,6 +248,11 @@ void NetworkTransportSession::createOutgoingUnidirectionalStream(CompletionHandl
 }
 
 void NetworkTransportSession::createBidirectionalStream(CompletionHandler<void(std::optional<WebCore::WebTransportStreamIdentifier>)>&& completionHandler)
+{
+    completionHandler(std::nullopt);
+}
+
+void NetworkTransportSession::createStream(NetworkTransportStreamType, CompletionHandler<void(std::optional<WebCore::WebTransportStreamIdentifier>)>&& completionHandler)
 {
     completionHandler(std::nullopt);
 }

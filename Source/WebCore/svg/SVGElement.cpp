@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2004, 2005, 2006, 2007, 2008 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2006, 2008 Rob Buis <buis@kde.org>
- * Copyright (C) 2008-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2024 Google Inc. All rights reserved.
  * Copyright (C) 2008 Alp Toker <alp@atoker.com>
  * Copyright (C) 2009 Cameron McCormack <cam@mcc.id.au>
@@ -78,6 +78,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RobinHoodHashMap.h>
+#include <wtf/RobinHoodHashSet.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -193,6 +194,8 @@ void SVGElement::reportAttributeParsingError(SVGParsingError error, const Qualif
 void SVGElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
     StyledElement::removingSteps(removalType, oldParentOfRemovedTree);
+
+    m_isInSVGResourceContainer = TriState::Indeterminate;
 
     if (!parentNode()) {
         m_hasRegisteredWithParentForRelativeLengths = false;
@@ -536,10 +539,10 @@ void SVGElement::attributeChanged(const QualifiedName& name, const AtomString& o
         m_className->setBaseValInternal(newValue);
         break;
     case AttributeNames::tabindexAttr:
-        if (newValue.isEmpty())
-            setTabIndexExplicitly(std::nullopt);
-        else if (auto optionalTabIndex = parseHTMLInteger(newValue))
+        if (auto optionalTabIndex = parseHTMLInteger(newValue))
             setTabIndexExplicitly(optionalTabIndex.value());
+        else
+            setTabIndexExplicitly(std::nullopt);
         break;
     default:
         if (auto& eventName = HTMLElement::eventNameForEventHandlerAttribute(name); !eventName.isNull())
@@ -1086,6 +1089,8 @@ Node::NeedsPostConnectionSteps SVGElement::insertionSteps(InsertionType insertio
 {
     StyledElement::insertionSteps(insertionType, parentOfInsertedTree);
 
+    m_isInSVGResourceContainer = TriState::Indeterminate;
+
     if (!m_hasInitializedRelativeLengthsState)
         updateRelativeLengthsInformation();
     else if (RefPtr parentElement = dynamicDowncast<SVGElement>(parentNode()); parentElement && &parentOfInsertedTree == parentNode())
@@ -1104,6 +1109,39 @@ Node::NeedsPostConnectionSteps SVGElement::insertionSteps(InsertionType insertio
 void SVGElement::postConnectionSteps()
 {
     buildPendingResourcesIfNeeded();
+}
+
+bool SVGElement::isResourceContainerTagName(const QualifiedName& tagName)
+{
+    static NeverDestroyed resourceContainerTags = MemoryCompactLookupOnlyRobinHoodHashSet<QualifiedName> {
+        SVGNames::clipPathTag,
+        SVGNames::filterTag,
+        SVGNames::linearGradientTag,
+        SVGNames::markerTag,
+        SVGNames::maskTag,
+        SVGNames::patternTag,
+        SVGNames::radialGradientTag,
+    };
+    return resourceContainerTags.get().contains(tagName);
+}
+
+bool SVGElement::isInSVGResourceContainer() const
+{
+    if (m_isInSVGResourceContainer == TriState::Indeterminate) {
+        bool result = false;
+        // Walk composed-tree element ancestors (crosses shadow boundaries for <use> and
+        // HTML inside <foreignObject>). Stop at the first SVG ancestor and reuse its cached
+        // answer, so repeated calls become O(1) once the ancestor cache is populated.
+        for (RefPtr<Element> ancestor = parentElementInComposedTree(); ancestor; ancestor = ancestor->parentElementInComposedTree()) {
+            RefPtr svgAncestor = dynamicDowncast<SVGElement>(ancestor.get());
+            if (!svgAncestor)
+                continue;
+            result = isResourceContainerTagName(svgAncestor->tagQName()) || svgAncestor->isInSVGResourceContainer();
+            break;
+        }
+        m_isInSVGResourceContainer = triState(result);
+    }
+    return m_isInSVGResourceContainer == TriState::True;
 }
 
 void SVGElement::buildPendingResourcesIfNeeded()

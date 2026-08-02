@@ -29,7 +29,9 @@
 #include "AudioSession.h"
 #include "Document.h"
 #include "Logging.h"
+#include "MediaSessionManagerClient.h"
 #include "NowPlayingInfo.h"
+#include "Page.h"
 #include "PlatformMediaSession.h"
 #include <algorithm>
 #include <ranges>
@@ -45,13 +47,52 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaSessionManagerInterface);
 
+class PageMediaSessionManagerClient final : public MediaSessionManagerClient {
+    WTF_MAKE_TZONE_ALLOCATED(PageMediaSessionManagerClient);
+public:
+    explicit PageMediaSessionManagerClient(std::optional<PageIdentifier> pageIdentifier)
+        : m_pageIdentifier(pageIdentifier) { }
+
+private:
+    Ref<GenericPromise> tryToSetAudioSessionActive(bool active, PlatformMediaSessionInterface*) final
+    {
+#if USE(AUDIO_SESSION)
+        return AudioSession::singleton().tryToSetActive(active);
+#else
+        UNUSED_PARAM(active);
+        return GenericPromise::createAndResolve();
+#endif
+    }
+
+    void hasActiveNowPlayingSessionChanged(PlatformMediaSessionInterface*) final
+    {
+        if (RefPtr page = m_pageIdentifier ? Page::fromPageIdentifier(*m_pageIdentifier) : nullptr)
+            page->hasActiveNowPlayingSessionChanged();
+    }
+
+    Markable<PageIdentifier> m_pageIdentifier;
+};
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PageMediaSessionManagerClient);
+
 MediaSessionManagerInterface::MediaSessionManagerInterface(std::optional<PageIdentifier> pageIdentifier)
     : m_pageIdentifier(pageIdentifier)
+    , m_client(makeUnique<PageMediaSessionManagerClient>(pageIdentifier))
 #if !RELEASE_LOG_DISABLED
     , m_stateLogTimer(makeUniqueRef<Timer>(*this, &MediaSessionManagerInterface::dumpSessionStates))
     , m_logger(AggregateLogger::create(this))
 #endif
 {
+}
+
+MediaSessionManagerClient& MediaSessionManagerInterface::client() const
+{
+    return *m_client;
+}
+
+void MediaSessionManagerInterface::setClient(std::unique_ptr<MediaSessionManagerClient>&& client)
+{
+    m_client = WTF::move(client);
 }
 
 MediaSessionManagerInterface::~MediaSessionManagerInterface()
@@ -564,7 +605,7 @@ void MediaSessionManagerInterface::sessionWillEndPlayback(PlatformMediaSessionIn
     MEDIASESSIONMANAGERINTERFACE_RELEASE_LOG(SessionWillEndPlayback, pausingSession.logIdentifier());
 #endif
 
-    auto sessions = this->sessions();
+    auto& sessions = this->sessions();
     auto sessionCount = sessions.computeSize();
     if (sessionCount < 2)
         return;

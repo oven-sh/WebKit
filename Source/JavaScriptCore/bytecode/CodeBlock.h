@@ -814,12 +814,7 @@ public:
 
     bool m_shouldAlwaysBeInlined { true }; // Not a bitfield because the JIT wants to store to it.
 
-#if USE(JSVALUE64)
-    // 64bit environment does not need a lock for ValueProfile operations.
     NoLockingNecessaryTag valueProfileLock() { return NoLockingNecessary; }
-#else
-    ConcurrentJSLock& valueProfileLock() LIFETIME_BOUND { return m_lock; }
-#endif
 
     static constexpr ptrdiff_t offsetOfShouldAlwaysBeInlined() { return OBJECT_OFFSETOF(CodeBlock, m_shouldAlwaysBeInlined); }
 
@@ -969,8 +964,14 @@ private:
     const unsigned m_numCalleeLocals;
     const unsigned m_numVars;
     unsigned m_numParameters;
-    unsigned m_numberOfArgumentsToSkip : 31 { 0 };
-    unsigned m_couldBeTainted : 1 { 0 };
+    union {
+        // The LLInt reads this union as a word and tests the sign bit to check m_couldBeTainted.
+        unsigned m_numberOfArgumentsToSkipAndCouldBeTainted { 0 };
+        struct {
+            unsigned m_numberOfArgumentsToSkip : 31;
+            unsigned m_couldBeTainted : 1;
+        };
+    };
     uint32_t m_osrExitCounter { 0 };
     union {
         unsigned m_debuggerRequests;

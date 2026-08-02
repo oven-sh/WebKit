@@ -2038,7 +2038,7 @@ bool WebLocalFrameLoaderClient::shouldForceUniversalAccessFromLocalURL(const URL
 Ref<FrameNetworkingContext> WebLocalFrameLoaderClient::createNetworkingContext()
 {
     ASSERT(!hasProcessPrivilege(ProcessPrivilege::CanAccessRawCookies));
-    return WebFrameNetworkingContext::create(m_frame.ptr());
+    return WebFrameNetworkingContext::create(protect(m_localFrame).ptr());
 }
 
 #if ENABLE(CONTENT_FILTERING)
@@ -2173,6 +2173,11 @@ RefPtr<WebCore::Frame> WebLocalFrameLoaderClient::provisionalParentFrame() const
     if (RefPtr parentWebFrame = webFrame().parentFrame())
         return parentWebFrame->coreFrame();
     return nullptr;
+}
+
+bool WebLocalFrameLoaderClient::isProvisionalFrame() const
+{
+    return webFrame().provisionalFrame() == m_localFrame.ptr();
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)

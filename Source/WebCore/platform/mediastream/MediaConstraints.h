@@ -263,12 +263,23 @@ public:
         }
 
         if (m_max) {
-            value = m_max.value();
-            ASSERT(validForRange(capabilityMin, value));
-            if (value < max)
-                max = value;
-            if (value > max)
-                value = max;
+            auto constraintMax = m_max.value();
+            ASSERT(validForRange(capabilityMin, constraintMax));
+            if (constraintMax < max)
+                max = constraintMax;
+
+            if (m_min) {
+                if (value > max)
+                    value = max;
+            } else {
+                value = constraintMax;
+                if (value > max)
+                    value = max;
+
+                // If there is no ideal, don't change if maximum is larger than current, as long as current is a valid value for this capability.
+                if (!m_ideal && current >= min && current < value)
+                    value = current;
+            }
         }
 
         if (m_ideal)
@@ -698,6 +709,8 @@ struct MediaConstraints {
 
     enum class DeviceType : bool { Camera, Microphone };
     bool hasDisallowedRequiredConstraintForDeviceSelection(DeviceType) const;
+
+    WEBCORE_EXPORT bool willUseEchoCancellation() const;
 };
 
 } // namespace WebCore

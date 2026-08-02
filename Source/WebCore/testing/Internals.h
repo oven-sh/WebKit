@@ -244,6 +244,7 @@ public:
 
     bool isPreloaded(const String& url);
     bool isLoadingFromMemoryCache(const String& url);
+    ExceptionOr<bool> frameNetworkingContextIsValid() const;
     String fetchResponseSource(FetchResponse&);
     String xhrResponseSource(XMLHttpRequest&);
     bool NODELETE isSharingStyleSheetContents(HTMLLinkElement&, HTMLLinkElement&);
@@ -541,6 +542,7 @@ public:
     void setCachedFindMatchBufferLimitForTesting(unsigned maximumRunCount);
 #if ENABLE(VIDEO)
     ExceptionOr<Vector<double>> findCueMatches(const String&, const Vector<String>& findOptions);
+    void clearFindCaptionTracks();
 #endif
 
     unsigned numberOfScrollableAreas();
@@ -1689,6 +1691,12 @@ public:
     void NODELETE disableModelLoadDelaysForTesting();
     String modelElementState(HTMLModelElement&);
     bool NODELETE isModelElementIntersectingViewport(HTMLModelElement&);
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+    unsigned NODELETE numberOfHostedModelsInSpatialPortal(Element&);
+    unsigned NODELETE numberOfLoadedModelsInSpatialPortal(Element&);
+    bool NODELETE establishesSpatialPortal(Element&);
 #endif
 
     ExceptionOr<void> copyImageAtLocation(int x, int y);

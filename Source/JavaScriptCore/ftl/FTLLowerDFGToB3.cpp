@@ -80,6 +80,7 @@
 #include "JITRightShiftGenerator.h"
 #include "JITSubGenerator.h"
 #include "JITThunks.h"
+#include "JSArray.h"
 #include "JSArrayIterator.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncFunction.h"
@@ -2620,7 +2621,7 @@ private:
             break;
         default:
             if (isInt32Speculation(value.m_type))
-                setInt32(m_out.load32(payloadFor(data->machineLocal)));
+                setInt32(m_out.load32(lowWordFor(data->machineLocal)));
             else
                 setJSValue(m_out.load64(addressFor(data->machineLocal)));
             break;
@@ -2645,7 +2646,7 @@ private:
 
         case FlushedInt32: {
             LValue value = lowInt32(m_node->child1());
-            m_out.store32(value, payloadFor(data->machineLocal));
+            m_out.store32(value, lowWordFor(data->machineLocal));
             break;
         }
 
@@ -7233,7 +7234,7 @@ IGNORE_CLANG_WARNINGS_END
             numberOfArgsIncludingThis = m_out.constInt32(inlineCallFrame->argumentCountIncludingThis);
         else {
             VirtualRegister argumentCountRegister = AssemblyHelpers::argumentCount(inlineCallFrame);
-            numberOfArgsIncludingThis = m_out.load32(payloadFor(argumentCountRegister));
+            numberOfArgsIncludingThis = m_out.load32(lowWordFor(argumentCountRegister));
         }
 
         speculate(NegativeIndex, noValue(), nullptr, m_out.lessThan(originalIndex, m_out.int32Zero));
@@ -9106,76 +9107,73 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileArrayShift()
     {
-        // Inlined code handles length = 0 and length = 1 case. Otherwise, calling operation.
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LValue base = lowCell(m_node->child1());
         LValue storage = lowStorage(m_node->child2());
 
         switch (m_node->arrayMode().type()) {
         case Array::Int32:
+        case Array::Double:
         case Array::Contiguous: {
             IndexedAbstractHeap& heap = m_heaps.forArrayType(m_node->arrayMode().type());
+            bool isDouble = m_node->arrayMode().type() == Array::Double;
+            bool canShiftElements = m_node->arrayMode().isInBoundsSaneChain();
+            auto shiftElementsOperation = [&] {
+                switch (m_node->arrayMode().type()) {
+                case Array::Int32:
+                    return operationArrayShiftElementsInt32;
+                case Array::Contiguous:
+                    return operationArrayShiftElementsContiguous;
+                default:
+                    ASSERT(m_node->arrayMode().type() == Array::Double);
+                    return operationArrayShiftElementsDouble;
+                }
+            }();
 
             LBasicBlock checkLengthOne = m_out.newBlock();
+            LBasicBlock checkSmallShift = canShiftElements ? m_out.newBlock() : nullptr;
+            LBasicBlock shiftElementsCase = canShiftElements ? m_out.newBlock() : nullptr;
             LBasicBlock loadCase = m_out.newBlock();
             LBasicBlock fastDone = m_out.newBlock();
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
 
+            // Where length != 1 goes: the element-move path when we are allowed to use it,
+            // otherwise straight to the generic shift.
+            LBasicBlock notLengthOneCase = canShiftElements ? checkSmallShift : slowCase;
+
             LValue prevLength = m_out.load32(storage, m_heaps.Butterfly_publicLength);
 
-            Vector<ValueFromBlock, 3> results;
+            Vector<ValueFromBlock, 4> results;
             results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
             m_out.branch(m_out.isZero32(prevLength), rarely(continuation), usually(checkLengthOne));
 
-            LBasicBlock lastNext = m_out.appendTo(checkLengthOne, loadCase);
-            m_out.branch(m_out.equal(prevLength, m_out.int32One), usually(loadCase), rarely(slowCase));
+            LBasicBlock lastNext = m_out.appendTo(checkLengthOne, notLengthOneCase);
+            // Moving elements is the case this node exists to speed up, so it is the likely one.
+            m_out.branch(m_out.equal(prevLength, m_out.int32One), rarely(loadCase), usually(notLengthOneCase));
 
+            if (canShiftElements) {
+                m_out.appendTo(checkSmallShift, shiftElementsCase);
+                m_out.branch(m_out.above(prevLength, m_out.constInt32(JSArray::shiftThreshold)), rarely(slowCase), usually(shiftElementsCase));
+
+                m_out.appendTo(shiftElementsCase, loadCase);
+                LValue shiftResult = vmCall(Int64, shiftElementsOperation, m_vmValue, base);
+                // The operation returns the empty value when it cannot handle element 0.
+                results.append(m_out.anchor(shiftResult));
+                m_out.branch(m_out.notZero64(shiftResult), usually(continuation), rarely(slowCase));
+            }
+
+            // length == 1. This moves no elements, so it needs no prototype chain guarantee.
             m_out.appendTo(loadCase, fastDone);
             TypedPointer pointer = m_out.baseIndex(heap, storage, m_out.intPtrZero);
-            LValue result = m_out.load64(pointer);
-            m_out.branch(m_out.notZero64(result), usually(fastDone), rarely(slowCase));
+            LValue loadedValue = isDouble ? m_out.loadDouble(pointer) : m_out.load64(pointer);
+            LValue isUsable = isDouble ? m_out.doubleEqual(loadedValue, loadedValue) : m_out.notZero64(loadedValue);
+            m_out.branch(isUsable, usually(fastDone), rarely(slowCase));
 
             m_out.appendTo(fastDone, slowCase);
-            m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), pointer);
+            m_out.store64(m_out.constInt64(isDouble ? std::bit_cast<int64_t>(PNaN) : static_cast<int64_t>(JSValue::encode(JSValue()))), pointer);
             m_out.store32(m_out.int32Zero, storage, m_heaps.Butterfly_publicLength);
-            results.append(m_out.anchor(result));
-            m_out.jump(continuation);
-
-            m_out.appendTo(slowCase, continuation);
-            results.append(m_out.anchor(vmCall(Int64, operationArrayShift, weakPointer(globalObject), base)));
-            m_out.jump(continuation);
-
-            m_out.appendTo(continuation, lastNext);
-            setJSValue(m_out.phi(Int64, results));
-            return;
-        }
-
-        case Array::Double: {
-            LBasicBlock checkLengthOne = m_out.newBlock();
-            LBasicBlock loadCase = m_out.newBlock();
-            LBasicBlock fastDone = m_out.newBlock();
-            LBasicBlock slowCase = m_out.newBlock();
-            LBasicBlock continuation = m_out.newBlock();
-
-            LValue prevLength = m_out.load32(storage, m_heaps.Butterfly_publicLength);
-
-            Vector<ValueFromBlock, 3> results;
-            results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
-            m_out.branch(m_out.isZero32(prevLength), rarely(continuation), usually(checkLengthOne));
-
-            LBasicBlock lastNext = m_out.appendTo(checkLengthOne, loadCase);
-            m_out.branch(m_out.equal(prevLength, m_out.int32One), usually(loadCase), rarely(slowCase));
-
-            m_out.appendTo(loadCase, fastDone);
-            TypedPointer pointer = m_out.baseIndex(m_heaps.indexedDoubleProperties, storage, m_out.intPtrZero);
-            LValue resultDouble = m_out.loadDouble(pointer);
-            m_out.branch(m_out.doubleEqual(resultDouble, resultDouble), usually(fastDone), rarely(slowCase));
-
-            m_out.appendTo(fastDone, slowCase);
-            m_out.store64(m_out.constInt64(std::bit_cast<int64_t>(PNaN)), pointer);
-            m_out.store32(m_out.int32Zero, storage, m_heaps.Butterfly_publicLength);
-            results.append(m_out.anchor(boxDouble(resultDouble)));
+            results.append(m_out.anchor(isDouble ? boxDouble(loadedValue) : loadedValue));
             m_out.jump(continuation);
 
             m_out.appendTo(slowCase, continuation);
@@ -13082,7 +13080,7 @@ IGNORE_CLANG_WARNINGS_END
     void compileSetCallee()
     {
         auto callee = lowCell(m_node->child1());
-        m_out.storePtr(callee, payloadFor(VirtualRegister(CallFrameSlot::callee)));
+        m_out.storePtr(callee, lowWordFor(VirtualRegister(CallFrameSlot::callee)));
     }
 
     void compileGetArgumentCountIncludingThis()
@@ -13092,12 +13090,12 @@ IGNORE_CLANG_WARNINGS_END
             argumentCountRegister = inlineCallFrame->argumentCountRegister;
         else
             argumentCountRegister = VirtualRegister(CallFrameSlot::argumentCountIncludingThis);
-        setInt32(m_out.load32(payloadFor(argumentCountRegister)));
+        setInt32(m_out.load32(lowWordFor(argumentCountRegister)));
     }
 
     void compileSetArgumentCountIncludingThis()
     {
-        m_out.store32(m_out.constInt32(m_node->argumentCountIncludingThis()), payloadFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis)));
+        m_out.store32(m_out.constInt32(m_node->argumentCountIncludingThis()), lowWordFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis)));
     }
 
     void compileGetScopeOrGetEvalScope()
@@ -13190,7 +13188,7 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileGetArgument()
     {
-        LValue argumentCount = m_out.load32(payloadFor(AssemblyHelpers::argumentCount(m_origin.semantic)));
+        LValue argumentCount = m_out.load32(lowWordFor(AssemblyHelpers::argumentCount(m_origin.semantic)));
 
         LBasicBlock inBounds = m_out.newBlock();
         LBasicBlock outOfBounds = m_out.newBlock();
@@ -13868,7 +13866,7 @@ IGNORE_CLANG_WARNINGS_END
         };
 
         addArgument(jsCallee, VirtualRegister(CallFrameSlot::callee), 0);
-        addArgument(m_out.constInt32(numArgs), VirtualRegister(CallFrameSlot::argumentCountIncludingThis), PayloadOffset);
+        addArgument(m_out.constInt32(numArgs), VirtualRegister(CallFrameSlot::argumentCountIncludingThis), LowWordOffset);
         for (unsigned i = 0; i < numArgs; ++i)
             addArgument(lowJSValue(m_graph.varArgChild(node, 1 + i)), virtualRegisterForArgumentIncludingThis(i), 0);
 
@@ -13898,7 +13896,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 jit.store32(
                     CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                    CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                    CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
                 auto* callLinkInfo = state->addCallLinkInfo(nodeSemanticOrigin);
                 callLinkInfo->setUpCall(nodeOp == Construct ? CallLinkInfo::Construct : CallLinkInfo::Call);
@@ -13950,7 +13948,7 @@ IGNORE_CLANG_WARNINGS_END
             };
 
             addArgument(jsCallee, VirtualRegister(CallFrameSlot::callee), 0);
-            addArgument(m_out.constInt32(numPassedArgs), VirtualRegister(CallFrameSlot::argumentCountIncludingThis), PayloadOffset);
+            addArgument(m_out.constInt32(numPassedArgs), VirtualRegister(CallFrameSlot::argumentCountIncludingThis), LowWordOffset);
             for (unsigned i = 0; i < numPassedArgs; ++i)
                 addArgument(lowJSValue(m_graph.varArgChild(node, 1 + i)), virtualRegisterForArgumentIncludingThis(i), 0);
             for (unsigned i = numPassedArgs; i < numAllocatedArgs; ++i)
@@ -14055,7 +14053,7 @@ IGNORE_CLANG_WARNINGS_END
                     if (nativeFunction && !vm->isDebuggerHookInjected()) {
                         jit.store32(
                             CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                            CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                            CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
                         CallFrameShuffler(jit, shuffleData).prepareForTailCall();
                         emitCallTarget();
                         jit.ret();
@@ -14070,7 +14068,7 @@ IGNORE_CLANG_WARNINGS_END
                     CCallHelpers::Label mainPath = jit.label();
                     jit.store32(
                         CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                        CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                        CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
                     callLinkInfo->emitDirectTailCallFastPath(jit, scopedLambda<void()>([&]{
                         CallFrameShuffler(jit, shuffleData).prepareForTailCall();
                     }));
@@ -14099,7 +14097,7 @@ IGNORE_CLANG_WARNINGS_END
 
                     jit.store32(
                         CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                        CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                        CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
                     auto call = jit.nearCall();
                     jit.addLinkTask([=](LinkBuffer& linkBuffer) {
                         linkBuffer.link(call, linkBuffer.locationOf<NoPtrTag>(callTarget));
@@ -14116,7 +14114,7 @@ IGNORE_CLANG_WARNINGS_END
                 CCallHelpers::Label mainPath = jit.label();
                 jit.store32(
                     CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                    CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                    CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
                 callLinkInfo->emitDirectFastPath(jit);
                 jit.addPtr(
                     CCallHelpers::TrustedImm32(-params.proc().frameSize()),
@@ -14218,7 +14216,7 @@ IGNORE_CLANG_WARNINGS_END
                 // with the call site index of our frame. Bad things happen if it's not set.
                 jit.store32(
                     CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                    CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                    CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
                 CallFrameShuffleData shuffleData;
                 shuffleData.numLocals = state->jitCode->common.frameRegisterCount;
@@ -14420,7 +14418,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 jit.store32(
                     CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                    CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                    CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
                 auto* callLinkInfo = state->addCallLinkInfo(semanticNodeOrigin);
 
@@ -14488,7 +14486,7 @@ IGNORE_CLANG_WARNINGS_END
                     // Before touching stack values, we should update the stack pointer to protect them from signal stack.
                     jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CallerFrameAndPC)), scratchGPR1, CCallHelpers::stackPointerRegister);
 
-                    jit.store32(scratchGPR2, CCallHelpers::Address(scratchGPR1, CallFrameSlot::argumentCountIncludingThis * static_cast<int>(sizeof(Register)) + PayloadOffset));
+                    jit.store32(scratchGPR2, CCallHelpers::Address(scratchGPR1, CallFrameSlot::argumentCountIncludingThis * static_cast<int>(sizeof(Register)) + LowWordOffset));
 
                     for (const auto& argumentToEmit : argumentsToEmit) {
                         switch (argumentToEmit.m_type) {
@@ -14685,7 +14683,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 jit.store32(
                     CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                    CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                    CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
                 auto* callLinkInfo = state->addCallLinkInfo(semanticNodeOrigin);
 
@@ -14876,7 +14874,7 @@ IGNORE_CLANG_WARNINGS_END
         };
 
         addArgument(jsCallee, VirtualRegister(CallFrameSlot::callee), 0);
-        addArgument(m_out.constInt32(numArgs), VirtualRegister(CallFrameSlot::argumentCountIncludingThis), PayloadOffset);
+        addArgument(m_out.constInt32(numArgs), VirtualRegister(CallFrameSlot::argumentCountIncludingThis), LowWordOffset);
         for (unsigned i = 0; i < numArgs; ++i)
             addArgument(lowJSValue(m_graph.varArgChild(node, 1 + i)), virtualRegisterForArgumentIncludingThis(i), 0);
 
@@ -14907,7 +14905,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 jit.store32(
                     CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                    CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                    CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
                 auto* callLinkInfo = state->addCallLinkInfo(semanticNodeOrigin);
                 callLinkInfo->setUpCall(CallLinkInfo::Call);
@@ -15100,7 +15098,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 exceptionHandle->scheduleExitCreationForUnwind(params, callSiteIndex);
 
-                jit.store32(CCallHelpers::TrustedImm32(callSiteIndex.bits()), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                jit.store32(CCallHelpers::TrustedImm32(callSiteIndex.bits()), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
                 constexpr GPRReg scratchGPR = GPRInfo::nonPreservedNonArgumentGPR0;
                 static_assert(noOverlap(GPRInfo::wasmBoundsCheckingSizeRegister, GPRInfo::wasmBaseMemoryPointer, scratchGPR));
@@ -15643,7 +15641,7 @@ IGNORE_CLANG_WARNINGS_END
         switch (m_node->argumentsChild().useKind()) {
         case UntypedUse: {
             speculate(VarargsOverflow, noValue(), nullptr, m_out.bitOr(m_out.isZero32(lengthIncludingThis), m_out.above(lengthIncludingThis, m_out.constInt32(data->limit))));
-            m_out.store32(lengthIncludingThis, payloadFor(data->machineCount));
+            m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
             // FIXME: This computation is rather silly. If operationLoadVarargs just took a pointer instead
             // of a VirtualRegister, we wouldn't have to do this.
             // https://bugs.webkit.org/show_bug.cgi?id=141660
@@ -15657,7 +15655,7 @@ IGNORE_CLANG_WARNINGS_END
                 terminate(VarargsOverflow);
                 break;
             }
-            m_out.store32(lengthIncludingThis, payloadFor(data->machineCount));
+            m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
             if (data->mandatoryMinimum) {
                 LValue machineStart = m_out.lShr(m_out.sub(addressFor(data->machineStart).value(), m_callFrame), m_out.constIntPtr(3));
                 vmCall(Void, operationLoadVarargs, weakPointer(globalObject), m_out.castToInt32(machineStart), jsArguments, m_out.constInt32(data->offset), lengthIncludingThis, m_out.constInt32(data->mandatoryMinimum));
@@ -15695,7 +15693,7 @@ IGNORE_CLANG_WARNINGS_END
             VarargsOverflow, noValue(), nullptr,
             m_out.above(lengthIncludingThis, m_out.constInt32(data->limit)));
 
-        m_out.store32(lengthIncludingThis, payloadFor(data->machineCount));
+        m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
 
         LValue sourceStart = getArgumentsStart(inlineCallFrame, numberOfArgumentsToSkip);
         LValue targetStart = addressFor(data->machineStart).value();
@@ -15775,7 +15773,7 @@ IGNORE_CLANG_WARNINGS_END
             VarargsOverflow, noValue(), nullptr,
             m_out.above(lengthIncludingThis, m_out.constInt32(data->limit)));
 
-        m_out.store32(lengthIncludingThis, payloadFor(data->machineCount));
+        m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
 
         LValue targetStart = addressFor(data->machineStart).value();
 
@@ -19772,25 +19770,15 @@ IGNORE_CLANG_WARNINGS_END
         return m_out.testNonZero32(bitmapByte, bit);
     }
 
-    // Anchored non-sticky exec fast-fail; tests input[0].
-    bool compileRegExpExecNonGlobalOrStickyAnchoredFilter(LValue globalObject, LValue argument)
+    void emitAnchoredFirstCharacterGuardChain(LValue argument, Edge argumentEdge, const uint8_t* bitmap, LBasicBlock operationCase, LBasicBlock noMatchCase)
     {
-        RegExp* regExp = uncheckedDowncast<RegExp>(m_node->cellOperand()->value());
-        auto localBitmap = Yarr::computeAnchoredFirstCharacterBitmap(regExp->pattern(), regExp->flags());
-        if (!localBitmap)
-            return false;
-        const uint8_t* bitmap = m_ftlState.jitCode->dfgCommon()->m_regExpFirstCharacterBitmaps.add(*localBitmap)->storageBytes().data();
-
         LBasicBlock check8Bit = m_out.newBlock();
         LBasicBlock checkLength = m_out.newBlock();
         LBasicBlock filterCase = m_out.newBlock();
-        LBasicBlock noMatchCase = m_out.newBlock();
-        LBasicBlock operationCase = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(isRopeString(argument, m_node->child2()), rarely(operationCase), usually(check8Bit));
+        m_out.branch(isRopeString(argument, argumentEdge), rarely(operationCase), usually(check8Bit));
 
-        LBasicBlock lastNext = m_out.appendTo(check8Bit, checkLength);
+        m_out.appendTo(check8Bit, checkLength);
         LValue stringImpl = m_out.loadPtr(argument, m_heaps.JSString_value);
         m_out.branch(
             m_out.testIsZero32(
@@ -19798,7 +19786,7 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.constInt32(StringImpl::flagIs8Bit())),
             rarely(operationCase), usually(checkLength));
 
-        // An anchored pattern cannot match empty, so delegate an empty string to the operation.
+        // An anchored pattern that reaches here cannot match empty, so delegate an empty string.
         m_out.appendTo(checkLength, filterCase);
         m_out.branch(m_out.equal(m_out.load32(stringImpl, m_heaps.StringImpl_length), m_out.int32Zero), rarely(operationCase), usually(filterCase));
 
@@ -19806,6 +19794,25 @@ IGNORE_CLANG_WARNINGS_END
         LValue stringData = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
         LValue character = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, stringData, m_out.constIntPtr(0)));
         m_out.branch(firstCharacterBitmapContains(character, bitmap), unsure(operationCase), unsure(noMatchCase));
+    }
+
+    // Anchored non-sticky exec fast-fail; tests input[0].
+    bool compileRegExpExecNonGlobalOrStickyAnchoredFilter(LValue globalObject, LValue argument)
+    {
+        RegExp* regExp = uncheckedDowncast<RegExp>(m_node->cellOperand()->value());
+        ASSERT(!regExp->globalOrSticky());
+
+        auto* localBitmap = m_graph.regExpFirstCharacterBitmap(regExp, FirstCharacterFilterPosition::AtStart);
+        if (!localBitmap)
+            return false;
+        const uint8_t* bitmap = localBitmap->storageBytes().data();
+
+        LBasicBlock noMatchCase = m_out.newBlock();
+        LBasicBlock operationCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(noMatchCase);
+        emitAnchoredFirstCharacterGuardChain(argument, m_node->child2(), bitmap, operationCase, noMatchCase);
 
         m_out.appendTo(noMatchCase, operationCase);
         ValueFromBlock nullResult = m_out.anchor(m_out.constInt64(JSValue::encode(jsNull())));
@@ -19833,30 +19840,17 @@ IGNORE_CLANG_WARNINGS_END
         setJSValue(result);
     }
 
-    // Sticky exec fast-fail; when input[lastIndex] cannot begin a match, reset lastIndex to 0 and
-    // return null inline.
-    bool compileRegExpExecStickyFirstCharFilter(LValue globalObject, LValue base, LValue argument)
+    void emitStickyFirstCharacterGuardChain(LValue base, LValue argument, Edge argumentEdge, const uint8_t* bitmap, LBasicBlock operationCase, LBasicBlock noMatchCase)
     {
-        RegExp* regExp = uncheckedDowncast<RegExp>(m_node->cellOperand()->value());
-        ASSERT(regExp->sticky() && !regExp->global());
-
-        auto localBitmap = Yarr::computeStickyFirstCharacterBitmap(regExp->pattern(), regExp->flags());
-        if (!localBitmap)
-            return false;
-        const uint8_t* bitmap = m_ftlState.jitCode->dfgCommon()->m_regExpFirstCharacterBitmaps.add(*localBitmap)->storageBytes().data();
-
         LBasicBlock check8Bit = m_out.newBlock();
         LBasicBlock checkWritable = m_out.newBlock();
         LBasicBlock checkInt32 = m_out.newBlock();
         LBasicBlock checkInBounds = m_out.newBlock();
         LBasicBlock filterCase = m_out.newBlock();
-        LBasicBlock noMatchCase = m_out.newBlock();
-        LBasicBlock operationCase = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(isRopeString(argument, m_node->child3()), rarely(operationCase), usually(check8Bit));
+        m_out.branch(isRopeString(argument, argumentEdge), rarely(operationCase), usually(check8Bit));
 
-        LBasicBlock lastNext = m_out.appendTo(check8Bit, checkWritable);
+        m_out.appendTo(check8Bit, checkWritable);
         LValue stringImpl = m_out.loadPtr(argument, m_heaps.JSString_value);
         m_out.branch(
             m_out.testIsZero32(
@@ -19886,6 +19880,25 @@ IGNORE_CLANG_WARNINGS_END
         LValue stringData = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
         LValue character = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, stringData, m_out.zeroExtPtr(lastIndex)));
         m_out.branch(firstCharacterBitmapContains(character, bitmap), unsure(operationCase), unsure(noMatchCase));
+    }
+
+    // Sticky exec fast-fail; when input[lastIndex] cannot begin a match, reset lastIndex to 0 and return null inline.
+    bool compileRegExpExecStickyFirstCharFilter(LValue globalObject, LValue base, LValue argument)
+    {
+        RegExp* regExp = uncheckedDowncast<RegExp>(m_node->cellOperand()->value());
+        ASSERT(regExp->sticky() && !regExp->global());
+
+        auto* localBitmap = m_graph.regExpFirstCharacterBitmap(regExp, FirstCharacterFilterPosition::AtLastIndex);
+        if (!localBitmap)
+            return false;
+        const uint8_t* bitmap = localBitmap->storageBytes().data();
+
+        LBasicBlock noMatchCase = m_out.newBlock();
+        LBasicBlock operationCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(noMatchCase);
+        emitStickyFirstCharacterGuardChain(base, argument, m_node->child3(), bitmap, operationCase, noMatchCase);
 
         m_out.appendTo(noMatchCase, operationCase);
         m_out.store64(m_out.constInt64(JSValue::encode(jsNumber(0))), base, m_heaps.RegExpObject_lastIndex);
@@ -19939,6 +19952,8 @@ IGNORE_CLANG_WARNINGS_END
                 LValue argument = lowString(m_node->child3());
                 if (compileRegExpTestAnchoredFilter(globalObject, base, argument))
                     return;
+                if (compileRegExpTestStickyFilter(globalObject, base, argument))
+                    return;
                 LValue result = vmCall(Int32, operationRegExpTestString, globalObject, base, argument);
                 setBoolean(result);
                 return;
@@ -19956,52 +19971,52 @@ IGNORE_CLANG_WARNINGS_END
         setBoolean(result);
     }
 
-    // Anchored RegExp.test(string) fast-fail on a constant RegExpObject; tests input[0]. A runtime
-    // guard (below) keeps it correct across .compile() without a recompile watchpoint.
+    // Anchored RegExp.test(string) fast-fail on a constant RegExpObject; tests input[0].
     bool compileRegExpTestAnchoredFilter(LValue globalObject, LValue base, LValue argument)
     {
-        RegExp* regExp = nullptr;
-        if (RegExpObject* regExpObject = m_node->child2()->dynamicCastConstant<RegExpObject*>())
-            regExp = regExpObject->regExp();
-        else if (m_node->child2()->op() == NewRegExp)
-            regExp = m_node->child2()->castOperand<RegExp*>();
-        if (!regExp || regExp->globalOrSticky())
-            return false;
-        auto localBitmap = Yarr::computeAnchoredFirstCharacterBitmap(regExp->pattern(), regExp->flags());
+        auto* localBitmap = m_graph.tryGetConstantRegExpFirstCharacterBitmap(m_node->child2().node(), FirstCharacterFilterPosition::AtStart);
         if (!localBitmap)
             return false;
-        const uint8_t* bitmap = m_ftlState.jitCode->dfgCommon()->m_regExpFirstCharacterBitmaps.add(*localBitmap)->storageBytes().data();
+        const uint8_t* bitmap = localBitmap->storageBytes().data();
 
-        LBasicBlock checkRope = m_out.newBlock();
-        LBasicBlock check8Bit = m_out.newBlock();
-        LBasicBlock checkLength = m_out.newBlock();
-        LBasicBlock filterCase = m_out.newBlock();
         LBasicBlock falseCase = m_out.newBlock();
         LBasicBlock operationCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        // The object must still wrap the RegExp whose bitmap we baked (guards against .compile()).
-        LValue currentRegExp = m_out.bitAnd(m_out.loadPtr(base, m_heaps.RegExpObject_regExpAndFlags), m_out.constIntPtr(RegExpObject::regExpMask));
-        m_out.branch(m_out.equal(currentRegExp, frozenPointer(m_graph.freeze(regExp))), usually(checkRope), rarely(operationCase));
-
-        LBasicBlock lastNext = m_out.appendTo(checkRope, check8Bit);
-        m_out.branch(isRopeString(argument, m_node->child3()), rarely(operationCase), usually(check8Bit));
-
-        m_out.appendTo(check8Bit, checkLength);
-        LValue stringImpl = m_out.loadPtr(argument, m_heaps.JSString_value);
-        m_out.branch(
-            m_out.testIsZero32(m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())),
-            rarely(operationCase), usually(checkLength));
-
-        m_out.appendTo(checkLength, filterCase);
-        m_out.branch(m_out.equal(m_out.load32(stringImpl, m_heaps.StringImpl_length), m_out.int32Zero), rarely(operationCase), usually(filterCase));
-
-        m_out.appendTo(filterCase, falseCase);
-        LValue stringData = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
-        LValue character = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, stringData, m_out.constIntPtr(0)));
-        m_out.branch(firstCharacterBitmapContains(character, bitmap), unsure(operationCase), unsure(falseCase));
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(falseCase);
+        emitAnchoredFirstCharacterGuardChain(argument, m_node->child3(), bitmap, operationCase, falseCase);
 
         m_out.appendTo(falseCase, operationCase);
+        ValueFromBlock falseResult = m_out.anchor(m_out.int32Zero);
+        m_out.jump(continuation);
+
+        m_out.appendTo(operationCase, continuation);
+        ValueFromBlock operationResult = m_out.anchor(vmCall(Int32, operationRegExpTestString, globalObject, base, argument));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setBoolean(m_out.phi(Int32, falseResult, operationResult));
+        return true;
+    }
+
+    // Sticky RegExp.test(string) fast-fail on a constant RegExpObject; tests input[lastIndex]. `gy`
+    // qualifies too: on a failed match RegExpBuiltinExec resets lastIndex to 0 for global as well as sticky.
+    bool compileRegExpTestStickyFilter(LValue globalObject, LValue base, LValue argument)
+    {
+        auto* localBitmap = m_graph.tryGetConstantRegExpFirstCharacterBitmap(m_node->child2().node(), FirstCharacterFilterPosition::AtLastIndex);
+        if (!localBitmap)
+            return false;
+        const uint8_t* bitmap = localBitmap->storageBytes().data();
+
+        LBasicBlock falseCase = m_out.newBlock();
+        LBasicBlock operationCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(falseCase);
+        emitStickyFirstCharacterGuardChain(base, argument, m_node->child3(), bitmap, operationCase, falseCase);
+
+        m_out.appendTo(falseCase, operationCase);
+        m_out.store64(m_out.constInt64(JSValue::encode(jsNumber(0))), base, m_heaps.RegExpObject_lastIndex);
         ValueFromBlock falseResult = m_out.anchor(m_out.int32Zero);
         m_out.jump(continuation);
 
@@ -20499,7 +20514,7 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.storePtr(m_callFrame, packet, m_heaps.ShadowChicken_Packet_frame);
         m_out.storePtr(m_out.loadPtr(addressFor(VirtualRegister(0))), packet, m_heaps.ShadowChicken_Packet_callerFrame);
-        m_out.storePtr(m_out.loadPtr(payloadFor(VirtualRegister(CallFrameSlot::callee))), packet, m_heaps.ShadowChicken_Packet_callee);
+        m_out.storePtr(m_out.loadPtr(lowWordFor(VirtualRegister(CallFrameSlot::callee))), packet, m_heaps.ShadowChicken_Packet_callee);
         m_out.storePtr(scope, packet, m_heaps.ShadowChicken_Packet_scope);
     }
 
@@ -20575,7 +20590,7 @@ IGNORE_CLANG_WARNINGS_END
                 argumentCountRegister = VirtualRegister(CallFrameSlot::argumentCountIncludingThis);
             else
                 argumentCountRegister = inlineCallFrame->argumentCountRegister;
-            length.value = m_out.sub(m_out.load32(payloadFor(argumentCountRegister)), m_out.int32One);
+            length.value = m_out.sub(m_out.load32(lowWordFor(argumentCountRegister)), m_out.int32One);
         }
 
         return length;
@@ -27305,7 +27320,7 @@ IGNORE_CLANG_WARNINGS_END
         CallSiteIndex callSiteIndex = m_ftlState.jitCode->common.codeOrigins->addCodeOrigin(codeOrigin);
         m_out.store32(
             m_out.constInt32(callSiteIndex.bits()),
-            tagFor(CallFrameSlot::argumentCountIncludingThis));
+            highWordFor(CallFrameSlot::argumentCountIncludingThis));
 #if !USE(BUILTIN_FRAME_ADDRESS) || ASSERT_ENABLED
         m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
 #endif
@@ -27570,7 +27585,7 @@ IGNORE_CLANG_WARNINGS_END
             [=](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
                 // Since we no longer use any registers, we can just use the macro scratch register freely. We will just jump to the thunk.
                 AllowMacroScratchRegisterUsage allowScratch(jit);
-                jit.store32(CCallHelpers::TrustedImm32(callSiteIndex.bits()), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+                jit.store32(CCallHelpers::TrustedImm32(callSiteIndex.bits()), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
                 jit.jumpThunk(CodeLocationLabel(state->vm().getCTIStub(CommonJITThunkID::ThrowOutOfMemoryError).retaggedCode<NoPtrTag>()));
             });
     }
@@ -27956,13 +27971,13 @@ IGNORE_CLANG_WARNINGS_END
     {
         return m_out.address(base, m_heaps.variables[operand.virtualRegister().offset()], offset);
     }
-    TypedPointer payloadFor(LValue base, Operand operand)
+    TypedPointer lowWordFor(LValue base, Operand operand)
     {
-        return addressFor(base, operand, PayloadOffset);
+        return addressFor(base, operand, LowWordOffset);
     }
-    TypedPointer tagFor(LValue base, Operand operand)
+    TypedPointer highWordFor(LValue base, Operand operand)
     {
-        return addressFor(base, operand, TagOffset);
+        return addressFor(base, operand, HighWordOffset);
     }
     TypedPointer addressFor(Operand operand, ptrdiff_t offset = 0)
     {
@@ -27974,21 +27989,21 @@ IGNORE_CLANG_WARNINGS_END
             return addressFor(m_captured, operand, offset);
         return addressFor(m_callFrame, operand, offset);
     }
-    TypedPointer payloadFor(Operand operand)
+    TypedPointer lowWordFor(Operand operand)
     {
-        return payloadFor(operand.virtualRegister());
+        return lowWordFor(operand.virtualRegister());
     }
-    TypedPointer payloadFor(VirtualRegister operand)
+    TypedPointer lowWordFor(VirtualRegister operand)
     {
-        return addressFor(operand, PayloadOffset);
+        return addressFor(operand, LowWordOffset);
     }
-    TypedPointer tagFor(Operand operand)
+    TypedPointer highWordFor(Operand operand)
     {
-        return tagFor(operand.virtualRegister());
+        return highWordFor(operand.virtualRegister());
     }
-    TypedPointer tagFor(VirtualRegister operand)
+    TypedPointer highWordFor(VirtualRegister operand)
     {
-        return addressFor(operand, TagOffset);
+        return addressFor(operand, HighWordOffset);
     }
 
     AbstractValue abstractValue(Node* node)
