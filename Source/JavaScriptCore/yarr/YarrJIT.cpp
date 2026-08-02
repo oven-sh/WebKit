@@ -412,6 +412,47 @@ public:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DispatchInfo);
 
+// First-character dispatch across the body's repeated alternatives, with no
+// group and no frame. It applies only when the alternatives' first-character
+// sets are pairwise disjoint, so the character at the match start names at most
+// one candidate. A binary decision tree over that character jumps straight to
+// its sole candidate; when that candidate fails, no other alternative can
+// match at this position, so the failure advances the search instead of
+// walking the remaining alternatives. Every decision is static -- no per-match
+// state -- so the pattern gains no Yarr frame and stays eligible for
+// RegExpTestInline.
+struct BodyDispatchInfo {
+private:
+    WTF_MAKE_TZONE_ALLOCATED(BodyDispatchInfo);
+public:
+    // Latin-1 char -> index (into the repeated alternatives, 0-based from the
+    // Begin) of the sole alternative that can start with it, or noAlternative.
+    std::array<unsigned, 256> firstAlternativeForCharacter { };
+    unsigned wideFirstAlternative { noAlternative }; // sole candidate for chars >= 0x100, or noAlternative
+    Checked<unsigned> firstCharacterOffset; // read offset back from the claimed frontier
+    unsigned alternativeCount { 0 };
+
+    // Per repeated alternative: dispatch-tree jumps awaiting that alternative's
+    // entry (bound right after its Begin/Next op's input-claim delta), and the
+    // bound entry label itself once known, for the backtrack-pass tail dispatch
+    // (which is emitted after every entry has been bound).
+    Vector<MacroAssembler::JumpList, 8> pendingEntryJumps;
+    Vector<MacroAssembler::Label, 8> pendingEntryLabels;
+
+    // Search-advance stubs that ran out of input for the next position join
+    // the body loop's own first-input-check-failed flow (its input-exhaustion
+    // protocol). That code is emitted in the backtrack pass, after the forward
+    // pass's no-candidate leaf, so those jumps wait here until it is bound.
+    MacroAssembler::JumpList inputExhaustedJumps;
+    MacroAssembler::Label firstInputCheckFailed;
+    bool haveFirstInputCheckFailed { false };
+
+
+    static constexpr unsigned noAlternative = std::numeric_limits<unsigned>::max();
+};
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BodyDispatchInfo);
+
 struct MaskedAlternativeInfo {
 private:
     WTF_MAKE_TZONE_ALLOCATED(MaskedAlternativeInfo);
@@ -2342,6 +2383,13 @@ class YarrGenerator final : public YarrJITInfo {
         // Position of this Begin/Next op's alternative within the dispatched
         // disjunction.
         unsigned m_dispatchAlternativeIndex { 0 };
+
+        // Set on the repeated body's Begin/Next/End ops when the body alternation
+        // is dispatched on its first character (see BodyDispatchInfo).
+        struct BodyDispatchInfo* m_bodyDispatch { nullptr };
+        // Position of this Begin/Next op's alternative among the repeated body
+        // alternatives.
+        unsigned m_bodyDispatchAlternativeIndex { 0 };
 
         // Shared UTF-16 lead surrogate across all repeated alternatives' first character.
         std::optional<char16_t> m_bodyAltSharedLead;
@@ -4875,6 +4923,9 @@ class YarrGenerator final : public YarrJITInfo {
                         op.m_jumps.append(jumpIfNoAvailableInput());
                     } else if (priorAlternative->m_minimumSize > alternative->m_minimumSize)
                         m_jit.sub32(MacroAssembler::Imm32(priorAlternative->m_minimumSize - alternative->m_minimumSize), m_regs.index);
+                    // The claim is now this alternative's; a dispatched entry lands here.
+                    if (op.m_bodyDispatch)
+                        bindBodyDispatchEntry(*op.m_bodyDispatch, op.m_bodyDispatchAlternativeIndex);
                 } else if (op.m_nextOp == notFound) {
                     // This is the reentry point for the End of 'once through' alternatives,
                     // jumped to when the last alternative fails to match.
@@ -5396,6 +5447,15 @@ class YarrGenerator final : public YarrJITInfo {
                 break;
             }
 
+            // A body Begin op's search prefilters `break` out of its case at
+            // several points; all of them converge here, index at the first
+            // alternative's claimed frontier, before alternative 0's terms. Route
+            // on the match-start character now so every path is dispatched.
+            if (op.m_op == YarrOpCode::BodyAlternativeBegin && op.m_bodyDispatch) {
+                generateBodyDispatch(op);
+                bindBodyDispatchEntry(*op.m_bodyDispatch, 0);
+            }
+
             ++opIndex;
         } while (opIndex < m_ops.size() && !hasExceededCodeSizeLimit());
 
@@ -5452,6 +5512,20 @@ class YarrGenerator final : public YarrJITInfo {
                 // Is this the last alternative? If not, then if we backtrack to this point we just
                 // need to jump to try to match the next alternative.
                 if (m_ops[op.m_nextOp].m_op != YarrOpCode::BodyAlternativeEnd) {
+                    if (op.m_bodyDispatch) {
+                        // Under body dispatch this alternative was the sole candidate for
+                        // the character at the match start (first-character sets are
+                        // pairwise disjoint), so no later alternative can match here:
+                        // its failure advances the search rather than trying the next
+                        // alternative. Materialise the failure flow, then advance from
+                        // this alternative's claim.
+                        m_backtrackingState.link(*this, op);
+                        YarrOp* beginOp = &op;
+                        while (beginOp->m_op != YarrOpCode::BodyAlternativeBegin)
+                            beginOp = &m_ops[beginOp->m_previousOp];
+                        emitBodyDispatchAdvance(*op.m_bodyDispatch, *beginOp, alternative->m_minimumSize);
+                        break;
+                    }
                     m_backtrackingState.linkTo(m_ops[op.m_nextOp].m_reentry, &m_jit);
                     break;
                 }
@@ -5563,10 +5637,25 @@ class YarrGenerator final : public YarrJITInfo {
                 // Either way, we have just failed the input check for the first alternative.
                 MacroAssembler::Label firstInputCheckFailed(&m_jit);
 
+                if (BodyDispatchInfo* bodyDispatch = beginOp->m_bodyDispatch) {
+                    // Dispatched body: the Begin's input-check failures and the
+                    // search-advance stubs that lack input for the next position all
+                    // arrive here with the index at the first alternative's claim
+                    // (min[0] characters unavailable). Route the tail on the
+                    // match-start character instead of walking the alternatives in
+                    // order, so that every entry into an alternative is a sole
+                    // candidate dispatch entry; the tail falls out below with the
+                    // index at the last alternative's claim.
+                    beginOp->m_jumps.link(&m_jit);
+                    bodyDispatch->inputExhaustedJumps.link(&m_jit);
+                    bodyDispatch->firstInputCheckFailed = firstInputCheckFailed;
+                    bodyDispatch->haveFirstInputCheckFailed = true;
+                    generateBodyDispatchTail(*bodyDispatch, *beginOp, op);
+                } else {
                 // Generate code to handle input check failures from alternatives except the last.
                 // prevOp is the alternative we're handling a bail out from (initially Begin), and
                 // nextOp is the alternative we will be attempting to reenter into.
-                // 
+                //
                 // We will link input check failures from the forwards matching path back to the code
                 // that can handle them.
                 YarrOp* prevOp = beginOp;
@@ -5590,6 +5679,7 @@ class YarrGenerator final : public YarrJITInfo {
                         m_jit.add32(MacroAssembler::Imm32(nextOp->m_alternative->m_minimumSize - prevOp->m_alternative->m_minimumSize), m_regs.index);
                     prevOp = nextOp;
                     nextOp = &m_ops[nextOp->m_nextOp];
+                }
                 }
 
                 // We fall through to here if there is insufficient input to run the last alternative.
@@ -6953,9 +7043,16 @@ class YarrGenerator final : public YarrJITInfo {
         }
 
         // Emit the repeated alternatives.
+        size_t firstRepeatedAlternative = currentAlternativeIndex;
+        BodyDispatchInfo* bodyDispatch = tryPrepareBodyDispatch(disjunction, firstRepeatedAlternative);
+        if (bodyDispatch)
+            dataLogLnIf(Options::verboseRegExpCompilation(), "Body first-character dispatch enabled: ", bodyDispatch->alternativeCount, " alternatives");
+
         size_t repeatLoop = m_ops.size();
         appendOp(YarrOp(YarrOpCode::BodyAlternativeBegin));
         m_ops.last().m_previousOp = notFound;
+        m_ops.last().m_bodyDispatch = bodyDispatch;
+        m_ops.last().m_bodyDispatchAlternativeIndex = 0;
 
         if (disjunction->m_minimumSize && !m_pattern.sticky()) {
             // Collect BoyerMooreInfo if it is possible and profitable. BoyerMooreInfo will be used to emit fast skip path with large stride
@@ -7030,7 +7127,14 @@ class YarrGenerator final : public YarrJITInfo {
             lastOp.m_alternative = alternative;
             lastOp.m_nextOp = thisOpIndex;
             thisOp.m_previousOp = lastOpIndex;
-            
+            // The Next op belongs to the alternative that follows the one just
+            // compiled; its dispatch entry binds after that op's claim delta. The
+            // End op keeps the pointer (with an index past the last alternative)
+            // so the last alternative's failure flow can absorb the tree's
+            // no-alternative leaves.
+            thisOp.m_bodyDispatch = bodyDispatch;
+            thisOp.m_bodyDispatchAlternativeIndex = (currentAlternativeIndex - firstRepeatedAlternative) + 1;
+
             ++currentAlternativeIndex;
         } while (currentAlternativeIndex < alternatives.size());
         YarrOp& lastOp = m_ops.last();
@@ -7189,6 +7293,236 @@ class YarrGenerator final : public YarrJITInfo {
         info.pendingEntryJumps[alternativeIndex].clear();
     }
 
+    // Binary decision tree over the character's Latin-1 value. `ranges` are
+    // maximal [begin,end] intervals with a constant target, sorted and contiguous
+    // over 0..255. For group dispatch the target is a chain id; for body dispatch
+    // it is the index of the first alternative that can start with the range.
+    struct DispatchRange {
+        unsigned begin;
+        unsigned end;
+        unsigned chainId;
+    };
+
+    void bindBodyDispatchEntry(BodyDispatchInfo& info, unsigned alternativeIndex)
+    {
+        info.pendingEntryLabels[alternativeIndex] = m_jit.label();
+        info.pendingEntryJumps[alternativeIndex].link(&m_jit);
+        info.pendingEntryJumps[alternativeIndex].clear();
+    }
+
+    // Advance the body search past the current position after a dispatched
+    // alternative (or the no-candidate leaf) failed. `claimedMinimumSize` is the
+    // claim the index currently holds (index = matchStart + claimedMinimumSize,
+    // those characters verified in bounds). The next candidate position is
+    // matchStart + 1, which needs index' = (matchStart + 1) + min[0]. This is
+    // the last alternative's loop-back trampoline specialised to an arbitrary
+    // claim: record the new match start, move the claim, and re-check input
+    // only when the claim grew (a shrunk or unchanged claim is already covered
+    // by the characters this position verified).
+    void emitBodyDispatchAdvance(BodyDispatchInfo& info, YarrOp& beginOp, unsigned claimedMinimumSize)
+    {
+        ASSERT(claimedMinimumSize);
+        if (!m_pattern.m_body->m_hasFixedSize) {
+            // New match start = old start + 1 = index - (claimedMinimumSize - 1).
+            if (claimedMinimumSize == 1)
+                setMatchStart(m_regs.index);
+            else {
+                m_jit.sub32(m_regs.index, MacroAssembler::Imm32(claimedMinimumSize - 1), m_regs.regT0);
+                setMatchStart(m_regs.regT0);
+            }
+        }
+        // The Begin op's m_reentry is the loop-back target the last
+        // alternative's trampoline uses: when a search prefilter runs it points
+        // into the search's own resume path, which continues scanning from the
+        // advanced position (its backtrack entry re-establishes its state).
+        unsigned nextClaim = beginOp.m_alternative->m_minimumSize + 1; // relative to the old start
+        if (nextClaim > claimedMinimumSize) {
+            m_jit.add32(MacroAssembler::Imm32(nextClaim - claimedMinimumSize), m_regs.index);
+            checkInput().linkTo(beginOp.m_reentry, &m_jit);
+            // Not enough input for even the first alternative at the next
+            // position: hand off to the body loop's input-exhaustion flow.
+            if (info.haveFirstInputCheckFailed)
+                m_jit.jump().linkTo(info.firstInputCheckFailed, &m_jit);
+            else
+                info.inputExhaustedJumps.append(m_jit.jump());
+        } else {
+            if (claimedMinimumSize > nextClaim)
+                m_jit.sub32(MacroAssembler::Imm32(claimedMinimumSize - nextClaim), m_regs.index);
+            m_jit.jump(beginOp.m_reentry);
+        }
+    }
+
+    // Group the routing table into maximal ranges of equal target so a
+    // decision tree gets one leaf per run rather than one per character.
+    Vector<DispatchRange, 16> bodyDispatchRanges(BodyDispatchInfo& info)
+    {
+        Vector<DispatchRange, 16> ranges;
+        for (unsigned ch = 0; ch < 256;) {
+            unsigned target = info.firstAlternativeForCharacter[ch];
+            unsigned begin = ch;
+            while (ch < 256 && info.firstAlternativeForCharacter[ch] == target)
+                ++ch;
+            ranges.append({ begin, ch - 1, target });
+        }
+        return ranges;
+    }
+
+    // Binary decision tree over the character; `leaf(target)` emits the code
+    // for a target alternative index (or BodyDispatchInfo::noAlternative).
+    template<typename LeafFunction>
+    void emitBodyDispatchRangeTree(MacroAssembler::RegisterID character, const Vector<DispatchRange, 16>& ranges, unsigned low, unsigned high, const LeafFunction& leaf)
+    {
+        if (low == high) {
+            leaf(ranges[low].chainId);
+            return;
+        }
+        unsigned middle = (low + high + 1) / 2;
+        MacroAssembler::Jump upper = m_jit.branch32(MacroAssembler::AboveOrEqual, character, MacroAssembler::TrustedImm32(ranges[middle].begin));
+        emitBodyDispatchRangeTree(character, ranges, low, middle - 1, leaf);
+        upper.link(&m_jit);
+        emitBodyDispatchRangeTree(character, ranges, middle, high, leaf);
+    }
+
+    // With `character` holding the routing character, dispatch over the
+    // Latin-1 ranges plus (16-bit strings) the wide leaf, via `leaf(target)`.
+    template<typename LeafFunction>
+    void emitBodyDispatchOverCharacter(BodyDispatchInfo& info, MacroAssembler::RegisterID character, const LeafFunction& leaf)
+    {
+        auto ranges = bodyDispatchRanges(info);
+        if (m_charSize == CharSize::Char16) {
+            MacroAssembler::Jump wide = m_jit.branch32(MacroAssembler::AboveOrEqual, character, MacroAssembler::TrustedImm32(256));
+            emitBodyDispatchRangeTree(character, ranges, 0, ranges.size() - 1, leaf);
+            wide.link(&m_jit);
+            leaf(info.wideFirstAlternative);
+        } else
+            emitBodyDispatchRangeTree(character, ranges, 0, ranges.size() - 1, leaf);
+    }
+
+    YarrOp& bodyDispatchAlternativeOp(YarrOp& beginOp, unsigned target)
+    {
+        YarrOp* targetOp = &beginOp;
+        for (unsigned i = 0; i < target; ++i)
+            targetOp = &m_ops[targetOp->m_nextOp];
+        return *targetOp;
+    }
+
+    // Body first-character dispatch (see BodyDispatchInfo). Emitted for the
+    // repeated body's Begin op once the index sits at the first alternative's
+    // claimed frontier (index = matchStart + min[0]):
+    //
+    //   char = input[index - min[0]]            ; the shared first character
+    //   [16-bit: char >= 0x100 -> wide leaf]
+    //   binary decision tree over char -> leaf(k), or the no-candidate leaf
+    //   leaf(k):  index += min[k] - min[0]  (checked if it grows); jump entry(k)
+    //
+    // entry(k) is bound right after alternative k's Begin/Next input-claim
+    // delta, so an entered alternative sees exactly the index its own op would
+    // have produced. Because first-character sets are pairwise disjoint (see
+    // tryPrepareBodyDispatch), k is the only alternative that can match here:
+    // its failure (see the BodyAlternativeNext backtrack case) and the
+    // no-candidate leaf both advance the search via emitBodyDispatchAdvance
+    // instead of walking the remaining alternatives.
+    void generateBodyDispatch(YarrOp& beginOp)
+    {
+        BodyDispatchInfo& info = *beginOp.m_bodyDispatch;
+        const MacroAssembler::RegisterID character = m_regs.regT0;
+        unsigned firstMinimumSize = beginOp.m_alternative->m_minimumSize;
+
+        JIT_COMMENT(m_jit, "body first-character dispatch");
+        readCharacter(info.firstCharacterOffset, character);
+        emitBodyDispatchOverCharacter(info, character, [&](unsigned target) {
+            if (target == BodyDispatchInfo::noAlternative) {
+                // No repeated alternative can start with this character: the
+                // search advances. The index is at the first alternative's claim.
+                emitBodyDispatchAdvance(info, beginOp, firstMinimumSize);
+                return;
+            }
+            // Move the claim from the first alternative's to the target's, then
+            // enter the target where its own op's delta would have left the index.
+            YarrOp& targetOp = bodyDispatchAlternativeOp(beginOp, target);
+            unsigned targetMinimumSize = targetOp.m_alternative->m_minimumSize;
+            if (targetMinimumSize > firstMinimumSize) {
+                m_jit.add32(MacroAssembler::Imm32(targetMinimumSize - firstMinimumSize), m_regs.index);
+                // Claiming more input than the first alternative did: if it is not
+                // there, the target cannot match here; that is the target's own
+                // input-check failure (its op's failure flow gives the input back).
+                targetOp.m_jumps.append(jumpIfNoAvailableInput());
+            } else if (firstMinimumSize > targetMinimumSize)
+                m_jit.sub32(MacroAssembler::Imm32(firstMinimumSize - targetMinimumSize), m_regs.index);
+            info.pendingEntryJumps[target].append(m_jit.jump());
+        });
+    }
+
+    // Tail dispatch, emitted in the backtrack pass at the body's
+    // first-input-check-failed point in place of the plain in-order
+    // input-exhaustion chain. That chain re-entered shorter alternatives blindly
+    // near the end of input; under body dispatch an entered alternative must be
+    // the sole candidate for the match-start character (or its dispatched
+    // failure would advance past the true candidate). So the tail routes on
+    // the character too: index = matchStart + min[0] here (min[0] characters
+    // unavailable), and for the character at matchStart the sole candidate k
+    // is entered only if min[k] fits the remaining input. Every path that finds
+    // no fitting candidate falls out with the index normalised to the last
+    // alternative's claim (matchStart + min[last]), the contract of the loop's
+    // advance-and-recheck continuation that follows.
+    void generateBodyDispatchTail(BodyDispatchInfo& info, YarrOp& beginOp, YarrOp& lastAlternativeOp)
+    {
+        const MacroAssembler::RegisterID character = m_regs.regT0;
+        unsigned firstMinimumSize = beginOp.m_alternative->m_minimumSize;
+        unsigned lastMinimumSize = lastAlternativeOp.m_alternative->m_minimumSize;
+
+        // Move the index from `fromClaim` to the last alternative's claim.
+        auto normalizeToLastClaim = [&](unsigned fromClaim) {
+            if (lastMinimumSize > fromClaim)
+                m_jit.add32(MacroAssembler::Imm32(lastMinimumSize - fromClaim), m_regs.index);
+            else if (fromClaim > lastMinimumSize)
+                m_jit.sub32(MacroAssembler::Imm32(fromClaim - lastMinimumSize), m_regs.index);
+        };
+
+        MacroAssembler::JumpList noFittingCandidate; // arrivals hold the last alternative's claim
+
+        // No character at matchStart at all (matchStart >= length): no candidate.
+        JIT_COMMENT(m_jit, "body first-character dispatch (tail)");
+        m_jit.sub32(m_regs.index, MacroAssembler::Imm32(firstMinimumSize), character);
+        MacroAssembler::Jump noCharacter = m_jit.branch32(MacroAssembler::AboveOrEqual, character, m_regs.length);
+        readCharacter(info.firstCharacterOffset, character);
+        emitBodyDispatchOverCharacter(info, character, [&](unsigned target) {
+            if (target == BodyDispatchInfo::noAlternative) {
+                normalizeToLastClaim(firstMinimumSize);
+                noFittingCandidate.append(m_jit.jump());
+                return;
+            }
+            // Enter the sole candidate only if its minimum fits the input left.
+            YarrOp& targetOp = bodyDispatchAlternativeOp(beginOp, target);
+            unsigned targetMinimumSize = targetOp.m_alternative->m_minimumSize;
+            if (targetMinimumSize > firstMinimumSize)
+                m_jit.add32(MacroAssembler::Imm32(targetMinimumSize - firstMinimumSize), m_regs.index);
+            else if (firstMinimumSize > targetMinimumSize)
+                m_jit.sub32(MacroAssembler::Imm32(firstMinimumSize - targetMinimumSize), m_regs.index);
+            checkInput().linkTo(info.pendingEntryLabels[target], &m_jit); // fits: enter k
+            normalizeToLastClaim(targetMinimumSize); // does not fit
+            noFittingCandidate.append(m_jit.jump());
+        });
+        noCharacter.link(&m_jit);
+        normalizeToLastClaim(firstMinimumSize);
+
+        // Every earlier alternative's own input-check failures (index at that
+        // alternative's claim) mean the same: no fitting candidate here. The
+        // last alternative's own such failures are already linked by the loop's
+        // continuation below, at exactly the state these arrivals reproduce.
+        // (The Begin op's own m_jumps were already linked at the tail's entry.)
+        YarrOp* alternativeOp = &m_ops[beginOp.m_nextOp];
+        while (alternativeOp != &lastAlternativeOp) {
+            if (!alternativeOp->m_jumps.empty()) {
+                noFittingCandidate.append(m_jit.jump()); // skip the pad on fall-through
+                alternativeOp->m_jumps.link(&m_jit);
+                normalizeToLastClaim(alternativeOp->m_alternative->m_minimumSize);
+            }
+            alternativeOp = &m_ops[alternativeOp->m_nextOp];
+        }
+        noFittingCandidate.link(&m_jit);
+    }
+
     // An alternative that is a fixed-length literal string (only fixed-count
     // pattern characters) can never be backtracked into: it either matches its
     // exact characters or not. Such alternatives are emitted as inline compare
@@ -7292,11 +7626,6 @@ class YarrGenerator final : public YarrJITInfo {
     // Binary decision tree over the character's Latin-1 value. `ranges` are
     // maximal [begin,end] intervals with a constant chain id, sorted and
     // contiguous over 0..255. Leaves jump to the chain head (or group failure).
-    struct DispatchRange {
-        unsigned begin;
-        unsigned end;
-        unsigned chainId;
-    };
     void emitDispatchTree(DispatchInfo& info, MacroAssembler::RegisterID character, const Vector<DispatchRange, 16>& ranges, unsigned low, unsigned high)
     {
         if (low == high) {
@@ -7511,6 +7840,91 @@ class YarrGenerator final : public YarrJITInfo {
         if (!set.consumed)
             set.any = true;
         return set;
+    }
+
+    // Decide whether the body's repeated alternatives can be dispatched on the
+    // first character, and if so build the routing (character -> the SOLE
+    // alternative that can start with it). Called from opCompileBody before the
+    // repeated alternatives' ops are emitted.
+    //
+    // Dispatch requires the alternatives' first-character sets to be pairwise
+    // disjoint. Then each character has exactly one candidate, so once that
+    // candidate fails no other alternative can match at this position and the
+    // right action is to advance the search -- a static decision, needing no
+    // per-match state and hence no Yarr frame. (Overlapping sets are left to
+    // the plain alternative chain, whose per-alternative first-character
+    // rejection is already as cheap as a decision-tree node.)
+    BodyDispatchInfo* tryPrepareBodyDispatch(PatternDisjunction* disjunction, size_t firstRepeated)
+    {
+        // The advance stub jumps into the body's re-scan loop, which sticky
+        // patterns do not have (they never advance), and it does not model the
+        // non-BMP first-character read adjustment used by unicode patterns.
+        if (m_direction != Forward || m_decodeSurrogatePairs || m_pattern.sticky() || m_pattern.eitherUnicode() || m_canUseFirstNonBMPCharacterOptimization)
+            return nullptr;
+
+        auto& alternatives = disjunction->m_alternatives;
+        size_t count = alternatives.size() - firstRepeated;
+        if (count < alternationDispatchMinAlternatives)
+            return nullptr;
+
+        // Every alternative must consume its first character inside the input
+        // its Begin/Next op claimed; a zero-minimum alternative has no first
+        // character to route on.
+        size_t totalMinimumSize = 0;
+        for (size_t i = firstRepeated; i < alternatives.size(); ++i) {
+            if (!alternatives[i]->m_minimumSize)
+                return nullptr;
+            totalMinimumSize += alternatives[i]->m_minimumSize;
+        }
+        if (totalMinimumSize < alternationDispatchMinTotalSize)
+            return nullptr;
+
+        Vector<FirstCharacterSet, 8> sets;
+        unsigned wideCount = 0;
+        for (size_t i = firstRepeated; i < alternatives.size(); ++i) {
+            FirstCharacterSet set = computeFirstCharacterSet(*alternatives[i]);
+            // An `any` set overlaps every other alternative: no sole candidate.
+            if (set.any)
+                return nullptr;
+            if (set.matchesWide())
+                ++wideCount;
+            sets.append(WTF::move(set));
+        }
+        // A character >= 0x100 (16-bit strings) needs a sole candidate too.
+        if (m_charSize == CharSize::Char16 && wideCount > 1)
+            return nullptr;
+
+        auto info = makeUniqueRef<BodyDispatchInfo>();
+        info->alternativeCount = count;
+        for (unsigned ch = 0; ch < 256; ++ch) {
+            unsigned candidate = BodyDispatchInfo::noAlternative;
+            for (unsigned i = 0; i < count; ++i) {
+                if (!sets[i].matches(ch))
+                    continue;
+                if (candidate != BodyDispatchInfo::noAlternative)
+                    return nullptr; // two alternatives can start with ch: not disjoint
+                candidate = i;
+            }
+            info->firstAlternativeForCharacter[ch] = candidate;
+        }
+        if (m_charSize == CharSize::Char16) {
+            for (unsigned i = 0; i < count; ++i) {
+                if (sets[i].matchesWide()) {
+                    info->wideFirstAlternative = i;
+                    break;
+                }
+            }
+        }
+        // The dispatch reads the shared first character of every repeated
+        // alternative: back from the first alternative's claimed frontier
+        // (index = matchStart + min[0]) to the match start.
+        info->firstCharacterOffset = alternatives[firstRepeated]->m_minimumSize;
+        info->pendingEntryJumps.resize(count);
+        info->pendingEntryLabels.resize(count);
+
+        BodyDispatchInfo* result = info.ptr();
+        m_bodyDispatchInfos.append(WTF::move(info));
+        return result;
     }
 
     std::optional<unsigned> collectBoyerMooreInfoFromTerm(PatternTerm& term, unsigned cursor, BoyerMooreInfo& bmInfo)
@@ -9210,6 +9624,8 @@ private:
 
     // First-character dispatch state for nested disjunctions (see DispatchInfo).
     Vector<UniqueRef<DispatchInfo>, 2> m_dispatchInfos;
+    // First-character dispatch state for the body alternation (see BodyDispatchInfo).
+    Vector<UniqueRef<BodyDispatchInfo>, 2> m_bodyDispatchInfos;
 
     // The regular expression expressed as a linear sequence of operations.
     Vector<YarrOp, 128> m_ops;
