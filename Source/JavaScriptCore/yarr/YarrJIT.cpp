@@ -6849,7 +6849,7 @@ class YarrGenerator final : public YarrJITInfo {
                     // non-BMP (it never moves the frontier), so a literal or a class head
                     // that reads once at the start both qualify.
                     bool readsOnce = term->quantityType == QuantifierType::FixedCount && term->quantityMaxCount == 1;
-                    m_ops.last().m_readsStartCharacter = !frontierMayHaveMoved && readsOnce;
+                    m_ops.last().m_readsStartCharacter = !frontierMayHaveMoved && readsOnce && !term->inputPosition;
                     frontierMayHaveMoved = true;
                 }
                 break;
