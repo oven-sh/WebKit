@@ -1897,6 +1897,9 @@ public:
                 if (m_alternative->lastTerm().type == PatternTerm::Type::ParenthesesSubpattern)
                     m_alternative->lastTerm().parentheses.isCopy = true;
             } else {
+                bool isPendingForwardReference = (term.type == PatternTerm::Type::NumberedForwardReference || term.type == PatternTerm::Type::NamedForwardReference)
+                    && !m_forwardReferencesInLookbehind.isEmpty()
+                    && m_forwardReferencesInLookbehind.last().term() == &term;
                 term.quantify((max == quantifyInfinite) ? max : max - min, greedy ? QuantifierType::Greedy : QuantifierType::NonGreedy);
                 if (term.type == PatternTerm::Type::ParenthesesSubpattern)
                     term.parentheses.isCopy = true;
@@ -1908,6 +1911,13 @@ public:
                 m_alternative->lastTerm().quantify(min, min, QuantifierType::FixedCount);
                 if (m_alternative->lastTerm().type == PatternTerm::Type::ParenthesesSubpattern)
                     m_alternative->lastTerm().parentheses.isCopy = false;
+                if (isPendingForwardReference) {
+                    auto& pending = m_forwardReferencesInLookbehind.last();
+                    if (pending.hasNamedGroup())
+                        m_forwardReferencesInLookbehind.append(UnresolvedForwardReference(m_alternative, m_alternative->lastTermIndex(), pending.namedGroup()));
+                    else
+                        m_forwardReferencesInLookbehind.append(UnresolvedForwardReference(m_alternative, m_alternative->lastTermIndex()));
+                }
             }
         }
     }

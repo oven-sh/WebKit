@@ -106,3 +106,14 @@ shouldBe(execSummary(/(?<=[^a]+?a[^a]+)z/u, "\u{1F600}a\u{1F600}\u{1F600}z"), [7
         }
     }
 }
+
+shouldBe(execSummary(/(?<=.\1+(q))x/u, "aqx"), null);
+shouldBe(execSummary(/(?<=\1+(q))x/, "aqx"), null);
+shouldBe(execSummary(/(?<=\1{1,2}(q))x/, "aqx"), null);
+shouldBe(execSummary(/(?<=b\1+(q))x/, "bqqx"), [3, "x", "q"]);
+shouldBe(execSummary(/(?<=b\1+(q))x/, "baqx"), null);
+shouldBe(execSummary(/(?<=\1{2,}(q))x/, "qqqx"), [3, "x", "q"]);
+shouldBe(execSummary(/(?<=\1{2,}(q))x/, "aqqx"), null);
+shouldBe(execSummary(/(?<=\k<n>+(?<n>q))x/, "aqx"), null);
+shouldBe(execSummary(/(?<=\k<n>+(?<n>q))x/, "qqx"), [2, "x", "q"]);
+shouldBe(execSummary(/(?<=\1*(q))x/, "aqx"), [2, "x", "q"]);
