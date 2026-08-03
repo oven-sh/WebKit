@@ -115,6 +115,12 @@
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
+#if ENABLE(SPATIAL_PORTAL)
+#include "ElementAncestorIteratorInlines.h"
+#include "HTMLModelElement.h"
+#include "TypedElementDescendantIteratorInlines.h"
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderBox);
@@ -344,12 +350,42 @@ void RenderBox::invalidateAncestorBackgroundObscurationStatus()
 }
 
 #if ENABLE(SPATIAL_PORTAL)
-static void spatialPortalStyleDidChange(Element& element, SpatialType oldSpatial, SpatialType newSpatial)
+static bool isNestedInsideSpatialPortal(const Element& element)
 {
-    if (oldSpatial == SpatialType::None && newSpatial == SpatialType::Portal)
+    for (Ref ancestor : ancestorsOfType<Element>(element)) {
+        if (ancestor->establishesSpatialPortal())
+            return true;
+    }
+    return false;
+}
+
+static void updateSpatialPortalController(Element& element)
+{
+    bool hadController = element.establishesSpatialPortal();
+
+    CheckedPtr box = dynamicDowncast<RenderBox>(element.renderer());
+    if (box && box->style().spatial() == SpatialType::Portal && !isNestedInsideSpatialPortal(element))
         element.ensureSpatialPortalController();
-    else if (oldSpatial == SpatialType::Portal && newSpatial == SpatialType::None)
+    else
         element.clearSpatialPortalController();
+
+    if (box && hadController != element.establishesSpatialPortal()) {
+        if (CheckedPtr layer = box->layer())
+            layer->setNeedsCompositingConfigurationUpdate();
+    }
+}
+
+static void spatialPortalStyleDidChange(Element& element)
+{
+    updateSpatialPortalController(element);
+
+    for (Ref descendant : descendantsOfType<Element>(element)) {
+        if (CheckedPtr box = dynamicDowncast<RenderBox>(descendant->renderer()); box && box->style().spatial() == SpatialType::Portal)
+            updateSpatialPortalController(descendant);
+    }
+
+    for (Ref model : descendantsOfType<HTMLModelElement>(element))
+        model->spatialPortalContextDidChange();
 }
 #endif
 
@@ -472,7 +508,7 @@ void RenderBox::styleDidChange(Style::Difference diff, const Style::ComputedStyl
     auto oldSpatial = oldStyle ? oldStyle->spatial() : SpatialType::None;
     if (oldSpatial != newStyle.spatial()) {
         if (RefPtr element = this->element())
-            spatialPortalStyleDidChange(*element, oldSpatial, newStyle.spatial());
+            spatialPortalStyleDidChange(*element);
     }
 #endif
 }
@@ -661,7 +697,7 @@ bool RenderBox::shouldResetLogicalHeightBeforeLayout() const
     // A flex item resets its logical height while its container is stretching items along the cross axis, so the
     // stretch relayout starts from a clean height. This runs inside the item's own layout, after its LayoutRepainter
     // has captured the pre-stretch bounds, so repaint stays minimal (see webkit.org/b/204380).
-    CheckedPtr flexBoxParent = dynamicDowncast<RenderFlexibleBox>(parent());
+    auto* flexBoxParent = dynamicDowncast<RenderFlexibleBox>(parent());
     return flexBoxParent && flexBoxParent->isInCrossAxisStretchLayout();
 }
 
@@ -3450,7 +3486,7 @@ void RenderBox::updateLogicalHeight()
         overrideLogicalHeightForSizeContainment();
 
     if (CheckedPtr flexContainer = dynamicDowncast<RenderFlexibleBox>(parent()))
-        flexContainer->setFlexItemContentLogicalHeightIfNeeded(*this, contentBoxLogicalHeight());
+        flexContainer->setFlexItemContentLogicalHeightFromLayout(*this, contentBoxLogicalHeight());
     auto computedValues = computeLogicalHeight(logicalHeight(), logicalTop());
     setLogicalHeight(computedValues.extent);
     setLogicalTop(computedValues.position);
@@ -3776,7 +3812,7 @@ template<typename SizeType> std::optional<LayoutUnit> RenderBox::computeSizingKe
                 // When the width comes from a flex cross-axis override (e.g. stretch in a
                 // column flex container), use it to compute the min-content height through
                 // the aspect ratio.
-                if (!isFlexItem() || downcast<RenderFlexibleBox>(parent())->isHorizontalFlow())
+                if (!isFlexItem() || FlexFormattingUtils::isHorizontalFlow(*downcast<RenderFlexibleBox>(parent())))
                     return { };
                 if (auto overridingWidth = overridingBorderBoxLogicalWidth(); overridingWidth && !preferredRatio.isEmpty())
                     return resolveHeightForRatio(borderAndPaddingLogicalWidth(), borderAndPaddingLogicalHeight(), contentBoxLogicalWidth(*overridingWidth), preferredRatio.transposedSize().aspectRatio(), BoxSizing::ContentBox);
@@ -4168,14 +4204,21 @@ void RenderBox::constrainIntrinsicLogicalWidthsByMinMax(LayoutUnit& minIntrinsic
         return { };
     }();
 
+    // The aspect-ratio transfer derives a main-axis min/max from the cross axis; it is not the
+    // item's own min/max-width, so it applies even when measuring a flex base size.
     if (!style().logicalWidth().isFixed() && shouldComputeLogicalHeightFromAspectRatio())
         applyTransferredMinMaxSizesFromAspectRatio(minIntrinsicLogicalWidth, maxIntrinsicLogicalWidth);
 
-    maxIntrinsicLogicalWidth = std::min(maxIntrinsicLogicalWidth, usedMaxLogicalWidth);
-    minIntrinsicLogicalWidth = std::min(minIntrinsicLogicalWidth, usedMaxLogicalWidth);
+    // A flex item being measured for its flex base size ignores its own min/max-width: the flex
+    // algorithm re-applies them later, when deriving the hypothetical main size (see
+    // shouldIgnoreLogicalMinMaxWidthSizes()). Border and padding still apply.
+    if (!shouldIgnoreLogicalMinMaxWidthSizes()) {
+        maxIntrinsicLogicalWidth = std::min(maxIntrinsicLogicalWidth, usedMaxLogicalWidth);
+        minIntrinsicLogicalWidth = std::min(minIntrinsicLogicalWidth, usedMaxLogicalWidth);
 
-    maxIntrinsicLogicalWidth = std::max(maxIntrinsicLogicalWidth, usedMinLogicalWidth);
-    minIntrinsicLogicalWidth = std::max(minIntrinsicLogicalWidth, usedMinLogicalWidth);
+        maxIntrinsicLogicalWidth = std::max(maxIntrinsicLogicalWidth, usedMinLogicalWidth);
+        minIntrinsicLogicalWidth = std::max(minIntrinsicLogicalWidth, usedMinLogicalWidth);
+    }
 
     auto borderAndPadding = borderAndPaddingLogicalWidth();
     minIntrinsicLogicalWidth += borderAndPadding;
@@ -5586,7 +5629,7 @@ bool RenderBox::shouldIgnoreLogicalMinMaxWidthSizes() const
     if (!isFlexItem())
         return false;
     if (auto* flexBox = dynamicDowncast<RenderFlexibleBox>(parent()))
-        return flexBox->isComputingFlexBaseSizes() && writingMode().isHorizontal() == flexBox->isHorizontalFlow();
+        return flexBox->isComputingFlexBaseSizes() && writingMode().isHorizontal() == FlexFormattingUtils::isHorizontalFlow(*flexBox);
     ASSERT_NOT_REACHED();
     return false;
 }
@@ -5596,7 +5639,7 @@ bool RenderBox::shouldIgnoreLogicalMinMaxHeightSizes() const
     if (!isFlexItem())
         return false;
     if (auto* flexBox = dynamicDowncast<RenderFlexibleBox>(parent()))
-        return flexBox->isComputingFlexBaseSizes() && writingMode().isHorizontal() != flexBox->isHorizontalFlow();
+        return flexBox->isComputingFlexBaseSizes() && writingMode().isHorizontal() != FlexFormattingUtils::isHorizontalFlow(*flexBox);
     ASSERT_NOT_REACHED();
     return false;
 }

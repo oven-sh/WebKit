@@ -202,6 +202,7 @@ public:
         String displayName;
         String sourceURL;
         String sourceMappingURL;
+        uint64_t requestIdentifier { 0 };
         RefPtr<SourceProvider> sourceProvider;
         int startLine { 0 };
         int startColumn { 0 };

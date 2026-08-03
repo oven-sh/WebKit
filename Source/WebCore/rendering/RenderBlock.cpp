@@ -488,7 +488,7 @@ void RenderBlock::endAndCommitUpdateScrollInfoAfterLayoutTransaction()
             RelayoutScopeForScrollbarChange relayoutScope { *block, InOverflowRelayout::No };
 
         // The scrollbar relayout above may have re-dirtied out-of-flow descendants of ancestor containing blocks
-        // (e.g. via prepareFlexItemForPositionedLayout). Process them now since those containing blocks have
+        // (e.g. via prepareOutOfFlowBoxForPositionedLayout). Process them now since those containing blocks have
         // already completed their own layoutOutOfFlowBoxes pass.
         for (CheckedPtr ancestor = block->parent(); ancestor && ancestor != this; ancestor = ancestor->parent()) {
             CheckedPtr renderBlock = dynamicDowncast<RenderBlock>(*ancestor);
@@ -554,22 +554,18 @@ static EnumSet<LogicalBoxAxis> sizesAffectedByScrollbarsForSubtreeRoot(const Ren
     if (layoutContext.subtreeScrollbarChangesState())
         return { };
 
-    EnumSet<LogicalBoxAxis> sizesAffected;
-
     auto& style = renderBlock.style();
     auto& computedLogicalWidth = style.logicalWidth();
-    if (!computedLogicalWidth.isFixed() && (computedLogicalWidth.isIntrinsic() || computedLogicalWidth.isMinIntrinsic() || renderBlock.sizesLogicalWidthToFitContent()))
-        sizesAffected.add(LogicalBoxAxis::Inline);
+    if (computedLogicalWidth.isFixed())
+        return { };
 
-    auto& computedLogicalHeight = style.logicalHeight();
+    if (computedLogicalWidth.isIntrinsic() || computedLogicalWidth.isMinIntrinsic())
+        return LogicalBoxAxis::Inline;
 
-    if (renderBlock.isRenderFlexibleBox() && renderBlock.isBlockLevelBox() && (computedLogicalHeight.isAuto() || computedLogicalHeight.isIntrinsic()))
-        sizesAffected.add(LogicalBoxAxis::Block);
+    if (renderBlock.sizesLogicalWidthToFitContent())
+        return LogicalBoxAxis::Inline;
 
-    if (renderBlock.isRenderGrid() && (computedLogicalHeight.isAuto() || computedLogicalHeight.isIntrinsic()))
-        sizesAffected.add(LogicalBoxAxis::Block);
-
-    return sizesAffected;
+    return { };
 }
 
 static bool canContainDescendantScrollbarChanges(const RenderBlock& renderBlock, const LocalFrameViewLayoutContext& layoutContext)
@@ -3101,7 +3097,7 @@ std::optional<LayoutUnit> RenderBlock::availableLogicalHeightForPercentageComput
                 // horizontal WM, horizontal for vertical WM). It aligns with the
                 // main axis when they point in different physical directions.
                 auto& flexContainer = downcast<RenderFlexibleBox>(*parent());
-                return !style.flexBasis().isAuto() && flexContainer.isHorizontalFlow() != isHorizontalWritingMode();
+                return !style.flexBasis().isAuto() && FlexFormattingUtils::isHorizontalFlow(flexContainer) != isHorizontalWritingMode();
             };
             if (!flexBasisOverridesHeight()) {
                 auto contentBoxHeight = adjustContentBoxLogicalHeightForBoxSizing(LayoutUnit { fixedLogicalHeight->resolveZoom(style.usedZoomForLength()) });
@@ -3460,8 +3456,7 @@ LayoutSize RenderBlock::intrinsicSize() const
 
     // CSS UI 4: widgets are replaced elements, but WebKit has them as RenderBlock with appearance (not RenderReplaced).
     // Provide intrinsic size from the theme so they participate in replaced-element sizing paths.
-    auto zoom = style().evaluationTimeZoomEnabled() ? 1.0f : style().usedZoom();
-    auto controlSize = theme().controlSize(style().usedAppearance(), style().fontCascade(), { Style::PreferredSize { CSS::Keyword::Auto { } }, Style::PreferredSize { CSS::Keyword::Auto { } } }, zoom);
+    auto controlSize = theme().controlSize(style().usedAppearance(), style().fontCascade(), { Style::PreferredSize { CSS::Keyword::Auto { } }, Style::PreferredSize { CSS::Keyword::Auto { } } }, 1.0f);
 
     auto width = LayoutUnit { };
     if (auto fixedWidth = controlSize.width().tryFixed())

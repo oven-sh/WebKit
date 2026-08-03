@@ -42,19 +42,29 @@ RemoteFrameGeometryTransformer::RemoteFrameGeometryTransformer(RemoteFrameGeomet
 
 RemoteFrameGeometryTransformer& RemoteFrameGeometryTransformer::operator=(RemoteFrameGeometryTransformer&&) = default;
 
+// The returned point is in the remote frame's root-view coordinates (i.e. relative to the remote
+// frame's origin, without the remote frame's own scroll offset applied). Consumers deliver it into
+// the remote frame's process as a root-view point, where it is converted to contents coordinates
+// (re-applying the remote frame's scroll) during hit-testing. Using rootViewToContents() here would
+// apply the remote frame's scroll offset a second time.
 IntPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(IntPoint pointInContents) const
 {
-    return Ref { m_remoteView }->rootViewToContents(Ref { m_localView }->contentsToRootView(pointInContents));
+    return Ref { m_remoteView }->convertFromRootView(Ref { m_localView }->contentsToRootView(pointInContents));
 }
 
 FloatPoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(FloatPoint pointInContents) const
 {
-    return Ref { m_remoteView }->rootViewToContents(Ref { m_localView }->contentsToRootView(pointInContents));
+    return Ref { m_remoteView }->convertFromRootView(Ref { m_localView }->contentsToRootView(pointInContents));
 }
 
 DoublePoint RemoteFrameGeometryTransformer::transformToRemoteFrameCoordinates(DoublePoint pointInContents) const
 {
-    return Ref { m_remoteView }->rootViewToContents(Ref { m_localView }->contentsToRootView(pointInContents));
+    return Ref { m_remoteView }->convertFromRootView(Ref { m_localView }->contentsToRootView(pointInContents));
+}
+
+DoublePoint RemoteFrameGeometryTransformer::transformRootViewPointToRemoteFrameCoordinates(DoublePoint pointInRootView) const
+{
+    return Ref { m_remoteView }->convertFromRootView(pointInRootView);
 }
 
 } // namespace WebCore

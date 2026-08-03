@@ -95,14 +95,14 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmMemorySizeInPages, int64_t, (JSW
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmMemoryFill, UCPUStrictInt32, (JSWebAssemblyInstance*, uint64_t dstAddress, uint32_t targetValue, uint64_t count, uint8_t memoryIndex));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmMemoryCopy, UCPUStrictInt32, (JSWebAssemblyInstance*, uint64_t dstAddress, uint64_t srcAddress, uint64_t count, uint8_t dstMemoryIndex, uint8_t srcMemoryIndex));
 
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationGetWasmTableElement, EncodedJSValue, (JSWebAssemblyInstance*, unsigned, int32_t));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationSetWasmTableElement, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned, uint32_t, EncodedJSValue encValue));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationGetWasmTableElement, EncodedJSValue, (JSWebAssemblyInstance*, unsigned, uint64_t));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationSetWasmTableElement, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned, uint64_t, EncodedJSValue encValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmRefFunc, EncodedJSValue, (JSWebAssemblyInstance*, uint32_t));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTableInit, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned elementIndex, unsigned tableIndex, uint32_t dstOffset, uint32_t srcOffset, uint32_t length));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTableInit, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned elementIndex, unsigned tableIndex, uint64_t dstOffset, uint32_t srcOffset, uint32_t length));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmElemDrop, void, (JSWebAssemblyInstance*, unsigned elementIndex));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTableGrow, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned, EncodedJSValue fill, uint32_t delta));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTableFill, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned, uint32_t offset, EncodedJSValue fill, uint32_t count));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTableCopy, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned dstTableIndex, unsigned srcTableIndex, int32_t dstOffset, int32_t srcOffset, int32_t length));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTableGrow, int64_t, (JSWebAssemblyInstance*, unsigned, EncodedJSValue fill, uint64_t delta));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTableFill, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned, uint64_t offset, EncodedJSValue fill, uint64_t count));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTableCopy, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned dstTableIndex, unsigned srcTableIndex, uint64_t dstOffset, uint64_t srcOffset, uint64_t length));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationGetWasmTableSize, UCPUStrictInt32, (JSWebAssemblyInstance*, unsigned));
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationMemoryAtomicWait32, UCPUStrictInt32, (JSWebAssemblyInstance* instance, uint64_t base, uint64_t offset, int32_t value, int64_t timeout, uint8_t memoryIndex));
@@ -125,9 +125,7 @@ struct ThrownExceptionInfo {
     EncodedJSValue thrownValue;
     void* payload;
 };
-#if USE(JSVALUE64)
 static_assert(sizeof(ThrownExceptionInfo) == sizeof(UCPURegister) * 2, "ThrownExceptionInfo should fit in two machine registers");
-#endif
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmArrayNew, EncodedJSValue, (JSWebAssemblyInstance* instance, uint32_t typeIndex, uint32_t size, uint64_t value));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmArrayNewVector, EncodedJSValue, (JSWebAssemblyInstance* instance, uint32_t typeIndex, uint32_t size, uint64_t lane0, uint64_t lane1));
@@ -144,15 +142,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmAnyConvertExtern, EncodedJSValue
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmRefTest, UCPUStrictInt32, (JSWebAssemblyInstance*, EncodedJSValue, uint32_t, int32_t, bool));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmRefCast, EncodedJSValue, (JSWebAssemblyInstance*, EncodedJSValue, uint32_t, int32_t));
 
-#if USE(JSVALUE64)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmRetrieveAndClearExceptionIfCatchable, ThrownExceptionInfo, (JSWebAssemblyInstance*));
-#else
-/* On 32-bit platforms, we can't return both an EncodedJSValue and the payload
- * together (not enough return registers are available in the ABI and we don't
- * handle stack arguments when calling C functions), so, instead, return the
- * payload and return the thrown value via an out pointer */
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmRetrieveAndClearExceptionIfCatchable, void*, (JSWebAssemblyInstance*, EncodedJSValue*));
-#endif // USE(JSVALUE64)
 
 } } // namespace JSC::Wasm
 

@@ -44,6 +44,8 @@
 #include <WebCore/DigitalCredentialsRequestData.h>
 #include <WebCore/FocusDirection.h>
 #include <WebCore/HTMLMediaElementIdentifier.h>
+#include <WebCore/IntRect.h>
+#include <WebCore/IntRectHash.h>
 #include <WebCore/KeypressCommand.h>
 #include <WebCore/PlatformPlaybackSessionInterface.h>
 #include <WebCore/ScrollTypes.h>
@@ -117,7 +119,7 @@ OBJC_CLASS WebPlaybackControlsManager;
 OBJC_CLASS WKDigitalCredentialsPicker;
 #endif
 
-OBJC_CLASS WKPDFHUDView;
+OBJC_PROTOCOL(WKPDFHUDView);
 
 OBJC_CLASS VKCImageAnalysis;
 OBJC_CLASS VKCImageAnalysisOverlayView;
@@ -292,6 +294,7 @@ public:
 
     void createPDFHUD(PDFPluginIdentifier, WebCore::FrameIdentifier, const WebCore::IntRect&);
     void updatePDFHUDLocation(PDFPluginIdentifier, const WebCore::IntRect&);
+    void convertPDFHUDBoundingBoxToWebViewCoordinates(WebCore::FrameIdentifier, WebCore::IntRect boundingBoxInFrameRootView, CompletionHandler<void(WebCore::IntRect)>&&);
     void removePDFHUD(PDFPluginIdentifier);
     void removeAllPDFHUDs();
     void showPDFHUD(PDFPluginIdentifier);
@@ -895,6 +898,8 @@ public:
     void applyRefreshControllerHeight(CGFloat, bool);
     CGFloat topScrollStretchForRefreshController() const;
     CGFloat refreshControllerSnappingThreshold() const;
+    bool refreshControllerIsTracking() const { return m_refreshControllerIsTracking; }
+    void clearRefreshControllerTracking() { m_refreshControllerIsTracking = false; }
     void updateRefreshControllerForWheelEvent(NSEvent *);
     void updateRefreshControllerForPanGesture(NSGestureRecognizerState);
     void updateRefreshControllerFrame();
@@ -1059,7 +1064,9 @@ private:
     RetainPtr<WKFullScreenWindowController> m_fullScreenWindowController;
 #endif
 
-    HashMap<WebKit::PDFPluginIdentifier, RetainPtr<WKPDFHUDView>> _pdfHUDViews;
+    HashMap<WebKit::PDFPluginIdentifier, RetainPtr<NSView<WKPDFHUDView>>> _pdfHUDViews;
+    // PDF HUDs awaiting their initial async coordinate conversion, mapped to the latest location update.
+    HashMap<WebKit::PDFPluginIdentifier, WebCore::IntRect> m_pdfHUDsPendingCreation;
 
     RetainPtr<WKShareSheet> _shareSheet;
 
@@ -1234,6 +1241,7 @@ private:
     RetainPtr<CAShapeLayer> m_refreshControllerMask;
     CGFloat m_topScrollStretchForRefreshController { 0 };
     bool m_canShowRefreshController { false };
+    bool m_refreshControllerIsTracking { false };
     bool m_suppressRefreshControllerUpdates { false };
     CGFloat m_cachedTopScrollStretch { 0 };
 #endif
@@ -1249,7 +1257,7 @@ private:
     RetainPtr<WKAppKitGestureController> m_appKitGestureController;
     RetainPtr<WKTextSelectionController> m_textSelectionController;
 #endif
-} SWIFT_SHARED_REFERENCE(incrementCheckedPtrCountOnWebViewImpl, decrementCheckedPtrCountOnWebViewImpl);
+} SWIFT_SHARED_REFERENCE(incrementCheckedPtrCountOnWebViewImpl, decrementCheckedPtrCountOnWebViewImpl) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
 
 } // namespace WebKit
 

@@ -105,12 +105,19 @@ void RemoteAudioSession::setCategory(CategoryType type, Mode mode, RouteSharingP
     if (type == m_category && mode == m_mode && policy == m_routeSharingPolicy && !m_isPlayingToBluetoothOverrideChanged)
         return;
 
+    bool categoryOrModeChanged = type != m_category || mode != m_mode;
     m_category = type;
     m_mode = mode;
     m_routeSharingPolicy = policy;
     m_isPlayingToBluetoothOverrideChanged = false;
 
     protect(ensureConnection())->send(Messages::RemoteAudioSessionProxy::SetCategory(type, mode, policy), { });
+
+    if (categoryOrModeChanged) {
+        m_configurationChangeObservers.forEach([this](auto& observer) {
+            observer.categoryDidChange(*this);
+        });
+    }
 #else
     UNUSED_PARAM(type);
     UNUSED_PARAM(policy);
@@ -228,8 +235,18 @@ void RemoteAudioSession::configurationChanged(RemoteAudioSessionConfiguration&& 
     bool bufferSizeChanged = !m_configuration || configuration.bufferSize != (*m_configuration).bufferSize;
     bool sampleRateChanged = !m_configuration || configuration.sampleRate != (*m_configuration).sampleRate;
     bool routingContextUIDChanged = !m_configuration || configuration.routingContextUID != (*m_configuration).routingContextUID;
+    bool activeChanged = configuration.isActive != isActive();
 
     m_configuration = WTF::move(configuration);
+
+    // The GPU process is the source of truth for whether the audio session is active. Mirror it
+    // here so AudioSession::isActive() and its observers behave the same with and without site
+    // isolation, even with the site isolation activation is decided in the UI process which
+    // talks to the RemoteAudioSessionProxy in the GPU directly.
+    if (activeChanged) {
+        setActive(m_configuration->isActive);
+        activeStateChanged();
+    }
 
     m_configurationChangeObservers.forEach([&](auto& observer) {
         if (mutedStateChanged)

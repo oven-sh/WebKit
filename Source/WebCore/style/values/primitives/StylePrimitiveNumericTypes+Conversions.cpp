@@ -37,29 +37,12 @@ namespace Style {
 
 double canonicalizeLength(double value, CSS::LengthUnit unit, NoConversionDataRequiredToken)
 {
-    return computeNonCalcLengthDouble(value, unit, { });
+    return resolveLength(value, unit, { });
 }
 
 double canonicalizeLength(double value, CSS::LengthUnit unit, const CSSToLengthConversionData& conversionData)
 {
-    return computeNonCalcLengthDouble(value, unit, conversionData);
-}
-
-// MARK: ToCSS utilities
-
-float adjustForZoom(float value, const Style::ComputedStyle& style)
-{
-    return adjustFloatForAbsoluteZoom(value, style);
-}
-
-bool evaluationTimeZoomEnabled(const Style::ComputedStyle& style)
-{
-    return style.evaluationTimeZoomEnabled();
-}
-
-bool evaluationTimeZoomEnabled(const BuilderState& state)
-{
-    return state.document().settings().evaluationTimeZoomEnabled();
+    return resolveLength(value, unit, conversionData);
 }
 
 } // namespace Style

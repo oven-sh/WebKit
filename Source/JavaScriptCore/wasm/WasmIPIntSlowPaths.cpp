@@ -143,13 +143,8 @@ IPIntStackEntry* FrameAccess::stackEnd()
 
 #define IPINT_END() WASM_RETURN_TWO(0, 0);
 
-#if CPU(ADDRESS64)
 #define IPINT_RETURN(value) \
     WASM_RETURN_TWO(std::bit_cast<void*>(value), 0);
-#else
-#define IPINT_RETURN(value) \
-    WASM_RETURN_TWO(std::bit_cast<void*>(JSValue::decode(value).payload()), std::bit_cast<void*>(JSValue::decode(value).tag()));
-#endif
 
 #if ENABLE(WEBASSEMBLY_BBQJIT)
 
@@ -184,8 +179,14 @@ static inline RefPtr<Wasm::JITCallee> jitCompileAndSetHeuristics(Wasm::IPIntCall
     auto getReplacement = [&] () -> RefPtr<Wasm::JITCallee> {
         switch (osrFor) {
         case OSRFor::Prologue: {
-            if (!Options::useWasmIPInt() || needsSIMDReplacement) [[unlikely]]
-                return calleeGroup.tryGetReplacementConcurrently(functionIndex);
+            if (!Options::useWasmIPInt() || needsSIMDReplacement) [[unlikely]] {
+                // Deliberately not the lock-free peek used for loops: needsSIMDReplacement means
+                // IPInt cannot interpret this function at all, so we must find the JIT callee that
+                // IPIntPlan forced to be compiled, whether it is BBQ or OMG. This path is disabled
+                // in the default configuration, so it is not worth optimizing for contention.
+                Locker locker { calleeGroup.m_lock };
+                return calleeGroup.replacement(locker, callee.index());
+            }
             return nullptr;
         }
         case OSRFor::Epilogue: {
@@ -518,11 +519,7 @@ WASM_IPINT_EXTERN_CPP_DECL(rethrow_exception, CallFrame* callFrame, unsigned try
     Wasm::IPIntCallee* callee = IPINT_CALLEE(callFrame);
     RELEASE_ASSERT(tryDepth <= callee->rethrowSlots());
     FrameAccess frame(callFrame, callee);
-#if CPU(ADDRESS64)
     JSWebAssemblyException* exception = std::bit_cast<JSWebAssemblyException*>(frame.rethrowSlot(tryDepth - 1)->i64);
-#else
-    JSWebAssemblyException* exception = std::bit_cast<JSWebAssemblyException*>(frame.rethrowSlot(tryDepth - 1)->i32);
-#endif
     RELEASE_ASSERT(exception);
     throwException(globalObject, throwScope, exception);
 
@@ -632,7 +629,7 @@ WASM_IPINT_EXTERN_CPP_DECL(table_grow, IPIntStackEntry* sp, TableGrowMetadata* m
     if (!n)
         IPINT_RETURN(static_cast<intptr_t>(-1));
 
-    WASM_RETURN_TWO(std::bit_cast<void*>(Wasm::tableGrow(instance, metadata->tableIndex, fill, *n)), 0);
+    WASM_RETURN_TWO(reinterpret_cast<void*>(Wasm::tableGrow(instance, metadata->tableIndex, fill, *n)), 0);
 }
 
 WASM_IPINT_EXTERN_CPP_DECL(memory_grow, int64_t delta, uint8_t memoryIndex)

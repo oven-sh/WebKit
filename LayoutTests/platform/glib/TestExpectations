@@ -125,8 +125,6 @@ imported/w3c/web-platform-tests/css/css-will-change/will-change-fixedpos-cb-003.
 imported/w3c/web-platform-tests/css/css-writing-modes/overconstrained-rel-pos-rtl-left-right-vlr-009.xht [ Pass ]
 imported/w3c/web-platform-tests/css/css-writing-modes/sizing-orthog-vlr-in-htb-008.xht [ Pass ]
 imported/w3c/web-platform-tests/css/css-writing-modes/text-combine-upright-rtl-002.html [ Pass ]
-imported/w3c/web-platform-tests/html/rendering/replaced-elements/the-select-element/customizable-select/min-height-in-flex.html [ Pass ]
-imported/w3c/web-platform-tests/html/rendering/replaced-elements/the-select-element/customizable-select/min-width-in-flex.html [ Pass ]
 imported/w3c/web-platform-tests/html/rendering/replaced-elements/the-select-element/select-button-min-height-001.html [ Pass ]
 imported/w3c/web-platform-tests/html/rendering/widgets/input-checkbox-zero-size.html [ Pass ]
 imported/w3c/web-platform-tests/html/rendering/widgets/the-select-element/option-add-label-quirks.html [ Pass ]
@@ -484,7 +482,6 @@ imported/w3c/web-platform-tests/html/rendering/widgets/the-select-element/select
 
 imported/w3c/web-platform-tests/html/semantics/document-metadata/the-link-element/link-rel-attribute-ascii-case-insensitive.html [ Pass ]
 imported/w3c/web-platform-tests/html/semantics/forms/the-datalist-element/input-text-datalist-removal.html [ Pass ]
-imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-appearance-sizing-in-flex.html [ Pass ]
 imported/w3c/web-platform-tests/html/semantics/forms/the-textarea-element/placeholder-white-space.tentative.html [ Pass ]
 imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-b-element/b-usage.html [ Pass ]
 imported/w3c/web-platform-tests/html/semantics/text-level-semantics/the-ruby-element/ruby-usage.html [ Pass ]
@@ -606,9 +603,6 @@ media/media-source/media-source-mp4ttsimple.html [ Pass ]
 media/media-source/media-source-inband-cea608-track.html [ Pass ]
 
 media/media-source/media-source-video-seek-pause.html [ Failure Pass ]
-
-# GStreamer seeks to the wrong frame
-webkit.org/b/261335 media/media-source/media-managedmse-seek.html [ ImageOnlyFailure ]
 
 # GStreamer incorrectly demux the webm and creates gaps.
 webkit.org/b/266195 media/media-source/media-managedmse-multipletracks-bufferedchange.html [ Failure ]
@@ -937,6 +931,11 @@ imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-fill.h
 # Passing since 317045@main.
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-square-notch-mixed.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-square-notch-superellipse.html [ Pass ]
+
+imported/w3c/web-platform-tests/fs/ [ Pass ]
+storage/filesystemaccess/ [ Pass ]
+imported/w3c/web-platform-tests/storage/ [ Pass ]
+storage/storagemanager/ [ Pass ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of PASSING tests.
@@ -1481,7 +1480,7 @@ webkit.org/b/215799 imported/w3c/web-platform-tests/css/css-content/quotes-018.h
 webkit.org/b/215799 imported/w3c/web-platform-tests/css/css-content/quotes-025.html [ ImageOnlyFailure ]
 webkit.org/b/215799 imported/w3c/web-platform-tests/css/css-content/quotes-027.html [ ImageOnlyFailure ]
 
-webkit.org/b/319525 imported/w3c/web-platform-tests/css/css-masking/mask-image/mask-mode-d.html [ ImageOnlyFailure ]
+webkit.org/b/319525 imported/w3c/web-platform-tests/css/css-masking/mask-image/mask-mode-d.html [ Pass ]
 
 imported/w3c/web-platform-tests/css/css-text-decor/text-emphasis-style-property-013.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-text-decor/text-emphasis-style-property-013a.html [ Pass ]
@@ -1767,7 +1766,7 @@ webkit.org/b/182103 fast/forms/focus-selection-textarea.html [ Failure ]
 
 webkit.org/b/308037 imported/w3c/web-platform-tests/webrtc/simulcast/vp9.https.html [ Crash Failure Pass ]
 
-imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-audio-jitterBufferTarget-stats.https.html [ Failure ]
+imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-audio-jitterBufferTarget-stats.https.html [ Failure Pass ]
 
 webkit.org/b/311462 [ Debug ] imported/w3c/web-platform-tests/media-source/mediasource-config-change-mp4-av-framesize.html [ Pass Failure Timeout Crash ]
 webkit.org/b/308601 [ Release ] imported/w3c/web-platform-tests/media-source/SourceBuffer-abort-updating.html [ Failure Pass ]
@@ -2082,43 +2081,7 @@ http/tests/images/mp4-partial-load.html [ Failure ]
 # IndexedDB-related bugs
 #////////////////////////////////////////////////////////////////////////////////////////
 
-# Failure since import.
-webkit.org/b/243614 imported/w3c/web-platform-tests/IndexedDB/idb-partitioned-coverage.sub.html [ Failure ]
-
 webkit.org/b/216298 imported/w3c/web-platform-tests/IndexedDB/blob-valid-after-deletion.any.html [ Pass Failure ]
-
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAll.any.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAll.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAll.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAll.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAll-options.any.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAll-options.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAll-options.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAll-options.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAllRecords.any.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAllRecords.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAllRecords.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbindex_getAllRecords.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbobjectstore_getAll-options.any.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbobjectstore_getAll-options.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbobjectstore_getAll-options.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbobjectstore_getAll-options.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbobjectstore_getAllRecords.any.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbobjectstore_getAllRecords.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbobjectstore_getAllRecords.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/idbobjectstore_getAllRecords.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.worker.html [ Failure ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of IndexedDB-related bugs
@@ -2599,6 +2562,8 @@ fast/text/simple-line-layout-hyphenation-constrains.html [ ImageOnlyFailure ]
 
 webkit.org/b/132995 transitions/cancel-transition.html [ Failure Pass ]
 
+webkit.org/b/295127  transitions/svg-text-shadow-transition.html [ Pass Failure ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Transitions-related bugs
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -3016,6 +2981,8 @@ imported/w3c/web-platform-tests/webrtc/RTCDTMFSender-ontonechange-long.https.htm
 
 # Also skipped on mac, timing out because relying on MediaStream::onactive event which is not exposed.
 webkit.org/b/151344 fast/mediastream/MediaStream-add-ended-tracks.html [ Skip ]
+
+webkit.org/b/320603 webrtc/multi-video.html [ Failure Pass ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of WebRTC-related bugs
@@ -3792,9 +3759,6 @@ webkit.org/b/264587 imported/w3c/web-platform-tests/html/semantics/document-meta
 webkit.org/b/264587 imported/w3c/web-platform-tests/html/semantics/document-metadata/the-base-element/base-javascript.html [ Failure ]
 webkit.org/b/264587 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-iframe-element/iframe_sandbox_navigation_download_block_downloads.sub.tentative.html [ Failure ]
 
-webkit.org/b/264591 imported/w3c/web-platform-tests/storage/storagemanager-estimate.https.any.html [ Failure ]
-webkit.org/b/264591 imported/w3c/web-platform-tests/storage/storagemanager-estimate.https.any.worker.html [ Failure ]
-
 # This test is constantly timing out.
 webkit.org/b/217621 media/video-buffering-allowed.html [ Skip ] # Timeout.
 
@@ -4148,7 +4112,6 @@ webkit.org/b/198830 media/video-size-intrinsic-scale.html [ Failure ]
 webkit.org/b/108925 http/tests/media/video-play-stall.html [ Failure Timeout ]
 webkit.org/b/282165 http/tests/media/video-webm-stall-seek.html [ Failure ]
 
-webkit.org/b/137698 media/video-controls-drag.html [ Timeout ]
 webkit.org/b/113127 media/track/track-prefer-captions.html [ Timeout ]
 
 webkit.org/b/137311 media/video-fullscreen-only-playback.html [ Timeout ]
@@ -4247,6 +4210,15 @@ webkit.org/b/236298 fast/text/combining-character-sequence-vertical.html [ Image
 
 fast/webgpu [ Skip ]
 http/tests/webgpu/webgpu/api/operation/memory_sync/buffer/multiple_buffers.html [ Skip ]
+inspector/canvas/create-context-webgpu.html [ Skip ]
+inspector/canvas/recording-webgpu.html [ Skip ]
+inspector/canvas/requestClientNodes-webgpu.html [ Skip ]
+inspector/canvas/requestContent-webgpu.html [ Skip ]
+inspector/canvas/requestShaderSource-webgpu.html [ Skip ]
+inspector/canvas/resolveContext-webgpu.html [ Skip ]
+inspector/canvas/setShaderProgramDisabled-webgpu.html [ Skip ]
+inspector/canvas/shaderProgram-add-remove-webgpu.html [ Skip ]
+inspector/canvas/worker-webgpu.html [ Skip ]
 
 # NetworkStorageSession::deleteCookies() doesn't obey partitioning for glib ports.
 http/wpt/clear-site-data/partitioning.html [ Skip ]
@@ -4318,7 +4290,6 @@ imported/w3c/web-platform-tests/css/css-scroll-snap/snap-at-user-scroll-end.html
 imported/w3c/web-platform-tests/css/css-transforms/scroll-preserve-3d.html [ Skip ]
 imported/w3c/web-platform-tests/dom/events/non-cancelable-when-passive [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-scroll-within.html [ Skip ]
-imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-touch-scroll.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-self-invoke.html [ Skip ]
 imported/w3c/web-platform-tests/uievents/order-of-events/mouse-events/wheel-scrolling.html [ Skip ]
 
@@ -4441,6 +4412,7 @@ imported/w3c/web-platform-tests/css/css-view-transitions/web-animations-api.html
 imported/w3c/web-platform-tests/css/css-view-transitions/new-content-inline-with-offset-from-containing-block-clipped.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/old-content-inline-with-offset-from-containing-block-clipped.html [ ImageOnlyFailure ]
 
+imported/w3c/web-platform-tests/css/css-view-transitions/object-view-box-new-image.html [ ImageOnlyFailure Pass ]
 imported/w3c/web-platform-tests/css/css-view-transitions/pseudo-with-classes-mismatch-ident.html [ ImageOnlyFailure Pass ]
 imported/w3c/web-platform-tests/css/css-view-transitions/pseudo-with-classes-mismatch-partial.html [ ImageOnlyFailure Pass ]
 imported/w3c/web-platform-tests/css/css-view-transitions/pseudo-with-classes-mismatch-wildcard.html [ ImageOnlyFailure Pass ]
@@ -4595,8 +4567,6 @@ imported/w3c/web-platform-tests/html/browsers/browsing-the-web/read-media/pagelo
 webkit.org/b/277255 fast/forms/datalist/datalist-searchinput-appearance.html [ Failure Pass ]
 
 # Touch events related layout tests failing
-webkit.org/b/278719 fast/events/touch/basic-multi-touch-events.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/basic-multi-touch-events-limited.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/document-create-touch.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/document-create-touch-list.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/document-create-touch-list-ios.html [ Failure ]
@@ -4614,7 +4584,7 @@ webkit.org/b/278719 fast/events/touch/gesture/touch-gesture-scroll-iframe-editab
 webkit.org/b/278719 fast/events/touch/gesture/touch-gesture-scroll-page-not-propagated.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/gesture/touch-gesture-scroll-page-propagated.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/gesture/touch-gesture-scroll-sideways.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/multi-touch-some-without-handlers.html [ Failure ]
+webkit.org/b/278719 fast/events/touch/multi-touch-some-without-handlers.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/ontouchstart-active-selector.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/page-scaled-touch-gesture-click.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/scroll-without-mouse-lacks-mousemove-events.html [ Failure ]
@@ -4622,8 +4592,6 @@ webkit.org/b/278719 fast/events/touch/send-oncancel-event.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/touch-constructor.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/touch-input-element-change-documents.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/touch-scaled-scrolled.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/touch-target.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/touch-target-limited.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/zoomed-touch-event-pageXY.html [ Timeout ]
 webkit.org/b/278719 imported/w3c/web-platform-tests/touch-events/historical.html [ Failure ]
 webkit.org/b/278719 imported/w3c/web-platform-tests/touch-events/touch-retargeting.html [ Failure ]
@@ -4772,7 +4740,6 @@ webkit.org/b/204115 imported/w3c/web-platform-tests/pointerevents/pointerevent_s
 webkit.org/b/204115 imported/w3c/web-platform-tests/pointerevents/pointerevent_setpointercapture_to_same_element_twice.html?touch [ Skip ]
 webkit.org/b/204115 imported/w3c/web-platform-tests/pointerevents/pointerevent_pointerrawupdate_changes_pointer_capture.https.html [ Skip ]
 
-imported/w3c/web-platform-tests/pointerevents/pointerevent_hit_test_scroll_visible_descendant.html [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointer-events-none-skip-scroll-in-iframe.html [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointer-events-none-skip-scroll-will-change-in-iframe.html [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_attributes.html?pen [ Skip ]
@@ -5111,8 +5078,6 @@ http/tests/workers/service/service-worker-download-octet-stream-nosniff.https.ht
 # Resource timing tests are flaky due to redirect timing variability
 webkit.org/b/197473 imported/w3c/web-platform-tests/speculation-rules/prefetch/navigation-timing-requestStart-responseStart.https.html?include=waitingForRedirect [ Pass Failure ]
 
-webkit.org/b/278719 fast/events/touch/inserted-fragment-touch-target.html [ Timeout ]
-
 # This test has been failing on glib ports since its creation.
 imported/w3c/web-platform-tests/css/css-text/text-autospace/text-autospace-supplementary-ideograph.html [ ImageOnlyFailure ]
 
@@ -5275,7 +5240,6 @@ webkit.org/b/318434 ipc/send-gpu-GetShareableBitmap-RemoteRenderingBackend.html 
 
 webkit.org/b/318634 ipc/loadping-firstpartyforcookies-message-check.html [ Failure ]
 
-webkit.org/b/319043 http/wpt/navigation-api/traverse-subframe-remote-sibling.sub.html [ Crash ]
 webkit.org/b/319044 imported/w3c/web-platform-tests/html/rendering/widgets/shadow-dom.html [ Failure ]
 webkit.org/b/319045 [ Debug ] accessibility/button-in-deep-dom.html [ Timeout ]
 webkit.org/b/319046 [ Debug ] fast/mediastream/applyConstraints-with-takePhoto.html [ Crash Timeout ]
@@ -5294,6 +5258,7 @@ webkit.org/b/319950 imported/w3c/web-platform-tests/css/css-pseudo/marker-hit-te
 
 # WebTransport is Cocoa-only (non-Cocoa ports are a stub). https://bugs.webkit.org/show_bug.cgi?id=319008
 imported/w3c/web-platform-tests/webtransport/ [ Skip ]
+imported/w3c/web-platform-tests/content-security-policy/connect-src/connect-src-webtransport-blocked.sub.https.html [ Skip ]
 
 webkit.org/b/320057 imported/w3c/web-platform-tests/css/css-view-transitions/object-view-box-old-image.html [ ImageOnlyFailure Pass ]
 
@@ -5346,6 +5311,11 @@ imported/w3c/web-platform-tests/css/css-position/hypothetical-box-scroll-parent.
 imported/w3c/web-platform-tests/css/css-scroll-snap/scroll-target-align-005.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-scroll-snap/scroll-target-align-006.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-scroll-snap/scroll-target-snap-002.html [ ImageOnlyFailure ]
+
+webkit.org/b/320646 [ Debug ] webrtc/canvas-to-peer-connection-2d.html [ Failure ]
+webkit.org/b/320647 [ Debug ] webrtc/canvas-to-peer-connection-vp8-2d.html [ Failure ]
+webkit.org/b/320648 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/computed-grid-column.html [ Timeout Pass ]
+webkit.org/b/320653 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-connectionState.https.html [ Crash Pass ]
 
 # End: Common failures between GTK and WPE.
 

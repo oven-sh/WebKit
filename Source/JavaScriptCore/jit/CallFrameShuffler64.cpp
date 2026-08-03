@@ -26,7 +26,7 @@
 #include "config.h"
 #include "CallFrameShuffler.h"
 
-#if ENABLE(JIT) && USE(JSVALUE64)
+#if ENABLE(JIT)
 
 #include "CCallHelpers.h"
 #include "DataFormat.h"
@@ -44,7 +44,7 @@ DataFormat CallFrameShuffler::emitStore(
         m_jit.storePtr(cachedRecovery.recovery().gpr(), address);
         return DataFormatJS;
     case UnboxedInt32InGPR:
-        m_jit.store32(cachedRecovery.recovery().gpr(), address.withOffset(PayloadOffset));
+        m_jit.store32(cachedRecovery.recovery().gpr(), address.withOffset(LowWordOffset));
         return DataFormatInt32;
     case UnboxedInt52InGPR:
         m_jit.rshift64(MacroAssembler::TrustedImm32(JSValue::int52ShiftAmount),
@@ -367,4 +367,4 @@ bool CallFrameShuffler::tryAcquireNumberTagRegister()
 
 } // namespace JSC
 
-#endif // ENABLE(JIT) && USE(JSVALUE64)
+#endif // ENABLE(JIT)

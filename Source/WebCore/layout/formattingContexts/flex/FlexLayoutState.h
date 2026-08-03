@@ -27,29 +27,50 @@
 
 #include <cstdint>
 #include <optional>
+#include <wtf/StdLibExtras.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 
 class RenderBox;
 
+// How far the flex algorithm has got. Monotonic: the flex formatting context advances it as it works through
+// css-flexbox-1 9.2 - 9.6, and RenderFlexibleBox consults it to tell which of a flex item's sizes are settled.
+enum class LayoutPhase : uint8_t {
+    PreparingFlexItems,       // layoutBlock setup, before the flex algorithm runs.
+    ComputingFlexBaseSizes,   // computeFlexBaseAndHypotheticalMainSizes (CSS Flexbox 9.2).
+    CollectingLines,          // computeFlexLines (9.3 #5).
+    ResolvingFlexibleLengths, // computeMainSizeForFlexItems (9.3 #6).
+    MainAxisItemSizing,       // layoutFlexItems — items laid out at their resolved main size.
+    CrossSizing,              // hypotheticalCrossSizeForFlexItems / crossSizeForFlexLines (9.4 #7-#8).
+    MainAxisAlignment,        // handleMainAxisAlignment (9.5 #12).
+    CrossAxisItemSizing,      // computeCrossSizeForFlexItems — stretch items to the line's cross size (9.4 #11).
+    CrossAxisAlignment,       // handleCrossAxisAlignmentForFlexItems (9.6 #13-#14).
+};
+
 class FlexLayoutState {
 public:
-    enum class Phase : uint8_t {
-        PreparingFlexItems,       // layoutBlock setup, before the flex algorithm runs.
-        ComputingFlexBaseSizes,   // computeFlexBaseAndHypotheticalMainSizes (CSS Flexbox 9.2).
-        CollectingLines,          // computeFlexLines (9.3 #5).
-        ResolvingFlexibleLengths, // computeMainSizeForFlexItems (9.3 #6).
-        MainAxisItemSizing,       // layoutFlexItems — items laid out at their resolved main size.
-        CrossSizing,              // hypotheticalCrossSizeForFlexItems / crossSizeForFlexLines (9.4 #7-#8).
-        MainAxisAlignment,        // handleMainAxisAlignment (9.5 #12).
-        CrossAxisItemSizing,      // computeCrossSizeForFlexItems — stretch items to the line's cross size (9.4 #11).
-        CrossAxisAlignment,       // handleCrossAxisAlignmentForFlexItems (9.6 #13-#14).
-        PostFlexScrollbarLayout,  // Scrollbar reconciliation relayout after flex layout.
+    struct MarginTrimItems {
+        SingleThreadWeakHashSet<const RenderBox> itemsAtFlexLineStart;
+        SingleThreadWeakHashSet<const RenderBox> itemsAtFlexLineEnd;
+        SingleThreadWeakHashSet<const RenderBox> itemsOnFirstFlexLine;
+        SingleThreadWeakHashSet<const RenderBox> itemsOnLastFlexLine;
     };
 
-    Phase phase() const { return m_phase; }
-    void setPhase(Phase phase)
+    FlexLayoutState(MarginTrimItems&& marginTrimItems, bool isFlexBoxBlockSizeDefinite)
+        : m_marginTrimItems(WTF::move(marginTrimItems))
+        , m_isFlexBoxBlockSizeDefinite(isFlexBoxBlockSizeDefinite)
+    {
+    }
+
+    const MarginTrimItems& marginTrimItems() const LIFETIME_BOUND { return m_marginTrimItems; }
+    void addItemAtFlexLineStart(const RenderBox& flexItem) { m_marginTrimItems.itemsAtFlexLineStart.add(flexItem); }
+    void addItemAtFlexLineEnd(const RenderBox& flexItem) { m_marginTrimItems.itemsAtFlexLineEnd.add(flexItem); }
+    void addItemOnFirstFlexLine(const RenderBox& flexItem) { m_marginTrimItems.itemsOnFirstFlexLine.add(flexItem); }
+    void addItemOnLastFlexLine(const RenderBox& flexItem) { m_marginTrimItems.itemsOnLastFlexLine.add(flexItem); }
+
+    LayoutPhase phase() const { return m_phase; }
+    void setPhase(LayoutPhase phase)
     {
         if (phase > m_phase)
             m_phase = phase;
@@ -58,15 +79,13 @@ public:
     void setFlexItemHasCompletedLayout(const RenderBox& flexItem) { m_flexItemsWithCompletedLayout.add(flexItem); }
     bool hasFlexItemCompletedLayout(const RenderBox& flexItem) const { return m_flexItemsWithCompletedLayout.contains(flexItem); }
 
-    bool isFlexBoxBlockSizeDefinite() const { return m_isFlexBoxBlockSizeDefinite && *m_isFlexBoxBlockSizeDefinite; }
-    bool isFlexBoxBlockSizeIndefinite() const { return m_isFlexBoxBlockSizeDefinite && !*m_isFlexBoxBlockSizeDefinite; }
-    void setFlexBoxBlockSizeIsDefinite(bool isDefinite) { m_isFlexBoxBlockSizeDefinite = isDefinite; }
-    void resetFlexBoxBlockSizeDefiniteness() { m_isFlexBoxBlockSizeDefinite = { }; }
+    bool isFlexBoxBlockSizeDefinite() const { return m_isFlexBoxBlockSizeDefinite; }
 
 private:
-    Phase m_phase { Phase::PreparingFlexItems };
+    MarginTrimItems m_marginTrimItems;
+    LayoutPhase m_phase { LayoutPhase::PreparingFlexItems };
     SingleThreadWeakHashSet<const RenderBox> m_flexItemsWithCompletedLayout;
-    std::optional<bool> m_isFlexBoxBlockSizeDefinite;
+    bool m_isFlexBoxBlockSizeDefinite { false };
 };
 
 } // namespace WebCore

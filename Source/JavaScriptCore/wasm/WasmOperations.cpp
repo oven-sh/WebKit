@@ -303,9 +303,6 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
     auto singletonCallee = CalleeBits::boxNativeCallee(&WasmToJSCallee::singleton());
     *access.operator()<uintptr_t>(callFrame, CallFrameSlot::codeBlock * sizeof(Register)) = std::bit_cast<uintptr_t>(instance);
     *access.operator()<uintptr_t>(callFrame, CallFrameSlot::callee * sizeof(Register)) = std::bit_cast<uintptr_t>(singletonCallee);
-#if USE(JSVALUE32_64)
-    *access.operator()<uintptr_t>(callFrame, CallFrameSlot::callee * sizeof(Register) + TagOffset) = JSValue::NativeCalleeTag;
-#endif
 
     CallFrame* calleeFrame = std::bit_cast<CallFrame*>(reinterpret_cast<uintptr_t>(sp) - sizeof(CallerFrameAndPC));
     ASSERT(instance);
@@ -360,31 +357,16 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
         case TypeKind::I32: {
             if (wasmParam.isStack()) {
                 uint64_t raw = *access.operator()<UCPURegister>(callFrame, wasmParam.offsetFromFP());
-#if USE(JSVALUE64)
                 if (argType.isI32())
                     *access.operator()<uint64_t>(calleeFrame, dst) = static_cast<uint32_t>(raw) | JSValue::NumberTag;
-#else
-                if (argType.isI32()) {
-                    *access.operator()<uint32_t>(calleeFrame, dst + PayloadOffset) = static_cast<uint32_t>(raw);
-                    *access.operator()<uint32_t>(calleeFrame, dst + TagOffset) = JSValue::Int32Tag;
-                }
-#endif
                 else
                     *access.operator()<uint64_t>(calleeFrame, dst) = raw;
             } else {
                 auto raw = *access.operator()<UCPURegister>(argumentRegisters, GPRInfo::toArgumentIndex(wasmParam.jsr().payloadGPR()) * sizeof(UCPURegister));
-#if USE(JSVALUE64)
                 if (argType.isI32())
                     *access.operator()<uint64_t>(calleeFrame, dst) = static_cast<uint32_t>(raw) | JSValue::NumberTag;
                 else
                     *access.operator()<uint64_t>(calleeFrame, dst) = raw;
-#else
-                if (argType.isI32()) {
-                    *access.operator()<uint32_t>(calleeFrame, dst + PayloadOffset) = static_cast<uint32_t>(raw);
-                    *access.operator()<uint32_t>(calleeFrame, dst + TagOffset) = JSValue::Int32Tag;
-                } else
-                    *access.operator()<uint32_t>(calleeFrame, dst) = raw;
-#endif
             }
             break;
         }
@@ -409,9 +391,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
 
             double marshalled = purifyNaN(val);
             uint64_t raw = std::bit_cast<uint64_t>(marshalled);
-#if USE(JSVALUE64)
             raw += JSValue::DoubleEncodeOffset;
-#endif
             *access.operator()<uint64_t>(calleeFrame, dst) = raw;
             break;
         }
@@ -424,9 +404,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
 
             double marshalled = purifyNaN(val);
             uint64_t raw = std::bit_cast<uint64_t>(marshalled);
-#if USE(JSVALUE64)
             raw += JSValue::DoubleEncodeOffset;
-#endif
             *access.operator()<uint64_t>(calleeFrame, dst) = raw;
             break;
         }
@@ -437,7 +415,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
 
     // materializeImportJSCell and store
     *access.operator()<uint64_t>(calleeFrame, CallFrameSlot::callee * sizeof(Register)) = JSValue::encode(importableFunction->importFunction.get());
-    *access.operator()<uint32_t>(calleeFrame, CallFrameSlot::argumentCountIncludingThis * static_cast<int>(sizeof(Register)) + PayloadOffset) = argCount + 1; // including this = +1
+    *access.operator()<uint32_t>(calleeFrame, CallFrameSlot::argumentCountIncludingThis * static_cast<int>(sizeof(Register)) + LowWordOffset) = argCount + 1; // including this = +1
 
     OPERATION_RETURN(scope);
 }
@@ -515,11 +493,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
                     float result = static_cast<float>(*access.operator()<int32_t>(registerSpace, 0));
                     *access.operator()<float>(registerSpace, offset) = result;
                 } else {
-#if USE(JSVALUE64)
                     uint64_t intermediate = *access.operator()<uint64_t>(registerSpace, 0) + JSValue::NumberTag;
-#else
-                    uint64_t intermediate = *access.operator()<uint64_t>(registerSpace, 0);
-#endif
                     double d = std::bit_cast<double>(intermediate);
                     *access.operator()<uint64_t>(registerSpace, offset) = static_cast<uint64_t>(std::bit_cast<uint32_t>(static_cast<float>(d)));
                 }
@@ -538,11 +512,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
                     double result = static_cast<double>(*access.operator()<int32_t>(registerSpace, 0));
                     *access.operator()<double>(registerSpace, offset) = result;
                 } else {
-#if USE(JSVALUE64)
                     uint64_t intermediate = *access.operator()<uint64_t>(registerSpace, 0) + JSValue::NumberTag;
-#else
-                    uint64_t intermediate = *access.operator()<uint64_t>(registerSpace, 0);
-#endif
                     double d = std::bit_cast<double>(intermediate);
                     *access.operator()<double>(registerSpace, offset) = d;
                 }
@@ -753,15 +723,6 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
     for (unsigned index = 0; index < values.size(); ++index) {
         const OSREntryValue& value = values[index];
         dataLogLnIf(Options::verboseOSR() || verbose, "OMG OSR entry values[", index, "] ", value.type(), " ", value);
-#if USE(JSVALUE32_64)
-        if (value.isRegPair(B3::ValueRep::OSRValueRep)) {
-            std::bit_cast<uint32_t*>(buffer + index)[0] = context.gpr(value.gprLo(B3::ValueRep::OSRValueRep));
-            std::bit_cast<uint32_t*>(buffer + index)[1] = context.gpr(value.gprHi(B3::ValueRep::OSRValueRep));
-            dataLogLnIf(verbose, "GPR Pair for value ", index, " ",
-                value.gprLo(B3::ValueRep::OSRValueRep), " = ", context.gpr(value.gprLo(B3::ValueRep::OSRValueRep)), " ",
-                value.gprHi(B3::ValueRep::OSRValueRep), " = ", context.gpr(value.gprHi(B3::ValueRep::OSRValueRep)));
-        } else
-#endif
 
         if (value.isGPR()) {
             switch (value.type().kind()) {
@@ -887,11 +848,6 @@ static void doOSREntry(JSWebAssemblyInstance* instance, Probe::Context& context,
     // popPair(framePointerRegister, linkRegister);
     context.fp() = std::bit_cast<UCPURegister*>(*framePointer);
     context.gpr(RISCV64Registers::ra) = std::bit_cast<UCPURegister>(*(framePointer + 1));
-    context.sp() = framePointer + 2;
-    static_assert(prologueStackPointerDelta() == sizeof(void*) * 2);
-#elif CPU(ARM)
-    context.fp() = std::bit_cast<UCPURegister*>(*framePointer);
-    context.gpr(ARMRegisters::lr) = std::bit_cast<UCPURegister>(*(framePointer + 1));
     context.sp() = framePointer + 2;
     static_assert(prologueStackPointerDelta() == sizeof(void*) * 2);
 #else
@@ -1173,12 +1129,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe:
         if (value.isGPR()) {
             ASSERT(!type.isFloat() && !type.isVector());
             context.gpr(value.gpr()) = *bufferSlot;
-#if USE(JSVALUE32_64)
-        } else if (value.isRegPair(B3::ValueRep::OSRValueRep)) {
-            uint64_t encodedValue = *bufferSlot;
-            context.gpr(value.gprHi(B3::ValueRep::OSRValueRep)) = (encodedValue >> 32) & 0xffffffff;
-            context.gpr(value.gprLo(B3::ValueRep::OSRValueRep)) = encodedValue & 0xffffffff;
-#endif
         } else if (value.isFPR()) {
             if (type.isVector()) {
 #if CPU(X86_64) || CPU(ARM64)
@@ -1495,9 +1445,6 @@ JSC_DEFINE_JIT_OPERATION(operationAllocateResultsArray, JSArray*, (JSWebAssembly
         ValueLocation loc = wasmCallInfo.results[i].location;
         JSValue value;
         if (loc.isGPR()) {
-#if USE(JSVALE32_64)
-            ASSERT(registerResults.find(loc.jsr().payloadGPR())->offset() + 4 == registerResults.find(loc.jsr().tagGPR())->offset());
-#endif
             value = stackPointerFromCallee[(registerResults.find(loc.jsr().payloadGPR())->offset() + wasmCallInfo.headerAndArgumentStackSizeInBytes) / sizeof(JSValue)];
         } else if (loc.isFPR())
             value = stackPointerFromCallee[(registerResults.find(loc.fpr())->offset() + wasmCallInfo.headerAndArgumentStackSizeInBytes) / sizeof(JSValue)];
@@ -1551,17 +1498,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmMemoryCopy, UCPUStrictInt32, (JSW
     return toUCPUStrictInt32(memoryCopy(instance, dstAddress, srcAddress, count, dstMemoryIndex, srcMemoryIndex));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationGetWasmTableElement, EncodedJSValue, (JSWebAssemblyInstance* instance, unsigned tableIndex, int32_t signedIndex))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationGetWasmTableElement, EncodedJSValue, (JSWebAssemblyInstance* instance, unsigned tableIndex, uint64_t index))
 {
-    return tableGet(instance, tableIndex, signedIndex);
+    return tableGet(instance, tableIndex, index);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSetWasmTableElement, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned tableIndex, uint32_t signedIndex, EncodedJSValue encValue))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSetWasmTableElement, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned tableIndex, uint64_t signedIndex, EncodedJSValue encValue))
 {
     return toUCPUStrictInt32(tableSet(instance, tableIndex, signedIndex, encValue));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableInit, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned elementIndex, unsigned tableIndex, uint32_t dstOffset, uint32_t srcOffset, uint32_t length))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableInit, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned elementIndex, unsigned tableIndex, uint64_t dstOffset, uint32_t srcOffset, uint32_t length))
 {
     CallFrame* callFrame = DECLARE_WASM_CALL_FRAME(instance);
     assertCalleeIsReferenced(callFrame, instance);
@@ -1575,17 +1522,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmElemDrop, void, (JSWebAssemblyIns
     return elemDrop(instance, elementIndex);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableGrow, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned tableIndex, EncodedJSValue fill, uint32_t delta))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableGrow, int64_t, (JSWebAssemblyInstance* instance, unsigned tableIndex, EncodedJSValue fill, uint64_t delta))
 {
-    return toUCPUStrictInt32(tableGrow(instance, tableIndex, fill, delta));
+    return tableGrow(instance, tableIndex, fill, delta);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableFill, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned tableIndex, uint32_t offset, EncodedJSValue fill, uint32_t count))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableFill, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned tableIndex, uint64_t offset, EncodedJSValue fill, uint64_t count))
 {
     return toUCPUStrictInt32(tableFill(instance, tableIndex, offset, fill, count));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableCopy, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned dstTableIndex, unsigned srcTableIndex, int32_t dstOffset, int32_t srcOffset, int32_t length))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableCopy, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned dstTableIndex, unsigned srcTableIndex, uint64_t dstOffset, uint64_t srcOffset, uint64_t length))
 {
     return toUCPUStrictInt32(tableCopy(instance, dstTableIndex, srcTableIndex, dstOffset, srcOffset, length));
 }
@@ -1718,7 +1665,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCrashDueToOMGStackOverflow, void, ())
         RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(false);
 }
 
-#if USE(JSVALUE64)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmRetrieveAndClearExceptionIfCatchable, ThrownExceptionInfo, (JSWebAssemblyInstance* instance))
 {
     VM& vm = instance->vm();
@@ -1741,29 +1687,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmRetrieveAndClearExceptionIfCatcha
 
     return { JSValue::encode(thrownValue), jumpTarget };
 }
-#else
-// Same as JSVALUE64 version, but returns thrownValue on stack
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmRetrieveAndClearExceptionIfCatchable, void*, (JSWebAssemblyInstance* instance, EncodedJSValue* thrownValue))
-{
-    VM& vm = instance->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    RELEASE_ASSERT(!!throwScope.exception());
-
-    vm.callFrameForCatch = nullptr;
-    auto* jumpTarget = std::exchange(vm.targetMachinePCAfterCatch, nullptr);
-
-    Exception* exception = throwScope.exception();
-    *thrownValue = JSValue::encode(exception->value());
-
-    // We want to clear the exception here rather than in the catch prologue
-    // JIT code because clearing it also entails clearing a bit in an Atomic
-    // bit field in VMTraps.
-    (void)throwScope.tryClearException();
-
-    return jumpTarget;
-}
-#endif // USE(JSVALUE64)
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayNew, EncodedJSValue, (JSWebAssemblyInstance* instance, uint32_t typeIndex, uint32_t size, uint64_t value))
 {

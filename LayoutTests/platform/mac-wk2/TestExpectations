@@ -1249,6 +1249,8 @@ webkit.org/b/260113 [ arm64 ] http/wpt/webauthn/ctap-hid-failure.https.html [ Pa
 # Only applicable on platforms with HDR support
 [ Sequoia+ ] compositing/hdr [ Pass ]
 [ Sequoia+ ] fast/canvas/hdr [ Pass ]
+webkit.org/b/320158 [ x86_64 ] fast/canvas/hdr/float16-canvas-imagedata-small-accelerated-srgb-linear.html [ Failure ]
+webkit.org/b/320158 [ x86_64 ] fast/canvas/hdr/float16-canvas-imagedata-small-accelerated-display-p3-linear.html [ Failure ]
 [ Sequoia+ ] fast/images/hdr-basic-image.html [ Pass ]
 [ Sequoia+ ] fast/images/hdr-basic-image-dynamic-range-limit.html [ Pass ]
 [ Sequoia+ ] fast/images/hdr-background-image.html [ Pass ]
@@ -2222,8 +2224,6 @@ webkit.org/b/315308 http/tests/inspector/network/cross-origin-iframe-get-respons
 
 webkit.org/b/308165 [ Debug ] scrollingcoordinator/mac/latching/simple-page-rubberbands.html [ Pass Failure ]
 
-webkit.org/b/315578 [ Sequoia ] imported/w3c/web-platform-tests/url/IdnaTestV2.any.html [ Failure ]
-
 webkit.org/b/311759 [ Release arm64 ] imported/w3c/web-platform-tests/event-timing/keydown.html [ Pass Failure ]
 
 webkit.org/b/308325 [ Debug ] http/wpt/cache-storage/cache-in-stopped-context.html [ Pass Failure ]
@@ -2427,8 +2427,6 @@ fast/animation/request-animation-frame-throttle-subframe-display-none.html [ Pas
 webkit.org/b/319501 fast/animation/request-animation-frame-throttle-subframe.html [ Pass Timeout ]
 
 webkit.org/b/318732 http/tests/site-isolation/page-zoom.html [ Pass ImageOnlyFailure ]
-
-webkit.org/b/318879 [ x86_64 Release ] webgl/ [ Skip ]
 
 # webkit.org/b/319018 2x media/media-source/* (layout-tests) are flaky timeouts.
 media/media-source/media-source-real-play-after-eos.html [ Pass ImageOnlyFailure Timeout ]

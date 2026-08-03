@@ -371,7 +371,8 @@ GstPadProbeReturn AppendPipeline::appsrcEndOfAppendCheckerProbe(GstPadProbeInfo*
     }
 
     GST_TRACE_OBJECT(pipeline(), "Posting end-of-append task to the main thread");
-    dumpBinToDotFile(m_pipeline, makeString(unsafeSpan(GST_ELEMENT_NAME(m_pipeline.get())), "-end-of-append"_s));
+    if (enableMSEAdditionalPipelineDumps())
+        dumpBinToDotFile(m_pipeline, makeString(unsafeSpan(GST_ELEMENT_NAME(m_pipeline.get())), "-end-of-append"_s));
     m_taskQueue.enqueueTask([this]() {
         handleEndOfAppend();
     });
@@ -438,17 +439,15 @@ std::tuple<GRefPtr<GstCaps>, StreamType, FloatSize> AppendPipeline::parseDemuxer
 
     auto originalMediaType = capsMediaType(demuxerSrcPadCaps);
     auto& gstRegistryScanner = GStreamerRegistryScannerMSE::singleton();
-    if (doCapsHaveType(demuxerSrcPadCaps, GST_TEXT_CAPS_TYPE_PREFIX) || originalMediaType == "application/x-subtitle-vtt"_s || originalMediaType == "closedcaption/x-cea-608") {
+    if (doCapsHaveType(demuxerSrcPadCaps, GST_TEXT_CAPS_TYPE_PREFIX) || originalMediaType == "application/x-subtitle-vtt"_s || originalMediaType == "closedcaption/x-cea-608"_s) {
         streamType = StreamType::Text;
     } else if (!gstRegistryScanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, originalMediaType.span())) {
         streamType = StreamType::Invalid;
     } else if (doCapsHaveType(demuxerSrcPadCaps, GST_VIDEO_CAPS_TYPE_PREFIX)) {
         presentationSize = getVideoResolutionFromCaps(demuxerSrcPadCaps).value_or(FloatSize());
         streamType = StreamType::Video;
-    } else {
-        if (doCapsHaveType(demuxerSrcPadCaps, GST_AUDIO_CAPS_TYPE_PREFIX))
-            streamType = StreamType::Audio;
-    }
+    } else if (doCapsHaveType(demuxerSrcPadCaps, GST_AUDIO_CAPS_TYPE_PREFIX))
+        streamType = StreamType::Audio;
 
     return { WTF::move(parsedCaps), streamType, WTF::move(presentationSize) };
 }
@@ -574,7 +573,7 @@ void AppendPipeline::appsinkNewSample(const Track& track, GRefPtr<GstSample>&& s
     }
 
     if (hasValidPTS)
-        m_sourceBufferPrivate.didReceiveSample(mediaSample.get());
+        m_sourceBufferPrivate.didReceiveSample(WTF::move(mediaSample));
 }
 
 #ifndef GST_DISABLE_GST_DEBUG
@@ -739,12 +738,13 @@ void AppendPipeline::didReceiveInitializationSegment()
         }
     }
 
-    auto dotFileName = makeString(unsafeSpan(GST_ELEMENT_NAME(m_pipeline.get())), "-received-init-segment"_s, m_pendingInitializationSegmentForChangeType ? "-for-change-type"_s : ""_s);
     m_hasReceivedFirstInitializationSegment = true;
-    m_pendingInitializationSegmentForChangeType = false;
 
     GST_DEBUG_OBJECT(pipeline(), "Notifying SourceBuffer of initialization segment.");
-    dumpBinToDotFile(m_pipeline, dotFileName);
+    if (enableMSEAdditionalPipelineDumps())
+        dumpBinToDotFile(m_pipeline, makeString(unsafeSpan(GST_ELEMENT_NAME(m_pipeline.get())), "-received-init-segment"_s, m_pendingInitializationSegmentForChangeType ? "-for-change-type"_s : ""_s));
+
+    m_pendingInitializationSegmentForChangeType = false;
     m_sourceBufferPrivate.didReceiveInitializationSegment(WTF::move(initializationSegment));
 }
 
@@ -1089,7 +1089,7 @@ static GRefPtr<GstElement> createOptionalParserForFormat([[maybe_unused]] GstBin
         // Necessary for: metadata filling.
         // Without this parser the codec string set on the corresponding video track will be incomplete.
         elementClass = "vp9parse"_s;
-    } else if (mediaType == "closedcaption/x-cea-608") {
+    } else if (mediaType == "closedcaption/x-cea-608"_s) {
         // Used in converting cea-608 to WebVTT.
         // qtdemux pushes captions in format: s334-1a, while cea608tott expects format: raw.
         elementClass = "ccconverter"_s;
@@ -1119,7 +1119,7 @@ GRefPtr<GstElement> createOptionalEncoderForFormat([[maybe_unused]] GstBin* bin,
     //   - SouceBuffer timestampOffset   (Media Source Extensions, 5.1 Attributes)
     if (mediaType == "text/x-raw"_s)
         elementClass = "webvttenc"_s;
-    else if (mediaType == "closedcaption/x-cea-608")
+    else if (mediaType == "closedcaption/x-cea-608"_s)
         elementClass = "cea608tott"_s;
 
     GST_DEBUG_OBJECT(bin, "Creating %s encoder for stream with caps %" GST_PTR_FORMAT, elementClass.characters(), caps);
@@ -1249,15 +1249,15 @@ bool AppendPipeline::recycleTrackForPad(GstPad* demuxerSrcPad)
 void AppendPipeline::linkPadWithTrack(GstPad* demuxerSrcPad, Track& track)
 {
     auto pipelineName = unsafeSpan(GST_ELEMENT_NAME(m_pipeline.get()));
-    auto dotFileNameBefore = makeString(pipelineName, "-before-link"_s);
-    auto dotFileNameAfter = makeString(pipelineName, "-after-link"_s);
 
     GST_DEBUG_OBJECT(demuxerSrcPad, "Linking to track %" PRIu64 "", track.trackId);
-    dumpBinToDotFile(m_pipeline, dotFileNameBefore);
+    if (enableMSEAdditionalPipelineDumps())
+        dumpBinToDotFile(m_pipeline, makeString(pipelineName, "-before-link"_s));
     ASSERT(!GST_PAD_IS_LINKED(track.entryPad.get()));
     gst_pad_link(demuxerSrcPad, track.entryPad.get());
     ASSERT(GST_PAD_IS_LINKED(track.entryPad.get()));
-    dumpBinToDotFile(m_pipeline, dotFileNameAfter);
+    if (enableMSEAdditionalPipelineDumps())
+        dumpBinToDotFile(m_pipeline, makeString(pipelineName, "-after-link"_s));
 }
 
 Ref<WebCore::TrackPrivateBase> AppendPipeline::makeWebKitTrack(Track& appendPipelineTrack, int trackIndex, TrackID trackId)

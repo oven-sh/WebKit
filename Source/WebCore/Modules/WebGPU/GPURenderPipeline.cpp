@@ -27,8 +27,81 @@
 #include "GPURenderPipeline.h"
 
 #include "GPUBindGroupLayout.h"
+#include "GPUDevice.h"
+#include "InspectorInstrumentation.h"
+#include <wtf/Locker.h>
+#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
+
+Lock GPURenderPipeline::s_instancesLock;
+
+Ref<GPURenderPipeline> GPURenderPipeline::create(Ref<WebGPU::RenderPipeline>&& backing, uint64_t uniqueId, GPUDevice* device, const String& vertexShaderSource, const String& fragmentShaderSource, bool sharesVertexFragmentShader)
+{
+    Ref result = adoptRef(*new GPURenderPipeline(WTF::move(backing), uniqueId, device, vertexShaderSource, fragmentShaderSource, sharesVertexFragmentShader));
+
+    if (device)
+        InspectorInstrumentation::didCreateWebGPURenderPipeline(*device, result);
+
+    return result;
+}
+
+HashMap<GPURenderPipeline*, GPUDevice*>& GPURenderPipeline::instances()
+{
+    static NeverDestroyed<HashMap<GPURenderPipeline*, GPUDevice*>> instances;
+    return instances;
+}
+
+Lock& GPURenderPipeline::instancesLock()
+{
+    return s_instancesLock;
+}
+
+void GPURenderPipeline::willDestroyDevice(GPUDevice& device)
+{
+    Locker locker { instancesLock() };
+    for (auto& registeredDevice : instances().values()) {
+        if (registeredDevice == &device) {
+            // Don't remove any GPURenderPipeline from the instances list, as they may still exist.
+            // Only remove the association with a GPUDevice.
+            registeredDevice = nullptr;
+        }
+    }
+}
+
+GPURenderPipeline::GPURenderPipeline(Ref<WebGPU::RenderPipeline>&& backing, uint64_t uniqueId, GPUDevice* device, const String& vertexShaderSource, const String& fragmentShaderSource, bool sharesVertexFragmentShader)
+    : m_backing(WTF::move(backing))
+    , m_uniqueId(uniqueId)
+    , m_vertexShaderSource(vertexShaderSource)
+    , m_fragmentShaderSource(fragmentShaderSource)
+    , m_sharesVertexFragmentShader(sharesVertexFragmentShader)
+{
+    if (device) {
+        m_device = *device;
+
+        Locker locker { instancesLock() };
+        instances().add(this, device);
+    }
+}
+
+GPURenderPipeline::~GPURenderPipeline()
+{
+    InspectorInstrumentation::willDestroyWebGPURenderPipeline(*this);
+
+    Locker locker { instancesLock() };
+    instances().remove(this);
+}
+
+bool GPURenderPipeline::hasActiveInspectorCanvasCallTracer() const
+{
+    RefPtr device = m_device;
+    return device && device->hasActiveInspectorCanvasCallTracer();
+}
+
+GPUDevice* GPURenderPipeline::device() const
+{
+    return m_device;
+}
 
 String GPURenderPipeline::label() const
 {
@@ -43,7 +116,7 @@ void GPURenderPipeline::setLabel(String&& label)
 Ref<GPUBindGroupLayout> GPURenderPipeline::getBindGroupLayout(uint32_t index)
 {
     // "A new GPUBindGroupLayout wrapper is returned each time"
-    return GPUBindGroupLayout::create(m_backing->getBindGroupLayout(index), m_uniqueId);
+    return GPUBindGroupLayout::create(m_backing->getBindGroupLayout(index), m_uniqueId, protect(m_device));
 }
 
 }

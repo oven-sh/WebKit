@@ -519,8 +519,6 @@ public:
 
     static Arg imm(int64_t value)
     {
-        if constexpr (is32Bit())
-            RELEASE_ASSERT((Fits<int64_t, Wide32>::check(value) || Fits<uint64_t, Wide32>::check(value)));
         Arg result;
         result.m_kind = Imm;
         result.m_value = value;
@@ -529,8 +527,6 @@ public:
 
     static Arg bigImm(int64_t value)
     {
-        if constexpr (is32Bit())
-            RELEASE_ASSERT((Fits<int64_t, Wide32>::check(value) || Fits<uint64_t, Wide32>::check(value)));
         Arg result;
         result.m_kind = BigImm;
         result.m_value = value;
@@ -549,8 +545,6 @@ public:
 
     static Arg bitImm(int64_t value)
     {
-        if constexpr (is32Bit())
-            RELEASE_ASSERT((Fits<int64_t, Wide32>::check(value)));
         Arg result;
         result.m_kind = BitImm;
         result.m_value = value;
@@ -559,8 +553,6 @@ public:
 
     static Arg bitImm64(int64_t value)
     {
-        if constexpr (is32Bit())
-            UNREACHABLE_FOR_PLATFORM();
         Arg result;
         result.m_kind = BitImm64;
         result.m_value = value;
@@ -569,8 +561,6 @@ public:
 
     static Arg fpImm32(int64_t value)
     {
-        if constexpr (is32Bit())
-            RELEASE_ASSERT((Fits<int64_t, Wide32>::check(value)));
         Arg result;
         result.m_kind = FPImm32;
         result.m_value = value;
@@ -579,8 +569,6 @@ public:
 
     static Arg fpImm64(int64_t value)
     {
-        if constexpr (is32Bit())
-            UNREACHABLE_FOR_PLATFORM();
         Arg result;
         result.m_kind = FPImm64;
         result.m_value = value;
@@ -589,8 +577,6 @@ public:
 
     static Arg fpImm128(v128_t value)
     {
-        if constexpr (is32Bit())
-            UNREACHABLE_FOR_PLATFORM();
         Arg result;
         result.m_kind = FPImm128;
         result.m_value = value.u64x2[0];
@@ -667,13 +653,13 @@ public:
     {
         switch (scale) {
         case 1:
-            if (isX86() || isARM64() || isARM_THUMB2())
+            if (isX86() || isARM64())
                 return true;
             return false;
         case 2:
         case 4:
         case 8:
-            if (isX86() || isARM_THUMB2())
+            if (isX86())
                 return true;
             if (isARM64()) {
                 if (!width)
@@ -1354,8 +1340,6 @@ public:
                 return isUInt12(shifted) || isUInt12(toTwosComplement(shifted));
             return false;
         }
-        if (isARM_THUMB2())
-            return isValidARMThumb2Immediate(value);
         return false;
     }
 
@@ -1365,8 +1349,6 @@ public:
             return WTF::isRepresentableAs<int32_t>(value);
         if (isARM64())
             return ARM64LogicalImmediate::create32(value).isValid();
-        if (isARM_THUMB2())
-            return isValidARMThumb2Immediate(value);
         return false;
     }
 
@@ -1522,9 +1504,7 @@ public:
     template<IsLegalOffset Int>
     static bool isValidAddrForm(Air::Opcode opcode, Int offset, std::optional<Width> width = std::nullopt)
     {
-#if !CPU(ARM_THUMB2)
         UNUSED_PARAM(opcode);
-#endif
         if (isX86())
             return true;
 
@@ -1549,26 +1529,11 @@ public:
             }
         }
 
-#if CPU(ARM_THUMB2)
-        switch (opcode) {
-        case Move:
-        case Move32:
-            return MacroAssemblerARMv7::BoundsNonDoubleWordOffset::within(offset);
-        case MoveDouble:
-        case MoveFloat:
-            if constexpr (!std::is_signed_v<Int>)
-                return !((offset & 3) || (offset > (255 * 4)));
-            else
-                return !((offset & 3) || (offset > (255 * 4)) || (static_cast<typename std::make_signed<Int>::type>(offset) < -(255 * 4)));
-        default:
-            return false;
-        }
-#endif
         return false;
     }
 
     template<IsLegalOffset Int>
-    static bool isValidIndexForm(Air::Opcode opcode, unsigned scale, Int offset, std::optional<Width> width = std::nullopt)
+    static bool isValidIndexForm(unsigned scale, Int offset, std::optional<Width> width = std::nullopt)
     {
         if (!isValidScale(scale, width))
             return false;
@@ -1576,15 +1541,6 @@ public:
             return true;
         if (isARM64())
             return !offset;
-        if (isARM_THUMB2()) {
-            switch (opcode) {
-            case MoveFloat:
-            case MoveDouble:
-                return false;
-            default:
-                return !offset;
-            }
-        }
         return false;
     }
 
@@ -1630,7 +1586,7 @@ public:
         case CallArg:
             return isValidAddrForm(opcode, offset(), width);
         case Index:
-            return isValidIndexForm(opcode, scale(), offset(), width);
+            return isValidIndexForm(scale(), offset(), width);
         case PreIndex:
         case PostIndex:
             return isValidIncrementIndexForm(offset());
@@ -1720,16 +1676,12 @@ public:
 
     MacroAssembler::TrustedImm64 asTrustedImm64() const
     {
-        if constexpr (is32Bit())
-            UNREACHABLE_FOR_PLATFORM();
         ASSERT(isBigImm() || isBitImm64() || isFPImm64());
         return MacroAssembler::TrustedImm64(value());
     }
 
     v128_t asV128() const
     {
-        if constexpr (is32Bit())
-            UNREACHABLE_FOR_PLATFORM();
         ASSERT(isFPImm128());
         return v128_t(m_value, m_value);
     }
@@ -1737,10 +1689,7 @@ public:
     decltype(auto) asTrustedBigImm() const
     {
         ASSERT(isBigImm());
-        if constexpr (is32Bit())
-            return MacroAssembler::TrustedImm32(value());
-        else
-            return MacroAssembler::TrustedImm64(value());
+        return MacroAssembler::TrustedImm64(value());
     }
 
 #if CPU(ARM64)
@@ -1752,10 +1701,7 @@ public:
 
     MacroAssembler::TrustedImmPtr asTrustedImmPtr() const
     {
-        if (is64Bit())
-            ASSERT(isBigImm());
-        else
-            ASSERT(isImm());
+        ASSERT(isBigImm());
         return MacroAssembler::TrustedImmPtr(pointerValue());
     }
     
@@ -1915,14 +1861,10 @@ private:
     Kind m_kind { Invalid };
     uint8_t m_logScale { 0 }; // Only meaningful for Index: scale() == 1u << m_logScale.
     MacroAssembler::Extend m_extend { MacroAssembler::Extend::None };
-#if USE(JSVALUE32_64)
-    Air::Tmp m_baseHi;
-    Air::Tmp m_baseLo;
-#endif
 };
 
-#if USE(JSVALUE64) && !OS(WINDOWS)
-static_assert(sizeof(Arg) == 16, "Arg is expected to stay 16 bytes on JSVALUE64.");
+#if !OS(WINDOWS)
+static_assert(sizeof(Arg) == 16, "Arg is expected to stay 16 bytes.");
 #endif
 
 } } } // namespace JSC::B3::Air

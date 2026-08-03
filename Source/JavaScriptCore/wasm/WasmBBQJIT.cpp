@@ -315,7 +315,7 @@ bool BBQJIT::isValidValueTypeKind(TypeKind kind)
     }
 }
 
-TypeKind BBQJIT::pointerType() { return is64Bit() ? TypeKind::I64 : TypeKind::I32; }
+TypeKind BBQJIT::pointerType() { return TypeKind::I64; }
 
 bool BBQJIT::isFloatingPointType(TypeKind type)
 {
@@ -690,11 +690,6 @@ BBQJIT::BBQJIT(CompilationContext& compilationContext, const RTT& signature, Mod
     RegisterSet::macroClobberedFPRs().forEach([&](Reg reg) {
         fprSetBuilder.remove(reg);
     });
-#if USE(JSVALUE32_64) && CPU(ARM_NEON)
-    // Remove NEON fprs
-    for (auto reg = ARMRegisters::d16; reg <= ARMRegisters::d31; reg = MacroAssembler::nextFPRegister(reg))
-        fprSetBuilder.remove(reg);
-#endif
     // TODO: handle callee-saved registers better.
     RegisterSet::vmCalleeSaveRegisters().forEach([&](Reg reg) {
         fprSetBuilder.remove(reg);
@@ -704,9 +699,6 @@ BBQJIT::BBQJIT(CompilationContext& compilationContext, const RTT& signature, Mod
     RegisterSet callerSaveFprs = fprSetBuilder;
 
     gprSetBuilder.remove(wasmScratchGPR);
-#if USE(JSVALUE32_64)
-    gprSetBuilder.remove(wasmScratchGPR2);
-#endif
     fprSetBuilder.remove(wasmScratchFPR);
 
     ASCIILiteral logPrefix = Options::verboseBBQJITAllocation() ? "BBQ"_s : ASCIILiteral();
@@ -854,7 +846,7 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
 [[nodiscard]] PartialResult BBQJIT::addTableSet(unsigned tableIndex, Value index, Value value)
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
-    ASSERT(index.type() == TypeKind::I32);
+    ASSERT(index.type() == m_info.table(tableIndex).addressType().asWasmTypeKind());
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -878,7 +870,7 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
 
 [[nodiscard]] PartialResult BBQJIT::addTableInit(unsigned elementIndex, unsigned tableIndex, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length)
 {
-    ASSERT(dstOffset.type() == TypeKind::I32);
+    ASSERT(dstOffset.type() == m_info.table(tableIndex).addressType().asWasmTypeKind());
     ASSERT(srcOffset.type() == TypeKind::I32);
     ASSERT(length.type() == TypeKind::I32);
 
@@ -921,7 +913,7 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
         instanceValue(),
         Value::fromI32(tableIndex)
     };
-    result = topValue(TypeKind::I32);
+    result = topValue(m_info.table(tableIndex).addressType().asWasmTypeKind());
     emitCCall(&operationGetWasmTableSize, arguments, result);
 
     LOG_INSTRUCTION("TableSize", tableIndex, RESULT(result));
@@ -930,14 +922,15 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
 
 [[nodiscard]] PartialResult BBQJIT::addTableGrow(unsigned tableIndex, Value fill, Value delta, Value& result)
 {
-    ASSERT(delta.type() == TypeKind::I32);
+    auto tableAddressTypeKind = m_info.table(tableIndex).addressType().asWasmTypeKind();
+    ASSERT(delta.type() == tableAddressTypeKind);
 
     Vector<Value, 8> arguments = {
         instanceValue(),
         Value::fromI32(tableIndex),
         fill, delta
     };
-    result = topValue(TypeKind::I32);
+    result = topValue(tableAddressTypeKind);
     emitCCall(&operationWasmTableGrow, arguments, result);
 
     LOG_INSTRUCTION("TableGrow", tableIndex, fill, delta, RESULT(result));
@@ -946,8 +939,8 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
 
 [[nodiscard]] PartialResult BBQJIT::addTableFill(unsigned tableIndex, Value offset, Value fill, Value count)
 {
-    ASSERT(offset.type() == TypeKind::I32);
-    ASSERT(count.type() == TypeKind::I32);
+    ASSERT(offset.type() == m_info.table(tableIndex).addressType().asWasmTypeKind());
+    ASSERT(count.type() == m_info.table(tableIndex).addressType().asWasmTypeKind());
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -969,9 +962,9 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
 
 [[nodiscard]] PartialResult BBQJIT::addTableCopy(unsigned dstTableIndex, unsigned srcTableIndex, Value dstOffset, Value srcOffset, Value length)
 {
-    ASSERT(dstOffset.type() == TypeKind::I32);
-    ASSERT(srcOffset.type() == TypeKind::I32);
-    ASSERT(length.type() == TypeKind::I32);
+    ASSERT(dstOffset.type() == m_info.table(srcTableIndex).addressType().asWasmTypeKind());
+    ASSERT(srcOffset.type() == m_info.table(dstTableIndex).addressType().asWasmTypeKind());
+    ASSERT(m_info.table(dstTableIndex).addressType().is64Bit() && m_info.table(srcTableIndex).addressType().is64Bit() ? length.type() == TypeKind::I64 : length.type() == TypeKind::I32);
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -3286,16 +3279,10 @@ void BBQJIT::emitEntryTierUpCheck()
     JIT_COMMENT(m_jit, "Store boxed JIT callee");
     m_jit.move(CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(&m_callee)), wasmScratchGPR);
     static_assert(CallFrameSlot::codeBlock + 1 == CallFrameSlot::callee);
-    if constexpr (is32Bit()) {
-        CCallHelpers::Address calleeSlot { GPRInfo::callFrameRegister, CallFrameSlot::callee * sizeof(Register) };
-        m_jit.storePtr(wasmScratchGPR, calleeSlot.withOffset(PayloadOffset));
-        m_jit.store32(CCallHelpers::TrustedImm32(JSValue::NativeCalleeTag), calleeSlot.withOffset(TagOffset));
-        m_jit.storePtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::addressFor(CallFrameSlot::codeBlock));
-    } else
-        m_jit.storePairPtr(GPRInfo::wasmContextInstancePointer, wasmScratchGPR, GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(CallFrameSlot::codeBlock * sizeof(Register)));
+    m_jit.storePairPtr(GPRInfo::wasmContextInstancePointer, wasmScratchGPR, GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(CallFrameSlot::codeBlock * sizeof(Register)));
 
     if (m_profiledCallee.hasExceptionHandlers())
-        m_jit.store32(CCallHelpers::TrustedImm32(wasmInvalidCallSiteIndex), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+        m_jit.store32(CCallHelpers::TrustedImm32(wasmInvalidCallSiteIndex), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
     // Because we compile in a single pass, we always need to pessimistically check for stack underflow/overflow.
     static_assert(wasmScratchGPR == GPRInfo::nonPreservedNonArgumentGPR0);
@@ -3303,9 +3290,6 @@ void BBQJIT::emitEntryTierUpCheck()
 
     MacroAssembler::JumpList overflow;
     JIT_COMMENT(m_jit, "Stack overflow check");
-#if !CPU(ADDRESS64)
-    overflow.append(m_jit.branchPtr(CCallHelpers::Above, wasmScratchGPR, GPRInfo::callFrameRegister));
-#endif
     overflow.append(m_jit.branchPtr(CCallHelpers::LessThan, wasmScratchGPR, CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfSoftStackLimit())));
     overflow.linkThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwStackOverflowFromWasmThunkGenerator).code()), &m_jit);
 
@@ -3462,13 +3446,7 @@ MacroAssembler::Label BBQJIT::addLoopOSREntrypoint()
 
     m_jit.move(CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(&m_callee)), wasmScratchGPR);
     static_assert(CallFrameSlot::codeBlock + 1 == CallFrameSlot::callee);
-    if constexpr (is32Bit()) {
-        CCallHelpers::Address calleeSlot { GPRInfo::callFrameRegister, CallFrameSlot::callee * sizeof(Register) };
-        m_jit.storePtr(wasmScratchGPR, calleeSlot.withOffset(PayloadOffset));
-        m_jit.store32(CCallHelpers::TrustedImm32(JSValue::NativeCalleeTag), calleeSlot.withOffset(TagOffset));
-        m_jit.storePtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::addressFor(CallFrameSlot::codeBlock));
-    } else
-        m_jit.storePairPtr(GPRInfo::wasmContextInstancePointer, wasmScratchGPR, GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(CallFrameSlot::codeBlock * sizeof(Register)));
+    m_jit.storePairPtr(GPRInfo::wasmContextInstancePointer, wasmScratchGPR, GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(CallFrameSlot::codeBlock * sizeof(Register)));
 
     // Because tiering up code materializes BaselineData, this is always non nullptr.
     m_jit.loadPtr(Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfBaselineData(m_info, m_functionIndex)), GPRInfo::jitDataRegister);
@@ -3484,12 +3462,7 @@ MacroAssembler::Label BBQJIT::addLoopOSREntrypoint()
     // The loop_osr slow path should have already checked that we have enough space. We have already destroyed the ipint stack, and unwind will see the BBQ catch
     // since we already replaced callee. So, we just assert that this case doesn't happen to avoid reading a corrupted frame from the bbq catch handler.
     MacroAssembler::JumpList overflow;
-#if !CPU(ADDRESS64)
-    overflow.append(m_jit.branchPtr(CCallHelpers::Above, wasmScratchGPR, GPRInfo::callFrameRegister));
-    overflow.append(m_jit.branchPtr(CCallHelpers::LessThanOrEqual, wasmScratchGPR, CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfSoftStackLimit())));
-#else
     overflow.append(m_jit.branchPtr(CCallHelpers::LessThanOrEqual, MacroAssembler::stackPointerRegister, CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfSoftStackLimit())));
-#endif
     overflow.linkThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(crashDueToBBQStackOverflowGenerator).code()), &m_jit);
 
     // This operation shuffles around values on the stack, until everything is in the right place. Then,
@@ -3557,10 +3530,6 @@ B3::Type BBQJIT::toB3Type(TypeKind kind)
 
 B3::ValueRep BBQJIT::toB3Rep(Location location)
 {
-#if USE(JSVALUE32_64)
-    if (location.isGPR2())
-        return B3::ValueRep(B3::ValueRep::OSRValueRep, Reg(location.asGPRlo()), Reg(location.asGPRhi()));
-#endif
     if (location.isRegister())
         return B3::ValueRep(location.isGPR() ? Reg(location.asGPR()) : Reg(location.asFPR()));
     if (location.isStack())
@@ -3937,7 +3906,7 @@ void BBQJIT::emitLoopTierUpCheckAndOSREntryData(const ControlData& data, std::sp
 
     ++m_callSiteIndex;
     if (m_profiledCallee.hasExceptionHandlers()) {
-        m_jit.store32(CCallHelpers::TrustedImm32(m_callSiteIndex), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+        m_jit.store32(CCallHelpers::TrustedImm32(m_callSiteIndex), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
         flushRegisters();
     }
     m_jit.move(GPRInfo::wasmContextInstancePointer, GPRInfo::argumentGPR0);
@@ -3950,7 +3919,7 @@ void BBQJIT::prepareForExceptions()
 {
     ++m_callSiteIndex;
     if (m_profiledCallee.hasExceptionHandlers()) {
-        m_jit.store32(CCallHelpers::TrustedImm32(m_callSiteIndex), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+        m_jit.store32(CCallHelpers::TrustedImm32(m_callSiteIndex), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
         flushRegistersForException();
     }
 }
@@ -4059,20 +4028,18 @@ void BBQJIT::prepareForExceptions()
     // Flush everything below the top N values.
     currentControlData().flushAtBlockBoundary(*this, defaultTarget.targetLocations().size(), results, true);
 
+    unsigned runCount = 0;
+    for (unsigned i = 0; i < targets.size(); ++i) {
+        if (!i || targets[i] != targets[i - 1])
+            ++runCount;
+    }
+
     constexpr unsigned minCasesForTable = 7;
-    if (minCasesForTable <= targets.size()) {
-#if USE(JSVALUE64)
+    if (minCasesForTable <= runCount) {
         auto* jumpTable = m_callee.addJumpTable(targets.size() + 1);
         m_jit.moveConditionally32(RelationalCondition::AboveOrEqual, wasmScratchGPR, TrustedImm32(targets.size()), TrustedImm32(targets.size()), wasmScratchGPR, wasmScratchGPR);
-#else
-        auto* jumpTable = m_callee.addJumpTable(targets.size());
-        auto fallThrough = m_jit.branch32(RelationalCondition::AboveOrEqual, wasmScratchGPR, TrustedImm32(targets.size()));
-#endif
         m_jit.zeroExtend32ToWord(wasmScratchGPR, wasmScratchGPR);
-        if constexpr (is64Bit())
-            m_jit.lshiftPtr(TrustedImm32(3), wasmScratchGPR);
-        else
-            m_jit.lshiftPtr(TrustedImm32(2), wasmScratchGPR);
+        m_jit.lshiftPtr(TrustedImm32(3), wasmScratchGPR);
         m_jit.addPtr(TrustedImmPtr(jumpTable->span().data()), wasmScratchGPR);
         m_jit.farJump(Address(wasmScratchGPR), JSSwitchPtrTag);
 
@@ -4089,24 +4056,26 @@ void BBQJIT::prepareForExceptions()
             }
             return label;
         });
-#if USE(JSVALUE64)
         labels.append(Box<CCallHelpers::Label>::create(m_jit.label()));
-#else
-        fallThrough.link(&m_jit);
-#endif
 
         m_jit.addLinkTask([labels = WTF::move(labels), jumpTable](LinkBuffer& linkBuffer) {
             for (unsigned index = 0; index < labels.size(); ++index)
                 jumpTable->at(index) = linkBuffer.locationOf<JSSwitchPtrTag>(*labels[index]);
         });
     } else {
-        Vector<int64_t, 16> cases(targets.size(), [](size_t i) { return i; });
+        Vector<std::tuple<uint32_t, size_t>, 16> runs;
+        runs.reserveInitialCapacity(runCount);
+        for (unsigned i = 0; i < targets.size(); ) {
+            unsigned start = i;
+            while (i < targets.size() && targets[i] == targets[start])
+                ++i;
+            runs.append({ static_cast<uint32_t>(start), static_cast<size_t>(i - start) });
+        }
+        ASSERT(runs.size() == runCount);
 
-        BinarySwitch binarySwitch(wasmScratchGPR, cases.span(), BinarySwitch::Int32);
+        BinarySwitch binarySwitch(wasmScratchGPR, runs.span());
         while (binarySwitch.advance(m_jit)) {
-            unsigned value = binarySwitch.caseValue();
             unsigned index = binarySwitch.caseIndex();
-            ASSERT_UNUSED(value, value == index);
             ASSERT(index < targets.size());
             currentControlData().addExit(*this, targets[index]->targetLocations(), results);
             targets[index]->addBranch(m_jit.jump());
@@ -4502,7 +4471,7 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
     m_jit.loadPtr(Address(MacroAssembler::framePointerRegister), callerFramePointer);
     resolvedArguments.append(Value::pinned(pointerType(), Location::fromStack(sizeof(Register))));
     parameterLocations.append(Location::fromStack(tailCallStackOffsetFromFP + Checked<int>(sizeof(Register))));
-#elif CPU(ARM64) || CPU(ARM_THUMB2)
+#elif CPU(ARM64)
     m_jit.loadPairPtr(MacroAssembler::framePointerRegister, callerFramePointer, MacroAssembler::linkRegister);
 #else
     UNUSED_PARAM(callerFramePointer);
@@ -4665,9 +4634,7 @@ void BBQJIT::emitIndirectCall(const char* opcode, unsigned callProfileIndex, con
         // Do a context switch if needed.
         Jump isSameInstanceBefore = m_jit.branchPtr(RelationalCondition::Equal, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
         m_jit.move(wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
-#if USE(JSVALUE64)
         loadWebAssemblyGlobalState(wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
-#endif
         isSameInstanceBefore.link(m_jit);
     } else {
         JumpList profilingDone;
@@ -4676,9 +4643,7 @@ void BBQJIT::emitIndirectCall(const char* opcode, unsigned callProfileIndex, con
         m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), m_jit.scratchRegister());
         Jump isSameInstanceBefore = m_jit.branchPtr(RelationalCondition::Equal, m_jit.scratchRegister(), GPRInfo::wasmContextInstancePointer);
         m_jit.move(m_jit.scratchRegister(), GPRInfo::wasmContextInstancePointer);
-#if USE(JSVALUE64)
         loadWebAssemblyGlobalState(wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
-#endif
         m_jit.loadPtr(CCallHelpers::Address(GPRInfo::jitDataRegister, safeCast<int32_t>(BaselineData::offsetOfData() + sizeof(CallProfile) * callProfileIndex + CallProfile::offsetOfBoxedCallee())), wasmScratchGPR);
         m_jit.orPtr(TrustedImm32(CallProfile::Megamorphic), wasmScratchGPR);
         updateProfile.append(m_jit.jump());
@@ -4751,9 +4716,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
         Jump isSameInstance = m_jit.branchPtr(RelationalCondition::Equal, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
         emitRestoreInstanceFrameIfNeeded(m_jit, GPRInfo::wasmContextInstancePointer, callerStackSize, m_frameSize, topSourceOffsetFromFP, wasmScratchGPR, wasmBaseMemoryPointer);
         m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), GPRInfo::wasmContextInstancePointer);
-#if USE(JSVALUE64)
         loadWebAssemblyGlobalState(wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
-#endif
         isSameInstance.link(m_jit);
     }
 
@@ -4778,7 +4741,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
 
     resolvedArguments.append(Value::pinned(pointerType(), Location::fromStack(sizeof(Register))));
     parameterLocations.append(Location::fromStack(tailCallStackOffsetFromFP + Checked<int>(sizeof(Register))));
-#elif CPU(ARM64) || CPU(ARM_THUMB2)
+#elif CPU(ARM64)
     auto preserved = callingConvention.argumentGPRs();
     preserved.add(importableFunction, IgnoreVectors);
     if constexpr (isARM64E())
@@ -4835,7 +4798,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
     m_jit.loadPtr(Address(MacroAssembler::framePointerRegister, tailCallStackOffsetFromFP), wasmScratchGPR);
     m_jit.addPtr(TrustedImm32(tailCallStackOffsetFromFP + Checked<int>(sizeof(Register))), MacroAssembler::framePointerRegister, MacroAssembler::stackPointerRegister);
     m_jit.move(wasmScratchGPR, MacroAssembler::framePointerRegister);
-#elif CPU(ARM64) || CPU(ARM_THUMB2)
+#elif CPU(ARM64)
     m_jit.addPtr(TrustedImm32(tailCallStackOffsetFromFP + Checked<int>(sizeof(CallerFrameAndPC))), MacroAssembler::framePointerRegister, MacroAssembler::stackPointerRegister);
     m_jit.move(callerFramePointer, MacroAssembler::framePointerRegister);
 #else
@@ -4906,7 +4869,9 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
             ASSERT(calleeIndexLocation.isGPR());
 
             JIT_COMMENT(m_jit, "Check the index we are looking for is valid");
-            recordJumpToThrowException(ExceptionType::OutOfBoundsCallIndirect, m_jit.branch32(RelationalCondition::AboveOrEqual, calleeIndexLocation.asGPR(), wasmScratchGPR));
+            if (!tableInformation.addressType().is64Bit())
+                m_jit.zeroExtend32ToWord(calleeIndexLocation.asGPR(), calleeIndexLocation.asGPR());
+            recordJumpToThrowException(ExceptionType::OutOfBoundsCallIndirect, m_jit.branch64(RelationalCondition::AboveOrEqual, calleeIndexLocation.asGPR(), wasmScratchGPR));
 
             // Neither callableFunctionBuffer nor wasmScratchGPR are used before any of these
             // are def'd below, so we can reuse the registers and save some pressure.
@@ -5077,11 +5042,7 @@ BBQJIT::Jump BBQJIT::emitFusedBranchCompareBranch(OpType opType, ExpressionType,
     case OpType::I32Eqz:
         return m_jit.branchTest32(ResultCondition::NonZero, operandLocation.asGPR());
     case OpType::I64Eqz:
-#if USE(JSVALUE64)
         return m_jit.branchTest64(ResultCondition::NonZero, operandLocation.asGPR());
-#else
-        return m_jit.branchTest64(ResultCondition::NonZero, operandLocation.asGPRhi(), operandLocation.asGPRlo());
-#endif
     default:
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Op type '%s' is not a unary comparison and should not have been fused.\n", makeString(opType).characters());
     }
@@ -5252,19 +5213,11 @@ static MacroAssembler::Jump emitBranchI32(CCallHelpers& jit, MacroAssembler::Rel
 
 static MacroAssembler::Jump emitBranchI64(CCallHelpers& jit, MacroAssembler::RelationalCondition condition, Value left, Location leftLocation, Value right, Location rightLocation)
 {
-#if USE(JSVALUE64)
     if (right.isConst())
         return jit.branch64(condition, leftLocation.asGPR(), MacroAssembler::Imm64(right.asI64()));
     if (left.isConst())
         return jit.branch64(MacroAssembler::commute(condition), rightLocation.asGPR(), MacroAssembler::Imm64(left.asI64()));
     return jit.branch64(condition, leftLocation.asGPR(), rightLocation.asGPR());
-#else
-    if (right.isConst())
-        return jit.branch64(condition, leftLocation.asGPRhi(), leftLocation.asGPRlo(), MacroAssembler::TrustedImm64(right.asI64()));
-    if (left.isConst())
-        return jit.branch64(MacroAssembler::commute(condition), rightLocation.asGPRhi(), rightLocation.asGPRlo(), MacroAssembler::TrustedImm64(left.asI64()));
-    return jit.branch64(condition, leftLocation.asGPRhi(), leftLocation.asGPRlo(), rightLocation.asGPRhi(), rightLocation.asGPRlo());
-#endif
 }
 
 static MacroAssembler::Jump emitBranchF32(CCallHelpers& jit, MacroAssembler::DoubleCondition condition, Value, Location leftLocation, Value, Location rightLocation)
@@ -5632,13 +5585,7 @@ Location BBQJIT::allocateWithHint(Value value, Location hint)
         result = Location::fromFPR(m_fprAllocator.allocate(*this, RegisterBinding::fromValue(value), nextLRUKey(), hint.isFPR() ? hint.asFPR() : InvalidFPRReg));
     else if (!typeNeedsGPR2(value.type()))
         result = Location::fromGPR(m_gprAllocator.allocate(*this, RegisterBinding::fromValue(value), nextLRUKey(), hint.isGPR() ? hint.asGPR() : InvalidGPRReg));
-    else if constexpr (is32Bit()) {
-        // FIXME: Add hint support for GPR2s.
-        auto lruKey = nextLRUKey();
-        GPRReg lo = m_gprAllocator.allocate(*this, RegisterBinding::fromValue(value), lruKey);
-        GPRReg hi = m_gprAllocator.allocate(*this, RegisterBinding::fromValue(value), lruKey);
-        result = Location::fromGPR2(hi, lo);
-    } else
+    else
         RELEASE_ASSERT_NOT_REACHED();
 
     if (value.isLocal())

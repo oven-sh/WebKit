@@ -120,6 +120,7 @@ public:
 
     bool NODELETE isCORSSameOrigin() const;
     bool hasWasmMIMEType() const;
+    std::optional<ResourceLoaderIdentifier> resourceLoaderIdentifier() const { return m_resourceLoaderIdentifier; }
 
     const NetworkLoadMetrics& networkLoadMetrics() const LIFETIME_BOUND { return m_networkLoadMetrics; }
     void setReceivedInternalResponse(const ResourceResponse&, FetchOptions::Credentials);
@@ -171,22 +172,19 @@ private:
         NotificationCallback takeNotificationCallback() { return WTF::move(m_responseCallback); }
         ConsumeDataByChunkCallback takeConsumeDataCallback() { return WTF::move(m_consumeDataCallback); }
 
-        void setUploadSink(Ref<ReadableStreamToSharedBufferSink>&& sink) { m_uploadSink = WTF::move(sink); }
-
     private:
         Loader(FetchResponse&, NotificationCallback&&, RefPtr<ReadableStreamToSharedBufferSink>&&);
 
         // FetchLoaderClient API
         void didSucceed(const NetworkLoadMetrics&) final;
         void didFail(const ResourceError&) final;
-        void didReceiveResponse(const ResourceResponse&) final;
+        void didReceiveResponse(std::optional<ResourceLoaderIdentifier>, const ResourceResponse&) final;
         void didReceiveData(const SharedBuffer&) final;
 
         WeakPtr<FetchResponse> m_response;
         NotificationCallback m_responseCallback;
         ConsumeDataByChunkCallback m_consumeDataCallback;
         RefPtr<FetchLoader> m_loader;
-        RefPtr<ReadableStreamToSharedBufferSink> m_uploadSink;
         const Ref<PendingActivity<FetchResponse>> m_pendingActivity;
         FetchOptions::Credentials m_credentials;
         bool m_shouldStartStreaming { false };
@@ -200,6 +198,7 @@ private:
     RefPtr<Loader> m_loader;
     std::unique_ptr<FetchResponseBodyLoader> m_bodyLoader;
     mutable String m_responseURL;
+    std::optional<ResourceLoaderIdentifier> m_resourceLoaderIdentifier;
     // Opaque responses will padd their body size when used with Cache API.
     uint64_t m_bodySizeWithPadding { 0 };
     uint64_t m_opaqueLoadIdentifier { 0 };

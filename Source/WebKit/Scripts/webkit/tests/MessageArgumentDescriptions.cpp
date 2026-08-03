@@ -157,6 +157,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
 #endif
     case MessageName::TestWithMultiLineExtendedAttributes_AlwaysEnabled:
         return jsValueForDecodedMessage<MessageName::TestWithMultiLineExtendedAttributes_AlwaysEnabled>(globalObject, decoder);
+    case MessageName::TestWithMultipleDispatchedFrom_AlwaysEnabled:
+        return jsValueForDecodedMessage<MessageName::TestWithMultipleDispatchedFrom_AlwaysEnabled>(globalObject, decoder);
 #if (ENABLE(WEBKIT2) && (NESTED_MASTER_CONDITION || MASTER_OR && MASTER_AND))
     case MessageName::TestWithoutAttributes_LoadURL:
         return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_LoadURL>(globalObject, decoder);
@@ -287,6 +289,10 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithStreamBuffer_SendStreamBuffer>(globalObject, decoder);
     case MessageName::TestWithStreamServerConnectionHandle_SendStreamServerConnection:
         return jsValueForDecodedMessage<MessageName::TestWithStreamServerConnectionHandle_SendStreamServerConnection>(globalObject, decoder);
+    case MessageName::TestWithStreamSwift_SendString:
+        return jsValueForDecodedMessage<MessageName::TestWithStreamSwift_SendString>(globalObject, decoder);
+    case MessageName::TestWithStreamSwift_SendStringSync:
+        return jsValueForDecodedMessage<MessageName::TestWithStreamSwift_SendStringSync>(globalObject, decoder);
     case MessageName::TestWithSuperclass_LoadURL:
         return jsValueForDecodedMessage<MessageName::TestWithSuperclass_LoadURL>(globalObject, decoder);
 #if ENABLE(TEST_FEATURE)
@@ -430,6 +436,8 @@ std::optional<JSC::JSValue> jsValueForReplyArguments(JSC::JSGlobalObject* global
     case MessageName::TestWithStream_SendAndReceiveMachSendRight:
         return jsValueForDecodedMessageReply<MessageName::TestWithStream_SendAndReceiveMachSendRight>(globalObject, decoder);
 #endif
+    case MessageName::TestWithStreamSwift_SendStringSync:
+        return jsValueForDecodedMessageReply<MessageName::TestWithStreamSwift_SendStringSync>(globalObject, decoder);
 #if ENABLE(TEST_FEATURE)
     case MessageName::TestWithSuperclass_TestAsyncMessage:
         return jsValueForDecodedMessageReply<MessageName::TestWithSuperclass_TestAsyncMessage>(globalObject, decoder);
@@ -840,6 +848,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         return Vector<ArgumentDescription> {
             { "url"_s, "String"_s },
         };
+    case MessageName::TestWithMultipleDispatchedFrom_AlwaysEnabled:
+        return Vector<ArgumentDescription> {
+            { "url"_s, "String"_s },
+        };
 #if (ENABLE(WEBKIT2) && (NESTED_MASTER_CONDITION || MASTER_OR && MASTER_AND))
     case MessageName::TestWithoutAttributes_LoadURL:
         return Vector<ArgumentDescription> {
@@ -1064,6 +1076,14 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
     case MessageName::TestWithStreamServerConnectionHandle_SendStreamServerConnection:
         return Vector<ArgumentDescription> {
             { "handle"_s, "IPC::StreamServerConnectionHandle"_s },
+        };
+    case MessageName::TestWithStreamSwift_SendString:
+        return Vector<ArgumentDescription> {
+            { "url"_s, "String"_s },
+        };
+    case MessageName::TestWithStreamSwift_SendStringSync:
+        return Vector<ArgumentDescription> {
+            { "url"_s, "String"_s },
         };
     case MessageName::TestWithSuperclass_LoadURL:
         return Vector<ArgumentDescription> {
@@ -1308,6 +1328,10 @@ std::optional<Vector<ArgumentDescription>> messageReplyArgumentDescriptions(Mess
             { "r1"_s, "MachSendRight"_s },
         };
 #endif
+    case MessageName::TestWithStreamSwift_SendStringSync:
+        return Vector<ArgumentDescription> {
+            { "returnValue"_s, "int64_t"_s },
+        };
 #if ENABLE(TEST_FEATURE)
     case MessageName::TestWithSuperclass_TestAsyncMessage:
         return Vector<ArgumentDescription> {

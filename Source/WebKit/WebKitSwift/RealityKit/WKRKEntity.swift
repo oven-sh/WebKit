@@ -167,18 +167,17 @@ extension WKRKEntity {
         entity.visualBounds(relativeTo: entity)
     }
 
+    @objc(referenceEntity)
+    weak var reference: WKRKEntity?
+
     var transform: WKEntityTransform {
         get {
-            let transform = Transform(matrix: entity.transformMatrix(relativeTo: nil))
+            let transform = Transform(matrix: entity.transformMatrix(relativeTo: reference?.entity))
             return WKEntityTransform(scale: transform.scale, rotation: transform.rotation, translation: transform.translation)
         }
         set {
-            var adjustedTransform = Transform(scale: newValue.scale, rotation: newValue.rotation, translation: newValue.translation)
-            if let container = entity.parent {
-                adjustedTransform = container.convert(transform: adjustedTransform, from: nil)
-            }
-
-            entity.transform = adjustedTransform
+            let newTransform = Transform(scale: newValue.scale, rotation: newValue.rotation, translation: newValue.translation)
+            entity.setTransformMatrix(newTransform.matrix, relativeTo: reference?.entity)
         }
     }
 
@@ -494,6 +493,10 @@ extension WKRKEntity {
         entity.setParent(parentEntity, preservingWorldTransform: preservingWorldTransform)
     }
     #endif
+
+    func removeFromParentEntity() {
+        entity.removeFromParent()
+    }
 
     @objc(interactionContainerDidRecenterFromTransform:)
     func interactionContainerDidRecenter(fromTransform transform: simd_float4x4) {

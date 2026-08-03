@@ -113,6 +113,21 @@ AVFoundationEnabled:
       "PLATFORM(WATCHOS)": false
       default: true
 
+AXCustomColorModeEnabled:
+  type: bool
+  status: embedder
+  getter: axCustomColorModeEnabled
+  webcoreName: axCustomColorModeEnabled
+  webcoreOnChange: setNeedsRecalcStyleInAllFrames
+  condition: ENABLE(AX_CUSTOM_COLOR_MODE)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 AcceleratedCompositingEnabled:
   type: bool
   status: embedder
@@ -196,9 +211,11 @@ AccessHandleEnabled:
       default: false
     WebKit:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)" : true
       default: false
     WebCore:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)" : true
       default: false
 
 AccessibilityTextStitchingEnabled:
@@ -1031,19 +1048,6 @@ BuiltInNotificationsEnabled:
       default: defaultBuiltInNotificationsEnabled()
   sharedPreferenceForWebProcess: true
 
-CFNetworkNetworkLoaderEnabled:
-  type: bool
-  status: testable
-  category: networking
-  humanReadableName: "Enable experimental network loader"
-  humanReadableDescription: "Enable experimental network loader"
-  webcoreBinding: none
-  condition: HAVE(NETWORK_LOADER)
-  exposed: [ WebKit ]
-  defaultValue:
-    WebKit:
-      default: false
-
 CSS3DTransformBackfaceVisibilityInteroperabilityEnabled:
   type: bool
   status: preview
@@ -1173,7 +1177,7 @@ CSSConstrainedDynamicRangeLimitEnabled:
 CSSCornerShapeEnabled:
   type: bool
   category: css
-  status: testable
+  status: preview
   humanReadableName: "CSS corner-shape property"
   humanReadableDescription: "Enable support for CSS corner-shape property"
   defaultValue:
@@ -3032,20 +3036,6 @@ EnumeratingVisibleNetworkInterfacesEnabled:
     WebKit:
       default: true
 
-EvaluationTimeZoomEnabled:
-  category: css
-  type: bool
-  status: stable
-  humanReadableName: "Evaluation time zoom enabled"
-  humanReadableDescription: "Enables used zoom value to be applied during layout and avoid applying at style-build time"
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-    WebCore:
-      default: true
-
 EventHandlerDrivenSmoothKeyboardScrollingEnabled:
   type: bool
   status: internal
@@ -3303,9 +3293,11 @@ FileSystemEnabled:
       default: false
     WebKit:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)" : true
       default: false
     WebCore:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)" : true
       default: false
   disableInLockdownMode: true
   sharedPreferenceForWebProcess: true
@@ -3339,9 +3331,11 @@ FileSystemWritableStreamEnabled:
       default: false
     WebKit:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
   disableInLockdownMode: true
   sharedPreferenceForWebProcess: true
@@ -3792,6 +3786,21 @@ HTMLEnhancedSelectParsingQuirkEnabled:
   defaultValue:
     WebKitLegacy:
       PLATFORM(MAC): WebKit::defaultHTMLEnhancedSelectParsingQuirkEnabled()
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+HTMLInCanvasEnabled:
+  type: bool
+  status: unstable
+  category: dom
+  webcoreOnChange: setNeedsRelayoutAllFrames
+  humanReadableName: "HTML-in-Canvas"
+  humanReadableDescription: "Enable HTML-in-Canvas"
+  defaultValue:
+    WebKitLegacy:
       default: false
     WebKit:
       default: false
@@ -4716,7 +4725,7 @@ IteratorChunkingEnabled:
 
 IteratorIncludesEnabled:
   type: bool
-  status: testable
+  status: stable
   category: javascript
   humanReadableName: "Iterator Includes"
   humanReadableDescription: "Expose the Iterator.includes method."
@@ -4725,7 +4734,7 @@ IteratorIncludesEnabled:
   sharedPreferenceForWebProcess: true
   defaultValue:
     WebKit:
-      default: false
+      default: true
 
 IteratorJoinEnabled:
   type: bool
@@ -8504,9 +8513,11 @@ StorageAPIEnabled:
       default: false
     WebKit:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
 
 StorageAPIEstimateEnabled:
@@ -8520,9 +8531,11 @@ StorageAPIEstimateEnabled:
       default: false
     WebKit:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
       "PLATFORM(COCOA)" : true
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
 
 StorageAccessAPIEnabled:
@@ -9189,6 +9202,19 @@ UseAVCaptureDeviceRotationCoordinatorAPI:
       default: false
   sharedPreferenceForWebProcess: true
 
+UseAlternatePDFHUD:
+  type: bool
+  status: internal
+  category: html
+  humanReadableName: "Alternate PDF HUD"
+  humanReadableDescription: "Use the alternate PDF HUD"
+  webcoreBinding: none
+  exposed: [ WebKit ]
+  condition: ENABLE(PDF_HUD)
+  defaultValue:
+    WebKit:
+      default: false
+
 UseAppKitGestures:
   type: bool
   status: internal
@@ -9768,7 +9794,7 @@ WasmJSTypesEnabled:
 
 WasmMemory64Enabled:
   type: bool
-  status: testable
+  status: stable
   category: javascript
   humanReadableName: "WebAssembly Memory64"
   humanReadableDescription: "Allow the Memory64 proposal for WebAssembly. This feature is currently only supported in the IPInt tier."
@@ -9777,7 +9803,7 @@ WasmMemory64Enabled:
   sharedPreferenceForWebProcess: true
   defaultValue:
     WebKit:
-      default: false
+      default: true
 
 WasmMemoryToBufferAPIsEnabled:
   type: bool
@@ -10276,7 +10302,7 @@ WebLocksAPIEnabled:
 
 WebRTCAV1CodecEnabled:
   type: bool
-  status: preview
+  status: stable
   category: media
   humanReadableName: "WebRTC AV1 codec"
   humanReadableDescription: "Enable WebRTC AV1 codec"
@@ -10285,10 +10311,10 @@ WebRTCAV1CodecEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      "USE(GSTREAMER)": true
+      "USE(GSTREAMER) || PLATFORM(COCOA)": true
       default: false
     WebCore:
-      "USE(GSTREAMER)": true
+      "USE(GSTREAMER) || PLATFORM(COCOA)": true
       default: false
 
 WebRTCAudioLatencyAdaptationEnabled:

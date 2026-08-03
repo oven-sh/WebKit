@@ -29,22 +29,26 @@
 
 #pragma once
 
+#include "FloatRoundedRect.h"
 #include "LayoutRoundedRect.h"
 #include "RectCorners.h"
 #include "RectEdges.h"
 #include "RenderStyleConstants.h"
+#include <optional>
 
 namespace WebCore {
 
 class Color;
 class GraphicsContext;
 class FloatRect;
-class FloatRoundedRect;
 class Path;
 
 namespace Style {
 class ComputedStyle;
 }
+
+// Whether an offset shape keeps constant thickness along the curve (outline) vs. expanding as an area (box-shadow spread).
+enum class ConstantThicknessOffset : bool { No, Yes };
 
 // BorderShape is used to fill and clip to the shape formed by the border and padding boxes with border-radius.
 // In future, this may be a more complex shape than a rounded rect, so accessors that return rounded rects
@@ -58,7 +62,7 @@ public:
     // Create a BorderShape suitable for rendering an outline or shadow. borderRect is provided to
     // allow for scaling the corner radii; radii expand outward or shrink inward based on the offset
     // between borderRect and offsetRect.
-    static BorderShape shapeForOffsetRect(const Style::ComputedStyle&, const LayoutRect& borderRect, const LayoutRect& offsetRect, const RectEdges<LayoutUnit>& edgeWidths, RectEdges<bool> closedEdges = { true });
+    static BorderShape shapeForOffsetRect(const Style::ComputedStyle&, const LayoutRect& borderRect, const LayoutRect& offsetRect, const RectEdges<LayoutUnit>& edgeWidths, RectEdges<bool> closedEdges = { true }, ConstantThicknessOffset constantThickness = ConstantThicknessOffset::No);
 
     BorderShape(const LayoutRect& borderRect, const RectEdges<LayoutUnit>& borderWidths);
     BorderShape(const LayoutRect& borderRect, const RectEdges<LayoutUnit>& borderWidths, const LayoutRoundedRectRadii&);
@@ -90,6 +94,8 @@ public:
     const LayoutRoundedRectRadii& radii() const LIFETIME_BOUND { return m_borderRect.radii(); }
     void setRadii(const LayoutRoundedRectRadii& radii) { m_borderRect.setRadii(radii); }
 
+    const RectCorners<float>& cornerCurvatures() const LIFETIME_BOUND { return m_cornerCurvatures; }
+
     // Note that the inner edge isn't necessarily a rounded rect, but the radii still represent where the straight edge sections terminate.
     const LayoutRoundedRectRadii& innerEdgeRadii() const LIFETIME_BOUND { return m_innerEdgeRect.radii(); }
 
@@ -100,6 +106,8 @@ public:
 
     bool NODELETE outerShapeIsRectangular() const;
     bool NODELETE innerShapeIsRectangular() const;
+
+    bool hasNonRoundCornerShape() const;
 
     bool isEmpty() const { return m_borderRect.rect().isEmpty(); }
 
@@ -133,19 +141,21 @@ private:
     // Insets the snapped outer rect by device-rounded widths so opposite sides stay equal thickness.
     FloatRoundedRect snappedInnerEdgeRectForPainting(float deviceScaleFactor) const;
 
-    // True if any corner uses a non-`round` shape (curvature != 1), so the shape
-    bool hasNonRoundCornerShape() const;
+    std::optional<FloatRoundedRect> snappedOffsetReferenceRect(float deviceScaleFactor) const;
 
     Path pathForOuterRoundedRect(const FloatRoundedRect& outerSnapped) const;
     Path pathForInnerRoundedRect(const FloatRoundedRect& innerSnapped) const;
 
-    Path pathForOuterCornerShape(const FloatRoundedRect& outerSnapped) const;
-    Path pathForInnerCornerShape(const FloatRoundedRect& outerSnapped, const FloatRoundedRect& innerSnapped) const;
+    Path pathForOuterCornerShape(const FloatRoundedRect& outerSnapped, const std::optional<FloatRoundedRect>& snappedOffsetReference) const;
+    Path pathForInnerCornerShape(const FloatRoundedRect& outerSnapped, const FloatRoundedRect& innerSnapped, const std::optional<FloatRoundedRect>& snappedOffsetReference) const;
 
     LayoutRoundedRect m_borderRect;
     LayoutRoundedRect m_innerEdgeRect;
     RectEdges<LayoutUnit> m_borderWidths;
     RectCorners<float> m_cornerCurvatures { 1.0f, 1.0f, 1.0f, 1.0f };
+
+    std::optional<LayoutRoundedRect> m_offsetReferenceRect;
+    bool m_constantThicknessOffset { false };
 };
 
 } // namespace WebCore

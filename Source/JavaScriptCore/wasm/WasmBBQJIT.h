@@ -74,11 +74,7 @@ public:
     static_assert(maxFunctionLocals < 1 << LocalIndexBits);
 
     static constexpr GPRReg wasmScratchGPR = GPRInfo::nonPreservedNonArgumentGPR0; // Scratch registers to hold temporaries in operations.
-#if USE(JSVALUE32_64)
-    static constexpr GPRReg wasmScratchGPR2 = GPRInfo::nonPreservedNonArgumentGPR2;
-#else
     static constexpr GPRReg wasmScratchGPR2 = InvalidGPRReg;
-#endif
     static constexpr FPRReg wasmScratchFPR = FPRInfo::nonPreservedNonArgumentFPR0;
 
 #if CPU(X86_64)
@@ -87,13 +83,8 @@ public:
     static constexpr GPRReg shiftRCX = InvalidGPRReg;
 #endif
 
-#if USE(JSVALUE64)
     static constexpr GPRReg wasmBaseMemoryPointer = GPRInfo::wasmBaseMemoryPointer;
     static constexpr GPRReg wasmBoundsCheckingSizeRegister = GPRInfo::wasmBoundsCheckingSizeRegister;
-#else
-    static constexpr GPRReg wasmBaseMemoryPointer = InvalidGPRReg;
-    static constexpr GPRReg wasmBoundsCheckingSizeRegister = InvalidGPRReg;
-#endif
 
 public:
     struct Location {
@@ -340,11 +331,7 @@ public:
 
         ALWAYS_INLINE static Value fromPointer(void* pointer)
         {
-#if USE(JSVALUE64)
             return fromI64(std::bit_cast<uintptr_t>(pointer));
-#else
-            return fromI32(std::bit_cast<uintptr_t>(pointer));
-#endif
         }
 
         ALWAYS_INLINE static Value fromRef(TypeKind refType, EncodedJSValue ref)
@@ -1192,13 +1179,6 @@ public:
         } else
             pointerLocation = loadIfNecessary(pointer);
         ASSERT(pointerLocation.isGPR());
-
-#if USE(JSVALUE32_64)
-        ScratchScope<2, 0> globals(*this);
-        GPRReg wasmBaseMemoryPointer = globals.gpr(0);
-        GPRReg wasmBoundsCheckingSizeRegister = globals.gpr(1);
-        loadWebAssemblyGlobalState(wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
-#endif
 
         // conservatively force bounds checking if memoryIndex != 0
         switch (memoryIndex ? MemoryMode::BoundsChecking : m_mode) {
@@ -2128,9 +2108,9 @@ public:
 
     void NODELETE notifyFunctionUsesSIMD();
 
-    PartialResult addSIMDLoad(ExpressionType, uint32_t, ExpressionType&, uint8_t);
+    PartialResult addSIMDLoad(ExpressionType, uint64_t, ExpressionType&, uint8_t);
 
-    PartialResult addSIMDStore(ExpressionType, ExpressionType, uint32_t, uint8_t);
+    PartialResult addSIMDStore(ExpressionType, ExpressionType, uint64_t, uint8_t);
 
     PartialResult addSIMDSplat(SIMDLane, ExpressionType, ExpressionType&);
 
@@ -2140,15 +2120,15 @@ public:
 
     PartialResult addSIMDExtmul(SIMDLaneOperation, SIMDInfo, ExpressionType, ExpressionType, ExpressionType&);
 
-    PartialResult addSIMDLoadSplat(SIMDLaneOperation, ExpressionType, uint32_t, ExpressionType&, uint8_t);
+    PartialResult addSIMDLoadSplat(SIMDLaneOperation, ExpressionType, uint64_t, ExpressionType&, uint8_t);
 
-    PartialResult addSIMDLoadLane(SIMDLaneOperation, ExpressionType, ExpressionType, uint32_t, uint8_t, ExpressionType&, uint8_t);
+    PartialResult addSIMDLoadLane(SIMDLaneOperation, ExpressionType, ExpressionType, uint64_t, uint8_t, ExpressionType&, uint8_t);
 
-    PartialResult addSIMDStoreLane(SIMDLaneOperation, ExpressionType, ExpressionType, uint32_t, uint8_t, uint8_t);
+    PartialResult addSIMDStoreLane(SIMDLaneOperation, ExpressionType, ExpressionType, uint64_t, uint8_t, uint8_t);
 
-    PartialResult addSIMDLoadExtend(SIMDLaneOperation, ExpressionType, uint32_t, ExpressionType&, uint8_t);
+    PartialResult addSIMDLoadExtend(SIMDLaneOperation, ExpressionType, uint64_t, ExpressionType&, uint8_t);
 
-    PartialResult addSIMDLoadPad(SIMDLaneOperation, ExpressionType, uint32_t, ExpressionType&, uint8_t);
+    PartialResult addSIMDLoadPad(SIMDLaneOperation, ExpressionType, uint64_t, ExpressionType&, uint8_t);
 
     void materializeVectorConstant(v128_t, Location);
 

@@ -372,23 +372,14 @@ struct WrappedCryptoKey;
 struct MockWebAuthenticationConfiguration;
 struct DigitalCredentialsMobileDocumentRequestData;
 
-#if ENABLE(ISO18013_DOCUMENT_REQUEST_INFO)
-struct DigitalCredentialsMobileDocumentRequestDataWithRequestInfo;
-using RawDigitalCredentialsWithRequestInfo = Vector<String>;
-#endif
-
 struct MobileDocumentRequest;
-using UnvalidatedDigitalCredentialRequest = MobileDocumentRequest;
+struct OpenID4VPMultisignedRequest;
+struct OpenID4VPSignedRequest;
+using UnvalidatedDigitalCredentialRequest = Variant<MobileDocumentRequest, OpenID4VPSignedRequest, OpenID4VPMultisignedRequest>;
 using DigitalCredentialsRequestData = Variant<
     WebCore::DigitalCredentialsMobileDocumentRequestData
-#if ENABLE(ISO18013_DOCUMENT_REQUEST_INFO)
-    , WebCore::DigitalCredentialsMobileDocumentRequestDataWithRequestInfo
-#endif // ENABLE(ISO18013_DOCUMENT_REQUEST_INFO)
 >;
 using DigitalCredentialsRawRequests = Variant<Vector<UnvalidatedDigitalCredentialRequest>
-#if ENABLE(ISO18013_DOCUMENT_REQUEST_INFO)
-        , RawDigitalCredentialsWithRequestInfo
-#endif // ENABLE(ISO18013_DOCUMENT_REQUEST_INFO)
     >;
 struct DigitalCredentialsResponseData;
 struct MobileDocumentRequest;
@@ -577,6 +568,7 @@ class WebContextMenuProxy;
 class WebDateTimePicker;
 class WebDeviceOrientationUpdateProviderProxy;
 class WebEditCommandProxy;
+class WebEvent;
 class WebExtensionController;
 class WebFramePolicyListenerProxy;
 class WebFrameProxy;
@@ -660,7 +652,6 @@ struct UserMessage;
 struct ViewWindowCoordinates;
 struct WebAutocorrectionContext;
 struct WebAutocorrectionData;
-struct WebBackForwardListCounts;
 struct WebFoundTextRange;
 struct WebHitTestResultData;
 struct WebNavigationDataStore;
@@ -773,6 +764,7 @@ public:
     WebCore::PageIdentifier webPageIDInMainFrameProcess() const { return m_webPageID; }
     WebCore::PageIdentifier identifierInSiteIsolatedProcess() const { return webPageIDInMainFrameProcess(); }
     WebCore::PageIdentifier webPageIDInProcess(const WebProcessProxy&) const;
+    WebCore::PageIdentifier webPageIDInProcessForFrame(std::optional<WebCore::FrameIdentifier>);
 
     PAL::SessionID NODELETE sessionID() const;
 
@@ -1071,8 +1063,8 @@ public:
     WebCore::Color NODELETE underlayColor() const;
     void setUnderlayColor(const WebCore::Color&);
 
-    void triggerBrowsingContextGroupSwitchForNavigation(WebCore::NavigationIdentifier, WebCore::BrowsingContextGroupSwitchDecision, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, CompletionHandler<void(bool success)>&&);
-    void triggerProcessSwapForEnhancedSecurity(WebCore::NavigationIdentifier, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, CompletionHandler<void(bool)>&&);
+    void triggerBrowsingContextGroupSwitchForNavigation(WebCore::NavigationIdentifier, WebCore::BrowsingContextGroupSwitchDecision, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(bool success)>&&);
+    void triggerProcessSwapForEnhancedSecurity(WebCore::NavigationIdentifier, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(bool)>&&);
 
     // At this time, pageExtendedBackgroundColor can be set via pageExtendedBackgroundColorDidChange() which is a message
     // from the UIProcess, or by didCommitLayerTree(). When PLATFORM(MAC) adopts UI side compositing, we should get rid of
@@ -1187,15 +1179,13 @@ public:
 #if PLATFORM(COCOA)
     void scrollingNodeScrollViewDidScroll(WebCore::ScrollingNodeID);
     WebCore::FloatRect selectionBoundingRectInRootViewCoordinates() const;
-    // Maps a selection rect from the focused frame's root-view space to main-frame coordinates.
-    void convertEditorStateSelectionRectToMainFrameCoordinates(WebCore::FloatRect, CompletionHandler<void(WebCore::FloatRect)>&&);
 #endif
 
     void processWillSuspend();
     void processDidResume();
 
 #if PLATFORM(COCOA)
-    void selectWithGesture(WebCore::IntPoint, GestureType, GestureRecognizerState, bool isInteractingWithFocusedElement, CompletionHandler<void(const WebCore::IntPoint&, GestureType, GestureRecognizerState, OptionSet<SelectionFlags>)>&&);
+    void selectWithGesture(std::optional<WebCore::FrameIdentifier>, WebCore::IntPoint, GestureType, GestureRecognizerState, bool isInteractingWithFocusedElement, CompletionHandler<void(const WebCore::IntPoint&, GestureType, GestureRecognizerState, OptionSet<SelectionFlags>)>&&);
 
     void didReceivePositionInformation(const InteractionInformationAtPosition&);
     void requestPositionInformation(const InteractionInformationRequest&);
@@ -1203,7 +1193,7 @@ public:
     void selectPositionAtPoint(WebCore::IntPoint, bool isInteractingWithFocusedElement, CompletionHandler<void()>&&);
     void updateSelectionWithExtentPoint(WebCore::IntPoint, bool isInteractingWithFocusedElement, RespectSelectionAnchor, CompletionHandler<void(bool)>&&);
     void updateSelectionWithExtentPointAndBoundary(WebCore::IntPoint, WebCore::TextGranularity, bool isInteractingWithFocusedElement, TextInteractionSource, CompletionHandler<void(bool)>&&);
-    void selectTextWithGranularityAtPoint(WebCore::IntPoint, WebCore::TextGranularity, bool isInteractingWithFocusedElement, CompletionHandler<void()>&&);
+    void selectTextWithGranularityAtPoint(std::optional<WebCore::FrameIdentifier>, WebCore::IntPoint, WebCore::TextGranularity, bool isInteractingWithFocusedElement, CompletionHandler<void()>&&);
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -1462,6 +1452,7 @@ public:
     void processNextQueuedMouseEvent();
     void sendMouseEvent(WebCore::FrameIdentifier, const NativeWebMouseEvent&, std::optional<Vector<SandboxExtensionHandle>>&&);
     void handleMouseEvent(const NativeWebMouseEvent&);
+    void recordUIProcessUserActivation(const WebEvent&);
     void dispatchMouseDidMoveOverElementAsynchronously(const NativeWebMouseEvent&);
 
     void doAfterProcessingAllPendingMouseEvents(Function<void()>&&);
@@ -2370,9 +2361,9 @@ public:
     void decidePolicyForResponseShared(Ref<WebProcessProxy>&&, WebCore::PageIdentifier, FrameInfoData&&, std::optional<WebCore::NavigationIdentifier>, const WebCore::ResourceResponse&, const WebCore::ResourceRequest&, bool canShowMIMEType, String&& downloadAttribute, bool isShowingInitialAboutBlank, WebCore::CrossOriginOpenerPolicyValue activeDocumentCOOPValue, CompletionHandler<void(PolicyDecision&&)>&&);
     void startURLSchemeTaskShared(IPC::Connection&, Ref<WebProcessProxy>&&, WebCore::PageIdentifier, URLSchemeTaskParameters&&);
     void loadDataWithNavigationShared(Ref<WebProcessProxy>&&, WebCore::PageIdentifier, API::Navigation&, Ref<WebCore::SharedBuffer>&&, const String& MIMEType, const String& encoding, const String& baseURL, API::Object* userData, WebCore::ShouldTreatAsContinuingLoad, std::optional<NavigatingToAppBoundDomain>, RefPtr<API::WebsitePolicies>&&, WebCore::ShouldOpenExternalURLsPolicy, WebCore::SessionHistoryVisibility);
-    void loadRequestWithNavigationShared(Ref<WebProcessProxy>&&, WebCore::PageIdentifier, API::Navigation&, WebCore::ResourceRequest&&, WebCore::ShouldOpenExternalURLsPolicy, WebCore::NavigationUpgradeToHTTPSBehavior, API::Object* userData, WebCore::ShouldTreatAsContinuingLoad, std::optional<NavigatingToAppBoundDomain>, RefPtr<API::WebsitePolicies>&&, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume);
+    void loadRequestWithNavigationShared(Ref<WebProcessProxy>&&, WebCore::PageIdentifier, API::Navigation&, WebCore::ResourceRequest&&, WebCore::ShouldOpenExternalURLsPolicy, WebCore::NavigationUpgradeToHTTPSBehavior, API::Object* userData, WebCore::ShouldTreatAsContinuingLoad, std::optional<NavigatingToAppBoundDomain>, RefPtr<API::WebsitePolicies>&&, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime);
     void backForwardAddItemShared(IPC::Connection&, Ref<FrameState>&&, LoadedWebArchive);
-    void backForwardGoToItemShared(WebCore::BackForwardItemIdentifier, CompletionHandler<void(const WebBackForwardListCounts&)>&&);
+    void backForwardGoToItemShared(WebCore::BackForwardItemIdentifier);
     void didDestroyNavigationShared(Ref<WebProcessProxy>&&, WebCore::NavigationIdentifier);
 #if USE(QUICK_LOOK)
     void requestPasswordForQuickLookDocumentInMainFrameShared(const String& fileName, CompletionHandler<void(const String&)>&&);
@@ -3021,6 +3012,8 @@ public:
     void didCreateRemotePage(RemotePageProxy&);
     void willDestroyRemotePage(RemotePageProxy&);
 
+    void stopAllURLSchemeTasks(WebProcessProxy* = nullptr);
+
 #if PLATFORM(IOS_FAMILY) && ENABLE(DEVICE_ORIENTATION)
     RefPtr<WebDeviceOrientationUpdateProviderProxy> NODELETE webDeviceOrientationUpdateProviderProxy();
 #endif
@@ -3159,7 +3152,6 @@ private:
     void decidePolicyForResponse(IPC::Connection&, FrameInfoData&&, std::optional<WebCore::NavigationIdentifier>, const WebCore::ResourceResponse&, const WebCore::ResourceRequest&, bool canShowMIMEType, String&& downloadAttribute, bool isShowingInitialAboutBlank, WebCore::CrossOriginOpenerPolicyValue activeDocumentCOOPValue, CompletionHandler<void(PolicyDecision&&)>&&);
     void beginSafeBrowsingCheck(const URL&, API::Navigation&, bool forMainFrameNavigation);
     void showBrowsingWarning(RefPtr<WebKit::BrowsingWarning>&&);
-    void deferModalUntilSafeBrowsingCompletes(CompletionHandler<void(bool shouldShow)>&&);
     void completeSafeBrowsingCheckForModals(bool userProceeded);
     void drainDeferredModalsForNewNavigation();
 
@@ -3539,8 +3531,6 @@ private:
     void viewIsBecomingVisible();
     void viewIsBecomingInvisible();
 
-    void stopAllURLSchemeTasks(WebProcessProxy* = nullptr);
-
 #if ENABLE(ATTACHMENT_ELEMENT)
     void registerAttachmentIdentifierFromData(IPC::Connection&, const String&, const String& contentType, const String& preferredFileName, const IPC::SharedBufferReference&);
     void registerAttachmentIdentifierFromFilePath(IPC::Connection&, const String&, const String& contentType, const String& filePath);
@@ -3568,8 +3558,8 @@ private:
 
     void reportPageLoadResult(const WebCore::ResourceError&);
 
-    void continueNavigationInNewProcess(API::Navigation&, WebFrameProxy&, RefPtr<SuspendedPageProxy>&&, BrowsingContextGroup&, Ref<WebProcessProxy>&&, ProcessSwapRequestedByClient, WebCore::ShouldTreatAsContinuingLoad, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, LoadedWebArchive, WebCore::NavigationUpgradeToHTTPSBehavior, WebCore::ProcessSwapDisposition, WebsiteDataStore* replacedDataStoreForWebArchiveLoad = nullptr);
-    void performProcessSwapForNavigationResponse(API::Navigation&, Ref<BrowsingContextGroup>&&, Ref<WebProcessProxy>&&, WebCore::ProcessSwapDisposition, NetworkResourceLoadIdentifier, CompletionHandler<void(bool)>&&);
+    void continueNavigationInNewProcess(API::Navigation&, WebFrameProxy&, RefPtr<SuspendedPageProxy>&&, BrowsingContextGroup&, Ref<WebProcessProxy>&&, ProcessSwapRequestedByClient, WebCore::ShouldTreatAsContinuingLoad, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, LoadedWebArchive, WebCore::NavigationUpgradeToHTTPSBehavior, WebCore::ProcessSwapDisposition, WebsiteDataStore* replacedDataStoreForWebArchiveLoad, MonotonicTime originalNavigationStartTime);
+    void performProcessSwapForNavigationResponse(API::Navigation&, Ref<BrowsingContextGroup>&&, Ref<WebProcessProxy>&&, WebCore::ProcessSwapDisposition, NetworkResourceLoadIdentifier, MonotonicTime originalNavigationStartTime, CompletionHandler<void(bool)>&&);
 
     void setNeedsFontAttributes(bool);
     void updateFontAttributesAfterEditorStateChange();
@@ -3609,7 +3599,10 @@ private:
 
     void didUpdateEditorState(const EditorState& oldEditorState, const EditorState& newEditorState);
 
-    void runModalJavaScriptDialog(RefPtr<WebFrameProxy>&&, FrameInfoData&&, String&& message, CompletionHandler<void(WebPageProxy&, WebFrameProxy*, FrameInfoData&&, String&&, CompletionHandler<void()>&&)>&&);
+    enum class DialogDisposition : bool { Show, Cancel };
+    void runModalJavaScriptDialog(RefPtr<WebFrameProxy>&&, FrameInfoData&&, String&& message, CompletionHandler<void(WebPageProxy&, WebFrameProxy*, FrameInfoData&&, String&&, CompletionHandler<void()>&&, DialogDisposition)>&&);
+    void runNextModalJavaScriptDialogIfNeeded();
+    void purgeQueuedModalDialogs();
 
 #if ENABLE(IMAGE_ANALYSIS) && PLATFORM(MAC)
     void showImageInQuickLookPreviewPanel(WebCore::ShareableBitmap& imageBitmap, const String& tooltip, const URL& imageURL, QuickLookPreviewActivity);
@@ -3661,7 +3654,8 @@ private:
     void addMessageToConsoleForTesting(String&&);
     void frameTextForTesting(WebCore::FrameIdentifier, CompletionHandler<void(String&&)>&&);
     void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, WebCore::AccessibilityRemoteToken dataToken, CompletionHandler<void(WebCore::AccessibilityRemoteToken, int)>&&);
-    void updateRemoteFrameAccessibilityOffset(WebCore::FrameIdentifier, WebCore::IntPoint);
+    void updateRemoteFrameOffsetInMainFrame(WebCore::FrameIdentifier, WebCore::IntPoint);
+    void pushCumulativeOffsetInMainFrame(WebFrameProxy&);
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     void updateRemoteFrameAccessibilityInheritedState(WebCore::FrameIdentifier, const WebCore::InheritedFrameState&);
 #endif
@@ -4258,10 +4252,10 @@ private:
 
     bool m_lastNavigationWasAppInitiated { true };
     bool m_isRunningModalJavaScriptDialog { false };
+    Deque<Function<void(DialogDisposition)>> m_queuedModalDialogs;
     bool m_isSuspended { false };
 
 #if HAVE(SAFE_BROWSING)
-    Vector<CompletionHandler<void(bool)>> m_deferredModalHandlers;
     bool m_isSafeBrowsingCheckInProgress { false };
     std::optional<WebCore::NavigationIdentifier> m_safeBrowsingWarningShownForNavigation;
     std::optional<WebCore::NavigationIdentifier> m_committedMainFrameNavigationID;

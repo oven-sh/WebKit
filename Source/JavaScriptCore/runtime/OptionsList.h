@@ -101,9 +101,9 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useLLInt,  true, Normal, "allows the LLINT to be used if true"_s) \
     v(Bool, useJIT, jitEnabledByDefault(), Normal, "allows the executable pages to be allocated for JIT and thunks if true"_s) \
     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
-    v(Bool, useDFGJIT, is64Bit(), Normal, "allows the DFG JIT to be used if true"_s) \
-    v(Bool, useRegExpJIT, jitEnabledByDefault() && is64Bit(), Normal, "allows the RegExp JIT to be used if true"_s) \
-    v(Bool, useDOMJIT, is64Bit(), Normal, "allows the DOMJIT to be used if true"_s) \
+    v(Bool, useDFGJIT, jitEnabledByDefault(), Normal, "allows the DFG JIT to be used if true"_s) \
+    v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
+    v(Bool, useDOMJIT, jitEnabledByDefault(), Normal, "allows the DOMJIT to be used if true"_s) \
     v(Bool, useRegExpLookbehindJIT, true, Normal, "allows patterns containing lookbehind assertions to use the RegExp JIT"_s) \
     v(Bool, useRegExpAlternationFactoring, true, Normal, "factors shared prefixes out of wide alternations and folds wide top-level alternations into a group"_s) \
     v(Bool, useRegExpAlternationDispatch, true, Normal, "lets the RegExp JIT dispatch a group's alternatives on their first character and compare short literal alternatives inline"_s) \
@@ -126,7 +126,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Size, jitMemoryReservationAddress, 0, Restricted, "If non-zero, we will attempt to allocate JIT memory at the address provided and crash if we cannot.") \
     \
     v(Bool, forceCodeBlockLiveness, false, Normal, nullptr) \
-    v(Bool, forceICFailure, is32Bit(), Normal, nullptr) \
+    v(Bool, forceICFailure, false, Normal, nullptr) \
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
@@ -532,11 +532,8 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Bool, logPhaseTimes, false, Normal, nullptr) \
     v(Double, rareBlockPenalty, 0.001, Normal, nullptr) \
-    v(Bool, airForceBriggsAllocator, false, Normal, nullptr) \
-    v(Bool, airForceIRCAllocator, false, Normal, nullptr) \
     v(Bool, airGreedyRegAllocVerbose, false, Normal, nullptr) \
     v(OptionString, airGreedyRegAllocDumpFunction, nullptr, Normal, "dump greedy register allocator state and IR for functions matching this substring"_s) \
-    v(Bool, airUseGreedyRegAlloc, true, Normal, nullptr) \
     v(Double, airGreedyRegAllocSplitMultiplier, 2.0, Normal, nullptr) \
     v(Bool, airGreedyRegAllocSplitAroundLoops, false, Normal, nullptr) \
     v(Double, airGreedyRegAllocLoopSplitMaxLoopFraction, 0.75, Normal, nullptr) \
@@ -613,7 +610,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verboseBBQJITInstructions, false, Normal, "Logs instruction information during BBQ JIT"_s) \
     v(Bool, disableBBQConsts, false, Normal, "Wasm <type>.const instructions in BBQ JIT won't lower to a const BBQ::Value"_s) \
     v(Bool, useBBQJIT, true, Normal, "allows the BBQ JIT to be used if true"_s) \
-    v(Bool, useOMGJIT, !isARM_THUMB2(), Normal, "allows the OMG JIT to be used if true"_s) \
+    v(Bool, useOMGJIT, true, Normal, "allows the OMG JIT to be used if true"_s) \
     v(OptionRange, wasmFunctionIndexRangeToCompile, nullptr, Normal, "wasm function index range to allow compilation on, e.g. 1:100"_s) \
     v(Bool, useEagerWasmModuleHashing, false, Normal, "Unnamed Wasm modules are identified in backtraces through their hash, if available."_s) \
     v(Bool, useArrayAllocationProfiling, true, Normal, "If true, we will use our normal array allocation profiling. If false, the allocation profile will always claim to be undecided."_s) \
@@ -660,11 +657,13 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maxPartialLoopUnrollingBodyNodeSize, 70, Normal, nullptr) \
     v(Unsigned, maxPartialLoopUnrollingIterationCount, 4, Normal, nullptr) \
     v(Unsigned, maxNumericHotLoopSize, 225, Normal, nullptr) \
+    v(Unsigned, maxIntegerRangeOptimizationRelationshipsPerNode, 24, Normal, "How many relationships IRO keeps about any one node, 0 for no cap."_s) \
+    v(Unsigned, maxIntegerRangeOptimizationWork, 50000000, Normal, "Give up threshold for IRO"_s) \
     v(Bool, printEachUnrolledLoop, false, Normal, nullptr) \
     v(Bool, verboseExecutablePoolAllocation, false, Normal, nullptr) \
     v(Bool, useHandlerICInFTL, false, Normal, nullptr) \
     v(Bool, useLLIntICs, true, Normal, "Use property and call ICs in LLInt code."_s) \
-    v(Bool, useBaselineJITCodeSharing, is64Bit(), Normal, nullptr) \
+    v(Bool, useBaselineJITCodeSharing, jitEnabledByDefault(), Normal, nullptr) \
     v(Bool, libpasScavengeContinuously, false, Normal, nullptr) \
     v(Unsigned, libpasForcePGMWithRate, 0, Normal, "Forces on probablistic guard malloc and guards allocations with a rate 1/N (0 is disabled)"_s) \
     v(Bool, useWasmFaultSignalHandler, true, Normal, nullptr) \

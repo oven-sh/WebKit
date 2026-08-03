@@ -52,13 +52,7 @@ extern "C" {
 #include <setjmp.h>
 }
 
-#if CPU(BIG_ENDIAN) || CPU(MIDDLE_ENDIAN)
-#define ASSUME_LITTLE_ENDIAN 0
-#else
-#define ASSUME_LITTLE_ENDIAN 1
-#endif
-
-#if defined(JCS_ALPHA_EXTENSIONS) && ASSUME_LITTLE_ENDIAN
+#if defined(JCS_ALPHA_EXTENSIONS)
 #define TURBO_JPEG_RGB_SWIZZLE
 inline J_COLOR_SPACE rgbOutputColorSpace() { return JCS_EXT_BGRA; }
 inline bool turboSwizzled(J_COLOR_SPACE colorSpace) { return colorSpace == JCS_EXT_RGBA || colorSpace == JCS_EXT_BGRA; }
@@ -568,6 +562,7 @@ JPEGImageDecoder::~JPEGImageDecoder()
 
 ScalableImageDecoderFrame* JPEGImageDecoder::frameBufferAtIndex(size_t index)
 {
+    assertIsHeld(m_lock);
     if (index)
         return 0;
 
@@ -653,6 +648,7 @@ bool JPEGImageDecoder::outputScanlines(ScalableImageDecoderFrame& buffer)
 
 bool JPEGImageDecoder::outputScanlines()
 {
+    assertIsHeld(m_lock);
     if (m_frameBufferCache.isEmpty())
         return false;
 
@@ -703,6 +699,7 @@ bool JPEGImageDecoder::outputScanlines()
 
 void JPEGImageDecoder::jpegComplete()
 {
+    assertIsHeld(m_lock);
     if (m_frameBufferCache.isEmpty())
         return;
 
@@ -715,6 +712,7 @@ void JPEGImageDecoder::jpegComplete()
 
 void JPEGImageDecoder::decode(bool onlySize, bool allDataReceived)
 {
+    assertIsHeld(m_lock);
     if (failed())
         return;
 

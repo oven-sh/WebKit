@@ -61,7 +61,7 @@
 
 namespace JSC { namespace FFI {
 
-#if USE(JSVALUE64) && !ENABLE(JIT_CAGE)
+#if !ENABLE(JIT_CAGE)
 
 namespace {
 
@@ -369,7 +369,7 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
 
     if (argumentCount) {
         JIT_COMMENT(jit, "arity check");
-        slowPath.append(jit.branch32(CCallHelpers::Below, CCallHelpers::payloadFor(CallFrameSlot::argumentCountIncludingThis), CCallHelpers::TrustedImm32(argumentCount + 1)));
+        slowPath.append(jit.branch32(CCallHelpers::Below, CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), CCallHelpers::TrustedImm32(argumentCount + 1)));
     }
 
     for (unsigned i = 0; i < argumentCount; ++i) {
@@ -427,7 +427,7 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
     return adoptRef(new DirectJITCode(codeRef, codeRef.code(), JITType::HostCallThunk, NoIntrinsic));
 }
 
-#endif // USE(JSVALUE64) && !ENABLE(JIT_CAGE)
+#endif // !ENABLE(JIT_CAGE)
 
 } } // namespace JSC::FFI
 

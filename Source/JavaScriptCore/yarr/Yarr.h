@@ -39,7 +39,7 @@ namespace JSC { namespace Yarr {
 #define YarrStackSpaceForBackTrackInfoAlternative 1 // One per alternative.
 #define YarrStackSpaceForBackTrackInfoParentheticalAssertion 1
 #define YarrStackSpaceForBackTrackInfoParenthesesOnce 3
-#define YarrStackSpaceForBackTrackInfoParenthesesTerminal 1
+#define YarrStackSpaceForBackTrackInfoParenthesesTerminal 2
 #define YarrStackSpaceForBackTrackInfoParentheses 4
 #define YarrStackSpaceForDotStarEnclosure 1
 

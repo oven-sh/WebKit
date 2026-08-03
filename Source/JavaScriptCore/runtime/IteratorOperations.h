@@ -28,7 +28,7 @@
 
 #include "CachedCallInlines.h"
 #include "IterationModeMetadata.h"
-#include "JSArrayIterator.h"
+#include "JSArrayIteratorInlines.h"
 #include "JSCJSValue.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSMapInlines.h"
@@ -215,7 +215,7 @@ static ALWAYS_INLINE void forEachInFastArray(JSGlobalObject* globalObject, JSVal
         if (scope.exception()) [[unlikely]] {
             scope.release();
             JSArrayIterator* iterator = JSArrayIterator::create(vm, array->realm()->arrayIteratorStructure(), array, IterationKind::Values);
-            iterator->internalField(JSArrayIterator::Field::Index).setWithoutWriteBarrier(jsNumber(index + 1));
+            iterator->setIndex(index + 1);
             iteratorClose(globalObject, iterator);
             return;
         }
@@ -326,7 +326,7 @@ void forEachInIterable(JSGlobalObject& globalObject, JSObject* iterable, JSValue
             if (scope.exception()) [[unlikely]] {
                 scope.release();
                 JSArrayIterator* iterator = JSArrayIterator::create(vm, globalObject.arrayIteratorStructure(), array, IterationKind::Values);
-                iterator->internalField(JSArrayIterator::Field::Index).setWithoutWriteBarrier(jsNumber(index + 1));
+                iterator->setIndex(index + 1);
                 iteratorClose(&globalObject, iterator);
                 return;
             }

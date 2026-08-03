@@ -138,6 +138,7 @@
 #include "ShadowRoot.h"
 #include "SleepDisabler.h"
 #include "SpeechSynthesis.h"
+#include "TextIterator.h"
 #include "TextTrackCueList.h"
 #include "TextTrackList.h"
 #include "TextTrackRepresentation.h"
@@ -145,6 +146,7 @@
 #include "TimeRanges.h"
 #include "UserContentController.h"
 #include "UserGestureIndicator.h"
+#include "VTTCue.h"
 #include "VideoPlaybackQuality.h"
 #include "VideoTrack.h"
 #include "VideoTrackConfiguration.h"
@@ -2107,6 +2109,7 @@ void HTMLMediaElement::loadResource(const URL& initialURL, const ContentType& in
         .contentType = WTF::move(contentType),
         .requiresRemotePlayback = !!m_remotePlaybackConfiguration,
         .supportsLimitedMatroska = limitedMatroskaSupportEnabled(),
+        .disableTeardownOnVisibilityChange = protect(document())->quirks().shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk(),
 #if ENABLE(MEDIA_SOURCE)
         .supportsProgressMonitoringOverride = protect(document())->quirks().needsSupportsProgressMonitoring() ? std::optional<bool> { true } : std::nullopt,
 #endif
@@ -2751,7 +2754,7 @@ void HTMLMediaElement::textTrackLanguageChanged(TextTrack& track)
 void HTMLMediaElement::willRemoveTextTrack(TextTrack& track)
 {
     if (track.trackType() == TextTrack::InBand)
-        removeTextTrack(track);
+        removeTextTrack(track, ScheduleEvent::Yes);
 }
 
 void HTMLMediaElement::videoTrackSelectedChanged(VideoTrack& track)
@@ -5134,6 +5137,15 @@ void HTMLMediaElement::routingContextUIDDidChange(const AudioSession& session)
     });
 }
 
+void HTMLMediaElement::categoryDidChange(const AudioSession& session)
+{
+    if (paused())
+        return;
+
+    m_categoryAtMostRecentPlayback = session.category();
+    m_modeAtMostRecentPlayback = session.mode();
+}
+
 #endif // USE(AUDIO_SESSION)
 
 void HTMLMediaElement::togglePlayState()
@@ -5447,20 +5459,26 @@ void HTMLMediaElement::removeAudioTrack(TrackID trackID)
         removeAudioTrack(downcast<AudioTrack>(*track));
 }
 
-void HTMLMediaElement::removeTextTrack(TextTrack& track, bool scheduleEvent)
+bool HTMLMediaElement::removeTextTrack(TextTrack& track, ScheduleEvent scheduleEvent)
 {
     if (!m_textTracks || !m_textTracks->contains(track))
-        return;
+        return false;
+
+    if (m_findCaptionTrack == &track) {
+        m_findCaptionTrack = nullptr;
+        m_findCaptionTrackPreviousMode = std::nullopt;
+    }
 
     TrackDisplayUpdateScope scope { *this };
     if (RefPtr cues = track.cues())
         textTrackRemoveCues(track, *cues);
     track.clearClient(*this);
     if (m_textTracks)
-        m_textTracks->remove(track, scheduleEvent);
+        m_textTracks->remove(track, scheduleEvent == ScheduleEvent::Yes);
+    return true;
 }
 
-void HTMLMediaElement::removeTextTrack(TrackID trackID, bool scheduleEvent)
+void HTMLMediaElement::removeTextTrack(TrackID trackID, ScheduleEvent scheduleEvent)
 {
     if (!m_textTracks)
         return;
@@ -5495,7 +5513,7 @@ void HTMLMediaElement::forgetResourceSpecificTracks()
         for (int i = m_textTracks->length() - 1; i >= 0; --i) {
             Ref track = *m_textTracks->item(i);
             if (track->trackType() == TextTrack::InBand)
-                removeTextTrack(track, false);
+                removeTextTrack(track, ScheduleEvent::No);
         }
     }
 
@@ -5543,6 +5561,17 @@ ExceptionOr<Ref<TextTrack>> HTMLMediaElement::addTextTrack(const AtomString& kin
     track->setMode(TextTrack::Mode::Hidden);
 
     return track;
+}
+
+ExceptionOr<void> HTMLMediaElement::removeTextTrack(TextTrack& track)
+{
+    if (track.trackType() != TextTrack::AddTrack)
+        return Exception { ExceptionCode::NotFoundError };
+
+    if (!removeTextTrack(track, ScheduleEvent::Yes))
+        return Exception { ExceptionCode::NotFoundError };
+
+    return { };
 }
 
 AudioTrackList& HTMLMediaElement::ensureAudioTracks()
@@ -5607,7 +5636,7 @@ void HTMLMediaElement::didRemoveTextTrack(HTMLTrackElement& trackElement)
     // When a track element's parent element changes and the old parent was a media element,
     // then the user agent must remove the track element's corresponding text track from the
     // media element's list of text tracks.
-    removeTextTrack(textTrack);
+    removeTextTrack(textTrack, ScheduleEvent::Yes);
 
     m_textTracksWhenResourceSelectionBegan.removeFirst(textTrack.ptr());
 }
@@ -5892,6 +5921,135 @@ void HTMLMediaElement::configureTextTracks()
     m_processingPreferenceChange = false;
 
     configureTextTrackDisplay();
+}
+
+static bool isSubtitleOrCaptionTrackKind(TextTrack::Kind kind)
+{
+    return kind == TextTrack::Kind::Subtitles || kind == TextTrack::Kind::Captions;
+}
+
+bool HTMLMediaElement::hasShowingFindSearchableTextTrackExcept(const TextTrack* except) const
+{
+    if (!m_textTracks)
+        return false;
+    for (unsigned i = 0; i < m_textTracks->length(); ++i) {
+        RefPtr track = m_textTracks->item(i);
+        if (!track || track.get() == except)
+            continue;
+        if (track->mode() == TextTrack::Mode::Showing && isSubtitleOrCaptionTrackKind(track->kind()))
+            return true;
+    }
+    return false;
+}
+
+RefPtr<TextTrack> HTMLMediaElement::bestFindCaptionTrack() const
+{
+    if (!m_textTracks)
+        return nullptr;
+
+    RefPtr page = document().page();
+    RefPtr captionPreferences = page ? &protect(page->group())->ensureCaptionPreferences() : nullptr;
+    auto preferredLanguages = captionPreferences ? captionPreferences->preferredLanguages() : Vector<String> { };
+
+    RefPtr<TextTrack> bestLanguageMatch;
+    int bestLanguageScore = 0;
+    RefPtr<TextTrack> defaultTrack;
+
+    for (unsigned i = 0; i < m_textTracks->length(); ++i) {
+        RefPtr track = m_textTracks->item(i);
+        if (!track)
+            continue;
+        if (!isSubtitleOrCaptionTrackKind(track->kind()))
+            continue;
+        if (track->containsOnlyForcedSubtitles() || !track->isMainProgramContent())
+            continue;
+
+        if (!defaultTrack && track->isDefault())
+            defaultTrack = track;
+
+        if (captionPreferences) {
+            int languageScore = captionPreferences->textTrackLanguageSelectionScore(*track, preferredLanguages);
+            if (languageScore > bestLanguageScore) {
+                bestLanguageScore = languageScore;
+                bestLanguageMatch = track;
+            }
+        }
+    }
+
+    if (bestLanguageMatch)
+        return bestLanguageMatch;
+    return defaultTrack;
+}
+
+void HTMLMediaElement::updateFindCaptionTrack()
+{
+    RefPtr best = hasShowingFindSearchableTextTrackExcept(m_findCaptionTrack.get()) ? nullptr : bestFindCaptionTrack();
+    if (m_findCaptionTrack == best)
+        return;
+
+    if (RefPtr previous = m_findCaptionTrack; previous && m_findCaptionTrackPreviousMode && previous->mode() == TextTrack::Mode::Showing)
+        previous->setMode(*m_findCaptionTrackPreviousMode);
+    m_findCaptionTrackPreviousMode = std::nullopt;
+
+    m_findCaptionTrack = best;
+    if (best) {
+        m_findCaptionTrackPreviousMode = best->mode();
+        best->setMode(TextTrack::Mode::Showing);
+    }
+}
+
+void HTMLMediaElement::clearFindCaptionTrack()
+{
+    if (RefPtr findCaptionTrack = m_findCaptionTrack; findCaptionTrack && m_findCaptionTrackPreviousMode && findCaptionTrack->mode() == TextTrack::Mode::Showing)
+        findCaptionTrack->setMode(*m_findCaptionTrackPreviousMode);
+    m_findCaptionTrack = nullptr;
+    m_findCaptionTrackPreviousMode = std::nullopt;
+}
+
+Vector<MediaTime> HTMLMediaElement::findCueMatches(const String& target, FindOptions options)
+{
+    if (!document().settings().findInVideoEnabled())
+        return { };
+
+    updateFindCaptionTrack();
+
+    Vector<MediaTime> matches;
+    if (RefPtr tracks = m_textTracks) {
+        MediaTime duration = durationMediaTime();
+        for (unsigned i = 0; i < tracks->length(); ++i) {
+            RefPtr track = tracks->item(i);
+            if (!track || track->mode() != TextTrack::Mode::Showing)
+                continue;
+            if (!isSubtitleOrCaptionTrackKind(track->kind()))
+                continue;
+            RefPtr cues = track->cues();
+            if (!cues)
+                continue;
+            for (unsigned j = 0; j < cues->length(); ++j) {
+                RefPtr vttCue = dynamicDowncast<VTTCue>(cues->item(j));
+                if (!vttCue)
+                    continue;
+                if (duration.isValid() && vttCue->startMediaTime() >= duration)
+                    break;
+                RefPtr cueAsHTML = vttCue->getCueAsHTML();
+                if (cueAsHTML && containsPlainText(cueAsHTML->textContent(), target, options))
+                    matches.append(vttCue->startMediaTime());
+            }
+        }
+    }
+
+    std::ranges::stable_sort(matches, [](auto& a, auto& b) {
+        return a < b;
+    });
+
+    MediaTime previousTime = MediaTime::invalidTime();
+    matches.removeAllMatching([&previousTime](auto& time) {
+        bool isDuplicate = time == previousTime;
+        previousTime = time;
+        return isDuplicate;
+    });
+
+    return matches;
 }
 
 bool HTMLMediaElement::havePotentialSourceChild()

@@ -27,7 +27,10 @@
 #include "Structure.h"
 #include "Yarr.h"
 #include <JavaScriptCore/YarrErrorCode.h>
+#include <wtf/Atomics.h>
+#include <wtf/BitSet.h>
 #include <wtf/Forward.h>
+#include <wtf/ThreadSafeLazyUniquePtr.h>
 #include <wtf/text/WTFString.h>
 
 #if ENABLE(YARR_JIT)
@@ -38,6 +41,14 @@ namespace JSC {
 
 struct RegExpRepresentation;
 class VM;
+
+// Where a first-character fast-fail filter reads the byte it tests.
+enum class FirstCharacterFilterPosition : uint8_t {
+    // Reads input[0]. Sound only when every match must begin at index 0.
+    AtStart,
+    // Reads input[lastIndex]. Sound only for a sticky pattern.
+    AtLastIndex,
+};
 
 class RegExp final : public JSCell {
     friend class CachedRegExp;
@@ -184,6 +195,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     const String& atom() const LIFETIME_BOUND { return m_atom; }
     Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
 
+    const WTF::BitSet<256>* firstCharacterBitmap(FirstCharacterFilterPosition);
+
 private:
     template<Yarr::MatchFrom thread>
     int matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, std::span<int> ovector);
@@ -253,6 +266,7 @@ private:
 #endif
     std::unique_ptr<RareData> m_rareData;
     Vector<int> m_ovector;
+    mutable ThreadSafeLazyUniquePtr<const WTF::BitSet<256>> m_firstCharacterBitmap;
 #if ENABLE(REGEXP_TRACING)
     double m_rtMatchOnlyTotalSubjectStringLen { 0.0 };
     double m_rtMatchTotalSubjectStringLen { 0.0 };

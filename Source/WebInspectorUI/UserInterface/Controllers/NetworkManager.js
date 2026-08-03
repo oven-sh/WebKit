@@ -750,9 +750,8 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         let resource = this._resourceRequestIdentifierMap.get(requestIdentifier);
         if (resource) {
             // This is an existing request which is being redirected, update the resource.
-            console.assert(resource.parentFrame.id === frameIdentifier);
+            console.assert(resource.parentFrame?.id === frameIdentifier || resource.target?.identifier === targetId);
             console.assert(resource.loaderIdentifier === loaderIdentifier);
-            console.assert(!targetId);
             resource.updateForRedirectResponse(request, redirectResponse, elapsedTime, walltime);
             return;
         }
@@ -1628,6 +1627,14 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         }
 
         let target = WI.assumingMainTarget();
+
+        // Under Site Isolation, ProxyingNetworkAgent implements Network.loadResource on the backend
+        // (web-page) target, fanning the load out to the frame's owning process. Route there when
+        // Network is enabled on the backend target; otherwise the main target handles it. Mirrors
+        // Resource.requestContentFromBackend.
+        if (this._networkEnabledOnBackendTarget && WI.backendTarget && WI.backendTarget !== target && WI.backendTarget.hasCommand("Network.loadResource"))
+            target = WI.backendTarget;
+
         if (!target.hasCommand("Network.loadResource")) {
             this._sourceMapLoadFailed(sourceMapURL);
             return;

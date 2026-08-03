@@ -49,8 +49,6 @@
 
 #if CPU(X86_64)
 #include "X86_64Registers.h"
-#elif CPU(ARM_THUMB2)
-#include "ARMv7Registers.h"
 #elif CPU(ARM64)
 #include "ARM64Registers.h"
 #else
