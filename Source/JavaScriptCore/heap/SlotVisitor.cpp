@@ -344,6 +344,14 @@ private:
     SlotVisitor& m_visitor;
 };
 
+void SlotVisitor::visitImmortalCellAsRoot(const JSCell* cell)
+{
+    // Like visitChildren, but never writes the (frozen, already-black) header, so clean image pages stay clean.
+    SetCurrentCellScope currentCellScope(*this, cell);
+    m_isFirstVisit = false;
+    cell->methodTable()->visitChildren(const_cast<JSCell*>(cell), *this);
+}
+
 ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
 {
     ASSERT(m_heap.isMarked(cell));

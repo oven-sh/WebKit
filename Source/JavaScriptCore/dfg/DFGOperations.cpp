@@ -6719,6 +6719,12 @@ static bool shouldTriggerFTLCompile(CodeBlock* codeBlock, JITCode* jitCode)
 
 static void triggerFTLReplacementCompile(VM& vm, CodeBlock* codeBlock, JITCode* jitCode)
 {
+    if (getenv("JSC_IMM_LOG") && codeBlock->ownerExecutable()->isFunctionExecutable() && !static_cast<FunctionExecutable*>(codeBlock->ownerExecutable())->codeBlockFor(codeBlock->specializationKind())) [[unlikely]] {
+        auto imm = [](const JSCell* c) { return c && !c->isPreciseAllocation() && c->markedBlock().isImmortal(); };
+        dataLogLn("[imm] triggerFTLReplacementCompile: running DFG cb ", RawPointer(codeBlock), " immortal=", imm(codeBlock), " marked=", vm.heap.isMarked(codeBlock), " but owner ", RawPointer(codeBlock->ownerExecutable()), " immortal=", imm(codeBlock->ownerExecutable()), " marked=", vm.heap.isMarked(codeBlock->ownerExecutable()), " has null codeBlockFor; cb->alternative=", RawPointer(codeBlock->alternative()));
+        CRASH();
+    }
+
     if (codeBlock->codeType() == GlobalCode) {
         // Global code runs once, so we don't want to do anything. We don't want to defer indefinitely,
         // since this may have been spuriously called from tier-up initiated in a loop, and that loop may

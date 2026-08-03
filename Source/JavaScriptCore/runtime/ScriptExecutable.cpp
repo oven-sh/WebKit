@@ -24,6 +24,7 @@
  */
 
 #include "config.h"
+#include <stdlib.h>
 
 #include "CodeBlock.h"
 #include "Debugger.h"
@@ -73,6 +74,8 @@ void ScriptExecutable::destroy(JSCell* cell)
 
 void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
 {
+    if (getenv("JSC_IMM_LOG")) [[unlikely]]
+        dataLogLn("[imm] clearCode exec=", RawPointer(this), " immortalBlock=", (!isPreciseAllocation() && markedBlock().isImmortal()));
     m_jitCodeForCall = nullptr;
     m_jitCodeForConstruct = nullptr;
     m_jitCodeForCallWithArityCheck = CodePtr<JSEntryPtrTag>();
@@ -120,6 +123,8 @@ void ScriptExecutable::installCode(CodeBlock* codeBlock)
 
 void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType codeType, CodeSpecializationKind kind, Profiler::JettisonReason reason)
 {
+    if (getenv("JSC_IMM_LOG") && reason != Profiler::JettisonReason::NotJettisoned) [[unlikely]]
+        dataLogLn("[imm] installCode(jettison) exec=", RawPointer(this), " cb=", RawPointer(genericCodeBlock), " cbMarked=", genericCodeBlock ? vm.heap.isMarked(genericCodeBlock) : false, " reason=", static_cast<int>(reason));
     if (genericCodeBlock) {
         CODEBLOCK_LOG_EVENT(genericCodeBlock, "installCode", ());
         switch (reason) {

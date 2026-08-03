@@ -313,6 +313,8 @@ public:
         WTF::BitSet<atomsPerBlock> m_marks;
         WTF::BitSet<atomsPerBlock> m_newlyAllocated;
         void* m_verifierMemo { nullptr };
+        // Experimental "immortal image" block: liveness is frozen in m_marks, the collector never writes here, never sweeps or allocates.
+        bool m_isImmortal { false };
     };
     
 private:
@@ -403,6 +405,8 @@ public:
     
     bool isMarkedRaw(const void* p);
     HeapVersion markingVersion() const { return header().m_markingVersion; }
+    bool isImmortal() const { return header().m_isImmortal; }
+    void makeImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool allCellsLive);
     
     const WTF::BitSet<atomsPerBlock>& marks() const;
     
@@ -584,6 +588,8 @@ inline unsigned MarkedBlock::atomNumber(const void* p)
 
 inline bool MarkedBlock::areMarksStale(HeapVersion markingVersion)
 {
+    if (header().m_isImmortal) [[unlikely]]
+        return false; // frozen marks are always authoritative
     return markingVersion != header().m_markingVersion;
 }
 
@@ -591,7 +597,7 @@ inline Dependency MarkedBlock::aboutToMark(HeapVersion markingVersion, HeapCell*
 {
     HeapVersion version;
     Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
-    if (version != markingVersion) [[unlikely]]
+    if (version != markingVersion && !header().m_isImmortal) [[unlikely]]
         aboutToMarkSlow(markingVersion, cell);
     return dependency;
 }
@@ -618,12 +624,16 @@ inline bool MarkedBlock::isMarkedRaw(const void* p)
 
 inline bool MarkedBlock::isMarked(const void* p, Dependency dependency)
 {
+    if (header().m_isImmortal) [[unlikely]]
+        return header().m_marks.get(atomNumber(p));
     assertMarksNotStale();
     return header().m_marks.concurrentGet(atomNumber(p), dependency);
 }
 
 inline bool MarkedBlock::testAndSetMarked(const void* p, Dependency dependency)
 {
+    if (header().m_isImmortal) [[unlikely]]
+        return true; // frozen: treat as already marked, never write
     assertMarksNotStale();
     return header().m_marks.concurrentTestAndSet(atomNumber(p), dependency);
 }

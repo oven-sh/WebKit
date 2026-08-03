@@ -43,6 +43,7 @@ namespace JSC {
     macro(eden, Eden) /* The set of all blocks that have new objects since the last GC. */\
     macro(unswept, Unswept) /* The set of all blocks that could be swept by the incremental sweeper. */\
     macro(inUse, InUse) /* This tells us if a block is currently being allocated from or swept. This acts like a lock bit. */\
+    macro(immortal, Immortal) /* Experimental: frozen image blocks; never empty/allocatable/sweepable. */\
     \
     /* These are computed during marking. */\
     macro(markingNotEmpty, MarkingNotEmpty) /* The set of all blocks that are not empty. */ \

@@ -51,6 +51,7 @@ public:
     void prepareForAllocation();
     void resumeAllocating();
     void stopAllocatingForGood();
+    void forgetCurrentBlock() { m_freeList.clear(); m_currentBlock = nullptr; m_lastActiveBlock = nullptr; }
     
     static constexpr ptrdiff_t offsetOfFreeList();
     static constexpr ptrdiff_t offsetOfCellSize();

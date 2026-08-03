@@ -3064,8 +3064,50 @@ constexpr bool samplingProfilerSupported = false;
 static UNUSED_FUNCTION void visitSamplingProfiler(VM&, AbstractSlotVisitor&) { };
 #endif
 
+void Heap::freezeCurrentHeapAsImmortalImage()
+{
+    RELEASE_ASSERT(vm().currentThreadIsHoldingAPILock());
+    collectNow(Sync, CollectionScope::Full);
+    PreventCollectionScope preventCollectionScope(*this);
+    m_objectSpace.freezeAllBlocksAsImmortal();
+}
+
 void Heap::addCoreConstraints()
 {
+    m_constraintSet->add(
+        "Img", "Immortal image roots",
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            if (!m_objectSpace.hasImmortalBlocks())
+                return;
+            // Eden collections see mutated image cells through the remembered set; a Full collection re-traces from roots,
+            // so (prototype) treat every live image cell as a root and visit its children read-only.
+            if (m_collectionScope != CollectionScope::Full)
+                return;
+            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
+            size_t visited = 0, blocks = 0;
+            m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
+                if (!handle->block().isImmortal())
+                    return;
+                blocks++;
+                handle->forEachCell([&](size_t, HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
+                    if (!handle->block().isMarkedRaw(heapCell))
+                        return IterationStatus::Continue;
+                    if (isJSCellKind(kind)) {
+                        visited++;
+                        if constexpr (std::is_same_v<std::decay_t<decltype(visitor)>, SlotVisitor>)
+                            visitor.visitImmortalCellAsRoot(static_cast<JSCell*>(heapCell));
+                        else
+                            visitor.appendUnbarriered(JSValue(static_cast<JSCell*>(heapCell)));
+                    }
+                    return IterationStatus::Continue;
+                });
+            });
+            if (getenv("JSC_IMM_LOG"))
+                dataLogLn("[imm] full GC visited ", visited, " immortal cells in ", blocks, " blocks");
+        })),
+        ConstraintVolatility::GreyedByExecution);
+
+
     m_constraintSet->add(
         "Cs", "Conservative Scan",
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this, lastVersion = static_cast<uint64_t>(0)] (auto& visitor) mutable {
@@ -3505,7 +3547,11 @@ void Heap::verifyGC()
         if (Heap::isMarked(cell))
             return;
 
-        dataLogLn("\n" "GC Verifier: ERROR cell ", RawPointer(cell), " was not marked");
+        dataLogLn("\n" "GC Verifier: ERROR cell ", RawPointer(cell), " was not marked",
+            " type=", isJSCellKind(cell->cellKind()) ? static_cast<JSCell*>(cell)->className() : "aux",
+            " immortalBlock=", (!cell->isPreciseAllocation() && cell->markedBlock().isImmortal()),
+            " cellState=", isJSCellKind(cell->cellKind()) ? static_cast<int>(static_cast<JSCell*>(cell)->cellState()) : -1);
+        visitor.dumpMarkerData(cell);
         if (Options::verboseVerifyGC()) [[unlikely]]
             visitor.dumpMarkerData(cell);
         RELEASE_ASSERT(this->isMarked(cell));

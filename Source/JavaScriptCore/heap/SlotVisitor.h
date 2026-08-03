@@ -208,6 +208,7 @@ private:
     void noteLiveAuxiliaryCell(HeapCell*);
     
     void visitChildren(const JSCell*);
+    void visitImmortalCellAsRoot(const JSCell*);
 
     void propagateExternalMemoryVisitedIfNecessary();
     

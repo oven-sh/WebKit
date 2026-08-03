@@ -70,6 +70,7 @@ public:
     void endMarking();
     void NODELETE snapshotUnsweptForEdenCollection();
     void NODELETE snapshotUnsweptForFullCollection();
+    void makeAllBlocksImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion);
     void sweep();
     void shrink();
     void assertNoUnswept();

@@ -24,6 +24,7 @@
  */
 
 #include "config.h"
+#include <stdlib.h>
 #include "BlockDirectory.h"
 
 #include "BlockDirectoryInlines.h"
@@ -286,6 +287,9 @@ void BlockDirectory::beginMarkingForFullCollection()
     // as the next one is eden.
     markingNotEmptyBits().clearAll();
     markingRetiredBits().clearAll();
+    // Immortal blocks are never marked into, but must still be iterated by forEachMarkedCell (unconditional finalizers etc.).
+    markingNotEmptyBits() |= immortalBits();
+    markingRetiredBits() |= immortalBits();
 }
 
 void BlockDirectory::endMarking()
@@ -308,8 +312,8 @@ void BlockDirectory::endMarking()
     // vectors.
     
     // Sweeper is suspended so we don't need the lock here.
-    emptyBits() = liveBits() & ~markingNotEmptyBits();
-    canAllocateBits() = liveBits() & ~markingRetiredBits();
+    emptyBits() = liveBits() & ~markingNotEmptyBits() & ~immortalBits();
+    canAllocateBits() = liveBits() & ~markingRetiredBits() & ~immortalBits();
 
     switch (m_attributes.destruction) {
     case NeedsDestruction: {
@@ -342,13 +346,41 @@ void BlockDirectory::endMarking()
 void BlockDirectory::snapshotUnsweptForEdenCollection()
 {
     assertSweeperIsSuspended();
-    unsweptBits() |= edenBits();
+    unsweptBits() |= edenBits() & ~immortalBits();
 }
 
 void BlockDirectory::snapshotUnsweptForFullCollection()
 {
     assertSweeperIsSuspended();
-    unsweptBits() = liveBits();
+    unsweptBits() = liveBits() & ~immortalBits();
+}
+
+void BlockDirectory::makeAllBlocksImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion)
+{
+    // Return any block held by an allocator (records newlyAllocated bits), then make allocators forget it.
+    if (!getenv("JSC_IMM_SKIP_FORGET")) {
+        m_localAllocators.forEach([&](LocalAllocator* allocator) {
+            allocator->stopAllocating();
+            allocator->forgetCurrentBlock();
+        });
+    }
+    if (getenv("JSC_IMM_SKIP_MARK"))
+        return;
+    Locker locker(bitvectorLock());
+    for (size_t index = 0; index < m_blocks.size(); ++index) {
+        if (!isLive(index) || !m_blocks[index])
+            continue;
+        // A block with the 'allocated' bit was bump-filled since the last GC: every cell in it is live.
+        m_blocks[index]->block().makeImmortal(markingVersion, newlyAllocatedVersion, isAllocated(index));
+        setIsImmortal(index, true);
+        setIsMarkingNotEmpty(index, true);
+        setIsMarkingRetired(index, true);
+        setIsEmpty(index, false);
+        setIsCanAllocate(index, false);
+        setIsUnswept(index, false);
+        setIsEden(index, false);
+        setIsAllocated(index, false);
+    }
 }
 
 MarkedBlock::Handle* BlockDirectory::findBlockToSweep(unsigned& unsweptCursor)

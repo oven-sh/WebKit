@@ -399,6 +399,17 @@ MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
     return result;
 }
 
+void MarkedSpace::freezeAllBlocksAsImmortal()
+{
+    HeapVersion newlyAllocatedVersion = this->newlyAllocatedVersion();
+    HeapVersion markingVersion = this->markingVersion();
+    forEachDirectory([&](BlockDirectory& directory) -> IterationStatus {
+        directory.makeAllBlocksImmortal(markingVersion, newlyAllocatedVersion);
+        return IterationStatus::Continue;
+    });
+    m_hasImmortalBlocks = true;
+}
+
 void MarkedSpace::freeBlock(MarkedBlock::Handle* block)
 {
     m_capacity -= MarkedBlock::blockSize;
