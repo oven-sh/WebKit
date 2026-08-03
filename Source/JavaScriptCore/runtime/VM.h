@@ -154,6 +154,8 @@ class ShadowChicken;
 class SharedJITStubSet;
 class SourceProvider;
 class SourceProviderCache;
+class Decoder;
+class CachedBytecode;
 enum class SourceTaintedOrigin : uint8_t;
 class StackFrame;
 class StringSplitCache;
@@ -753,6 +755,13 @@ public:
 
     typedef UncheckedKeyHashMap<RefPtr<SourceProvider>, RefPtr<SourceProviderCache>> SourceProviderCacheMap;
     SourceProviderCacheMap sourceProviderCacheMap;
+
+    // The live Decoder (if any) per CachedBytecode, so lazy and repeated (post-jettison) decodes share decoded
+    // strings/environments. Non-owning: a Decoder lives while executables still reference it and unregisters itself.
+    Ref<Decoder> ensureBytecodeCacheDecoder(Ref<CachedBytecode>&&, RefPtr<SourceProvider>&&);
+    void unregisterBytecodeCacheDecoder(Decoder&, CachedBytecode&);
+    Lock m_bytecodeCacheDecoderMapLock;
+    UncheckedKeyHashMap<CachedBytecode*, Decoder*> m_bytecodeCacheDecoderMap WTF_GUARDED_BY_LOCK(m_bytecodeCacheDecoderMapLock);
 #if ENABLE(JIT)
     std::unique_ptr<JITThunks> jitStubs;
     MacroAssemblerCodeRef<JITThunkPtrTag> getCTIStub(ThunkGenerator);

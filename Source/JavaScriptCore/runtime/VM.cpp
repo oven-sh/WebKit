@@ -29,6 +29,9 @@
 #include "config.h"
 #include "VM.h"
 
+#include "CachedBytecode.h"
+#include "CachedTypes.h"
+
 #include "AbortReason.h"
 #include "AccessCase.h"
 #include "AggregateError.h"
@@ -1073,6 +1076,26 @@ SourceProviderCache* VM::addSourceProviderCache(SourceProvider* sourceProvider)
 void VM::clearSourceProviderCaches()
 {
     sourceProviderCacheMap.clear();
+}
+
+Ref<Decoder> VM::ensureBytecodeCacheDecoder(Ref<CachedBytecode>&& cachedBytecode, RefPtr<SourceProvider>&& provider)
+{
+    Locker locker { m_bytecodeCacheDecoderMapLock };
+    auto addResult = m_bytecodeCacheDecoderMap.add(cachedBytecode.ptr(), nullptr);
+    if (!addResult.isNewEntry)
+        return *addResult.iterator->value;
+    Ref decoder = Decoder::create(*this, WTF::move(cachedBytecode), WTF::move(provider));
+    addResult.iterator->value = decoder.ptr();
+    decoder->setIsRegisteredWithVM();
+    return decoder;
+}
+
+void VM::unregisterBytecodeCacheDecoder(Decoder& decoder, CachedBytecode& cachedBytecode)
+{
+    Locker locker { m_bytecodeCacheDecoderMapLock };
+    auto it = m_bytecodeCacheDecoderMap.find(&cachedBytecode);
+    if (it != m_bytecodeCacheDecoderMap.end() && it->value == &decoder)
+        m_bytecodeCacheDecoderMap.remove(it);
 }
 
 bool VM::hasExceptionsAfterHandlingTraps()

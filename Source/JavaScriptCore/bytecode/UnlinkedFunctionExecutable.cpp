@@ -169,7 +169,7 @@ void UnlinkedFunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visito
                 return;
             if (unlinkedCodeBlock->didOptimize() == TriState::True)
                 visitor.append(unlinkedCodeBlock);
-            else if (unlinkedCodeBlock->age() < UnlinkedCodeBlock::maxAge)
+            else if (unlinkedCodeBlock->age() < std::min<unsigned>(Options::unlinkedCodeBlockJettisonAge(), UnlinkedCodeBlock::maxAge))
                 visitor.append(unlinkedCodeBlock);
         };
         markIfProfitable(thisObject->m_unlinkedCodeBlockForCall);
@@ -252,6 +252,9 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         break;
     }
 
+    if (UnlinkedFunctionCodeBlock* redecoded = tryRedecodeCodeBlock(vm, source, specializationKind))
+        return redecoded;
+
     UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(
         vm, this, source, specializationKind, codeGenerationMode, 
         isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, 
@@ -271,6 +274,28 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
     vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;
+}
+
+UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::tryRedecodeCodeBlock(VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind)
+{
+    if (!m_isGeneratedFromCache || m_isCached || m_cachedRecordOffset <= 0)
+        return nullptr;
+    RefPtr provider = source.provider();
+    if (!provider)
+        return nullptr;
+    RefPtr<CachedBytecode> cachedBytecode = provider->cachedBytecode();
+    if (!cachedBytecode || static_cast<size_t>(m_cachedRecordOffset) >= cachedBytecode->size())
+        return nullptr;
+
+    Ref decoder = vm.ensureBytecodeCacheDecoder(cachedBytecode.releaseNonNull(), WTF::move(provider));
+    DeferGC deferGC(vm);
+    auto& slot = specializationKind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct;
+    decodeFunctionCodeBlockFromExecutableRecord(decoder.get(), m_cachedRecordOffset, specializationKind, slot, this);
+    if (!slot)
+        return nullptr;
+    vm.writeBarrier(this);
+    vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
+    return slot.get();
 }
 
 void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
@@ -296,6 +321,8 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     WTF::storeStoreFence();
     m_isCached = false;
     vm.writeBarrier(this);
+    // Registered so deleteAllCode / jettisoning can clear these too; they re-decode from the cache on next use.
+    vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
 }
 
 UnlinkedFunctionExecutable::RareData& UnlinkedFunctionExecutable::ensureRareDataSlow()
