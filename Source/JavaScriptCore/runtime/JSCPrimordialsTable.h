@@ -315,6 +315,7 @@ namespace JSC {
     V(IteratorPrototypeTake,                 PROP("take"),        Method) \
     V(IteratorPrototypeDrop,                 PROP("drop"),        Method) \
     V(IteratorPrototypeFlatMap,              PROP("flatMap"),     Method) \
+    V(IteratorPrototypeIncludes,             PROP("includes"),    Method) \
     V(IteratorPrototypeSymbolIterator,       SYM(iterator),       Method) \
     V(IteratorPrototypeGetSymbolToStringTag, SYM(toStringTag),    Getter) \
     V(IteratorPrototypeSetSymbolToStringTag, SYM(toStringTag),    Setter) \
@@ -763,8 +764,8 @@ namespace JSC {
 
 
 #define JSC_FOREACH_PRIMORDIAL_Float16ArrayPrototype(V) \
-
-
+    V(Float16ArrayPrototype,            SELF,                Self) \
+    V(Float16ArrayPrototypeConstructor, PROP("constructor"), Method) \
 
 #define JSC_FOREACH_PRIMORDIAL_Float16ArrayConstructor(V) \
 
