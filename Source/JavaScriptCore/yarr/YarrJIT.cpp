@@ -5652,34 +5652,34 @@ class YarrGenerator final : public YarrJITInfo {
                     bodyDispatch->haveFirstInputCheckFailed = true;
                     generateBodyDispatchTail(*bodyDispatch, *beginOp, op);
                 } else {
-                // Generate code to handle input check failures from alternatives except the last.
-                // prevOp is the alternative we're handling a bail out from (initially Begin), and
-                // nextOp is the alternative we will be attempting to reenter into.
-                //
-                // We will link input check failures from the forwards matching path back to the code
-                // that can handle them.
-                YarrOp* prevOp = beginOp;
-                YarrOp* nextOp = &m_ops[beginOp->m_nextOp];
-                while (nextOp->m_op != YarrOpCode::BodyAlternativeEnd) {
-                    prevOp->m_jumps.link(&m_jit);
+                    // Generate code to handle input check failures from alternatives except the last.
+                    // prevOp is the alternative we're handling a bail out from (initially Begin), and
+                    // nextOp is the alternative we will be attempting to reenter into.
+                    //
+                    // We will link input check failures from the forwards matching path back to the code
+                    // that can handle them.
+                    YarrOp* prevOp = beginOp;
+                    YarrOp* nextOp = &m_ops[beginOp->m_nextOp];
+                    while (nextOp->m_op != YarrOpCode::BodyAlternativeEnd) {
+                        prevOp->m_jumps.link(&m_jit);
 
-                    // We only get here if an input check fails, it is only worth checking again
-                    // if the next alternative has a minimum size less than the last.
-                    if (prevOp->m_alternative->m_minimumSize > nextOp->m_alternative->m_minimumSize) {
-                        // FIXME: if we added an extra label to YarrOp, we could avoid needing to
-                        // subtract delta back out, and reduce this code. Should performance test
-                        // the benefit of this.
-                        unsigned delta = prevOp->m_alternative->m_minimumSize - nextOp->m_alternative->m_minimumSize;
-                        m_jit.sub32(MacroAssembler::Imm32(delta), m_regs.index);
-                        MacroAssembler::Jump fail = jumpIfNoAvailableInput();
-                        m_jit.add32(MacroAssembler::Imm32(delta), m_regs.index);
-                        m_jit.jump(nextOp->m_reentry);
-                        fail.link(&m_jit);
-                    } else if (prevOp->m_alternative->m_minimumSize < nextOp->m_alternative->m_minimumSize)
-                        m_jit.add32(MacroAssembler::Imm32(nextOp->m_alternative->m_minimumSize - prevOp->m_alternative->m_minimumSize), m_regs.index);
-                    prevOp = nextOp;
-                    nextOp = &m_ops[nextOp->m_nextOp];
-                }
+                        // We only get here if an input check fails, it is only worth checking again
+                        // if the next alternative has a minimum size less than the last.
+                        if (prevOp->m_alternative->m_minimumSize > nextOp->m_alternative->m_minimumSize) {
+                            // FIXME: if we added an extra label to YarrOp, we could avoid needing to
+                            // subtract delta back out, and reduce this code. Should performance test
+                            // the benefit of this.
+                            unsigned delta = prevOp->m_alternative->m_minimumSize - nextOp->m_alternative->m_minimumSize;
+                            m_jit.sub32(MacroAssembler::Imm32(delta), m_regs.index);
+                            MacroAssembler::Jump fail = jumpIfNoAvailableInput();
+                            m_jit.add32(MacroAssembler::Imm32(delta), m_regs.index);
+                            m_jit.jump(nextOp->m_reentry);
+                            fail.link(&m_jit);
+                        } else if (prevOp->m_alternative->m_minimumSize < nextOp->m_alternative->m_minimumSize)
+                            m_jit.add32(MacroAssembler::Imm32(nextOp->m_alternative->m_minimumSize - prevOp->m_alternative->m_minimumSize), m_regs.index);
+                        prevOp = nextOp;
+                        nextOp = &m_ops[nextOp->m_nextOp];
+                    }
                 }
 
                 // We fall through to here if there is insufficient input to run the last alternative.
@@ -7859,8 +7859,12 @@ class YarrGenerator final : public YarrJITInfo {
         // The advance stub jumps into the body's re-scan loop, which sticky
         // patterns do not have (they never advance), and it does not model the
         // non-BMP first-character read adjustment used by unicode patterns.
-        if (m_direction != Forward || m_decodeSurrogatePairs || m_pattern.sticky() || m_pattern.eitherUnicode() || m_canUseFirstNonBMPCharacterOptimization)
+        if (m_direction != Forward || m_decodeSurrogatePairs || m_pattern.sticky() || m_pattern.eitherUnicode())
             return nullptr;
+#if ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
+        if (m_canUseFirstNonBMPCharacterOptimization)
+            return nullptr;
+#endif
 
         auto& alternatives = disjunction->m_alternatives;
         size_t count = alternatives.size() - firstRepeated;
