@@ -447,7 +447,6 @@ public:
     MacroAssembler::Label firstInputCheckFailed;
     bool haveFirstInputCheckFailed { false };
 
-
     static constexpr unsigned noAlternative = std::numeric_limits<unsigned>::max();
 };
 
@@ -7692,6 +7691,7 @@ class YarrGenerator final : public YarrJITInfo {
     // alternatives up; below that the sequential chain is faster.
     static constexpr size_t alternationDispatchMinAlternatives = 4;
     static constexpr size_t alternationDispatchMinTotalSize = 12;
+    static constexpr size_t bodyDispatchMatchOnlyMinTotalSize = 64;
 
     DispatchInfo* tryPrepareDispatch(PatternTerm* term, Checked<unsigned> checkedOffset)
     {
@@ -7881,6 +7881,8 @@ class YarrGenerator final : public YarrJITInfo {
             totalMinimumSize += alternatives[i]->m_minimumSize;
         }
         if (totalMinimumSize < alternationDispatchMinTotalSize)
+            return nullptr;
+        if (m_executionMode != ExecutionMode::IncludeSubpatterns && totalMinimumSize <= bodyDispatchMatchOnlyMinTotalSize)
             return nullptr;
 
         Vector<FirstCharacterSet, 8> sets;
