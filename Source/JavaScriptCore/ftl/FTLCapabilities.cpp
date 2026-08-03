@@ -211,6 +211,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case ConstructForwardVarargs:
     case CallWasm:
     case TailCallInlinedCallerWasm:
+    case CallFFI:
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case VarargsLength:
@@ -245,6 +246,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case FunctionBind:
     case ToObject:
     case CallObjectConstructor:
+    case OpenAsyncFromSyncIterator:
     case CallStringConstructor:
     case CallNumberConstructor:
     case ObjectAssign:
@@ -331,7 +333,6 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case IsObject:
     case IsCallable:
     case IsConstructor:
-    case IsTypedArrayView:
     case ArrayIsArray:
     case CheckTypeInfoFlags:
     case HasStructureWithFlags:

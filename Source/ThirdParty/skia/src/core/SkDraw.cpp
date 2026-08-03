@@ -25,17 +25,15 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/core/SkTileMode.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkCPUTypes.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFixed.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkArenaAlloc.h"
-#include "src/base/SkTLazy.h"
-#include "src/base/SkZip.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkCPUTypes.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFixed.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkAutoBlitterChoose.h"
 #include "src/core/SkBlendModePriv.h"
 #include "src/core/SkBlitter.h"
@@ -54,6 +52,8 @@
 #include "src/core/SkRasterClip.h"
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkScan.h"
+#include "src/core/SkTLazy.h"
+#include "src/core/SkZip.h"
 #include "src/image/SkImage_Raster.h"
 #include "src/shaders/SkImageShader.h"
 
@@ -219,17 +219,17 @@ bool PtProcRec::init(SkCanvas::PointMode mode, const SkPaint& paint,
     if (paint.getPathEffect() || paint.getMaskFilter()) {
         return false;
     }
-    SkScalar width = paint.getStrokeWidth();
-    SkScalar radius = -1;   // sentinel value, a "valid" value must be > 0
+    float width = paint.getStrokeWidth();
+    float radius = -1;   // sentinel value, a "valid" value must be > 0
 
     if (0 == width) {
         radius = 0.5f;
     } else if (paint.getStrokeCap() != SkPaint::kRound_Cap &&
                matrix->isScaleTranslate() && SkCanvas::kPoints_PointMode == mode) {
-        SkScalar sx = matrix->get(SkMatrix::kMScaleX);
-        SkScalar sy = matrix->get(SkMatrix::kMScaleY);
+        float sx = matrix->get(SkMatrix::kMScaleX);
+        float sy = matrix->get(SkMatrix::kMScaleY);
         if (SkScalarNearlyZero(sx - sy)) {
-            radius = SkScalarHalf(width * SkScalarAbs(sx));
+            radius = (width * std::abs(sx)) / 2.f;
         }
     }
     if (radius > 0) {
@@ -752,7 +752,7 @@ void Draw::drawRect(const SkRect& prePaintRect,
             const SkPoint& ssize = (RectType::kStroke == rtype)
                 ? strokeSize
                 : compute_stroke_size(paint, *fCTM);
-            bbox.outset(SkScalarHalf(ssize.x()), SkScalarHalf(ssize.y()));
+            bbox.outset(ssize.x() / 2.f, ssize.y() / 2.f);
         }
     }
     if (SkPathPriv::TooBigForMath(bbox)) {
@@ -803,14 +803,14 @@ void Draw::drawRect(const SkRect& prePaintRect,
     }
 }
 
-static SkScalar fast_len(const SkVector& vec) {
-    SkScalar x = SkScalarAbs(vec.fX);
-    SkScalar y = SkScalarAbs(vec.fY);
+static float fast_len(const SkVector& vec) {
+    float x = std::abs(vec.fX);
+    float y = std::abs(vec.fY);
     if (x < y) {
         using std::swap;
         swap(x, y);
     }
-    return x + SkScalarHalf(y);
+    return x + (y / 2.f);
 }
 
 bool DrawTreatAAStrokeAsHairline(SkScalar strokeWidth, const SkMatrix& matrix, SkScalar* coverage) {
@@ -1240,8 +1240,8 @@ void Draw::drawDevicePoints(SkCanvas::PointMode mode,
             SkPaint newPaint(paint);
             newPaint.setStyle(SkPaint::kFill_Style);
 
-            SkScalar width = newPaint.getStrokeWidth();
-            SkScalar radius = SkScalarHalf(width);
+            float width = newPaint.getStrokeWidth();
+            float radius = width / 2.f;
 
             if (newPaint.getStrokeCap() == SkPaint::kRound_Cap) {
                 if (device) {
@@ -1313,7 +1313,7 @@ void Draw::drawDevicePoints(SkCanvas::PointMode mode,
 
                     if (pointData.fSize.fX == pointData.fSize.fY) {
                         // The rest of the dashed line can just be drawn as points
-                        SkASSERT(pointData.fSize.fX == SkScalarHalf(newP.getStrokeWidth()));
+                        SkASSERT(pointData.fSize.fX == newP.getStrokeWidth() / 2.f);
 
                         if (SkPathEffectBase::PointData::kCircles_PointFlag & pointData.fFlags) {
                             newP.setStrokeCap(SkPaint::kRound_Cap);

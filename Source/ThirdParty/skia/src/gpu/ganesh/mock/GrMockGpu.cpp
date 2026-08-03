@@ -8,8 +8,8 @@
 
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/ganesh/mock/GrMockBackendSurface.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkMath.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkMath.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrGpuBuffer.h"
 #include "src/gpu/ganesh/GrRenderTarget.h"
@@ -297,7 +297,7 @@ GrBackendTexture GrMockGpu::onCreateCompressedBackendTexture(SkISize dimensions,
     return GrBackendTextures::MakeMock(dimensions.width(), dimensions.height(), mipmapped, info);
 }
 
-void GrMockGpu::deleteBackendTexture(const GrBackendTexture& tex) {
+void GrMockGpu::onDeleteBackendTexture(const GrBackendTexture& tex) {
     SkASSERT(tex.backend() == GrBackendApi::kMock);
 
     GrMockTextureInfo info = GrBackendTextures::GetMockTextureInfo(tex);

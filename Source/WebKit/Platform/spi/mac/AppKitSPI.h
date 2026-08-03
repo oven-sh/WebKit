@@ -67,6 +67,10 @@ DECLARE_SYSTEM_HEADER
 #import <AppKit/NSGlassEffectView_Private.h>
 #endif
 
+#if HAVE(APPKIT_SIRI_AFFORDANCE)
+#import <AppKit/NSCampoLightweightUIController.h>
+#endif
+
 #if HAVE(NSREFRESHCONTROLLER)
 #import <AppKit/NSRefreshControl_Private.h>
 #import <AppKit/NSRefreshController_Private.h>
@@ -222,6 +226,16 @@ typedef NS_ENUM(NSInteger, _NSGlassEffectViewAdaptiveAppearance) {
 
 #endif
 
+#if HAVE(APPKIT_SIRI_AFFORDANCE)
+
+@interface NSCampoLightweightUIController : NSObject
++ (instancetype)sharedInstance;
+- (void)dismiss;
+@property (nonatomic, readonly) BOOL isVisible;
+@end
+
+#endif
+
 #endif
 
 @interface NSPopover (IPI)
@@ -289,6 +303,9 @@ NS_HEADER_AUDIT_END(nullability, sendability)
 
 - (void)applyWithVerticalInset:(CGFloat)verticalInset animated:(BOOL)animated completion:(void (^ _Nullable)(void))completion;
 - (void)removeWithVerticalInset:(CGFloat)verticalInset animated:(BOOL)animated completion:(void (^ _Nullable)(void))completion;
+
+@optional
+@property (nonatomic, readonly) BOOL refreshControlHostIsTracking;
 @end
 
 #endif

@@ -661,6 +661,8 @@ public:
 
     virtual void handleAutoFillButtonClick(HTMLInputElement&) { }
 
+    virtual void didCompleteAutofill(HTMLInputElement&) { }
+
     virtual void inputElementDidResignStrongPasswordAppearance(HTMLInputElement&) { }
 
     virtual void performSwitchHapticFeedback() { }
@@ -777,6 +779,10 @@ public:
     virtual void saveSnapshotOfTextPlaceholderForAnimation(const SimpleRange&) { };
 
     virtual void clearAnimationsForActiveWritingToolsSession() { };
+
+    virtual void showWritingToolsAffordance() { }
+
+    virtual bool writingToolsAvailable() const { return false; }
 
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
     virtual void addTextEffectForID(const WTF::UUID&, TextEffectData&&, RefPtr<TextIndicator>&&, RefPtr<TextIndicator>&&) { }

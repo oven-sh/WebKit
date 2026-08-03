@@ -97,7 +97,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeAttributeEvaluate, (JSGlob
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->evaluate(globalObject));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->evaluate(globalObject)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeAttributeSavedResultAlias, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -110,7 +110,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeAttributeSavedResultAlias,
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->savedResultAlias(globalObject));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->savedResultAlias(globalObject)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionInternalConstructorName, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -123,7 +123,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionInternalConstructo
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->internalConstructorName(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->internalConstructorName(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionIsHTMLAllCollection, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -136,7 +136,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionIsHTMLAllCollectio
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->isHTMLAllCollection(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->isHTMLAllCollection(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionIsPromiseRejectedWithNativeGetterTypeError, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -149,7 +149,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionIsPromiseRejectedW
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->isPromiseRejectedWithNativeGetterTypeError(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->isPromiseRejectedWithNativeGetterTypeError(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionProxyTargetValue, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -162,7 +162,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionProxyTargetValue, 
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->proxyTargetValue(callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->proxyTargetValue(callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakRefTargetValue, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -175,7 +175,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakRefTargetValue
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->weakRefTargetValue(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->weakRefTargetValue(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakMapSize, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -188,7 +188,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakMapSize, (JSGl
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->weakMapSize(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->weakMapSize(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakMapEntries, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -201,7 +201,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakMapEntries, (J
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->weakMapEntries(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->weakMapEntries(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakSetSize, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -214,7 +214,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakSetSize, (JSGl
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->weakSetSize(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->weakSetSize(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakSetEntries, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -227,7 +227,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionWeakSetEntries, (J
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->weakSetEntries(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->weakSetEntries(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionIteratorEntries, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -240,7 +240,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionIteratorEntries, (
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->iteratorEntries(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->iteratorEntries(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionQueryInstances, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -253,7 +253,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionQueryInstances, (J
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->queryInstances(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->queryInstances(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionQueryHolders, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -266,7 +266,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionQueryHolders, (JSG
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->queryHolders(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->queryHolders(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionEvaluateWithScopeExtension, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -279,7 +279,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionEvaluateWithScopeE
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->evaluateWithScopeExtension(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->evaluateWithScopeExtension(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionSubtype, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -292,7 +292,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionSubtype, (JSGlobal
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->subtype(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->subtype(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionFunctionDetails, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -305,7 +305,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionFunctionDetails, (
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->functionDetails(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->functionDetails(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionGetOwnPrivatePropertySymbols, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -318,7 +318,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionGetOwnPrivatePrope
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->getOwnPrivatePropertySymbols(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->getOwnPrivatePropertySymbols(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionGetOwnPrivatePropertyMethods, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -331,7 +331,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionGetOwnPrivatePrope
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->getOwnPrivatePropertyMethods(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->getOwnPrivatePropertyMethods(globalObject, callFrame)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionGetInternalProperties, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -344,7 +344,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInjectedScriptHostPrototypeFunctionGetInternalPropert
     if (!castedThis)
         return throwVMTypeError(globalObject, scope);
 
-    return JSValue::encode(castedThis->getInternalProperties(globalObject, callFrame));
+    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->getInternalProperties(globalObject, callFrame)));
 }
 
 Structure* JSInjectedScriptHostPrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

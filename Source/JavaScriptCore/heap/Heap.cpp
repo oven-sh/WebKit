@@ -23,6 +23,7 @@
 
 #include "JSCJSValueInlines.h"
 
+#include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
@@ -87,6 +88,7 @@
 #include "SpaceTimeMutatorScheduler.h"
 #include "StochasticSpaceTimeMutatorScheduler.h"
 #include "StopIfNecessaryTimer.h"
+#include "StringSplitCache.h"
 #include "StructureAlignedMemoryAllocator.h"
 #include "SubspaceInlines.h"
 #include "SuperSampler.h"
@@ -117,6 +119,8 @@
 #include "InternalFieldTuple.h"
 
 #if USE(BUN_JSC_ADDITIONS)
+#include "JSFFICallback.h"
+#include "JSFFIFunction.h"
 #include "JSString.h"
 #include <wtf/text/ExternalStringImpl.h>
 #endif
@@ -415,6 +419,10 @@ Heap::Heap(VM& vm, HeapType heapType)
     , intlSegmentIteratorHeapCellType(IsoHeapCellType::Args<IntlSegmentIterator>())
     , intlSegmenterHeapCellType(IsoHeapCellType::Args<IntlSegmenter>())
     , intlSegmentsHeapCellType(IsoHeapCellType::Args<IntlSegments>())
+#if USE(BUN_JSC_ADDITIONS)
+    , ffiFunctionHeapCellType(IsoHeapCellType::Args<JSFFIFunction>())
+    , ffiCallbackHeapCellType(IsoHeapCellType::Args<JSFFICallback>())
+#endif
 #if ENABLE(WEBASSEMBLY)
     , webAssemblyExceptionHeapCellType(IsoHeapCellType::Args<JSWebAssemblyException>())
     , webAssemblyFunctionHeapCellType(IsoHeapCellType::Args<WebAssemblyFunction>())
@@ -1186,6 +1194,25 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
             UnlinkedFunctionExecutable* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
             executable->clearCode(vm);
         });
+
+#if ENABLE(JIT)
+    // Shareable Baseline JIT code is cached on UnlinkedCodeBlock::m_unlinkedBaselineCode (populated by
+    // CodeBlock::setupWithUnlinkedBaselineCode). That cache is not owned by any linked CodeBlock or
+    // executable, so it survives deleteAllCodeBlocks and is otherwise only released when the
+    // UnlinkedCodeBlock itself is collected. A "warm" UnlinkedCodeBlock can therefore pin Baseline JIT
+    // executable memory across memory warnings indefinitely. Drop the cache eagerly here: any still-linked
+    // CodeBlock holds its own ref to the BaselineJITCode (so we never free code that is still in use),
+    // while a cache-only entry is freed as soon as its last ref goes away, synchronously here.
+    if (Options::useBaselineJITCodeSharing()) {
+        auto clearUnlinkedBaselineCode = [] (HeapCell* cell, HeapCell::Kind) {
+            static_cast<UnlinkedCodeBlock*>(cell)->m_unlinkedBaselineCode = nullptr;
+        };
+        for (auto* space : { m_unlinkedFunctionCodeBlockSpace.get(), m_unlinkedProgramCodeBlockSpace.get(), m_unlinkedEvalCodeBlockSpace.get(), m_unlinkedModuleProgramCodeBlockSpace.get() }) {
+            if (space)
+                space->forEachLiveCell(clearUnlinkedBaselineCode);
+        }
+    }
+#endif
 }
 
 void Heap::deleteUnmarkedCompiledCode()
@@ -2351,7 +2378,8 @@ void Heap::finalize()
         vm().stringReplaceCache.clear();
     }
     vm().keyAtomStringCache.clear();
-    vm().stringSplitCache.clear();
+    if (auto* cache = vm().stringSplitCache())
+        cache->clear();
     vm().jsonAtomStringCache.clearJSStrings();
 
     m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.removeAllMatching([&](const auto& iter) {
@@ -2587,8 +2615,7 @@ void Heap::updateAllocationLimits()
         m_sizeAfterLastEdenCollect = currentHeapSize;
         dataLogLnIf(verbose, "Eden: sizeAfterLastEdenCollect = ", currentHeapSize);
         double edenToOldGenerationRatio = (double)remainingHeapSize / (double)m_maxHeapSize;
-        double minEdenToOldGenerationRatio = 1.0 / 3.0;
-        if (edenToOldGenerationRatio < minEdenToOldGenerationRatio)
+        if (edenToOldGenerationRatio < Options::minEdenToOldGenerationRatio())
             m_shouldDoFullCollection = true;
         m_maxHeapSize = std::max(m_maxHeapSize, currentHeapSize + m_maxEdenSize);
         dataLogLnIf(verbose, "Eden: maxHeapSize = ", m_maxHeapSize);

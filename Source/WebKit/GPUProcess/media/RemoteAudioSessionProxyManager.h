@@ -62,7 +62,8 @@ public:
     void updatePreferredBufferSizeForProcess();
     void updateSpatialExperience();
 
-    bool tryToSetActiveForProcess(RemoteAudioSessionProxy&, bool);
+    Ref<WebCore::AudioSession::SetActivePromise> tryToSetActiveForProcess(RemoteAudioSessionProxy&, bool);
+    Ref<WebCore::AudioSession::SetActivePromise> tryToSetActiveForProcess(WebCore::ProcessIdentifier, bool);
 
     void beginInterruptionRemote();
     void endInterruptionRemote(WebCore::AudioSession::MayResume);

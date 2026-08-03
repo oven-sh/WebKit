@@ -19,10 +19,10 @@
 #include "include/core/SkColorType.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkRect.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkStream.h"
+#include "include/private/SkAssert.h"
 #include "include/private/SkEncodedInfo.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkSpan_impl.h"
 #include "modules/skcms/skcms.h"
 #include "src/codec/SkCodecPriv.h"
 #include "src/codec/SkColorPalette.h"
@@ -58,6 +58,16 @@ skcms_PixelFormat ToPixelFormat(const SkEncodedInfo& info) {
 SkPngCodecBase::~SkPngCodecBase() = default;
 
 // static
+bool SkPngCodecBase::IsPng(const void* buf, size_t len) {
+    static constexpr uint8_t kPngSignature[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    if (len < sizeof(kPngSignature)) {
+        return false;
+    }
+
+    return memcmp(buf, kPngSignature, sizeof(kPngSignature)) == 0;
+}
+
+// static
 bool SkPngCodecBase::isCompatibleColorProfileAndType(const SkCodecs::ColorProfile* profile,
                                                      SkEncodedInfo::Color color) {
     if (profile) {
@@ -80,8 +90,14 @@ bool SkPngCodecBase::isCompatibleColorProfileAndType(const SkCodecs::ColorProfil
 
 SkPngCodecBase::SkPngCodecBase(SkEncodedInfo&& encodedInfo,
                                std::unique_ptr<SkStream> stream,
-                               SkEncodedOrigin origin)
-        : SkCodec(std::move(encodedInfo), ToPixelFormat(encodedInfo), std::move(stream), origin) {}
+                               SkEncodedOrigin origin,
+                               sk_sp<SkPngCompositeChunkReader> chunkReader,
+                               std::unique_ptr<SkStream> gainmapStream,
+                               std::optional<SkGainmapInfo> gainmapInfo)
+        : SkCodec(std::move(encodedInfo), ToPixelFormat(encodedInfo), std::move(stream), origin)
+        , fPngChunkReader(std::move(chunkReader))
+        , fGainmapStream(std::move(gainmapStream))
+        , fGainmapInfo(gainmapInfo) {}
 
 SkEncodedImageFormat SkPngCodecBase::onGetEncodedFormat() const {
     return SkEncodedImageFormat::kPNG;
@@ -96,19 +112,15 @@ SkCodec::Result SkPngCodecBase::initializeXforms(const SkImageInfo& dstInfo,
     fXformWidth = frameWidth;
 
     {
-        size_t encodedBitsPerPixel = static_cast<size_t>(getEncodedInfo().bitsPerPixel());
+        uint32_t encodedBitsPerPixel = getEncodedInfo().bitsPerPixel();
 
-        // We assume that `frameWidth` and `bitsPerPixel` have been already sanitized
-        // earlier (and that the multiplication and addition below won't overflow).
+        // We assume that `frameWidth` and the encoded format have already been
+        // sanitized earlier (preventing overflow in the row bytes calculation).
         SkASSERT_RELEASE(0 < frameWidth);
         SkASSERT_RELEASE(frameWidth < 0xFFFFFF);
         SkASSERT_RELEASE(encodedBitsPerPixel < 128);
 
-        size_t encodedBitsPerRow = static_cast<size_t>(frameWidth) * encodedBitsPerPixel;
-        fEncodedRowBytes = (encodedBitsPerRow + 7) / 8;  // Round up to the next byte.
-
-        size_t dstBytesPerPixel = dstInfo.bytesPerPixel();
-        fDstRowBytes = static_cast<size_t>(frameWidth) * dstBytesPerPixel;
+        fEncodedRowBytes = SkCodecPriv::ComputeRowBytes(frameWidth, encodedBitsPerPixel);
     }
 
     // Reset fSwizzler and this->colorXform().  We can't do this in onRewind() because the
@@ -159,8 +171,24 @@ SkCodec::Result SkPngCodecBase::initializeXforms(const SkImageInfo& dstInfo,
 }
 
 void SkPngCodecBase::initializeXformParams() {
-    if (fXformMode == kSwizzleColor_XformMode) {
-        fXformWidth = this->swizzler()->swizzleWidth();
+    switch (fXformMode) {
+        case kSwizzleOnly_XformMode:
+        case kSwizzleColor_XformMode:
+            fXformWidth = this->swizzler()->swizzleWidth();
+            break;
+        case kColorOnly_XformMode:
+            SkASSERT_RELEASE(!fSwizzler);
+            break;
+    }
+
+    {
+        // We assume that `fXformWidth` and the destination format have already been
+        // sanitized earlier (preventing overflow in the destination row bytes calculation).
+        SkASSERT_RELEASE(0 < fXformWidth);
+        SkASSERT_RELEASE(fXformWidth < 0xFFFFFF);
+
+        fDstRowSize = SkCodecPriv::ComputeRowBytesBytesPerPixel(fXformWidth,
+                                                                this->dstInfo().bytesPerPixel());
     }
 }
 
@@ -262,7 +290,7 @@ SkSampler* SkPngCodecBase::getSampler(bool createIfNecessary) {
 }
 
 void SkPngCodecBase::applyXformRow(SkSpan<uint8_t> dstRow, SkSpan<const uint8_t> srcRow) {
-    SkASSERT_RELEASE(dstRow.size() >= fDstRowBytes);
+    SkASSERT_RELEASE(dstRow.size() >= fDstRowSize);
     SkASSERT_RELEASE(srcRow.size() >= fEncodedRowBytes);
     applyXformRow(dstRow.data(), srcRow.data());
 }
@@ -276,6 +304,7 @@ void SkPngCodecBase::applyXformRow(void* dstRow, const uint8_t* srcRow) {
             this->applyColorXform(dstRow, srcRow, fXformWidth);
             break;
         case kSwizzleColor_XformMode:
+            SkASSERT_RELEASE(fSwizzler->swizzleWidth() == fXformWidth);
             fSwizzler->swizzle(fStorage.get(), srcRow);
             this->applyColorXform(dstRow, fStorage.get(), fXformWidth);
             break;
@@ -366,4 +395,60 @@ bool SkPngCodecBase::createColorTable(const SkImageInfo& dstInfo) {
 
     fColorTable.reset(new SkColorPalette(colorTable, maxColors));
     return true;
+}
+
+bool SkPngCodecBase::onGetGainmapCodec(SkGainmapInfo* info,
+                                       std::unique_ptr<SkCodec>* gainmapCodec) {
+    if (!fGainmapStream) {
+        return false;
+    }
+
+    sk_sp<const SkData> data = fGainmapStream->getData();
+    if (!data) {
+        return false;
+    }
+
+    if (!SkPngCodecBase::IsPng(data->bytes(), data->size())) {
+        return false;
+    }
+
+    // The gainmap information lives on the gainmap image itself, so we need to
+    // create the gainmap codec first, then check if it has a metadata chunk.
+    SkCodec::Result result;
+    std::unique_ptr<SkCodec> codec = this->onDecodeGainmap(fGainmapStream->duplicate(), &result);
+
+    if (!codec || result != SkCodec::Result::kSuccess) {
+        return false;
+    }
+
+    bool hasInfo = codec->onGetGainmapInfo(info);
+
+    if (hasInfo && gainmapCodec) {
+        // The ISO gainmap payload does not contain the actual alterative image
+        // primaries, so we need to query the ICC profile stored on the gainmap.
+        if (info->fGainmapMathColorSpace) {
+            const auto* colorProfile = codec->getEncodedInfo().colorProfile();
+            if (colorProfile) {
+                auto colorSpace = colorProfile->getExactColorSpace();
+                if (colorSpace) {
+                    info->fGainmapMathColorSpace = std::move(colorSpace);
+                }
+            }
+        }
+
+        *gainmapCodec = std::move(codec);
+    }
+
+    return hasInfo;
+}
+
+bool SkPngCodecBase::onGetGainmapInfo(SkGainmapInfo* info) {
+    if (fGainmapInfo) {
+        if (info) {
+            *info = *fGainmapInfo;
+        }
+        return true;
+    }
+
+    return false;
 }

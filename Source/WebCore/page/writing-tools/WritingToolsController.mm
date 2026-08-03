@@ -127,6 +127,13 @@ static bool NODELETE isZeroToOneCompositionType(WritingTools::Session::Compositi
     }
 }
 
+static CharacterRange rangeClampedToLength(CharacterRange range, unsigned length)
+{
+    range.location = std::min<uint64_t>(range.location, length);
+    range.length = std::min<uint64_t>(range.length, length - range.location);
+    return range;
+}
+
 static std::optional<SimpleRange> contextRangeForSession(Document& document, const std::optional<WritingTools::Session>& session)
 {
     // If the selection is a range, the range of the context should be the range of the paragraph
@@ -268,6 +275,12 @@ void WritingToolsController::willBeginWritingToolsSession(const std::optional<Wr
     if (attributedStringFromRange.string.isEmpty())
         RELEASE_LOG(WritingTools, "WritingToolsController::willBeginWritingToolsSession (%s) => attributed string is empty", session ? session->identifier.toString().utf8().data() : "");
 
+    auto attributedStringLength = attributedStringFromRange.string.length();
+    if (auto clampedRange = rangeClampedToLength(selectedTextCharacterRange, attributedStringLength); clampedRange != selectedTextCharacterRange) [[unlikely]] {
+        RELEASE_LOG_ERROR(WritingTools, "WritingToolsController::willBeginWritingToolsSession (%s) => selected range (%llu, %llu) does not fit within attributed string (length %u)", session ? session->identifier.toString().utf8().data() : "", selectedTextCharacterRange.location, selectedTextCharacterRange.length, attributedStringLength);
+        selectedTextCharacterRange = clampedRange;
+    }
+
     if (!session) {
         // If there is no session, this implies that the Writing Tools delegate is used for the "non-inline editing" case;
         // as such, no mutating delegate methods will be invoked, and so there need not be any state tracked.
@@ -294,14 +307,13 @@ void WritingToolsController::willBeginWritingToolsSession(const std::optional<Wr
         break;
     }
 
-    auto attributedStringCharacterCount = attributedStringFromRange.string.length();
     auto contextRangeCharacterCount = characterCount(*contextRange);
 
     // Postcondition: the selected text character range must be a valid range within the
     // attributed string formed by the context range; the length of the entire context range
     // being equal to the length of the attributed string implies the range is valid.
-    if (attributedStringCharacterCount != contextRangeCharacterCount) [[unlikely]] {
-        RELEASE_LOG_ERROR(WritingTools, "WritingToolsController::willBeginWritingToolsSession (%s) => attributed string length (%u) != context range length (%llu)", session->identifier.toString().utf8().data(), attributedStringCharacterCount, contextRangeCharacterCount);
+    if (attributedStringLength != contextRangeCharacterCount) [[unlikely]] {
+        RELEASE_LOG_ERROR(WritingTools, "WritingToolsController::willBeginWritingToolsSession (%s) => attributed string length (%u) != context range length (%llu)", session->identifier.toString().utf8().data(), attributedStringLength, contextRangeCharacterCount);
         ASSERT_NOT_REACHED();
         completionHandler({ });
         return;
@@ -1339,8 +1351,10 @@ std::optional<SimpleRange> WritingToolsController::validatedRangeForSuggestionMa
     auto sessionPlainText = plainText(sessionRange);
     auto staleOffset = characterRange(sessionRange, rangeToReplace).location;
 
+    // Re-anchoring is a heuristic, so reject it when ambiguous (a tie) or when it collides with another suggestion's marker.
     size_t bestMatch = notFound;
     uint64_t bestDistance = std::numeric_limits<uint64_t>::max();
+    uint64_t secondBestDistance = std::numeric_limits<uint64_t>::max();
     unsigned searchStart = 0;
     while (true) {
         auto matchIndex = sessionPlainText.find(expectedCurrentText, searchStart);
@@ -1348,9 +1362,11 @@ std::optional<SimpleRange> WritingToolsController::validatedRangeForSuggestionMa
             break;
         uint64_t distance = matchIndex > staleOffset ? matchIndex - staleOffset : staleOffset - matchIndex;
         if (distance < bestDistance) {
+            secondBestDistance = bestDistance;
             bestDistance = distance;
             bestMatch = matchIndex;
-        }
+        } else if (distance < secondBestDistance)
+            secondBestDistance = distance;
         searchStart = static_cast<unsigned>(matchIndex + 1);
     }
 
@@ -1359,7 +1375,34 @@ std::optional<SimpleRange> WritingToolsController::validatedRangeForSuggestionMa
         return std::nullopt;
     }
 
-    return resolveCharacterRange(sessionRange, { bestMatch, expectedCurrentText.length() });
+    if (secondBestDistance == bestDistance) {
+        RELEASE_LOG(WritingTools, "WritingToolsController::validatedRangeForSuggestionMarker bailing - ambiguous match for expected text of length %u", expectedCurrentText.length());
+        return std::nullopt;
+    }
+
+    CharacterRange resolvedCharacterRange { bestMatch, expectedCurrentText.length() };
+
+    auto suggestionID = std::get<DocumentMarker::WritingToolsTextSuggestionData>(marker.data()).suggestionID;
+    bool overlapsOtherSuggestion = false;
+    if (RefPtr document = this->document()) {
+        document->markers().forEach(sessionRange, { DocumentMarkerType::WritingToolsTextSuggestion }, [&](auto& otherNode, auto& otherMarker) {
+            if (std::get<DocumentMarker::WritingToolsTextSuggestionData>(otherMarker.data()).suggestionID == suggestionID)
+                return false;
+            auto otherRange = characterRange(sessionRange, makeSimpleRange(otherNode, otherMarker));
+            if (resolvedCharacterRange.location < otherRange.location + otherRange.length && otherRange.location < resolvedCharacterRange.location + resolvedCharacterRange.length) {
+                overlapsOtherSuggestion = true;
+                return true;
+            }
+            return false;
+        });
+    }
+
+    if (overlapsOtherSuggestion) {
+        RELEASE_LOG(WritingTools, "WritingToolsController::validatedRangeForSuggestionMarker bailing - re-anchored range overlaps another suggestion marker");
+        return std::nullopt;
+    }
+
+    return resolveCharacterRange(sessionRange, resolvedCharacterRange);
 }
 
 std::optional<std::tuple<Node&, DocumentMarker&>> WritingToolsController::findTextSuggestionMarkerContainingRange(const SimpleRange& range) const

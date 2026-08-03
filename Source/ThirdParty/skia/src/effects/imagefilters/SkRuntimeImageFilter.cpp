@@ -18,15 +18,15 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkString.h"
 #include "include/effects/SkRuntimeEffect.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkTArray.h"
-#include "src/base/SkSpinlock.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkTArray.h"
 #include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkPicturePriv.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkRuntimeEffectPriv.h"
+#include "src/core/SkSpinlock.h"
 #include "src/core/SkWriteBuffer.h"
 
 #include <cstddef>
@@ -156,7 +156,11 @@ sk_sp<SkFlattenable> SkRuntimeImageFilter::CreateProc(SkReadBuffer& buffer) {
         return nullptr;
     }
 
-    // Read the SkSL string and convert it into a runtime effect
+    // Read the SkSL string and convert it into a runtime effect (if allowed)
+    if (!buffer.validate(buffer.allowSkSL())) {
+        return nullptr;
+    }
+
     SkString sksl;
     buffer.readString(&sksl);
     auto effect = SkMakeCachedRuntimeEffect(SkRuntimeEffect::MakeForShader, std::move(sksl));

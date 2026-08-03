@@ -10,13 +10,13 @@
 
 #include "include/core/SkColor.h"
 #include "include/core/SkRefCnt.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkString.h"
 #include "include/effects/SkRuntimeEffect.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
 #include "include/private/SkSLSampleUsage.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkSpan_impl.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "src/core/SkEffectPriv.h"
 #include "src/core/SkKnownRuntimeEffects.h"
 #include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
@@ -158,8 +158,21 @@ public:
     static void WriteChildEffects(SkWriteBuffer& buffer,
                                   SkSpan<const SkRuntimeEffect::ChildPtr> children);
 
+    // Analysis from the runtime SkSL
+    static bool UsesSampleCoords(const SkRuntimeEffect* effect) {
+        return effect->usesSampleCoords();
+    }
+    static bool SamplesOutsideMain(const SkRuntimeEffect* effect) {
+        return effect->samplesOutsideMain();
+    }
     static bool UsesColorTransform(const SkRuntimeEffect* effect) {
         return effect->usesColorTransform();
+    }
+    static bool AlwaysOpaque(const SkRuntimeEffect* effect) {
+        return effect->alwaysOpaque();
+    }
+    static bool IsAlphaUnchanged(const SkRuntimeEffect* effect) {
+        return effect->isAlphaUnchanged();
     }
     static SkSL::SampleUsage ChildSampleUsage(const SkRuntimeEffect* effect, int child) {
         return effect->fSampleUsages[child];

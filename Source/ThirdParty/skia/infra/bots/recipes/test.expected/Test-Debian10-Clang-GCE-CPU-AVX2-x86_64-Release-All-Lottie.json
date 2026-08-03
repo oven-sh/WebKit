@@ -21,42 +21,6 @@
       "RECIPE_MODULE[recipe_engine::file]/resources/fileutil.py",
       "--json-output",
       "/path/to/tmp/json",
-      "copy",
-      "[START_DIR]/skia/infra/bots/assets/lottie-samples/VERSION",
-      "/path/to/tmp/"
-    ],
-    "infra_step": true,
-    "name": "Get lottie-samples VERSION",
-    "~followup_annotations": [
-      "@@@STEP_LOG_LINE@VERSION@42@@@",
-      "@@@STEP_LOG_END@VERSION@@@"
-    ]
-  },
-  {
-    "cmd": [
-      "vpython3",
-      "-u",
-      "RECIPE_MODULE[recipe_engine::file]/resources/fileutil.py",
-      "--json-output",
-      "/path/to/tmp/json",
-      "copy",
-      "42",
-      "[START_DIR]/tmp/LOTTIE_VERSION"
-    ],
-    "infra_step": true,
-    "name": "write LOTTIE_VERSION",
-    "~followup_annotations": [
-      "@@@STEP_LOG_LINE@LOTTIE_VERSION@42@@@",
-      "@@@STEP_LOG_END@LOTTIE_VERSION@@@"
-    ]
-  },
-  {
-    "cmd": [
-      "vpython3",
-      "-u",
-      "RECIPE_MODULE[recipe_engine::file]/resources/fileutil.py",
-      "--json-output",
-      "/path/to/tmp/json",
       "rmtree",
       "[START_DIR]/test"
     ],
@@ -160,22 +124,53 @@
   },
   {
     "cmd": [
-      "gsutil",
-      "-m",
+      "luci-auth",
+      "token",
+      "-scopes",
+      "https://www.googleapis.com/auth/devstorage.read_write",
+      "-lifetime",
+      "3m"
+    ],
+    "infra_step": true,
+    "name": "get access token for default account"
+  },
+  {
+    "cmd": [
+      "gcloud",
+      "storage",
       "cp",
       "[START_DIR]/[SWARM_OUT_DIR]/*.png",
       "gs://skia-infra-gm/dm-images-v1"
     ],
+    "env": {
+      "CLOUDSDK_AUTH_ACCESS_TOKEN": "extra.secret.token.should.not.be.logged"
+    },
     "name": "upload .png images"
   },
   {
     "cmd": [
-      "gsutil",
+      "luci-auth",
+      "token",
+      "-scopes",
+      "https://www.googleapis.com/auth/devstorage.read_write",
+      "-lifetime",
+      "3m"
+    ],
+    "infra_step": true,
+    "name": "get access token for default account (2)"
+  },
+  {
+    "cmd": [
+      "gcloud",
+      "storage",
       "cp",
       "-Z",
       "[START_DIR]/[SWARM_OUT_DIR]/dm.json",
       "gs://skia-infra-gm/trybot/dm-json-v1/2012/05/14/12/1234_7/Test-Debian10-Clang-GCE-CPU-AVX2-x86_64-Release-All-Lottie/1337000001/dm.json"
     ],
+    "env": {
+      "CLOUDSDK_AUTH_ACCESS_TOKEN": "extra.secret.token.should.not.be.logged"
+    },
     "name": "upload dm.json"
   },
   {

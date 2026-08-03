@@ -33,6 +33,7 @@
 #include "ChromeClient.h"
 #include "Document.h"
 #include "DocumentPage.h"
+#include "DocumentQuirks.h"
 #include "DocumentView.h"
 #include "ElementInlines.h"
 #include "EventNames.h"
@@ -184,7 +185,11 @@ void HTMLVideoElement::computeAcceleratedRenderingStateAndUpdateMediaPlayer()
     bool isInFullScreen = false;
 #endif
     CheckedPtr renderer = this->renderer();
-    bool canBeAccelerated = player->supportsAcceleratedRendering() && (isInFullScreen || (m_isIntersectingViewport && renderer && protect(renderer->view())->compositor().hasAcceleratedCompositing()));
+    // 311380@main added the viewport intersection to this condition. Some clients keep
+    // displaying the video layer they host after scrolling it out of view or hiding their
+    // web view, so for those ignore it as it was before.
+    bool isIntersectingViewport = m_isIntersectingViewport || protect(document())->quirks().shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk();
+    bool canBeAccelerated = player->supportsAcceleratedRendering() && (isInFullScreen || (isIntersectingViewport && renderer && protect(renderer->view())->compositor().hasAcceleratedCompositing()));
     if (canBeAccelerated == m_renderingCanBeAccelerated)
         return;
     m_renderingCanBeAccelerated = canBeAccelerated;
@@ -611,7 +616,12 @@ void HTMLVideoElement::setPresentationMode(VideoPresentationMode mode)
         return;
     }
 
-    if (!protect(mediaSession())->fullscreenPermitted() || !supportsFullscreen(videoFullscreenMode))
+#if ENABLE(PICTURE_IN_PICTURE_API)
+    bool requiresUserGesture = mode != VideoPresentationMode::PictureInPicture || !protect(document())->pictureInPictureElement();
+#else
+    bool requiresUserGesture = true;
+#endif
+    if ((requiresUserGesture && !protect(mediaSession())->fullscreenPermitted()) || !supportsFullscreen(videoFullscreenMode))
         return;
 
     if (videoFullscreenMode == VideoFullscreenModePictureInPicture)
@@ -773,6 +783,16 @@ void HTMLVideoElement::cancelVideoFrameCallback(unsigned identifier)
         if (RefPtr player = this->player())
             player->stopVideoFrameMetadataGathering();
     }
+}
+
+void HTMLVideoElement::suspend(ReasonForSuspension reason)
+{
+#if ENABLE(PICTURE_IN_PICTURE_API)
+    if (reason == ReasonForSuspension::BackForwardCache)
+        protect(HTMLVideoElementPictureInPicture::from(*this))->didExitPictureInPicture();
+#endif
+
+    HTMLMediaElement::suspend(reason);
 }
 
 void HTMLVideoElement::stop()

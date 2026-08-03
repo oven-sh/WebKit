@@ -71,11 +71,10 @@ WI.ResourceTimingData = class ResourceTimingData
         if (isNaN(fetchStart) || fetchStart < startTime)
             fetchStart = startTime;
 
-        if (redirectStart < startTime || redirectStart > fetchStart || redirectStart > redirectEnd)
+        if (redirectStart < startTime || redirectEnd < startTime || redirectStart > fetchStart || redirectEnd > fetchStart || redirectStart > redirectEnd) {
             redirectStart = NaN;
-
-        if (redirectEnd < startTime || redirectEnd > fetchStart || redirectEnd < redirectStart)
             redirectEnd = NaN;
+        }
 
         function offsetToTimestamp(offset) {
             return offset > 0 ? fetchStart + (offset / 1000) : NaN;
@@ -117,8 +116,8 @@ WI.ResourceTimingData = class ResourceTimingData
     markResponseEndTime(responseEnd)
     {
         console.assert(typeof responseEnd === "number");
-        console.assert(isNaN(responseEnd) || responseEnd >= this.startTime, "responseEnd time should be greater than the start time", this.startTime, responseEnd);
-        console.assert(isNaN(responseEnd) || responseEnd >= this.requestStart, "responseEnd time should be greater than the request time", this.requestStart, responseEnd);
+        console.assert(isNaN(responseEnd) || isNaN(this.startTime) || responseEnd >= this.startTime, "responseEnd time should be greater than the start time", this.startTime, responseEnd);
+        console.assert(isNaN(responseEnd) || isNaN(this.requestStart) || responseEnd >= this.requestStart, "responseEnd time should be greater than the request time", this.requestStart, responseEnd);
         this._responseEnd = responseEnd;
     }
 };

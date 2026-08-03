@@ -8,7 +8,8 @@
 #define skgpu_graphite_sparse_strips_Polyline_DEFINED
 
 #include "include/core/SkScalar.h"
-#include "include/private/base/SkTDArray.h"
+#include "include/core/SkSpan.h"
+#include "include/private/SkTDArray.h"
 #include "src/gpu/graphite/sparse_strips/SparseStripsTypes.h"
 
 #include <cmath>
@@ -40,10 +41,35 @@ public:
         }
     }
 
+    // Bulk append to eliminate repetitive capacity checks and memory hits.
+    void appendPoints(SkSpan<const SkPoint> pts) {
+        if (pts.empty()) {
+            return;
+        }
+
+        fPoints.reserve(fPoints.size() + pts.size());
+
+        // Cache the last point in a local register.
+        // Note: If fPoints.back() is a NaN sentinel, pt != lastPt correctly evaluates to true.
+        SkPoint lastPt = fPoints.empty() ? SkPoint{SK_ScalarNaN, SK_ScalarNaN} : fPoints.back();
+
+        for (SkPoint pt : pts) {
+            SkASSERT(!std::isnan(pt.fX) && !std::isnan(pt.fY));
+            if (pt != lastPt) {
+                fPoints.push_back(pt);
+                lastPt = pt;
+            }
+        }
+    }
+
     void appendSentinel() {
         if (!fPoints.empty() && !std::isnan(fPoints.back().fX)) {
             fPoints.push_back({SK_ScalarNaN, SK_ScalarNaN});
         }
+    }
+
+    Line getLine(uint32_t index) const {
+        return {fPoints[index], fPoints[index + 1]};
     }
 
     class LineIterator {

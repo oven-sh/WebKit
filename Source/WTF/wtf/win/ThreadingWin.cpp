@@ -87,7 +87,6 @@
 #include <wtf/Threading.h>
 
 #include <bmalloc/BPlatform.h>
-#include <bmalloc/pas_process.h>
 #include <errno.h>
 #include <process.h>
 #include <windows.h>
@@ -98,6 +97,21 @@
 #include <wtf/ThreadingPrimitives.h>
 
 namespace WTF {
+
+bool processIsShuttingDown()
+{
+    using RtlDllShutdownInProgressPtr = BOOLEAN (WINAPI *)();
+    static RtlDllShutdownInProgressPtr resolved;
+    static bool didResolve;
+
+    if (!didResolve) {
+        if (HMODULE ntdll = GetModuleHandleW(L"ntdll.dll"))
+            resolved = reinterpret_cast<RtlDllShutdownInProgressPtr>(GetProcAddress(ntdll, "RtlDllShutdownInProgress"));
+        didResolve = true;
+    }
+
+    return resolved && resolved();
+}
 
 Thread::~Thread()
 {
@@ -160,7 +174,7 @@ bool Thread::establishHandle(NewThreadContext& data, StackAllocationSpecificatio
     unsigned initFlag = stackSize ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0;
     HANDLE threadHandle = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, stackSize, wtfThreadEntryPoint, &data, initFlag, &threadIdentifier));
     if (!threadHandle) {
-        LOG_ERROR("Failed to create thread at entry point %p with data %p: %ld", wtfThreadEntryPoint, &data, errno);
+        LOG_ERROR("Failed to create thread at entry point %p with data %p: %d", wtfThreadEntryPoint, &data, errno);
         return false;
     }
     establishPlatformSpecificHandle(threadHandle, threadIdentifier);
@@ -250,6 +264,23 @@ size_t Thread::getRegisters(const ThreadSuspendLocker&, PlatformRegisters& regis
     return sizeof(CONTEXT);
 }
 
+void Thread::barrierInstructionCache()
+{
+#if CPU(X86_64)
+    // x86-64 has a coherent instruction cache, so there is nothing to publish.
+    return;
+#else
+    RELEASE_ASSERT_WITH_MESSAGE(this != &Thread::currentSingleton(), "We do not support synchronizing the current thread itself.");
+    // Suspending and then resuming the thread makes the OS run a context-synchronizing return on it
+    // as it resumes, so it re-fetches modified instructions. suspend()/resume() need the
+    // thread-suspend lock, so take it here rather than requiring it from the caller.
+    ThreadSuspendLocker locker;
+    if (!suspend(locker))
+        return;
+    resume(locker);
+#endif
+}
+
 Thread& Thread::initializeCurrentTLS()
 {
     // Not a WTF-created thread, ThreadIdentifier is not established yet.
@@ -282,7 +313,7 @@ void Thread::establishPlatformSpecificHandle(HANDLE handle, ThreadIdentifier thr
 struct Thread::ThreadHolder {
     ~ThreadHolder()
     {
-        if (pas_process_is_shutting_down())
+        if (processIsShuttingDown())
             return;
 
         if (thread) {

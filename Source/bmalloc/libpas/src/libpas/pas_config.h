@@ -67,6 +67,10 @@
 #undef LIBPAS_ENABLED
 #define LIBPAS_ENABLED 0
 #endif
+
+#if BENABLE(LIBPAS) && !PAS_CPU(ADDRESS64)
+#error "libpas requires a 64-bit address space"
+#endif
 #endif
 
 #if ((PAS_OS(DARWIN) && __PAS_ARM64 && !__PAS_ARM64E) || PAS_PLATFORM(PLAYSTATION)) && defined(NDEBUG)
@@ -81,12 +85,15 @@
 #endif
 
 #define PAS_ARM64 __PAS_ARM64
-#define PAS_ARM32 __PAS_ARM32
 
 #define PAS_ARM __PAS_ARM
 
 #ifndef PAS_ENABLE_MTE
-#define PAS_ENABLE_MTE (PAS_USE_APPLE_INTERNAL_SDK && __PAS_ARM64E && !PAS_ASAN_ENABLED)
+#if PAS_USE_APPLE_INTERNAL_SDK && __PAS_ARM64E && !PAS_ASAN_ENABLED && !PAS_TSAN_ENABLED
+#define PAS_ENABLE_MTE 1
+#else
+#define PAS_ENABLE_MTE 0
+#endif
 #endif /* PAS_ENABLE_MTE */
 
 /* PAS_USE_SYMMETRIC_PAGE_ALLOCATION controls whether pas_page_malloc_commit /
@@ -173,4 +180,3 @@
 #endif
 
 #endif /* PAS_CONFIG_H */
-

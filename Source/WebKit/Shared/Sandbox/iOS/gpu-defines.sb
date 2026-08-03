@@ -359,6 +359,10 @@
         SYS_write_nocancel
         SYS_writev))
 
+(define (syscall-unix-allowed-with-telemetry)
+    (syscall-number
+        SYS_renameat))
+        
 (define (syscall-mach-allowed)
     (machtrap-number
         MSC__kernelrpc_mach_port_allocate_trap

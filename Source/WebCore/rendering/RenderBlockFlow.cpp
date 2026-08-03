@@ -58,6 +58,7 @@
 #include "RenderCounter.h"
 #include "RenderDeprecatedFlexibleBox.h"
 #include "RenderElementStyleInlines.h"
+#include "FlexFormattingUtils.h"
 #include "RenderFlexibleBox.h"
 #include "RenderInline.h"
 #include "RenderIterator.h"
@@ -148,7 +149,7 @@ RenderBlockFlow::MarginInfo::MarginInfo(const RenderBlockFlow& block, IgnoreScro
         if (block.borderAndPaddingAfter())
             return false;
         // FIXME: Check if all callsites are supposed to take scrollbar into account here.
-        return ignoreScrollbarForAfterMargin == IgnoreScrollbarForAfterMargin::Yes ? true : !block.scrollbarLogicalHeight();
+        return ignoreScrollbarForAfterMargin == IgnoreScrollbarForAfterMargin::Yes || !block.scrollbarLogicalHeight();
     };
     m_canCollapseMarginAfterWithChildren = canCollapseMarginAfterWithChildren();
 
@@ -557,7 +558,7 @@ void RenderBlockFlow::layoutBlock(RelayoutChildren relayoutChildren, LayoutUnit 
         return;
 
     auto isPaginated = [&] {
-        // FIXME: Grid calls into layout outside of regular layout phase (during preferred width computation).
+        // FIXME: RenderMarquee::computePosition may trigger layout by calling min/maxContentLogicalWidthContribution during didLayout.
         if (auto* layoutState = view().frameView().layoutContext().layoutState())
             return layoutState->isPaginated();
         return false;
@@ -777,9 +778,9 @@ static bool formattingContextRootIntrinsicLogicalWidthsDependOnOwnHeight(const R
         //    to the flex item's min and max cross size) and is considered definite."
         // In multi-line containers each line's cross size is driven by its own items, so the
         // container's preferred widths cannot depend on its own height through this mechanism.
-        if (flexBox->flexLayoutUtils().isMultiline())
+        if (FlexFormattingUtils::isMultiline(*flexBox))
             return false;
-        if (flexBox->flexLayoutUtils().hasStretchedFlexItemWithAspectRatio())
+        if (FlexFormattingUtils::hasStretchedFlexItemWithAspectRatio(*flexBox))
             return true;
     }
     return false;
@@ -2590,7 +2591,7 @@ void RenderBlockFlow::updateStylesForColumnChildren(const Style::ComputedStyle* 
 void RenderBlockFlow::styleWillChange(Style::Difference diff, const Style::ComputedStyle& newStyle)
 {
     const Style::ComputedStyle* oldStyle = hasInitializedStyle() ? &style() : nullptr;
-    s_canPropagateFloatIntoSibling = oldStyle ? !isFloatingOrOutOfFlowPositioned() && !avoidsFloats() : false;
+    s_canPropagateFloatIntoSibling = oldStyle && !isFloatingOrOutOfFlowPositioned() && !avoidsFloats();
 
     if (oldStyle) {
         auto oldPosition = oldStyle->position();
@@ -4048,12 +4049,12 @@ bool RenderBlockFlow::relayoutForPagination()
 
 bool RenderBlockFlow::hasContentfulInlineOrBlockLine() const
 {
-    return inlineLayout() ? inlineLayout()->hasContentfulInlineOrBlockLine() : false;
+    return inlineLayout() && inlineLayout()->hasContentfulInlineOrBlockLine();
 }
 
 bool RenderBlockFlow::hasContentfulInlineLine() const
 {
-    return inlineLayout() ? inlineLayout()->hasContentfulInlineLine() : false;
+    return inlineLayout() && inlineLayout()->hasContentfulInlineLine();
 }
 
 bool RenderBlockFlow::hasBlocksInInlineLayout() const
@@ -4409,7 +4410,7 @@ void RenderBlockFlow::layoutInlineContent(RelayoutChildren relayoutChildren, Lay
     auto& inlineLayout = *this->inlineLayout();
 
     ASSERT(containingBlock() || is<RenderView>(*this));
-    inlineLayout.updateFormattingContexGeometries(containingBlock() ? containingBlockLogicalWidthForContent() : LayoutUnit());
+    inlineLayout.updateFormattingContextGeometries(containingBlock() ? containingBlockLogicalWidthForContent() : LayoutUnit());
 
     auto marginInfo = MarginInfo { *this, MarginInfo::IgnoreScrollbarForAfterMargin::No };
     auto shouldForceFullLayout = relayoutChildren == RelayoutChildren::Yes || inlineContentStatus.hasDirtyInFlowBlockLevelElement ? LayoutIntegration::LineLayout::ForceFullLayout::Yes : LayoutIntegration::LineLayout::ForceFullLayout::No;
@@ -5030,19 +5031,26 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlockFlow::computeInlineIntrinsicLogical
             return false;
         };
         if (isInterlinearTypeAnnotation()) {
-            auto [annotationMinimumIntrinsicWidth, annotationMaximumIntrinsicWidth] = computeChildIntrinsicLogicalWidths(downcast<RenderBlock>(*child));
+            auto& annotationBox = downcast<RenderBlock>(*child);
+            auto [annotationMinContentInParentInlineAxis, annotationMaxContentInParentInlineAxis] = [&]() -> std::pair<LayoutUnit, LayoutUnit> {
+                if (writingMode().isOrthogonal(annotationBox.writingMode())) {
+                    auto intrinsicBlockSize = annotationBox.computeIntrinsicLogicalHeight();
+                    return { intrinsicBlockSize, intrinsicBlockSize };
+                }
+                return computeChildIntrinsicLogicalWidths(annotationBox);
+            }();
 
             if (!rubyBaseContentStack.isEmpty()) {
                 // Annotation box is always preceded by the associated ruby base.
                 // inlineMin/max only gets expanded if the annotation is wider than the base content is.
                 auto baseContent = rubyBaseContentStack.takeLast();
-                inlineMax += std::max(0.f, annotationMaximumIntrinsicWidth.ceilToFloat() - baseContent.maximumWidth);
+                inlineMax += std::max(0.f, annotationMaxContentInParentInlineAxis.ceilToFloat() - baseContent.maximumWidth);
                 if (baseContent.hasBreakingPositionAfter) {
                     // When base end has breaking position, the inlineMin value is already reset as we are not tracking the inline content for this "line" anymore.
                     // However the annotation still belows to the current "line" so we have to update the minLogicalWidth in case annotation is wider than the base content.
-                    minLogicalWidth += std::max(0.f, annotationMinimumIntrinsicWidth.ceilToFloat() - baseContent.minimumWidth);
+                    minLogicalWidth += std::max(0.f, annotationMinContentInParentInlineAxis.ceilToFloat() - baseContent.minimumWidth);
                 } else
-                    inlineMin += std::max(0.f, annotationMinimumIntrinsicWidth.ceilToFloat() - baseContent.minimumWidth);
+                    inlineMin += std::max(0.f, annotationMinContentInParentInlineAxis.ceilToFloat() - baseContent.minimumWidth);
             } else
                 ASSERT_NOT_REACHED();
             continue;
@@ -5074,12 +5082,19 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlockFlow::computeInlineIntrinsicLogical
 
             resetLineForForcedLineBreak();
 
-            auto [blockMinWidth, blocMaxWidth] = computeChildIntrinsicLogicalWidths(downcast<RenderBox>(*child));
+            auto& blockChild = downcast<RenderBox>(*child);
+            auto [blockChildMinContentInParentInlineAxis, blockChildMaxContentInParentInlineAxis] = [&]() -> std::pair<LayoutUnit, LayoutUnit> {
+                if (writingMode().isOrthogonal(blockChild.writingMode())) {
+                    auto intrinsicBlockSize = blockChild.computeIntrinsicLogicalHeight();
+                    return { intrinsicBlockSize, intrinsicBlockSize };
+                }
+                return computeChildIntrinsicLogicalWidths(blockChild);
+            }();
 
-            auto marginsInInlineDirection = marginIntrinsicLogicalWidthForChild(downcast<RenderBox>(*child));
+            auto marginsInInlineDirection = marginIntrinsicLogicalWidthForChild(blockChild);
 
-            minLogicalWidth = std::max(minLogicalWidth, blockMinWidth + marginsInInlineDirection);
-            maxLogicalWidth = std::max(maxLogicalWidth, blocMaxWidth + marginsInInlineDirection);
+            minLogicalWidth = std::max(minLogicalWidth, blockChildMinContentInParentInlineAxis + marginsInInlineDirection);
+            maxLogicalWidth = std::max(maxLogicalWidth, blockChildMaxContentInParentInlineAxis + marginsInInlineDirection);
             continue;
         }
 
@@ -5175,17 +5190,17 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlockFlow::computeInlineIntrinsicLogical
         if (!is<RenderInline>(*child) && !is<RenderText>(*child)) {
             // Case (2). Inline replaced boxes and floats.
             // Terminate the current line as far as minwidth is concerned.
-            LayoutUnit childMinContentLogicalWidth;
-            LayoutUnit childMaxContentLogicalWidth;
+            LayoutUnit childMinContentInParentInlineAxis;
+            LayoutUnit childMaxContentInParentInlineAxis;
             CheckedPtr box = dynamicDowncast<RenderBox>(*child);
-            if (box->isHorizontalWritingMode() != isHorizontalWritingMode()) {
-                auto extent = box->computeLogicalHeight(box->borderAndPaddingLogicalHeight(), 0).extent;
-                childMinContentLogicalWidth = extent;
-                childMaxContentLogicalWidth = extent;
+            if (writingMode().isOrthogonal(box->writingMode())) {
+                auto intrinsicBlockSize = box->computeIntrinsicLogicalHeight();
+                childMinContentInParentInlineAxis = intrinsicBlockSize;
+                childMaxContentInParentInlineAxis = intrinsicBlockSize;
             } else
-                std::tie(childMinContentLogicalWidth, childMaxContentLogicalWidth) = computeChildIntrinsicLogicalWidths(*box);
-            childMin += childMinContentLogicalWidth.ceilToFloat();
-            childMax += childMaxContentLogicalWidth.ceilToFloat();
+                std::tie(childMinContentInParentInlineAxis, childMaxContentInParentInlineAxis) = computeChildIntrinsicLogicalWidths(*box);
+            childMin += childMinContentInParentInlineAxis.ceilToFloat();
+            childMax += childMaxContentInParentInlineAxis.ceilToFloat();
 
             bool clearPreviousFloat = false;
             if (box->isFloating()) {

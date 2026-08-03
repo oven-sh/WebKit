@@ -22,7 +22,7 @@ struct SkSamplingOptions;
 
 class SkNullSurface : public SkSurface_Base {
 public:
-    SkNullSurface(int width, int height) : SkSurface_Base(width, height, nullptr) {}
+    SkNullSurface(int width, int height) : SkSurface_Base(width, height, nullptr, nullptr) {}
 
     // From SkSurface_Base.h
     SkSurface_Base::Type type() const override { return SkSurface_Base::Type::kNull; }

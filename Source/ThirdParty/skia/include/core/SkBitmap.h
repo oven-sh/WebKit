@@ -18,8 +18,8 @@
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkCPUTypes.h"
-#include "include/private/base/SkDebug.h"
+#include "include/private/SkCPUTypes.h"
+#include "include/private/SkDebug.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -205,7 +205,7 @@ public:
 
         @return  true if dimensions do not enclose area
     */
-    bool empty() const { return fPixmap.info().isEmpty(); }
+    bool empty() const { return fPixmap.isEmpty(); }
 
     /** Returns true if SkPixelRef is nullptr.
 

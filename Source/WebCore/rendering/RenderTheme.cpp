@@ -113,9 +113,9 @@ using namespace HTMLNames;
 RenderTheme::RenderTheme() = default;
 RenderTheme::~RenderTheme() = default;
 
-float RenderTheme::usedZoomForComputedStyle(const Style::ComputedStyle& renderStyle) const
+float RenderTheme::usedZoomForComputedStyle(const Style::ComputedStyle&) const
 {
-    return renderStyle.evaluationTimeZoomEnabled() ? 1.0f : renderStyle.usedZoom();
+    return 1.0f;
 }
 
 StyleAppearance RenderTheme::adjustAppearanceForElement(Style::ComputedStyle& style, const Style::ComputedStyle& parentStyle, const Element* element, StyleAppearance autoAppearance) const
@@ -1869,10 +1869,6 @@ Color RenderTheme::systemColor(CSSValueID cssValueId, OptionSet<StyleColorOption
 
     // Non-standard addition.
     case CSSValueActivebuttontext:
-        return Color::black;
-
-    // Non-standard addition.
-    case CSSValueText:
         return Color::black;
 
     // Non-standard addition.

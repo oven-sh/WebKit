@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 #include "include/core/SkString.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkTo.h"
 #include "modules/skunicode/include/SkUnicode.h"
-#include "src/base/SkBitmaskEnum.h"
-#include "src/base/SkTime.h"
+#include "src/core/SkBitmaskEnum.h"
+#include "src/core/SkTime.h"
 #include "tools/unicode_comparison/cpp/bridge.h"
 
 namespace {
@@ -69,9 +69,9 @@ int getFlags(int index) {
     if (gUnicode == nullptr) {
         SK_ABORT("Unicode object does not exist");
     } else if (gCodeUnitFlags.size() == 0) {
-        SK_ABORT("Unicode object is empty or not initialized\n");
+        SK_ABORT("Unicode object is empty or not initialized");
     } else if (index < 0 || index >= gCodeUnitFlags.size()) {
-        SK_ABORT("Index value %d outside of valid range [%d:%d)\n", index, 0, gCodeUnitFlags.size());
+        SK_ABORT("Index value %d outside of valid range [%d:%d)", index, 0, gCodeUnitFlags.size());
     }
     return gCodeUnitFlags[index];
 }

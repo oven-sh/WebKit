@@ -34,6 +34,7 @@
 #include <WebCore/AudioTrackClient.h>
 #include <WebCore/AutoplayEvent.h>
 #include <WebCore/CaptionUserPreferences.h>
+#include <WebCore/FindOptions.h>
 #include <WebCore/HTMLElement.h>
 #include <WebCore/HTMLMediaElementEnums.h>
 #include <WebCore/HTMLMediaElementIdentifier.h>
@@ -45,6 +46,7 @@
 #include <WebCore/MediaUniqueIdentifier.h>
 #include <WebCore/MessageTargetForTesting.h>
 #include <WebCore/PlatformDynamicRangeLimit.h>
+#include <WebCore/TextTrack.h>
 #include <WebCore/TextTrackClient.h>
 #include <WebCore/URLKeepingBlobAlive.h>
 #include <WebCore/VideoTrackClient.h>
@@ -393,6 +395,7 @@ public:
     bool shouldForceControlsDisplay() const;
 
     ExceptionOr<Ref<TextTrack>> addTextTrack(const AtomString& kind, const AtomString& label, const AtomString& language);
+    ExceptionOr<void> removeTextTrack(TextTrack&);
 
     AudioTrackList& ensureAudioTracks();
     TextTrackList& ensureTextTracks();
@@ -408,13 +411,17 @@ public:
     void addVideoTrack(Ref<VideoTrack>&&);
     void removeAudioTrack(AudioTrack&);
     void removeAudioTrack(TrackID);
-    void removeTextTrack(TextTrack&, bool scheduleEvent = true);
-    void removeTextTrack(TrackID, bool scheduleEvent = true);
+    enum class ScheduleEvent : bool { No, Yes };
+    bool removeTextTrack(TextTrack&, ScheduleEvent);
+    void removeTextTrack(TrackID, ScheduleEvent = ScheduleEvent::Yes);
     void removeVideoTrack(VideoTrack&);
     void removeVideoTrack(TrackID);
     void forgetResourceSpecificTracks();
     void closeCaptionTracksChanged();
     void notifyMediaPlayerOfTextTrackChanges();
+
+    Vector<MediaTime> findCueMatches(const String& target, FindOptions);
+    void clearFindCaptionTrack();
 
     virtual void didAddTextTrack(HTMLTrackElement&);
     virtual void didRemoveTextTrack(HTMLTrackElement&);
@@ -435,6 +442,10 @@ public:
     void configureTextTracks();
     void configureTextTrackGroup(const TrackGroup&);
     void configureMetadataTextTrackGroup(const TrackGroup&);
+
+    void updateFindCaptionTrack();
+    bool hasShowingFindSearchableTextTrackExcept(const TextTrack*) const;
+    RefPtr<TextTrack> bestFindCaptionTrack() const;
 
     void setSelectedTextTrack(TextTrack*);
 
@@ -823,6 +834,7 @@ protected:
 protected:
     // ActiveDOMObject
     void stop() override;
+    void suspend(ReasonForSuspension) override;
 
 private:
     friend class Internals;
@@ -842,7 +854,6 @@ private:
     void willStopBeingFullscreenElement() override;
 
     // ActiveDOMObject.
-    void suspend(ReasonForSuspension) override;
     void resume() override;
     bool virtualHasPendingActivity() const override;
 
@@ -1006,7 +1017,8 @@ private:
     void pauseInternal();
     void completePlayInternal();
 
-    void prepareForLoad();
+    enum class IsExplicitLoad : bool { No, Yes };
+    void prepareForLoad(IsExplicitLoad = IsExplicitLoad::No);
     void allowVideoRendering();
 
     bool processingMediaPlayerCallback() const { return m_processingMediaPlayerCallback > 0; }
@@ -1096,6 +1108,7 @@ private:
     void hardwareMutedStateDidChange(const AudioSession&) final;
 #endif
     void routingContextUIDDidChange(const AudioSession&) final;
+    void categoryDidChange(const AudioSession&) final;
 #endif
 
     bool NODELETE hasMediaSource() const;
@@ -1224,7 +1237,9 @@ private:
     TaskCancellationGroup m_periodicTimeupdateCancellationGroup;
     TaskCancellationGroup m_volumeRevertTaskCancellationGroup;
 
+    const Ref<NativePromiseRequest> m_playRequest;
     PlayPromiseVector m_pendingPlayPromises;
+    bool m_playPromiseSettlementGuaranteed { false };
 
     double m_requestedPlaybackRate { 1 };
     double m_reportedPlaybackRate { 1 };
@@ -1393,6 +1408,9 @@ private:
 
     struct CueData;
     std::unique_ptr<CueData> m_cueData;
+
+    RefPtr<TextTrack> m_findCaptionTrack;
+    std::optional<TextTrack::Mode> m_findCaptionTrackPreviousMode;
 
     int m_ignoreTrackDisplayUpdate { 0 };
 

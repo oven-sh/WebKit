@@ -76,6 +76,9 @@ WI.Frame = class Frame extends WI.Object
         this._mainResource = mainResource;
         this._mainResource._parentFrame = this;
 
+        this._domContentReadyEventTimestamp = NaN;
+        this._loadEventTimestamp = NaN;
+
         if (oldMainResource && this._mainResource !== oldMainResource)
             this._disassociateWithResource(oldMainResource);
 
@@ -108,16 +111,18 @@ WI.Frame = class Frame extends WI.Object
         this.dispatchEventToListeners(WI.Frame.Event.ProvisionalLoadStarted);
     }
 
-    commitProvisionalLoad(securityOrigin)
+    commitProvisionalLoad(name, securityOrigin)
     {
         console.assert(this._provisionalMainResource);
         console.assert(this._provisionalLoaderIdentifier);
         if (!this._provisionalLoaderIdentifier)
             return;
 
+        var oldName = this._name;
         var oldSecurityOrigin = this._securityOrigin;
         var oldMainResource = this._mainResource;
 
+        this._name = name || null;
         this._securityOrigin = securityOrigin || null;
         this._loaderIdentifier = this._provisionalLoaderIdentifier;
         this._mainResource = this._provisionalMainResource;
@@ -145,6 +150,9 @@ WI.Frame = class Frame extends WI.Object
 
         if (this._securityOrigin !== oldSecurityOrigin)
             this.dispatchEventToListeners(WI.Frame.Event.SecurityOriginDidChange, {oldSecurityOrigin});
+
+        if (this._name !== oldName)
+            this.dispatchEventToListeners(WI.Frame.Event.NameDidChange, {oldName});
     }
 
     clearProvisionalLoad(skipProvisionalLoadClearedEvent)
@@ -224,6 +232,10 @@ WI.Frame = class Frame extends WI.Object
 
     addExecutionContext(context)
     {
+        let pageExecutionContext = this._executionContextList.pageExecutionContext;
+        if (context.type === WI.ExecutionContext.Type.Normal && pageExecutionContext && context.id !== pageExecutionContext.id)
+            this.clearExecutionContexts();
+
         this._executionContextList.add(context);
 
         this.dispatchEventToListeners(WI.Frame.Event.ExecutionContextAdded, {context});
@@ -359,10 +371,10 @@ WI.Frame = class Frame extends WI.Object
 
     removeAllChildFrames()
     {
-        this._detachFromParentFrame();
-
-        for (let childFrame of this._childFrameCollection)
+        for (let childFrame of this._childFrameCollection) {
             childFrame.removeAllChildFrames();
+            childFrame._detachFromParentFrame();
+        }
 
         this._childFrameCollection.clear();
         this._childFrameIdentifierMap.clear();

@@ -39,11 +39,6 @@
 #include "GraphicsTypesGL.h"
 #endif
 
-namespace WTF {
-class MediaTime;
-class URL;
-}
-
 namespace WebCore {
 
 class FloatSize;
@@ -108,11 +103,7 @@ void deinitializeGStreamer();
 
 unsigned getGstPlayFlag(ASCIILiteral nick);
 uint64_t toGstUnsigned64Time(const WTF::MediaTime&);
-
-inline GstClockTime toGstClockTime(const WTF::MediaTime& mediaTime)
-{
-    return static_cast<GstClockTime>(toGstUnsigned64Time(mediaTime));
-}
+GstClockTime toGstClockTime(const WTF::MediaTime&);
 
 GstClockTime toGstClockTime(const Seconds&);
 WTF::MediaTime fromGstClockTime(GstClockTime);
@@ -324,14 +315,14 @@ GstClockTime webkitGstInitTime();
 PlatformVideoColorSpace videoColorSpaceFromCaps(const GstCaps*);
 PlatformVideoColorSpace videoColorSpaceFromInfo(const GstVideoInfo&);
 void fillVideoInfoColorimetryFromColorSpace(GstVideoInfo*, const PlatformVideoColorSpace&);
+GstVideoColorimetry colorimetryFromColorSpace(const PlatformVideoColorSpace&);
 
 void configureAudioDecoderForHarnessing(const GRefPtr<GstElement>&);
 void configureVideoDecoderForHarnessing(const GRefPtr<GstElement>&);
 
 void configureMediaStreamAudioDecoder(GstElement*);
 
-String configureMediaStreamVideoDecoder(GstElement*);
-void configureVideoRTPDepayloader(GstElement*);
+void configureMediaStreamVideoDecoder(GstElement*);
 
 bool gstObjectHasProperty(GstObject*, ASCIILiteral name);
 bool gstObjectHasProperty(GstElement*, ASCIILiteral name);
@@ -457,6 +448,8 @@ private:
     WTF::ThreadSafeWeakPtr<T> m_owner;
     PadProbeCallback m_callback;
 };
+
+bool enableMSEAdditionalPipelineDumps();
 
 } // namespace WebCore
 

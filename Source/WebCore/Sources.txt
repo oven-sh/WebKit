@@ -306,6 +306,7 @@ Modules/model-element/ModelPlayerAnimationState.cpp
 Modules/model-element/ModelPlayerClient.cpp
 Modules/model-element/ModelPlayerProvider.cpp
 Modules/model-element/PlaceholderModelPlayer.cpp
+Modules/model-element/SpatialPortalController.cpp
 Modules/model-element/dummy/DummyModelPlayer.cpp
 Modules/model-element/dummy/DummyModelPlayerProvider.cpp
 Modules/notifications/Notification.cpp
@@ -391,6 +392,7 @@ Modules/streams/StreamTeeUtilities.cpp
 Modules/streams/StreamTransferUtilities.cpp
 Modules/streams/TransformStream.cpp
 Modules/streams/WritableStream.cpp
+Modules/streams/WritableStreamDefaultWriter.cpp
 Modules/streams/WritableStreamSink.cpp
 Modules/url-pattern/URLPattern.cpp
 Modules/url-pattern/URLPatternCanonical.cpp
@@ -532,11 +534,13 @@ Modules/webtransport/WebTransportDatagramDuplexStream.cpp
 Modules/webtransport/WebTransportDatagramsWritable.cpp
 Modules/webtransport/WebTransportError.cpp
 Modules/webtransport/WebTransportReceiveStream.cpp
+Modules/webtransport/WebTransportReceiveStreamByteSource.cpp
 Modules/webtransport/WebTransportReceiveStreamSource.cpp
 Modules/webtransport/WebTransportSendGroup.cpp
 Modules/webtransport/WebTransportSendStream.cpp
 Modules/webtransport/WebTransportSendStreamSink.cpp
 Modules/webtransport/WebTransportSession.cpp
+Modules/webtransport/WebTransportWriter.cpp
 Modules/webtransport/WorkerWebTransportSession.cpp
 Modules/webxr/NavigatorWebXR.cpp
 Modules/webxr/WebGLOpaqueTexture.cpp
@@ -2003,9 +2007,8 @@ layout/formattingContexts/block/BlockMarginCollapse.cpp @header:RenderStyleGette
 layout/formattingContexts/block/PrecomputedBlockMarginCollapse.cpp @header:RenderStyleGetters
 layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingContext.cpp @header:RenderStyleGetters
 layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingQuirks.cpp
-layout/formattingContexts/flex/FlexFormattingContext.cpp @header:RenderStyleGetters
-layout/formattingContexts/flex/FlexFormattingUtils.cpp @header:RenderStyleGetters
-layout/formattingContexts/flex/FlexLayout.cpp @header:RenderStyleGetters
+layout/formattingContexts/flex/FlexFormattingContext.cpp @header:RenderStyleGetters @cost:4
+layout/formattingContexts/flex/FlexFormattingUtils.cpp @header:RenderStyleGetters @cost:4
 layout/formattingContexts/grid/GridFormattingContext.cpp @header:RenderStyleGetters
 layout/formattingContexts/grid/GridItemSizingFunctions.cpp
 layout/formattingContexts/grid/GridLayout.cpp @header:RenderStyleGetters
@@ -2051,6 +2054,7 @@ layout/integration/LayoutIntegrationCoverage.cpp @header:RenderStyleGetters
 layout/integration/grid/LayoutIntegrationGridCoverage.cpp @header:RenderStyleGetters
 layout/integration/LayoutIntegrationFormattingContextLayout.cpp @header:RenderStyleGetters
 layout/integration/LayoutIntegrationUtils.cpp
+layout/integration/flex/FlexIntegrationUtils.cpp @header:RenderStyleGetters
 layout/integration/flex/LayoutIntegrationFlexLayout.cpp @header:RenderStyleGetters
 layout/integration/grid/LayoutIntegrationGridLayout.cpp @header:RenderStyleGetters
 layout/integration/inline/InlineIteratorBox.cpp
@@ -2563,6 +2567,7 @@ platform/gamepad/GamepadProvider.cpp
 platform/graphics/AV1Utilities.cpp
 platform/graphics/AlphaPremultiplication.cpp
 platform/graphics/AnimationFrameRate.cpp
+platform/graphics/ArrayPixelBuffer.cpp
 platform/graphics/BezierUtilities.cpp
 platform/graphics/BifurcatedGraphicsContext.cpp
 platform/graphics/BitmapImage.cpp
@@ -2877,6 +2882,7 @@ platform/network/NetworkStateNotifier.cpp
 platform/network/NetworkStorageSession.cpp
 platform/network/ParsedContentRange.cpp
 platform/network/ParsedContentType.cpp
+platform/network/PendingStreamState.cpp
 platform/network/ProtectionSpaceBase.cpp
 platform/network/RFC7230.cpp
 platform/network/RFC8941.cpp
@@ -2926,13 +2932,13 @@ rendering/BorderShape.cpp @header:RenderStyleGetters @cost:5
 rendering/BreakablePositions.cpp
 rendering/CSSFilterRenderer.cpp @header:RenderStyleGetters @cost:6
 rendering/CaretRectComputation.cpp @header:RenderStyleGetters @cost:6
+rendering/ClipPathPaintScope.cpp
 rendering/ClipRect.cpp
 rendering/ContentfulPaintChecker.cpp
 rendering/CounterNode.cpp
 rendering/EllipsisBoxPainter.cpp @header:RenderStyleGetters @cost:5
 rendering/EventRegion.cpp @header:RenderStyleGetters @cost:5
 rendering/FixedTableLayout.cpp @header:RenderStyleGetters @cost:5
-rendering/FlexLayoutUtils.cpp @header:RenderStyleGetters @cost:4
 rendering/FloatingObjects.cpp @header:RenderStyleGetters @cost:5
 rendering/GlyphDisplayListCache.cpp @header:RenderStyleGetters @cost:5
 rendering/GlyphDisplayListCacheRemoval.cpp
@@ -2984,7 +2990,6 @@ rendering/RenderElement.cpp @header:RenderStyleGetters @cost:12
 rendering/RenderEmbeddedObject.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderFileUploadControl.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderFlexibleBox.cpp @header:RenderStyleGetters @cost:7
-rendering/RenderFlexLayout.cpp @header:RenderStyleGetters @cost:4
 rendering/RenderFragmentContainer.cpp @header:RenderStyleGetters @cost:6
 rendering/RenderFragmentContainerSet.cpp @header:RenderStyleGetters @cost:5
 rendering/RenderFragmentedFlow.cpp @header:RenderStyleGetters @cost:6
@@ -4142,7 +4147,6 @@ JSDataCue.cpp
 JSDataTransfer.cpp
 JSDataTransferItem.cpp
 JSDataTransferItemList.cpp
-JSDatagramsReadableMode.cpp
 JSDatabase.cpp
 JSDatabaseCallback.cpp
 JSDecompressionStream.cpp
@@ -4230,6 +4234,7 @@ JSFetchRequest.cpp
 JSFetchRequestCache.cpp
 JSFetchRequestCredentials.cpp
 JSFetchRequestDestination.cpp
+JSFetchRequestDuplex.cpp
 JSFetchRequestInit.cpp
 JSFetchRequestMode.cpp
 JSFetchRequestRedirect.cpp
@@ -4700,6 +4705,9 @@ JSOfflineAudioContext.cpp
 JSOfflineAudioContextOptions.cpp
 JSOffscreenCanvas.cpp
 JSOffscreenCanvasRenderingContext2D.cpp
+JSOpenID4VPMultisignedRequest.cpp
+JSOpenID4VPSignature.cpp
+JSOpenID4VPSignedRequest.cpp
 JSOptionalEffectTiming.cpp
 JSOpusEncoderConfig.cpp
 JSOrigin.cpp
@@ -5307,6 +5315,7 @@ JSWebTransportSendOptions.cpp
 JSWebTransportSendStream.cpp
 JSWebTransportSendStreamOptions.cpp
 JSWebTransportSendStreamStats.cpp
+JSWebTransportWriter.cpp
 JSWebXRBoundedReferenceSpace.cpp
 JSWebXRFrame.cpp
 JSWebXRHand.cpp

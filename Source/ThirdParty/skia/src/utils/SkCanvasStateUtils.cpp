@@ -17,9 +17,10 @@
 #include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkSize.h"
-#include "include/private/base/SkMalloc.h"
+#include "include/private/SkMalloc.h"
 #include "src/core/SkDevice.h"
 #include "src/core/SkWriter32.h"
+#include "src/partition_alloc/raw_ptr_exclusion.h"
 #include "src/utils/SkCanvasStack.h"
 
 #include <cstddef>
@@ -62,7 +63,8 @@ struct SkMCState {
     float matrix[9];
     // NOTE: this only works for non-antialiased clips
     int32_t clipRectCount;
-    ClipRect* clipRects;
+    // RAW_PTR_EXCLUSION: Part of a stable C ABI struct copied via raw memcpy.
+    RAW_PTR_EXCLUSION ClipRect* clipRects;
 };
 
 // NOTE: If you add more members, create a new subclass of SkCanvasState with a
@@ -77,9 +79,10 @@ struct SkCanvasLayerState {
 
     union {
         struct {
-            RasterConfig config; // pixel format: a value from RasterConfigs.
-            uint64_t rowBytes;   // Number of bytes from start of one line to next.
-            void* pixels;        // The pixels, all (height * rowBytes) of them.
+            RasterConfig config;  // pixel format: a value from RasterConfigs.
+            uint64_t rowBytes;    // Number of bytes from start of one line to next.
+            // RAW_PTR_EXCLUSION: Part of a stable C ABI struct inside a union.
+            RAW_PTR_EXCLUSION void* pixels;  // The pixels, all (height * rowBytes) of them.
         } raster;
         struct {
             int32_t textureID;
@@ -142,9 +145,12 @@ public:
     SkMCState mcState;
 
     int32_t layerCount;
-    SkCanvasLayerState* layers;
+    // RAW_PTR_EXCLUSION: Stable C ABI.
+    RAW_PTR_EXCLUSION SkCanvasLayerState* layers;
+
 private:
-    SkCanvas* originalCanvas;
+    // RAW_PTR_EXCLUSION: Stable C ABI.
+    RAW_PTR_EXCLUSION SkCanvas* originalCanvas;
     using INHERITED = SkCanvasState;
 };
 
@@ -183,7 +189,7 @@ SkCanvasState* SkCanvasStateUtils::CaptureCanvasState(SkCanvas* canvas) {
         return nullptr;
     }
 
-    std::unique_ptr<SkCanvasState_v1> canvasState(new SkCanvasState_v1(canvas));
+    auto canvasState = std::make_unique<SkCanvasState_v1>(canvas);
 
     setup_MC_state(&canvasState->mcState, canvas->getTotalMatrix(), canvas->getDeviceClipBounds());
 
@@ -288,7 +294,7 @@ make_canvas_from_canvas_layer(const SkCanvasLayerState& layerState) {
     SkASSERT(!bitmap.empty());
     SkASSERT(!bitmap.isNull());
 
-    std::unique_ptr<SkCanvas> canvas(new SkCanvas(bitmap));
+    auto canvas = std::make_unique<SkCanvas>(bitmap);
 
     // setup the matrix and clip
     setup_canvas_from_MC_state(layerState.mcState, canvas.get());
@@ -307,7 +313,7 @@ std::unique_ptr<SkCanvas> SkCanvasStateUtils::MakeFromCanvasState(const SkCanvas
         return nullptr;
     }
 
-    std::unique_ptr<SkCanvasStack> canvas(new SkCanvasStack(state->width, state->height));
+    auto canvas = std::make_unique<SkCanvasStack>(state->width, state->height);
 
     // setup the matrix and clip on the n-way canvas
     setup_canvas_from_MC_state(state_v1->mcState, canvas.get());

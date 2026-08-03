@@ -10,6 +10,7 @@
 #include "include/gpu/graphite/PrecompileContext.h"
 #include "include/gpu/graphite/precompile/Precompile.h"
 #include "include/gpu/graphite/precompile/PrecompileColorFilter.h"
+#include "include/private/SkLog.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/ContextUtils.h"
@@ -17,7 +18,6 @@
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
 #include "src/gpu/graphite/GraphicsPipelineHandle.h"
 #include "src/gpu/graphite/KeyContext.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/PipelineCreationTask.h"
 #include "src/gpu/graphite/PipelineData.h"
 #include "src/gpu/graphite/PrecompileContextPriv.h"
@@ -135,13 +135,13 @@ void Precompile(PrecompileContext* precompileContext,
 
             SkColorInfo ci(rpp.fDstCT, kPremul_SkAlphaType, rpp.fDstCS);
 
-            // The PipelineDataGatherer and FloatStorageManager are only used to accumulate uniform
-            // data. In the pre-compile case we don't need to record the uniform data but the
+            // The PipelineDataGatherer handles uniform data; the StorageBufferManager may handle
+            // mixed data. In the pre-compile case we don't need to record the uniform data but the
             // process of generating it is required to create the correct key.
-            FloatStorageManager floatStorageManager;
+            StorageBufferManager storageBufferManager;
             PipelineDataGatherer gatherer(Layout::kMetal);
             PaintParamsKeyBuilder builder(dict);
-            KeyContext keyContext(caps, &floatStorageManager, &builder, &gatherer, dict,
+            KeyContext keyContext(caps, &storageBufferManager, &builder, &gatherer, dict,
                                   rtEffectDict, ci);
 
             for (Coverage coverage : { Coverage::kNone, Coverage::kSingleChannel }) {
@@ -180,6 +180,7 @@ void Precompile(PrecompileContext* precompileContext,
                 // For color emoji text, shaders don't affect the final color
                 PaintOptions tmp = options;
                 tmp.setShaders({});
+                tmp.priv().setPrimitiveBlendMode(SkBlendMode::kDstIn);
 
                 // ARGB text doesn't emit coverage and always has a primitive blender
                 PrecompileCombinations(rendererProvider,

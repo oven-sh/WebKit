@@ -25,7 +25,7 @@
 
 WI.Script = class Script extends WI.SourceCode
 {
-    constructor(target, id, range, url, sourceType, injected, sourceURL, sourceMapURL)
+    constructor(target, id, range, url, sourceType, injected, sourceURL, sourceMapURL, parentFrame, displayName, requestId)
     {
         super(url);
 
@@ -35,12 +35,15 @@ WI.Script = class Script extends WI.SourceCode
         this._target = target;
         this._id = id || null;
         this._range = range || null;
-        this._sourceType = sourceType || WI.Script.SourceType.Program;
+        this._sourceType = sourceType;
         this._sourceURL = sourceURL || null;
         this._sourceMappingURL = sourceMapURL || null;
         this._injected = injected || false;
+        this._parentFrame = parentFrame || null;
+        this._displayName = displayName || null;
         this._dynamicallyAddedScriptElement = false;
         this._scriptSyntaxTree = null;
+        this._requestId = requestId || null;
 
         this._resource = this._resolveResource();
 
@@ -51,9 +54,10 @@ WI.Script = class Script extends WI.SourceCode
             console.assert(this._resource.isMainResource());
             let documentResource = this._resource;
             this._resource = null;
+            this._parentFrame ||= documentResource.parentFrame;
             this._dynamicallyAddedScriptElement = true;
-            documentResource.parentFrame.addExtraScript(this);
-            this._dynamicallyAddedScriptElementNumber = documentResource.parentFrame.extraScriptCollection.size;
+            this._parentFrame.addExtraScript(this);
+            this._dynamicallyAddedScriptElementNumber = this._parentFrame.extraScriptCollection.size;
         } else if (this._resource)
             this._resource.associateWithScript(this);
 
@@ -74,6 +78,17 @@ WI.Script = class Script extends WI.SourceCode
             WI.Script._uniqueDisplayNameNumbersForRootTargetMap.delete(target);
     }
 
+    static isWebAssembly(sourceCode)
+    {
+        if (sourceCode instanceof WI.SourceMapResource)
+            sourceCode = sourceCode.sourceMap.originalSourceCode;
+
+        if (sourceCode instanceof WI.Script)
+            return sourceCode.sourceType === WI.Script.SourceType.WebAssembly;
+
+        return sourceCode instanceof WI.Resource && (sourceCode.mimeTypeComponents.type === "application/wasm" || sourceCode.scripts.some((script) => WI.Script.isWebAssembly(script)));
+    }
+
     // Public
 
     get target() { return this._target; }
@@ -83,6 +98,8 @@ WI.Script = class Script extends WI.SourceCode
     get sourceURL() { return this._sourceURL; }
     get sourceMappingURL() { return this._sourceMappingURL; }
     get injected() { return this._injected; }
+    get parentFrame() { return this._parentFrame; }
+    get customName() { return this._displayName; }
 
     get contentIdentifier()
     {
@@ -108,7 +125,14 @@ WI.Script = class Script extends WI.SourceCode
 
     get mimeType()
     {
-        return this._resource ? this._resource.mimeType : "text/javascript";
+        return this._resource?.mimeType || this.syntheticMIMEType;
+    }
+
+    get syntheticMIMEType()
+    {
+        if (this._sourceType === WI.Script.SourceType.WebAssembly)
+            return "application/wasm";
+        return "text/javascript";
     }
 
     get isScript()
@@ -116,8 +140,19 @@ WI.Script = class Script extends WI.SourceCode
         return true;
     }
 
+    get supportsScriptBlackboxing()
+    {
+        // FIXME: Support blackboxing in WebAssembly.
+        if (this._sourceType === WI.Script.SourceType.WebAssembly)
+            return false;
+        return super.supportsScriptBlackboxing;
+    }
+
     get displayName()
     {
+        if (this._displayName)
+            return this._displayName;
+
         if (isWebInspectorBootstrapScript(this._sourceURL || this._url)) {
             console.assert(WI.NetworkManager.supportsBootstrapScript());
             return WI.UIString("Inspector Bootstrap Script");
@@ -178,6 +213,25 @@ WI.Script = class Script extends WI.SourceCode
         return this._resource;
     }
 
+    tryAssociateWithResource(resource)
+    {
+        console.assert(resource instanceof WI.Resource, resource);
+
+        if (this._resource)
+            return false;
+
+        if (this._resolveResource() !== resource)
+            return false;
+
+        this._resource = resource;
+        this._resource.associateWithScript(this);
+        for (let sourceMap of this.sourceMaps) {
+            if (!this._resource.sourceMaps.includes(sourceMap))
+                this._resource.addSourceMap(sourceMap);
+        }
+        return true;
+    }
+
     get scriptSyntaxTree()
     {
         return this._scriptSyntaxTree;
@@ -187,7 +241,7 @@ WI.Script = class Script extends WI.SourceCode
     {
         console.assert(target instanceof WI.Target, target);
 
-        return this._url === target.name;
+        return this._sourceType !== WI.Script.SourceType.WebAssembly && this._url === target.name;
     }
 
     isMainResource()
@@ -314,8 +368,60 @@ WI.Script = class Script extends WI.SourceCode
         if (!this._url)
             return null;
 
+        let resourceCollection = this._parentFrame?.resourceCollection || this._target?.resourceCollection;
+        if (resourceCollection) {
+            let hasMatchingScript = (resource) => resource.scripts.some((script) => script.sourceType === this._sourceType);
+            let isMatchingResource = (resource) => resource.url === this._url && resource.mimeTypeComponents.type === this.syntheticMIMEType;
+
+            if (this._requestId) {
+                let resource = WI.networkManager.resourceForRequestIdentifier(this._requestId);
+                if (resource && resourceCollection.has(resource) && isMatchingResource(resource))
+                    return hasMatchingScript(resource) ? null : resource;
+
+                for (resource of resourceCollection) {
+                    if (resource.requestIdentifier === this._requestId && isMatchingResource(resource))
+                        return hasMatchingScript(resource) ? null : resource;
+                }
+
+                let matchingResource = null;
+                for (resource of resourceCollection.resourcesForURL(this._url)) {
+                    if (resource.requestIdentifier)
+                        continue;
+                    if (!isMatchingResource(resource))
+                        continue;
+                    if (hasMatchingScript(resource))
+                        continue;
+                    if (matchingResource)
+                        return null;
+                    matchingResource = resource;
+                }
+                return matchingResource;
+            }
+
+            let matchingResource = null;
+            let foundMatchingResource = false;
+            for (let resource of resourceCollection.resourcesForURL(this._url)) {
+                if (!isMatchingResource(resource))
+                    continue;
+
+                foundMatchingResource = true;
+
+                if (hasMatchingScript(resource))
+                    continue;
+
+                if (matchingResource)
+                    return null;
+                matchingResource = resource;
+            }
+            if (foundMatchingResource)
+                return matchingResource;
+        }
+
+        if (this._requestId)
+            return null;
+
         let isOtherTarget = this._target && this._target !== WI.mainTarget;
-        let resolver = isOtherTarget ? this._target.resourceCollection : WI.networkManager;
+        let resolver = this._parentFrame || (isOtherTarget ? this._target.resourceCollection : WI.networkManager);
 
         let filters = [
             (item) => item.type === WI.Resource.Type.Document || item.type === WI.Resource.Type.Script,
@@ -377,9 +483,14 @@ WI.Script = class Script extends WI.SourceCode
     }
 };
 
+WI.Script.Event = {
+    ResourceChanged: "script-resource-changed",
+};
+
 WI.Script.SourceType = {
-    Program: "script-source-type-program",
-    Module: "script-source-type-module",
+    Program: "program",
+    Module: "module",
+    WebAssembly: "webassembly",
 };
 
 WI.Script.TypeIdentifier = "script";

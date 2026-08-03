@@ -10,8 +10,8 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPathBuilder.h"
-#include "include/private/base/SkTDArray.h"
-#include "src/base/SkRandom.h"
+#include "include/private/SkTDArray.h"
+#include "src/core/SkRandom.h"
 
 /**
  * This is a conversion of samplecode/SampleChart.cpp into a bench. It sure would be nice to be able
@@ -23,8 +23,8 @@ static void gen_data(SkScalar yAvg, SkScalar ySpread, int count,
                      SkRandom* random, SkTDArray<SkScalar>* dataPts) {
     dataPts->resize(count);
     for (int i = 0; i < count; ++i) {
-        (*dataPts)[i] = random->nextRangeScalar(yAvg - SkScalarHalf(ySpread),
-                                                yAvg + SkScalarHalf(ySpread));
+        (*dataPts)[i] = random->nextRangeScalar(yAvg - (ySpread / 2.f),
+                                                yAvg + (ySpread / 2.f));
     }
 }
 

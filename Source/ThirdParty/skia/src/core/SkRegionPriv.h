@@ -9,9 +9,9 @@
 #define SkRegionPriv_DEFINED
 
 #include "include/core/SkRegion.h"
-#include "include/private/base/SkMalloc.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkTo.h"
 
 #include <atomic>
 #include <functional>
@@ -37,9 +37,6 @@ static constexpr int SkRegion_kRunTypeSentinel = 0x7FFFFFFF;
 inline bool SkRegionValueIsSentinel(int32_t value) {
     return value == (int32_t)SkRegion_kRunTypeSentinel;
 }
-
-#define assert_sentinel(value, isSentinel) \
-    SkASSERT(SkRegionValueIsSentinel(value) == isSentinel)
 
 #ifdef SK_DEBUG
 // Given the first interval (just past the interval-count), compute the

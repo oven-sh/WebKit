@@ -437,6 +437,8 @@ private:
 
     void handleAutoFillButtonClick(WebCore::HTMLInputElement&) final;
 
+    void didCompleteAutofill(WebCore::HTMLInputElement&) final;
+
     void inputElementDidResignStrongPasswordAppearance(WebCore::HTMLInputElement&) final;
 
     void performSwitchHapticFeedback() final;
@@ -559,6 +561,10 @@ private:
     void saveSnapshotOfTextPlaceholderForAnimation(const WebCore::SimpleRange&);
 
     void clearAnimationsForActiveWritingToolsSession() final;
+
+    void showWritingToolsAffordance() final;
+
+    bool writingToolsAvailable() const final;
 
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
     void addTextEffectForID(const WTF::UUID&, WebCore::TextEffectData&&, RefPtr<WebCore::TextIndicator>&&, RefPtr<WebCore::TextIndicator>&&) final;

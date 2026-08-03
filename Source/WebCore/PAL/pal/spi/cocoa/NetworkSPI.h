@@ -102,11 +102,6 @@ void nw_parameters_set_traffic_class(nw_parameters_t, uint32_t traffic_class);
 
 OS_OBJECT_RETURNS_RETAINED nw_interface_t nw_path_copy_interface(nw_path_t);
 
-bool nw_settings_get_unified_http_enabled(void);
-#if HAVE(NWSETTINGS_UNIFIED_HTTP_WEBKIT)
-bool nw_settings_get_unified_http_enabled_webkit(void);
-#endif
-
 void nw_parameters_set_server_mode(nw_parameters_t, bool);
 OS_OBJECT_RETURNS_RETAINED nw_parameters_t nw_parameters_create_webtransport_http(nw_parameters_configure_protocol_block_t, nw_parameters_configure_protocol_block_t, nw_parameters_configure_protocol_block_t, nw_parameters_configure_protocol_block_t);
 OS_OBJECT_RETURNS_RETAINED nw_protocol_definition_t nw_protocol_copy_webtransport_definition(void);
@@ -147,6 +142,7 @@ void nw_connection_abort_writes(nw_connection_t, uint64_t);
 
 
 void nw_http_fields_access_value_by_name(nw_http_fields_t, const char*, NW_NOESCAPE nw_http_optional_string_accessor_t);
+OS_OBJECT_RETURNS_RETAINED sec_protocol_metadata_t nw_webtransport_metadata_copy_sec_protocol_metadata(nw_protocol_metadata_t);
 
 WTF_EXTERN_C_END
 

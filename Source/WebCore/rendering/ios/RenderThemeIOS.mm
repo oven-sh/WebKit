@@ -245,7 +245,7 @@ void RenderThemeIOS::adjustRadioStyle(Style::ComputedStyle& style, const Element
     style.setHeight(Style::PreferredSize::Fixed { size });
 
     auto usedZoom = style.usedZoomForLength();
-    auto radius = Style::LengthPercentage<CSS::NonnegativeUnzoomed>::Dimension { std::trunc(size / 2 / usedZoom.value) };
+    auto radius = Style::LengthPercentage<CSS::Nonnegative>::Dimension { std::trunc(size / 2 / usedZoom.value) };
     style.setBorderRadius({ radius, radius });
 }
 
@@ -392,7 +392,7 @@ static Style::PaddingEdge toTruncatedPaddingEdge(auto value)
 
 Style::PaddingBox RenderThemeIOS::platformPopupInternalPaddingBox(const Style::ComputedStyle& style) const
 {
-    const auto padding = Style::emToPx<float>(1, style);
+    const auto padding = Style::emToPxZoomed<float>(1, style);
 
     if (style.usedAppearance() == StyleAppearance::MenulistButton) {
         // FIXME: Reduce code duplication with toTruncatedPaddingEdge.
@@ -436,15 +436,15 @@ void RenderThemeIOS::adjustRoundBorderRadius(Style::ComputedStyle& style, Render
     auto unzoomedMinDimension = minDimension / usedZoom.value;
 
     if ((isAnyOf<RenderButton, RenderMenuList>(box)) && boxLogicalHeight >= largeButtonSize) {
-        auto largeButtonBorderRadius = Style::LengthPercentage<CSS::NonnegativeUnzoomed>::Dimension { unzoomedMinDimension * largeButtonBorderRadiusRatio };
+        auto largeButtonBorderRadius = Style::LengthPercentage<CSS::Nonnegative>::Dimension { unzoomedMinDimension * largeButtonBorderRadiusRatio };
         style.setBorderRadius({ largeButtonBorderRadius, largeButtonBorderRadius });
         return;
     }
 
     // FIXME: We should not be relying on border radius for the appearance of our controls <rdar://problem/7675493>.
     auto borderRadius = Style::BorderRadiusValue {
-        Style::LengthPercentage<CSS::NonnegativeUnzoomed>::Dimension { unzoomedMinDimension / 2 },
-        Style::LengthPercentage<CSS::NonnegativeUnzoomed>::Dimension { unzoomedBoxLogicalHeight / 2 },
+        Style::LengthPercentage<CSS::Nonnegative>::Dimension { unzoomedMinDimension / 2 },
+        Style::LengthPercentage<CSS::Nonnegative>::Dimension { unzoomedBoxLogicalHeight / 2 },
     };
     if (!style.writingMode().isHorizontal())
         borderRadius.transpose();
@@ -454,7 +454,8 @@ void RenderThemeIOS::adjustRoundBorderRadius(Style::ComputedStyle& style, Render
 
 static void applyCommonButtonPaddingToStyle(Style::ComputedStyle& style)
 {
-    auto edge = toTruncatedPaddingEdge(Style::emToPx<int>(0.5, style));
+    // FIXME: This should probably use the unzoomed Style::emToPx conversion. Like this, zoom is being applied twice. Once now, once at use time.
+    auto edge = toTruncatedPaddingEdge(Style::emToPxZoomed<int>(0.5, style));
 
     auto paddingBox = Style::PaddingBox { 0_css_px, edge, 0_css_px, edge };
     if (!style.writingMode().isHorizontal())
@@ -615,7 +616,7 @@ void RenderThemeIOS::paintMenuListButtonDecorations(const RenderBox& box, const 
         glyphPath.addBezierCurveTo({ 29.4179f, 71.8f }, { 30.541f, 72.3867f }, { 31.8593f, 72.3867 });
     }
 
-    auto emPixels = Style::emToPx<float>(1, style);
+    auto emPixels = Style::emToPxZoomed<float>(1, style);
     auto glyphScale = 0.65f * emPixels / glyphSize.width();
     glyphSize = glyphScale * glyphSize;
 
@@ -667,7 +668,7 @@ void RenderThemeIOS::adjustSliderTrackStyle(Style::ComputedStyle& style, const E
     RenderTheme::adjustSliderTrackStyle(style, element);
 
     // FIXME: We should not be relying on border radius for the appearance of our controls <rdar://problem/7675493>.
-    constexpr auto radius = Style::LengthPercentage<CSS::NonnegativeUnzoomed>::Dimension { defaultTrackRadius };
+    constexpr auto radius = Style::LengthPercentage<CSS::Nonnegative>::Dimension { defaultTrackRadius };
     style.setBorderRadius({ radius, radius });
 }
 
@@ -973,7 +974,8 @@ void RenderThemeIOS::adjustButtonStyle(Style::ComputedStyle& style, const Elemen
 
     // Set padding: 0 1.0em; on buttons.
 
-    auto edge = toTruncatedPaddingEdge(Style::emToPx<int>(1, style));
+    // FIXME: This should probably use the unzoomed Style::emToPx conversion. Like this, zoom is being applied twice. Once now, once at use time.
+    auto edge = toTruncatedPaddingEdge(Style::emToPxZoomed<int>(1, style));
 
     auto paddingBox = Style::PaddingBox { 0_css_px, edge, 0_css_px, edge };
     if (!style.writingMode().isHorizontal())
@@ -1923,7 +1925,8 @@ void RenderThemeIOS::adjustSearchFieldDecorationPartStyle(Style::ComputedStyle& 
     constexpr auto searchFieldDecorationEmSize = 1.0f;
     constexpr auto searchFieldDecorationMargin = 4_css_px;
 
-    auto size = Style::PreferredSize::Fixed { Style::emToPx<float>(searchFieldDecorationEmSize, style) };
+    // FIXME: This should probably use the unzoomed Style::emToPx conversion. Like this, zoom is being applied twice. Once now, once at use time.
+    auto size = Style::PreferredSize::Fixed { Style::emToPxZoomed<float>(searchFieldDecorationEmSize, style) };
 
     style.setWidth(size);
     style.setHeight(size);

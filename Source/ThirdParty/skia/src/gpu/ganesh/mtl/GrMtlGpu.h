@@ -9,7 +9,7 @@
 #define GrMtlGpu_DEFINED
 
 #include "include/gpu/ganesh/mtl/GrMtlBackendContext.h"
-#include "include/private/base/SkDeque.h"
+#include "include/private/SkDeque.h"
 #include "src/gpu/ganesh/mtl/GrMtlTypesPriv.h"
 
 #include "src/gpu/ganesh/GrGpu.h"
@@ -58,8 +58,6 @@ public:
         kForce_SyncQueue,
         kSkip_SyncQueue
     };
-
-    void deleteBackendTexture(const GrBackendTexture&) override;
 
     bool compile(const GrProgramDesc&, const GrProgramInfo&) override;
 
@@ -141,6 +139,8 @@ private:
                                                       const GrBackendFormat&,
                                                       skgpu::Mipmapped,
                                                       GrProtected) override;
+
+    void onDeleteBackendTexture(const GrBackendTexture&) override;
 
     bool onUpdateCompressedBackendTexture(const GrBackendTexture&,
                                           sk_sp<skgpu::RefCntedCallback> finishedCallback,

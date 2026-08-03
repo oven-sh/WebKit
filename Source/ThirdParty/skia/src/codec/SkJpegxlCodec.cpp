@@ -16,9 +16,9 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkEncodedInfo.h"
-#include "include/private/base/SkTFitsIn.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkTFitsIn.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
 #include "modules/skcms/skcms.h"
 #include "src/codec/SkCodecPriv.h"
 #include "src/codec/SkFrameHolder.h"
@@ -64,9 +64,9 @@ public:
     bool fSeenAllFrames = false;
     std::vector<Frame> fFrames;
     int fLastProcessedFrame = SkCodec::kNoFrame;
-    void* fDst;
-    size_t fPixelShift;
-    size_t fRowBytes;
+    void* fDst = nullptr;
+    size_t fPixelShift = 0;
+    size_t fRowBytes = 0;
     SkColorType fDstColorType;
 
 protected:
@@ -164,8 +164,7 @@ std::unique_ptr<SkCodec> SkJpegxlCodec::MakeFromStream(std::unique_ptr<SkStream>
 
     size_t iccSize = 0;
     // TODO(eustas): format field is currently ignored by decoder.
-    status = JxlDecoderGetICCProfileSize(
-        dec, /* format = */ nullptr, JXL_COLOR_PROFILE_TARGET_DATA, &iccSize);
+    status = JxlDecoderGetICCProfileSize(dec, JXL_COLOR_PROFILE_TARGET_DATA, &iccSize);
     if (status != JXL_DEC_SUCCESS) {
         // Likely incompatible colorspace.
         iccSize = 0;
@@ -173,9 +172,7 @@ std::unique_ptr<SkCodec> SkJpegxlCodec::MakeFromStream(std::unique_ptr<SkStream>
     std::unique_ptr<SkCodecs::ColorProfile> profile;
     if (iccSize) {
         auto icc = SkData::MakeUninitialized(iccSize);
-        // TODO(eustas): format field is currently ignored by decoder.
         status = JxlDecoderGetColorAsICCProfile(dec,
-                                                /* format = */ nullptr,
                                                 JXL_COLOR_PROFILE_TARGET_DATA,
                                                 reinterpret_cast<uint8_t*>(icc->writable_data()),
                                                 iccSize);
@@ -209,7 +206,7 @@ SkCodec::Result SkJpegxlCodec::onGetPixels(const SkImageInfo& dstInfo, void* dst
     auto* dec = codec.fDecoder.get();
     JxlDecoderStatus status;
 
-    if ((codec.fLastProcessedFrame >= index) || (codec.fLastProcessedFrame = SkCodec::kNoFrame)) {
+    if ((codec.fLastProcessedFrame >= index) || (codec.fLastProcessedFrame == SkCodec::kNoFrame)) {
         codec.fLastProcessedFrame = SkCodec::kNoFrame;
         JxlDecoderRewind(dec);
         status = JxlDecoderSubscribeEvents(dec, JXL_DEC_FRAME | JXL_DEC_FULL_IMAGE);

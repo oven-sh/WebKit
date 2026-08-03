@@ -460,6 +460,26 @@ void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) con
         if (shouldComputeEnclosingLayerID)
             computeEnclosingLayerID(result, selection);
     }
+
+    // When the selection is in a cross-origin subframe, the rects above are in this frame's local
+    // root-view coordinates. Offset them by the frame's origin within the top-level page (pushed from
+    // the parent process) so they're in main-frame coordinates, and UIKit reads the correct location
+    // synchronously without a UI-process round-trip.
+    if (auto& remoteFrameOffset = m_remoteFrameOffsetInMainFrame; !remoteFrameOffset.isZero()) {
+        auto offset = toIntSize(remoteFrameOffset);
+        auto moveGeometries = [&](Vector<SelectionGeometry>& geometries) {
+            for (auto& geometry : geometries)
+                geometry.move(offset.width(), offset.height());
+        };
+        visualData.caretRectAtStart.move(offset);
+        visualData.caretRectAtEnd.move(offset);
+        visualData.selectionClipRect.move(offset);
+        visualData.editableRootBounds.move(offset);
+        visualData.markedTextCaretRectAtStart.move(offset);
+        visualData.markedTextCaretRectAtEnd.move(offset);
+        moveGeometries(visualData.selectionGeometries);
+        moveGeometries(visualData.markedTextRects);
+    }
 }
 
 void WebPage::platformWillPerformEditingCommand()
@@ -722,14 +742,13 @@ void WebPage::getSelectionContext(CompletionHandler<void(const String&, const St
     completionHandler(selectedText, textBefore, textAfter);
 }
     
-void WebPage::updateRemotePageAccessibilityOffset(WebCore::FrameIdentifier, WebCore::IntPoint offset)
+void WebPage::updateRemotePageOffsetInMainFrame(WebCore::FrameIdentifier, WebCore::IntPoint offset)
 {
-#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
-    // With local frame support, position data is sent from the UI process in frameScreenPosition.
-    UNUSED_PARAM(offset);
-#else
-    [protect(accessibilityRemoteObject()) setRemoteFrameOffset:offset];
-#endif
+    // Store the offset unconditionally (even when accessibility is not active) so that
+    // remoteFrameOffsetInMainFrame() returns it for both accessibility and selection; the latter is
+    // used by getPlatformEditorStateCommon() to convert selection rects to main-frame coordinates in
+    // the web process.
+    m_remoteFrameOffsetInMainFrame = offset;
 }
 
 static RetainPtr<NSDictionary> createAccessibillityTokenDictionary(WebCore::AccessibilityRemoteToken elementToken)
@@ -772,9 +791,9 @@ void WebPage::getDataSelectionForPasteboard(const String, CompletionHandler<void
     completionHandler({ });
 }
 
-WebCore::IntPoint WebPage::accessibilityRemoteFrameOffset()
+WebCore::IntPoint WebPage::remoteFrameOffsetInMainFrame()
 {
-    return [m_mockAccessibilityElement accessibilityRemoteFrameOffset];
+    return m_remoteFrameOffsetInMainFrame;
 }
 
 bool WebPage::platformCanHandleRequest(const WebCore::ResourceRequest& request)
@@ -896,54 +915,6 @@ void WebPage::attemptSyntheticClick(const IntPoint& point, OptionSet<WebEventMod
         completeSyntheticClick(std::nullopt, *nodeRespondingToClick, adjustedPoint, modifiers, WebCore::SyntheticClickType::OneFingerTap);
     else
         handleSyntheticClick(std::nullopt, *nodeRespondingToClick, adjustedPoint, modifiers);
-}
-
-static RefPtr<LocalDOMWindow> windowWithDoubleClickEventListener(RefPtr<LocalFrame> frame)
-{
-    if (!frame)
-        return nullptr;
-
-    RefPtr window = frame->window();
-    if (!window || !window->hasEventListeners(WebCore::eventNames().dblclickEvent))
-        return nullptr;
-
-    return window;
-}
-
-void WebPage::handleDoubleTapForDoubleClickAtPoint(const IntPoint& point, OptionSet<WebEventModifier> modifiers, TransactionID lastLayerTreeTransactionId)
-{
-    FloatPoint adjustedPoint;
-    RefPtr localMainFrame = protect(*m_page)->localMainFrame();
-    RefPtr nodeRespondingToDoubleClick = localMainFrame ? localMainFrame->nodeRespondingToDoubleClickEvent(point, adjustedPoint) : nullptr;
-
-    RefPtr windowListeningToDoubleClickEvents = windowWithDoubleClickEventListener(localMainFrame);
-
-    if (!nodeRespondingToDoubleClick && !windowListeningToDoubleClickEvents)
-        return;
-
-    RefPtr<LocalFrame> frameRespondingToDoubleClick;
-    if (nodeRespondingToDoubleClick)
-        frameRespondingToDoubleClick = nodeRespondingToDoubleClick->document().frame();
-    else if (windowListeningToDoubleClickEvents) {
-        RefPtr document = windowListeningToDoubleClickEvents->documentIfLocal();
-        frameRespondingToDoubleClick = document ? document->frame() : nullptr;
-    }
-
-    if (!frameRespondingToDoubleClick)
-        return;
-
-    auto firstTransactionID = WebFrame::fromCoreFrame(*frameRespondingToDoubleClick)->firstLayerTreeTransactionIDAfterDidCommitLoad();
-    if (!firstTransactionID || lastLayerTreeTransactionId.lessThanSameProcess(*firstTransactionID))
-        return;
-
-    SetForScope userIsInteractingChange { m_userIsInteracting, true };
-
-    auto platformModifiers = platform(modifiers);
-    auto roundedAdjustedPoint = roundedIntPoint(adjustedPoint);
-    frameRespondingToDoubleClick->eventHandler().handleMousePressEvent(PlatformMouseEvent(roundedAdjustedPoint, roundedAdjustedPoint, MouseButton::Left, PlatformEvent::Type::MousePressed, 2, platformModifiers, MonotonicTime::now(), 0, WebCore::SyntheticClickType::OneFingerTap, WebCore::MouseEventInputSource::UserDriven));
-    if (m_isClosed)
-        return;
-    frameRespondingToDoubleClick->eventHandler().handleMouseReleaseEvent(PlatformMouseEvent(roundedAdjustedPoint, roundedAdjustedPoint, MouseButton::Left, PlatformEvent::Type::MouseReleased, 2, platformModifiers, MonotonicTime::now(), 0, WebCore::SyntheticClickType::OneFingerTap, WebCore::MouseEventInputSource::UserDriven));
 }
 
 void WebPage::requestFocusedElementInformation(CompletionHandler<void(const std::optional<FocusedElementInformation>&)>&& completionHandler)
@@ -3734,7 +3705,7 @@ void WebPage::updateVisibleContentRects(const VisibleContentRectUpdateInfo& visi
                 setCorePageScaleFactor(scaleFromUIProcess.value(), scrollPosition, m_isInStableState);
 
             hasSetPageScale = true;
-            send(Messages::WebPageProxy::PageScaleFactorDidChange(scaleFromUIProcess.value()));
+            send(Messages::WebPageProxy::DidSetPageScaleFactor(scaleFromUIProcess.value()));
         }
 
         if (!hasSetPageScale && m_isInStableState && shouldSetCorePageScale)

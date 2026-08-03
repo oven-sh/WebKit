@@ -33,6 +33,7 @@
 #import "ImageAdapter.h"
 #import "Logging.h"
 #import "MediaPlayer.h"
+#import "MediaSessionManagerClient.h"
 #import "MediaStrategy.h"
 #import "NowPlayingInfo.h"
 #import "Page.h"
@@ -90,7 +91,7 @@ Ref<MediaSessionManagerCocoa> MediaSessionManagerCocoa::create(PageIdentifier pa
 }
 #endif // !PLATFORM(MAC)
 
-MediaSessionManagerCocoa::MediaSessionManagerCocoa(PageIdentifier pageIdentifier)
+MediaSessionManagerCocoa::MediaSessionManagerCocoa(std::optional<PageIdentifier> pageIdentifier)
     : PlatformMediaSessionManager(pageIdentifier)
     , m_nowPlayingManager(hasPlatformStrategies() ? platformStrategies()->mediaStrategy()->createNowPlayingManager() : nullptr)
     , m_nowPlayingUpdateTimer(RunLoop::mainSingleton(), "MediaSessionManagerCocoa::NowPlayingUpdateTimer"_s, this, &MediaSessionManagerCocoa::updateNowPlayingInfo)
@@ -313,8 +314,7 @@ void MediaSessionManagerCocoa::removeSession(PlatformMediaSessionInterface& sess
 
     if (session.isActiveNowPlayingSession()) {
         session.setActiveNowPlayingSession(false);
-        if (RefPtr page = Page::fromPageIdentifier(pageIdentifier()))
-            page->hasActiveNowPlayingSessionChanged();
+        client().hasActiveNowPlayingSessionChanged(&session);
     }
 
     if (hasNoSession()) {
@@ -525,8 +525,7 @@ void MediaSessionManagerCocoa::updateActiveNowPlayingSession(RefPtr<PlatformMedi
     });
 
     if (activeSessionChanged) {
-        if (RefPtr page = Page::fromPageIdentifier(pageIdentifier()))
-            page->hasActiveNowPlayingSessionChanged();
+        client().hasActiveNowPlayingSessionChanged(activeNowPlayingSession.get());
 
         adjustNowPlayingUpdateInterval();
     }

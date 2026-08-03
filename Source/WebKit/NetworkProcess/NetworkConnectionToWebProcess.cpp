@@ -124,10 +124,6 @@
 #include <WebCore/ResourceMonitorThrottlerHolder.h>
 #endif
 
-#if USE(LIBRICE)
-#include "RiceBackendMessages.h"
-#endif
-
 #define CONNECTION_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [webProcessIdentifier=%" PRIu64 "] NetworkConnectionToWebProcess::" fmt, this, this->webProcessIdentifier().toUInt64(), ##__VA_ARGS__)
 #define CONNECTION_RELEASE_LOG_ERROR(channel, fmt, ...) RELEASE_LOG_ERROR(channel, "%p - [webProcessIdentifier=%" PRIu64 "] NetworkConnectionToWebProcess::" fmt, this, this->webProcessIdentifier().toUInt64(), ##__VA_ARGS__)
 
@@ -336,15 +332,6 @@ bool NetworkConnectionToWebProcess::dispatchMessage(IPC::Connection& connection,
         return true;
     }
 
-#if USE(LIBRICE)
-    if (decoder.messageReceiverName() == Messages::RiceBackend::messageReceiverName()) {
-        MESSAGE_CHECK_WITH_RETURN_VALUE(RiceBackendIdentifier::isValidIdentifier(decoder.destinationID()), false);
-        if (RefPtr iceBackend = m_gstreamerIceBackends.get(RiceBackendIdentifier(decoder.destinationID())))
-            iceBackend->didReceiveMessage(connection, decoder);
-        return true;
-    }
-#endif
-
     if (decoder.messageReceiverName() == Messages::WebSWServerConnection::messageReceiverName()) {
         if (RefPtr swConnection = m_swConnection.get())
             swConnection->didReceiveMessage(connection, decoder);
@@ -467,15 +454,6 @@ bool NetworkConnectionToWebProcess::dispatchSyncMessage(IPC::Connection& connect
     if (decoder.messageReceiverName() == Messages::IPCTester::messageReceiverName()) {
         m_ipcTester->didReceiveSyncMessage(connection, decoder, reply);
         return true;
-    }
-#endif
-
-#if USE(LIBRICE)
-    if (decoder.messageReceiverName() == Messages::RiceBackend::messageReceiverName()) {
-        if (RefPtr iceBackend = m_gstreamerIceBackends.get(RiceBackendIdentifier(decoder.destinationID()))) {
-            iceBackend->didReceiveSyncMessage(connection, decoder, reply);
-            return true;
-        }
     }
 #endif
 
@@ -1842,9 +1820,21 @@ void NetworkConnectionToWebProcess::takeAllMessagesForPort(const MessagePortIden
 {
     CheckedRef registry = m_networkProcess->messagePortChannelRegistry();
     RefPtr channel = registry->existingChannelContainingPort(port);
-    MESSAGE_CHECK_COMPLETION(channel, callback({ }, std::nullopt));
-    // A WebContent process may only receive messages for ports entangled to it.
-    MESSAGE_CHECK_COMPLETION(channel->processForPort(port) == m_webProcessIdentifier, callback({ }, std::nullopt));
+
+    // The channel may have been closed, or the port may have been disentangled (e.g. mid-transfer to
+    // another process), concurrently with this request. This commonly happens while a worker process is
+    // being torn down and relaunched, when a takeAllMessagesForPort() may have already been dispatched
+    // from a worker thread. Such races are benign, so return no messages rather than treating the
+    // message as invalid and terminating the sending WebContent process.
+    std::optional<WebCore::ProcessIdentifier> entangledProcess;
+    if (channel)
+        entangledProcess = channel->processForPort(port);
+    if (!entangledProcess)
+        return callback({ }, std::nullopt);
+
+    // A WebContent process may only receive messages for ports entangled to it. A request for a port
+    // currently entangled to a *different* process indicates a misbehaving process and is treated as invalid.
+    MESSAGE_CHECK_COMPLETION(*entangledProcess == m_webProcessIdentifier, callback({ }, std::nullopt));
 
     registry->takeAllMessagesForPort(port, [this, protectedThis = Ref { *this }, callback = WTF::move(callback)](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& deliveryCallback) mutable {
         // Now that the receiving process has been authenticated and is about to take possession,
@@ -2034,28 +2024,6 @@ void NetworkConnectionToWebProcess::destroyWebTransportSession(WebTransportSessi
 {
     m_networkTransportSessions.remove(identifier);
 }
-
-#if USE(LIBRICE)
-void NetworkConnectionToWebProcess::initializeRiceBackend(WebPageProxyIdentifier&& pageID, CompletionHandler<void(std::optional<RiceBackendIdentifier>)>&& completionHandler)
-{
-    RiceBackend::initialize(*this, WTF::move(pageID), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](RefPtr<RiceBackend>&& backend) mutable {
-        RefPtr protectedThis = weakThis.get();
-        if (!backend || !protectedThis)
-            return completionHandler(std::nullopt);
-
-        auto identifier = backend->identifier();
-        ASSERT(!protectedThis->m_gstreamerIceBackends.contains(identifier));
-        protectedThis->m_gstreamerIceBackends.set(identifier, backend.releaseNonNull());
-        completionHandler(identifier);
-    });
-}
-
-void NetworkConnectionToWebProcess::destroyRiceBackend(RiceBackendIdentifier identifier)
-{
-    ASSERT(m_gstreamerIceBackends.contains(identifier));
-    m_gstreamerIceBackends.remove(identifier);
-}
-#endif
 
 void NetworkConnectionToWebProcess::clearFrameLoadRecordsForStorageAccess(WebCore::FrameIdentifier frameID)
 {

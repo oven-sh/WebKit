@@ -17,20 +17,21 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
+#include "include/core/SkStrikeRef.h"
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkUTF.h"
-#include "src/base/SkZip.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkFontPriv.h"
 #include "src/core/SkGlyph.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkPaintDefaults.h"
 #include "src/core/SkStrike.h"
 #include "src/core/SkStrikeSpec.h"
+#include "src/core/SkUTF.h"
+#include "src/core/SkZip.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -235,6 +236,12 @@ static inline SkRect scale_pos(SkRect r, SkScalar s) {
         r.fLeft * s, r.fTop * s, r.fRight * s, r.fBottom * s,
     };
 }
+
+SkStrikeRef SkFont::makeStrikeRef() const {
+    auto [strikeSpec, strikeToSourceScale] = SkStrikeSpec::MakeCanonicalized(*this);
+    return SkStrikeRef(strikeSpec.findOrCreateStrike(), strikeToSourceScale);
+}
+
 void SkFont::getWidthsBounds(SkSpan<const SkGlyphID> glyphIDs,
                              SkSpan<SkScalar> widths,
                              SkSpan<SkRect> bounds,

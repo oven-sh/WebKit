@@ -6,6 +6,7 @@
  */
 
 #include "dm/DMSrcSink.h"
+
 #include "include/codec/SkAndroidCodec.h"
 #include "include/codec/SkCodec.h"
 #include "include/codec/SkPixmapUtils.h"
@@ -29,7 +30,7 @@
 #include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
-#include "include/private/base/SkTLogic.h"
+#include "include/private/SkTLogic.h"
 #include "include/private/chromium/GrDeferredDisplayList.h"
 #include "include/private/chromium/GrSurfaceCharacterization.h"
 #include "include/utils/SkNullCanvas.h"
@@ -37,18 +38,18 @@
 #include "modules/skcms/skcms.h"
 #include "modules/skottie/utils/SkottieUtils.h"
 #include "modules/skshaper/utils/FactoryHelpers.h"
-#include "src/base/SkAutoMalloc.h"
-#include "src/base/SkRandom.h"
-#include "src/base/SkTLazy.h"
 #include "src/codec/SkCodecImageGenerator.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/core/SkImageInfoPriv.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkPictureData.h"
 #include "src/core/SkPicturePriv.h"
+#include "src/core/SkRandom.h"
 #include "src/core/SkRecordCanvas.h"
 #include "src/core/SkRecordDraw.h"
 #include "src/core/SkSwizzlePriv.h"
+#include "src/core/SkTLazy.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrGpu.h"
@@ -57,9 +58,9 @@
 #include "src/utils/SkJSONWriter.h"
 #include "src/utils/SkMultiPictureDocumentPriv.h"
 #include "src/utils/SkOSPath.h"
-#include "tools/DeserialProcsUtils.h"
 #include "tools/EncodeUtils.h"
 #include "tools/GpuToolUtils.h"
+#include "tools/ProcsUtils.h"
 #include "tools/Resources.h"
 #include "tools/RuntimeBlendUtils.h"
 #include "tools/ToolUtils.h"
@@ -1174,7 +1175,7 @@ Result SKPSrc::draw(SkCanvas* canvas, GraphiteTestContext*) const {
 #endif
     };
 
-    SkDeserialProcs procs = ToolUtils::get_default_skp_deserial_procs();
+    SkDeserialProcs procs = ToolUtils::default_deserial_procs();
 
     // We override the default fImageDataProc set above
     procs.fImageDataProc =
@@ -1484,7 +1485,7 @@ Result MSKPSrc::draw(int i, SkCanvas* canvas, GraphiteTestContext*) const {
         if (!stream) {
             return Result::Fatal("Unable to open file: %s", fPath.c_str());
         }
-        SkDeserialProcs dprocs = ToolUtils::get_default_skp_deserial_procs();
+        SkDeserialProcs dprocs = ToolUtils::default_deserial_procs();
         if (!SkMultiPictureDocument::Read(stream.get(), &fPages[0], fPages.size(), &dprocs)) {
             return Result::Fatal("SkMultiPictureDocument reader failed on page %d: %s", i,
                                  fPath.c_str());
@@ -2090,34 +2091,6 @@ Result XPSSink::draw(const Src& src, SkBitmap*, SkWStream* dst, SkString*) const
 }
 #endif
 
-static SkSerialProcs serial_procs_using_png() {
-    static SkSerialProcs procs{.fImageProc = [](SkImage* img, void*) -> sk_sp<const SkData> {
-#if defined(SK_CODEC_ENCODES_PNG_WITH_LIBPNG)
-        return SkPngEncoder::Encode(as_IB(img)->directContext(), img, {});
-#elif defined(SK_CODEC_ENCODES_PNG_WITH_RUST)
-        return SkPngRustEncoder::Encode(as_IB(img)->directContext(), img, {});
-#else
-        // TODO: This catches SkImageEncoder_NDK (or other).
-        return SkPngEncoder::Encode(as_IB(img)->directContext(), img, {});
-#endif
-    }};
-    return procs;
-}
-
-static SkDeserialProcs deserial_procs_using_png() {
-    static SkDeserialProcs procs{.fImageDataProc = [](sk_sp<SkData> data,
-                                                      std::optional<SkAlphaType> alphaType,
-                                                      void*) -> sk_sp<SkImage> {
-#if defined(SK_CODEC_DECODES_PNG_WITH_RUST)
-        std::unique_ptr<SkStream> stream = SkMemoryStream::Make(data);
-        auto codec = SkPngRustDecoder::Decode(std::move(stream), nullptr, nullptr);
-#else
-        auto codec = SkPngDecoder::Decode(data, nullptr, nullptr);
-#endif
-        return SkCodecs::DeferredImage(std::move(codec), alphaType);
-    }};
-    return procs;
-}
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
@@ -2131,7 +2104,7 @@ Result SKPSink::draw(const Src& src, SkBitmap*, SkWStream* dst, SkString*) const
     if (!result.isOk()) {
         return result;
     }
-    SkSerialProcs procs = serial_procs_using_png();
+    SkSerialProcs procs = ToolUtils::default_serial_procs();
     recorder.finishRecordingAsPicture()->serialize(dst, &procs);
     return Result::Ok();
 }
@@ -2146,7 +2119,7 @@ Result DebugSink::draw(const Src& src, SkBitmap*, SkWStream* dst, SkString*) con
     }
     std::unique_ptr<SkCanvas> nullCanvas = SkMakeNullCanvas();
     UrlDataManager dataManager(SkString("data"));
-    SkJSONWriter writer(dst, SkJSONWriter::Mode::kPretty);
+    SkJSONWriter              writer(dst, ToolUtils::default_serial_procs(), SkJSONWriter::Mode::kPretty);
     writer.beginObject(); // root
     debugCanvas.toJSON(writer, dataManager, nullCanvas.get());
     writer.endObject(); // root
@@ -2725,8 +2698,8 @@ Result ViaSerialization::draw(
     }
     sk_sp<SkPicture> pic(recorder.finishRecordingAsPicture());
 
-    SkSerialProcs procs = serial_procs_using_png();
-    SkDeserialProcs dProcs = deserial_procs_using_png();
+    SkSerialProcs procs = ToolUtils::default_serial_procs();
+    SkDeserialProcs dProcs = ToolUtils::default_deserial_procs();
     // Serialize it and then deserialize it.
     sk_sp<SkPicture> deserialized = SkPicture::MakeFromData(pic->serialize(&procs).get(), &dProcs);
 

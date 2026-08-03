@@ -22,17 +22,7 @@
 
 struct WebCore::WebTransportConnectionStats {
     uint64_t bytesSent
-    uint64_t packetsSent
-    uint64_t bytesLost
-    uint64_t packetsLost
     uint64_t bytesReceived
-    uint64_t packetsReceived
-    double smoothedRtt
-    double rttVariation
-    double minRtt
-    WebCore::WebTransportDatagramStats datagrams
-    std::optional<uint64_t> estimatedSendRate
-    bool atSendCapacity
 }
 
 struct WebCore::WebTransportDatagramStats {
@@ -66,7 +56,7 @@ struct WebCore::WebTransportOptions {
     std::optional<uint16_t> anticipatedConcurrentIncomingUnidirectionalStreams
     std::optional<uint16_t> anticipatedConcurrentIncomingBidirectionalStreams
     Vector<String> protocols
-    std::optional<WebCore::DatagramsReadableMode> datagramsReadableMode;
+    std::optional<WebCore::ReadableStreamType> datagramsReadableType;
 };
 
 enum class WebCore::WebTransportCongestionControl : uint8_t {
@@ -81,7 +71,7 @@ enum class WebCore::WebTransportReliabilityMode : uint8_t {
     SupportsUnreliable
 };
 
-enum class WebCore::DatagramsReadableMode : uint8_t {
+enum class WebCore::ReadableStreamType : uint8_t {
     Bytes
 };
 

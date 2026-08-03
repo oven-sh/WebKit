@@ -43,6 +43,7 @@ private:
     void mouseUp(unsigned, double, WKEventModifiers, double, double, unsigned&) override;
     void mouseMoveTo(double, double, double, WKEventMouseButton, unsigned) override;
     void mouseScrollBy(int, int, double, double, double) override;
+    void sendWheelEvent(double, double, double, double, double, bool) override;
 
     void keyDown(WKStringRef, double, WKEventModifiers, unsigned) override;
     void rawKeyDown(WKStringRef, WKEventModifiers, unsigned) override;
@@ -59,6 +60,7 @@ private:
     void touchEnd(double) override;
     void touchCancel(double) override;
     void setTouchModifier(WKEventModifiers, bool);
+    void sendTouchEvent(int type, double time);
 
     struct TouchPoint {
         enum class State { Down, Up, Move, Cancel, Stationary };
@@ -70,8 +72,6 @@ private:
     };
 
     struct TouchPointContext;
-
-    std::function<bool(TouchPoint&)> pointProcessor(const TouchPointContext&);
 
     Vector<TouchPoint> m_touchPoints;
     unsigned m_touchModifiers { 0 };

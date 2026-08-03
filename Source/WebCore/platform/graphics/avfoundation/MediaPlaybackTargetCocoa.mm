@@ -30,10 +30,6 @@
 
 #import <pal/spi/cocoa/AVFoundationSPI.h>
 
-#if HAVE(AVROUTING_FRAMEWORK)
-#import <WebKitAdditions/MediaPlaybackTargetCocoaAdditions.mm>
-#endif
-
 #import <pal/cocoa/AVFoundationSoftLink.h>
 
 namespace WebCore {

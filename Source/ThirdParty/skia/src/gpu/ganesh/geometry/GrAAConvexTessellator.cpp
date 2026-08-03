@@ -11,10 +11,11 @@
 #include "include/core/SkPath.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTPin.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTPin.h"
 #include "src/core/SkPathPriv.h"
+#include "src/core/SkSafeMath.h"
 #include "src/gpu/ganesh/geometry/GrPathUtils.h"
 
 #include <algorithm>
@@ -404,6 +405,12 @@ bool GrAAConvexTessellator::extractFromPath(const SkMatrix& m, const SkPath& pat
         return false;
     }
 
+    SkSafeMath safe;
+    int indicesAllocation = safe.addInt(safe.mulInt(18, path.countPoints()), 6);
+    if (!safe.ok()) {
+        return false;
+    }
+
     // Outer ring: 3*numPts
     // Middle ring: numPts
     // Presumptive inner ring: numPts
@@ -411,7 +418,7 @@ bool GrAAConvexTessellator::extractFromPath(const SkMatrix& m, const SkPath& pat
     // Outer ring: 12*numPts
     // Middle ring: 0
     // Presumptive inner ring: 6*numPts + 6
-    fIndices.reserve(18*path.countPoints() + 6);
+    fIndices.reserve(indicesAllocation);
 
     // Reset the accumulated error for all the future lineTo() calls when iterating over the path.
     fAccumLinearError = 0.f;
@@ -611,7 +618,7 @@ void GrAAConvexTessellator::createOuterRing(const Ring& previousRing, SkScalar o
                         SkScalar dotProd = normal1.dot(normal2);
                         // The max is because this could go slightly negative if precision causes
                         // us to become slightly concave.
-                        SkScalar sinHalfAngleSq = std::max(SkScalarHalf(SK_Scalar1 + dotProd), 0.f);
+                        float sinHalfAngleSq = std::max((SK_Scalar1 + dotProd) / 2.f, 0.f);
                         SkScalar lengthSq = sk_ieee_float_divide(outsetSq, sinHalfAngleSq);
                         if (lengthSq > miterLimitSq) {
                             // just bevel it

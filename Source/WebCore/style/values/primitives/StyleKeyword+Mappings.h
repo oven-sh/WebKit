@@ -412,6 +412,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
 
+#define TYPE BaselineSource
+#define FOR_EACH(CASE) CASE(Auto) CASE(First) CASE(Last)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
 constexpr CSSValueID toCSSValueID(FillAttachment e)
 {
     switch (e) {
@@ -998,6 +1004,14 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
 
+#if ENABLE(SPATIAL_PORTAL)
+#define TYPE SpatialType
+#define FOR_EACH(CASE) CASE(None) CASE(Portal)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+#endif
+
 constexpr CSSValueID toCSSValueID(Style::TextAlign e)
 {
     switch (e) {
@@ -1411,7 +1425,7 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef FOR_EACH
 
 #define TYPE RubyOverhang
-#define FOR_EACH(CASE) CASE(Auto) CASE(None)
+#define FOR_EACH(CASE) CASE(Auto) CASE(Spaces)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH

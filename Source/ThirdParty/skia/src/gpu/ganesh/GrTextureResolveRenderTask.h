@@ -10,8 +10,8 @@
 
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrRenderTask.h"
@@ -43,6 +43,12 @@ private:
     }
 
     bool onExecute(GrOpFlushState*) override;
+
+    // addProxy() optimistically marks the proxy resolved/clean at recording time. If the flush
+    // is dropped before this task executes (or a per-target operation fails) we must restore the
+    // proxy's dirty state so a later flush will re-record the resolve.
+    bool requiresExplicitCleanup() const override { return true; }
+    void endFlush(GrDrawingManager*) override;
 
 #if defined(GPU_TEST_UTILS)
     const char* name() const final { return "TextureResolve"; }

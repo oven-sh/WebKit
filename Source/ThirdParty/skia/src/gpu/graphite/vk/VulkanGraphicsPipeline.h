@@ -11,7 +11,7 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSpan.h"
 #include "include/gpu/vk/VulkanTypes.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "src/gpu/Blend.h"
 #include "src/gpu/graphite/Attribute.h"
 #include "src/gpu/graphite/DrawTypes.h"
@@ -89,7 +89,7 @@ class VulkanGraphicsPipeline final : public GraphicsPipeline {
 public:
     inline static constexpr unsigned int kCombinedUniformIndex = 0; // Paint AND renderstep!
     inline static constexpr unsigned int kGradientBufferIndex = 1;
-    inline static constexpr unsigned int kNumUniformBuffers = 2;
+    inline static constexpr unsigned int kMaxNumUniformBuffers = 2;
 
     // For now, rigidly assign all descriptor types to be at statically-defined set indices.
     // TODO(b/274762935): Make the bindings and descriptor set organization more flexible.

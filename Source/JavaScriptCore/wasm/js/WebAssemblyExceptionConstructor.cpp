@@ -28,6 +28,8 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "BuiltinNames.h"
+#include "Interpreter.h"
 #include "IteratorOperations.h"
 #include "JITOpaqueByproducts.h"
 #include "JSCInlines.h"
@@ -75,9 +77,18 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyException, (JSGlobalObject* globa
     FixedVector<uint64_t> payload(values.size());
     for (unsigned i = 0; i < values.size(); ++i) {
         auto type = tagFunctionType.argumentType(i);
-        if (type.kind == Wasm::TypeKind::V128 || isExnref(type)) [[unlikely]]
+        if (type.kind() == Wasm::TypeKind::V128 || isExnref(type)) [[unlikely]]
             return throwVMTypeError(globalObject, scope, "WebAssembly.Exception constructor expects payload includes neither v128 nor exnref."_s);
         payload[i] = toWebAssemblyValue(globalObject, type, values.at(i));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+
+    bool traceStack = false;
+    JSValue optionsValue = callFrame->argument(2);
+    if (!optionsValue.isUndefined()) {
+        JSValue traceStackValue = optionsValue.get(globalObject, Identifier::fromString(vm, "traceStack"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        traceStack = traceStackValue.toBoolean(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
@@ -85,7 +96,15 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyException, (JSGlobalObject* globa
     Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, webAssemblyExceptionStructure, newTarget, callFrame->jsCallee());
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSWebAssemblyException::create(vm, structure, tag->tag(), WTF::move(payload))));
+    auto* exception = JSWebAssemblyException::create(vm, structure, tag->tag(), WTF::move(payload));
+    if (traceStack) {
+        Vector<StackFrame> stackTrace;
+        constexpr size_t framesToSkip = 1;
+        vm.interpreter.getStackTrace(exception, stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0));
+        exception->putDirect(vm, vm.propertyNames->builtinNames().stackPrivateName(), jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete));
+    }
+
+    return JSValue::encode(exception);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callJSWebAssemblyException, (JSGlobalObject* globalObject, CallFrame*))
@@ -109,7 +128,7 @@ Structure* WebAssemblyExceptionConstructor::createStructure(VM& vm, JSGlobalObje
 
 void WebAssemblyExceptionConstructor::finishCreation(VM& vm, WebAssemblyExceptionPrototype* prototype)
 {
-    Base::finishCreation(vm, 1, "Exception"_s, PropertyAdditionMode::WithoutStructureTransition);
+    Base::finishCreation(vm, 2, "Exception"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
 }
 

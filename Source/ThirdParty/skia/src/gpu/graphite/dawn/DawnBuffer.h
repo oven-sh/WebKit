@@ -11,8 +11,8 @@
 #include "webgpu/webgpu_cpp.h"  // NO_G3_REWRITE
 
 #include "include/core/SkRefCnt.h"
-#include "include/private/base/SingleOwner.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SingleOwner.h"
+#include "include/private/SkTArray.h"
 #include "src/gpu/RefCntedCallback.h"
 #include "src/gpu/graphite/Buffer.h"
 #include "src/gpu/graphite/dawn/DawnAsyncWait.h"
@@ -31,6 +31,9 @@ public:
     bool isUnmappable() const override;
 
     const wgpu::Buffer& dawnBuffer() const { return fBuffer; }
+
+    const wgpu::BindGroup* getCachedSingleBufferBindGroup(size_t bindingSize) const;
+    void addCachedSingleBufferBindGroup(wgpu::BindGroup, size_t bindingSize) const;
 
 private:
     DawnBuffer(const DawnSharedContext*,
@@ -60,6 +63,10 @@ private:
 
     // Ensure that only one thread can access fAsyncMapCallbacks.
     [[maybe_unused]] SingleOwner fSingleAsyncMapCallbacksOwner;
+
+    // By the time the command buffer requests a bind group, the provided Buffer pointer is const
+    // so this attribute must be mutable to avoid a const_cast.
+    mutable skia_private::TArray<std::pair<size_t, wgpu::BindGroup>> fCachedSingleBufferBindGroups;
 };
 
 } // namespace skgpu::graphite

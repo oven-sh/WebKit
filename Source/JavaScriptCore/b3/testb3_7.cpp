@@ -967,7 +967,6 @@ void testLoadBaseIndexShift2()
 
 void testLoadBaseIndexShift32()
 {
-#if CPU(ADDRESS64)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
@@ -987,15 +986,12 @@ void testLoadBaseIndexShift32()
     char* ptr = std::bit_cast<char*>(&value);
     for (unsigned i = 0; i < 10; ++i)
         CHECK_EQ(invoke<int32_t>(*code, ptr - (static_cast<intptr_t>(1) << static_cast<intptr_t>(32)) * i, i), 12341234);
-#endif
 }
 
 void testOptimizeMaterialization()
 {
     Procedure proc;
     if (proc.optLevel() < 2)
-        return;
-    if constexpr (is32Bit())
         return;
 
     BasicBlock* root = proc.addBlock();
@@ -1088,7 +1084,7 @@ void generateLoopNotBackwardsDominant(Procedure& proc, std::array<int, 100>& arr
                 loopHeader->appendNew<ConstPtrValue>(proc, Origin(), &array),
                 loopHeader->appendNew<Value>(
                     proc, Mul, Origin(),
-                    is32Bit() ? index : loopHeader->appendNew<Value>(proc, ZExt32, Origin(), index),
+                    loopHeader->appendNew<Value>(proc, ZExt32, Origin(), index),
                     loopHeader->appendNew<ConstPtrValue>(proc, Origin(), sizeof(int))))));
     loopHeader->setSuccessors(loopCall, loopFooter);
 
@@ -1635,8 +1631,7 @@ void testDepend32()
     Value* ptr = arguments[0];
     Value* first = root->appendNew<MemoryValue>(proc, Load, Int32, Origin(), ptr, 0);
     Value* depend = root->appendNew<Value>(proc, Depend, Origin(), first);
-    if constexpr (!is32Bit())
-        depend = root->appendNew<Value>(proc, ZExt32, Origin(), depend);
+    depend = root->appendNew<Value>(proc, ZExt32, Origin(), depend);
     Value* second = root->appendNew<MemoryValue>(
         proc, Load, Int32, Origin(),
         root->appendNew<Value>(
@@ -1652,7 +1647,7 @@ void testDepend32()
     values[1] = 0xbeef;
 
     auto code = compileProc(proc);
-    if (isARM64() || isARM_THUMB2())
+    if (isARM64())
         checkUsesInstruction(*code, "eor");
     else if (isX86()) {
         checkDoesNotUseInstruction(*code, "mfence");
@@ -1758,8 +1753,7 @@ void testWasmAddress()
     // Body
     Value* pointer = body->appendNew<Value>(proc, Mul, Origin(), indexPhi,
         body->appendNew<Const32Value>(proc, Origin(), sizeof(unsigned)));
-    if (!is32Bit())
-        pointer = body->appendNew<Value>(proc, ZExt32, Origin(), pointer);
+    pointer = body->appendNew<Value>(proc, ZExt32, Origin(), pointer);
     body->appendNew<MemoryValue>(proc, Store, Origin(), valueToStore,
         body->appendNew<WasmAddressValue>(proc, Origin(), pointer, pinnedGPR), 0);
     UpsilonValue* incUpsilon = body->appendNew<UpsilonValue>(proc, Origin(),
@@ -1798,8 +1792,7 @@ void testWasmAddressWithOffset()
     Value* offset = arguments[0];
     Value* valueToStore = arguments[1];
     Value* pointer = offset;
-    if (!is32Bit())
-        pointer = root->appendNew<Value>(proc, ZExt32, Origin(), offset);
+    pointer = root->appendNew<Value>(proc, ZExt32, Origin(), offset);
     root->appendNew<MemoryValue>(proc, Store8, Origin(), valueToStore, root->appendNew<WasmAddressValue>(proc, Origin(), pointer, pinnedGPR), 1);
     root->appendNewControlValue(proc, Return, Origin());
 
@@ -2210,10 +2203,8 @@ static void testSimpleTuplePairUnused(unsigned first, int64_t second)
     patchpoint->setGenerator([&] (CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.move(CCallHelpers::TrustedImm32(first), params[0].gpr());
-#if !CPU(ARM_THUMB2) // FIXME
         jit.move(CCallHelpers::TrustedImm64(second), params[1].gpr());
         jit.move64ToDouble(CCallHelpers::Imm64(std::bit_cast<uint64_t>(0.0)), params[2].fpr());
-#endif
     });
     Value* i32 = root->appendNew<Value>(proc, ZExt32, Origin(),
         root->appendNew<ExtractValue>(proc, Origin(), Int32, patchpoint, 0));
@@ -2234,9 +2225,7 @@ static void testSimpleTuplePairStack(unsigned first, int64_t second)
     patchpoint->setGenerator([&] (CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.move(CCallHelpers::TrustedImm32(first), params[0].gpr());
-#if !CPU(ARM_THUMB2) // FIXME
         jit.store64(CCallHelpers::TrustedImm64(second), CCallHelpers::Address(CCallHelpers::framePointerRegister, params[1].offsetFromFP()));
-#endif
     });
     Value* i32 = root->appendNew<Value>(proc, ZExt32, Origin(),
         root->appendNew<ExtractValue>(proc, Origin(), Int32, patchpoint, 0));
@@ -2314,9 +2303,7 @@ static void tailDupedTuplePair(unsigned first, double second)
     patchpoint->setGenerator([&] (CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.move(CCallHelpers::TrustedImm32(first), params[0].gpr());
-#if !CPU(ARM_THUMB2) // FIXME
         jit.store64(CCallHelpers::TrustedImm64(std::bit_cast<uint64_t>(second)), CCallHelpers::Address(CCallHelpers::framePointerRegister, params[1].offsetFromFP()));
-#endif
     });
     root->appendNew<VariableValue>(proc, Set, Origin(), var, patchpoint);
     root->appendNewControlValue(proc, Branch, Origin(), test, FrequentedBlock(truthy), FrequentedBlock(falsey));
@@ -2379,10 +2366,8 @@ static void tuplePairVariableLoop(unsigned first, uint64_t second)
             AllowMacroScratchRegisterUsage allowScratch(jit);
             CHECK(params[3].gpr() != params[0].gpr());
             CHECK(params[2].gpr() != params[0].gpr());
-#if !CPU(ARM_THUMB2) // FIXME
             jit.add64(CCallHelpers::TrustedImm32(1), params[3].gpr(), params[0].gpr());
             jit.store64(params[0].gpr(), CCallHelpers::Address(CCallHelpers::framePointerRegister, params[1].offsetFromFP()));
-#endif
 
             jit.move(params[2].gpr(), params[0].gpr());
             jit.urshift32(CCallHelpers::TrustedImm32(1), params[0].gpr());
@@ -4571,6 +4556,57 @@ void testVectorShrImmediate()
     testVectorShrImmediateForLane<uint64_t, int64_t>(SIMDLane::i64x2, SIMDSignMode::Signed, 32, 0xFFFFFFFF00000000ull);
     testVectorShrImmediateForLane<uint64_t, int64_t>(SIMDLane::i64x2, SIMDSignMode::Signed, 63, 0x8000000000000000ull);
 }
+
+// Verifies the B3ReduceStrength peephole that rewrites VectorZip{Lower,Higher}(x, zeroConstant)
+// into an unsigned VectorExtend{Low,High}(x): zip-with-zero interleaves each narrow lane with a
+// zero lane, which is exactly a zero-extension (uxtl / uxtl2). NarrowT/WideT are the source and
+// destination lane element types.
+template<typename NarrowT, typename WideT>
+static void testVectorZipZeroExtendForLane(SIMDLane narrowLane, bool high)
+{
+    if constexpr (!isARM64())
+        return;
+
+    alignas(16) v128_t vectors[2];
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<void*>(proc, root);
+    Value* address = arguments[0];
+    Value* input = root->appendNew<MemoryValue>(proc, Load, V128, Origin(), address);
+    Value* zero = root->appendNew<Const128Value>(proc, Origin(), vectorAllZeros());
+    B3::Opcode zipOp = high ? VectorZipHigher : VectorZipLower;
+    Value* result = root->appendNew<SIMDValue>(proc, Origin(), zipOp, B3::V128, narrowLane, SIMDSignMode::None, input, zero);
+    root->appendNew<MemoryValue>(proc, Store, Origin(), result, address, static_cast<int32_t>(sizeof(v128_t)));
+    root->appendNewControlValue(proc, Return, Origin());
+
+    auto code = compileProc(proc);
+
+    constexpr unsigned narrowLanes = sizeof(v128_t) / sizeof(NarrowT);
+    constexpr unsigned wideLanes = sizeof(v128_t) / sizeof(WideT);
+    for (unsigned i = 0; i < narrowLanes; ++i)
+        reinterpret_cast<NarrowT*>(&vectors[0])[i] = static_cast<NarrowT>(0x80 + i * 0x11);
+    invoke<void>(*code, vectors);
+
+    // Lower zips the low half of the input; higher zips the high half.
+    unsigned base = high ? wideLanes : 0;
+    for (unsigned i = 0; i < wideLanes; ++i) {
+        WideT expected = static_cast<WideT>(reinterpret_cast<NarrowT*>(&vectors[0])[base + i]);
+        CHECK(reinterpret_cast<WideT*>(&vectors[1])[i] == expected);
+    }
+}
+
+void testVectorZipWithZeroIsZeroExtend()
+{
+    if constexpr (!isARM64())
+        return;
+
+    for (bool high : { false, true }) {
+        testVectorZipZeroExtendForLane<uint8_t, uint16_t>(SIMDLane::i8x16, high);
+        testVectorZipZeroExtendForLane<uint16_t, uint32_t>(SIMDLane::i16x8, high);
+        testVectorZipZeroExtendForLane<uint32_t, uint64_t>(SIMDLane::i32x4, high);
+    }
+}
+
 // Helper: build a 3-child (binary) VectorSwizzle with the given byte pattern, verify result.
 static void testBinarySwizzlePattern(const char*, const uint8_t pattern[16], v128_t inputA, v128_t inputB, v128_t expected)
 {

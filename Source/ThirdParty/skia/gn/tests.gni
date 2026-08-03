@@ -32,6 +32,7 @@ tests_sources = [
   "$_tests/CanvasStateHelpers.h",
   "$_tests/CanvasStateTest.cpp",
   "$_tests/CanvasTest.cpp",
+  "$_tests/CappedHairlinesTest.cpp",
   "$_tests/CharToGlyphCache.cpp",
   "$_tests/ChecksumTest.cpp",
   "$_tests/ClipCubicTest.cpp",
@@ -59,6 +60,7 @@ tests_sources = [
   "$_tests/DequeTest.cpp",
   "$_tests/DescriptorTest.cpp",
   "$_tests/DeviceTest.cpp",
+  "$_tests/DirectMaskLimitTest.cpp",
   "$_tests/DiscardableMemoryPoolTest.cpp",
   "$_tests/DiscardableMemoryTest.cpp",
   "$_tests/DrawBitmapRectTest.cpp",
@@ -181,6 +183,7 @@ tests_sources = [
   "$_tests/RandomTest.cpp",
   "$_tests/RasterPipelineBuilderTest.cpp",
   "$_tests/RasterPipelineCodeGeneratorTest.cpp",
+  "$_tests/RawPtrTest.cpp",
   "$_tests/ReadPixelsTest.cpp",
   "$_tests/RecordDrawTest.cpp",
   "$_tests/RecordOptsTest.cpp",
@@ -335,6 +338,7 @@ graphite_tests_sources = [
   "$_tests/graphite/UpdateBackendTextureTest.cpp",
   "$_tests/graphite/UploadBufferManagerTest.cpp",
   "$_tests/graphite/VerticesPaddingTest.cpp",
+  "$_tests/graphite/crbug_513836996.cpp",
 ]
 
 precompile_tests_sources = [
@@ -358,8 +362,14 @@ precompile_tests_sources = [
 ]
 
 sparse_strips_test_sources = [
+  "$_tests/graphite/sparse_strips/ClipTest.cpp",
+  "$_tests/graphite/sparse_strips/CoverageTest.cpp",
+  "$_tests/graphite/sparse_strips/FlattenTest.cpp",
   "$_tests/graphite/sparse_strips/LUTTest.cpp",
   "$_tests/graphite/sparse_strips/PolylineTest.cpp",
+  "$_tests/graphite/sparse_strips/TileTestCases.cpp",
+  "$_tests/graphite/sparse_strips/TileTestCases.h",
+  "$_tests/graphite/sparse_strips/TilerTest.cpp",
 ]
 
 graphite_dawn_tests_sources = [ "$_tests/graphite/DawnBackendTextureTest.cpp" ]
@@ -478,6 +488,7 @@ ganesh_tests_sources = [
   "$_tests/GrTextBlobTest.cpp",
   "$_tests/GrTextureMipMapInvalidationTest.cpp",
   "$_tests/GrThreadSafeCacheTest.cpp",
+  "$_tests/GrUniqueProxyTest.cpp",
   "$_tests/LazyProxyTest.cpp",
   "$_tests/LazyStencilAttachmentTest.cpp",
   "$_tests/MatrixColorFilterTest.cpp",
@@ -501,7 +512,9 @@ ganesh_tests_sources = [
   "$_tests/Skbug12214.cpp",
   "$_tests/Skbug6653.cpp",
   "$_tests/SlugTest.cpp",
+  "$_tests/SmallPathRendererTest.cpp",
   "$_tests/SrcSrcOverBatchTest.cpp",
+  "$_tests/StencilClearTest.cpp",
   "$_tests/SurfaceDrawContextTest.cpp",
   "$_tests/SurfaceSemaphoreTest.cpp",
   "$_tests/TextBlobCacheTest.cpp",
@@ -513,6 +526,7 @@ ganesh_tests_sources = [
   "$_tests/VkBackendSurfaceTest.cpp",
   "$_tests/VkWrapTests.cpp",
   "$_tests/WrappedSurfaceCopyOnWriteTest.cpp",
+  "$_tests/crbug_500172224.cpp",
 ]
 
 ganesh_gl_tests_sources = [

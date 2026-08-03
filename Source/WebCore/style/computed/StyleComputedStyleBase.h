@@ -68,6 +68,7 @@ enum class ApplePayButtonStyle : uint8_t;
 enum class ApplePayButtonType : uint8_t;
 enum class AppleVisualEffect : uint8_t;
 enum class BackfaceVisibility : uint8_t;
+enum class BaselineSource : uint8_t;
 enum class BlendMode : uint8_t;
 enum class FlowDirection : uint8_t;
 enum class BlockStepAlign : uint8_t;
@@ -414,7 +415,7 @@ template<typename> struct Shadows;
 
 using Animations = CoordinatedValueList<Animation>;
 using BackgroundLayers = CoordinatedValueList<BackgroundLayer>;
-using BorderRadiusValue = MinimallySerializingSpaceSeparatedSize<LengthPercentage<CSS::NonnegativeUnzoomed>>;
+using BorderRadiusValue = MinimallySerializingSpaceSeparatedSize<LengthPercentage<CSS::Nonnegative>>;
 using BoxShadows = Shadows<BoxShadow>;
 using FlexGrow = Number<CSS::Nonnegative, float>;
 using FlexShrink = Number<CSS::Nonnegative, float>;
@@ -437,10 +438,10 @@ using TimelineTriggers = CoordinatedValueList<TimelineTrigger>;
 using TransformOriginX = PositionX;
 using TransformOriginXY = Position;
 using TransformOriginY = PositionY;
-using TransformOriginZ = Length<CSS::AllUnzoomed>;
+using TransformOriginZ = Length<>;
 using Transitions = CoordinatedValueList<Transition>;
 using ViewTimelines = CoordinatedValueList<ViewTimeline>;
-using WebkitBorderSpacing = Length<CSS::NonnegativeUnzoomed>;
+using WebkitBorderSpacing = Length<CSS::Nonnegative>;
 using WebkitBoxFlex = Number<CSS::All, float>;
 using WebkitBoxFlexGroup = Integer<CSS::Nonnegative>;
 using WebkitBoxOrdinalGroup = Integer<CSS::Positive>;
@@ -612,9 +613,6 @@ public:
     void addCustomPaintWatchProperty(const AtomString&);
 
     // MARK: - Zoom
-
-    inline bool evaluationTimeZoomEnabled() const;
-    inline void setEvaluationTimeZoomEnabled(bool);
 
     inline bool useSVGZoomRulesForLength() const;
     inline void setUseSVGZoomRulesForLength(bool);

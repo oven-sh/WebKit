@@ -14,9 +14,9 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkSpan.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkMacros.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkMacros.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkGeometry.h"
 #include "src/core/SkPathEnums.h"
 #include "src/core/SkPathPriv.h"
@@ -1430,7 +1430,7 @@ void SkStroke::setJoin(SkPaint::Join join) {
 void SkStroke::strokePath(const SkPath& src, SkPathBuilder* dst) const {
     SkASSERT(dst);
 
-    SkScalar radius = SkScalarHalf(fWidth);
+    float radius = fWidth / 2.f;
 
     if (radius <= 0) {
         return;
@@ -1585,7 +1585,7 @@ void SkStroke::strokeRect(const SkRect& origRect, SkPathBuilder* dst,
     SkASSERT(dst != nullptr);
     dst->reset();
 
-    SkScalar radius = SkScalarHalf(fWidth);
+    float radius = fWidth / 2.f;
     if (radius <= 0) {
         return;
     }

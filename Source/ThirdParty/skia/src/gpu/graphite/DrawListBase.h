@@ -9,10 +9,10 @@
 
 #include "include/gpu/graphite/GraphiteTypes.h"
 
-#include "include/private/base/SkDebug.h"
-#include "src/base/SkBlockAllocator.h"
-#include "src/base/SkEnumBitMask.h"
-#include "src/base/SkTBlockList.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkEnumBitMask.h"
+#include "src/core/SkBlockAllocator.h"
+#include "src/core/SkTBlockList.h"
 #include "src/gpu/graphite/ContextUtils.h"
 #include "src/gpu/graphite/DrawCommands.h"
 #include "src/gpu/graphite/DrawOrder.h"
@@ -35,7 +35,7 @@ class Geometry;
 class Renderer;
 class Recorder;
 
-struct Insertion;
+struct Layer;
 
 /**
  * The base interface for recording draw commands. DrawList implements the existing Graphite
@@ -51,7 +51,7 @@ public:
     DrawListBase() {}
     virtual ~DrawListBase() = default;
 
-    virtual std::pair<DrawParams*, Insertion> recordDraw(
+    virtual std::pair<DrawParams*, Layer*> recordDraw(
             const Renderer* renderer,
             const Transform& localToDevice,
             const Geometry& geometry,
@@ -62,7 +62,7 @@ public:
             BarrierType barrierBeforeDraws,
             PipelineDataGatherer* gatherer,
             const StrokeStyle* stroke,
-            const Insertion& latestInsertion) = 0;
+            Layer* latestInsertion) = 0;
 
     virtual std::unique_ptr<DrawPass> snapDrawPass(Recorder* recorder,
                                                    sk_sp<TextureProxy> target,

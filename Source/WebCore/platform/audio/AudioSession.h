@@ -27,10 +27,12 @@
 
 #if USE(AUDIO_SESSION)
 
+#include <WebCore/PlatformMediaSessionTypes.h>
 #include <memory>
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/AbstractThreadSafeRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/CompletionHandler.h>
+#include <wtf/NativePromise.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Observer.h>
@@ -46,30 +48,6 @@ class Logger;
 }
 
 namespace WebCore {
-
-enum class RouteSharingPolicy : uint8_t {
-    Default,
-    LongFormAudio,
-    Independent,
-    LongFormVideo
-};
-
-enum class AudioSessionCategory : uint8_t {
-    None,
-    AmbientSound,
-    SoloAmbientSound,
-    MediaPlayback,
-    RecordAudio,
-    PlayAndRecord,
-    AudioProcessing,
-};
-
-enum class AudioSessionMode : uint8_t {
-    // FIXME: This is not exhaustive.
-    Default,
-    VideoChat,
-    MoviePlayback,
-};
 
 enum class AudioSessionSoundStageSize : uint8_t {
     Automatic,
@@ -92,6 +70,7 @@ public:
     virtual void bufferSizeDidChange(const AudioSession&) { }
     virtual void sampleRateDidChange(const AudioSession&) { }
     virtual void routingContextUIDDidChange(const AudioSession&) { }
+    virtual void categoryDidChange(const AudioSession&) { }
 };
 
 class WEBCORE_EXPORT AudioSession : public AbstractThreadSafeRefCountedAndCanMakeWeakPtr {
@@ -104,6 +83,7 @@ public:
 
     static bool NODELETE enableMediaPlayback();
 
+    using SetActivePromise = GenericPromise;
     using ChangedObserver = WTF::Observer<void(AudioSession&)>;
     static void addAudioSessionChangedObserver(const ChangedObserver&);
 
@@ -126,7 +106,7 @@ public:
     virtual size_t numberOfOutputChannels() const;
     virtual size_t maximumNumberOfOutputChannels() const;
 
-    bool tryToSetActive(bool);
+    Ref<SetActivePromise> tryToSetActive(bool);
 
     virtual size_t preferredBufferSize() const;
     virtual void setPreferredBufferSize(size_t);
@@ -176,7 +156,7 @@ protected:
     friend class NeverDestroyed<AudioSession>;
     AudioSession();
 
-    virtual bool tryToSetActiveInternal(bool);
+    virtual Ref<SetActivePromise> tryToSetActiveInternal(bool);
     void setActive(bool);
     void activeStateChanged();
 

@@ -59,7 +59,7 @@ option(SHOW_BINDINGS_GENERATION_PROGRESS "Show progress of generating bindings" 
 #       parallelism win.
 function(GENERATE_BINDINGS target)
     set(options)
-    set(oneValueArgs OUTPUT_SOURCE BASE_DIR FEATURES DESTINATION GENERATOR SUPPLEMENTAL_DEPFILE)
+    set(oneValueArgs OUTPUT_SOURCE BASE_DIR FEATURES DESTINATION GENERATOR SUPPLEMENTAL_DEPFILE INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE)
     set(multiValueArgs INPUT_FILES SUPPLEMENTAL_IDL_FILES PP_INPUT_FILES INCLUDED_FILES PP_EXTRA_OUTPUT PP_EXTRA_ARGS EXTRA_OUTPUT)
     cmake_parse_arguments(arg "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     set(binding_generator ${WEBCORE_DIR}/bindings/scripts/generate-bindings-all.pl)
@@ -130,6 +130,9 @@ function(GENERATE_BINDINGS target)
         --idlAttributesFile ${idl_attributes_file}
         --ignoreStandaloneConstructorAttributes
     )
+    if (WEBKIT_PLATFORM_FEATURE_DEFINES_FILE)
+        list(APPEND args --defines-file ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE})
+    endif ()
     if (arg_SUPPLEMENTAL_DEPFILE)
         list(APPEND args --supplementalDependencyFile ${arg_SUPPLEMENTAL_DEPFILE})
     endif ()
@@ -153,6 +156,9 @@ function(GENERATE_BINDINGS target)
         # Settings can be removed also which requires regeneration.
         ${WTF_WEB_PREFERENCES}
     )
+    if (WEBKIT_PLATFORM_FEATURE_DEFINES_FILE)
+        list(APPEND common_generator_dependencies ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE})
+    endif ()
     if (EXISTS ${WEBCORE_DIR}/bindings/scripts/CodeGenerator${arg_GENERATOR}.pm)
         list(APPEND common_generator_dependencies ${WEBCORE_DIR}/bindings/scripts/CodeGenerator${arg_GENERATOR}.pm)
     endif ()
@@ -220,6 +226,20 @@ function(GENERATE_BINDINGS target)
         BYPRODUCTS ${_byproducts}
         ${_uses_terminal})
     add_custom_target(${target} DEPENDS ${_stamp_file})
+
+    if (arg_INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE)
+        add_custom_command(
+            OUTPUT ${arg_INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE}
+            COMMAND ${PERL_EXECUTABLE} ${WEBCORE_DIR}/bindings/scripts/combine-inspector-native-function-parameters.pl --idlFilesList ${included_idl_files_list} --output ${arg_INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE}
+            DEPENDS
+                ${_stamp_file}
+                ${WEBCORE_DIR}/bindings/scripts/combine-inspector-native-function-parameters.pl
+                ${included_idl_files_list}
+            WORKING_DIRECTORY ${arg_BASE_DIR}
+            COMMENT "Combine Web Inspector native function parameters (${target})"
+            VERBATIM)
+        add_custom_target(${target}-inspector-native-function-parameters DEPENDS ${arg_INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE})
+    endif ()
 endfunction()
 
 

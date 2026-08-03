@@ -247,7 +247,10 @@ void TestRunner::notifyDone()
     auto& injectedBundle = InjectedBundle::singleton();
     if (!injectedBundle.isTestRunning())
         return;
-    if (!postSynchronousMessageReturningBoolean("ResolveNotifyDone"))
+    // The UI process replies true when this came from the main-frame process; then the injected bundle
+    // completes notifyDone() locally (deferring while loading, as without site isolation). Otherwise the UI
+    // process routes the dump to the process that owns the main frame.
+    if (!postSynchronousPageMessageReturningBoolean("ResolveNotifyDone"))
         return;
     if (!injectedBundle.page())
         return;
@@ -259,7 +262,8 @@ void TestRunner::forceImmediateCompletion()
     auto& injectedBundle = InjectedBundle::singleton();
     if (!injectedBundle.isTestRunning())
         return;
-    if (!postSynchronousMessageReturningBoolean("ResolveForceImmediateCompletion"))
+    // Reply true when this came from the main-frame process; otherwise the UI process routes the dump.
+    if (!postSynchronousPageMessageReturningBoolean("ResolveForceImmediateCompletion"))
         return;
     if (!injectedBundle.page())
         return;

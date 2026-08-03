@@ -32,6 +32,8 @@
 #include <WebCore/HTTPHeaderMap.h>
 #include <WebCore/InspectorBackendClient.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
+#include <utility>
+#include <wtf/Expected.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -99,7 +101,9 @@ public:
 
     void enableNetworkInstrumentation();
     void disableNetworkInstrumentation();
-    void getResponseBody(WebCore::ResourceLoaderIdentifier, CompletionHandler<void(String content, bool base64Encoded, String errorString)>&&);
+    void getResponseBody(WebCore::ResourceLoaderIdentifier, CompletionHandler<void(Expected<std::pair<String, bool>, String>&&)>&&);
+    void getSerializedCertificate(WebCore::ResourceLoaderIdentifier, CompletionHandler<void(Expected<String, String>&&)>&&);
+    void loadResource(WebCore::FrameIdentifier, const String& url, CompletionHandler<void(Expected<std::tuple<String, String, int>, String>&&)>&&);
 
     void setExtraHTTPHeaders(WebCore::HTTPHeaderMap&&);
     void setResourceCachingDisabled(bool);
@@ -107,6 +111,7 @@ public:
     void enablePageInstrumentation();
     void disablePageInstrumentation();
     void getFrameResourceData(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>>&&)>&&);
+    void getFrameResourceContent(WebCore::FrameIdentifier, String url, CompletionHandler<void(String content, bool base64Encoded, String errorString)>&&);
 
     void searchInRequest(WebCore::ResourceLoaderIdentifier, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);
     void searchInFrameResource(WebCore::FrameIdentifier, const String& url, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);

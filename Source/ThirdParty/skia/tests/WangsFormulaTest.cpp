@@ -10,9 +10,9 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkTypes.h"
-#include "src/base/SkRandom.h"
-#include "src/base/SkVx.h"
 #include "src/core/SkGeometry.h"
+#include "src/core/SkRandom.h"
+#include "src/core/SkVx.h"
 #include "src/gpu/tessellate/Tessellation.h"
 #include "src/gpu/tessellate/WangsFormula.h"
 #include "tests/Test.h"
@@ -576,6 +576,14 @@ DEF_TEST(wangs_formula_nextlog2, r) {
         REPORTER_ASSERT(r, wangs_formula::nextlog2(pow2 + epsilon) == i + 1);
         REPORTER_ASSERT(r, wangs_formula::nextlog2(pow2 - epsilon) == i);
     }
+
+    REPORTER_ASSERT(r, wangs_formula::nextlog64(0.0f) == 0);
+    REPORTER_ASSERT(r, wangs_formula::nextlog64(1.0f) == 0);
+    REPORTER_ASSERT(r, wangs_formula::nextlog64(1.1f) == 1);
+    REPORTER_ASSERT(r, wangs_formula::nextlog64(64.0f) == 1);
+    REPORTER_ASSERT(r, wangs_formula::nextlog64(64.1f) == 2);
+    REPORTER_ASSERT(r, wangs_formula::nextlog64(4096.0f) == 2);
+    REPORTER_ASSERT(r, wangs_formula::nextlog64(4096.1f) == 3);
 }
 
 }  // namespace skgpu::tess

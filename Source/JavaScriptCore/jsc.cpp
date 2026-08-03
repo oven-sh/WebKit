@@ -616,6 +616,10 @@ private:
 
     void finishCreation(VM& vm, const Vector<String>& arguments)
     {
+        // This shouldn't actually throw in practice, it's a test object. That said, it creates
+        // arrays and such that can generally throw.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
         auto& filter = ensurePropertyFilter();
 
         auto addFunction = [&] (VM& vm, ASCIILiteral name, NativeFunction function, unsigned arguments, unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum)) {
@@ -787,8 +791,11 @@ private:
 
         if (!arguments.isEmpty()) {
             JSArray* array = constructEmptyArray(this, nullptr);
-            for (size_t i = 0; i < arguments.size(); ++i)
+            scope.assertNoException();
+            for (size_t i = 0; i < arguments.size(); ++i) {
                 array->putDirectIndex(this, i, jsString(vm, arguments[i]));
+                scope.assertNoException();
+            }
             putDirect(vm, Identifier::fromString(vm, "arguments"_s), array, DontEnum);
         }
 
@@ -3084,7 +3091,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFinalizationRegistryDeadCount, (JSGlobalObject*
 
 JSC_DEFINE_HOST_FUNCTION(functionIs32BitPlatform, (JSGlobalObject*, CallFrame*))
 {
-#if USE(JSVALUE64)
+#if CPU(ADDRESS64)
     return JSValue::encode(JSValue(JSC::JSValue::JSFalse));
 #else
     return JSValue::encode(JSValue(JSC::JSValue::JSTrue));
@@ -4113,6 +4120,7 @@ static void runInteractive(GlobalObject* globalObject)
     fprintf(stderr, "  --footprint                Dump memory footprint after done executing\n");
     fprintf(stderr, "  --options                  Dumps all JSC VM options and exits\n");
     fprintf(stderr, "  --dumpOptions              Dumps all non-default JSC VM options before continuing\n");
+    fprintf(stderr, "  --enable-all-experimental-features  Enables all JSC feature-flag options (off-by-default in-development features)\n");
     fprintf(stderr, "  --<jsc VM option>=<value>  Sets the specified JSC VM option\n");
 #if USE(LIBPAS)
     fprintf(stderr, "  --crash-vm=<value>         Crash VM on startup due to PGM failure. Options PGMOOBLowerGuardPage, PGMOOBUpperGuardPage, or PGMUAF (For Testing Purposes).\n");
@@ -4317,6 +4325,13 @@ void CommandLine::parseArguments(int argc, char** argv, int start)
         }
         if (!strcmp(arg, "--disableOptionsFreezingForTesting")) {
             JSC::Config::disableFreezingForTesting();
+            continue;
+        }
+        if (!strcmp(arg, "--enable-all-experimental-features")) {
+#define JSC_ENABLE_EXPERIMENTAL_WEB_PREFERENCE_OPTION(name_) \
+            Options::name_() = true;
+            FOR_EACH_JSC_EXPERIMENTAL_WEB_PREFERENCE_OPTION(JSC_ENABLE_EXPERIMENTAL_WEB_PREFERENCE_OPTION)
+#undef JSC_ENABLE_EXPERIMENTAL_WEB_PREFERENCE_OPTION
             continue;
         }
 

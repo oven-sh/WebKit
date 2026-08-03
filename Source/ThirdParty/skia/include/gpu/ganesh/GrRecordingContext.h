@@ -12,7 +12,7 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkString.h" // IWYU pragma: keep
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrContext_Base.h"
 #include "include/private/gpu/ganesh/GrImageContext.h"
 
@@ -279,8 +279,9 @@ protected:
 private:
     OwnedArenas                       fArenas;
 
+    std::unique_ptr<GrProxyProvider> fProxyProvider;
+    // Depends on fProxyProvider (drawing tasks reference proxies). Must be destroyed first.
     std::unique_ptr<GrDrawingManager> fDrawingManager;
-    std::unique_ptr<GrProxyProvider>  fProxyProvider;
     std::unique_ptr<const skcpu::ContextImpl> fCPUContext;
     std::unique_ptr<SkGaneshRecorder> fRecorder;
 

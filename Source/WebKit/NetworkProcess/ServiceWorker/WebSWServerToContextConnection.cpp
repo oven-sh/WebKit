@@ -32,13 +32,17 @@
 #include "NetworkConnectionToWebProcess.h"
 #include "NetworkProcess.h"
 #include "NetworkProcessProxyMessages.h"
+#include "NetworkResourceLoader.h"
 #include "NetworkSession.h"
 #include "ServiceWorkerFetchTask.h"
 #include "ServiceWorkerFetchTaskMessages.h"
+#include "SharedBufferReference.h"
+#include "WebResourceLoaderMessages.h"
 #include "WebSWContextManagerConnectionMessages.h"
 #include "WebSWServerConnection.h"
 #include <WebCore/NotificationData.h>
 #include <WebCore/NotificationPayload.h>
+#include <WebCore/PendingStreamState.h>
 #include <WebCore/SWServer.h>
 #include <WebCore/SWServerWorker.h>
 #include <WebCore/ServiceWorkerContextData.h>
@@ -388,6 +392,89 @@ void WebSWServerToContextConnection::setThrottleState(bool isThrottleable)
 void WebSWServerToContextConnection::startFetch(ServiceWorkerFetchTask& task)
 {
     task.start(*this);
+}
+
+void WebSWServerToContextConnection::startPendingStreamUploadForwarding(WebCore::FetchIdentifier fetchIdentifier)
+{
+    auto errorCallback = [&]() {
+        protect(ipcConnection())->send(Messages::WebSWContextManagerConnection::ForwardPendingStreamUploadError { fetchIdentifier }, 0);
+    };
+
+    RefPtr fetch = m_ongoingFetches.get(fetchIdentifier);
+    if (!fetch) {
+        errorCallback();
+        return;
+    }
+    RefPtr loader = fetch->loader();
+    if (!loader) {
+        RELEASE_LOG_ERROR(ServiceWorker, "StartPendingStreamUpload no loader");
+        errorCallback();
+        return;
+    }
+    RefPtr state = loader->pendingStreamState();
+    if (!state) {
+        RELEASE_LOG_ERROR(ServiceWorker, "StartPendingStreamUpload no pendingStreamState");
+        errorCallback();
+        return;
+    }
+
+    m_requestPendingStreamStates.add(fetchIdentifier, *state);
+
+    loader->connectionToWebProcess().connection().send(Messages::WebResourceLoader::ServiceWorkerPendingStreamForwardingNeedData { }, loader->coreIdentifier());
+
+    state->setDataAvailableHandler([weakThis = WeakPtr { *this }, fetchIdentifier] {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->pendingStreamDataAvailable(fetchIdentifier);
+    });
+}
+
+void WebSWServerToContextConnection::pendingStreamDataAvailable(WebCore::FetchIdentifier fetchIdentifier)
+{
+    RefPtr connection = this->ipcConnection();
+    if (!connection)
+        return;
+
+    RefPtr state = m_requestPendingStreamStates.get(fetchIdentifier);
+    if (!state)
+        return;
+
+    auto result = state->takeAvailableChunks();
+    if (!result) {
+        connection->send(Messages::WebSWContextManagerConnection::ForwardPendingStreamUploadError { fetchIdentifier }, 0);
+        state->clearDataAvailableHandler();
+        m_requestPendingStreamStates.remove(fetchIdentifier);
+        return;
+    }
+
+    for (Ref chunk : result->first)
+        connection->send(Messages::WebSWContextManagerConnection::ForwardPendingStreamUploadData { fetchIdentifier, IPC::SharedBufferReference { WTF::move(chunk) } }, 0);
+
+    if (!result->second)
+        return;
+
+    connection->send(Messages::WebSWContextManagerConnection::ForwardPendingStreamUploadEnd { fetchIdentifier }, 0);
+    state->clearDataAvailableHandler();
+    m_requestPendingStreamStates.remove(fetchIdentifier);
+}
+
+void WebSWServerToContextConnection::cancelPendingStreamUploadForwarding(WebCore::FetchIdentifier fetchIdentifier)
+{
+    if (RefPtr state = m_requestPendingStreamStates.take(fetchIdentifier))
+        state->clearDataAvailableHandler();
+
+    if (RefPtr fetch = m_ongoingFetches.get(fetchIdentifier))
+        fetch->cancelPendingStreamUpload();
+}
+
+void WebSWServerToContextConnection::pendingStreamUploadNeedData(WebCore::FetchIdentifier fetchIdentifier)
+{
+    RefPtr fetch = m_ongoingFetches.get(fetchIdentifier);
+    if (!fetch)
+        return;
+    RefPtr loader = fetch->loader();
+    if (!loader)
+        return;
+    loader->connectionToWebProcess().connection().send(Messages::WebResourceLoader::ServiceWorkerPendingStreamForwardingNeedData { }, loader->coreIdentifier());
 }
 
 void WebSWServerToContextConnection::didReceiveFetchTaskMessage(IPC::Connection& connection, IPC::Decoder& decoder)

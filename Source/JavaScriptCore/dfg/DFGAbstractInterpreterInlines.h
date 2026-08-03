@@ -37,6 +37,9 @@
 #include "DOMJITCallDOMGetterSnippet.h"
 #include "DOMJITGetterSetter.h"
 #include "DOMJITSignature.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "FFIDFG.h"
+#endif
 #include "FunctionPrototype.h"
 #include "GetByStatus.h"
 #include "GetterSetter.h"
@@ -1768,14 +1771,13 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case IsObject:
     case IsCallable:
     case IsConstructor:
-    case IsCellWithType:
-    case IsTypedArrayView: {
+    case IsCellWithType: {
         AbstractValue& child = forNode(node->child1());
         if (child.value()) {
             bool constantWasSet = true;
             switch (node->op()) {
             case IsCellWithType:
-                setConstant(node, jsBoolean(child.value().isCell() && child.value().asCell()->type() == node->queriedType()));
+                setConstant(node, jsBoolean(child.value().isCell() && node->queriedType().contains(child.value().asCell()->type())));
                 break;
             case TypeOfIsUndefined:
                 setConstant(node, jsBoolean(
@@ -1836,9 +1838,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             case IsEmpty:
                 setConstant(node, jsBoolean(child.value().isEmpty()));
                 break;
-            case IsTypedArrayView:
-                setConstant(node, jsBoolean(child.value().isObject() && isTypedView(child.value().getObject()->type())));
-                break;
             default:
                 constantWasSet = false;
                 break;
@@ -1856,7 +1855,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                     std::optional<bool> result;
                     child.m_structure.forEach(
                         [&] (RegisteredStructure structure) {
-                            bool matched = structure->typeInfo().type() == node->queriedType();
+                            bool matched = node->queriedType().contains(structure->typeInfo().type());
                             if (!result)
                                 result = matched;
                             else {
@@ -2069,19 +2068,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             }
             break;
         }
-
-        case IsTypedArrayView:
-            if (!(child.m_type & ~SpecTypedArrayView)) {
-                setConstant(node, jsBoolean(true));
-                constantWasSet = true;
-                break;
-            }
-            if (!(child.m_type & SpecTypedArrayView)) {
-                setConstant(node, jsBoolean(false));
-                constantWasSet = true;
-                break;
-            }
-            break;
 
         default:
             break;
@@ -3818,13 +3804,11 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             // We've compiled assuming we're not having a bad time, so to be consistent
             // with StructureRegisterationPhase we must say we produce an original array
             // allocation structure.
-#if USE(JSVALUE64)
             BitVector* bitVector = node->bitVector();
             if (node->numChildren() == 1 && bitVector->get(0)) {
                 setForNode(node, globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous));
                 break;
             }
-#endif
         }
         setForNode(node, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
         break;
@@ -4221,6 +4205,12 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
     case SymbolToString: {
         setTypeForNode(node, SpecStringResolved);
+        break;
+    }
+
+    case OpenAsyncFromSyncIterator: {
+        clobberWorld();
+        setTypeForNode(node, SpecObjectOther);
         break;
     }
 
@@ -5716,7 +5706,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
         ASSERT(signature->returnCount() == 1);
         auto type = signature->returnType(0);
-        switch (type.kind) {
+        switch (type.kind()) {
         case Wasm::TypeKind::I32: {
             setNonCellTypeForNode(node, SpecInt32Only);
             break;
@@ -5743,6 +5733,16 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             break;
         }
         }
+#endif
+        break;
+    }
+
+    case CallFFI: {
+#if USE(BUN_JSC_ADDITIONS)
+        clobberWorld();
+        setTypeForNode(node, FFI::speculatedResultTypeForCallFFI(node));
+#else
+        DFG_CRASH(m_graph, node, "Unexpected node type");
 #endif
         break;
     }

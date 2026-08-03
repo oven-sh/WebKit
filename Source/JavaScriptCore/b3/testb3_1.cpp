@@ -778,11 +778,8 @@ void run(const TestConfig* config)
     RUN(testPatchpointAnyImm(ValueRep::WarmAny));
     RUN(testPatchpointAnyImm(ValueRep::ColdAny));
     RUN(testPatchpointAnyImm(ValueRep::LateColdAny));
-    if constexpr (!is32Bit()) {
-        // Can't handle ConstDoubleValue arguments to patchpoints on 32 bits.
-        RUN(testPatchpointManyWarmAnyImms());
-        RUN(testPatchpointManyColdAnyImms());
-    }
+    RUN(testPatchpointManyWarmAnyImms());
+    RUN(testPatchpointManyColdAnyImms());
     RUN(testPatchpointWithRegisterResult());
     RUN(testPatchpointWithStackArgumentResult());
     RUN(testPatchpointWithAnyResult());
@@ -924,6 +921,7 @@ void run(const TestConfig* config)
 
     RUN(testSwitchTargettingSameBlock());
     RUN(testSwitchTargettingSameBlockFoldPathConstant());
+    RUN(testSwitchSparseI64RangeOverflow());
 
     RUN(testTrunc(0));
     RUN(testTrunc(1));
@@ -1166,10 +1164,7 @@ void run(const TestConfig* config)
 
     addAtomicTests(config, tasks);
     RUN(testDepend32());
-    if constexpr (!is32Bit()) {
-        // Test only applicable on 64-bits.
-        RUN(testDepend64());
-    }
+    RUN(testDepend64());
 
     RUN(testWasmBoundsCheck(0));
     RUN(testWasmBoundsCheck(100));
@@ -1486,6 +1481,7 @@ void run(const TestConfig* config)
         RUN(testVectorXor3());
         RUN(testVectorShlImmediate());
         RUN(testVectorShrImmediate());
+        RUN(testVectorZipWithZeroIsZeroExtend());
         RUN(testVectorUnzipEven());
         RUN(testVectorUnzipOdd());
         RUN(testVectorZipLower());

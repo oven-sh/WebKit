@@ -2,6 +2,67 @@ Skia Graphics Release Notes
 
 This file includes a list of high level updates for each milestone release.
 
+Milestone 152
+-------------
+  * Add skgpu::graphite::ContextOptions::fAvoidDepth. Enabling this will lead
+    graphite to avoid using the depth/stencil buffer, and fallback to analytic path
+    and turn off depth occlusion culling when necessary.
+  * Add SkRRect::contains(const SkPoint&). This allows point vs RRectF intersection
+    testing. As SkRRect::contains(const SkRectF&), returns true if the point is
+    inside the SkRRect and the SkRRect is not empty.
+  * Since SkPath data is now immutable and we always compute the bounds
+    upfront, SkPath::updateBoundsCache() no longer serves any purpose
+    and has been removed.
+  * Added a new `SkIcoRustDecoder` which decodes ICO and CUR images using Rust-based
+    PNG and BMP decoders for the embedded images. Register `SkIcoRustDecoder::Decoder()`
+    with `SkCodecs::Register` to enable it. This is built when `skia_use_rust_ico_decode`
+    is enabled (defining `SK_CODEC_DECODES_ICO_WITH_RUST`).
+
+* * *
+
+Milestone 151
+-------------
+  * Added a 'containsExternalFormat' method to 'PrecompileContext'. This allows clients to determine if a serialized key contains an external format.
+  * Added 'fGainmap' and 'fGainmapInfo' to 'SkPngRustEncoder::Options', allowing clients to encode HDR gainmaps in PNG images using the Rust PNG encoder.
+  * Add a getWidthsStrided() API to SkStrikeRef which allows scattered memory access
+    into input glyph list and provides scattered writes with a stride length into a
+    client provided output buffer.  Useful for fast access and transfer of advance
+    widths in shaping. Shown to improve Blink performance.
+
+* * *
+
+Milestone 150
+-------------
+  * `SkRegion::setRects(const SkIRect[], int)` has been deprecated in favor of `SkRegion::setRects(SkSpan<const SkIRect>)`.
+  * Added `SkStrikeRef`, a public lightweight handle to a resolved font strike.
+    `SkFont::makeStrikeRef()` returns an `SkStrikeRef` that allows repeated glyph
+    metric queries (advances, bounds) without the per-call overhead of strike
+    lookup. This is useful for text shaping engines that make many `getWidths`
+    calls with the same font configuration.
+
+* * *
+
+Milestone 149
+-------------
+  * Add bitwise operators for working with skgpu::GpuStatsFlags.
+  * * The following new feature is only supported by the Graphite backend.
+
+    * Allow clients to pass in a maximum time duration Skia should spend when purging purgeable
+      resources from caches. Skia will purge available purgeable resources until all purgeable resources
+      are removed *or* until the purge time has been surpassed, at which point we exit early.
+
+    * Clients can either call the Context or the Recorder's performDeferredCleanup(...) method with a
+      max duration in microseconds. Following the current implementation pattern, durations passed in
+      get converted to time points when calling in to the ResourceCache itself.
+
+    * Public API calls into performDeferredCleanup accept an optional stop time duration which is set to
+      std::nullopt by default.  This signifies no time limit for purging and means this change should
+      not disrupt current client API calls nor impact existing functionality.
+  * The PrecompileContext's getPipelineLabel method can now, optionally, return the uniqueHash for the serializedPipelineKey. Note that this uniqueHash is only valid for the lifetime of the Context used to create the invoking PrecompileContext.
+  * PrecompileColorFilters::Matrix() can now specify clamped or unclamped filtering.
+
+* * *
+
 Milestone 148
 -------------
   * * The `leakTracer` argument to `SkEventTracer::SetInstance` is removed and now behaves as if

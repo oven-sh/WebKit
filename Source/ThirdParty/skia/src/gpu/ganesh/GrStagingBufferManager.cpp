@@ -8,7 +8,7 @@
 
 #include "include/gpu/ganesh/GrContextOptions.h"
 #include "include/gpu/ganesh/GrDirectContext.h"
-#include "include/private/base/SkAssert.h"
+#include "include/private/SkAssert.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrGpu.h"
@@ -24,7 +24,7 @@ GrStagingBufferManager::Slice GrStagingBufferManager::allocateStagingBufferSlice
         size_t totalBufferSize = fBuffers[i].fBuffer->size();
         size_t currentOffset = fBuffers[i].fOffset;
         offset = ((currentOffset + requiredAlignment - 1)/requiredAlignment)*requiredAlignment;
-        if (totalBufferSize - offset >= size) {
+        if (offset <= totalBufferSize && totalBufferSize - offset >= size) {
             buffer = &fBuffers[i];
             break;
         }

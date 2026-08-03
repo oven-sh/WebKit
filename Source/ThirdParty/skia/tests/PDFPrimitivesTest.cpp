@@ -12,6 +12,7 @@
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
+#include "include/core/SkData.h"
 #include "include/core/SkDocument.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontStyle.h"
@@ -23,20 +24,24 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
+#include "include/core/SkShader.h"
 #include "include/core/SkSpan.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
+#include "include/core/SkTileMode.h"
 #include "include/core/SkTypes.h"
 #include "include/docs/SkPDFDocument.h"
 #include "include/docs/SkPDFJpegHelpers.h"
+#include "include/effects/SkGradient.h"
 #include "include/effects/SkImageFilters.h"
 #include "include/effects/SkPerlinNoiseShader.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkRandom.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTo.h"
+#include "include/utils/SkParsePath.h"
 #include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageFilter_Base.h"
+#include "src/core/SkRandom.h"
 #include "src/pdf/SkClusterator.h"
 #include "src/pdf/SkPDFDocumentPriv.h"
 #include "src/pdf/SkPDFFont.h"
@@ -176,7 +181,7 @@ static void TestPDFUnion(skiatest::Reporter* reporter) {
 }
 
 static void TestPDFArray(skiatest::Reporter* reporter) {
-    std::unique_ptr<SkPDFArray> array(new SkPDFArray);
+    auto array = std::make_unique<SkPDFArray>();
     assert_emit_eq(reporter, *array, "[]");
 
     array->appendInt(42);
@@ -206,7 +211,7 @@ static void TestPDFArray(skiatest::Reporter* reporter) {
                    "[42 .5 0 true /ThisName /AnotherName (This String) "
                    "(Another String)]");
 
-    std::unique_ptr<SkPDFArray> innerArray(new SkPDFArray);
+    auto innerArray = std::make_unique<SkPDFArray>();
     innerArray->appendInt(-1);
     array->appendObject(std::move(innerArray));
     assert_emit_eq(reporter, *array,
@@ -215,7 +220,7 @@ static void TestPDFArray(skiatest::Reporter* reporter) {
 }
 
 static void TestPDFDict(skiatest::Reporter* reporter) {
-    std::unique_ptr<SkPDFDict> dict(new SkPDFDict);
+    auto dict = std::make_unique<SkPDFDict>();
     assert_emit_eq(reporter, *dict, "<<>>");
 
     dict->insertInt("n1", SkToSizeT(42));
@@ -230,7 +235,7 @@ static void TestPDFDict(skiatest::Reporter* reporter) {
     dict->insertScalar("n2", SK_ScalarHalf);
 
     SkString n3("n3");
-    std::unique_ptr<SkPDFArray> innerArray(new SkPDFArray);
+    auto innerArray = std::make_unique<SkPDFArray>();
     innerArray->appendInt(-100);
     dict->insertObject(n3, std::move(innerArray));
     assert_emit_eq(reporter, *dict, "<</n1 42\n/n2 .5\n/n3 [-100]>>");
@@ -492,4 +497,181 @@ DEF_TEST(fuzz875632f0, reporter) {
 
     canvas->drawPath(SkPath(), paint);
 }
+
+DEF_TEST(SkPDF_EmitPath, reporter) {
+    enum Selector : uint32_t {
+        kDiscardEmptyPath = 1 << 0,
+        kDiscardEmptyVerb = 1 << 1,
+        kDiscardEmptyArea = 1 << 2,
+    };
+
+    static constexpr struct {
+        const char* svgPath;
+        const char* expectedPdf;
+        uint32_t    discardMask = 0; // Discard all degenerates by default
+    } gTests[] = {
+        // Empty path
+        { "", "0 0 0 0 re\n" },
+        { "", "", kDiscardEmptyPath },
+
+        { "M10,10", "" }, // TODO: this looks iffy, we prolly want an empty rect here too?
+        { "M10,10", "", kDiscardEmptyPath },
+
+        // Empty verb
+        { "M10,10 L20,20 L20,20", "10 10 m\n20 20 l\n20 20 l\n" },
+        { "M10,10 L20,20 L20,20", "10 10 m\n20 20 l\n", kDiscardEmptyVerb },
+
+        // Empty area
+        { "M10,10 L10,10", "10 10 m\n10 10 l\n" },
+        { "M10,10 L10,10", "", kDiscardEmptyArea },
+
+        { "M10,10 L20,20", "10 10 m\n20 20 l\n" },
+        { "M10,10 L20,20", "", kDiscardEmptyArea },
+
+        { "M10,10 L20,20 L30,30", "10 10 m\n20 20 l\n30 30 l\n" },
+        { "M10,10 L20,20 L30,30", "", kDiscardEmptyArea },
+
+        { "M10,10 L20,20 L0,0", "10 10 m\n20 20 l\n0 0 l\n" },
+        { "M10,10 L20,20 L0,0", "", kDiscardEmptyArea },
+
+        { "M5,5   M10,10 L20,20 L20 30", "10 10 m\n20 20 l\n20 30 l\n" },
+        { "M5,5   M10,10 L20,20 L20 30", "10 10 m\n20 20 l\n20 30 l\n", kDiscardEmptyArea },
+
+        { "M5,5   M10,10 L20,20 L20 30 Z",
+              "10 10 m\n20 20 l\n20 30 l\n10 10 l\nh\n" },
+        { "M5,5   M10,10 L20,20 L20 30 Z",
+              "10 10 m\n20 20 l\n20 30 l\n10 10 l\nh\n", kDiscardEmptyArea },
+
+        { "M5,5   M0,10 L20,20   M10,10 L20,20 L20,0   M10,0 L20,20",
+              "0 10 m\n20 20 l\n10 10 m\n20 20 l\n20 0 l\n10 0 m\n20 20 l\n" },
+        { "M5,5   M0,10 L20,20   M10,10 L20,20 L20,0   M10,0 L20,20",
+              "10 10 m\n20 20 l\n20 0 l\n", kDiscardEmptyArea },
+
+        { "M5,5   M0,10 L20,20 Z   M10,10 L20,20 L20,0 Z   M10,0 L20,20 Z",
+              "0 10 m\n20 20 l\n0 10 l\nh\n10 10 m\n20 20 l\n20 0 l\n10 10 l\nh\n"
+              "10 0 m\n20 20 l\n10 0 l\nh\n" },
+        { "M5,5   M0,10 L20,20 Z   M10,10 L20,20 L20,0 Z   M10,0 L20,20 Z",
+              "10 10 m\n20 20 l\n20 0 l\n10 10 l\nh\n", kDiscardEmptyArea },
+    };
+
+    SkDynamicMemoryWStream str;
+    for (const auto& tst : gTests) {
+        const SkPath src = SkParsePath::FromSVGString(tst.svgPath).value();
+        const auto emptyPath = (tst.discardMask & kDiscardEmptyPath)
+                ? SkPDFUtils::EmptyPath::Discard
+                : SkPDFUtils::EmptyPath::Preserve;
+        const auto emptyVerb = (tst.discardMask & kDiscardEmptyVerb)
+                ? SkPDFUtils::EmptyVerb::Discard
+                : SkPDFUtils::EmptyVerb::Preserve;
+        const auto emptyArea = (tst.discardMask & kDiscardEmptyArea)
+                ? SkPDFUtils::EmptyArea::Discard
+                : SkPDFUtils::EmptyArea::Preserve;
+
+        bool didEmit = SkPDFUtils::EmitPath(src, emptyPath, emptyVerb, emptyArea, &str);
+        const auto str_data = str.detachAsData();
+        const auto result = SkString(reinterpret_cast<const char*>(str_data->bytes()),
+                                     str_data->size());
+
+        REPORTER_ASSERT(reporter, result == SkString(tst.expectedPdf),
+            "*** Unexpected PDF path for \"%s\":\n---\n%s---\nExpected:\n---\n%s---\n",
+            tst.svgPath, result.c_str(), tst.expectedPdf);
+        REPORTER_ASSERT(reporter, didEmit != result.isEmpty());
+    }
+}
+
+static bool pdf_contains(const sk_sp<SkData>& data, const char needle[]) {
+    size_t len = strlen(needle);
+    if (len == 0 || data->size() < len) {
+        return false;
+    }
+    const char* bytes = reinterpret_cast<const char*>(data->bytes());
+    for (size_t i = 0, n = data->size() - len; i <= n; ++i) {
+        if (0 == memcmp(bytes + i, needle, len)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static sk_sp<SkShader> make_linear_gradient(SkSpan<const SkColor4f> colors,
+                                            SkTileMode tileMode = SkTileMode::kClamp) {
+    const SkPoint pts[2] = {{0, 0}, {64, 64}};
+    return SkShaders::LinearGradient(pts, {{colors, {}, tileMode}, {}});
+}
+
+static sk_sp<SkData> render_gradient_pdf(SkSpan<const SkColor4f> colors,
+                                         bool rasterizeForPrint,
+                                         SkTileMode tileMode = SkTileMode::kClamp) {
+    SkPDF::Metadata metadata = SkPDF::JPEG::MetadataWithCallbacks();
+    metadata.fRasterizeAlphaGradientsForPrinting = rasterizeForPrint;
+    SkDynamicMemoryWStream stream;
+    auto doc = SkPDF::MakeDocument(&stream, metadata);
+    SkCanvas* canvas = doc->beginPage(64, 64);
+    SkPaint paint;
+    paint.setShader(make_linear_gradient(colors, tileMode));
+    canvas->drawRect(SkRect::MakeWH(64, 64), paint);
+    doc->endPage();
+    doc->close();
+    return stream.detachAsData();
+}
+
+// The print workaround should avoid the alpha-gradient vector encoding that
+// triggers downstream PDF-to-PostScript failures.
+DEF_TEST(SkPDF_RasterizeAlphaGradientForPrinting, reporter) {
+    REQUIRE_PDF_DOCUMENT(SkPDF_RasterizeAlphaGradientForPrinting, reporter);
+    const SkColor4f withAlpha[] = {{1, 0, 0, 0.5f}, {0, 0, 1, 1}};
+
+    sk_sp<SkData> off = render_gradient_pdf(withAlpha, /*rasterizeForPrint=*/false);
+    sk_sp<SkData> on = render_gradient_pdf(withAlpha, /*rasterizeForPrint=*/true);
+
+    REPORTER_ASSERT(reporter, pdf_contains(off, "/S /Luminosity"));
+
+    REPORTER_ASSERT(reporter, !pdf_contains(on, "/S /Luminosity"));
+    REPORTER_ASSERT(reporter, pdf_contains(on, "/Subtype /Image"));
+
+    off = render_gradient_pdf(withAlpha, /*rasterizeForPrint=*/false, SkTileMode::kDecal);
+    on = render_gradient_pdf(withAlpha, /*rasterizeForPrint=*/true, SkTileMode::kDecal);
+
+    REPORTER_ASSERT(reporter, pdf_contains(off, "/S /Luminosity"));
+    REPORTER_ASSERT(reporter, !pdf_contains(on, "/S /Luminosity"));
+    REPORTER_ASSERT(reporter, pdf_contains(on, "/Subtype /Image"));
+}
+
+// The workaround must touch alpha gradients only. An opaque gradient has no
+// soft mask to begin with, so the flag must not change its output at all.
+DEF_TEST(SkPDF_RasterizeAlphaGradientForPrinting_OpaqueUnchanged, reporter) {
+    REQUIRE_PDF_DOCUMENT(SkPDF_RasterizeAlphaGradientForPrinting_OpaqueUnchanged, reporter);
+    const SkColor4f opaque[] = {{1, 0, 0, 1}, {0, 0, 1, 1}};
+
+    sk_sp<SkData> off = render_gradient_pdf(opaque, /*rasterizeForPrint=*/false);
+    sk_sp<SkData> on = render_gradient_pdf(opaque, /*rasterizeForPrint=*/true);
+
+    REPORTER_ASSERT(reporter, !pdf_contains(on, "/Subtype /Image"));
+    REPORTER_ASSERT(reporter, pdf_contains(on, "/Shading"));
+    REPORTER_ASSERT(reporter, off->equals(on.get()));
+
+    off = render_gradient_pdf(opaque, /*rasterizeForPrint=*/false, SkTileMode::kDecal);
+    on = render_gradient_pdf(opaque, /*rasterizeForPrint=*/true, SkTileMode::kDecal);
+
+    REPORTER_ASSERT(reporter, !pdf_contains(on, "/Subtype /Image"));
+    REPORTER_ASSERT(reporter, pdf_contains(on, "/Shading"));
+    REPORTER_ASSERT(reporter, off->equals(on.get()));
+}
+
+DEF_TEST(SkPDF_GradientDegenerateStopsDoesNotCrash, reporter) {
+    REQUIRE_PDF_DOCUMENT(SkPDF_GradientDegenerateStopsDoesNotCrash, reporter);
+    const SkColor4f colors[] = {{0, 0, 0, 1}, {0, 0, 0, 1}};
+    const float pos[] = {1, 1};
+    sk_sp<SkShader> shader = SkShaders::SweepGradient({32, 32}, {{colors, pos, SkTileMode::kClamp}, {}});
+
+    SkDynamicMemoryWStream stream;
+    auto doc = SkPDF::MakeDocument(&stream, SkPDF::JPEG::MetadataWithCallbacks());
+    SkCanvas* canvas = doc->beginPage(64, 64);
+    SkPaint paint;
+    paint.setShader(shader);
+    canvas->drawRect(SkRect::MakeWH(64, 64), paint);
+    doc->endPage();
+    doc->close();
+}
+
 #endif

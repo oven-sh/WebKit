@@ -878,6 +878,84 @@ void testExtractSignedBitfield64()
     }
 }
 
+void testExtractSignedBitfieldNonCanonical32()
+{
+    if (JSC::Options::defaultB3OptLevel() < 2)
+        return;
+
+    Vector<int32_t> srcs = {
+        0x12345678,
+        static_cast<int32_t>(0xffffffff),
+        static_cast<int32_t>(0x80000000),
+        0x00abcdef,
+    };
+    Vector<int32_t> leftAmts = { 4, 8, 16 };
+    Vector<int32_t> lsbs = { 2, 3, 4 };
+
+    for (int32_t src : srcs) {
+        for (size_t i = 0; i < leftAmts.size(); ++i) {
+            int32_t leftAmt = leftAmts.at(i);
+            int32_t lsb = lsbs.at(i);
+            int32_t rightAmt = leftAmt + lsb;
+
+            Procedure proc;
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<int32_t>(proc, root);
+
+            Value* srcValue = arguments[0];
+            Value* leftShiftValue = root->appendNew<Value>(proc, Shl, Origin(), srcValue,
+                root->appendNew<Const32Value>(proc, Origin(), leftAmt));
+            root->appendNewControlValue(proc, Return, Origin(),
+                root->appendNew<Value>(proc, SShr, Origin(), leftShiftValue,
+                    root->appendNew<Const32Value>(proc, Origin(), rightAmt)));
+
+            auto code = compileProc(proc);
+            if (isARM64())
+                checkUsesInstruction(*code, "sbfx");
+            CHECK_EQ(invoke<int32_t>(*code, src), (src << leftAmt) >> rightAmt);
+        }
+    }
+}
+
+void testExtractSignedBitfieldNonCanonical64()
+{
+    if (JSC::Options::defaultB3OptLevel() < 2)
+        return;
+
+    Vector<int64_t> srcs = {
+        0x123456789abcdef0ll,
+        static_cast<int64_t>(0xffffffffffffffffull),
+        static_cast<int64_t>(0x8000000000000000ull),
+        0x0000ffffffffffffll,
+    };
+    Vector<int32_t> leftAmts = { 4, 16, 32 };
+    Vector<int32_t> lsbs = { 2, 8, 4 };
+
+    for (int64_t src : srcs) {
+        for (size_t i = 0; i < leftAmts.size(); ++i) {
+            int32_t leftAmt = leftAmts.at(i);
+            int32_t lsb = lsbs.at(i);
+            int32_t rightAmt = leftAmt + lsb;
+
+            Procedure proc;
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t>(proc, root);
+
+            Value* srcValue = arguments[0];
+            Value* leftShiftValue = root->appendNew<Value>(proc, Shl, Origin(), srcValue,
+                root->appendNew<Const32Value>(proc, Origin(), leftAmt));
+            root->appendNewControlValue(proc, Return, Origin(),
+                root->appendNew<Value>(proc, SShr, Origin(), leftShiftValue,
+                    root->appendNew<Const32Value>(proc, Origin(), rightAmt)));
+
+            auto code = compileProc(proc);
+            if (isARM64())
+                checkUsesInstruction(*code, "sbfx");
+            CHECK_EQ(invoke<int64_t>(*code, src), (src << leftAmt) >> rightAmt);
+        }
+    }
+}
+
 void testBitOrBitOrArgImmImm32(int32_t a, int32_t b, int32_t c)
 {
     Procedure proc;
@@ -3832,11 +3910,7 @@ void testStoreConstantPtr(intptr_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     intptr_t slot;
-#if CPU(ADDRESS64)
     slot = (static_cast<intptr_t>(0xbaadbeef) << 32) + static_cast<intptr_t>(0xbaadbeef);
-#else
-    slot = 0xbaadbeef;
-#endif
     root->appendNew<MemoryValue>(
         proc, Store, Origin(),
         root->appendNew<ConstPtrValue>(proc, Origin(), value),
@@ -3930,7 +4004,6 @@ void testStore8Imm()
 
 void testStorePartial8BitRegisterOnX86()
 {
-#if !CPU(ARM_THUMB2)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
 
@@ -3978,7 +4051,6 @@ void testStorePartial8BitRegisterOnX86()
     int8_t storage = 0xff;
     CHECK_EQ(compileAndRun<int64_t>(proc, 0x12345678abcdef12, &storage), 0x12345678abcdef12);
     CHECK(!storage);
-#endif // !CPU(ARM_THUMB2)
 }
 
 void testStore16Arg()
@@ -4221,11 +4293,7 @@ void addArgTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN_UNARY(testAddArgFloat, floatingPointOperands<float>());
     RUN_BINARY(testAddArgsFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
 
-    // The ARMv7 ABI expects floats to be passed in consecutive s* registers, but
-    // AirCCallingConvention can't currently do that.
-#if !CPU(ARM_THUMB2)
     RUN_BINARY(testAddFPRArgsFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
-#endif
 
     RUN_BINARY(testAddArgImmFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
     RUN_BINARY(testAddImmArgFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
@@ -4470,12 +4538,8 @@ void addCallTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& t
     RUN(testCallSimpleDouble(1, 2));
     RUN(testCallFunctionWithHellaDoubleArguments());
 
-// The ARMv7 ABI expects floats to be passed in consecutive s* registers, but
-// AirCCallingConvention can't currently do that.
-#if !CPU(ARM_THUMB2)
     RUN_BINARY(testCallSimpleFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
     RUN(testCallFunctionWithHellaFloatArguments());
-#endif
     }
 
 void addShrTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& tasks)

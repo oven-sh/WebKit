@@ -7,11 +7,18 @@ package(
 licenses(["notice"])
 
 SPARSE_STRIPS_FILES = [
+    "Flatten.cpp",
+    "Flatten.h",
     "MSAA_LUT.h",
+    "MakeStrips.h",
     "Polyline.h",
     "SparseStripsTypes.h",
+    "Strip.h",
     "StripGenerator.cpp",
     "StripGenerator.h",
+    "StripProcessorScalar.h",
+    "StripProcessorSimd.h",
+    "Tiler.h",
 ]
 
 split_srcs_and_hdrs(
@@ -29,6 +36,5 @@ skia_cc_library(
         "//:core",
         "//src/gpu",
         "//src/gpu/graphite",
-        "//src/gpu/graphite:graphite_TEST_UTIL",
     ],
 )

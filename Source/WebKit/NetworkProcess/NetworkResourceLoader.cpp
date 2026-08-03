@@ -74,6 +74,7 @@
 #include <WebCore/NetworkLoadMetrics.h>
 #include <WebCore/NetworkStorageSession.h>
 #include <WebCore/OriginAccessPatterns.h>
+#include <WebCore/PendingStreamState.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ReportingScope.h>
 #include <WebCore/SWServer.h>
@@ -180,6 +181,13 @@ NetworkResourceLoader::NetworkResourceLoader(NetworkResourceLoadParameters&& par
 #endif
     if (synchronousReply)
         m_synchronousLoadData = makeUnique<SynchronousLoadData>(WTF::move(synchronousReply));
+
+    if (RefPtr body = m_parameters.request.httpBody()) {
+        if (body->isPendingStream()) {
+            m_pendingStreamState = PendingStreamState::create();
+            body->setPendingStreamState(*m_pendingStreamState);
+        }
+    }
 }
 
 NetworkResourceLoader::~NetworkResourceLoader()
@@ -406,6 +414,10 @@ bool NetworkResourceLoader::isLocalFileLoadAllowed(const URL& url)
 
 void NetworkResourceLoader::startNetworkLoad(ResourceRequest&& request, FirstLoad load)
 {
+    if (request.url().protocolIsFile() && !m_parameters.resourceSandboxExtension) {
+        // Record when a file-load sandbox extension failed to reach the Networking process.
+        LOADER_RELEASE_LOG_ERROR("startNetworkLoad: local file load, resourceSandboxExtension not provided");
+    }
 #if ENABLE(BLOCKING_OF_LOCAL_FILE_LOADS_WITHOUT_SANDBOX_EXTENSION)
         if (request.url().protocolIsFile() && !isLocalFileLoadAllowed(request.url())) {
             LOADER_RELEASE_LOG("startNetworkLoad: stop local file load because a sandbox extension is not provided");
@@ -1151,7 +1163,11 @@ void NetworkResourceLoader::sendDidReceiveResponseWithPotentialProcessSwap(const
     };
 
     auto reason = shouldConsiderProcessSwapForEnhancedSecurity ? NavigationResponseProcessSwapReason::EnhancedSecurity : NavigationResponseProcessSwapReason::COOP;
-    protect(connection->networkProcess().parentProcessConnection())->sendWithAsyncReply(Messages::NetworkProcessProxy::ConsiderProcessSwapForNavigationResponse(webPageProxyID(), *m_parameters.navigationID, browsingContextGroupSwitchDecision, reason, responseSite, existingNetworkResourceLoadIdentifierToResume), WTF::move(swapResultHandler));
+
+    // Propagating the original start time to a destination that fails the TAO check would leak cross-origin redirect timing.
+    // https://fetch.spec.whatwg.org/#navigation-tao-check
+    auto originalNavigationStartTime = (m_networkLoadChecker && m_networkLoadChecker->navigationTAOCheckPassed()) ? m_parameters.originalNavigationStartTime : MonotonicTime { };
+    protect(connection->networkProcess().parentProcessConnection())->sendWithAsyncReply(Messages::NetworkProcessProxy::ConsiderProcessSwapForNavigationResponse(webPageProxyID(), *m_parameters.navigationID, browsingContextGroupSwitchDecision, reason, responseSite, existingNetworkResourceLoadIdentifierToResume, originalNavigationStartTime), WTF::move(swapResultHandler));
 }
 
 void NetworkResourceLoader::didReceiveBuffer(const WebCore::FragmentedSharedBuffer& buffer)
@@ -1476,12 +1492,16 @@ void NetworkResourceLoader::continueWillSendRedirectedRequest(ResourceRequest&& 
         if (!protectedThis)
             return completionHandler({ });
 
+        Ref connection = protectedThis->m_connection;
+        if (!connection->connection().isValid())
+            return completionHandler({ });
+
+        if (newRequest.isNull())
+            return completionHandler({ });
+
         if (newRequest.firstPartyForCookies() != firstPartyForCookiesFromRedirectRequest) {
-            Ref connection = protectedThis->m_connection;
-            auto allowCookieAccess = connection->networkProcess().allowsFirstPartyForCookies(
-                connection->webProcessIdentifier(), newRequest.firstPartyForCookies());
-            MESSAGE_CHECK_COMPLETION_BASE(allowCookieAccess == NetworkProcess::AllowCookieAccess::Allow,
-                connection->connection(), completionHandler({ }));
+            auto allowCookieAccess = connection->networkProcess().allowsFirstPartyForCookies(connection->webProcessIdentifier(), newRequest.firstPartyForCookies());
+            MESSAGE_CHECK_COMPLETION_BASE(allowCookieAccess == NetworkProcess::AllowCookieAccess::Allow, connection->connection(), completionHandler({ }));
         }
 
         protectedThis->continueWillSendRequest(WTF::move(newRequest), isAllowedToAskUserForCredentials, WTF::move(completionHandler));
@@ -1660,6 +1680,31 @@ void NetworkResourceLoader::continueDidReceiveResponse()
 
     if (!m_responseCompletionHandlers.isEmpty())
         m_responseCompletionHandlers.takeFirst()(PolicyAction::Use);
+}
+
+void NetworkResourceLoader::pendingStreamAppendData(IPC::SharedBufferReference&& chunk)
+{
+    ASSERT(m_pendingStreamState);
+    if (!m_pendingStreamState)
+        return;
+    RefPtr buffer = chunk.unsafeBuffer();
+    if (!buffer)
+        return;
+    protect(m_pendingStreamState)->appendData(buffer.releaseNonNull());
+}
+
+void NetworkResourceLoader::pendingStreamEnd()
+{
+    ASSERT(m_pendingStreamState);
+    if (RefPtr state = m_pendingStreamState)
+        state->endStream();
+}
+
+void NetworkResourceLoader::pendingStreamError()
+{
+    ASSERT(m_pendingStreamState);
+    if (RefPtr state = m_pendingStreamState)
+        state->errorStream(-1);
 }
 
 void NetworkResourceLoader::didSendData(uint64_t bytesSent, uint64_t totalBytesToBeSent)

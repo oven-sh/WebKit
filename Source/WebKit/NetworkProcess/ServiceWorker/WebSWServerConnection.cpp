@@ -105,17 +105,14 @@ WebSWServerConnection::~WebSWServerConnection()
         completionHandler(false);
 }
 
-NetworkProcess& WebSWServerConnection::networkProcess()
+NetworkProcess* WebSWServerConnection::networkProcess()
 {
-    return m_networkConnectionToWebProcess->networkProcess();
+    return m_networkConnectionToWebProcess ? &m_networkConnectionToWebProcess->networkProcess() : nullptr;
 }
 
 std::optional<SharedPreferencesForWebProcess> WebSWServerConnection::sharedPreferencesForWebProcess() const
 {
-    if (!m_networkConnectionToWebProcess)
-        return std::nullopt;
-
-    return m_networkConnectionToWebProcess->sharedPreferencesForWebProcess();
+    return m_networkConnectionToWebProcess ? m_networkConnectionToWebProcess->sharedPreferencesForWebProcess() : std::nullopt;
 }
 
 void WebSWServerConnection::rejectJobInClient(ServiceWorkerJobIdentifier jobIdentifier, const ExceptionData& exceptionData)
@@ -231,7 +228,7 @@ void WebSWServerConnection::controlClient(const NetworkResourceLoadParameters& p
 
     auto ancestorOrigins = map(parameters.frameAncestorOrigins, [](auto& origin) { return origin->toString(); });
     auto advancedPrivacyProtections = server->advancedPrivacyProtectionsFromClient(registration.key().clientOrigin());
-    ServiceWorkerClientData data { clientIdentifier, clientType, ServiceWorkerClientFrameType::None, request.url(), URL(), parameters.webPageID, parameters.webFrameID, request.isAppInitiated() ? WebCore::LastNavigationWasAppInitiated::Yes : WebCore::LastNavigationWasAppInitiated::No, advancedPrivacyProtections, false, false, 0, WTF::move(ancestorOrigins) };
+    ServiceWorkerClientData data { clientIdentifier, clientType, ServiceWorkerClientFrameType::None, request.url(), URL(), parameters.webPageID, parameters.webFrameID, request.isAppInitiated() ? WebCore::LastNavigationWasAppInitiated::Yes : WebCore::LastNavigationWasAppInitiated::No, advancedPrivacyProtections, false, false, 0, WTF::move(ancestorOrigins), parameters.globalPrivacyControlEnabled };
 
     registerServiceWorkerClientInternal(ClientOrigin { registration.key().topOrigin(), SecurityOriginData::fromURLWithoutStrictOpaqueness(request.url()) }, WTF::move(data), registration.identifier(), request.httpUserAgent(), WebCore::SWServer::IsBeingCreatedClient::Yes);
 }
@@ -412,7 +409,9 @@ void WebSWServerConnection::postMessageToServiceWorker(ServiceWorkerIdentifier d
 
         // PostMessageToServiceWorker follows a different flow than normal MessagePort post message.
         // We pre-record the destination so impending message checks pass.
-        Ref networkProcess = protectedThis->networkProcess();
+        RefPtr networkProcess = protectedThis->networkProcess();
+        if (!networkProcess)
+            return;
         CheckedRef registry = networkProcess->messagePortChannelRegistry();
         for (auto& transferredPort : message.transferredPorts)
             registry->recordPendingTransferDestination(transferredPort.first, contextConnection->webProcessIdentifier());
@@ -493,7 +492,9 @@ void WebSWServerConnection::postMessageToServiceWorkerClient(ScriptExecutionCont
     server->postMessageToServiceWorkerClient(destinationContextIdentifier, message, sourceIdentifier, sourceOrigin, [protectedThis = Ref { *this }] (auto destinationContextIdentifier, auto& message, auto sourceServiceWorkerData, auto& sourceOrigin) {
         // PostMessageToServiceWorkerClient follows a different flow than normal MessagePort post message.
         // We pre-record the destination so impending message checks pass.
-        Ref networkProcess = protectedThis->networkProcess();
+        RefPtr networkProcess = protectedThis->networkProcess();
+        if (!networkProcess)
+            return;
         CheckedRef registry = networkProcess->messagePortChannelRegistry();
         for (auto& transferredPort : message.transferredPorts)
             registry->recordPendingTransferDestination(transferredPort.first, destinationContextIdentifier.processIdentifier());
@@ -572,8 +573,8 @@ void WebSWServerConnection::registerServiceWorkerClientInternal(WebCore::ClientO
 
     if (isNewOrigin) {
         server->forEachContextConnectionForRegistrableDomain(RegistrableDomain { contextOrigin }, [&](auto& contextConnection) {
-            auto& connection = downcast<WebSWServerToContextConnection>(contextConnection);
-            networkProcess().parentProcessConnection()->send(Messages::NetworkProcessProxy::RegisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
+            RefPtr networkProcess = this->networkProcess();
+            protect(networkProcess->parentProcessConnection())->send(Messages::NetworkProcessProxy::RegisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), downcast<WebSWServerToContextConnection>(contextConnection).webProcessIdentifier() }, 0);
         });
     }
 }
@@ -606,7 +607,8 @@ void WebSWServerConnection::unregisterServiceWorkerClient(const ScriptExecutionC
         if (!hasMatchingClient(potentiallyRemovedDomain)) {
             server->forEachContextConnectionForRegistrableDomain(potentiallyRemovedDomain, [&](auto& contextConnection) {
                 auto& connection = downcast<WebSWServerToContextConnection>(contextConnection);
-                networkProcess().parentProcessConnection()->send(Messages::NetworkProcessProxy::UnregisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
+                RefPtr networkProcess = downcast<WebSWServerToContextConnection>(contextConnection).networkProcess();
+                protect(networkProcess->parentProcessConnection())->send(Messages::NetworkProcessProxy::UnregisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
             });
         }
     }
@@ -792,8 +794,10 @@ void WebSWServerConnection::contextConnectionCreated(SWServerToContextConnection
     auto& connection =  downcast<WebSWServerToContextConnection>(contextConnection);
     connection.setThrottleState(computeThrottleState(connection.registrableDomain()));
 
-    if (hasMatchingClient(connection.registrableDomain()))
-        protect(networkProcess().parentProcessConnection())->send(Messages::NetworkProcessProxy::RegisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
+    if (hasMatchingClient(connection.registrableDomain())) {
+        RefPtr networkProcess = this->networkProcess();
+        protect(networkProcess->parentProcessConnection())->send(Messages::NetworkProcessProxy::RegisterRemoteWorkerClientProcess { RemoteWorkerType::ServiceWorker, identifier(), connection.webProcessIdentifier() }, 0);
+    }
 }
 
 void WebSWServerConnection::terminateWorkerFromClient(ServiceWorkerIdentifier serviceWorkerIdentifier, CompletionHandler<void()>&& callback)
@@ -822,7 +826,8 @@ PAL::SessionID WebSWServerConnection::sessionID() const
 
 NetworkSession* WebSWServerConnection::session()
 {
-    return protect(networkProcess())->networkSession(sessionID());
+    RefPtr networkProcess = this->networkProcess();
+    return networkProcess ? networkProcess->networkSession(sessionID()) : nullptr;
 }
 
 template<typename U> void WebSWServerConnection::sendToContextProcess(WebCore::SWServerToContextConnection& connection, U&& message)
@@ -1040,7 +1045,7 @@ bool WebSWServerConnection::checkTopOrigin(const WebCore::SecurityOriginData& or
     if (!networkConnectionToWebProcess)
         return false;
 
-    Ref networkProcess = networkConnectionToWebProcess->networkProcess();
+    RefPtr networkProcess = networkConnectionToWebProcess->networkProcess();
     MESSAGE_CHECK_WITH_RETURN_VALUE(networkProcess->allowsFirstPartyForCookies(networkConnectionToWebProcess->webProcessIdentifier(), WebCore::RegistrableDomain::uncheckedCreateFromHost(origin.host())) != NetworkProcess::AllowCookieAccess::Terminate, false);
     return true;
 }

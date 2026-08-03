@@ -12,9 +12,9 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkTypes.h"
-#include "src/base/SkFloatBits.h"
-#include "src/base/SkUtils.h"
-#include "src/base/SkVx.h"
+#include "src/core/SkFloatBits.h"
+#include "src/core/SkUtils.h"
+#include "src/core/SkVx.h"
 
 #include <math.h>
 #include <algorithm>
@@ -97,6 +97,15 @@ AI int nextlog4(float x) {
 AI int nextlog16(float x) {
     return (nextlog2(x) + 3) >> 2;
 }
+
+// Returns nextlog2(pow(x, 1/6)):
+//
+//   log2(pow(x, 1/6)) == log2(x)/6 == log2(x)/log2(64) == log64(x)
+//
+AI int nextlog64(float x) {
+    return (nextlog2(x) + 5) / 6;
+}
+
 
 // Represents the upper-left 2x2 matrix of an affine transform for applying to vectors:
 //

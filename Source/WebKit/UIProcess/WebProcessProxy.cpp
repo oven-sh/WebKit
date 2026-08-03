@@ -157,6 +157,11 @@
 #import <pal/system/ios/Device.h>
 #endif
 
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+#include "RemoteMediaSessionManagerProxy.h"
+#include "RemoteMediaSessionManagerProxyMessages.h"
+#endif
+
 #define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, connection())
 #define MESSAGE_CHECK_URL(url) MESSAGE_CHECK_BASE(checkURLReceivedFromWebProcess(url), connection())
 #define MESSAGE_CHECK_COMPLETION(assertion, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, connection(), completion)
@@ -766,6 +771,14 @@ void WebProcessProxy::shutDown()
 
     shutDownProcess();
 
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+    // Tear down the log stream as soon as the process shuts down, rather than waiting for this
+    // proxy to be destroyed (which may be delayed, or leak). Otherwise its underlying default-QOS
+    // IPC connection — and the Mach port / kqueue workloop it holds — lingers with a dead peer and
+    // accumulates until the UI process is killed for resource exhaustion. See rdar://182244946.
+    stopLogStream();
+#endif
+
     m_backgroundResponsivenessTimer->invalidate();
     m_audibleMediaActivity = std::nullopt;
     m_mediaStreamingActivity = std::nullopt;
@@ -783,6 +796,14 @@ void WebProcessProxy::shutDown()
 #if ENABLE(ROUTING_ARBITRATION)
     if (RefPtr routingArbitrator = m_routingArbitrator.get())
         routingArbitrator->processDidTerminate();
+#endif
+
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    // Under site isolation the process-wide RemoteMediaSessionManagerProxy holds this process's audio
+    // sessions; drop them now so the shared audio session can deactivate instead of staying wedged
+    // active on behalf of a process that no longer exists.
+    if (RefPtr remoteMediaSessionManagerProxy = RemoteMediaSessionManagerProxy::singletonIfCreated())
+        remoteMediaSessionManagerProxy->webProcessWillShutDown(coreProcessIdentifier());
 #endif
 
     Ref<WebProcessPool> { processPool() }->disconnectProcess(*this);
@@ -1121,7 +1142,8 @@ void WebProcessProxy::assumeReadAccessToBaseURLs(WebPageProxy& page, const Vecto
     if (!networkProcessWillCheckBlobFileAccess())
         return completionHandler();
 
-    protect(dataStore->networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::AllowFilesAccessFromWebProcess(coreProcessIdentifier(), WTF::move(paths)), [weakThis = WeakPtr { *this }, weakPage = WeakPtr { page }, paths, completionHandler = WTF::move(completionHandler)] mutable {
+    auto messagePaths = paths;
+    protect(dataStore->networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::AllowFilesAccessFromWebProcess(coreProcessIdentifier(), WTF::move(messagePaths)), [weakThis = WeakPtr { *this }, weakPage = WeakPtr { page }, paths = WTF::move(paths), completionHandler = WTF::move(completionHandler)] mutable {
         if (!weakThis || !weakPage)
             return completionHandler();
 
@@ -1398,6 +1420,12 @@ bool WebProcessProxy::dispatchMessage(IPC::Connection& connection, IPC::Decoder&
             WebFrameProxy::sendCancelReply(connection, decoder);
         return true;
     }
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    if (messageName == Messages::RemoteMediaSessionManagerProxy::messageReceiverName()) {
+        RemoteMediaSessionManagerProxy::singleton()->didReceiveMessage(connection, decoder);
+        return true;
+    }
+#endif
 
     // FIXME: Add unhandled message logging.
     // WebProcessProxy will receive messages to instances that were removed from
@@ -1778,6 +1806,17 @@ bool WebProcessProxy::canBeAddedToWebProcessCache() const
     return true;
 }
 
+void WebProcessProxy::decrementFrameProcessCount()
+{
+    ASSERT(m_frameProcessCount);
+    // A process backing live FrameProcesses (e.g. cross-site subframes preserved in the
+    // back/forward cache) is kept out of the WebProcess cache and alive by
+    // canTerminateAuxiliaryProcess(). Once the last FrameProcess goes away we may now be able
+    // to cache or shut the process down, so re-evaluate here as we do when other counts drop.
+    if (!--m_frameProcessCount)
+        maybeShutDown();
+}
+
 void WebProcessProxy::maybeShutDown()
 {
     if (isDummyProcessProxy() && m_pageMap.isEmpty()) {
@@ -1805,9 +1844,10 @@ bool WebProcessProxy::canTerminateAuxiliaryProcess()
         || !m_remotePages.isEmptyIgnoringNullReferences()
         || !m_suspendedPages.isEmptyIgnoringNullReferences()
         || !m_provisionalPages.isEmptyIgnoringNullReferences()
+        || m_frameProcessCount
         || m_isInProcessCache
         || m_shutdownPreventingScopeCounter.value()) {
-        WEBPROCESSPROXY_RELEASE_LOG(Process, "canTerminateAuxiliaryProcess: returns false (pageCount=%u, remotePageCount=%u, provisionalPageCount=%u, suspendedPageCount=%u, m_isInProcessCache=%d, m_shutdownPreventingScopeCounter=%zu)", m_pageMap.size(), m_remotePages.computeSize(), m_provisionalPages.computeSize(), m_suspendedPages.computeSize(), m_isInProcessCache, m_shutdownPreventingScopeCounter.value());
+        WEBPROCESSPROXY_RELEASE_LOG(Process, "canTerminateAuxiliaryProcess: returns false (pageCount=%u, remotePageCount=%u, provisionalPageCount=%u, suspendedPageCount=%u, frameProcessCount=%" PRIu64 ", m_isInProcessCache=%d, m_shutdownPreventingScopeCounter=%zu)", m_pageMap.size(), m_remotePages.computeSize(), m_provisionalPages.computeSize(), m_suspendedPages.computeSize(), m_frameProcessCount, m_isInProcessCache, m_shutdownPreventingScopeCounter.value());
         return false;
     }
 
@@ -2404,6 +2444,13 @@ void WebProcessProxy::didCollectPrewarmInformation(const WebCore::RegistrableDom
 {
     MESSAGE_CHECK(!domain.isEmpty());
     protect(processPool())->didCollectPrewarmInformation(domain, prewarmInformation);
+}
+
+void WebProcessProxy::didCompleteAutofill(const WebCore::Site& site)
+{
+    MESSAGE_CHECK(!site.isEmpty());
+    if (RefPtr dataStore = websiteDataStore())
+        dataStore->isolatedSiteStore().addSite(site, IsolatedSiteStore::Signal::Autofill);
 }
 
 void WebProcessProxy::activePagesDomainsForTesting(CompletionHandler<void(Vector<String>&&)>&& completionHandler)

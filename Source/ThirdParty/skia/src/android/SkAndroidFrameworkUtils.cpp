@@ -8,10 +8,10 @@
 #include "include/android/SkAndroidFrameworkUtils.h"
 #include "include/core/SkCanvas.h"
 #include "include/effects/SkGradient.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SkTemplates.h"
 #include "include/utils/SkPaintFilterCanvas.h"
-#include "src/base/SkTLazy.h"
 #include "src/core/SkDevice.h"
+#include "src/core/SkTLazy.h"
 #include "src/image/SkSurface_Base.h"
 #include "src/shaders/SkShaderBase.h"
 
@@ -29,11 +29,6 @@ void SkAndroidFrameworkUtils::SafetyNetLog(const char* bugNumber) {
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
     android_errorWriteLog(0x534e4554, bugNumber);
 #endif
-}
-
-sk_sp<SkSurface> SkAndroidFrameworkUtils::getSurfaceFromCanvas(SkCanvas* canvas) {
-    sk_sp<SkSurface> surface(SkSafeRef(canvas->getSurfaceBase()));
-    return surface;
 }
 
 int SkAndroidFrameworkUtils::SaveBehind(SkCanvas* canvas, const SkRect* subset) {

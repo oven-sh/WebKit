@@ -36,25 +36,18 @@
 
 namespace WebCore {
 
-static void computeStyleForPseudoElementStyle(StyledMarkedText::Style& style, const Style::ComputedStyle* pseudoElementStyle, const PaintInfo& paintInfo)
+static void computeDecorationStylesForPseudoElementStyle(StyledMarkedText::Style& style, const Style::ComputedStyle& pseudoElementStyle, const PaintInfo& paintInfo)
 {
-    if (!pseudoElementStyle)
-        return;
-
-    style.backgroundColor = pseudoElementStyle->visitedDependentBackgroundColorApplyingColorFilter(paintInfo.paintBehavior);
-    style.textStyles.fillColor = pseudoElementStyle->visitedDependentTextFillColorApplyingColorFilter(paintInfo.paintBehavior);
-    style.textStyles.strokeColor = pseudoElementStyle->usedStrokeColor();
-    style.textStyles.hasExplicitlySetFillColor = pseudoElementStyle->hasExplicitlySetColor();
-
-    auto color = TextDecorationPainter::decorationColor(*pseudoElementStyle, paintInfo.paintBehavior);
-    auto decorationStyle = pseudoElementStyle->textDecorationStyle();
-    auto thickness = pseudoElementStyle->textDecorationThickness();
-    auto decorations = pseudoElementStyle->textDecorationLineInEffect();
+    auto color = TextDecorationPainter::decorationColor(pseudoElementStyle, paintInfo.paintBehavior);
+    auto decorationStyle = pseudoElementStyle.textDecorationStyle();
+    auto thickness = pseudoElementStyle.textDecorationThickness();
+    auto decorations = pseudoElementStyle.textDecorationLine();
 
     if (decorations.hasUnderline()) {
         style.textDecorationStyles.underline.color = color;
         style.textDecorationStyles.underline.decorationStyle = decorationStyle;
         style.textDecorationStyles.underline.thickness = thickness;
+        style.textDecorationStyles.underlineOffset = pseudoElementStyle.textUnderlineOffset();
     }
     if (decorations.hasOverline()) {
         style.textDecorationStyles.overline.color = color;
@@ -66,8 +59,22 @@ static void computeStyleForPseudoElementStyle(StyledMarkedText::Style& style, co
         style.textDecorationStyles.linethrough.decorationStyle = decorationStyle;
         style.textDecorationStyles.linethrough.thickness = thickness;
     }
+}
 
-    style.textShadow = pseudoElementStyle->textShadow();
+static void computeStyleForPseudoElementStyle(StyledMarkedText::Style& style, const Style::ComputedStyle* pseudoElementStyle, const PaintInfo& paintInfo)
+{
+    if (!pseudoElementStyle)
+        return;
+
+    CheckedRef checkedPseudoElementStyle = *pseudoElementStyle;
+    style.backgroundColor = checkedPseudoElementStyle->visitedDependentBackgroundColorApplyingColorFilter(paintInfo.paintBehavior);
+    style.textStyles.fillColor = checkedPseudoElementStyle->visitedDependentTextFillColorApplyingColorFilter(paintInfo.paintBehavior);
+    style.textStyles.strokeColor = checkedPseudoElementStyle->usedStrokeColor();
+    style.textStyles.hasExplicitlySetFillColor = checkedPseudoElementStyle->hasExplicitlySetColor();
+
+    computeDecorationStylesForPseudoElementStyle(style, checkedPseudoElementStyle.get(), paintInfo);
+
+    style.textShadow = checkedPseudoElementStyle->textShadow();
 }
 
 static StyledMarkedText resolveStyleForMarkedText(const MarkedText& markedText, const StyledMarkedText::Style& baseStyle, const RenderText& renderer, const Style::ComputedStyle& lineStyle, const PaintInfo& paintInfo)
@@ -138,6 +145,9 @@ static StyledMarkedText resolveStyleForMarkedText(const MarkedText& markedText, 
     case MarkedText::Type::Selection: {
         style.textStyles = computeTextSelectionPaintStyle(style.textStyles, renderer, lineStyle, paintInfo, style.textShadow);
 
+        if (auto selectionStyle = renderer.selectionPseudoStyle())
+            computeDecorationStylesForPseudoElementStyle(style, *selectionStyle, paintInfo);
+
         Color selectionBackgroundColor = renderer.selectionBackgroundColor();
         style.backgroundColor = selectionBackgroundColor;
         if (selectionBackgroundColor.isValid() && selectionBackgroundColor.isVisible() && style.textStyles.fillColor == selectionBackgroundColor)
@@ -181,6 +191,7 @@ static TextDecorationPainter::Styles NODELETE computeStylesForTextDecorations(co
         textDecorationStyles.underline.color = currentTextDecorationStyles.underline.color;
         textDecorationStyles.underline.decorationStyle = currentTextDecorationStyles.underline.decorationStyle;
         textDecorationStyles.underline.thickness = currentTextDecorationStyles.underline.thickness;
+        textDecorationStyles.underlineOffset = currentTextDecorationStyles.underlineOffset;
     }
     if (textDecorations.hasOverline()) {
         textDecorationStyles.overline.color = currentTextDecorationStyles.overline.color;
@@ -223,9 +234,9 @@ static Vector<StyledMarkedText> coalesceAdjacentWithSameRanges(Vector<StyledMark
 
             if (previousStyledMarkedText.priority <= text.priority) {
                 previousStyledMarkedText.priority = text.priority;
-                // If highlight, combine textDecorationStyles accordingly.
+                // If highlight or selection, combine textDecorationStyles accordingly.
                 // FIXME: Check for taking textDecorationStyles needs to accommodate other MarkedText type.
-                if (!text.highlightName.isNull())
+                if (!text.highlightName.isNull() || text.type == MarkedText::Type::Selection)
                     previousStyledMarkedText.style.textDecorationStyles = computeStylesForTextDecorations(previousStyledMarkedText.style.textDecorationStyles, text.style.textDecorationStyles);
                 // If higher or same priority and opaque, override background color.
                 if (text.style.backgroundColor.isOpaque())

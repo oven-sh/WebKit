@@ -9,13 +9,14 @@
 
 #include "include/core/SkData.h"
 #include "include/core/SkStream.h"
-#include "include/private/base/SkMutex.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkMutex.h"
+#include "include/private/SkTArray.h"
 #include "modules/jsonreader/SkJSONReader.h"
 #include "src/core/SkOSFile.h"
 #include "src/utils/SkJSONWriter.h"
 #include "src/utils/SkOSPath.h"
 #include "tools/ProcStats.h"
+#include "tools/ProcsUtils.h"
 
 using namespace skia_private;
 
@@ -43,7 +44,7 @@ void JsonWriter::DumpJson(const char* dir,
     SkString path = SkOSPath::Join(dir, "dm.json");
     sk_mkdir(dir);
     SkFILEWStream stream(path.c_str());
-    SkJSONWriter writer(&stream, SkJSONWriter::Mode::kPretty);
+    SkJSONWriter  writer(&stream, ToolUtils::default_serial_procs(), SkJSONWriter::Mode::kPretty);
 
     writer.beginObject(); // root
 

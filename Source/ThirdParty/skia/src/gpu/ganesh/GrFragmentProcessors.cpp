@@ -27,11 +27,10 @@
 #include "include/gpu/ganesh/GrRecordingContext.h"
 #include "include/gpu/ganesh/GrTypes.h"
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkTLazy.h"
 #include "src/core/SkBlendModeBlender.h"
 #include "src/core/SkBlenderBase.h"
 #include "src/core/SkColorData.h"
@@ -40,6 +39,7 @@
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkRuntimeBlender.h"
 #include "src/core/SkRuntimeEffectPriv.h"
+#include "src/core/SkTLazy.h"
 #include "src/effects/SkShaderMaskFilterImpl.h"
 #include "src/effects/colorfilters/SkBlendModeColorFilter.h"
 #include "src/effects/colorfilters/SkColorFilterBase.h"
@@ -755,7 +755,9 @@ static std::unique_ptr<GrFragmentProcessor> make_shader_fp(const SkPictureShader
     } else {
         const int msaaSampleCount = 0;
         const bool createWithMips = false;
-        const bool kUnprotected = false;
+        const bool isProtected =
+                args.fSurfaceDrawContext->asSurfaceProxy()->isProtected() ==
+                GrProtected::kYes;
         auto image = info.makeImage(SkSurfaces::RenderTarget(ctx,
                                                              skgpu::Budgeted::kYes,
                                                              info.imageInfo,
@@ -763,7 +765,7 @@ static std::unique_ptr<GrFragmentProcessor> make_shader_fp(const SkPictureShader
                                                              kTopLeft_GrSurfaceOrigin,
                                                              &info.props,
                                                              createWithMips,
-                                                             kUnprotected),
+                                                             isProtected),
                                     shader->picture().get());
         if (!image) {
             return nullptr;

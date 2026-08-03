@@ -28,6 +28,7 @@
 #import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
+#import "Helpers/Utilities.h"
 #import "Helpers/cocoa/TestCocoa.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
@@ -58,6 +59,13 @@
 #import <wtf/RetainPtr.h>
 #import <wtf/WallTime.h>
 #import <wtf/text/MakeString.h>
+
+#if HAVE(ENHANCED_SECURITY_LINKS)
+#import <LinkSecurity/LinkSecurity.h>
+#import <wtf/BlockPtr.h>
+
+asm(".linker_option \"-delay_framework\", \"LinkSecurity\"");
+#endif // HAVE(ENHANCED_SECURITY_LINKS)
 
 using namespace TestWebKitAPI;
 
@@ -290,6 +298,37 @@ static void runHttpLoad(bool useSiteIsolation)
     EXPECT_EQ(plaintextServer.totalRequests(), 1u);
 }
 TEST_WITH_AND_WITHOUT_SITE_ISOLATION(HttpLoad)
+
+static void runHttpFragmentNavigation(bool useSiteIsolation)
+{
+    auto pageBody = "<a id='link' href='#target'>target</a><div id='target'></div>"
+        "<script>"
+        "alert('insecure-page');"
+        "window.onhashchange = () => alert('after-fragment-navigation');"
+        "window.onload = () => { document.getElementById('link').click(); };"
+        "</script>"_s;
+
+    HTTPServer plaintextServer({
+        { "http://insecure.example.internal/"_s, { pageBody } },
+        { "http://insecure.example.internal/#target"_s, { pageBody } },
+    });
+
+    auto webView = enhancedSecurityTestConfiguration(&plaintextServer, nullptr, useSiteIsolation);
+
+    loadRequestAndCheckEnhancedSecurityAlerts(webView, @"http://insecure.example.internal/", {
+        { "insecure-page"_s, ExpectedEnhancedSecurity::Enabled },
+        { "after-fragment-navigation"_s, ExpectedEnhancedSecurity::Enabled }
+    });
+
+    EXPECT_WK_STREQ([webView URL].absoluteString, @"http://insecure.example.internal/#target");
+
+    // Allow a moment for the provisional load to begin, if it is going to.
+    TestWebKitAPI::Util::runFor(0.1_s);
+
+    EXPECT_EQ([webView _provisionalWebProcessIdentifier], 0);
+    EXPECT_EQ(plaintextServer.totalRequests(), 1u);
+}
+TEST_WITH_AND_WITHOUT_SITE_ISOLATION(HttpFragmentNavigation)
 
 static void runHttpLoadWithCOOP(bool useSiteIsolation)
 {
@@ -1780,8 +1819,68 @@ TEST(EnhancedSecurityPolicies, OpenDatabaseDoesNotCrashWhenMigrationFails)
     cleanUpEnhancedSecuritySites();
 }
 
-#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/EnhancedSecurityPoliciesAdditions.mm>)
-#import <WebKitAdditions/EnhancedSecurityPoliciesAdditions.mm>
-#endif
+#if HAVE(ENHANCED_SECURITY_LINKS)
+
+TEST(EnhancedSecurityPolicies, LinkInStoreEnablesEnhancedSecurity)
+{
+    HTTPServer secureServer({
+        { "/"_s, { "<script>alert('secure-page')</script>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto webView = enhancedSecurityTestConfiguration(nullptr, &secureServer, false);
+    loadRequestAndCheckEnhancedSecurityAlerts(webView, @"https://test.example/", {
+        { "secure-page"_s, ExpectedEnhancedSecurity::Disabled }
+    });
+
+    NSURL *enhancedURL = [NSURL URLWithString:@"https://clicked.example/"];
+    [LSLinkSecurityManager.sharedManager addFlaggedURL:enhancedURL];
+
+    bool isFlagged = false;
+    TestWebKitAPI::Util::waitFor([&] {
+        if (!LSLinkSecurityManager.sharedManager.hasFlaggedURLs)
+            return false;
+        [LSLinkSecurityManager.sharedManager checkIsFlaggedURL:enhancedURL completion:makeBlockPtr([&](BOOL flagged) {
+            isFlagged = flagged;
+        }).get()];
+        return isFlagged;
+    });
+
+    loadRequestAndCheckEnhancedSecurityAlerts(webView, @"https://clicked.example/", {
+        { "secure-page"_s, ExpectedEnhancedSecurity::Enabled }
+    });
+}
+
+TEST(EnhancedSecurityPolicies, HttpLinkInStoreRemainsOnceUpgraded)
+{
+    HTTPServer plaintextServer({
+        { "http://clicked.example/"_s, { 302, { { "Location"_s, "https://clicked.example/"_s } }, emptyString() } }
+    });
+
+    HTTPServer secureServer({
+        { "/"_s, { "<script>alert('secure-page')</script>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto webView = enhancedSecurityTestConfiguration(&plaintextServer, &secureServer, false);
+    loadRequestAndCheckEnhancedSecurityAlerts(webView, @"https://test.example/", {
+        { "secure-page"_s, ExpectedEnhancedSecurity::Disabled }
+    });
+
+    NSURL *enhancedURL = [NSURL URLWithString:@"http://clicked.example/"];
+    [LSLinkSecurityManager.sharedManager addFlaggedURL:enhancedURL];
+
+    bool isFlagged = false;
+    TestWebKitAPI::Util::waitFor([&] {
+        [LSLinkSecurityManager.sharedManager checkIsFlaggedURL:enhancedURL completion:makeBlockPtr([&](BOOL flagged) {
+            isFlagged = flagged;
+        }).get()];
+        return isFlagged;
+    });
+
+    loadRequestAndCheckEnhancedSecurityAlerts(webView, @"http://clicked.example/", {
+        { "secure-page"_s, ExpectedEnhancedSecurity::Enabled }
+    });
+}
+
+#endif // HAVE(ENHANCED_SECURITY_LINKS)
 
 #endif

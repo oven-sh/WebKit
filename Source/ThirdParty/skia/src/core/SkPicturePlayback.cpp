@@ -26,17 +26,17 @@
 #include "include/core/SkString.h"
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkSafeMath.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkDrawShadowInfo.h"
 #include "src/core/SkPictureData.h"
 #include "src/core/SkPictureFlat.h"
 #include "src/core/SkPicturePriv.h"
 #include "src/core/SkReadBuffer.h"
+#include "src/core/SkSafeMath.h"
 #include "src/core/SkVerticesPriv.h"
 #include "src/utils/SkPatchUtils.h"
 
@@ -453,7 +453,7 @@ void SkPicturePlayback::handleOp(SkReadBuffer* reader,
             const SkPaint* paint = fPictureData->optionalPaint(reader);
             const SkImage* image = fPictureData->getImage(reader);
             SkCanvas::Lattice lattice;
-            (void)SkCanvasPriv::ReadLattice(*reader, &lattice);
+            reader->validate(SkCanvasPriv::ReadLattice(*reader, &lattice));
             const SkRect* dst = reader->skipT<SkRect>();
             BREAK_ON_READ_ERROR(reader);
 
@@ -463,7 +463,7 @@ void SkPicturePlayback::handleOp(SkReadBuffer* reader,
             const SkPaint* paint = fPictureData->optionalPaint(reader);
             const SkImage* image = fPictureData->getImage(reader);
             SkCanvas::Lattice lattice;
-            (void)SkCanvasPriv::ReadLattice(*reader, &lattice);
+            reader->validate(SkCanvasPriv::ReadLattice(*reader, &lattice));
             const SkRect* dst = reader->skipT<SkRect>();
             SkFilterMode filter = reader->read32LE(SkFilterMode::kLinear);
             BREAK_ON_READ_ERROR(reader);

@@ -10,8 +10,8 @@
 
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkNoncopyable.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkNoncopyable.h"
+#include "include/private/SkTo.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/GpuTypesPriv.h"
 #include "src/gpu/ResourceKey.h"
@@ -235,9 +235,7 @@ public:
 
     static uint32_t CreateUniqueID();
 
-#if defined(GPU_TEST_UTILS)
     virtual const GrSurface* asSurface() const { return nullptr; }
-#endif
 
 protected:
     // This must be called by every non-wrapped GrGpuObject. It should be called once the object is

@@ -59,7 +59,6 @@ skia_cc_library(
     ],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
         "//src/gpu",
     ],
@@ -82,7 +81,6 @@ skia_cc_library(
     ],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
     ],
 )
@@ -101,12 +99,12 @@ skia_cc_library(
     ],
     features = ["layering_check"],
     visibility = [
+        "//src/gpu/ganesh/d3d:__pkg__",
         "//tools/skslc:__pkg__",
     ],
     deps = [
         ":spirv",
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
         "@spirv_cross",
     ],
@@ -124,13 +122,13 @@ skia_cc_library(
     ],
     features = ["layering_check"],
     visibility = [
+        "//dm:__pkg__",
         "//src/gpu/ganesh/mtl:__pkg__",
         "//src/gpu/mtl:__pkg__",
         "//tools/skslc:__pkg__",
     ],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
     ],
 )
@@ -148,12 +146,12 @@ skia_cc_library(
     ],
     features = ["layering_check"],
     visibility = [
+        "//dm:__pkg__",
         "//src/gpu/vk:__pkg__",
         "//tools/skslc:__pkg__",
     ],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
         "//src/utils:shader_utils",
     ],
@@ -191,11 +189,12 @@ skia_cc_library(
     ],
     features = ["layering_check"],
     visibility = [
+        "//dm:__pkg__",
+        "//src/gpu/graphite/dawn:__pkg__",
         "//tools/skslc:__pkg__",
     ],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
     ],
 )

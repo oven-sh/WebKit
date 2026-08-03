@@ -78,7 +78,9 @@ struct WebPageTests {
         #expect(page.estimatedProgress == 0.0)
         #expect(page.serverTrust == nil)
         #expect(!page.hasOnlySecureContent)
+        #if WTF_PLATFORM_MAC || WTF_PLATFORM_IOS
         #expect(page.themeColor == nil)
+        #endif
 
         // FIXME: (283456) Make this test more comprehensive once Observation supports observing a stream of changes to properties.
     }
@@ -112,6 +114,23 @@ struct WebPageTests {
         let result = try await page.callJavaScript(returning: Bool.self) {
             """
             return navigator.globalPrivacyControl;
+            """
+        }
+        #expect(result == enabled)
+    }
+
+    @Test(arguments: [true, false])
+    func allowsJSHandleCreationInPageWorld(enabled: Bool) async throws {
+        let decider = TestNavigationDecider()
+        decider.preferencesMutation = { preferences in
+            preferences.allowsJSHandleCreationInPageWorld = enabled
+        }
+        let page = WebPage(navigationDecider: decider)
+        try await page.load(html: "hi", baseURL: URL(string: "http://webkit.org")!).wait()
+
+        let result = try await page.callJavaScript(returning: Bool.self) {
+            """
+            return !!window.webkit && !!window.webkit.createJSHandle;
             """
         }
         #expect(result == enabled)

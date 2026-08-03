@@ -27,7 +27,7 @@ import sys
 
 from webkit.opaque_ipc_types import opaque_ipc_types
 from webkit import parser
-from webkit.model import BUILTIN_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLYDURINGUNBOUNDEDIPC_ATTRIBUTE, MAINTHREADCALLBACK_ATTRIBUTE, STREAM_ATTRIBUTE, CALL_WITH_REPLY_ID_ATTRIBUTE, MessageReceiver, Message
+from webkit.model import BUILTIN_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLYDURINGUNBOUNDEDIPC_ATTRIBUTE, MAINTHREADCALLBACK_ATTRIBUTE, ANYTHREADCALLBACK_ATTRIBUTE, STREAM_ATTRIBUTE, CALL_WITH_REPLY_ID_ATTRIBUTE, MessageReceiver, Message
 
 _license_header = """/*
  * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
@@ -283,6 +283,8 @@ def message_to_struct_declaration(receiver, message):
             result.append('    static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::%s_%sReply; }\n' % (receiver.name, message.name))
         if message.has_attribute(MAINTHREADCALLBACK_ATTRIBUTE):
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::MainThread;\n')
+        elif message.has_attribute(ANYTHREADCALLBACK_ATTRIBUTE):
+            result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::AnyThread;\n')
         else:
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;\n')
         result.append('    using ReplyArguments = std::tuple<%s>;\n' % ', '.join([parameter.type for parameter in message.reply_parameters]))
@@ -367,6 +369,7 @@ def atomic_object_identifier(type):
         'WebCore::IDBObjectStoreIdentifierType',
         'WebCore::IDBObjectStoreIdentifier',
         'WebCore::LibWebRTCSocketIdentifier',
+        'WebCore::PendingStreamIdentifier',
         'WebCore::RenderingResourceIdentifier',
         'WebCore::ResourceLoaderIdentifier',
         'WebCore::SamplesRendererTrackIdentifier',
@@ -467,6 +470,7 @@ def serialized_identifiers():
         'WebCore::PlatformLayerIdentifierID',
         'WebCore::PlaybackTargetClientContextID',
         'WebCore::NonSerializedDataIdentifier',
+        'WebCore::PendingStreamIdentifier',
         'WebCore::PortIdentifier',
         'WebCore::ProcessIdentifier',
         'WebCore::PushSubscriptionIdentifier',
@@ -511,7 +515,6 @@ def serialized_identifiers():
         'WebKit::GPUProcessConnectionIdentifier',
         'WebKit::ImageBufferSetIdentifier',
         'WebKit::RemoteGraphicsContextGLIdentifier',
-        'WebKit::RiceBackendIdentifier',
         'WebKit::IPCConnectionTesterIdentifier',
         'WebKit::IPCStreamTesterIdentifier',
         'WebKit::JSObjectID',
@@ -771,6 +774,9 @@ def forward_declarations_and_headers(receiver):
         '<wtf/ThreadSafeRefCounted.h>',
     ])
 
+    if (receiver.swift_receiver or receiver.swift_receiver_build_enabled_by) and receiver.has_attribute(STREAM_ATTRIBUTE):
+        headers.add('"StreamMessageReceiver.h"')
+
     non_template_wtf_types = frozenset([
         'MachSendRight',
         'MediaType',
@@ -871,18 +877,29 @@ def generate_messages_header(receiver):
                 sync_messages.append(message)
 
         result.append('namespace ' + handler_namespace + ' {\n\n')
-        result.append('class ' + forwarder_class + ': public RefCounted<' + forwarder_class + '>, public IPC::MessageReceiver {\n')
+        is_stream = receiver.has_attribute(STREAM_ATTRIBUTE)
+        if is_stream:
+            result.append('class ' + forwarder_class + ' final : public IPC::StreamMessageReceiver {\n')
+        else:
+            result.append('class ' + forwarder_class + ': public RefCounted<' + forwarder_class + '>, public IPC::MessageReceiver {\n')
         result.append('public:\n')
         result.append('    static Ref<' + forwarder_class + '> createFromWeak(' + handler_namespace + '::' + weak_ref_class + '* _Nonnull handler)\n')
         result.append('    {\n')
         result.append('        return adoptRef(*new ' + forwarder_class + '(handler));\n')
         result.append('    }\n')
         result.append('    ~' + forwarder_class + '();\n')
-        result.append('    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);\n')
-        if not receiver.has_attribute(STREAM_ATTRIBUTE) and (sync_messages or receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE)):
+        if is_stream:
+            result.append('    void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;\n')
+        else:
+            result.append('    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);\n')
+        if not is_stream and (sync_messages or receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE)):
             result.append('    void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);\n')
-        result.append('    void ref() const final { RefCounted::ref(); }\n')
-        result.append('    void deref() const final { RefCounted::deref(); }\n')
+        if is_stream:
+            result.append('    void ref() const { StreamMessageReceiver::ref(); }\n')
+            result.append('    void deref() const { StreamMessageReceiver::deref(); }\n')
+        else:
+            result.append('    void ref() const final { RefCounted::ref(); }\n')
+            result.append('    void deref() const final { RefCounted::deref(); }\n')
         result.append('private:\n')
         result.append('    ' + forwarder_class + '(' + handler_namespace + '::' + weak_ref_class + '* _Nonnull);\n')
         result.append('    std::unique_ptr<' + handler_namespace + '::' + class_name + '> getMessageTarget();\n')
@@ -1058,6 +1075,7 @@ def class_template_headers(template_string):
         'std::optional': {'headers': ['<optional>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'std::pair': {'headers': ['<utility>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'std::span': {'headers': ['<span>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
+        'std::tuple': {'headers': ['<tuple>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'Variant': {'headers': ['<wtf/Variant.h>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'IPC::ArrayReferenceTuple': {'headers': ['"ArrayReferenceTuple.h"'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'Ref': {'headers': ['<wtf/Ref.h>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
@@ -1564,8 +1582,6 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::GestureRecognizerState': ['"GestureTypes.h"'],
         'WebKit::GestureType': ['"GestureTypes.h"'],
         'WebKit::InputType': ['"FocusedElementInformation.h"'],
-        'WebKit::RiceBackendIdentifier': ['"RiceBackend.h"'],
-        'WebKit::RiceGatherResult': ['"RiceBackend.h"'],
         'WebKit::JSObjectID': ['"JavaScriptEvaluationResult.h"'],
         'WebKit::SnapshotOption': ['"ImageOptions.h"'],
         'WebKit::LastNavigationWasAppInitiated': ['"AppPrivacyReport.h"'],
@@ -1674,6 +1690,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::WebGPU::VertexState': ['"WebGPUVertexState.h"'],
         'WebKit::WebGPU::XREye': ['"WebGPUXREye.h"'],
         'WebKit::WebJSBufferData': ['"WebUserContentControllerDataTypes.h"'],
+        'WebKit::WebMouseEventSyntheticClickType': ['"WebMouseEvent.h"'],
         'WebKit::WebPushD::PushMessageForTesting': ['"PushMessageForTesting.h"'],
         'WebKit::WebPushD::WebPushDaemonConnectionConfiguration': ['"WebPushDaemonConnectionConfiguration.h"'],
         'WebKit::WebScriptMessageHandlerData': ['"WebUserContentControllerDataTypes.h"'],
@@ -1779,18 +1796,28 @@ def generate_header_includes_from_conditions(header_conditions):
     return result
 
 
+PROCESS_NAME_PREDICATES = {
+    "UI": "!isInAuxiliaryProcess()",
+    "Networking": "isInNetworkProcess()",
+    "GPU": "isInGPUProcess()",
+    "WebContent": "isInWebProcess()",
+    "Model": "isInModelProcess()",
+}
+
+
 def generate_dispatched_for_x(dispatched_x, spacing='    '):
-    if dispatched_x == "WebContent":
-        return ['%sASSERT(isInWebProcess());\n' % spacing]
-    elif dispatched_x == "Networking":
-        return ['%sASSERT(isInNetworkProcess());\n' % spacing]
-    elif dispatched_x == "GPU":
-        return ['%sASSERT(isInGPUProcess());\n' % spacing]
-    elif dispatched_x == "UI":
-        return ['%sASSERT(!isInAuxiliaryProcess());\n' % spacing]
-    elif dispatched_x == "Model":
-        return ['%sASSERT(isInModelProcess());\n' % spacing]
-    return []
+    if not dispatched_x:
+        return []
+    predicates = [PROCESS_NAME_PREDICATES[name] for name in dispatched_x.split('|') if name in PROCESS_NAME_PREDICATES]
+    if not predicates:
+        return []
+    return ['%sASSERT(%s);\n' % (spacing, ' || '.join(predicates))]
+
+
+def process_name_enumerator(dispatched_x):
+    if not dispatched_x or '|' in dispatched_x:
+        return "Unknown"
+    return dispatched_x
 
 
 def generate_enabled_by_for_receiver(receiver, messages):
@@ -1821,17 +1848,26 @@ def generate_get_target_statements(receiver):
 
     def append_swift_get_target_statements(result):
         result.append('    auto target = getMessageTarget();\n')
-        # If target is a nullptr, this means the Swift message receiver has been destroyed.
-        # This makes no sense, since that Swift message receiver owns this class, the C++
-        # message forwarder, so we should also have been destroyed. If this happens,
-        # something somewhere is keeping an unexpected reference alive.
-        # In debug builds, crash. In release builds, attempt to survive by behaving as if
-        # corrupted data was received from the sender.
-        result.append('    if (!target) {\n')
-        result.append('        FATAL("Something is keeping a reference to the message forwarder");\n')
-        result.append('        decoder.markInvalid();\n')
-        result.append('        return;\n')
-        result.append('    }\n')
+        if receiver.has_attribute(STREAM_ATTRIBUTE):
+            # Stream receivers hold the target weakly and dispatch off the main thread, so a null
+            # target is a benign teardown race that must not crash the process. Mark the message
+            # invalid, which tears the stream connection down cleanly.
+            result.append('    if (!target) {\n')
+            result.append('        decoder.markInvalid();\n')
+            result.append('        return;\n')
+            result.append('    }\n')
+        else:
+            # If target is a nullptr, this means the Swift message receiver has been destroyed.
+            # This makes no sense, since that Swift message receiver owns this class, the C++
+            # message forwarder, so we should also have been destroyed. If this happens,
+            # something somewhere is keeping an unexpected reference alive.
+            # In debug builds, crash. In release builds, attempt to survive by behaving as if
+            # corrupted data was received from the sender.
+            result.append('    if (!target) {\n')
+            result.append('        FATAL("Something is keeping a reference to the message forwarder");\n')
+            result.append('        decoder.markInvalid();\n')
+            result.append('        return;\n')
+            result.append('    }\n')
 
     if_swift_enabled(receiver, result, append_swift_get_target_statements, None)
     return result
@@ -2267,11 +2303,11 @@ def generate_message_names_implementation(receivers):
                 result.append(', %s' % value)
             result.append(', %s' % ("true" if enumerator.messages[0].is_async_reply else "false"))
             if enumerator.messages[0].is_async_reply:
-                result.append(', ProcessName::%s' % (enumerator.receiver.receiver_dispatched_to or "Unknown"))
-                result.append(', ProcessName::%s' % (enumerator.receiver.receiver_dispatched_from or "Unknown"))
+                result.append(', ProcessName::%s' % process_name_enumerator(enumerator.receiver.receiver_dispatched_to))
+                result.append(', ProcessName::%s' % process_name_enumerator(enumerator.receiver.receiver_dispatched_from))
             else:
-                result.append(', ProcessName::%s' % (enumerator.receiver.receiver_dispatched_from or "Unknown"))
-                result.append(', ProcessName::%s' % (enumerator.receiver.receiver_dispatched_to or "Unknown"))
+                result.append(', ProcessName::%s' % process_name_enumerator(enumerator.receiver.receiver_dispatched_from))
+                result.append(', ProcessName::%s' % process_name_enumerator(enumerator.receiver.receiver_dispatched_to))
             result.append(' },\n')
         if condition:
             result.append('#endif\n')

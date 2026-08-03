@@ -49,6 +49,7 @@ struct SharedPreferencesForWebProcess;
 class RemoteAudioSessionProxy
     : public RefCounted<RemoteAudioSessionProxy>, public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteAudioSessionProxy);
+    friend class RemoteAudioSessionProxyManager;
 public:
     static Ref<RemoteAudioSessionProxy> create(GPUConnectionToWebProcess& gpuConnection)
     {
@@ -99,6 +100,7 @@ private:
     void setPreferredBufferSize(uint64_t);
     using SetActiveCompletion = CompletionHandler<void(bool)>;
     void tryToSetActive(bool, SetActiveCompletion&&);
+    void tryToSetActiveSync(bool, SetActiveCompletion&&);
     void setIsPlayingToBluetoothOverride(std::optional<bool>&& value);
     void triggerBeginInterruptionForTesting();
     void triggerEndInterruptionForTesting();

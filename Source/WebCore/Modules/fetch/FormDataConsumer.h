@@ -36,29 +36,37 @@
 namespace WebCore {
 
 class BlobLoader;
+class DeferredPromise;
 class Exception;
 class FormData;
+class PendingStreamState;
 class ScriptExecutionContext;
 template<typename> class ExceptionOr;
 
 class FormDataConsumer : public RefCountedAndCanMakeWeakPtr<FormDataConsumer> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(FormDataConsumer, WEBCORE_EXPORT);
 public:
+    enum class Mode : bool { Greedy, Pull };
     using Callback = Function<bool(ExceptionOr<std::span<const uint8_t>>)>;
-    static Ref<FormDataConsumer> create(const FormData& formData, ScriptExecutionContext& context, Callback&& callback) { return adoptRef(*new FormDataConsumer(formData, context, WTF::move(callback))); }
+    static Ref<FormDataConsumer> create(const FormData& formData, ScriptExecutionContext& context, Callback&& callback, Mode mode = Mode::Greedy) { return adoptRef(*new FormDataConsumer(formData, context, WTF::move(callback), mode)); }
     WEBCORE_EXPORT ~FormDataConsumer();
 
     void start() { read(); }
     void cancel();
 
-    bool hasPendingActivity() const { return !!m_blobLoader || m_isReadingFile; }
+    void resume(RefPtr<DeferredPromise>&&);
+    bool hasPendingPull() const { return !!m_pendingPullPromise; }
+
+    bool hasPendingActivity() const { return !!m_blobLoader || m_isReadingFile || !!m_pendingStreamState; }
 
 private:
-    FormDataConsumer(const FormData&, ScriptExecutionContext&, Callback&&);
+    FormDataConsumer(const FormData&, ScriptExecutionContext&, Callback&&, Mode);
 
     void consumeData(const Vector<uint8_t>&);
     void consumeFile(const String&);
     void consumeBlob(const URL&);
+    void consumePendingStream(PendingStreamState&);
+    void drainPendingStream();
 
     void consume(std::span<const uint8_t>);
     void read();
@@ -68,11 +76,15 @@ private:
     const Ref<FormData> m_formData;
     RefPtr<ScriptExecutionContext> m_context;
     Callback m_callback;
+    RefPtr<DeferredPromise> m_pendingPullPromise;
 
     size_t m_currentElementIndex { 0 };
     const Ref<WorkQueue> m_fileQueue;
     RefPtr<BlobLoader> m_blobLoader;
+    RefPtr<PendingStreamState> m_pendingStreamState;
     bool m_isReadingFile { false };
+    bool m_hasRequestedPendingStream { false };
+    const Mode m_mode;
 };
 
 } // namespace WebCore

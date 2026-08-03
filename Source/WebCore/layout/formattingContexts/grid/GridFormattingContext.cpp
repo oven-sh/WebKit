@@ -60,15 +60,37 @@ UnplacedGridItems GridFormattingContext::constructUnplacedGridItems() const
         int order;
     };
 
+    // Negative line placements are resolved against the explicit grid track count, which can still
+    // produce a negative line when the placement counts past the start edge of the explicit grid.
+    // Those are normalized by shifting every line forward by the magnitude of the most-negative
+    // resolved line, so e.g. with 3 explicit columns a column-start of -5 resolves to line -1,
+    // which shifts all column lines forward by 1 and maps to matrix column 0.
+    auto explicitColumnCount = m_gridBox->style().gridTemplateColumns().sizes.size();
+    auto explicitRowCount = m_gridBox->style().gridTemplateRows().sizes.size();
+    int minimumColumnLine = 0;
+    int minimumRowLine = 0;
     Vector<GridItem> gridItems;
     for (CheckedRef gridItem : childrenOfType<ElementBox>(m_gridBox)) {
         if (gridItem->isOutOfFlowPositioned())
             continue;
 
-        gridItems.append({ gridItem, gridItem->style().order().value });
+        CheckedRef gridItemStyle = gridItem->style();
+        if (auto columnRange = UnplacedGridItem::resolveDefinitePosition(gridItemStyle->gridItemColumnStart(), gridItemStyle->gridItemColumnEnd(), explicitColumnCount)) {
+            auto [startLine, endLine] = *columnRange;
+            minimumColumnLine = std::min({ minimumColumnLine, startLine, endLine });
+        }
+        if (auto rowRange = UnplacedGridItem::resolveDefinitePosition(gridItemStyle->gridItemRowStart(), gridItemStyle->gridItemRowEnd(), explicitRowCount)) {
+            auto [startLine, endLine] = *rowRange;
+            minimumRowLine = std::min({ minimumRowLine, startLine, endLine });
+        }
+
+        gridItems.append({ gridItem, gridItemStyle->order().value });
     }
 
     std::ranges::stable_sort(gridItems, { }, &GridItem::order);
+
+    size_t columnNegativeLineOffset = minimumColumnLine < 0 ? static_cast<size_t>(-minimumColumnLine) : 0;
+    size_t rowNegativeLineOffset = minimumRowLine < 0 ? static_cast<size_t>(-minimumRowLine) : 0;
 
     UnplacedGridItems unplacedGridItems;
     for (auto& gridItem : gridItems) {
@@ -84,26 +106,20 @@ UnplacedGridItems GridFormattingContext::constructUnplacedGridItems() const
             gridItemColumnStart,
             gridItemColumnEnd,
             gridItemRowStart,
-            gridItemRowEnd
+            gridItemRowEnd,
+            explicitColumnCount,
+            explicitRowCount,
+            columnNegativeLineOffset,
+            rowNegativeLineOffset
         };
 
-        // Check if this item is fully explicitly positioned
-        bool fullyExplicitlyPositionedItem = gridItemColumnStart.isExplicit()
-            && gridItemColumnEnd.isExplicit()
-            && gridItemRowStart.isExplicit()
-            && gridItemRowEnd.isExplicit();
-
-        // FIXME: support definite row/column positioning
-        // We should place items with definite row or column positions
-        // but currently we only support fully explicitly positioned items.
-        // See: https://www.w3.org/TR/css-grid-1/#auto-placement-algo
-        if (fullyExplicitlyPositionedItem) {
+        // https://drafts.csswg.org/css-grid-1/#auto-placement-algo
+        if (unplacedGridItem.hasDefiniteColumnPosition() && unplacedGridItem.hasDefiniteRowPosition())
             unplacedGridItems.nonAutoPositionedItems.append(unplacedGridItem);
-        } else if (unplacedGridItem.hasDefiniteRowPosition()) {
+        else if (unplacedGridItem.hasDefiniteRowPosition())
             unplacedGridItems.definiteRowPositionedItems.append(unplacedGridItem);
-        } else {
+        else
             unplacedGridItems.autoPositionedItems.append(unplacedGridItem);
-        }
     }
     return unplacedGridItems;
 }
@@ -167,7 +183,7 @@ static Style::GridTemplateList gridTemplateListWithPercentagesConvertedToAuto(co
     return Style::GridTemplateList { WTF::move(transformedList) };
 }
 
-UsedTrackSizes GridFormattingContext::layout(GridLayoutConstraints layoutConstraints)
+GridLayoutResult GridFormattingContext::layout(GridLayoutConstraints layoutConstraints)
 {
     auto unplacedGridItems = constructUnplacedGridItems();
     CheckedRef gridStyle = root().style();
@@ -190,7 +206,7 @@ UsedTrackSizes GridFormattingContext::layout(GridLayoutConstraints layoutConstra
     auto gridTemplateColumns = inlineAxisDependsOnTracks ? gridTemplateListWithPercentagesConvertedToAuto(gridStyle->gridTemplateColumns()) : gridStyle->gridTemplateColumns();
     auto gridTemplateRows = blockAxisDependsOnTracks ? gridTemplateListWithPercentagesConvertedToAuto(gridStyle->gridTemplateRows()) : gridStyle->gridTemplateRows();
 
-    GridDefinition gridDefinition { gridTemplateColumns, gridTemplateRows, gridStyle->gridAutoColumns(), gridStyle->gridAutoRows(), autoFlowOptions };
+    GridDefinition gridDefinition { gridTemplateColumns, gridTemplateRows, gridStyle->gridAutoColumns(), gridStyle->gridAutoRows(), autoFlowOptions, gridStyle->usedZoomForLength() };
 
     auto usedJustifyContent = gridStyle->justifyContent().resolve();
     auto usedAlignContent = gridStyle->alignContent().resolve();
@@ -208,12 +224,12 @@ UsedTrackSizes GridFormattingContext::layout(GridLayoutConstraints layoutConstra
             auto columnPosition = GridLayoutUtils::computeGridLinePosition(lineNumbersForGridArea.columnStartLine, usedTrackSizes.columnSizes, layoutState.usedColumnGap);
             auto rowPosition = GridLayoutUtils::computeGridLinePosition(lineNumbersForGridArea.rowStartLine, usedTrackSizes.rowSizes, layoutState.usedRowGap);
 
-            gridItemRect.borderBoxRect.moveBy({ columnPosition, rowPosition });
+            gridItemRect.borderBoxRect.moveBy(LayoutPoint { columnPosition, rowPosition });
         }
     };
     mapGridItemLocationsToGrid();
     setGridItemGeometries(gridItemRects);
-    return usedTrackSizes;
+    return { WTF::move(usedTrackSizes), WTF::move(gridItemRects) };
 }
 
 PlacedGridItems GridFormattingContext::constructPlacedGridItems(const GridAreas& gridAreas) const
@@ -224,8 +240,7 @@ PlacedGridItems GridFormattingContext::constructPlacedGridItems(const GridAreas&
     for (auto [ unplacedGridItem, gridAreaLines ] : gridAreas) {
         CheckedRef gridItem = unplacedGridItem.m_layoutBox;
         CheckedRef gridContainerStyle = this->gridContainerStyle();
-        auto& boxGeometry = geometryForGridItem(gridItem);
-        placedGridItems.constructAndAppend(gridItem, gridAreaLines, boxGeometry, gridContainerStyle);
+        placedGridItems.constructAndAppend(gridItem, gridAreaLines, gridContainerStyle);
     }
     return placedGridItems;
 }
@@ -298,7 +313,8 @@ GridFormattingContext::IntrinsicWidths GridFormattingContext::computeIntrinsicWi
         gridTemplateListWithPercentagesConvertedToAuto(gridStyle->gridTemplateRows()),
         gridStyle->gridAutoColumns(),
         gridStyle->gridAutoRows(),
-        autoFlowOptions
+        autoFlowOptions,
+        gridStyle->usedZoomForLength(),
     };
 
     auto usedJustifyContent = gridStyle->justifyContent().resolve();

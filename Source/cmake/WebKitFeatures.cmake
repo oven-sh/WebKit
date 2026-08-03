@@ -43,6 +43,26 @@ macro(WEBKIT_OPTION_DEFAULT_PORT_VALUE _name _public _value)
     set(_WEBKIT_AVAILABLE_OPTIONS_INITIAL_VALUE_${_name} ${_value})
 endmacro()
 
+# Retires options whose value wtf/Platform.h owns on this port. That value depends
+# on the SDK, so it isn't knowable at configure time: dropping them from the option
+# list keeps cmakeconfig.h from overriding Platform.h, keeps them out of
+# FEATURE_DEFINES, and makes CMake code that reads one fail loudly. The generators
+# get them from the build-time --defines-file instead. Bug 312033.
+macro(WEBKIT_OPTION_OWNED_BY_PLATFORM_H)
+    _ENSURE_OPTION_MODIFICATION_IS_ALLOWED()
+
+    foreach (_platform_h_owned_name ${ARGN})
+        _ENSURE_IS_WEBKIT_OPTION(${_platform_h_owned_name})
+
+        # Don't let a value cached before the option was retired survive.
+        unset(${_platform_h_owned_name} CACHE)
+        unset(${_platform_h_owned_name})
+
+        list(REMOVE_ITEM _WEBKIT_AVAILABLE_OPTIONS ${_platform_h_owned_name})
+        list(REMOVE_ITEM _WEBKIT_CONFIG_FILE_VARIABLES ${_platform_h_owned_name})
+    endforeach ()
+endmacro()
+
 macro(WEBKIT_OPTION_CONFLICT _name _conflict)
     _ENSURE_OPTION_MODIFICATION_IS_ALLOWED()
     _ENSURE_IS_WEBKIT_OPTION(${_name})
@@ -96,20 +116,6 @@ macro(WEBKIT_OPTION_BEGIN)
         set(USE_MIMALLOC_DEFAULT OFF)
         set(ENABLE_C_LOOP_DEFAULT OFF)
         set(ENABLE_SAMPLING_PROFILER_DEFAULT ON)
-    elseif (WTF_CPU_ARM AND WTF_OS_LINUX AND ARM_THUMB2_DETECTED)
-        set(ENABLE_JIT_DEFAULT ON)
-        set(ENABLE_FTL_DEFAULT OFF)
-        set(USE_SYSTEM_MALLOC_DEFAULT OFF)
-        set(USE_MIMALLOC_DEFAULT ON)
-        set(ENABLE_C_LOOP_DEFAULT OFF)
-        set(ENABLE_SAMPLING_PROFILER_DEFAULT ON)
-    elseif (WTF_CPU_MIPS AND WTF_OS_LINUX)
-        set(ENABLE_JIT_DEFAULT OFF)
-        set(ENABLE_FTL_DEFAULT OFF)
-        set(USE_SYSTEM_MALLOC_DEFAULT OFF)
-        set(USE_MIMALLOC_DEFAULT ON)
-        set(ENABLE_C_LOOP_DEFAULT ON)
-        set(ENABLE_SAMPLING_PROFILER_DEFAULT OFF)
     elseif (WTF_CPU_RISCV64)
         set(ENABLE_JIT_DEFAULT ON)
         set(ENABLE_FTL_DEFAULT ON)
@@ -278,6 +284,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEFINE(ENABLE_SERVICE_CONTROLS "Toggle service controls support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_SHAREABLE_RESOURCE "Toggle network shareable resources support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_SMOOTH_SCROLLING "Toggle smooth scrolling" PRIVATE ON)
+    WEBKIT_OPTION_DEFINE(ENABLE_SPATIAL_PORTAL "Toggle Spatial CSS Portal support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_SPEECH_SYNTHESIS "Toggle Speech Synthesis API support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_SPELLCHECK "Toggle Spellchecking support (requires Enchant)" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_STREAMING_IPC_IN_LOG_FORWARDING "Toggle streaming connection in WebKit::LogStream" PRIVATE OFF)

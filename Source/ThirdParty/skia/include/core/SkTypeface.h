@@ -17,8 +17,8 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
+#include "include/private/SkOnce.h"
 #include "include/private/SkWeakRefCnt.h"
-#include "include/private/base/SkOnce.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -145,10 +145,16 @@ public:
         of a typeface referring to the same font. If that font is not available,
         return nullptr.
         Goes through all registered typeface factories and lastResortMgr (if non-null).
+        If the sanitizer proc is provided, that will be used on the data extracted from
+        the stream before it is passed on to any underlying decoders.
         Does not affect ownership of SkStream.
      */
 
-    static sk_sp<SkTypeface> MakeDeserialize(SkStream*, sk_sp<SkFontMgr> lastResortMgr);
+    using SkTypefaceStreamSanitizerProc = sk_sp<SkData> (*)(sk_sp<const SkData>);
+
+    static sk_sp<SkTypeface> MakeDeserialize(SkStream*,
+                                             sk_sp<SkFontMgr> lastResortMgr,
+                                             SkTypefaceStreamSanitizerProc = nullptr);
 
     /**
      *  Given an array of UTF32 character codes, return their corresponding glyph IDs.

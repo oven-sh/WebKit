@@ -35,6 +35,7 @@
 #include "CachedImage.h"
 #include "CanvasRenderingContext2DBase.h"
 #include "Chrome.h"
+#include "ClipPathPaintScope.h"
 #include "ColorBlending.h"
 #include "ContainerNodeInlines.h"
 #include "CornerRadii.h"
@@ -136,6 +137,10 @@
 
 #if USE(SYSTEM_PREVIEW) && ENABLE(MODEL_PROCESS) && ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
 #include "ARKitBadgeSystemImage.h"
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+#include "SpatialPortalController.h"
 #endif
 
 namespace WebCore {
@@ -1367,6 +1372,18 @@ bool RenderLayerBacking::updateConfiguration(const RenderLayer* compositingAnces
     }
 #endif // ENABLE(MODEL_ELEMENT)
 
+#if ENABLE(SPATIAL_PORTAL)
+    if (RefPtr element = renderer().element()) {
+        if (CheckedPtr controller = element->spatialPortalController()) {
+            updateContentsRects();
+            auto portalBackgroundColor = blendSourceOver(renderer().theme().systemColor(CSSValueCanvas, renderer().styleColorOptions()), rendererBackgroundColor());
+            controller->configureGraphicsLayer(*m_graphicsLayer, portalBackgroundColor);
+            controller->sizeMayHaveChanged();
+            layerConfigChanged = true;
+        }
+    }
+#endif // ENABLE(SPATIAL_PORTAL)
+
     // FIXME: Why do we do this twice?
     if (CheckedPtr widget = dynamicDowncast<RenderWidget>(renderer())) {
         if (compositor.attachWidgetContentLayersIfNecessary(*widget).layerHierarchyChanged) {
@@ -1945,7 +1962,7 @@ void RenderLayerBacking::updateMaskingLayerGeometry()
             LayoutRect boundingBox = m_owningLayer.boundingBox(&m_owningLayer);
             LayoutRect referenceBoxForClippedInline = LayoutRect(snapRectToDevicePixelsIfNeeded(boundingBox, renderer()));
             LayoutSize offset = LayoutSize(snapSizeToDevicePixel(-m_subpixelOffsetFromRenderer, LayoutPoint(), deviceScaleFactor()));
-            auto [clipPath, windRule] = m_owningLayer.computeClipPath(offset, referenceBoxForClippedInline);
+            auto [clipPath, windRule] = ClipPathPaintScope::computeClipPath(renderer(), offset, referenceBoxForClippedInline);
 
             FloatSize pathOffset = m_maskLayer->offsetFromRenderer();
             if (!pathOffset.isZero())
@@ -2081,8 +2098,18 @@ void RenderLayerBacking::updateContentsRects()
 {
     m_graphicsLayer->setContentsRect(snapRectToDevicePixelsIfNeeded(contentsBox(), renderer()));
 
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS) || ENABLE(SPATIAL_PORTAL)
+    bool needsContentsClippingRectUpdate = false;
 #if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
-    if (RenderLayerCompositor::isSeparated(renderer())) {
+    if (RenderLayerCompositor::isSeparated(renderer()))
+        needsContentsClippingRectUpdate = true;
+#endif
+#if ENABLE(SPATIAL_PORTAL)
+    if (RenderLayerCompositor::isSpatialPortal(renderer()))
+        needsContentsClippingRectUpdate = true;
+#endif
+
+    if (needsContentsClippingRectUpdate) {
         if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(renderer())) {
             auto borderShape = BorderShape::shapeForBorderRect(renderBox->style(), renderBox->borderBoxRect());
             auto contentsClippingRect = borderShape.deprecatedPixelSnappedInnerRoundedRect(deviceScaleFactor());
@@ -2416,7 +2443,7 @@ bool RenderLayerBacking::updateAncestorClippingStack(Vector<CompositedClipData>&
         return false;
     }
     
-    m_ancestorClippingStack->updateWithClipData(scrollingCoordinator, WTF::move(clippingData));
+    m_ancestorClippingStack->updateWithClipData(scrollingCoordinator, Vector { clippingData });
     LOG_WITH_STREAM(Compositing, stream << "layer " << &m_owningLayer << " ancestorClippingStack " << *m_ancestorClippingStack);
     if (m_overflowControlsHostLayerAncestorClippingStack)
         m_overflowControlsHostLayerAncestorClippingStack->updateWithClipData(scrollingCoordinator, WTF::move(clippingData));
@@ -3896,6 +3923,13 @@ LayoutRect RenderLayerBacking::contentsBox() const
 #if ENABLE(VIDEO)
     if (auto* renderVideo = dynamicDowncast<RenderVideo>(*renderBox))
         contentsRect = renderVideo->videoBox();
+    else
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+    // The portal StereoLayer should cover the whole padding box.
+    if (RenderLayerCompositor::isSpatialPortal(renderer()))
+        contentsRect = renderBox->paddingBoxRect();
     else
 #endif
 

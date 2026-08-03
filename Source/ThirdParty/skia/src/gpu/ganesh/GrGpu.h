@@ -16,7 +16,7 @@
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/ganesh/GrBackendSurface.h"
 #include "include/gpu/ganesh/GrTypes.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrGpuBuffer.h"  // IWYU pragma: keep
@@ -626,7 +626,7 @@ public:
      * Frees a texture created by createBackendTexture(). If ownership of the backend
      * texture has been transferred to a context using adopt semantics this should not be called.
      */
-    virtual void deleteBackendTexture(const GrBackendTexture&) = 0;
+    void deleteBackendTexture(const GrBackendTexture&);
 
     /**
      * In this case we have a program descriptor and a program info but no render target.
@@ -736,6 +736,9 @@ private:
                                                               const GrBackendFormat&,
                                                               skgpu::Mipmapped,
                                                               GrProtected) = 0;
+
+    virtual void onDeleteBackendTexture(const GrBackendTexture&) = 0;
+
 
     virtual bool onClearBackendTexture(const GrBackendTexture&,
                                        sk_sp<skgpu::RefCntedCallback> finishedCallback,

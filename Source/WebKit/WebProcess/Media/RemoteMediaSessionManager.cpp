@@ -47,9 +47,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionManager);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteMediaSessionState);
 
-RefPtr<RemoteMediaSessionManager> RemoteMediaSessionManager::create(WebPage& webPage)
+Ref<RemoteMediaSessionManager> RemoteMediaSessionManager::create(WebPage& webPage)
 {
-    return adoptRef(new RemoteMediaSessionManager(webPage));
+    return adoptRef(*new RemoteMediaSessionManager(webPage));
 }
 
 RemoteMediaSessionManager::RemoteMediaSessionManager(WebPage& webPage)
@@ -111,7 +111,17 @@ void RemoteMediaSessionManager::setCurrentSession(WebCore::PlatformMediaSessionI
 
 void RemoteMediaSessionManager::sessionWillBeginPlayback(WebCore::PlatformMediaSessionInterface& session, CompletionHandler<void(bool)>&& completionHandler)
 {
-    sendWithAsyncReply(Messages::RemoteMediaSessionManagerProxy::MediaSessionWillBeginPlayback(currentSessionState(session)), WTF::move(completionHandler));
+    sendWithAsyncReply(Messages::RemoteMediaSessionManagerProxy::MediaSessionWillBeginPlayback(currentSessionState(session)),
+        [completionHandler = WTF::move(completionHandler)](bool granted, WebCore::AudioSessionCategory category, WebCore::AudioSessionMode mode, WebCore::RouteSharingPolicy policy) mutable {
+#if USE(AUDIO_SESSION)
+            WebCore::AudioSession::singleton().setCategory(category, mode, policy);
+#else
+            UNUSED_PARAM(category);
+            UNUSED_PARAM(mode);
+            UNUSED_PARAM(policy);
+#endif
+            completionHandler(granted);
+        });
 }
 
 void RemoteMediaSessionManager::addRestriction(WebCore::PlatformMediaSessionMediaType type, WebCore::MediaSessionRestrictions restrictions)
@@ -134,7 +144,24 @@ void RemoteMediaSessionManager::resetRestrictions()
 
 void RemoteMediaSessionManager::updateSessionState()
 {
-    send(Messages::RemoteMediaSessionManagerProxy::UpdateMediaSessionState());
+    auto liveSessions = copySessionsToVector();
+    Vector<RemoteMediaSessionState> sessions(liveSessions.size(), [&](size_t i) -> std::optional<RemoteMediaSessionState> {
+        RefPtr session = liveSessions[i].get();
+        if (!session)
+            return std::nullopt;
+        return currentSessionState(*session);
+    });
+
+    sendWithAsyncReply(Messages::RemoteMediaSessionManagerProxy::UpdateMediaSessionStates(m_webPageID, WTF::move(sessions), countActiveAudioCaptureSources()),
+        [](WebCore::AudioSessionCategory category, WebCore::AudioSessionMode mode, WebCore::RouteSharingPolicy policy) {
+#if USE(AUDIO_SESSION)
+            WebCore::AudioSession::singleton().setCategory(category, mode, policy);
+#else
+            UNUSED_PARAM(category);
+            UNUSED_PARAM(mode);
+            UNUSED_PARAM(policy);
+#endif
+        });
 }
 
 void RemoteMediaSessionManager::sessionStateChanged(WebCore::PlatformMediaSessionInterface& session)
@@ -235,7 +262,7 @@ void RemoteMediaSessionManager::setAudioSessionPreferredBufferSize(uint64_t pref
 
 void RemoteMediaSessionManager::tryToSetAudioSessionActive(bool active)
 {
-    WebCore::AudioSession::singleton().tryToSetActive(active);
+    WebCore::AudioSession::singleton().tryToSetActive(active)->whenSettled(RunLoop::mainSingleton(), [](auto&&) { });
 }
 #endif
 

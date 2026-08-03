@@ -219,7 +219,8 @@ enum class WebCore::AuthenticatorAttachment : uint8_t {
     WrongChannelId,
     MaliciousPayload,
     UnsupportedOptions,
-    WrongNonce
+    WrongNonce,
+    ShortInitResponse
 };
 
 [Nested] struct WebCore::MockWebAuthenticationConfiguration::HidConfiguration {
@@ -336,6 +337,26 @@ struct WebCore::MobileDocumentRequest {
     Vector<WebCore::ISO18013PresentmentRequest> presentmentRequests;
 };
 
+header: <WebCore/OpenID4VPSignedRequest.h>
+struct WebCore::OpenID4VPSignedRequest {
+    String request;
+};
+
+header: <WebCore/OpenID4VPSignature.h>
+struct WebCore::OpenID4VPSignature {
+    String protectedHeader;
+    String signature;
+};
+
+header: <WebCore/OpenID4VPMultisignedRequest.h>
+struct WebCore::OpenID4VPMultisignedRequest {
+    String payload;
+    Vector<WebCore::OpenID4VPSignature> signatures;
+};
+
+header: <WebCore/UnvalidatedDigitalCredentialRequest.h>
+using WebCore::UnvalidatedDigitalCredentialRequest = Variant<WebCore::MobileDocumentRequest, WebCore::OpenID4VPSignedRequest, WebCore::OpenID4VPMultisignedRequest>;
+
 header: <WebCore/DigitalCredentialsRequestData.h>
 [AdditionalEncoder=StreamConnectionEncoder] struct WebCore::DigitalCredentialsSecurityOriginData {
     [Validator='!topOrigin->isNull()'] WebCore::SecurityOriginData topOrigin;
@@ -346,25 +367,16 @@ struct WebCore::DigitalCredentialsMobileDocumentRequestData : WebCore::DigitalCr
     Vector<WebCore::ValidatedMobileDocumentRequest> requests;
 };
 
-#if ENABLE(ISO18013_DOCUMENT_REQUEST_INFO)
-[Nested] enum class WebCore::ResponseType : uint8_t {
-    Attestation,
-    Disclosure,
-};
-
-[AdditionalEncoder=StreamConnectionEncoder] struct WebCore::DigitalCredentialsMobileDocumentRequestDataWithRequestInfo : WebCore::DigitalCredentialsSecurityOriginData {
-    WebCore::ResponseType responseType;
-    String matchingHint;
-}
-#endif // ENABLE(ISO18013_DOCUMENT_REQUEST_INFO)
-
 struct WebCore::DigitalCredentialsResponseData {
     WebCore::DigitalCredentialPresentationProtocol protocol;
     String responseDataJSON;
 };
 
 [Nested] enum class WebCore::DigitalCredentialPresentationProtocol : uint8_t {
-    OrgIsoMdoc
+    OrgIsoMdoc,
+    Openid4vpV1Unsigned,
+    Openid4vpV1Signed,
+    Openid4vpV1Multisigned
 };
 
 #endif // ENABLE(WEB_AUTHN)

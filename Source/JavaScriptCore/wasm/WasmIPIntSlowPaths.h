@@ -50,11 +50,7 @@ extern "C" UCPURegister SYSV_ABI slow_path_wasm_unwind_exception(CallFrame* call
 extern "C" UGPRPair SYSV_ABI NODELETE slow_path_wasm_popcount(const void* pc, uint32_t) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" UGPRPair SYSV_ABI NODELETE slow_path_wasm_popcountll(const void* pc, uint64_t) REFERENCED_FROM_ASM WTF_INTERNAL;
 
-#if USE(JSVALUE64)
 static constexpr uintptr_t SlowPathExceptionTag = 1;
-#elif USE(JSVALUE32_64)
-static constexpr uintptr_t SlowPathExceptionTag = JSValue::InvalidTag;
-#endif
 
 #define WASM_IPINT_EXTERN_CPP_DECL(name, ...) \
     extern "C" UGPRPair SYSV_ABI ipint_extern_##name(JSWebAssemblyInstance* instance, __VA_ARGS__)
@@ -82,8 +78,8 @@ WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(rethrow_exception, CallFrame*, unsigned tryDep
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(throw_ref, CallFrame* callFrame, EncodedJSValue exnref);
 
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(ref_func, unsigned index);
-WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(table_get, unsigned, unsigned);
-WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(table_set, unsigned tableIndex, unsigned index, EncodedJSValue value);
+WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(table_get, unsigned, uint64_t);
+WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(table_set, unsigned tableIndex, uint64_t index, EncodedJSValue value);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(table_init, IPIntStackEntry* sp, TableInitMetadata* metadata);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(table_fill, IPIntStackEntry* sp, TableFillMetadata* metadata);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(table_grow, IPIntStackEntry* sp, TableGrowMetadata* metadata);
@@ -126,7 +122,6 @@ WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(call_indirect, CallFrame* callFrame, Wasm::Fun
 
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(trace, CallFrame*, uint8_t*, uint8_t*);
 
-// We can't use FunctionSpaceIndex here since ARMv7 ABI always passes structs on th stack...
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(prepare_function_body, CallFrame*);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(prepare_call, CallFrame*, CallMetadata*, Register* callee);
 WASM_IPINT_EXTERN_CPP_HIDDEN_DECL(prepare_call_indirect, CallFrame* callFrame, Wasm::FunctionSpaceIndex* functionIndex, CallIndirectMetadata* call);

@@ -11,12 +11,14 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSize.h"
 #include "include/gpu/GpuTypes.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkAssert.h"
-#include "src/base/SkEnumBitMask.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkEnumBitMask.h"
+#include "src/core/SkSafeMath.h"
 #include "src/gpu/ResourceKey.h"
 #include "src/gpu/Swizzle.h"
 #include "src/gpu/graphite/ResourceTypes.h"
+#include "src/gpu/graphite/TextureFormat.h"
 #include "src/text/gpu/SubRunControl.h"
 
 #include <cstddef>
@@ -42,7 +44,6 @@ class RendererProvider;
 class TextureInfo;
 enum class DepthStencilFlags : int;
 enum class PathRendererStrategy;
-enum class TextureFormat : uint8_t;
 struct AttachmentDesc;
 struct ContextOptions;
 struct RenderPassDesc;
@@ -119,7 +120,11 @@ public:
 
     bool avoidMSAA() const {
         // Publicly, treat avoiding MSAA due to device issues or due to client option equivalently.
-        return fAvoidMSAA || fMaxInternalSampleCount == SampleCount::k1;
+        return fAvoidMSAA || fMaxInternalSampleCount == SampleCount::k1 || fAvoidDepthMode;
+    }
+
+    bool avoidDepthMode() const {
+        return fAvoidDepthMode;
     }
 
     /* Returns whether multisampled render to single sampled is supported. */
@@ -237,8 +242,13 @@ public:
     size_t requiredTransferBufferAlignment() const { return fRequiredTransferBufferAlignment; }
 
     /* Returns the aligned rowBytes when transferring to or from a Texture */
-    size_t getAlignedTextureDataRowBytes(size_t rowBytes) const {
-        return SkAlignTo(rowBytes, fTextureDataRowBytesAlignment);
+    size_t getAlignedTextureDataRowBytes(size_t rowBytes, size_t bytesPerBlock) const {
+        SkASSERT(bytesPerBlock > 0);
+        SkASSERT(fTextureDataRowBytesAlignment > 0);
+        SkSafeMath safe;
+        size_t alignment = safe.lcm(bytesPerBlock, fTextureDataRowBytesAlignment);
+        size_t alignedRowBytes = safe.alignUpNonPow2(rowBytes, alignment);
+        return safe.ok() ? alignedRowBytes : 0;
     }
 
     /**
@@ -406,6 +416,10 @@ public:
 protected:
     Caps();
 
+    // Initializes ShaderCaps to the baseline feature levels that Graphite assumes to be true.
+    // Called in Caps' constructor so subclasses can override or set additional flags afterwards.
+    void setDefaultShaderCaps();
+
     /**
      * Subclasses must call this at the end of their init method in order to do final processing on
      * the caps.
@@ -418,32 +432,11 @@ protected:
     }
 #endif
 
-    /* ColorTypeInfo for a specific format. Used in format tables. */
-    struct ColorTypeInfo {
-        ColorTypeInfo() = default;
-        ColorTypeInfo(SkColorType ct, SkColorType transferCt, uint32_t flags,
-                      skgpu::Swizzle readSwizzle, skgpu::Swizzle writeSwizzle)
-                : fColorType(ct)
-                , fTransferColorType(transferCt)
-                , fFlags(flags)
-                , fReadSwizzle(readSwizzle)
-                , fWriteSwizzle(writeSwizzle) {}
-
-        SkColorType fColorType = kUnknown_SkColorType;
-        SkColorType fTransferColorType = kUnknown_SkColorType;
-        enum {
-            kUploadData_Flag = 0x1,
-            /**
-             * Does Graphite itself support rendering to this colorType & format pair. Renderability
-             * still additionally depends on if the format itself is renderable.
-             */
-            kRenderable_Flag = 0x2,
-        };
-        uint32_t fFlags = 0;
-
-        skgpu::Swizzle fReadSwizzle;
-        skgpu::Swizzle fWriteSwizzle;
-    };
+    using FormatSupport = std::pair<SkEnumBitMask<TextureUsage>, SkEnumBitMask<SampleCount>>;
+    // Indexed by Tiling then TextureFormat, must be filled out by subclasses during initialization.
+    // This is zero-initialized so that every format defaults to unsupported unless a subclass
+    // provides more information.
+    std::array<std::array<FormatSupport, kTextureFormatCount>, 2> fFormatSupport{};
 
     int fMaxTextureSize = 0;
 
@@ -468,6 +461,7 @@ protected:
     bool fDifferentResolveAttachmentSizeSupport = false;
     bool fAvoidMSAA = false;
     bool fDrawListLayer = false;
+    bool fAvoidDepthMode = false;
 
     bool fComputeSupport = false;
     bool fSupportsAHardwareBufferImages = false;
@@ -549,8 +543,9 @@ private:
 
     // Return the supported TextureUsages and SampleCounts for a texture of the given format and
     // tiling, assuming the textures are created with the requisite usages.
-    virtual std::pair<SkEnumBitMask<TextureUsage>, SkEnumBitMask<SampleCount>> getTextureSupport(
-            TextureFormat format, Tiling) const = 0;
+    FormatSupport getTextureSupport(TextureFormat format, Tiling tiling) const {
+        return fFormatSupport[static_cast<int>(tiling)][static_cast<int>(format)];
+    }
 
     // Return the mask of TextureUsages supported by the described texture, as well as its tiling
     // representation. Subclasses can assume that this will only be called on valid TextureInfos

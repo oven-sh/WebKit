@@ -297,6 +297,7 @@ struct PerWebProcessState {
     BOOL viewportMetaTagWidthWasExplicit { NO };
     BOOL viewportMetaTagCameFromImageDocument { NO };
     BOOL lastTransactionWasInStableState { NO };
+    BOOL hasMainThreadScrollDrivenAnimations { NO };
 
     std::optional<WebCore::FloatSize> lastSentViewLayoutSize;
     std::optional<WebCore::IntDegrees> lastSentDeviceOrientation;
@@ -587,6 +588,9 @@ struct LiveResizeSnapshotState {
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
     WebCore::RectEdges<RetainPtr<WKColorExtensionView>> _systemBackgroundColorExtensionViews;
     WebKit::AdjustedColorExtensionsForBannerViewOverlaysEnablement _adjustedColorExtensionsForBannerViewOverlaysEnablement;
+#if PLATFORM(IOS_FAMILY)
+    CGFloat _restingTopSystemBackgroundColorExtensionInset;
+#endif
 #endif
 
 #if ENABLE(TEXT_EXTRACTION_FILTER)
@@ -696,8 +700,9 @@ struct LiveResizeSnapshotState {
 #endif
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
-- (BOOL)_hasDetectedHorizontalBannerViewOverlays;
 - (void)_updateAppearanceForSystemBackgroundColorExtensionViews;
+- (CGFloat)_webContentDistanceFromLeftEdge;
+- (CGFloat)_webContentDistanceFromRightEdge;
 #endif
 
 - (BOOL)_shouldAdjustColorExtensionsForHorizontalBannerViewOverlays;
@@ -760,6 +765,7 @@ struct LiveResizeSnapshotState {
 
 #if HAVE(NSREFRESHCONTROLLER)
 @property (nonatomic, readonly) CGFloat _refreshControlVisibleHeight;
+@property (nonatomic, readonly) BOOL _refreshControlHostIsTracking;
 #endif
 #endif // PLATFORM(MAC)
 
@@ -803,6 +809,7 @@ struct LiveResizeSnapshotState {
 
 - (void)_requestTextExtraction:(nullable _WKTextExtractionConfiguration *)configuration completionHandler:(NS_SWIFT_UI_ACTOR void (^)(WKTextExtractionItem * _Nullable))completionHandler;
 - (void)_describeInteraction:(nullable _WKTextExtractionInteraction *)interaction completionHandler:(NS_SWIFT_UI_ACTOR void (^)(NSString * _Nullable_result, NSError * _Nullable))completionHandler;
+@property (nonatomic, readonly, nullable) NSString *_activeContextMenuTargetNodeIdentifier;
 
 @end
 
@@ -840,18 +847,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 - (void)_handleSmartMagnificationInformationForPotentialTap:(WebKit::TapIdentifier)requestID renderRect:(const WebCore::FloatRect&)renderRect fitEntireRect:(BOOL)fitEntireRect viewportMinimumScale:(double)viewportMinimumScale viewportMaximumScale:(double)viewportMaximumScale nodeIsRootLevel:(BOOL)nodeIsRootLevel nodeIsPluginElement:(BOOL)nodeIsPluginElement;
 @end
 
-#endif
-
-#if ENABLE(PDF_HUD)
-
-@interface WKWebView (WKPDFHUD)
-- (void)_pdfZoomIn:(WebKit::PDFPluginIdentifier)pluginIdentifier frameIdentifier:(WebCore::FrameIdentifier)frameIdentifier;
-- (void)_pdfZoomOut:(WebKit::PDFPluginIdentifier)pluginIdentifier frameIdentifier:(WebCore::FrameIdentifier)frameIdentifier;
-- (void)_pdfOpenWithPreview:(WebKit::PDFPluginIdentifier)pluginIdentifier frameIdentifier:(WebCore::FrameIdentifier)frameIdentifier;
-- (void)_pdfSaveToPDF:(WebKit::PDFPluginIdentifier)pluginIdentifier frameIdentifier:(WebCore::FrameIdentifier)frameIdentifier;
-@end
-
-#endif
+#endif // ENABLE(TWO_PHASE_CLICKS)
 
 #endif // !__has_feature(modules) || WK_SUPPORTS_SWIFT_OBJCXX_INTEROP
 

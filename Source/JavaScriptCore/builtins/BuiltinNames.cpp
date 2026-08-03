@@ -49,6 +49,7 @@ JSC_FOREACH_PRIMORDIAL_NAME(INITIALIZE_PRIMORDIAL_PRIVATE_NAMES)
 
 SymbolImpl::StaticSymbolImpl dollarVMPrivateName { "$vm", SymbolImpl::s_flagIsPrivate };
 SymbolImpl::StaticSymbolImpl polyProtoPrivateName { "PolyProto", SymbolImpl::s_flagIsPrivate };
+SymbolImpl::StaticSymbolImpl stackPrivateName { "stack", SymbolImpl::s_flagIsPrivate };
 
 } // namespace Symbols
 
@@ -89,6 +90,7 @@ BuiltinNames::BuiltinNames(VM& vm, CommonIdentifiers* commonIdentifiers)
     , m_dollarVMName(Identifier::fromString(vm, "$vm"_s))
     , m_dollarVMPrivateName(Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::dollarVMPrivateName)))
     , m_polyProtoPrivateName(Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::polyProtoPrivateName)))
+    , m_stackPrivateName(Identifier::fromUid(vm, &static_cast<SymbolImpl&>(Symbols::stackPrivateName)))
 {
     JSC_FOREACH_BUILTIN_FUNCTION_NAME(INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY)
     JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(INITIALIZE_PUBLIC_TO_PRIVATE_ENTRY)

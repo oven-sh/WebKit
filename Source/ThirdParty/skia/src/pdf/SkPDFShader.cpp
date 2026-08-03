@@ -20,7 +20,7 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTileMode.h"
-#include "include/private/base/SkTPin.h"
+#include "include/private/SkTPin.h"
 #include "src/core/SkDevice.h"
 #include "src/core/SkTHash.h"
 #include "src/pdf/SkKeyedImage.h"
@@ -340,7 +340,10 @@ SkPDFIndirectReference SkPDFMakeShader(SkPDFDocument* doc,
     SkASSERT(shader);
     SkASSERT(doc);
     if (as_SB(shader)->asGradient() != SkShaderBase::GradientType::kNone) {
-        return SkPDFGradientShader::Make(doc, shader, canvasTransform, surfaceBBox);
+        if (SkPDFIndirectReference gradientShader =
+                    SkPDFGradientShader::Make(doc, shader, canvasTransform, surfaceBBox)) {
+            return gradientShader;
+        }
     }
     if (surfaceBBox.isEmpty()) {
         return SkPDFIndirectReference();

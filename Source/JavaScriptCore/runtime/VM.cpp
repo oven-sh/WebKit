@@ -125,6 +125,7 @@
 #include "SideDataRepository.h"
 #include "SimpleTypedArrayController.h"
 #include "SourceProviderCache.h"
+#include "StringSplitCache.h"
 #include "StrongInlines.h"
 #include "StructureChainInlines.h"
 #include "StructureInlines.h"
@@ -290,6 +291,10 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 
         m_megamorphicCache.initLater([](VM&, auto& ref) {
             ref.set(makeUniqueRef<MegamorphicCache>());
+        });
+
+        m_stringSplitCache.initLater([](VM&, auto& ref) {
+            ref.set(makeUniqueRef<StringSplitCache>());
         });
 
         m_shadowChicken.initLater([](VM&, auto& ref) {
@@ -821,12 +826,16 @@ static ThunkGenerator NODELETE thunkGeneratorForIntrinsic(Intrinsic intrinsic)
         return logThunkGenerator;
     case IMulIntrinsic:
         return imulThunkGenerator;
+#if CPU(ARM64)
+    case MaxIntrinsic:
+        return maxThunkGenerator;
+    case MinIntrinsic:
+        return minThunkGenerator;
+#endif
     case RandomIntrinsic:
         return randomThunkGenerator;
-#if USE(JSVALUE64)
     case ObjectIsIntrinsic:
         return objectIsThunkGenerator;
-#endif
     case BoundFunctionCallIntrinsic:
         return boundFunctionCallGenerator;
     case RemoteFunctionCallIntrinsic:
@@ -1770,6 +1779,19 @@ NativeExecutable* VM::promiseAnySlowRejectFunctionExecutableSlow()
     return executable;
 }
 
+bool VM::hasLanguageChange()
+{
+    return m_intlCache->hasLanguageChange();
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+void VM::clearForTimeZoneChange()
+{
+    intlCache().clearForTimeZoneChange();
+    dateCache.clearForTimeZoneChange();
+}
+#endif
+
 void VM::executeEntryScopeServicesOnEntry()
 {
     if (hasEntryScopeServiceRequest(EntryScopeService::FirePrimitiveGigacageEnabled)) [[unlikely]] {
@@ -1777,8 +1799,13 @@ void VM::executeEntryScopeServicesOnEntry()
         clearEntryScopeService(EntryScopeService::FirePrimitiveGigacageEnabled);
     }
 
-    if (dateCache.hasTimeZoneChange()) [[unlikely]]
+    if (dateCache.hasTimeZoneChange()) [[unlikely]] {
+        intlCache().clearForTimeZoneChange();
         dateCache.clearForTimeZoneChange();
+    }
+
+    if (intlCache().hasLanguageChange()) [[unlikely]]
+        intlCache().clearForLanguageChange();
 
     RefPtr watchdog = this->watchdog();
     if (watchdog) [[unlikely]]
@@ -2020,7 +2047,7 @@ void VM::removeDebugger(Debugger& debugger)
     m_debuggers.remove(&debugger);
 }
 
-void VM::performOpportunisticallyScheduledTasks(MonotonicTime deadline, OptionSet<SchedulerOptions> options)
+void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, OptionSet<SchedulerOptions> options)
 {
     constexpr bool verbose = false;
 

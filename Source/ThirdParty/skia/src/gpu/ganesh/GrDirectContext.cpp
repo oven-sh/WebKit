@@ -16,16 +16,17 @@
 #include "include/gpu/ganesh/GrBackendSemaphore.h"
 #include "include/gpu/ganesh/GrBackendSurface.h"
 #include "include/gpu/ganesh/GrContextThreadSafeProxy.h"
-#include "include/private/base/SingleOwner.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SingleOwner.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTemplates.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkAutoMalloc.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkCompressedDataUtils.h"
 #include "src/core/SkMipmap.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/DataUtils.h"
+#include "src/gpu/GlobalResourceStats.h"
 #include "src/gpu/GpuTypesPriv.h"
 #include "src/gpu/RefCntedCallback.h"
 #include "src/gpu/Swizzle.h"
@@ -202,7 +203,9 @@ void GrDirectContext::releaseResourcesAndAbandonContext() {
     fResourceCache->releaseAll();
 
     // Must be after GrResourceCache::releaseAll().
-    fMappedBufferManager.reset();
+    // Must be called before fGpu->disconnect in case there are any outstanding, unsubmitted finish
+    // procs that callback into the fMappedBufferManager.
+    fMappedBufferManager->abandon();
 
     fGpu->disconnect(GrGpu::DisconnectType::kCleanup);
 #if !defined(SK_ENABLE_OPTIMIZE_SIZE)
@@ -455,7 +458,9 @@ bool GrDirectContext::submit(const GrSubmitInfo& info) {
         return false;
     }
 
-    return fGpu->submitToGpu(info);
+    bool result = fGpu->submitToGpu(info);
+    skgpu::GlobalResourceStats::TraceStatsSummary();
+    return result;
 }
 
 GrSemaphoresSubmitted GrDirectContext::flush(const sk_sp<const SkImage>& image,
@@ -1154,7 +1159,7 @@ bool GrDirectContext::precompileShader(const SkData& key, const SkData& data) {
 
 SkString GrDirectContext::dump() const {
     SkDynamicMemoryWStream stream;
-    SkJSONWriter writer(&stream, SkJSONWriter::Mode::kPretty);
+    SkJSONWriter           writer(&stream, SkSerialProcs{}, SkJSONWriter::Mode::kPretty);
     writer.beginObject();
 
     writer.appendCString("backend", GrBackendApiToStr(this->backend()));

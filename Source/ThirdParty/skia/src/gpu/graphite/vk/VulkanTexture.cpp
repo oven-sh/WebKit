@@ -10,11 +10,12 @@
 #include "include/gpu/MutableTextureState.h"
 #include "include/gpu/graphite/vk/VulkanGraphiteTypes.h"
 #include "include/gpu/vk/VulkanMutableTextureState.h"
+#include "include/private/SkLog.h"
 #include "src/core/SkCompressedDataUtils.h"
 #include "src/core/SkMipmap.h"
 #include "src/gpu/DataUtils.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/Sampler.h"
+#include "src/gpu/graphite/TextureProxy.h"
 #include "src/gpu/graphite/task/UploadTask.h"
 #include "src/gpu/graphite/vk/VulkanCaps.h"
 #include "src/gpu/graphite/vk/VulkanCommandBuffer.h"
@@ -38,17 +39,17 @@ bool VulkanTexture::MakeVkImage(const VulkanSharedContext* sharedContext,
     const VulkanCaps& caps = sharedContext->vulkanCaps();
 
     if (dimensions.isEmpty()) {
-        SKGPU_LOG_E("Tried to create VkImage with empty dimensions.");
+        SKIA_LOG_E("Tried to create VkImage with empty dimensions.");
         return false;
     }
     if (dimensions.width() > caps.maxTextureSize() ||
         dimensions.height() > caps.maxTextureSize()) {
-        SKGPU_LOG_E("Tried to create VkImage with too large a size.");
+        SKIA_LOG_E("Tried to create VkImage with too large a size.");
         return false;
     }
 
     if ((info.isProtected() == Protected::kYes) != caps.protectedSupport()) {
-        SKGPU_LOG_E("Tried to create %s VkImage in %s Context.",
+        SKIA_LOG_E("Tried to create %s VkImage in %s Context.",
                     info.isProtected() == Protected::kYes ? "protected" : "unprotected",
                     caps.protectedSupport() ? "protected" : "unprotected");
         return false;
@@ -100,7 +101,7 @@ bool VulkanTexture::MakeVkImage(const VulkanSharedContext* sharedContext,
     VULKAN_CALL_RESULT(
             sharedContext, result, CreateImage(device, &imageCreateInfo, nullptr, &image));
     if (result != VK_SUCCESS) {
-        SKGPU_LOG_E("Failed call to vkCreateImage with error: %d", result);
+        SKIA_LOG_E("Failed call to vkCreateImage with error: %d", result);
         return false;
     }
 
@@ -128,13 +129,13 @@ bool VulkanTexture::MakeVkImage(const VulkanSharedContext* sharedContext,
                                                   /*useLazyAllocation=*/false,
                                                   checkResult,
                                                   &outInfo->fMemoryAlloc)) {
-            SKGPU_LOG_W("Could not allocate lazy image memory; using non-lazy instead.");
+            SKIA_LOG_W("Could not allocate lazy image memory; using non-lazy instead.");
             useLazyAllocation = false;
         } else {
             const char* protectednessStr =
                     info.isProtected() == Protected::kYes ? "protected" : "unprotected";
             const char* memoryTypeStr = forceDedicatedMemory ? "dedicated" : "shared";
-            SKGPU_LOG_E("Failed to allocate %s %s image memory.", protectednessStr, memoryTypeStr);
+            SKIA_LOG_E("Failed to allocate %s %s image memory.", protectednessStr, memoryTypeStr);
 
             VULKAN_CALL(sharedContext->interface(), DestroyImage(device, image, nullptr));
             return false;
@@ -499,8 +500,14 @@ bool VulkanTexture::canUploadOnHost() const {
         return false;
     }
 
-    // Can't use host-image-copy if the image is busy on the GPU.
-    if (this->isTextureBusyOnGPU()) {
+    // Can't use host-image-copy if the image is busy on the GPU. While UploadSource was responsible
+    // for ensuring the TextureProxy was uniquely held (so other threads can't add work for that
+    // proxy), we have to ensure the host upload won't conflict with any other use of the texture:
+    //  - The texture could be used on the GPU by some now-deleted proxy, so we'll have to fall
+    //    back to a regular upload via command buffer submission.
+    //  - The texture needs to be non-shareable, otherwise multiple proxies could be instantiated
+    //    with the same proxy.
+    if (this->shareable() != Shareable::kNo || this->isBusyOnGPU()) {
         return false;
     }
 
@@ -516,7 +523,17 @@ bool VulkanTexture::canUploadOnHost() const {
     return true;
 }
 
-bool VulkanTexture::uploadDataOnHost(const UploadSource& source, const SkIRect& dstRect) {
+bool VulkanTexture::uploadDataOnHost(const UploadSource& source) {
+    // Should not have changed since canUploadOnHost() returned true given the usage possibilities
+    // implied by these constraints (current thread is the only possible mutator).
+    SkASSERT(source.formatXferFn().isIdentity());
+    SkASSERT(source.view().proxy()->unique());
+    SkASSERT(source.view().proxy()->texture() == this);
+    SkASSERT(this->shareable() == Shareable::kNo);
+    SkASSERT(!this->isBusyOnGPU());
+    SkASSERT(this->vulkanTextureInfo().fImageUsageFlags & VK_IMAGE_USAGE_HOST_TRANSFER_BIT);
+    SkASSERT(this->currentLayout() == VK_IMAGE_LAYOUT_UNDEFINED);
+
     auto sharedContext = static_cast<const VulkanSharedContext*>(this->sharedContext());
     SkSpan<const MipLevel> levels = source.levels();
     const unsigned int mipLevelCount = levels.size();
@@ -544,7 +561,9 @@ bool VulkanTexture::uploadDataOnHost(const UploadSource& source, const SkIRect& 
 
     TArray<VkMemoryToImageCopy> copyRegions(mipLevelCount);
 
-    // The assumption is either that we have no mipmaps, or that our rect is the entire texture
+    // The assumption is either that we have no mipmaps, or that our rect is the entire texture,
+    // which is guaranteed by UploadSource's creation.
+    const SkIRect& dstRect = source.dstRect();
     SkASSERT(mipLevelCount == 1 || dstRect == SkIRect::MakeSize(this->dimensions()));
 
     // Copy data mip by mip.
@@ -553,16 +572,12 @@ bool VulkanTexture::uploadDataOnHost(const UploadSource& source, const SkIRect& 
     int32_t currentWidth = dstRect.width();
     int32_t currentHeight = dstRect.height();
 
+    const int bpp = TextureFormatBytesPerBlock(TextureInfoPriv::ViewFormat(this->textureInfo()));
     for (unsigned int currentMipLevel = 0; currentMipLevel < mipLevelCount; currentMipLevel++) {
-        // Upload data for compressed formats are fully packed. If this changes, the division by
-        // bytes-per-pixel should be adjusted for compressed formats.
-        SkASSERT(source.compression() == SkTextureCompressionType::kNone ||
-                 levels[currentMipLevel].fRowBytes == 0);
-
         VkMemoryToImageCopy copyRegion = {};
         copyRegion.sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY;
         copyRegion.pHostPointer = levels[currentMipLevel].fPixels;
-        copyRegion.memoryRowLength = levels[currentMipLevel].fRowBytes / source.bytesPerPixel();
+        copyRegion.memoryRowLength = levels[currentMipLevel].fRowBytes / bpp;
         copyRegion.memoryImageHeight = 0;  // Tightly packed
         copyRegion.imageSubresource.aspectMask = aspectFlags;
         copyRegion.imageSubresource.mipLevel = currentMipLevel;

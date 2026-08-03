@@ -35,13 +35,20 @@
 #include <WebCore/WebTransportConnectionStats.h>
 #include <WebCore/WebTransportReceiveStreamStats.h>
 #include <WebCore/WebTransportSendStreamStats.h>
+#include <wtf/ReducedResolutionSeconds.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkTransportSession);
 
-NetworkTransportSession::~NetworkTransportSession() = default;
+NetworkTransportSession::~NetworkTransportSession()
+{
+    for (auto&& statsRequest : std::exchange(m_statsRequestsBeforeInitialization, { }))
+        statsRequest(std::nullopt);
+    for (auto&& streamRequest : std::exchange(m_streamRequestsBeforeInitialization, { }))
+        streamRequest.completionHandler(std::nullopt);
+}
 
 IPC::Connection* NetworkTransportSession::messageSenderConnection() const
 {
@@ -63,6 +70,7 @@ void NetworkTransportSession::streamSendBytes(WebCore::WebTransportStreamIdentif
 
 void NetworkTransportSession::receiveDatagram(std::span<const uint8_t> datagram, bool withFin, std::optional<WebCore::Exception>&& exception)
 {
+    m_datagramBytesReceived += datagram.size();
     send(Messages::WebTransportSession::ReceiveDatagram(datagram, withFin, WTF::move(exception)));
 }
 
@@ -105,8 +113,11 @@ void NetworkTransportSession::cancelSendStream(WebCore::WebTransportStreamIdenti
 
 void NetworkTransportSession::destroyStream(WebCore::WebTransportStreamIdentifier identifier, std::optional<WebCore::WebTransportStreamErrorCode> errorCode)
 {
-    if (RefPtr stream = m_streams.take(identifier))
+    if (RefPtr stream = m_streams.take(identifier)) {
         stream->cancel(errorCode);
+        m_bytesSentOnClosedStreams += stream->bytesSent();
+        m_bytesReceivedOnClosedStreams += stream->bytesReceived();
+    }
 }
 
 std::optional<SharedPreferencesForWebProcess> NetworkTransportSession::sharedPreferencesForWebProcess() const
@@ -136,7 +147,7 @@ void NetworkTransportSession::getReceiveStreamStats(WebCore::WebTransportStreamI
 void NetworkTransportSession::getSendGroupStats(WebCore::WebTransportSendGroupIdentifier identifier, CompletionHandler<void(std::optional<WebCore::WebTransportSendStreamStats>&&)>&& completionHandler)
 {
     // FIXME: Get better data from the stream.
-    uint64_t bytesSent = m_datagramStats.get(identifier);
+    uint64_t bytesSent = m_datagramBytesSent.get(identifier);
     completionHandler(WebCore::WebTransportSendStreamStats {
         bytesSent,
         bytesSent,
@@ -154,17 +165,63 @@ void NetworkTransportSession::datagramOutgoingMaxAgeUpdated(std::optional<double
     // FIXME: Use this value.
 }
 
-void NetworkTransportSession::datagramIncomingHighWaterMarkUpdated(double)
+void NetworkTransportSession::incomingMaxBufferedDatagramsUpdated(uint32_t)
 {
     // FIXME: Use this value.
 }
 
-void NetworkTransportSession::datagramOutgoingHighWaterMarkUpdated(double)
+void NetworkTransportSession::outgoingMaxBufferedDatagramsUpdated(uint32_t)
 {
     // FIXME: Use this value.
 }
 
-#if !PLATFORM(COCOA)
+void NetworkTransportSession::getStats(CompletionHandler<void(std::optional<WebCore::WebTransportConnectionStats>&&)>&& completionHandler)
+{
+    switch (m_initializationState) {
+    case InitializationState::Waiting:
+        m_statsRequestsBeforeInitialization.append(WTF::move(completionHandler));
+        return;
+    case InitializationState::Failed:
+        return completionHandler(std::nullopt);
+    case InitializationState::Succeeded:
+        break;
+    }
+
+    uint64_t bytesSent = m_bytesSentOnClosedStreams;
+    uint64_t bytesReceived = m_bytesReceivedOnClosedStreams;
+    for (Ref stream : m_streams.values()) {
+        bytesSent += stream->bytesSent();
+        bytesReceived += stream->bytesReceived();
+    }
+    for (uint64_t datagramBytesSent : m_datagramBytesSent.values())
+        bytesSent += datagramBytesSent;
+    bytesReceived += m_datagramBytesReceived;
+
+    completionHandler(WebCore::WebTransportConnectionStats {
+        bytesSent,
+        bytesReceived
+    });
+}
+
+void NetworkTransportSession::completeRequestsAfterInitialization(std::optional<Seconds> initializationTime)
+{
+    ASSERT(m_initializationState == InitializationState::Waiting);
+    if (!initializationTime) {
+        m_initializationState = InitializationState::Failed;
+        for (auto&& statsRequest : std::exchange(m_statsRequestsBeforeInitialization, { }))
+            statsRequest(std::nullopt);
+        for (auto&& streamRequest : std::exchange(m_streamRequestsBeforeInitialization, { }))
+            streamRequest.completionHandler(std::nullopt);
+        return;
+    }
+    m_initializationState = InitializationState::Succeeded;
+    for (auto&& statsRequest : std::exchange(m_statsRequestsBeforeInitialization, { }))
+        getStats(WTF::move(statsRequest));
+    for (auto&& streamRequest : std::exchange(m_streamRequestsBeforeInitialization, { }))
+        createStream(streamRequest.streamType, WTF::move(streamRequest.completionHandler));
+}
+
+#if !HAVE(WEBTRANSPORT)
 RefPtr<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectionToWebProcess&, WebTransportSessionIdentifier, URL&&, WebCore::WebTransportOptions&&, WebKit::WebPageProxyIdentifier&&, WebCore::ClientOrigin&&)
 {
     return nullptr;
@@ -195,9 +252,9 @@ void NetworkTransportSession::createBidirectionalStream(CompletionHandler<void(s
     completionHandler(std::nullopt);
 }
 
-void NetworkTransportSession::getStats(CompletionHandler<void(WebCore::WebTransportConnectionStats&&)>&& completionHandler)
+void NetworkTransportSession::createStream(NetworkTransportStreamType, CompletionHandler<void(std::optional<WebCore::WebTransportStreamIdentifier>)>&& completionHandler)
 {
-    completionHandler({ });
+    completionHandler(std::nullopt);
 }
 
 void NetworkTransportSession::terminate(WebCore::WebTransportSessionErrorCode, CString&&)
@@ -207,6 +264,11 @@ void NetworkTransportSession::terminate(WebCore::WebTransportSessionErrorCode, C
 bool NetworkTransportSession::isSessionClosed() const
 {
     return false;
+}
+
+void NetworkTransportSession::exportKeyingMaterial(std::span<const uint8_t>, std::span<const uint8_t>, uint32_t, CompletionHandler<void(std::optional<Vector<uint8_t>>)>&& completionHandler)
+{
+    completionHandler(std::nullopt);
 }
 #endif
 

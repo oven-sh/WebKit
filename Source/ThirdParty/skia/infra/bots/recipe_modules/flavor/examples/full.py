@@ -47,6 +47,7 @@ def RunSteps(api):
   try:
     api.flavor.copy_file_to_device('file.txt', 'file.txt')
     api.flavor.read_file_on_device('file.txt')
+    api.flavor.device_path_join('a', 'b')
     api.flavor.remove_file_on_device('file.txt')
     api.flavor.create_clean_host_dir('results_dir')
     api.flavor.create_clean_device_dir('device_results_dir')
@@ -103,7 +104,7 @@ TEST_BUILDERS = [
   'Test-Mac10.13-Clang-MacBookPro11.5-CPU-AVX2-x86_64-Debug-All-ASAN',
   'Test-Debian10-Clang-NUC7i5BNK-GPU-IntelIris640-x86_64-Debug-All-ASAN_Vulkan',
   'Test-Debian11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Debug-All',
-  'Test-Win10-Clang-NUC5i7RYH-CPU-AVX2-x86_64-Debug-All-NativeFonts_DWriteCore',
+  'Test-Win10-Clang-NUC7i5BNK-CPU-AVX2-x86_64-Debug-All-NativeFonts_DWriteCore',
 ]
 
 # Default properties used for TEST_BUILDERS.
@@ -151,17 +152,6 @@ def GenTests(api):
       api.step_data('get swarming bot id',
                     stdout=api.raw_io.output('build123-m2--device5')) +
       api.step_data('dump log', retcode=1)
-  )
-
-  yield (
-      api.test('failed_read_version') +
-      api.properties(buildername=builder,
-                     repository='https://skia.googlesource.com/skia.git',
-                     revision='abc123',
-                     path_config='kitchen',
-                     swarm_out_dir='[SWARM_OUT_DIR]') +
-      api.step_data('read /sdcard/revenge_of_the_skiabot/SK_IMAGE_VERSION',
-                    retcode=1)
   )
 
   yield (

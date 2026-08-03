@@ -108,7 +108,7 @@ public:
     JSC::JSObject* debuggerScopeExtensionObject(JSC::Debugger&, JSC::JSGlobalObject*, JSC::DebuggerCallFrame&) final;
 
     // JSC::Debugger::Observer
-    void didParseSource(JSC::SourceID, const JSC::Debugger::Script&) final;
+    void didParseSource(JSC::JSGlobalObject*, JSC::SourceID, const JSC::Debugger::Script&) final;
     void failedToParseSource(const String& url, const String& data, int firstLine, int errorLine, const String& errorMessage) final;
     void didCreateNativeExecutable(JSC::NativeExecutable&) final;
     void willCallNativeExecutable(JSC::CallFrame*) final;
@@ -181,6 +181,7 @@ protected:
     virtual void unmuteConsole() = 0;
 
     virtual String sourceMapURLForScript(const JSC::Debugger::Script&);
+    virtual String requestIdForScript(JSC::JSGlobalObject*, const JSC::Debugger::Script&);
 
     void didClearGlobalObject();
     virtual void didClearAsyncStackTraceData();

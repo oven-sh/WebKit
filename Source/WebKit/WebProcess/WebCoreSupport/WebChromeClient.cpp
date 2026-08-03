@@ -123,6 +123,7 @@
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/Settings.h>
+#include <WebCore/Site.h>
 #include <WebCore/SystemPreviewInfo.h>
 #include <WebCore/TextDetectorInterface.h>
 #include <WebCore/TextIndicator.h>
@@ -205,6 +206,10 @@
 
 #if ENABLE(VIDEO)
 #include <WebCore/HTMLMediaElement.h>
+#endif
+
+#if PLATFORM(IOS_FAMILY) && ENABLE(VIDEO_PRESENTATION_MODE)
+#include <WebCore/PictureInPictureSupport.h>
 #endif
 
 namespace WebKit {
@@ -1490,6 +1495,9 @@ bool WebChromeClient::supportsVideoFullscreenStandby()
 
 void WebChromeClient::setMockVideoPresentationModeEnabled(bool enabled)
 {
+#if PLATFORM(IOS_FAMILY) && ENABLE(VIDEO_PRESENTATION_MODE)
+    setSupportsPictureInPicture(enabled);
+#endif
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::SetMockVideoPresentationModeEnabled(enabled));
 }
@@ -1984,6 +1992,15 @@ void WebChromeClient::handleAutoFillButtonClick(HTMLInputElement& inputElement)
     page->send(Messages::WebPageProxy::HandleAutoFillButtonClick(UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
 }
 
+void WebChromeClient::didCompleteAutofill(HTMLInputElement& inputElement)
+{
+    auto site = Site { inputElement.document().url() };
+    if (site.isEmpty())
+        return;
+
+    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebProcessProxy::DidCompleteAutofill(site), 0);
+}
+
 void WebChromeClient::inputElementDidResignStrongPasswordAppearance(HTMLInputElement& inputElement)
 {
     RefPtr page = m_page.get();
@@ -2391,6 +2408,18 @@ void WebChromeClient::clearAnimationsForActiveWritingToolsSession()
 {
     if (RefPtr page = m_page.get())
         page->clearAnimationsForActiveWritingToolsSession();
+}
+
+void WebChromeClient::showWritingToolsAffordance()
+{
+    if (RefPtr page = m_page.get())
+        page->showWritingToolsAffordance();
+}
+
+bool WebChromeClient::writingToolsAvailable() const
+{
+    RefPtr page = m_page.get();
+    return page && page->writingToolsAvailable();
 }
 
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)

@@ -17,6 +17,7 @@
 #include "src/gpu/graphite/ResourceTypes.h"
 #include "src/gpu/graphite/TextureProxy.h"
 #include "src/gpu/graphite/TextureProxyView.h"
+#include "src/gpu/graphite/task/UploadTask.h"
 
 #include <array>
 #include <memory>
@@ -41,8 +42,6 @@ class Renderer;
 class StrokeStyle;
 class Task;
 class Transform;
-class UploadList;
-class UploadSource;
 
 /**
  * DrawContext records draw commands into a specific Surface, via a general task graph
@@ -75,7 +74,7 @@ public:
     void clear(const SkColor4f& clearColor);
     void discard();
 
-    std::pair<DrawParams*, Insertion> recordDraw(
+    std::pair<DrawParams*, Layer*> recordDraw(
             const Renderer* renderer,
             const Transform& localToDevice,
             const Geometry& geometry,
@@ -85,15 +84,11 @@ public:
             SkEnumBitMask<DstUsage> dstUsage,
             PipelineDataGatherer* gatherer,
             const StrokeStyle* stroke,
-            const Insertion& latestInsertion);
+            Layer* lastInsertion=nullptr);
 
     bool recordUpload(Recorder* recorder,
-                      const TextureProxyView& dstView,
-                      const SkColorInfo& srcColorInfo,
-                      const SkColorInfo& dstColorInfo,
                       const UploadSource& source,
-                      const SkIRect& dstRect,
-                      std::unique_ptr<ConditionalUploadContext>);
+                      std::unique_ptr<ConditionalUploadContext> = nullptr);
 
     // Add a Task that will be executed *before* any of the pending draws and uploads are
     // executed as part of the next flush().

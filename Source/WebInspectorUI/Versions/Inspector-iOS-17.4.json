@@ -1076,6 +1076,7 @@
         },
         {
             "name": "extensionEnabled",
+            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
             "parameters": [
                 { "name": "canvasId", "$ref": "CanvasId" },
                 { "name": "extension", "type": "string", "description": "Name of the extension that was enabled." }
@@ -1236,6 +1237,7 @@
         {
             "name": "getLoggingChannels",
             "description": "List of the different message sources that are non-default logging channels.",
+            "targetTypes": ["page"],
             "returns": [
                 { "name": "channels", "type": "array", "items": { "$ref": "Channel"}, "description": "Logging channels." }
             ]
@@ -1243,6 +1245,7 @@
          {
             "name": "setLoggingChannelLevel",
             "description": "Modify the level of a channel.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "source", "$ref": "ChannelSource", "description": "Logging channel to modify." },
                 { "name": "level", "$ref": "ChannelLevel", "description": "New level." }

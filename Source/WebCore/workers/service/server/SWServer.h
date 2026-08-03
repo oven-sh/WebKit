@@ -304,6 +304,7 @@ public:
     WEBCORE_EXPORT void postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier, const MessageWithMessagePorts&, ServiceWorkerIdentifier, const SecurityOriginData&, NOESCAPE const Function<void(ScriptExecutionContextIdentifier, const MessageWithMessagePorts&, const ServiceWorkerData&, const SecurityOriginData&)>&);
 
     WEBCORE_EXPORT OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtectionsFromClient(const ClientOrigin&) const;
+    WEBCORE_EXPORT std::optional<bool> globalPrivacyControlEnabledFromClient(const ClientOrigin&) const;
 
     bool isProcessTerminationDelayEnabled() const { return m_isProcessTerminationDelayEnabled; }
 
@@ -356,7 +357,8 @@ private:
     void originImportComplete(const SecurityOriginData& topOrigin, MonotonicTime startTime);
     void fireAllOriginImportCallbacks();
 
-    ResourceRequest createScriptRequest(const URL&, const ServiceWorkerJobData&, SWServerRegistration&);
+    enum class IsMainScript : bool { No, Yes };
+    ResourceRequest createScriptRequest(const URL&, const ServiceWorkerJobData&, SWServerRegistration&, IsMainScript);
 
     enum class ShouldUpdateRegistrations : bool { No, Yes };
     void unregisterServiceWorkerClientInternal(const ClientOrigin&, ScriptExecutionContextIdentifier, ShouldUpdateRegistrations);

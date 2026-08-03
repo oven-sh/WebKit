@@ -24,6 +24,7 @@ import argparse
 import os
 import re
 import sys
+import time
 
 from .command import Command
 from .commit import Commit
@@ -453,13 +454,18 @@ class PullRequest(Command):
     @classmethod
     def add_comment_to_issue(cls, issue, pr, commit_class=None):
         log.info('Checking issue assignee...')
+        assigned = False
         if issue.assignee != issue.tracker.me() and commit_class != 'Gardening':
             issue.assign(issue.tracker.me())
+            assigned = True
             print('Assigning associated issue to {}'.format(issue.tracker.me()))
         log.info('Checking for pull request link in associated issue...')
         pr_label = 'Test gardening pull request' if commit_class == 'Gardening' else 'Pull request'
         if pr.url and not any([pr.url in comment.content for comment in issue.comments]):
             if issue.opened:
+                # Wait until the next second so Bugzilla sends a notification for the PR opening comment
+                if assigned:
+                    time.sleep(1.1)
                 issue.add_comment('{}: {}'.format(pr_label, pr.url))
             elif commit_class != 'Gardening':
                 issue.open(why='Re-opening for {} {}'.format(pr_label.lower(), pr.url))
@@ -499,6 +505,26 @@ class PullRequest(Command):
             for commit in commits
             for issue in commit.issues
         ]
+
+        unreviewed = re.compile(r'(Unreviewed|Versioning.)', re.IGNORECASE)
+        reviewed = re.compile(r'^Reviewed by .+', re.IGNORECASE | re.MULTILINE)
+        bad_commits = [c for c in commits if c.message and unreviewed.search(c.message) and reviewed.search(c.message)]
+
+        if bad_commits:
+            if len(bad_commits) > 1:
+                sys.stderr.write("Multiple commits are marked 'Unreviewed' or 'Versioning' but contain a 'Reviewed by' line, please fix before posting\n")
+                return 1
+            response = Terminal.choose(
+                "Commit message is marked 'Unreviewed' or 'Versioning' but contains a 'Reviewed by' line. Remove it?",
+                options=('Yes', 'No'),
+                default='Yes',
+            )
+            if response == 'Yes':
+                cleaned = re.sub(r'Reviewed by .+\n?', '', bad_commits[0].message)
+                if run([repository.executable(), 'commit', '--amend', '-m', cleaned], cwd=repository.root_path).returncode:
+                    sys.stderr.write("Failed to amend commit message\n")
+                    return 1
+                commits = list(repository.commits(begin={'hash': branch_point.hash}, end={'branch': repository.branch}))
 
         radar_issue = next(iter(filter(lambda issue: isinstance(issue.tracker, radar.Tracker), issues)), None)
         not_radar = next(iter(filter(lambda issue: not isinstance(issue.tracker, radar.Tracker), issues)), None)

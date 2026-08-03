@@ -31,9 +31,10 @@
 #include "include/core/SkSurfaceProps.h"
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkCPUTypes.h"
-#include "include/private/base/SkDeque.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkCPUTypes.h"
+#include "include/private/SkDeque.h"
+#include "include/private/SkEnumBitMask.h"
+#include "include/private/SkTArray.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -44,11 +45,6 @@
 #ifndef SK_SUPPORT_LEGACY_GETTOTALMATRIX
 #define SK_SUPPORT_LEGACY_GETTOTALMATRIX
 #endif
-
-namespace sktext {
-class GlyphRunBuilder;
-class GlyphRunList;
-}
 
 class AutoLayerForImageFilter;
 class GrRecordingContext;
@@ -80,6 +76,12 @@ struct SkDrawShadowRec;
 
 template<typename E>
 class SkEnumBitMask;
+
+namespace sktext {
+class GlyphRunBuilder;
+class GlyphRun;
+class GlyphRunList;
+}  // namespace sktext
 
 namespace skgpu::graphite { class Recorder; }
 namespace sktext::gpu { class Slug; }
@@ -2415,11 +2417,7 @@ private:
         kCheckForOverwrite       = 4, // Check if the draw would overwrite the entire surface
         kSkipMaskFilterAutoLayer = 8, // Do not apply mask filters in the AutoLayer
     };
-    // Inlined SK_DECL_BITMASK_OPS_FRIENDS to avoid including SkEnumBitMask.h
-    friend constexpr SkEnumBitMask<PredrawFlags> operator|(PredrawFlags, PredrawFlags);
-    friend constexpr SkEnumBitMask<PredrawFlags> operator&(PredrawFlags, PredrawFlags);
-    friend constexpr SkEnumBitMask<PredrawFlags> operator^(PredrawFlags, PredrawFlags);
-    friend constexpr SkEnumBitMask<PredrawFlags> operator~(PredrawFlags);
+    SK_DECL_BITMASK_OPS_FRIENDS(PredrawFlags)
 
     // notify our surface (if we have one) that we are about to draw, so it
     // can perform copy-on-write or invalidate any cached images
@@ -2531,12 +2529,13 @@ private:
     std::unique_ptr<SkRasterHandleAllocator> fAllocator;
 
     SkSurface_Base*  fSurfaceBase;
-    SkSurface_Base* getSurfaceBase() const { return fSurfaceBase; }
+    virtual SkSurface_Base* getSurfaceBase() const { return fSurfaceBase; }
     void setSurfaceBase(SkSurface_Base* sb) {
         fSurfaceBase = sb;
     }
     friend class SkSurface_Base;
     friend class SkSurface_Ganesh;
+    friend class SkCaptureCanvas;
 
     SkIRect fClipRestrictionRect = SkIRect::MakeEmpty();
     int fClipRestrictionSaveCount = -1;
@@ -2559,6 +2558,7 @@ private:
     friend class SkRecords::Draw;
     template <typename Key>
     friend class skiatest::TestCanvas;
+    friend class AutoGlyphRunBuilder;
 
 protected:
     // For use by SkNoDrawCanvas (via SkCanvasVirtualEnforcer, which can't be a friend)
@@ -2704,7 +2704,15 @@ private:
     class AutoUpdateQRBounds;
     void validateClip() const;
 
-    std::unique_ptr<sktext::GlyphRunBuilder> fScratchGlyphRunBuilder;
+    sktext::GlyphRunBuilder* obtainGlyphRunBuilder();
+
+    void releaseGlyphRunBuilder();
+
+    /**
+     * fRunBuilders will be reused across text drawing commands
+     */
+    skia_private::STArray<1, std::unique_ptr<sktext::GlyphRunBuilder>> fRunBuilders;
+    int fRunBuildersUsed = 0;
 };
 
 /** \class SkAutoCanvasRestore

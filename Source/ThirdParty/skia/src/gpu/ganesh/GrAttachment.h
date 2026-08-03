@@ -11,7 +11,7 @@
 #include "include/core/SkSize.h"
 #include "include/gpu/ganesh/GrBackendSurface.h"
 #include "include/gpu/ganesh/GrTypes.h"
-#include "include/private/base/SkMacros.h"
+#include "include/private/SkMacros.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/ganesh/GrSurface.h"
 
@@ -53,8 +53,11 @@ public:
 
     skgpu::Mipmapped mipmapped() const { return fMipmapped; }
 
-    bool hasPerformedInitialClear() const { return fHasPerformedInitialClear; }
-    void markHasPerformedInitialClear() { fHasPerformedInitialClear = true; }
+    SkIRect clearedArea() const { return fClearedArea; }
+    bool hasAreaBeenCleared(SkIRect attachmentArea) const {
+        return fClearedArea.contains(attachmentArea);
+    }
+    void markAreaCleared(SkIRect area) { fClearedArea = area; }
 
     // This unique key is used for attachments of the same dimensions, usage, and sample cnt which
     // are shared between multiple render targets at the same time. Only one usage flag may be
@@ -117,7 +120,12 @@ private:
     UsageFlags fSupportedUsages;
     int fSampleCnt;
     skgpu::Mipmapped fMipmapped;
-    bool fHasPerformedInitialClear = false;
+    // Track which area of the attachment has already been cleared to cut down on unnecessary clear
+    // operations, which can be more expensive on desktop GPUs than loads.
+    // NOTE: stored in native (backend) coordinate space, NOT surface-origin space -- this
+    // attachment can be shared by render targets with different GrSurfaceOrigin (origin is not
+    // part of the shared-attachment UniqueKey).
+    SkIRect fClearedArea = SkIRect::MakeEmpty();
     GrMemoryless fMemoryless;
 
     using INHERITED = GrSurface;

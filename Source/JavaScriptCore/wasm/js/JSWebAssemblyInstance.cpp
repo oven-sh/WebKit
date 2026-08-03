@@ -220,6 +220,8 @@ void JSWebAssemblyInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Locker locker { cell->cellLock() };
     for (auto& wrapper : thisObject->functionWrappers())
         visitor.appendUnbarriered(wrapper.get());
+    for (auto& entry : thisObject->m_constantExpressionValues)
+        visitor.append(entry.value);
 }
 
 DEFINE_VISIT_CHILDREN(JSWebAssemblyInstance);
@@ -350,6 +352,7 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
             moduleRecord->addImportEntry(WebAssemblyModuleRecord::ImportEntry {
                 WebAssemblyModuleRecord::ImportEntryType::Single,
                 WebAssemblyModuleRecord::ModulePhase::Evaluation,
+                ScriptFetchParameters::Type::JavaScript,
                 moduleName,
                 fieldName,
                 Identifier::fromUid(PrivateName(PrivateName::Description, "WebAssemblyImportName"_s)),
@@ -597,7 +600,7 @@ void JSWebAssemblyInstance::initElementSegment(uint32_t tableIndex, const Elemen
         else {
             ASSERT(initType == Element::InitializationType::FromExtendedExpression);
             uint64_t result;
-            bool success = evaluateConstantExpression(initialBitsOrIndex, segment.elementType, result);
+            bool success = ensureConstantExpressionValue(initialBitsOrIndex, segment.elementType, result);
             // FIXME: https://bugs.webkit.org/show_bug.cgi?id=264454
             // Currently this should never fail, as the parse phase already validated it.
             RELEASE_ASSERT(success);
@@ -687,7 +690,7 @@ void JSWebAssemblyInstance::copyElementSegment(JSWebAssemblyArray* array, const 
 
         ASSERT(initType == Element::InitializationType::FromExtendedExpression);
         uint64_t result;
-        bool success = evaluateConstantExpression(initialBitsOrIndex, segment.elementType, result);
+        bool success = ensureConstantExpressionValue(initialBitsOrIndex, segment.elementType, result);
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=264454
         // Currently this should never fail, as the parse phase already validated it.
         RELEASE_ASSERT(success);
@@ -703,6 +706,21 @@ bool JSWebAssemblyInstance::evaluateConstantExpression(uint64_t index, Type expe
         return false;
 
     result = evalResult.value();
+    return true;
+}
+
+bool JSWebAssemblyInstance::ensureConstantExpressionValue(uint64_t constantExpressionIndex, Type expectedType, uint64_t& result)
+{
+    if (auto found = m_constantExpressionValues.getOptional(constantExpressionIndex)) {
+        result = JSValue::encode(found.value().get());
+        return true;
+    }
+
+    if (!evaluateConstantExpression(constantExpressionIndex, expectedType, result)) [[unlikely]]
+        return false;
+
+    Locker locker { cellLock() };
+    m_constantExpressionValues.set(constantExpressionIndex, WriteBarrier<Unknown>(vm(), this, JSValue::decode(result)));
     return true;
 }
 

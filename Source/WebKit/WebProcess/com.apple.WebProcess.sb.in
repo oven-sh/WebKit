@@ -64,11 +64,10 @@
 
 (allow fs-quota-get)
 
-#if !RC_XBS
 ;; Allow development dylibs to be loaded
-(allow file-read* file-map-executable
-    (literal (string-append (param "WEBKIT2_FRAMEWORK_DIR") "/libWebKitSwift.dylib")))
-#endif
+(when (equal? (param "WK_FRAMEWORKS_ARE_RELOCATED") "YES")
+    (allow file-read* file-map-executable
+        (literal (string-append (param "WEBKIT2_FRAMEWORK_DIR") "/libWebKitSwift.dylib"))))
 
 #if HAVE(SANDBOX_STATE_FLAGS)
 (with-filter (require-not (webcontent-process-launched))
@@ -1343,6 +1342,11 @@
 (with-filter (require-not (webcontent-process-launched))
     (allow syscall-unix (syscall-number SYS_quotactl)))
 #endif
+
+(allow syscall-unix (with telemetry)
+    (syscall-number
+        SYS_openat_dprotected_np
+        SYS_renameat))
 
 (with-filter (lockdown-mode)
     (deny syscall-unix (with telemetry) (syscall-unix-blocked-in-lockdown-mode))

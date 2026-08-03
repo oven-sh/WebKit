@@ -9,10 +9,10 @@
 
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTo.h"
-#include "src/base/SkEnumBitMask.h"
-#include "src/base/SkStringView.h"
+#include "include/private/SkEnumBitMask.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkStringView.h"
 #include "src/core/SkTHash.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/sksl/SkSLAnalysis.h"
@@ -3241,6 +3241,16 @@ std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
 
     const ExpressionArray& arguments = call.arguments();
     switch (kind) {
+        case k_workgroupUniformLoad_IntrinsicKind: {
+            // WGSL 17.11.4: workgroupUniformLoad(p : ptr<workgroup, T>) -> T
+            // The argument must be a pointer-addressable reference expression (variable reference,
+            // struct field, or array element) rooted in a variable declared in the 'workgroup'
+            // address space. Vector components (swizzles or indexed vector elements) and rvalues
+            // are not addressable.
+            std::string argument = this->assembleExpression(*arguments[0], Precedence::kSequence);
+            return "workgroupUniformLoad(&" + argument + ")";
+        }
+
         case k_atan_IntrinsicKind: {
             const char* name = (arguments.size() == 1) ? "atan" : "atan2";
             return this->assembleSimpleIntrinsic(name, call);
@@ -3567,6 +3577,8 @@ std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
         case k_asin_IntrinsicKind:
         case k_atomicAdd_IntrinsicKind:
         case k_atomicLoad_IntrinsicKind:
+        case k_atomicMax_IntrinsicKind:
+        case k_atomicMin_IntrinsicKind:
         case k_atomicStore_IntrinsicKind:
         case k_ceil_IntrinsicKind:
         case k_cos_IntrinsicKind:
@@ -3784,16 +3796,21 @@ std::string WGSLCodeGenerator::assembleFunctionCall(const FunctionCall& call,
     for (int index = 0; index < args.size(); ++index) {
         if (params[index]->modifierFlags() & ModifierFlag::kOut) {
             std::unique_ptr<LValue> lvalue = this->makeLValue(*args[index]);
-            if (params[index]->modifierFlags() & ModifierFlag::kIn) {
-                // Load the lvalue's contents into the substitute argument.
-                substituteArgument.push_back(this->writeScratchVar(args[index]->type(),
-                                                                   lvalue->load()));
+            if (lvalue) {
+                if (params[index]->modifierFlags() & ModifierFlag::kIn) {
+                    // Load the lvalue's contents into the substitute argument.
+                    substituteArgument.push_back(this->writeScratchVar(args[index]->type(),
+                                                                       lvalue->load()));
+                } else {
+                    // Create a substitute argument, but leave it uninitialized.
+                    substituteArgument.push_back(this->writeScratchVar(args[index]->type()));
+                }
+                writeback.push_back(std::move(lvalue));
+                needsWriteback = true;
             } else {
-                // Create a substitute argument, but leave it uninitialized.
-                substituteArgument.push_back(this->writeScratchVar(args[index]->type()));
+                substituteArgument.push_back(std::string());
+                writeback.push_back(nullptr);
             }
-            writeback.push_back(std::move(lvalue));
-            needsWriteback = true;
         } else {
             substituteArgument.push_back(std::string());
             writeback.push_back(nullptr);
@@ -4135,7 +4152,6 @@ std::string WGSLCodeGenerator::variableReferenceNameForLValue(const VariableRefe
         for (const Field& f : globalStruct.fields()) {
             if (f.fName == v.name()) {
                 polyfillInfo = fFieldPolyfillMap.find(&f);
-                SkASSERT(polyfillInfo);
                 break;
             }
         }

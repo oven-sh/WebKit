@@ -73,9 +73,12 @@ public:
 #include <WebCore/ModelPlayer.h>
 #include <WebCore/ModelPlayerAnimationState.h>
 #include <WebCore/ModelPlayerIdentifier.h>
+#include <WebCore/NodeIdentifier.h>
 #include <WebCore/StageModeOperations.h>
 #include <WebCore/TransformationMatrix.h>
 #include <simd/simd.h>
+#include <wtf/HashMap.h>
+#include <wtf/Markable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
@@ -118,13 +121,13 @@ public:
     void unloadModelTimerFired();
     void updateTransformAfterLayout();
     void updateOpacity();
-    void startAnimating();
     void animationPlaybackStateDidUpdate();
 
     // Messages
     void createLayer();
-    void loadModel(Ref<WebCore::Model>&&, WebCore::LayoutSize, bool);
-    void reloadModel(Ref<WebCore::Model>&&, WebCore::LayoutSize, std::optional<WebCore::TransformationMatrix> transformToRestore, std::optional<WebCore::ModelPlayerAnimationState> animationStateToRestore);
+    void loadModel(WebCore::NodeIdentifier, Ref<WebCore::Model>&&, WebCore::LayoutSize, bool);
+    void unloadModel(WebCore::NodeIdentifier);
+    void reloadModel(WebCore::NodeIdentifier, Ref<WebCore::Model>&&, WebCore::LayoutSize, std::optional<WebCore::TransformationMatrix> transformToRestore, std::optional<WebCore::ModelPlayerAnimationState> animationStateToRestore);
     void modelVisibilityDidChange(bool isVisible);
 
     // WebCore::REModelLoaderClient overrides.
@@ -133,10 +136,10 @@ public:
 
     // WebCore::ModelPlayer overrides.
     WebCore::ModelPlayerIdentifier identifier() const final { return m_id; }
-    void load(WebCore::Model&, WebCore::LayoutSize, bool) final;
+    void load(WebCore::NodeIdentifier, WebCore::Model&, WebCore::LayoutSize, bool) final;
     void sizeDidChange(WebCore::LayoutSize) final;
     void configureGraphicsLayer(WebCore::GraphicsLayer&, WebCore::ModelPlayerGraphicsLayerConfiguration&&) final;
-    void setEntityTransform(WebCore::TransformationMatrix) final;
+    void setEntityTransform(WebCore::NodeIdentifier, WebCore::TransformationMatrix) final;
     void enterFullscreen() final;
     bool supportsMouseInteraction() final;
     bool supportsDragging() final;
@@ -146,22 +149,22 @@ public:
     void handleMouseUp(const WebCore::LayoutPoint&, MonotonicTime) final;
     void getCamera(CompletionHandler<void(std::optional<WebCore::HTMLModelElementCamera>&&)>&&) final;
     void setCamera(WebCore::HTMLModelElementCamera, CompletionHandler<void(bool success)>&&) final;
-    void isPlayingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&) final;
-    void setAnimationIsPlaying(bool, CompletionHandler<void(bool success)>&&) final;
-    void isLoopingAnimation(CompletionHandler<void(std::optional<bool>&&)>&&) final;
-    void setIsLoopingAnimation(bool, CompletionHandler<void(bool success)>&&) final;
-    void animationDuration(CompletionHandler<void(std::optional<Seconds>&&)>&&) final;
-    void animationCurrentTime(CompletionHandler<void(std::optional<Seconds>&&)>&&) final;
-    void setAnimationCurrentTime(Seconds, CompletionHandler<void(bool success)>&&) final;
+    void isPlayingAnimation(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&&) final;
+    void setAnimationIsPlaying(WebCore::NodeIdentifier, bool, CompletionHandler<void(bool success)>&&) final;
+    void isLoopingAnimation(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<bool>&&)>&&) final;
+    void setIsLoopingAnimation(WebCore::NodeIdentifier, bool, CompletionHandler<void(bool success)>&&) final;
+    void animationDuration(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&&) final;
+    void animationCurrentTime(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<Seconds>&&)>&&) final;
+    void setAnimationCurrentTime(WebCore::NodeIdentifier, Seconds, CompletionHandler<void(bool success)>&&) final;
     WebCore::ModelPlayerAccessibilityChildren accessibilityChildren() final;
-    void setAutoplay(bool) final;
-    void setLoop(bool) final;
-    void setPlaybackRate(double, CompletionHandler<void(double effectivePlaybackRate)>&&) final;
-    double duration() const final;
-    bool paused() const final;
-    void setPaused(bool, CompletionHandler<void(bool succeeded)>&&) final;
-    Seconds currentTime() const final;
-    void setCurrentTime(Seconds, CompletionHandler<void()>&&) final;
+    void setAutoplay(WebCore::NodeIdentifier, bool) final;
+    void setLoop(WebCore::NodeIdentifier, bool) final;
+    void setPlaybackRate(WebCore::NodeIdentifier, double, CompletionHandler<void(double effectivePlaybackRate)>&&) final;
+    double duration(WebCore::NodeIdentifier) const final;
+    bool paused(WebCore::NodeIdentifier) const final;
+    void setPaused(WebCore::NodeIdentifier, bool, CompletionHandler<void(bool succeeded)>&&) final;
+    Seconds currentTime(WebCore::NodeIdentifier) const final;
+    void setCurrentTime(WebCore::NodeIdentifier, Seconds, CompletionHandler<void()>&&) final;
     void setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data) final;
     void setHasPortal(bool) final;
     void setStageMode(WebCore::StageModeOperation) final;
@@ -185,6 +188,15 @@ public:
 private:
     ModelProcessModelPlayerProxy(ModelProcessModelPlayerManagerProxy&, WebCore::ModelPlayerIdentifier, Ref<IPC::Connection>&&, const std::optional<String>&, std::optional<int>, std::optional<int>);
 
+    struct HostedModelEntity {
+        RefPtr<WebCore::REModelLoader> loader;
+        RetainPtr<WKRKEntity> entity;
+        simd_float3 originalEntityScale { simd_make_float3(1, 1, 1) };
+        simd_float3 originalBoundingBoxCenter { simd_make_float3(0, 0, 0) };
+        simd_float3 originalBoundingBoxExtents { simd_make_float3(0, 0, 0) };
+    };
+    using HostedModelEntityMap = HashMap<WebCore::NodeIdentifier, HostedModelEntity>;
+
     RESRT modelStandardizedTransformSRT(RESRT originalSRT);
     RESRT modelLocalizedTransformSRT(RESRT originalSRT);
     void computeTransform(bool);
@@ -196,28 +208,40 @@ private:
     void notifyModelPlayerOfEntityTransformChange();
     void applyDefaultIBL();
     void updateForCurrentStageMode();
+    void setUpLoadedEntity(WKRKEntity *);
+    simd_float3 reportingModelScale() const;
+    void clearReportingModelIfNeeded(WebCore::NodeIdentifier);
+    HostedModelEntityMap::iterator findHostedEntityForLoader(const WebCore::REModelLoader&);
+    void cancelAllLoaders();
+#if HAVE(CORE_RE)
+    void ensurePortalEntityHierarchy();
+    void parentToContainer(WKRKEntity *);
+#endif
     std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier();
     int entityMemoryLimit(bool) const;
 
     WebCore::ModelPlayerIdentifier m_id;
+    Markable<WebCore::NodeIdentifier> m_nodeID;
     bool m_isVisible { true };
     Ref<IPC::Connection> m_webProcessConnection;
     WeakPtr<ModelProcessModelPlayerManagerProxy> m_manager;
 
     std::unique_ptr<LayerHostingContext> m_layerHostingContext;
     RetainPtr<WKModelProcessModelLayer> m_layer;
-    RefPtr<WebCore::REModelLoader> m_loader;
+
+    HostedModelEntityMap m_hostedEntities;
+
+    // The first model loaded reports animation playback state for the portal until that is
+    // generalized: rdar://182292543 (Child model animation forwarding).
     RetainPtr<WKRKEntity> m_modelRKEntity;
 #if HAVE(CORE_RE)
     REPtr<RESceneRef> m_scene;
     REPtr<REEntityRef> m_hostingEntity;
     REPtr<REEntityRef> m_containerEntity;
+    RetainPtr<WKRKEntity> m_containerEntityWrapper;
 #endif
     RetainPtr<WKModelProcessModelPlayerProxyObjCAdapter> m_objCAdapter;
 
-    simd_float3 m_originalBoundingBoxCenter { simd_make_float3(0, 0, 0) };
-    simd_float3 m_originalBoundingBoxExtents { simd_make_float3(0, 0, 0) };
-    simd_float3 m_originalEntityScale { simd_make_float3(1, 1, 1) };
     float m_pitch { 0 };
 
     RESRT m_transformSRT; // SRT=Scaling/Rotation/Translation. This is stricter than a WebCore::TransformationMatrix.

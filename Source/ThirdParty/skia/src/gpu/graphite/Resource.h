@@ -9,7 +9,7 @@
 #define skgpu_graphite_Resource_DEFINED
 
 #include "include/gpu/GpuTypes.h"
-#include "include/private/base/SkMutex.h"
+#include "include/private/SkMutex.h"
 #include "src/gpu/GpuTypesPriv.h"
 #include "src/gpu/graphite/GraphiteResourceKey.h"
 #include "src/gpu/graphite/ResourceTypes.h"
@@ -228,11 +228,7 @@ public:
 
     // Whether the resource is currently in use by the GPU: any resource that is used in a command
     // buffer is considered in use by the GPU.
-    //
-    // NOTE: This is currently only correct for textures, hence the name. Once the rest of the
-    // resources use the command buffer ref instead of usage ref appropriately, this can be made
-    // more generaic.
-    bool isTextureBusyOnGPU() const {
+    bool isBusyOnGPU() const {
         return (fRefs.load(std::memory_order_acquire) & RefMask(RefType::kCommandBuffer)) != 0;
     }
 
@@ -242,6 +238,8 @@ public:
     Budgeted budgeted() const { return fBudgeted; }
     Shareable shareable() const { return fShareable; }
     const GraphiteResourceKey& key() const { return fKey; }
+
+    virtual Protected isProtected() const { return Protected::kNo; }
 
     // Retrieves the amount of GPU memory used by this resource in bytes. It is approximate since we
     // aren't aware of additional padding or copies made by the driver.

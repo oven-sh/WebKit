@@ -347,6 +347,11 @@ CanvasKit.onRuntimeInitialized = function() {
     return this;
   };
 
+  CanvasKit["PathBuilder"].prototype["setFillType"] = function(ft) {
+    this._setFillType(ft);
+    return this;
+  };
+
   CanvasKit.Path.prototype.makeStroked = function(opts) {
     // Fill out any missing values with the default values.
     opts = opts || {};
@@ -1287,8 +1292,8 @@ var memoizedCanvas2dElement = null;
 // Expects that the canvasImageSource has already loaded/decoded.
 // CanvasImageSource reference: https://developer.mozilla.org/en-US/docs/Web/API/CanvasImageSource
 CanvasKit.MakeImageFromCanvasImageSource = function(canvasImageSource) {
-  var width = canvasImageSource.width;
-  var height = canvasImageSource.height;
+  var width = CanvasKit._getWidth(canvasImageSource);
+  var height = CanvasKit._getHeight(canvasImageSource);
 
   if (!memoizedCanvas2dElement) {
     memoizedCanvas2dElement = document.createElement('canvas');

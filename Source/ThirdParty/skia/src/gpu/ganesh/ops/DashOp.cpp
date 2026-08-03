@@ -8,23 +8,23 @@
 
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkString.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/gpu/ganesh/GrRecordingContext.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkPoint_impl.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/base/SkArenaAlloc.h"
-#include "src/base/SkSafeMath.h"
+#include "src/core/SkArenaAlloc.h"
 #include "src/core/SkColorData.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkPathEffectBase.h"
 #include "src/core/SkPointPriv.h"
 #include "src/core/SkSLTypeShared.h"
+#include "src/core/SkSafeMath.h"
 #include "src/gpu/BufferWriter.h"
 #include "src/gpu/KeyBuilder.h"
 #include "src/gpu/ganesh/GrAppliedClip.h"
@@ -50,7 +50,7 @@
 #include "src/gpu/ganesh/ops/GrSimpleMeshDrawOpHelper.h"
 
 #if defined(GPU_TEST_UTILS)
-#include "src/base/SkRandom.h"
+#include "src/core/SkRandom.h"
 #include "src/gpu/ganesh/GrDrawOpTest.h"
 #include "src/gpu/ganesh/GrTestUtils.h"
 #endif
@@ -184,8 +184,8 @@ void setup_dashed_rect(const SkRect& rect,
                         offset + len + bloatX,  halfDevRectHeight };
 
     if (kRound_DashCap == cap) {
-        SkScalar radius = SkScalarHalf(strokeWidth) - 0.5f;
-        SkScalar centerX = SkScalarHalf(endInterval);
+        float radius = (strokeWidth / 2.f) - 0.5f;
+        float centerX = endInterval / 2.f;
 
         vertices.writeQuad(GrQuad::MakeFromRect(rect, matrix),
                            VertexWriter::TriStripFromRect(dashRect),
@@ -194,8 +194,8 @@ void setup_dashed_rect(const SkRect& rect,
                            centerX);
     } else {
         SkASSERT(kNonRound_DashCap == cap);
-        SkScalar halfOffLen = SkScalarHalf(endInterval);
-        SkScalar halfStroke = SkScalarHalf(strokeWidth);
+        float halfOffLen = endInterval / 2.f;
+        float halfStroke = strokeWidth / 2.f;
         SkRect rectParam;
         rectParam.setLTRB(halfOffLen                 + 0.5f, -halfStroke + 0.5f,
                           halfOffLen + startInterval - 0.5f,  halfStroke - 0.5f);

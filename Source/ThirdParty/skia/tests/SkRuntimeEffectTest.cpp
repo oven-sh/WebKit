@@ -32,13 +32,13 @@
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/GpuTypes.h"
 #include "include/private/SkSLSampleUsage.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "include/sksl/SkSLDebugTrace.h"
 #include "include/sksl/SkSLVersion.h"
-#include "src/base/SkStringView.h"
 #include "src/core/SkColorData.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkRuntimeEffectPriv.h"
+#include "src/core/SkStringView.h"
 #include "src/gpu/KeyBuilder.h"
 #include "src/gpu/SkBackingFit.h"
 #include "src/sksl/SkSLString.h"
@@ -1697,7 +1697,7 @@ void test_using_transformed_coords(skiatest::Reporter* reporter,
 DEF_GRAPHITE_TEST_FOR_RENDERING_CONTEXTS(SkRuntimeShader_TransformedCoords_Graphite,
                                          reporter,
                                          context,
-                                         CtsEnforcement::kNextRelease) {
+                                         CtsEnforcement::kApiLevel_202604) {
     std::unique_ptr<skgpu::graphite::Recorder> recorder = context->makeRecorder();
     GraphiteInfo graphiteInfo = {context, recorder.get()};
     test_using_transformed_coords(reporter, /*ganeshContext=*/nullptr, &graphiteInfo);
@@ -1708,7 +1708,7 @@ DEF_GRAPHITE_TEST_FOR_RENDERING_CONTEXTS(SkRuntimeShader_TransformedCoords_Graph
 DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SkRuntimeShader_TransformedCoords_Ganesh,
                                        reporter,
                                        contextInfo,
-                                       CtsEnforcement::kNextRelease) {
+                                       CtsEnforcement::kApiLevel_202604) {
     test_using_transformed_coords(reporter, contextInfo.directContext(), /*graphiteInfo=*/nullptr);
 }
 
@@ -1795,3 +1795,78 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(GrSkSLFP_UniformArray,
     }
 }
 #endif
+
+DEF_TEST(SkRuntimeShader_b500080194, r) {
+    constexpr const char* kSkSL =
+        "half4 main(float2 xy) {"
+          "float4 v;"
+          "v.x += xy.x;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "(v = abs(v)).xyz;"
+          "return half4(v);"
+        "}";
+
+    auto [effect, err] = SkRuntimeEffect::MakeForShader(SkString(kSkSL));
+
+    if (!effect) {
+        REPORT_FAILURE(r, "SkSL compile failed", SkString("SkSL compile failed"));
+    } else {
+        sk_sp<SkShader> shader = effect->makeShader(/*uniforms=*/nullptr, {});
+        SkPaint paint;
+        paint.setShader(std::move(shader));
+        sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(64, 64));
+        // This caused a crash before the patch.
+        surface->getCanvas()->drawPaint(paint);
+    }
+}
+
+DEF_TEST(SkRuntimeShader_b507643404, r) {
+    constexpr const char* kSkSL =
+        "half4 blend_src_over(half4,half4 dst){"
+          "float a;return(a)/dst;"
+        "}"
+        "half4 main(half4 src,half4){"
+          "return blend_src_over(src,half4(0));"
+        "}";
+
+    // This effect compiles when we aren't optimizing/inlining, but fails when we are.
+    SkRuntimeEffect::Options options;
+    options.forceUnoptimized = false;
+    auto [effect, err] = SkRuntimeEffect::MakeForBlender(SkString(kSkSL));
+    if (!effect) {
+        SkDebugf("Error: %s\n", err.c_str());
+        REPORT_FAILURE(r, "SkSL compile failed", SkString("SkSL compile failed"));
+    } else {
+        sk_sp<SkBlender> blender = effect->makeBlender(nullptr);
+        REPORTER_ASSERT(r, blender);
+        if (!blender) {
+            return;
+        }
+        SkPaint paint;
+        paint.setColor(SK_ColorRED);
+        paint.setBlender(std::move(blender));
+
+        sk_sp<SkSurface> s = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(4, 4));
+        REPORTER_ASSERT(r, s);
+        // We should make sure this doesn't crash
+        s->getCanvas()->drawPaint(paint);
+    }
+}

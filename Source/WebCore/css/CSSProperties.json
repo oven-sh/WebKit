@@ -2476,6 +2476,27 @@
                 "url": "https://www.w3.org/TR/SVG11/text.html#BaselineShiftProperty"
             }
         },
+        "baseline-source": {
+            "animation-type": "discrete",
+            "initial": "auto",
+            "values": [
+                "auto",
+                "first",
+                "last"
+            ],
+            "codegen-properties": {
+                "settings-flag": "cssBaselineSourceEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "boxData"],
+                "computed-style-storage-kind": "enum",
+                "computed-style-type": "BaselineSource",
+                "parser-grammar": "<<values>>"
+            },
+            "specification": {
+                "category": "css-inline",
+                "url": "https://drafts.csswg.org/css-inline-3/#baseline-source"
+            },
+            "status": "experimental"
+        },
         "block-ellipsis": {
             "animation-type": "discrete",
             "inherited": true,
@@ -2977,11 +2998,8 @@
                     "resolver": "bottom"
                 },
                 "accepts-quirky-length": true,
-                "style-builder-custom": "Initial",
                 "style-extractor-custom": true,
                 "disables-native-appearance": true,
-                "computed-style-initial-constexpr": true,
-                "computed-style-initial-custom": true,
                 "computed-style-storage-path": ["m_nonInheritedData", "surroundData", "border.widths()"],
                 "computed-style-storage-container": "physical-group",
                 "computed-style-storage-kind": "reference",
@@ -3539,11 +3557,8 @@
                     "resolver": "left"
                 },
                 "accepts-quirky-length": true,
-                "style-builder-custom": "Initial",
                 "style-extractor-custom": true,
                 "disables-native-appearance": true,
-                "computed-style-initial-constexpr": true,
-                "computed-style-initial-custom": true,
                 "computed-style-storage-path": ["m_nonInheritedData", "surroundData", "border.widths()"],
                 "computed-style-storage-container": "physical-group",
                 "computed-style-storage-kind": "reference",
@@ -3660,11 +3675,8 @@
                     "resolver": "right"
                 },
                 "accepts-quirky-length": true,
-                "style-builder-custom": "Initial",
                 "style-extractor-custom": true,
                 "disables-native-appearance": true,
-                "computed-style-initial-constexpr": true,
-                "computed-style-initial-custom": true,
                 "computed-style-storage-path": ["m_nonInheritedData", "surroundData", "border.widths()"],
                 "computed-style-storage-container": "physical-group",
                 "computed-style-storage-kind": "reference",
@@ -3886,11 +3898,8 @@
                     "resolver": "top"
                 },
                 "accepts-quirky-length": true,
-                "style-builder-custom": "Initial",
                 "style-extractor-custom": true,
                 "disables-native-appearance": true,
-                "computed-style-initial-constexpr": true,
-                "computed-style-initial-custom": true,
                 "computed-style-storage-path": ["m_nonInheritedData", "surroundData", "border.widths()"],
                 "computed-style-storage-container": "physical-group",
                 "computed-style-storage-kind": "reference",
@@ -4295,7 +4304,7 @@
             }
         },
         "corner-shape": {
-            "animation-type": "discrete",
+            "animation-type": "by computed value",
             "initial": "round",
             "codegen-properties": {
                 "settings-flag": "cssCornerShapeEnabled",
@@ -7266,9 +7275,6 @@
                 "thick"
             ],
             "codegen-properties": {
-                "style-builder-custom": "Initial",
-                "computed-style-initial-constexpr": true,
-                "computed-style-initial-custom": true,
                 "computed-style-storage-path": ["m_nonInheritedData", "backgroundData", "outline"],
                 "computed-style-storage-container": "struct",
                 "computed-style-storage-kind": "reference",
@@ -8064,13 +8070,15 @@
             "initial": "auto",
             "values": [
                 "auto",
+                "spaces",
                 "none"
             ],
             "codegen-properties": {
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "enum",
                 "computed-style-type": "RubyOverhang",
-                "parser-grammar": "<<values>>"
+                "parser-grammar": "auto | spaces | none@(aliased-to=spaces)",
+                "parser-grammar-comment": "'none' is a legacy value alias of 'spaces'."
             },
             "specification": {
                 "category": "css-ruby",
@@ -8410,6 +8418,26 @@
                 "category": "css-22",
                 "url": "https://www.w3.org/TR/CSS22/tables.html#propdef-table-layout"
             }
+        },
+        "spatial": {
+            "animation-type": "discrete",
+            "initial": "none",
+            "values": [
+                "none",
+                "portal"
+            ],
+            "codegen-properties": {
+                "enable-if": "ENABLE_SPATIAL_PORTAL",
+                "settings-flag": "spatialPortalEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "enum",
+                "computed-style-type": "SpatialType",
+                "parser-grammar": "<<values>>"
+            },
+            "specification": {
+                "url": "https://webkit.github.io/explainers/css-spatial/Overview.html#portals"
+            },
+            "status": "in development"
         },
         "tab-size": {
             "animation-type": "by computed value",
@@ -10162,9 +10190,6 @@
                 "aliases": [
                     "-webkit-column-rule-width"
                 ],
-                "style-builder-custom": "Initial",
-                "computed-style-initial-constexpr": true,
-                "computed-style-initial-custom": true,
                 "computed-style-storage-name": "width",
                 "computed-style-storage-path": ["m_nonInheritedData", "miscData", "multiCol", "columnRule"],
                 "computed-style-storage-container": "struct",

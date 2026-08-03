@@ -419,6 +419,9 @@ void NetworkProcess::createNetworkConnectionToWebProcess(ProcessIdentifier ident
     ASSERT(!m_webProcessConnections.contains(identifier));
     m_webProcessConnections.add(identifier, WTF::move(newConnection));
 
+    for (auto& path : m_pendingAllowedFilePathsByProcess.take(identifier))
+        connection->allowAccessToFile(path);
+
     CheckedPtr storage = storageSession(sessionID);
 
     RELEASE_LOG(Process, "%p - NetworkProcess::createNetworkConnectionToWebProcess: Finished creating connection for web process core identifier %" PRIu64 ", notifying the UI process", this, identifier.toUInt64());
@@ -3416,6 +3419,14 @@ void NetworkProcess::allowFilesAccessFromWebProcess(WebCore::ProcessIdentifier p
     if (RefPtr connection = webProcessConnection(processID)) {
         for (auto& path : paths)
             connection->allowAccessToFile(path);
+    } else {
+        // If web process is not launched yet, buffer the grant so it can be applied
+        // once createNetworkConnectionToWebProcess() runs for this process identifier.
+        auto& pendingPaths = m_pendingAllowedFilePathsByProcess.ensure(processID, [] {
+            return HashSet<String> { };
+        }).iterator->value;
+        for (auto& path : paths)
+            pendingPaths.add(path);
     }
     completionHandler();
 }
@@ -3558,14 +3569,14 @@ void NetworkProcess::allowEvaluatedURL(const WebCore::ParentalControlsURLFilterP
         filter->requestPermissionForURL(parameters.urlToAllow, *parameters.referrerURL, WTF::move(completionHandler));
         return;
     }
-#else
-    filter->allowURL(parameters.urlToAllow, WTF::move(completionHandler));
 #endif
+    filter->allowURL(parameters.urlToAllow, WTF::move(completionHandler));
+
 }
 
-void NetworkProcess::installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, CompletionHandler<void()>&& completionHandler)
+void NetworkProcess::installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, std::span<const uint8_t> replacementData, CompletionHandler<void()>&& completionHandler)
 {
-    Ref mock = WebCore::MockParentalControlsURLFilter::create(WTF::move(blockedURLs));
+    Ref mock = WebCore::MockParentalControlsURLFilter::create(WTF::move(blockedURLs), replacementData);
     WebCore::ParentalControlsURLFilter::setFilterForTesting(WTF::move(mock));
     completionHandler();
 }

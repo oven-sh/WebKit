@@ -857,6 +857,15 @@
     "imported/w3c/web-platform-tests/close-watcher/iframes/dialog-same-origin-ynyn.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/content-security-policy/connect-src/connect-src-webtransport-allowed.sub.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/content-security-policy/connect-src/connect-src-webtransport-blocked.sub.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/content-security-policy/connect-src/connect-src-webtransport-hashes.sub.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/content-security-policy/embedded-enforcement/required_csp-header-crlf.html": [
         "slow"
     ],
@@ -2990,6 +2999,12 @@
     "imported/w3c/web-platform-tests/fetch/api/request/request-keepalive-quota.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/compressed-large-resources-001.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/compressed-large-resources-002.tentative.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-clear-site-data-cache.tentative.https.html": [
         "slow"
     ],
@@ -2999,7 +3014,13 @@
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-clear-site-data-storage.tentative.https.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-compressed-fetch-with-link-match-dest.tentative.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-compressed.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-decompression.tentative.https.h2.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-decompression.tentative.https.html": [
@@ -3008,10 +3029,49 @@
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-no-cors.tentative.https.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-timing-001.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-timing-002.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-imagesrcset.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-connect-src-nonce.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-connect-src.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element-baseURL.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element-crossorigin.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element-in-body.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element-invalid-url.tentative.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-element.tentative.https.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-header-in-subresources.tentative.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-header.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-integrity.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-link-referrer-and-referrerpolicy.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-fetch-with-type-attribute.tentative.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-insecure-context.tentative.http.html": [
@@ -3021,6 +3081,9 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-registration.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/fetch-destination.tentative.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/fetch/connection-pool/network-partition-key.html": [
@@ -4121,7 +4184,7 @@
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-invoking-attribute.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-command-edge-cases.tentative.html": [
+    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-command-edge-cases.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-command.html": [
@@ -5384,13 +5447,22 @@
     "imported/w3c/web-platform-tests/permissions-policy/permissions-policy-nested-header-policy-disallowed-for-all.https.sub.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/picture-in-picture/leave-picture-in-picture-disable-attribute.optional.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/picture-in-picture/leave-picture-in-picture.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/picture-in-picture/picture-in-picture-window.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/picture-in-picture/request-picture-in-picture-exits-existing.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/picture-in-picture/request-picture-in-picture-twice.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/picture-in-picture/unload-document-exits-picture-in-picture.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/pointerevents/coalesced_events_attributes_under_load.https.optional.html": [

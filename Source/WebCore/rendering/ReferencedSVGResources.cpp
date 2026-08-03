@@ -28,6 +28,7 @@
 #include "ReferencedSVGResources.h"
 
 #include "ContainerNodeInlines.h"
+#include "Document.h"
 #include "DocumentView.h"
 #include "LegacyRenderSVGResourceClipper.h"
 #include "LegacyRenderSVGResourceContainerInlines.h"
@@ -40,6 +41,8 @@
 #include "RenderSVGResourcePaintServer.h"
 #include "RenderSVGResourcePattern.h"
 #include "SVGClipPathElement.h"
+#include "SVGDocument.h"
+#include "SVGDocumentExtensions.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGFilterElement.h"
 #include "SVGMarkerElement.h"
@@ -102,24 +105,29 @@ void CSSSVGResourceElementClient::resourceChanged(SVGElement& element)
     if (m_clientRenderer->needsLayout())
         return;
 
-    RefPtr frameView = m_clientRenderer->document().view();
+    CheckedPtr clientLayerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer.get());
+
+    // A non-layer SVG client applies clip-path/mask at paint time, so the area the resource used to cover
+    // lives only in its cached visual overflow rect (kept current at the end of the client's own layout).
+    // Capture the old repaint rects before that cache is dropped below, so the affected region is
+    // repainted along with the new one. Layered clients keep their old bounds in the layer's stored
+    // repaint rect and go through the position update instead.
+    bool isNonLayerSVGClient = clientLayerModelObject && clientLayerModelObject->isSVGLayerAwareRenderer() && !clientLayerModelObject->hasLayer();
+    std::optional<RenderObject::RepaintRects> oldRepaintRects;
+    SingleThreadWeakPtr<const RenderLayerModelObject> repaintContainer;
+    if (isNonLayerSVGClient) {
+        repaintContainer = clientLayerModelObject->containerForRepaint().renderer.get();
+        CheckedPtr checkedRepaintContainer = repaintContainer.get();
+        oldRepaintRects = clientLayerModelObject->rectsForRepaintingAfterLayout(checkedRepaintContainer.get(), RepaintOutlineBounds::Yes);
+    }
 
     // Invalidate cached visual overflow rect since resource bounds may have changed.
-    if (CheckedPtr layerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer.get())) {
-        // A marker or clip-path change can resize the client, but a layer-less client gets no post-layout
-        // position update, so repaint the old bounds now while the cached visual overflow still holds
-        // them, letting a shrunk client erase the area it used to cover. Paint servers (gradient,
-        // pattern) leave bounds unchanged, so they skip this.
-        if (!resourceIsPaintServer && !layerModelObject->hasLayer() && !(frameView && frameView->layoutContext().isInLayout()))
-            m_clientRenderer->repaint();
-
-        layerModelObject->invalidateCachedVisualOverflowRect();
+    if (clientLayerModelObject) {
+        clientLayerModelObject->invalidateCachedVisualOverflowRect();
         // Ensure the post-layout recursiveUpdateLayerPositions() processes this client layer
         // and generates repaint rects, even if the client's own geometry didn't change.
-        if (layerModelObject->hasLayer()) {
-            CheckedPtr layer = layerModelObject->layer();
+        if (CheckedPtr layer = clientLayerModelObject->layer())
             layer->setSelfAndDescendantsNeedPositionUpdate();
-        }
     }
 
     // Special case for markers. Markers can be attached to RenderSVGPath object. Marker positions are computed
@@ -131,9 +139,16 @@ void CSSSVGResourceElementClient::resourceChanged(SVGElement& element)
 
     // During layout, clients with layers are handled by the post-layout
     // recursiveUpdateLayerPositions() phase. Clients without layers need a direct repaint.
-    if (frameView && frameView->layoutContext().isInLayout()) {
-        if (auto* layerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer.get()); layerModelObject && layerModelObject->hasLayer())
+    if (m_clientRenderer->document().view()->layoutContext().isInLayout()) {
+        if (clientLayerModelObject && clientLayerModelObject->hasLayer())
             return;
+    }
+
+    if (oldRepaintRects) {
+        CheckedPtr checkedRepaintContainer = repaintContainer.get();
+        auto newRepaintRects = clientLayerModelObject->rectsForRepaintingAfterLayout(checkedRepaintContainer.get(), RepaintOutlineBounds::Yes);
+        clientLayerModelObject->repaintAfterLayoutIfNeeded(WTF::move(repaintContainer), RequiresFullRepaint::Yes, *oldRepaintRects, newRepaintRects);
+        return;
     }
 
     m_clientRenderer->repaintOldAndNewPositionsForSVGRenderer();
@@ -352,6 +367,15 @@ RefPtr<SVGFilterElement> ReferencedSVGResources::referencedFilterElement(TreeSco
     if (filterReference.cachedFragment.isEmpty())
         return nullptr;
 
+    Ref document = treeScope.documentScope();
+    CheckedRef extensions = document->svgExtensions();
+    if (auto externalDocument = extensions->externalResourceDocument(filterReference.url.resolved)) {
+        RefPtr resolvedDocument = *externalDocument;
+        if (!resolvedDocument)
+            return nullptr;
+        return downcast<SVGFilterElement>(elementForResourceID(*resolvedDocument, filterReference.cachedFragment, SVGNames::filterTag));
+    }
+
     return downcast<SVGFilterElement>(elementForResourceID(treeScope, filterReference.cachedFragment, SVGNames::filterTag));
 }
 
@@ -359,6 +383,16 @@ LegacyRenderSVGResourceClipper* ReferencedSVGResources::referencedClipperRendere
 {
     if (clipPath.fragment().isEmpty())
         return nullptr;
+
+    Ref document = treeScope.documentScope();
+    CheckedRef extensions = document->svgExtensions();
+    if (auto externalDocument = extensions->externalResourceDocument(clipPath.url().resolved)) {
+        RefPtr resolvedDocument = *externalDocument;
+        if (!resolvedDocument)
+            return nullptr;
+        return getRenderSVGResourceById<LegacyRenderSVGResourceClipper>(*resolvedDocument, clipPath.fragment());
+    }
+
     // For some reason, SVG stores a cache of id -> renderer, rather than just using getElementById() and renderer().
     return getRenderSVGResourceById<LegacyRenderSVGResourceClipper>(treeScope, clipPath.fragment());
 }

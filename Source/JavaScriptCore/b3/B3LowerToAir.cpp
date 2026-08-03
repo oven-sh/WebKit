@@ -29,24 +29,6 @@
 
 #if ENABLE(B3_JIT)
 
-// On Windows, there's macros for these which interfere with the opcodes
-#pragma push_macro("RotateLeft32")
-#pragma push_macro("RotateLeft64")
-#pragma push_macro("RotateRight32")
-#pragma push_macro("RotateRight64")
-#pragma push_macro("StoreFence")
-#pragma push_macro("LoadFence")
-#pragma push_macro("MemoryFence")
-
-#undef RotateLeft32
-#undef RotateLeft64
-#undef RotateRight32
-#undef RotateRight64
-#undef StoreFence
-#undef LoadFence
-#undef MemoryFence
-
-#if USE(JSVALUE64)
 #include "AirBlockInsertionSet.h"
 #include "AirCCallSpecial.h"
 #include "AirCCallingConvention.h"
@@ -83,6 +65,25 @@
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
 #include <wtf/StdLibExtras.h>
+
+// On Windows, there's macros for these which interfere with the opcodes. The
+// undefs have to follow every #include: <windows.h> defines them, so anything
+// that pulls it in later would put them back.
+#pragma push_macro("RotateLeft32")
+#pragma push_macro("RotateLeft64")
+#pragma push_macro("RotateRight32")
+#pragma push_macro("RotateRight64")
+#pragma push_macro("StoreFence")
+#pragma push_macro("LoadFence")
+#pragma push_macro("MemoryFence")
+
+#undef RotateLeft32
+#undef RotateLeft64
+#undef RotateRight32
+#undef RotateRight64
+#undef StoreFence
+#undef LoadFence
+#undef MemoryFence
 
 #if !ASSERT_ENABLED
 IGNORE_RETURN_TYPE_WARNINGS_BEGIN
@@ -559,7 +560,7 @@ private:
     }
 
     template<IsLegalOffset Int>
-    std::optional<unsigned> NODELETE scaleForShl(Air::Opcode opcode, Value* shl, Int offset, std::optional<Width> width = std::nullopt)
+    std::optional<unsigned> NODELETE scaleForShl(Value* shl, Int offset, std::optional<Width> width = std::nullopt)
     {
         if (shl->opcode() != Shl)
             return std::nullopt;
@@ -576,7 +577,7 @@ private:
         if (!isRepresentableAs<int32_t>(bigScale))
             return std::nullopt;
         unsigned scale = static_cast<int32_t>(bigScale);
-        if (!Arg::isValidIndexForm(opcode, scale, offset, width))
+        if (!Arg::isValidIndexForm(scale, offset, width))
             return std::nullopt;
         return scale;
     }
@@ -605,7 +606,7 @@ private:
             Value* right = address->child(1);
 
             auto tryIndex = [&] (Value* index, Value* base) -> Arg {
-                std::optional<unsigned> scale = scaleForShl(Air::Move, index, offset, width);
+                std::optional<unsigned> scale = scaleForShl(index, offset, width);
                 if (!scale)
                     return Arg();
                 if (m_locked.contains(index->child(0)) || m_locked.contains(base))
@@ -619,7 +620,7 @@ private:
                 return result;
 
             if (m_locked.contains(left) || m_locked.contains(right)
-                || !Arg::isValidIndexForm(Air::Move, 1, offset, width))
+                || !Arg::isValidIndexForm(1, offset, width))
                 return fallback();
 
             if (isMergeableValue(left, ZExt32) || isMergeableValue(left, SExt32))
@@ -634,7 +635,7 @@ private:
             // amount is greater than 1, then there isn't really anything smart that we could do here.
             // We avoid using baseless indexes because their encoding isn't particularly efficient.
             if (m_locked.contains(left) || !address->child(1)->isInt32(1)
-                || !Arg::isValidIndexForm(Air::Move, 1, offset, width))
+                || !Arg::isValidIndexForm(1, offset, width))
                 return fallback();
 
             return indexArg(tmp(left), left, 1, offset);
@@ -652,7 +653,7 @@ private:
             // Why don't we need to check m_locked here? WasmAddressValue is purely used for address computation,
             // which is different from the other operations. And we already know that numUses(address) is below the threshold.
             // If we ensure that all use of WasmAddress gets indexArg form, we do not need to have WasmAddressValue's instruction actually.
-            if (!Arg::isValidIndexForm(Air::Move, 1, offset, width))
+            if (!Arg::isValidIndexForm(1, offset, width))
                 return fallback();
 
             // FIXME: We should support ARM64 LDR 32-bit addressing, which will
@@ -1327,7 +1328,6 @@ private:
             }
             break;
         case Width64:
-            RELEASE_ASSERT(is64Bit());
             switch (bank) {
             case GP:
                 return Move;
@@ -1336,7 +1336,7 @@ private:
             }
             break;
         case Width128:
-            RELEASE_ASSERT(is64Bit() && Options::useWasmSIMD());
+            RELEASE_ASSERT(Options::useWasmSIMD());
             RELEASE_ASSERT(bank == FP);
             return MoveVector;
         }
@@ -3325,7 +3325,7 @@ private:
         }
         
         auto tryShl = [&] (Value* shl, Value* other) -> bool {
-            std::optional<unsigned> scale = scaleForShl(leaOpcode, shl, offset);
+            std::optional<unsigned> scale = scaleForShl(shl, offset);
             if (!scale)
                 return false;
             if (!canBeInternal(shl))
@@ -4673,40 +4673,60 @@ private:
             Value* left = m_value->child(0);
             Value* right = m_value->child(1);
 
-            // SBFX Pattern: ((src >> lsb) << amount) >> amount
-            // Where: amount = datasize - width
             auto tryAppendSBFX = [&] () -> bool {
                 Air::Opcode opcode = opcodeForType(ExtractSignedBitfield32, ExtractSignedBitfield64, m_value->type());
                 if (!isValidForm(opcode, Arg::Tmp, Arg::Imm, Arg::Imm, Arg::Tmp))
                     return false;
-                if (left->opcode() != Shl || (left->child(0)->opcode() != ZShr && left->child(0)->opcode() != SShr))
+                if (left->opcode() != Shl)
+                    return false;
+                if (!imm(right) || right->asInt() < 0)
                     return false;
 
-                Value* srcValue = left->child(0)->child(0);
-                Value* lsbValue = left->child(0)->child(1);
-                Value* amount1Value = left->child(1);
-                Value* amount2Value = right;
+                uint64_t datasize = opcode == ExtractSignedBitfield32 ? 32 : 64;
+                uint64_t amount = right->asInt();
+                if (amount >= datasize)
+                    return false;
+                uint64_t width = datasize - amount;
+                ASSERT(width);
+
+                Value* srcValue = nullptr;
+                uint64_t lsb = 0;
+
+                // SBFX Pattern: ((src >> lsb) << amount) >> amount
+                // Where: amount = datasize - width
+                if (left->child(0)->opcode() == ZShr || left->child(0)->opcode() == SShr) {
+                    Value* amount1Value = left->child(1);
+                    Value* lsbValue = left->child(0)->child(1);
+                    if (!imm(amount1Value) || !imm(lsbValue))
+                        return false;
+                    if (amount1Value->asInt() < 0 || lsbValue->asInt() < 0)
+                        return false;
+                    if (static_cast<uint64_t>(amount1Value->asInt()) != amount)
+                        return false;
+                    srcValue = left->child(0)->child(0);
+                    lsb = lsbValue->asInt();
+                } else {
+                    // SBFX Pattern (non-canonical): (src << leftAmt) >> rightAmt
+                    // Where: rightAmt > leftAmt, lsb = rightAmt - leftAmt, width = datasize - rightAmt
+                    Value* leftAmtValue = left->child(1);
+                    if (!imm(leftAmtValue) || leftAmtValue->asInt() < 0)
+                        return false;
+                    uint64_t leftAmt = leftAmtValue->asInt();
+                    if (amount <= leftAmt)
+                        return false;
+                    srcValue = left->child(0);
+                    lsb = amount - leftAmt;
+                    ASSERT(lsb);
+                }
+
                 if (m_locked.contains(srcValue))
                     return false;
-                if (!imm(lsbValue) || !imm(amount1Value) || !imm(amount2Value))
-                    return false;
-                if (lsbValue->asInt() < 0 || amount1Value->asInt() < 0 || amount2Value->asInt() < 0)
-                    return false;
 
-                uint64_t amount1 = amount1Value->asInt();
-                uint64_t amount2 = amount2Value->asInt();
-                uint64_t lsb = lsbValue->asInt();
-                uint64_t datasize = opcode == ExtractSignedBitfield32 ? 32 : 64;
-
-                if (amount1 >= datasize)
-                    return false;
-
-                uint64_t width = datasize - amount1;
                 uint64_t resultDataSize = 0;
-                if (!WTF::safeAdd(lsb, width, resultDataSize) || amount1 != amount2 || !width || resultDataSize > datasize)
+                if (!WTF::safeAdd(lsb, width, resultDataSize) || resultDataSize > datasize)
                     return false;
 
-                append(opcode, tmp(srcValue), imm(lsbValue), imm(width), tmp(m_value));
+                append(opcode, tmp(srcValue), imm(lsb), imm(width), tmp(m_value));
                 return true;
             };
 
@@ -6045,7 +6065,7 @@ private:
 
         case B3::CCall: {
             CCallValue* cCall = m_value->as<CCallValue>();
-            bool deferToAfterRegAlloc = m_isRare && m_code.optLevel() >= 2 && !isARM_THUMB2();
+            bool deferToAfterRegAlloc = m_isRare && m_code.optLevel() >= 2;
             if (deferToAfterRegAlloc) {
                 m_procedure.setUsesColdCCall(true);
 
@@ -6158,12 +6178,8 @@ private:
                 break;
             case Int64:
                 append(Move, cCallResult(m_code, cCall, 0), resultDst0);
-#if USE(JSVALUE32_64)
-                append(Move, cCallResult(m_code, cCall, 1), resultDst1);
-#endif
                 break;
             case V128:
-                ASSERT(is64Bit());
                 append(MoveVector, cCallResult(m_code, cCall, 0), resultDst0);
                 break;
             }
@@ -6830,8 +6846,6 @@ IGNORE_RETURN_TYPE_WARNINGS_END
 #endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
-#endif // USE(JSVALUE64)
 
 #pragma pop_macro("RotateLeft32")
 #pragma pop_macro("RotateLeft64")

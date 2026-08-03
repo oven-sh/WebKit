@@ -13,7 +13,7 @@
 #include "include/gpu/graphite/vk/VulkanGraphiteTypes.h"
 #include "include/gpu/vk/VulkanExtensions.h"
 #include "include/gpu/vk/VulkanTypes.h"
-#include "include/private/base/SkMath.h"
+#include "include/private/SkMath.h"
 #include "src/gpu/SwizzlePriv.h"
 #include "src/gpu/graphite/ContextUtils.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
@@ -138,6 +138,11 @@ void VulkanCaps::init(const ContextOptions& contextOptions,
     fRequiredUniformBufferAlignment = deviceLimits.minUniformBufferOffsetAlignment;
     fRequiredStorageBufferAlignment = deviceLimits.minStorageBufferOffsetAlignment;
     fRequiredTransferBufferAlignment = 4;
+
+    // We require a minimum alignment of 4 bytes for CPU memcpy safety when doing memcpys into
+    // buffers for upload.
+    fTextureDataRowBytesAlignment =
+            std::max<size_t>(4, deviceLimits.optimalBufferCopyRowPitchAlignment);
 
     fMaxVaryings = std::min(deviceLimits.maxVertexOutputComponents,
                             deviceLimits.maxFragmentInputComponents) / 4;
@@ -487,7 +492,7 @@ void VulkanCaps::getProperties(const skgpu::VulkanInterface* vkInterface,
     if (hasDriverProperties) {
         AddToPNextChain(&props->fBase, &props->fDriver);
     } else {
-        SKGPU_LOG_W("VK_KHR_driver_properties is not enabled, driver workarounds cannot "
+        SKIA_LOG_W("VK_KHR_driver_properties is not enabled, driver workarounds cannot "
                     "be correctly applied");
     }
 
@@ -663,7 +668,6 @@ void VulkanCaps::initShaderCaps(const EnabledFeatures enabledFeatures, const uin
     // Avoid RelaxedPrecision with OpImageSampleImplicitLod due to driver bug with YCbCr sampling.
     // (skbug.com/421927604)
     fShaderCaps->fCannotUseRelaxedPrecisionOnImageSample = vendorID == kNvidia_VkVendor;
-
     fShaderCaps->fDualSourceBlendingSupport = enabledFeatures.fDualSrcBlend;
 }
 
@@ -964,7 +968,7 @@ SkEnumBitMask<SampleCount> VulkanCaps::getSupportedSampleCounts(
                                                                       0,  // createFlags
                                                                       &properties));
     if (result != VK_SUCCESS) {
-        SKGPU_LOG_W("Vulkan call GetPhysicalDeviceImageFormatProperties failed: %d", result);
+        SKIA_LOG_W("Vulkan call GetPhysicalDeviceImageFormatProperties failed: %d", result);
         return {};
     }
 
@@ -1000,13 +1004,13 @@ SkEnumBitMask<SampleCount> VulkanCaps::getSupportedSampleCounts(
                         VK_IMAGE_CREATE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_BIT_EXT,
                         &properties));
         if (result != VK_SUCCESS && result != VK_ERROR_FORMAT_NOT_SUPPORTED) {
-            SKGPU_LOG_W("Vulkan call GetPhysicalDeviceImageFormatProperties failed: %d", result);
+            SKIA_LOG_W("Vulkan call GetPhysicalDeviceImageFormatProperties failed: %d", result);
             return {};
         }
         if (result == VK_ERROR_FORMAT_NOT_SUPPORTED ||
             properties.sampleCounts <= VK_SAMPLE_COUNT_1_BIT ||
             (sampleCounts & properties.sampleCounts) != sampleCounts) {
-            SKGPU_LOG_W("Inconsistent MSAA rendering support in the presence of "
+            SKIA_LOG_W("Inconsistent MSAA rendering support in the presence of "
                         "VK_EXT_multisampled_render_to_single_sampled (Supported MSAA bits: %#X vs "
                         "with MSRTSS: %#X)",
                         sampleCounts,
@@ -1140,6 +1144,16 @@ bool VulkanCaps::extractGraphicsDescs(const UniqueKey& key,
             SwizzleCtorAccessor::Make(rawKeyData[kPipelineKeyWriteSwizzleIndex]),
             this->getDstReadStrategy(),
             renderPassDesc);
+
+    if ((renderPassDesc->fColorAttachment.fSampleCount > SampleCount::k1 && this->avoidMSAA()) ||
+        (renderPassDesc->fDepthStencilAttachment.fFormat != TextureFormat::kUnsupported &&
+         this->avoidDepthMode())) {
+        *renderPassDesc = {};
+        return false;
+    }
+    if (this->avoidDepthMode()) {
+        renderPassDesc->fDepthStencilAttachment = {};
+    }
 
     return true;
 }

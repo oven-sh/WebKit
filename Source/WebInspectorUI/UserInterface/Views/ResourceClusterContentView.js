@@ -31,6 +31,7 @@ WI.ResourceClusterContentView = class ResourceClusterContentView extends WI.Clus
 
         this._resource = resource;
         this._resource.addEventListener(WI.Resource.Event.TypeDidChange, this._resourceTypeDidChange, this);
+        this._resource.addEventListener(WI.Resource.Event.MIMETypeDidChange, this._resourceTypeDidChange, this);
         this._resource.addEventListener(WI.Resource.Event.LoadingDidFinish, this._resourceLoadingDidFinish, this);
         this._disableDropZone = disableDropZone || false;
 
@@ -74,28 +75,39 @@ WI.ResourceClusterContentView = class ResourceClusterContentView extends WI.Clus
 
     restoreFromCookie(cookie)
     {
-        let contentViewIdentifier = cookie[WI.ResourceClusterContentView.ContentViewIdentifierCookieKey] || this._getPreferredContentViewIdentifier();
+        let contentViewIdentifier = cookie[WI.ResourceClusterContentView.ContentViewIdentifierCookieKey];
+
+        let isPreferredContentViewIdentifier = false;
+        if (!contentViewIdentifier) {
+            isPreferredContentViewIdentifier = true;
+            contentViewIdentifier = this._getPreferredContentViewIdentifier();
+        }
 
         this._enableCustomResponseContentViewsPromise.then(() => {
+            let textRangeToSelect = null;
+            if (!isNaN(cookie.startLine) && !isNaN(cookie.startColumn) && !isNaN(cookie.endLine) && !isNaN(cookie.endColumn))
+                textRangeToSelect = new WI.TextRange(cookie.startLine, cookie.startColumn, cookie.endLine, cookie.endColumn);
+
+            let position = null;
+            if (!isNaN(cookie.lineNumber) && !isNaN(cookie.columnNumber))
+                position = new WI.SourceCodePosition(cookie.lineNumber, cookie.columnNumber);
+            else if (textRangeToSelect)
+                position = textRangeToSelect.startPosition();
+
+            if (position && isPreferredContentViewIdentifier) {
+                // Always show the response text (which will fall through to the response if that
+                // override is not applicable) as searching does not look at request content.
+                contentViewIdentifier = WI.ResourceClusterContentView.Identifier.ResponseText;
+            }
+
             let contentView = this._showContentViewForIdentifier(contentViewIdentifier);
 
-            if (contentView.revealPosition) {
-                let textRangeToSelect = null;
-                if (!isNaN(cookie.startLine) && !isNaN(cookie.startColumn) && !isNaN(cookie.endLine) && !isNaN(cookie.endColumn))
-                    textRangeToSelect = new WI.TextRange(cookie.startLine, cookie.startColumn, cookie.endLine, cookie.endColumn);
-
-                let position = null;
-                if (!isNaN(cookie.lineNumber) && !isNaN(cookie.columnNumber))
-                    position = new WI.SourceCodePosition(cookie.lineNumber, cookie.columnNumber);
-                else if (textRangeToSelect)
-                    position = textRangeToSelect.startPosition();
-
+            if (position && contentView.revealPosition) {
                 let scrollOffset = null;
                 if (!isNaN(cookie.scrollOffsetX) && !isNaN(cookie.scrollOffsetY))
                     scrollOffset = new WI.Point(cookie.scrollOffsetX, cookie.scrollOffsetY);
 
-                if (position)
-                    contentView.revealPosition(position, {...cookie, textRangeToSelect, scrollOffset});
+                contentView.revealPosition(position, {...cookie, textRangeToSelect, scrollOffset});
             }
         });
     }
@@ -238,6 +250,8 @@ WI.ResourceClusterContentView = class ResourceClusterContentView extends WI.Clus
         case WI.Resource.Type.Document:
         case WI.Resource.Type.Script:
         case WI.Resource.Type.StyleSheet:
+            if (!WI.shouldTreatMIMETypeAsText(this._resource.mimeType))
+                return null;
             return new WI.TextResourceContentView(this._resource);
 
         case WI.Resource.Type.Image:

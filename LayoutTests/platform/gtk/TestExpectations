@@ -23,10 +23,8 @@ webkit.org/b/279747 [ Release ] editing/input/scroll-viewport-page-up-down.html 
 fast/scrolling/gtk [ Pass ]
 swipe [ Pass ]
 
-imported/w3c/web-platform-tests/css/CSS2/normal-flow/overflow-scroll-paint-order.html [ Pass ]
 webkit.org/b/254521 [ Release ] imported/w3c/web-platform-tests/media-source/mediasource-getvideoplaybackquality.html [ Pass Failure ]
 webkit.org/b/277912 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-backdrop-filter-overflow.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/CSS2/floats/overflow-scroll-float-paint-order.html [ Pass ]
 imported/w3c/web-platform-tests/css/CSS2/linebox/vertical-align-baseline-009.xht [ Pass ]
 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-scroll-to-sticky-003.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-scroll-to-sticky-004.html [ Pass ]
@@ -35,8 +33,6 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/root_selector.html [ Pass ]
 
 imported/w3c/web-platform-tests/css/compositing/mix-blend-mode/mix-blend-mode-stacking-context-002.html [ Pass ]
-
-webkit.org/b/289926 imported/w3c/web-platform-tests/css/css-position/position-absolute-under-non-containing-stacking-context.html [ Pass ]
 
 imported/w3c/web-platform-tests/html/canvas/element/manual/drawing-images-to-the-canvas/image-orientation/drawImage-from-blob.tentative.html [ Pass ]
 
@@ -73,7 +69,7 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/not_allowed_properties.html [ ImageOnlyFailure ]
 
-imported/w3c/web-platform-tests/web-animations/responsive/toggle-animated-iframe-visibility.html [ Pass ]
+webkit.org/b/320062 imported/w3c/web-platform-tests/web-animations/responsive/toggle-animated-iframe-visibility.html [ ImageOnlyFailure Pass ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of PASSING tests. See below where to put expected failures.
@@ -127,12 +123,10 @@ webkit.org/b/254733 inspector/canvas/shaderProgram-add-remove-webgl.html [ Failu
 
 # Crash on EWS bot.
 webrtc/vp8-then-h264-gpu-process-crash.html [ Skip ]
-webkit.org/b/235885 webrtc/audio-peer-connection-g722.html [ Failure Timeout Pass ]
-webkit.org/b/229346 webkit.org/b/235885 webrtc/multi-audio.html [ Timeout Pass Failure ]
+webkit.org/b/229346 webrtc/multi-audio.html [ Timeout Pass Failure ]
 webkit.org/b/235885 webrtc/peer-connection-remote-audio-mute2.html [ Crash Pass Failure ]
-webkit.org/b/187064 webrtc/video-addTrack.html [ Failure Pass Timeout ]
+webkit.org/b/187064 webrtc/video-addTrack.html [ Crash Pass ]
 
-webkit.org/b/303924 webrtc/peer-connection-audio-mute2.html [ Failure ]
 webkit.org/b/303925 webrtc/audio-replace-track.html [ Failure ]
 webkit.org/b/306021 webrtc/peer-connection-audio-unmute.html [ Pass Failure ]
 webkit.org/b/235885 webrtc/audio-peer-connection-webaudio.html [ Pass Failure ]
@@ -401,8 +395,6 @@ webkit.org/b/214470 imported/w3c/web-platform-tests/css/css-values/ch-unit-011.h
 webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/attr-all-types.html [ Pass ]
 
 webkit.org/b/219614 inspector/css/getComputedPrimaryFontForNode.html [ Failure ]
-
-webkit.org/b/236298 fast/inline-block/hidpi-margin-top-with-subpixel-value-and-overflow-hidden.html [ ImageOnlyFailure ]
 
 webkit.org/b/131347 svg/custom/hidpi-masking-clipping.svg [ ImageOnlyFailure ]
 
@@ -880,10 +872,6 @@ webkit.org/b/159143 fast/dom/horizontal-scrollbar-in-rtl.html [ Failure ]
 # Incomplete implementation of eventSender causes this test to fail
 webkit.org/b/42194 fast/scrolling/scroll-select-list.html [ ImageOnlyFailure ]
 
-webkit.org/b/250610 fast/scrolling/rtl-scrollbars-listbox-scroll.html [ Skip ]
-webkit.org/b/250610 scrollbars/scroll-rtl-or-bt-layer.html [ Skip ]
-webkit.org/b/250610 fast/events/wheel/wheel-event-destroys-overflow.html [ Skip ]
-
 webkit.org/b/142479 svg/text/select-textLength-spacingAndGlyphs-squeeze-2.svg [ Failure ]
 webkit.org/b/142479 svg/text/select-textLength-spacingAndGlyphs-squeeze-3.svg [ Failure ]
 webkit.org/b/142479 svg/text/select-textLength-spacingAndGlyphs-squeeze-4.svg [ Failure ]
@@ -958,8 +946,6 @@ webkit.org/b/192434 fast/inline/inline-content-with-float-and-margin.html [ Fail
 webkit.org/b/196061 editing/pasteboard/smart-paste-paragraph-001.html [ Failure ]
 webkit.org/b/196061 editing/pasteboard/smart-paste-paragraph-002.html [ Failure ]
 webkit.org/b/196061 editing/pasteboard/smart-paste-paragraph-004.html [ Failure ]
-
-webkit.org/b/196197 http/wpt/cache-storage/cache-quota-after-restart.any.html [ Failure ]
 
 webkit.org/b/199868 accessibility/gtk/aria-haspopup.html [ Failure ]
 
@@ -1069,8 +1055,6 @@ webgl/2.0.y/conformance2/textures/image_bitmap_from_video [ Skip ]
 webgl/2.0.y/conformance2/textures/misc/tex-image-with-bad-args-from-dom-elements.html [ Skip ]
 
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-plus-filter.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/filter-effects/filtered-block-is-container.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/filter-effects/filtered-inline-is-container.html [ ImageOnlyFailure ]
 
 [ Debug ] media/video-concurrent-playback.html [ Pass Failure ]
 
@@ -1101,7 +1085,6 @@ imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus-2.html [ F
 
 webkit.org/b/273196 imported/w3c/web-platform-tests/html/semantics/popovers/popover-top-layer-combinations.html [ Failure ]
 
-compositing/overflow/dynamic-composited-scrolling-status.html [ Failure ]
 fast/scrolling/gtk/repeated-mouse-wheel-smooth.html [ Pass Timeout ]
 compositing/repaint/copy-forward-dirty-region.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/window-resize-aborts-transition-before-ready.html [ Failure ]
@@ -1109,6 +1092,11 @@ imported/w3c/web-platform-tests/css/css-view-transitions/window-resize-aborts-tr
 http/tests/login-status/login-status-api-getter-setter-functions.html [ Failure ]
 
 imported/w3c/web-platform-tests/css/css-overflow/overflow-auto-scrolling-with-margin-and-transform.html [ Skip ]
+
+webkit.org/b/278719 fast/events/touch/basic-multi-touch-events.html [ Failure ]
+webkit.org/b/278719 fast/events/touch/basic-multi-touch-events-limited.html [ Failure ]
+webkit.org/b/278719 fast/events/touch/touch-target.html [ Timeout ]
+webkit.org/b/278719 fast/events/touch/touch-target-limited.html [ Timeout ]
 
 webkit.org/b/278719 fast/events/touch/basic-single-touch-events.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/emulate-touch-events.html [ Failure ]
@@ -1223,19 +1211,14 @@ webkit.org/b/309894 [ Release ] http/tests/inspector/target/pause-on-inline-debu
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u002E_u2029_u05D0.html [ Pass ]
 
 webkit.org/b/310748 [ Release ] editing/pasteboard/copy-element-with-conflicting-background-color-from-rule.html [ Pass ImageOnlyFailure ]
-webkit.org/b/310751 imported/w3c/web-platform-tests/webrtc/protocol/h264-profile-levels.https.html?interop-2026 [ Pass Failure ]
 [ Release ] imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-getStats-timestamp.https.html [ Pass Failure ]
-webkit.org/b/313631 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-videoDetectorTest.html [ Pass Failure ]
-webkit.org/b/307440 [ Release ] imported/w3c/web-platform-tests/webrtc/simplecall.https.html [ Pass Failure ]
 webkit.org/b/310752 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/replace-before-load/location-setter.html [ Pass Failure ]
 [ Release ] imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/replace-before-load/location-assign.html [ Pass Failure ]
-webkit.org/b/310753 imported/w3c/web-platform-tests/webrtc/protocol/split.https.html [ Pass Failure ]
 webkit.org/b/310754 [ Release ] inspector/controller/runtime-controller-import.html [ Pass Failure ]
 [ Debug ] media/video-currentTime-set.html [ Pass Failure ]
 
 pointer-lock/lock-lost-on-alert.html [ Pass Failure ]
 
-webkit.org/b/311846 [ Debug ] webrtc/h264-high.html [ Pass Failure Slow ]
 webkit.org/b/311847 [ Debug ] webrtc/dtmf-gc.html [ Pass Timeout ]
 
 webkit.org/b/311927 accessibility/combobox/gtk/combobox-collapsed-selection-changed.html [ Failure Pass Timeout ]
@@ -1326,3 +1309,19 @@ webkit.org/b/319319 [ Debug ] imported/w3c/web-platform-tests/css/css-contain/co
 webkit.org/b/319323 imported/w3c/web-platform-tests/css/css-scroll-snap/input/keyboard-snap-interruption.html [ Failure Pass ]
 webkit.org/b/319324 inspector/canvas/create-context-webgl.html [ Failure Pass ]
 webkit.org/b/319325 fast/body-propagation/background-color/010.html [ ImageOnlyFailure Pass ]
+
+webkit.org/b/320055 [ Release ] imported/w3c/web-platform-tests/html/interaction/focus/the-autofocus-attribute/update-the-rendering.html [ Failure Pass ]
+webkit.org/b/320058 [ Debug ] ipc/send-filter.html [ Crash Pass ]
+webkit.org/b/320059 [ Debug ] media/media-source/media-source-resize.html [ Timeout Pass ]
+webkit.org/b/320061 inspector/dom-debugger/dom-breakpoint-node-removed-ancestor.html [ Crash Pass ]
+webkit.org/b/320061 inspector/dom-debugger/dom-breakpoint-node-removed-direct.html [ Crash Pass ]
+
+webkit.org/b/320214 [ Debug ] inspector/debugger/async-stack-trace-truncate.html [ Failure Timeout ]
+webkit.org/b/320215 compositing/absolute-inside-out-of-view-fixed.html [ Pass Timeout ]
+webkit.org/b/319067 imported/w3c/web-platform-tests/media-source/mediasource-config-change-webm-v-framerate.html [ Failure Pass ]
+webkit.org/b/173419 fast/events/wheel/wheelevent-in-horizontal-scrollbar-in-rtl.html [ Failure Pass ]
+
+webkit.org/b/137698 media/video-controls-drag.html [ Timeout ]
+
+webkit.org/b/320354 compositing/animation/animated-composited-inside-hidden.html [ Timeout Pass ]
+webkit.org/b/320354 compositing/backgrounds/fixed-background-on-descendant.html [ Timeout Pass ]

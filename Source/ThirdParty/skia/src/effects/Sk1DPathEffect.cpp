@@ -18,7 +18,7 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkFloatingPoint.h"
+#include "include/private/SkFloatingPoint.h"
 #include "src/core/SkPathEffectBase.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
@@ -76,10 +76,6 @@ public:
     SkPath1DPathEffectImpl(const SkPath& path, SkScalar advance, SkScalar phase,
                            SkPath1DPathEffect::Style style) : fPath(path) {
         SkASSERT(advance > 0 && !path.isEmpty());
-
-        // Make the path thread-safe.
-        fPath.updateBoundsCache();
-        (void)fPath.getGenerationID();
 
         // cleanup their phase parameter, inverting it so that it becomes an
         // offset along the path (to match the interpretation in PostScript)

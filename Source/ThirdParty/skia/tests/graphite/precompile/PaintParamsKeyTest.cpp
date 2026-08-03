@@ -15,7 +15,7 @@
 #include "include/gpu/graphite/Surface.h"
 #include "include/gpu/graphite/precompile/Precompile.h"
 #include "include/gpu/graphite/precompile/PrecompileShader.h"
-#include "src/base/SkRandom.h"
+#include "src/core/SkRandom.h"
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/ContextUtils.h"
 #include "src/gpu/graphite/DrawContext.h"
@@ -288,7 +288,11 @@ void extract_vs_build_subtest(skiatest::Reporter* reporter,
         NonMSAAClip clipData;
         if (hasAnalyticClip) {
             clipData.fAnalyticClip.fBounds = SkRect::MakeWH(15, 15);
+#if defined(SK_GRAPHITE_USE_LEGACY_RRECT_CLIP_SHADER)
             clipData.fAnalyticClip.fRadius = 5;
+#else
+            clipData.fAnalyticClip.fRadii = SkV4{5.f, 5.f, 5.f, 5.f};
+#endif
         }
 
         PaintParams paintParams{paint, primitiveBlender.get()};
@@ -302,10 +306,11 @@ void extract_vs_build_subtest(skiatest::Reporter* reporter,
         precompileKeyContext.paintParamsKeyBuilder()->resetForDraw();
         KeyContext keyContext(recorder,
                               drawContext,
-                              precompileKeyContext.floatStorageManager(),
+                              precompileKeyContext.storageBufferManager(),
                               precompileKeyContext.paintParamsKeyBuilder(),
                               &paramsGatherer,
                               {},
+                              SkRect::MakeEmpty(),
                               precompileKeyContext.dstColorInfo(),
                               KeyGenFlags::kDisableSamplingOptimization,
                               paintParams.color());
@@ -386,14 +391,17 @@ void precompile_vs_real_draws_subtest(skiatest::Reporter* reporter,
 
     const SkColorType kColorType = kBGRA_8888_SkColorType;
 
-    static const RenderPassProperties kDepth_Stencil_4 { DepthStencilFlags::kDepthStencil,
-                                                         kColorType,
-                                                         /* dstColorSpace= */ nullptr,
-                                                         /* requiresMSAA= */ true };
-    static const RenderPassProperties kDepth_1 { DepthStencilFlags::kDepth,
-                                                 kColorType,
-                                                 /* dstColorSpace= */ nullptr,
-                                                 /* requiresMSAA= */ false };
+    bool avoidDepthMode = context->priv().caps()->avoidDepthMode();
+    static const RenderPassProperties kDepth_Stencil_4{
+            avoidDepthMode ? DepthStencilFlags::kNone : DepthStencilFlags::kDepthStencil,
+            kColorType,
+            /* dstColorSpace= */ nullptr,
+            /* requiresMSAA= */ true};
+    static const RenderPassProperties kDepth_1{
+            avoidDepthMode ? DepthStencilFlags::kNone : DepthStencilFlags::kDepth,
+            kColorType,
+            /* dstColorSpace= */ nullptr,
+            /* requiresMSAA= */ false};
 
     TextureInfo textureInfo = caps->getDefaultSampledTextureInfo(kColorType,
                                                                  skgpu::Mipmapped::kNo,
@@ -506,13 +514,13 @@ DEF_CONDITIONAL_GRAPHITE_TEST_FOR_ALL_CONTEXTS(PaintParamsKeyTestReduced,
     // Currently, we just use this as a valid parameter for keyContext (will hit asserts otherwise)
     sk_sp<DrawContext> precompileDrawContext = get_precompile_draw_context(caps, context);
 
-    FloatStorageManager floatStorageManager;
+    StorageBufferManager storageBufferManager;
     ShaderCodeDictionary* dict = context->priv().shaderCodeDictionary();
     PaintParamsKeyBuilder builder(dict);
     PipelineDataGatherer gatherer(Layout::kMetal);
     sk_sp<RuntimeEffectDictionary> rtDict = sk_make_sp<RuntimeEffectDictionary>();
     KeyContext keyContext(caps,
-                          &floatStorageManager,
+                          &storageBufferManager,
                           &builder,
                           &gatherer,
                           dict,
@@ -597,13 +605,13 @@ DEF_CONDITIONAL_GRAPHITE_TEST_FOR_ALL_CONTEXTS(PaintParamsKeyTest,
     // Currently, we just use this as a valid parameter for keyContext (will hit asserts otherwise)
     sk_sp<DrawContext> precompileDrawContext = get_precompile_draw_context(caps, context);
 
-    FloatStorageManager floatStorageManager;
+    StorageBufferManager storageBufferManager;
     ShaderCodeDictionary* dict = context->priv().shaderCodeDictionary();
     PaintParamsKeyBuilder builder(dict);
     PipelineDataGatherer gatherer(Layout::kMetal);
     sk_sp<RuntimeEffectDictionary> rtDict = sk_make_sp<RuntimeEffectDictionary>();
     KeyContext precompileKeyContext(caps,
-                                    &floatStorageManager,
+                                    &storageBufferManager,
                                     &builder,
                                     &gatherer,
                                     dict,

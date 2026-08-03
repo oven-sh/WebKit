@@ -35,15 +35,16 @@
 
 namespace JSC {
 
-ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, CodeFeatures features)
+ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, CodeFeatures features)
     : m_vm(globalObject->vm())
-    , m_moduleRecord(JSModuleRecord::create(globalObject, m_vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, features))
+    , m_moduleRecord(JSModuleRecord::create(globalObject, m_vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, features))
 {
 }
 
 void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes, AbstractModuleRecord::ModulePhase phase)
 {
-    if (m_requestedModules[phase].add(specifier.impl()).isNewEntry)
+    ModuleMapKey key { specifier.impl(), attributes ? attributes->type() : ScriptFetchParameters::Type::JavaScript };
+    if (m_requestedModules[phase].add(key).isNewEntry)
         moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes), phase);
 }
 
@@ -87,7 +88,7 @@ void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const 
             if (importEntry.phase == AbstractModuleRecord::ModulePhase::Defer)
                 moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromUid(m_vm, exportName.get()), Identifier::fromUid(m_vm, localName.get())));
             else
-                moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(Identifier::fromUid(m_vm, exportName.get()), importEntry.moduleRequest));
+                moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(Identifier::fromUid(m_vm, exportName.get()), importEntry.moduleRequest, importEntry.moduleRequestType));
         }
         return;
     }
@@ -96,7 +97,7 @@ void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const 
     // import a from "mod"
     // export { a }
     for (auto& exportName : moduleProgramNode.moduleScopeData().exportedBindings().get(localName.get()))
-        moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(Identifier::fromUid(m_vm, exportName.get()), importEntry.importName, importEntry.moduleRequest));
+        moduleRecord()->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(Identifier::fromUid(m_vm, exportName.get()), importEntry.importName, importEntry.moduleRequest, importEntry.moduleRequestType));
 }
 
 
@@ -145,10 +146,10 @@ Expected<JSModuleRecord*, std::tuple<ErrorType, String>> ModuleAnalyzer::analyze
     //     This exports all the names from the specified external module as the current module's name.
     //
     //     export * from "mod"
-    for (const auto& pair : m_moduleRecord->declaredVariables())
+    for (const auto& pair : moduleProgramNode.varDeclarations())
         exportVariable(moduleProgramNode, pair.key, pair.value);
 
-    for (const auto& pair : m_moduleRecord->lexicalVariables())
+    for (const auto& pair : moduleProgramNode.lexicalVariables())
         exportVariable(moduleProgramNode, pair.key, pair.value);
 
     m_moduleRecord->setHasTLA(moduleProgramNode.usesAwait());

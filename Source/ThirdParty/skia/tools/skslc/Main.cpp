@@ -5,9 +5,9 @@
  * found in the LICENSE file.
  */
 #include "include/core/SkStream.h"
-#include "src/base/SkStringView.h"
 #include "src/core/SkCpu.h"
 #include "src/core/SkOpts.h"
+#include "src/core/SkStringView.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLFileOutputStream.h"
 #include "src/sksl/SkSLProgramSettings.h"
@@ -692,6 +692,7 @@ static ResultCode process_command(SkSpan<std::string> args) {
             return SkSL::ToHLSL(program, shaderCaps, out, SkSL::ValidateSPIRVAndDissassemble);
         });
     } else if (skstd::ends_with(outputPath, ".wgsl")) {
+        settings.fForceNoRTFlip = true;
         return compileProgram([](SkSL::Compiler& compiler,
                                  const SkSL::ShaderCaps* shaderCaps,
                                  SkSL::Program& program,

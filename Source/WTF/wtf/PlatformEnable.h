@@ -287,10 +287,6 @@
 #define ENABLE_IOS_TOUCH_EVENTS 0
 #endif
 
-#if !defined(ENABLE_ISO18013_DOCUMENT_REQUEST_INFO)
-#define ENABLE_ISO18013_DOCUMENT_REQUEST_INFO 0
-#endif
-
 #if !defined(ENABLE_IPC_TESTING_API)
 /* Enable IPC testing on all ASAN builds and debug builds. Enable it in GLib ports when assertions are enabled. */
 /* In GLib ports, only enable for GCC builds, as this is what we currently test in EWS and clang-18 is significantly */
@@ -534,6 +530,10 @@
 #define ENABLE_SEPARATED_WX_HEAP 0
 #endif
 
+#if !defined(ENABLE_SPATIAL_PORTAL)
+#define ENABLE_SPATIAL_PORTAL 0
+#endif
+
 #if !defined(ENABLE_SPEECH_SYNTHESIS)
 #define ENABLE_SPEECH_SYNTHESIS 0
 #endif
@@ -715,7 +715,7 @@
 #define ENABLE_JIT 1
 #endif
 
-#if USE(JSVALUE32_64)
+#if !CPU(ADDRESS64)
 #undef ENABLE_JIT
 #define ENABLE_JIT 0
 #endif
@@ -745,7 +745,7 @@
 
 /* FIXME: This should be turned into an #error invariant */
 /* The FTL *does not* work on 32-bit platforms. Disable it even if someone asked us to enable it. */
-#if USE(JSVALUE32_64)
+#if !CPU(ADDRESS64)
 #undef ENABLE_FTL_JIT
 #define ENABLE_FTL_JIT 0
 #undef ENABLE_DFG_JIT
@@ -832,7 +832,7 @@
 #define ENABLE_CONCURRENT_JS 1
 #endif
 
-#if (CPU(X86_64) || CPU(ARM64)) && HAVE(FAST_TLS)
+#if ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64)) && HAVE(FAST_TLS)
 #define ENABLE_FAST_TLS_JIT 1
 #endif
 
@@ -996,7 +996,7 @@
 #endif
 
 #if ENABLE(JIT)
-#if CPU(ARM_THUMB2) || CPU(ARM64)
+#if CPU(ARM64)
 #define ENABLE_BRANCH_COMPACTION 1
 #endif
 #endif

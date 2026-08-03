@@ -70,6 +70,7 @@ skia_filegroup(
     srcs = [
         "SkCanvasStateUtils.cpp",
     ],
+    visibility = ["//dm:__pkg__"],
 )
 
 skia_cc_library(
@@ -86,12 +87,12 @@ skia_cc_library(
         "//src/gpu/ganesh/gl:__pkg__",
         "//src/gpu/ganesh/vk:__pkg__",
         "//src/gpu/graphite:__pkg__",
+        "//src/gpu/graphite/dawn:__pkg__",
         "//src/gpu/graphite/vk:__pkg__",
         "//src/sksl/codegen:__pkg__",
     ],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
     ],
 )
@@ -113,7 +114,6 @@ skia_cc_library(
     ],
     deps = [
         "//:core",
-        "//src/base",
     ],
 )
 
@@ -178,6 +178,5 @@ skia_cc_library(
     ],
     deps = [
         "//:core",
-        "//src/base",
     ],
 )

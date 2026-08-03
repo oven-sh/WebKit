@@ -30,7 +30,6 @@
 #include "APIWebsitePolicies.h"
 #include "EnhancedSecurity.h"
 #include "FrameProcess.h"
-#include "Logging.h"
 #include "PageLoadState.h"
 #include "ProvisionalPageProxy.h"
 #include "RemotePageProxy.h"
@@ -38,9 +37,8 @@
 #include "WebPageProxy.h"
 #include "WebProcessPool.h"
 #include "WebProcessProxy.h"
-
-#define BCG_RELEASE_LOG(fmt, ...) RELEASE_LOG(ProcessSwapping, "%p - BrowsingContextGroup::" fmt, this, ##__VA_ARGS__)
-#define BCG_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(ProcessSwapping, "%p - BrowsingContextGroup::" fmt, this, ##__VA_ARGS__)
+#include <WebCore/IPAddressSpace.h>
+#include <WebCore/SecurityOrigin.h>
 
 namespace WebKit {
 
@@ -50,17 +48,31 @@ BrowsingContextGroup::BrowsingContextGroup() = default;
 
 BrowsingContextGroup::~BrowsingContextGroup() = default;
 
+static bool isLoopbackOrLocalNetworkSite(const Site& site)
+{
+    if (determineIPAddressSpace(site) != IPAddressSpace::Public)
+        return true;
+    return SecurityOrigin::isLocalHostOrLoopbackIPAddress(site.domain().string());
+}
+
 void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataStore, API::WebsitePolicies* websitePolicies, const WebPreferences& preferences, const WebCore::Site& site, const WebCore::Site& mainFrameSite,
     WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, API::PageConfiguration& pageConfiguration, IsMainFrame isMainFrame, CompletionHandler<void(FrameProcess*)>&& completionHandler)
 {
     if (!preferences.siteIsolationEnabled() || !preferences.siteIsolationSharedProcessEnabled())
         return completionHandler(nullptr);
+
     if (site.isEmpty() || m_processMap.contains(site))
         return completionHandler(nullptr);
+
+    if (isLoopbackOrLocalNetworkSite(site))
+        return completionHandler(nullptr);
+
     if (!m_sharedProcessSites.contains(site)) {
         if (isMainFrame == IsMainFrame::Yes)
             return completionHandler(nullptr);
         if (websitePolicies && !websitePolicies->allowSharedProcess())
+            return completionHandler(nullptr);
+        if (websiteDataStore.isolatedSiteStore().contains(site))
             return completionHandler(nullptr);
     }
     websiteDataStore.fetchDomainsWithUserInteraction([
@@ -80,16 +92,7 @@ void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataSto
         protectedThis->m_sharedProcessSites.add(site);
         if (RefPtr frameProcess = protectedThis->m_sharedProcess.get()) {
             ASSERT(frameProcess->isSharedProcess());
-            if (frameProcess->process().isInProcessCache()) {
-                RELEASE_LOG_ERROR(ProcessSwapping, "%p - BrowsingContextGroup::sharedProcessForSite: shared process pid %i is in process cache unexpectedly, clearing m_sharedProcess (site=%" SENSITIVE_LOG_STRING ")",
-                    protectedThis.ptr(), frameProcess->process().processID(), site.toString().utf8().data());
-                // FIXME: Remove this workaround once we can correlate the error log with logs of
-                // maybeShutDown / addProcessIfPossible to understand why the web process enters
-                // cache when its FrameProcess (m_sharedProcess) is still alive.
-                protectedThis->m_sharedProcess = nullptr;
-                protectedThis->m_sharedProcessSites.clear();
-                return completionHandler(nullptr);
-            }
+            RELEASE_ASSERT(!frameProcess->process().isInProcessCache());
             return completionHandler(frameProcess.get());
         }
 
@@ -179,7 +182,14 @@ void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& p
         return;
     auto& site = *process.site();
     for (Ref page : m_pages) {
-        if (site == Site(URL(page->currentURL())))
+        // Under site isolation, a same-site page should be hosted in the same process and
+        // shouldn't need a remote page. Empty sites are the exception as they can span
+        // multiple processes but they appear as same-site.
+        // So for an empty site, only skip when the page really is in this process.
+        bool sameSite = site == Site(URL(page->currentURL()));
+        RefPtr mainFrame = page->mainFrame();
+        bool pageIsInThisProcess = mainFrame && mainFrame->process().coreProcessIdentifier() == process.process().coreProcessIdentifier();
+        if (sameSite && (!site.isEmpty() || pageIsInThisProcess))
             continue;
         createRemotePageIfNeeded(page, site);
     }

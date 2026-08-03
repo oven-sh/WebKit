@@ -211,6 +211,7 @@ CORE_FILES = [
     "GrTexture.h",
     "GrTextureProxy.cpp",
     "GrTextureProxy.h",
+    "GrTextureProxyCacheAccess.cpp",
     "GrTextureProxyCacheAccess.h",
     "GrTextureProxyPriv.h",
     "GrTextureRenderTargetProxy.cpp",
@@ -322,6 +323,7 @@ skia_cc_library_with_testutil(
         "//tools/flags:__pkg__",
         "//tools/ganesh:__pkg__",
         "//tools/gpu:__pkg__",
+        "//tools/text/gpu:__pkg__",
         "//tools/window:__pkg__",
         "//tools:__pkg__",
         "//src/gpu/ganesh:__subpackages__",
@@ -332,7 +334,6 @@ skia_cc_library_with_testutil(
     deps = [
         "//:core",
         "//modules/skcms",
-        "//src/base",
         "//src/core:core_priv",
         "//src/gpu",
         "//src/sksl/codegen:gpu",

@@ -14,10 +14,9 @@
 #include "include/core/SkSurface.h"
 #include "include/gpu/graphite/GraphiteTypes.h"
 #include "include/gpu/graphite/Recording.h"
-#include "include/private/base/SingleOwner.h"
-#include "include/private/base/SkAPI.h"
-#include "include/private/base/SkTArray.h"
-#include "include/private/base/SkTDArray.h"
+#include "include/private/SingleOwner.h"
+#include "include/private/SkAPI.h"
+#include "include/private/SkTArray.h"
 
 #include <chrono>
 #include <cstddef>
@@ -53,7 +52,7 @@ class BackendTexture;
 class Context;
 class Device;
 class DrawBufferManager;
-class FloatStorageManager;
+class StorageBufferManager;
 class ImageProvider;
 class PaintParamsKeyBuilder;
 class PipelineDataGatherer;
@@ -297,9 +296,10 @@ private:
     // Aggregated one-time uploads that precede all tasks in the root task list.
     std::unique_ptr<UploadList> fRootUploads;
 
-    std::unique_ptr<DrawBufferManager> fDrawBufferManager;
     std::unique_ptr<UploadBufferManager> fUploadBufferManager;
-    sk_sp<FloatStorageManager> fFloatStorageManager;
+    // Depends on fUploadBufferManager (holds a pointer to it). Must be destroyed first.
+    std::unique_ptr<DrawBufferManager> fDrawBufferManager;
+    sk_sp<StorageBufferManager> fStorageBufferManager;
     std::unique_ptr<ProxyReadCountMap> fProxyReadCounts;
 
     skia_private::STArray<kMaxKeyAndDataBuilders, std::unique_ptr<KeyAndDataBuilder>>

@@ -39,12 +39,16 @@ namespace Style {
 // <line-width> = <length [0,∞]> | thin | medium | thick
 // https://drafts.csswg.org/css-backgrounds/#typedef-line-width
 struct LineWidth {
-    using Length = Style::Length<CSS::NonnegativeUnzoomed>;
+    using Length = Style::Length<CSS::Nonnegative>;
 
     Length value;
 
     constexpr LineWidth(Length length) : value { length } { }
     constexpr LineWidth(CSS::ValueLiteral<CSS::LengthUnit::Px> literal) : value { literal } { }
+
+    constexpr LineWidth(CSS::Keyword::Thin) : value { 1 } { }
+    constexpr LineWidth(CSS::Keyword::Medium) : value { 3 } { }
+    constexpr LineWidth(CSS::Keyword::Thick) : value { 5 } { }
 
     static Length snapLengthAsBorderWidth(float, float deviceScaleFactor);
     static Length snapLengthAsBorderWidth(Length, float deviceScaleFactor);

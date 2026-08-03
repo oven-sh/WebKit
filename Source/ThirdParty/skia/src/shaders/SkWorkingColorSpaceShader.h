@@ -11,7 +11,7 @@
 #include "include/core/SkFlattenable.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkShader.h"
-#include "include/private/base/SkAssert.h"
+#include "include/private/SkAssert.h"
 #include "src/shaders/SkShaderBase.h"
 
 #include <utility>
@@ -30,6 +30,8 @@ public:
                                 bool workInUnpremul);
 
     ShaderType type() const override { return ShaderType::kWorkingColorSpace; }
+
+    bool isOpaque() const override { return fShader->isOpaque(); }
 
     sk_sp<SkShader> shader() const { return fShader; }
 

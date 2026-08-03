@@ -1331,8 +1331,8 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
     if (CheckedPtr renderBlock = dynamicDowncast<RenderBlock>(*this); renderBlock && renderBlock->createsNewFormattingContext()) {
         if (CheckedPtr blockBox = dynamicDowncast<RenderBlockFlow>(*renderBlock))
             stream << (blockBox->childrenInline() && LayoutIntegration::canUseForLineLayout(*blockBox) ? "M" : "L");
-        else if (CheckedPtr flexBox = dynamicDowncast<RenderFlexibleBox>(*renderBlock))
-            stream << (LayoutIntegration::canUseForFlexLayout(*flexBox) ? "M" : "L");
+        else if (is<RenderFlexibleBox>(*renderBlock))
+            stream << "M";
         else
             stream << "L";
     } else
@@ -1847,10 +1847,10 @@ PositionWithAffinity RenderObject::positionForPoint(const LayoutPoint&, HitTestS
     return createPositionWithAffinity(caretMinOffset(), Affinity::Downstream);
 }
 
-VisiblePosition RenderObject::visiblePositionForPoint(const LayoutPoint& point, HitTestSource source)
+VisiblePosition RenderObject::visiblePositionForPoint(const LayoutPoint& point, HitTestSource source, AllowUserSelectNone allowUserSelectNone)
 {
     auto positionWithAffinity = positionForPoint(point, source, nullptr);
-    return VisiblePosition(positionWithAffinity.position(), positionWithAffinity.affinity());
+    return VisiblePosition(positionWithAffinity.position(), positionWithAffinity.affinity(), allowUserSelectNone);
 }
 
 bool RenderObject::isComposited() const
@@ -2035,7 +2035,7 @@ bool RenderObject::canUpdateSelectionOnRootLineBoxes()
         return false;
 
     CheckedPtr containingBlock = this->containingBlock();
-    return containingBlock ? !containingBlock->needsLayout() : true;
+    return !containingBlock || !containingBlock->needsLayout();
 }
 
 // We only create "generated" child renderers like one for first-letter if:

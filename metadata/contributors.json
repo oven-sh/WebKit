@@ -4409,7 +4409,7 @@
       "nicks" : [
          "jlee53"
       ],
-      "status" : "committer"
+      "status" : "reviewer"
    },
    {
       "emails" : [
@@ -5822,7 +5822,7 @@
       "nicks" : [
          "marcosc"
       ],
-      "status" : "committer"
+      "status" : "reviewer"
    },
    {
       "emails" : [
@@ -9118,6 +9118,17 @@
       "nicks" : [
          "zhifei_fang",
          "z.f"
+      ]
+   },
+   {
+      "emails" : [
+         "z_jiangli@apple.com",
+         "zhuoyingjiangli@gmail.com"
+      ],
+      "github" : "RoundofThree",
+      "name" : "Zhuo Ying Jiang Li",
+      "nicks" : [
+         "RoundofThree"
       ]
    },
    {

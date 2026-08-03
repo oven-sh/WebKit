@@ -36,6 +36,7 @@
 
 namespace WebCore {
 
+class JSDOMGlobalObject;
 class ReadableStream;
 class ReadableStreamDefaultReader;
 class SinkReadRequest;
@@ -45,15 +46,19 @@ class ReadableStreamToSharedBufferSink final : public RefCountedAndCanMakeWeakPt
 public:
     using Result = Variant<std::nullptr_t, std::span<const uint8_t>, JSC::JSValue, Exception>;
     using Callback = Function<void(Result&&)>;
-    static Ref<ReadableStreamToSharedBufferSink> create(Callback&& callback) { return adoptRef(*new ReadableStreamToSharedBufferSink(WTF::move(callback))); }
+
+    static Ref<ReadableStreamToSharedBufferSink> create(Callback&& callback, std::optional<size_t> backpressureThreshold = std::nullopt) { return adoptRef(*new ReadableStreamToSharedBufferSink(WTF::move(callback), backpressureThreshold)); }
     ~ReadableStreamToSharedBufferSink();
 
     void pipeFrom(ReadableStream&);
     void clearCallback();
     bool hasCallback() const { return !!m_callback; }
+    void cancel(JSDOMGlobalObject&, JSC::JSValue);
+
+    void resumeReading();
 
 private:
-    explicit ReadableStreamToSharedBufferSink(Callback&&);
+    ReadableStreamToSharedBufferSink(Callback&&, std::optional<size_t> backpressureThreshold);
 
     friend class SinkReadRequest;
     void enqueue(const Ref<JSC::Uint8Array>&);
@@ -62,10 +67,13 @@ private:
     void error(JSC::JSValue);
 
     void keepReading();
+    void scheduleKeepReading();
 
     Callback m_callback;
     RefPtr<ReadableStreamDefaultReader> m_reader;
     RefPtr<SinkReadRequest> m_readRequest;
+    size_t m_dataStored { 0 };
+    const std::optional<size_t> m_backpressureThreshold;
 };
 
 } // namespace WebCore

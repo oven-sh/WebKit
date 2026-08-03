@@ -32,6 +32,8 @@
 #include "tools/graphite/UniqueKeyUtils.h"
 #include "tools/graphite/precompile/PrecompileEffectFactories.h"
 
+extern bool gGraphiteAvoidDepth;
+
 using namespace::skgpu::graphite;
 using namespace skiatest::graphite;
 using namespace skiatools::graphite;
@@ -197,7 +199,7 @@ void reset_and_recreate_pipelines_with_normal_precompile_api(
     REPORTER_ASSERT(reporter, androidStyleKeys.size() == 1);
 
     RenderPassProperties renderPassProps;
-    renderPassProps.fDSFlags = DepthStencilFlags::kDepth;
+    renderPassProps.fDSFlags = gGraphiteAvoidDepth ? DepthStencilFlags::kNone : DepthStencilFlags::kDepth;
 
     Precompile(precompileContext,
                paintOptions,
@@ -355,8 +357,7 @@ DEF_CONDITIONAL_GRAPHITE_TEST_FOR_CONTEXTS(UserDefinedStableKeyTest,
                                            /* optionsProc= */ nullptr,
                                            /* condition= */ true,
                                            CtsEnforcement::kNever) {
-
-    std::unique_ptr<PipelineCallBackHandler> pipelineHandler(new PipelineCallBackHandler);
+    auto pipelineHandler = std::make_unique<PipelineCallBackHandler>();
 
     TestOptions newOptions(origOptions);
     newOptions.fContextOptions.fPipelineCallbackContext = pipelineHandler.get();
@@ -450,7 +451,7 @@ DEF_CONDITIONAL_GRAPHITE_TEST_FOR_CONTEXTS(UserDefinedStableKeyTest_Duplicates,
                                            /* condition= */ true,
                                            CtsEnforcement::kNever) {
 
-    std::unique_ptr<PipelineCallBackHandler> pipelineHandler(new PipelineCallBackHandler);
+    auto pipelineHandler = std::make_unique<PipelineCallBackHandler>();
 
     TestOptions newOptions(origOptions);
     newOptions.fContextOptions.fPipelineCallbackContext = pipelineHandler.get();
@@ -489,7 +490,7 @@ DEF_CONDITIONAL_GRAPHITE_TEST_FOR_CONTEXTS(UserDefinedStableKeyTest_Nullptrs,
                                            /* condition= */ true,
                                            CtsEnforcement::kNever) {
 
-    std::unique_ptr<PipelineCallBackHandler> pipelineHandler(new PipelineCallBackHandler);
+    auto pipelineHandler = std::make_unique<PipelineCallBackHandler>();
 
     TestOptions newOptions(origOptions);
     newOptions.fContextOptions.fPipelineCallbackContext = pipelineHandler.get();
@@ -530,7 +531,7 @@ DEF_CONDITIONAL_GRAPHITE_TEST_FOR_CONTEXTS(UserDefinedStableKeyTest_Overflow,
                                            /* condition= */ true,
                                            CtsEnforcement::kNever) {
 
-    std::unique_ptr<PipelineCallBackHandler> pipelineHandler(new PipelineCallBackHandler);
+    auto pipelineHandler = std::make_unique<PipelineCallBackHandler>();
 
     TestOptions newOptions(origOptions);
     newOptions.fContextOptions.fPipelineCallbackContext = pipelineHandler.get();

@@ -28,7 +28,7 @@
 
 #include "CachedCallInlines.h"
 #include "IterationModeMetadata.h"
-#include "JSArrayIterator.h"
+#include "JSArrayIteratorInlines.h"
 #include "JSCJSValue.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSMapInlines.h"
@@ -65,12 +65,19 @@ JS_EXPORT_PRIVATE JSObject* createIteratorResultObject(JSGlobalObject*, JSValue,
 
 Structure* createIteratorResultObjectStructure(VM&, JSGlobalObject&);
 
-JS_EXPORT_PRIVATE JSValue iteratorMethod(JSGlobalObject*, JSObject*);
+// https://tc39.es/ecma262/multipage/abstract-operations.html#sec-getiterator, SYNC kind
 JS_EXPORT_PRIVATE IterationRecord iteratorForIterable(JSGlobalObject*, JSObject*, JSValue iteratorMethod);
 JS_EXPORT_PRIVATE IterationRecord iteratorForIterable(JSGlobalObject*, JSValue iterable);
+
 JS_EXPORT_PRIVATE IterationRecord iteratorDirect(JSGlobalObject*, JSValue);
 IterationRecord getAsyncIterator(JSGlobalObject&, JSValue);
 JS_EXPORT_PRIVATE IterationRecord getAsyncIteratorExported(JSGlobalObject&, JSValue);
+
+class JSAsyncFromSyncIterator;
+JSAsyncFromSyncIterator* createAsyncFromSyncIterator(JSGlobalObject*, JSObject* syncIterator, std::optional<IterationMode> knownMode = std::nullopt);
+JSAsyncFromSyncIterator* createAsyncFromSyncIteratorForIterable(JSGlobalObject*, JSValue iterable);
+IterationRecord createAsyncFromSyncIteratorRecord(JSGlobalObject&, JSValue iterable);
+JSC_DECLARE_HOST_FUNCTION(asyncFromSyncIteratorCreatePrivate);
 
 JS_EXPORT_PRIVATE JSValue iteratorMethod(JSGlobalObject*, JSObject*);
 JS_EXPORT_PRIVATE bool hasIteratorMethod(JSGlobalObject*, JSValue);
@@ -208,7 +215,7 @@ static ALWAYS_INLINE void forEachInFastArray(JSGlobalObject* globalObject, JSVal
         if (scope.exception()) [[unlikely]] {
             scope.release();
             JSArrayIterator* iterator = JSArrayIterator::create(vm, array->realm()->arrayIteratorStructure(), array, IterationKind::Values);
-            iterator->internalField(JSArrayIterator::Field::Index).setWithoutWriteBarrier(jsNumber(index + 1));
+            iterator->setIndex(index + 1);
             iteratorClose(globalObject, iterator);
             return;
         }
@@ -319,7 +326,7 @@ void forEachInIterable(JSGlobalObject& globalObject, JSObject* iterable, JSValue
             if (scope.exception()) [[unlikely]] {
                 scope.release();
                 JSArrayIterator* iterator = JSArrayIterator::create(vm, globalObject.arrayIteratorStructure(), array, IterationKind::Values);
-                iterator->internalField(JSArrayIterator::Field::Index).setWithoutWriteBarrier(jsNumber(index + 1));
+                iterator->setIndex(index + 1);
                 iteratorClose(&globalObject, iterator);
                 return;
             }

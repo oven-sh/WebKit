@@ -10,7 +10,7 @@
 #include "include/core/SkRect.h"
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/ganesh/GrTypes.h"
-#include "include/private/base/SkDebug.h"
+#include "include/private/SkDebug.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/ganesh/GrGpuBuffer.h"
 #include "src/gpu/ganesh/vk/GrVkBuffer.h"
@@ -695,7 +695,17 @@ void GrVkPrimaryCommandBuffer::forceSync(GrVkGpu* gpu) {
     if (fSubmitFence == VK_NULL_HANDLE) {
         return;
     }
-    GR_VK_CALL_ERRCHECK(gpu, WaitForFences(gpu->device(), 1, &fSubmitFence, true, UINT64_MAX));
+    // On some drivers vkWaitForFences() can spuriously return VK_TIMEOUT when a signal handler
+    // runs. Work around this by retrying on VK_TIMEOUT.
+    VkResult result = VK_TIMEOUT;
+    while (result == VK_TIMEOUT) {
+        GR_VK_CALL_RESULT_NOCHECK(
+                gpu, result, WaitForFences(gpu->device(), 1, &fSubmitFence, true, UINT64_MAX));
+    }
+    if (result != VK_SUCCESS && !gpu->isDeviceLost()) {
+        SkDebugf("vkWaitForFences() failed. Error: %d\n", result);
+    }
+    SkASSERT(VK_SUCCESS == result || VK_ERROR_DEVICE_LOST == result);
 }
 
 bool GrVkPrimaryCommandBuffer::finished(GrVkGpu* gpu) {

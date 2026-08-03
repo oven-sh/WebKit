@@ -9,9 +9,9 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkSpan.h"
 #include "include/core/SkString.h"
-#include "include/private/base/SkAPI.h"
-#include "include/private/base/SkMacros.h"
-#include "include/private/base/SkNoncopyable.h"
+#include "include/private/SkAPI.h"
+#include "include/private/SkMacros.h"
+#include "include/private/SkNoncopyable.h"
 
 #include <cstdint>
 #include <memory>
@@ -157,6 +157,12 @@ struct Metadata {
         opaque, it will be encoded (using JPEG) with that quality setting.
     */
     int fEncodingQuality = 101;
+
+    /** If true, rasterize gradients with non-opaque stops for print compatibility.
+        Intended only for physical printing; it trades vector fidelity and file
+        size to avoid PDF-to-PostScript converter bugs.
+    */
+    bool fRasterizeAlphaGradientsForPrinting = false;
 
     /** An optional tree of structured document tags that provide
         a semantic representation of the content. The caller

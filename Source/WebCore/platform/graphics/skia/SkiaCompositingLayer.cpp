@@ -38,7 +38,6 @@
 #include "PlatformDisplay.h"
 #include "Region.h"
 #include "SkiaBackingStore.h"
-#include "SkiaCompositingLayer3DRenderingContext.h"
 #include "SkiaCompositingLayerFilters.h"
 #include "SkiaCompositingLayerOverlapRegions.h"
 #include "SkiaDamageRegion.h"
@@ -92,10 +91,10 @@ void SkiaCompositingLayer::invalidate()
 // size to decide what to damage, and what it has to damage is what the layer is about to paint.
 void SkiaCompositingLayer::setSize(const FloatSize& size)
 {
-    if (m_size == size)
+    if (m_rect.size() == size)
         return;
 
-    m_size = size;
+    m_rect.setSize(size);
     damageWholeLayer();
 }
 
@@ -166,7 +165,7 @@ void SkiaCompositingLayer::updateBackingStore(CoordinatedBackingStoreProxy::Upda
         m_maskImage = nullptr;
 
     ASSERT(m_backingStore);
-    m_backingStore->update(m_size, scale, WTF::move(update));
+    m_backingStore->update(m_rect.size(), scale, WTF::move(update));
 }
 
 bool SkiaCompositingLayer::hasPendingBackingStoreTileUpdates() const
@@ -240,11 +239,15 @@ void SkiaCompositingLayer::setBackdropFiltersRect(const FloatRoundedRect& clipRe
 
 FloatRect SkiaCompositingLayer::paintedLayerRect() const
 {
-    auto rect = effectiveLayerRect();
+    auto rect = m_rect;
     if (paintsContentsRect())
         rect.unite(m_contentsRect);
     if (m_backdrop.filter)
         rect.unite(m_backdrop.clipRect.rect());
+
+    // A debug border is stroked on the edges of what the layer paints, respect that.
+    if (m_debugBorder)
+        rect.inflate(m_debugBorder->width / 2);
 
     // A filter such as a blur spreads what the layer paints past its bounds, unless something clips it
     // back in, which mirrors what computeOverlapRegions() does with the same outsets.
@@ -353,12 +356,16 @@ void SkiaCompositingLayer::resolveBackdropDamage(const Vector<FloatRect>& backdr
 
 void SkiaCompositingLayer::setDebugIndicators(Color&& debugBorderColor, std::optional<float> debugBorderWidth, std::optional<unsigned> repaintCount)
 {
+    std::optional<DebugBorder> debugBorder;
     if (debugBorderColor.isValid())
-        m_debugBorder = { WTF::move(debugBorderColor), debugBorderWidth.value_or(1) };
-    else
-        m_debugBorder = std::nullopt;
+        debugBorder = { WTF::move(debugBorderColor), debugBorderWidth.value_or(1) };
 
+    if (m_debugBorder == debugBorder && m_repaintCount == repaintCount)
+        return;
+
+    m_debugBorder = WTF::move(debugBorder);
     m_repaintCount = repaintCount;
+    damageWholeLayer();
 }
 
 const TransformationMatrix& SkiaCompositingLayer::localTransform() const
@@ -428,13 +435,13 @@ bool SkiaCompositingLayer::computeTransformsAndAnimations(const TransformationMa
     TransformationMatrix combinedForChildren;
     TransformationMatrix futureCombinedForChildren;
 
-    if (!m_size.isEmpty() || !m_masksToBounds) {
+    if (!m_rect.isEmpty() || !m_masksToBounds) {
 #if ENABLE(DAMAGE_TRACKING)
         TransformationMatrix previousTransform = m_transforms.combined;
 #endif
 
         FloatPoint origin(m_anchorPoint.x(), m_anchorPoint.y());
-        origin.scale(m_size.width(), m_size.height());
+        origin.scale(m_rect.size().width(), m_rect.size().height());
         m_transforms.combined = parentTransform;
         m_transforms.combined
             .translate3d(origin.x() + (m_position.x() - m_boundsOrigin.x()), origin.y() + (m_position.y() - m_boundsOrigin.y()), m_anchorPoint.z())
@@ -499,7 +506,7 @@ bool SkiaCompositingLayer::computeTransformsAndAnimations(const TransformationMa
     return hasRunningAnimations;
 }
 
-bool SkiaCompositingLayer::paint(SkCanvas& canvas, std::optional<Damage>& frameDamage, const std::optional<Damage>& priorTargetDamage)
+bool SkiaCompositingLayer::paint(SkCanvas& canvas, std::optional<Damage>& frameDamage, const std::optional<Damage>& priorTargetDamage, std::optional<SkColor> clearColor)
 {
     // Both walks below assume the animations have been applied and the transforms computed.
     bool hasRunningAnimations = computeTransformsAndAnimations({ }, { }, MonotonicTime::now());
@@ -536,7 +543,7 @@ bool SkiaCompositingLayer::paint(SkCanvas& canvas, std::optional<Damage>& frameD
 #if ENABLE(DAMAGE_TRACKING)
     if (priorTargetDamage) {
         // The damage is in device space, so the surface size the region is tested against must be too.
-        // m_size is in layer coordinates, which the root transform scales to the device by the device
+        // m_rect is in layer coordinates, which the root transform scales to the device by the device
         // pixel ratio - use the canvas device size instead, as the collect walk above already does.
         const auto deviceSize = canvas.getBaseLayerSize();
         const IntSize surfaceSize(deviceSize.width(), deviceSize.height());
@@ -551,8 +558,21 @@ bool SkiaCompositingLayer::paint(SkCanvas& canvas, std::optional<Damage>& frameD
     UNUSED_PARAM(priorTargetDamage);
 #endif
 
-    // An empty region means the target already holds the frame, so draw nothing.
-    if (!damageRegion || !damageRegion->isEmpty()) {
+    // An empty region means the target already holds the frame, so draw nothing and skip the clear.
+    const bool skipDraw = damageRegion && damageRegion->isEmpty();
+    if (!skipDraw) {
+        // Clear what will be redrawn - only the damage rects when compositing from the damage, which keeps
+        // undamaged content and composites translucent content once, or the whole target otherwise.
+        if (clearColor) {
+            if (damageRegion) {
+                SkPaint clearPaint;
+                clearPaint.setColor(*clearColor);
+                clearPaint.setBlendMode(SkBlendMode::kSrc);
+                damageRegion->fillCanvasInDeviceSpace(canvas, clearPaint);
+            } else
+                canvas.clear(*clearColor);
+        }
+
         PaintContext context;
         context.compositingDamageRegion = WTF::move(damageRegion);
 
@@ -626,6 +646,24 @@ void SkiaCompositingLayer::paintContents(SkCanvas& canvas, PaintContext& context
     const auto ctm = transform.asM33();
     bool enableAntialias = !ctm.preservesAxisAlignment() && !ctm.preservesRightAngles();
 
+    auto shouldBlend = [&]() -> bool {
+        if (m_contentsOpaque)
+            return false;
+
+        if (m_backingStore)
+            return true;
+
+        if (m_contentsBuffer)
+            return m_contentsBuffer->flags().contains(TextureMapperFlags::ShouldBlend);
+
+        if (m_imageBackingStore) {
+            if (const auto* buffer = m_imageBackingStore->buffer())
+                return buffer->flags().contains(TextureMapperFlags::ShouldBlend);
+        }
+
+        return true;
+    };
+
     // When the layer contents are fully opaque and composited at full opacity with the default
     // (source-over) blend mode, drawing the batched tiles/images with source-over needlessly keeps
     // GL_BLEND enabled for every draw. Compositing with source (kSrc) instead lets Skia's blend
@@ -636,7 +674,7 @@ void SkiaCompositingLayer::paintContents(SkCanvas& canvas, PaintContext& context
     // filter and still use kSrc when it provably keeps the contents opaque.
     bool forcedSrcBlendMode = false;
     auto batchBlendMode = context.blendMode;
-    if (!batchBlendMode && !context.colorFilter && m_contentsOpaque && context.opacity == 1) {
+    if (!batchBlendMode && !context.colorFilter && !shouldBlend() && context.opacity == 1) {
         batchBlendMode = SkBlendMode::kSrc;
         forcedSrcBlendMode = true;
     }
@@ -914,7 +952,7 @@ void SkiaCompositingLayer::paintSelfAndChildren(SkCanvas& canvas, PaintContext& 
         auto childMatrix = canvas.getLocalToDeviceAs3x3() * SkM44(m_children[0]->m_transforms.combined).asM33();
         FloatRect childBounds;
         if (m_children[0]->m_backingStore)
-            childBounds = m_children[0]->effectiveLayerRect();
+            childBounds = m_children[0]->m_rect;
         if (m_children[0]->m_contentsBuffer || m_children[0]->m_imageBackingStore || (m_children[0]->m_contentsSolidColor.isValid() && m_children[0]->m_contentsSolidColor.isVisible()))
             childBounds.unite(m_children[0]->m_contentsRect);
         return matrix.mapRect(SkRect(rect.rect())).contains(childMatrix.mapRect(SkRect(childBounds)));
@@ -930,7 +968,7 @@ void SkiaCompositingLayer::paintSelfAndChildren(SkCanvas& canvas, PaintContext& 
         if (!contentsRectClipsDescendants)
             clipTransform.translate(m_boundsOrigin.x(), m_boundsOrigin.y());
 
-        FloatRoundedRect rect = contentsRectClipsDescendants ? m_contentsClippingRect : FloatRoundedRect(effectiveLayerRect());
+        FloatRoundedRect rect = contentsRectClipsDescendants ? m_contentsClippingRect : FloatRoundedRect(m_rect);
         if (!canSkipClip(rect, clipTransform))
             clippingRect = rect;
     }
@@ -945,7 +983,7 @@ void SkiaCompositingLayer::paintSelfAndChildren(SkCanvas& canvas, PaintContext& 
 
 bool SkiaCompositingLayer::isVisible() const
 {
-    if (m_size.isEmpty() && (m_masksToBounds || m_children.isEmpty()))
+    if (m_rect.isEmpty() && (m_masksToBounds || m_children.isEmpty()))
         return false;
     if (!m_visible && m_children.isEmpty())
         return false;
@@ -981,7 +1019,7 @@ sk_sp<SkImage> SkiaCompositingLayer::maskImage()
 
     // Paint the mask at the same scale the tiles were painted.
     auto scale = m_backingStore->scale();
-    auto rect = effectiveLayerRect();
+    auto rect = m_rect;
     rect.scale(scale);
 
     auto* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
@@ -1267,7 +1305,7 @@ void SkiaCompositingLayer::computeOverlapRegions(ComputeOverlapRegionData& data,
 
     FloatRect localBoundingRect;
     if (m_backingStore || m_masksToBounds || m_mask || filter || m_backdrop.filter)
-        localBoundingRect = effectiveLayerRect();
+        localBoundingRect = m_rect;
     else if (paintsContentsRect())
         localBoundingRect = m_contentsRect;
 
@@ -1428,29 +1466,52 @@ void SkiaCompositingLayer::paintWithBlendMode(SkCanvas& canvas, PaintContext& co
     }
 }
 
-void SkiaCompositingLayer::collect3DRenderingContextLayers(Vector<Ref<SkiaCompositingLayer>>& layers)
+FloatRect SkiaCompositingLayer::transformedFlattenedBounds() const
+{
+    auto bounds = m_transforms.combined.mapRect(m_rect);
+
+    if (!m_masksToBounds && !m_mask) {
+        for (const auto& child : m_children)
+            bounds.unite(child->transformedFlattenedBounds());
+    }
+
+    return bounds;
+}
+
+FloatPolygon3D SkiaCompositingLayer::geometryFor3DRenderingContext() const
+{
+    FloatRect bounds = m_rect;
+    if (bounds.isEmpty() && isLeafOf3DRenderingContext() && !m_children.isEmpty() && !m_masksToBounds && !m_mask) {
+        if (auto inverse = m_transforms.combined.inverse())
+            bounds = inverse->mapRect(transformedFlattenedBounds());
+    }
+
+    return FloatPolygon3D(bounds, m_transforms.combined);
+}
+
+void SkiaCompositingLayer::collect3DRenderingContextLayers(Vector<SkiaCompositingLayer3DRenderingContext::Layer>& layers)
 {
     if (m_preserves3D || isLeafOf3DRenderingContext()) {
         // Add layers to 3d rendering context only if they get actually painted.
         bool hasVisualContentOrFilters = hasVisualContent() || filter() || m_backdrop.filter;
         if (isVisible() && (hasVisualContentOrFilters || (isLeafOf3DRenderingContext() && !m_children.isEmpty())))
-            layers.append(Ref { *this });
+            layers.append(SkiaCompositingLayer3DRenderingContext::Layer(Ref { *this }, geometryFor3DRenderingContext()));
 
         // Stop recursion on 3d rendering context leaf
         if (isLeafOf3DRenderingContext())
             return;
     }
 
-    for (auto& child : m_children)
+    for (const auto& child : m_children)
         child->collect3DRenderingContextLayers(layers);
 }
 
 void SkiaCompositingLayer::paintWith3DRenderingContext(SkCanvas& canvas, PaintContext& context)
 {
-    Vector<Ref<SkiaCompositingLayer>> layers;
+    Vector<SkiaCompositingLayer3DRenderingContext::Layer> layers;
     collect3DRenderingContextLayers(layers);
 
-    SkiaCompositingLayer3DRenderingContext::paint(layers, [&](SkiaCompositingLayer& layer, std::optional<SkPath> clipPath) {
+    SkiaCompositingLayer3DRenderingContext::paint(WTF::move(layers), [&](SkiaCompositingLayer& layer, std::optional<SkPath> clipPath) {
         ScopedFlush autoFlush(canvas, context.imageSetBatch, clipPath ? ScopedFlush::Mode::FlushBeforeAndAfter : ScopedFlush::Mode::DoNothing);
         if (clipPath)
             canvas.clipPath(*clipPath);

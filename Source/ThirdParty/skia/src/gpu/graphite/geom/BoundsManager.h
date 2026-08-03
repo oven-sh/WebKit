@@ -10,11 +10,11 @@
 
 #include "include/core/SkScalar.h"
 #include "include/core/SkSize.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkTemplates.h"
-#include "src/base/SkBlockAllocator.h"
-#include "src/base/SkTBlockList.h"
-#include "src/base/SkVx.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkTemplates.h"
+#include "src/core/SkBlockAllocator.h"
+#include "src/core/SkTBlockList.h"
+#include "src/core/SkVx.h"
 #include "src/gpu/graphite/DrawOrder.h"
 #include "src/gpu/graphite/geom/Rect.h"
 
@@ -293,9 +293,12 @@ private:
     const int     fMaxBruteForceN;
     const int     fMaxGridSize;
 
-    BoundsManager* fCurrentManager;
-
+    // fBruteForceManager must be declared before fCurrentManager so that fBruteForceManager
+    // outlives fCurrentManager on destruction (since fCurrentManager can point to
+    // fBruteForceManager).
     BruteForceBoundsManager                  fBruteForceManager;
+
+    BoundsManager* fCurrentManager;
 
     // The grid manager starts out null and is created the first time we exceed fMaxBruteForceN.
     // However, even if we reset back to the brute force manager, we keep the grid around under the

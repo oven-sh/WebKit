@@ -53,6 +53,7 @@
 #include <WebCore/LocalFrameLoaderClient.h>
 #include <WebCore/NetworkLoadMetrics.h>
 #include <WebCore/Page.h>
+#include <WebCore/PendingStreamState.h>
 #include <WebCore/ResourceError.h>
 #include <WebCore/ResourceLoader.h>
 #include <WebCore/SubresourceLoader.h>
@@ -72,17 +73,70 @@
 namespace WebKit {
 using namespace WebCore;
 
-Ref<WebResourceLoader> WebResourceLoader::create(Ref<ResourceLoader>&& coreLoader, const std::optional<TrackingParameters>& trackingParameters)
+Ref<WebResourceLoader> WebResourceLoader::create(Ref<ResourceLoader>&& coreLoader, const std::optional<TrackingParameters>& trackingParameters, RefPtr<PendingStreamState>&& state)
 {
-    return adoptRef(*new WebResourceLoader(WTF::move(coreLoader), trackingParameters));
+    Ref loader = adoptRef(*new WebResourceLoader(WTF::move(coreLoader), trackingParameters, WTF::move(state)));
+    loader->initPendingStreamState();
+    return loader;
 }
 
-WebResourceLoader::WebResourceLoader(Ref<WebCore::ResourceLoader>&& coreLoader, const std::optional<TrackingParameters>& trackingParameters)
+WebResourceLoader::WebResourceLoader(Ref<WebCore::ResourceLoader>&& coreLoader, const std::optional<TrackingParameters>& trackingParameters, RefPtr<PendingStreamState>&& state)
     : m_coreLoader(WTF::move(coreLoader))
     , m_trackingParameters(trackingParameters)
+    , m_pendingStreamState(WTF::move(state))
     , m_loadStart(MonotonicTime::now())
 {
     WEBRESOURCELOADER_RELEASE_LOG(WebResourceLoaderConstructor);
+}
+
+void WebResourceLoader::initPendingStreamState()
+{
+    RefPtr state = m_pendingStreamState;
+    if (!state)
+        return;
+    state->setDataAvailableHandler([weakThis = WeakPtr { *this }] {
+        ensureOnMainThread([weakThis] {
+            if (RefPtr protectedThis = weakThis.get())
+                protectedThis->drainPendingStreamIfPossible();
+        });
+    });
+}
+
+static constexpr uint64_t kMaxInFlightBytes = 64 * 1024;
+
+void WebResourceLoader::drainPendingStreamIfPossible()
+{
+    if (m_pendingStreamBytesForwardedToNetworkProcess >= m_pendingStreamBytesSentByNetwork + kMaxInFlightBytes)
+        return;
+
+    RefPtr state = m_pendingStreamState;
+    if (!state)
+        return;
+
+    auto result = state->takeAvailableChunks();
+
+    if (!result) {
+        send(Messages::NetworkResourceLoader::PendingStreamError { });
+        m_pendingStreamState = nullptr;
+        return;
+    }
+
+    for (Ref chunk : result->first) {
+        m_pendingStreamBytesForwardedToNetworkProcess += chunk->size();
+        send(Messages::NetworkResourceLoader::PendingStreamAppendData { IPC::SharedBufferReference(WTF::move(chunk)) });
+    }
+
+    if (!result->second)
+        return;
+
+    send(Messages::NetworkResourceLoader::PendingStreamEnd { });
+    m_pendingStreamState = nullptr;
+}
+
+void WebResourceLoader::serviceWorkerPendingStreamForwardingNeedData()
+{
+    m_pendingStreamBytesSentByNetwork = m_pendingStreamBytesForwardedToNetworkProcess;
+    drainPendingStreamIfPossible();
 }
 
 WebResourceLoader::~WebResourceLoader() = default;
@@ -153,6 +207,11 @@ void WebResourceLoader::willSendRequest(ResourceRequest&& proposedRequest, IPC::
 
 void WebResourceLoader::didSendData(uint64_t bytesSent, uint64_t totalBytesToBeSent)
 {
+    ASSERT(bytesSent >= m_pendingStreamBytesSentByNetwork);
+    if (bytesSent > m_pendingStreamBytesSentByNetwork) {
+        m_pendingStreamBytesSentByNetwork = bytesSent;
+        drainPendingStreamIfPossible();
+    }
     protect(resourceLoader())->didSendData(bytesSent, totalBytesToBeSent);
 }
 
@@ -366,6 +425,12 @@ void WebResourceLoader::updateResultingClientIdentifier(WTF::UUID currentIdentif
 {
     if (RefPtr loader = DocumentLoader::fromScriptExecutionContextIdentifier({ currentIdentifier, Process::identifier() }))
         loader->setNewResultingClientId({ newIdentifier, Process::identifier() });
+}
+
+void WebResourceLoader::cancelPendingStreamUpload()
+{
+    if (RefPtr state = m_pendingStreamState)
+        state->cancel();
 }
 
 void WebResourceLoader::didFailResourceLoad(const ResourceError& error)

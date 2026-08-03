@@ -687,16 +687,13 @@ selectors = [
     { name = "visiblePeripheralFrame", class = "?" },
     { name = "webProcessPlugInBrowserContextController:didSameDocumentNavigationForFrame:", class = "?" },
     { name = "_CFURLResponse", class = "?" },
-    { name = "_cookieForSetCookieString:forURL:partition:", class = "?" },
     { name = "_cookieStorage", class = "?" },
-    { name = "_getCookiesForURL:mainDocumentURL:partition:policyProperties:completionHandler:", class = "?" },
     { name = "_initWithCFHTTPCookieStorage:", class = "?" },
     { name = "_isHostedInAnotherProcess", class = "?" },
     { name = "_performAsDataOwner:block:", class = "?" },
     { name = "_referenceBounds", class = "?" },
     { name = "_saveCookies:", class = "?" },
     { name = "_schemeWasUpgradedDueToDynamicHSTS", class = "?" },
-    { name = "_setCookies:forURL:mainDocumentURL:policyProperties:", class = "?" },
     { name = "_setProperty:forKey:", class = "?" },
     { name = "_strictlyUnarchivedObjectOfClasses:fromData:error:", class = "?" },
     { name = "_web_removeFileOnlyAtPath:", class = "?" },
@@ -1007,24 +1004,6 @@ requires = [
     # The code checks for NW_CONNECTION_HAS_FAILED_RESOLUTION_REPORT, which
     # comes from an internal SDK header.
     "USE_APPLE_INTERNAL_SDK"
-]
-
-[[legacy]]
-symbols = [
-    "nw_settings_get_unified_http_enabled",
-]
-requires = [
-    # The code checks for NW_SETTINGS_HAS_UNIFIED_HTTP, which comes from an
-    # internal SDK header.
-    "USE_APPLE_INTERNAL_SDK"
-]
-
-[[legacy]]
-symbols = [
-    "nw_settings_get_unified_http_enabled_webkit",
-]
-requires = [
-    "HAVE_NWSETTINGS_UNIFIED_HTTP_WEBKIT"
 ]
 
 # The public iOS build uses CGGeometry methods instead of internal only

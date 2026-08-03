@@ -471,7 +471,7 @@ bool WebPage::performNonEditingBehaviorForSelector(const String& selector, Keybo
     return didPerformAction;
 }
 
-void WebPage::updateRemotePageAccessibilityOffset(WebCore::FrameIdentifier, WebCore::IntPoint offset)
+void WebPage::updateRemotePageOffsetInMainFrame(WebCore::FrameIdentifier, WebCore::IntPoint offset)
 {
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     // With local frame support, position data is sent from the UI process in frameScreenPosition.
@@ -550,7 +550,7 @@ void WebPage::getDataSelectionForPasteboard(const String pasteboardType, Complet
     completionHandler(buffer.releaseNonNull());
 }
 
-WebCore::IntPoint WebPage::accessibilityRemoteFrameOffset()
+WebCore::IntPoint WebPage::remoteFrameOffsetInMainFrame()
 {
     return [m_mockAccessibilityElement accessibilityRemoteFrameOffset];
 }
@@ -819,7 +819,7 @@ void WebPage::performImmediateActionHitTestAtLocation(WebCore::FrameIdentifier f
         if (RefPtr remoteFrameView = remoteFrame->view()) {
             immediateActionResult.remoteUserInputEventData = RemoteUserInputEventData {
                 remoteFrame->frameID(),
-                remoteFrameView->rootViewToContents(roundedIntPoint(locationInViewCoordinates))
+                remoteFrameView->convertFromRootView(roundedIntPoint(locationInViewCoordinates))
             };
         }
     }
@@ -1143,6 +1143,18 @@ void WebPage::showPDFHUD(PDFPluginBase& plugin)
 {
     if (m_pdfPlugInsWithHUD.contains(plugin.identifier()))
         send(Messages::WebPageProxy::ShowPDFHUD(plugin.identifier()));
+}
+
+void WebPage::updatePDFHUDLocationsAfterRemoteFrameGeometryChange()
+{
+    // A remote parent's geometry changes but a cross-origin <iframe> plugin's
+    // local root view transform stays unchanged, so we ask the plugin to re-report
+    // its HUD location to the UI process, which runs the main frame conversion
+    // with newer geometry.
+    for (WeakPtr weakPlugin : m_pdfPlugInsWithHUD.values()) {
+        if (RefPtr plugin = weakPlugin.get())
+            plugin->updateHUDLocation();
+    }
 }
 
 #endif // ENABLE(PDF_PLUGIN)

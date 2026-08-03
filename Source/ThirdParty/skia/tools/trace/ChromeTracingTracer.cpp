@@ -6,11 +6,12 @@
  */
 
 #include "include/core/SkStream.h"
-#include "include/private/base/SkThreadID.h"
+#include "include/private/SkThreadID.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/utils/SkJSONWriter.h"
 #include "src/utils/SkOSPath.h"
+#include "tools/ProcsUtils.h"
 #include "tools/trace/ChromeTracingTracer.h"
 
 #include <chrono>
@@ -278,7 +279,7 @@ void ChromeTracingTracer::onExit() {
     }
 
     SkFILEWStream fileStream(fFilename.c_str());
-    SkJSONWriter  writer(&fileStream, SkJSONWriter::Mode::kFast);
+    SkJSONWriter  writer(&fileStream, ToolUtils::default_serial_procs(), SkJSONWriter::Mode::kFast);
     writer.beginArray();
 
     uint64_t clockOffset = 0;

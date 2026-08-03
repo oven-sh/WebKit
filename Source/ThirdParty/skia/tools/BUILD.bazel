@@ -58,17 +58,19 @@ skia_cc_library(
     visibility = [
         "//bench:__pkg__",
         "//dm:__pkg__",
+        "//tools/ganesh:__pkg__",
         "//tools/gpu:__pkg__",
     ],
-    deps = ["//src/base"],
+    deps = ["//:core"],
 )
 
 skia_objc_library(
     name = "autorelease_pool_objc",
     hdrs = ["AutoreleasePool.h"],
+    mac_frameworks = ["Foundation"],
     non_arc_srcs = ["AutoreleasePool.mm"],
     visibility = ["//tools/ganesh:__pkg__"],
-    deps = ["//src/base"],
+    deps = ["//:core"],
 )
 
 skia_cc_library(
@@ -78,6 +80,7 @@ skia_cc_library(
     visibility = [
         "//dm:__pkg__",
         "//tools/debugger:__pkg__",
+        "//tools/viewer:__pkg__",
     ],
     deps = ["//:core"],
 )
@@ -164,7 +167,6 @@ skia_cc_library(
     ],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
     ],
 )
@@ -190,30 +192,33 @@ skia_cc_library(
         "//:core",
         "//:png_decode_codec",
         "//:png_encode_codec",
-        "//src/base",
         "//src/core:core_priv",
         "//tools:resources",
     ],
 )
 
 skia_cc_library(
-    name = "deserial_procs_utils",
+    name = "procs_utils",
     testonly = True,
     srcs = [
-        "DeserialProcsUtils.cpp",
+        "ProcsUtils.cpp",
     ],
     hdrs = [
-        "DeserialProcsUtils.h",
+        "ProcsUtils.h",
     ],
     visibility = [
         "//bench:__subpackages__",
         "//dm:__pkg__",
         "//gm:__subpackages__",
+        "//tools/debugger:__pkg__",
+        "//tools/trace:__pkg__",
         "//tools/viewer:__pkg__",
     ],
     deps = [
         "//:core",
         "//:png_decode_libpng",
+        "//:png_encode_libpng",
+        "//src/core:core_priv",
         "//tools/fonts:font_tool_utils",
     ],
 )
@@ -233,7 +238,6 @@ skia_cc_library(
     ],
     deps = [
         "//:core",
-        "//src/base",
         "//src/core:core_priv",
         "//tools/flags:cmd_flags",
     ],
@@ -324,11 +328,9 @@ skia_cc_library(
         "//include/pathops:headers_to_compile",
         "//include/ports:headers_to_compile",
         "//include/private:headers_to_compile",
-        "//include/private/base:headers_to_compile",
         "//include/sksl:headers_to_compile",
         "//include/svg:headers_to_compile",
         "//include/utils:headers_to_compile",
-        "//src/base:headers_to_compile",
         "//src/codec:headers_to_compile",
         "//src/core:headers_to_compile",
         "//src/gpu/ganesh/mock:headers_to_compile",

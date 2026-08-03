@@ -31,6 +31,9 @@
 #include <WebCore/InspectorResourceType.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
+#include <tuple>
+#include <wtf/CompletionHandler.h>
+#include <wtf/Expected.h>
 #include <wtf/Forward.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -40,6 +43,7 @@ class DocumentLoader;
 class FragmentedSharedBuffer;
 class LocalFrame;
 class Page;
+class ScriptExecutionContext;
 class TextResourceDecoder;
 }
 
@@ -68,10 +72,10 @@ struct FrameResource {
 };
 
 // Per-frame data gathered from a frame's hosting WebContent process: the committed document's
-// loaderId (carried as a ScriptExecutionContextIdentifier and converted to the protocol loaderId
-// string at the UIProcess boundary) and the frame's cached subresources.
+// protocol loaderId string (computed by that process so it matches the live Network events) and
+// the frame's cached subresources.
 struct FrameResourceData {
-    std::optional<WebCore::ScriptExecutionContextIdentifier> loaderId;
+    String loaderId;
     Vector<FrameResource> resources;
 };
 
@@ -93,6 +97,10 @@ struct SearchResult {
     int matchesCount { 0 };
     std::optional<WebCore::ResourceLoaderIdentifier> resourceID;
 };
+
+// Completion for Network.loadResource: {content, mimeType, status} on success, or an error string
+// on failure.
+using LoadResourceCompletionHandler = CompletionHandler<void(Expected<std::tuple<String /* content */, String /* mimeType */, int /* status */>, String /* error */>&&)>;
 
 namespace ResourceUtilities {
 
@@ -118,6 +126,9 @@ WEBCORE_EXPORT bool shouldTreatAsText(const String& mimeType);
 WEBCORE_EXPORT Ref<WebCore::TextResourceDecoder> createTextDecoder(const String& mimeType, const String& textEncodingName);
 WEBCORE_EXPORT std::optional<String> textContentForCachedResource(WebCore::CachedResource&);
 WEBCORE_EXPORT bool cachedResourceContent(WebCore::CachedResource&, String* result, bool* base64Encoded);
+
+// Loads url in the given context on behalf of the inspector, bypassing cross-origin checks (Network.loadResource).
+WEBCORE_EXPORT void loadResource(WebCore::ScriptExecutionContext&, const String& url, LoadResourceCompletionHandler&&);
 
 } // namespace ResourceUtilities
 

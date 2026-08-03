@@ -14,21 +14,21 @@
 #include "include/core/SkData.h"
 #include "include/core/SkDocument.h"
 #include "include/core/SkGraphics.h"
-#include "include/private/base/SkLog.h"
-#include "src/base/SkHalf.h"
-#include "src/base/SkLeanWindows.h"
-#include "src/base/SkNoDestructor.h"
-#include "src/base/SkSpinlock.h"
-#include "src/base/SkTime.h"
-#include "src/base/SkVx.h"
+#include "include/private/SkLog.h"
 #include "src/core/SkChecksum.h"
 #include "src/core/SkColorPriv.h"
 #include "src/core/SkColorSpacePriv.h"
+#include "src/core/SkHalf.h"
+#include "src/core/SkLeanWindows.h"
 #include "src/core/SkMD5.h"
+#include "src/core/SkNoDestructor.h"
 #include "src/core/SkOSFile.h"
+#include "src/core/SkSpinlock.h"
 #include "src/core/SkStringUtils.h"
 #include "src/core/SkTHash.h"
 #include "src/core/SkTaskGroup.h"
+#include "src/core/SkTime.h"
+#include "src/core/SkVx.h"
 #include "src/utils/SkOSPath.h"
 #include "tests/Test.h"
 #include "tests/TestHarness.h"
@@ -86,6 +86,9 @@ extern bool gForceHighPrecisionRasterPipeline;
 #if defined(SK_GANESH)
 extern bool gCreateProtectedContext;
 #endif
+#if defined(SK_GRAPHITE)
+extern bool gGraphiteAvoidDepth;
+#endif
 static DEFINE_string(src, "tests gm skp mskp lottie rive svg image colorImage",
                      "Source types to test.");
 static DEFINE_bool(nameByHash, false,
@@ -120,6 +123,7 @@ static DEFINE_string(mskps, "", "Directory to read mskps from, or a single mskp 
 static DEFINE_bool(forceRasterPipeline, false, "sets gSkForceRasterPipelineBlitter");
 static DEFINE_bool(forceRasterPipelineHP, false, "sets gSkForceRasterPipelineBlitter and gForceHighPrecisionRasterPipeline");
 static DEFINE_bool(createProtected, false, "attempts to create a protected backend context");
+static DEFINE_bool(avoidDepth, false, "Disable depth/stencil buffer usage");
 
 static DEFINE_string(bisect, "",
         "Pair of: SKP file to bisect, followed by an l/r bisect trail string (e.g., 'lrll'). The "
@@ -1635,6 +1639,7 @@ int main(int argc, char** argv) {
     // If available, use PartitionAlloc as the memory allocator for DM. This allows catching
     // additional memory errors in tests that would otherwise go unnoticed.
     skiatest::InitializePartitionAllocForTesting();
+    skiatest::InitializeDanglingPointerChecksForTesting();
 #endif
 
     CommandLineFlags::Parse(argc, argv);
@@ -1653,6 +1658,9 @@ int main(int argc, char** argv) {
     gForceHighPrecisionRasterPipeline = FLAGS_forceRasterPipelineHP;
 #if defined(SK_GANESH)
     gCreateProtectedContext           = FLAGS_createProtected;
+#endif
+#if defined(SK_GRAPHITE)
+    gGraphiteAvoidDepth               = FLAGS_avoidDepth;
 #endif
 
     // The bots like having a verbose.log to upload, so always touch the file even if --verbose.

@@ -70,6 +70,7 @@ public:
     WebCore::AllowsContentJavaScript allowsContentJavaScriptFromMostRecentNavigation() const final;
 
     void removeStorageAccess();
+    void removeStorageAccessOnCommit(WebCore::DocumentLoader&);
 
 private:
     bool hasHTMLView() const final;
@@ -334,6 +335,7 @@ private:
     RefPtr<WebCore::HistoryItem> createHistoryItemTree(bool clipAtTarget, WebCore::BackForwardItemIdentifier) const final;
 
     RefPtr<WebCore::Frame> provisionalParentFrame() const final;
+    bool isProvisionalFrame() const final;
 };
 
 } // namespace WebKit

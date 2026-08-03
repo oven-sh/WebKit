@@ -65,7 +65,7 @@ public:
 
     void invoke();
     void didReceiveMessageFromInjectedBundle(WKStringRef messageName, WKTypeRef messageBody);
-    WKRetainPtr<WKTypeRef> didReceiveSynchronousMessageFromInjectedBundle(WKStringRef messageName, WKTypeRef messageBody);
+    WKRetainPtr<WKTypeRef> didReceiveSynchronousMessageFromInjectedBundle(WKStringRef messageName, WKTypeRef messageBody, bool fromMainFrameProcess);
 
     static void dumpWebProcessUnresponsiveness(const char* errorMessage);
     void outputText(const String&);
@@ -107,11 +107,11 @@ private:
     void done();
     void setWaitUntilDone(bool);
 
-    // Returns true if the caller bundle should proceed with dumping.
-    // Returns false if the WKTR invokes dumping through page, asynchronously.
-    // Resets waitUntilDone.
-    bool resolveNotifyDone();
-    bool resolveForceImmediateCompletion();
+    // Returns true if the caller bundle should complete the dump locally (as without site isolation), false if
+    // the WKTR routes it to the main-frame process. Resets waitUntilDone. canCompleteSynchronously reflects
+    // whether the message came from the main-frame process.
+    bool resolveNotifyDone(bool canCompleteSynchronously);
+    bool resolveForceImmediateCompletion(bool canCompleteSynchronously);
 
     void dumpResults();
     static void dump(const char* textToStdout, const char* textToStderr = 0, bool seenError = false);

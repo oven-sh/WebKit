@@ -213,6 +213,12 @@ Expected<FileSystemSyncAccessHandleInfo, FileSystemStorageError> FileSystemStora
     if (!acquired)
         return makeUnexpected(FileSystemStorageError::InvalidState);
 
+    bool isLockReleaseNeeded = true;
+    auto lockReleaser = makeScopeExit([&] {
+        if (isLockReleaseNeeded)
+            manager->releaseLockForFile(m_path);
+    });
+
     auto handle = FileSystem::openFile(m_path, FileSystem::FileOpenMode::ReadWrite);
     if (!handle)
         return makeUnexpected(FileSystemStorageError::Unknown);
@@ -220,6 +226,8 @@ Expected<FileSystemSyncAccessHandleInfo, FileSystemStorageError> FileSystemStora
     auto ipcHandle = IPC::SharedFileHandle::create(WTF::move(handle));
     if (!ipcHandle)
         return makeUnexpected(FileSystemStorageError::BackendNotSupported);
+
+    isLockReleaseNeeded = false;
 
     ASSERT(!m_activeSyncAccessHandle);
     m_activeSyncAccessHandle = SyncAccessHandleInfo { WebCore::FileSystemSyncAccessHandleIdentifier::generate() };
@@ -255,6 +263,12 @@ Expected<WebCore::FileSystemWritableFileStreamIdentifier, FileSystemStorageError
     if (!acquired)
         return makeUnexpected(FileSystemStorageError::InvalidState);
 
+    bool isLockReleaseNeeded = true;
+    auto lockReleaser = makeScopeExit([&] {
+        if (isLockReleaseNeeded)
+            manager->releaseLockForFile(m_path);
+    });
+
     auto path = FileSystem::createTemporaryFile("FileSystemWritableStream"_s);
     if (keepExistingData)
         FileSystem::copyFile(path, m_path);
@@ -266,6 +280,7 @@ Expected<WebCore::FileSystemWritableFileStreamIdentifier, FileSystemStorageError
     if (!activeWritableFile)
         return makeUnexpected(FileSystemStorageError::Unknown);
 
+    isLockReleaseNeeded = false;
     m_activeWritableFiles.add(streamIdentifier, FileHandleWithPath { WTF::move(activeWritableFile), WTF::move(path) });
     return streamIdentifier;
 }
@@ -370,12 +385,18 @@ std::optional<size_t> FileSystemStorageHandle::computeCommandSpace(WebCore::File
     if (type == WebCore::FileSystemWriteCommandType::Truncate)
         return *size > *fileSize ? *size - *fileSize : 0;
 
-    uint64_t finalSize;
-    auto currentOffset = activeWritableFile.handle.seek(position.value_or(0), FileSystem::FileSeekOrigin::Current);
-    if (!currentOffset)
-        return { };
+    uint64_t writeStart;
+    if (position)
+        writeStart = *position;
+    else {
+        auto currentOffset = activeWritableFile.handle.seek(0, FileSystem::FileSeekOrigin::Current);
+        if (!currentOffset)
+            return { };
+        writeStart = *currentOffset;
+    }
 
-    if (!WTF::safeAdd(*currentOffset, dataBytes.size(), finalSize))
+    uint64_t finalSize;
+    if (!WTF::safeAdd(writeStart, dataBytes.size(), finalSize))
         return { };
 
     return finalSize > *fileSize ? finalSize - *fileSize : 0;

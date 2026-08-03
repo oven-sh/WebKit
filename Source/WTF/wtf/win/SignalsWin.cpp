@@ -107,7 +107,10 @@ LONG WINAPI vectoredHandler(struct _EXCEPTION_POINTERS *exceptionInfo)
 
     PlatformRegisters& registers = *(exceptionInfo->ContextRecord);
 
-    long result = EXCEPTION_EXECUTE_HANDLER;
+    // A vectored handler may only return EXCEPTION_CONTINUE_EXECUTION or EXCEPTION_CONTINUE_SEARCH.
+    // Default to search so faults no handler claims proceed down the chain (e.g. to ASan's shadow
+    // committer) instead of looping on the faulting instruction; matches the POSIX/Mach NotHandled path.
+    long result = EXCEPTION_CONTINUE_SEARCH;
     handlers.forEachHandler(signal, [&] (const SignalHandler& handler) {
         switch (handler(signal, sigInfo, registers)) {
         case SignalAction::Handled:
@@ -152,7 +155,15 @@ void SignalHandlers::finalize()
 
     for (unsigned i = 0; i < numberOfSignals; ++i) {
         if (handlers.numberOfHandlers[i]) {
+#if ASAN_ENABLED
+            // AddressSanitizer's runtime commits its shadow lazily from its own vectored
+            // handler and unpoisons the dispatch context for the handlers behind it. Registered
+            // ahead of it we would read the CONTEXT and dispatch stack before ASan has unpoisoned
+            // them, producing spurious stack-buffer reports on every fault. Register behind it.
+            AddVectoredExceptionHandler(0, vectoredHandler);
+#else
             AddVectoredExceptionHandler(1, vectoredHandler);
+#endif
             break;
         }
     }

@@ -266,15 +266,17 @@ CanvasRenderingContext2DBase::CanvasRenderingContext2DBase(CanvasBase& canvas, C
 
 CanvasRenderingContext2DBase::~CanvasRenderingContext2DBase()
 {
-#if ASSERT_ENABLED
     m_unrealizedSaveCount = 0;
     size_t restoreCount = m_stateStack.size() - 1;
     for (size_t i = 0; i < restoreCount; ++i)
         restore();
-    m_stateStack.first() = State();
+
+    // Should only have one state now.
+    ASSERT(m_stateStack.size() == 1);
+
+    // The buffer created in buffer() is save(), so restore() here to match.
     if (RefPtr buffer = m_buffer)
         buffer->context().restore();
-#endif
 }
 
 bool CanvasRenderingContext2DBase::isAccelerated() const
@@ -992,11 +994,12 @@ void CanvasRenderingContext2DBase::setTransform(double m11, double m12, double m
 
 ExceptionOr<void> CanvasRenderingContext2DBase::setTransform(DOMMatrix2DInit&& matrixInit)
 {
-    auto checkValid = DOMMatrixReadOnly::validateAndFixup(matrixInit);
-    if (checkValid.hasException())
-        return checkValid.releaseException();
+    auto transform = DOMMatrixReadOnly::toAffineTransform(matrixInit);
+    if (transform.hasException())
+        return transform.releaseException();
 
-    setTransform(matrixInit.m11.value(), matrixInit.m12.value(), matrixInit.m21.value(), matrixInit.m22.value(), matrixInit.m41.value(), matrixInit.m42.value());
+    auto matrix = transform.releaseReturnValue();
+    setTransform(matrix.a(), matrix.b(), matrix.c(), matrix.d(), matrix.e(), matrix.f());
     return { };
 }
 
@@ -2593,10 +2596,11 @@ RefPtr<ImageData> CanvasRenderingContext2DBase::makeImageDataIfContentsCached(co
         return nullptr;
 
     auto size = pixelBuffer->size();
-    auto data = pixelBuffer->takeData();
+    auto format = pixelBuffer->format();
+    auto data = WTF::move(pixelBuffer.get()).takeData();
     unsigned bytesPerRow = static_cast<unsigned>(size.width()) * 4u;
     ConstPixelBufferConversionView source {
-        .format = pixelBuffer->format(),
+        .format = format,
         .bytesPerRow = bytesPerRow,
         .rows = data->span(),
     };
@@ -2606,7 +2610,7 @@ RefPtr<ImageData> CanvasRenderingContext2DBase::makeImageDataIfContentsCached(co
         .rows = data->mutableSpan(),
     };
     convertImagePixels(source, destination, size);
-    return ImageData::create(size, WTF::move(data), m_settings.colorSpace);
+    return ImageData::create(size, Ref<JSC::ArrayBufferView>(WTF::move(data)), m_settings.colorSpace);
 }
 
 ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::getImageData(int sx, int sy, int sw, int sh, std::optional<ImageDataSettings> settings) const
@@ -2640,7 +2644,7 @@ ExceptionOr<Ref<ImageData>> CanvasRenderingContext2DBase::getImageData(int sx, i
             return Exception { ExceptionCode::InvalidStateError };
 
         auto format = PixelBufferFormat { AlphaPremultiplication::Unpremultiplied, outputPixelFormat, buffer->colorSpace() };
-        RefPtr pixelBuffer = dynamicDowncast<ByteArrayPixelBuffer>(buffer->getPixelBuffer(format, imageDataRect));
+        RefPtr pixelBuffer = dynamicDowncast<ArrayPixelBuffer>(buffer->getPixelBuffer(format, imageDataRect));
         if (!pixelBuffer)
             return Exception { ExceptionCode::InvalidStateError };
 
@@ -3273,7 +3277,7 @@ void CanvasRenderingContext2DBase::setLetterSpacing(const String& letterSpacing)
     auto parserContext = CSSParserContext { HTMLStandardMode };
     auto parserState = CSS::PropertyParserState { .context = parserContext, .pool = protect(canvasBase())->scriptExecutionContext()->cssValuePool() };
 
-    auto parsedValue = CSSPropertyParserHelpers::MetaConsumer<CSS::Length<CSS::AllUnzoomed>>::consume(tokenRange, parserState);
+    auto parsedValue = CSSPropertyParserHelpers::MetaConsumer<CSS::Length<>>::consume(tokenRange, parserState);
     if (!parsedValue)
         return;
     auto rawLength = parsedValue->raw();
@@ -3283,7 +3287,7 @@ void CanvasRenderingContext2DBase::setLetterSpacing(const String& letterSpacing)
         return;
 
     CheckedRef fontCascade = fontProxy()->fontCascade();
-    double pixels = Style::computeUnzoomedNonCalcLengthDouble(rawLength->value, rawLength->unit, CSSPropertyLetterSpacing, fontCascade.ptr());
+    double pixels = Style::resolveLength(rawLength->value, rawLength->unit, CSSPropertyLetterSpacing, fontCascade, nullptr);
 
     modifiableState().letterSpacing = CSS::serializationForCSS(CSS::defaultSerializationContext(), *rawLength);
     modifiableState().font.setLetterSpacing(pixels);
@@ -3301,7 +3305,7 @@ void CanvasRenderingContext2DBase::setWordSpacing(const String& wordSpacing)
     auto parserContext = CSSParserContext { HTMLStandardMode };
     auto parserState = CSS::PropertyParserState { .context = parserContext, .pool = protect(canvasBase())->scriptExecutionContext()->cssValuePool() };
 
-    auto parsedValue = CSSPropertyParserHelpers::MetaConsumer<CSS::Length<CSS::AllUnzoomed>>::consume(tokenRange, parserState);
+    auto parsedValue = CSSPropertyParserHelpers::MetaConsumer<CSS::Length<>>::consume(tokenRange, parserState);
     if (!parsedValue)
         return;
     auto rawLength = parsedValue->raw();
@@ -3311,7 +3315,7 @@ void CanvasRenderingContext2DBase::setWordSpacing(const String& wordSpacing)
         return;
 
     CheckedRef fontCascade = fontProxy()->fontCascade();
-    double pixels = Style::computeUnzoomedNonCalcLengthDouble(rawLength->value, rawLength->unit, CSSPropertyWordSpacing, fontCascade.ptr());
+    double pixels = Style::resolveLength(rawLength->value, rawLength->unit, CSSPropertyWordSpacing, fontCascade, nullptr);
 
     modifiableState().wordSpacing = CSS::serializationForCSS(CSS::defaultSerializationContext(), *rawLength);
     modifiableState().font.setWordSpacing(pixels);

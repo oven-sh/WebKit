@@ -41,6 +41,7 @@
 #include <WebCore/Chrome.h>
 #include <WebCore/Document.h>
 #include <WebCore/DocumentLoader.h>
+#include <WebCore/DocumentPage.h>
 #include <WebCore/DocumentView.h>
 #include <WebCore/FrameInspectorController.h>
 #include <WebCore/FrameLoadRequest.h>
@@ -378,6 +379,9 @@ void WebInspectorBackend::enableNetworkInstrumentation()
         m_networkInstrumentationEnabled = true;
         corePage->settings().setDeveloperExtrasEnabled(true);
         corePage->inspectorController().connectRemoteInstrumentation();
+
+        // Buffer certificates only when the page opts in, matching PageNetworkAgent.
+        CheckedRef { m_resourceDataStore.get() }->setSupportsShowingCertificate(corePage->settings().inspectorSupportsShowingCertificate());
     }
 
     corePage->forEachLocalFrame([&](LocalFrame& frame) {
@@ -414,15 +418,53 @@ void WebInspectorBackend::removeInstrumentationForFrame(FrameIdentifier frameID)
     m_framePageAgentProxies.remove(frameID);
 }
 
-void WebInspectorBackend::getResponseBody(ResourceLoaderIdentifier resourceID, CompletionHandler<void(String content, bool base64Encoded, String errorString)>&& completionHandler)
+void WebInspectorBackend::getResponseBody(ResourceLoaderIdentifier resourceID, CompletionHandler<void(Expected<std::pair<String, bool>, String>&&)>&& completionHandler)
 {
     CheckedRef resourceDataStore = m_resourceDataStore.get();
     auto result = resourceDataStore->getResponseBody(resourceID);
-    if (result.has_value()) {
-        auto& [content, base64Encoded] = result.value();
-        completionHandler(content, base64Encoded, String());
-    } else
-        completionHandler(String(), false, result.error());
+    // ProxyingNetworkAgent reads an empty error as the AsyncReplyError connection-loss sentinel, so
+    // every genuine failure here must carry a non-empty message.
+    // FIXME: <https://webkit.org/b/320234> The sibling proxying replies (Page.getResourceContent,
+    // Page.searchInResource) still use a bare error-string reply and should adopt this same
+    // Expected-based discriminator.
+    ASSERT(result.has_value() || !result.error().isEmpty());
+    completionHandler(WTF::move(result));
+}
+
+void WebInspectorBackend::getSerializedCertificate(ResourceLoaderIdentifier resourceID, CompletionHandler<void(Expected<String, String>&&)>&& completionHandler)
+{
+    CheckedRef resourceDataStore = m_resourceDataStore.get();
+    auto result = resourceDataStore->getSerializedCertificate(resourceID);
+    // See getResponseBody: a genuine failure must carry a non-empty message (empty is connection loss).
+    ASSERT(result.has_value() || !result.error().isEmpty());
+    completionHandler(WTF::move(result));
+}
+
+void WebInspectorBackend::loadResource(WebCore::FrameIdentifier frameID, const String& url, CompletionHandler<void(Expected<std::tuple<String, String, int>, String>&&)>&& completionHandler)
+{
+    // Site Isolation load leg for Network.loadResource: ProxyingNetworkAgent already routed this to
+    // the frame's hosting process, so resolve the frame locally and run the load in its document
+    // context. Failures carry a non-empty error string (empty is reserved for the connection-loss
+    // AsyncReplyError; see WebInspectorBackend.messages.in).
+    RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
+    if (!webFrame) {
+        completionHandler(makeUnexpected("Frame not found in this process"_s));
+        return;
+    }
+
+    RefPtr localFrame = webFrame->coreLocalFrame();
+    if (!localFrame) {
+        completionHandler(makeUnexpected("Frame is not local to this process"_s));
+        return;
+    }
+
+    RefPtr document = localFrame->document();
+    if (!document) {
+        completionHandler(makeUnexpected("No document for frame"_s));
+        return;
+    }
+
+    Inspector::ResourceUtilities::loadResource(*document, url, WTF::move(completionHandler));
 }
 
 // Convert the JSON protocol matches from ContentSearchUtilities::searchInTextByLines into the plain
@@ -679,12 +721,12 @@ void WebInspectorBackend::disablePageInstrumentation()
 void WebInspectorBackend::getFrameResourceData(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>>&&)>&& completionHandler)
 {
     // Return, for each requested frame that is local to this WebContent process, its committed
-    // document's loaderId (as a ScriptExecutionContextIdentifier) and cached subresources. The
-    // UIProcess ProxyingPageAgent walks the authoritative cross-process frame tree, groups frame
-    // IDs by hosting process, and asks each process only for the frames it hosts; it then builds
-    // the Page.getResourceTree protocol objects from this typed data under Site Isolation. Frames
-    // not local to this process are silently skipped (another process answers for them).
-    // See webkit.org/b/308896.
+    // document's protocol loaderId string (computed here via IdentifierRegistry so it matches the
+    // live Network/Page events) and cached subresources. The UIProcess ProxyingPageAgent walks the
+    // authoritative cross-process frame tree, groups frame IDs by hosting process, and asks each
+    // process only for the frames it hosts; it then builds the Page.getResourceTree protocol objects
+    // from this typed data under Site Isolation. Frames not local to this process are silently
+    // skipped (another process answers for them). See webkit.org/b/308896.
     Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>> resourcesByFrame;
     resourcesByFrame.reserveInitialCapacity(frameIDs.size());
 
@@ -697,13 +739,72 @@ void WebInspectorBackend::getFrameResourceData(Vector<WebCore::FrameIdentifier>&
             continue;
 
         Inspector::FrameResourceData frameData;
-        if (RefPtr document = localFrame->document())
-            frameData.loaderId = document->identifier();
+        if (RefPtr framePage = localFrame->page()) {
+            Ref registry = framePage->inspectorController().identifierRegistry();
+            RefPtr documentLoader = localFrame->loader().documentLoader();
+            frameData.loaderId = registry->loaderId(documentLoader.get());
+        }
         frameData.resources = Inspector::ResourceUtilities::buildResourceDataForFrame(*localFrame);
         resourcesByFrame.append({ frameID, WTF::move(frameData) });
     }
 
     completionHandler(WTF::move(resourcesByFrame));
+}
+
+void WebInspectorBackend::getFrameResourceContent(WebCore::FrameIdentifier frameID, String url, CompletionHandler<void(String content, bool base64Encoded, String errorString)>&& completionHandler)
+{
+    // Return the content of a resource hosted by this WebContent process, for the UIProcess
+    // ProxyingPageAgent to serve Page.getResourceContent cross-process under Site Isolation.
+    // The UIProcess routes this message to the frame's hosting process (parsed from the
+    // process-qualified protocol frameId), so the frame is expected to be local here; a null
+    // WebFrame / LocalFrame / DocumentLoader means the frame swapped or detached between the
+    // request and this reply, which we surface as an errorString (unlike a lookup miss below,
+    // this case has no InspectorPageAgent precedent to mimic).
+    // Frame resolution mirrors searchInFrameResource() / getFrameResourceData().
+    // See webkit.org/b/171780776.
+    RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
+    if (!webFrame) {
+        completionHandler(String(), false, "Frame not found in this process"_s);
+        return;
+    }
+    RefPtr localFrame = webFrame->coreLocalFrame();
+    if (!localFrame) {
+        completionHandler(String(), false, "Frame is not local to this process"_s);
+        return;
+    }
+    RefPtr loader = localFrame->loader().documentLoader();
+    if (!loader) {
+        completionHandler(String(), false, "No document loader for frame"_s);
+        return;
+    }
+
+    // Serve the frame's committed main document, else a cached subresource matched by url --
+    // the same two-step lookup as WebCore's ResourceUtilities::resourceContent (which is not
+    // WEBCORE_EXPORT and so can't be linked from WebKit), composed here from the exported
+    // primitives, the same way searchInFrameResource() does above. Runs on the main thread (same
+    // dispatch as getFrameResourceData) because it touches Document / CachedResourceLoader /
+    // DocumentLoader.
+    URL parsedURL({ }, url);
+    URL loaderURL = loader->url();
+
+    String content;
+    // Initialize before use: the cached-subresource branch (cachedResourceContent) has a
+    // return-false path that leaves base64Encoded untouched, and this reply serializes it across
+    // IPC unconditionally, so an uninitialized bool would be undefined behavior.
+    bool base64Encoded = false;
+    bool success = false;
+
+    if (equalIgnoringFragmentIdentifier(parsedURL, loaderURL))
+        success = Inspector::ResourceUtilities::mainResourceContent(localFrame.get(), false, &content);
+
+    if (!success) {
+        if (RefPtr resource = Inspector::ResourceUtilities::cachedResource(localFrame.get(), parsedURL))
+            Inspector::ResourceUtilities::cachedResourceContent(*resource, &content, &base64Encoded);
+    }
+
+    // Matches InspectorPageAgent::getResourceContent: on a lookup miss, report success with
+    // empty content rather than an error -- the frontend already tolerates empty content here.
+    completionHandler(content, base64Encoded, String());
 }
 
 } // namespace WebKit

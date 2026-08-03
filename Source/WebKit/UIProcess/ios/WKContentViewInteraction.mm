@@ -187,7 +187,7 @@
 #import <WebCore/PlatformPasteboard.h>
 #import <WebCore/WebItemProviderPasteboard.h>
 #if ENABLE(MODEL_PROCESS)
-#import "ModelPresentationManagerProxy.h"
+#import "PortalPresentationManagerProxy.h"
 #endif
 #endif
 
@@ -1569,7 +1569,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     _didAccessoryTabInitiateFocus = NO;
     _isChangingFocusUsingAccessoryTab = NO;
     _isExpectingFastSingleTapCommit = NO;
-    _blurringFocusedElementForLoupeSelection = NO;
     _needsDeferredEndScrollingSelectionUpdate = NO;
     [_formInputSession invalidate];
     _formInputSession = nil;
@@ -1944,6 +1943,18 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (const WebKit::InteractionInformationAtPosition&)positionInformation
 {
     return _positionInformation;
+}
+
+- (std::optional<WebCore::ElementContext>)activeContextMenuElementContext
+{
+#if HAVE(LINK_PREVIEW) && USE(UICONTEXTMENU)
+    if (!_contextMenuElementInfo)
+        return std::nullopt;
+
+    return downcast<API::ContextMenuElementInfo>([_contextMenuElementInfo _apiObject]).interactionInformation().elementContext;
+#else
+    return std::nullopt;
+#endif
 }
 
 - (void)setInputDelegate:(id <UITextInputDelegate>)inputDelegate
@@ -3810,9 +3821,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         return YES;
 #endif
 
-    // If we're currently focusing an editable element, only allow the selection to move within that focused
-    // element. The loupe is exempt: it may begin a new selection on non-editable content outside the field.
-    if (self.isFocusingElement && gesture != WKBEGestureTypeLoupe)
+    // If we're currently focusing an editable element, only allow the selection to move within that focused element.
+    if (self.isFocusingElement)
         return _positionInformation.elementContext && _positionInformation.elementContext->isSameElement(_focusedElementInformation.elementContext);
 
     if (_positionInformation.prefersDraggingOverTextSelection)
@@ -3900,7 +3910,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (void)_doubleTapRecognizedForDoubleClick:(UITapGestureRecognizer *)gestureRecognizer
 {
     RELEASE_ASSERT(_layerTreeTransactionIdAtLastInteractionStart);
-    protect(_page)->handleDoubleTapForDoubleClickAtPoint(WebCore::IntPoint([gestureRecognizer locationInView:self]), WebKit::webEventModifierFlags(gestureRecognizer.modifierFlags), *_layerTreeTransactionIdAtLastInteractionStart);
+    protect(_page)->handleDoubleTapForDoubleClickAtPoint(WebCore::IntPoint([gestureRecognizer locationInView:self]), WebKit::webEventModifierFlags(gestureRecognizer.modifierFlags), *_layerTreeTransactionIdAtLastInteractionStart, WebKit::WebEventInputSource::UserDriven, WebKit::WebMouseEventSyntheticClickType::OneFingerTap);
 }
 
 - (void)_twoFingerSingleTapGestureRecognized:(UITapGestureRecognizer *)gestureRecognizer
@@ -4397,6 +4407,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKWEBVIEW)
         auto selectionContext = makeString(textBefore, selectedText, textAfter);
         NSRange selectedRangeInContext = NSMakeRange(textBefore.length(), selectedText.length());
 
+        // The editor state's selection rects are already in main-frame coordinates.
         if (auto textSelectionAssistant = view->_textInteractionWrapper)
             [textSelectionAssistant lookup:selectionContext.createNSString().get() withRange:selectedRangeInContext fromRect:presentationRect];
     });
@@ -4424,6 +4435,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKWEBVIEW)
         if (selectionGeometries.isEmpty())
             return;
 
+        // The editor state's selection rects are already in main-frame coordinates.
         [view->_textInteractionWrapper showShareSheetFor:string.createNSString().get() fromRect:selectionGeometries.first().rect()];
     });
 }
@@ -4452,6 +4464,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKWEBVIEW)
         if (page->editorState().visualData->selectionGeometries.isEmpty())
             return;
 
+        // selectionBoundingRectInRootViewCoordinates() is already in main-frame coordinates.
         [strongSelf->_textInteractionWrapper translate:string.createNSString().get() fromRect:page->selectionBoundingRectInRootViewCoordinates()];
     });
 }
@@ -4468,7 +4481,12 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKWEBVIEW)
     Ref page = *_page;
     if (!page->editorState().visualData)
         return;
-    [_textInteractionWrapper showTextServiceFor:[self selectedText] fromRect:page->editorState().visualData->selectionGeometries[0].rect()];
+    auto& selectionGeometries = page->editorState().visualData->selectionGeometries;
+    if (selectionGeometries.isEmpty())
+        return;
+    RetainPtr selectedText = [self selectedText];
+    // The editor state's selection rects are already in main-frame coordinates.
+    [_textInteractionWrapper showTextServiceFor:selectedText.get() fromRect:selectionGeometries.first().rect()];
 }
 
 - (NSString *)selectedText
@@ -5540,7 +5558,7 @@ static void selectionChangedWithTouch(WKTextInteractionWrapper *interaction, con
 
     _autocorrectionContextNeedsUpdate = YES;
     _usingGestureForSelection = YES;
-    protect(_page)->selectWithGesture(WebCore::IntPoint(point), toGestureType(gestureType), toGestureRecognizerState(state), self._hasFocusedElement, [self, strongSelf = retainPtr(self), state, flags](const WebCore::IntPoint& point, WebKit::GestureType gestureType, WebKit::GestureRecognizerState gestureState, OptionSet<WebKit::SelectionFlags> innerFlags) {
+    protect(_page)->selectWithGesture(std::nullopt, WebCore::IntPoint(point), toGestureType(gestureType), toGestureRecognizerState(state), self._hasFocusedElement, [self, strongSelf = retainPtr(self), state, flags](const WebCore::IntPoint& point, WebKit::GestureType gestureType, WebKit::GestureRecognizerState gestureState, OptionSet<WebKit::SelectionFlags> innerFlags) {
         selectionChangedWithGesture(_textInteractionWrapper.get(), point, gestureType, gestureState, toSelectionFlags(flags) | innerFlags);
         if (state == UIGestureRecognizerStateEnded || state == UIGestureRecognizerStateCancelled)
             _usingGestureForSelection = NO;
@@ -5871,8 +5889,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
 - (void)selectPositionAtPoint:(CGPoint)point completionHandler:(void (^)(void))completionHandler
 {
     _autocorrectionContextNeedsUpdate = YES;
-    BOOL stayingWithinFocusedElement = self._hasFocusedElement && _focusedElementInformation.interactionRect.contains(WebCore::roundedIntPoint(point));
-    [self _selectPositionAtPoint:point stayingWithinFocusedElement:stayingWithinFocusedElement completionHandler:completionHandler];
+    [self _selectPositionAtPoint:point stayingWithinFocusedElement:self._hasFocusedElement completionHandler:completionHandler];
 }
 
 - (void)_selectPositionAtPoint:(CGPoint)point stayingWithinFocusedElement:(BOOL)stayingWithinFocusedElement completionHandler:(void (^)(void))completionHandler
@@ -5881,20 +5898,6 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
 
     _autocorrectionContextNeedsUpdate = YES;
     _usingGestureForSelection = YES;
-
-    if (!stayingWithinFocusedElement && self._hasFocusedElement) {
-        _blurringFocusedElementForLoupeSelection = YES;
-        cancelPotentialTapIfNecessary(self);
-        protect(_page)->blurFocusedElement(_focusedElementInformation.frameID());
-        BOOL isInteractingWithFocusedElement = false;
-        [self.textInteractionLoupeGestureRecognizer _wk_cancel];
-        protect(_page)->selectWithGesture(WebCore::IntPoint(point), WebKit::GestureType::Loupe, WebKit::GestureRecognizerState::Began, isInteractingWithFocusedElement,
-        [view = retainPtr(self), completionHandler = makeBlockPtr(completionHandler)](const WebCore::IntPoint&, WebKit::GestureType, WebKit::GestureRecognizerState, OptionSet<WebKit::SelectionFlags>) {
-            completionHandler();
-            view->_usingGestureForSelection = NO;
-        });
-        return;
-    }
 
     protect(_page)->selectPositionAtPoint(WebCore::IntPoint(point), stayingWithinFocusedElement, [view = retainPtr(self), completionHandler = makeBlockPtr(completionHandler)]() {
         completionHandler();
@@ -5936,7 +5939,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
     _usingMouseDragForSelection = [_mouseInteraction mouseTouchGestureRecognizer]._wk_hasRecognizedOrEnded;
 #endif
     ++_suppressNonEditableSingleTapTextInteractionCount;
-    protect(_page)->selectTextWithGranularityAtPoint(WebCore::IntPoint(point), toWKTextGranularity(granularity), self._hasFocusedElement, [view = retainPtr(self), selectionHandler = makeBlockPtr(completionHandler)] {
+    protect(_page)->selectTextWithGranularityAtPoint(std::nullopt, WebCore::IntPoint(point), toWKTextGranularity(granularity), self._hasFocusedElement, [view = retainPtr(self), selectionHandler = makeBlockPtr(completionHandler)] {
         selectionHandler();
         view->_usingGestureForSelection = NO;
         --view->_suppressNonEditableSingleTapTextInteractionCount;
@@ -8334,8 +8337,7 @@ static UITextAutocapitalizationType toUITextAutocapitalize(WebCore::Autocapitali
     self.inputDelegate = nil;
     [self setUpTextSelectionAssistant];
 
-    if (!_blurringFocusedElementForLoupeSelection)
-        [_textInteractionWrapper deactivateSelection];
+    [_textInteractionWrapper deactivateSelection];
     [protect(_formAccessoryView) hideAutoFillButton];
 
     // FIXME: Does it make sense to call -reloadInputViews on watchOS?
@@ -8842,8 +8844,6 @@ static RetainPtr<NSObject <WKFormPeripheral>> createInputPeripheralWithView(WebK
         _didAccessoryTabInitiateFocus = NO;
 
     _lastInsertedCharacterToOverrideCharacterBeforeSelection = std::nullopt;
-
-    _blurringFocusedElementForLoupeSelection = NO;
 }
 
 - (void)_updateInputContextAfterBlurringAndRefocusingElement
@@ -8857,6 +8857,9 @@ static RetainPtr<NSObject <WKFormPeripheral>> createInputPeripheralWithView(WebK
 - (void)_didProgrammaticallyClearFocusedElement:(WebCore::ElementContext&&)context
 {
     if (![self _isSameAsFocusedElement:context])
+        return;
+
+    if (_usingGestureForSelection || _selectionChangeNestingLevel)
         return;
 
     [self _internalInvalidateTextEntryContext];
@@ -9463,7 +9466,7 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
         if (postLayoutData.selectionIsTransparentOrFullyClipped)
             selectionIsTransparentOrFullyClipped = YES;
 
-        if (self._hasFocusedElement && editorState.isContentEditable) {
+        if (self._hasFocusedElement) {
             auto elementArea = visualData.editableRootBounds.area<RecordOverflow>();
             if (!elementArea.hasOverflowed() && elementArea < minimumFocusedElementAreaForSuppressingSelectionAssistant)
                 focusedElementIsTooSmall = YES;
@@ -10802,8 +10805,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 #if ENABLE(MODEL_PROCESS)
     _dragDropInteractionState.setElementIdentifier(nodeID);
     if (item.modelLayerID && _page) {
-        if (RefPtr modelPresentationManager = _page->modelPresentationManagerProxy()) {
-            if (RetainPtr viewForDragPreview = modelPresentationManager->startDragForModel(*item.modelLayerID)) {
+        if (RefPtr portalPresentationManager = _page->portalPresentationManagerProxy()) {
+            if (RetainPtr viewForDragPreview = portalPresentationManager->startDragForModel(*item.modelLayerID)) {
                 _dragDropInteractionState.stageDragItem(item, viewForDragPreview);
                 return;
             }
@@ -10943,8 +10946,8 @@ static std::optional<WebCore::DragOperation> coreDragOperationForUIDropOperation
 
 #if ENABLE(MODEL_PROCESS)
     if (_page) {
-        if (RefPtr modelPresentationManager = _page->modelPresentationManagerProxy())
-            modelPresentationManager->doneWithCurrentDragSession();
+        if (RefPtr portalPresentationManager = _page->portalPresentationManagerProxy())
+            portalPresentationManager->doneWithCurrentDragSession();
 
         if (_dragDropInteractionState.nodeIdentifier())
             _page->modelDragEnded(_dragDropInteractionState.nodeIdentifier().value());

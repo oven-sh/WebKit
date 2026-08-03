@@ -649,9 +649,8 @@ SUPPRESS_NODELETE ALWAYS_INLINE const UnsignedType* NODELETE findImpl(const Unsi
         return current == character;
     };
 
-    constexpr size_t threshold = 32;
     auto* end = pointer + length;
-    auto* cursor = SIMD::find<UnsignedType, threshold>(std::span { pointer, end }, vectorMatch, scalarMatch);
+    auto* cursor = SIMD::find(std::span { pointer, end }, vectorMatch, scalarMatch);
     if (cursor == end)
         return nullptr;
     return cursor;
@@ -1593,7 +1592,7 @@ inline void copyElements(std::span<uint8_t> destinationSpan, std::span<const uin
 
     while (destination != end)
         *destination++ = static_cast<uint8_t>(*source++);
-#elif CPU(ARM_NEON) && !(CPU(BIG_ENDIAN) || CPU(MIDDLE_ENDIAN)) && !ASSERT_ENABLED
+#elif CPU(ARM_NEON) && !ASSERT_ENABLED
     const uint8_t* const end = destination + length;
     const uintptr_t memoryAccessSize = 8;
 

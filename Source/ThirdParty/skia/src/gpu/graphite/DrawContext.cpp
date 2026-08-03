@@ -12,8 +12,9 @@
 #include "include/core/SkSize.h"
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/graphite/Recorder.h"
-#include "include/private/base/SkAssert.h"
-#include "src/base/SkEnumBitMask.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkEnumBitMask.h"
+#include "include/private/SkLog.h"
 #include "src/core/SkColorData.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/SkBackingFit.h"
@@ -28,7 +29,6 @@
 #include "src/gpu/graphite/DrawParams.h"
 #include "src/gpu/graphite/DrawPass.h"
 #include "src/gpu/graphite/Image_Graphite.h"
-#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/RenderPassDesc.h"
 #include "src/gpu/graphite/ResourceTypes.h"
@@ -93,11 +93,13 @@ DrawContext::DrawContext(const Caps* caps,
         , fDstReadStrategy(caps->getDstReadStrategy())
         , fSupportsHardwareAdvancedBlend(caps->supportsHardwareAdvancedBlending())
         , fAdvancedBlendsRequireBarrier(caps->blendEquationSupport() ==
-                                            Caps::BlendEquationSupport::kAdvancedNoncoherent)
+                                        Caps::BlendEquationSupport::kAdvancedNoncoherent)
         , fCurrentDrawTask(sk_make_sp<DrawTask>(fTarget.refProxy()))
-        , fPendingDraws(caps->useDrawListLayer() ?
-                        std::unique_ptr<DrawListBase>(std::make_unique<DrawListLayer>()) :
-                        std::unique_ptr<DrawListBase>(std::make_unique<DrawList>()))
+        , fPendingDraws(
+                  caps->useDrawListLayer()
+                          ? std::unique_ptr<DrawListBase>(std::make_unique<DrawListLayer>(
+                                   caps->storageBufferSupport()))
+                          : std::unique_ptr<DrawListBase>(std::make_unique<DrawList>()))
         , fPendingUploads(std::make_unique<UploadList>()) {
     // Must determine a valid strategy to use should a dst texture read be required.
     SkASSERT(fDstReadStrategy != DstReadStrategy::kNoneRequired);
@@ -150,7 +152,7 @@ bool DrawContext::readsTexture(const TextureProxy* texture) const {
     return !notFound; // double negation means its found in a pending child task
 }
 
-std::pair<DrawParams*, Insertion> DrawContext::recordDraw(
+std::pair<DrawParams*, Layer*> DrawContext::recordDraw(
         const Renderer* renderer,
         const Transform& localToDevice,
         const Geometry& geometry,
@@ -160,7 +162,7 @@ std::pair<DrawParams*, Insertion> DrawContext::recordDraw(
         SkEnumBitMask<DstUsage> dstUsage,
         PipelineDataGatherer* gatherer,
         const StrokeStyle* stroke,
-        const Insertion& latestInsertion) {
+        Layer* lastInsertion) {
     SkASSERTF(SkIRect::MakeSize(this->imageInfo().dimensions()).contains(clip.scissor()),
               "Image %dx%d, scissor %d,%d,%d,%d",
               this->imageInfo().width(), this->imageInfo().height(),
@@ -182,27 +184,15 @@ std::pair<DrawParams*, Insertion> DrawContext::recordDraw(
 
     return fPendingDraws->recordDraw(renderer, localToDevice, geometry, clip, ordering, paintID,
                                      dstUsage,  barrierBeforeDraws, gatherer, stroke,
-                                     latestInsertion);
+                                     lastInsertion);
 }
 
 bool DrawContext::recordUpload(Recorder* recorder,
-                               const TextureProxyView& dstView,
-                               const SkColorInfo& srcColorInfo,
-                               const SkColorInfo& dstColorInfo,
                                const UploadSource& source,
-                               const SkIRect& dstRect,
                                std::unique_ptr<ConditionalUploadContext> condContext) {
-    // Our caller should have clipped to the bounds of the surface already.
-    SkASSERT(dstView.proxy()->isFullyLazy() ||
-             SkIRect::MakeSize(dstView.dimensions()).contains(dstRect));
-    SkASSERT(source.isValid());
-    return fPendingUploads->recordUpload(recorder,
-                                         std::move(dstView),
-                                         srcColorInfo,
-                                         dstColorInfo,
-                                         source,
-                                         dstRect,
-                                         std::move(condContext));
+    // Since this upload is inline with the DrawContext's tasks, we do not attempt to upload it
+    // directly via the host, we want to keep it as a repeatable task.
+    return fPendingUploads->recordUpload(recorder, source, std::move(condContext));
 }
 
 void DrawContext::recordDependency(sk_sp<Task> task) {
@@ -295,7 +285,7 @@ void DrawContext::flush(Recorder* recorder) {
                     SkBackingFit::kApprox,
                     "DstCopy");
             if (!imageCopy) {
-                SKGPU_LOG_W("DrawContext::flush Image::Copy failed, draw pass dropped!");
+                SKIA_LOG_W("DrawContext::flush Image::Copy failed, draw pass dropped!");
                 return;
             }
             dstCopy = imageCopy->textureProxyView().refProxy();
@@ -308,7 +298,7 @@ void DrawContext::flush(Recorder* recorder) {
         auto writeSwizzle = WriteSwizzleForColorType(this->colorInfo().colorType(), format);
         if (!writeSwizzle.has_value()) {
             writeSwizzle = Swizzle::RGBA(); // Fall back to rgba in release builds
-            SKGPU_LOG_W("No valid write swizzle for color type %d with format %s",
+            SKIA_LOG_W("No valid write swizzle for color type %d with format %s",
                         (int) this->colorInfo().colorType(), TextureFormatName(format));
         }
         RenderPassDesc desc = RenderPassDesc::Make(caps, fTarget.proxy()->textureInfo(),
@@ -325,7 +315,7 @@ void DrawContext::flush(Recorder* recorder) {
                                                        std::move(dstCopy), dstReadPixelBounds));
         if (fTarget.mipmapped() == Mipmapped::kYes) {
             if (!GenerateMipmaps(recorder, this, fTarget.refProxy())) {
-                SKGPU_LOG_W("DrawContext::flush GenerateMipmaps failed, draw pass dropped!");
+                SKIA_LOG_W("DrawContext::flush GenerateMipmaps failed, draw pass dropped!");
                 return;
             }
         }

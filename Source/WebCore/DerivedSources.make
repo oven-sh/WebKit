@@ -346,6 +346,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/fetch/FetchRequestCache.idl \
     $(WebCore)/Modules/fetch/FetchRequestCredentials.idl \
     $(WebCore)/Modules/fetch/FetchRequestDestination.idl \
+    $(WebCore)/Modules/fetch/FetchRequestDuplex.idl \
     $(WebCore)/Modules/fetch/FetchRequestInit.idl \
     $(WebCore)/Modules/fetch/FetchRequestMode.idl \
     $(WebCore)/Modules/fetch/FetchRequestRedirect.idl \
@@ -382,6 +383,9 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/identity/DigitalCredentialRequestOptions.idl \
     $(WebCore)/Modules/identity/DigitalCredentialPresentationProtocol.idl \
     $(WebCore)/Modules/identity/protocols/ISO18013/MobileDocumentRequest.idl \
+    $(WebCore)/Modules/identity/protocols/openid/OpenID4VPMultisignedRequest.idl \
+    $(WebCore)/Modules/identity/protocols/openid/OpenID4VPSignature.idl \
+    $(WebCore)/Modules/identity/protocols/openid/OpenID4VPSignedRequest.idl \
     $(WebCore)/Modules/indexeddb/IDBCursor.idl \
     $(WebCore)/Modules/indexeddb/IDBCursorDirection.idl \
     $(WebCore)/Modules/indexeddb/IDBCursorWithValue.idl \
@@ -834,7 +838,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webdriver/Navigator+WebDriver.idl \
     $(WebCore)/Modules/websockets/CloseEvent.idl \
     $(WebCore)/Modules/websockets/WebSocket.idl \
-    $(WebCore)/Modules/webtransport/DatagramsReadableMode.idl \
     $(WebCore)/Modules/webtransport/WebTransport.idl \
     $(WebCore)/Modules/webtransport/WebTransportBidirectionalStream.idl \
     $(WebCore)/Modules/webtransport/WebTransportCloseInfo.idl \
@@ -856,6 +859,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webtransport/WebTransportSendStream.idl \
     $(WebCore)/Modules/webtransport/WebTransportSendStreamOptions.idl \
     $(WebCore)/Modules/webtransport/WebTransportSendStreamStats.idl \
+    $(WebCore)/Modules/webtransport/WebTransportWriter.idl \
     $(WebCore)/Modules/webxr/Navigator+WebXR.idl \
     $(WebCore)/Modules/webxr/WebXRBoundedReferenceSpace.idl \
     $(WebCore)/Modules/webxr/WebXRFrame+HandInput.idl \
@@ -2620,6 +2624,7 @@ WORKLETGLOBALSCOPE_CONSTRUCTORS_FILE = WorkletGlobalScopeConstructors.idl
 PAINTWORKLETGLOBALSCOPE_CONSTRUCTORS_FILE = PaintWorkletGlobalScopeConstructors.idl
 AUDIOWORKLETGLOBALSCOPE_CONSTRUCTORS_FILE = AudioWorkletGlobalScopeConstructors.idl
 IDL_ATTRIBUTES_FILE = $(WebCore)/bindings/scripts/IDLAttributes.json
+INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE = InspectorNativeFunctionParameters.json
 
 IDL_INTERMEDIATE_FILES = \
     $(SUPPLEMENTAL_MAKEFILE_DEPS) \
@@ -2711,6 +2716,10 @@ $(JS_BINDINGS_STAMP): $(JS_BINDING_IDLS) $(JS_BINDINGS_SCRIPTS) \
 		--exclude EventListener.idl
 	touch $(JS_BINDINGS_STAMP)
 
+all : $(INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE)
+$(INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE): $(JS_BINDINGS_STAMP) $(WebCore)/bindings/scripts/combine-inspector-native-function-parameters.pl $(IDL_FILE_NAMES_LIST)
+	$(PERL) $(WebCore)/bindings/scripts/combine-inspector-native-function-parameters.pl --idlFilesList $(IDL_FILE_NAMES_LIST) --output $(INSPECTOR_NATIVE_FUNCTION_PARAMETERS_FILE)
+
 $(JS_DOM_HEADERS) $(JS_DOM_IMPLEMENTATIONS): $(JS_BINDINGS_STAMP)
 # -------------------------------------------------
 
@@ -2728,7 +2737,6 @@ WebCore_BUILTINS_SOURCES = \
     $(WebCore)/Modules/streams/TransformStreamDefaultController.js \
     $(WebCore)/Modules/streams/TransformStreamInternals.js \
     $(WebCore)/Modules/streams/WritableStreamDefaultController.js \
-    $(WebCore)/Modules/streams/WritableStreamDefaultWriter.js \
     $(WebCore)/Modules/streams/WritableStreamInternals.js \
     $(WebCore)/dom/TextDecoderStream.js \
     $(WebCore)/dom/TextEncoderStream.js \

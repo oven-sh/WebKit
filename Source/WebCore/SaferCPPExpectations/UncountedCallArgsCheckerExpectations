@@ -192,7 +192,6 @@ html/canvas/PlaceholderRenderingContext.cpp
 inspector/DOMEditor.cpp
 inspector/InspectorAuditAccessibilityObject.cpp
 inspector/InspectorCanvas.cpp
-inspector/InspectorCanvas.h
 inspector/InspectorCanvasCallTracer.cpp
 inspector/InspectorOverlay.cpp
 inspector/InspectorResourceUtilities.cpp
@@ -213,7 +212,6 @@ inspector/agents/InspectorPageAgent.cpp
 inspector/agents/InspectorTimelineAgent.cpp
 inspector/agents/InspectorWorkerAgent.cpp
 inspector/agents/page/PageConsoleAgent.cpp
-inspector/agents/page/PageDOMDebuggerAgent.cpp
 inspector/agents/page/PageNetworkAgent.cpp
 inspector/agents/page/PageRuntimeAgent.cpp
 inspector/agents/worker/ServiceWorkerAgent.cpp
@@ -272,6 +270,7 @@ platform/graphics/DisplayRefreshMonitorManager.h
 platform/graphics/ImageBackingStore.h
 [ iOS ] platform/graphics/avfoundation/SampleBufferDisplayLayer.h
 platform/graphics/avfoundation/objc/MediaPlayerPrivateMediaStreamAVFObjC.mm
+platform/graphics/ca/FrameProcessIndicators.cpp
 platform/graphics/ca/GraphicsLayerCA.cpp
 platform/graphics/ca/TileGrid.cpp
 [ Mac ] platform/graphics/cocoa/ImageAdapterCocoa.mm
@@ -302,6 +301,7 @@ platform/mediastream/RealtimeOutgoingAudioSource.h
 platform/mediastream/RealtimeOutgoingVideoSource.cpp
 platform/mediastream/cocoa/RealtimeOutgoingAudioSourceCocoa.cpp
 platform/mock/MockRealtimeVideoSource.cpp
+platform/network/cf/FormDataStreamCFNet.mm
 platform/network/cocoa/ResourceHandleCocoa.mm
 platform/network/cocoa/WebCoreResourceHandleAsOperationQueueDelegate.mm
 [ macOS ] rendering/AttachmentLayout.mm

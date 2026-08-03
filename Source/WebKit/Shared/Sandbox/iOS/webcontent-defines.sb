@@ -381,6 +381,11 @@
     SYS_shared_region_map_and_slide_2_np ;; <rdar://problem/60294880>
     SYS_sysctlbyname))
 
+(define (syscall-unix-allowed-with-telemetry)
+    (syscall-number
+        SYS_openat_dprotected_np
+        SYS_renameat))
+
 (define (syscall-quicklook)
     (syscall-number
         SYS_mkdirat

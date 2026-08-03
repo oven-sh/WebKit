@@ -67,13 +67,14 @@
 #import "UIGamepadProvider.h"
 #import "UndoOrRedo.h"
 #import "ViewGestureController.h"
+#import "WKAlternatePDFHUDView.h"
 #import "WKAppKitGestureController.h"
+#import "WKDefaultPDFHUDView.h"
 #import "WKEditCommand.h"
 #import "WKErrorInternal.h"
 #import "WKFullScreenWindowController.h"
 #import "WKImmediateActionController.h"
 #import "WKNSURLExtras.h"
-#import "WKPDFHUDView.h"
 #import "WKPrintingView.h"
 #import "WKQuickLookPreviewController.h"
 #import "WKRevealItemPresenter.h"
@@ -118,6 +119,7 @@
 #import <WebCore/DragItem.h>
 #import <WebCore/Editor.h>
 #import <WebCore/FixedContainerEdges.h>
+#import <WebCore/FloatRect.h>
 #import <WebCore/FontAttributeChanges.h>
 #import <WebCore/FontAttributes.h>
 #import <WebCore/FrameIdentifier.h>
@@ -1346,6 +1348,10 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     [NSApp registerServicesMenuSendTypes:PasteboardTypes::forSelectionSingleton() returnTypes:PasteboardTypes::forEditingSingleton()];
 
+    // Occlusion notifications are not always sent in the base system, and stale occlusion state can result in various misbehaviors.
+    if (os_variant_is_basesystem("WebKit"))
+        setWindowOcclusionDetectionEnabled(false);
+
 #if ENABLE(TILED_CA_DRAWING_AREA)
     auto useRemoteLayerTree = [&]() {
         bool result = false;
@@ -1510,6 +1516,7 @@ void WebViewImpl::handleProcessSwapOrExit()
 #endif
 
     m_contentRelativeViewsNeedToBeRepositioned = false;
+    m_cursorOverlapsSelection = false;
 }
 
 void WebViewImpl::processWillSwap()
@@ -1781,28 +1788,107 @@ void WebViewImpl::viewDidEndLiveResize()
     [m_layoutStrategy didEndLiveResize];
 }
 
-void WebViewImpl::createPDFHUD(PDFPluginIdentifier identifier, WebCore::FrameIdentifier frameID, const WebCore::IntRect& rect)
+void WebViewImpl::createPDFHUD(PDFPluginIdentifier identifier, WebCore::FrameIdentifier frameID, const WebCore::IntRect& boundingBoxInFrameRootView)
 {
     removePDFHUD(identifier);
-    RetainPtr hud = adoptNS([[WKPDFHUDView alloc] initWithFrame:rect pluginIdentifier:identifier.toUInt64() frameIdentifier:frameID.toUInt64() webView:m_page->cocoaView().get()]);
-    [m_view.get() addSubview:hud.get()];
-    _pdfHUDViews.add(identifier, WTF::move(hud));
+
+    auto actionHandler = makeBlockPtr([weakThis = WeakPtr { *this }, identifier, frameID](WKPDFHUDViewControlAction action) {
+        CheckedPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
+
+        Ref page = protectedThis->page();
+
+        switch (action) {
+        case WKPDFHUDViewControlActionZoomIn:
+            page->pdfZoomIn(identifier, frameID);
+            return;
+
+        case WKPDFHUDViewControlActionZoomOut:
+            page->pdfZoomOut(identifier, frameID);
+            return;
+
+        case WKPDFHUDViewControlActionOpenInPreview:
+            page->pdfOpenWithPreview(identifier, frameID);
+            return;
+
+        case WKPDFHUDViewControlActionSavePDF:
+            page->pdfSaveToPDF(identifier, frameID);
+            return;
+        }
+    });
+
+    // The bounding box is in the plugin frame's local root view coordinates.
+    // For cross-origin <iframe> PDFs, this lacks the subframe's offset in the
+    // page, so we need to convert that to top level web view coordinates.
+    m_pdfHUDsPendingCreation.set(identifier, boundingBoxInFrameRootView);
+    convertPDFHUDBoundingBoxToWebViewCoordinates(frameID, boundingBoxInFrameRootView, [weakThis = WeakPtr { *this }, identifier, frameID, requestedBox = boundingBoxInFrameRootView, actionHandler](const WebCore::IntRect& boundingBoxInWebView) {
+        CheckedPtr checkedThis = weakThis.get();
+        if (!checkedThis)
+            return;
+
+        auto latestBoxInFrameRootView = checkedThis->m_pdfHUDsPendingCreation.takeOptional(identifier);
+        // In case the PDF HUD was removed while the conversion was in flight.
+        if (!latestBoxInFrameRootView)
+            return;
+
+        const auto compositingBordersVisible = protect(checkedThis->m_page->preferences())->compositingBordersVisible();
+
+        RetainPtr<Class> hudType = protect(checkedThis->m_page->preferences())->useAlternatePDFHUD() ? WKAlternatePDFHUDView.class : WKDefaultPDFHUDView.class;
+        RetainPtr<NSView<WKPDFHUDView>> hud = adoptNS([[hudType alloc] initWithFrame:boundingBoxInWebView frameIdentifier:frameID.toUInt64() compositingBordersVisible:compositingBordersVisible actionHandler:actionHandler.get()]);
+
+        [checkedThis->m_view.get() addSubview:hud];
+        checkedThis->_pdfHUDViews.add(identifier, WTF::move(hud));
+
+        // If a HUD update arrived while the conversion was in flight, apply it now that the HUD exists.
+        if (latestBoxInFrameRootView != requestedBox)
+            checkedThis->updatePDFHUDLocation(identifier, *latestBoxInFrameRootView);
+    });
 }
 
-void WebViewImpl::updatePDFHUDLocation(PDFPluginIdentifier identifier, const WebCore::IntRect& rect)
+void WebViewImpl::updatePDFHUDLocation(PDFPluginIdentifier identifier, const WebCore::IntRect& boundingBoxInFrameRootView)
 {
-    if (RetainPtr hud = _pdfHUDViews.get(identifier))
-        [hud setFrame:rect];
+    RetainPtr hud = _pdfHUDViews.get(identifier);
+    if (!hud) {
+        if (auto it = m_pdfHUDsPendingCreation.find(identifier); it != m_pdfHUDsPendingCreation.end())
+            it->value = boundingBoxInFrameRootView;
+        return;
+    }
+
+    convertPDFHUDBoundingBoxToWebViewCoordinates(WebCore::FrameIdentifier { [hud frameIdentifier] }, boundingBoxInFrameRootView, [weakThis = WeakPtr { *this }, identifier](const WebCore::IntRect& boundingBoxInWebView) {
+        CheckedPtr checkedThis = weakThis.get();
+        if (!checkedThis)
+            return;
+        if (RetainPtr hud = checkedThis->_pdfHUDViews.get(identifier))
+            [hud setFrame:boundingBoxInWebView];
+    });
+}
+
+void WebViewImpl::convertPDFHUDBoundingBoxToWebViewCoordinates(WebCore::FrameIdentifier pluginFrameID, WebCore::IntRect boundingBoxInFrameRootView, CompletionHandler<void(WebCore::IntRect)>&& completionHandler)
+{
+    RefPtr frame = WebFrameProxy::webFrame(pluginFrameID);
+    if (!frame)
+        return completionHandler(boundingBoxInFrameRootView);
+
+    m_page->convertRectToMainFrameCoordinates(boundingBoxInFrameRootView, frame->rootFrame()->frameID(), [completionHandler = WTF::move(completionHandler), fallback = boundingBoxInFrameRootView](std::optional<WebCore::FloatRect> boundingBoxInWebView) mutable {
+        completionHandler(boundingBoxInWebView
+            .transform([](const auto& floatRect) {
+                return WebCore::enclosingIntRect(floatRect);
+            })
+            .value_or(fallback));
+    });
 }
 
 void WebViewImpl::removePDFHUD(PDFPluginIdentifier identifier)
 {
+    m_pdfHUDsPendingCreation.remove(identifier);
     if (RetainPtr hud = _pdfHUDViews.take(identifier))
         [hud removeFromSuperview];
 }
 
 void WebViewImpl::removeAllPDFHUDs()
 {
+    m_pdfHUDsPendingCreation.clear();
     for (auto& hud : _pdfHUDViews.values())
         [hud removeFromSuperview];
     _pdfHUDViews.clear();
@@ -2552,6 +2638,8 @@ void WebViewImpl::pageDidScroll(const IntPoint& scrollOffset)
 
     m_lastPageScrollOffset = scrollOffset;
     m_pageScrollingHysteresis->impulse();
+
+    updateCursorOverlapsSelectionAndNotifyIfNeeded();
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
     // While a selection-drag is autoscrolling, keep extending the selection toward the
@@ -3903,7 +3991,7 @@ void WebViewImpl::contentRelativeViewsHysteresisTimerFired(PAL::HysteresisState 
     }
 
     if (m_contentRelativeViewsNeedToBeRepositioned != started && std::exchange(m_contentRelativeViewsNeedToBeRepositioned, started))
-        [inputContextForSelectionUpdates() textInputClientDidUpdateSelection];
+        [protect(inputContextForSelectionUpdates()) textInputClientDidUpdateSelection];
 }
 
 void WebViewImpl::pageScrollingHysteresisFired(PAL::HysteresisState state)
@@ -3935,6 +4023,31 @@ void WebViewImpl::restoreContentRelativeChildViews()
 #if ENABLE(WRITING_TOOLS)
     [m_view.get() _web_restoreContentRelativeChildViews];
     [m_textAnimationTypeManager restoreTextAnimationType];
+#endif
+}
+
+void WebViewImpl::updateCursorOverlapsSelectionAndNotifyIfNeeded()
+{
+    RetainPtr context = inputContextForSelectionUpdates();
+    if (!context)
+        return;
+
+    bool overlaps = false;
+    RetainPtr view = m_view.get();
+    if (RetainPtr window = [view window]) {
+        auto locationInView = [view convertPoint:[window mouseLocationOutsideOfEventStream] fromView:nil];
+        overlaps = page().selectionBoundingRectInRootViewCoordinates().contains(WebCore::FloatPoint { locationInView });
+    }
+
+    if (std::exchange(m_cursorOverlapsSelection, overlaps) == overlaps)
+        return;
+
+    if (overlaps)
+        return;
+
+#if HAVE(APPKIT_SIRI_AFFORDANCE)
+    if (RetainPtr controller = [NSCampoLightweightUIController sharedInstance]; [controller isVisible])
+        [controller dismiss];
 #endif
 }
 
@@ -4447,7 +4560,7 @@ void WebViewImpl::setInspectorAttachmentView(NSView *newView)
         return;
 
     m_inspectorAttachmentView = newView;
-    
+
     if (RefPtr inspector = m_page->inspector())
         inspector->attachmentViewDidChange(oldView ? oldView.get() : m_view.get().get(), newView ? RetainPtr { newView }.get() : m_view.get().get());
 }
@@ -7966,7 +8079,10 @@ void WebViewImpl::updateScrollPocket()
     RetainPtr view = m_view.get();
     CGFloat topContentInset = obscuredContentInsets().top();
     CGFloat additionalHeight = page->overflowHeightForTopScrollEdgeEffect();
-    auto needsTopViewForFullScreenTitlebar = [view _scrollPocketInFullscreenEnabled] && (m_fullScreenTitlebarOverlayHeight > 0);
+    auto needsTopViewForFullScreenTitlebar = [view _scrollPocketInFullscreenEnabled]
+        && (m_fullScreenTitlebarOverlayHeight > 0)
+        && ![view enclosingScrollView];
+
     bool needsTopView = protect(page->preferences())->contentInsetBackgroundFillEnabled()
         && view
         && !view->_reasonsToHideTopScrollPocket
@@ -8174,7 +8290,9 @@ void WebViewImpl::setRefreshController(NSRefreshController *refreshController)
     if (m_refreshController) {
         [[m_refreshController refreshControl] removeFromSuperview];
         m_topScrollStretchForRefreshController = 0;
+        m_refreshControllerIsTracking = false;
         m_refreshControllerMask = nil;
+        m_suppressRefreshControllerUpdates = false;
     }
 
     m_refreshController = refreshController;
@@ -8210,6 +8328,10 @@ void WebViewImpl::setRefreshController(NSRefreshController *refreshController)
 void WebViewImpl::applyRefreshControllerHeight(CGFloat height, bool animated)
 {
     m_topScrollStretchForRefreshController = height;
+
+    if (!height && m_cachedTopScrollStretch > 0)
+        m_suppressRefreshControllerUpdates = true;
+
     if (CheckedPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy())
         scrollingCoordinator->setTopScrollStretchForRefreshController(height);
 }
@@ -8256,7 +8378,8 @@ void WebViewImpl::updateRefreshControllerFrame()
         [m_refreshControllerMask setPath:maskPath.get()];
     }
 
-    [[m_refreshController refreshControl] update];
+    if (!m_suppressRefreshControllerUpdates)
+        [[m_refreshController refreshControl] update];
 
     if (CheckedPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy())
         scrollingCoordinator->setRefreshControllerSnappingThreshold(refreshControllerSnappingThreshold());
@@ -8268,6 +8391,10 @@ void WebViewImpl::topScrollStretchDidChange(CGFloat topScrollStretch)
         return;
 
     m_cachedTopScrollStretch = topScrollStretch;
+
+    if (m_suppressRefreshControllerUpdates && !topScrollStretch)
+        m_suppressRefreshControllerUpdates = false;
+
     if (m_refreshController)
         updateRefreshControllerFrame();
 }
@@ -8279,8 +8406,32 @@ void WebViewImpl::updateRefreshControllerForWheelEvent(NSEvent *event)
 
     // Track whether this scroll gesture began at the top of the page.
     // Only allow refresh control activation for gestures that started at top.
-    if (event.phase == NSEventPhaseBegan)
+    if (event.phase == NSEventPhaseBegan) {
         m_canShowRefreshController = pageIsScrolledToTop();
+        m_suppressRefreshControllerUpdates = false;
+    }
+
+    // Prevent momentum scrolls from triggering the refresh control. Only an active,
+    // ongoing scroll should trigger the control.
+    auto shouldTrackEventForRefreshControl = [](NSEvent *event, bool wasTracking) {
+        if (event.momentumPhase != NSEventPhaseNone)
+            return false;
+
+        switch (event.phase) {
+        case NSEventPhaseBegan:
+        case NSEventPhaseChanged:
+        case NSEventPhaseNone:
+        case NSEventPhaseStationary:
+            return true;
+        case NSEventPhaseCancelled:
+        case NSEventPhaseEnded:
+            return false;
+        case NSEventPhaseMayBegin:
+            return wasTracking;
+        }
+        return false;
+    };
+    m_refreshControllerIsTracking = shouldTrackEventForRefreshControl(event, m_refreshControllerIsTracking);
 }
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
@@ -8291,8 +8442,27 @@ void WebViewImpl::updateRefreshControllerForPanGesture(NSGestureRecognizerState 
 
     // Track whether this scroll gesture began at the top of the page.
     // Only allow refresh control activation for gestures that started at top.
-    if (state == NSGestureRecognizerStateBegan)
+    if (state == NSGestureRecognizerStateBegan) {
         m_canShowRefreshController = pageIsScrolledToTop();
+        m_suppressRefreshControllerUpdates = false;
+    }
+
+    // Prevent momentum scrolls from triggering the refresh control. Only an active,
+    // ongoing scroll should trigger the control.
+    auto shouldTrackEventForRefreshControl = [](NSGestureRecognizerState state, bool wasTracking) {
+        switch (state) {
+        case NSGestureRecognizerStateBegan:
+        case NSGestureRecognizerStateChanged:
+            return true;
+        case NSGestureRecognizerStateCancelled:
+        case NSGestureRecognizerStateEnded:
+        case NSGestureRecognizerStateFailed:
+            return false;
+        case NSGestureRecognizerStatePossible:
+            return wasTracking;
+        }
+    };
+    m_refreshControllerIsTracking = shouldTrackEventForRefreshControl(state, m_refreshControllerIsTracking);
 }
 #endif
 

@@ -95,11 +95,6 @@
 #include "WebKitWebSourceGStreamer.h"
 #endif
 
-#if USE(GSTREAMER_WEBRTC)
-#include "GStreamerRTPVideoRotationHeaderExtension.h"
-#include <gst/webrtc/webrtc-enumtypes.h>
-#endif
-
 #if USE(GSTREAMER_GL)
 #include <gst/gl/gl.h>
 #endif
@@ -571,10 +566,6 @@ void registerWebKitGStreamerElements()
 #endif
         registerInternalVideoEncoder();
 
-#if USE(GSTREAMER_WEBRTC)
-        gst_element_register(nullptr, "webkitrtpvideorotationheaderextension", GST_RANK_MARGINAL, WEBKIT_TYPE_GST_RTP_VIDEO_ROTATION_HEADER_EXTENSION);
-#endif
-
 #if ENABLE(MEDIA_SOURCE)
         gst_element_register(nullptr, "webkitmediasrc", GST_RANK_PRIMARY, WEBKIT_TYPE_MEDIA_SRC);
 #endif
@@ -806,6 +797,15 @@ uint64_t toGstUnsigned64Time(const MediaTime& mediaTime)
 GstClockTime toGstClockTime(const Seconds& seconds)
 {
     return toGstClockTime(MediaTime::createWithDouble(seconds.seconds()));
+}
+
+GstClockTime toGstClockTime(const WTF::MediaTime& mediaTime)
+{
+    if (mediaTime.isInvalid())
+        return GST_CLOCK_TIME_NONE;
+    if (mediaTime < MediaTime::zeroTime())
+        return 0;
+    return static_cast<GstClockTime>(toGstUnsigned64Time(mediaTime));
 }
 
 MediaTime fromGstClockTime(GstClockTime time)
@@ -1274,7 +1274,7 @@ bool webkitGstSetElementStateSynchronously(GstElement* pipeline, GstState target
 
 GstBuffer* /* (transfer full) */ gstBufferNewWrappedFast(void* data, size_t length)
 {
-    return gst_buffer_new_wrapped_full(static_cast<GstMemoryFlags>(0), data, length, 0, length, data, fastFree);
+    return gst_buffer_new_wrapped_full(static_cast<GstMemoryFlags>(0), data, length, 0, length, data, fastFreeCallback);
 }
 
 GstElement* /* (transfer floating) */ makeGStreamerElement(CStringView factoryName, const String& name)
@@ -1294,94 +1294,6 @@ GstElement* /* (transfer floating) */ makeGStreamerElement(CStringView factoryNa
     ASSERT(g_object_is_floating(element));
     return element;
 }
-
-#if USE(GSTREAMER_WEBRTC)
-static ASCIILiteral webrtcStatsTypeName(int value)
-{
-    switch (value) {
-    case GST_WEBRTC_STATS_CODEC:
-        return "codec"_s;
-    case GST_WEBRTC_STATS_INBOUND_RTP:
-        return "inbound-rtp"_s;
-    case GST_WEBRTC_STATS_OUTBOUND_RTP:
-        return "outbound-rtp"_s;
-    case GST_WEBRTC_STATS_REMOTE_INBOUND_RTP:
-        return "remote-inbound-rtp"_s;
-    case GST_WEBRTC_STATS_REMOTE_OUTBOUND_RTP:
-        return "remote-outbound-rtp"_s;
-    case GST_WEBRTC_STATS_CSRC:
-        return "csrc"_s;
-    case GST_WEBRTC_STATS_PEER_CONNECTION:
-        return "peer-connection"_s;
-    case GST_WEBRTC_STATS_TRANSPORT:
-        return "transport"_s;
-    case GST_WEBRTC_STATS_STREAM:
-        return "stream"_s;
-    case GST_WEBRTC_STATS_DATA_CHANNEL:
-        return "data-channel"_s;
-    case GST_WEBRTC_STATS_LOCAL_CANDIDATE:
-        return "local-candidate"_s;
-    case GST_WEBRTC_STATS_REMOTE_CANDIDATE:
-        return "remote-candidate"_s;
-    case GST_WEBRTC_STATS_CANDIDATE_PAIR:
-        return "candidate-pair"_s;
-    case GST_WEBRTC_STATS_CERTIFICATE:
-        return "certificate"_s;
-    }
-    ASSERT_NOT_REACHED();
-    return nullptr;
-}
-
-static ASCIILiteral webrtcDtlsTransportStateName(int value)
-{
-    switch (value) {
-    case GST_WEBRTC_DTLS_TRANSPORT_STATE_NEW:
-        return "new"_s;
-    case GST_WEBRTC_DTLS_TRANSPORT_STATE_CLOSED:
-        return "closed"_s;
-    case GST_WEBRTC_DTLS_TRANSPORT_STATE_FAILED:
-        return "failed"_s;
-    case GST_WEBRTC_DTLS_TRANSPORT_STATE_CONNECTING:
-        return "connecting"_s;
-    case GST_WEBRTC_DTLS_TRANSPORT_STATE_CONNECTED:
-        return "connected"_s;
-    }
-    ASSERT_NOT_REACHED();
-    return nullptr;
-}
-
-#if GST_CHECK_VERSION(1, 28, 0)
-static ASCIILiteral webrtcIceTcpCandidateTypeName(int value)
-{
-    switch (value) {
-    case GST_WEBRTC_ICE_TCP_CANDIDATE_TYPE_NONE:
-        return "none"_s;
-    case GST_WEBRTC_ICE_TCP_CANDIDATE_TYPE_ACTIVE:
-        return "active"_s;
-    case GST_WEBRTC_ICE_TCP_CANDIDATE_TYPE_PASSIVE:
-        return "passive"_s;
-    case GST_WEBRTC_ICE_TCP_CANDIDATE_TYPE_SO:
-        return "so"_s;
-    }
-    ASSERT_NOT_REACHED();
-    return nullptr;
-}
-
-static ASCIILiteral webrtcDtlsRoleName(int value)
-{
-    switch (value) {
-    case GST_WEBRTC_DTLS_ROLE_CLIENT:
-        return "client"_s;
-    case GST_WEBRTC_DTLS_ROLE_SERVER:
-        return "server"_s;
-    case GST_WEBRTC_DTLS_ROLE_UNKNOWN:
-        return "unknown"_s;
-    }
-    ASSERT_NOT_REACHED();
-    return nullptr;
-}
-#endif // GST_CHECK_VERSION
-#endif // USE(GSTREAMER_WEBRTC)
 
 template<typename T>
 std::optional<T> gstStructureGet(const GstStructure* structure, CStringView key)
@@ -1591,31 +1503,6 @@ static std::optional<RefPtr<JSON::Value>> gstStructureValueToJSON(const GValue* 
     if (valueType == G_TYPE_STRING)
         return JSON::Value::create(String(byteCast<char8_t>(unsafeSpan(g_value_get_string(value)))))->asValue();
 
-#if USE(GSTREAMER_WEBRTC)
-    if (valueType == GST_TYPE_WEBRTC_STATS_TYPE) {
-        auto name = webrtcStatsTypeName(g_value_get_enum(value));
-        if (!name.isEmpty()) [[likely]]
-            return JSON::Value::create(makeString(name))->asValue();
-    }
-    if (valueType == GST_TYPE_WEBRTC_DTLS_TRANSPORT_STATE) {
-        auto name = webrtcDtlsTransportStateName(g_value_get_enum(value));
-        if (!name.isEmpty()) [[likely]]
-            return JSON::Value::create(makeString(name))->asValue();
-    }
-#if GST_CHECK_VERSION(1, 28, 0)
-    if (valueType == GST_TYPE_WEBRTC_ICE_TCP_CANDIDATE_TYPE) {
-        auto name = webrtcIceTcpCandidateTypeName(g_value_get_enum(value));
-        if (!name.isEmpty()) [[likely]]
-            return JSON::Value::create(makeString(name))->asValue();
-    }
-    if (valueType == GST_TYPE_WEBRTC_DTLS_ROLE) {
-        auto name = webrtcDtlsRoleName(g_value_get_enum(value));
-        if (!name.isEmpty()) [[likely]]
-            return JSON::Value::create(makeString(name))->asValue();
-    }
-#endif // GST_CHECK_VERSION
-#endif // USE(GSTREAMER_WEBRTC)
-
     GST_WARNING("Unhandled GValue type: %s", G_VALUE_TYPE_NAME(value));
     return { };
 }
@@ -1802,133 +1689,136 @@ PlatformVideoColorSpace videoColorSpaceFromInfo(const GstVideoInfo& info)
     return colorSpace;
 }
 
-void fillVideoInfoColorimetryFromColorSpace(GstVideoInfo* info, const PlatformVideoColorSpace& colorSpace)
+GstVideoColorimetry colorimetryFromColorSpace(const PlatformVideoColorSpace& colorSpace)
 {
     ensureGStreamerInitialized();
+    GstVideoColorimetry result;
     if (colorSpace.matrix) {
         switch (*colorSpace.matrix) {
         case PlatformVideoMatrixCoefficients::Rgb:
-            GST_VIDEO_INFO_COLORIMETRY(info).matrix = GST_VIDEO_COLOR_MATRIX_RGB;
+            result.matrix = GST_VIDEO_COLOR_MATRIX_RGB;
             break;
         case PlatformVideoMatrixCoefficients::Bt709:
-            GST_VIDEO_INFO_COLORIMETRY(info).matrix = GST_VIDEO_COLOR_MATRIX_BT709;
+            result.matrix = GST_VIDEO_COLOR_MATRIX_BT709;
             break;
         case PlatformVideoMatrixCoefficients::Smpte170m:
-            GST_VIDEO_INFO_COLORIMETRY(info).matrix = GST_VIDEO_COLOR_MATRIX_BT601;
+            result.matrix = GST_VIDEO_COLOR_MATRIX_BT601;
             break;
         case PlatformVideoMatrixCoefficients::Smpte240m:
-            GST_VIDEO_INFO_COLORIMETRY(info).matrix = GST_VIDEO_COLOR_MATRIX_SMPTE240M;
+            result.matrix = GST_VIDEO_COLOR_MATRIX_SMPTE240M;
             break;
         case PlatformVideoMatrixCoefficients::Fcc:
-            GST_VIDEO_INFO_COLORIMETRY(info).matrix = GST_VIDEO_COLOR_MATRIX_FCC;
+            result.matrix = GST_VIDEO_COLOR_MATRIX_FCC;
             break;
         case PlatformVideoMatrixCoefficients::Bt2020NonconstantLuminance:
-            GST_VIDEO_INFO_COLORIMETRY(info).matrix = GST_VIDEO_COLOR_MATRIX_BT2020;
+            result.matrix = GST_VIDEO_COLOR_MATRIX_BT2020;
             break;
         case PlatformVideoMatrixCoefficients::Unspecified:
-            GST_VIDEO_INFO_COLORIMETRY(info).matrix = GST_VIDEO_COLOR_MATRIX_UNKNOWN;
+            result.matrix = GST_VIDEO_COLOR_MATRIX_UNKNOWN;
             break;
         default:
             break;
         };
-    } else
-        GST_VIDEO_INFO_COLORIMETRY(info).matrix = GST_VIDEO_COLOR_MATRIX_UNKNOWN;
+    }
 
     if (colorSpace.transfer) {
         switch (*colorSpace.transfer) {
         case PlatformVideoTransferCharacteristics::Iec6196621:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_SRGB;
+            result.transfer = GST_VIDEO_TRANSFER_SRGB;
             break;
         case PlatformVideoTransferCharacteristics::Bt709:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_BT709;
+            result.transfer = GST_VIDEO_TRANSFER_BT709;
             break;
         case PlatformVideoTransferCharacteristics::Smpte170m:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_BT601;
+            result.transfer = GST_VIDEO_TRANSFER_BT601;
             break;
         case PlatformVideoTransferCharacteristics::SmpteSt2084:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_SMPTE2084;
+            result.transfer = GST_VIDEO_TRANSFER_SMPTE2084;
             break;
         case PlatformVideoTransferCharacteristics::AribStdB67Hlg:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_ARIB_STD_B67;
+            result.transfer = GST_VIDEO_TRANSFER_ARIB_STD_B67;
             break;
         case PlatformVideoTransferCharacteristics::Bt2020_10bit:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_BT2020_10;
+            result.transfer = GST_VIDEO_TRANSFER_BT2020_10;
             break;
         case PlatformVideoTransferCharacteristics::Bt2020_12bit:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_BT2020_12;
+            result.transfer = GST_VIDEO_TRANSFER_BT2020_12;
             break;
         case PlatformVideoTransferCharacteristics::Linear:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_GAMMA10;
+            result.transfer = GST_VIDEO_TRANSFER_GAMMA10;
             break;
         case PlatformVideoTransferCharacteristics::Gamma22curve:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_GAMMA22;
+            result.transfer = GST_VIDEO_TRANSFER_GAMMA22;
             break;
         case PlatformVideoTransferCharacteristics::Gamma28curve:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_GAMMA28;
+            result.transfer = GST_VIDEO_TRANSFER_GAMMA28;
             break;
         case PlatformVideoTransferCharacteristics::Smpte240m:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_SMPTE240M;
+            result.transfer = GST_VIDEO_TRANSFER_SMPTE240M;
             break;
         case PlatformVideoTransferCharacteristics::Log:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_LOG100;
+            result.transfer = GST_VIDEO_TRANSFER_LOG100;
             break;
         case PlatformVideoTransferCharacteristics::LogSqrt:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_LOG316;
+            result.transfer = GST_VIDEO_TRANSFER_LOG316;
             break;
         case PlatformVideoTransferCharacteristics::Unspecified:
-            GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_UNKNOWN;
+            result.transfer = GST_VIDEO_TRANSFER_UNKNOWN;
             break;
         default:
             break;
         }
-    } else
-        GST_VIDEO_INFO_COLORIMETRY(info).transfer = GST_VIDEO_TRANSFER_UNKNOWN;
+    }
 
     if (colorSpace.primaries) {
         switch (*colorSpace.primaries) {
         case PlatformVideoColorPrimaries::Bt709:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_BT709;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_BT709;
             break;
         case PlatformVideoColorPrimaries::Bt470bg:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_BT470BG;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_BT470BG;
             break;
         case PlatformVideoColorPrimaries::Bt470m:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_BT470M;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_BT470M;
             break;
         case PlatformVideoColorPrimaries::Smpte170m:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_SMPTE170M;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_SMPTE170M;
             break;
         case PlatformVideoColorPrimaries::SmpteRp431:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_SMPTERP431;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_SMPTERP431;
             break;
         case PlatformVideoColorPrimaries::SmpteEg432:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_SMPTEEG432;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_SMPTEEG432;
             break;
         case PlatformVideoColorPrimaries::Film:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_FILM;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_FILM;
             break;
         case PlatformVideoColorPrimaries::Bt2020:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_BT2020;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_BT2020;
             break;
         case PlatformVideoColorPrimaries::Smpte240m:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_SMPTE240M;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_SMPTE240M;
             break;
         case PlatformVideoColorPrimaries::JedecP22Phosphors:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_EBU3213;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_EBU3213;
             break;
         case PlatformVideoColorPrimaries::Unspecified:
-            GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_UNKNOWN;
+            result.primaries = GST_VIDEO_COLOR_PRIMARIES_UNKNOWN;
             break;
         default:
             break;
         }
-    } else
-        GST_VIDEO_INFO_COLORIMETRY(info).primaries = GST_VIDEO_COLOR_PRIMARIES_UNKNOWN;
+    }
 
     if (colorSpace.fullRange)
-        GST_VIDEO_INFO_COLORIMETRY(info).range = *colorSpace.fullRange ? GST_VIDEO_COLOR_RANGE_0_255 : GST_VIDEO_COLOR_RANGE_16_235;
-    else
-        GST_VIDEO_INFO_COLORIMETRY(info).range = GST_VIDEO_COLOR_RANGE_UNKNOWN;
+        result.range = *colorSpace.fullRange ? GST_VIDEO_COLOR_RANGE_0_255 : GST_VIDEO_COLOR_RANGE_16_235;
+    return result;
+}
+
+void fillVideoInfoColorimetryFromColorSpace(GstVideoInfo* info, const PlatformVideoColorSpace& colorSpace)
+{
+    auto colorimetry = colorimetryFromColorSpace(colorSpace);
+    GST_VIDEO_INFO_COLORIMETRY(info) = colorimetry;
 }
 
 void configureAudioDecoderForHarnessing(const GRefPtr<GstElement>& element)
@@ -1975,7 +1865,7 @@ void configureMediaStreamAudioDecoder(GstElement* element)
         g_object_set(element, "max-errors", -1, nullptr);
 }
 
-String configureMediaStreamVideoDecoder(GstElement* element)
+void configureMediaStreamVideoDecoder(GstElement* element)
 {
     if (gstObjectHasProperty(element, "automatic-request-sync-points"_s))
         g_object_set(element, "automatic-request-sync-points", TRUE, nullptr);
@@ -1988,22 +1878,6 @@ String configureMediaStreamVideoDecoder(GstElement* element)
 
     if (gstObjectHasProperty(element, "max-errors"_s))
         g_object_set(element, "max-errors", -1, nullptr);
-
-    auto factoryName = CStringView::unsafeFromUTF8(GST_OBJECT_NAME(gst_element_get_factory(element)));
-    StringBuilder builder;
-    builder.append("GStreamer "_s, factoryName.span());
-    if (factoryName == "vp9dec"_s || factoryName == "vp8dec"_s)
-        builder.append(" (fallback from: libvpx)"_s);
-    return builder.toString();
-}
-
-void configureVideoRTPDepayloader(GstElement* element)
-{
-    if (gstObjectHasProperty(element, "request-keyframe"_s))
-        g_object_set(element, "request-keyframe", TRUE, nullptr);
-
-    if (gstObjectHasProperty(element, "wait-for-keyframe"_s))
-        g_object_set(element, "wait-for-keyframe", TRUE, nullptr);
 }
 
 bool gstObjectHasProperty(GstObject* gstObject, ASCIILiteral name)
@@ -2325,6 +2199,12 @@ void dumpBinToDotFile(const GRefPtr<GstElement>& element, const String& filename
 {
     ASSERT(GST_IS_BIN(element.get()));
     dumpBinToDotFile(GST_BIN_CAST(element.get()), filename, details);
+}
+
+bool enableMSEAdditionalPipelineDumps()
+{
+    static bool result = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_MSE_VERBOSE_PIPELINE_DUMPS")) == "1"_s;
+    return result;
 }
 
 GstDebugLevel gstDebugLevelFromWTFLogLevel(WTFLogLevel level)

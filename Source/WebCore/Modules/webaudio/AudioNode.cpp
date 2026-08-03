@@ -220,9 +220,8 @@ ExceptionOr<void> AudioNode::connect(AudioNode& destination, unsigned outputInde
 
 ExceptionOr<void> AudioNode::connect(AudioParam& param, unsigned outputIndex)
 {
-    Locker locker { context().graphLock() };
-
     ASSERT(isMainThread());
+    Locker locker { context().graphLock() };
 
     INFO_LOG(LOGIDENTIFIER, param.name(), ", output = ", outputIndex);
 
@@ -454,7 +453,7 @@ enum EventTargetInterfaceType AudioNode::eventTargetInterface() const
 
 ScriptExecutionContext* AudioNode::scriptExecutionContext() const
 {
-    return static_cast<ActiveDOMObject&>(const_cast<AudioNode*>(this)->context()).scriptExecutionContext();
+    return static_cast<const ActiveDOMObject&>(context()).scriptExecutionContext();
 }
 
 void AudioNode::processIfNecessary(size_t framesToProcess)

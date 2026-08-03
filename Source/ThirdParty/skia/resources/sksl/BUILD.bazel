@@ -85,6 +85,7 @@ skia_filegroup(
         ":sksl_folding_tests",
         ":sksl_rte_tests",
         ":sksl_shared_tests",
+        ":sksl_skrp_tests",
     ],
     visibility = ["//tools/skslc:__pkg__"],
 )
@@ -182,6 +183,7 @@ skia_filegroup(
         "compute/AtomicOperations.compute",
         #"compute/AtomicOperationsOverArrayAndStruct.compute",
         "compute/Barrier.compute",
+        "compute/Buffers.compute",
         "compute/BuiltinStageInputs.compute",
         "compute/Desaturate.compute",
         "compute/DesaturateFunction.compute",
@@ -193,7 +195,7 @@ skia_filegroup(
         "compute/ModuleStructInVariable.compute",
         "compute/Raytrace.compute",
         "compute/Uniforms.compute",
-        #"compute/Workgroup.compute",
+        "compute/Workgroup.compute",
     ],
 )
 
@@ -284,6 +286,8 @@ skia_filegroup(
         "errors/FloatRemainder.rts",
         "errors/ForInitStmt.sksl",
         "errors/ForLoopInductionVariableScope.sksl",
+        "errors/ForLoopNEQOverflow.rts",
+        "errors/ForLoopOverflow.rts",
         "errors/ForTypeMismatch.rts",
         "errors/FunctionParamBadType.rts",
         "errors/FunctionParamShadowedByLocal.rts",
@@ -397,6 +401,9 @@ skia_filegroup(
         "errors/Ossfuzz49558.sksl",
         "errors/Ossfuzz50798.sksl",
         "errors/Ossfuzz50922.sksl",
+        "errors/Ossfuzz515515145.sksl",
+        "errors/Ossfuzz516126015.sksl",
+        "errors/Ossfuzz519154489.sksl",
         "errors/Ossfuzz56373.sksl",
         "errors/Ossfuzz58037.sksl",
         "errors/Ossfuzz58375.sksl",
@@ -1208,5 +1215,12 @@ skia_filegroup(
         "wgsl/VertexPositionOutputIsAlwaysDeclared.vert",
         "wgsl/WorkgroupSize.compute",
         "workarounds/LastFragColor.sksl",
+    ],
+)
+
+skia_filegroup(
+    name = "sksl_skrp_tests",
+    srcs = [
+        "skrp/ImmediateOpsOpt.sksl",
     ],
 )

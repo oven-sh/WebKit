@@ -19,7 +19,7 @@
 #include "include/core/SkYUVAPixmaps.h"
 #include "include/private/SkEncodedInfo.h"
 #include "include/private/SkHdrMetadata.h"
-#include "include/private/base/SkNoncopyable.h"
+#include "include/private/SkNoncopyable.h"
 #include "modules/skcms/skcms.h"
 
 #include <cstddef>
@@ -834,14 +834,6 @@ public:
     };
     IsAnimated isAnimated() { return this->onIsAnimated(); }
 
-    // Register a decoder at runtime by passing two function pointers:
-    //    - peek() to return true if the span of bytes appears to be your encoded format;
-    //    - make() to attempt to create an SkCodec from the given stream.
-    // Not thread safe.
-    static void Register(
-            bool                     (*peek)(const void*, size_t),
-            std::unique_ptr<SkCodec> (*make)(std::unique_ptr<SkStream>, SkCodec::Result*));
-
 protected:
     const SkEncodedInfo& getEncodedInfo() const { return fEncodedInfo; }
 
@@ -1137,7 +1129,8 @@ private:
     friend class PNGCodecGM;    // for fillIncompleteImage
     friend class SkSampledCodec;
     friend class SkIcoCodec;
-    friend class SkPngCodec;     // for onGetGainmapCodec
+    friend class SkIcoRustCodec;  // for getEncodedInfo and getSampler
+    friend class SkPngCodecBase;  // for onGetGainmapCodec
     friend class SkAndroidCodec;  // for handleFrameIndex
     friend class SkCodecPriv;     // for fEncodedInfo
 };

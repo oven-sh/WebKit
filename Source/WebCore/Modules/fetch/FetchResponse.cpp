@@ -42,6 +42,7 @@
 #include "ReadableStreamToSharedBufferSink.h"
 #include "ResourceError.h"
 #include "ScriptExecutionContext.h"
+#include "Settings.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <WebCore/HTTPStatusCodes.h>
@@ -220,13 +221,14 @@ ExceptionOr<Ref<FetchResponse>> FetchResponse::clone(JSDOMGlobalObject& globalOb
     clone->cloneBody(globalObject, *this);
     clone->m_opaqueLoadIdentifier = m_opaqueLoadIdentifier;
     clone->m_bodySizeWithPadding = m_bodySizeWithPadding;
+    clone->m_resourceLoaderIdentifier = m_resourceLoaderIdentifier;
     return clone;
 }
 
 void FetchResponse::addAbortSteps(Ref<AbortSignal>&& signal)
 {
     m_abortSignal = signal.copyRef();
-    signal->addAlgorithm([weakThis = WeakPtr { *this }](JSC::JSValue) {
+    signal->addAlgorithm([weakThis = WeakPtr { *this }](JSC::JSValue value) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -251,14 +253,19 @@ void FetchResponse::addAbortSteps(Ref<AbortSignal>&& signal)
         if (protectedThis->m_body)
             protectedThis->m_body->loadingFailed(*protectedThis->loadingException());
 
-        if (RefPtr loader = std::exchange(protectedThis->m_loader, nullptr))
+        if (RefPtr loader = std::exchange(protectedThis->m_loader, nullptr)) {
+            RefPtr context = protectedThis->scriptExecutionContext();
+            auto* globalObject = context ? context->globalObject() : nullptr;
+            if (globalObject)
+                loader->abortUpload(*downcast<JSDOMGlobalObject>(globalObject), value);
             loader->stop();
+        }
         if (auto bodyLoader = std::exchange(protectedThis->m_bodyLoader, nullptr))
             bodyLoader->stop();
     });
 }
 
-Ref<FetchResponse> FetchResponse::createFetchResponse(ScriptExecutionContext& context, FetchRequest& request, NotificationCallback&& responseCallback)
+Ref<FetchResponse> FetchResponse::createFetchResponse(ScriptExecutionContext& context, FetchRequest& request, NotificationCallback&& responseCallback, RefPtr<ReadableStreamToSharedBufferSink>&& pendingUpload)
 {
     auto response = adoptRef(*new FetchResponse(&context, FetchBody { }, FetchHeaders::create(FetchHeaders::Guard::Immutable), { }));
     response->suspendIfNeeded();
@@ -267,18 +274,20 @@ Ref<FetchResponse> FetchResponse::createFetchResponse(ScriptExecutionContext& co
 
     response->addAbortSteps(request.signal());
 
-    response->m_loader = Loader::create(response.get(), WTF::move(responseCallback));
+    response->m_loader = Loader::create(response.get(), WTF::move(responseCallback), WTF::move(pendingUpload));
     return response;
 }
 
 void FetchResponse::fetch(ScriptExecutionContext& context, FetchRequest& request, NotificationCallback&& responseCallback, const String& initiator)
 {
+    RefPtr<ReadableStreamToSharedBufferSink> uploadSink;
     if (request.isReadableStreamBody()) {
-        responseCallback(Exception { ExceptionCode::NotSupportedError, "ReadableStream uploading is not supported"_s });
-        return;
-    }
-
-    if (request.hasReadableStreamBody()) {
+        if (!context.settingsValues().fetchUploadStreamsEnabled) {
+            responseCallback(Exception { ExceptionCode::NotSupportedError, "ReadableStream uploading is not supported"_s });
+            return;
+        }
+        uploadSink = request.body().startPendingStreamUpload(context);
+    } else if (request.hasReadableStreamBody()) {
         request.body().convertReadableStreamToArrayBuffer(request, [context = Ref { context }, weakRequest = WeakPtr { request }, responseCallback = WTF::move(responseCallback), initiator](auto&& exception) mutable {
             if (!!exception) {
                 responseCallback(WTF::move(*exception));
@@ -292,7 +301,7 @@ void FetchResponse::fetch(ScriptExecutionContext& context, FetchRequest& request
         return;
     }
 
-    Ref response = createFetchResponse(context, request, WTF::move(responseCallback));
+    Ref response = createFetchResponse(context, request, WTF::move(responseCallback), WTF::move(uploadSink));
     response->startLoader(context, request, initiator);
 }
 
@@ -373,25 +382,30 @@ void FetchResponse::setReceivedInternalResponse(const ResourceResponse& resource
     m_headers->filterAndFill(m_filteredResponse->httpHeaderFields(), FetchHeaders::Guard::Response);
 }
 
-Ref<FetchResponse::Loader> FetchResponse::Loader::create(FetchResponse& response, NotificationCallback&& responseCallback)
+Ref<FetchResponse::Loader> FetchResponse::Loader::create(FetchResponse& response, NotificationCallback&& responseCallback, RefPtr<ReadableStreamToSharedBufferSink>&& pendingUpload)
 {
-    return adoptRef(*new Loader(response, WTF::move(responseCallback)));
+    return adoptRef(*new Loader(response, WTF::move(responseCallback), WTF::move(pendingUpload)));
 }
 
-FetchResponse::Loader::Loader(FetchResponse& response, NotificationCallback&& responseCallback)
+FetchResponse::Loader::Loader(FetchResponse& response, NotificationCallback&& responseCallback, RefPtr<ReadableStreamToSharedBufferSink>&& pendingUpload)
     : m_response(response)
     , m_responseCallback(WTF::move(responseCallback))
     , m_pendingActivity(response.makePendingActivity(response))
+    , m_pendingUpload(WTF::move(pendingUpload))
 {
 }
 
 FetchResponse::Loader::~Loader() = default;
 
-void FetchResponse::Loader::didReceiveResponse(const ResourceResponse& resourceResponse)
+void FetchResponse::Loader::didReceiveResponse(std::optional<ResourceLoaderIdentifier> resourceLoaderIdentifier, const ResourceResponse& resourceResponse)
 {
     RefPtr response = m_response.get();
     if (!response)
         return;
+
+    if (resourceResponse.source() == ResourceResponse::Source::MemoryCache || resourceResponse.source() == ResourceResponse::Source::MemoryCacheAfterValidation)
+        resourceLoaderIdentifier = std::nullopt;
+    response->m_resourceLoaderIdentifier = resourceLoaderIdentifier;
 
     if (RefPtr document = dynamicDowncast<Document>(response->scriptExecutionContext()))
         document->quirks().clearLogoutSurvivingIdentityCookiesIfNeeded(resourceResponse.url(), resourceResponse.httpStatusCode());
@@ -451,6 +465,12 @@ bool FetchResponse::Loader::start(ScriptExecutionContext& context, const FetchRe
     }
 
     return true;
+}
+
+void FetchResponse::Loader::abortUpload(JSDOMGlobalObject& globalObject, JSC::JSValue value)
+{
+    if (m_pendingUpload)
+        m_pendingUpload->cancel(globalObject, value);
 }
 
 void FetchResponse::Loader::stop()

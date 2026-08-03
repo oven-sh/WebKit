@@ -55,22 +55,20 @@ static RenderView* NODELETE renderViewForDocument(const Document& document)
 
 CSSToLengthConversionData::CSSToLengthConversionData(const Style::ComputedStyle& style, Style::BuilderState& builderState)
     : m_style(&style)
-    , m_rootStyle(builderState.rootElementRenderStyle())
-    , m_parentStyle(&builderState.parentRenderStyle())
+    , m_rootStyle(builderState.rootElementStyle())
+    , m_parentStyle(&builderState.parentStyle())
     , m_renderView(renderViewForDocument(builderState.document()))
     , m_elementForContainerUnitResolution(builderState.element())
     , m_styleBuilderState(&builderState)
 {
 }
 
-CSSToLengthConversionData::CSSToLengthConversionData(const Style::ComputedStyle& style, const Style::ComputedStyle* rootStyle, const Style::ComputedStyle* parentStyle, const RenderView* renderView, const Element* elementForContainerUnitResolution, CSS::RangeZoomOptions rangeZoomOptions)
+CSSToLengthConversionData::CSSToLengthConversionData(const Style::ComputedStyle& style, const Style::ComputedStyle* rootStyle, const Style::ComputedStyle* parentStyle, const RenderView* renderView, const Element* elementForContainerUnitResolution)
     : m_style(&style)
     , m_rootStyle(rootStyle)
     , m_parentStyle(parentStyle)
     , m_renderView(renderView)
     , m_elementForContainerUnitResolution(elementForContainerUnitResolution)
-    , m_zoom(1.f)
-    , m_rangeZoomOption(rangeZoomOptions)
 {
 }
 
@@ -90,7 +88,8 @@ std::optional<CSSToLengthConversionData> CSSToLengthConversionData::tryCreateFor
         elementRenderer->style(),
         documentElement->renderer() ? &documentElement->renderer()->style() : nullptr,
         elementParentRenderer ? &elementParentRenderer->style() : nullptr,
-        document->renderView()
+        document->renderView(),
+        nullptr
     };
 }
 
@@ -113,66 +112,16 @@ const FontCascade& CSSToLengthConversionData::fontCascadeForFontUnits() const
     return style()->fontCascade();
 }
 
-
-float CSSToLengthConversionData::zoom() const
-{
-    return m_zoom.value_or(m_style ? m_style->usedZoom() : 1.f);
-}
-
-FloatSize CSSToLengthConversionData::defaultViewportFactor() const
+void CSSToLengthConversionData::setUsesViewportUnits() const
 {
     if (m_styleBuilderState)
         m_styleBuilderState->setUsesViewportUnits();
-
-    if (!m_renderView)
-        return { };
-
-    return m_renderView->sizeForCSSDefaultViewportUnits() / 100.0;
-}
-
-FloatSize CSSToLengthConversionData::smallViewportFactor() const
-{
-    if (m_styleBuilderState)
-        m_styleBuilderState->setUsesViewportUnits();
-
-    if (!m_renderView)
-        return { };
-
-    return m_renderView->sizeForCSSSmallViewportUnits() / 100.0;
-}
-
-FloatSize CSSToLengthConversionData::largeViewportFactor() const
-{
-    if (m_styleBuilderState)
-        m_styleBuilderState->setUsesViewportUnits();
-
-    if (!m_renderView)
-        return { };
-
-    return m_renderView->sizeForCSSLargeViewportUnits() / 100.0;
-}
-
-FloatSize CSSToLengthConversionData::dynamicViewportFactor() const
-{
-    if (m_styleBuilderState)
-        m_styleBuilderState->setUsesViewportUnits();
-
-    if (!m_renderView)
-        return { };
-
-    return m_renderView->sizeForCSSDynamicViewportUnits() / 100.0;
 }
 
 void CSSToLengthConversionData::setUsesContainerUnits() const
 {
     if (m_styleBuilderState)
         m_styleBuilderState->setIsContainerDependent();
-}
-
-bool CSSToLengthConversionData::evaluationTimeZoomEnabled() const
-{
-    ASSERT(m_style);
-    return m_style->evaluationTimeZoomEnabled();
 }
 
 } // namespace WebCore

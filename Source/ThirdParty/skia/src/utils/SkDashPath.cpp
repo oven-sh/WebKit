@@ -17,9 +17,9 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkPathEffectBase.h"
 #include "src/core/SkPointPriv.h"
 
@@ -90,7 +90,7 @@ void SkDashPath::CalcDashParameters(SkScalar phase, SkSpan<const SkScalar> inter
 }
 
 static void outset_for_stroke(SkRect* rect, const SkStrokeRec& rec) {
-    SkScalar radius = SkScalarHalf(rec.getWidth());
+    float radius = rec.getWidth() / 2.f;
     if (0 == radius) {
         radius = SK_Scalar1;    // hairlines
     }
@@ -258,7 +258,7 @@ public:
             return false;
         }
         SkPointPriv::RotateCCW(fTangent, &fNormal);
-        fNormal.scale(SkScalarHalf(rec->getWidth()));
+        fNormal.scale(rec->getWidth() / 2.f);
 
         // now estimate how many quads will be added to the path
         //     resulting segments = pathLen * intervalCount / intervalLen

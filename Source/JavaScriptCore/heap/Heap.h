@@ -212,9 +212,18 @@ class Heap;
 #define FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(v)
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+#define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
+    v(ffiFunctionSpace, ffiFunctionHeapCellType, JSFFIFunction) \
+    v(ffiCallbackSpace, ffiCallbackHeapCellType, JSFFICallback)
+#else
+#define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v)
+#endif
+
 #define FOR_EACH_JSC_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_OBJC_API_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_GLIB_API_DYNAMIC_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
     \
     v(apiGlobalObjectSpace, apiGlobalObjectHeapCellType, JSAPIGlobalObject) \
     v(apiValueWrapperSpace, cellHeapCellType, JSAPIValueWrapper) \
@@ -932,8 +941,11 @@ private:
     size_t m_indexOfNextLogicallyEmptyWeakBlockToSweep { WTF::notFound };
 
 #if ASSERT_ENABLED
-    friend void setTopGCOwnedDataScopeIfNeeded(const JSCell*, const void*);
-    friend void clearTopGCOwnedDataScopeIfNeeded(const JSCell*, const void*);
+    // JS_EXPORT_PRIVATE matches GCOwnedDataScope.h. Heap.h does not include it, so
+    // whichever declaration a translation unit sees first has to carry the attribute:
+    // adding dllimport in a redeclaration is an error under -Wdll-attribute-on-redeclaration.
+    friend JS_EXPORT_PRIVATE void setTopGCOwnedDataScopeIfNeeded(const JSCell*, const void*);
+    friend JS_EXPORT_PRIVATE void clearTopGCOwnedDataScopeIfNeeded(const JSCell*, const void*);
     const void* m_topGCOwnedDataScope { nullptr };
 #endif
     // Use a SegmentedVector rather than a Vector because we don't want to have to copy in order to grow the buffer.
@@ -1101,6 +1113,10 @@ public:
     IsoHeapCellType intlSegmentIteratorHeapCellType;
     IsoHeapCellType intlSegmenterHeapCellType;
     IsoHeapCellType intlSegmentsHeapCellType;
+#if USE(BUN_JSC_ADDITIONS)
+    IsoHeapCellType ffiFunctionHeapCellType;
+    IsoHeapCellType ffiCallbackHeapCellType;
+#endif
 #if ENABLE(WEBASSEMBLY)
     IsoHeapCellType webAssemblyExceptionHeapCellType;
     IsoHeapCellType webAssemblyFunctionHeapCellType;

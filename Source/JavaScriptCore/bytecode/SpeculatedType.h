@@ -28,7 +28,8 @@
 
 #pragma once
 
-#include "CPU.h"
+#include <JavaScriptCore/CPU.h>
+#include <JavaScriptCore/JSType.h>
 #include <wtf/Forward.h>
 
 namespace JSC {
@@ -40,7 +41,6 @@ class Structure;
 struct ClassInfo;
 
 using IndexingType = uint8_t;
-enum JSType : uint8_t;
 enum TypedArrayType : uint8_t;
 
 typedef uint64_t SpeculatedType;
@@ -132,7 +132,7 @@ static constexpr SpeculatedType SpecTypeofMightBeFunction             = SpecFunc
 // SpecCellCheck is the type set representing the values that can flow through a cell check.
 // On 64-bit platforms, the empty value passes a cell check. Also, ~SpecCellCheck is the type
 // set that representing the values that flow through when testing that something is not a cell.
-static constexpr SpeculatedType SpecCellCheck          = is64Bit() ? (SpecCell | SpecEmpty) : SpecCell;
+static constexpr SpeculatedType SpecCellCheck          = SpecCell | SpecEmpty;
 
 typedef bool (*SpeculatedTypeChecker)(SpeculatedType);
 
@@ -568,6 +568,7 @@ SpeculatedType NODELETE speculationFromValue(JSValue);
 // Otherwise, it'll return types from the JSValue lattice.
 JS_EXPORT_PRIVATE SpeculatedType NODELETE int52AwareSpeculationFromValue(JSValue);
 std::optional<SpeculatedType> NODELETE speculationFromJSType(JSType);
+std::optional<SpeculatedType> NODELETE speculationFromJSTypeRange(JSTypeRange);
 
 SpeculatedType NODELETE speculationFromTypedArrayType(TypedArrayType); // only valid for typed views.
 TypedArrayType NODELETE typedArrayTypeFromSpeculation(SpeculatedType);

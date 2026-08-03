@@ -1152,7 +1152,7 @@ bool RenderLayerCompositor::updateCompositingLayers(CompositingUpdateType update
         }
 
         RefPtr scrollingCoordinator = this->scrollingCoordinator();
-        bool hadSubscrollers = scrollingCoordinator ? scrollingCoordinator->hasSubscrollers(m_renderView.frame().rootFrame().frameID()) : false;
+        bool hadSubscrollers = scrollingCoordinator && scrollingCoordinator->hasSubscrollers(m_renderView.frame().rootFrame().frameID());
 
         UpdateBackingTraversalState traversalState;
         Vector<Ref<GraphicsLayer>> childList;
@@ -1793,10 +1793,13 @@ void RenderLayerCompositor::updateBackingAndHierarchy(RenderLayer& layer, Vector
 
     auto appendForegroundLayerIfNecessary = [&] {
         // If a negative z-order child is compositing, we get a foreground layer which needs to get parented.
-        if (layer.negativeZOrderLayers().size()) {
-            if (layerBacking && layerBacking->foregroundLayer())
-                childList.append(Ref { *layerBacking->foregroundLayer() });
-        }
+        bool needsForegroundLayer = !!layer.negativeZOrderLayers().size();
+#if ENABLE(SPATIAL_PORTAL)
+        // Same thing for `spatial: portal` elements.
+        needsForegroundLayer = needsForegroundLayer || isSpatialPortal(layer.renderer());
+#endif
+        if (needsForegroundLayer && layerBacking && layerBacking->foregroundLayer())
+            childList.append(Ref { *layerBacking->foregroundLayer() });
     };
 
     // After recursing into a composited SVG child, add the overlay "(svg segment N)" layer that paints the
@@ -3306,6 +3309,7 @@ bool RenderLayerCompositor::requiresCompositingLayer(const RenderLayer& layer, R
         || requiresCompositingForViewTransition(renderer)
         || requiresCompositingForVideo(renderer)
         || requiresCompositingForModel(renderer)
+        || requiresCompositingForSpatialPortal(renderer)
         || requiresCompositingForFrame(renderer, queryData)
         || requiresCompositingForPlugin(renderer, queryData)
         || requiresCompositingForOverflowScrolling(*renderer.layer(), queryData)
@@ -3388,6 +3392,7 @@ bool RenderLayerCompositor::requiresOwnBackingStore(const RenderLayer& layer, co
         || requiresCompositingForViewTransition(renderer)
         || requiresCompositingForVideo(renderer)
         || requiresCompositingForModel(renderer)
+        || requiresCompositingForSpatialPortal(renderer)
         || requiresCompositingForFrame(renderer, queryData)
         || requiresCompositingForPlugin(renderer, queryData)
         || requiresCompositingForOverflowScrolling(layer, queryData)
@@ -3443,6 +3448,8 @@ OptionSet<CompositingReason> RenderLayerCompositor::reasonsForCompositing(const 
         reasons.add(CompositingReason::Canvas);
     else if (requiresCompositingForModel(renderer))
         reasons.add(CompositingReason::Model);
+    else if (requiresCompositingForSpatialPortal(renderer))
+        reasons.add(CompositingReason::SpatialPortal);
     else if (requiresCompositingForPlugin(renderer, queryData))
         reasons.add(CompositingReason::Plugin);
     else if (requiresCompositingForFrame(renderer, queryData))
@@ -3565,6 +3572,7 @@ static ASCIILiteral compositingReasonToString(CompositingReason reason)
     case CompositingReason::WillChange: return "will-change"_s;
     case CompositingReason::Root: return "root"_s;
     case CompositingReason::Model: return "model"_s;
+    case CompositingReason::SpatialPortal: return "spatial-portal"_s;
     case CompositingReason::BackdropRoot: return "backdrop root"_s;
     case CompositingReason::AnchorPositioning: return "anchor positioning"_s;
     }
@@ -3820,6 +3828,17 @@ bool RenderLayerCompositor::isSeparated(const RenderObject& renderer)
 }
 #endif
 
+#if ENABLE(SPATIAL_PORTAL)
+bool RenderLayerCompositor::isSpatialPortal(const RenderObject& renderer)
+{
+    CheckedPtr renderElement = dynamicDowncast<RenderElement>(renderer);
+    if (!renderElement)
+        return false;
+    RefPtr element = renderElement->element();
+    return element && element->establishesSpatialPortal();
+}
+#endif
+
 // Return true if the given layer is a stacking context and has compositing child
 // layers that it needs to clip. In this case we insert a clipping GraphicsLayer
 // into the hierarchy between this layer and its children in the z-order hierarchy.
@@ -4027,6 +4046,16 @@ bool RenderLayerCompositor::requiresCompositingForModel(RenderLayerModelObject& 
 #endif
 
     return false;
+}
+
+bool RenderLayerCompositor::requiresCompositingForSpatialPortal(RenderLayerModelObject& renderer) const
+{
+#if ENABLE(SPATIAL_PORTAL)
+    return isSpatialPortal(renderer);
+#else
+    UNUSED_PARAM(renderer);
+    return false;
+#endif
 }
 
 bool RenderLayerCompositor::requiresCompositingForPlugin(RenderLayerModelObject& renderer, RequiresCompositingData& queryData) const
@@ -4511,6 +4540,12 @@ bool RenderLayerCompositor::needsContentsCompositingLayer(const RenderLayer& lay
         if (anchor && anchor->isSystemPreviewLink())
             return true;
     }
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+    // DOM content goes in the foreground layer by default, the content layer will be a StereoLayer for models.
+    if (isSpatialPortal(layer.renderer()))
+        return true;
 #endif
 
     return false;

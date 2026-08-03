@@ -8,9 +8,9 @@
 #include "src/core/SkDescriptor.h"
 
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkAlign.h"
-#include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkAlign.h"
+#include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkChecksum.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
@@ -178,8 +178,11 @@ std::optional<SkAutoDescriptor> SkAutoDescriptor::MakeFromBuffer(SkReadBuffer& b
     if (!buffer.readPad32(&descriptorHeader, sizeof(SkDescriptor))) { return {}; }
 
     // Basic bounds check on header length to make sure that bodyLength calculation does not
-    // underflow.
-    if (descriptorHeader.getLength() < sizeof(SkDescriptor)) { return {}; }
+    // underflow. Also ensure alignment.
+    if (descriptorHeader.getLength() < sizeof(SkDescriptor) ||
+        !SkIsAlign4(descriptorHeader.getLength())) {
+        return {};
+    }
     uint32_t bodyLength = descriptorHeader.getLength() - sizeof(SkDescriptor);
 
     // Make sure the fLength makes sense with respect to the incoming data.

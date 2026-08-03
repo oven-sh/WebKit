@@ -8,8 +8,8 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPathBuilder.h"
-#include "include/private/base/SkTDArray.h"
-#include "src/base/SkRandom.h"
+#include "include/private/SkTDArray.h"
+#include "src/core/SkRandom.h"
 #include "tools/viewer/Slide.h"
 
 // Generates y values for the chart plots.
@@ -17,8 +17,8 @@ static void gen_data(SkScalar yAvg, SkScalar ySpread, int count, SkTDArray<SkSca
     dataPts->resize(count);
     static SkRandom gRandom;
     for (int i = 0; i < count; ++i) {
-        (*dataPts)[i] = gRandom.nextRangeScalar(yAvg - SkScalarHalf(ySpread),
-                                                yAvg + SkScalarHalf(ySpread));
+        (*dataPts)[i] = gRandom.nextRangeScalar(yAvg - (ySpread / 2.f),
+                                                yAvg + (ySpread / 2.f));
     }
 }
 

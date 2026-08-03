@@ -157,6 +157,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
 #endif
     case MessageName::TestWithMultiLineExtendedAttributes_AlwaysEnabled:
         return jsValueForDecodedMessage<MessageName::TestWithMultiLineExtendedAttributes_AlwaysEnabled>(globalObject, decoder);
+    case MessageName::TestWithMultipleDispatchedFrom_AlwaysEnabled:
+        return jsValueForDecodedMessage<MessageName::TestWithMultipleDispatchedFrom_AlwaysEnabled>(globalObject, decoder);
 #if (ENABLE(WEBKIT2) && (NESTED_MASTER_CONDITION || MASTER_OR && MASTER_AND))
     case MessageName::TestWithoutAttributes_LoadURL:
         return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_LoadURL>(globalObject, decoder);
@@ -287,11 +289,17 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithStreamBuffer_SendStreamBuffer>(globalObject, decoder);
     case MessageName::TestWithStreamServerConnectionHandle_SendStreamServerConnection:
         return jsValueForDecodedMessage<MessageName::TestWithStreamServerConnectionHandle_SendStreamServerConnection>(globalObject, decoder);
+    case MessageName::TestWithStreamSwift_SendString:
+        return jsValueForDecodedMessage<MessageName::TestWithStreamSwift_SendString>(globalObject, decoder);
+    case MessageName::TestWithStreamSwift_SendStringSync:
+        return jsValueForDecodedMessage<MessageName::TestWithStreamSwift_SendStringSync>(globalObject, decoder);
     case MessageName::TestWithSuperclass_LoadURL:
         return jsValueForDecodedMessage<MessageName::TestWithSuperclass_LoadURL>(globalObject, decoder);
 #if ENABLE(TEST_FEATURE)
     case MessageName::TestWithSuperclass_TestAsyncMessage:
         return jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessage>(globalObject, decoder);
+    case MessageName::TestWithSuperclass_TestAsyncMessageAnyThread:
+        return jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageAnyThread>(globalObject, decoder);
     case MessageName::TestWithSuperclass_TestAsyncMessageWithNoArguments:
         return jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageWithNoArguments>(globalObject, decoder);
     case MessageName::TestWithSuperclass_TestAsyncMessageWithMultipleArguments:
@@ -306,6 +314,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
 #if ENABLE(TEST_FEATURE)
     case MessageName::TestWithSuperclass_TestAsyncMessageReply:
         return jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageReply>(globalObject, decoder);
+    case MessageName::TestWithSuperclass_TestAsyncMessageAnyThreadReply:
+        return jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageAnyThreadReply>(globalObject, decoder);
     case MessageName::TestWithSuperclass_TestAsyncMessageWithNoArgumentsReply:
         return jsValueForDecodedMessage<MessageName::TestWithSuperclass_TestAsyncMessageWithNoArgumentsReply>(globalObject, decoder);
     case MessageName::TestWithSuperclass_TestAsyncMessageWithMultipleArgumentsReply:
@@ -426,9 +436,13 @@ std::optional<JSC::JSValue> jsValueForReplyArguments(JSC::JSGlobalObject* global
     case MessageName::TestWithStream_SendAndReceiveMachSendRight:
         return jsValueForDecodedMessageReply<MessageName::TestWithStream_SendAndReceiveMachSendRight>(globalObject, decoder);
 #endif
+    case MessageName::TestWithStreamSwift_SendStringSync:
+        return jsValueForDecodedMessageReply<MessageName::TestWithStreamSwift_SendStringSync>(globalObject, decoder);
 #if ENABLE(TEST_FEATURE)
     case MessageName::TestWithSuperclass_TestAsyncMessage:
         return jsValueForDecodedMessageReply<MessageName::TestWithSuperclass_TestAsyncMessage>(globalObject, decoder);
+    case MessageName::TestWithSuperclass_TestAsyncMessageAnyThread:
+        return jsValueForDecodedMessageReply<MessageName::TestWithSuperclass_TestAsyncMessageAnyThread>(globalObject, decoder);
     case MessageName::TestWithSuperclass_TestAsyncMessageWithNoArguments:
         return jsValueForDecodedMessageReply<MessageName::TestWithSuperclass_TestAsyncMessageWithNoArguments>(globalObject, decoder);
     case MessageName::TestWithSuperclass_TestAsyncMessageWithMultipleArguments:
@@ -503,6 +517,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::PlatformLayerIdentifierID"_s,
         "WebCore::PlaybackTargetClientContextID"_s,
         "WebCore::NonSerializedDataIdentifier"_s,
+        "WebCore::PendingStreamIdentifier"_s,
         "WebCore::PortIdentifier"_s,
         "WebCore::ProcessIdentifier"_s,
         "WebCore::PushSubscriptionIdentifier"_s,
@@ -547,7 +562,6 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebKit::GPUProcessConnectionIdentifier"_s,
         "WebKit::ImageBufferSetIdentifier"_s,
         "WebKit::RemoteGraphicsContextGLIdentifier"_s,
-        "WebKit::RiceBackendIdentifier"_s,
         "WebKit::IPCConnectionTesterIdentifier"_s,
         "WebKit::IPCStreamTesterIdentifier"_s,
         "WebKit::JSObjectID"_s,
@@ -834,6 +848,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         return Vector<ArgumentDescription> {
             { "url"_s, "String"_s },
         };
+    case MessageName::TestWithMultipleDispatchedFrom_AlwaysEnabled:
+        return Vector<ArgumentDescription> {
+            { "url"_s, "String"_s },
+        };
 #if (ENABLE(WEBKIT2) && (NESTED_MASTER_CONDITION || MASTER_OR && MASTER_AND))
     case MessageName::TestWithoutAttributes_LoadURL:
         return Vector<ArgumentDescription> {
@@ -1059,12 +1077,24 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         return Vector<ArgumentDescription> {
             { "handle"_s, "IPC::StreamServerConnectionHandle"_s },
         };
+    case MessageName::TestWithStreamSwift_SendString:
+        return Vector<ArgumentDescription> {
+            { "url"_s, "String"_s },
+        };
+    case MessageName::TestWithStreamSwift_SendStringSync:
+        return Vector<ArgumentDescription> {
+            { "url"_s, "String"_s },
+        };
     case MessageName::TestWithSuperclass_LoadURL:
         return Vector<ArgumentDescription> {
             { "url"_s, "String"_s },
         };
 #if ENABLE(TEST_FEATURE)
     case MessageName::TestWithSuperclass_TestAsyncMessage:
+        return Vector<ArgumentDescription> {
+            { "twoStateEnum"_s, "WebKit::TestTwoStateEnum"_s },
+        };
+    case MessageName::TestWithSuperclass_TestAsyncMessageAnyThread:
         return Vector<ArgumentDescription> {
             { "twoStateEnum"_s, "WebKit::TestTwoStateEnum"_s },
         };
@@ -1087,6 +1117,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         };
 #if ENABLE(TEST_FEATURE)
     case MessageName::TestWithSuperclass_TestAsyncMessageReply:
+        return Vector<ArgumentDescription> {
+            { "result"_s, "uint64_t"_s },
+        };
+    case MessageName::TestWithSuperclass_TestAsyncMessageAnyThreadReply:
         return Vector<ArgumentDescription> {
             { "result"_s, "uint64_t"_s },
         };
@@ -1294,8 +1328,16 @@ std::optional<Vector<ArgumentDescription>> messageReplyArgumentDescriptions(Mess
             { "r1"_s, "MachSendRight"_s },
         };
 #endif
+    case MessageName::TestWithStreamSwift_SendStringSync:
+        return Vector<ArgumentDescription> {
+            { "returnValue"_s, "int64_t"_s },
+        };
 #if ENABLE(TEST_FEATURE)
     case MessageName::TestWithSuperclass_TestAsyncMessage:
+        return Vector<ArgumentDescription> {
+            { "result"_s, "uint64_t"_s },
+        };
+    case MessageName::TestWithSuperclass_TestAsyncMessageAnyThread:
         return Vector<ArgumentDescription> {
             { "result"_s, "uint64_t"_s },
         };

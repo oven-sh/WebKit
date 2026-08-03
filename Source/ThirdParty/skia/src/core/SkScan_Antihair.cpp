@@ -9,13 +9,13 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkRegion.h"
 #include "include/core/SkScalar.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkCPUTypes.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFixed.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkSafe32.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkCPUTypes.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFixed.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkSafe32.h"
+#include "include/private/SkTo.h"
 #include "src/core/SkBlitter.h"
 #include "src/core/SkColorPriv.h"
 #include "src/core/SkFDot6.h"
@@ -927,8 +927,8 @@ void SkScan::AntiFrameRect(const SkRect& r, const SkPoint& strokeSize,
                            const SkRegion* clip, SkBlitter* blitter) {
     SkASSERT(strokeSize.fX >= 0 && strokeSize.fY >= 0);
 
-    SkScalar rx = SkScalarHalf(strokeSize.fX);
-    SkScalar ry = SkScalarHalf(strokeSize.fY);
+    float rx = strokeSize.fX / 2.f;
+    float ry = strokeSize.fY / 2.f;
 
     // If we're empty on either axis, we remove the outset amount, to be sure
     // we stroke the same way a polygon would (i.e. it would just see a "line"

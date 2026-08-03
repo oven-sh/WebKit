@@ -215,18 +215,18 @@ static String webkitDrmGetFormatName(uint32_t format)
     if (!format)
         return "INVALID"_s;
 
-    std::span<char> buffer;
-    CString code = CString::newUninitialized(4, buffer);
+    std::array<char, 4> buffer;
     buffer[0] = static_cast<char>((format >> 0) & 0xFF);
     buffer[1] = static_cast<char>((format >> 8) & 0xFF);
     buffer[2] = static_cast<char>((format >> 16) & 0xFF);
     buffer[3] = static_cast<char>((format >> 24) & 0xFF);
 
     // Trim spaces at the end.
-    for (size_t i = 3; i > 0 && buffer[i] == ' '; --i)
-        buffer[i] = '\0';
+    size_t bufferSize = buffer.size();
+    while (bufferSize > 1 && buffer[bufferSize - 1] == ' ')
+        bufferSize--;
 
-    return makeString(code, isBigEndian ? "_BE"_s : ""_s);
+    return makeString(unsafeMakeSpan(buffer.data(), bufferSize), isBigEndian ? "_BE"_s : ""_s);
 }
 
 static String webkitDrmGetModifierName(uint64_t modifier)
@@ -307,23 +307,24 @@ static String preferredBufferFormats(WebKitURISchemeRequest* request, JSON::Arra
     StringBuilder builder;
     builder.append("<ul>"_s);
     for (const auto& tranche : formats) {
+        const auto& drmDevice = !tranche.drmDevice.isNull() ? tranche.drmDevice : drmMainDevice();
         auto jsonObject = JSON::Object::create();
         builder.append("<li>Formats for "_s);
         switch (tranche.usage) {
         case RendererBufferFormat::Usage::Rendering:
-            builder.append("<b>rendering</b> using device <i>"_s, !tranche.drmDevice.renderNode.isNull() ? tranche.drmDevice.renderNode : tranche.drmDevice.primaryNode, "</i>"_s);
+            builder.append("<b>rendering</b> using device <i>"_s, !drmDevice.renderNode.isNull() ? drmDevice.renderNode : drmDevice.primaryNode, "</i>"_s);
             jsonObject->setString("Usage"_s, "Rendering"_s);
-            jsonObject->setString("Device"_s, String::fromUTF8(!tranche.drmDevice.renderNode.isNull() ? tranche.drmDevice.renderNode.span() : tranche.drmDevice.primaryNode.span()));
+            jsonObject->setString("Device"_s, String::fromUTF8(!drmDevice.renderNode.isNull() ? drmDevice.renderNode.span() : drmDevice.primaryNode.span()));
             break;
         case RendererBufferFormat::Usage::Scanout:
-            builder.append("<b>scanout</b> using device <i>"_s, tranche.drmDevice.primaryNode, "</i>"_s);
+            builder.append("<b>scanout</b> using device <i>"_s, drmDevice.primaryNode, "</i>"_s);
             jsonObject->setString("Usage"_s, "Scanout"_s);
-            jsonObject->setString("Device"_s, String::fromUTF8(tranche.drmDevice.primaryNode.span()));
+            jsonObject->setString("Device"_s, String::fromUTF8(drmDevice.primaryNode.span()));
             break;
         case RendererBufferFormat::Usage::Mapping:
-            builder.append("<b>mapping</b> using device <i>"_s, tranche.drmDevice.primaryNode, "</i>"_s);
+            builder.append("<b>mapping</b> using device <i>"_s, drmDevice.primaryNode, "</i>"_s);
             jsonObject->setString("Usage"_s, "Mapping"_s);
-            jsonObject->setString("Device"_s, String::fromUTF8(tranche.drmDevice.primaryNode.span()));
+            jsonObject->setString("Device"_s, String::fromUTF8(drmDevice.primaryNode.span()));
             break;
         }
         builder.append("<br>"_s);
@@ -550,9 +551,15 @@ void WebKitProtocolHandler::handleGPU(WebKitURISchemeRequest* request, RenderPro
         "  h1 { color: #babdb6; text-shadow: 0 1px 0 white; margin-bottom: 0; }"
         "  html { font-family: -webkit-system-font; font-size: 11pt; color: #2e3436; padding: 20px 20px 0 20px; background-color: #f6f6f4; "
         "         background-image: -webkit-gradient(linear, left top, left bottom, color-stop(0, #eeeeec), color-stop(1, #f6f6f4));"
-        "         background-size: 100% 5em; background-repeat: no-repeat; }"
+        "         background-size: 100% 5em; background-repeat: no-repeat; "
+        "         color-scheme: light dark; }"
         "  table { width: 100%; border-collapse: collapse; }"
         "  table, td { border: 1px solid #d3d7cf; border-left: none; border-right: none; }"
+        "  @media (prefers-color-scheme: dark) {"
+        "      h1 { color: #babdb6; text-shadow: 0 1px 0 black; }"
+        "      html { color: #ffffff; background-color: #000000; background-image: -webkit-gradient(linear, left top, left bottom, color-stop(0, #1e2224), color-stop(1, #000000)); }"
+        "      table, td { border-color: #555753; }"
+        "  }"
         "  p { margin-bottom: 30px; }"
         "  table tr > td:first-child { width: 25% }"
         "  td { padding: 15px; }"

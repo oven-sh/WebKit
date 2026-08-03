@@ -9,8 +9,8 @@
 #include "include/core/SkSpan.h"
 
 #include "include/core/SkStream.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkMalloc.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkMalloc.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkStreamPriv.h"
 
@@ -91,6 +91,10 @@ sk_sp<SkData> SkData::shareSubset(size_t offset, size_t length) {
     return SkData::MakeWithProc(this->bytes() + offset, length, [](const void*, void* ctx) {
         ((SkData*)ctx)->unref();
     }, this);
+}
+
+sk_sp<const SkData> SkData::shareSubset(size_t offset, size_t length) const {
+    return const_cast<SkData*>(this)->shareSubset(offset, length);
 }
 
 sk_sp<SkData> SkData::copySubset(size_t offset, size_t length) const {

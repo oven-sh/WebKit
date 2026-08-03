@@ -109,6 +109,9 @@ void GStreamerVideoEncoder::create(const String& codecName, const VideoEncoder::
 
 Expected<Ref<GStreamerVideoEncoder>, String> GStreamerVideoEncoder::create(const String& codecName, const VideoEncoder::Config& config, DescriptionCallback&& descriptionCallback, OutputCallback&& outputCallback)
 {
+    if (!ensureGStreamerInitialized()) [[unlikely]]
+        return makeUnexpected("GStreamer initialization failed"_s);
+
     static std::once_flag debugRegisteredFlag;
     std::call_once(debugRegisteredFlag, [] {
         GST_DEBUG_CATEGORY_INIT(webkit_video_encoder_debug, "webkitvideoencoder", 0, "WebKit WebCodecs Video Encoder");
@@ -150,6 +153,14 @@ Ref<VideoEncoder::EncodePromise> GStreamerVideoEncoder::encode(RawFrame&& frame,
         encoder->harness()->processOutputSamples();
         return EncodePromise::createAndResolve();
     });
+}
+
+bool GStreamerVideoEncoder::encodeSync(RawFrame&& frame, bool shouldGenerateKeyFrame)
+{
+    auto result = m_internalEncoder->encode(WTF::move(frame), shouldGenerateKeyFrame);
+    if (result)
+        m_internalEncoder->harness()->processOutputSamples();
+    return result;
 }
 
 Ref<GenericPromise> GStreamerVideoEncoder::flush()

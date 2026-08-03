@@ -21,6 +21,7 @@
 #include "src/gpu/graphite/PrecompileInternal.h"
 #include "src/gpu/graphite/precompile/PrecompileBasePriv.h"
 #include "src/gpu/graphite/precompile/PrecompileBlenderPriv.h"
+#include "src/gpu/graphite/precompile/PrecompileColorFiltersPriv.h"
 #include "src/gpu/graphite/precompile/PrecompileShaderPriv.h"
 
 namespace skgpu::graphite {
@@ -73,59 +74,82 @@ void PaintOption::toKey(const KeyContext& keyContext) const {
     SkDEBUGCODE(keyContext.paintParamsKeyBuilder()->checkReset();)
 
     // Root Node 0 is the source color, which is the output of all effects post dithering
-    this->handleDithering(keyContext);
+    // TODO(michaelludwig): This will be used to change from src-over to src in certain scenarios.
+    [[maybe_unused]] bool isOpaque = this->handleDithering(keyContext);
 
     // Root Node 1 is the final blender
     std::optional<SkBlendMode> finalBlendMode =
             this->finalBlender() ? this->finalBlender()->priv().asBlendMode()
                                  : SkBlendMode::kSrcOver;
 
-    Coverage finalCoverage = fRendererCoverage;
-    if ((fClipShader.first || fAnalyticClip) && fRendererCoverage == Coverage::kNone) {
-        finalCoverage = Coverage::kSingleChannel;
-    }
-    bool dstReadReq = !finalBlendMode.has_value() ||
-                      !CanUseHardwareBlending(keyContext.caps(),
-                                              fTargetFormat,
-                                              *finalBlendMode,
-                                              finalCoverage);
-
-    if (finalBlendMode) {
+    if (!finalBlendMode) {
+        SkASSERT(this->finalBlender());
+        fFinalBlender.first->priv().addToKey(keyContext, fFinalBlender.second);
+    } else {
         // Clears are converted to kSrc + SolidColor in the constructor
         SkASSERT(finalBlendMode != SkBlendMode::kClear);
-        if (!dstReadReq) {
+
+        const bool hasAnalyticClip = fClipShader.first || fAnalyticClip;
+        Coverage effectiveCoverage = fRendererCoverage;
+        if (effectiveCoverage == Coverage::kNone && hasAnalyticClip) {
+            effectiveCoverage = Coverage::kSingleChannel;
+        }
+
+        // If the KeyContext has opted into prioritizing Src (no blending) and we don't need
+        // blending or only need it for the renderer (e.g. inner fill eligible), then try to keep
+        // the final blend snippet as Src when it wouldn't impact the rendering.
+        // NOTE: The first two terms here are equivalent to PaintParams::toKey()'s check for
+        // (dstUsage == kNone || dstUsage = kDstOnlyUsedByRenderer)
+        const bool optimizeSrcBlend =
+                !hasAnalyticClip &&
+                (finalBlendMode == SkBlendMode::kSrc || finalBlendMode == SkBlendMode::kSrcOver) &&
+                SkToBool(keyContext.flags() & KeyGenFlags::kPreferFixedSrcBlend);
+
+        const bool dstReadReq = !CanUseHardwareBlending(keyContext.caps(),
+                                                        fTargetFormat,
+                                                        *finalBlendMode,
+                                                        effectiveCoverage);
+        // Match PaintParams::toKey's logic to convert kSrcOver to kSrc
+        if (finalBlendMode == SkBlendMode::kSrcOver && isOpaque) {
+            const bool dstUsageNone = !hasAnalyticClip && fRendererCoverage == Coverage::kNone;
+            if (dstUsageNone && optimizeSrcBlend) {
+                SkASSERT(CanUseHardwareBlending(keyContext.caps(), fTargetFormat,
+                                                SkBlendMode::kSrc, fRendererCoverage));
+                finalBlendMode = SkBlendMode::kSrc;
+            }
+        }
+        if (!dstReadReq || (finalBlendMode == SkBlendMode::kSrc && optimizeSrcBlend)) {
             AddFixedBlendMode(keyContext, *finalBlendMode);
         } else {
             AddBlendMode(keyContext, *finalBlendMode);
         }
-    } else {
-        SkASSERT(this->finalBlender());
-        fFinalBlender.first->priv().addToKey(keyContext, fFinalBlender.second);
     }
 
     // Optional Root Node 2 is the clip
     this->handleClipping(keyContext);
 }
 
-void PaintOption::addPaintColorToKey(const KeyContext& keyContext) const {
+bool PaintOption::addPaintColorToKey(const KeyContext& keyContext) const {
     if (fShader.first) {
         fShader.first->priv().addToKey(keyContext, fShader.second);
+        return fShader.first->priv().isOpaque(fShader.second);
     } else {
         RGBPaintColorBlock::AddBlock(keyContext);
+        return true;
     }
 }
 
-void PaintOption::handlePrimitiveColor(const KeyContext& keyContext) const {
+bool PaintOption::handlePrimitiveColor(const KeyContext& keyContext) const {
     if (!fHasPrimitiveBlender) {
-        this->addPaintColorToKey(keyContext);
-        return;
+        return this->addPaintColorToKey(keyContext);
     }
 
     if (fSkipColorXform && fPrimitiveBlendMode == SkBlendMode::kDst) {
         AddPrimitiveColor(keyContext, fSkipColorXform);
-        return;
+        return false;
     }
 
+    bool srcIsOpaque = false;
     Blend(keyContext,
             /* addBlendToKey= */ [&] () -> void {
                 /**
@@ -135,20 +159,28 @@ void PaintOption::handlePrimitiveColor(const KeyContext& keyContext) const {
                 AddToKey(keyContext, GetBlendModeSingleton(fPrimitiveBlendMode));
             },
             /* addSrcToKey= */ [&]() -> void {
-                this->addPaintColorToKey(keyContext);
+                srcIsOpaque = this->addPaintColorToKey(keyContext);
             },
             /* addDstToKey= */ [&]() -> void {
                 AddPrimitiveColor(keyContext, fSkipColorXform);
             });
+    // NOTE: PaintOption only takes an SkBlendMode for primitive blending, but if it is expanded
+    // to accept SkBlenders, then this if should only be taken when the blender is a blend mode.
+    if (/* primBlend.has_value() && */srcIsOpaque) {
+        return fPrimitiveBlendMode == SkBlendMode::kSrc ||
+               fPrimitiveBlendMode == SkBlendMode::kSrcOver;
+    } else {
+        return false;
+    }
 }
 
-void PaintOption::handlePaintAlpha(const KeyContext& keyContext) const {
+bool PaintOption::handlePaintAlpha(const KeyContext& keyContext) const {
 
     if (!fShader.first && !fHasPrimitiveBlender) {
         // If there is no shader and no primitive blending the input to the colorFilter stage
         // is just the premultiplied paint color.
         SolidColorShaderBlock::AddBlock(keyContext, SK_PMColor4fWHITE);
-        return;
+        return fOpaquePaintColor;
     }
 
     if (!fOpaquePaintColor) {
@@ -162,22 +194,25 @@ void PaintOption::handlePaintAlpha(const KeyContext& keyContext) const {
               /* addDstToKey= */ [&]() -> void {
                   AlphaOnlyPaintColorBlock::AddBlock(keyContext);
               });
+        return false;
     } else {
-        this->handlePrimitiveColor(keyContext);
+        return this->handlePrimitiveColor(keyContext);
     }
 }
 
-void PaintOption::handleColorFilter(const KeyContext& keyContext) const {
+bool PaintOption::handleColorFilter(const KeyContext& keyContext) const {
     if (fColorFilter.first) {
+        bool srcIsOpaque = false;
         Compose(keyContext,
                 /* addInnerToKey= */ [&]() -> void {
-                    this->handlePaintAlpha(keyContext);
+                    srcIsOpaque = this->handlePaintAlpha(keyContext);
                 },
                 /* addOuterToKey= */ [&]() -> void {
                     fColorFilter.first->priv().addToKey(keyContext, fColorFilter.second);
                 });
+        return srcIsOpaque && fColorFilter.first->priv().isAlphaUnchanged(fColorFilter.second);
     } else {
-        this->handlePaintAlpha(keyContext);
+        return this->handlePaintAlpha(keyContext);
     }
 }
 
@@ -201,27 +236,30 @@ bool PaintOption::shouldDither(SkColorType dstCT) const {
     return fShader.first && !fShader.first->priv().isConstant(fShader.second);
 }
 
-void PaintOption::handleDithering(const KeyContext& keyContext) const {
+bool PaintOption::handleDithering(const KeyContext& keyContext) const {
 
 #ifndef SK_IGNORE_GPU_DITHER
     SkColorType ct = keyContext.dstColorInfo().colorType();
     if (this->shouldDither(ct)) {
+        bool srcIsOpaque = false;
         Compose(keyContext,
                 /* addInnerToKey= */ [&]() -> void {
-                    this->handleColorFilter(keyContext);
+                    srcIsOpaque = this->handleColorFilter(keyContext);
                 },
                 /* addOuterToKey= */ [&]() -> void {
                     AddDitherBlock(keyContext, ct);
                 });
+        return srcIsOpaque;
     } else
 #endif
     {
-        this->handleColorFilter(keyContext);
+        return this->handleColorFilter(keyContext);
     }
 }
 
 void PaintOption::handleClipping(const KeyContext& keyContext) const {
     if (fAnalyticClip) {
+#if defined(SK_GRAPHITE_USE_LEGACY_RRECT_CLIP_SHADER)
         NonMSAAClipBlock::NonMSAAClipData data(
                 /* rect= */ {},
                 /* radiusPlusHalf= */ {},
@@ -248,6 +286,37 @@ void PaintOption::handleClipping(const KeyContext& keyContext) const {
             // Without a clip shader, the analytic clip can be the clipping root node.
             NonMSAAClipBlock::AddBlock(keyContext, data);
         }
+#else
+        NonMSAAClip clip{
+            .fAnalyticClip = {
+                .fBounds = {0, 0, 1, 1}, // just needs to be non-empty
+            },
+            // TODO: kAnalyticAndAtlasClip vs. kAnalyticClip decision is based on this being
+            // a valid TextureProxy
+            .fAtlasClip = {
+                .fMaskBounds = {},
+                .fOutPos = {},
+                .fAtlasTexture = nullptr,
+            },
+        };
+        if (fClipShader.first) {
+            // For both an analytic clip and clip shader, we need to compose them together into
+            // a single clipping root node.
+            Blend(keyContext,
+                    /* addBlendToKey= */ [&]() -> void {
+                        AddFixedBlendMode(keyContext, SkBlendMode::kModulate);
+                    },
+                    /* addSrcToKey= */ [&]() -> void {
+                        AddAnalyticClip(keyContext, clip);
+                    },
+                    /* addDstToKey= */ [&]() -> void {
+                        fClipShader.first->priv().addToKey(keyContext, fClipShader.second);
+                    });
+        } else {
+            // Without a clip shader, the analytic clip can be the clipping root node.
+            AddAnalyticClip(keyContext, clip);
+        }
+#endif // SK_GRAPHITE_USE_LEGACY_RRECT_CLIP_SHADER
     } else if (fClipShader.first) {
         // Since there's no analytic clip, the clipping root node can be fClipShader directly.
         fClipShader.first->priv().addToKey(keyContext, fClipShader.second);

@@ -18,28 +18,28 @@
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkStream.h"
-#include "include/private/base/SkTemplates.h"
+#include "include/private/SkTemplates.h"
 #include "modules/skcms/skcms.h"
-#include "src/base/SkNoDestructor.h"
 #include "src/codec/SkCodecPriv.h"
 #include "src/codec/SkFrameHolder.h"
 #include "src/codec/SkPixmapUtilsPriv.h"
 #include "src/codec/SkSampler.h"
 #include "src/core/SkColorPriv.h"
+#include "src/core/SkNoDestructor.h"
 
 #include <string>
 #include <string_view>
 #include <utility>
 
 #if !defined(SK_DISABLE_LEGACY_INIT_DECODERS)
-#include "include/private/base/SkOnce.h"
+#include "include/private/SkOnce.h"
 
 #if defined(SK_CODEC_DECODES_AVIF)
 #include "include/codec/SkAvifDecoder.h"
 #endif
 
 #if defined(SK_CODEC_DECODES_BMP_WITH_RUST)
-#include "experimental/rust_bmp/decoder/SkBmpRustDecoder.h"
+#include "include/codec/SkBmpRustDecoder.h"
 #elif defined(SK_CODEC_DECODES_BMP)
 #include "include/codec/SkBmpDecoder.h"
 #endif
@@ -48,7 +48,9 @@
 #include "include/codec/SkGifDecoder.h"
 #endif
 
-#if defined(SK_CODEC_DECODES_ICO)
+#if defined(SK_CODEC_DECODES_ICO_WITH_RUST)
+#include "experimental/rust_ico/decoder/SkIcoRustDecoder.h"
+#elif defined(SK_CODEC_DECODES_ICO)
 #include "include/codec/SkIcoDecoder.h"
 #endif
 
@@ -102,7 +104,9 @@ static std::vector<Decoder>* get_decoders_for_editing() {
 #if defined(SK_CODEC_DECODES_GIF) || defined(SK_HAS_WUFFS_LIBRARY)
             decoders->push_back(SkGifDecoder::Decoder());
 #endif
-#if defined(SK_CODEC_DECODES_ICO)
+#if defined(SK_CODEC_DECODES_ICO_WITH_RUST)
+            decoders->push_back(SkIcoRustDecoder::Decoder());
+#elif defined(SK_CODEC_DECODES_ICO)
             decoders->push_back(SkIcoDecoder::Decoder());
 #endif
 

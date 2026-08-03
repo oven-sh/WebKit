@@ -95,6 +95,10 @@
 #include "DocumentFullscreen.h"
 #endif
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/StyleAdjusterAdditions.cpp>
+#endif
+
 namespace WebCore {
 namespace Style {
 
@@ -392,6 +396,9 @@ static bool shouldTreatAutoZIndexAsZero(const Style::ComputedStyle& style)
         || style.isolation() != Isolation::Auto
         || style.position() == PositionType::Sticky
         || style.position() == PositionType::Fixed
+#if ENABLE(SPATIAL_PORTAL)
+        || style.spatial() == SpatialType::Portal
+#endif
         || style.willChange().canCreateStackingContext();
 }
 
@@ -798,6 +805,10 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
         style.setContainIntrinsicWidth(style.containIntrinsicWidth().addingAuto());
         style.setContainIntrinsicHeight(style.containIntrinsicHeight().addingAuto());
     }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    adjustForAXCustomColorMode(style);
+#endif
 
     adjustForSiteSpecificQuirks(style);
 }

@@ -10,11 +10,11 @@
 #include "include/core/SkPoint.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkTPin.h"
-#include "include/private/base/SkTo.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkTPin.h"
+#include "include/private/SkTo.h"
 #include "modules/jsonreader/SkJSONReader.h"
 #include "modules/skottie/src/SkottieJson.h"
 #include "modules/skottie/src/SkottieValue.h"
@@ -23,6 +23,7 @@
 #include "modules/sksg/include/SkSGGradient.h"
 #include "modules/sksg/include/SkSGPaint.h"
 #include "modules/sksg/include/SkSGRenderEffect.h"
+#include "src/core/SkSafeMath.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -141,10 +142,13 @@ private:
         // while the number of opacity stops is implicit (based on the size of fStops).
         //
         // |fStops| holds ColorRec x |fColorStopCount| + OpacityRec x N
-        const auto c_count = fStopCount,
-                   c_size  = c_count * 4,
-                   o_count = (fStops.size() - c_size) / 2;
-        if (fStops.size() < c_size || fStops.size() != (c_count * 4 + o_count * 2)) {
+        SkSafeMath safe;
+        const size_t c_count = fStopCount,
+                     c_size  = safe.mul(c_count, 4),
+                     o_count = safe.sub(fStops.size(), c_size) / 2,
+                     o_size  = safe.mul(o_count, 2),
+                  total_size = safe.add(c_size, o_size);
+        if (!safe.ok() || fStops.size() != total_size) {
             // apply() may get called before the stops are set, so only log when we have some stops.
             if (!fStops.empty()) {
                 SkDebugf("!! Invalid gradient stop array size: %zu\n", fStops.size());

@@ -17,7 +17,7 @@
 #include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTypes.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 
 using namespace skia_private;
 
@@ -116,7 +116,7 @@ protected:
             // Arc example to test imperfect truncation bug (crbug.com/295626)
             constexpr SkScalar kRad = SkIntToScalar(2000);
             constexpr SkScalar kStartAngle = 262.59717f;
-            constexpr SkScalar kSweepAngle = SkScalarHalf(17.188717f);
+            constexpr SkScalar kSweepAngle = 17.188717f / 2.f;
 
             SkPathBuilder bug;
 

@@ -53,6 +53,33 @@ class TestGitHub(unittest.TestCase):
         self.assertEqual(decoded.url, 'https://github.example.com/WebKit/WebKit')
         self.assertEqual(decoded.from_string('example.com/b/1234').id, 1234)
 
+    def test_api_error_hint(self):
+        def resp(status_code, headers=None):
+            return type('Response', (), dict(status_code=status_code, headers=headers or {}))
+
+        self.assertEqual(github.Tracker.api_error_hint(resp(401)), github.Tracker.REFRESH_TOKEN_PROMPT)
+        self.assertEqual(github.Tracker.api_error_hint(resp(403)), github.Tracker.REFRESH_TOKEN_PROMPT)
+        self.assertEqual(github.Tracker.api_error_hint(resp(403, {'x-ratelimit-remaining': '0'})), github.Tracker.RATE_LIMIT_PROMPT)
+        self.assertEqual(github.Tracker.api_error_hint(resp(429, {'retry-after': '60'})), github.Tracker.RATE_LIMIT_PROMPT)
+        self.assertEqual(github.Tracker.api_error_hint(resp(500)), github.Tracker.SERVER_ERROR_PROMPT)
+        self.assertEqual(github.Tracker.api_error_hint(resp(503)), github.Tracker.SERVER_ERROR_PROMPT)
+        self.assertEqual(github.Tracker.api_error_hint(resp(404)), '')
+        self.assertEqual(github.Tracker.api_error_hint(resp(422)), '')
+
+    def test_decode_json(self):
+        class Response(object):
+            def __init__(self, payload):
+                self.payload = payload
+
+            def json(self):
+                if self.payload is None:
+                    raise json.JSONDecodeError('Expecting value', '', 0)
+                return self.payload
+
+        self.assertEqual(github.Tracker.decode_json(Response({'message': 'Server Error'})), {'message': 'Server Error'})
+        self.assertEqual(github.Tracker.decode_json(Response(None)), {})
+        self.assertEqual(github.Tracker.decode_json(Response(None)).get('message'), None)
+
     def test_users(self):
         with mocks.GitHub(self.URL.split('://')[1], users=mocks.USERS):
             tracker = github.Tracker(self.URL)

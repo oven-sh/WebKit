@@ -126,6 +126,13 @@ WK_CLASS_AVAILABLE(macos(26.4), ios(26.4), visionos(26.4))
 @property (nonatomic) BOOL includeRects;
 
 /*!
+ Prefix each element line in `.textTree` output with its lowercased tag name (e.g. `h1 'Title'`), including
+ for elements that would otherwise render as bare text such as headings and paragraphs. Only affects the
+ `.textTree` output format. The default value is `NO`.
+ */
+@property (nonatomic) BOOL includeTagName;
+
+/*!
  Include options for `select` elements in text extraction output.
  The default value is `YES`.
  */
@@ -326,6 +333,13 @@ NS_REQUIRES_PROPERTY_DEFINITIONS
 - (void)debugDescriptionInWebView:(WKWebView *)webView completionHandler:(void (^)(NSString * _Nullable, NSError * _Nullable))completionHandler;
 
 @property (nonatomic, readonly) _WKTextExtractionAction action;
+
+/*!
+ A direct handle to the target element.
+ When set, this takes precedence over `nodeIdentifier`.
+ */
+@property (nonatomic, copy, nullable) WKJSHandle *elementHandle WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
 @property (nonatomic, copy, nullable) NSString *nodeIdentifier;
 @property (nonatomic, copy, nullable) NSString *text;
 @property (nonatomic) BOOL replaceAll;

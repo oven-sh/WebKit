@@ -716,7 +716,25 @@ void SWServer::resolveUnregistrationJob(const ServiceWorkerJobData& jobData, con
     connection->resolveUnregistrationJobInClient(jobData.identifier().jobIdentifier, registrationKey, unregistrationResult);
 }
 
-ResourceRequest SWServer::createScriptRequest(const URL& url, const ServiceWorkerJobData& jobData, SWServerRegistration& registration)
+static void addFetchMetadataHeaders(ResourceRequest& request, const SecurityOrigin& scriptOrigin, ASCIILiteral destination, ASCIILiteral mode)
+{
+    Ref requestOrigin = SecurityOrigin::create(request.url());
+    ASSERT(requestOrigin->isPotentiallyTrustworthy());
+
+    auto site = [&]() -> ASCIILiteral {
+        if (scriptOrigin.isSameOriginAs(requestOrigin))
+            return "same-origin"_s;
+        if (scriptOrigin.isSameSiteAs(requestOrigin))
+            return "same-site"_s;
+        return "cross-site"_s;
+    }();
+
+    request.setHTTPHeaderField(HTTPHeaderName::SecFetchDest, destination);
+    request.setHTTPHeaderField(HTTPHeaderName::SecFetchMode, mode);
+    request.setHTTPHeaderField(HTTPHeaderName::SecFetchSite, site);
+}
+
+ResourceRequest SWServer::createScriptRequest(const URL& url, const ServiceWorkerJobData& jobData, SWServerRegistration& registration, IsMainScript isMainScript)
 {
     ResourceRequest request { URL { url } };
 
@@ -732,6 +750,14 @@ ResourceRequest SWServer::createScriptRequest(const URL& url, const ServiceWorke
     request.setHTTPUserAgent(serviceWorkerClientUserAgent(ClientOrigin { jobData.topOrigin, SecurityOrigin::create(jobData.scriptURL)->data() }));
     request.setPriority(ResourceLoadPriority::Low);
     request.setIsAppInitiated(registration.isAppInitiated());
+
+    if (isMainScript == IsMainScript::Yes) {
+        request.setHTTPHeaderField(HTTPHeaderName::ServiceWorker, "script"_s);
+        addFetchMetadataHeaders(request, origin, "serviceworker"_s, "same-origin"_s);
+    } else if (jobData.workerType == WorkerType::Module)
+        addFetchMetadataHeaders(request, origin, "serviceworker"_s, "cors"_s);
+    else
+        addFetchMetadataHeaders(request, origin, "script"_s, "no-cors"_s);
 
     return request;
 }
@@ -755,8 +781,7 @@ void SWServer::startScriptFetch(const ServiceWorkerJobData& jobData, SWServerReg
     if (jobData.connectionIdentifier() == Process::identifier()) {
         ASSERT(jobData.type == ServiceWorkerJobType::Update);
         // This is a soft-update job, create directly a network load to fetch the script.
-        auto request = createScriptRequest(jobData.scriptURL, jobData, registration);
-        request.setHTTPHeaderField(HTTPHeaderName::ServiceWorker, "script"_s);
+        auto request = createScriptRequest(jobData.scriptURL, jobData, registration, IsMainScript::Yes);
         protect(*m_delegate)->softUpdate(ServiceWorkerJobData { jobData }, shouldRefreshCache, WTF::move(request), [weakThis = WeakPtr { *this }, jobDataIdentifier = jobData.identifier(), registrationKey = jobData.registrationKey()](WorkerFetchResult&& result) {
             std::optional<ProcessIdentifier> requestingProcessIdentifier;
             if (RefPtr protectedThis = weakThis.get())
@@ -813,7 +838,7 @@ void SWServer::refreshImportedScripts(const ServiceWorkerJobData& jobData, SWSer
     auto handler = RefreshImportedScriptsHandler::create(urls.size(), WTF::move(callback));
     CheckedRef delegate = *m_delegate;
     for (auto& url : urls) {
-        delegate->softUpdate(ServiceWorkerJobData { jobData }, shouldRefreshCache, createScriptRequest(url, jobData, registration), [handler, url, size = urls.size()](WorkerFetchResult&& result) {
+        delegate->softUpdate(ServiceWorkerJobData { jobData }, shouldRefreshCache, createScriptRequest(url, jobData, registration, IsMainScript::No), [handler, url, size = urls.size()](WorkerFetchResult&& result) {
             handler->add(url, WTF::move(result));
         });
     }
@@ -1019,7 +1044,7 @@ void SWServer::unregisterServiceWorkerConnection(Connection& connection, Service
 
 void SWServer::updateWorker(const ServiceWorkerJobDataIdentifier& jobDataIdentifier, const std::optional<ProcessIdentifier>& requestingProcessIdentifier, SWServerRegistration& registration, const URL& url, const ScriptBuffer& script, const CertificateInfo& certificateInfo, const ContentSecurityPolicyResponseHeaders& contentSecurityPolicy, const CrossOriginEmbedderPolicy& coep, const String& referrerPolicy, WorkerType type, MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript>&& scriptResourceMap, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier)
 {
-    tryInstallContextData(requestingProcessIdentifier, ServiceWorkerContextData { jobDataIdentifier, registration.data(), ServiceWorkerIdentifier::generate(), script, certificateInfo, contentSecurityPolicy, coep, referrerPolicy, url, type, false, clientIsAppInitiatedForRegistrableDomain(RegistrableDomain(url)), WTF::move(scriptResourceMap), serviceWorkerPageIdentifier, { }, { } });
+    tryInstallContextData(requestingProcessIdentifier, ServiceWorkerContextData { jobDataIdentifier, registration.data(), ServiceWorkerIdentifier::generate(), script, certificateInfo, contentSecurityPolicy, coep, referrerPolicy, url, type, false, clientIsAppInitiatedForRegistrableDomain(RegistrableDomain(url)), WTF::move(scriptResourceMap), serviceWorkerPageIdentifier, { }, { }, { } });
 }
 
 LastNavigationWasAppInitiated SWServer::clientIsAppInitiatedForRegistrableDomain(const RegistrableDomain& domain)
@@ -1047,11 +1072,12 @@ void SWServer::tryInstallContextData(const std::optional<ProcessIdentifier>& req
     RefPtr connection = contextConnectionForRegistrableDomain(site.domain(), workerCOEP);
     if (!connection) {
         auto firstPartyForCookies = data.registration.key.firstPartyForCookies();
+        auto serviceWorkerPageIdentifier = data.serviceWorkerPageIdentifier;
         m_pendingContextDatas.ensure(ContextConnectionKey { site.domain(), workerCOEP }, [] {
             return Vector<ServiceWorkerContextData> { };
         }).iterator->value.append(WTF::move(data));
 
-        createContextConnection(site, data.serviceWorkerPageIdentifier, workerCOEP);
+        createContextConnection(site, serviceWorkerPageIdentifier, workerCOEP);
         return;
     }
 
@@ -1117,6 +1143,16 @@ OptionSet<AdvancedPrivacyProtections> SWServer::advancedPrivacyProtectionsFromCl
     return result;
 }
 
+std::optional<bool> SWServer::globalPrivacyControlEnabledFromClient(const ClientOrigin& origin) const
+{
+    std::optional<bool> result;
+    forEachClientForOrigin(origin, [&result](auto& clientData) {
+        if (clientData.globalPrivacyControlEnabled)
+            result = result.value_or(false) || *clientData.globalPrivacyControlEnabled;
+    });
+    return result;
+}
+
 void SWServer::addRoutes(ServiceWorkerRegistrationIdentifier identifier, Vector<ServiceWorkerRoute>&& routes, CompletionHandler<void(Expected<void, ExceptionData>&&)>&& callback)
 {
     RefPtr registration = getRegistration(identifier);
@@ -1167,7 +1203,9 @@ void SWServer::installContextData(const ServiceWorkerContextData& data)
     auto result = m_runningOrTerminatingWorkers.add(data.serviceWorkerIdentifier, worker.copyRef());
     ASSERT_UNUSED(result, result.isNewEntry);
 
-    connection->installServiceWorkerContext(data, worker->data(), userAgent, worker->workerThreadMode(), advancedPrivacyProtectionsFromClient(worker->registrationKey().clientOrigin()));
+    auto contextData = data.copy();
+    contextData.globalPrivacyControlEnabled = globalPrivacyControlEnabledFromClient(worker->registrationKey().clientOrigin());
+    connection->installServiceWorkerContext(contextData, worker->data(), userAgent, worker->workerThreadMode(), advancedPrivacyProtectionsFromClient(worker->registrationKey().clientOrigin()));
 }
 
 void SWServer::runServiceWorkerIfNecessary(ServiceWorkerIdentifier identifier, RunServiceWorkerCallback&& callback)
@@ -1255,7 +1293,9 @@ bool SWServer::runServiceWorker(SWServerWorker& worker)
     RefPtr contextConnection = worker.contextConnection();
     ASSERT(contextConnection);
 
-    contextConnection->installServiceWorkerContext(worker.contextData(), worker.data(), worker.userAgent(), worker.workerThreadMode(), advancedPrivacyProtectionsFromClient(worker.registrationKey().clientOrigin()));
+    auto contextData = worker.contextData();
+    contextData.globalPrivacyControlEnabled = globalPrivacyControlEnabledFromClient(worker.registrationKey().clientOrigin());
+    contextConnection->installServiceWorkerContext(contextData, worker.data(), worker.userAgent(), worker.workerThreadMode(), advancedPrivacyProtectionsFromClient(worker.registrationKey().clientOrigin()));
 
     return true;
 }

@@ -92,8 +92,8 @@ import WebKit_Internal
 @MainActor
 @Observable
 @available(anyAppleOSAndDownlevels 26.0, *)
-@available(watchOS, unavailable)
-@available(tvOS, unavailable)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
 #if compiler(>=6.2.3)
 @_expose(!Cxx)
 #endif
@@ -105,8 +105,8 @@ final public class WebPage {
     ///
     /// You can customize the media type of a ``WebPage`` by using the ``WebPage/mediaType`` property.
     @available(anyAppleOSAndDownlevels 26.0, *)
-    @available(watchOS, unavailable)
-    @available(tvOS, unavailable)
+    @_spi_available(watchOSAndOpenSourceTBA, *)
+    @_spi_available(tvOSAndOpenSourceTBA, *)
     public struct CSSMediaType: Hashable, RawRepresentable, Sendable {
         /// Corresponds to the "all" media type.
         public static let all = CSSMediaType(rawValue: "all")
@@ -132,8 +132,8 @@ final public class WebPage {
 
     /// The set of possible fullscreen states a webpage may be in.
     @available(anyAppleOSAndDownlevels 26.0, *)
-    @available(watchOS, unavailable)
-    @available(tvOS, unavailable)
+    @_spi_available(watchOSAndOpenSourceTBA, *)
+    @_spi_available(tvOSAndOpenSourceTBA, *)
     public enum FullscreenState: Hashable, Sendable {
         /// The page is entering fullscreen.
         case enteringFullscreen
@@ -362,17 +362,8 @@ final public class WebPage {
     let backingUIDelegate: WKUIDelegateAdapter
     private let backingNavigationDelegate: WKNavigationDelegateAdapter
 
-    #if os(macOS)
-    // SPI for the cross-import overlay.
-    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
-    @_spi(CrossImportOverlay)
-    public func setMenuBuilder(_ menuBuilder: ((WKContextMenuElementInfoAdapter) -> NSMenu)?) {
-        backingUIDelegate.menuBuilder = menuBuilder
-    }
-    #endif
-
     @ObservationIgnored
-    private var observations = KeyValueObservations()
+    var observations = KeyValueObservations()
 
     // SPI for the cross-import overlay.
     // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
@@ -398,16 +389,6 @@ final public class WebPage {
         return webView
     }()
 
-    #if os(macOS)
-    // SPI for testing.
-    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
-    @_spi(Testing)
-    public var smartListsEnabled: Bool {
-        get { backingWebView._isSmartListsEnabled() }
-        set { backingWebView._setSmartListsEnabled(newValue) }
-    }
-    #endif
-
     // MARK: Loading functions
 
     @ObservationIgnored
@@ -420,7 +401,7 @@ final public class WebPage {
     private var indefiniteNavigations: [UUID: AsyncThrowingStream<NavigationEvent, any Error>.Continuation] = [:]
 
     @ObservationIgnored
-    private var editorStateSnapshotsContinuations: [UUID: AsyncStream<EditorStateSnapshot>.Continuation] = [:]
+    var editorStateSnapshotsContinuations: [UUID: AsyncStream<EditorStateSnapshot>.Continuation] = [:]
 
     /// Loads the web content that the specified URL references and navigates to that content.
     ///
@@ -682,7 +663,7 @@ final public class WebPage {
 // MARK: Helper functions
 
 extension WebPage {
-    private struct KeyValueObservations: ~Copyable {
+    struct KeyValueObservations: ~Copyable {
         var contents: [PartialKeyPath<WebPage>: NSKeyValueObservation] = [:]
 
         deinit {
@@ -763,7 +744,7 @@ extension WebPage {
         return stream
     }
 
-    private func createObservation<Value, BackingValue>(
+    func createObservation<Value, BackingValue>(
         for keyPath: KeyPath<WebPage, Value>,
         backedBy backingKeyPath: KeyPath<WebPageWebView, BackingValue>
     ) -> NSKeyValueObservation {
@@ -778,32 +759,6 @@ extension WebPage {
                 _$observationRegistrar.didSet(self, keyPath: boxed.keyPath)
             }
         }
-    }
-
-    // SPI for the cross-import overlay.
-    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
-    @_spi(CrossImportOverlay)
-    public func backingProperty<Value, BackingValue>(
-        _ keyPath: KeyPath<WebPage, Value>,
-        backedBy backingKeyPath: KeyPath<WebPageWebView, BackingValue>,
-        _ transform: (BackingValue) -> Value
-    ) -> Value {
-        if observations.contents[keyPath] == nil {
-            observations.contents[keyPath] = createObservation(for: keyPath, backedBy: backingKeyPath)
-        }
-
-        self.access(keyPath: keyPath)
-
-        let backingValue = backingWebView[keyPath: backingKeyPath]
-        return transform(backingValue)
-    }
-
-    // SPI for the cross-import overlay.
-    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
-    @_spi(CrossImportOverlay)
-    public func backingProperty<Value>(_ keyPath: KeyPath<WebPage, Value>, backedBy backingKeyPath: KeyPath<WebPageWebView, Value>) -> Value
-    {
-        backingProperty(keyPath, backedBy: backingKeyPath) { $0 }
     }
 }
 
@@ -821,106 +776,10 @@ extension WebPage.FullscreenState {
     }
 }
 
-// MARK: Testing
-
-extension WebPage {
-    /// Represents details about the current editor state.
-    @_spi(Testing)
-    public struct EditorStateSnapshot: Sendable, Equatable {
-        /// The post-layout data associated with an editor state.
-        @_spi(Testing)
-        public struct PostLayoutData: Sendable, Equatable {
-            /// The current selection is bold.
-            @_spi(Testing)
-            public let bold: Bool
-
-            /// The current selection is italic.
-            @_spi(Testing)
-            public let italic: Bool
-
-            /// The current selection is underlined.
-            @_spi(Testing)
-            public let underline: Bool
-
-            /// The text alignment of the current selection.
-            @_spi(Testing)
-            public let textAlignment: NSTextAlignment
-
-            /// The CSS color string of the current selection.
-            @_spi(Testing)
-            public let textColor: Swift.String
-        }
-
-        /// A type of selection.
-        @_spi(Testing)
-        public enum SelectionType: Int, Sendable, Equatable {
-            /// No selection.
-            case none
-
-            /// A caret selection.
-            case caret
-
-            /// A range selection.
-            case range
-        }
-
-        /// The current type of selection.
-        @_spi(Testing)
-        public let selectionType: SelectionType
-
-        /// The post-layout data of the editor state, if any.
-        @_spi(Testing)
-        public let postLayoutData: PostLayoutData?
-    }
-
-    // SPI for testing.
-    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
-    @_spi(Testing)
-    public func terminateWebContentProcess() {
-        backingWebView._killWebContentProcess()
-    }
-
-    /// An indefinite sequence of editor state snapshot changes for this page.
-    @_spi(Testing)
-    public func editorStateSnapshots() -> some AsyncSequence<EditorStateSnapshot, Never> & Sendable {
-        let id = UUID()
-
-        let (stream, continuation) = AsyncStream.makeStream(of: EditorStateSnapshot.self)
-        continuation.onTermination = { [weak self] termination in
-            guard let self else {
-                return
-            }
-            Task { @MainActor in
-                editorStateSnapshotsContinuations[id] = nil
-            }
-        }
-
-        editorStateSnapshotsContinuations[id] = continuation
-        return stream
-    }
-}
-
-extension WebPage.EditorStateSnapshot {
-    init(_ dictionary: [AnyHashable: Any]) {
-        // The Objective-C interface this is converting from is not able to express at compile-time that this is guaranteed.
-        // swift-format-ignore: NeverForceUnwrap
-        self.selectionType = SelectionType(rawValue: dictionary["selection-type"] as! SelectionType.RawValue)!
-
-        guard let postLayoutData = dictionary["post-layout-data"] as? Bool, postLayoutData else {
-            self.postLayoutData = nil
-            return
-        }
-
-        // The Objective-C interface this is converting from is not able to express at compile-time that these are guaranteed.
-        // swift-format-ignore: NeverForceUnwrap
-        self.postLayoutData = .init(
-            bold: dictionary["bold"] as! Bool,
-            italic: dictionary["italic"] as! Bool,
-            underline: dictionary["underline"] as! Bool,
-            textAlignment: NSTextAlignment(rawValue: dictionary["text-alignment"] as! Int)!,
-            textColor: dictionary["text-color"] as! String
-        )
-    }
+@available(anyAppleOSAndDownlevels 26.0, *)
+@_spi_available(watchOSAndOpenSourceTBA, *)
+@_spi_available(tvOSAndOpenSourceTBA, *)
+extension WebPage: nonisolated Observation.Observable {
 }
 
 #endif

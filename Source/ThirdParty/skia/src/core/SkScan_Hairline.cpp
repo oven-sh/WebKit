@@ -13,22 +13,22 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkRegion.h"
 #include "include/core/SkScalar.h"
-#include "include/private/base/SkAssert.h"
-#include "include/private/base/SkDebug.h"
-#include "include/private/base/SkFixed.h"
-#include "include/private/base/SkFloatingPoint.h"
-#include "include/private/base/SkMath.h"
-#include "include/private/base/SkSafe32.h"
-#include "src/base/SkMathPriv.h"
-#include "src/base/SkUtils.h"
-#include "src/base/SkVx.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkFixed.h"
+#include "include/private/SkFloatingPoint.h"
+#include "include/private/SkMath.h"
+#include "include/private/SkSafe32.h"
 #include "src/core/SkBlitter.h"
 #include "src/core/SkFDot6.h"
 #include "src/core/SkGeometry.h"
 #include "src/core/SkLineClipper.h"
+#include "src/core/SkMathPriv.h"
 #include "src/core/SkPathPriv.h"
 #include "src/core/SkRasterClip.h"
 #include "src/core/SkScan.h"
+#include "src/core/SkUtils.h"
+#include "src/core/SkVx.h"
 
 #include <algorithm>
 #include <array>
@@ -214,7 +214,6 @@ void SkScan::HairLineRgn(SkSpan<const SkPoint> src, const SkRegion* clip, SkBlit
 }
 
 struct DrawingParameters {
-    const SkPathRaw raw;
     const SkRegion* clip;
     const SkRect* insetClip;
     const SkRect* outsetClip;
@@ -286,11 +285,11 @@ using float2 = skvx::float2;
 static uint32_t compute_int_quad_dist(const SkPoint pts[3]) {
     // compute the vector between the control point ([1]) and the middle of the
     // line connecting the start and end ([0] and [2])
-    SkScalar dx = SkScalarHalf(pts[0].fX + pts[2].fX) - pts[1].fX;
-    SkScalar dy = SkScalarHalf(pts[0].fY + pts[2].fY) - pts[1].fY;
+    float dx = ((pts[0].fX + pts[2].fX) / 2.f) - pts[1].fX;
+    float dy = ((pts[0].fY + pts[2].fY) / 2.f) - pts[1].fY;
     // we want everyone to be positive
-    dx = SkScalarAbs(dx);
-    dy = SkScalarAbs(dy);
+    dx = std::abs(dx);
+    dy = std::abs(dy);
     // convert to whole pixel values (use ceiling to be conservative).
     // assign to unsigned so we can safely add 1/2 of the smaller and still fit in
     // uint32_t, since SkScalarCeilToInt() returns 31 bits at most.
@@ -588,20 +587,6 @@ void extend_pts(std::optional<SkPathVerb> prevVerb, std::optional<SkPathVerb> ne
     }
 }
 
-static inline bool determine_degeneracy(const SkPoint* pts, int numPts) {
-    SkASSERT(numPts <= 4);
-    bool isDegenerate = false;
-    switch (numPts) {
-        case 2:
-            return SkPath::IsLineDegenerate(pts[0], pts[1], true);
-        case 3:
-            return SkPath::IsQuadDegenerate(pts[0], pts[1], pts[2], true);
-        case 4:
-            return SkPath::IsCubicDegenerate(pts[0], pts[1], pts[2], pts[3], true);
-    }
-    return isDegenerate;
-}
-
 static inline void hairconic(const SkPoint* p, DrawingParameters d, float conicWeight) {
     SkAutoConicToQuads converter;
     // how close should the quads be to the original conic?
@@ -615,8 +600,7 @@ static inline void hairconic(const SkPoint* p, DrawingParameters d, float conicW
 }
 
 // This function assumes that iter is currently ON a SkPathVerb::kMove verb
-static inline bool is_next_contour_closed(SkPathIter iter) {
-    auto scanner = iter;  // Create a copy for lookahead
+static inline bool is_next_contour_closed(SkPathIter scanner) {
     // we assume the first verb is already a move, so do scanner.next() to proceed to the next verb.
     // This will ideally be a contour verb or a close
     auto rec = scanner.next();
@@ -700,52 +684,60 @@ void hair_path(const SkPathRaw& raw,
     SkPoint pts[4], firstPt, lastPt;
     SkAutoConicToQuads converter;
     bool isClosed = false;
-    DrawingParameters params = {raw, clip, insetClip, outsetClip, blitter, lineproc};
+    DrawingParameters params = {clip, insetClip, outsetClip, blitter, lineproc};
     bool isButtCap = capStyle == SkPaint::kButt_Cap;
 
     std::optional<SkPathVerb> prevVerb;
     for (auto iter = raw.iter(); auto rec = iter.next();) {
         const SkPoint* srcPts = rec->fPoints.data();
-        const int numPts = rec->fPoints.size();
         SkPathVerb verb = rec->fVerb;
         auto nextVerb = iter.peekNextVerb();
         switch (verb) {
             case SkPathVerb::kMove:
                 firstPt = lastPt = srcPts[0];
-                isClosed = is_next_contour_closed(iter);
+                isClosed = !isButtCap && is_next_contour_closed(iter);
                 break;
-            case SkPathVerb::kLine:
-                std::copy(srcPts, srcPts + numPts, pts);
-                if (!isButtCap && (!isClosed || determine_degeneracy(srcPts, numPts))) {
-                    extend_pts<capStyle>(prevVerb, nextVerb, {pts, numPts});
+            case SkPathVerb::kLine: {
+                constexpr int kNumLinePts = 2;
+                std::copy(srcPts, srcPts + kNumLinePts, pts);
+                if (!isButtCap && (!isClosed || SkPath::IsLineDegenerate(pts[0], pts[1], true))) {
+                    extend_pts<capStyle>(prevVerb, nextVerb, {pts, kNumLinePts});
                 }
-                lineproc({pts, numPts}, clip, blitter);
-                lastPt = pts[numPts - 1];
+                lineproc({pts, kNumLinePts}, clip, blitter);
+                lastPt = pts[kNumLinePts - 1];
                 break;
-            case SkPathVerb::kQuad:
-                std::copy(srcPts, srcPts + numPts, pts);
-                if (!isButtCap && (!isClosed || determine_degeneracy(srcPts, numPts))) {
-                    extend_pts<capStyle>(prevVerb, nextVerb, {pts, numPts});
+            }
+            case SkPathVerb::kQuad: {
+                constexpr int kNumQuadPts = 3;
+                std::copy(srcPts, srcPts + kNumQuadPts, pts);
+                if (!isButtCap &&
+                    (!isClosed || SkPath::IsQuadDegenerate(pts[0], pts[1], pts[2], true))) {
+                    extend_pts<capStyle>(prevVerb, nextVerb, {pts, kNumQuadPts});
                 }
                 hairquad(pts, params, compute_quad_level(pts));
-                lastPt = pts[numPts - 1];
+                lastPt = pts[kNumQuadPts - 1];
                 break;
+            }
             case SkPathVerb::kConic: {
-                std::copy(srcPts, srcPts + numPts, pts);
-                if (!isButtCap && (!isClosed || determine_degeneracy(srcPts, numPts))) {
-                    extend_pts<capStyle>(prevVerb, nextVerb, {pts, numPts});
+                constexpr int kNumConicPts = 3;
+                std::copy(srcPts, srcPts + kNumConicPts, pts);
+                if (!isButtCap &&
+                    (!isClosed || SkPath::IsQuadDegenerate(pts[0], pts[1], pts[2], true))) {
+                    extend_pts<capStyle>(prevVerb, nextVerb, {pts, kNumConicPts});
                 }
                 hairconic(pts, params, rec->conicWeight());
-                lastPt = pts[numPts - 1];
+                lastPt = pts[kNumConicPts - 1];
                 break;
             }
             case SkPathVerb::kCubic: {
-                std::copy(srcPts, srcPts + numPts, pts);
-                if (!isButtCap && (!isClosed || determine_degeneracy(srcPts, numPts))) {
-                    extend_pts<capStyle>(prevVerb, nextVerb, {pts, numPts});
+                constexpr int kNumCubicPts = 4;
+                std::copy(srcPts, srcPts + kNumCubicPts, pts);
+                if (!isButtCap && (!isClosed || SkPath::IsCubicDegenerate(
+                                                        pts[0], pts[1], pts[2], pts[3], true))) {
+                    extend_pts<capStyle>(prevVerb, nextVerb, {pts, kNumCubicPts});
                 }
                 haircubic(pts, params, kMaxCubicSubdivideLevel);
-                lastPt = pts[numPts - 1];
+                lastPt = pts[kNumCubicPts - 1];
             } break;
             case SkPathVerb::kClose:
                 pts[0] = lastPt;
@@ -801,10 +793,10 @@ void SkScan::FrameRect(const SkRect& r, const SkPoint& strokeSize,
         return;
     }
 
-    const SkScalar dx = strokeSize.fX;
-    const SkScalar dy = strokeSize.fY;
-    SkScalar rx = SkScalarHalf(dx);
-    SkScalar ry = SkScalarHalf(dy);
+    const float dx = strokeSize.fX;
+    const float dy = strokeSize.fY;
+    float rx = dx / 2.f;
+    float ry = dy / 2.f;
     SkRect   outer, tmp;
 
     outer.setLTRB(r.fLeft - rx, r.fTop - ry, r.fRight + rx, r.fBottom + ry);

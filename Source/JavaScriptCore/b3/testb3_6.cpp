@@ -1493,8 +1493,6 @@ void testPatchpointDoubleRegs()
 
 void testSpillDefSmallerThanUse()
 {
-    if constexpr (is32Bit())
-        return;
 
     Procedure proc;
     BasicBlock* root = proc.addBlock();
@@ -1513,13 +1511,11 @@ void testSpillDefSmallerThanUse()
     clobberSet.exclude(RegisterSet::reservedHardwareRegisters());
     clobberSet.remove(GPRInfo::returnValueGPR); // Force the return value for aliasing below.
     forceSpill->clobberLate(clobberSet);
-#if !CPU(ARM_THUMB2)
     forceSpill->setGenerator(
         [&] (CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.xor64(params[0].gpr(), params[0].gpr());
         });
-#endif
 
     // On x86, Sub admit an address for any operand. If it uses the stack, the top bits must be zero.
     Value* result = root->appendNew<Value>(proc, Sub, Origin(), forceSpill, arg64);
@@ -1531,8 +1527,6 @@ void testSpillDefSmallerThanUse()
 
 void testSpillUseLargerThanDef()
 {
-    if constexpr (is32Bit())
-        return;
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     BasicBlock* thenCase = proc.addBlock();
@@ -1567,7 +1561,6 @@ void testSpillUseLargerThanDef()
 
     PatchpointValue* forceSpill = tail->appendNew<PatchpointValue>(proc, Void, Origin());
     forceSpill->clobberLate(clobberSet);
-#if !CPU(ARM_THUMB2)
     forceSpill->setGenerator(
         [&] (CCallHelpers& jit, const StackmapGenerationParams&) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -1575,7 +1568,6 @@ void testSpillUseLargerThanDef()
                 jit.move(CCallHelpers::TrustedImm64(0xffffffffffffffff), reg.gpr());
             });
         });
-#endif
 
     Value* phi = tail->appendNew<Value>(proc, Phi, Int64, Origin());
     thenResult->setPhi(phi);

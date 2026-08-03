@@ -30,28 +30,27 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-#include "ConcurrentJSLock.h"
-#include "DFGDoesGCCheck.h"
-#include "ExceptionEventLocation.h"
-#include "FunctionHasExecutedCache.h"
-#include "Heap.h"
-#include "ImplementationVisibility.h"
-#include "IndexingType.h"
-#include "Integrity.h"
-#include "Interpreter.h"
-#include "JSDateMath.h"
-#include "JSONAtomStringCache.h"
-#include "KeyAtomStringCache.h"
-#include "NativeFunction.h"
-#include "NumericStrings.h"
-#include "SmallStrings.h"
-#include "StringReplaceCache.h"
-#include "StringSplitCache.h"
-#include "StrongForward.h"
-#include "VMThreadContext.h"
-#include "VMTraps.h"
-#include "WeakGCMap.h"
-#include "WriteBarrier.h"
+#include <JavaScriptCore/ConcurrentJSLock.h>
+#include <JavaScriptCore/DFGDoesGCCheck.h>
+#include <JavaScriptCore/ExceptionEventLocation.h>
+#include <JavaScriptCore/FunctionHasExecutedCache.h>
+#include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/ImplementationVisibility.h>
+#include <JavaScriptCore/IndexingType.h>
+#include <JavaScriptCore/Integrity.h>
+#include <JavaScriptCore/Interpreter.h>
+#include <JavaScriptCore/JSDateMath.h>
+#include <JavaScriptCore/JSONAtomStringCache.h>
+#include <JavaScriptCore/KeyAtomStringCache.h>
+#include <JavaScriptCore/NativeFunction.h>
+#include <JavaScriptCore/NumericStrings.h>
+#include <JavaScriptCore/SmallStrings.h>
+#include <JavaScriptCore/StringReplaceCache.h>
+#include <JavaScriptCore/StrongForward.h>
+#include <JavaScriptCore/VMThreadContext.h>
+#include <JavaScriptCore/WeakGCMap.h>
+#include <JavaScriptCore/WriteBarrier.h>
+#include <wtf/ApproximateTime.h>
 #include <wtf/BumpPointerAllocator.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/Compiler.h>
@@ -140,6 +139,7 @@ class NativeExecutable;
 #if USE(BUN_JSC_ADDITIONS)
 class QueuedTask;
 enum class InternalMicrotask : uint8_t;
+namespace FFI { class CallbackEntryScope; }
 #endif
 class Debugger;
 class DeferredWorkTimer;
@@ -156,6 +156,7 @@ class SourceProvider;
 class SourceProviderCache;
 enum class SourceTaintedOrigin : uint8_t;
 class StackFrame;
+class StringSplitCache;
 class Structure;
 class Symbol;
 class TypedArrayController;
@@ -370,7 +371,7 @@ public:
         NeedStopTheWorld = 1 << 1, // FIXME rdar://161576886
     };
 
-    bool hasAnyEntryScopeServiceRequest() { return m_entryScopeServicesRawBits; }
+    bool hasAnyEntryScopeServiceRequest() { return m_entryScopeServicesRawBits || hasTimeZoneChange() || hasLanguageChange(); }
     void executeEntryScopeServicesOnEntry();
     void executeEntryScopeServicesOnExit();
 
@@ -386,7 +387,7 @@ public:
     enum class SchedulerOptions : uint8_t {
         HasImminentlyScheduledWork = 1 << 0,
     };
-    JS_EXPORT_PRIVATE void performOpportunisticallyScheduledTasks(MonotonicTime deadline, OptionSet<SchedulerOptions>);
+    JS_EXPORT_PRIVATE void performOpportunisticallyScheduledTasks(ApproximateTime deadline, OptionSet<SchedulerOptions>);
 
     Structure* cellButterflyStructure(IndexingType indexingType) { return rawImmutableButterflyStructure(indexingType).get(); }
 
@@ -635,7 +636,6 @@ public:
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
     JSONAtomStringCache jsonAtomStringCache;
     KeyAtomStringCache keyAtomStringCache;
-    StringSplitCache stringSplitCache;
     Vector<unsigned> stringSplitIndice;
     StringReplaceCache stringReplaceCache;
 
@@ -655,6 +655,7 @@ public:
     WriteBarrier<JSBigInt> m_nextCachedBigIntDivisor;
     Vector<UCPURegister> m_bigIntCachedInverse;
     int m_bigIntDivisorCount { 0 };
+    UCPURegister m_bigIntFoldFactor { 0 };
 
     JSCell* orderedHashTableDeletedValue()
     {
@@ -921,9 +922,6 @@ public:
     Interpreter interpreter;
     VMEntryScope* entryScope { nullptr };
 
-    JSObject* stringRecursionCheckFirstObject { nullptr };
-    UncheckedKeyHashSet<JSObject*> stringRecursionCheckVisitedObjects;
-
     DateCache dateCache;
 
     std::unique_ptr<Profiler::Database> m_perBytecodeProfiler;
@@ -944,6 +942,10 @@ public:
     ALWAYS_INLINE MegamorphicCache* megamorphicCache() { return m_megamorphicCache.getIfExists(); }
     MegamorphicCache& ensureMegamorphicCache() { return m_megamorphicCache.get(*this); }
 
+    LazyUniqueRef<VM, StringSplitCache> m_stringSplitCache;
+    ALWAYS_INLINE StringSplitCache* stringSplitCache() { return m_stringSplitCache.getIfExists(); }
+    StringSplitCache& ensureStringSplitCache() { return m_stringSplitCache.get(*this); }
+
     const UniqueRef<MicrotaskCallCache> m_syncResumeCallCache;
     MicrotaskCallCache& syncResumeCallCache() { return m_syncResumeCallCache.get(); }
 
@@ -963,6 +965,7 @@ public:
 #endif
 
     bool hasTimeZoneChange() { return dateCache.hasTimeZoneChange(); }
+    JS_EXPORT_PRIVATE bool hasLanguageChange();
 
     RegExpCache* regExpCache() LIFETIME_BOUND { return m_regExpCache.get(); }
 
@@ -979,6 +982,11 @@ public:
     JS_EXPORT_PRIVATE JSLock& apiLock();
     CodeCache* codeCache() LIFETIME_BOUND { return m_codeCache.get(); }
     IntlCache& intlCache() { return *m_intlCache; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Clears both dateCache and intlCache; callable without including IntlCache.h
+    // (which transitively includes ICU headers that Bun's C++ cannot see on macOS).
+    JS_EXPORT_PRIVATE void clearForTimeZoneChange();
+#endif
 
     JS_EXPORT_PRIVATE void whenIdle(Function<void()>&&);
 
@@ -1368,6 +1376,9 @@ private:
     friend class JSDollarVMHelper;
     friend class LLIntOffsetsExtractor;
     friend class SuspendExceptionScope;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class FFI::CallbackEntryScope;
+#endif
     friend class VMTraps;
 };
 

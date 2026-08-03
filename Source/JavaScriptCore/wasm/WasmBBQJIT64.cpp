@@ -31,7 +31,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "WasmBBQJIT.h"
 
 #if ENABLE(WEBASSEMBLY_BBQJIT)
-#if USE(JSVALUE64)
 
 #include "B3Common.h"
 #include "B3ValueRep.h"
@@ -162,8 +161,9 @@ Value BBQJIT::instanceValue()
 [[nodiscard]] PartialResult BBQJIT::addTableGet(unsigned tableIndex, Value index, Value& result)
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
-    ASSERT(index.type() == TypeKind::I32);
-    TypeKind returnType = m_info.tables[tableIndex].wasmType().kind;
+    auto table = m_info.table(tableIndex);
+    ASSERT(index.type() == table.addressType().asWasmTypeKind());
+    TypeKind returnType = table.wasmType().kind();
     ASSERT(typeKindSizeInBytes(returnType) == 8);
 
     Vector<Value, 8> arguments = {
@@ -187,19 +187,19 @@ Value BBQJIT::instanceValue()
     Type type = global.type;
 
     int32_t offset = JSWebAssemblyInstance::offsetOfGlobal(m_info, index);
-    Value globalValue = Value::pinned(type.kind, Location::fromGlobal(offset));
+    Value globalValue = Value::pinned(type.kind(), Location::fromGlobal(offset));
 
     switch (global.bindingMode) {
     case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance:
-        result = topValue(type.kind);
+        result = topValue(type.kind());
         emitLoad(globalValue, loadIfNecessary(result));
         break;
     case Wasm::GlobalInformation::BindingMode::Portable:
         ASSERT(global.mutability == Wasm::Mutability::Mutable);
         m_jit.loadPtr(Address(GPRInfo::wasmContextInstancePointer, offset), wasmScratchGPR);
-        result = topValue(type.kind);
+        result = topValue(type.kind());
         Location resultLocation = allocate(result);
-        switch (type.kind) {
+        switch (type.kind()) {
         case TypeKind::I32:
             m_jit.load32(Address(wasmScratchGPR), resultLocation.asGPR());
             break;
@@ -282,7 +282,7 @@ Value BBQJIT::instanceValue()
         ASSERT(valueLocation.isRegister());
         consume(value);
 
-        switch (type.kind) {
+        switch (type.kind()) {
         case TypeKind::I32:
             m_jit.store32(valueLocation.asGPR(), Address(wasmScratchGPR));
             break;
@@ -649,7 +649,7 @@ void BBQJIT::emitAtomicOpGeneric(ExtAtomicOpType op, Address address, GPRReg old
     if (accessWidth(loadOp) != Width8)
         recordJumpToThrowException(ExceptionType::UnalignedMemoryAccess, m_jit.branchTest64(ResultCondition::NonZero, pointer.asGPR(), TrustedImm64(sizeOfAtomicOpMemoryAccess(loadOp) - 1)));
 
-    Value result = topValue(valueType.kind);
+    Value result = topValue(valueType.kind());
     Location resultLocation = allocate(result);
 
     if (!(isARM64_LSE() || isX86_64())) {
@@ -657,7 +657,7 @@ void BBQJIT::emitAtomicOpGeneric(ExtAtomicOpType op, Address address, GPRReg old
         emitAtomicOpGeneric(loadOp, address, resultLocation.asGPR(), scratches.gpr(0), [&](GPRReg oldGPR, GPRReg newGPR) {
             emitSanitizeAtomicResult(loadOp, canonicalWidth(accessWidth(loadOp)) == Width64 ? TypeKind::I64 : TypeKind::I32, oldGPR, newGPR);
         });
-        emitSanitizeAtomicResult(loadOp, valueType.kind, resultLocation.asGPR());
+        emitSanitizeAtomicResult(loadOp, valueType.kind(), resultLocation.asGPR());
         return result;
     }
 
@@ -724,7 +724,7 @@ void BBQJIT::emitAtomicOpGeneric(ExtAtomicOpType op, Address address, GPRReg old
         break;
     }
 
-    emitSanitizeAtomicResult(loadOp, valueType.kind, resultLocation.asGPR());
+    emitSanitizeAtomicResult(loadOp, valueType.kind(), resultLocation.asGPR());
 
     return result;
 }
@@ -842,7 +842,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
     if (accessWidth(op) != Width8)
         recordJumpToThrowException(ExceptionType::UnalignedMemoryAccess, m_jit.branchTest64(ResultCondition::NonZero, pointer.asGPR(), TrustedImm64(sizeOfAtomicOpMemoryAccess(op) - 1)));
 
-    Value result = topValue(valueType.kind);
+    Value result = topValue(valueType.kind());
     Location resultLocation = allocate(result);
 
     GPRReg scratchGPR = InvalidGPRReg;
@@ -906,7 +906,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
             }
-            emitSanitizeAtomicResult(op, valueType.kind, resultLocation.asGPR());
+            emitSanitizeAtomicResult(op, valueType.kind(), resultLocation.asGPR());
             return result;
         }
         break;
@@ -961,7 +961,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
             }
-            emitSanitizeAtomicResult(op, valueType.kind, resultLocation.asGPR());
+            emitSanitizeAtomicResult(op, valueType.kind(), resultLocation.asGPR());
             return result;
         }
         break;
@@ -997,7 +997,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
             }
-            emitSanitizeAtomicResult(op, valueType.kind, resultLocation.asGPR());
+            emitSanitizeAtomicResult(op, valueType.kind(), resultLocation.asGPR());
             return result;
         }
 #endif
@@ -1028,7 +1028,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
             }
-            emitSanitizeAtomicResult(op, valueType.kind, resultLocation.asGPR());
+            emitSanitizeAtomicResult(op, valueType.kind(), resultLocation.asGPR());
             return result;
         }
 #endif
@@ -1059,7 +1059,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
             }
-            emitSanitizeAtomicResult(op, valueType.kind, resultLocation.asGPR());
+            emitSanitizeAtomicResult(op, valueType.kind(), resultLocation.asGPR());
             return result;
         }
 #endif
@@ -1109,7 +1109,7 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
             }
-            emitSanitizeAtomicResult(op, valueType.kind, resultLocation.asGPR());
+            emitSanitizeAtomicResult(op, valueType.kind(), resultLocation.asGPR());
             return result;
         }
         break;
@@ -1182,14 +1182,14 @@ Value BBQJIT::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Location
         case ExtAtomicOpType::I64AtomicRmw16XchgU:
         case ExtAtomicOpType::I64AtomicRmw32XchgU:
         case ExtAtomicOpType::I64AtomicRmwXchg:
-            emitSanitizeAtomicResult(op, valueType.kind, valueLocation.asGPR(), newGPR);
+            emitSanitizeAtomicResult(op, valueType.kind(), valueLocation.asGPR(), newGPR);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
             break;
         }
     });
-    emitSanitizeAtomicResult(op, valueType.kind, resultLocation.asGPR());
+    emitSanitizeAtomicResult(op, valueType.kind(), resultLocation.asGPR());
     return result;
 }
 
@@ -1657,7 +1657,7 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
         ASSERT(arrayref.asI64() == JSValue::encode(jsNull()));
         consume(index);
         emitThrowException(ExceptionType::NullAccess);
-        result = topValue(resultType.kind);
+        result = topValue(resultType.kind());
         return { };
     }
 
@@ -1680,7 +1680,7 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
     emitArrayGetPayload(elementType, arrayLocation.asGPR(), wasmScratchGPR);
 
     consume(arrayref);
-    result = topValue(resultType.kind);
+    result = topValue(resultType.kind());
     Location resultLocation = allocate(result);
 
     if (index.isConst()) {
@@ -1769,7 +1769,7 @@ void BBQJIT::emitAllocateGCArrayUninitialized(GPRReg resultGPR, TypeSignatureInd
             LOG_INSTRUCTION("ArrayGetU", typeIndex, arrayref, index, RESULT(result));
             return { };
         case ExtGCOpType::ArrayGetS: {
-            ASSERT(resultType.kind == TypeKind::I32);
+            ASSERT(resultType.kind() == TypeKind::I32);
             uint8_t bitShift = (sizeof(uint32_t) - elementType.elementSize()) * 8;
 
             m_jit.lshift32(TrustedImm32(bitShift), resultLocation.asGPR());
@@ -2055,7 +2055,7 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
         auto* structPtr = context.gpr<JSWebAssemblyStruct*>(resultGPR);
         for (unsigned i = 0; i < debugStructType->fieldCount(); ++i) {
             auto type = debugStructType->field(i).type.unpacked();
-            if (type.kind != TypeKind::V128)
+            if (type.kind() != TypeKind::V128)
                 validateWasmValue(structPtr->get(i), type);
         }
     });
@@ -2095,7 +2095,7 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
         auto* structPtr = context.gpr<JSWebAssemblyStruct*>(resultGPR);
         for (unsigned i = 0; i < debugStructType->fieldCount(); ++i) {
             auto type = debugStructType->field(i).type.unpacked();
-            if (type.kind != TypeKind::V128)
+            if (type.kind() != TypeKind::V128)
                 validateWasmValue(structPtr->get(i), type);
         }
     });
@@ -2109,7 +2109,7 @@ void BBQJIT::emitAllocateGCStructUninitialized(GPRReg resultGPR, TypeSignatureIn
 [[nodiscard]] PartialResult BBQJIT::addStructGet(ExtGCOpType structGetKind, TypedExpression typedStruct, const RTT& structType, uint32_t fieldIndex, Value& result)
 {
     auto structValue = typedStruct.value();
-    TypeKind resultKind = structType.field(fieldIndex).type.unpacked().kind;
+    TypeKind resultKind = structType.field(fieldIndex).type.unpacked().kind();
     if (structValue.isConst()) {
         // This is the only constant struct currently possible.
         ASSERT(JSValue::decode(structValue.asRef()).isNull());
@@ -2233,7 +2233,7 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
         if (allowNull)
             return std::nullopt;
 
-        if (typeIndexIsType(static_cast<Wasm::TypeIndex>(toHeapType)))
+        if (!isTypeIndexHeapType(toHeapType))
             return std::nullopt;
 
         Ref targetRTT = m_info.rtt(ModuleInformation::typeSignatureIndexFromHeapType(toHeapType));
@@ -2260,7 +2260,7 @@ void BBQJIT::emitRefTestOrCast(CastKind castKind, const TypedExpression& typedVa
         }
     }
 
-    if (typeIndexIsType(static_cast<Wasm::TypeIndex>(toHeapType))) {
+    if (!isTypeIndexHeapType(toHeapType)) {
         switch (static_cast<TypeKind>(toHeapType)) {
         case Wasm::TypeKind::Funcref:
         case Wasm::TypeKind::Externref:
@@ -3213,9 +3213,9 @@ void BBQJIT::emitCatchImpl(ControlData& dataCatch, const RTT& exceptionSignature
         unsigned offset = 0;
         for (unsigned i = 0; i < exceptionSignature.argumentCount(); ++i) {
             Type type = exceptionSignature.argumentType(i);
-            Value result = Value::fromTemp(type.kind, dataCatch.enclosedHeight() + dataCatch.implicitSlots() + i);
+            Value result = Value::fromTemp(type.kind(), dataCatch.enclosedHeight() + dataCatch.implicitSlots() + i);
             Location slot = canonicalSlot(result);
-            switch (type.kind) {
+            switch (type.kind()) {
             case TypeKind::I32:
                 m_jit.transfer32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asAddress());
                 break;
@@ -3257,7 +3257,7 @@ void BBQJIT::emitCatchImpl(ControlData& dataCatch, const RTT& exceptionSignature
             }
             bind(result, slot);
             results.append(result);
-            offset += type.kind == TypeKind::V128 ? 2 : 1;
+            offset += type.kind() == TypeKind::V128 ? 2 : 1;
         }
     }
 }
@@ -3301,7 +3301,7 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
             for (unsigned i = 0; i < signature->argumentCount(); ++i) {
                 Type type = signature->argumentType(i);
                 Location slot = targetControl.targetLocations()[i];
-                switch (type.kind) {
+                switch (type.kind()) {
                 case TypeKind::I32:
                     if (slot.isGPR())
                         m_jit.load32(Address(wasmScratchGPR, JSWebAssemblyException::Payload::Storage::offsetOfData() + offset * sizeof(uint64_t)), slot.asGPR());
@@ -3356,7 +3356,7 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
                     RELEASE_ASSERT_NOT_REACHED();
                     break;
                 }
-                offset += type.kind == TypeKind::V128 ? 2 : 1;
+                offset += type.kind() == TypeKind::V128 ? 2 : 1;
             }
         }
     }
@@ -3374,7 +3374,7 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
 
     ++m_callSiteIndex;
     if (m_profiledCallee.hasExceptionHandlers()) {
-        m_jit.store32(CCallHelpers::TrustedImm32(m_callSiteIndex), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+        m_jit.store32(CCallHelpers::TrustedImm32(m_callSiteIndex), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
         flushRegisters();
     }
 
@@ -3398,7 +3398,7 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
 
     ++m_callSiteIndex;
     if (m_profiledCallee.hasExceptionHandlers()) {
-        m_jit.store32(CCallHelpers::TrustedImm32(m_callSiteIndex), CCallHelpers::tagFor(CallFrameSlot::argumentCountIncludingThis));
+        m_jit.store32(CCallHelpers::TrustedImm32(m_callSiteIndex), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
         flushRegisters();
     }
     emitMove(this->exception(data), Location::fromGPR(GPRInfo::argumentGPR1));
@@ -3481,7 +3481,9 @@ void BBQJIT::emitCatchTableImpl(ControlData& entryData, ControlType::TryTableTar
         if (refValue.isNull())
             condition = Value::fromI32(static_cast<uint32_t>(shouldNegate ? !allowNull : allowNull));
         else {
-            bool matches = isSubtype(Type { TypeKind::Ref, static_cast<TypeIndex>(TypeKind::I31ref) }, Type { TypeKind::Ref, static_cast<TypeIndex>(heapType) });
+            // Const i31 only folds cleanly against abstract heap types.
+            bool matches = !isTypeIndexHeapType(heapType)
+                && isSubtype(Type { TypeKind::Ref, typeIndexFromTypeKind(TypeKind::I31ref) }, Type { TypeKind::Ref, typeIndexFromTypeKind(static_cast<TypeKind>(heapType)) });
             condition = Value::fromI32(shouldNegate ? !matches : matches);
         }
     } else {
@@ -3543,7 +3545,7 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     m_usesSIMD = true;
 }
 
-[[nodiscard]] PartialResult BBQJIT::addSIMDLoad(ExpressionType pointer, uint32_t uoffset, ExpressionType& result, uint8_t memoryIndex)
+[[nodiscard]] PartialResult BBQJIT::addSIMDLoad(ExpressionType pointer, uint64_t uoffset, ExpressionType& result, uint8_t memoryIndex)
 {
     result = emitCheckAndPrepareAndMaterializePointerApply(pointer, uoffset, bytesForWidth(Width::Width128), memoryIndex, [&](auto location) -> Value {
         consume(pointer);
@@ -3556,7 +3558,7 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     return { };
 }
 
-[[nodiscard]] PartialResult BBQJIT::addSIMDStore(ExpressionType value, ExpressionType pointer, uint32_t uoffset, uint8_t memoryIndex)
+[[nodiscard]] PartialResult BBQJIT::addSIMDStore(ExpressionType value, ExpressionType pointer, uint64_t uoffset, uint8_t memoryIndex)
 {
     emitCheckAndPrepareAndMaterializePointerApply(pointer, uoffset, bytesForWidth(Width::Width128), memoryIndex, [&](auto location) -> void {
         Location valueLocation = loadIfNecessary(value);
@@ -3816,7 +3818,7 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     return { };
 }
 
-[[nodiscard]] PartialResult BBQJIT::addSIMDLoadSplat(SIMDLaneOperation op, ExpressionType pointer, uint32_t uoffset, ExpressionType& result, uint8_t memoryIndex)
+[[nodiscard]] PartialResult BBQJIT::addSIMDLoadSplat(SIMDLaneOperation op, ExpressionType pointer, uint64_t uoffset, ExpressionType& result, uint8_t memoryIndex)
 {
     Width width;
     switch (op) {
@@ -3869,7 +3871,7 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     return { };
 }
 
-[[nodiscard]] PartialResult BBQJIT::addSIMDLoadLane(SIMDLaneOperation op, ExpressionType pointer, ExpressionType vector, uint32_t uoffset, uint8_t lane, ExpressionType& result, uint8_t memoryIndex)
+[[nodiscard]] PartialResult BBQJIT::addSIMDLoadLane(SIMDLaneOperation op, ExpressionType pointer, ExpressionType vector, uint64_t uoffset, uint8_t lane, ExpressionType& result, uint8_t memoryIndex)
 {
     Width width;
     switch (op) {
@@ -3920,7 +3922,7 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     return { };
 }
 
-[[nodiscard]] PartialResult BBQJIT::addSIMDStoreLane(SIMDLaneOperation op, ExpressionType pointer, ExpressionType vector, uint32_t uoffset, uint8_t lane, uint8_t memoryIndex)
+[[nodiscard]] PartialResult BBQJIT::addSIMDStoreLane(SIMDLaneOperation op, ExpressionType pointer, ExpressionType vector, uint64_t uoffset, uint8_t lane, uint8_t memoryIndex)
 {
     Width width;
     switch (op) {
@@ -3967,7 +3969,7 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     return { };
 }
 
-[[nodiscard]] PartialResult BBQJIT::addSIMDLoadExtend(SIMDLaneOperation op, ExpressionType pointer, uint32_t uoffset, ExpressionType& result, uint8_t memoryIndex)
+[[nodiscard]] PartialResult BBQJIT::addSIMDLoadExtend(SIMDLaneOperation op, ExpressionType pointer, uint64_t uoffset, ExpressionType& result, uint8_t memoryIndex)
 {
     SIMDLane lane;
     SIMDSignMode signMode;
@@ -4016,7 +4018,7 @@ void NODELETE BBQJIT::notifyFunctionUsesSIMD()
     return { };
 }
 
-[[nodiscard]] PartialResult BBQJIT::addSIMDLoadPad(SIMDLaneOperation op, ExpressionType pointer, uint32_t uoffset, ExpressionType& result, uint8_t memoryIndex)
+[[nodiscard]] PartialResult BBQJIT::addSIMDLoadPad(SIMDLaneOperation op, ExpressionType pointer, uint64_t uoffset, ExpressionType& result, uint8_t memoryIndex)
 {
     result = emitCheckAndPrepareAndMaterializePointerApply(pointer, uoffset, op == SIMDLaneOperation::LoadPad32 ? sizeof(float) : sizeof(double), memoryIndex, [&](auto location) -> Value {
         consume(pointer);
@@ -4059,7 +4061,7 @@ void BBQJIT::materializeVectorConstant(v128_t value, Location result)
     Location valueLocation = loadIfNecessary(value);
     consume(value);
 
-    result = topValue(simdScalarType(info.lane).kind);
+    result = topValue(simdScalarType(info.lane).kind());
     Location resultLocation = allocate(result);
     LOG_INSTRUCTION("VectorExtractLane", info.lane, lane, value, valueLocation, RESULT(result));
 
@@ -5174,7 +5176,6 @@ void BBQJIT::emitMove(StorageType type, Value src, Address dst)
 
 } } } // namespace JSC::Wasm::BBQJITImpl
 
-#endif // USE(JSVALUE64)
 #endif // ENABLE(WEBASSEMBLY_BBQJIT)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

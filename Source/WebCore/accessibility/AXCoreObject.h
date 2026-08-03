@@ -650,6 +650,7 @@ public:
     bool isSwitch() const { return role() == AccessibilityRole::Switch; }
     bool isToggleButton() const { return role() == AccessibilityRole::ToggleButton; }
     bool NODELETE isTextControl() const;
+    static bool isTextControl(AccessibilityRole);
     virtual bool isEditableWebArea() const = 0;
     virtual bool isNonNativeTextControl() const = 0;
     bool isTabList() const { return role() == AccessibilityRole::TabList; }
@@ -1058,6 +1059,10 @@ public:
     virtual CharacterRange selectedTextRange() const = 0;
     virtual int insertionPointLineNumber() const = 0;
 
+#if ENABLE(WRITING_TOOLS)
+    virtual bool writingToolsAvailable() const = 0;
+#endif // ENABLE(WRITING_TOOLS)
+
     virtual URL url() const = 0;
     virtual VisibleSelection selection() const = 0;
     virtual String selectedText() const = 0;
@@ -1180,6 +1185,12 @@ public:
             return stitchGroup->representativeID();
         return std::nullopt;
     }
+
+    // Resolves this object to its stitch-group representative when it has been stitched away
+    // (i.e. removed from its parent's exposed children); otherwise returns this object. AT-facing
+    // APIs that hand a single object to the client should route through this so a stitched-away
+    // member is never exposed as an element that is absent from the tree.
+    RefPtr<AXCoreObject> stitchRepresentativeOrSelf();
 
     // When ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE) is true, this returns IDs of ignored children.
     // When it is not, it returns IDs of unignored children. After ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)

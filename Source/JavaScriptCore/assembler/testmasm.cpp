@@ -197,11 +197,7 @@ template<typename T> T NODELETE nextID(T id) { return static_cast<T>(id + 1); }
 #define testWord32(x) (TESTWORD32 + static_cast<uint32_t>(x))
 #define testWord64(x) (TESTWORD64 + static_cast<uint64_t>(x))
 
-#if USE(JSVALUE64)
 #define testWord(x) testWord64(x)
-#else
-#define testWord(x) testWord32(x)
-#endif
 
 // Nothing fancy for now; we just use the existing WTF assertion machinery.
 #define CHECK_EQ(_actual, _expected) do {                               \
@@ -224,12 +220,8 @@ template<typename T> T NODELETE nextID(T id) { return static_cast<T>(id + 1); }
 
 bool NODELETE isPC(MacroAssembler::RegisterID id)
 {
-#if CPU(ARM_THUMB2)
-    return id == ARMRegisters::pc;
-#else
     UNUSED_PARAM(id);
     return false;
-#endif
 }
 
 bool NODELETE isSP(MacroAssembler::RegisterID id)
@@ -299,20 +291,10 @@ T compileAndRun(Generator&& generator, Arguments... arguments)
 void emitFunctionPrologue(CCallHelpers& jit)
 {
     jit.emitFunctionPrologue();
-#if CPU(ARM_THUMB2)
-    // MacroAssemblerARMv7 uses r6 as a temporary register, which is a
-    // callee-saved register, see 5.1.1 of the Procedure Call Standard for
-    // the ARM Architecture.
-    // http://infocenter.arm.com/help/topic/com.arm.doc.ihi0042f/IHI0042F_aapcs.pdf
-    jit.push(ARMRegisters::r6);
-#endif
 }
 
 void emitFunctionEpilogue(CCallHelpers& jit)
 {
-#if CPU(ARM_THUMB2)
-    jit.pop(ARMRegisters::r6);
-#endif
     jit.emitFunctionEpilogue();
 }
 
@@ -343,25 +325,13 @@ void testGetEffectiveAddress(size_t pointer, ptrdiff_t length, int32_t offset, C
 void testBranchTruncateDoubleToInt32(double val, int32_t expected)
 {
     const uint64_t valAsUInt = std::bit_cast<uint64_t>(val);
-#if CPU(BIG_ENDIAN)
-    const bool isBigEndian = true;
-#else
-    const bool isBigEndian = false;
-#endif
     CHECK_EQ(compileAndRun<int>([&] (CCallHelpers& jit) {
         emitFunctionPrologue(jit);
         jit.subPtr(CCallHelpers::TrustedImm32(stackAlignmentBytes()), MacroAssembler::stackPointerRegister);
-        if (isBigEndian) {
-            jit.store32(CCallHelpers::TrustedImm32(valAsUInt >> 32),
-                MacroAssembler::Address(MacroAssembler::stackPointerRegister));
-            jit.store32(CCallHelpers::TrustedImm32(valAsUInt & 0xffffffff),
-                MacroAssembler::Address(MacroAssembler::stackPointerRegister, 4));
-        } else {
-            jit.store32(CCallHelpers::TrustedImm32(valAsUInt & 0xffffffff),
-                MacroAssembler::Address(MacroAssembler::stackPointerRegister));
-            jit.store32(CCallHelpers::TrustedImm32(valAsUInt >> 32),
-                MacroAssembler::Address(MacroAssembler::stackPointerRegister, 4));
-        }
+        jit.store32(CCallHelpers::TrustedImm32(valAsUInt & 0xffffffff),
+            MacroAssembler::Address(MacroAssembler::stackPointerRegister));
+        jit.store32(CCallHelpers::TrustedImm32(valAsUInt >> 32),
+            MacroAssembler::Address(MacroAssembler::stackPointerRegister, 4));
         jit.loadDouble(MacroAssembler::Address(MacroAssembler::stackPointerRegister), FPRInfo::fpRegT0);
 
         MacroAssembler::Jump done;
@@ -4592,8 +4562,6 @@ void testLoad16SignedExtendTo32_voidp_RegisterID()
 #endif
 }
 
-#if CPU(ADDRESS64)
-
 struct SignedLoad8to64Scenario {
     int8_t src;
     int64_t expected;
@@ -4821,8 +4789,6 @@ void testLoad32SignedExtendTo64_voidp_RegisterID()
         });
 #endif
 }
-
-#endif // CPU(ADDRESS64)
 
 #if CPU(ARM64)
 void testLoadStorePair64Int64()
@@ -5298,17 +5264,10 @@ void testProbeReadsArgumentRegisters()
         jit.convertInt32ToDouble(GPRInfo::argumentGPR0, FPRInfo::fpRegT0);
         jit.move(CCallHelpers::TrustedImm32(testWord32(1)), GPRInfo::argumentGPR0);
         jit.convertInt32ToDouble(GPRInfo::argumentGPR0, FPRInfo::fpRegT1);
-#if USE(JSVALUE64)
         jit.move(CCallHelpers::TrustedImm64(testWord(0)), GPRInfo::argumentGPR0);
         jit.move(CCallHelpers::TrustedImm64(testWord(1)), GPRInfo::argumentGPR1);
         jit.move(CCallHelpers::TrustedImm64(testWord(2)), GPRInfo::argumentGPR2);
         jit.move(CCallHelpers::TrustedImm64(testWord(3)), GPRInfo::argumentGPR3);
-#else
-        jit.move(CCallHelpers::TrustedImm32(testWord(0)), GPRInfo::argumentGPR0);
-        jit.move(CCallHelpers::TrustedImm32(testWord(1)), GPRInfo::argumentGPR1);
-        jit.move(CCallHelpers::TrustedImm32(testWord(2)), GPRInfo::argumentGPR2);
-        jit.move(CCallHelpers::TrustedImm32(testWord(3)), GPRInfo::argumentGPR3);
-#endif
 
         jit.probeDebug([&] (Probe::Context& context) {
             auto& cpu = context.cpu;
@@ -5344,17 +5303,10 @@ void testProbeWritesArgumentRegisters()
         jit.pushPair(GPRInfo::argumentGPR2, GPRInfo::argumentGPR3);
 
         // Pre-initialize with non-expected values.
-#if USE(JSVALUE64)
         jit.move(CCallHelpers::TrustedImm64(0), GPRInfo::argumentGPR0);
         jit.move(CCallHelpers::TrustedImm64(0), GPRInfo::argumentGPR1);
         jit.move(CCallHelpers::TrustedImm64(0), GPRInfo::argumentGPR2);
         jit.move(CCallHelpers::TrustedImm64(0), GPRInfo::argumentGPR3);
-#else
-        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::argumentGPR0);
-        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::argumentGPR1);
-        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::argumentGPR2);
-        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::argumentGPR3);
-#endif
         jit.convertInt32ToDouble(GPRInfo::argumentGPR0, FPRInfo::fpRegT0);
         jit.convertInt32ToDouble(GPRInfo::argumentGPR0, FPRInfo::fpRegT1);
 
@@ -5503,9 +5455,6 @@ void testProbeModifiesStackPointer(WTF::Function<void*(Probe::Context&)> compute
 #if CPU(X86_64)
     auto flagsSPR = X86Registers::eflags;
     uintptr_t flagsMask = 0xc5;
-#elif CPU(ARM_THUMB2)
-    auto flagsSPR = ARMRegisters::apsr;
-    uintptr_t flagsMask = 0xf8000000;
 #elif CPU(ARM64)
     auto flagsSPR = ARM64Registers::nzcv;
     uintptr_t flagsMask = 0xf0000000;
@@ -5679,9 +5628,6 @@ void testProbeModifiesStackValues()
 #if CPU(X86_64)
     MacroAssembler::SPRegisterID flagsSPR = X86Registers::eflags;
     uintptr_t flagsMask = 0xc5;
-#elif CPU(ARM_THUMB2)
-    MacroAssembler::SPRegisterID flagsSPR = ARMRegisters::apsr;
-    uintptr_t flagsMask = 0xf8000000;
 #elif CPU(ARM64)
     MacroAssembler::SPRegisterID flagsSPR = ARM64Registers::nzcv;
     uintptr_t flagsMask = 0xf0000000;
@@ -5722,8 +5668,6 @@ void testProbeModifiesStackValues()
             uintptr_t* p = static_cast<uintptr_t*>(newSP);
             int count = 0;
             stack.set<double>(p++, 1.234567);
-            if (is32Bit())
-                p++; // On 32-bit targets, a double takes up 2 uintptr_t.
             while (p < static_cast<uintptr_t*>(originalSP))
                 stack.set<uintptr_t>(p++, testWord(count++));
         });
@@ -5755,8 +5699,6 @@ void testProbeModifiesStackValues()
             uintptr_t* p = static_cast<uintptr_t*>(newSP);
             int count = 0;
             CHECK_EQ(stack.get<double>(p++), 1.234567);
-            if (is32Bit())
-                p++; // On 32-bit targets, a double takes up 2 uintptr_t.
             while (p < static_cast<uintptr_t*>(originalSP))
                 CHECK_EQ(stack.get<uintptr_t>(p++), testWord(count++));
         });
@@ -6349,9 +6291,7 @@ void testLoadBaseIndex()
         });
         uint16_t array[] = { 1, 2, 0x7ff3, 0x8000, 5, };
         CHECK_EQ(invoke<uint32_t>(test, array, static_cast<UCPURegister>(3)), 0x7ff3);
-#if CPU(REGISTER64)
         CHECK_EQ(invoke<uint64_t>(test, array, static_cast<UCPURegister>(4)), 0xffff8000);
-#endif
     }
     {
         auto test = compile([=](CCallHelpers& jit) {
@@ -6362,9 +6302,7 @@ void testLoadBaseIndex()
         });
         uint16_t array[] = { UINT16_MAX - 1, UINT16_MAX - 2, UINT16_MAX - 3, UINT16_MAX - 4, static_cast<uint16_t>(-1), };
         CHECK_EQ(invoke<uint32_t>(test, array, static_cast<UCPURegister>(3)), static_cast<uint32_t>(-1));
-#if CPU(REGISTER64)
         CHECK_EQ(invoke<uint64_t>(test, array, static_cast<UCPURegister>(3)), static_cast<uint32_t>(-1));
-#endif
     }
 
     // load8
@@ -6399,9 +6337,7 @@ void testLoadBaseIndex()
         });
         uint8_t array[] = { 1, 2, 0x73, 0x80, 5, };
         CHECK_EQ(invoke<uint32_t>(test, array, static_cast<UCPURegister>(3)), 0x73);
-#if CPU(REGISTER64)
         CHECK_EQ(invoke<uint64_t>(test, array, static_cast<UCPURegister>(4)), 0xffffff80);
-#endif
     }
     {
         auto test = compile([=](CCallHelpers& jit) {
@@ -6412,9 +6348,7 @@ void testLoadBaseIndex()
         });
         uint8_t array[] = { UINT8_MAX - 1, UINT8_MAX - 2, UINT8_MAX - 3, UINT8_MAX - 4, static_cast<uint8_t>(-1), };
         CHECK_EQ(invoke<uint32_t>(test, array, static_cast<UCPURegister>(3)), static_cast<uint32_t>(-1));
-#if CPU(REGISTER64)
         CHECK_EQ(invoke<uint64_t>(test, array, static_cast<UCPURegister>(3)), static_cast<uint32_t>(-1));
-#endif
     }
 
     // loadDouble
@@ -8504,7 +8438,6 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 
     RUN(testLoadStorePair32());
 
-#if CPU(ADDRESS64)
     RUN(testLoadAcq8SignedExtendTo64_Address_RegisterID());
     RUN(testLoad8SignedExtendTo64_Address_RegisterID());
     RUN(testLoad8SignedExtendTo64_BaseIndex_RegisterID());
@@ -8519,7 +8452,6 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testLoad32SignedExtendTo64_Address_RegisterID());
     RUN(testLoad32SignedExtendTo64_BaseIndex_RegisterID());
     RUN(testLoad32SignedExtendTo64_voidp_RegisterID());
-#endif
 
 #if CPU(ARM64)
     RUN(testLoadStorePair64Int64());

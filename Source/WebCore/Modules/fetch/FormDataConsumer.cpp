@@ -29,6 +29,11 @@
 #include "BlobLoader.h"
 #include "ExceptionOr.h"
 #include "FormData.h"
+#include "JSDOMPromiseDeferred.h"
+#include "PendingStreamState.h"
+#include "SWContextManager.h"
+#include "SharedBuffer.h"
+#include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WorkQueue.h>
 
@@ -36,15 +41,22 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FormDataConsumer);
 
-FormDataConsumer::FormDataConsumer(const FormData& formData, ScriptExecutionContext& context, Callback&& callback)
+FormDataConsumer::FormDataConsumer(const FormData& formData, ScriptExecutionContext& context, Callback&& callback, Mode mode)
     : m_formData(formData.copy())
     , m_context(&context)
     , m_callback(WTF::move(callback))
     , m_fileQueue(WorkQueue::create("FormDataConsumer file queue"_s))
+    , m_mode(mode)
 {
+    // We explicitly copy pendingStreamState as FormData::copy does not, to limit the risk of trying to consume mulitple times the same pendingStreamState.
+    if (RefPtr state = formData.pendingStreamState())
+        m_formData->setPendingStreamState(state.releaseNonNull());
 }
 
-FormDataConsumer::~FormDataConsumer() = default;
+FormDataConsumer::~FormDataConsumer()
+{
+    ASSERT(!m_pendingStreamState);
+}
 
 void FormDataConsumer::read()
 {
@@ -66,6 +78,12 @@ void FormDataConsumer::read()
         consumeFile(fileData.filename);
     }, [this](const FormDataElement::EncodedBlobData& blobData) {
         consumeBlob(blobData.url);
+    }, [this](const FormDataElement::PendingStreamData&) {
+        if (RefPtr state = m_formData->pendingStreamState()) {
+            consumePendingStream(*state);
+            return;
+        }
+        didFail(Exception { ExceptionCode::InvalidStateError, "Stream upload is missing state"_s });
     });
 }
 
@@ -121,6 +139,87 @@ void FormDataConsumer::consumeBlob(const URL& blobURL)
     didFail(Exception { ExceptionCode::InvalidStateError, "Unable to read form data blob"_s });
 }
 
+void FormDataConsumer::consumePendingStream(PendingStreamState& state)
+{
+    RefPtr context = m_context;
+    if (!context) {
+        didFail(Exception { ExceptionCode::InvalidStateError, "Context is gone"_s });
+        return;
+    }
+
+    m_pendingStreamState = &state;
+    state.setDataAvailableHandler([weakThis = WeakPtr { *this }, contextIdentifier = context->identifier()] {
+        ScriptExecutionContext::postTaskTo(contextIdentifier, [weakThis](auto&) {
+            if (RefPtr protectedThis = weakThis.get())
+                protectedThis->drainPendingStream();
+        });
+    });
+
+    if (!m_hasRequestedPendingStream) {
+        ASSERT(state.serviceWorkerFetchIdentifier());
+        m_hasRequestedPendingStream = true;
+        ensureOnMainThread([state = Ref { state }] {
+            if (RefPtr connection = SWContextManager::singleton().connection())
+                connection->startPendingStreamUploadForwarding(state.get());
+        });
+    }
+}
+
+void FormDataConsumer::drainPendingStream()
+{
+    if (isCancelled())
+        return;
+
+    RefPtr state = m_pendingStreamState;
+    if (!state)
+        return;
+
+    if (m_mode == Mode::Pull && !m_pendingPullPromise)
+        return;
+
+    auto result = state->takeAvailableChunks();
+
+    if (!result) {
+        didFail(Exception { ExceptionCode::NetworkError, "Stream upload failed"_s });
+        return;
+    }
+
+    if (result->first.isEmpty() && !result->second) {
+        // We do not have data, let's wait for data availability notification.
+        return;
+    }
+
+    auto scope = makeScopeExit([promise = std::exchange(m_pendingPullPromise, { })] {
+        if (promise)
+            promise->resolve();
+    });
+
+    for (auto chunk : result->first) {
+        if (m_callback) {
+            if (!m_callback(chunk->span())) {
+                cancel();
+                return;
+            }
+        }
+    }
+
+    if (!result->second)
+        return;
+
+    state->clearDataAvailableHandler();
+    m_pendingStreamState = nullptr;
+
+    if (auto callback = std::exchange(m_callback, nullptr))
+        callback(std::span<const uint8_t> { });
+}
+
+void FormDataConsumer::resume(RefPtr<DeferredPromise>&& promise)
+{
+    ASSERT(m_mode == Mode::Pull);
+    m_pendingPullPromise = WTF::move(promise);
+    drainPendingStream();
+}
+
 void FormDataConsumer::consume(std::span<const uint8_t> content)
 {
     if (!m_callback)
@@ -153,6 +252,15 @@ void FormDataConsumer::cancel()
     m_callback = nullptr;
     if (auto loader = std::exchange(m_blobLoader, { }))
         loader->cancel();
+    if (RefPtr state = std::exchange(m_pendingStreamState, { })) {
+        state->clearDataAvailableHandler();
+        if (m_hasRequestedPendingStream) {
+            ensureOnMainThread([state = state.releaseNonNull()] {
+                if (RefPtr connection = SWContextManager::singleton().connection())
+                    connection->cancelPendingStreamUploadForwarding(state.get());
+            });
+        }
+    }
     m_isReadingFile = false;
     m_context = nullptr;
 }

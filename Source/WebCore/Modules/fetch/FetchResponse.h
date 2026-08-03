@@ -48,6 +48,7 @@ class AbortSignal;
 class FetchRequest;
 class FetchResponseBodyLoader;
 class ReadableStreamSource;
+class ReadableStreamToSharedBufferSink;
 
 class FetchResponse final : public FetchBodyOwner {
 public:
@@ -72,7 +73,7 @@ public:
 
     using NotificationCallback = Function<void(ExceptionOr<Ref<FetchResponse>>&&)>;
     static void fetch(ScriptExecutionContext&, FetchRequest&, NotificationCallback&&, const String& initiator);
-    static Ref<FetchResponse> createFetchResponse(ScriptExecutionContext&, FetchRequest&, NotificationCallback&&);
+    static Ref<FetchResponse> createFetchResponse(ScriptExecutionContext&, FetchRequest&, NotificationCallback&&, RefPtr<ReadableStreamToSharedBufferSink>&& = { });
 
     void startConsumingStream(unsigned);
     void consumeChunk(Ref<JSC::Uint8Array>&&);
@@ -119,6 +120,7 @@ public:
 
     bool NODELETE isCORSSameOrigin() const;
     bool hasWasmMIMEType() const;
+    std::optional<ResourceLoaderIdentifier> resourceLoaderIdentifier() const { return m_resourceLoaderIdentifier; }
 
     const NetworkLoadMetrics& networkLoadMetrics() const LIFETIME_BOUND { return m_networkLoadMetrics; }
     void setReceivedInternalResponse(const ResourceResponse&, FetchOptions::Credentials);
@@ -152,7 +154,7 @@ private:
     class Loader final : public RefCounted<Loader>, public FetchLoaderClient {
         WTF_MAKE_TZONE_ALLOCATED(Loader);
     public:
-        static Ref<Loader> create(FetchResponse&, NotificationCallback&&);
+        static Ref<Loader> create(FetchResponse&, NotificationCallback&&, RefPtr<ReadableStreamToSharedBufferSink>&&);
         ~Loader();
 
         // FetchLoaderClient.
@@ -161,7 +163,7 @@ private:
 
         bool start(ScriptExecutionContext&, const FetchRequest&, const String& initiator);
         void stop();
-
+        void abortUpload(JSDOMGlobalObject&, JSC::JSValue);
         void consumeDataByChunk(ConsumeDataByChunkCallback&&);
 
         bool hasLoader() const { return !!m_loader; }
@@ -171,12 +173,12 @@ private:
         ConsumeDataByChunkCallback takeConsumeDataCallback() { return WTF::move(m_consumeDataCallback); }
 
     private:
-        Loader(FetchResponse&, NotificationCallback&&);
+        Loader(FetchResponse&, NotificationCallback&&, RefPtr<ReadableStreamToSharedBufferSink>&&);
 
         // FetchLoaderClient API
         void didSucceed(const NetworkLoadMetrics&) final;
         void didFail(const ResourceError&) final;
-        void didReceiveResponse(const ResourceResponse&) final;
+        void didReceiveResponse(std::optional<ResourceLoaderIdentifier>, const ResourceResponse&) final;
         void didReceiveData(const SharedBuffer&) final;
 
         WeakPtr<FetchResponse> m_response;
@@ -186,6 +188,7 @@ private:
         const Ref<PendingActivity<FetchResponse>> m_pendingActivity;
         FetchOptions::Credentials m_credentials;
         bool m_shouldStartStreaming { false };
+        const RefPtr<ReadableStreamToSharedBufferSink> m_pendingUpload;
     };
 
     Loader* loader() const { return m_loader.get(); }
@@ -195,6 +198,7 @@ private:
     RefPtr<Loader> m_loader;
     std::unique_ptr<FetchResponseBodyLoader> m_bodyLoader;
     mutable String m_responseURL;
+    std::optional<ResourceLoaderIdentifier> m_resourceLoaderIdentifier;
     // Opaque responses will padd their body size when used with Cache API.
     uint64_t m_bodySizeWithPadding { 0 };
     uint64_t m_opaqueLoadIdentifier { 0 };

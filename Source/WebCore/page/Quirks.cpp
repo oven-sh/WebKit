@@ -1821,6 +1821,16 @@ bool Quirks::shouldDisableLazyIframeLoadingQuirk() const
     return m_quirksData.quirkIsEnabled(QuirksData::SiteSpecificQuirk::ShouldDisableLazyIframeLoadingQuirk);
 }
 
+// Moon Player app (rdar://162452658): the app hides its WKWebView while continuing to display
+// the video layer it hosts, so page visibility does not indicate whether the video is on screen.
+// Tearing the layer down when the page becomes hidden leaves the app displaying a black frame.
+bool Quirks::shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk() const
+{
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
+
+    return m_quirksData.quirkIsEnabled(QuirksData::SiteSpecificQuirk::ShouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk);
+}
+
 // reddit.com with Sink It extension (rdar://176377447) and apple.com/retail (rdar://181007316).
 bool Quirks::shouldDisableScrollAnchoringQuirk() const
 {
@@ -2103,20 +2113,6 @@ bool Quirks::shouldIgnorePlaysInlineRequirementQuirk() const
 #else
     return false;
 #endif
-}
-
-bool Quirks::shouldUseEphemeralPartitionedStorageForDOMCookies(const URL& url) const
-{
-    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
-
-    auto firstPartyDomain = RegistrableDomain(m_document->firstPartyForCookies()).string();
-    auto domain = RegistrableDomain(url).string();
-
-    // rdar://113830141
-    if (firstPartyDomain == "cagreatamerica.com"_s && domain == "queue-it.net"_s)
-        return true;
-
-    return false;
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -2986,6 +2982,10 @@ static void handleCNNQuirks(QuirksData& quirksData, const URL& /* quirksURL */, 
     quirksData.enableQuirk(QuirksData::SiteSpecificQuirk::NeedsFullscreenObjectFitQuirk);
 #if PLATFORM(COCOA)
     quirksData.enableQuirk(QuirksData::SiteSpecificQuirk::NeedsCNNCaptionQuirk);
+#endif
+    // cnn.com rdar://176539646
+#if ENABLE(THREADED_ANIMATIONS)
+    quirksData.enableQuirk(QuirksData::SiteSpecificQuirk::ShouldDisableThreadedAnimationsQuirk);
 #endif
 }
 
@@ -4143,11 +4143,15 @@ void Quirks::determineRelevantQuirks()
 #if PLATFORM(IOS_FAMILY)
     static const bool shouldDisableLazyIframeLoadingQuirk = !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::NoUNIQLOLazyIframeLoadingQuirk) && WTF::IOSApplication::isUNIQLOApp();
     static const bool needsResettingTransitionCancelsRunningTransitionQuirk = !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::ResettingTransitionCancelsRunningTransitionQuirk) && WTF::IOSApplication::isDOFUSTouch();
+    static const bool shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk = !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::NoMediaLayerTeardownOnPageVisibilityChangeQuirk) && WTF::IOSApplication::isMoonPlayer();
 
     m_quirksData.setQuirkState(QuirksData::SiteSpecificQuirk::ShouldDisableLazyIframeLoadingQuirk, shouldDisableLazyIframeLoadingQuirk);
 
     // DOFUS Touch app (rdar://112679186)
     m_quirksData.setQuirkState(QuirksData::SiteSpecificQuirk::NeedsResettingTransitionCancelsRunningTransitionQuirk, needsResettingTransitionCancelsRunningTransitionQuirk);
+
+    // Moon Player app (rdar://162452658)
+    m_quirksData.setQuirkState(QuirksData::SiteSpecificQuirk::ShouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk, shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk);
 #endif
 
 #if PLATFORM(MAC)

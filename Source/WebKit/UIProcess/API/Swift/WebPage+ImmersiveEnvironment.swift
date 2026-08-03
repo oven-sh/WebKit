@@ -25,8 +25,13 @@
 
 public import Foundation
 
+@available(anyAppleOSAndDownlevels 27.0, *)
+@available(iOS, unavailable)
+@available(macOS, unavailable)
+@available(watchOS, unavailable)
+@available(tvOS, unavailable)
 extension WebPage {
-    /// An object representing a website-provided immersive environment that is ready for presentation.
+    /// An object that represents a website-provided immersive environment ready for presentation.
     @MainActor
     @available(anyAppleOSAndDownlevels 27.0, *)
     @available(iOS, unavailable)
@@ -40,7 +45,7 @@ extension WebPage {
             self.wrapped = wrapped
         }
 
-        /// The frame information of the website that provided this immersive environment.
+        /// The frame information of the website that provides this immersive environment.
         public var sourceFrame: WebPage.FrameInfo {
             WebPage.FrameInfo(wrapped.sourceFrame)
         }

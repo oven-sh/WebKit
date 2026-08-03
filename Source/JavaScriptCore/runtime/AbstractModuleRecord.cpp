@@ -99,8 +99,6 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_asyncCapability);
     Locker locker { thisObject->cellLock() };
     visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
-    auto values = thisObject->m_dependencies.values();
-    visitor.append(values.begin(), values.end());
     for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
 }
@@ -154,9 +152,9 @@ void AbstractModuleRecord::appendRequestedModule(const Identifier& moduleName, R
     m_requestedModules.append({ moduleName, WTF::move(attributes), phase });
 }
 
-void AbstractModuleRecord::addStarExportEntry(const Identifier& moduleName)
+void AbstractModuleRecord::addStarExportEntry(const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
 {
-    m_starExportEntries.add(moduleName.impl());
+    m_starExportEntries.add({ moduleName.impl(), moduleRequestType });
 }
 
 void AbstractModuleRecord::addImportEntry(const ImportEntry& entry)
@@ -193,17 +191,17 @@ auto AbstractModuleRecord::tryGetExportEntry(UniquedStringImpl* exportName) -> s
 
 auto AbstractModuleRecord::ExportEntry::createLocal(const Identifier& exportName, const Identifier& localName) -> ExportEntry
 {
-    return ExportEntry { Type::Local, exportName, Identifier(), Identifier(), localName };
+    return ExportEntry { Type::Local, ScriptFetchParameters::Type::JavaScript, exportName, Identifier(), Identifier(), localName };
 }
 
-auto AbstractModuleRecord::ExportEntry::createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName) -> ExportEntry
+auto AbstractModuleRecord::ExportEntry::createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType) -> ExportEntry
 {
-    return ExportEntry { Type::Indirect, exportName, moduleName, importName, Identifier() };
+    return ExportEntry { Type::Indirect, moduleRequestType, exportName, moduleName, importName, Identifier() };
 }
 
-auto AbstractModuleRecord::ExportEntry::createNamespace(const Identifier& exportName, const Identifier& moduleName) -> ExportEntry
+auto AbstractModuleRecord::ExportEntry::createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType) -> ExportEntry
 {
-    return ExportEntry { Type::Namespace, exportName, moduleName, Identifier(), Identifier() };
+    return ExportEntry { Type::Namespace, moduleRequestType, exportName, moduleName, Identifier(), Identifier() };
 }
 
 auto AbstractModuleRecord::Resolution::notFound() -> Resolution
@@ -221,27 +219,27 @@ auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
     return Resolution { Type::Ambiguous, nullptr, Identifier() };
 }
 
-AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject* globalObject, const Identifier& moduleName)
+AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
 {
-    if (auto iter = m_dependencies.find(moduleName.string()); iter != m_dependencies.end())
-        return iter->value.get();
-    return globalObject->moduleLoader()->maybeGetImportedModule(this, moduleName);
+    if (auto iter = m_loadedModules.find(ModuleMapKey { moduleName.impl(), moduleRequestType }); iter != m_loadedModules.end())
+        return iter->value.m_module.get();
+    return nullptr;
 }
 
 void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const ModuleRequest& request, AbstractModuleRecord* record)
 {
     VM& vm = globalObject->vm();
-    // visitChildrenImpl() walks both maps under cellLock(); take the same lock
-    // for mutation so a concurrent marker thread can't observe a mid-rehash
+    // visitChildrenImpl() walks m_loadedModules under cellLock(); take the same
+    // lock for mutation so a concurrent marker thread can't observe a mid-rehash
     // bucket array (matches finishLoadingImportedModule's locking).
-    Locker locker { cellLock() };
-    m_dependencies.set(request.m_specifier.string(), WriteBarrier<AbstractModuleRecord>(vm, this, record));
+    //
     // innerModuleLinking/innerModuleEvaluation walk loadedModules() via
     // getImportedModule(), so records that are linked outside the loader (Bun's
     // node:vm SourceTextModule) need this map populated too. Reuse the original
     // ModuleRequest (specifier + attributes) so a `with { type: "json" }` /
     // HostDefined import lands in the same (specifier, type) bucket that
     // getImportedModule()'s typed lookup will use.
+    Locker locker { cellLock() };
     ModuleMapKey key { request.m_specifier.impl(), request.type() };
     m_loadedModules.set(key, LoadedModuleRequest { vm, request, record, this });
 }
@@ -259,7 +257,7 @@ auto AbstractModuleRecord::resolveImport(JSGlobalObject* globalObject, const Ide
     if (importEntry.type == AbstractModuleRecord::ImportEntryType::Namespace)
         return Resolution::notFound();
 
-    AbstractModuleRecord* importedModule = hostResolveImportedModule(globalObject, importEntry.moduleRequest);
+    AbstractModuleRecord* importedModule = hostResolveImportedModule(globalObject, importEntry.moduleRequest, importEntry.moduleRequestType);
     RETURN_IF_EXCEPTION(scope, Resolution::error());
 
     RELEASE_AND_RETURN(scope, importedModule->resolveExport(globalObject, importEntry.importName));
@@ -636,8 +634,8 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
         // Enqueue the tasks in reverse order.
         for (auto iterator = query.moduleRecord->starExportEntries().rbegin(), end = query.moduleRecord->starExportEntries().rend(); iterator != end; ++iterator) {
-            const RefPtr<UniquedStringImpl>& starModuleName = *iterator;
-            AbstractModuleRecord* importedModuleRecord = query.moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()));
+            const auto& [starModuleName, starModuleRequestType] = *iterator;
+            AbstractModuleRecord* importedModuleRecord = query.moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()), starModuleRequestType);
             RETURN_IF_EXCEPTION(scope, false);
             pendingTasks.append(Task { ResolveQuery(importedModuleRecord, query.exportName.get()), Type::Query });
         }
@@ -726,7 +724,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                     }
                 }
 
-                AbstractModuleRecord* importedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, exportEntry.moduleName);
+                AbstractModuleRecord* importedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, exportEntry.moduleName, exportEntry.moduleRequestType);
                 RETURN_IF_EXCEPTION(scope, Resolution::error());
 
                 // When the imported module does not produce any resolved binding, we need to look into the stars in the *current*
@@ -739,7 +737,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             }
 
             case ExportEntry::Type::Namespace: {
-                AbstractModuleRecord* importedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, exportEntry.moduleName);
+                AbstractModuleRecord* importedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, exportEntry.moduleName, exportEntry.moduleRequestType);
                 RETURN_IF_EXCEPTION(scope, Resolution::error());
                 Resolution resolution { Resolution::Type::Resolved, importedModuleRecord, vm.propertyNames->starNamespacePrivateName };
                 if (!mergeToCurrentTop(resolution))
@@ -810,7 +808,7 @@ auto AbstractModuleRecord::resolveExport(JSGlobalObject* globalObject, const Ide
             ASSERT(!entry.localName.isNull());
             return Resolution { Resolution::Type::Resolved, this, entry.localName };
         case ExportEntry::Type::Namespace: {
-            AbstractModuleRecord* importedModuleRecord = hostResolveImportedModule(globalObject, entry.moduleName);
+            AbstractModuleRecord* importedModuleRecord = hostResolveImportedModule(globalObject, entry.moduleName, entry.moduleRequestType);
             RETURN_IF_EXCEPTION(scope, Resolution::error());
             return Resolution { Resolution::Type::Resolved, importedModuleRecord, vm.propertyNames->starNamespacePrivateName };
         }
@@ -892,7 +890,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
                 candidate = { Resolution::Type::Resolved, moduleRecord, exportEntry.localName };
                 break;
             case ExportEntry::Type::Namespace: {
-                AbstractModuleRecord* importedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, exportEntry.moduleName);
+                AbstractModuleRecord* importedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, exportEntry.moduleName, exportEntry.moduleRequestType);
                 RETURN_IF_EXCEPTION(scope, nullptr);
                 candidate = { Resolution::Type::Resolved, importedModuleRecord, vm.propertyNames->starNamespacePrivateName };
                 break;
@@ -919,8 +917,8 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             }
         }
 
-        for (const auto& starModuleName : moduleRecord->starExportEntries()) {
-            AbstractModuleRecord* requestedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()));
+        for (const auto& [starModuleName, starModuleRequestType] : moduleRecord->starExportEntries()) {
+            AbstractModuleRecord* requestedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()), starModuleRequestType);
             RETURN_IF_EXCEPTION(scope, nullptr);
             pendingModules.append(requestedModuleRecord);
         }
@@ -1441,10 +1439,6 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
     for (const ModuleRequest& request : module->requestedModules()) {
         // 9.a. Let requiredModule be GetImportedModule(module, request).
         AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
-        {
-            Locker locker { cellLock() };
-            m_dependencies.set(request.m_specifier.string(), WriteBarrier<AbstractModuleRecord>(vm, this, requiredModule));
-        }
         checkSafeToRecurse(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, invalid);
         // 9.b. Set index to ? InnerModuleLinking(requiredModule, stack, index).
@@ -1573,8 +1567,8 @@ void AbstractModuleRecord::dump()
             break;
         }
     }
-    for (const auto& moduleName : m_starExportEntries)
-        dataLog("      [Star] module(", printableName(moduleName.get()), ")\n");
+    for (const auto& starExportEntry : m_starExportEntries)
+        dataLog("      [Star] module(", printableName(starExportEntry.first), ")\n");
 }
 
 } // namespace JSC

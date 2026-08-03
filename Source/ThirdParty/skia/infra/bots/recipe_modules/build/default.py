@@ -142,7 +142,7 @@ def get_compile_flags(api, checkout_root, out_dir, workdir):
 
   if 'Tidy' in extra_tokens:
     # Swap in clang-tidy.sh for clang++, but update PATH so it can find clang++.
-    cxx = skia_dir.joinpath("tools/clang-tidy.sh")
+    args['cc_wrapper'] = '"%s"' % skia_dir.joinpath("tools/clang-tidy.sh")
     env['PATH'] = '%s:%%(PATH)s' % (clang_linux + '/bin')
     # Increase ClangTidy code coverage by enabling features.
     args.update({
@@ -177,6 +177,7 @@ def get_compile_flags(api, checkout_root, out_dir, workdir):
       'skia_use_runtime_icu': 'true',
       'skia_enable_optimize_size': 'true',
       'skia_use_jpeg_gainmaps': 'false',
+      'skia_use_partition_alloc': 'false',
     })
 
   if 'Exceptions' in extra_tokens:
@@ -237,6 +238,7 @@ def get_compile_flags(api, checkout_root, out_dir, workdir):
     args['skia_use_rust_bmp_decode'] = 'true'
     args['skia_use_rust_exif'] = 'true'
     args['skia_use_rust_icc'] = 'true'
+    args['skia_use_rust_ico_decode'] = 'true'
     args['skia_use_rust_png_decode'] = 'true'
     args['skia_use_rust_png_encode'] = 'true'
     args['skia_use_libpng_decode'] = 'false'
@@ -265,6 +267,7 @@ def get_compile_flags(api, checkout_root, out_dir, workdir):
       'skia_use_libpng_encode':        'false',
       'skia_use_libwebp_decode':       'false',
       'skia_use_libwebp_encode':       'false',
+      'skia_use_partition_alloc':      'false',
       'skia_use_vulkan':               'false',
       'skia_use_wuffs':                'false',
       'skia_use_zlib':                 'false',
@@ -314,10 +317,6 @@ def get_compile_flags(api, checkout_root, out_dir, workdir):
       if api.vars.is_linux and t == 'ASAN':
         # skbug.com/40040003 and skbug.com/40040004
         extra_cflags.append('-DSK_ENABLE_SCOPED_LSAN_SUPPRESSIONS')
-  if 'SafeStack' in extra_tokens:
-    assert sanitize == ''
-    sanitize = 'safe-stack'
-
   if 'Wuffs' in extra_tokens:
     args['skia_use_wuffs'] = 'true'
 
@@ -330,7 +329,7 @@ def get_compile_flags(api, checkout_root, out_dir, workdir):
     'sanitize': sanitize,
     'target_cpu': target_arch,
     'target_os': 'ios' if any('iOS' in t for t in extra_tokens) else '',
-    'win_sdk': win_toolchain + '/win_sdk' if 'Win' in os else '',
+    'win_sdk': win_toolchain + '/Windows Kits/10' if 'Win' in os else '',
     'win_vc': win_toolchain + '/VC' if 'Win' in os else '',
     'skia_dwritecore_sdk': dwritecore if 'DWriteCore' in extra_tokens else '',
   }.items():

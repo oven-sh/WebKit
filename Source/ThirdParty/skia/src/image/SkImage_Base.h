@@ -11,7 +11,11 @@
 #include "include/core/SkData.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkRefCnt.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
+#include "include/private/SkPixelStorage.h"
+#include "include/private/SkTDArray.h"
+#include "src/capture/SkCaptureManager.h"
 #include "src/core/SkMipmap.h"
 
 #include <atomic>
@@ -174,9 +178,14 @@ public:
         return nullptr;
     }
 
-protected:
-    SkImage_Base(const SkImageInfo& info, uint32_t uniqueID);
+    SkSpan<const sk_sp<SkPixelStorage>> getPixelStorages() const {
+        return fPixelStorages;
+    }
 
+protected:
+    SkImage_Base(const SkImageInfo& info, uint32_t uniqueID, sk_sp<SkPixelStorage> backingStorage);
+    // fPixelStorages is protected since SkImage_Raster needs access in ctor
+    skia_private::STArray<1, sk_sp<SkPixelStorage>> fPixelStorages;
 private:
     // Set true by caches when they cache content that's derived from the current pixels.
 

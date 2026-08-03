@@ -5,8 +5,6 @@
  * found in the LICENSE file.
  */
 
-#include <ctype.h>
-
 #include "bench/nanobench.h"
 
 #include "bench/AndroidCodecBench.h"
@@ -33,23 +31,24 @@
 #include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
 #include "include/encode/SkPngEncoder.h"
-#include "include/private/base/SkLog.h"
-#include "include/private/base/SkMacros.h"
-#include "src/base/SkAutoMalloc.h"
-#include "src/base/SkLeanWindows.h"
-#include "src/base/SkTime.h"
+#include "include/private/SkAssert.h"
+#include "include/private/SkLog.h"
+#include "include/private/SkMacros.h"
+#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkColorSpacePriv.h"
+#include "src/core/SkLeanWindows.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkTaskGroup.h"
+#include "src/core/SkTime.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/utils/SkJSONWriter.h"
 #include "src/utils/SkOSPath.h"
 #include "src/utils/SkShaderUtils.h"
 #include "tools/AutoreleasePool.h"
 #include "tools/CrashHandler.h"
-#include "tools/DeserialProcsUtils.h"
 #include "tools/MSKPPlayer.h"
 #include "tools/ProcStats.h"
+#include "tools/ProcsUtils.h"
 #include "tools/Stats.h"
 #include "tools/ToolUtils.h"
 #include "tools/flags/CommonFlags.h"
@@ -59,6 +58,8 @@
 #include "tools/ios_utils.h"
 #include "tools/trace/EventTracingPriv.h"
 #include "tools/trace/SkDebugfTracer.h"
+
+#include <ctype.h>
 
 #if defined(SK_ENABLE_SVG)
 #include "modules/skshaper/utils/FactoryHelpers.h"
@@ -874,7 +875,7 @@ public:
             SkDebugf("Could not read %s.\n", path);
             return nullptr;
         }
-        SkDeserialProcs procs = ToolUtils::get_default_skp_deserial_procs();
+        SkDeserialProcs procs = ToolUtils::default_deserial_procs();
         return SkPicture::MakeFromStream(stream.get(), &procs);
     }
 
@@ -1432,7 +1433,8 @@ int main(int argc, char** argv) {
         return 1;
 #endif
     }
-    NanoJSONResultsWriter log(logStream.get(), SkJSONWriter::Mode::kPretty);
+    NanoJSONResultsWriter log(
+            logStream.get(), ToolUtils::default_serial_procs(), SkJSONWriter::Mode::kPretty);
     log.beginObject(); // root
 
     if (1 == FLAGS_properties.size() % 2) {
@@ -1498,14 +1500,14 @@ int main(int argc, char** argv) {
 #if defined(SK_USE_PPROF)
         ProfilerStart(FLAGS_cpuprofile[0]);
 #else
-        SKIA_LOG_F("Must be compiled with -DSK_USE_PPROF (e.g. skia_use_pprof");
+        SK_ABORT("Must be compiled with -DSK_USE_PPROF (e.g. skia_use_pprof)");
 #endif
     }
     if (!FLAGS_memprofile.isEmpty()) {
 #if defined(SK_USE_PPROF)
         HeapProfilerStart(FLAGS_memprofile[0]);
 #else
-        SKIA_LOG_F("Must be compiled with -DSK_USE_PPROF (e.g. skia_use_pprof");
+        SK_ABORT("Must be compiled with -DSK_USE_PPROF (e.g. skia_use_pprof)");
 #endif
     }
 

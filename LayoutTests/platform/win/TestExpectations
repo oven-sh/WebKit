@@ -112,6 +112,15 @@ fast/webcodecs/audio-data-copy-to-crash.html [ Skip ]
 # WebGPU is disabled
 http/tests/webgpu [ Skip ]
 fast/webgpu [ Skip ]
+inspector/canvas/create-context-webgpu.html [ Skip ]
+inspector/canvas/recording-webgpu.html [ Skip ]
+inspector/canvas/requestClientNodes-webgpu.html [ Skip ]
+inspector/canvas/requestContent-webgpu.html [ Skip ]
+inspector/canvas/requestShaderSource-webgpu.html [ Skip ]
+inspector/canvas/resolveContext-webgpu.html [ Skip ]
+inspector/canvas/setShaderProgramDisabled-webgpu.html [ Skip ]
+inspector/canvas/shaderProgram-add-remove-webgpu.html [ Skip ]
+inspector/canvas/worker-webgpu.html [ Skip ]
 
 # QUOTA is disabled
 fast/workers/worker-storagequota-query-usage.html [ Skip ]
@@ -4446,8 +4455,6 @@ fast/html/body-color-legacy-parsing-3.html [ Pass ImageOnlyFailure ]
 
 # Fails on Buildbot
 fast/picture/viewport-resize.html [ Pass Failure ]
-
-imported/w3c/web-platform-tests/css/css-viewport/zoom/iframe-zoom-nested.html [ ImageOnlyFailure Pass ]
 
 fast/text/backslash-to-yen-sign.html [ Pass Failure ]
 

@@ -29,7 +29,6 @@
 
 namespace WebCore {
 
-class CSSPrimitiveValue;
 class CSSValuePair;
 
 namespace Style {

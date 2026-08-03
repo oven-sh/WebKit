@@ -533,6 +533,16 @@ TextStream& operator<<(TextStream& ts, FieldSizing sizing)
     return ts;
 }
 
+TextStream& operator<<(TextStream& ts, BaselineSource source)
+{
+    switch (source) {
+    case BaselineSource::Auto: ts << "auto"_s; break;
+    case BaselineSource::First: ts << "first"_s; break;
+    case BaselineSource::Last: ts << "last"_s; break;
+    }
+    return ts;
+}
+
 TextStream& operator<<(TextStream& ts, FillAttachment attachment)
 {
     switch (attachment) {
@@ -976,7 +986,7 @@ TextStream& operator<<(TextStream& ts, RubyOverhang overhang)
 {
     switch (overhang) {
     case RubyOverhang::Auto: ts << "auto"_s; break;
-    case RubyOverhang::None: ts << "none"_s; break;
+    case RubyOverhang::Spaces: ts << "spaces"_s; break;
     }
     return ts;
 }
@@ -1037,6 +1047,15 @@ TextStream& operator<<(TextStream& ts, TableLayoutType layoutType)
     switch (layoutType) {
     case TableLayoutType::Auto: ts << "Auto"_s; break;
     case TableLayoutType::Fixed: ts << "Fixed"_s; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, SpatialType spatial)
+{
+    switch (spatial) {
+    case SpatialType::None: ts << "None"_s; break;
+    case SpatialType::Portal: ts << "Portal"_s; break;
     }
     return ts;
 }

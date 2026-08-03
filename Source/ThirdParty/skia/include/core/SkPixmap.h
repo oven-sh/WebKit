@@ -15,8 +15,8 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkSize.h"
-#include "include/private/base/SkAPI.h"
-#include "include/private/base/SkAssert.h"
+#include "include/private/SkAPI.h"
+#include "include/private/SkAssert.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -164,6 +164,11 @@ public:
         @return  pixel height in SkImageInfo
     */
     int height() const { return fInfo.height(); }
+
+    /**
+     *  Returns if the pixmap is empty (from its ImageInfo).
+     */
+    bool isEmpty() const { return fInfo.isEmpty(); }
 
     /**
      *  Return the dimensions of the pixmap (from its ImageInfo)

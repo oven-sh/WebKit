@@ -331,12 +331,8 @@ JSC_DECLARE_JIT_OPERATION(operationCompareGreater, size_t, (JSGlobalObject*, Enc
 JSC_DECLARE_JIT_OPERATION(operationCompareGreaterEq, size_t, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationCompareEq, size_t, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationCompareStrictEq, size_t, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
-#if USE(JSVALUE64)
 JSC_DECLARE_JIT_OPERATION(operationCompareStringEq, EncodedJSValue, (JSGlobalObject*, JSCell* left, JSCell* right));
 JSC_DECLARE_JIT_OPERATION(operationCompareEqHeapBigIntToInt32, size_t, (JSGlobalObject*, JSCell* heapBigInt, int32_t smallInt));
-#else
-JSC_DECLARE_JIT_OPERATION(operationCompareStringEq, size_t, (JSGlobalObject*, JSCell* left, JSCell* right));
-#endif
 JSC_DECLARE_JIT_OPERATION(operationNewArrayWithProfile, EncodedJSValue, (JSGlobalObject*, ArrayAllocationProfile*, const JSValue* values, int32_t size));
 JSC_DECLARE_JIT_OPERATION(operationNewArrayWithSizeAndProfile, EncodedJSValue, (JSGlobalObject*, ArrayAllocationProfile*, EncodedJSValue size));
 JSC_DECLARE_JIT_OPERATION(operationCreateLexicalEnvironmentTDZ, EncodedJSValue, (JSGlobalObject*, JSScope*, SymbolTable*));
@@ -359,8 +355,7 @@ JSC_DECLARE_JIT_OPERATION(operationNewAsyncFunctionWithInvalidatedReallocationWa
 JSC_DECLARE_JIT_OPERATION(operationNewAsyncGeneratorFunction, EncodedJSValue, (JSGlobalObject*, JSScope*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationNewAsyncGeneratorFunctionWithInvalidatedReallocationWatchpoint, EncodedJSValue, (JSGlobalObject*, JSScope*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationSetFunctionName, void, (JSGlobalObject*, JSCell*, EncodedJSValue));
-JSC_DECLARE_JIT_OPERATION(operationEnqueueAsyncGeneratorDriver, void, (JSGlobalObject*, JSAsyncGenerator*, JSObject*, MicrotaskCallCache*));
-JSC_DECLARE_JIT_OPERATION(operationAsyncIteratorNextWithDriver, EncodedJSValue, (JSGlobalObject*, JSObject*, JSObject*, MicrotaskCallCache*));
+JSC_DECLARE_JIT_OPERATION(operationAsyncIteratorNextWithDriver, EncodedJSValue, (JSGlobalObject*, JSObject*, JSObject*, EncodedJSValue resumeValue, MicrotaskCallCache*));
 JSC_DECLARE_JIT_OPERATION(operationNewObject, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewPromise, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewGenerator, JSCell*, (VM*, Structure*));
@@ -378,11 +373,7 @@ JSC_DECLARE_JIT_OPERATION(operationPutGetterById, void, (JSGlobalObject*, JSCell
 JSC_DECLARE_JIT_OPERATION(operationPutSetterById, void, (JSGlobalObject*, JSCell*, UniquedStringImpl*, int32_t options, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationPutGetterByVal, void, (JSGlobalObject*, JSCell*, EncodedJSValue, int32_t attribute, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationPutSetterByVal, void, (JSGlobalObject*, JSCell*, EncodedJSValue, int32_t attribute, JSCell*));
-#if USE(JSVALUE64)
 JSC_DECLARE_JIT_OPERATION(operationPutGetterSetter, void, (JSGlobalObject*, JSCell*, UniquedStringImpl*, int32_t attribute, EncodedJSValue, EncodedJSValue));
-#else
-JSC_DECLARE_JIT_OPERATION(operationPutGetterSetter, void, (JSGlobalObject*, JSCell*, UniquedStringImpl*, int32_t attribute, JSCell*, JSCell*));
-#endif
 
 JSC_DECLARE_JIT_OPERATION(operationPushWithScope, JSCell*, (JSGlobalObject*, JSCell* currentScopeCell, EncodedJSValue object));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationPushWithScopeObject, JSCell*, (JSGlobalObject* globalObject, JSCell* currentScopeCell, JSObject* object));

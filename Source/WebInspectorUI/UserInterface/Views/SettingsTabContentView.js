@@ -422,6 +422,7 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
             experimentalSettingsView.addSeparator();
         }
 
+        // COMPATIBILITY (macOS 26.0, iOS 26.0): LayerTree.requestContent did not exist yet.
         if (InspectorBackend.hasCommand("LayerTree.requestContent")) {
             let layersGroup = experimentalSettingsView.addGroup(WI.UIString("Layers:"));
             layersGroup.addSetting(WI.settings.experimentalLayers3DShowLayerContents, WI.UIString("Show layer contents"));
@@ -476,6 +477,7 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
             listenForChange(WI.settings.experimentalCSSSortPropertyNameAutocompletionByUsage);
         }
 
+        // COMPATIBILITY (macOS 26.0, iOS 26.0): LayerTree.requestContent did not exist yet.
         if (InspectorBackend.hasCommand("LayerTree.requestContent"))
             listenForChange(WI.settings.experimentalLayers3DShowLayerContents);
 
@@ -536,7 +538,6 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
             this.value = InspectorBackend.dumpInspectorProtocolMessages;
         }, protocolAutoLogMessagesEditor);
 
-        protocolMessagesGroup.addSetting(WI.settings.protocolAutoLogTimeStats, WI.unlocalizedString("Time Stats"));
         protocolMessagesGroup.addSetting(WI.settings.protocolLogAsText, WI.unlocalizedString("Log as Text"));
 
         this._debugSettingsView.addSeparator();

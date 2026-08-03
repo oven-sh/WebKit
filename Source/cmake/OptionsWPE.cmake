@@ -8,6 +8,8 @@ set(USER_AGENT_BRANDING "" CACHE STRING "Branding to add to user agent string")
 set(ENABLE_UNSAFE_BUFFER_USAGE_WARNING ON)
 list(APPEND WEBKIT_UNSAFE_BUFFER_WARNING_FLAGS -Wno-unsafe-buffer-usage-in-format-attr-call)
 
+set(ENABLE_THREAD_SAFETY_WARNING ON)
+
 # Update Source/WTF/wtf/Platform.h to match required GLib versions.
 find_package(GLib 2.70.0 REQUIRED COMPONENTS GioUnix Thread Module)
 find_package(HarfBuzz 2.7.4 REQUIRED COMPONENTS ICU)
@@ -116,6 +118,7 @@ WEBKIT_OPTION_DEFINE(USE_GBM "Whether to enable usage of GBM." PUBLIC ON)
 WEBKIT_OPTION_DEFINE(USE_LIBBACKTRACE "Whether to enable usage of libbacktrace." PUBLIC ON)
 WEBKIT_OPTION_DEFINE(USE_LIBDRM "Whether to enable usage of libdrm." PUBLIC ON)
 WEBKIT_OPTION_DEFINE(USE_LIBHYPHEN "Whether to enable the default automatic hyphenation implementation." PUBLIC ON)
+WEBKIT_OPTION_DEFINE(USE_LIBSECRET "Whether to enable the persistent credential storage using libsecret." PUBLIC OFF)
 WEBKIT_OPTION_DEFINE(USE_SKIA_OPENTYPE_SVG "Whether to use the Skia built-in support for OpenType SVG fonts." PUBLIC ON)
 WEBKIT_OPTION_DEFINE(USE_VULKAN "Whether to build support to use Vulkan." PUBLIC ${ENABLE_EXPERIMENTAL_FEATURES})
 
@@ -254,6 +257,13 @@ if (USE_LIBHYPHEN)
     endif ()
 endif ()
 
+if (USE_LIBSECRET)
+    find_package(Secret)
+    if (NOT Secret_FOUND)
+        message(FATAL_ERROR "libsecret is needed for USE_LIBSECRET")
+    endif ()
+endif ()
+
 if (USE_VULKAN)
     find_package(volk CONFIG)
     if (NOT TARGET volk::volk OR NOT TARGET volk::volk_headers)
@@ -307,6 +317,7 @@ endif ()
 if (ENABLE_WPE_PLATFORM)
     if (ANDROID)
         set(WPE_PLATFORM_BUFFER_ANDROID ON)
+        set(WPE_PLATFORM_PROCESS_MANAGER_ANDROID ON)
     endif ()
 
     if (ENABLE_WPE_PLATFORM_DRM)

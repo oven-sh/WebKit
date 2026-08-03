@@ -70,7 +70,7 @@
 #define USE_GLIB 1
 #endif
 
-#if PLATFORM(COCOA) || USE(GLIB) || USE(BUN_JSC_ADDITIONS)
+#if OS(DARWIN) || USE(GLIB) || USE(BUN_JSC_ADDITIONS)
 #define USE_TIME_ZONE_CHANGE_NOTIFICATIONS 1
 #endif
 
@@ -127,12 +127,6 @@
 #define USE_ACCELERATE 1
 #endif
 
-#if CPU(REGISTER64)
-#define USE_JSVALUE64 1
-#else
-#define USE_JSVALUE32_64 1
-#endif
-
 // FIXME: this should instead be based on SIZE_MAX == UINT64_MAX
 // But this requires including <cstdint> and Platform.h is included in all kind of weird places, including non-cpp files
 // And in practice CPU(ADDRESS64) is equivalent on all platforms we support (verified by static_asserts in ArrayBuffer.h)
@@ -142,11 +136,9 @@
 #define USE_LARGE_TYPED_ARRAYS 0
 #endif
 
-#if USE(JSVALUE64)
 /* FIXME: Enable BIGINT32 optimization again after we ensure Speedometer2 and JetStream2 regressions are fixed. */
 /* https://bugs.webkit.org/show_bug.cgi?id=214777 */
 #define USE_BIGINT32 0
-#endif
 
 /* FIXME: This name should be more specific if it is only for use with CallFrame* */
 /* Use __builtin_frame_address(1) to get CallFrame* */
@@ -249,7 +241,10 @@
 #endif
 
 #if !defined(USE_SYSTEM_MALLOC)
-#if OS(DARWIN) && !CPU(ADDRESS64)
+#if TSAN_ENABLED
+// bmalloc falls back to the system allocator under ThreadSanitizer.
+#define USE_SYSTEM_MALLOC 1
+#elif OS(DARWIN) && !CPU(ADDRESS64)
 #define USE_SYSTEM_MALLOC 1
 #else
 #define USE_SYSTEM_MALLOC 0

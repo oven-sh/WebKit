@@ -27,22 +27,46 @@
 #include "GridItemSizingFunctions.h"
 
 #include "GridLayoutUtils.h"
+#include "GridSizeTypes.h"
+#include "PlacedGridItem.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 
 namespace WebCore {
 namespace Layout {
 
 GridItemSizingFunctions GridItemSizingFunctions::inlineAxis(const IntegrationUtils& integrationUtils)
 {
+    // The opposite-axis constraint is part of the shared callback signature (blockAxis() uses it), but
+    // inline-axis intrinsic sizes don't depend on it while grid items with a preferred aspect ratio are unsupported.
     return {
-        [&integrationUtils](const PlacedGridItem& gridItem, LayoutUnit blockAxisConstraint) {
-            return GridLayoutUtils::inlineAxisMinContentContribution(gridItem, blockAxisConstraint, integrationUtils);
+        [&integrationUtils](const PlacedGridItem& gridItem, LayoutUnit) {
+            return GridLayoutUtils::inlineAxisMinContentContribution(gridItem, integrationUtils);
         },
-        [&integrationUtils](const PlacedGridItem& gridItem, LayoutUnit blockAxisConstraint) {
-            return GridLayoutUtils::inlineAxisMaxContentContribution(gridItem, blockAxisConstraint, integrationUtils);
+        [&integrationUtils](const PlacedGridItem& gridItem, LayoutUnit) {
+            return GridLayoutUtils::inlineAxisMaxContentContribution(gridItem, integrationUtils);
         },
-        [&integrationUtils](const PlacedGridItem& gridItem, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit borderAndPadding, LayoutUnit availableSpace, LayoutUnit blockAxisConstraint) {
-            UNUSED_PARAM(blockAxisConstraint);
-            return GridLayoutUtils::inlineMinimumSize(gridItem, trackSizingFunctions, borderAndPadding, availableSpace, integrationUtils);
+        // This mirrors GridLayoutUtils::inlineMinimumSize(), but is evaluated while track sizing is in
+        // progress: the available space is not yet known, so it is absent for the automatic minimum size
+        // and percentage/calc() minimum sizes resolve against a zero containing block size.
+        [&integrationUtils](const PlacedGridItem& gridItem, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit borderAndPadding, LayoutUnit) {
+            auto& minimumSize = gridItem.inlineAxisSizes().minimumSize;
+            return WTF::switchOn(minimumSize,
+                [&](const Style::MinimumSize::Fixed& fixed) {
+                    return BorderBoxSize { ContentBoxSize { Style::evaluate<LayoutUnit>(fixed, gridItem.usedZoom()) }, borderAndPadding }.value;
+                },
+                [&](const Style::MinimumSize::Percentage& percentage) {
+                    return BorderBoxSize { ContentBoxSize { Style::evaluate<LayoutUnit>(percentage, 0_lu) }, borderAndPadding }.value;
+                },
+                [&](const Style::MinimumSize::Calc& calculated) {
+                    return BorderBoxSize { ContentBoxSize { Style::evaluate<LayoutUnit>(calculated, 0_lu, gridItem.usedZoom()) }, borderAndPadding }.value;
+                },
+                [&](const CSS::Keyword::Auto&) -> LayoutUnit {
+                    return GridLayoutUtils::automaticMinimumInlineSize(gridItem, borderAndPadding, trackSizingFunctions, { }, integrationUtils).value;
+                },
+                [](const auto&) -> LayoutUnit {
+                    ASSERT_NOT_IMPLEMENTED_YET();
+                    return { };
+                });
         }
     };
 }
@@ -56,8 +80,28 @@ GridItemSizingFunctions GridItemSizingFunctions::blockAxis(const GridFormattingC
         [&formattingContext](const PlacedGridItem& gridItem, LayoutUnit inlineAxisConstraint) {
             return GridLayoutUtils::blockAxisMaxContentContribution(gridItem, inlineAxisConstraint, formattingContext);
         },
-        [&formattingContext](const PlacedGridItem& gridItem, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit borderAndPadding, LayoutUnit availableSpace, LayoutUnit inlineAxisConstraint) {
-            return GridLayoutUtils::blockMinimumSize(gridItem, trackSizingFunctions, borderAndPadding, availableSpace, formattingContext, inlineAxisConstraint);
+        // This mirrors GridLayoutUtils::blockMinimumSize(), but is evaluated while track sizing is in
+        // progress: the available space is not yet known, so it is absent for the automatic minimum size
+        // and percentage/calc() minimum sizes resolve against a zero containing block size.
+        [&formattingContext](const PlacedGridItem& gridItem, const TrackSizingFunctionsList& trackSizingFunctions, LayoutUnit borderAndPadding, LayoutUnit inlineAxisConstraint) {
+            auto& minimumSize = gridItem.blockAxisSizes().minimumSize;
+            return WTF::switchOn(minimumSize,
+                [&](const Style::MinimumSize::Fixed& fixed) {
+                    return BorderBoxSize { ContentBoxSize { Style::evaluate<LayoutUnit>(fixed, gridItem.usedZoom()) }, borderAndPadding }.value;
+                },
+                [&](const Style::MinimumSize::Percentage& percentage) {
+                    return BorderBoxSize { ContentBoxSize { Style::evaluate<LayoutUnit>(percentage, 0_lu) }, borderAndPadding }.value;
+                },
+                [&](const Style::MinimumSize::Calc& calculated) {
+                    return BorderBoxSize { ContentBoxSize { Style::evaluate<LayoutUnit>(calculated, 0_lu, gridItem.usedZoom()) }, borderAndPadding }.value;
+                },
+                [&](const CSS::Keyword::Auto&) -> LayoutUnit {
+                    return GridLayoutUtils::automaticMinimumBlockSize(gridItem, borderAndPadding, trackSizingFunctions, { }, formattingContext, inlineAxisConstraint).value;
+                },
+                [](const auto&) -> LayoutUnit {
+                    ASSERT_NOT_IMPLEMENTED_YET();
+                    return { };
+                });
         }
     };
 }

@@ -37,6 +37,7 @@
 #include <wtf/MonotonicTime.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/WeakPtr.h>
 
 namespace IPC {
 class FormDataReference;
@@ -46,6 +47,7 @@ class SharedBufferReference;
 namespace WebCore {
 class ContentFilterUnblockHandler;
 class NetworkLoadMetrics;
+class PendingStreamState;
 class ResourceError;
 class ResourceLoader;
 class ResourceRequest;
@@ -58,7 +60,7 @@ namespace WebKit {
 
 enum class PrivateRelayed : bool;
 
-class WebResourceLoader : public RefCounted<WebResourceLoader>, public IPC::MessageSender {
+class WebResourceLoader : public RefCounted<WebResourceLoader>, public IPC::MessageSender, public CanMakeWeakPtr<WebResourceLoader> {
 public:
     struct TrackingParameters {
         WebPageProxyIdentifier webPageProxyID;
@@ -67,7 +69,7 @@ public:
         WebCore::ResourceLoaderIdentifier resourceID;
     };
 
-    static Ref<WebResourceLoader> create(Ref<WebCore::ResourceLoader>&&, const std::optional<TrackingParameters>&);
+    static Ref<WebResourceLoader> create(Ref<WebCore::ResourceLoader>&&, const std::optional<TrackingParameters>&, RefPtr<WebCore::PendingStreamState>&& = { });
 
     ~WebResourceLoader();
 
@@ -78,7 +80,9 @@ public:
     void detachFromCoreLoader();
 
 private:
-    WebResourceLoader(Ref<WebCore::ResourceLoader>&&, const std::optional<TrackingParameters>&);
+    WebResourceLoader(Ref<WebCore::ResourceLoader>&&, const std::optional<TrackingParameters>&, RefPtr<WebCore::PendingStreamState>&&);
+
+    void initPendingStreamState();
 
     // IPC::MessageSender
     IPC::Connection* messageSenderConnection() const override;
@@ -93,11 +97,15 @@ private:
     void didFailServiceWorkerLoad(const WebCore::ResourceError&);
     void serviceWorkerDidNotHandle();
     void updateResultingClientIdentifier(WTF::UUID currentIdentifier, WTF::UUID newIdentifier);
+    void cancelPendingStreamUpload();
+    void serviceWorkerPendingStreamForwardingNeedData();
 
     void didBlockAuthenticationChallenge();
     void setServiceWorkerTimingInfo(ServiceWorkerTimingInfo&& info) { m_serviceWorkerTimingInfo = WTF::move(info); }
 
     void stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied(const WebCore::ResourceResponse&);
+
+    void drainPendingStreamIfPossible();
 
     WebCore::MainFrameMainResource mainFrameMainResource() const;
     
@@ -115,6 +123,9 @@ private:
     RefPtr<WebCore::ResourceLoader> m_coreLoader;
     const std::optional<TrackingParameters> m_trackingParameters;
     WebResourceInterceptController m_interceptController;
+    RefPtr<WebCore::PendingStreamState> m_pendingStreamState;
+    uint64_t m_pendingStreamBytesForwardedToNetworkProcess { 0 };
+    uint64_t m_pendingStreamBytesSentByNetwork { 0 };
     size_t m_numBytesReceived { 0 };
     size_t m_bytesTransferredOverNetwork { 0 };
 

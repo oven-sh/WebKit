@@ -11,7 +11,7 @@
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkData.h"
 #include "include/core/SkFont.h"
-#include "include/private/base/SkTArray.h"
+#include "include/private/SkTArray.h"
 #include "modules/skcms/skcms.h"
 #include "src/sksl/codegen/SkSLNativeShader.h"
 #include "src/sksl/ir/SkSLProgram.h"
@@ -167,6 +167,7 @@ private:
     SkISize currentSlideSize() const;
     void listNames() const;
     void dumpShadersToResources();
+    void checkCaptureAndSerialize();
 
     void updateUIState();
 
@@ -194,6 +195,10 @@ private:
     bool                   fRefresh; // whether to continuously refresh for measuring render time
 
     bool                   fSaveToSKP;
+#if defined(SK_GRAPHITE)
+    bool                   fCurrentlyCapturing;
+#endif
+    bool                   fToggleCapture;
     bool                   fShowSlideDimensions;
 
     ImGuiLayer             fImGuiLayer;

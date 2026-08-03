@@ -391,7 +391,7 @@ WI.Resource = class Resource extends WI.SourceCode
 
     get displayName()
     {
-        return WI.displayNameForURL(this._url, this.urlComponents);
+        return this.scripts.find((script) => script.customName)?.customName || WI.displayNameForURL(this._url, this.urlComponents);
     }
 
     get displayURL()
@@ -889,12 +889,30 @@ WI.Resource = class Resource extends WI.SourceCode
         } else {
             // If we have the requestIdentifier we can get the actual response for this specific resource.
             // Otherwise the content will be cached resource data, which might not exist anymore.
-            if (this._requestIdentifier)
-                return this._target.NetworkAgent.getResponseBody(this._requestIdentifier);
+            if (this._requestIdentifier) {
+                // Under Site Isolation the backend target's Network agent owns the response data for
+                // cross-process requestIds that the resource's own target can't resolve; route there.
+                // Gated on enabledNetworkForSiteIsolation rather than hasDomain("Network") alone, which
+                // is statically true on the backend target even when no Network agent is enabled on it.
+                let networkTarget = this._target;
+                if (WI.networkManager.enabledNetworkForSiteIsolation && WI.backendTarget && WI.backendTarget !== this._target && WI.backendTarget.hasDomain("Network"))
+                    networkTarget = WI.backendTarget;
+                return networkTarget.NetworkAgent.getResponseBody(this._requestIdentifier);
+            }
 
             // There is no request identifier or frame to request content from.
-            if (this._parentFrame)
-                return this._target.PageAgent.getResourceContent(this._parentFrame.id, this._url);
+            if (this._parentFrame) {
+                // Under Site Isolation a cross-origin frame's content lives in another WebContent
+                // process, unreachable from this resource's own (page) target -- its PageAgent is
+                // the in-process InspectorPageAgent, which only resolves LocalFrames and would fail
+                // assertFrame() for the remote child. WI.backendTarget's PageAgent is the UIProcess
+                // ProxyingPageAgent, which routes getResourceContent to the frame's hosting process.
+                // Without Site Isolation WI.backendTarget has no PageAgent at all, so this is unchanged.
+                // Can't use hasCommand("Page.getResourceContent") here: that only reflects the static
+                // protocol, which declares the command regardless of whether SI is actually on.
+                let contentTarget = WI.backendTarget && WI.networkManager.enabledPageForSiteIsolation ? WI.backendTarget : this._target;
+                return contentTarget.PageAgent.getResourceContent(this._parentFrame.id, this._url);
+            }
         }
 
         return Promise.reject(new Error("Content request failed."));
@@ -1066,11 +1084,13 @@ WI.Resource = class Resource extends WI.SourceCode
 
         this._scripts.push(script);
 
-        if (this._type === WI.Resource.Type.Other || this._type === WI.Resource.Type.XHR) {
+        if (this._type === WI.Resource.Type.Other || this._type === WI.Resource.Type.XHR || this._type === WI.Resource.Type.Fetch) {
             let oldType = this._type;
             this._type = WI.Resource.Type.Script;
             this.dispatchEventToListeners(WI.Resource.Event.TypeDidChange, {oldType});
         }
+
+        this.dispatchEventToListeners(WI.Resource.Event.ScriptAssociated, {script});
     }
 
     saveIdentityToCookie(cookie)
@@ -1162,7 +1182,12 @@ WI.Resource = class Resource extends WI.SourceCode
         let errorString = WI.UIString("Unable to show certificate for \u201C%s\u201D").format(this.url);
 
         try {
-            let {serializedCertificate} = await this._target.NetworkAgent.getSerializedCertificate(this._requestIdentifier);
+            // The Network domain (ProxyingNetworkAgent) lives on the backend target under Site
+            // Isolation, not the resource's own (page) target; route there like requestContentFromBackend.
+            let webPageTarget = this._target;
+            if (WI.networkManager.networkEnabledOnBackendTarget && WI.backendTarget && WI.backendTarget !== this._target && WI.backendTarget.hasDomain("Network"))
+                webPageTarget = WI.backendTarget;
+            let {serializedCertificate} = await webPageTarget.NetworkAgent.getSerializedCertificate(this._requestIdentifier);
             if (InspectorFrontendHost.showCertificate(serializedCertificate))
                 return;
         } catch (e) {
@@ -1197,6 +1222,7 @@ WI.Resource.Event = {
     URLDidChange: "resource-url-did-change",
     MIMETypeDidChange: "resource-mime-type-did-change",
     TypeDidChange: "resource-type-did-change",
+    ScriptAssociated: "resource-script-associated",
     RequestHeadersDidChange: "resource-request-headers-did-change",
     RequestDataDidChange: "resource-request-data-did-change",
     ResponseReceived: "resource-response-received",

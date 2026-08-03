@@ -255,7 +255,7 @@ void StyleOriginatedTimelinesController::documentDidResolveStyle()
     m_removedTimelines.clear();
 }
 
-void StyleOriginatedTimelinesController::registerNamedViewTimeline(const AtomString& name, const Styleable& subject, ScrollAxis axis, const Style::ViewTimelineInsetItem& insets)
+void StyleOriginatedTimelinesController::registerNamedViewTimeline(const AtomString& name, const Styleable& subject, ScrollAxis axis, const Style::ViewTimelineInsetItem& insets, const Style::ZoomFactor& usedZoomForLength)
 {
     LOG_WITH_STREAM(Animations, stream << "StyleOriginatedTimelinesController::registerNamedViewTimeline: " << name << " subject: " << subject);
 
@@ -272,9 +272,9 @@ void StyleOriginatedTimelinesController::registerNamedViewTimeline(const AtomStr
     if (hasExistingTimeline) {
         Ref existingViewTimeline = downcast<ViewTimeline>(timelines[existingTimelineIndex].get());
         existingViewTimeline->setAxis(axis);
-        existingViewTimeline->setInsets(insets);
+        existingViewTimeline->setInsets(ResolvableViewTimelineInsets { insets, usedZoomForLength });
     } else {
-        auto newViewTimeline = ViewTimeline::create(name, axis, insets);
+        auto newViewTimeline = ViewTimeline::create(name, axis, insets, usedZoomForLength);
         newViewTimeline->setSubject(subject);
         updateTimelineForTimelineScope(newViewTimeline, name);
         timelines.append(WTF::move(newViewTimeline));
@@ -475,9 +475,7 @@ void StyleOriginatedTimelinesController::unregisterNamedTimelinesAssociatedWithE
 {
     LOG_WITH_STREAM(Animations, stream << "StyleOriginatedTimelinesController::unregisterNamedTimelinesAssociatedWithElement element: " << styleable);
 
-    HashSet<AtomString> namesToClear;
-
-    for (auto& entry : m_nameToTimelineMap) {
+    m_nameToTimelineMap.removeIf([&](auto& entry) {
         auto& timelines = entry.value;
         for (size_t i = 0; i < timelines.size(); ++i) {
             auto& timeline = timelines[i];
@@ -486,12 +484,8 @@ void StyleOriginatedTimelinesController::unregisterNamedTimelinesAssociatedWithE
                 timelines.removeAt(i--);
             }
         }
-        if (timelines.isEmpty())
-            namesToClear.add(entry.key);
-    }
-
-    for (auto& name : namesToClear)
-        m_nameToTimelineMap.remove(name);
+        return timelines.isEmpty();
+    });
 }
 
 void StyleOriginatedTimelinesController::styleableWasRemoved(const Styleable& styleable)

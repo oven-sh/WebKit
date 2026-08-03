@@ -205,6 +205,12 @@ void MediaPlayerPrivateAVFoundation::load(const String& url)
     setPreload(m_preload);
 }
 
+void MediaPlayerPrivateAVFoundation::load(const URL& url, const LoadOptions& options)
+{
+    m_disableTeardownOnVisibilityChange = options.disableTeardownOnVisibilityChange;
+    load(url.string());
+}
+
 #if ENABLE(MEDIA_SOURCE)
 void MediaPlayerPrivateAVFoundation::load(const URL&, const LoadOptions&, MediaSourcePrivateClient&)
 {
@@ -722,8 +728,11 @@ void MediaPlayerPrivateAVFoundation::didEnd(double now)
 {
     // Hang onto the current time and use it as duration from now on since we are definitely at
     // the end of the movie. Do this because the initial duration is sometimes an estimate.
-    ALWAYS_LOG(LOGIDENTIFIER, "currentTime: ", now, ", seeking: ", m_seeking);
-    if (now > 0 && !m_seeking) {
+    // Never do this for a live stream: its duration is unbounded (positive infinity), and
+    // demoting it to a finite value here would make endedPlayback() treat reaching the live
+    // edge as the end of the media and fire a spurious 'ended' event.
+    ALWAYS_LOG(LOGIDENTIFIER, "currentTime: ", now, ", seeking: ", m_seeking, ", isLiveStream: ", isLiveStream());
+    if (now > 0 && !m_seeking && !isLiveStream()) {
         ALWAYS_LOG(LOGIDENTIFIER, "Updating cached duration to ", now);
         m_cachedDuration = MediaTime::createWithDouble(now);
     }

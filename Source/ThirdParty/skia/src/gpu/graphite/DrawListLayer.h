@@ -9,10 +9,10 @@
 
 #include "src/gpu/graphite/DrawListBase.h"
 
-#include "include/private/base/SkDebug.h"
-#include "src/base/SkBlockAllocator.h"
-#include "src/base/SkEnumBitMask.h"
-#include "src/base/SkTBlockList.h"
+#include "include/private/SkDebug.h"
+#include "include/private/SkEnumBitMask.h"
+#include "src/core/SkBlockAllocator.h"
+#include "src/core/SkTBlockList.h"
 #include "src/gpu/graphite/ContextUtils.h"
 #include "src/gpu/graphite/DrawCommands.h"
 #include "src/gpu/graphite/DrawListTypes.h"
@@ -36,13 +36,14 @@ class Renderer;
 
 class DrawListLayer final : public DrawListBase {
 public:
-    // Add a construtor to prevent default zero initialization of SkTBlockList members' storage.
-    DrawListLayer() : DrawListBase() {}
+    explicit DrawListLayer(bool storageBufferSupport)
+        : DrawListBase()
+        , fStorageBufferSupport(storageBufferSupport) {}
 
     // DrawList requires that all Transforms be valid and asserts as much; invalid transforms should
     // be detected at the Device level or similar. The provided Renderer must be compatible with the
     // 'shape' and 'stroke' parameters.
-    std::pair<DrawParams*, Insertion> recordDraw(
+    std::pair<DrawParams*, Layer*> recordDraw(
             const Renderer* renderer,
             const Transform& localToDevice,
             const Geometry& geometry,
@@ -53,7 +54,7 @@ public:
             BarrierType barrierBeforeDraws,
             PipelineDataGatherer* gatherer,
             const StrokeStyle* stroke,
-            const Insertion& latestInsertion) override;
+            Layer* lastInsertion) override;
 
     std::unique_ptr<DrawPass> snapDrawPass(Recorder* recorder,
                                            sk_sp<TextureProxy> target,
@@ -65,34 +66,20 @@ public:
     void reset(LoadOp op, SkColor4f clearColor = {0.f, 0.f, 0.f, 0.f}) override;
 
 private:
-    template<bool kIsDepthOnly>
-    void recordBackwards(int stepIndex,
-                         bool isStencil,
-                         bool dependsOnDst,
-                         bool requiresBarrier,
-                         const RenderStep* step,
-                         const UniformDataCache::Index& uniformIndex,
-                         const LayerKey& key,
-                         const DrawParams* drawParams,
-                         const Insertion& stop,
-                         Insertion* capture,
-                         bool canForwardMerge);
+    std::pair<Layer*, BindingList*> searchBackwards(const RenderStep* step,
+                                                    const LayerKey& key,
+                                                    SkEnumBitMask<BoundsFlags> testMask,
+                                                    const DrawParams* drawParams,
+                                                    CompressedPaintersOrder stop);
 
-    void recordForwards(int stepIndex,
-                        bool isStencil,
-                        bool dependsOnDst,
-                        bool requiresBarrier,
-                        const RenderStep* step,
-                        const UniformDataCache::Index& uniformIndex,
-                        const LayerKey& key,
-                        const DrawParams* drawParams,
-                        Insertion& start);
+    BindingList* findOrCreateBindingInLayer(Layer* layer,
+                                            BindingList* parent,
+                                            const RenderStep* step,
+                                            const LayerKey& key);
 
     friend class DrawPass;
 
-    // It turns out that these seem to be really good default parameters. Maybe the default
-    // allocation could be brough down a little bit.
-    static constexpr uint32_t kMaxSearchLimit = 32;
+    static constexpr int32_t  kMaxSearchLimit = 32;
     static constexpr uint32_t kDefaultAllocation = 4096;
 
     // TODO (thomsmit): Try using SkSTArenaAllocWithReset that has the first storage block stored
@@ -102,6 +89,8 @@ private:
 
     int fDrawCount = 0;
     CompressedPaintersOrder fOrderCounter = CompressedPaintersOrder::First();
+
+    const bool fStorageBufferSupport;
 };
 
 } // namespace skgpu::graphite

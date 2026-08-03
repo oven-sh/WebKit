@@ -66,6 +66,7 @@
 #include <WebCore/NetscapePlugInStreamLoader.h>
 #include <WebCore/NetworkLoadInformation.h>
 #include <WebCore/NodeDocument.h>
+#include <WebCore/PendingStreamState.h>
 #include <WebCore/PlatformStrategies.h>
 #include <WebCore/ReferrerPolicy.h>
 #include <WebCore/ResourceLoader.h>
@@ -402,7 +403,7 @@ static void addParametersShared(const LocalFrame* frame, NetworkResourceLoadPara
         parameters.isClearSiteDataHeaderEnabled = document->settings().clearSiteDataHTTPHeaderEnabled();
         parameters.isClearSiteDataExecutionContextEnabled = document->settings().clearSiteDataExecutionContextsSupportEnabled();
         parameters.mayBlockNetworkRequest = !isMainFrameNavigation && document->settings().scriptTrackingPrivacyNetworkRequestBlockingEnabled();
-        parameters.globalPrivacyControlEnabled = document->settings().globalPrivacyControlEnabled();
+        parameters.globalPrivacyControlEnabled = document->settings().globalPrivacyControlEnabled().value_or(false);
     }
 
     if (RefPtr page = frame->page()) {
@@ -600,6 +601,9 @@ void WebLoaderStrategy::scheduleLoadFromNetworkProcess(ResourceLoader& resourceL
         if (RefPtr documentLoader = resourceLoader.documentLoader()) {
             loadParameters.navigationID = documentLoader->navigationID();
             loadParameters.navigationRequester = documentLoader->triggeringAction().requester();
+            if (auto& requester = loadParameters.navigationRequester; requester && frame && !frame->isMainFrame() && frame->document())
+                loadParameters.navigationLosesFrameSpecificStorageAccess = shouldNavigationLoseFrameSpecificStorageAccess(*requester, frame->frameID(), frame->document()->url(), request.url());
+            loadParameters.originalNavigationStartTime = documentLoader->timing().startTime();
             if (loadParameters.navigationRequester && (!loadParameters.sourceOrigin || loadParameters.sourceOrigin->isOpaque()))
                 loadParameters.sourceOrigin = loadParameters.navigationRequester->securityOrigin.ptr();
         }
@@ -661,7 +665,10 @@ void WebLoaderStrategy::scheduleLoadFromNetworkProcess(ResourceLoader& resourceL
         return;
     }
 
-    auto loader = WebResourceLoader::create(resourceLoader, trackingParameters);
+    RefPtr<PendingStreamState> state;
+    if (RefPtr body = resourceLoader.request().httpBody())
+        state = body->pendingStreamState();
+    auto loader = WebResourceLoader::create(resourceLoader, trackingParameters, WTF::move(state));
     m_webResourceLoaders.set(identifier, WTF::move(loader));
 }
 

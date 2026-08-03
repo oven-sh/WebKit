@@ -11,7 +11,7 @@
 #include "include/core/SkRecorder.h"
 #include "include/core/SkRefCnt.h"
 #include "include/gpu/graphite/Recorder.h"
-#include "include/private/base/SkDebug.h"
+#include "include/private/SkDebug.h"
 #include "src/gpu/graphite/DebugUtils.h"
 #include "src/gpu/graphite/PipelineData.h"
 #include "src/gpu/graphite/ResourceProvider.h"
@@ -86,8 +86,8 @@ public:
     UploadList* rootUploadList() { return fRecorder->fRootUploads.get(); }
     DrawBufferManager* drawBufferManager() { return fRecorder->fDrawBufferManager.get(); }
     UploadBufferManager* uploadBufferManager() { return fRecorder->fUploadBufferManager.get(); }
-    FloatStorageManager* floatStorageManager() { return fRecorder->fFloatStorageManager.get(); }
-    sk_sp<FloatStorageManager> refFloatStorageManager() { return fRecorder->fFloatStorageManager; }
+    StorageBufferManager* storageBufferManager() { return fRecorder->fStorageBufferManager.get(); }
+    sk_sp<StorageBufferManager> refStorageBufferManager() { return fRecorder->fStorageBufferManager; }
 
     AtlasProvider* atlasProvider() { return fRecorder->fAtlasProvider.get(); }
     TokenTracker* tokenTracker() { return fRecorder->fTokenTracker.get(); }
@@ -119,7 +119,9 @@ public:
     // used by the Context that created this Recorder to set a back pointer
     void setContext(Context*);
     Context* context() { return fRecorder->fContext; }
+
     void issueFlushToken();
+    int numRootTasks() const;
 #endif
 
 private:

@@ -88,6 +88,9 @@ public:
     JSValue cachedSpecialProperty(CachedSpecialPropertyKey) const;
     void cacheSpecialProperty(JSGlobalObject*, VM&, Structure* baseStructure, JSValue, CachedSpecialPropertyKey, const PropertySlot&);
 
+    TriState cachedHasDefaultToPrimitiveFastAndNonObservable() const { return m_cachedHasDefaultToPrimitiveFastAndNonObservable; }
+    void setCachedHasDefaultToPrimitiveFastAndNonObservable(TriState mode) { m_cachedHasDefaultToPrimitiveFastAndNonObservable = mode; }
+
     JSPropertyNameEnumerator* cachedPropertyNameEnumerator() const;
     uintptr_t cachedPropertyNameEnumeratorAndFlag() const;
     void setCachedPropertyNameEnumerator(VM&, Structure*, JSPropertyNameEnumerator*, StructureChain*);
@@ -179,6 +182,7 @@ private:
     PropertyOffset m_maxOffset;
     PropertyOffset m_transitionOffset;
     unsigned m_activeReplacementWatchpointSet { 0 };
+    TriState m_cachedHasDefaultToPrimitiveFastAndNonObservable : 2 { TriState::Indeterminate };
 };
 
 } // namespace JSC

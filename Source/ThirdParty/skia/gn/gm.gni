@@ -72,6 +72,7 @@ gm_sources = [
   "$_gm/circulararcs.cpp",
   "$_gm/circularclips.cpp",
   "$_gm/clip_error.cpp",
+  "$_gm/clip_rrects.cpp",
   "$_gm/clip_sierpinski_region.cpp",
   "$_gm/clip_strokerect.cpp",
   "$_gm/clipdrawdraw.cpp",
@@ -119,6 +120,7 @@ gm_sources = [
   "$_gm/crbug_1313579.cpp",
   "$_gm/crbug_224618.cpp",
   "$_gm/crbug_478659067.cpp",
+  "$_gm/crbug_531782512.cpp",
   "$_gm/crbug_691386.cpp",
   "$_gm/crbug_788500.cpp",
   "$_gm/crbug_847759.cpp",
@@ -418,6 +420,8 @@ gl_gm_sources = [ "$_gm/rectangletexture.cpp" ]
 
 fontations_gm_sources = [
   "$_gm/fontations.cpp",
+  "$_gm/fontations_cbdt.cpp",
+  "$_gm/fontations_ebdt.cpp",
   "$_gm/fontations_ft_compare.cpp",
 ]
 

@@ -83,6 +83,7 @@ struct TracingRect : public TracingShape {
 
 }  // namespace
 
+[[maybe_unused]]
 static SkScalar gTracingTestWorkSink = 1.0f;
 
 static void do_work(int howMuchWork) {
@@ -140,20 +141,6 @@ static void test_trace_counters() {
             SkScalar rad = SkDegreesToRadians(SkIntToScalar(i));
             TRACE_COUNTER1("skia", "sin", SkScalarSin(rad) * 1000.0f + 1000.0f);
             TRACE_COUNTER1("skia", "cos", SkScalarCos(rad) * 1000.0f + 1000.0f);
-            do_work(10);
-        }
-    }
-
-    {
-        TRACE_EVENT0("skia", "Stacked Counters");
-
-        // Two counters can be recorded together with COUNTER2. They will be graphed together,
-        // as a stacked bar graph. The combined graph needs a name, as does each data series.
-        for (int i = 0; i < 180; ++i) {
-            SkScalar rad = SkDegreesToRadians(SkIntToScalar(i));
-            TRACE_COUNTER2("skia", "trig",
-                           "sin", SkScalarSin(rad) * 1000.0f + 1000.0f,
-                           "cos", SkScalarCos(rad) * 1000.0f + 1000.0f);
             do_work(10);
         }
     }

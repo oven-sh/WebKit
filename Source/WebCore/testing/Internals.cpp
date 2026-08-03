@@ -181,6 +181,7 @@
 #include "NavigatorBeacon.h"
 #include "NavigatorMediaDevices.h"
 #include "NetworkLoadInformation.h"
+#include "NetworkingContext.h"
 #include "Page.h"
 #include "PageInspectorController.h"
 #include "PageOverlay.h"
@@ -442,6 +443,10 @@
 
 #if ENABLE(MODEL_ELEMENT)
 #include "HTMLModelElement.h"
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+#include "SpatialPortalController.h"
 #endif
 
 #if ENABLE(SERVICE_CONTROLS)
@@ -733,9 +738,6 @@ void Internals::resetToConsistentState(Page& page)
     rtcProvider.setH265Support(true);
     rtcProvider.setVP9Support(true, true);
     rtcProvider.clearFactory();
-#if USE(GSTREAMER_WEBRTC)
-    page.settings().setPeerConnectionEnabled(true);
-#endif
 #endif
 
     page.setFullscreenAutoHideDuration(0_s);
@@ -775,7 +777,7 @@ void Internals::resetToConsistentState(Page& page)
 
 #if USE(AUDIO_SESSION)
     AudioSession::singleton().setCategoryOverride(AudioSessionCategory::None);
-    AudioSession::singleton().tryToSetActive(false);
+    AudioSession::singleton().tryToSetActive(false)->whenSettled(RunLoop::mainSingleton(), [](auto&&) { });
     AudioSession::singleton().endInterruptionForTesting();
 #endif
 
@@ -985,6 +987,19 @@ bool Internals::isLoadingFromMemoryCache(const String& url)
 {
     CachedResource* resource = resourceFromMemoryCache(url);
     return resource && resource->status() == CachedResource::Cached;
+}
+
+ExceptionOr<bool> Internals::frameNetworkingContextIsValid() const
+{
+    RefPtr document = contextDocument();
+    if (!document || !document->frame())
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    RefPtr context = document->frame()->loader().networkingContext();
+    if (!context)
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    return context->isValid();
 }
 
 CachedResource* Internals::resourceFromMemoryCache(const String& url)
@@ -3388,6 +3403,12 @@ ExceptionOr<Vector<double>> Internals::findCueMatches(const String& text, const 
         return match.seekTime.toDouble();
     });
 }
+
+void Internals::clearFindCaptionTracks()
+{
+    if (RefPtr document = contextDocument(); document && document->page())
+        document->page()->clearFindCaptionTracks();
+}
 #endif
 
 unsigned Internals::numberOfIDBTransactions() const
@@ -4770,6 +4791,23 @@ void Internals::forceAXObjectCacheUpdate() const
     }
 }
 
+unsigned Internals::liveRegionSnapshotBuildCount() const
+{
+    if (RefPtr document = contextDocument()) {
+        if (CheckedPtr cache = document->axObjectCache())
+            return cache->liveRegionSnapshotBuildCount();
+    }
+    return 0;
+}
+
+void Internals::resetLiveRegionSnapshotBuildCount() const
+{
+    if (RefPtr document = contextDocument()) {
+        if (CheckedPtr cache = document->axObjectCache())
+            cache->resetLiveRegionSnapshotBuildCount();
+    }
+}
+
 void Internals::setShouldMockParentSearchResultsForTesting(bool enabled)
 {
     WebCore::setShouldMockParentSearchResultsForTesting(enabled);
@@ -4927,9 +4965,9 @@ bool Internals::elementShouldBufferData(HTMLMediaElement& element)
     return element.bufferingPolicy() < MediaPlayer::BufferingPolicy::LimitReadAhead;
 }
 
-String Internals::elementBufferingPolicy(HTMLMediaElement& element)
+static String bufferingPolicyToString(MediaPlayer::BufferingPolicy policy)
 {
-    switch (element.bufferingPolicy()) {
+    switch (policy) {
     case MediaPlayer::BufferingPolicy::Default:
         return "Default"_s;
     case MediaPlayer::BufferingPolicy::LimitReadAhead:
@@ -4942,6 +4980,20 @@ String Internals::elementBufferingPolicy(HTMLMediaElement& element)
 
     ASSERT_NOT_REACHED();
     return "UNKNOWN"_s;
+}
+
+String Internals::elementBufferingPolicy(HTMLMediaElement& element)
+{
+    return bufferingPolicyToString(element.bufferingPolicy());
+}
+
+// The live-computed preferred policy, in contrast to the cached applied policy
+// returned by elementBufferingPolicy(). Comparing the two, together with
+// mediaSessionState(), disambiguates "session state stuck at Playing" from
+// "applied policy stale (update never re-triggered)". rdar://181274857.
+String Internals::elementPreferredBufferingPolicy(HTMLMediaElement& element)
+{
+    return bufferingPolicyToString(element.mediaSession().preferredBufferingPolicy());
 }
 
 void Internals::setMediaElementBufferingPolicy(HTMLMediaElement& element, const String& policy)
@@ -8707,6 +8759,25 @@ String Internals::modelElementState(HTMLModelElement& element)
 bool Internals::isModelElementIntersectingViewport(HTMLModelElement& element)
 {
     return element.isIntersectingViewport();
+}
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+unsigned Internals::numberOfHostedModelsInSpatialPortal(Element& element)
+{
+    CheckedPtr controller = element.spatialPortalController();
+    return controller ? controller->numberOfHostedModels() : 0;
+}
+
+unsigned Internals::numberOfLoadedModelsInSpatialPortal(Element& element)
+{
+    CheckedPtr controller = element.spatialPortalController();
+    return controller ? controller->numberOfLoadedModels() : 0;
+}
+
+bool Internals::establishesSpatialPortal(Element& element)
+{
+    return element.establishesSpatialPortal();
 }
 #endif
 

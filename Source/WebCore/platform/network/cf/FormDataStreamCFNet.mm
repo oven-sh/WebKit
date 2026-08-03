@@ -31,6 +31,7 @@
 
 #include "BlobRegistryImpl.h"
 #include "FormData.h"
+#include "PendingStreamState.h"
 #include "PlatformStrategies.h"
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -91,7 +92,7 @@ CFStringRef formDataStreamLengthPropertyNameSingleton()
 
 struct FormCreationContext {
     FormDataForUpload data;
-    unsigned long long streamLength;
+    unsigned long long streamLength { 0 };
 };
 
 struct FormStreamFields {
@@ -166,6 +167,9 @@ static bool advanceCurrentStream(FormStreamFields* form)
             form->currentStreamRangeLength = fileData.fileLength;
             return true;
         }, [] (const FormDataElement::EncodedBlobData&) {
+            ASSERT_NOT_REACHED();
+            return false;
+        }, [] (const FormDataElement::PendingStreamData&) {
             ASSERT_NOT_REACHED();
             return false;
         }
@@ -369,10 +373,129 @@ static void formEventCallback(CFReadStreamRef stream, CFStreamEventType type, vo
     }
 }
 
+struct PendingStreamCreationContext {
+    Ref<PendingStreamState> state;
+};
+
+struct PendingStreamFields {
+    explicit PendingStreamFields(Ref<PendingStreamState>&& state)
+        : state(WTF::move(state)) { }
+
+    RetainPtr<CFReadStreamRef> cfFormStream()
+    {
+        return bridge_cast(formStream.get());
+    }
+
+    Ref<PendingStreamState> state;
+    WeakObjCPtr<NSInputStream> formStream;
+    std::optional<bool> isHTTP2OrLater;
+    bool isOpened { false };
+};
+
+static void* pendingStreamCreate(CFReadStreamRef stream, void* context)
+{
+    auto* creationContext = static_cast<PendingStreamCreationContext*>(context);
+
+    auto* fields = new PendingStreamFields(WTF::move(creationContext->state));
+    fields->formStream = bridge_cast(stream);
+
+    callOnMainThread([creationContext] {
+        delete creationContext;
+    });
+
+    return fields;
+}
+
+static void pendingStreamFinalize(CFReadStreamRef stream, void* context)
+{
+    auto* fields = static_cast<PendingStreamFields*>(context);
+    ASSERT_UNUSED(stream, !fields->cfFormStream() || fields->cfFormStream() == stream);
+
+    callOnMainThread([fields] {
+        delete fields;
+    });
+}
+
+static Boolean pendingStreamOpen(CFReadStreamRef, CFStreamError* error, Boolean* openComplete, void*)
+{
+    *openComplete = TRUE;
+    error->error = 0;
+    return TRUE;
+}
+
+static CFIndex pendingStreamRead(CFReadStreamRef, UInt8* buffer, CFIndex bufferLength, CFStreamError* error, Boolean* atEOF, void* context)
+{
+    auto* fields = static_cast<PendingStreamFields*>(context);
+
+    if (!fields->isHTTP2OrLater.value_or(false)) {
+        error->domain = kCFStreamErrorDomainMacOSStatus;
+        error->error = -1;
+        *atEOF = FALSE;
+        return -1;
+    }
+
+    auto output = unsafeMakeSpan(buffer, static_cast<size_t>(bufferLength));
+    auto result = fields->state->readInto(output);
+
+    if (!result) {
+        error->domain = kCFStreamErrorDomainMacOSStatus;
+        error->error = result.error();
+        *atEOF = FALSE;
+        return -1;
+    }
+
+    error->error = 0;
+    *atEOF = result->second;
+    return static_cast<CFIndex>(result->first);
+}
+
+static Boolean pendingStreamCanRead(CFReadStreamRef, void* context)
+{
+    auto* fields = static_cast<PendingStreamFields*>(context);
+
+    Ref state = fields->state;
+    if (!fields->isHTTP2OrLater) {
+        fields->isHTTP2OrLater = state->currentHTTPVersion() == PendingStreamState::HTTPVersion::HTTP2OrLater;
+        if (!*fields->isHTTP2OrLater) {
+            // Under HTTP/1 we fail immediately in pendingStreamRead.
+            return true;
+        }
+        state->setDataAvailableHandler([weakStream = fields->formStream] {
+            if (RetainPtr stream = weakStream.get())
+                CFReadStreamSignalEvent(bridge_cast(stream.get()), kCFStreamEventHasBytesAvailable, nullptr);
+        });
+    }
+
+    return state->hasReadyData();
+}
+
+static void pendingStreamClose(CFReadStreamRef, void* context)
+{
+    auto* fields = static_cast<PendingStreamFields*>(context);
+    protect(fields->state)->clearDataAvailableHandler();
+}
+
+static CFTypeRef pendingStreamCopyProperty(CFReadStreamRef, CFStringRef, void*)
+{
+    // Deliberately do not answer WebKitFormDataStreamLength — length is unknown for a pending stream.
+    return 0;
+}
+
 RetainPtr<CFReadStreamRef> createHTTPBodyCFReadStream(FormData& formData)
 {
     if (!hasPlatformStrategies() && formData.containsBlobElement())
         return nullptr;
+
+    ASSERT(isMainThread());
+
+    if (formData.isPendingStream()) {
+        RefPtr state = formData.pendingStreamState();
+        if (!state)
+            return nullptr;
+        auto* context = new PendingStreamCreationContext { state.releaseNonNull() };
+        CFReadStreamCallBacksV1 pendingStreamCallBacks = { 1, pendingStreamCreate, pendingStreamFinalize, nullptr, pendingStreamOpen, nullptr, pendingStreamRead, nullptr, pendingStreamCanRead, pendingStreamClose, pendingStreamCopyProperty, nullptr, nullptr, nullptr, nullptr };
+        return adoptCF(CFReadStreamCreate(nullptr, static_cast<const void*>(&pendingStreamCallBacks), context));
+    }
 
     auto resolvedFormData = formData.resolveBlobReferences();
     auto dataForUpload = resolvedFormData->prepareForUpload();
@@ -384,7 +507,7 @@ RetainPtr<CFReadStreamRef> createHTTPBodyCFReadStream(FormData& formData)
             return blobRegistry()->blobRegistryImpl()->blobSize(url);
         });
     }
-    ASSERT(isMainThread());
+
     FormCreationContext* formContext = new FormCreationContext { WTF::move(dataForUpload), length };
     CFReadStreamCallBacksV1 callBacks = { 1, formCreate, formFinalize, nullptr, formOpen, nullptr, formRead, nullptr, formCanRead, formClose, formCopyProperty, nullptr, nullptr, formSchedule, formUnschedule };
     return adoptCF(CFReadStreamCreate(nullptr, static_cast<const void*>(&callBacks), formContext));

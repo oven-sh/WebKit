@@ -12,8 +12,8 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkSpan.h"
 #include "include/gpu/graphite/GraphiteTypes.h"
-#include "include/private/base/SkAPI.h"
-#include "include/private/base/SkMath.h"
+#include "include/private/SkAPI.h"
+#include "include/private/SkMath.h"
 
 #include <optional>
 #include <string>
@@ -221,6 +221,12 @@ struct SK_API ContextOptions {
      * draw calls and surface creation from Recorders spawned from the Context.
      */
      bool fEnableCapture = false;
+
+     /**
+      * Avoid using depth/stencil buffers. This will disable depth-occlusion-culling (more GPU work)
+      * and fall back to analytic path algorithm instead of MSAA (more CPU work).
+      */
+     bool fAvoidDepthMode = false;
 
     /**
      * Private options that are only meant for testing within Skia's tools.

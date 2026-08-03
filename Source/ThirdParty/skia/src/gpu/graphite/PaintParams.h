@@ -10,7 +10,7 @@
 
 #include "include/core/SkColor.h"
 #include "include/core/SkPaint.h"
-#include "src/base/SkEnumBitMask.h"
+#include "include/private/SkEnumBitMask.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/Renderer.h"
 #include "src/gpu/graphite/geom/NonMSAAClip.h"
@@ -23,7 +23,7 @@ namespace skgpu::graphite {
 
 class DrawContext;
 class KeyContext;
-class FloatStorageManager;
+class StorageBufferManager;
 class PaintParamsKeyBuilder;
 class PipelineDataGatherer;
 class Recorder;
@@ -70,14 +70,26 @@ public:
     // NOTE: Does not copy `imageOverride`, this must live for the lifetime of PaintParams
     PaintParams(const SkPaint&, const SimpleImage& imageOverride, float xtraAlpha=1.f);
 
+    // Converts an SkPaint to PaintParams, overrides the paint's base color with `colorOverride`
+    // and multiplies the base and override color alphas together. Since this is a color override,
+    // any shader in the SkPaint is ignored.
+    PaintParams(const SkPaint&, const SkColor4f& colorOverride);
+
     // Creates a constant color PaintParams with the specific blend mode.
     PaintParams(const SkColor4f& color, SkBlendMode finalBlendMode);
+
+    // Creates a copy of this PaintParams with the specified primitive color and blender.
+    PaintParams makeWithPrimitiveColor(const SkBlender* primitiveBlender,
+                                       const SkColor4f& primitiveColorOverride) const;
 
     const SkColor4f& color() const { return fColor; }
     const SkShader* shader() const { return fShader; }
     const SimpleImage* imageShader() const { return fImageShader; }
     const SkColorFilter* colorFilter() const { return fColorFilter; }
     const SkBlender* primitiveBlender() const { return fPrimitiveBlender; }
+    const std::optional<SkColor4f>& primitiveColorOverride() const {
+        return fPrimitiveColorOverride;
+    }
     bool skipPrimitiveColorXform() const { return fSkipColorXform; }
 
     const SkBlender* finalBlender() const { return fFinalBlend.first; }
@@ -88,6 +100,11 @@ public:
 
     /** Converts an SkColor4f to the destination color space. */
     static SkColor4f Color4fPrepForDst(SkColor4f srgb, const SkColorInfo& dstColorInfo);
+
+#if defined(SK_DEBUG)
+    // Creates a new PaintParams that is opaque and won't depend on the dst
+    static PaintParams MakeOpaque(const PaintParams& paint);
+#endif
 
 private:
     PaintParams(const SkPaint&,
@@ -111,8 +128,13 @@ private:
     // In the case where there is primitive blending, the primitive color is the source color and
     // the dest is the paint's color (or the paint's shader's computed color).
     const SkBlender* fPrimitiveBlender;
-    bool             fSkipColorXform;
-    bool             fDither;
+    // When a fPrimitiveColorOverride is present, it is used instead of any defined primitive colors
+    // in the vertices for primitive color blending. This is done to enable primitive color blending
+    // for render steps which don't emit primitive colors.
+    std::optional<SkColor4f> fPrimitiveColorOverride;
+
+    bool fSkipColorXform;
+    bool fDither;
 };
 
 // ShadingParams wraps a PaintParams with the additional per-pixel state to handle clipping and
@@ -133,25 +155,36 @@ public:
     using Result = std::tuple<UniquePaintParamsID, SkEnumBitMask<DstUsage>>;
     std::optional<Result> toKey(const KeyContext&) const;
 
+    // Quickly produce a new paint ID that is the same paint effects described by `origPaint`
+    // except that it will be combined with a RenderStep that has Coverage::kNone.
+    //
+    // This must *only* be called if the prior call to toKey() returned kDstOnlyUsedByRenderer.
+    // The KeyContext's PaintParamsKeyBuilder must not have been modified after toKey() returned
+    // the key producing `origPaint`.
+    UniquePaintParamsID optimizeForOpacity(const KeyContext&, UniquePaintParamsID origPaint) const;
+
 private:
     bool addPaintColorToKey(const KeyContext&) const;
     bool handlePrimitiveColor(const KeyContext&) const;
     bool handlePaintAlpha(const KeyContext&) const;
     bool handleColorFilter(const KeyContext&) const;
     bool handleDithering(const KeyContext&) const;
-    bool handleDstRead(const KeyContext&) const;
     void handleClipping(const KeyContext&) const;
 
     const PaintParams& fPaint;
     const NonMSAAClip& fNonMSAAClip;
     const SkShader*    fClipShader;
 
-    // Base (incomplete) dst usage that will be augmented by opacity analysis calculated in toKey()
+    // Base (incomplete) dst usage that will be augmented by opacity analysis calculated in toKey().
+    // This is only relevant for kSrcOver, fDstUsage is set assuming the paint is opaque; if it's
+    // not actually opaque it will be adjusted accordingly.
     const SkEnumBitMask<DstUsage> fDstUsage;
 
-    // Used for asserts
-    SkDEBUGCODE(const SkEnumBitMask<DstUsage> fDstUsageNoCoverage;)
-    SkDEBUGCODE(const Coverage fRendererCoverage;)
+#if defined(SK_DEBUG)
+    UniquePaintParamsID validateOpacityOptimization(const KeyContext&) const;
+
+    const Coverage fCoverage;
+#endif
 };
 
 } // namespace skgpu::graphite

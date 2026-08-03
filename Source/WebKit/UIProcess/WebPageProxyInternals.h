@@ -53,7 +53,9 @@
 #include "WindowKind.h"
 #include <WebCore/BackForwardItemIdentifier.h>
 #include <WebCore/CornerRadii.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/FrameLoaderTypes.h>
+#include <WebCore/IntPointHash.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ResourceRequest.h>
@@ -104,7 +106,7 @@
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
-#include "ModelPresentationManagerProxy.h"
+#include "PortalPresentationManagerProxy.h"
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS)
@@ -294,6 +296,11 @@ public:
 
     HashMap<WebCore::BackForwardItemIdentifier, Vector<Ref<WebFrameProxy>>> pendingBackForwardCachedChildren;
 
+    // Each cross-origin remote frame's origin within its immediate parent frame, keyed by frame ID.
+    // Used to compute each frame's cumulative offset in main-frame coordinates (see
+    // WebPageProxy::updateRemoteFrameOffsetInMainFrame).
+    HashMap<WebCore::FrameIdentifier, WebCore::IntPoint> remoteFrameOffsetsInParent;
+
 #if ENABLE(APPLE_PAY)
     RefPtr<WebPaymentCoordinatorProxy> paymentCoordinator;
 #endif
@@ -401,7 +408,7 @@ public:
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
-    RefPtr<ModelPresentationManagerProxy> modelPresentationManagerProxy;
+    RefPtr<PortalPresentationManagerProxy> portalPresentationManagerProxy;
 #endif
 
     bool allowsLayoutViewportHeightExpansion { true };

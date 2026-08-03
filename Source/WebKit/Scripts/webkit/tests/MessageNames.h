@@ -52,25 +52,27 @@ enum class ReceiverName : uint8_t {
     , TestWithImageData = 8
     , TestWithLegacyReceiver = 9
     , TestWithMultiLineExtendedAttributes = 10
-    , TestWithSemaphore = 11
-    , TestWithSpanOfConst = 12
-    , TestWithStream = 13
-    , TestWithStreamBatched = 14
-    , TestWithStreamBuffer = 15
-    , TestWithStreamServerConnectionHandle = 16
-    , TestWithSuperclass = 17
-    , TestWithSuperclassAndWantsAsyncDispatch = 18
-    , TestWithSuperclassAndWantsDispatch = 19
-    , TestWithSwift = 20
-    , TestWithSwiftConditionally = 21
-    , TestWithValidator = 22
-    , TestWithWantsAsyncDispatch = 23
-    , TestWithWantsDispatch = 24
-    , TestWithWantsDispatchNoSyncMessages = 25
-    , TestWithoutAttributes = 26
-    , TestWithoutUsingIPCConnection = 27
-    , IPC = 28
-    , Invalid = 29
+    , TestWithMultipleDispatchedFrom = 11
+    , TestWithSemaphore = 12
+    , TestWithSpanOfConst = 13
+    , TestWithStream = 14
+    , TestWithStreamBatched = 15
+    , TestWithStreamBuffer = 16
+    , TestWithStreamServerConnectionHandle = 17
+    , TestWithStreamSwift = 18
+    , TestWithSuperclass = 19
+    , TestWithSuperclassAndWantsAsyncDispatch = 20
+    , TestWithSuperclassAndWantsDispatch = 21
+    , TestWithSwift = 22
+    , TestWithSwiftConditionally = 23
+    , TestWithValidator = 24
+    , TestWithWantsAsyncDispatch = 25
+    , TestWithWantsDispatch = 26
+    , TestWithWantsDispatchNoSyncMessages = 27
+    , TestWithoutAttributes = 28
+    , TestWithoutUsingIPCConnection = 29
+    , IPC = 30
+    , Invalid = 31
 };
 
 enum class MessageName : uint16_t {
@@ -137,6 +139,7 @@ enum class MessageName : uint16_t {
     TestWithLegacyReceiver_TouchEvent,
 #endif
     TestWithMultiLineExtendedAttributes_AlwaysEnabled,
+    TestWithMultipleDispatchedFrom_AlwaysEnabled,
     TestWithSemaphore_ReceiveSemaphore,
     TestWithSemaphore_ReceiveSemaphoreReply,
     TestWithSemaphore_SendSemaphore,
@@ -145,6 +148,7 @@ enum class MessageName : uint16_t {
     TestWithStreamBatched_SendString,
     TestWithStreamBuffer_SendStreamBuffer,
     TestWithStreamServerConnectionHandle_SendStreamServerConnection,
+    TestWithStreamSwift_SendString,
     TestWithStream_CallWithIdentifier,
     TestWithStream_CallWithIdentifierReply,
 #if PLATFORM(COCOA)
@@ -158,6 +162,8 @@ enum class MessageName : uint16_t {
     TestWithSuperclass_LoadURL,
 #if ENABLE(TEST_FEATURE)
     TestWithSuperclass_TestAsyncMessage,
+    TestWithSuperclass_TestAsyncMessageAnyThread,
+    TestWithSuperclass_TestAsyncMessageAnyThreadReply,
     TestWithSuperclass_TestAsyncMessageReply,
     TestWithSuperclass_TestAsyncMessageWithConnection,
     TestWithSuperclass_TestAsyncMessageWithConnectionReply,
@@ -240,6 +246,7 @@ enum class MessageName : uint16_t {
     LastAsynchronous = FirstSynchronous - 1,
     TestWithLegacyReceiver_GetPluginProcessConnection,
     TestWithLegacyReceiver_TestMultipleAttributes,
+    TestWithStreamSwift_SendStringSync,
 #if PLATFORM(COCOA)
     TestWithStream_ReceiveMachSendRight,
     TestWithStream_SendAndReceiveMachSendRight,
