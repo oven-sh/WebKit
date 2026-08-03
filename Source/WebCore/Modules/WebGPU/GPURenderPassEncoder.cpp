@@ -29,17 +29,30 @@
 #include "ExceptionOr.h"
 #include "GPUBindGroup.h"
 #include "GPUBuffer.h"
+#include "GPUCommandEncoder.h"
+#include "GPUDevice.h"
 #include "GPUQuerySet.h"
 #include "GPURenderBundle.h"
 #include "GPURenderPipeline.h"
-#include "WebGPUDevice.h"
+#include "InspectorInstrumentation.h"
 
 namespace WebCore {
 
-GPURenderPassEncoder::GPURenderPassEncoder(Ref<WebGPU::RenderPassEncoder>&& backing, WebGPU::Device& device)
+GPURenderPassEncoder::GPURenderPassEncoder(Ref<WebGPU::RenderPassEncoder>&& backing, GPUCommandEncoder& commandEncoder)
     : m_backing(WTF::move(backing))
-    , m_device(&device)
+    , m_device(commandEncoder.device())
 {
+}
+
+bool GPURenderPassEncoder::hasActiveInspectorCanvasCallTracer() const
+{
+    RefPtr device = m_device;
+    return device && device->hasActiveInspectorCanvasCallTracer();
+}
+
+GPUDevice* GPURenderPassEncoder::device() const
+{
+    return m_device;
 }
 
 String GPURenderPassEncoder::label() const
@@ -54,6 +67,7 @@ void GPURenderPassEncoder::setLabel(String&& label)
 
 void GPURenderPassEncoder::setPipeline(const GPURenderPipeline& renderPipeline)
 {
+    m_currentPipeline = renderPipeline;
     protect(backing())->setPipeline(renderPipeline.backing());
 }
 
@@ -70,6 +84,8 @@ void GPURenderPassEncoder::setVertexBuffer(GPUIndex32 slot, const GPUBuffer* buf
 void GPURenderPassEncoder::draw(GPUSize32 vertexCount, GPUSize32 instanceCount,
     GPUSize32 firstVertex, GPUSize32 firstInstance)
 {
+    if (RefPtr pipeline = m_currentPipeline; pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
+        return;
     protect(backing())->draw(vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
@@ -78,16 +94,22 @@ void GPURenderPassEncoder::drawIndexed(GPUSize32 indexCount, GPUSize32 instanceC
     GPUSignedOffset32 baseVertex,
     GPUSize32 firstInstance)
 {
+    if (RefPtr pipeline = m_currentPipeline; pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
+        return;
     protect(backing())->drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
 }
 
 void GPURenderPassEncoder::drawIndirect(const GPUBuffer& indirectBuffer, GPUSize64 indirectOffset)
 {
+    if (RefPtr pipeline = m_currentPipeline; pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
+        return;
     protect(backing())->drawIndirect(indirectBuffer.backing(), indirectOffset);
 }
 
 void GPURenderPassEncoder::drawIndexedIndirect(const GPUBuffer& indirectBuffer, GPUSize64 indirectOffset)
 {
+    if (RefPtr pipeline = m_currentPipeline; pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
+        return;
     protect(backing())->drawIndexedIndirect(indirectBuffer.backing(), indirectOffset);
 }
 
@@ -164,14 +186,16 @@ void GPURenderPassEncoder::executeBundles(Vector<Ref<GPURenderBundle>>&& bundles
         return bundle->backing();
     });
     protect(backing())->executeBundles(WTF::move(result));
+    m_currentPipeline = nullptr;
 }
 
 void GPURenderPassEncoder::end()
 {
     protect(backing())->end();
+    m_currentPipeline = nullptr;
     if (RefPtr device = m_device) {
         m_overrideLabel = label();
-        m_backing = device->invalidRenderPassEncoder();
+        m_backing = device->backing().invalidRenderPassEncoder();
     }
 }
 

@@ -389,6 +389,7 @@ struct PendingStreamFields {
     Ref<PendingStreamState> state;
     WeakObjCPtr<NSInputStream> formStream;
     std::optional<bool> isHTTP2OrLater;
+    bool isOpened { false };
 };
 
 static void* pendingStreamCreate(CFReadStreamRef stream, void* context)
@@ -433,32 +434,39 @@ static CFIndex pendingStreamRead(CFReadStreamRef, UInt8* buffer, CFIndex bufferL
         return -1;
     }
 
-    bool pendingAtEOF = false;
-    int pendingError = 0;
     auto output = unsafeMakeSpan(buffer, static_cast<size_t>(bufferLength));
-    size_t bytesCopied = fields->state->read(output, pendingAtEOF, pendingError);
+    auto result = fields->state->readInto(output);
 
-    if (pendingError) {
+    if (!result) {
         error->domain = kCFStreamErrorDomainMacOSStatus;
-        error->error = pendingError;
+        error->error = result.error();
         *atEOF = FALSE;
         return -1;
     }
 
     error->error = 0;
-    *atEOF = pendingAtEOF ? TRUE : FALSE;
-    return static_cast<CFIndex>(bytesCopied);
+    *atEOF = result->second;
+    return static_cast<CFIndex>(result->first);
 }
 
 static Boolean pendingStreamCanRead(CFReadStreamRef, void* context)
 {
     auto* fields = static_cast<PendingStreamFields*>(context);
 
-    if (!fields->isHTTP2OrLater)
-        fields->isHTTP2OrLater = protect(fields->state)->currentHTTPVersion() == PendingStreamState::HTTPVersion::HTTP2OrLater;
+    Ref state = fields->state;
+    if (!fields->isHTTP2OrLater) {
+        fields->isHTTP2OrLater = state->currentHTTPVersion() == PendingStreamState::HTTPVersion::HTTP2OrLater;
+        if (!*fields->isHTTP2OrLater) {
+            // Under HTTP/1 we fail immediately in pendingStreamRead.
+            return true;
+        }
+        state->setDataAvailableHandler([weakStream = fields->formStream] {
+            if (RetainPtr stream = weakStream.get())
+                CFReadStreamSignalEvent(bridge_cast(stream.get()), kCFStreamEventHasBytesAvailable, nullptr);
+        });
+    }
 
-    // Under HTTP/1 we fail immediately in pendingStreamRead.
-    return !*fields->isHTTP2OrLater || protect(fields->state)->hasReadyData();
+    return state->hasReadyData();
 }
 
 static void pendingStreamClose(CFReadStreamRef, void* context)
@@ -473,20 +481,6 @@ static CFTypeRef pendingStreamCopyProperty(CFReadStreamRef, CFStringRef, void*)
     return 0;
 }
 
-static void pendingStreamSchedule(CFReadStreamRef, CFRunLoopRef, CFStringRef, void* context)
-{
-    auto* fields = static_cast<PendingStreamFields*>(context);
-    RetainPtr<CFReadStreamRef> outerStream = fields->cfFormStream();
-    protect(fields->state)->setDataAvailableHandler([outerStream = WTF::move(outerStream)] {
-        if (outerStream)
-            CFReadStreamSignalEvent(outerStream.get(), kCFStreamEventHasBytesAvailable, nullptr);
-    });
-}
-
-static void pendingStreamUnschedule(CFReadStreamRef, CFRunLoopRef, CFStringRef, void*)
-{
-}
-
 RetainPtr<CFReadStreamRef> createHTTPBodyCFReadStream(FormData& formData)
 {
     if (!hasPlatformStrategies() && formData.containsBlobElement())
@@ -499,7 +493,7 @@ RetainPtr<CFReadStreamRef> createHTTPBodyCFReadStream(FormData& formData)
         if (!state)
             return nullptr;
         auto* context = new PendingStreamCreationContext { state.releaseNonNull() };
-        CFReadStreamCallBacksV1 pendingStreamCallBacks = { 1, pendingStreamCreate, pendingStreamFinalize, nullptr, pendingStreamOpen, nullptr, pendingStreamRead, nullptr, pendingStreamCanRead, pendingStreamClose, pendingStreamCopyProperty, nullptr, nullptr, pendingStreamSchedule, pendingStreamUnschedule };
+        CFReadStreamCallBacksV1 pendingStreamCallBacks = { 1, pendingStreamCreate, pendingStreamFinalize, nullptr, pendingStreamOpen, nullptr, pendingStreamRead, nullptr, pendingStreamCanRead, pendingStreamClose, pendingStreamCopyProperty, nullptr, nullptr, nullptr, nullptr };
         return adoptCF(CFReadStreamCreate(nullptr, static_cast<const void*>(&pendingStreamCallBacks), context));
     }
 

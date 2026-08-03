@@ -28,7 +28,6 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
-#if USE(JSVALUE64)
 
 #include "CallFrame.h"
 #include "Error.h"
@@ -544,6 +543,5 @@ JSC_DEFINE_JIT_OPERATION(operationFFIArenaExit, void, (JSGlobalObject* globalObj
 
 } // namespace JSC
 
-#endif // USE(JSVALUE64)
 
 #endif // USE(BUN_JSC_ADDITIONS)

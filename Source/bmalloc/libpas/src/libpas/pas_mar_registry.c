@@ -54,8 +54,6 @@ struct pas_mar_registry* pas_mar_registry_for_crash_reporter_enumeration = NULL;
 
 // Backtrace hashing
 
-#if PAS_CPU(ADDRESS64)
-
 static uint32_t hash_backtrace(unsigned num_stack_frames, void** backtrace)
 {
     // This implements Murmur hash on the low 32b of each backtrace
@@ -102,7 +100,6 @@ unsigned pas_mar_insert_backtrace(pas_mar_registry* registry, unsigned num_stack
     return index;
 }
 
-#endif /* PAS_CPU(ADDRESS64) */
 
 // MAR Registry
 
@@ -126,7 +123,7 @@ void pas_mar_initialize(void)
     }
 }
 
-void* pas_mar_did_allocate(pas_mar_registry* registry, void* address, size_t allocation_size)
+PAS_PRESERVE_MOST void* pas_mar_did_allocate(pas_mar_registry* registry, void* address, size_t allocation_size)
 {
     void* stacktrace[PAS_MAR_BACKTRACE_MAX_SIZE];
     unsigned num_stack_frames = (unsigned) backtrace(stacktrace, PAS_MAR_BACKTRACE_MAX_SIZE);
@@ -134,7 +131,7 @@ void* pas_mar_did_allocate(pas_mar_registry* registry, void* address, size_t all
     return pas_mar_record_allocation(registry, address, allocation_size, num_stack_frames, stacktrace);
 }
 
-void* pas_mar_did_allocate_and_zero(pas_mar_registry* registry, pas_allocation_result result, size_t allocation_size)
+PAS_PRESERVE_MOST void* pas_mar_did_allocate_and_zero(pas_mar_registry* registry, pas_allocation_result result, size_t allocation_size)
 {
     void* stacktrace[PAS_MAR_BACKTRACE_MAX_SIZE];
     unsigned num_stack_frames = (unsigned) backtrace(stacktrace, PAS_MAR_BACKTRACE_MAX_SIZE);

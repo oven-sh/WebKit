@@ -391,7 +391,7 @@ WI.Resource = class Resource extends WI.SourceCode
 
     get displayName()
     {
-        return WI.displayNameForURL(this._url, this.urlComponents);
+        return this.scripts.find((script) => script.customName)?.customName || WI.displayNameForURL(this._url, this.urlComponents);
     }
 
     get displayURL()
@@ -1084,11 +1084,13 @@ WI.Resource = class Resource extends WI.SourceCode
 
         this._scripts.push(script);
 
-        if (this._type === WI.Resource.Type.Other || this._type === WI.Resource.Type.XHR) {
+        if (this._type === WI.Resource.Type.Other || this._type === WI.Resource.Type.XHR || this._type === WI.Resource.Type.Fetch) {
             let oldType = this._type;
             this._type = WI.Resource.Type.Script;
             this.dispatchEventToListeners(WI.Resource.Event.TypeDidChange, {oldType});
         }
+
+        this.dispatchEventToListeners(WI.Resource.Event.ScriptAssociated, {script});
     }
 
     saveIdentityToCookie(cookie)
@@ -1180,7 +1182,12 @@ WI.Resource = class Resource extends WI.SourceCode
         let errorString = WI.UIString("Unable to show certificate for \u201C%s\u201D").format(this.url);
 
         try {
-            let {serializedCertificate} = await this._target.NetworkAgent.getSerializedCertificate(this._requestIdentifier);
+            // The Network domain (ProxyingNetworkAgent) lives on the backend target under Site
+            // Isolation, not the resource's own (page) target; route there like requestContentFromBackend.
+            let webPageTarget = this._target;
+            if (WI.networkManager.networkEnabledOnBackendTarget && WI.backendTarget && WI.backendTarget !== this._target && WI.backendTarget.hasDomain("Network"))
+                webPageTarget = WI.backendTarget;
+            let {serializedCertificate} = await webPageTarget.NetworkAgent.getSerializedCertificate(this._requestIdentifier);
             if (InspectorFrontendHost.showCertificate(serializedCertificate))
                 return;
         } catch (e) {
@@ -1215,6 +1222,7 @@ WI.Resource.Event = {
     URLDidChange: "resource-url-did-change",
     MIMETypeDidChange: "resource-mime-type-did-change",
     TypeDidChange: "resource-type-did-change",
+    ScriptAssociated: "resource-script-associated",
     RequestHeadersDidChange: "resource-request-headers-did-change",
     RequestDataDidChange: "resource-request-data-did-change",
     ResponseReceived: "resource-response-received",

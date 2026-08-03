@@ -387,6 +387,7 @@ pas_local_allocator_result pas_thread_local_cache_get_local_allocator_slow(
     
     pas_thread_local_cache* new_thread_local_cache;
     pas_thread_local_cache_layout_node layout_node;
+    pas_lock* scavenger_lock;
     unsigned old_index_upper_bound;
     unsigned desired_index_upper_bound;
 
@@ -400,8 +401,9 @@ pas_local_allocator_result pas_thread_local_cache_get_local_allocator_slow(
     pas_thread_local_cache_flush_deallocation_log(thread_local_cache, heap_lock_hold_mode);
     
     pas_heap_lock_lock_conditionally(heap_lock_hold_mode);
-    pas_lock_lock(&thread_local_cache->node->scavenger_lock);
-    
+    scavenger_lock = &thread_local_cache->node->scavenger_lock;
+    pas_lock_lock(scavenger_lock);
+
     PAS_ASSERT(desired_allocator_index < pas_thread_local_cache_layout_next_allocator_index);
 
     desired_index_upper_bound = pas_thread_local_cache_layout_next_allocator_index;
@@ -470,7 +472,7 @@ pas_local_allocator_result pas_thread_local_cache_get_local_allocator_slow(
     if (thread_local_cache != new_thread_local_cache)
         deallocate(thread_local_cache);
 
-    pas_lock_unlock(&thread_local_cache->node->scavenger_lock);
+    pas_lock_unlock(scavenger_lock);
     pas_heap_lock_unlock_conditionally(heap_lock_hold_mode);
 
     if (thread_local_cache != new_thread_local_cache)
@@ -1211,7 +1213,7 @@ bool pas_thread_local_cache_for_all(pas_allocator_scavenge_action allocator_acti
         case pas_deallocator_scavenge_flush_log_if_clean_action:
             if (cache->deallocation_log_dirty) {
                 cache->deallocation_log_dirty = false;
-                result = !!cache->deallocation_log_index;
+                result |= !!cache->deallocation_log_index;
             } else
                 flush_deallocation_log_for_scavenger(cache);
             break;
@@ -1331,7 +1333,7 @@ bool pas_thread_local_cache_for_all(pas_allocator_scavenge_action allocator_acti
     return result;
 }
 
-PAS_NEVER_INLINE void pas_thread_local_cache_append_deallocation_slow(
+PAS_NEVER_INLINE PAS_PRESERVE_MOST void pas_thread_local_cache_append_deallocation_slow(
     pas_thread_local_cache* thread_local_cache,
     uintptr_t begin,
     pas_segregated_page_config_kind kind)

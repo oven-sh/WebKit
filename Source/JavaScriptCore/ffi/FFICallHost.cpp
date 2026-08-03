@@ -28,7 +28,6 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
-#if USE(JSVALUE64)
 
 #include "CallFrame.h"
 #include "ExceptionHelpers.h"
@@ -122,6 +121,5 @@ JSC_DEFINE_JIT_OPERATION(operationFFICallSlowPath, EncodedJSValue, (JSGlobalObje
 
 } // namespace JSC
 
-#endif // USE(JSVALUE64)
 
 #endif // USE(BUN_JSC_ADDITIONS)

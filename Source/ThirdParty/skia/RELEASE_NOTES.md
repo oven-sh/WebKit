@@ -2,6 +2,35 @@ Skia Graphics Release Notes
 
 This file includes a list of high level updates for each milestone release.
 
+Milestone 152
+-------------
+  * Add skgpu::graphite::ContextOptions::fAvoidDepth. Enabling this will lead
+    graphite to avoid using the depth/stencil buffer, and fallback to analytic path
+    and turn off depth occlusion culling when necessary.
+  * Add SkRRect::contains(const SkPoint&). This allows point vs RRectF intersection
+    testing. As SkRRect::contains(const SkRectF&), returns true if the point is
+    inside the SkRRect and the SkRRect is not empty.
+  * Since SkPath data is now immutable and we always compute the bounds
+    upfront, SkPath::updateBoundsCache() no longer serves any purpose
+    and has been removed.
+  * Added a new `SkIcoRustDecoder` which decodes ICO and CUR images using Rust-based
+    PNG and BMP decoders for the embedded images. Register `SkIcoRustDecoder::Decoder()`
+    with `SkCodecs::Register` to enable it. This is built when `skia_use_rust_ico_decode`
+    is enabled (defining `SK_CODEC_DECODES_ICO_WITH_RUST`).
+
+* * *
+
+Milestone 151
+-------------
+  * Added a 'containsExternalFormat' method to 'PrecompileContext'. This allows clients to determine if a serialized key contains an external format.
+  * Added 'fGainmap' and 'fGainmapInfo' to 'SkPngRustEncoder::Options', allowing clients to encode HDR gainmaps in PNG images using the Rust PNG encoder.
+  * Add a getWidthsStrided() API to SkStrikeRef which allows scattered memory access
+    into input glyph list and provides scattered writes with a stride length into a
+    client provided output buffer.  Useful for fast access and transfer of advance
+    widths in shaping. Shown to improve Blink performance.
+
+* * *
+
 Milestone 150
 -------------
   * `SkRegion::setRects(const SkIRect[], int)` has been deprecated in favor of `SkRegion::setRects(SkSpan<const SkIRect>)`.

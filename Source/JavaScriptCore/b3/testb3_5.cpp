@@ -49,16 +49,7 @@ void testPatchpointManyWarmAnyImms()
     patchpoint->append(ConstrainedValue(arg5, ValueRep::WarmAny));
     patchpoint->setGenerator(
         [&] (CCallHelpers&, const StackmapGenerationParams& params) {
-            CHECK_EQ(params.size(), (is32Bit() ? 6u : 5u));
-            if constexpr (is32Bit()) {
-                CHECK_EQ(params[0], ValueRep::constant(42));
-                CHECK_EQ(params[1], ValueRep::constant(43));
-                CHECK_EQ(params[2], ValueRep::constant(43000000000000ll >> 32));
-                CHECK_EQ(params[3], ValueRep::constant(43000000000000ll & 0xffffffff));
-                CHECK_EQ(params[4], ValueRep::constantDouble(42.5));
-                CHECK_EQ(params[5], ValueRep::constantFloat(-42.5f));
-                CHECK_EQ(params[5].floatValue(), -42.5f);
-            }
+            CHECK_EQ(params.size(), 5u);
             CHECK_EQ(params[0], ValueRep::constant(42));
             CHECK_EQ(params[1], ValueRep::constant(43));
             CHECK_EQ(params[2], ValueRep::constant(43000000000000ll));
@@ -311,12 +302,10 @@ void testCheckMegaCombo()
     auto arguments = cCallArgumentValues<intptr_t, size_t>(proc, root);
     Value* base = arguments[0];
     Value* index = arguments[1];
-    if (is64Bit()) {
-        index = root->appendNew<Value>(
-            proc, ZExt32, Origin(),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(), index));
-    }
+    index = root->appendNew<Value>(
+        proc, ZExt32, Origin(),
+        root->appendNew<Value>(
+            proc, Trunc, Origin(), index));
 
     Value* ptr = root->appendNew<Value>(
         proc, Add, Origin(), base,
@@ -368,10 +357,8 @@ void testCheckTrickyMegaCombo()
     auto arguments = cCallArgumentValues<intptr_t, size_t>(proc, root);
     Value* base = arguments[0];
     Value* index = arguments[1];
-    if (is64Bit()) {
-        index = root->appendNew<Value>(proc, ZExt32, Origin(),
-            root->appendNew<Value>(proc, Trunc, Origin(), index));
-    }
+    index = root->appendNew<Value>(proc, ZExt32, Origin(),
+        root->appendNew<Value>(proc, Trunc, Origin(), index));
     index = root->appendNew<Value>(proc, Add, Origin(),
         index,
         root->appendNew<ConstPtrValue>(proc, Origin(), 1));
@@ -426,12 +413,10 @@ void testCheckTwoMegaCombos()
     auto arguments = cCallArgumentValues<intptr_t, size_t>(proc, root);
     Value* base = arguments[0];
     Value* index = arguments[1];
-    if (is64Bit()) {
-        index = root->appendNew<Value>(
-            proc, ZExt32, Origin(),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(), index));
-    }
+    index = root->appendNew<Value>(
+        proc, ZExt32, Origin(),
+        root->appendNew<Value>(
+            proc, Trunc, Origin(), index));
 
     Value* ptr = root->appendNew<Value>(
         proc, Add, Origin(), base,
@@ -499,12 +484,10 @@ void testCheckTwoNonRedundantMegaCombos()
 
     Value* base = arguments[0];
     Value* index = arguments[1];
-    if (is64Bit()) {
-        index = root->appendNew<Value>(
-            proc, ZExt32, Origin(),
-            root->appendNew<Value>(
-                proc, Trunc, Origin(), index));
-    }
+    index = root->appendNew<Value>(
+        proc, ZExt32, Origin(),
+        root->appendNew<Value>(
+            proc, Trunc, Origin(), index));
     Value* branchPredicate = root->appendNew<Value>(
         proc, BitAnd, Origin(),
         arguments[2],
@@ -728,9 +711,6 @@ void testCheckAdd()
     CHECK_EQ(invoke<double>(*code, 2147483647, 42), 2147483689.0);
 }
 
-#if CPU(ARM_THUMB2)
-void testCheckAdd64() { } // TODO
-#else
 void testCheckAdd64()
 {
     Procedure proc;
@@ -745,18 +725,6 @@ void testCheckAdd64()
     checkAdd->appendSomeRegister(arg2);
     checkAdd->setGenerator(
         [&] (CCallHelpers& jit, const StackmapGenerationParams& params) {
-#if CPU(ARM_THUMB2)
-                CHECK_EQ(params.size(), 4u);
-                CHECK(params[0].isGPR());
-                CHECK(params[1].isGPR());
-                CHECK(params[2].isGPR());
-                CHECK(params[3].isGPR());
-                jit.convertInt64ToDouble(params[0].gpr(), params[1].gpr(), FPRInfo::fpRegT0);
-                jit.convertInt64ToDouble(params[2].gpr(), params[3].gpr(), FPRInfo::fpRegT0);
-                jit.addDouble(FPRInfo::fpRegT1, FPRInfo::fpRegT0);
-                jit.emitFunctionEpilogue();
-                jit.ret();
-#else
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 CHECK_EQ(params.size(), 2u);
                 CHECK(params[0].isGPR());
@@ -766,7 +734,6 @@ void testCheckAdd64()
                 jit.addDouble(FPRInfo::fpRegT1, FPRInfo::fpRegT0);
                 jit.emitFunctionEpilogue();
                 jit.ret();
-#endif
     });
     root->appendNewControlValue(
         proc, Return, Origin(),
@@ -779,7 +746,6 @@ void testCheckAdd64()
     CHECK_EQ(invoke<double>(*code, 42ll, 42ll), 84.0);
     CHECK_EQ(invoke<double>(*code, 9223372036854775807ll, 42ll), static_cast<double>(9223372036854775807ll) + 42.0);
 }
-#endif
 
 void testCheckAdd64Range()
 {
@@ -939,11 +905,7 @@ void testCheckAddSelfOverflow64()
     checkAdd->setGenerator(
         [&] (CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            if constexpr (is32Bit()) {
-                jit.move(params[1].gpr(), GPRInfo::returnValueGPR);
-                jit.move(params[0].gpr(), GPRInfo::returnValueGPR2);
-            } else
-                jit.move(params[0].gpr(), GPRInfo::returnValueGPR);
+            jit.move(params[0].gpr(), GPRInfo::returnValueGPR);
             jit.emitFunctionEpilogue();
             jit.ret();
         });
@@ -1223,9 +1185,6 @@ NEVER_INLINE double doubleSub(double a, double b)
     return a - b;
 }
 
-#if CPU(ARM_THUMB2)
-void testCheckSub64() { } // TODO
-#else
 void testCheckSub64()
 {
     Procedure proc;
@@ -1260,7 +1219,6 @@ void testCheckSub64()
     CHECK_EQ(invoke<double>(*code, 42ll, 42ll), 0.0);
     CHECK_EQ(invoke<double>(*code, -9223372036854775807ll, 42ll), doubleSub(static_cast<double>(-9223372036854775807ll), 42.0));
 }
-#endif
 
 void testCheckSubFold(int a, int b)
 {
@@ -1338,9 +1296,6 @@ void testCheckNeg()
     CHECK_EQ(invoke<double>(*code, -2147483647 - 1), 2147483648.0);
 }
 
-#if CPU(ARM_THUMB2)
-void testCheckNeg64() { } // TODO
-#else
 void testCheckNeg64()
 {
     Procedure proc;
@@ -1372,7 +1327,6 @@ void testCheckNeg64()
     CHECK_EQ(invoke<double>(*code, 42ll), -42.0);
     CHECK_EQ(invoke<double>(*code, -9223372036854775807ll - 1), 9223372036854775808.0);
 }
-#endif
 
 void testCheckMul()
 {
@@ -1501,9 +1455,6 @@ void testCheckMul2()
     CHECK_EQ(invoke<double>(*code, 2147483647), 2147483647.0 * 2.0);
 }
 
-#if CPU(ARM_THUMB2)
-void testCheckMul64() { } // TODO
-#else
 void testCheckMul64()
 {
     Procedure proc;
@@ -1538,7 +1489,6 @@ void testCheckMul64()
     CHECK_EQ(invoke<double>(*code, 42, 42), 42.0 * 42.0);
     CHECK_EQ(invoke<double>(*code, 9223372036854775807ll, 42), static_cast<double>(9223372036854775807ll) * 42.0);
 }
-#endif
 
 void testCheckMulFold(int a, int b)
 {
@@ -1661,9 +1611,6 @@ void testCheckMulArgumentAliasing32()
     CHECK_EQ(compileAndRun<int32_t>(proc, 2, 3, 4), 72);
 }
 
-#if CPU(ARM_THUMB2)
-void testCheckMul64SShr() { } // TODO
-#else
 void testCheckMul64SShr()
 {
     Procedure proc;
@@ -1704,7 +1651,6 @@ void testCheckMul64SShr()
     CHECK_EQ(invoke<double>(*code, 42ll, 42ll), (42.0 / 2.0) * (42.0 / 2.0));
     CHECK_EQ(invoke<double>(*code, 10000000000ll, 10000000000ll), 25000000000000000000.0);
 }
-#endif
 
 template<typename LeftFunctor, typename RightFunctor, typename InputType>
 void genericTestCompare(
@@ -2518,8 +2464,6 @@ void testChillDivTwice(int num1, int den1, int num2, int den2, int res)
 
 void testChillDiv64(int64_t num, int64_t den, int64_t res)
 {
-    if (!is64Bit())
-        return;
 
     // Test non-constant.
     {
@@ -2759,8 +2703,7 @@ void testLoopWithMultipleHeaderEdges()
         ne42,
         FrequentedBlock(innerHeader), FrequentedBlock(outerEnd));
     auto* arg32 = arg0;
-    if constexpr (!is32Bit())
-        arg32 = root->appendNew<Value>(proc, Trunc, Origin(), arg0);
+    arg32 = root->appendNew<Value>(proc, Trunc, Origin(), arg0);
     outerEnd->appendNewControlValue(
         proc, Branch, Origin(),
         arg32,
@@ -2965,6 +2908,51 @@ void testSwitchTargettingSameBlockFoldPathConstant()
         int32_t expected = (i == 3 || i == 13) ? i : 42;
         CHECK_EQ(invoke<int32_t>(*code, i), expected);
     }
+}
+
+void testSwitchSparseI64RangeOverflow()
+{
+    static constexpr auto caseValues = WTF::toArray<int64_t>({
+        -7554636318383037360LL, -7454801818899625434LL, -7429423314461979223LL,
+        -7207276661950557992LL, -7131803591814180821LL, -6019758777144226059LL,
+        -5780275611666609265LL, -4358396017616483017LL, -4143042619558893734LL,
+        -2917486167113271335LL, -2784610183734848337LL, -2624729345222129160LL,
+        -2622802681898502475LL, -2183502553742430119LL, -425081688584147149LL,
+        457380681191578133LL, 898638452777906692LL, 950521141494289804LL,
+        1228320887535867596LL, 1732804360746816840LL, 2039119943687723725LL,
+        3865875329656804759LL, 4986947095633979045LL, 5134327459162675121LL,
+        5167461299025127993LL, 5265749391392088513LL, 5268430586848198546LL,
+        5400666402170143952LL, 6290364617955584048LL, 6568062526259002154LL,
+    });
+    static constexpr unsigned numCases = caseValues.size();
+
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t>(proc, root);
+
+    BasicBlock* fallThrough = proc.addBlock();
+    fallThrough->appendNewControlValue(
+        proc, Return, Origin(),
+        fallThrough->appendNew<Const64Value>(proc, Origin(), -1));
+
+    SwitchValue* switchValue = root->appendNew<SwitchValue>(proc, Origin(), arguments[0]);
+    switchValue->setFallThrough(FrequentedBlock(fallThrough));
+
+    for (unsigned i = 0; i < numCases; ++i) {
+        BasicBlock* target = proc.addBlock();
+        target->appendNewControlValue(
+            proc, Return, Origin(),
+            target->appendNew<Const64Value>(proc, Origin(), static_cast<int64_t>(i)));
+        switchValue->appendCase(SwitchCase(caseValues[i], FrequentedBlock(target)));
+    }
+
+    auto code = compileProc(proc);
+
+    for (unsigned i = 0; i < numCases; ++i)
+        CHECK_EQ(invoke<int64_t>(*code, caseValues[i]), static_cast<int64_t>(i));
+    CHECK_EQ(invoke<int64_t>(*code, 0), static_cast<int64_t>(-1));
+    CHECK_EQ(invoke<int64_t>(*code, std::numeric_limits<int64_t>::min()), static_cast<int64_t>(-1));
+    CHECK_EQ(invoke<int64_t>(*code, std::numeric_limits<int64_t>::max()), static_cast<int64_t>(-1));
 }
 
 void testTruncFold(int64_t value)

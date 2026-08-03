@@ -32,6 +32,7 @@ import time
 from unittest import skip as skipTest
 from unittest.mock import call, create_autospec, patch
 
+from buildbot.process import properties
 from buildbot.process import remotetransfer
 from buildbot.process.results import SUCCESS, FAILURE, WARNINGS, SKIPPED, RETRY
 from buildbot.test.fake.fakebuild import FakeBuild
@@ -2995,6 +2996,23 @@ class TestAnalyzeLayoutTestsResults(BuildStepMixinAdditions, unittest.TestCase):
         self.expect_property('build_summary', message)
         return rc
 
+    def test_retry_build_triggers_only_current_queue(self):
+        self.configureStep()
+        self.setProperty('buildername', 'iOS-13-Simulator-WK2-Tests-EWS')
+        self.setProperty('triggered_by', 'ios-13-sim-build-ews')
+        self.setProperty('scheduler', 'ios-13-sim-wk2-tests-ews')
+        self.setProperty('first_run_failures', ['test1'])
+        self.setProperty('second_run_failures', ['test1'])
+        self.setProperty('clean_tree_results_exceed_failure_limit', True)
+        self.setProperty('clean_tree_run_failures', [f'test{i}' for i in range(0, 30)])
+        next_steps = []
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: next_steps.extend(s))
+        self.expect_outcome(result=SUCCESS, state_string='Unable to confirm if test failures are introduced by change, retrying build')
+        rc = self.run_step()
+        self.assertEqual(len(next_steps), 1)
+        self.assertEqual(next_steps[0].set_properties['triggers'], ['ios-13-sim-wk2-tests-ews'])
+        return rc
+
     def test_clean_tree_has_lot_of_failures(self):
         self.configureStep()
         self.setProperty('first_results_exceed_failure_limit', True)
@@ -3167,6 +3185,27 @@ class TestFilterLayoutTestFailuresUsingResultsDB(BuildStepMixinAdditions, unitte
             ['flaky1.html', 'real.html', 'flaky2.html'],
             {'flaky1.html', 'flaky2.html'},
         )
+
+    @defer.inlineCallbacks
+    def test_wpe_platform_is_translated_to_uppercase_for_results_db(self):
+        configurations = []
+
+        def fake_is_pre_existing(cls, test, configuration=None, **kwargs):
+            configurations.append(configuration)
+            return defer.succeed({
+                'is_existing_failure': False, 'pass_rate': 100, 'raw_data': {}, 'logs': '', 'request_failed': False,
+            })
+
+        self.setup_step(RunWebKitTests())
+        step = self.get_nth_step(0)
+        step._addToLog = lambda logName, message: defer.succeed(None)
+        self.setProperty('platform', 'wpe')
+        self.setProperty('configuration', 'release')
+        self.patch(ResultsDatabase, 'is_test_pre_existing_failure', classmethod(fake_is_pre_existing))
+        self.patch(ResultsDatabase, 'has_commit', classmethod(lambda cls, commit=None: defer.succeed(False)))
+
+        yield step.filter_failures_using_results_db(['real.html'])
+        self.assertEqual(configurations, [dict(platform='WPE', style='release')])
 
     @defer.inlineCallbacks
     def test_caps_number_of_results_db_queries(self):
@@ -6322,6 +6361,27 @@ class TestFilterAPITestFailuresUsingResultsDB(BuildStepMixinAdditions, unittest.
             ['suite.AlsoFlaky', 'suite.MultipleAccounts', 'suite.real_failure'],
             {'suite.MultipleAccounts', 'suite.AlsoFlaky'},
         )
+
+    @defer.inlineCallbacks
+    def test_gtk_platform_is_translated_to_uppercase_for_results_db(self):
+        configurations = []
+
+        def fake_is_pre_existing(cls, test, configuration=None, **kwargs):
+            configurations.append(configuration)
+            return defer.succeed({
+                'is_existing_failure': False, 'pass_rate': 100, 'raw_data': {}, 'logs': '', 'request_failed': False,
+            })
+
+        self.setup_step(RunAPITests())
+        step = self.get_nth_step(0)
+        step._addToLog = lambda logName, message: defer.succeed(None)
+        self.setProperty('platform', 'gtk')
+        self.setProperty('configuration', 'release')
+        self.patch(ResultsDatabase, 'is_test_pre_existing_failure', classmethod(fake_is_pre_existing))
+        self.patch(ResultsDatabase, 'has_commit', classmethod(lambda cls, commit=None: defer.succeed(False)))
+
+        yield step.filter_api_test_failures_using_results_db(['suite.real_failure'])
+        self.assertEqual(configurations, [dict(platform='GTK', style='release')])
 
     @defer.inlineCallbacks
     def test_caps_number_of_results_db_queries(self):
@@ -9564,13 +9624,13 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
                         log_environ=False,
                         timeout=60,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c',
-                                 "git log eng/pull-request-branch ^main > commit_msg.txt; grep -q '\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\|Unreviewed\\|Versioning.\\)' commit_msg.txt || echo 'No reviewer information in commit message';"])
+                                 "git log --format=%B eng/pull-request-branch ^main > commit_msg.txt; grep -q '^\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\|Unreviewed\\|Versioning.\\)' commit_msg.txt || echo 'No reviewer information in commit message';"])
             .exit(0),
             ExpectShell(workdir='wkdir',
                         log_environ=False,
                         timeout=60,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c',
-                                 "git log eng/pull-request-branch ^main | grep '\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\)' || true"])
+                                 "git log --format=%B eng/pull-request-branch ^main | grep '^\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\)' || true"])
             .exit(0)
             .log('stdio', stdout=expected_remote_command_output),
         )
@@ -9606,14 +9666,14 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir='wkdir',
                         log_environ=False,
                         timeout=60,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git log HEAD ^origin/main > commit_msg.txt; grep -q '\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\|Unreviewed\\|Versioning.\\)' commit_msg.txt || echo 'No reviewer information in commit message';"])
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git log --format=%B HEAD ^origin/main > commit_msg.txt; grep -q '^\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\|Unreviewed\\|Versioning.\\)' commit_msg.txt || echo 'No reviewer information in commit message';"])
             .exit(0),
             ExpectShell(workdir='wkdir',
                         log_environ=False,
                         timeout=60,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git log HEAD ^origin/main | grep '\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\)' || true"])
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git log --format=%B HEAD ^origin/main | grep '^\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\)' || true"])
             .exit(0)
-            .log('stdio', stdout='    Reviewed by WebKit Reviewer.\n'),
+            .log('stdio', stdout='Reviewed by WebKit Reviewer.\n'),
         )
         self.expect_outcome(result=SUCCESS, state_string='Validated commit message')
         return self.run_step()
@@ -9622,7 +9682,7 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
         self.setup_step(ValidateCommitMessage())
         ValidateCommitMessage._files = lambda x: ['+++ Tools/CISupport/ews-build/steps.py']
         self.setUpCommonProperties()
-        expected_remote_command_output = '    Reviewed by WebKit Reviewer.\n'
+        expected_remote_command_output = 'Reviewed by WebKit Reviewer.\n'
         self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
         self.expect_outcome(result=SUCCESS, state_string='Validated commit message')
         return self.run_step()
@@ -9631,7 +9691,7 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
         self.setup_step(ValidateCommitMessage())
         ValidateCommitMessage._files = lambda x: ['+++ Tools/CISupport/ews-build/steps.py']
         self.setUpCommonProperties()
-        expected_remote_command_output = '    Reviewed by Myles C. Maxfield.\n'
+        expected_remote_command_output = 'Reviewed by Myles C. Maxfield.\n'
         self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
         self.expect_outcome(result=SUCCESS, state_string='Validated commit message')
         return self.run_step()
@@ -9640,7 +9700,7 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
         self.setup_step(ValidateCommitMessage())
         ValidateCommitMessage._files = lambda x: ['+++ Tools/CISupport/ews-build/steps.py']
         self.setUpCommonProperties()
-        expected_remote_command_output = '    Reviewed by WebKit Reviewer and Abrar Protyasha.\n'
+        expected_remote_command_output = 'Reviewed by WebKit Reviewer and Abrar Protyasha.\n'
         self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
         self.expect_outcome(result=SUCCESS, state_string='Validated commit message')
         return self.run_step()
@@ -9649,7 +9709,7 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
         self.setup_step(ValidateCommitMessage())
         ValidateCommitMessage._files = lambda x: ['+++ Tools/CISupport/ews-build/steps.py']
         self.setUpCommonProperties()
-        expected_remote_command_output = '    Reviewed by WebKit Reviewer, Abrar Protyasha, and Myles C. Maxfield.\n'
+        expected_remote_command_output = 'Reviewed by WebKit Reviewer, Abrar Protyasha, and Myles C. Maxfield.\n'
         self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
         self.expect_outcome(result=SUCCESS, state_string='Validated commit message')
         return self.run_step()
@@ -9673,14 +9733,14 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir='wkdir',
                         log_environ=False,
                         timeout=60,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git log eng/pull-request-branch ^main > commit_msg.txt; grep -q '\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\|Unreviewed\\|Versioning.\\)' commit_msg.txt || echo 'No reviewer information in commit message';"])
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git log --format=%B eng/pull-request-branch ^main > commit_msg.txt; grep -q '^\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\|Unreviewed\\|Versioning.\\)' commit_msg.txt || echo 'No reviewer information in commit message';"])
             .exit(0),
             ExpectShell(workdir='wkdir',
                         log_environ=False,
                         timeout=60,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git log eng/pull-request-branch ^main | grep '\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\)' || true"])
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', "git log --format=%B eng/pull-request-branch ^main | grep '^\\(Reviewed by\\|Rubber-stamped by\\|Rubber stamped by\\)' || true"])
             .exit(0)
-            .log('stdio', stdout='    Reviewed by Myles C. Maxfield.\n'),
+            .log('stdio', stdout='Reviewed by Myles C. Maxfield.\n'),
         )
         self.expect_outcome(result=SUCCESS, state_string='Validated commit message')
         return self.run_step()
@@ -9745,7 +9805,7 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
         self.setup_step(ValidateCommitMessage())
         ValidateCommitMessage._files = lambda x: ['+++ Tools/ChangeLog', '+++ Tools/CISupport/ews-build/steps.py']
         self.setUpCommonProperties()
-        expected_remote_command_output = '    Reviewed by WebKit Reviewer.\n'
+        expected_remote_command_output = 'Reviewed by WebKit Reviewer.\n'
         self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
         self.expect_outcome(result=FAILURE, state_string='ChangeLog modified, WebKit only allows commit messages')
         return self.run_step()
@@ -9757,7 +9817,7 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
             '+++ Tools/Scripts/webkitperl/prepare-ChangeLog_unittest/resources/swift_unittests-expected.txt',
             '+++ Tools/Scripts/webkitperl/prepare-ChangeLog_unittest/resources/swift_unittests.swift']
         self.setUpCommonProperties()
-        expected_remote_command_output = '    Reviewed by WebKit Reviewer.\n'
+        expected_remote_command_output = 'Reviewed by WebKit Reviewer.\n'
         self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
         self.expect_outcome(result=SUCCESS, state_string='Validated commit message')
         return self.run_step()
@@ -9766,7 +9826,7 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
         self.setup_step(ValidateCommitMessage())
         ValidateCommitMessage._files = lambda x: ['+++ Tools/CISupport/ews-build/steps.py']
         self.setUpCommonProperties()
-        expected_remote_command_output = '    Reviewed by WebKit Contributor.\n'
+        expected_remote_command_output = 'Reviewed by WebKit Contributor.\n'
         self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
         self.expect_outcome(result=SUCCESS, state_string="'WebKit Contributor' is not a reviewer, still continuing")
         return self.run_step()
@@ -9776,7 +9836,7 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
         ValidateCommitMessage._files = lambda x: ['+++ Tools/CISupport/ews-build/steps.py']
         self.setUpCommonProperties()
         self.setProperty('author', 'WebKit Reviewer <reviewer@apple.com>')
-        expected_remote_command_output = '    Reviewed by WebKit Reviewer.\n'
+        expected_remote_command_output = 'Reviewed by WebKit Reviewer.\n'
         self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
         self.expect_outcome(result=FAILURE, state_string="'WebKit Reviewer <reviewer@apple.com>' cannot review their own change")
         return self.run_step()
@@ -11784,6 +11844,18 @@ class TestTrigger(BuildStepMixinAdditions, unittest.TestCase):
         props = step.propertiesToPassToTriggers()
         self.assertIn('triggers', props)
 
+    def test_triggers_property_passes_explicit_list(self):
+        step = Trigger(schedulerNames=['test-scheduler'], triggers=['tester-a'])
+        props = step.propertiesToPassToTriggers()
+        # Property overloads __eq__ to return a renderable, so assert the type before the value.
+        self.assertIsInstance(props['triggers'], list)
+        self.assertEqual(props['triggers'], ['tester-a'])
+
+    def test_triggers_property_is_not_a_renderable(self):
+        step = Trigger(schedulerNames=['test-scheduler'], triggers=['tester-a'])
+        props = step.propertiesToPassToTriggers()
+        self.assertNotIsInstance(props['triggers'], properties.Property)
+
     def test_ews_revision_excluded_when_include_revision_false(self):
         step = Trigger(schedulerNames=['test-scheduler'], include_revision=False)
         props = step.propertiesToPassToTriggers()
@@ -11800,6 +11872,13 @@ class TestResultsDatabaseFailureHandling(unittest.TestCase):
 
     def _ok_response(self, payload):
         return TwistedAdditions.Response(status_code=200, content=json.dumps(payload).encode('utf-8'))
+
+    def test_platform_for_query(self):
+        for platform in ('mac', 'ios', 'win', 'playstation', 'watchos', 'tvos', 'visionos'):
+            self.assertEqual(ResultsDatabase.platform_for_query(platform), platform)
+        for platform in ('gtk', 'wpe'):
+            self.assertEqual(ResultsDatabase.platform_for_query(platform), platform.upper())
+            self.assertEqual(ResultsDatabase.platform_for_query(platform), platform.upper())
 
     @defer.inlineCallbacks
     def test_make_request_returns_none_on_no_response(self):

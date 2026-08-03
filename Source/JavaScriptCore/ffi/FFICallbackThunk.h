@@ -33,7 +33,7 @@
 #include "MacroAssemblerCodeRef.h"
 #include "OperationResult.h"
 
-#if ENABLE(JIT) && USE(JSVALUE64) && !ENABLE(JIT_CAGE) && (CPU(X86_64) || CPU(ARM64))
+#if ENABLE(JIT) && !ENABLE(JIT_CAGE) && (CPU(X86_64) || CPU(ARM64))
 #define FFI_CALLBACK_THUNK_SUPPORTED 1
 #else
 #define FFI_CALLBACK_THUNK_SUPPORTED 0

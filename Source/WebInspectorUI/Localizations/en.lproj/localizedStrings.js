@@ -784,6 +784,7 @@ localizedStrings["Failed to upgrade"] = "Failed to upgrade";
 localizedStrings["Failure status code"] = "Failure status code";
 /* Section title for font feature properties. */
 localizedStrings["Feature Properties @ Font Details Sidebar Section"] = "Feature Properties";
+localizedStrings["Features"] = "Features";
 /* Resource loaded via 'fetch' method */
 localizedStrings["Fetch"] = "Fetch";
 /* Resources loaded via 'fetch' method */
@@ -1388,6 +1389,8 @@ localizedStrings["Recording Type Canvas Bitmap Renderer"] = "Bitmap Renderer";
 localizedStrings["Recording Type Canvas WebGL"] = "WebGL";
 /* A type of canvas recording in the Graphics Tab. */
 localizedStrings["Recording Type Canvas WebGL2"] = "WebGL2";
+/* A type of canvas recording in the Graphics Tab. */
+localizedStrings["Recording Type Canvas WebGPU"] = "WebGPU";
 /* A type of canvas recording in the Graphics Tab. */
 localizedStrings["Recording Type Offscreen Canvas 2D"] = "Offscreen2D";
 /* A type of canvas recording in the Graphics Tab. */
@@ -2038,8 +2041,6 @@ localizedStrings["WebGL2 @ Offscreen Canvas Context Type"] = "WebGL2 (Offscreen)
 /* WebGPU is a type of rendering context associated with a <canvas> element. */
 localizedStrings["WebGPU @ Canvas Context Type"] = "WebGPU";
 localizedStrings["WebKit Threads"] = "WebKit Threads";
-/* WebMetal is a type of rendering context associated with a <canvas> element. */
-localizedStrings["WebMetal @ Canvas Context Type"] = "WebMetal";
 localizedStrings["WebP"] = "WebP";
 localizedStrings["WebRTC"] = "WebRTC";
 localizedStrings["WebRTC Logging:"] = "WebRTC Logging:";

@@ -172,11 +172,11 @@
 static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 {
     auto rectToString = [] (auto rect) {
-        return makeString("[x: "_s, rect.origin.x, " y: "_s, rect.origin.x, " width: "_s, rect.size.width, " height: "_s, rect.size.height, ']');
+        return makeString("[x: "_s, rect.origin.x, " y: "_s, rect.origin.y, " width: "_s, rect.size.width, " height: "_s, rect.size.height, ']');
     };
 
     auto pointToString = [] (auto point) {
-        return makeString("[x: "_s, point.x, " y: "_s, point.x, ']');
+        return makeString("[x: "_s, point.x, " y: "_s, point.y, ']');
     };
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
@@ -1060,7 +1060,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     return @{
         @"bounds" : @{
             @"x" : @(layer.get().bounds.origin.x),
-            @"y" : @(layer.get().bounds.origin.x),
+            @"y" : @(layer.get().bounds.origin.y),
             @"width" : @(layer.get().bounds.size.width),
             @"height" : @(layer.get().bounds.size.height),
 
@@ -1167,6 +1167,9 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
     [_systemBackgroundColorExtensionViews.left() cancelFadeAnimation];
     [_systemBackgroundColorExtensionViews.right() cancelFadeAnimation];
+#if PLATFORM(IOS_FAMILY)
+    [_systemBackgroundColorExtensionViews.top() cancelFadeAnimation];
+#endif
 #endif
 }
 

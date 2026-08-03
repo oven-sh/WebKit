@@ -172,7 +172,7 @@ end
 #     end
 # }
 #
-# See arm.rb for a different example, in which we lower all BaseIndex addresses
+# See arm64.rb for a different example, in which we lower all BaseIndex addresses
 # that have non-zero offset, all Address addresses that have large offsets, and
 # all other addresses (like AbsoluteAddress).
 #
@@ -377,7 +377,7 @@ def riscLowerMalformedImmediates(list, validImmediates, validLogicalImmediates)
         if node.is_a? Instruction
             annotation = node.annotation
             case node.opcode
-            when "move", "moveii"
+            when "move"
                 newList << node
             when "addi", "addp", "addq", "addis", "subi", "subp", "subq", "subis"
                 if node.operands[0].is_a? Immediate and

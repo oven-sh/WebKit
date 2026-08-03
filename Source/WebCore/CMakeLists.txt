@@ -456,6 +456,9 @@ set(WebCore_NON_SVG_IDL_FILES
 
     Modules/identity/protocols/ISO18013/MobileDocumentRequest.idl
 
+    Modules/identity/protocols/openid/OpenID4VPMultisignedRequest.idl
+    Modules/identity/protocols/openid/OpenID4VPSignature.idl
+    Modules/identity/protocols/openid/OpenID4VPSignedRequest.idl
 
     Modules/indexeddb/IDBCursor.idl
     Modules/indexeddb/IDBCursorDirection.idl
@@ -2839,6 +2842,7 @@ if (ENABLE_WEBCORE_TEST_SUPPORT)
     WEBKIT_LIBRARY_DECLARE(WebCoreTestSupport)
 endif ()
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
+WEBKIT_ADD_TARGET_THREAD_SAFETY_WARNINGS(WebCore)
 WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WebCore)
 
 if (ENABLE_MALLOC_HEAP_BREAKDOWN)
@@ -2911,10 +2915,10 @@ add_custom_command(
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/WebCoreLogDefinitions.h)
 
 # The generators never include Platform.h, so pass its feature defines through
-# --defines-file. Mac-only. Tools' bindings have no [Conditional] IDL to gate.
+# --defines-file.
 set(_platform_defines_file_arg)
 set(_platform_defines_file_dep)
-if (PORT STREQUAL "Mac")
+if (APPLE)
     webkit_generate_platform_feature_defines_file(WEBKIT_PLATFORM_FEATURE_DEFINES_FILE)
     set(_platform_defines_file_arg --defines-file "${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}")
     set(_platform_defines_file_dep "${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}")
@@ -3224,6 +3228,7 @@ WEBKIT_ADD_PREFIX_HEADER(WebCore WebCorePrefix.h PREFIX_LANGUAGES CXX OBJCXX)
 list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/DocumentSyncData.serialization.in
     ${WebCore_DERIVED_SOURCES_DIR}/FrameTreeSyncData.serialization.in
+    ${WebCore_DERIVED_SOURCES_DIR}/InspectorNativeFunctionParameters.json
 
     Modules/WebGPU/InternalAPI/WebGPU.serialization.in
     Modules/indexeddb/IndexedDB.serialization.in
@@ -3249,7 +3254,6 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 )
 
 WEBKIT_SYMLINK_FILES(WebCore_CopyPrivateHeaders
-    PRUNE_STALE
     DESTINATION ${WebCore_PRIVATE_HEADERS_DIR}
     FILES ${WebCore_PRIVATE_FRAMEWORK_HEADERS}
     FLATTENED
@@ -3331,7 +3335,6 @@ if (ENABLE_WEBCORE_TEST_SUPPORT)
     WEBKIT_ADD_PREFIX_HEADER(WebCoreTestSupport WebCorePrefix.h PREFIX_NO_CODEGEN PREFIX_LANGUAGES CXX OBJCXX)
 
     WEBKIT_COPY_FILES(Copy_WebCoreTestSupportPrivateHeaders
-        PRUNE_STALE
         DESTINATION ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCoreTestSupport
         FILES ${WebCoreTestSupport_PRIVATE_HEADERS}
         FLATTENED

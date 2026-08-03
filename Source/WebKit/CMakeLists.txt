@@ -143,7 +143,6 @@ list(APPEND WebKit_UNIFIED_SOURCE_LIST_FILES
 
 set(WebKit_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIAction
-    WebProcess/Extensions/Interfaces/WebExtensionAPIAlarms
     WebProcess/Extensions/Interfaces/WebExtensionAPIBookmarks
     WebProcess/Extensions/Interfaces/WebExtensionAPICommands
     WebProcess/Extensions/Interfaces/WebExtensionAPICookies
@@ -180,6 +179,7 @@ set(WebKit_BINDINGS_IN_FILES
 )
 
 set(WebKit_CPP_BINDINGS_IN_FILES
+    WebProcess/Extensions/Interfaces/WebExtensionAPIAlarms
     WebProcess/Extensions/Interfaces/WebExtensionAPITest
 )
 
@@ -873,6 +873,7 @@ endif ()
 
 WEBKIT_FRAMEWORK_DECLARE(WebKit)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
+WEBKIT_ADD_TARGET_THREAD_SAFETY_WARNINGS(WebKit)
 WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WebKit)
 
 # The full WebKit_Internal C++ module pulls in WebPageProxy.h and friends, which
@@ -993,7 +994,6 @@ WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(WebKit WebKit
 
 if (WebKit_PUBLIC_FRAMEWORK_HEADERS)
     WEBKIT_COPY_FILES(WebKit_CopyHeaders
-        PRUNE_STALE
         DESTINATION ${WebKit_HEADERS_DIR}
         FILES ${WebKit_PUBLIC_FRAMEWORK_HEADERS}
         FLATTENED
@@ -1003,7 +1003,6 @@ endif ()
 
 if (WebKit_PRIVATE_FRAMEWORK_HEADERS)
     WEBKIT_COPY_FILES(WebKit_CopyPrivateHeaders
-        PRUNE_STALE
         DESTINATION ${WebKit_PRIVATE_HEADERS_DIR}
         FILES ${WebKit_PRIVATE_FRAMEWORK_HEADERS}
         FLATTENED
@@ -1103,6 +1102,7 @@ list(APPEND WebKit_UNIFIED_SOURCE_EXCLUDES "^[A-Za-z0-9_]+MessageReceiver\\.cpp"
 #   _cpp_inputs are .idl files to generate (CPP sources only).
 macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
     unset(_input_files)
+    unset(_cpp_input_files)
     unset(_outputs)
     unset(_import_names)
     foreach (_file IN ITEMS ${_inputs})
@@ -1125,7 +1125,7 @@ macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
 
             ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h
         )
-        list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.cpp)
+        list(APPEND _cpp_import_names JS${_name}.cpp)
         list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/JS${_name}.h)
     endforeach ()
 
@@ -1133,6 +1133,7 @@ macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
         OUTPUT
             ${_outputs}
             ${WebKit_DERIVED_SOURCES_DIR}/JSWebExtensionAPIUnified.mm
+            ${WebKit_DERIVED_SOURCES_DIR}/JSWebExtensionAPIUnified.cpp
         MAIN_DEPENDENCY ${WEBCORE_DIR}/bindings/scripts/generate-bindings-all.pl
         DEPENDS
             ${_input_files}
@@ -1143,7 +1144,8 @@ macro(GENERATE_IDL_BINDINGS _output_source _inputs _cpp_inputs)
            "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl"
            "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/IDLAttributes.json"
         COMMAND ${PERL_EXECUTABLE} -I "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts" ${WEBCORE_DIR}/bindings/scripts/generate-bindings.pl --outputDir . --generator Extensions --idlAttributesFile "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/IDLAttributes.json" --idlFileNamesList WebExtensionIDLFileNamesList.txt ${_input_files}
-        COMMAND ${PERL_EXECUTABLE} "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl" JSWebExtensionAPIUnified.mm ${_import_names}
+        COMMAND ${PERL_EXECUTABLE} "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl" --output=JSWebExtensionAPIUnified.mm -- ${_import_names}
+        COMMAND ${PERL_EXECUTABLE} "${WEBKIT_DIR}/WebProcess/Extensions/Bindings/Scripts/GenerateImports.pl" --cpp --output=JSWebExtensionAPIUnified.cpp -- ${_cpp_import_names}
         WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
         VERBATIM
     )
@@ -1180,6 +1182,7 @@ list(APPEND WebKit_DERIVED_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersCommon.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/SerializedTypeInfo.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
     ${WebKit_DERIVED_SOURCES_DIR}/WebKitPlatformGeneratedSerializers.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
+    ${WebKit_DERIVED_SOURCES_DIR}/JSWebExtensionAPIUnified.cpp
 )
 
 set(_serializers_stage_dir ${WebKit_DERIVED_SOURCES_DIR}/.serializers-stage)
@@ -1458,7 +1461,7 @@ if (USE_APPLE_INTERNAL_SDK)
 endif ()
 WEBKIT_ADD_PREFIX_HEADER(WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
 
-if (SWIFT_REQUIRED AND "${PORT}" STREQUAL "Mac")
+if (SWIFT_REQUIRED AND WEBKIT_SDK_IS_MACOS)
     WEBKIT_ADD_SWIFT_PREWARM(WebKit SwiftPrewarmMac.swift)
 endif ()
 
@@ -1512,13 +1515,13 @@ if (APPLE)
         PROPERTY LINK_LIBRARY_OVERRIDE_WebKitLegacy REEXPORT_FRAMEWORK)
 endif ()
 
-if ("${PORT}" STREQUAL "Mac" OR "${PORT}" STREQUAL "IOS")
+if (WEBKIT_SDK_IS_MACOS OR WEBKIT_SDK_IS_IOS_FAMILY)
     WEBKIT_DEFINE_XPC_SERVICES()
     # XPC services have a link dependency on WebKit, but for codesigning we
     # need the reverse. The service bundles all sign, and then WebKit.framework
     # can sign.
-    if (NOT "${PORT}" STREQUAL "IOS")
-        # FIXME: iOS port does not use the shared codesigning macros for
+    if (WEBKIT_SDK_IS_MACOS)
+        # FIXME: iOS build does not use the shared codesigning macros for
         # extension processes.
         add_dependencies(WebKit_CodeSign
             WebProcess_CodeSign

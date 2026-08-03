@@ -2988,23 +2988,18 @@ void MediaPlayerPrivateAVFoundationObjC::keyAdded()
     if (!player)
         return;
 
-    Vector<String> fulfilledKeyIds;
-
     ALWAYS_LOG(LOGIDENTIFIER);
-    for (auto& pair : m_keyURIToRequestMap) {
+    m_keyURIToRequestMap.removeIf([&](auto& pair) {
         const String& keyId = pair.key;
         const RetainPtr<AVAssetResourceLoadingRequest>& request = pair.value;
 
         auto keyData = player->cachedKeyForKeyId(keyId);
         if (!keyData)
-            continue;
+            return false;
 
         fulfillRequestWithKeyData(request.get(), keyData.get());
-        fulfilledKeyIds.append(keyId);
-    }
-
-    for (auto& keyId : fulfilledKeyIds)
-        m_keyURIToRequestMap.remove(keyId);
+        return true;
+    });
 }
 
 RefPtr<LegacyCDMSession> MediaPlayerPrivateAVFoundationObjC::createSession(const String& keySystem, LegacyCDMSessionClient& client)
@@ -4329,6 +4324,12 @@ bool MediaPlayerPrivateAVFoundationObjC::shouldAttachLayerToPlayer()
     if (m_videoTarget && m_isInFullscreenOrPictureInPicture)
         return false;
 #endif
+
+    // 311380@main started detaching the video layer from the player when the page or the
+    // element became non-visible. Some clients keep displaying the video layer they host
+    // after hiding their web view, so for those keep the layer attached as it was before.
+    if (m_disableTeardownOnVisibilityChange)
+        return true;
 
     if (!pageIsVisible())
         return false;

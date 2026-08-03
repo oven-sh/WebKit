@@ -535,6 +535,7 @@ enum ContentsFormat {
     DOMString elementRenderTreeAsText(Element element);
     boolean isPreloaded(DOMString url);
     boolean isLoadingFromMemoryCache(DOMString url);
+    boolean frameNetworkingContextIsValid();
     DOMString fetchResponseSource(FetchResponse response);
     DOMString xhrResponseSource(XMLHttpRequest xhr);
     boolean isSharingStyleSheetContents(HTMLLinkElement a, HTMLLinkElement b);
@@ -674,6 +675,7 @@ enum ContentsFormat {
     unsigned long countFindMatches(DOMString text, sequence<DOMString> findOptions);
     undefined setCachedFindMatchBufferLimitForTesting(unsigned long maximumRunCount);
     [Conditional=VIDEO] sequence<unrestricted double> findCueMatches(DOMString text, sequence<DOMString> findOptions);
+    [Conditional=VIDEO] undefined clearFindCaptionTracks();
 
     DOMString autofillFieldName(Element formControlElement);
     boolean isSpellcheckDisabledExceptTextReplacement(HTMLInputElement inputElement);
@@ -1548,6 +1550,10 @@ enum ContentsFormat {
     [Conditional=MODEL_ELEMENT] undefined disableModelLoadDelaysForTesting();
     [Conditional=MODEL_ELEMENT] DOMString modelElementState(HTMLModelElement element);
     [Conditional=MODEL_ELEMENT] boolean isModelElementIntersectingViewport(HTMLModelElement element);
+
+    [Conditional=SPATIAL_PORTAL] unsigned long numberOfHostedModelsInSpatialPortal(Element element);
+    [Conditional=SPATIAL_PORTAL] unsigned long numberOfLoadedModelsInSpatialPortal(Element element);
+    [Conditional=SPATIAL_PORTAL] boolean establishesSpatialPortal(Element element);
 
     undefined copyImageAtLocation(long x, long y);
 

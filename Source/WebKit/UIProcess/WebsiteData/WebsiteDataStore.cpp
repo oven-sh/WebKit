@@ -72,6 +72,7 @@
 #include <WebCore/SearchPopupMenu.h>
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/SecurityOriginData.h>
+#include <WebCore/Site.h>
 #include <WebCore/StorageUtilities.h>
 #include <WebCore/WebLockRegistry.h>
 #include <algorithm>
@@ -1545,6 +1546,11 @@ void WebsiteDataStore::didHaveUserInteractionForSiteIsolation(const URL& url)
     }
 }
 
+bool WebsiteDataStore::isIsolatedSiteForTesting(const URL& url) const
+{
+    return m_isolatedSiteStore.contains(WebCore::Site { url });
+}
+
 void WebsiteDataStore::logUserInteraction(const URL& url, CompletionHandler<void()>&& completionHandler)
 {
     ASSERT(RunLoop::isMain());
@@ -2282,9 +2288,6 @@ WebsiteDataStoreParameters WebsiteDataStore::parameters()
     parameters.networkSessionParameters = WTF::move(networkSessionParameters);
     parameters.networkSessionParameters.resourceLoadStatisticsParameters.enabled = trackingPreventionEnabled();
     platformSetNetworkParameters(parameters);
-#if PLATFORM(COCOA)
-    parameters.networkSessionParameters.useNetworkLoader = useNetworkLoader();
-#endif
 
 #if PLATFORM(IOS_FAMILY)
     if (isPersistent()) {
@@ -2980,9 +2983,9 @@ void WebsiteDataStore::isStorageSuspendedForTesting(CompletionHandler<void(bool)
 }
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
-void WebsiteDataStore::installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, CompletionHandler<void()>&& completionHandler)
+void WebsiteDataStore::installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, std::span<const uint8_t> replacementData, CompletionHandler<void()>&& completionHandler)
 {
-    protect(networkProcess())->installMockParentalControlsURLFilterForTesting(WTF::move(blockedURLs), WTF::move(completionHandler));
+    protect(networkProcess())->installMockParentalControlsURLFilterForTesting(WTF::move(blockedURLs), replacementData, WTF::move(completionHandler));
 }
 #endif
 

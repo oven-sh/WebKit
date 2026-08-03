@@ -2991,10 +2991,9 @@ class Trigger(trigger.Trigger):
                 'github.head.repo.full_name', 'github.number', 'github.title',
                 'repository', 'project', 'owners', 'classification', 'identifier',
             ]
-        if self.triggers:
-            property_names.append('triggers')
-
         properties_to_pass = {prop: properties.Property(prop) for prop in property_names}
+        if self.triggers:
+            properties_to_pass['triggers'] = self.triggers
         properties_to_pass['retry_count'] = properties.Property('retry_count', default=0)
         if not self.triggers:
             properties_to_pass['os_version_builder'] = properties.Property('os_version', default='')
@@ -3320,6 +3319,15 @@ def customBuildFlag(platform, fullPlatform):
     return ['--' + platform]
 
 
+def usesBuildWebKitForJSC(platform):
+    # GTK and WPE use build-webkit rather than build-jsc, so the whole build process (build flags, etc.) matches what post-commit bots do.
+    return platform in ('gtk', 'wpe')
+
+
+def shouldBuildJSCOnly(group_name, platform):
+    return group_name == 'jsc' and not usesBuildWebKitForJSC(platform)
+
+
 class BuildLogLineObserver(ParseByLineLogObserver):
     def __init__(self, errorReceived, searchString='rror:', includeRelatedLines=True, thresholdExceedCallBack=None):
         self.errorReceived = errorReceived
@@ -3467,7 +3475,7 @@ class CompileWebKit(shell.Compile, AddToLogMixin, ShellMixin):
                 steps_to_add.append(InstallWpeDependencies())
             elif platform == 'gtk':
                 steps_to_add.append(InstallGtkDependencies())
-            if self.getProperty('group') == 'jsc':
+            if shouldBuildJSCOnly(self.getProperty('group'), platform):
                 steps_to_add.append(CompileJSCWithoutChange())
             else:
                 steps_to_add.append(CompileWebKitWithoutChange())
@@ -3565,7 +3573,7 @@ class AnalyzeCompileWebKitResults(buildstep.BuildStep, BugzillaMixin, GitHubMixi
     def run(self):
         self.error_logs = {}
         self.compile_webkit_step = CompileWebKit.name
-        if self.getProperty('group') == 'jsc':
+        if shouldBuildJSCOnly(self.getProperty('group'), self.getProperty('platform')):
             self.compile_webkit_step = CompileJSC.name
         yield self.getResults(self.compile_webkit_step)
         rc = yield self.analyzeResults()
@@ -3574,7 +3582,7 @@ class AnalyzeCompileWebKitResults(buildstep.BuildStep, BugzillaMixin, GitHubMixi
     @defer.inlineCallbacks
     def analyzeResults(self):
         compile_without_patch_step = CompileWebKitWithoutChange.name
-        if self.getProperty('group') == 'jsc':
+        if shouldBuildJSCOnly(self.getProperty('group'), self.getProperty('platform')):
             compile_without_patch_step = CompileJSCWithoutChange.name
         compile_without_patch_result = self.getStepResult(compile_without_patch_step)
 
@@ -3870,6 +3878,7 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
             self.setProperty('results-db_jsc_pre_existing', sorted(self.preexisting_failures_in_results_db))
 
     def evaluateCommand(self, cmd):
+        platform = self.getProperty('platform')
         rc = super().evaluateCommand(cmd)
         steps_to_add = []
         if SHOULD_FILTER_LOGS is True:
@@ -3904,12 +3913,18 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
                 RevertAppliedChanges(),
                 CleanWorkingDirectory(),
                 ValidateChange(verifyBugClosed=False, addURLs=False),
-                SetO3OptimizationLevel()
             ]
+            if platform == 'wpe':
+                steps_to_add.append(InstallWpeDependencies())
+            elif platform == 'gtk':
+                steps_to_add.append(InstallGtkDependencies())
+            else:
+                # SetO3OptimizationLevel is only needed by the macOS JSC O3 debug queue (see 305715@main).
+                steps_to_add.append(SetO3OptimizationLevel())
             if self.getProperty('rebuild_without_change_on_builder', False):
                 steps_to_add.extend([DownloadBuiltProduct(suffix=SUFFIX_WITHOUT_CHANGE), ExtractBuiltProduct()])
             else:
-                steps_to_add.extend([CompileJSCWithoutChange()])
+                steps_to_add.append(CompileWebKitWithoutChange() if usesBuildWebKitForJSC(platform) else CompileJSCWithoutChange())
             steps_to_add += [
                 ValidateChange(verifyBugClosed=False, addURLs=False),
                 KillOldProcesses(),
@@ -3946,7 +3961,7 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
         platform = self.getProperty('platform', None)
         configuration = {}
         if platform:
-            configuration['platform'] = platform
+            configuration['platform'] = ResultsDatabase.platform_for_query(platform)
         style = self.getProperty('configuration', None)
         if style and style in ['debug', 'release']:
             configuration['style'] = style
@@ -4343,7 +4358,7 @@ class RunWebKitTests(shell.Test, AddToLogMixin, ShellMixin):
         platform = self.getProperty('platform', None)
         configuration = {}
         if platform:
-            configuration['platform'] = platform
+            configuration['platform'] = ResultsDatabase.platform_for_query(platform)
         style = self.getProperty('configuration', None)
         if style and style in ['debug', 'release']:
             configuration['style'] = style
@@ -6147,7 +6162,7 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
         platform = self.getProperty('platform', None)
         configuration = {}
         if platform:
-            configuration['platform'] = platform
+            configuration['platform'] = ResultsDatabase.platform_for_query(platform)
         style = self.getProperty('configuration', None)
         if style and style in ['debug', 'release']:
             configuration['style'] = style
@@ -7636,10 +7651,10 @@ class ValidateCommitMessage(steps.ShellSequence, ShellMixin, AddToLogMixin):
         commands = [
             f"git log {head_ref} ^{base_ref} | grep -q '{self.OOPS_RE}' && echo 'Commit message contains (OOPS!){reviewer_error_msg}' || test $? -eq 1",
             f"git log {head_ref} ^{base_ref} | grep -q 'by NOBODY' && echo 'Commit message contains \"by NOBODY\"{reviewer_error_msg}' || test $? -eq 1",
-            "git log {} ^{} > commit_msg.txt; grep -q '\\({}\\)' commit_msg.txt || echo 'No reviewer information in commit message';".format(
+            "git log --format=%B {} ^{} > commit_msg.txt; grep -q '^\\({}\\)' commit_msg.txt || echo 'No reviewer information in commit message';".format(
                 head_ref, base_ref,
                 '\\|'.join(self.REVIEWED_STRINGS)
-            ), "git log {} ^{} | grep '\\({}\\)' || true".format(
+            ), "git log --format=%B {} ^{} | grep '^\\({}\\)' || true".format(
                 head_ref, base_ref,
                 '\\|'.join(self.REVIEWED_STRINGS[:3]),
             ),
@@ -8422,7 +8437,7 @@ class FindUnexpectedStaticAnalyzerResults(shell.ShellCommand, AnalyzeChange, Add
         platform = self.getProperty('platform', None)
         configuration = {}
         if platform:
-            configuration['platform'] = platform
+            configuration['platform'] = ResultsDatabase.platform_for_query(platform)
         style = self.getProperty('configuration', None)
         if style and style in ['debug', 'release']:
             configuration['style'] = style

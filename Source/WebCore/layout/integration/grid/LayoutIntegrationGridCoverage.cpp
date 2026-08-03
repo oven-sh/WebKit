@@ -69,9 +69,9 @@ enum class GridAvoidanceReason : uint8_t {
     GridHasUnsupportedMaxWidth,
     GridHasUnsupportedMinHeight,
     GridHasUnsupportedMaxHeight,
+    GridHasPercentageRowsWithIndefiniteHeight,
     GridItemHasNonInitialMaxWidth,
     GridItemHasNonInitialMaxHeight,
-    GridItemHasPercentOrCalcPadding,
     GridItemHasMargin,
     GridItemHasBorderBoxSizing,
     GridItemHasUnsupportedWritingMode,
@@ -82,6 +82,7 @@ enum class GridAvoidanceReason : uint8_t {
     GridItemHasNonVisibleOverflow,
     GridItemHasContainsSize,
     GridItemNeedsSecondColumnSizingPass,
+    RelativeGridItemHasPercentageInset,
 
     GridItemColumnStartHasLineName,
     GridItemColumnStartHasNegativeLineNumber,
@@ -267,10 +268,14 @@ static bool gridItemHasValidWidth(const Style::PreferredSize& width)
     );
 }
 
-static bool canComputeAutomaticInlineSize(const RenderBox& gridItem, const StyleSelfAlignmentData& usedJustifySelf)
+// A grid item with an automatic size which is not stretched is sized to its fit-content size in
+// the axis. GFC does not implement the remaining cases from grid item sizing, where a replaced
+// item uses its natural size and an item with a preferred aspect ratio transfers its size through
+// that ratio.
+// https://drafts.csswg.org/css-grid-1/#grid-item-sizing
+static bool canComputeAutomaticSize(const RenderBox& gridItem)
 {
-    return (usedJustifySelf.position() == ItemPosition::Normal || usedJustifySelf.position() == ItemPosition::Stretch)
-        && !protect(gridItem.element())->isReplaced()
+    return !protect(gridItem.element())->isReplaced()
         && !gridItem.style().aspectRatio().hasRatio();
 }
 
@@ -287,13 +292,6 @@ static bool gridItemHasValidHeight(const Style::PreferredSize& height)
             return false;
         }
     );
-}
-
-static bool canComputeAutomaticBlockSize(const RenderBox& gridItem, const StyleSelfAlignmentData& usedAlignSelf)
-{
-    return (usedAlignSelf.position() == ItemPosition::Normal || usedAlignSelf.position() == ItemPosition::Stretch)
-        && !protect(gridItem.element())->isReplaced()
-        && !gridItem.style().aspectRatio().hasRatio();
 }
 
 static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& renderGrid, ReasonCollectionMode reasonCollectionMode)
@@ -445,6 +443,22 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
     if (renderGridStyle->maxHeight().isIntrinsic())
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedMaxHeight, reasons, reasonCollectionMode);
 
+    // If the contianer has an indefinite (e.g. auto) height and a row with a percentage,
+    // then in order to properly handle this case we need to run the "Find the size of
+    // the grid container," portion of the spec fully before "Given the resulting grid
+    // container size, run the Grid Sizing Algorithm to size the grid." so that the
+    // grid has a height to resolve the percentages again in the second step.
+    auto gridBlockSizeIsIndefinite = renderGridStyle->height().isAuto() || renderGridStyle->height().isIntrinsic();
+    auto hasPercentageRowTrack = [&] {
+        return gridTemplateRowsTrackList.containsIf([&](const auto& rowsTrackListEntry) {
+            if (auto* trackSize = std::get_if<Style::GridTrackSize>(&rowsTrackListEntry))
+                return trackSize->minTrackBreadth().isPercentOrCalculated() || trackSize->maxTrackBreadth().isPercentOrCalculated();
+            return false;
+        });
+    };
+    if (gridBlockSizeIsIndefinite && hasPercentageRowTrack())
+        ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasPercentageRowsWithIndefiniteHeight, reasons, reasonCollectionMode);
+
     ASSERT(renderGridStyle->gridAutoFlow().isRow(),
         "If we end up supporting column auto flow before broader implicit grid support then the logic using explicitlyPlacedItemsInRowCount will need to be reworked to be based upon the auto flow direction");
     Vector<size_t> explicitlyPlacedItemsInRowCount;
@@ -469,28 +483,30 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
 
         auto usedJustifySelf = gridItemStyle->justifySelf().resolve(renderGridStyle.ptr());
 
-        if ((usedJustifySelf.position() != ItemPosition::Start && usedJustifySelf.position() != ItemPosition::Normal && usedJustifySelf.position() != ItemPosition::Stretch)
-            || usedJustifySelf.overflow() != OverflowAlignment::Default || usedJustifySelf.positionType() != ItemPositionType::NonLegacy)
+        // Every non-baseline self-alignment value is handled by GridLayout's self alignment,
+        // including the safe overflow alignment. Baseline alignment additionally requires the
+        // track sizing algorithm to form baseline-sharing groups and to grow the tracks which
+        // those groups span, which GFC does not implement yet.
+        if (isBaselinePosition(usedJustifySelf.position()))
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedInlineAxisAlignment, reasons, reasonCollectionMode);
 
         auto& gridItemWidth = gridItemStyle->width();
         if (!gridItemHasValidWidth(gridItemWidth))
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedWidthValue, reasons, reasonCollectionMode);
 
-        if (gridItemWidth.isAuto() && !canComputeAutomaticInlineSize(gridItem, usedJustifySelf))
+        if (gridItemWidth.isAuto() && !canComputeAutomaticSize(gridItem))
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedAutomaticInlineSizing, reasons, reasonCollectionMode);
 
         auto usedAlignSelf = gridItemStyle->alignSelf().resolve(renderGridStyle.ptr());
 
-        if ((usedAlignSelf.position() != ItemPosition::Start && usedAlignSelf.position() != ItemPosition::Normal && usedAlignSelf.position() != ItemPosition::Stretch)
-            || usedAlignSelf.overflow() != OverflowAlignment::Default || usedAlignSelf.positionType() != ItemPositionType::NonLegacy)
+        if (isBaselinePosition(usedAlignSelf.position()))
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedBlockAxisAlignment, reasons, reasonCollectionMode);
 
         auto& gridItemHeight = gridItemStyle->height();
         if (!gridItemHasValidHeight(gridItemHeight))
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedHeightValue, reasons, reasonCollectionMode);
 
-        if (gridItemHeight.isAuto() && !canComputeAutomaticBlockSize(gridItem, usedAlignSelf))
+        if (gridItemHeight.isAuto() && !canComputeAutomaticSize(gridItem))
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedAutomaticBlockSizing, reasons, reasonCollectionMode);
 
         auto& minWidth = gridItemStyle->minWidth();
@@ -506,18 +522,6 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
 
         if (!gridItemStyle->maxHeight().isNone())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasNonInitialMaxHeight, reasons, reasonCollectionMode);
-
-        // Fixed padding is threaded into item and track sizing as part of the border-box size and lays
-        // out identically to legacy RenderGrid. Percentage and calc() padding resolve against the grid
-        // item's grid area, which needs additional plumbing, so keep those items on the legacy path.
-        // FIXME: Support percentage and calc() padding on grid items and remove this restriction.
-        auto gridItemHasUnsupportedPadding = [&] {
-            return gridItemStyle->paddingBox().anyOf([](const Style::PaddingEdge& paddingEdge) {
-                return paddingEdge.isPercentOrCalculated();
-            });
-        };
-        if (gridItemHasUnsupportedPadding())
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasPercentOrCalcPadding, reasons, reasonCollectionMode);
 
         auto gridItemHasMargins = [&] {
             return gridItemStyle->marginBox().anyOf([](const Style::MarginEdge& marginEdge) {
@@ -624,6 +628,18 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
 
         if (gridItem->isOutOfFlowPositioned())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasOutOfFlowChild, reasons, reasonCollectionMode);
+
+        // A relatively (or sticky) positioned grid item resolves percentage inset offsets against
+        // its containing block, which for a grid item is its grid area. GFC does not yet set the
+        // grid-area size on the item, so such percentages would incorrectly resolve against the
+        // grid container's content box. Keep these items on the legacy path.
+        if (gridItemStyle->position() == PositionType::Relative || gridItemStyle->position() == PositionType::Sticky) {
+            auto hasPercentageInsetOffset = gridItemStyle->insetBox().anyOf([](const Style::InsetEdge& insetEdge) {
+                return insetEdge.isPercentOrCalculated();
+            });
+            if (hasPercentageInsetOffset)
+                ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::RelativeGridItemHasPercentageInset, reasons, reasonCollectionMode);
+        }
 
         if (gridItemStyle->aspectRatio().hasRatio())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasAspectRatio, reasons, reasonCollectionMode);
@@ -771,9 +787,6 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
     case GridAvoidanceReason::GridItemHasNonInitialMaxHeight:
         stream << "grid item has non-initial max-height";
         break;
-    case GridAvoidanceReason::GridItemHasPercentOrCalcPadding:
-        stream << "grid item has percent or calc padding";
-        break;
     case GridAvoidanceReason::GridItemHasMargin:
         stream << "grid item has margin";
         break;
@@ -803,6 +816,9 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
         break;
     case GridAvoidanceReason::GridItemNeedsSecondColumnSizingPass:
         stream << "grid item needs second column sizing support";
+        break;
+    case GridAvoidanceReason::RelativeGridItemHasPercentageInset:
+        stream << "relative grid item has percentage inset";
         break;
     case GridAvoidanceReason::GridItemColumnStartHasLineName:
         stream << "grid item column start has line name";
@@ -854,6 +870,9 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
         break;
     case GridAvoidanceReason::GridHasUnsupportedMaxHeight:
         stream << "grid container has unsupported max-height";
+        break;
+    case GridAvoidanceReason::GridHasPercentageRowsWithIndefiniteHeight:
+        stream << "grid has percentage rows with indefinite height";
         break;
     case GridAvoidanceReason::NotAGrid:
         stream << "not a grid";

@@ -37,7 +37,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 
-#if ENABLE(JIT) && USE(JSVALUE64) && !ENABLE(JIT_CAGE)
+#if ENABLE(JIT) && !ENABLE(JIT_CAGE)
 #include "FFIInvokeThunk.h"
 #endif
 
@@ -117,7 +117,7 @@ CodePtr<JITThunkPtrTag> Signature::invokeThunk()
         return CodePtr<JITThunkPtrTag>::fromTaggedPtr(published);
 
     Locker locker { m_codeLock };
-#if ENABLE(JIT) && USE(JSVALUE64) && !ENABLE(JIT_CAGE)
+#if ENABLE(JIT) && !ENABLE(JIT_CAGE)
     if (!m_invokeThunkCode) {
         m_invokeThunkCode = generateInvokeThunk(*this);
         if (m_invokeThunkCode) {

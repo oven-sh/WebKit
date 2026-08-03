@@ -49,9 +49,6 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
     if (node->op() != DFG::Call)
         return false;
 
-    if (!is64Bit())
-        return false;
-
     if (!function)
         return false;
     auto* ffiFunction = dynamicDowncast<JSFFIFunction>(function);

@@ -108,6 +108,11 @@ elseif (APPLE)
             -DMACH_EXC_SERVER_TASKIDTOKEN_STATE -isysroot ${CMAKE_OSX_SYSROOT}
             MachExceptions.defs
         VERBATIM)
+    if (NOT USE_GLIB)
+        list(APPEND WTF_SOURCES
+            cocoa/TimeZoneCocoa.cpp
+        )
+    endif ()
     list(APPEND WTF_SOURCES
         cocoa/MemoryFootprintCocoa.cpp
 

@@ -27,7 +27,6 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
-#if USE(JSVALUE64)
 
 #include "JSCJSValue.h"
 #include "OperationResult.h"
@@ -47,6 +46,5 @@ JSC_DECLARE_JIT_OPERATION(operationFFICallSlowPath, EncodedJSValue, (JSGlobalObj
 
 } // namespace JSC
 
-#endif // USE(JSVALUE64)
 
 #endif // USE(BUN_JSC_ADDITIONS)

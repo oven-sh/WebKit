@@ -29,7 +29,6 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
-#if USE(JSVALUE64)
 
 #include "FFIContext.h"
 #include "FFIType.h"
@@ -66,6 +65,5 @@ JSC_DECLARE_JIT_OPERATION(operationFFIArenaExit, void, (JSGlobalObject*));
 
 } // namespace JSC
 
-#endif // USE(JSVALUE64)
 
 #endif // USE(BUN_JSC_ADDITIONS)

@@ -235,12 +235,10 @@ set(LLINT_ASM
     llint/InPlaceInterpreter.asm
     llint/InPlaceInterpreter64.asm
     llint/LowLevelInterpreter.asm
-    llint/LowLevelInterpreter32_64.asm
     llint/LowLevelInterpreter64.asm
 )
 
 set(OFFLINE_ASM
-    offlineasm/arm.rb
     offlineasm/arm64.rb
     offlineasm/arm64e.rb
     offlineasm/asm.rb
@@ -311,8 +309,6 @@ elseif (WTF_CPU_ARM64)
     else ()
         set(OFFLINE_ASM_BACKEND "ARM64")
     endif ()
-elseif (ARM_THUMB2_DETECTED)
-    set(OFFLINE_ASM_BACKEND "ARMv7")
 elseif (WTF_CPU_RISCV64)
     set(OFFLINE_ASM_BACKEND "RISCV64")
 endif ()
@@ -600,8 +596,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     assembler/ARM64Assembler.h
     assembler/ARM64EAssembler.h
     assembler/ARM64Registers.h
-    assembler/ARMv7Assembler.h
-    assembler/ARMv7Registers.h
     assembler/AbortReason.h
     assembler/AbstractMacroAssembler.h
     assembler/AllowMacroScratchRegisterUsage.h
@@ -619,7 +613,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     assembler/MacroAssembler.h
     assembler/MacroAssemblerARM64.h
     assembler/MacroAssemblerARM64E.h
-    assembler/MacroAssemblerARMv7.h
     assembler/MacroAssemblerCodeRef.h
     assembler/MacroAssemblerHelpers.h
     assembler/MacroAssemblerRISCV64.h
@@ -635,6 +628,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     assembler/X86Assembler.h
     assembler/X86_64Registers.h
 
+    b3/air/AirDisassembler.h
+    b3/B3CanonicalizePrePostIncrements.h
     b3/B3Common.h
     b3/B3Compile.h
     b3/B3Type.h
@@ -1401,6 +1396,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSArrayBufferViewInlinesLight.h
     runtime/JSArrayInlines.h
     runtime/JSArrayIterator.h
+    runtime/JSArrayIteratorInlines.h
     runtime/JSAsyncDisposableStack.h
     runtime/JSAsyncDisposableStackInlines.h
     runtime/JSAsyncFromSyncIterator.h
@@ -1726,7 +1722,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/StringObjectInlines.h
     runtime/StringPrototype.h
     runtime/StringPrototypeInlines.h
-    runtime/StringRecursionChecker.h
     runtime/StringReplaceCache.h
     runtime/StringReplaceCacheInlines.h
     runtime/StringSplitCache.h
@@ -2224,6 +2219,7 @@ endif ()
 
 WEBKIT_FRAMEWORK_DECLARE(JavaScriptCore)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
+WEBKIT_ADD_TARGET_THREAD_SAFETY_WARNINGS(JavaScriptCore)
 WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(JavaScriptCore)
 
 if (COMPILER_IS_GCC_OR_CLANG)
@@ -2243,13 +2239,11 @@ if (COMPILER_IS_GCC_OR_CLANG)
 endif()
 
 WEBKIT_COPY_FILES(JavaScriptCore_CopyHeaders
-    PRUNE_STALE
     DESTINATION ${JavaScriptCore_HEADERS_DIR}
     FILES ${JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS}
     FLATTENED
 )
 WEBKIT_SYMLINK_FILES(JavaScriptCore_CopyPrivateHeaders
-    PRUNE_STALE
     DESTINATION ${JavaScriptCore_PRIVATE_HEADERS_DIR}
     FILES ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS}
     FLATTENED
@@ -2376,8 +2370,8 @@ else ()
     WEBKIT_ADD_PREFIX_HEADER(JavaScriptCore JavaScriptCorePrefix.h PREFIX_LANGUAGES CXX)
 endif ()
 
-if(NOT "${PORT}" STREQUAL "Mac")
-    if(${JavaScriptCore_LIBRARY_TYPE} STREQUAL "SHARED")
+if (NOT "${PORT}" STREQUAL "Cocoa")
+    if (${JavaScriptCore_LIBRARY_TYPE} STREQUAL "SHARED")
         WEBKIT_POPULATE_LIBRARY_VERSION(JAVASCRIPTCORE)
         set_target_properties(JavaScriptCore PROPERTIES VERSION ${JAVASCRIPTCORE_VERSION} SOVERSION ${JAVASCRIPTCORE_VERSION_MAJOR})
         install(TARGETS JavaScriptCore DESTINATION "${LIB_INSTALL_DIR}")

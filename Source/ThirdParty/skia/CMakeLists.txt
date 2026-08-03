@@ -239,6 +239,7 @@ add_library(Skia STATIC
     src/core/SkStream.cpp
     src/core/SkStrike.cpp
     src/core/SkStrikeCache.cpp
+    src/core/SkStrikeRef.cpp
     src/core/SkStrikeSpec.cpp
     src/core/SkString.cpp
     src/core/SkStringUtils.cpp
@@ -278,6 +279,7 @@ add_library(Skia STATIC
     src/gpu/BlurUtils.cpp
     src/gpu/DataUtils.cpp
     src/gpu/DitherUtils.cpp
+    src/gpu/GradientBitmap.cpp
     src/gpu/RectanizerPow2.cpp
     src/gpu/RectanizerSkyline.cpp
     src/gpu/ResourceKey.cpp

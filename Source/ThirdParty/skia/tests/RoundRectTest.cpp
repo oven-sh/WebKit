@@ -11,6 +11,7 @@
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/pathops/SkPathOps.h"
 #include "src/core/SkFloatBits.h"
@@ -216,7 +217,7 @@ static void test_round_rect_basic(skiatest::Reporter* reporter) {
     REPORTER_ASSERT(reporter, rr1_3 == rr1 && rr1_3.getType() == rr1.getType());
 
     //----
-    SkPoint halfPoint = { SkScalarHalf(kWidth), SkScalarHalf(kHeight) };
+    SkPoint halfPoint = { kWidth / 2.f, kHeight / 2.f };
     SkRRect rr2;
     rr2.setOval(rect);
 
@@ -333,7 +334,7 @@ static void test_round_rect_ovals(skiatest::Reporter* reporter) {
     SkRect oval;
     SkRect rect = SkRect::MakeLTRB(0, 0, kWidth, kHeight);
     SkRRect rr1;
-    rr1.setRectXY(rect, SkScalarHalf(kWidth), SkScalarHalf(kHeight));
+    rr1.setRectXY(rect, kWidth / 2.f, kHeight / 2.f);
 
     REPORTER_ASSERT(reporter, SkRRect::kOval_Type == rr1.type());
     oval = rr1.rect();
@@ -401,6 +402,20 @@ static void test_direction(skiatest::Reporter* reporter, const SkRRect &rr,
         test.sort();
 
         REPORTER_ASSERT(reporter, contains[i] == rr.contains(test));
+
+        x += stepX;
+        y += stepY;
+    }
+}
+
+// Move a point from the start position by (stepX, stepY) 'numSteps' times
+// testing for containment in 'rr' at each step.
+static void test_point_direction(skiatest::Reporter* reporter, const SkRRect &rr,
+                                 SkScalar initX, int stepX, SkScalar initY, int stepY,
+                                 SkSpan<const bool> contains) {
+    SkScalar x = initX, y = initY;
+    for (bool expected : contains) {
+        REPORTER_ASSERT(reporter, expected == rr.contains(SkPoint::Make(x, y)));
 
         x += stepX;
         y += stepY;
@@ -519,6 +534,109 @@ static void test_round_rect_contains_rect(skiatest::Reporter* reporter) {
         test_direction(reporter, rrects[i], 19.5f,  0,    40, -1, kNumSteps, answers[i][5]); // S
         test_direction(reporter, rrects[i],     0,  1,    40, -1, kNumSteps, answers[i][6]); // SW
         test_direction(reporter, rrects[i],     0,  1, 19.5f,  0, kNumSteps, answers[i][7]); // W
+    }
+}
+
+static void test_round_rect_contains_point(skiatest::Reporter* reporter) {
+    static const int kNumRRects = 4;
+    static const SkVector gRadii[kNumRRects][4] = {
+        { {  0,  0 }, {  0,  0 }, {  0,  0 }, {  0,  0 } },  // rect
+        { { 20, 20 }, { 20, 20 }, { 20, 20 }, { 20, 20 } },  // circle
+        { { 10, 10 }, { 10, 10 }, { 10, 10 }, { 10, 10 } },  // simple
+        { {  0,  0 }, { 20, 20 }, { 10, 10 }, { 30, 30 } }   // complex
+    };
+
+    SkRRect rrects[kNumRRects];
+    for (int i = 0; i < kNumRRects; ++i) {
+        rrects[i].setRectRadii(SkRect::MakeWH(40, 40), gRadii[i]);
+    }
+
+    static const SkPoint easyOuts[] = {
+        { -5, -5 }, // TL
+        { 20, -5 }, // T
+        { 45, -5 }, // TR
+        { 45, 20 }, // R
+        { 45, 45 }, // BR
+        { 20, 45 }, // B
+        { -5, 45 }, // BL
+        { -5, 20 }  // L
+    };
+
+    for (int i = 0; i < kNumRRects; ++i) {
+        for (size_t j = 0; j < std::size(easyOuts); ++j) {
+            REPORTER_ASSERT(reporter, !rrects[i].contains(easyOuts[j]));
+        }
+    }
+
+    // Walk just far enough in from each edge or corner to test bounds
+    // exclusion, curved-corner rejection, and curved-corner acceptance.
+    static const int kNumSteps = 3;
+    bool answers[kNumRRects][8][kNumSteps] = {
+        // for the rect we expect points on the left/top edges to be in, but
+        // points on the right/bottom edges to be out
+        {
+            // rect
+            { true, true, true },
+            { true, true, true },
+            { false, true, true },
+            { false, true, true },
+            { false, true, true },
+            { false, true, true },
+            { false, true, true },
+            { true, true, true },
+        },
+        // for the circle we expect the first two points to be out on the
+        // corners (then in) and only the first point out on the right/bottom axes
+        {
+            // circle
+            { false, false, true },
+            { true, true, true },
+            { false, false, true },
+            { false, true, true },
+            { false, false, true },
+            { false, true, true },
+            { false, false, true },
+            { true, true, true },
+        },
+        // for the simple round rect we expect only the first point to be out on
+        // corners and on the right/bottom axes
+        {
+            // simple RR
+            { false, true, true },
+            { true, true, true },
+            { false, true, true },
+            { false, true, true },
+            { false, true, true },
+            { false, true, true },
+            { false, true, true },
+            { true, true, true },
+        },
+        // for the complex case the answer is different for each direction
+        {
+            // complex RR
+            // all in for TL (rect) corner and T (top center band)
+            { true, true, true },
+            { true, true, true },
+            // first out for TR and BL is the excluded bound; second is outside the larger corner
+            { false, false, true },
+            // first out for R, BR, and B is the excluded bound; L is due to the larger corner
+            { false, true, true },
+            { false, true, true },
+            { false, true, true },
+            { false, false, true },
+            { false, true, true },
+         }
+    };
+
+    for (int i = 0; i < kNumRRects; ++i) {
+        test_point_direction(reporter, rrects[i],  0,  5,  0,  5, answers[i][0]); // TL
+        test_point_direction(reporter, rrects[i], 20,  0,  0,  5, answers[i][1]); // T
+        test_point_direction(reporter, rrects[i], 40, -5,  0,  5, answers[i][2]); // TR
+        test_point_direction(reporter, rrects[i], 40, -5, 20,  0, answers[i][3]); // R
+        test_point_direction(reporter, rrects[i], 40, -5, 40, -5, answers[i][4]); // BR
+        test_point_direction(reporter, rrects[i], 20,  0, 40, -5, answers[i][5]); // B
+        test_point_direction(reporter, rrects[i],  0,  5, 40, -5, answers[i][6]); // BL
+        test_point_direction(reporter, rrects[i],  0,  5, 20,  0, answers[i][7]); // L
     }
 }
 
@@ -1188,8 +1306,8 @@ static void test_issue_2696(skiatest::Reporter* reporter) {
     auto dst = rrect.transform(xform);
     REPORTER_ASSERT(reporter, dst.has_value());
 
-    SkScalar halfWidth = SkScalarHalf(dst->width());
-    SkScalar halfHeight = SkScalarHalf(dst->height());
+    SkScalar halfWidth = dst->width() / 2.f;
+    SkScalar halfHeight = dst->height() / 2.f;
 
     for (int i = 0; i < 4; ++i) {
         REPORTER_ASSERT(reporter,
@@ -1520,6 +1638,7 @@ DEF_TEST(RoundRect, reporter) {
     test_round_rect_iffy_parameters(reporter);
     test_inset(reporter);
     test_round_rect_contains_rect(reporter);
+    test_round_rect_contains_point(reporter);
     test_round_rect_transform(reporter);
     test_issue_2696(reporter);
     test_tricky_radii(reporter);
@@ -1590,4 +1709,21 @@ DEF_TEST(RRect_b511391129, r) {
         rrect.setRectRadii(rect, radii);
         REPORTER_ASSERT(r, rrect.isValid());
     }
+}
+
+DEF_TEST(RRect_b527765132, r) {
+    // These values were found via fuzzing to trigger a validation due to ULPs only not being a
+    // good way to compare floats
+    const float width = 37.408840f;
+    const float height = 73.093933f;
+    const float dx = -5430.867188f;
+    const float dy = -26967.046875f;
+
+    SkRect rect = SkRect::MakeWH(width, height);
+    SkRRect rrect = SkRRect::MakeOval(rect);
+
+    SkRRect offsetRRect = rrect.makeOffset(dx, dy);
+
+    REPORTER_ASSERT(r, offsetRRect.isValid());
+    REPORTER_ASSERT(r, offsetRRect.isOval());
 }

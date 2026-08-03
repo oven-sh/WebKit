@@ -76,6 +76,9 @@ WI.Frame = class Frame extends WI.Object
         this._mainResource = mainResource;
         this._mainResource._parentFrame = this;
 
+        this._domContentReadyEventTimestamp = NaN;
+        this._loadEventTimestamp = NaN;
+
         if (oldMainResource && this._mainResource !== oldMainResource)
             this._disassociateWithResource(oldMainResource);
 
@@ -229,6 +232,10 @@ WI.Frame = class Frame extends WI.Object
 
     addExecutionContext(context)
     {
+        let pageExecutionContext = this._executionContextList.pageExecutionContext;
+        if (context.type === WI.ExecutionContext.Type.Normal && pageExecutionContext && context.id !== pageExecutionContext.id)
+            this.clearExecutionContexts();
+
         this._executionContextList.add(context);
 
         this.dispatchEventToListeners(WI.Frame.Event.ExecutionContextAdded, {context});
@@ -364,10 +371,10 @@ WI.Frame = class Frame extends WI.Object
 
     removeAllChildFrames()
     {
-        this._detachFromParentFrame();
-
-        for (let childFrame of this._childFrameCollection)
+        for (let childFrame of this._childFrameCollection) {
             childFrame.removeAllChildFrames();
+            childFrame._detachFromParentFrame();
+        }
 
         this._childFrameCollection.clear();
         this._childFrameIdentifierMap.clear();

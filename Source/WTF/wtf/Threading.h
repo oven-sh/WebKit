@@ -86,6 +86,8 @@ class PrintStream;
 
 WTF_EXPORT_PRIVATE void initialize();
 
+WTF_EXPORT_PRIVATE bool processIsShuttingDown();
+
 class ThreadSuspendLocker {
     WTF_MAKE_NONCOPYABLE(ThreadSuspendLocker);
 public:
@@ -192,6 +194,12 @@ public:
     WTF_EXPORT_PRIVATE Expected<void, PlatformSuspendError> suspend(const ThreadSuspendLocker&);
     WTF_EXPORT_PRIVATE void resume(const ThreadSuspendLocker&);
     WTF_EXPORT_PRIVATE size_t getRegisters(const ThreadSuspendLocker&, PlatformRegisters&);
+
+    // Forces this thread through a context-synchronizing event so it re-fetches instructions that
+    // were modified by another thread (the caller must have already flushed the modified code from
+    // the instruction cache). This does not read or modify the thread's state; it only publishes the
+    // change to it.
+    WTF_EXPORT_PRIVATE void barrierInstructionCache();
 
 #if USE(PTHREADS)
 #if OS(LINUX)

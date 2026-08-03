@@ -302,6 +302,13 @@ bool GrVkCaps::onCanCopySurface(const GrSurfaceProxy* dst, const SkIRect& dstRec
 
 }
 
+namespace {
+bool is_tiler_gpu(uint32_t vendorId) {
+    return vendorId == skgpu::kARM_VkVendor ||
+           vendorId == skgpu::kQualcomm_VkVendor ||
+           vendorId == skgpu::kImagination_VkVendor;
+}
+} // anonymous namespace
 void GrVkCaps::init(const GrContextOptions& contextOptions,
                     const skgpu::VulkanInterface* vkInterface,
                     VkPhysicalDevice physDev,
@@ -415,12 +422,12 @@ void GrVkCaps::init(const GrContextOptions& contextOptions,
     this->initGrCaps(vkInterface, physDev, properties, memoryProperties, features, extensions);
     this->initShaderCaps(properties, features);
 
-    if (skgpu::kQualcomm_VkVendor == properties.vendorID) {
-        // A "clear" load for atlases runs faster on QC than a "discard" load followed by a
+    if (is_tiler_gpu(properties.vendorID)) {
+        // A "clear" load for atlases runs faster on tiler GPUs than a "discard" load followed by a
         // scissored clear.
-        // On NVIDIA and Intel, the discard load followed by clear is faster.
-        // TODO: Evaluate on ARM, Imagination, and ATI.
         fPreferFullscreenClears = true;
+        fDiscardStencilValuesAfterRenderPass = true;
+        fClearsAreFasterThanLoads = true;
     }
 
     if (properties.vendorID == skgpu::kNvidia_VkVendor ||
@@ -664,6 +671,9 @@ void GrVkCaps::initGrCaps(const skgpu::VulkanInterface* vkInterface,
     fMaxPreferredRenderTargetSize = fMaxRenderTargetSize;
 
     fMaxPushConstantsSize = std::min(properties.limits.maxPushConstantsSize, (uint32_t)INT_MAX);
+
+    fTransferBufferRowBytesAlignment =
+            std::max<size_t>(4, properties.limits.optimalBufferCopyRowPitchAlignment);
 
     // Assuming since we will always map in the end to upload the data we might as well just map
     // from the get go. There is no hard data to suggest this is faster or slower.

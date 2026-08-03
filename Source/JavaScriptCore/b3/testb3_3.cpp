@@ -3910,11 +3910,7 @@ void testStoreConstantPtr(intptr_t value)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     intptr_t slot;
-#if CPU(ADDRESS64)
     slot = (static_cast<intptr_t>(0xbaadbeef) << 32) + static_cast<intptr_t>(0xbaadbeef);
-#else
-    slot = 0xbaadbeef;
-#endif
     root->appendNew<MemoryValue>(
         proc, Store, Origin(),
         root->appendNew<ConstPtrValue>(proc, Origin(), value),
@@ -4008,7 +4004,6 @@ void testStore8Imm()
 
 void testStorePartial8BitRegisterOnX86()
 {
-#if !CPU(ARM_THUMB2)
     Procedure proc;
     BasicBlock* root = proc.addBlock();
 
@@ -4056,7 +4051,6 @@ void testStorePartial8BitRegisterOnX86()
     int8_t storage = 0xff;
     CHECK_EQ(compileAndRun<int64_t>(proc, 0x12345678abcdef12, &storage), 0x12345678abcdef12);
     CHECK(!storage);
-#endif // !CPU(ARM_THUMB2)
 }
 
 void testStore16Arg()
@@ -4299,11 +4293,7 @@ void addArgTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN_UNARY(testAddArgFloat, floatingPointOperands<float>());
     RUN_BINARY(testAddArgsFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
 
-    // The ARMv7 ABI expects floats to be passed in consecutive s* registers, but
-    // AirCCallingConvention can't currently do that.
-#if !CPU(ARM_THUMB2)
     RUN_BINARY(testAddFPRArgsFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
-#endif
 
     RUN_BINARY(testAddArgImmFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
     RUN_BINARY(testAddImmArgFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
@@ -4548,12 +4538,8 @@ void addCallTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& t
     RUN(testCallSimpleDouble(1, 2));
     RUN(testCallFunctionWithHellaDoubleArguments());
 
-// The ARMv7 ABI expects floats to be passed in consecutive s* registers, but
-// AirCCallingConvention can't currently do that.
-#if !CPU(ARM_THUMB2)
     RUN_BINARY(testCallSimpleFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
     RUN(testCallFunctionWithHellaFloatArguments());
-#endif
     }
 
 void addShrTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& tasks)

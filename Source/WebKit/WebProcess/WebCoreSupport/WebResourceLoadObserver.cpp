@@ -397,6 +397,24 @@ void WebResourceLoadObserver::logUserInteractionWithReducedTimeResolution(const 
             RefPtr openerDocument = opener->document();
             if (RefPtr openerPage = openerDocument ? openerDocument->page() : nullptr)
                 requestStorageAccessUnderOpener(topFrameDomain, Ref { *WebPage::fromCorePage(*openerPage) }, *openerDocument);
+        } else if (frame && frame->opener()) {
+            if (RefPtr openerCorePage = frame->opener()->page()) {
+                RefPtr openerWebPage = WebPage::fromCorePage(*openerCorePage);
+                RefPtr webPage = WebPage::fromCorePage(*protect(protect(mainFrameDocument)->page()));
+                RELEASE_LOG_FORWARDABLE(SiteIsolation, WebResourceLoadObserverLogUserInteractionWithReducedTimeResolutionWithRemoteFrame, openerWebPage ? openerWebPage->identifier().toUInt64() : 0);
+                if (webPage && openerWebPage) {
+                    if (auto openerURL = webPage->mainFrameOpenerURL(); !openerURL.isEmpty()) {
+                        RegistrableDomain openerDomain { openerURL };
+                        if (topFrameDomain != openerDomain && !mainFrameDocument->hasRequestedPageSpecificStorageAccessWithUserInteraction(topFrameDomain)) {
+                            openerWebPage->addDomainWithPageLevelStorageAccess(openerDomain, topFrameDomain);
+                            // FIXME: this message and the message in requestStorageAccessUnderOpener should instead be sent from the UI process. See rdar://183732418.
+                            Ref connection = WebProcess::singleton().ensureNetworkProcessConnection().connection();
+                            connection->send(Messages::NetworkConnectionToWebProcess::RequestStorageAccessUnderOpener(topFrameDomain, openerWebPage->identifier(), openerDomain), 0);
+                            mainFrameDocument->setHasRequestedPageSpecificStorageAccessWithUserInteraction(topFrameDomain);
+                        }
+                    }
+                }
+            }
         }
     } else {
         LOG_ONCE(SiteIsolation, "Unable to request storage access under opener when logging user interation without access to the main frame document ");

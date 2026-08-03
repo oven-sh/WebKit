@@ -56,10 +56,10 @@ Ref<MathMLOperatorElement> MathMLOperatorElement::create(const QualifiedName& ta
     return adoptRef(*new MathMLOperatorElement(tagName, document));
 }
 
-MathMLOperatorElement::OperatorChar MathMLOperatorElement::parseOperatorChar(const String& string)
+MathMLOperatorElement::OperatorChar MathMLOperatorElement::parseOperatorChar(StringView string)
 {
     OperatorChar operatorChar;
-    String trimmed = string.trim(isASCIIWhitespaceWithoutFF<UChar>);
+    auto trimmed = string.trim(isASCIIWhitespaceWithoutFF<char16_t>);
     if (trimmed.isEmpty())
         return operatorChar;
 
@@ -83,16 +83,16 @@ MathMLOperatorElement::OperatorChar MathMLOperatorElement::parseOperatorChar(con
 
     if (length == 2) {
         // A surrogate pair encoding a single code point (e.g. U+1EEF0, U+1EEF1).
-        if (auto codePoint = StringView(trimmed).convertToSingleCodePoint()) {
+        if (auto codePoint = trimmed.convertToSingleCodePoint()) {
             setOperatorChar(codePoint.value());
             return operatorChar;
         }
         // Base character followed by U+0338 COMBINING LONG SOLIDUS OVERLAY
         // or U+20D2 COMBINING LONG VERTICAL LINE OVERLAY. The base character
         // is used for dictionary lookup and must not be substituted.
-        constexpr UChar combiningLongSolidusOverlay = 0x0338;
-        constexpr UChar combiningLongVerticalLineOverlay = 0x20D2;
-        UChar second = trimmed[1];
+        constexpr char16_t combiningLongSolidusOverlay = 0x0338;
+        constexpr char16_t combiningLongVerticalLineOverlay = 0x20D2;
+        char16_t second = trimmed[1];
         if (second == combiningLongSolidusOverlay || second == combiningLongVerticalLineOverlay) {
             setOperatorChar(trimmed[0]);
             return operatorChar;

@@ -32,7 +32,7 @@
 #include "JITStubRoutine.h"
 #include "JSFunctionInlines.h"
 #include "MacroAssembler.h"
-#include "PropertyInlineCacheClearingWatchpoint.h"
+#include "PropertyInlineCache.h"
 #include "ScratchRegisterAllocator.h"
 #include <wtf/Vector.h>
 
@@ -432,8 +432,6 @@ static constexpr size_t prologueSizeInBytesDataIC = 1;
 #elif CPU(ARM64E)
 static constexpr size_t prologueSizeInBytesDataIC = 4;
 #elif CPU(ARM64)
-static constexpr size_t prologueSizeInBytesDataIC = 0;
-#elif CPU(ARM_THUMB2)
 static constexpr size_t prologueSizeInBytesDataIC = 0;
 #elif CPU(RISCV64)
 static constexpr size_t prologueSizeInBytesDataIC = 0;

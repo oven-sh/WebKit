@@ -103,7 +103,7 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
         return nullptr;
     }
 
-#if !USE(JSVALUE64) || ENABLE(JIT_CAGE) || !(CPU(X86_64) || CPU(ARM64))
+#if ENABLE(JIT_CAGE) || !(CPU(X86_64) || CPU(ARM64))
     UNUSED_PARAM(structure);
     UNUSED_PARAM(signatureRef);
     UNUSED_PARAM(target);

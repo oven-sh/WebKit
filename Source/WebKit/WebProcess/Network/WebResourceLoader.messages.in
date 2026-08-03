@@ -35,6 +35,8 @@ messages -> WebResourceLoader {
     DidFailServiceWorkerLoad(WebCore::ResourceError error)
     ServiceWorkerDidNotHandle()
     UpdateResultingClientIdentifier(WTF::UUID currentIdentifier, WTF::UUID newIdentifier);
+    CancelPendingStreamUpload()
+    ServiceWorkerPendingStreamForwardingNeedData()
     DidBlockAuthenticationChallenge()
 
     StopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied(WebCore::ResourceResponse response)

@@ -508,6 +508,10 @@ public:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Document::PendingScrollEventTargetList);
 
+#if USE(APPLE_INTERNAL_SDK)
+#include <WebKitAdditions/DocumentAdditions.cpp>
+#endif
+
 static const Seconds intersectionObserversInitialUpdateDelay { 2000_ms };
 
 static void CallbackForContainIntrinsicSize(const Vector<Ref<ResizeObserverEntry>>& entries, ResizeObserver& observer)
@@ -2680,59 +2684,9 @@ Vector<CueMatch> Document::findCueMatches(const String& target, FindOptions opti
         return is_lt(treeOrder<ComposedTree>(a.get(), b.get()));
     });
 
-    // FIXME: Decisions still need to be made on whether we should only include videos that are paused, that have been interacted with, etc.
     for (Ref element : elements) {
-        size_t firstMatchForElement = results.size();
-
-        RefPtr tracks = element->textTracks();
-        if (!tracks)
-            continue;
-        MediaTime duration = element->durationMediaTime();
-        for (unsigned i = 0; i < tracks->length(); ++i) {
-            RefPtr track = tracks->item(i);
-            if (!track)
-                continue;
-            if (track->mode() != TextTrack::Mode::Showing)
-                continue;
-            // Only search tracks whose cues carry text the user reads or hears, skip chapters and metadata tracks.
-            switch (track->kind()) {
-            case TextTrack::Kind::Subtitles:
-            case TextTrack::Kind::Captions:
-            case TextTrack::Kind::Descriptions:
-                break;
-            default:
-                continue;
-            }
-            RefPtr cues = track->cues();
-            if (!cues)
-                continue;
-
-            for (unsigned j = 0; j < cues->length(); ++j) {
-                RefPtr cue = cues->item(j);
-                // Only VTTCue carries searchable caption text.
-                RefPtr vttCue = dynamicDowncast<VTTCue>(cue.get());
-                if (!vttCue)
-                    continue;
-                if (duration.isValid() && vttCue->startMediaTime() >= duration)
-                    break;
-                RefPtr cueAsHTML = vttCue->getCueAsHTML();
-                if (cueAsHTML && containsPlainText(cueAsHTML->textContent(), target, options))
-                    results.append({ element.get(), vttCue->startMediaTime() });
-            }
-        }
-
-        // One element can carry several active text tracks (captions, subtitles, etc.), so sort by cue time.
-        std::ranges::stable_sort(results.mutableSubspan(firstMatchForElement), [](auto& a, auto& b) {
-            return a.seekTime < b.seekTime;
-        });
-
-        // Collapse cues that share a start time
-        MediaTime previousSeekTime = MediaTime::invalidTime();
-        results.removeAllMatching([&previousSeekTime](auto& match) {
-            bool isDuplicate = match.seekTime == previousSeekTime;
-            previousSeekTime = match.seekTime;
-            return isDuplicate;
-        }, firstMatchForElement);
+        for (auto& seekTime : element->findCueMatches(target, options))
+            results.append({ element.get(), seekTime });
     }
 
     return results;
@@ -4188,11 +4142,9 @@ bool Document::isFullyActive() const
     if (!frame || frame->document() != this)
         return false;
 
-    // Walk the ancestor chain: the document is fully active only if it reaches the main
-    // frame. A RemoteFrame ancestor lives in another process, but if it became parentless
-    // without being the main frame, its iframe was removed in the parent process and the
-    // chain was severed. (The local chain may briefly lag that removal until this process
-    // receives the IPC; we treat it as up to date.)
+    // The document is fully active only if the ancestor chain reaches the main frame. A
+    // RemoteFrame ancestor lives in another process, but if it became parentless without
+    // being the main frame, its iframe was removed there and the chain was severed.
     for (RefPtr ancestor = frame->tree().parent(); ancestor; ancestor = ancestor->tree().parent()) {
         if (RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor.get())) {
             if (!localAncestor->document() || localAncestor->document()->frame() != localAncestor)
@@ -4202,7 +4154,10 @@ bool Document::isFullyActive() const
         if (!ancestor->tree().parent())
             return ancestor->isMainFrame();
     }
-    return frame->isMainFrame();
+
+    // A provisional frame for a cross-process navigation is parentless by construction until its
+    // load commits, so parentlessness alone does not mean the chain was severed.
+    return frame->isMainFrame() || frame->loader().client().isProvisionalFrame();
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#fully-active-descendant-of-a-top-level-traversable-with-user-attention
@@ -10106,6 +10061,12 @@ bool Document::useElevatedUserInterfaceLevel() const
     return false;
 }
 
+#if !ENABLE(AX_CUSTOM_COLOR_MODE)
+void Document::adjustStyleColorOptionsIfNeeded(OptionSet<StyleColorOptions>&) const
+{
+}
+#endif
+
 OptionSet<StyleColorOptions> Document::styleColorOptions(const Style::ComputedStyle* style) const
 {
     OptionSet<StyleColorOptions> options;
@@ -10115,6 +10076,8 @@ OptionSet<StyleColorOptions> Document::styleColorOptions(const Style::ComputedSt
         options.add(StyleColorOptions::UseDarkAppearance);
     if (useElevatedUserInterfaceLevel())
         options.add(StyleColorOptions::UseElevatedUserInterfaceLevel);
+
+    adjustStyleColorOptionsIfNeeded(options);
     return options;
 }
 
@@ -11632,7 +11595,6 @@ const Style::ComputedStyle& Document::initialStyle() const
         m_cachedInitialStyle = Style::ComputedStyle::createPtr();
 
         m_cachedInitialStyle->setZoom(zoom);
-        m_cachedInitialStyle->setEvaluationTimeZoomEnabled(settings().evaluationTimeZoomEnabled());
 
         auto initialFontFamily = FontFamily { standardFamily, FontFamilyKind::Generic };
         auto initialSpecifiedFontSize = Style::fontSizeForKeyword(CSSValueMedium, false, settingsValues(), inQuirksMode());
@@ -11646,7 +11608,6 @@ const Style::ComputedStyle& Document::initialStyle() const
         fontDescription.setSpecifiedSize(initialSpecifiedFontSize);
         fontDescription.setComputedSize(initialComputedFontSize, zoomForFontDescription);
         fontDescription.setShouldAllowUserInstalledFonts(allowUserInstalledFonts);
-        fontDescription.setEvaluationTimeZoomEnabled(settings().evaluationTimeZoomEnabled());
 
         m_cachedInitialStyle->setFontDescription(WTF::move(fontDescription));
     }
