@@ -20,6 +20,7 @@
 
 #include "config.h"
 #include "Heap.h"
+#include "VerifierSlotVisitor.h"
 
 #include "JSCJSValueInlines.h"
 
@@ -1791,6 +1792,38 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
             writeBarrier(codeBlock);
         });
 
+    if (m_objectSpace.hasImmortalBlocks() && m_collectionScope == CollectionScope::Eden && getenv("JSC_IMM_CHECK")) [[unlikely]] {
+        // Debug: find old(immortal) -> new(unmarked) edges the eden collection missed (i.e. a missing/ineffective barrier).
+        auto checker = makeUnique<VerifierSlotVisitor>(*this);
+        JSCell* parent = nullptr;
+        size_t missed = 0;
+        HashMap<CString, size_t> byEdge;
+        checker->m_edgeHook = [&](JSCell* child) {
+            if (child->isPreciseAllocation() || child->markedBlock().isImmortal())
+                return;
+            if (isMarked(child))
+                return;
+            missed++;
+            auto key = makeString(parent->className(), "(state="_s, static_cast<int>(parent->cellState()), ") -> "_s, child->className());
+            byEdge.add(key.utf8(), 0).iterator->value++;
+        };
+        m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
+            if (!handle->block().isImmortal())
+                return;
+            handle->forEachCell([&](size_t, HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
+                if (!isJSCellKind(kind) || !handle->block().isMarkedRaw(heapCell))
+                    return IterationStatus::Continue;
+                parent = static_cast<JSCell*>(heapCell);
+                parent->methodTable()->visitChildren(parent, *checker);
+                return IterationStatus::Continue;
+            });
+        });
+        if (missed) {
+            dataLogLn("[imm] EDEN MISSED EDGES: ", missed);
+            for (auto& e : byEdge)
+                dataLogLn("    ", e.key, " x", e.value);
+        }
+    }
     updateObjectCounts();
     endMarking();
 
@@ -3070,6 +3103,21 @@ void Heap::freezeCurrentHeapAsImmortalImage()
     collectNow(Sync, CollectionScope::Full);
     PreventCollectionScope preventCollectionScope(*this);
     m_objectSpace.freezeAllBlocksAsImmortal();
+    if (!getenv("JSC_IMM_NO_STATIC_STRINGS")) {
+        size_t count = 0;
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind))
+                return IterationStatus::Continue;
+            JSCell* cell = static_cast<JSCell*>(heapCell);
+            if (cell->isString()) {
+                if (auto* impl = static_cast<JSString*>(cell)->tryGetValueImpl()) { impl->makeStaticForImage(); count++; }
+            }
+            return IterationStatus::Continue;
+        });
+        for (auto& entry : vm().atomStringTable()->table()) { if (StringImpl* impl = entry.get()) { impl->makeStaticForImage(); count++; } }
+        dataLogLnIf(!!getenv("JSC_IMM_LOG"), "[imm] made ", count, " StringImpls static");
+    }
 }
 
 void Heap::addCoreConstraints()
