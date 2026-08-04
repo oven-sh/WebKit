@@ -599,6 +599,12 @@ void VM::queueMicrotask(QueuedTask&& task)
 }
 #endif
 
+void VM::didRestoreFromImage()
+{
+    m_imageEpoch++;
+    m_intlCache = makeUnique<IntlCache>();
+}
+
 VM::~VM()
 {
     // Remove from VMManager before marking as no longer in service or cancelling traps,

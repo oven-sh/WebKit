@@ -68,7 +68,10 @@ private:
 
     static ASCIILiteral granularityString(Granularity);
 
-    std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
+    UBreakIterator* breakIterator(JSGlobalObject*) const;
+
+    mutable std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
+    mutable unsigned m_imageEpoch { 0 };
     String m_locale;
     Granularity m_granularity { Granularity::Grapheme };
 };

@@ -991,6 +991,8 @@ public:
     JS_EXPORT_PRIVATE JSLock& apiLock();
     CodeCache* codeCache() LIFETIME_BOUND { return m_codeCache.get(); }
     IntlCache& intlCache() { return *m_intlCache; }
+    unsigned imageEpoch() const { return m_imageEpoch; } // bumped when this VM resumes in a new process from a heap image; holders of foreign (non-GC-heap) handles revalidate against it
+    JS_EXPORT_PRIVATE void didRestoreFromImage();
 #if USE(BUN_JSC_ADDITIONS)
     // Clears both dateCache and intlCache; callable without including IntlCache.h
     // (which transitively includes ICU headers that Bun's C++ cannot see on macOS).
@@ -1285,6 +1287,7 @@ private:
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
     std::unique_ptr<CodeCache> m_codeCache;
     std::unique_ptr<IntlCache> m_intlCache;
+    unsigned m_imageEpoch { 0 };
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
     UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
     std::unique_ptr<TypeProfiler> m_typeProfiler;
