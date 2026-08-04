@@ -259,6 +259,8 @@ void PreciseAllocation::flip()
     // The dead object newly created before this  1 0      =>      1 0        =>       1 0       =>       0 0    => dead
     //                                                                                                    ^
     //                                                              This is ensured since this function is used only for full GC.
+    if (m_isImmortal)
+        return;
     m_isNewlyAllocated |= isMarked();
     m_isMarked.store(false, std::memory_order_relaxed);
 }
@@ -271,6 +273,8 @@ bool PreciseAllocation::isEmpty()
 void PreciseAllocation::sweep()
 {
     m_weakSet.sweep();
+    if (m_isImmortal)
+        return;
     
     if (m_hasValidCell && !isLive()) {
         if (m_attributes.destruction != DoesNotNeedDestruction)

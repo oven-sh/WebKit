@@ -3164,8 +3164,16 @@ void Heap::freezeCurrentHeapAsImmortalImage()
     }
     PreventCollectionScope preventCollectionScope(*this);
     m_objectSpace.freezeAllBlocksAsImmortal();
+    m_objectSpace.forEachSubspace([](Subspace& subspace) {
+        if (subspace.isIsoSubspace())
+            static_cast<IsoSubspace&>(subspace).abandonLowerTierPreciseFreeListForImage();
+        return IterationStatus::Continue;
+    });
     for (PreciseAllocation* allocation : m_objectSpace.preciseAllocations()) {
-        if (allocation->isLive() && isJSCellKind(allocation->attributes().cellKind))
+        if (!allocation->isLive())
+            continue;
+        allocation->makeImmortal();
+        if (isJSCellKind(allocation->attributes().cellKind))
             m_imagePreciseRoots.append(static_cast<JSCell*>(allocation->cell()));
     }
     {

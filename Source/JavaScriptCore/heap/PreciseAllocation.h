@@ -87,7 +87,9 @@ public:
     void NODELETE flip();
     
     bool isNewlyAllocated() const { return m_isNewlyAllocated; }
-    ALWAYS_INLINE bool isMarked() { return m_isMarked.load(std::memory_order_relaxed); }
+    ALWAYS_INLINE bool isMarked() { return m_isImmortal || m_isMarked.load(std::memory_order_relaxed); }
+    void makeImmortal() { m_isImmortal = true; }
+    bool isImmortal() const { return m_isImmortal; }
     ALWAYS_INLINE bool isMarked(HeapCell*) { return isMarked(); }
     ALWAYS_INLINE bool isMarked(HeapCell*, Dependency) { return isMarked(); }
     ALWAYS_INLINE bool isMarked(HeapVersion, HeapCell*) { return isMarked(); }
@@ -173,6 +175,7 @@ private:
     size_t m_cellSize;
     bool m_isNewlyAllocated : 1;
     bool m_hasValidCell : 1;
+    bool m_isImmortal : 1 { false };
     // Worst case adjustment needed would be halfAlignment + portionOfObjectThatMustFitInCacheLine
     // which is 8 + 16 -> 24 bytes i.e. will fit in 5 bits. If we need more bits in the future, we
     // can also encode this number of uintptr_t words to save 3 bits.

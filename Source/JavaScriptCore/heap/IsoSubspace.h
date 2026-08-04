@@ -54,6 +54,7 @@ public:
 
     void* tryAllocateLowerTierPrecise(size_t cellSize);
     void destroyLowerTierPreciseFreeList();
+    void abandonLowerTierPreciseFreeListForImage() { while (!m_lowerTierPreciseFreeList.isEmpty()) m_lowerTierPreciseFreeList.remove(&*m_lowerTierPreciseFreeList.begin()); } // free cells live in image pages; never hand them out again
 
     void sweep();
 
