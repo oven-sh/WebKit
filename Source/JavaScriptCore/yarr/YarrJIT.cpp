@@ -269,14 +269,19 @@ std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequenc
 
             // Cutoff at 50%. If we could encounter the character more than 50%, then BM search would be useless probably.
             int32_t matchingProbability = (BoyerMooreBitmap::mapSize / 2) - frequency;
-            int32_t point = static_cast<int32_t>(end - begin) * matchingProbability;
-            if (point > biggestPoint) {
+            // A miss skips the whole range, so throughput is stride / (1 + falseCandidateCost * hitRate):
+            // weigh a frequent character against the stride it buys rather than subtracting it from
+            // every position, or one common letter in a long range loses to a short range of rare ones.
+            static constexpr int32_t falseCandidateCost = 2; // re-check cost relative to one skip step
+            int32_t point = static_cast<int32_t>(end - begin) * BoyerMooreBitmap::mapSize * BoyerMooreBitmap::mapSize
+                / (BoyerMooreBitmap::mapSize + falseCandidateCost * frequency);
+            if (matchingProbability >= 0 && point > biggestPoint) {
                 biggestPoint = point;
                 beginResult = begin;
                 endResult = end;
             }
-            // Extending the range only adds characters, so the probability never recovers and a
-            // longer stride only scales an already-negative score further down.
+            // Past a 50% union no search pays for itself; and extending only adds characters, so
+            // once the union crosses that line every longer range from this start does too.
             if (matchingProbability < 0)
                 break;
         }
