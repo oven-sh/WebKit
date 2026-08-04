@@ -344,7 +344,8 @@ void MarkedSpace::prepareForConservativeScan()
         });
     unsigned index = m_preciseAllocationsOffsetForThisCollection;
     for (auto* start = m_preciseAllocationsForThisCollectionBegin; start != m_preciseAllocationsForThisCollectionEnd; ++start, ++index) {
-        (*start)->setIndexInSpace(index);
+        if ((*start)->indexInSpace() != index)
+            (*start)->setIndexInSpace(index);
         ASSERT(m_preciseAllocations[index] == *start);
         ASSERT(m_preciseAllocations[index]->indexInSpace() == index);
     }
