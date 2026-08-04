@@ -782,7 +782,13 @@ public:
     
     static void dumpContextHeader(PrintStream&);
     
-    ConcurrentJSLock& lock() LIFETIME_BOUND { return m_lock; }
+    // Image (immortal) structures take a striped side lock so lock traffic never dirties their pages.
+    ConcurrentJSLock& lock() LIFETIME_BOUND { if (isImageCellForLock(this)) [[unlikely]] return imageSideLock(this); return m_lock; }
+    JS_EXPORT_PRIVATE static bool isImageCellForLock(const Structure*);
+    // Image structures own their property table permanently (transitions clone instead of stealing it), so they are never written.
+    void materializePropertyTableForImage(VM& vm) { if (ensurePropertyTableIfNotEmpty(vm)) setIsPinnedPropertyTable(true); }
+    bool hasPropertyTableForImage() const { return !!m_propertyTableUnsafe.get(); }
+    JS_EXPORT_PRIVATE static ConcurrentJSLock& imageSideLock(const void*);
 
     unsigned propertyHash() const { return m_propertyHash; }
     SeenProperties seenProperties() const { return m_seenProperties; }
@@ -915,7 +921,7 @@ private:
     // and the list of structures that we visited before we got to it. If it returns a
     // non-null structure, it will also lock the structure that it returns; it is your job
     // to unlock it.
-    bool findStructuresAndMapForMaterialization(Vector<Structure*, 8>& structures, Structure*& structure, PropertyTable*&) WTF_ACQUIRES_LOCK_IF(true, structure->m_lock);
+    bool findStructuresAndMapForMaterialization(Vector<Structure*, 8>& structures, Structure*& structure, PropertyTable*&) WTF_ACQUIRES_LOCK_IF(true, structure->lock());
     
     static Structure* toDictionaryTransition(VM&, Structure*, DictionaryKind, DeferredStructureTransitionWatchpointFire* = nullptr);
 

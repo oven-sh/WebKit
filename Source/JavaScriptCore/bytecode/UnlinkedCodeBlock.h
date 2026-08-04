@@ -324,7 +324,7 @@ public:
     static constexpr unsigned maxAge = 7;
 
     unsigned age() const { return m_age; }
-    void resetAge() { m_age = 0; }
+    void resetAge() { if (m_age) m_age = 0; }
 
     NeedsClassFieldInitializer needsClassFieldInitializer() const
     {

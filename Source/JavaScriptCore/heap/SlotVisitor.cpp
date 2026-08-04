@@ -349,6 +349,8 @@ void SlotVisitor::visitImmortalCellAsRoot(const JSCell* cell)
     // Like visitChildren, but never writes the (frozen, already-black) header, so clean image pages stay clean.
     SetCurrentCellScope currentCellScope(*this, cell);
     m_isFirstVisit = false;
+    m_heap.willVisitImageCell(const_cast<JSCell*>(cell));
+    WTF::storeLoadFence();
     cell->methodTable()->visitChildren(const_cast<JSCell*>(cell), *this);
 }
 
@@ -370,7 +372,10 @@ ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
     // not clear to me that it would be correct or profitable to bail here if the object is already
     // black.
     
-    cell->setCellState(CellState::PossiblyBlack);
+    if (cell->cellState() != CellState::PossiblyBlack)
+        cell->setCellState(CellState::PossiblyBlack);
+    else if (m_heap.objectSpace().hasImmortalBlocks() && Heap::isImageCell(cell)) [[unlikely]]
+        m_heap.willVisitImageCell(const_cast<JSCell*>(cell));
     
     WTF::storeLoadFence();
     

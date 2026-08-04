@@ -480,6 +480,13 @@ public:
     JS_EXPORT_PRIVATE size_t extraMemorySize(); // Non-GC memory referenced by GC objects.
     // Experimental: after a synchronous Full GC, freeze every MarkedBlock as an immortal image block.
     JS_EXPORT_PRIVATE void freezeCurrentHeapAsImmortalImage();
+    static bool isImageCell(const JSCell* cell);
+    bool isFreezingImage() const { return m_isFreezingImage; }
+    // Barrier slow path for image owners: side remembered set instead of cellState writes. Returns true if handled.
+    bool rememberImageCell(JSCell*);
+    // Called by the visitor right before it reads an image cell's fields, so a racing store re-remembers it.
+    void willVisitImageCell(JSCell*);
+    size_t imageWrittenCellCount() const { return m_imageWrittenEver.size(); }
     JS_EXPORT_PRIVATE size_t size();
     JS_EXPORT_PRIVATE size_t capacity();
     JS_EXPORT_PRIVATE size_t objectCount();
@@ -904,6 +911,12 @@ private:
     std::unique_ptr<SlotVisitor> m_collectorSlotVisitor;
     std::unique_ptr<SlotVisitor> m_mutatorSlotVisitor;
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
+    // Prototype card table: image cells written since freeze (sticky, Full-GC roots) and this cycle (barrier dedupe).
+    UncheckedKeyHashSet<JSCell*> m_imageWrittenEver;
+    UncheckedKeyHashSet<JSCell*> m_imageRememberedThisCycle;
+    Vector<JSCell*> m_imagePreciseRoots;
+    bool m_isFreezingImage { false };
+    Lock m_imageRememberedLock;
     std::unique_ptr<MarkStackArray> m_raceMarkStack;
     std::unique_ptr<MarkingConstraintSet> m_constraintSet;
     std::unique_ptr<VerifierSlotVisitor> m_verifierSlotVisitor;

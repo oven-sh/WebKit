@@ -123,6 +123,7 @@
 #include "JSFFICallback.h"
 #include "JSFFIFunction.h"
 #include "JSString.h"
+#include "StructureInlines.h"
 #include <wtf/text/ExternalStringImpl.h>
 #endif
 
@@ -1034,6 +1035,10 @@ void Heap::endMarking()
     
     m_objectSpace.endMarking();
     setMutatorShouldBeFenced(Options::forceFencedBarrier());
+    if (m_objectSpace.hasImmortalBlocks()) {
+        Locker locker { m_imageRememberedLock };
+        m_imageRememberedThisCycle.clear();
+    }
 }
 
 size_t Heap::objectCount()
@@ -1221,12 +1226,38 @@ void Heap::deleteUnmarkedCompiledCode()
     m_jitStubRoutines->deleteUnmarkedJettisonedStubRoutines(vm());
 }
 
+bool Heap::isImageCell(const JSCell* cell)
+{
+    return cell && !cell->isPreciseAllocation() && cell->markedBlock().isImmortal();
+}
+
+bool Heap::rememberImageCell(JSCell* cell)
+{
+    // Image cells stay PossiblyBlack forever (their header is never written); dedupe per cycle via the side set.
+    Locker locker { m_imageRememberedLock };
+    m_imageWrittenEver.add(cell);
+    if (!m_imageRememberedThisCycle.add(cell).isNewEntry)
+        return true;
+    m_mutatorMarkStack->append(cell);
+    return true;
+}
+
+void Heap::willVisitImageCell(JSCell* cell)
+{
+    Locker locker { m_imageRememberedLock };
+    m_imageRememberedThisCycle.remove(cell);
+}
+
 void Heap::addToRememberedSet(const JSCell* constCell)
 {
     JSCell* cell = const_cast<JSCell*>(constCell);
     ASSERT(cell);
     ASSERT(!Options::useConcurrentJIT() || !isCompilationThread());
     m_barriersExecuted++;
+    if (m_objectSpace.hasImmortalBlocks() && isImageCell(cell)) [[unlikely]] {
+        rememberImageCell(cell);
+        return;
+    }
     if (m_mutatorShouldBeFenced) {
         WTF::loadLoadFence();
         if (!isMarked(cell)) {
@@ -3100,9 +3131,75 @@ static UNUSED_FUNCTION void visitSamplingProfiler(VM&, AbstractSlotVisitor&) { }
 void Heap::freezeCurrentHeapAsImmortalImage()
 {
     RELEASE_ASSERT(vm().currentThreadIsHoldingAPILock());
+    {
+        // Settle lazily-materialized state that would otherwise be written into image cells after freeze:
+        // every Structure gets its property table now (and the freeze GC below keeps them).
+        HeapIterationScope iterationScope(*this);
+        Vector<Structure*> structures;
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (isJSCellKind(kind) && static_cast<JSCell*>(heapCell)->type() == StructureType)
+                structures.append(static_cast<Structure*>(static_cast<JSCell*>(heapCell)));
+            return IterationStatus::Continue;
+        });
+        DeferGC deferGC(vm());
+        size_t withTable = 0;
+        for (Structure* structure : structures) {
+            structure->materializePropertyTableForImage(vm());
+            if (structure->hasPropertyTableForImage())
+                withTable++;
+        }
+        dataLogLnIf(!!getenv("JSC_IMM_LOG"), "[imm] pre-materialized property tables: ", withTable, " of ", structures.size(), " structures have a table");
+    }
+    m_isFreezingImage = true;
     collectNow(Sync, CollectionScope::Full);
+    m_isFreezingImage = false;
+    if (getenv("JSC_IMM_LOG")) {
+        size_t withTable = 0, total = 0;
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (isJSCellKind(kind) && static_cast<JSCell*>(heapCell)->type() == StructureType) { total++; if (static_cast<Structure*>(static_cast<JSCell*>(heapCell))->hasPropertyTableForImage()) withTable++; }
+            return IterationStatus::Continue;
+        });
+        dataLogLn("[imm] after freeze GC: ", withTable, " of ", total, " structures have a table");
+    }
     PreventCollectionScope preventCollectionScope(*this);
     m_objectSpace.freezeAllBlocksAsImmortal();
+    for (PreciseAllocation* allocation : m_objectSpace.preciseAllocations()) {
+        if (allocation->isLive() && isJSCellKind(allocation->attributes().cellKind))
+            m_imagePreciseRoots.append(static_cast<JSCell*>(allocation->cell()));
+    }
+    {
+        // Cells still PossiblyGrey (remembered around the freeze GC) would get blackened on their next visit; settle them now
+        // (they stay on the mutator mark stack, so nothing is lost) so image headers are never written afterwards.
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (isJSCellKind(kind) && !heapCell->isPreciseAllocation() && heapCell->markedBlock().isImmortal()) {
+                JSCell* cell = static_cast<JSCell*>(heapCell);
+                if (cell->cellState() != CellState::PossiblyBlack) {
+                    rememberImageCell(cell);
+                    cell->setCellState(CellState::PossiblyBlack);
+                }
+            }
+            return IterationStatus::Continue;
+        });
+    }
+    if (getenv("JSC_IMM_LOG")) {
+        size_t states[4] = { 0, 0, 0, 0 };
+        HashMap<CString, size_t> whiteByClass;
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind) || heapCell->isPreciseAllocation() || !heapCell->markedBlock().isImmortal())
+                return IterationStatus::Continue;
+            auto st = static_cast<unsigned>(static_cast<JSCell*>(heapCell)->cellState());
+            states[std::min(st, 3u)]++;
+            if (st == static_cast<unsigned>(CellState::DefinitelyWhite))
+                whiteByClass.add(static_cast<JSCell*>(heapCell)->className(), 0).iterator->value++;
+            return IterationStatus::Continue;
+        });
+        dataLogLn("[imm] frozen cellState histogram: PossiblyBlack=", states[0], " DefinitelyWhite=", states[1], " PossiblyGrey=", states[2], " other=", states[3]);
+        for (auto& e : whiteByClass)
+            dataLogLn("    white: ", e.key, " x", e.value);
+    }
     if (!getenv("JSC_IMM_NO_STATIC_STRINGS")) {
         size_t count = 0;
         HeapIterationScope iterationScope(*this);
@@ -3127,31 +3224,26 @@ void Heap::addCoreConstraints()
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             if (!m_objectSpace.hasImmortalBlocks())
                 return;
-            // Eden collections see mutated image cells through the remembered set; a Full collection re-traces from roots,
-            // so (prototype) treat every live image cell as a root and visit its children read-only.
+            // Unwritten image cells can only reference image cells or the precise allocations that existed at freeze;
+            // so the Full-GC roots are: every image cell written since freeze (side card set) + those precise allocations.
             if (m_collectionScope != CollectionScope::Full)
                 return;
             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
-            size_t visited = 0, blocks = 0;
-            m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
-                if (!handle->block().isImmortal())
-                    return;
-                blocks++;
-                handle->forEachCell([&](size_t, HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
-                    if (!handle->block().isMarkedRaw(heapCell))
-                        return IterationStatus::Continue;
-                    if (isJSCellKind(kind)) {
-                        visited++;
-                        if constexpr (std::is_same_v<std::decay_t<decltype(visitor)>, SlotVisitor>)
-                            visitor.visitImmortalCellAsRoot(static_cast<JSCell*>(heapCell));
-                        else
-                            visitor.appendUnbarriered(JSValue(static_cast<JSCell*>(heapCell)));
-                    }
-                    return IterationStatus::Continue;
-                });
-            });
+            Vector<JSCell*> written;
+            {
+                Locker locker { m_imageRememberedLock };
+                written = copyToVector(m_imageWrittenEver);
+            }
+            for (JSCell* cell : written) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(visitor)>, SlotVisitor>)
+                    visitor.visitImmortalCellAsRoot(cell);
+                else
+                    visitor.appendUnbarriered(JSValue(cell));
+            }
+            for (JSCell* cell : m_imagePreciseRoots)
+                visitor.appendUnbarriered(JSValue(cell));
             if (getenv("JSC_IMM_LOG"))
-                dataLogLn("[imm] full GC visited ", visited, " immortal cells in ", blocks, " blocks");
+                dataLogLn("[imm] full GC roots: ", written.size(), " written image cells, ", m_imagePreciseRoots.size(), " precise allocations");
         })),
         ConstraintVolatility::GreyedByExecution);
 

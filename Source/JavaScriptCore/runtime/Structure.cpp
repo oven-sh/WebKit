@@ -44,6 +44,17 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+bool Structure::isImageCellForLock(const Structure* structure)
+{
+    return Heap::isImageCell(structure);
+}
+
+ConcurrentJSLock& Structure::imageSideLock(const void* p)
+{
+    static std::array<ConcurrentJSLock, 512> locks;
+    return locks[(reinterpret_cast<uintptr_t>(p) >> 5) & 511];
+}
+
 template<typename DetailsFunc>
 void Structure::checkOffsetConsistency(PropertyTable* propertyTable, const DetailsFunc& detailsFunc) const
 {
@@ -436,7 +447,7 @@ bool Structure::findStructuresAndMapForMaterialization(Vector<Structure*, 8>& st
     table = nullptr;
 
     for (structure = this; structure; structure = structure->previousID()) {
-        structure->m_lock.lock();
+        structure->lock().lock();
         
         table = structure->propertyTableOrNull();
         if (table) {
@@ -446,7 +457,7 @@ bool Structure::findStructuresAndMapForMaterialization(Vector<Structure*, 8>& st
         }
         
         structures.append(structure);
-        structure->m_lock.unlock();
+        structure->lock().unlock();
     }
     
     ASSERT(!structure);
@@ -471,14 +482,14 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
     unsigned capacity = numberOfSlotsForMaxOffset(maxOffset(), m_inlineCapacity);
     if (didFindStructure) {
         table = table->copy(vm, capacity);
-        structure->m_lock.unlock();
+        structure->lock().unlock();
     } else
         table = PropertyTable::create(vm, capacity);
     
     // Must hold the lock on this structure, since we will be modifying this structure's
     // property map. We don't want getConcurrently() to see the property map in a half-baked
     // state.
-    GCSafeConcurrentJSLocker locker(m_lock, vm);
+    GCSafeConcurrentJSLocker locker(lock(), vm);
     if (setPropertyTable)
         this->setPropertyTable(vm, table);
 
@@ -596,7 +607,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     // case all is well.  If it wasn't for the lock, the GC would have TOCTOU: if could read
     // protectPropertyTableWhileTransitioning before we set it to true, and then blow the table away after.
     {
-        ConcurrentJSLocker locker(transition->m_lock);
+        ConcurrentJSLocker locker(transition->lock());
         transition->setProtectPropertyTableWhileTransitioning(true);
     }
 
@@ -617,7 +628,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
 
     checkOffset(transition->transitionOffset(), transition->inlineCapacity());
     if (!structure->hasBeenDictionary()) {
-        GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
+        GCSafeConcurrentJSLocker locker(structure->lock(), vm);
         structure->m_transitionTable.add(vm, structure, transition);
     }
     transition->checkOffsetConsistency();
@@ -668,7 +679,7 @@ Structure* Structure::removePropertyTransitionFromExistingStructureConcurrently(
     unsigned attributes = 0;
     if (structure->getConcurrently(propertyName.uid(), attributes) == invalidOffset)
         return nullptr;
-    ConcurrentJSLocker locker(structure->m_lock);
+    ConcurrentJSLocker locker(structure->lock());
     return removePropertyTransitionFromExistingStructureImpl(structure, propertyName, attributes, offset);
 }
 
@@ -693,7 +704,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
 
     // While we are deleting the property, we need to make sure the table is not cleared.
     {
-        ConcurrentJSLocker locker(transition->m_lock);
+        ConcurrentJSLocker locker(transition->lock());
         transition->setProtectPropertyTableWhileTransitioning(true);
     }
 
@@ -714,7 +725,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
 
     checkOffset(transition->transitionOffset(), transition->inlineCapacity());
     if (!structure->hasBeenDictionary()) {
-        GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
+        GCSafeConcurrentJSLocker locker(structure->lock(), vm);
         structure->m_transitionTable.add(vm, structure, transition);
     }
     transition->checkOffsetConsistency();
@@ -744,13 +755,13 @@ Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JS
     // Let's pin the table and break the edge to the previous Structure.
     Structure* transition = Structure::create(vm, structure, &deferred);
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
-    transition->pin(Locker { transition->m_lock }, vm, table);
+    transition->pin(Locker { transition->lock() }, vm, table);
     transition->m_prototype.set(vm, transition, prototype);
     transition->setTransitionKind(TransitionKind::ChangePrototype);
     transition->setMaxOffset(vm, structure->maxOffset());
     checkOffset(transition->transitionOffset(), transition->inlineCapacity());
     if (shouldChain) {
-        GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
+        GCSafeConcurrentJSLocker locker(structure->lock(), vm);
         structure->m_transitionTable.add(vm, structure, transition);
     }
 
@@ -767,7 +778,7 @@ Structure* Structure::changeGlobalProxyTargetTransition(VM& vm, Structure* struc
     transition->setRealm(vm, globalObject);
 
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
-    transition->pin(Locker { transition->m_lock }, vm, table);
+    transition->pin(Locker { transition->lock() }, vm, table);
     transition->setMaxOffset(vm, structure->maxOffset());
 
     transition->checkOffsetConsistency();
@@ -800,7 +811,7 @@ Structure* Structure::attributeChangeTransitionToExistingStructure(Structure* st
 
 Structure* Structure::attributeChangeTransitionToExistingStructureConcurrently(Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset)
 {
-    ConcurrentJSLocker locker(structure->m_lock);
+    ConcurrentJSLocker locker(structure->lock());
     return attributeChangeTransitionToExistingStructureImpl(structure, propertyName, attributes, offset);
 }
 
@@ -834,7 +845,7 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
 
     {
-        ConcurrentJSLocker locker(transition->m_lock);
+        ConcurrentJSLocker locker(transition->lock());
         transition->setProtectPropertyTableWhileTransitioning(true);
     }
 
@@ -855,7 +866,7 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
 
     checkOffset(transition->transitionOffset(), transition->inlineCapacity());
     if (!structure->hasBeenDictionary()) {
-        GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
+        GCSafeConcurrentJSLocker locker(structure->lock(), vm);
         structure->m_transitionTable.add(vm, structure, transition);
     }
     transition->checkOffsetConsistency();
@@ -871,7 +882,7 @@ Structure* Structure::toDictionaryTransition(VM& vm, Structure* structure, Dicti
     Structure* transition = Structure::create(vm, structure, deferred);
 
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
-    transition->pin(Locker { transition->m_lock }, vm, table);
+    transition->pin(Locker { transition->lock() }, vm, table);
     transition->setMaxOffset(vm, structure->maxOffset());
     transition->setDictionaryKind(kind);
     transition->setHasBeenDictionary(true);
@@ -917,7 +928,7 @@ PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm)
     if (result) {
         if (isPinnedPropertyTable())
             return result->copy(vm, result->size() + 1);
-        ConcurrentJSLocker locker(m_lock);
+        ConcurrentJSLocker locker(lock());
         setPropertyTable(vm, nullptr);
         return result;
     }
@@ -963,7 +974,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze);
 
         PropertyTable* table = structure->copyPropertyTableForPinning(vm);
-        transition->pinForCaching(Locker { transition->m_lock }, vm, table);
+        transition->pinForCaching(Locker { transition->lock() }, vm, table);
         transition->setMaxOffset(vm, structure->maxOffset());
         
         table = transition->propertyTableOrNull();
@@ -988,9 +999,9 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     
     if (structure->isDictionary()) {
         PropertyTable* table = transition->ensurePropertyTable(vm);
-        transition->pin(Locker { transition->m_lock }, vm, table);
+        transition->pin(Locker { transition->lock() }, vm, table);
     } else {
-        Locker locker { structure->m_lock };
+        Locker locker { structure->lock() };
         structure->m_transitionTable.add(vm, structure, transition);
     }
 
@@ -1047,7 +1058,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     if (beforeOutOfLineCapacity != afterOutOfLineCapacity)
         cellLocker = Locker { object->cellLock() };
 
-    GCSafeConcurrentJSLocker locker(m_lock, vm);
+    GCSafeConcurrentJSLocker locker(lock(), vm);
 
     object->setStructureIDDirectly(id().nuke());
     WTF::storeStoreFence();
@@ -1136,7 +1147,7 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     
     if (!hasRareData())
         allocateRareData(vm);
-    ConcurrentJSLocker locker(m_lock);
+    ConcurrentJSLocker locker(lock());
     Structure* structure = this;
     StructureRareData* rareData = structure->rareData();
     auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
@@ -1243,8 +1254,8 @@ PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attr
         case TransitionKind::PropertyDeletion:
             if (structure->m_transitionPropertyName.get() == uid) {
                 if (didFindStructure) {
-                    assertIsHeld(tableStructure->m_lock); // Sadly Clang needs some help here.
-                    tableStructure->m_lock.unlock();
+                    assertIsHeld(tableStructure->lock()); // Sadly Clang needs some help here.
+                    tableStructure->lock().unlock();
                 }
                 return invalidOffset;
             }
@@ -1260,8 +1271,8 @@ PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attr
             PropertyOffset result = structure->transitionOffset();
             attributes = structure->transitionPropertyAttributes();
             if (didFindStructure) {
-                assertIsHeld(tableStructure->m_lock); // Sadly Clang needs some help here.
-                tableStructure->m_lock.unlock();
+                assertIsHeld(tableStructure->lock()); // Sadly Clang needs some help here.
+                tableStructure->lock().unlock();
             }
             return result;
         }
@@ -1270,7 +1281,7 @@ PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attr
     PropertyOffset result = invalidOffset;
 
     if (didFindStructure) {
-        assertIsHeld(tableStructure->m_lock); // Sadly Clang needs some help here.
+        assertIsHeld(tableStructure->lock()); // Sadly Clang needs some help here.
         // Because uid is UniquedStringImpl, it is guaranteed that the hash is already computed.
         // So we can use PropertyTable::get even from the concurrent compilers.
         // Even though taking a lock, all you can do is getting value from this table. We must not modify the table
@@ -1280,7 +1291,7 @@ PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attr
             result = offset;
             attributes = entryAttributes;
         }
-        tableStructure->m_lock.unlock();
+        tableStructure->lock().unlock();
     }
 
     return result;
@@ -1407,13 +1418,18 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     Base::visitChildren(thisObject, visitor);
     
-    ConcurrentJSLocker locker(thisObject->m_lock);
+    // Image structures: visit without taking lock() (an identity write) and without dropping caches, so their pages stay clean.
+    bool isImage = Heap::isImageCell(thisObject);
+    std::optional<ConcurrentJSLocker> locker;
+    if (!isImage)
+        locker.emplace(thisObject->lock());
     
     visitor.append(thisObject->m_realm);
     if (!thisObject->isObject()) {
         // We do not need to clear JSPropertyNameEnumerator since it is never cached for non-object Structure.
         // We do not have code clearing JSPropertyNameEnumerator since this function can be called concurrently.
-        thisObject->m_cachedPrototypeChain.clear();
+        if (!isImage || thisObject->m_cachedPrototypeChain)
+            thisObject->m_cachedPrototypeChain.clear();
 #if ASSERT_ENABLED
         if (auto* rareData = thisObject->tryRareData())
             ASSERT(!rareData->cachedPropertyNameEnumerator());
@@ -1424,7 +1440,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
     visitor.append(thisObject->m_previousOrRareData);
 
-    if (thisObject->isPinnedPropertyTable() || thisObject->protectPropertyTableWhileTransitioning()) {
+    if (isImage || visitor.heap()->isFreezingImage() || thisObject->isPinnedPropertyTable() || thisObject->protectPropertyTableWhileTransitioning()) {
         // NOTE: This can interleave in pin(), in which case it may see a null property table.
         // That's fine, because then the barrier will fire and we will scan this again.
         visitor.append(thisObject->m_propertyTableUnsafe);
@@ -1703,7 +1719,7 @@ Structure* Structure::setBrandTransitionFromExistingStructureImpl(Structure* str
 
 Structure* Structure::setBrandTransitionFromExistingStructureConcurrently(Structure* structure, UniquedStringImpl* brandID)
 {
-    ConcurrentJSLocker locker(structure->m_lock);
+    ConcurrentJSLocker locker(structure->lock());
     return setBrandTransitionFromExistingStructureImpl(structure, brandID);
 }
 
@@ -1726,9 +1742,9 @@ Structure* Structure::setBrandTransition(VM& vm, Structure* structure, Symbol* b
 
     if (structure->isDictionary()) {
         PropertyTable* table = transition->ensurePropertyTable(vm);
-        transition->pin(Locker { transition->m_lock }, vm, table);
+        transition->pin(Locker { transition->lock() }, vm, table);
     } else {
-        Locker locker { structure->m_lock };
+        Locker locker { structure->lock() };
         structure->m_transitionTable.add(vm, structure, transition);
     }
 

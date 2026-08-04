@@ -357,7 +357,8 @@ public:
             protect(fat())->fireAll(vm, fireDetails);
             return;
         }
-        if (decodeState(m_data) == ClearWatchpoint)
+        // Already-invalidated thin sets are terminal: skip the identity store (keeps clean/shared pages clean).
+        if (decodeState(m_data) != IsWatched)
             return;
         m_data = encodeState(IsInvalidated);
         WTF::storeStoreFence();
@@ -367,7 +368,7 @@ public:
     {
         if (isFat())
             protect(fat())->invalidate(vm, detail);
-        else
+        else if (decodeState(m_data) != IsInvalidated)
             m_data = encodeState(IsInvalidated);
     }
     
