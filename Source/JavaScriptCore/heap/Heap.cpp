@@ -1228,17 +1228,26 @@ void Heap::deleteUnmarkedCompiledCode()
 
 bool Heap::isImageCell(const JSCell* cell)
 {
-    return cell && !cell->isPreciseAllocation() && cell->markedBlock().isImmortal();
+    if (!cell)
+        return false;
+    if (cell->isPreciseAllocation())
+        return cell->preciseAllocation().isImmortal();
+    return cell->markedBlock().isImmortal();
 }
 
 bool Heap::rememberImageCell(JSCell* cell)
 {
     // Image cells stay PossiblyBlack forever (their header is never written); dedupe per cycle via the side set.
-    Locker locker { m_imageRememberedLock };
-    m_imageWrittenEver.add(cell);
-    if (!m_imageRememberedThisCycle.add(cell).isNewEntry)
-        return true;
-    m_mutatorMarkStack->append(cell);
+    static const bool logRemember = !!getenv("JSC_IMM_LOG_REMEMBER");
+    bool isNew; size_t total;
+    {
+        Locker locker { m_imageRememberedLock };
+        isNew = m_imageWrittenEver.add(cell).isNewEntry;
+        total = m_imageWrittenEver.size();
+        if (m_imageRememberedThisCycle.add(cell).isNewEntry)
+            m_mutatorMarkStack->append(cell);
+    }
+    if (logRemember && isNew) dataLogLn("[imm] remember ", RawPointer(cell), " ", cell->className(), " total=", total);
     return true;
 }
 
@@ -3173,8 +3182,12 @@ void Heap::freezeCurrentHeapAsImmortalImage()
         if (!allocation->isLive())
             continue;
         allocation->makeImmortal();
-        if (isJSCellKind(allocation->attributes().cellKind))
-            m_imagePreciseRoots.append(static_cast<JSCell*>(allocation->cell()));
+        if (isJSCellKind(allocation->attributes().cellKind)) {
+            JSCell* cell = static_cast<JSCell*>(allocation->cell());
+            m_imagePreciseRoots.append(cell);
+            if (cell->cellState() != CellState::PossiblyBlack)
+                cell->setCellState(CellState::PossiblyBlack); // so stores into it take the barrier slow path (-> side remembered set) like every other image cell
+        }
     }
     {
         // Cells still PossiblyGrey (remembered around the freeze GC) would get blackened on their next visit; settle them now
@@ -3248,8 +3261,12 @@ void Heap::addCoreConstraints()
                 else
                     visitor.appendUnbarriered(JSValue(cell));
             }
-            for (JSCell* cell : m_imagePreciseRoots)
-                visitor.appendUnbarriered(JSValue(cell));
+            for (JSCell* cell : m_imagePreciseRoots) { // immortal too: appendUnbarriered would see "already marked" and never look inside
+                if constexpr (std::is_same_v<std::decay_t<decltype(visitor)>, SlotVisitor>)
+                    visitor.visitImmortalCellAsRoot(cell);
+                else
+                    visitor.appendUnbarriered(JSValue(cell));
+            }
             if (getenv("JSC_IMM_LOG"))
                 dataLogLn("[imm] full GC roots: ", written.size(), " written image cells, ", m_imagePreciseRoots.size(), " precise allocations");
         })),
