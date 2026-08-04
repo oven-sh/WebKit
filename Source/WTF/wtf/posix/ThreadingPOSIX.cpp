@@ -672,6 +672,33 @@ Thread& Thread::initializeTLS(Ref<Thread>&& thread)
     return threadInTLS;
 }
 
+void Thread::adoptCurrentThreadForImage()
+{
+    pthread_t handle = pthread_self();
+    establishPlatformSpecificHandle(handle);
+    m_stack = StackBounds::currentThreadStackBounds();
+    m_savedLastStackTop = stack().origin();
+    m_currentAtomStringTable = m_currentAtomStringTable ? m_currentAtomStringTable : nullptr;
+#if !HAVE(FAST_TLS)
+    // The image's s_key was created in the build process; re-create keys here until that slot exists in this process.
+    for (int i = 0; i < 512; i++) {
+        pthread_key_t key;
+        if (pthread_key_create(&key, destructTLS))
+            break;
+        if (key == s_key)
+            break;
+        if (key > s_key) {
+            pthread_key_delete(key);
+            break;
+        }
+    }
+    threadSpecificSet(s_key, this);
+#else
+    _pthread_setspecific_direct(WTF_THREAD_DATA_KEY, this);
+    pthread_key_init_np(WTF_THREAD_DATA_KEY, &destructTLS);
+#endif
+}
+
 void Thread::destructTLS(void* data)
 {
     Thread* thread = static_cast<Thread*>(data);
