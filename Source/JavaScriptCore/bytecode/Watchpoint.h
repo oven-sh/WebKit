@@ -279,6 +279,7 @@ private:
     int8_t m_setIsNotEmpty;
 
     SentinelLinkedList<Watchpoint, BasicRawSentinelNode<Watchpoint>> m_set;
+    SentinelLinkedList<Watchpoint, BasicRawSentinelNode<Watchpoint>>* imageSideChain(bool createIfMissing); // heap image: post-restore additions to an imaged set
 };
 
 // InlineWatchpointSet is a low-overhead, non-copyable watchpoint set in which
