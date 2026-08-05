@@ -27,6 +27,7 @@
 #include "UnlinkedMetadataTable.h"
 
 #include "BytecodeStructs.h"
+#include "UnlinkedMetadataTableInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -178,6 +179,33 @@ UnlinkedMetadataTable::~UnlinkedMetadataTable()
     if (m_hasMetadata)
         MetadataTableMalloc::free(m_rawBuffer);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+Ref<UnlinkedMetadataTable> UnlinkedMetadataTable::createFromEntryCounts(unsigned numValueProfiles, std::span<const unsigned, s_numOpcodesWithMetadata> entryCounts)
+{
+    Ref table = adoptRef(*new UnlinkedMetadataTable);
+    table->m_hasMetadata = true;
+    table->m_numValueProfiles = numValueProfiles;
+    for (unsigned i = 0; i < s_numOpcodesWithMetadata; ++i)
+        table->preprocessBuffer()[i] = entryCounts[i];
+    table->finalize();
+    return table;
+}
+
+// Inverse of finalize(); the same range computation MetadataTable::forEach() performs.
+unsigned UnlinkedMetadataTable::entryCount(OpcodeID opcodeID) const
+{
+    ASSERT(m_isFinalized && m_hasMetadata);
+    ASSERT(static_cast<unsigned>(opcodeID) < s_numOpcodesWithMetadata);
+    unsigned start = m_is32Bit ? offsetTable32()[opcodeID] : offsetTable16()[opcodeID];
+    unsigned end = m_is32Bit ? offsetTable32()[opcodeID + 1] : offsetTable16()[opcodeID + 1];
+    unsigned alignedStart = roundUpToMultipleOf(metadataAlignment(opcodeID), start);
+    if (alignedStart >= end)
+        return 0;
+    ASSERT(!((end - alignedStart) % metadataSize(opcodeID)));
+    return (end - alignedStart) / metadataSize(opcodeID);
+}
+#endif
 
 } // namespace JSC
 

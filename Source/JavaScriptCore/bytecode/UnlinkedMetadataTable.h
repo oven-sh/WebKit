@@ -151,6 +151,14 @@ private:
     // Then, s_offset16TableSize and s_offset16TableSize + s_offset32TableSize offer the same alignment characteristics for subsequent Metadata.
     static constexpr unsigned s_offset32TableSize = roundUpToMultipleOf<s_maxMetadataAlignment>(s_offsetTableEntries * sizeof(Offset32));
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The bytecode cache stores per-opcode entry counts rather than the finalized offsets, because offsets are
+    // computed from sizeof(Op::Metadata) and must be recomputed by the process that decodes the cache.
+    static constexpr unsigned s_numOpcodesWithMetadata = s_offsetTableEntries - 1;
+    static Ref<UnlinkedMetadataTable> createFromEntryCounts(unsigned numValueProfiles, std::span<const unsigned, s_numOpcodesWithMetadata>);
+    unsigned entryCount(OpcodeID) const;
+#endif
+
     void* buffer() const { return m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData); }
     Offset32* preprocessBuffer() const { return std::bit_cast<Offset32*>(m_rawBuffer); }
 

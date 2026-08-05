@@ -44,6 +44,9 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "UnlinkedProgramCodeBlock.h"
 #include "VariableEnvironmentInlines.h"
+#include <bit>
+#include <climits>
+#include <limits>
 #include <wtf/FileHandle.h>
 #include <wtf/InlineMap.h>
 #include <wtf/MallocSpan.h>
@@ -73,6 +76,47 @@ struct SourceTypeImpl<T, std::enable_if_t<!std::is_fundamental<T>::value && !std
 
 template<typename T>
 using SourceType = typename SourceTypeImpl<T>::type;
+
+#if USE(BUN_JSC_ADDITIONS)
+// Bun decodes this cache on a different OS/CPU than encoded it (`bun build --compile --bytecode --target=...`), and
+// the format is the in-memory image of whatever is placed in the Encoder's buffer. So the buffer may only contain
+// types whose object representation is identical under the Itanium and MSVC C++ ABIs on every 64-bit little-endian
+// target, laid out without reference to this process's struct sizes, heap addresses or page size.
+// isPortablySerializable() enforces what the compiler can see at the two allocation entry points. What it cannot
+// see inside a Cached* class — bit-fields must all be declared `unsigned` (MSVC starts a new storage unit when the
+// declared type changes), and data members must not follow a base class that has tail padding (Itanium places them
+// inside it, MSVC never does, Apple arm64 only for some bases) — is caught by Bun's test that the encoder produces
+// byte-identical output on every platform.
+static_assert(std::endian::native == std::endian::little);
+static_assert(sizeof(void*) == 8 && sizeof(size_t) == 8 && sizeof(ptrdiff_t) == 8 && sizeof(intptr_t) == 8);
+static_assert(CHAR_BIT == 8 && sizeof(bool) == 1 && sizeof(int) == 4 && sizeof(long long) == 8);
+static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
+#if USE(BIGINT32)
+#error "CachedJSValue stores EncodedJSValue verbatim; BigInt32 immediates would not decode on builds without it"
+#endif
+
+static constexpr size_t cachedTypeMaxAlignment = 8;
+static constexpr size_t encoderPageSize = 16 * KB;
+
+template<typename T> concept CachedType = requires { typename T::SourceType_; };
+
+template<typename T>
+static consteval bool isPortablySerializable()
+{
+    using U = std::remove_cv_t<T>;
+    static_assert(alignof(U) <= cachedTypeMaxAlignment);
+    // With a destructor, MSVC (but not Itanium) prepends an array cookie to placement `new T[n]`.
+    static_assert(std::is_trivially_destructible_v<U>);
+    if constexpr (!CachedType<U>) {
+        static_assert(!std::is_same_v<U, long> && !std::is_same_v<U, unsigned long> && !std::is_same_v<U, wchar_t> && !std::is_same_v<U, long double>, "size differs between LP64 and LLP64");
+        static_assert(std::has_unique_object_representations_v<U> || std::is_floating_point_v<U>, "this type is copied into the bytecode cache verbatim but has padding or bit-field slack, so its layout is ABI-specific; encode its fields through a Cached* class instead");
+    }
+    return true;
+}
+#else
+static constexpr size_t cachedTypeMaxAlignment = alignof(std::max_align_t);
+template<typename> static consteval bool isPortablySerializable() { return true; }
+#endif
 
 class Encoder {
     WTF_MAKE_NONCOPYABLE(Encoder);
@@ -121,6 +165,7 @@ public:
     template<typename T, typename... Args>
     T* malloc(Args&&... args)
     {
+        static_assert(alignof(T) <= cachedTypeMaxAlignment && std::is_trivially_destructible_v<T>);
         return new (malloc(sizeof(T)).buffer()) T(std::forward<Args>(args)...);
     }
 
@@ -208,13 +253,18 @@ private:
     class Page {
     public:
         Page(size_t size)
+#if USE(BUN_JSC_ADDITIONS)
+            // Padding bytes inside the placed objects are never written; zeroed pages keep them out of the output.
+            : m_buffer(MallocSpan<uint8_t, VMMalloc>::zeroedMalloc(size))
+#else
             : m_buffer(MallocSpan<uint8_t, VMMalloc>::malloc(size))
+#endif
         {
         }
 
         bool malloc(size_t size, ptrdiff_t& result)
         {
-            size_t alignment = std::min(alignof(std::max_align_t), static_cast<size_t>(roundUpToPowerOfTwo(size)));
+            size_t alignment = std::min(cachedTypeMaxAlignment, static_cast<size_t>(roundUpToPowerOfTwo(size)));
             ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
             size = roundUpToMultipleOf(alignment, size);
             if (static_cast<size_t>(offset + size) > capacity())
@@ -246,7 +296,7 @@ private:
 
         void NODELETE alignEnd()
         {
-            ptrdiff_t size = roundUpToMultipleOf(alignof(std::max_align_t), m_offset);
+            ptrdiff_t size = roundUpToMultipleOf(cachedTypeMaxAlignment, m_offset);
             if (size == m_offset)
                 return;
             RELEASE_ASSERT(static_cast<size_t>(size) <= capacity());
@@ -262,7 +312,11 @@ private:
 
     void allocateNewPage(size_t size = 0)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        static constexpr size_t minPageSize = encoderPageSize;
+#else
         static size_t minPageSize = pageSize();
+#endif
         if (m_currentPage) {
             m_currentPage->alignEnd();
             m_baseOffset += m_currentPage->size();
@@ -457,6 +511,7 @@ protected:
 #endif
     T* allocate(Encoder& encoder, unsigned size = 1)
     {
+        static_assert(isPortablySerializable<T>());
         uint8_t* result = allocate(encoder, sizeof(T) * size);
         ASSERT(!(std::bit_cast<uintptr_t>(result) % alignof(T)));
         return new (result) T[size];
@@ -465,6 +520,12 @@ protected:
 private:
     constexpr static ptrdiff_t s_invalidOffset = std::numeric_limits<ptrdiff_t>::max();
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+// Most Cached* classes declare their data members after this non-empty base, which is only ABI-independent
+// because it has no tail padding for the Itanium ABI to place them in.
+static_assert(sizeof(VariableLengthObject<void*>) == __datasizeof(VariableLengthObject<void*>));
+#endif
 
 template<typename T, typename Source = SourceType<T>>
 class CachedArray : public VariableLengthObject<Source*> {
@@ -665,6 +726,7 @@ public:
     }
 
 private:
+    static_assert(isPortablySerializable<First>() && isPortablySerializable<Second>());
     First m_first;
     Second m_second;
 };
@@ -675,14 +737,21 @@ class CachedHashMap : public VariableLengthObject<HashMap<SourceType<Key>, Sourc
     using Map = HashMap<K, V, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits, shouldValidateKey>;
 
 public:
+    using Entries = Vector<std::pair<SourceType<Key>, SourceType<Value>>>;
+
     template<WTF::ShouldValidateKey shouldValidateKey>
     void encode(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map)
     {
-        SourceType<decltype(m_entries)> entriesVector(map.size());
+        Entries entriesVector(map.size());
         unsigned i = 0;
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
-        m_entries.encode(encoder, entriesVector);
+        encode(encoder, entriesVector);
+    }
+
+    void encode(Encoder& encoder, const Entries& entries)
+    {
+        m_entries.encode(encoder, entries);
     }
 
     template<WTF::ShouldValidateKey shouldValidateKey>
@@ -942,7 +1011,15 @@ class CachedStringJumpTable : public CachedObject<UnlinkedStringJumpTable> {
 public:
     void encode(Encoder& encoder, const UnlinkedStringJumpTable& jumpTable)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // m_offsetTable hashes StringImpl pointers; encode in m_indexInTable order so the output doesn't depend on them.
+        decltype(m_offsetTable)::Entries entries(jumpTable.m_offsetTable.size());
+        for (const auto& entry : jumpTable.m_offsetTable)
+            entries[entry.value.m_indexInTable] = { entry.key, entry.value };
+        m_offsetTable.encode(encoder, entries);
+#else
         m_offsetTable.encode(encoder, jumpTable.m_offsetTable);
+#endif
         m_minLength = jumpTable.m_minLength;
         m_maxLength = jumpTable.m_maxLength;
         m_defaultOffset = jumpTable.m_defaultOffset;
@@ -1012,6 +1089,31 @@ private:
     CachedVector<T> m_entries;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// Copying UnlinkedHandlerInfo verbatim would put the 30 unspecified bits next to its 2-bit HandlerType in the output.
+class CachedHandlerInfo : public CachedObject<UnlinkedHandlerInfo> {
+public:
+    void encode(Encoder&, const UnlinkedHandlerInfo& handlerInfo)
+    {
+        m_start = handlerInfo.start;
+        m_end = handlerInfo.end;
+        m_target = handlerInfo.target;
+        m_type = static_cast<unsigned>(handlerInfo.type());
+    }
+
+    void decode(Decoder&, UnlinkedHandlerInfo& handlerInfo) const
+    {
+        handlerInfo = UnlinkedHandlerInfo(m_start, m_end, m_target, static_cast<HandlerType>(m_type));
+    }
+
+private:
+    unsigned m_start;
+    unsigned m_end;
+    unsigned m_target;
+    unsigned m_type;
+};
+#endif
+
 class CachedCodeBlockRareData : public CachedObject<UnlinkedCodeBlock::RareData> {
 public:
     void encode(Encoder& encoder, const UnlinkedCodeBlock::RareData& rareData)
@@ -1043,7 +1145,11 @@ public:
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    CachedVector<CachedHandlerInfo> m_exceptionHandlers;
+#else
     CachedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
+#endif
     CachedVector<CachedSimpleJumpTable> m_unlinkedSwitchJumpTables;
     CachedVector<CachedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
@@ -1528,6 +1634,44 @@ private:
     CachedVector<uint8_t, 0, UnsafeVectorOverflow, InstructionStreamBufferMalloc> m_instructions;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// The finalized table holds byte offsets computed from this build's sizeof(Op::Metadata), which differs between
+// ABIs (e.g. anything embedding CallLinkInfo is 16 bytes larger under MSVC). Entry counts are what's portable; the
+// decoder lays the table out again with its own sizes.
+class CachedMetadataTable : public CachedObject<UnlinkedMetadataTable> {
+public:
+    void encode(Encoder&, const UnlinkedMetadataTable& metadataTable)
+    {
+        ASSERT(metadataTable.m_isFinalized);
+        m_hasMetadata = metadataTable.m_hasMetadata;
+        if (!m_hasMetadata)
+            return;
+        m_numValueProfiles = metadataTable.m_numValueProfiles;
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_numOpcodesWithMetadata; ++i)
+            m_numEntries[i] = metadataTable.entryCount(static_cast<OpcodeID>(i));
+#if ASSERT_ENABLED
+        Ref roundTrip = decode();
+        ASSERT(roundTrip->m_is32Bit == metadataTable.m_is32Bit);
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i)
+            ASSERT(roundTrip->m_is32Bit ? roundTrip->offsetTable32()[i] == metadataTable.offsetTable32()[i] : roundTrip->offsetTable16()[i] == metadataTable.offsetTable16()[i]);
+#endif
+    }
+
+    Ref<UnlinkedMetadataTable> decode(Decoder&) const { return decode(); }
+
+private:
+    Ref<UnlinkedMetadataTable> decode() const
+    {
+        if (!m_hasMetadata)
+            return UnlinkedMetadataTable::empty();
+        return UnlinkedMetadataTable::createFromEntryCounts(m_numValueProfiles, m_numEntries);
+    }
+
+    bool m_hasMetadata;
+    unsigned m_numValueProfiles;
+    std::array<unsigned, UnlinkedMetadataTable::s_numOpcodesWithMetadata> m_numEntries;
+};
+#else
 class CachedMetadataTable : public CachedObject<UnlinkedMetadataTable> {
 public:
     void encode(Encoder&, const UnlinkedMetadataTable& metadataTable)
@@ -1573,6 +1717,7 @@ private:
     unsigned m_numValueProfiles;
     std::array<unsigned, UnlinkedMetadataTable::s_offsetTableEntries> m_metadata;
 };
+#endif
 
 class CachedSourceOrigin : public CachedObject<SourceOrigin> {
 public:
@@ -1646,47 +1791,23 @@ public:
     void encode(Encoder& encoder, const StringSourceProvider& sourceProvider)
     {
         Base::encode(encoder, sourceProvider);
-#if USE(BUN_JSC_ADDITIONS)
-        // SourceCodeKey::operator== under BUN_JSC_ADDITIONS does not compare source
-        // text, so encoding it here only wastes ~source_size bytes of bytecode and
-        // forces a ~source_size heap allocation at decode time. Store length only —
-        // the comparison still validates length() and host().
-        m_sourceLength = sourceProvider.source().length();
-#else
+#if !USE(BUN_JSC_ADDITIONS)
         m_source.encode(encoder, sourceProvider.source().toString());
 #endif
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // The caller (CachedSourceProvider::decode) returns SourceProvider*, so the
-    // BUN reuse path can return the runtime provider as its base type without
-    // any reinterpret_cast through the StringSourceProvider sibling.
+    // Source text is not serialized: SourceCodeKey::operator== compares the source hash instead, and the provider is
+    // only decoded to build that key. So the provider the Decoder is decoding for stands in for it, and callers
+    // without one (isCachedBytecodeStillValid) get a StringSourceProvider with a null source.
     SourceProvider* decode(Decoder& decoder, SourceProviderSourceType sourceType) const
-#else
-    StringSourceProvider* decode(Decoder& decoder, SourceProviderSourceType sourceType) const
-#endif
     {
-#if USE(BUN_JSC_ADDITIONS)
-        // Reuse the runtime SourceProvider the Decoder was constructed with rather
-        // than allocating a fresh StringSourceProvider holding a heap copy of the
-        // source. The decoded key is only used for SourceCodeKey equality, which
-        // under BUN_JSC_ADDITIONS does not look at source bytes.
-        //
-        // Base::decode is intentionally skipped: the runtime provider already has
-        // its sourceURLDirective / sourceMappingURLDirective / sourceTaintedOrigin
-        // set, and the decoded key only needs sourceOrigin().url().host() and
-        // length() for equality. CachedSourceProviderShape fields are offset-based
-        // (not stream-based), so leaving them undecoded does not affect later reads.
-        if (RefPtr<SourceProvider> provider = decoder.provider()) {
-            if (provider->sourceType() == sourceType && provider->source().length() == m_sourceLength)
-                return provider.leakRef();
-        }
-        // Fallback for callers that did not supply a provider: decode without source
-        // bytes. SourceCodeKey::operator== ignores string(), but length() is compared,
-        // so synthesize a provider whose source() is empty — length() will mismatch
-        // and the cache entry will be rejected, which is the conservative behaviour.
+        if (RefPtr<SourceProvider> provider = decoder.provider(); provider && provider->sourceType() == sourceType)
+            return provider.leakRef();
         String decodedSource;
 #else
+    StringSourceProvider* decode(Decoder& decoder, SourceProviderSourceType sourceType) const
+    {
         String decodedSource = m_source.decode(decoder);
 #endif
         SourceOrigin decodedSourceOrigin = m_sourceOrigin.decode(decoder);
@@ -1698,10 +1819,8 @@ public:
         return &sourceProvider.leakRef();
     }
 
+#if !USE(BUN_JSC_ADDITIONS)
 private:
-#if USE(BUN_JSC_ADDITIONS)
-    unsigned m_sourceLength;
-#else
     CachedString m_source;
 #endif
 };
@@ -2604,7 +2723,7 @@ private:
     CachedCodeBlockTag m_tag;
 };
 
-static_assert(alignof(GenericCacheEntry) <= alignof(std::max_align_t));
+static_assert(alignof(GenericCacheEntry) <= cachedTypeMaxAlignment);
 
 template<typename UnlinkedCodeBlockType>
 class CacheEntry : public GenericCacheEntry {
@@ -2649,8 +2768,8 @@ private:
     CachedPtr<CachedCodeBlockType<UnlinkedCodeBlockType>> m_codeBlock;
 };
 
-static_assert(alignof(CacheEntry<UnlinkedProgramCodeBlock>) <= alignof(std::max_align_t));
-static_assert(alignof(CacheEntry<UnlinkedModuleProgramCodeBlock>) <= alignof(std::max_align_t));
+static_assert(alignof(CacheEntry<UnlinkedProgramCodeBlock>) <= cachedTypeMaxAlignment);
+static_assert(alignof(CacheEntry<UnlinkedModuleProgramCodeBlock>) <= cachedTypeMaxAlignment);
 
 bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, UnlinkedCodeBlock*>& result) const
 {
