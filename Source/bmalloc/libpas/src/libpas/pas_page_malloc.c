@@ -195,6 +195,10 @@ pas_page_malloc_try_map_pages(size_t size, bool may_contain_small_or_medium)
 
 #if PAS_OS(LINUX)
     prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, mmap_result, size, PAS_VM_TAG_NAME);
+    /* libpas-owned memory opts out of THP per VMA (not PR_SET_THP_DISABLE, which exec'd
+       children inherit): under `enabled=always` retouching decommitted pages would
+       otherwise fault 2MB at a time. */
+    PAS_SYSCALL(madvise(mmap_result, size, MADV_NOHUGEPAGE));
 #endif
 
     return mmap_result;
