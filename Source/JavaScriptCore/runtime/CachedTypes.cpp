@@ -493,6 +493,7 @@ public:
         for (unsigned i = 0; i < size; ++i)
             ::JSC::decode(decoder, buffer[i], array[i], args...);
     }
+    const T* borrow() const { return this->isEmpty() ? nullptr : this->template buffer<T>(); } // raw view (trivially-encoded T only)
 };
 
 template<typename T, typename Source = SourceType<T>>
@@ -1083,6 +1084,8 @@ public:
 
     std::unique_ptr<ExpressionInfo> decode(Decoder& decoder) const
     {
+        if (decoder.canBorrowPayload())
+            return ExpressionInfo::createBorrowed(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions, m_storage.borrow());
         auto info = ExpressionInfo::createUninitialized(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
         m_storage.decode(decoder, info->payload(), info->payloadSize());
         return info;

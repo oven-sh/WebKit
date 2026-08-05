@@ -290,7 +290,9 @@ public:
 
 #if OS(DARWIN)
     mach_port_t machThread() { return m_platformThread; }
-    // Experiment (heap image restore): make this (image) Thread object describe the calling OS thread and install it as current.
+#endif
+#if USE(PTHREADS)
+    // Heap image restore: make this (image) Thread object describe the calling OS thread and install it as current.
     WTF_EXPORT_PRIVATE void adoptCurrentThreadForImage();
 #endif
 
