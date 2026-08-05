@@ -138,6 +138,9 @@ public:
 
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
+        // A reparse yields the same answers; don't store (and dirty a heap-image page) unless something actually changed.
+        if (m_features == features && m_lexicallyScopedFeatures == lexicallyScopedFeatures && m_hasCapturedVariables == static_cast<unsigned>(hasCapturedVariables))
+            return;
         m_features = features;
         m_lexicallyScopedFeatures = lexicallyScopedFeatures;
         m_hasCapturedVariables = hasCapturedVariables;
