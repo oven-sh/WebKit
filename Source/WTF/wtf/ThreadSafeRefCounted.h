@@ -46,8 +46,8 @@ public:
         m_refCount.fetch_add(1, std::memory_order_relaxed);
     }
 
-    bool hasOneRef() const { return !isInImageImmortalRange(this, 4) && m_refCount.load(std::memory_order_acquire) == 1; }
-    uint32_t refCount() const { return m_refCount.load(std::memory_order_relaxed); }
+    bool hasOneRef() const { return !isInImageImmortalRange(this, 7) && m_refCount.load(std::memory_order_acquire) == 1; }
+    uint32_t refCount() const { uint32_t c = m_refCount.load(std::memory_order_relaxed); return isInImageImmortalRange(this, 7) ? c + (1u << 20) : c; }
 
     // Debug APIs
     void adopted() { m_refCountDebugger.adopted(); }

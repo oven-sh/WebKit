@@ -45,8 +45,9 @@ public:
         ++m_refCount;
     }
 
-    bool hasOneRef() const { return !isInImageImmortalRange(this, 4) && m_refCount == 1; } // image objects are shared with the image itself: never "solely owned" (no in-place mutation / adoption tricks)
-    uint32_t refCount() const { return isInImageImmortalRange(this, 4) ? m_refCount + 1 : m_refCount; }
+    // Image objects are co-owned by the image itself: never "solely owned", and their count reads as obviously shared whenever refcounting on them is elided.
+    bool hasOneRef() const { return !isInImageImmortalRange(this, 7) && m_refCount == 1; }
+    uint32_t refCount() const { return isInImageImmortalRange(this, 7) ? m_refCount + (1u << 20) : m_refCount; }
 
     // Debug APIs
     void adopted() { m_refCountDebugger.adopted(); }
