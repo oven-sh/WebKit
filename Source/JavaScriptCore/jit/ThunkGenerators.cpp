@@ -252,8 +252,9 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> virtualThunkFor(VM& vm, CallMode mo
     auto hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT0, CCallHelpers::TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), GPRInfo::regT0);
     hasExecutable.link(&jit);
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, ExecutableBase::offsetOfLink()), GPRInfo::regT5);
     jit.loadPtr(
-        CCallHelpers::Address(GPRInfo::regT0, ExecutableBase::offsetOfJITCodeWithArityCheckFor(kind)),
+        CCallHelpers::Address(GPRInfo::regT5, ExecutableBase::offsetOfJITCodeWithArityCheckFor(kind)),
         GPRInfo::regT4);
     slowCase.append(jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT4));
 
@@ -261,7 +262,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> virtualThunkFor(VM& vm, CallMode mo
 
     auto isNative = jit.branchIfNotType(GPRInfo::regT0, FunctionExecutableType);
     jit.loadPtr(
-        CCallHelpers::Address(GPRInfo::regT0, FunctionExecutable::offsetOfCodeBlockFor(kind)),
+        CCallHelpers::Address(GPRInfo::regT5, FunctionExecutable::offsetOfCodeBlockFor(kind)),
         GPRInfo::regT5);
     jit.storePtr(GPRInfo::regT5, CCallHelpers::calleeFrameCodeBlockBeforeTailCall());
 
@@ -1399,16 +1400,17 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     jit.loadPtr(CCallHelpers::Address(GPRInfo::regT1, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), GPRInfo::regT1);
     hasExecutable.link(&jit);
 
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::regT1, ExecutableBase::offsetOfLink()), GPRInfo::regT3);
     jit.loadPtr(
         CCallHelpers::Address(
-            GPRInfo::regT1, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)),
+            GPRInfo::regT3, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)),
         GPRInfo::regT2);
     auto codeNotExists = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT2);
 
     auto isNative = jit.branchIfNotType(GPRInfo::regT1, FunctionExecutableType);
     jit.loadPtr(
         CCallHelpers::Address(
-            GPRInfo::regT1, FunctionExecutable::offsetOfCodeBlockForCall()),
+            GPRInfo::regT3, FunctionExecutable::offsetOfCodeBlockForCall()),
         GPRInfo::regT3);
     jit.storePtr(GPRInfo::regT3, CCallHelpers::calleeFrameCodeBlockBeforeCall());
 
@@ -1526,6 +1528,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
         jit.loadPtr(CCallHelpers::Address(GPRInfo::regT2, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), GPRInfo::regT2);
         hasExecutable.link(&jit);
 
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT2, ExecutableBase::offsetOfLink()), GPRInfo::regT2);
         jit.loadPtr(
             CCallHelpers::Address(
                 GPRInfo::regT2, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)),
@@ -1578,9 +1581,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
     jit.loadPtr(CCallHelpers::Address(GPRInfo::regT1, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), GPRInfo::regT1);
     hasExecutable.link(&jit);
 
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::regT1, ExecutableBase::offsetOfLink()), GPRInfo::regT2);
     jit.loadPtr(
         CCallHelpers::Address(
-            GPRInfo::regT1, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)),
+            GPRInfo::regT2, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)),
         GPRInfo::regT2);
     auto codeExists = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::regT2);
 
@@ -1601,9 +1605,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
 
     codeExists.link(&jit);
     auto isNative = jit.branchIfNotType(GPRInfo::regT1, FunctionExecutableType);
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::regT1, ExecutableBase::offsetOfLink()), GPRInfo::regT3);
     jit.loadPtr(
         CCallHelpers::Address(
-            GPRInfo::regT1, FunctionExecutable::offsetOfCodeBlockForCall()),
+            GPRInfo::regT3, FunctionExecutable::offsetOfCodeBlockForCall()),
         GPRInfo::regT3);
     jit.storePtr(GPRInfo::regT3, CCallHelpers::calleeFrameCodeBlockBeforeCall());
 

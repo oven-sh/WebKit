@@ -172,6 +172,8 @@ public:
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
     bool hasExpressionInfo() { return !m_expressionInfo->isEmpty(); }
+    struct ComponentSizes { size_t instructions, expressionInfo, metadata, identifiers, constants, jumpTargets, profiles, rareData; };
+    JS_EXPORT_PRIVATE ComponentSizes componentSizesForCensus(); // memory attribution tooling
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }

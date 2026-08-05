@@ -231,6 +231,7 @@ void AssemblyHelpers::jitAssertCodeBlockMatchesCurrentCalleeCodeBlockOnCallFrame
     loadPtr(Address(scratchGPR, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), scratchGPR);
     hasExecutable.link(this);
     JIT_COMMENT(*this, scratchGPR, " = (", scratchGPR, ": Executable)->codeBlock");
+    loadPtr(Address(scratchGPR, ExecutableBase::offsetOfLink()), scratchGPR);
     loadPtr(Address(scratchGPR, FunctionExecutable::offsetOfCodeBlockFor(kind)), scratchGPR);
 
     JIT_COMMENT(*this, scratchGPR2, " = callFrame->codeBlock");

@@ -40,6 +40,7 @@ public:
 
     TinyBloomFilter<uintptr_t> filter() const;
     const UncheckedKeyHashSet<MarkedBlock*>& set() const;
+    void evacuateStorage() { auto copy = m_set; m_set.swap(copy); } // heap image: move the table to fresh pages so inserts don't dirty imaged ones
 
 private:
     void recomputeFilter();

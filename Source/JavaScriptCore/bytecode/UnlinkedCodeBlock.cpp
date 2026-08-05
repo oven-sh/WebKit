@@ -355,3 +355,22 @@ void UnlinkedCodeBlock::allocateSharedProfiles(unsigned numBinaryArithProfiles, 
 }
 
 } // namespace JSC
+
+namespace JSC {
+UnlinkedCodeBlock::ComponentSizes UnlinkedCodeBlock::componentSizesForCensus()
+{
+    ComponentSizes r { };
+    if (m_instructions)
+        r.instructions = m_instructions->sizeInBytes();
+    if (m_expressionInfo)
+        r.expressionInfo = m_expressionInfo->byteSize();
+    r.metadata = m_metadata->sizeInBytesForGC();
+    r.identifiers = m_identifiers.size() * sizeof(Identifier);
+    r.constants = m_constantRegisters.size() * sizeof(WriteBarrier<Unknown>) + m_constantsSourceCodeRepresentation.size() * sizeof(SourceCodeRepresentation);
+    r.jumpTargets = m_jumpTargets.size() * sizeof(JSInstructionStream::Offset);
+    r.profiles = m_valueProfiles.size() * sizeof(UnlinkedValueProfile) + m_arrayProfiles.size() * sizeof(UnlinkedArrayProfile) + m_binaryArithProfiles.size() * sizeof(BinaryArithProfile) + m_unaryArithProfiles.size() * sizeof(UnaryArithProfile);
+    if (m_rareData)
+        r.rareData = sizeof(RareData) + m_rareData->m_exceptionHandlers.size() * sizeof(UnlinkedHandlerInfo) + m_rareData->m_constantIdentifierSets.size() * sizeof(IdentifierSet);
+    return r;
+}
+} // namespace JSC

@@ -23,6 +23,7 @@
 
 #include "ArrayBuffer.h"
 #include "CellState.h"
+#include "CodeSpecializationKind.h"
 #include "CollectionScope.h"
 #include "CollectorPhase.h"
 #include "CompleteSubspace.h"
@@ -104,6 +105,8 @@ class SpaceTimeMutatorScheduler;
 class StopIfNecessaryTimer;
 class SweepingScope;
 class VM;
+class UnlinkedFunctionExecutable;
+class UnlinkedFunctionCodeBlock;
 class VerifierSlotVisitor;
 class WeakGCHashTable;
 struct CurrentThreadState;
@@ -481,6 +484,11 @@ public:
     // Experimental: after a synchronous Full GC, freeze every MarkedBlock as an immortal image block.
     JS_EXPORT_PRIVATE void freezeCurrentHeapAsImmortalImage();
     static bool isImageCell(const JSCell* cell);
+    // Rule 2 (link state out of image cells): decoded UnlinkedFunctionCodeBlocks for image UnlinkedFunctionExecutables live here, not in the (never written) cell.
+    UnlinkedFunctionCodeBlock* imageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind);
+    void setImageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind, UnlinkedFunctionCodeBlock*);
+    void clearImageUnlinkedCodeBlocks() { m_imageUnlinkedCodeBlocks.clear(); }
+    void evacuateTablesForImage(); // after restore: re-home per-heap tables that take inserts every run
     bool isFreezingImage() const { return m_isFreezingImage; }
     // Barrier slow path for image owners: side remembered set instead of cellState writes. Returns true if handled.
     bool rememberImageCell(JSCell*);
@@ -913,6 +921,7 @@ private:
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
     // Prototype card table: image cells written since freeze (sticky, Full-GC roots) and this cycle (barrier dedupe).
     UncheckedKeyHashSet<JSCell*> m_imageWrittenEver;
+    UncheckedKeyHashMap<std::pair<const UnlinkedFunctionExecutable*, unsigned>, UnlinkedFunctionCodeBlock*> m_imageUnlinkedCodeBlocks; // visited as roots by the Img constraint
     UncheckedKeyHashSet<JSCell*> m_imageRememberedThisCycle;
     Vector<JSCell*> m_imagePreciseRoots;
     bool m_isFreezingImage { false };

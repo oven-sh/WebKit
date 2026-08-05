@@ -603,6 +603,10 @@ void VM::didRestoreFromImage()
 {
     m_imageEpoch++;
     m_intlCache = makeUnique<IntlCache>();
+    if (m_regExpCache)
+        m_regExpCache->deleteAllCode();
+    { auto& table = atomStringTable()->table(); auto copy = table; table.swap(copy); }
+    heap.evacuateTablesForImage();
 }
 
 VM::~VM()

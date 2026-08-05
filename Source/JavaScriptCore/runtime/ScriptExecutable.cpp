@@ -52,9 +52,7 @@ ScriptExecutable::ScriptExecutable(Structure* structure, VM& vm, const SourceCod
     : ExecutableBase(vm, structure)
     , m_source(source)
     , m_intrinsic(intrinsic)
-    , m_features(NoFeatures)
     , m_lexicallyScopedFeatures(lexicallyScopedFeatures)
-    , m_hasCapturedVariables(false)
     , m_neverInline(false)
     , m_neverOptimize(false)
     , m_neverFTLOptimize(false)
@@ -84,8 +82,8 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
     switch (type()) {
     case FunctionExecutableType: {
         FunctionExecutable* executable = static_cast<FunctionExecutable*>(this);
-        executable->m_codeBlockForCall.clear();
-        executable->m_codeBlockForConstruct.clear();
+        executable->codeBlockForCallSlot().clear();
+        executable->codeBlockForConstructSlot().clear();
         break;
     }
     case EvalExecutableType: {

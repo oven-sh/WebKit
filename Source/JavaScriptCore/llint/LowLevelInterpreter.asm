@@ -2686,12 +2686,14 @@ macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internal
     btpz t5, (constexpr JSFunction::rareDataTag), .isExecutable
     loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[t5], t5
 .isExecutable:
-    loadp offsetOfJITCodeWithArityCheck[t5], t4
+    loadp ExecutableBase::m_link[t5], t4
+    loadp offsetOfJITCodeWithArityCheck[t4], t4
     btpz t4, slowCase # When jumping to slowCase, t0, t1, t2, needs to be unmodified.
     move t4, t1
     move 0, t0
     bbneq JSCell::m_type[t5], FunctionExecutableType, .callCode
-    loadp offsetOfCodeBlock[t5], t0
+    loadp ExecutableBase::m_link[t5], t0
+    loadp offsetOfCodeBlock[t0], t0
 .callCode:
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
@@ -2709,7 +2711,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_call_trampoline, macro ()
-    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
+    virtualThunkFor(ExecutableBase::LinkState::jitCodeForCallWithArityCheck, ExecutableBase::LinkState::codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2717,7 +2719,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_construct_trampoline, macro ()
-    virtualThunkFor(ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase)
+    virtualThunkFor(ExecutableBase::LinkState::jitCodeForConstructWithArityCheck, ExecutableBase::LinkState::codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2725,7 +2727,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_tail_call_trampoline, macro ()
-    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
+    virtualThunkFor(ExecutableBase::LinkState::jitCodeForCallWithArityCheck, ExecutableBase::LinkState::codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)

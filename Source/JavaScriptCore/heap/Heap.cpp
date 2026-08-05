@@ -1186,6 +1186,7 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
 
 void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
 {
+    m_imageUnlinkedCodeBlocks.clear();
     if (m_collectionScope && effort == DeleteAllCodeIfNotCollecting)
         return;
 
@@ -1233,6 +1234,30 @@ bool Heap::isImageCell(const JSCell* cell)
     if (cell->isPreciseAllocation())
         return cell->preciseAllocation().isImmortal();
     return cell->markedBlock().isImmortal();
+}
+
+UnlinkedFunctionCodeBlock* Heap::imageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable* executable, CodeSpecializationKind kind)
+{
+    auto it = m_imageUnlinkedCodeBlocks.find({ executable, static_cast<unsigned>(kind) });
+    return it == m_imageUnlinkedCodeBlocks.end() ? nullptr : it->value;
+}
+
+void Heap::setImageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable* executable, CodeSpecializationKind kind, UnlinkedFunctionCodeBlock* codeBlock)
+{
+    if (codeBlock)
+        m_imageUnlinkedCodeBlocks.set({ executable, static_cast<unsigned>(kind) }, codeBlock);
+    else
+        m_imageUnlinkedCodeBlocks.remove({ executable, static_cast<unsigned>(kind) });
+}
+
+void Heap::evacuateTablesForImage()
+{
+    m_objectSpace.blocks().evacuateStorage();
+    { auto copy = m_weakGCHashTables; m_weakGCHashTables.swap(copy); }
+    { decltype(m_imageWrittenEver) copy = m_imageWrittenEver; m_imageWrittenEver.swap(copy); }
+    { decltype(m_imageUnlinkedCodeBlocks) fresh; m_imageUnlinkedCodeBlocks.swap(fresh); } // empty at image time anyway
+    if (auto* cache = vm().megamorphicCache())
+        cache->age(CollectionScope::Full); // bumps the epoch (entries become misses) without rewriting the imaged entry arrays
 }
 
 bool Heap::rememberImageCell(JSCell* cell)
@@ -3245,6 +3270,8 @@ void Heap::addCoreConstraints()
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
             if (!m_objectSpace.hasImmortalBlocks())
                 return;
+            for (auto& entry : m_imageUnlinkedCodeBlocks)
+                visitor.appendUnbarriered(JSValue(reinterpret_cast<JSCell*>(entry.value)));
             // Unwritten image cells can only reference image cells or the precise allocations that existed at freeze;
             // so the Full-GC roots are: every image cell written since freeze (side card set) + those precise allocations.
             if (m_collectionScope != CollectionScope::Full)

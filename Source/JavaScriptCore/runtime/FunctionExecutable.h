@@ -80,7 +80,7 @@ public:
 
     FunctionCodeBlock* codeBlockForCall() const
     {
-        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForCall.get());
+        return std::bit_cast<FunctionCodeBlock*>(codeBlockForCallSlot().get());
     }
 
     bool isGeneratedForConstruct() const
@@ -90,7 +90,7 @@ public:
 
     FunctionCodeBlock* codeBlockForConstruct() const
     {
-        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForConstruct.get());
+        return std::bit_cast<FunctionCodeBlock*>(codeBlockForConstructSlot().get());
     }
         
     bool isGeneratedFor(CodeSpecializationKind kind)
@@ -233,8 +233,13 @@ public:
 
     InferredValue<JSFunction>& singleton()
     {
-        return m_singleton;
+        return m_extras->singleton;
     }
+    // Rule 2 (heap image): mutable inference state lives out of line next to the LinkState, not in the cell.
+    struct Extras {
+        InferredValue<JSFunction> singleton;
+    };
+    static Extras* allocateExtras();
 
     void notifyCreation(VM&, JSFunction*, const char* reason);
 
@@ -273,17 +278,21 @@ public:
         return m_rareData->m_asString.get();
     }
 
+    WriteBarrier<CodeBlock>& codeBlockForCallSlot() const { return *reinterpret_cast<WriteBarrier<CodeBlock>*>(&m_link->codeBlockForCall); }
+    WriteBarrier<CodeBlock>& codeBlockForConstructSlot() const { return *reinterpret_cast<WriteBarrier<CodeBlock>*>(&m_link->codeBlockForConstruct); }
+
     static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(FunctionExecutable, m_rareData); }
-    static constexpr ptrdiff_t offsetOfCodeBlockForCall() { return OBJECT_OFFSETOF(FunctionExecutable, m_codeBlockForCall); }
-    static constexpr ptrdiff_t offsetOfCodeBlockForConstruct() { return OBJECT_OFFSETOF(FunctionExecutable, m_codeBlockForConstruct); }
+    // NOTE: offsets within ExecutableBase::LinkState (load ExecutableBase::offsetOfLink() first)
+    static constexpr ptrdiff_t offsetOfCodeBlockForCall() { return OBJECT_OFFSETOF(LinkState, codeBlockForCall); }
+    static constexpr ptrdiff_t offsetOfCodeBlockForConstruct() { return OBJECT_OFFSETOF(LinkState, codeBlockForConstruct); }
 
     static constexpr ptrdiff_t offsetOfCodeBlockFor(CodeSpecializationKind kind)
     {
         switch (kind) {
         case CodeSpecializationKind::CodeForCall:
-            return OBJECT_OFFSETOF(FunctionExecutable, m_codeBlockForCall);
+            return OBJECT_OFFSETOF(LinkState, codeBlockForCall);
         case CodeSpecializationKind::CodeForConstruct:
-            return OBJECT_OFFSETOF(FunctionExecutable, m_codeBlockForConstruct);
+            return OBJECT_OFFSETOF(LinkState, codeBlockForConstruct);
         }
         RELEASE_ASSERT_NOT_REACHED();
         return 0;
@@ -330,9 +339,7 @@ private:
     std::unique_ptr<RareData> m_rareData;
     WriteBarrier<ScriptExecutable> m_topLevelExecutable;
     WriteBarrier<UnlinkedFunctionExecutable> m_unlinkedExecutable;
-    WriteBarrier<CodeBlock> m_codeBlockForCall;
-    WriteBarrier<CodeBlock> m_codeBlockForConstruct;
-    InferredValue<JSFunction> m_singleton;
+    Extras* const m_extras;
     Box<InlineWatchpointSet> m_polyProtoWatchpoint;
 };
 

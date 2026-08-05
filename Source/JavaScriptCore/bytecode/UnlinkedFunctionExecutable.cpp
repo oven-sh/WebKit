@@ -239,6 +239,37 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode)
 {
+    if (vm.heap.objectSpace().hasImmortalBlocks() && Heap::isImageCell(this)) [[unlikely]] {
+        // Image executable: its cell is never written. Whatever it already links to (imaged) is used as is; anything decoded/generated now lives in the heap's side table.
+        if (!m_isCached) {
+            if (auto* codeBlock = (specializationKind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct).get())
+                return codeBlock;
+        }
+        if (auto* codeBlock = vm.heap.imageUnlinkedCodeBlockFor(this, specializationKind))
+            return codeBlock;
+        WriteBarrier<UnlinkedFunctionCodeBlock> slot;
+        DeferGC deferGC(vm);
+        if (m_isCached) {
+            int32_t offset = specializationKind == CodeSpecializationKind::CodeForCall ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset;
+            if (offset && m_decoder)
+                decodeFunctionCodeBlock(*m_decoder, offset, slot, this);
+        } else if (m_isGeneratedFromCache && m_cachedRecordOffset > 0) {
+            if (RefPtr provider = source.provider()) {
+                if (RefPtr<CachedBytecode> cachedBytecode = provider->cachedBytecode(); cachedBytecode && static_cast<size_t>(m_cachedRecordOffset) < cachedBytecode->size()) {
+                    Ref decoder = vm.ensureBytecodeCacheDecoder(cachedBytecode.releaseNonNull(), WTF::move(provider));
+                    decodeFunctionCodeBlockFromExecutableRecord(decoder.get(), m_cachedRecordOffset, specializationKind, slot, this);
+                }
+            }
+        }
+        if (!slot) {
+            UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(vm, this, source, specializationKind, codeGenerationMode, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, error, parseMode);
+            if (error.isValid())
+                return nullptr;
+            slot.setWithoutWriteBarrier(result);
+        }
+        vm.heap.setImageUnlinkedCodeBlockFor(this, specializationKind, slot.get());
+        return slot.get();
+    }
     if (m_isCached)
         decodeCachedCodeBlocks(vm);
     switch (specializationKind) {

@@ -54,6 +54,10 @@ inline bool isCall(CodeSpecializationKind kind)
     return false;
 }
 
+#define m_jitCodeForCall (m_link->jitCodeForCall)
+#define m_jitCodeForConstruct (m_link->jitCodeForConstruct)
+#define m_jitCodeForCallWithArityCheck (m_link->jitCodeForCallWithArityCheck)
+#define m_jitCodeForConstructWithArityCheck (m_link->jitCodeForConstructWithArityCheck)
 class ExecutableBase : public JSCell {
     friend class JIT;
     friend class LLIntOffsetsExtractor;
@@ -63,6 +67,7 @@ class ExecutableBase : public JSCell {
 protected:
     ExecutableBase(VM& vm, Structure* structure)
         : JSCell(vm, structure)
+        , m_link(allocateLinkState())
     {
     }
 
@@ -185,11 +190,12 @@ public:
     static constexpr ptrdiff_t offsetOfJITCodeWithArityCheckFor(
         CodeSpecializationKind kind)
     {
+        // NOTE: offset within LinkState (load ExecutableBase::offsetOfLink() first)
         switch (kind) {
         case CodeSpecializationKind::CodeForCall:
-            return OBJECT_OFFSETOF(ExecutableBase, m_jitCodeForCallWithArityCheck);
+            return OBJECT_OFFSETOF(LinkState, jitCodeForCallWithArityCheck);
         case CodeSpecializationKind::CodeForConstruct:
-            return OBJECT_OFFSETOF(ExecutableBase, m_jitCodeForConstructWithArityCheck);
+            return OBJECT_OFFSETOF(LinkState, jitCodeForConstructWithArityCheck);
         }
         RELEASE_ASSERT_NOT_REACHED();
         return 0;
@@ -239,10 +245,24 @@ public:
     void dump(PrintStream&) const;
         
 protected:
-    RefPtr<JSC::JITCode> m_jitCodeForCall;
-    RefPtr<JSC::JITCode> m_jitCodeForConstruct;
-    CodePtr<JSEntryPtrTag> m_jitCodeForCallWithArityCheck;
-    CodePtr<JSEntryPtrTag> m_jitCodeForConstructWithArityCheck;
+public:
+    // Rule 2 (heap image): everything that changes when an executable gets (re)linked lives out of line, densely packed,
+    // so linking N functions dirties N*sizeof(LinkState) contiguous bytes instead of N scattered executable cells.
+    struct LinkState {
+        RefPtr<JSC::JITCode> jitCodeForCall;
+        RefPtr<JSC::JITCode> jitCodeForConstruct;
+        CodePtr<JSEntryPtrTag> jitCodeForCallWithArityCheck;
+        CodePtr<JSEntryPtrTag> jitCodeForConstructWithArityCheck;
+        CodeBlock* codeBlockForCall { nullptr }; // FunctionExecutable only; barriered through the executable
+        CodeBlock* codeBlockForConstruct { nullptr };
+        bool didTryToEnterInLoop { false }; // ScriptExecutable profiling hint (JIT writes through addressOf)
+        bool hasCapturedVariables { false }; // ScriptExecutable: discovered at (lazy) parse
+        uint16_t features { 0 }; // ScriptExecutable: CodeFeatures, discovered at (lazy) parse
+    };
+    static constexpr ptrdiff_t offsetOfLink() { return OBJECT_OFFSETOF(ExecutableBase, m_link); }
+    JS_EXPORT_PRIVATE static LinkState* allocateLinkState();
+protected:
+    LinkState* const m_link;
 };
 
 } // namespace JSC

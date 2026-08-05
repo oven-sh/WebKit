@@ -63,30 +63,30 @@ public:
     unsigned NODELETE typeProfilingStartOffset() const;
     unsigned NODELETE typeProfilingEndOffset() const;
 
-    bool usesArguments() const { return m_features & ArgumentsFeature; }
+    bool usesArguments() const { return m_link->features & ArgumentsFeature; }
     bool isArrowFunctionContext() const { return m_isArrowFunctionContext; }
     DerivedContextType derivedContextType() const { return static_cast<DerivedContextType>(m_derivedContextType); }
     EvalContextType evalContextType() const { return static_cast<EvalContextType>(m_evalContextType); }
     bool isInStrictContext() const { return m_lexicallyScopedFeatures & StrictModeLexicallyScopedFeature; }
-    bool usesNonSimpleParameterList() const { return m_features & NonSimpleParameterListFeature; }
+    bool usesNonSimpleParameterList() const { return m_link->features & NonSimpleParameterListFeature; }
 
     void setNeverInline(bool value) { m_neverInline = value; }
     void setNeverOptimize(bool value) { m_neverOptimize = value; }
     void setNeverFTLOptimize(bool value) { m_neverFTLOptimize = value; }
-    void setDidTryToEnterInLoop(bool value) { m_didTryToEnterInLoop = value; }
+    void setDidTryToEnterInLoop(bool value) { m_link->didTryToEnterInLoop = value; }
     void setCanUseOSRExitFuzzing(bool value) { m_canUseOSRExitFuzzing = value; }
     bool neverInline() const { return m_neverInline; }
     bool neverOptimize() const { return m_neverOptimize; }
     bool neverFTLOptimize() const { return m_neverFTLOptimize; }
-    bool didTryToEnterInLoop() const { return m_didTryToEnterInLoop; }
+    bool didTryToEnterInLoop() const { return m_link->didTryToEnterInLoop; }
     bool isInliningCandidate() const { return !neverInline(); }
     bool isOkToOptimize() const { return !neverOptimize(); }
     bool canUseOSRExitFuzzing() const { return m_canUseOSRExitFuzzing; }
     bool isInsideOrdinaryFunction() const { return m_isInsideOrdinaryFunction; }
     
-    bool* addressOfDidTryToEnterInLoop() LIFETIME_BOUND { return &m_didTryToEnterInLoop; }
+    bool* addressOfDidTryToEnterInLoop() LIFETIME_BOUND { return &m_link->didTryToEnterInLoop; }
 
-    CodeFeatures features() const { return m_features; }
+    CodeFeatures features() const { return m_link->features; }
     LexicallyScopedFeatures lexicallyScopedFeatures() { return static_cast<LexicallyScopedFeatures>(m_lexicallyScopedFeatures); }
     void setTaintedByWithScope() { m_lexicallyScopedFeatures |= TaintedByWithScopeLexicallyScopedFeature; }
         
@@ -139,9 +139,11 @@ protected:
 
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
-        m_features = features;
-        m_lexicallyScopedFeatures = lexicallyScopedFeatures;
-        m_hasCapturedVariables = hasCapturedVariables;
+        // Re-recorded on every newCodeBlockFor; don't dirty the cell (heap image) when nothing changed.
+        m_link->features = features;
+        if (m_lexicallyScopedFeatures != static_cast<unsigned>(lexicallyScopedFeatures))
+            m_lexicallyScopedFeatures = lexicallyScopedFeatures;
+        m_link->hasCapturedVariables = hasCapturedVariables;
     }
 
     static TemplateObjectMap& ensureTemplateObjectMapImpl(std::unique_ptr<TemplateObjectMap>& dest);
@@ -154,11 +156,8 @@ protected:
 
     SourceCode m_source;
     Intrinsic m_intrinsic { NoIntrinsic };
-    bool m_didTryToEnterInLoop { false };
-    CodeFeatures m_features;
     LexicallyScopedFeatures m_lexicallyScopedFeatures : bitWidthOfLexicallyScopedFeatures;
     OptionSet<CodeGenerationMode> m_codeGenerationModeForGeneratorBody;
-    bool m_hasCapturedVariables : 1;
     bool m_neverInline : 1;
     bool m_neverOptimize : 1;
     bool m_neverFTLOptimize : 1;
