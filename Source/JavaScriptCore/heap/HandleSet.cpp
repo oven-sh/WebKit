@@ -29,6 +29,7 @@
 #include "HandleBlock.h"
 #include "HandleBlockInlines.h"
 #include "JSCJSValueInlines.h"
+#include "VM.h"
 
 namespace JSC {
 
@@ -92,5 +93,18 @@ bool HandleSet::isLiveNode(Node* node)
     return true;
 }
 #endif // ENABLE(GC_VALIDATION) || ASSERT_ENABLED
+
+#if ASSERT_ENABLED
+void HandleSet::assertMayMutate()
+{
+    // Allocating, deallocating, or re-targeting a Strong handle mutates
+    // m_strongList, which the GC's strong-handles marking constraint scans.
+    // The VM's API lock is what orders those mutations with the scan, so a
+    // mutation from a thread that does not hold the lock is a data race. The
+    // classic way to get here is a Strong captured by value in a lambda that
+    // another thread destroys.
+    ASSERT_WITH_MESSAGE(m_vm.currentThreadIsHoldingAPILock(), "Strong handles may only be created, written, or destroyed while holding their VM's API lock");
+}
+#endif // ASSERT_ENABLED
 
 } // namespace JSC

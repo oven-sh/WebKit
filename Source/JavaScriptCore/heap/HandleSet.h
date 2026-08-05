@@ -86,6 +86,12 @@ private:
     JS_EXPORT_PRIVATE bool isLiveNode(Node*);
 #endif
 
+#if ASSERT_ENABLED
+    JS_EXPORT_PRIVATE void assertMayMutate();
+#else
+    void assertMayMutate() { }
+#endif
+
     VM& m_vm;
     DoublyLinkedList<HandleBlock> m_blockList;
 
@@ -106,6 +112,7 @@ inline VM& HandleSet::vm()
 
 inline HandleSlot HandleSet::allocate()
 {
+    assertMayMutate();
     if (m_freeList.isEmpty())
         grow();
 
@@ -116,6 +123,7 @@ inline HandleSlot HandleSet::allocate()
 
 inline void HandleSet::deallocate(HandleSlot handle)
 {
+    assertMayMutate();
     HandleSet::Node* node = HandleNode::toHandleNode(handle);
     if (node->isOnList())
         NodeList::remove(node);
@@ -147,6 +155,7 @@ template<typename Functor> void HandleSet::forEachStrongHandle(const Functor& fu
 template<bool isCellOnly>
 inline void HandleSet::writeBarrier(HandleSlot slot, JSValue value)
 {
+    assertMayMutate();
     bool valueIsNonEmptyCell = value && (isCellOnly || value.isCell());
     bool slotIsNonEmptyCell = *slot && (isCellOnly || slot->isCell());
     if (valueIsNonEmptyCell == slotIsNonEmptyCell)
