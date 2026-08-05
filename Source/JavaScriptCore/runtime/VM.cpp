@@ -603,6 +603,10 @@ void VM::queueMicrotask(QueuedTask&& task)
 void VM::didRestoreFromImage()
 {
     m_imageEpoch++;
+    // Stack addresses cached from the process that built the image (its main thread's stack) are meaningless here.
+    m_stackPointerAtVMEntry = nullptr;
+    setLastStackTop(Thread::currentSingleton());
+    updateStackLimits();
     AutomaticThread::forgetUnderlyingThreadsForImageRestore(); // GC collector/markers, JIT worklist threads: restart on next notify
     m_intlCache = makeUnique<IntlCache>();
     dateCache.didRestoreFromImage();
