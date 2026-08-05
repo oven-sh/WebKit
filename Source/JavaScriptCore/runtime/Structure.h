@@ -650,6 +650,8 @@ public:
 
     inline JSString* defaultToPrimitiveFastAndNonObservable(VM&);
 
+    static constexpr ptrdiff_t offsetOfTransitionTable() { return OBJECT_OFFSETOF(Structure, m_transitionTable); }
+
     static constexpr ptrdiff_t prototypeOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_prototype);
@@ -1032,6 +1034,8 @@ private:
     WriteBarrier<JSGlobalObject> m_realm;
     WriteBarrier<Unknown> m_prototype;
     mutable WriteBarrier<StructureChain> m_cachedPrototypeChain;
+    StructureChain* cachedPrototypeChain() const; // in-cell, or heap side slot for image structures
+    void setCachedPrototypeChain(VM&, StructureChain*) const;
 
     WriteBarrier<JSCell> m_previousOrRareData;
 

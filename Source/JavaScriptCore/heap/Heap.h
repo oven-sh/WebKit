@@ -105,6 +105,9 @@ class SpaceTimeMutatorScheduler;
 class StopIfNecessaryTimer;
 class SweepingScope;
 class VM;
+class StructureTransitionTable;
+class StructureChain;
+class Structure;
 class UnlinkedFunctionExecutable;
 class UnlinkedFunctionCodeBlock;
 class VerifierSlotVisitor;
@@ -488,6 +491,9 @@ public:
     UnlinkedFunctionCodeBlock* imageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind);
     void setImageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind, UnlinkedFunctionCodeBlock*);
     void clearImageUnlinkedCodeBlocks() { m_imageUnlinkedCodeBlocks.clear(); }
+    // Rule 2: lazily-cached prototype chains of image Structures live here instead of the (never written) cell. Slot is stable (node-based map).
+    StructureChain*& imageCachedPrototypeChainSlot(const Structure*); // raw: entries are GC roots (Img constraint), so no owner barrier needed
+    intptr_t& imageTransitionTableSlot(const StructureTransitionTable*, intptr_t seed);
     void evacuateTablesForImage(); // after restore: re-home per-heap tables that take inserts every run
     bool isFreezingImage() const { return m_isFreezingImage; }
     // Barrier slow path for image owners: side remembered set instead of cellState writes. Returns true if handled.
@@ -922,6 +928,8 @@ private:
     // Prototype card table: image cells written since freeze (sticky, Full-GC roots) and this cycle (barrier dedupe).
     UncheckedKeyHashSet<JSCell*> m_imageWrittenEver;
     UncheckedKeyHashMap<std::pair<const UnlinkedFunctionExecutable*, unsigned>, UnlinkedFunctionCodeBlock*> m_imageUnlinkedCodeBlocks; // visited as roots by the Img constraint
+    UncheckedKeyHashMap<const Structure*, std::unique_ptr<StructureChain*>> m_imageCachedPrototypeChains; // ditto (unique_ptr for a stable slot address)
+    UncheckedKeyHashMap<const StructureTransitionTable*, std::unique_ptr<intptr_t>> m_imageTransitionTables; // side words; single-transition targets are weak like the in-cell ones (visited/cleared by Structure::visitChildren via data())
     UncheckedKeyHashSet<JSCell*> m_imageRememberedThisCycle;
     Vector<JSCell*> m_imagePreciseRoots;
     bool m_isFreezingImage { false };

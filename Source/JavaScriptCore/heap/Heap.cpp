@@ -1260,6 +1260,22 @@ void Heap::evacuateTablesForImage()
         cache->age(CollectionScope::Full); // bumps the epoch (entries become misses) without rewriting the imaged entry arrays
 }
 
+intptr_t& Heap::imageTransitionTableSlot(const StructureTransitionTable* table, intptr_t seed)
+{
+    auto& slot = m_imageTransitionTables.add(table, nullptr).iterator->value;
+    if (!slot)
+        slot = makeUniqueWithoutFastMallocCheck<intptr_t>(seed);
+    return *slot;
+}
+
+StructureChain*& Heap::imageCachedPrototypeChainSlot(const Structure* structure)
+{
+    auto& slot = m_imageCachedPrototypeChains.add(structure, nullptr).iterator->value;
+    if (!slot)
+        slot = makeUniqueWithoutFastMallocCheck<StructureChain*>(nullptr);
+    return *slot;
+}
+
 bool Heap::rememberImageCell(JSCell* cell)
 {
     // Image cells stay PossiblyBlack forever (their header is never written); dedupe per cycle via the side set.
@@ -3164,6 +3180,7 @@ static UNUSED_FUNCTION void visitSamplingProfiler(VM&, AbstractSlotVisitor&) { }
 
 void Heap::freezeCurrentHeapAsImmortalImage()
 {
+    StructureTransitionTable::g_imageStructureTablesRedirected = true;
     RELEASE_ASSERT(vm().currentThreadIsHoldingAPILock());
     {
         // Settle lazily-materialized state that would otherwise be written into image cells after freeze:
@@ -3272,6 +3289,8 @@ void Heap::addCoreConstraints()
                 return;
             for (auto& entry : m_imageUnlinkedCodeBlocks)
                 visitor.appendUnbarriered(JSValue(reinterpret_cast<JSCell*>(entry.value)));
+            for (auto& entry : m_imageCachedPrototypeChains)
+                visitor.appendUnbarriered(JSValue(reinterpret_cast<JSCell*>(*entry.value)));
             // Unwritten image cells can only reference image cells or the precise allocations that existed at freeze;
             // so the Full-GC roots are: every image cell written since freeze (side card set) + those precise allocations.
             if (m_collectionScope != CollectionScope::Full)

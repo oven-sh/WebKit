@@ -96,7 +96,7 @@ static UncheckedKeyHashSet<Structure*>& liveStructureSet = *(new UncheckedKeyHas
 inline void StructureTransitionTable::setSingleTransition(VM& vm, JSCell* owner, Structure* structure)
 {
     ASSERT(isUsingSingleSlot());
-    m_data = std::bit_cast<intptr_t>(structure) | UsingSingleSlotFlag;
+    data() = std::bit_cast<intptr_t>(structure) | UsingSingleSlotFlag;
     vm.writeBarrier(owner, structure);
 }
 
@@ -1640,7 +1640,7 @@ void Structure::setCachedPropertyNameEnumerator(VM& vm, JSPropertyNameEnumerator
     ASSERT(!isDictionary());
     if (!hasRareData())
         allocateRareData(vm);
-    ASSERT(chain == m_cachedPrototypeChain.get());
+    ASSERT(chain == cachedPrototypeChain());
     rareData()->setCachedPropertyNameEnumerator(vm, this, enumerator, chain);
 }
 
@@ -1663,7 +1663,7 @@ bool Structure::canCachePropertyNameEnumerator(VM&) const
     if (!this->canCacheOwnPropertyNames())
         return false;
 
-    StructureChain* structureChain = m_cachedPrototypeChain.get();
+    StructureChain* structureChain = cachedPrototypeChain();
     ASSERT(structureChain);
     StructureID* currentStructureID = structureChain->head();
     while (true) {
@@ -1840,6 +1840,38 @@ void Structure::checkConsistency()
     checkOffsetConsistency();
 }
 #endif
+
+
+StructureChain* Structure::cachedPrototypeChain() const
+{
+    if (vm().heap.objectSpace().hasImmortalBlocks() && Heap::isImageCell(this)) [[unlikely]] {
+        if (StructureChain* side = vm().heap.imageCachedPrototypeChainSlot(this))
+            return side;
+    }
+    return m_cachedPrototypeChain.get();
+}
+
+void Structure::setCachedPrototypeChain(VM& vm, StructureChain* chain) const
+{
+    if (vm.heap.objectSpace().hasImmortalBlocks() && Heap::isImageCell(this)) [[unlikely]] {
+        vm.heap.imageCachedPrototypeChainSlot(this) = chain; // side entry is a GC root; the image cell stays clean
+        return;
+    }
+    const_cast<Structure*>(this)->clearCachedPrototypeChain();
+    m_cachedPrototypeChain.setMayBeNull(vm, this, chain);
+}
+
+
+bool StructureTransitionTable::g_imageStructureTablesRedirected = false;
+
+intptr_t& StructureTransitionTable::dataSlow() const
+{
+    // Only ever redirected for tables inside image Structures; the table sits at a fixed offset in Structure.
+    const Structure* owner = std::bit_cast<const Structure*>(std::bit_cast<const char*>(this) - Structure::offsetOfTransitionTable());
+    if (!Heap::isImageCell(owner))
+        return m_data;
+    return owner->vm().heap.imageTransitionTableSlot(this, m_data);
+}
 
 } // namespace JSC
 

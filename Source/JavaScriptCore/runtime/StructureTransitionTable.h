@@ -153,6 +153,9 @@ inline bool setsReadOnlyOnNonAccessorProperties(TransitionKind transition)
 
 class StructureTransitionTable {
     static constexpr intptr_t UsingSingleSlotFlag = 1;
+public:
+    JS_EXPORT_PRIVATE static bool g_imageStructureTablesRedirected; // set when the heap has immortal (image) blocks
+private:
 
     class PointerKey {
     public:
@@ -284,28 +287,38 @@ public:
 private:
     friend class SingleSlotTransitionWeakOwner;
 
+    // Rule 2 (heap image): for a table embedded in an image Structure, the mutable word lives in a heap side slot
+    // (seeded from the imaged value) so adding transitions never writes the image cell.
+    JS_EXPORT_PRIVATE intptr_t& dataSlow() const;
+    ALWAYS_INLINE intptr_t& data() const
+    {
+        if (g_imageStructureTablesRedirected) [[unlikely]]
+            return dataSlow();
+        return m_data;
+    }
+
     bool isUsingSingleSlot() const
     {
-        return m_data & UsingSingleSlotFlag;
+        return data() & UsingSingleSlotFlag;
     }
 
     TransitionMap* map() const
     {
         ASSERT(!isUsingSingleSlot());
-        return std::bit_cast<TransitionMap*>(m_data);
+        return std::bit_cast<TransitionMap*>(data());
     }
 
     void setMap(TransitionMap* map)
     {
         ASSERT(isUsingSingleSlot());
         // This implicitly clears the flag that indicates we're using a single transition
-        m_data = std::bit_cast<intptr_t>(map);
+        data() = std::bit_cast<intptr_t>(map);
         ASSERT(!isUsingSingleSlot());
     }
 
     void setSingleTransition(VM&, JSCell* owner, Structure*);
 
-    intptr_t m_data { UsingSingleSlotFlag };
+    mutable intptr_t m_data { UsingSingleSlotFlag };
 };
 
 } // namespace JSC
