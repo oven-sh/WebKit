@@ -328,6 +328,8 @@ public:
 
     size_t cost() const;
     size_t costDuringGC();
+    // Heap image: do the lazy one-time writes (hash, did-report-cost) now so the string's header never changes after the freeze.
+    void settleLazyHeaderWritesForImage() const { hash(); m_hashAndFlags |= s_hashFlagDidReportCost; }
 
     WTF_EXPORT_PRIVATE size_t NODELETE sizeInBytes() const;
 
