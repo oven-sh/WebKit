@@ -108,7 +108,9 @@ static consteval bool isPortablySerializable()
     // With a destructor, MSVC (but not Itanium) prepends an array cookie to placement `new T[n]`.
     static_assert(std::is_trivially_destructible_v<U>);
     if constexpr (!CachedType<U>) {
-        static_assert(!std::is_same_v<U, long> && !std::is_same_v<U, unsigned long> && !std::is_same_v<U, wchar_t> && !std::is_same_v<U, long double>, "size differs between LP64 and LLP64");
+        // int64_t is `long` on LP64, so `long` can only be told apart from a fixed-width type where it is 32-bit (LLP64).
+        static_assert(sizeof(long) == sizeof(long long) || (!std::is_same_v<U, long> && !std::is_same_v<U, unsigned long>), "long is 32-bit here but 64-bit on LP64 platforms");
+        static_assert(!std::is_same_v<U, wchar_t> && !std::is_same_v<U, long double>, "size differs between platforms");
         static_assert(std::has_unique_object_representations_v<U> || std::is_floating_point_v<U>, "this type is copied into the bytecode cache verbatim but has padding or bit-field slack, so its layout is ABI-specific; encode its fields through a Cached* class instead");
     }
     return true;
