@@ -564,6 +564,13 @@ void DateCache::timeZoneCacheSlow()
     m_timeZoneCache = std::unique_ptr<OpaqueICUTimeZone, OpaqueICUTimeZoneDeleter>(cache);
 }
 
+void DateCache::didRestoreFromImage()
+{
+    // The ICU objects belong to the process that built the image: forget them without freeing, then reset like a timezone change.
+    (void)m_timeZoneCache.release();
+    clearForTimeZoneChange();
+}
+
 void DateCache::clearForTimeZoneChange()
 {
     m_timeZoneCache.reset();

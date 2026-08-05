@@ -161,6 +161,9 @@ private:
     };
 
     void timeZoneCacheSlow();
+public:
+    JS_EXPORT_PRIVATE void didRestoreFromImage();
+private:
     LocalTimeOffset localTimeOffset(int64_t millisecondsFromEpoch, TimeType = TimeType::UTCTime);
 
     LocalTimeOffset calculateLocalTimeOffset(double millisecondsFromEpoch, TimeType inputTimeType);
