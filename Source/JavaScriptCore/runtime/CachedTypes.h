@@ -78,6 +78,9 @@ protected:
 };
 
 class Decoder : public RefCounted<Decoder> {
+public:
+    bool canBorrowPayload() const; // payload is process-lifetime (mmap'd / embedded), so decoded objects may alias it
+private:
     WTF_MAKE_NONCOPYABLE(Decoder);
 
 public:

@@ -38,6 +38,9 @@ public:
     JS_EXPORT_PRIVATE static CachePayload makeMallocPayload(MallocSpan<uint8_t, VMMalloc>&&);
     JS_EXPORT_PRIVATE static CachePayload makePayloadWithDestructor(std::span<uint8_t>, Destructor&&);
     JS_EXPORT_PRIVATE static CachePayload makeEmptyPayload();
+    // Mapped-file or externally-owned span payloads stay valid for as long as anything decoded from them; malloc payloads don't promise that.
+    bool isPersistent() const { return m_isPersistent || std::holds_alternative<FileSystem::MappedFileData>(m_data); }
+    void setIsPersistent() { m_isPersistent = true; } // embedder promises the bytes outlive every VM use (e.g. a section of the running executable)
 
     JS_EXPORT_PRIVATE CachePayload(CachePayload&&);
     JS_EXPORT_PRIVATE ~CachePayload();
@@ -50,6 +53,7 @@ public:
     explicit CachePayload(DataType&&, Destructor&& = {nullptr});
 
     DataType m_data;
+    bool m_isPersistent { false };
     Destructor m_destructor { nullptr };
 };
 

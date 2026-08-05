@@ -628,6 +628,7 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionString, dumpJITMemoryPath, nullptr, Restricted, nullptr) \
     v(Double, dumpJITMemoryFlushInterval, 10, Restricted, "Maximum time in between flushes of the JIT memory dump in seconds."_s) \
     v(Bool, useUnlinkedCodeBlockJettisoning, false, Normal, "If true, UnlinkedCodeBlock can be jettisoned."_s) \
+    v(Bool, useBorrowedBytecodeFromCache, true, Normal, "instruction streams decoded from a persistent (mmap'd/embedded) bytecode cache alias the cache instead of copying"_s) \
     v(Bool, useUnlinkedCodeBlockJettisoningForBytecodeCache, false, Normal, "If true, UnlinkedCodeBlocks decoded from a bytecode cache can also be jettisoned (regenerated from source or cache on next use)."_s) \
     v(Unsigned, unlinkedCodeBlockJettisonAge, 7, Normal, "Number of full collections an UnlinkedCodeBlock survives without being linked before it is jettisoned."_s) \
     v(Bool, forceOSRExitToLLInt, false, Normal, "If true, we always exit to the LLInt. If false, we exit to whatever is most convenient."_s) \

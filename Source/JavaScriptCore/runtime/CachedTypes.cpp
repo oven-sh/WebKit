@@ -56,6 +56,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+bool Decoder::canBorrowPayload() const
+{
+    return Options::useBorrowedBytecodeFromCache() && m_cachedBytecode->payloadIsPersistent();
+}
+
 namespace Yarr {
 enum class Flags : uint16_t;
 }
@@ -637,6 +642,13 @@ public:
         T* buffer = this->template allocate<T>(encoder, m_size);
         for (unsigned i = 0; i < m_size; ++i)
             ::JSC::encode(encoder, buffer[i], vector[i]);
+    }
+
+    std::span<const T> borrow() const // raw view of the encoded elements (only meaningful for trivially-encoded T like uint8_t)
+    {
+        if (!m_size)
+            return { };
+        return { this->template buffer<T>(), m_size };
     }
 
     template<typename... Args, typename VectorContainer>
@@ -1524,6 +1536,10 @@ public:
 
     JSInstructionStream* decode(Decoder& decoder) const
     {
+        if (decoder.canBorrowPayload()) {
+            // The cache outlives the VM's use of it (mmap'd / embedded): point at the bytes instead of copying them.
+            return new JSInstructionStream(m_instructions.borrow(), JSInstructionStream::Borrow);
+        }
         Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamBufferMalloc> instructionsVector;
         m_instructions.decode(decoder, instructionsVector);
         return new JSInstructionStream(WTF::move(instructionsVector));
