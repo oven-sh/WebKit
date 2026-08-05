@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include <wtf/AutomaticThread.h>
+#include <wtf/NeverDestroyed.h>
 
 #include <wtf/DataLog.h>
 #include <wtf/PageBlock.h>
@@ -109,6 +110,14 @@ AutomaticThread::AutomaticThread(const AbstractLocker& locker, Box<Lock> lock, R
 {
 }
 
+// Registry of live AutomaticThreads so a process resumed from a heap image can forget underlying threads that only existed in the builder.
+static Lock s_allAutomaticThreadsLock;
+static Vector<AutomaticThread*>& allAutomaticThreads()
+{
+    static NeverDestroyed<Vector<AutomaticThread*>> threads;
+    return threads;
+}
+
 AutomaticThread::AutomaticThread(const AbstractLocker& locker, Box<Lock> lock, Ref<AutomaticThreadCondition>&& condition, ThreadType type, Seconds timeout)
     : m_lock(lock)
     , m_condition(WTF::move(condition))
@@ -118,17 +127,35 @@ AutomaticThread::AutomaticThread(const AbstractLocker& locker, Box<Lock> lock, R
     if (verbose)
         dataLog(RawPointer(this), ": Allocated AutomaticThread.\n");
     m_condition->add(locker, this);
+    Locker registryLocker { s_allAutomaticThreadsLock };
+    allAutomaticThreads().append(this);
 }
 
 AutomaticThread::~AutomaticThread()
 {
     if (verbose)
         dataLog(RawPointer(this), ": Deleting AutomaticThread.\n");
+    {
+        Locker registryLocker { s_allAutomaticThreadsLock };
+        allAutomaticThreads().removeFirst(this);
+    }
     Locker locker { *m_lock };
     
     // It's possible that we're in a waiting state with the thread shut down. This is a goofy way to
     // die, but it could happen.
     m_condition->remove(locker, this);
+}
+
+void AutomaticThread::forgetUnderlyingThreadsForImageRestore()
+{
+    // Every AutomaticThread here came out of a heap image; whatever pthread it thinks it has belonged to the process that built the
+    // image. Put each into the "timed out, no underlying thread" state so the next notify() starts a real one.
+    Locker registryLocker { s_allAutomaticThreadsLock };
+    for (AutomaticThread* thread : allAutomaticThreads()) {
+        Locker locker { *thread->m_lock };
+        thread->m_hasUnderlyingThread = false;
+        thread->m_isWaiting = false;
+    }
 }
 
 bool AutomaticThread::tryStop(const AbstractLocker&)

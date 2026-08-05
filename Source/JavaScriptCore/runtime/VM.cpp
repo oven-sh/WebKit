@@ -165,6 +165,7 @@
 #include <wtf/SystemTracing.h>
 #include <wtf/Threading.h>
 #include <wtf/text/AtomStringTable.h>
+#include <wtf/AutomaticThread.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 #if ENABLE(DFG_JIT) || ENABLE(WEBASSEMBLY)
@@ -602,6 +603,7 @@ void VM::queueMicrotask(QueuedTask&& task)
 void VM::didRestoreFromImage()
 {
     m_imageEpoch++;
+    AutomaticThread::forgetUnderlyingThreadsForImageRestore(); // GC collector/markers, JIT worklist threads: restart on next notify
     m_intlCache = makeUnique<IntlCache>();
     dateCache.didRestoreFromImage();
     if (m_regExpCache)
