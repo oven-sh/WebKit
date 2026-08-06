@@ -494,6 +494,7 @@ public:
     // Rule 2: lazily-cached prototype chains of image Structures live here instead of the (never written) cell. Slot is stable (node-based map).
     StructureChain*& imageCachedPrototypeChainSlot(const Structure*); // raw: entries are GC roots (Img constraint), so no owner barrier needed
     intptr_t& imageTransitionTableSlot(const StructureTransitionTable*, intptr_t seed);
+    const intptr_t* peekImageTransitionTableSlot(const StructureTransitionTable*) const;
     void evacuateTablesForImage(); // after restore: re-home per-heap tables that take inserts every run
     bool isFreezingImage() const { return m_isFreezingImage; }
     // Barrier slow path for image owners: side remembered set instead of cellState writes. Returns true if handled.
@@ -929,7 +930,8 @@ private:
     UncheckedKeyHashSet<JSCell*> m_imageWrittenEver;
     UncheckedKeyHashMap<std::pair<const UnlinkedFunctionExecutable*, unsigned>, UnlinkedFunctionCodeBlock*> m_imageUnlinkedCodeBlocks; // visited as roots by the Img constraint
     UncheckedKeyHashMap<const Structure*, std::unique_ptr<StructureChain*>> m_imageCachedPrototypeChains; // ditto (unique_ptr for a stable slot address)
-    UncheckedKeyHashMap<const StructureTransitionTable*, std::unique_ptr<intptr_t>> m_imageTransitionTables; // side words; single-transition targets are weak like the in-cell ones (visited/cleared by Structure::visitChildren via data())
+    UncheckedKeyHashMap<const StructureTransitionTable*, intptr_t*> m_imageTransitionTables; // side words (storage below; stable addresses); single-transition targets are weak like the in-cell ones
+    SegmentedVector<intptr_t, 512> m_imageTransitionTableSlots;
     UncheckedKeyHashSet<JSCell*> m_imageRememberedThisCycle;
     Vector<JSCell*> m_imagePreciseRoots;
     bool m_isFreezingImage { false };

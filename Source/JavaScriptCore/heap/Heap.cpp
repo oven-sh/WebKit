@@ -1263,9 +1263,17 @@ void Heap::evacuateTablesForImage()
 intptr_t& Heap::imageTransitionTableSlot(const StructureTransitionTable* table, intptr_t seed)
 {
     auto& slot = m_imageTransitionTables.add(table, nullptr).iterator->value;
-    if (!slot)
-        slot = makeUniqueWithoutFastMallocCheck<intptr_t>(seed);
+    if (!slot) {
+        m_imageTransitionTableSlots.append(seed);
+        slot = &m_imageTransitionTableSlots.last();
+    }
     return *slot;
+}
+
+const intptr_t* Heap::peekImageTransitionTableSlot(const StructureTransitionTable* table) const
+{
+    auto it = m_imageTransitionTables.find(table);
+    return it == m_imageTransitionTables.end() ? nullptr : it->value;
 }
 
 StructureChain*& Heap::imageCachedPrototypeChainSlot(const Structure* structure)

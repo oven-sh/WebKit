@@ -289,23 +289,30 @@ private:
 
     // Rule 2 (heap image): for a table embedded in an image Structure, the mutable word lives in a heap side slot
     // (seeded from the imaged value) so adding transitions never writes the image cell.
-    JS_EXPORT_PRIVATE intptr_t& dataSlow() const;
+    JS_EXPORT_PRIVATE intptr_t& dataSlow() const; // write path: get-or-create the side slot
+    JS_EXPORT_PRIVATE intptr_t dataForReadSlow() const; // read path: peek the side slot, never creates one
     ALWAYS_INLINE intptr_t& data() const
     {
         if (g_imageStructureTablesRedirected) [[unlikely]]
             return dataSlow();
         return m_data;
     }
+    ALWAYS_INLINE intptr_t dataForRead() const
+    {
+        if (g_imageStructureTablesRedirected) [[unlikely]]
+            return dataForReadSlow();
+        return m_data;
+    }
 
     bool isUsingSingleSlot() const
     {
-        return data() & UsingSingleSlotFlag;
+        return dataForRead() & UsingSingleSlotFlag;
     }
 
     TransitionMap* map() const
     {
         ASSERT(!isUsingSingleSlot());
-        return std::bit_cast<TransitionMap*>(data());
+        return std::bit_cast<TransitionMap*>(dataForRead());
     }
 
     void setMap(TransitionMap* map)

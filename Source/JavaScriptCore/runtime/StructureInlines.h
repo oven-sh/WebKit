@@ -592,7 +592,7 @@ ALWAYS_INLINE StructureTransitionTable::Hash::Key StructureTransitionTable::Hash
 
 inline Structure* StructureTransitionTable::trySingleTransition() const
 {
-    uintptr_t pointer = data();
+    uintptr_t pointer = dataForRead(); // read: never materializes an image side slot
     if (pointer & UsingSingleSlotFlag)
         return std::bit_cast<Structure*>(pointer & ~UsingSingleSlotFlag);
     return nullptr;

@@ -1873,6 +1873,16 @@ intptr_t& StructureTransitionTable::dataSlow() const
     return owner->vm().heap.imageTransitionTableSlot(this, m_data);
 }
 
+intptr_t StructureTransitionTable::dataForReadSlow() const
+{
+    const Structure* owner = std::bit_cast<const Structure*>(std::bit_cast<const char*>(this) - Structure::offsetOfTransitionTable());
+    if (!Heap::isImageCell(owner))
+        return m_data;
+    if (const intptr_t* slot = owner->vm().heap.peekImageTransitionTableSlot(this))
+        return *slot;
+    return m_data;
+}
+
 } // namespace JSC
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
