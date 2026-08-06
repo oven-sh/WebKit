@@ -600,6 +600,15 @@ void VM::queueMicrotask(QueuedTask&& task)
 }
 #endif
 
+void VM::completeAllJITPlansBeforeImageSnapshot()
+{
+#if ENABLE(JIT)
+    // Drain in-flight DFG/FTL plans so no compiler thread touches the heap or installs code while the image is walked/frozen.
+    if (Options::useJIT())
+        JITWorklist::ensureGlobalWorklist().completeAllPlansForVM(*this);
+#endif
+}
+
 void VM::refreshStackBoundsAfterImageRestore()
 {
     // Stack addresses cached from the process that built the image (its main thread's stack) are meaningless here.

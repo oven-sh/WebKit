@@ -993,7 +993,8 @@ public:
     IntlCache& intlCache() { return *m_intlCache; }
     unsigned imageEpoch() const { return m_imageEpoch; } // bumped when this VM resumes in a new process from a heap image; holders of foreign (non-GC-heap) handles revalidate against it
     JS_EXPORT_PRIVATE void didRestoreFromImage();
-    JS_EXPORT_PRIVATE void refreshStackBoundsAfterImageRestore(); // call right after adopting the thread, before taking the JSLock
+    JS_EXPORT_PRIVATE void refreshStackBoundsAfterImageRestore();
+    JS_EXPORT_PRIVATE void completeAllJITPlansBeforeImageSnapshot(); // call right after adopting the thread, before taking the JSLock
 #if USE(BUN_JSC_ADDITIONS)
     // Clears both dateCache and intlCache; callable without including IntlCache.h
     // (which transitively includes ICU headers that Bun's C++ cannot see on macOS).
