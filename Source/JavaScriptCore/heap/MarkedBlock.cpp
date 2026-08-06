@@ -443,7 +443,7 @@ void MarkedBlock::resetMarks()
 #if ASSERT_ENABLED
 void MarkedBlock::assertMarksNotStale()
 {
-    ASSERT(header().m_markingVersion == vm().heap.objectSpace().markingVersion());
+    ASSERT(header().m_isImmortal || header().m_markingVersion == vm().heap.objectSpace().markingVersion());
 }
 #endif // ASSERT_ENABLED
 

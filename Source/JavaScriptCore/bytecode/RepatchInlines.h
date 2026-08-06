@@ -170,14 +170,6 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
     JSFunction* callee = uncheckedDowncast<JSFunction>(calleeAsFunctionCell);
     JSScope* scope = callee->scopeUnchecked();
     ExecutableBase* executable = callee->executable();
-    if (getenv("JSC_IMM_LOG")) [[unlikely]] {
-        auto imm = [](const JSCell* c) { return c && !c->isPreciseAllocation() && c->markedBlock().isImmortal(); };
-        uint32_t firstWord = *reinterpret_cast<const uint32_t*>(executable);
-        if (!firstWord || firstWord == 0xbadbeef0 || !executable->structureID()) {
-            dataLogLn("[imm] linkFor: callee ", RawPointer(callee), " (", callee->className(), ", immortal=", imm(callee), ", state=", static_cast<int>(callee->cellState()), ", marked=", vm.heap.isMarked(callee), ") has dead executable ", RawPointer(executable), " immortal=", imm(executable), " firstWord=", firstWord, " owner cb=", RawPointer(owner), " ownerImmortal=", imm(owner));
-            CRASH();
-        }
-    }
 
     CodePtr<JSEntryPtrTag> codePtr;
     CodeBlock* codeBlock = nullptr;
@@ -199,12 +191,6 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
 
         CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
         functionExecutable->prepareForExecution<FunctionExecutable>(vm, callee, scope, kind, *codeBlockSlot);
-        if (!throwScope.exception() && (!functionExecutable->hasJITCodeFor(kind) || !*codeBlockSlot)) [[unlikely]] {
-            dataLogLn("[imm] linkFor: no jit code after prepareForExecution exec=", RawPointer(functionExecutable), " immortal=", (!functionExecutable->isPreciseAllocation() && functionExecutable->markedBlock().isImmortal()), " cb=", RawPointer(*codeBlockSlot), " cbForKind=", RawPointer(functionExecutable->codeBlockFor(kind)), " kind=", static_cast<int>(kind));
-            if (*codeBlockSlot)
-                dataLogLn("   cb immortal=", (*codeBlockSlot)->markedBlock().isImmortal(), " cbMarked=", vm.heap.isMarked(*codeBlockSlot), " jitType=", static_cast<int>((*codeBlockSlot)->jitType()), " hasJITCode=", !!(*codeBlockSlot)->jitCode());
-            CRASH();
-        }
         RETURN_IF_EXCEPTION(throwScope, nullptr);
 
         codeBlock = *codeBlockSlot;
