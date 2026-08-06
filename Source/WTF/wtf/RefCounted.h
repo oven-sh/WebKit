@@ -39,15 +39,12 @@ class RefCountedBase {
 public:
     void ref() const
     {
-        if (isInImageImmortalRange(this, 1)) [[unlikely]]
-            return;
         m_refCountDebugger.willRef(m_refCount);
         ++m_refCount;
     }
 
-    // Image objects are co-owned by the image itself: never "solely owned", and their count reads as obviously shared whenever refcounting on them is elided.
-    bool hasOneRef() const { return !isInImageImmortalRange(this, 7) && m_refCount == 1; }
-    uint32_t refCount() const { return isInImageImmortalRange(this, 7) ? m_refCount + (1u << 20) : m_refCount; }
+    bool hasOneRef() const { return m_refCount == 1; }
+    uint32_t refCount() const { return m_refCount; }
 
     // Debug APIs
     void adopted() { m_refCountDebugger.adopted(); }
@@ -67,8 +64,6 @@ protected:
     // Returns true if the pointer should be deleted.
     bool derefBase() const
     {
-        if (isInImageImmortalRange(this, 2)) [[unlikely]]
-            return false;
         m_refCountDebugger.willDeref(m_refCount);
 
         auto tempRefCount = m_refCount - 1;
