@@ -660,6 +660,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         resolved = resolve(globalObject, specifier, referrerKey, scriptFetcher, useImportMap);
         // 9. If the previous step threw an exception, then:
         if (Exception* resolutionError = scope.exception()) {
+            // A TerminationException is not a resolution failure: it can be neither cleared
+            // (rejectWithCaughtException leaves it pending) nor cached, so let it propagate
+            // instead of continuing into FinishLoadingImportedModule with it still set.
+            if (vm.isTerminationException(resolutionError)) [[unlikely]]
+                RELEASE_AND_RETURN(scope, nullptr);
             attachErrorInfo(globalObject, resolutionError, nullptr, specifier, moduleRequest.type(), ModuleFailure::Kind::Instantiation);
             // Cache the resolution error so subsequent calls for the same specifier return the same error object.
             JSValue errorValue = resolutionError->value();
