@@ -406,7 +406,7 @@ public:
     bool isMarkedRaw(const void* p);
     HeapVersion markingVersion() const { return header().m_markingVersion; }
     bool isImmortal() const { return header().m_isImmortal; }
-    void makeImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool allCellsLive);
+    void makeImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion);
     
     const WTF::BitSet<atomsPerBlock>& marks() const;
     
@@ -597,8 +597,8 @@ inline Dependency MarkedBlock::aboutToMark(HeapVersion markingVersion, HeapCell*
 {
     HeapVersion version;
     Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
-    if (version != markingVersion && !header().m_isImmortal) [[unlikely]]
-        aboutToMarkSlow(markingVersion, cell);
+    if (version != markingVersion) [[unlikely]]
+        aboutToMarkSlow(markingVersion, cell); // image blocks keep a stale version forever; the slow path returns without writing
     return dependency;
 }
 
@@ -624,8 +624,6 @@ inline bool MarkedBlock::isMarkedRaw(const void* p)
 
 inline bool MarkedBlock::isMarked(const void* p, Dependency dependency)
 {
-    if (header().m_isImmortal) [[unlikely]]
-        return header().m_marks.get(atomNumber(p));
     assertMarksNotStale();
     return header().m_marks.concurrentGet(atomNumber(p), dependency);
 }

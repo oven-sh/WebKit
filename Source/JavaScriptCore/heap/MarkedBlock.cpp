@@ -56,19 +56,16 @@ NEVER_INLINE bool MarkedBlock::isMarked(HeapVersion markingVersion, const void* 
     return header().m_marks.concurrentGet(atomNumber(p), dependency);
 }
 
-void MarkedBlock::makeImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool allCellsLive)
+void MarkedBlock::makeImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion)
 {
-    // m_marks becomes the frozen liveness bitmap: stale marks mean "nothing survived", then fold in newlyAllocated.
+    // Runs right after a synchronous full GC + sweep: m_marks (if current) ∪ newlyAllocated (if current) is exactly the
+    // live set; every other slot is a zapped free cell that nothing references. That bitmap is frozen here and never
+    // written again, so the stock mark fast paths are safe on image blocks: a live image cell reads "already marked"
+    // (write-free), and a dead slot is unreachable by precise marking (conservative roots filter through isLive()).
     if (header().m_markingVersion != markingVersion)
         header().m_marks.clearAll();
     if (header().m_newlyAllocatedVersion == newlyAllocatedVersion)
         header().m_marks.merge(header().m_newlyAllocated);
-    if (allCellsLive) {
-        handle().forEachCell([&](size_t, HeapCell* cell, HeapCell::Kind) -> IterationStatus {
-            header().m_marks.set(atomNumber(cell));
-            return IterationStatus::Continue;
-        });
-    }
     header().m_markingVersion = markingVersion;
     header().m_isImmortal = true;
 }

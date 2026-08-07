@@ -24,7 +24,6 @@
  */
 
 #include "config.h"
-#include <stdlib.h>
 #include "BlockDirectory.h"
 
 #include "BlockDirectoryInlines.h"
@@ -357,21 +356,17 @@ void BlockDirectory::snapshotUnsweptForFullCollection()
 
 void BlockDirectory::makeAllBlocksImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion)
 {
-    // Return any block held by an allocator (records newlyAllocated bits), then make allocators forget it.
-    if (!getenv("JSC_IMM_SKIP_FORGET")) {
-        m_localAllocators.forEach([&](LocalAllocator* allocator) {
-            allocator->stopAllocating();
-            allocator->forgetCurrentBlock();
-        });
-    }
-    if (getenv("JSC_IMM_SKIP_MARK"))
-        return;
+    // Return any block held by an allocator — stopAllocating() records exactly the handed-out cells as newlyAllocated
+    // (the free-list remainder stays dead) — then make allocators forget it.
+    m_localAllocators.forEach([&](LocalAllocator* allocator) {
+        allocator->stopAllocating();
+        allocator->forgetCurrentBlock();
+    });
     Locker locker(bitvectorLock());
     for (size_t index = 0; index < m_blocks.size(); ++index) {
         if (!isLive(index) || !m_blocks[index])
             continue;
-        // A block with the 'allocated' bit was bump-filled since the last GC: every cell in it is live.
-        m_blocks[index]->block().makeImmortal(markingVersion, newlyAllocatedVersion, isAllocated(index));
+        m_blocks[index]->block().makeImmortal(markingVersion, newlyAllocatedVersion);
         setIsImmortal(index, true);
         setIsMarkingNotEmpty(index, true);
         setIsMarkingRetired(index, true);
