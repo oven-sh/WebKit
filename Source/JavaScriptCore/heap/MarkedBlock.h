@@ -597,8 +597,8 @@ inline Dependency MarkedBlock::aboutToMark(HeapVersion markingVersion, HeapCell*
 {
     HeapVersion version;
     Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
-    if (version != markingVersion) [[unlikely]]
-        aboutToMarkSlow(markingVersion, cell); // returns without writing for immortal (image) blocks
+    if (version != markingVersion && !header().m_isImmortal) [[unlikely]]
+        aboutToMarkSlow(markingVersion, cell);
     return dependency;
 }
 
@@ -624,13 +624,17 @@ inline bool MarkedBlock::isMarkedRaw(const void* p)
 
 inline bool MarkedBlock::isMarked(const void* p, Dependency dependency)
 {
+    if (header().m_isImmortal) [[unlikely]]
+        return header().m_marks.get(atomNumber(p));
     assertMarksNotStale();
     return header().m_marks.concurrentGet(atomNumber(p), dependency);
 }
 
 inline bool MarkedBlock::testAndSetMarked(const void* p, Dependency dependency)
 {
-    assertMarksNotStale(); // immortal (image) blocks: marks are frozen all-live, so this is a write-free "already marked"
+    if (header().m_isImmortal) [[unlikely]]
+        return true; // frozen: never write, never (re)visit — dead image cells stay unvisited. TODO(merge bar): make this free by freezing all bits set + zapping dead slots.
+    assertMarksNotStale();
     return header().m_marks.concurrentTestAndSet(atomNumber(p), dependency);
 }
 
