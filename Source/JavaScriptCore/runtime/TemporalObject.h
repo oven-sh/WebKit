@@ -137,4 +137,20 @@ void throwTemporalError(JSGlobalObject*, ThrowScope&, const TemporalError&);
 
 std::optional<TimeZone> toTemporalTimeZoneIdentifier(JSGlobalObject*, JSValue);
 
+// Which [[InitializedTemporal*]] internal slot a value carries. Embedders mirror
+// these discriminants, so keep them stable.
+enum class TemporalType : uint8_t {
+    None = 0,
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
+};
+
+JS_EXPORT_PRIVATE TemporalType temporalType(JSValue);
+
 } // namespace JSC

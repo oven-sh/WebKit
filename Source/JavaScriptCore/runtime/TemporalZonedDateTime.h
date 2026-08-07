@@ -30,6 +30,7 @@
 #include <JavaScriptCore/JSCTimeZone.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/TemporalEnums.h>
+#include <JavaScriptCore/TemporalObject.h>
 #include <optional>
 #include <wtf/Packed.h>
 
@@ -63,6 +64,12 @@ public:
     CalendarID calendarID() const { return m_calendarID; }
 
     std::optional<int64_t> getOffsetNanoseconds(JSGlobalObject*) const;
+
+    // https://tc39.es/proposal-temporal/#sec-temporal-temporalzoneddatetimetostring
+    // showOffset: ~auto~ | ~never~; showTimeZone: ~auto~ | ~never~ | ~critical~; showCalendar: ~auto~ | ~always~ | ~never~ | ~critical~.
+    String toString(JSGlobalObject*, const PrecisionData&, RoundingMode, StringView showOffset, StringView showTimeZone, StringView showCalendar) const;
+    // Every option ~auto~ (what toJSON and default-argument toString produce).
+    JS_EXPORT_PRIVATE String toString(JSGlobalObject*) const;
 
     ISO8601::PlainDateTime getLocalDateTime(JSGlobalObject*) const;
 
