@@ -92,7 +92,14 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
         list->addLast(listLocker, syncWaiter);
         dataLogLnIf(WaiterListsManagerInternal::verbose, "<WaiterListManager> <Thread:", Thread::currentSingleton(), "> added a new SyncWaiter=", syncWaiter.get(), " to a waiterList for ptr ", RawPointer(ptr));
 
-        while (syncWaiter->isOnList() && time.now() < time && !vm.hasTerminationRequest())
+        // A termination requested from another thread (VM::notifyNeedTermination) is, until this
+        // thread handles its traps, only a fired NeedTermination trap bit: VMTraps notifies our
+        // condition for it, but hasTerminationRequest() is set by trap handling on this thread,
+        // which cannot happen while we block here. Wake for either.
+        auto terminationRequested = [&] {
+            return vm.hasTerminationRequest() || vm.traps().needHandling(VMTraps::NeedTermination);
+        };
+        while (syncWaiter->isOnList() && time.now() < time && !terminationRequested())
             syncWaiter->condition().waitUntil(list->lock, time.approximate<WallTime>());
 
         // At this point, syncWaiter should be either notified (dequeued) or timeout (not dequeued).
@@ -102,7 +109,7 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
 
         didGetDequeued = list->findAndRemove(listLocker, syncWaiter);
         ASSERT(didGetDequeued);
-        return vm.hasTerminationRequest() ? WaitSyncResult::Terminated : WaitSyncResult::TimedOut;
+        return terminationRequested() ? WaitSyncResult::Terminated : WaitSyncResult::TimedOut;
     }
 }
 
