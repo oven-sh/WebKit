@@ -157,6 +157,7 @@
 #include "WeakGCMapInlines.h"
 #include "WideningNumberPredictionFuzzerAgent.h"
 #include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/ParkingLot.h>
 #include <wtf/ProcessID.h>
 #include <wtf/ReadWriteLock.h>
 #include <wtf/SimpleStats.h>
@@ -621,6 +622,7 @@ void VM::didRestoreFromImage()
 {
     m_imageEpoch++;
     refreshStackBoundsAfterImageRestore();
+    ParkingLot::forgetAllForImageRestore(); // parked entries in the image are the builder's threads
     AutomaticThread::forgetUnderlyingThreadsForImageRestore(); // GC collector/markers, JIT worklist threads: restart on next notify
     m_intlCache = makeUnique<IntlCache>();
     dateCache.didRestoreFromImage();

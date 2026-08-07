@@ -1260,6 +1260,7 @@ void Heap::evacuateTablesForImage()
         cache->age(CollectionScope::Full); // bumps the epoch (entries become misses) without rewriting the imaged entry arrays
 }
 
+
 intptr_t& Heap::imageTransitionTableSlot(const StructureTransitionTable* table, intptr_t seed)
 {
     auto& slot = m_imageTransitionTables.add(table, nullptr).iterator->value;

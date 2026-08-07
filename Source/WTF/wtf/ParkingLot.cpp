@@ -786,6 +786,17 @@ NEVER_INLINE void ParkingLot::unparkAll(const void* address)
     unparkCount(address, UINT_MAX);
 }
 
+
+void ParkingLot::forgetAllForImageRestore()
+{
+    Vector<const void*> addresses;
+    forEachImpl(scopedLambdaRef<void(uintptr_t, const void*)>([&](uintptr_t, const void* address) {
+        addresses.append(address);
+    }));
+    for (const void* address : addresses)
+        unparkAll(address);
+}
+
 NEVER_INLINE void ParkingLot::forEachImpl(const ScopedLambda<void(uintptr_t, const void*)>& callback)
 {
     Vector<Bucket*> bucketsToUnlock = lockHashtable();
