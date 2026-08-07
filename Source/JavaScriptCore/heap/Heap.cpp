@@ -3321,8 +3321,6 @@ void Heap::addCoreConstraints()
                 else
                     visitor.appendUnbarriered(JSValue(cell));
             }
-            if (getenv("JSC_IMM_LOG"))
-                dataLogLn("[imm] full GC roots: ", written.size(), " written image cells, ", m_imagePreciseRoots.size(), " precise allocations");
         })),
         ConstraintVolatility::GreyedByExecution);
 
