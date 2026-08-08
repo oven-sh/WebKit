@@ -868,7 +868,6 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii. Else,
                     // 2.d.iii.1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
-                    unsigned loadedModulesCountBefore = module->loadedModules().size();
                     JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, state, state->scriptFetcher(), true);
                     if (scope.exception()) [[unlikely]] {
                         state->setDrainingInnerLoad(false);
@@ -876,12 +875,18 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii.2. NOTE: HostLoadImportedModule will call FinishLoadingImportedModule, which re-enters the graph loading process through ContinueModuleLoading.
                     //
-                    // If module.[[LoadedModules]] grew across the HostLoadImportedModule call, the requested
-                    // module was loaded synchronously, which means it was already loaded before. In that case
-                    // there is no need to attach a ModuleGraphLoadingError reaction, so we skip it.
-                    bool needsErrorReaction = module->loadedModules().size() == loadedModulesCountBefore;
-                    ASSERT(module->loadedModules().size() <= loadedModulesCountBefore + 1);
-                    ASSERT(needsErrorReaction != module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() }));
+                    // If the requested module is in module.[[LoadedModules]] after the
+                    // HostLoadImportedModule call, it was loaded synchronously and
+                    // FinishLoadingImportedModule already continued this state, so no
+                    // ModuleGraphLoadingError reaction is needed. Membership — not a
+                    // loadedModules size delta — is the test: a require(esm) nested
+                    // inside the host hook (a CommonJS module evaluated during
+                    // makeModule requiring a sibling of this graph) drains the
+                    // synchronous module queue, which can run this module's pending
+                    // ModuleLoadStep reactions for OTHER requests during the call, so
+                    // the size can grow without THIS request having completed — and
+                    // grow by more than one.
+                    bool needsErrorReaction = !module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() });
                     if (needsErrorReaction)
                         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, state);
                     // 2.d.iv. If state.[[IsLoading]] is false, return UNUSED.
