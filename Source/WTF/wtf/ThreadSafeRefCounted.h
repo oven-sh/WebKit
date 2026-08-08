@@ -40,14 +40,12 @@ class WTF_EMPTY_BASE_CLASS ThreadSafeRefCountedBase {
 public:
     void ref() const
     {
-        if (isInImageImmortalRange(this, 1)) [[unlikely]]
-            return;
         m_refCountDebugger.willRef(m_refCount.load(std::memory_order_relaxed));
         m_refCount.fetch_add(1, std::memory_order_relaxed);
     }
 
-    bool hasOneRef() const { return !isInImageImmortalRange(this, 7) && m_refCount.load(std::memory_order_acquire) == 1; }
-    uint32_t refCount() const { uint32_t c = m_refCount.load(std::memory_order_relaxed); return isInImageImmortalRange(this, 7) ? c + (1u << 20) : c; }
+    bool hasOneRef() const { return m_refCount.load(std::memory_order_acquire) == 1; }
+    uint32_t refCount() const { return m_refCount.load(std::memory_order_relaxed); }
 
     // Debug APIs
     void adopted() { m_refCountDebugger.adopted(); }
@@ -73,8 +71,6 @@ protected:
     // Returns true if the pointer should be freed.
     bool derefBase() const
     {
-        if (isInImageImmortalRange(this, 2)) [[unlikely]]
-            return false;
         m_refCountDebugger.willDeref(m_refCount.load(std::memory_order_relaxed));
 
         if (m_refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) [[unlikely]] {

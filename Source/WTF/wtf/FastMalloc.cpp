@@ -771,5 +771,4 @@ void* mallocArray(Kind kind, size_t numElements, size_t elementSize)
 namespace WTF {
 uintptr_t g_imageImmortalRangeLo = 0;
 uintptr_t g_imageImmortalRangeSpan = 0;
-unsigned g_imageImmortalMode = 0; // off by default: full mode (3|4) currently gets the restored CC SIGKILLed at first render; deref-only (2|4) is sound but buys nothing
 } // namespace WTF
