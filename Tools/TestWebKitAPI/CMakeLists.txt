@@ -193,6 +193,7 @@ if (ENABLE_JAVASCRIPTCORE)
         Tests/JavaScriptCore/PropertySlot.cpp
         Tests/JavaScriptCore/RegularExpression.cpp
         Tests/JavaScriptCore/StrongBlock.cpp
+        Tests/JavaScriptCore/UnsafeCallerFrame.cpp
     )
 
     set(TestJavaScriptCore_LIBRARIES
