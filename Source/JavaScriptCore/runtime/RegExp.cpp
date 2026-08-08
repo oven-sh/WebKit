@@ -28,6 +28,7 @@
 #include "RegExpInlines.h"
 #include "YarrJIT.h"
 #include "YarrPattern.h"
+#include <wtf/ASCIICType.h>
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
@@ -159,6 +160,93 @@ RegExp::RegExp(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags
     ASSERT(m_flags != Yarr::Flags::DeletedValue);
 }
 
+// Decides from a cheap character scan only (no Yarr parse) whether it is likely
+// profitable to compile this pattern at construction time instead of lazily at
+// first match. Both kinds of mistakes are benign: a false negative just stays
+// lazy, a false positive wastes one small compile.
+static bool isLikelyProfitableToEagerlyCompile(StringView pattern, OptionSet<Yarr::Flags> flags)
+{
+    constexpr unsigned maxEagerPatternLength = 128;
+
+    unsigned length = pattern.length();
+    if (!length || length > maxEagerPatternLength)
+        return false;
+
+    // The v flag's class set operations can build large tables; stay lazy.
+    if (flags.contains(Yarr::Flags::UnicodeSets))
+        return false;
+
+    bool sawMetacharacter = false;
+    unsigned braceDepth = 0;
+    unsigned digitRunInBraces = 0;
+    for (unsigned i = 0; i < length; ++i) {
+        char16_t ch = pattern[i];
+        if (!isASCII(ch))
+            return false;
+        if (braceDepth && isASCIIDigit(ch)) {
+            // Counted repeats expand generated code; {100} and up stay lazy.
+            if (++digitRunInBraces > 2)
+                return false;
+        } else
+            digitRunInBraces = 0;
+        switch (ch) {
+        case '\\': {
+            if (i + 1 >= length)
+                return false;
+            char16_t escaped = pattern[i + 1];
+            // Backreferences are not always JITable, \k is a named
+            // backreference, and \p / \P build unicode property tables.
+            if (isASCIIDigit(escaped) && escaped != '0')
+                return false;
+            if (escaped == 'k' || escaped == 'p' || escaped == 'P')
+                return false;
+            // Class escapes like \d \s \w \b make this a real pattern, while
+            // escaped punctuation is just a literal character.
+            if (isASCIIAlphanumeric(escaped))
+                sawMetacharacter = true;
+            ++i;
+            break;
+        }
+        case '(':
+            // Lookbehinds are not JITable; they always start with "(?<=" or "(?<!".
+            if (i + 3 < length && pattern[i + 1] == '?' && pattern[i + 2] == '<') {
+                char16_t kind = pattern[i + 3];
+                if (kind == '=' || kind == '!')
+                    return false;
+            }
+            sawMetacharacter = true;
+            break;
+        case '{':
+            braceDepth++;
+            digitRunInBraces = 0;
+            break;
+        case '}':
+            if (braceDepth)
+                braceDepth--;
+            sawMetacharacter = true;
+            break;
+        case '[':
+        case ']':
+        case ')':
+        case '|':
+        case '*':
+        case '+':
+        case '?':
+        case '.':
+            sawMetacharacter = true;
+            break;
+        default:
+            // '^' and '$' deliberately do not count: anchored plain literals
+            // match through the atom / specific pattern fast paths.
+            break;
+        }
+    }
+
+    // A pattern with no metacharacters is a plain literal; those match through
+    // the atom fast path and compiled code would never run.
+    return sawMetacharacter;
+}
+
 void RegExp::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -188,6 +276,14 @@ void RegExp::finishCreation(VM& vm)
     if (hasNamedCaptures())
         offsetVectorSize += m_rareData->m_numDuplicateNamedCaptureGroups;
     m_ovector.resize(offsetVectorSize);
+
+#if ENABLE(YARR_JIT)
+    if (Options::useRegExpJIT() && Options::useEagerRegExpJIT() && isLikelyProfitableToEagerlyCompile(m_patternString, m_flags)) {
+        compileEagerly(vm, pattern);
+        if (Options::eagerRegExpJITCompilesMatchOnly() && m_state != ParseError && !hasMatchOnlyCodeFor(Yarr::CharSize::Char8))
+            compileMatchOnly(&vm, Yarr::CharSize::Char8, std::nullopt);
+    }
+#endif
 }
 
 void RegExp::destroy(JSCell* cell)
@@ -339,6 +435,43 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 
     m_state = ByteCode;
     m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_constructionErrorCode);
+    if (!m_regExpBytecode) {
+        m_state = ParseError;
+        return;
+    }
+}
+
+// Mirrors compile(), but reuses the YarrPattern finishCreation already built
+// for validation instead of parsing the pattern string a second time. Only the
+// 8-bit code is compiled eagerly: 16-bit subjects recompile lazily as before.
+void RegExp::compileEagerly(VM& vm, Yarr::YarrPattern& pattern)
+{
+    Locker locker { cellLock() };
+
+    ASSERT(!hasCode());
+    ASSERT(m_state == NotCompiled);
+    vm.regExpCache()->addToStrongCache(this);
+    m_state = ByteCode;
+
+#if ENABLE(YARR_JIT)
+    if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
+#if !ENABLE(YARR_JIT_BACKREFERENCES)
+        && !pattern.m_containsBackreferences
+#endif
+        && !pattern.m_containsLookbehinds
+        ) {
+        auto& jitCode = ensureRegExpJITCode();
+        Yarr::jitCompile(pattern, m_patternString, Yarr::CharSize::Char8, std::nullopt, &vm, jitCode, Yarr::ExecutionMode::IncludeSubpatterns);
+        if (!jitCode.failureReason()) {
+            m_state = JITCode;
+            return;
+        }
+    }
+#endif
+
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
+
+    m_regExpBytecode = byteCodeCompilePattern(&vm, pattern, m_constructionErrorCode);
     if (!m_regExpBytecode) {
         m_state = ParseError;
         return;

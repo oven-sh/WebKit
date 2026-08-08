@@ -103,6 +103,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
     v(Bool, useDFGJIT, jitEnabledByDefault(), Normal, "allows the DFG JIT to be used if true"_s) \
     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
+    v(Bool, useEagerRegExpJIT, true, Normal, "eagerly compile eligible RegExp patterns at construction time instead of at first match"_s) \
+    v(Bool, eagerRegExpJITCompilesMatchOnly, true, Normal, "when eagerly compiling a RegExp, also compile the match-only (test/search) variant"_s) \
     v(Bool, useDOMJIT, jitEnabledByDefault(), Normal, "allows the DOMJIT to be used if true"_s) \
     \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \
