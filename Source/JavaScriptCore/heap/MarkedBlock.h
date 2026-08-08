@@ -589,7 +589,7 @@ inline unsigned MarkedBlock::atomNumber(const void* p)
 inline bool MarkedBlock::areMarksStale(HeapVersion markingVersion)
 {
     if (header().m_isImmortal) [[unlikely]]
-        return false; // frozen marks are always authoritative
+        return false; // an image block keeps the version it was frozen with; its marks are its liveness
     return markingVersion != header().m_markingVersion;
 }
 
@@ -630,8 +630,9 @@ inline bool MarkedBlock::isMarked(const void* p, Dependency dependency)
 
 inline bool MarkedBlock::testAndSetMarked(const void* p, Dependency dependency)
 {
-    if (header().m_isImmortal) [[unlikely]]
-        return true; // frozen: never write, never (re)visit — dead image cells stay unvisited. TODO(merge bar): make this free by freezing all bits set + zapping dead slots.
+    // Image blocks need no case here: every image cell a precise pointer can reach is live, so its frozen bit is set and
+    // concurrentTestAndSet returns without writing; dead image cells are only ever proposed by conservative scanning,
+    // which consults isMarked (areMarksStale) first.
     assertMarksNotStale();
     return header().m_marks.concurrentTestAndSet(atomNumber(p), dependency);
 }
