@@ -43,6 +43,19 @@
 #include <unistd.h>
 #endif
 
+#if BOS(LINUX)
+#include <sys/syscall.h>
+#if defined(SYS_getrandom)
+#define CRYPTO_RANDOM_USE_GETRANDOM 1
+#ifndef GRND_NONBLOCK
+#define GRND_NONBLOCK 0x0001
+#endif
+#endif
+#endif
+#ifndef CRYPTO_RANDOM_USE_GETRANDOM
+#define CRYPTO_RANDOM_USE_GETRANDOM 0
+#endif
+
 #if BOS(DARWIN)
 #include <CommonCrypto/CommonCryptoError.h>
 #include <CommonCrypto/CommonRandom.h>
@@ -118,20 +131,41 @@ void ARC4RandomNumberGenerator::stir()
     BCRASH();
 #else
     static std::once_flag onceFlag;
-    static int fd;
+    static int fd = -1;
     std::call_once(
         onceFlag,
         [] {
+#if CRYPTO_RANDOM_USE_GETRANDOM
+            // Prefer getrandom(2): same kernel pool as /dev/urandom, but needs no
+            // filesystem access and keeps no fd open. Probe once with GRND_NONBLOCK;
+            // if the pool is already initialized use getrandom from here on (it can
+            // never become uninitialized again). Otherwise -- EAGAIN (pool not ready,
+            // where /dev/urandom would return without blocking), ENOSYS (pre-3.17
+            // kernel) or EPERM (seccomp) -- keep the historical /dev/urandom behaviour.
+            uint8_t probe;
+            long probeResult;
+            do {
+                probeResult = syscall(SYS_getrandom, &probe, sizeof(probe), GRND_NONBLOCK);
+            } while (probeResult == -1 && errno == EINTR);
+            if (probeResult == 1)
+                return; // fd stays -1: use getrandom below.
+#endif
             int ret = 0;
             do {
-                ret = open("/dev/urandom", O_RDONLY, 0);
+                ret = open("/dev/urandom", O_RDONLY | O_CLOEXEC, 0);
             } while (ret == -1 && errno == EINTR);
             RELEASE_BASSERT(ret >= 0);
             fd = ret;
         });
     ssize_t amountRead = 0;
     while (static_cast<size_t>(amountRead) < length) {
-        ssize_t currentRead = read(fd, randomness + amountRead, length - amountRead);
+        ssize_t currentRead;
+#if CRYPTO_RANDOM_USE_GETRANDOM
+        if (fd < 0)
+            currentRead = syscall(SYS_getrandom, randomness + amountRead, length - amountRead, 0);
+        else
+#endif
+            currentRead = read(fd, randomness + amountRead, length - amountRead);
         // We need to check for both EAGAIN and EINTR since on some systems /dev/urandom
         // is blocking and on others it is non-blocking.
         if (currentRead == -1)
