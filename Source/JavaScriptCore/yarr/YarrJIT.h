@@ -437,7 +437,7 @@ private:
     std::optional<JITFailureReason> m_failureReason;
 };
 
-void jitCompile(YarrPattern&, StringView patternString, CharSize, std::optional<StringView> sampleString, VM*, YarrCodeBlock& jitObject, ExecutionMode);
+void jitCompile(YarrPattern&, StringView patternString, CharSize, std::optional<StringView> sampleString, VM*, YarrCodeBlock& jitObject, ExecutionMode, StackCheck* = nullptr);
 
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
 

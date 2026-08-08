@@ -214,7 +214,10 @@ private:
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
 
+    struct EagerCompilation;
     void compileEagerly(VM&, Yarr::YarrPattern&);
+    void enqueueEagerCompilation(VM&);
+    bool adoptEagerCompilationIfReady(VM&); // Requires cellLock() to be held.
 
 #if ENABLE(YARR_JIT_DEBUG)
     void matchCompareWithInterpreter(StringView, int startOffset, int* offsetVector, int jitResult);
@@ -251,6 +254,7 @@ private:
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;
 #if ENABLE(YARR_JIT)
     std::unique_ptr<Yarr::YarrCodeBlock> m_regExpJITCode;
+    RefPtr<EagerCompilation> m_pendingEagerCompilation;
 #endif
     std::unique_ptr<RareData> m_rareData;
     Vector<int> m_ovector;

@@ -31,6 +31,8 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
+#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/WorkQueue.h>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
@@ -247,6 +249,28 @@ static bool isLikelyProfitableToEagerlyCompile(StringView pattern, OptionSet<Yar
     return sawMetacharacter;
 }
 
+#if ENABLE(YARR_JIT)
+// One background Yarr compilation in flight. The worker thread only ever
+// touches this object, never the RegExp cell: the mutator adopts the finished
+// code under the cell lock at its first compile, or compiles inline and drops
+// the result if the worker had not finished by then. done is the publication
+// barrier for codeBlock: the worker store-releases it after the compiles, and
+// the mutator load-acquires it before reading codeBlock.
+struct RegExp::EagerCompilation final : public ThreadSafeRefCounted<RegExp::EagerCompilation> {
+    EagerCompilation(const String& patternString, OptionSet<Yarr::Flags> flags, RegExp* regExp)
+        : pattern(patternString.isolatedCopy())
+        , flags(flags)
+        , codeBlock(makeUnique<Yarr::YarrCodeBlock>(regExp))
+    {
+    }
+
+    const String pattern;
+    const OptionSet<Yarr::Flags> flags;
+    std::unique_ptr<Yarr::YarrCodeBlock> codeBlock;
+    Atomic<bool> done { false };
+};
+#endif
+
 void RegExp::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -279,9 +303,13 @@ void RegExp::finishCreation(VM& vm)
 
 #if ENABLE(YARR_JIT)
     if (Options::useRegExpJIT() && Options::useEagerRegExpJIT() && isLikelyProfitableToEagerlyCompile(m_patternString, m_flags)) {
-        compileEagerly(vm, pattern);
-        if (Options::eagerRegExpJITCompilesMatchOnly() && m_state != ParseError && !hasMatchOnlyCodeFor(Yarr::CharSize::Char8))
-            compileMatchOnly(&vm, Yarr::CharSize::Char8, std::nullopt);
+        if (Options::eagerRegExpJITOnBackgroundThread())
+            enqueueEagerCompilation(vm);
+        else {
+            compileEagerly(vm, pattern);
+            if (Options::eagerRegExpJITCompilesMatchOnly() && m_state != ParseError && !hasMatchOnlyCodeFor(Yarr::CharSize::Char8))
+                compileMatchOnly(&vm, Yarr::CharSize::Char8, std::nullopt);
+        }
     }
 #endif
 }
@@ -395,7 +423,12 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
 void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
     Locker locker { cellLock() };
-    
+
+#if ENABLE(YARR_JIT)
+    if (adoptEagerCompilationIfReady(*vm) && hasCodeFor(charSize))
+        return;
+#endif
+
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
@@ -478,6 +511,61 @@ void RegExp::compileEagerly(VM& vm, Yarr::YarrPattern& pattern)
     }
 }
 
+#if ENABLE(YARR_JIT)
+void RegExp::enqueueEagerCompilation(VM& vm)
+{
+    auto data = adoptRef(*new EagerCompilation(m_patternString, m_flags, this));
+    m_pendingEagerCompilation = data.copyRef();
+    bool alsoCompileMatchOnly = Options::eagerRegExpJITCompilesMatchOnly();
+    vm.eagerRegExpCompilationQueue().dispatch([data = WTF::move(data), vm = &vm, alsoCompileMatchOnly] {
+        // VM::isSafeToRecurse() is about the mutator's stack; the generator
+        // needs a StackCheck for this thread instead.
+        StackCheck stackCheck;
+        {
+            Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
+            Yarr::YarrPattern pattern(data->pattern, data->flags, errorCode);
+            if (!hasError(errorCode) && !pattern.containsUnsignedLengthPattern()
+#if !ENABLE(YARR_JIT_BACKREFERENCES)
+                && !pattern.m_containsBackreferences
+#endif
+                && !pattern.m_containsLookbehinds)
+                Yarr::jitCompile(pattern, data->pattern, Yarr::CharSize::Char8, std::nullopt, vm, *data->codeBlock, Yarr::ExecutionMode::IncludeSubpatterns, &stackCheck);
+        }
+        if (alsoCompileMatchOnly && data->codeBlock->has8BitCode() && !data->codeBlock->failureReason()) {
+            Yarr::ErrorCode matchOnlyErrorCode = Yarr::ErrorCode::NoError;
+            Yarr::YarrPattern pattern(data->pattern, data->flags, matchOnlyErrorCode, Yarr::ExecutionMode::MatchOnly);
+            if (!hasError(matchOnlyErrorCode))
+                Yarr::jitCompile(pattern, data->pattern, Yarr::CharSize::Char8, std::nullopt, vm, *data->codeBlock, Yarr::ExecutionMode::MatchOnly, &stackCheck);
+        }
+        data->done.store(true, std::memory_order_release);
+    });
+}
+
+// Takes the pending background compilation, installing its code if the worker
+// finished cleanly. One shot: ready or not, the mutator owns compilation from
+// here on, and a worker result that arrives later is dropped with the last
+// ref. Requires cellLock() to be held.
+bool RegExp::adoptEagerCompilationIfReady(VM& vm)
+{
+    auto pending = WTF::move(m_pendingEagerCompilation);
+    if (!pending || !pending->done.load(std::memory_order_acquire))
+        return false;
+
+    auto codeBlock = WTF::move(pending->codeBlock);
+    if (!codeBlock->has8BitCode() || codeBlock->failureReason())
+        return false;
+
+    if (!hasCode()) {
+        ASSERT(m_state == NotCompiled);
+        vm.regExpCache()->addToStrongCache(this);
+    }
+    ASSERT(!m_regExpJITCode);
+    m_regExpJITCode = WTF::move(codeBlock);
+    m_state = JITCode;
+    return true;
+}
+#endif
+
 const WTF::BitSet<256>* RegExp::firstCharacterBitmap(FirstCharacterFilterPosition position)
 {
     ASSERT_UNUSED(position, position == FirstCharacterFilterPosition::AtStart ? !globalOrSticky() : sticky());
@@ -520,6 +608,11 @@ bool RegExp::matchConcurrently(
 void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
     Locker locker { cellLock() };
+
+#if ENABLE(YARR_JIT)
+    if (adoptEagerCompilationIfReady(*vm) && hasMatchOnlyCodeFor(charSize))
+        return;
+#endif
 
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::MatchOnly);
     if (hasError(m_constructionErrorCode)) {

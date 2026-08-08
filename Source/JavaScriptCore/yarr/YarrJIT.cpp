@@ -7695,14 +7695,19 @@ static void dumpCompileFailure(JITFailureReason failure)
     }
 }
 
-void jitCompile(YarrPattern& pattern, StringView patternString, CharSize charSize, std::optional<StringView> sampleString, VM* vm, YarrCodeBlock& codeBlock, ExecutionMode mode)
+void jitCompile(YarrPattern& pattern, StringView patternString, CharSize charSize, std::optional<StringView> sampleString, VM* vm, YarrCodeBlock& codeBlock, ExecutionMode mode, StackCheck* stackChecker)
 {
     CCallHelpers masm;
 
     ASSERT(mode == ExecutionMode::MatchOnly || mode == ExecutionMode::IncludeSubpatterns);
 
     YarrJITDefaultRegisters jitRegisters;
-    YarrGenerator<YarrJITDefaultRegisters>(masm, vm, &codeBlock, jitRegisters, pattern, patternString, charSize, mode, sampleString).compile(codeBlock);
+    YarrGenerator<YarrJITDefaultRegisters> yarrGenerator(masm, vm, &codeBlock, jitRegisters, pattern, patternString, charSize, mode, sampleString);
+    // Off the mutator thread, VM::isSafeToRecurse() compares against the wrong
+    // thread's stack; such callers pass a StackCheck for the compiling thread.
+    if (stackChecker)
+        yarrGenerator.setStackChecker(stackChecker);
+    yarrGenerator.compile(codeBlock);
 
     if (auto failureReason = codeBlock.failureReason()) {
         if (Options::dumpCompiledRegExpPatterns()) [[unlikely]] {

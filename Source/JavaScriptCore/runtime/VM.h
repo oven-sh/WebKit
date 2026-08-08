@@ -931,6 +931,7 @@ public:
     std::unique_ptr<RegExpCache> m_regExpCache;
     BumpPointerAllocator m_regExpAllocator;
     ConcurrentJSLock m_regExpAllocatorLock;
+    RefPtr<WTF::WorkQueue> m_eagerRegExpCompilationQueue;
 
     const Ref<CompactTDZEnvironmentMap> m_compactVariableMap;
 
@@ -968,6 +969,7 @@ public:
     JS_EXPORT_PRIVATE bool hasLanguageChange();
 
     RegExpCache* regExpCache() LIFETIME_BOUND { return m_regExpCache.get(); }
+    JS_EXPORT_PRIVATE WTF::WorkQueue& eagerRegExpCompilationQueue();
 
     bool isCollectorBusyOnCurrentThread() { return heap.currentThreadIsDoingGCWork(); }
 

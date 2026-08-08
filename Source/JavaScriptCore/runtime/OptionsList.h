@@ -105,6 +105,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
     v(Bool, useEagerRegExpJIT, true, Normal, "eagerly compile eligible RegExp patterns at construction time instead of at first match"_s) \
     v(Bool, eagerRegExpJITCompilesMatchOnly, true, Normal, "when eagerly compiling a RegExp, also compile the match-only (test/search) variant"_s) \
+    v(Bool, eagerRegExpJITOnBackgroundThread, true, Normal, "run eager RegExp compilation on a background queue; the result is adopted at first match, or dropped if the mutator compiles first"_s) \
     v(Bool, useDOMJIT, jitEnabledByDefault(), Normal, "allows the DOMJIT to be used if true"_s) \
     \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \

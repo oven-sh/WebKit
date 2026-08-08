@@ -161,6 +161,7 @@
 #include <wtf/StringPrintStream.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/Threading.h>
+#include <wtf/WorkQueue.h>
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
@@ -636,7 +637,12 @@ VM::~VM()
     if (JITWorklist* worklist = JITWorklist::existingGlobalWorklistOrNull())
         worklist->cancelAllPlansForVM(*this);
 #endif // ENABLE(JIT)
-    
+
+    // Eager RegExp compilation tasks hold a raw VM*; drain them before any VM
+    // state they could read is torn down.
+    if (m_eagerRegExpCompilationQueue)
+        m_eagerRegExpCompilationQueue->dispatchSync([] { });
+
     // Clear this first to ensure that nobody tries to remove themselves from it.
     m_perBytecodeProfiler = nullptr;
 
@@ -1326,6 +1332,14 @@ static void logSanitizeStack(VM& vm)
         auto& stackBounds = Thread::currentSingleton().stack();
         dataLogLn("Sanitizing stack for VM = ", RawPointer(&vm), ", current stack pointer at ", RawPointer(currentStackPointer()), ", last stack top = ", RawPointer(vm.lastStackTop()), ", in stack range (", RawPointer(stackBounds.end()), ", ", RawPointer(stackBounds.origin()), "]");
     }
+}
+
+WorkQueue& VM::eagerRegExpCompilationQueue()
+{
+    ASSERT(currentThreadIsHoldingAPILock());
+    if (!m_eagerRegExpCompilationQueue)
+        m_eagerRegExpCompilationQueue = WorkQueue::create("JSC RegExp Compiler"_s);
+    return *m_eagerRegExpCompilationQueue;
 }
 
 #if ENABLE(REGEXP_TRACING)
