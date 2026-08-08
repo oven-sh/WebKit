@@ -59,6 +59,7 @@ public:
     template<typename IntegerType>
     IntegerType randomNumber();
     void randomValues(std::span<uint8_t>);
+    void forceStirOnNextUse() { Locker locker { m_lock }; m_count = 0; }
 
 private:
     inline void NODELETE addRandomData(std::span<const uint8_t, 128>);
@@ -162,6 +163,11 @@ template<> uint8_t cryptographicallyRandomNumber<uint8_t>()
 template<> unsigned cryptographicallyRandomNumber<unsigned>()
 {
     return sharedRandomNumberGenerator().randomNumber<unsigned>();
+}
+
+void restirCryptographicallyRandomNumberGeneratorForImageRestore()
+{
+    sharedRandomNumberGenerator().forceStirOnNextUse();
 }
 
 void cryptographicallyRandomValues(std::span<uint8_t> buffer)

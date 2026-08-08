@@ -43,6 +43,8 @@ template<> WTF_EXPORT_PRIVATE unsigned cryptographicallyRandomNumber<unsigned>()
 template<> WTF_EXPORT_PRIVATE uint64_t cryptographicallyRandomNumber<uint64_t>();
 
 WTF_EXPORT_PRIVATE void cryptographicallyRandomValues(std::span<uint8_t>);
+// Heap-image restore: the generator's stream state came from the building process; every restored process would otherwise emit the same bytes.
+WTF_EXPORT_PRIVATE void restirCryptographicallyRandomNumberGeneratorForImageRestore();
 
 // Returns a cryptographically secure pseudo-random number in the range [0, 1), with 32 bits of randomness.
 WTF_EXPORT_PRIVATE double cryptographicallyRandomUnitInterval();
@@ -52,3 +54,4 @@ WTF_EXPORT_PRIVATE double cryptographicallyRandomUnitInterval();
 using WTF::cryptographicallyRandomNumber;
 using WTF::cryptographicallyRandomUnitInterval;
 using WTF::cryptographicallyRandomValues;
+using WTF::restirCryptographicallyRandomNumberGeneratorForImageRestore;
