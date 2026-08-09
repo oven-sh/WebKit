@@ -90,7 +90,7 @@
 
 namespace WTF {
 
-// Heap-image experiment: with MIMALLOC_DETERMINISTIC_HINT set, every non-JIT reservation gets a bump hint inside a fixed VA window so the image dumper owns (and can restore) all of it.
+// Heap image: with MIMALLOC_DETERMINISTIC_HINT set, every non-JIT reservation gets a bump hint inside a fixed VA window so the image dumper owns (and can restore) all of it.
 static std::atomic<uintptr_t> s_imageHintNext { 0x2e0000000000ull };
 static void* imageDeterministicHint(size_t bytes)
 {

@@ -313,7 +313,7 @@ public:
         WTF::BitSet<atomsPerBlock> m_marks;
         WTF::BitSet<atomsPerBlock> m_newlyAllocated;
         void* m_verifierMemo { nullptr };
-        // Experimental "immortal image" block: liveness is frozen in m_marks, the collector never writes here, never sweeps or allocates.
+        // Immortal (heap image) block: liveness is frozen in m_marks, the collector never writes here, never sweeps or allocates.
         bool m_isImmortal { false };
     };
     

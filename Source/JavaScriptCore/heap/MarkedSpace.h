@@ -127,7 +127,7 @@ public:
     template<typename Functor> void forEachLiveCell(HeapIterationScope&, const Functor&);
     template<typename Functor> void forEachDeadCell(HeapIterationScope&, const Functor&);
     template<typename Functor> void forEachBlock(const Functor&);
-    // Experimental: freeze every current block as an immortal image block (call with the world stopped, right after a Full GC).
+    // Heap image: freeze every current block as an immortal image block (call with the world stopped, right after a Full GC).
     void freezeAllBlocksAsImmortal();
     bool hasImmortalBlocks() const { return m_hasImmortalBlocks; }
     template<typename Functor> void forEachSubspace(const Functor&);

@@ -1187,7 +1187,7 @@ inline void StringImpl::ref()
 {
     STRING_STATS_REF_STRING(*this);
 
-    // Experiment (heap image): static/immortal strings never touch their refcount so their pages stay clean.
+    // Static strings (which every string in a heap image is made) never write their refcount, so their pages stay clean.
     if (isStatic())
         return;
 

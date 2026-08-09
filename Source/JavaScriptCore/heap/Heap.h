@@ -484,7 +484,7 @@ public:
     JS_EXPORT_PRIVATE bool unprotect(JSValue); // True when the protect count drops to 0.
     
     JS_EXPORT_PRIVATE size_t extraMemorySize(); // Non-GC memory referenced by GC objects.
-    // Experimental: after a synchronous Full GC, freeze every MarkedBlock as an immortal image block.
+    // Heap image: after a synchronous full collection, freeze every MarkedBlock as an immortal image block.
     JS_EXPORT_PRIVATE void freezeCurrentHeapAsImmortalImage();
     static inline bool isImageCell(const JSCell*);
     // Rule 2 (link state out of image cells): decoded UnlinkedFunctionCodeBlocks for image UnlinkedFunctionExecutables live here, not in the (never written) cell.
