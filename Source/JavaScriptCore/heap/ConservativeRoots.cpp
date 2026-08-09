@@ -186,8 +186,9 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
         return;
 
     // Also, a butterfly could point at the end of an object plus sizeof(IndexingHeader). In that
-    // case, this is pointing to the object to the right of the one we should be marking.
-    if (candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
+    // case, this is pointing to the object to the right of the one we should be marking. As with the
+    // previous-block case above, only blocks whose cells can carry an IndexingHeader have such pointers.
+    if (mayHaveIndexingHeader(cellKind) && candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
         tryPointer(alignedPointer - candidate->cellSize());
 }
 
