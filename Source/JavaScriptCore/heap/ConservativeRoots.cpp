@@ -117,8 +117,14 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
                 [] (PreciseAllocation** ptr) -> PreciseAllocation* { return *ptr; });
             if (result) {
                 auto attemptLarge = [&] (PreciseAllocation* allocation) {
-                    if (allocation->contains(pointer) && allocation->hasValidCell())
-                        markFoundGCPointer(allocation->cell(), allocation->attributes().cellKind);
+                    // contains() accepts up to sizeof(IndexingHeader) past the end for butterfly end
+                    // pointers; a cell that cannot carry an IndexingHeader is only referenced from within.
+                    HeapCell::Kind kind = allocation->attributes().cellKind;
+                    bool inBounds = mayHaveIndexingHeader(kind)
+                        ? allocation->contains(pointer)
+                        : (allocation->aboveLowerBound(pointer) && pointer < std::bit_cast<char*>(allocation->cell()) + allocation->cellSize());
+                    if (inBounds && allocation->hasValidCell())
+                        markFoundGCPointer(allocation->cell(), kind);
                 };
 
                 if (result > m_heap.objectSpace().preciseAllocationsForThisCollectionBegin())
