@@ -1318,6 +1318,83 @@ public:
         m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     }
 
+    // A class set with strings (e.g. \p{RGI_Emoji}) expands into one alternative per string.
+    // For the larger properties of strings that is thousands of alternatives, and every failing
+    // match attempt walks all of them. Build a character class of the possible first characters
+    // so the expansion can guard the string alternatives with a single lookahead class check.
+    // Returns nullptr when the filter cannot apply (backward matching, an empty string in the
+    // set, or too few strings for the extra lookahead to pay for itself).
+    CharacterClass* stringDisjunctionPrefilter(const CharacterClass* characterClass)
+    {
+        constexpr size_t minStringsForPrefilter = 16;
+
+        if (parenthesisMatchDirection() != Forward)
+            return nullptr;
+
+        auto& strings = characterClass->m_strings;
+        if (strings.size() < minStringsForPrefilter)
+            return nullptr;
+
+        CharacterClassConstructor prefilterConstructor(ignoreCase(), m_pattern.compileMode());
+        for (auto& string : strings) {
+            // An empty string matches without consuming input, so no first character exists to filter on.
+            if (string.isEmpty())
+                return nullptr;
+            prefilterConstructor.putChar(string[0]);
+        }
+
+        auto prefilterClass = prefilterConstructor.charClass();
+        CharacterClass* result = prefilterClass.get();
+        m_pattern.m_userCharacterClasses.append(WTF::move(prefilterClass));
+        return result;
+    }
+
+    // Emits the expansion of a class set with strings: a non-capturing group holding one
+    // alternative per string (longest first) and, when the set also has single characters,
+    // a final character class alternative (appended by the caller-supplied lambda). With a
+    // prefilter, the string alternatives are wrapped in (?=[prefilter])(?:...) so
+    // non-matching input fails after one class check instead of trying every string
+    // alternative.
+    template<typename AppendSinglesTerm>
+    void atomClassSetWithStringsExpansion(const CharacterClass* characterClass, bool invert, AppendSinglesTerm&& appendSinglesTerm)
+    {
+        CharacterClass* prefilter = invert ? nullptr : stringDisjunctionPrefilter(characterClass);
+
+        atomParenthesesSubpatternBegin(false);
+
+        if (prefilter) {
+            atomParentheticalAssertionBegin(false, Forward);
+            m_alternative->m_terms.append(PatternTerm(prefilter, false, m_flags, parenthesisMatchDirection()));
+            atomParenthesesEnd();
+            atomParenthesesSubpatternBegin(false);
+        }
+
+        unsigned alternativeCount = 0;
+        for (unsigned i = 0; i < characterClass->m_strings.size(); ++i) {
+            if (alternativeCount)
+                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
+
+            auto string = characterClass->m_strings[i];
+
+            for (auto ch : string)
+                atomPatternCharacter(ch, /* hyphenIsRange */ false);
+
+            ++alternativeCount;
+        }
+
+        if (prefilter)
+            atomParenthesesEnd();
+
+        if (characterClass->hasSingleCharacters()) {
+            if (alternativeCount)
+                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
+
+            appendSinglesTerm();
+        }
+
+        atomParenthesesEnd();
+    }
+
     void atomBuiltInCharacterClass(BuiltInCharacterClassID classID, bool invert)
     {
         switch (classID) {
@@ -1344,28 +1421,9 @@ public:
             if (characterClassMayContainStrings(classID)) {
                 auto characterClass = m_pattern.unicodeCharacterClassFor(classID);
                 if (characterClass->hasStrings()) {
-                    atomParenthesesSubpatternBegin(false);
-                    unsigned alternativeCount = 0;
-                    for (unsigned i = 0; i < characterClass->m_strings.size(); ++i) {
-                        if (alternativeCount)
-                            disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-
-                        auto string = characterClass->m_strings[i];
-
-                        for (auto ch : string)
-                            atomPatternCharacter(ch, /* hyphenIsRange */ false);
-
-                        ++alternativeCount;
-                    }
-
-                    if (characterClass->hasSingleCharacters()) {
-                        if (alternativeCount)
-                            disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-
+                    atomClassSetWithStringsExpansion(characterClass, invert, [&] {
                         m_alternative->m_terms.append(PatternTerm(characterClass, invert, m_flags, parenthesisMatchDirection()));
-                    }
-
-                    atomParenthesesEnd();
+                    });
                     break;
                 }
                 // Fall through for the case where the characterClass REALLY doesn't have strings.
@@ -1483,28 +1541,7 @@ public:
                 return;
             }
 
-            atomParenthesesSubpatternBegin(false);
-            unsigned alternativeCount = 0;
-            for (unsigned i = 0; i < newCharacterClass->m_strings.size(); ++i) {
-                if (alternativeCount)
-                    disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-
-                auto string = newCharacterClass->m_strings[i];
-
-                for (auto ch : string)
-                    atomPatternCharacter(ch, /* hyphenIsRange */ false);
-
-                ++alternativeCount;
-            }
-
-            if (newCharacterClass->hasSingleCharacters()) {
-                if (alternativeCount)
-                    disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-
-                addCharacterClassTerm();
-            }
-
-            atomParenthesesEnd();
+            atomClassSetWithStringsExpansion(newCharacterClass.get(), m_invertCharacterClass, addCharacterClassTerm);
         }
 
         m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
