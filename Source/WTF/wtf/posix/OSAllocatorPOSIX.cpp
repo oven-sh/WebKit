@@ -25,6 +25,8 @@
 
 #include "config.h"
 #include <wtf/OSAllocator.h>
+#include <atomic>
+#include <cstdlib>
 
 #include <errno.h>
 #include <mutex>
@@ -88,6 +90,27 @@
 
 namespace WTF {
 
+// Snapshot: with MIMALLOC_DETERMINISTIC_HINT set, every non-JIT reservation gets a bump hint inside a fixed VA window so the snapshot dumper owns (and can restore) all of it.
+static std::atomic<uintptr_t> s_snapshotHintNext { 0x2e0000000000ull };
+static void* snapshotDeterministicHint(size_t bytes)
+{
+    static const bool enabled = !!getenv("MIMALLOC_DETERMINISTIC_HINT");
+    if (!enabled)
+        return nullptr;
+    size_t align = 1ull << 24; // coarse, so small differences in request sizes between runs don't shift later placements
+    return reinterpret_cast<void*>(s_snapshotHintNext.fetch_add((bytes + align - 1) & ~(align - 1), std::memory_order_relaxed));
+}
+// Keeps the cursor above every mapping made so far, hinted or not: later hinted placements must never land where something
+// (a Gigacage, an unhinted reservation) already is, and both the build and the restoring process make the same sequence.
+static void snapshotDeterministicHintDidMap(void* result, size_t bytes)
+{
+    if (!result)
+        return;
+    uintptr_t end = (reinterpret_cast<uintptr_t>(result) + bytes + (1ull << 24) - 1) & ~((1ull << 24) - 1);
+    uintptr_t cur = s_snapshotHintNext.load(std::memory_order_relaxed);
+    while (end > cur && !s_snapshotHintNext.compare_exchange_weak(cur, end, std::memory_order_relaxed)) { }
+}
+
 void* OSAllocator::tryReserveAndCommit(size_t bytes, Usage usage, void* address, bool writable, bool executable, bool jitCageEnabled, unsigned numGuardPagesToAddOnEachEnd)
 {
     return tryReserveAndCommitImpl(bytes, usage, address, writable, executable, jitCageEnabled, numGuardPagesToAddOnEachEnd, /* uncommitted */ false);
@@ -131,9 +154,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         bytes = bytes + 2 * guardSize;
     }
+    if (!address && !executable)
+        address = snapshotDeterministicHint(bytes);
     auto result = MmapSpan<uint8_t>::mmap(address, bytes, protection, flags, fd);
     if (!result)
         return result.leakSpan().data();
+    snapshotDeterministicHintDidMap(result.mutableSpan().data(), bytes);
 
 #if OS(LINUX)
     if (const char* name = vmTagName(static_cast<bmalloc::VMTag>(usage)))
@@ -210,8 +236,13 @@ void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, 
         flags |= usage;
 
     void* aligned = address;
+    if (!aligned && !executable)
+        aligned = snapshotDeterministicHint(bytes + alignment); // VM_FLAGS_ANYWHERE treats the address as a lower-bound hint
     kern_return_t result = mach_vm_map(mach_task_self(), reinterpret_cast<mach_vm_address_t*>(&aligned), bytes, alignment - 1, flags, MEMORY_OBJECT_NULL, 0, copy, protections, protections, childProcessInheritance);
-    ASSERT_UNUSED(result, result == KERN_SUCCESS || !aligned);
+    if (result != KERN_SUCCESS)
+        aligned = nullptr;
+    else
+        snapshotDeterministicHintDidMap(aligned, bytes);
 #if HAVE(MADV_FREE_REUSE)
     if (aligned) {
         // To support the "reserve then commit" model, we have to initially decommit.
@@ -235,9 +266,12 @@ void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, 
     if (executable)
         protection |= PROT_EXEC;
 
+    if (!address && !executable)
+        address = snapshotDeterministicHint(bytes);
     void* result = mmap(address, bytes, protection, MAP_NORESERVE | MAP_PRIVATE | MAP_ANON | MAP_ALIGNED(getLSBSet(alignment)), -1, 0);
     if (result == MAP_FAILED)
         return nullptr;
+    snapshotDeterministicHintDidMap(result, bytes);
 #ifdef MADV_DONTFORK
     if (result)
         while (madvise(result, bytes, MADV_DONTFORK) == -1 && errno == EAGAIN) { }
