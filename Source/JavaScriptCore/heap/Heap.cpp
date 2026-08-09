@@ -1258,6 +1258,8 @@ void Heap::resetPacingAfterImageRestore()
     m_sizeAfterLastCollect = 0;
     m_sizeAfterLastFullCollect = 0;
     m_sizeAfterLastEdenCollect = 0;
+    m_extraMemorySize = 0; // reported by cells that are now immortal; a full collection would drop it too
+    m_deprecatedExtraMemorySize = 0;
     m_maxHeapSize = Options::mediumHeapSize(); // grows with the mortal live size from here, as a fresh heap's does
     m_maxEdenSize = m_maxHeapSize;
 }
