@@ -31,6 +31,7 @@
 #include "ISO8601.h"
 #include "IntlObject.h"
 #include "JSCInlines.h"
+#include "Rounding.h"
 #include "TemporalCalendar.h"
 #include "TemporalCoreTypes.h"
 #include "TemporalDuration.h"
@@ -42,6 +43,7 @@
 
 #include <wtf/DateMath.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC {
 
@@ -119,6 +121,79 @@ ISO8601::PlainDateTime TemporalZonedDateTime::getLocalDateTime(JSGlobalObject* g
         return { };
     }
     return *result;
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal-temporalzoneddatetimetostring
+String TemporalZonedDateTime::toString(JSGlobalObject* globalObject, const PrecisionData& precision, RoundingMode roundingMode, StringView showOffset, StringView showTimeZone, StringView showCalendar) const
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Steps 1-3: Default increment/unit/roundingMode when not present.
+    //            (Callers already pass concrete values, so these defaults are effectively no-ops here.)
+    // Step 4: Let epochNs be zonedDateTime.[[EpochNanoseconds]].
+    // Step 5: Set epochNs to RoundTemporalInstant(epochNs, increment, unit, roundingMode).
+    Int128 epochNs = m_exactTime.epochNanoseconds();
+    Int128 incrementNs = static_cast<Int128>(lengthInNanoseconds(precision.unit)) * static_cast<Int128>(static_cast<int64_t>(precision.increment));
+    if (incrementNs > 0)
+        epochNs = TemporalCore::roundNumberToIncrementAsIfPositive(epochNs, incrementNs, roundingMode);
+    ISO8601::ExactTime roundedExact(epochNs);
+
+    // Step 6: Let timeZone be zonedDateTime.[[TimeZone]].
+    // Step 7: Let offsetNanoseconds be GetOffsetNanosecondsFor(timeZone, epochNs).
+    auto offsetOpt = TemporalCore::getOffsetNanosecondsFor(m_timeZone, roundedExact);
+    if (!offsetOpt) [[unlikely]] {
+        throwRangeError(globalObject, scope, offsetOpt.error().message);
+        return { };
+    }
+
+    // Step 8: Let isoDateTime be GetISODateTimeFor(timeZone, epochNs).
+    auto [date, time] = TemporalCore::exactTimeToLocalDateAndTime(roundedExact, *offsetOpt);
+
+    // Step 9: Let dateTimeString be ISODateTimeToString(isoDateTime, "iso8601", precision, ~never~).
+    StringBuilder sb;
+    sb.append(ISO8601::temporalDateTimeToString(date, time, precision.precision));
+
+    // Steps 10-11: offsetString = if showOffset is ~never~ then "" else FormatDateTimeUTCOffsetRounded(offsetNs).
+    if (showOffset != "never"_s) {
+        int64_t offsetNs = *offsetOpt;
+        int64_t offsetMinutes = offsetNs / 60'000'000'000;
+        int64_t remainder = offsetNs % 60'000'000'000;
+        if (remainder > 30'000'000'000 || (remainder == 30'000'000'000 && offsetNs > 0))
+            offsetMinutes++;
+        else if (remainder < -30'000'000'000 || (remainder == -30'000'000'000 && offsetNs < 0))
+            offsetMinutes--;
+        sb.append(ISO8601::formatTimeZoneOffsetString(offsetMinutes * 60'000'000'000));
+    }
+
+    // Steps 12-13: timeZoneString = if showTimeZone is ~never~ then "" else "[" + (critical ? "!" : "") + timeZone + "]".
+    if (showTimeZone != "never"_s) {
+        sb.append('[');
+        if (showTimeZone == "critical"_s)
+            sb.append('!');
+        sb.append(timeZoneId());
+        sb.append(']');
+    }
+
+    // Step 14: calendarString = FormatCalendarAnnotation(calendar, showCalendar).
+    bool appendCalendar = showCalendar == "always"_s || showCalendar == "critical"_s
+        || (showCalendar == "auto"_s && !TemporalCore::calendarIsISO(m_calendarID));
+    if (appendCalendar) {
+        sb.append('[');
+        if (showCalendar == "critical"_s)
+            sb.append('!');
+        sb.append("u-ca="_s);
+        sb.append(calendarId());
+        sb.append(']');
+    }
+
+    // Step 15: Return string-concatenation(dateTimeString, offsetString, timeZoneString, calendarString).
+    return sb.toString();
+}
+
+String TemporalZonedDateTime::toString(JSGlobalObject* globalObject) const
+{
+    return toString(globalObject, { { Precision::Auto, 0 }, TemporalUnit::Nanosecond, 1 }, RoundingMode::Trunc, "auto"_s, "auto"_s, "auto"_s);
 }
 
 // Internal helper: extracts the runtime TimeZone handle from an already-parsed TimeZoneRecord.

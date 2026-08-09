@@ -117,8 +117,14 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
                 [] (PreciseAllocation** ptr) -> PreciseAllocation* { return *ptr; });
             if (result) {
                 auto attemptLarge = [&] (PreciseAllocation* allocation) {
-                    if (allocation->contains(pointer) && allocation->hasValidCell())
-                        markFoundGCPointer(allocation->cell(), allocation->attributes().cellKind);
+                    // contains() accepts up to sizeof(IndexingHeader) past the end for butterfly end
+                    // pointers; for a cell that cannot carry an IndexingHeader accept at most one-past-the-end.
+                    HeapCell::Kind kind = allocation->attributes().cellKind;
+                    bool inBounds = mayHaveIndexingHeader(kind)
+                        ? allocation->contains(pointer)
+                        : (allocation->aboveLowerBound(pointer) && pointer <= std::bit_cast<char*>(allocation->cell()) + allocation->cellSize());
+                    if (inBounds && allocation->hasValidCell())
+                        markFoundGCPointer(allocation->cell(), kind);
                 };
 
                 if (result > m_heap.objectSpace().preciseAllocationsForThisCollectionBegin())
@@ -186,8 +192,9 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
         return;
 
     // Also, a butterfly could point at the end of an object plus sizeof(IndexingHeader). In that
-    // case, this is pointing to the object to the right of the one we should be marking.
-    if (candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
+    // case, this is pointing to the object to the right of the one we should be marking. As with the
+    // previous-block case above, only blocks whose cells can carry an IndexingHeader have such pointers.
+    if (mayHaveIndexingHeader(cellKind) && candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
         tryPointer(alignedPointer - candidate->cellSize());
 }
 
