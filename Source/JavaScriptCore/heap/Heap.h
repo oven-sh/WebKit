@@ -495,7 +495,8 @@ public:
     StructureChain*& imageCachedPrototypeChainSlot(const Structure*); // raw: entries are GC roots (Img constraint), so no owner barrier needed
     intptr_t& imageTransitionTableSlot(const StructureTransitionTable*, intptr_t seed);
     const intptr_t* peekImageTransitionTableSlot(const StructureTransitionTable*) const;
-    void evacuateTablesForImage(); // after restore: re-home per-heap tables that take inserts every run
+    void evacuateTablesForImage();
+    JS_EXPORT_PRIVATE void resetPacingAfterImageRestore(); // after restore: re-home per-heap tables that take inserts every run
     bool isFreezingImage() const { return m_isFreezingImage; }
     // Barrier slow path for image owners: side remembered set instead of cellState writes. Returns true if handled.
     bool rememberImageCell(JSCell*);

@@ -631,6 +631,7 @@ void VM::didRestoreFromImage()
         m_regExpCache->deleteAllCode();
     { auto& table = atomStringTable()->table(); auto copy = table; table.swap(copy); }
     heap.evacuateTablesForImage();
+    heap.resetPacingAfterImageRestore();
 }
 
 VM::~VM()

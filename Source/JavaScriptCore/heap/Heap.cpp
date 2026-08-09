@@ -1250,6 +1250,18 @@ void Heap::setImageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable* execut
         m_imageUnlinkedCodeBlocks.remove({ executable, static_cast<unsigned>(kind) });
 }
 
+void Heap::resetPacingAfterImageRestore()
+{
+    // The limits in the image were computed when the image cells were ordinary live cells; here they are immortal and
+    // never counted, so those limits would let everything allocated after the restore accumulate in fresh blocks before
+    // the first collection. Start over as an empty heap does.
+    m_sizeAfterLastCollect = 0;
+    m_sizeAfterLastFullCollect = 0;
+    m_sizeAfterLastEdenCollect = 0;
+    m_maxHeapSize = Options::mediumHeapSize(); // grows with the mortal live size from here, as a fresh heap's does
+    m_maxEdenSize = m_maxHeapSize;
+}
+
 void Heap::evacuateTablesForImage()
 {
     m_objectSpace.blocks().evacuateStorage();
