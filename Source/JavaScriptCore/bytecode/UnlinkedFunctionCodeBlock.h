@@ -30,6 +30,7 @@
 namespace JSC {
 
 class CachedFunctionCodeBlock;
+class Decoder;
 
 class UnlinkedFunctionCodeBlock final : public UnlinkedCodeBlock {
 public:
@@ -51,6 +52,15 @@ public:
 
     static void destroy(JSCell*);
 
+    // Where this block was decoded from: the Decoder and its owning executable's pair of
+    // cached-code-block offsets. When the block is jettisoned, these put the owner back into the
+    // cached representation, so the next request re-decodes the cache instead of re-parsing.
+    // Both kinds carry the full pair, so either dying block restores both offsets.
+    void setDecodeOrigin(Decoder&, int32_t cachedCodeBlockForCallOffset, int32_t cachedCodeBlockForConstructOffset);
+    Decoder* decoder() const { return m_decoder.get(); }
+    int32_t cachedCodeBlockForCallOffset() const { return m_cachedCodeBlockForCallOffset; }
+    int32_t cachedCodeBlockForConstructOffset() const { return m_cachedCodeBlockForConstructOffset; }
+
 private:
     friend CachedFunctionCodeBlock;
 
@@ -60,6 +70,10 @@ private:
     }
 
     UnlinkedFunctionCodeBlock(Decoder&, const CachedFunctionCodeBlock&);
+
+    RefPtr<Decoder> m_decoder;
+    int32_t m_cachedCodeBlockForCallOffset { 0 };
+    int32_t m_cachedCodeBlockForConstructOffset { 0 };
     
 public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);

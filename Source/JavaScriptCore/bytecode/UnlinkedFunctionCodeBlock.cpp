@@ -26,6 +26,7 @@
 #include "config.h"
 #include "UnlinkedFunctionCodeBlock.h"
 
+#include "CachedTypes.h"
 #include "JSCellInlines.h"
 
 namespace JSC {
@@ -35,6 +36,14 @@ const ClassInfo UnlinkedFunctionCodeBlock::s_info = { "UnlinkedFunctionCodeBlock
 void UnlinkedFunctionCodeBlock::destroy(JSCell* cell)
 {
     static_cast<UnlinkedFunctionCodeBlock*>(cell)->~UnlinkedFunctionCodeBlock();
+}
+
+void UnlinkedFunctionCodeBlock::setDecodeOrigin(Decoder& decoder, int32_t cachedCodeBlockForCallOffset, int32_t cachedCodeBlockForConstructOffset)
+{
+    ASSERT(cachedCodeBlockForCallOffset || cachedCodeBlockForConstructOffset);
+    m_decoder = &decoder;
+    m_cachedCodeBlockForCallOffset = cachedCodeBlockForCallOffset;
+    m_cachedCodeBlockForConstructOffset = cachedCodeBlockForConstructOffset;
 }
 
 }

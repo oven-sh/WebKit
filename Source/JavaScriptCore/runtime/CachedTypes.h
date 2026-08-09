@@ -131,7 +131,6 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const UnlinkedFunctionCodeBlock*, BytecodeCacheError&);
 
 JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
-JS_EXPORT_PRIVATE void decodeFunctionCodeBlockFromExecutableRecord(Decoder&, int32_t cachedFunctionExecutableOffset, CodeSpecializationKind, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 

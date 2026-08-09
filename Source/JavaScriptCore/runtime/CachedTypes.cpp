@@ -2513,10 +2513,9 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     if (!cachedExecutable.unlinkedCodeBlockForCall().isEmpty() || !cachedExecutable.unlinkedCodeBlockForConstruct().isEmpty()) {
         checkBounds(m_cachedCodeBlockForCallOffset, cachedExecutable.unlinkedCodeBlockForCall());
         checkBounds(m_cachedCodeBlockForConstructOffset, cachedExecutable.unlinkedCodeBlockForConstruct());
-        if (m_isCached) {
+        if (m_isCached)
             m_decoder = &decoder;
-            m_cachedRecordOffset = static_cast<int32_t>(decoder.offsetOf(&cachedExecutable));
-        } else
+        else
             m_decoder = nullptr;
     }
 
@@ -2824,18 +2823,6 @@ void decodeFunctionCodeBlock(Decoder& decoder, int32_t cachedFunctionCodeBlockOf
     ASSERT(decoder.vm().heap.isDeferred());
     auto* cachedCodeBlock = static_cast<const CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock>*>(decoder.ptrForOffsetFromBase(cachedFunctionCodeBlockOffset));
     cachedCodeBlock->decode(decoder, codeBlock, owner);
-}
-
-void decodeFunctionCodeBlockFromExecutableRecord(Decoder& decoder, int32_t cachedFunctionExecutableOffset, CodeSpecializationKind kind, WriteBarrier<UnlinkedFunctionCodeBlock>& codeBlock, const JSCell* owner)
-{
-    ASSERT(decoder.vm().heap.isDeferred());
-    if (cachedFunctionExecutableOffset <= 0 || static_cast<size_t>(cachedFunctionExecutableOffset) + sizeof(CachedFunctionExecutable) > decoder.size())
-        return;
-    auto* cachedExecutable = static_cast<const CachedFunctionExecutable*>(decoder.ptrForOffsetFromBase(cachedFunctionExecutableOffset));
-    const auto& cachedCodeBlock = kind == CodeSpecializationKind::CodeForCall ? cachedExecutable->unlinkedCodeBlockForCall() : cachedExecutable->unlinkedCodeBlockForConstruct();
-    if (cachedCodeBlock.isEmpty())
-        return;
-    cachedCodeBlock.decode(decoder, codeBlock, owner);
 }
 
 } // namespace JSC

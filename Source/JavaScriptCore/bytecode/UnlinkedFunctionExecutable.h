@@ -128,13 +128,7 @@ public:
     SourceCode linkedSourceCode(const SourceCode&) const;
     JS_EXPORT_PRIVATE FunctionExecutable* link(VM&, ScriptExecutable* topLevelExecutable, const SourceCode& parentSource, std::optional<int> overrideLineNumber = std::nullopt, Intrinsic = NoIntrinsic, bool isInsideOrdinaryFunction = false);
 
-    void clearCode(VM& vm)
-    {
-        m_unlinkedCodeBlockForCall.clear();
-        m_unlinkedCodeBlockForConstruct.clear();
-        // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
-        vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.remove(this);
-    }
+    void clearCode(VM&);
 
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
@@ -284,7 +278,7 @@ private:
     DECLARE_VISIT_CHILDREN;
 
     void decodeCachedCodeBlocks(VM&);
-    UnlinkedFunctionCodeBlock* tryRedecodeCodeBlock(VM&, const SourceCode&, CodeSpecializationKind);
+    void returnToCachedRepresentation(RefPtr<Decoder>&&, int32_t cachedCodeBlockForCallOffset, int32_t cachedCodeBlockForConstructOffset);
 
     bool codeBlockEdgeMayBeWeak() const
     {
@@ -342,8 +336,6 @@ private:
 
     Identifier m_name;
     Identifier m_ecmaName;
-    // Offset of this executable's CachedFunctionExecutable record in the provider's CachedBytecode (0 = none); lets a cleared code block be re-decoded instead of re-parsed.
-    int32_t m_cachedRecordOffset { 0 };
 
     RareData& ensureRareData()
     {
@@ -362,7 +354,7 @@ public:
 };
 
 #if !ASSERT_ENABLED
-static_assert(sizeof(UnlinkedFunctionExecutable) <= 104, "UnlinkedFunctionExecutable needs to be small");
+static_assert(sizeof(UnlinkedFunctionExecutable) <= 96, "UnlinkedFunctionExecutable needs to be small");
 #endif
 
 } // namespace JSC
