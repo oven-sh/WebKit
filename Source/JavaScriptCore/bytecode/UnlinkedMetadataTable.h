@@ -101,8 +101,6 @@ public:
     TriState didOptimize() const { return m_didOptimize; }
     void setDidOptimize(TriState didOptimize) { m_didOptimize = didOptimize; }
 
-    size_t allocatedSizeForDebug() const { return !m_hasMetadata || !m_rawBuffer ? 0 : (m_isFinalized ? prefixSize() + (m_isLinked ? totalSize() - m_numValueProfiles * sizeof(ValueProfile) : offsetTableSize()) : s_offset32TableSize); }
-
 private:
     enum EmptyTag { Empty };
 
@@ -153,20 +151,18 @@ private:
     // Then, s_offset16TableSize and s_offset16TableSize + s_offset32TableSize offer the same alignment characteristics for subsequent Metadata.
     static constexpr unsigned s_offset32TableSize = roundUpToMultipleOf<s_maxMetadataAlignment>(s_offsetTableEntries * sizeof(Offset32));
 
-    // While no MetadataTable shares m_rawBuffer (!m_isLinked), the buffer holds only the offset table.
-    unsigned prefixSize() const { return m_isLinked ? m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData) : 0; }
-    void* buffer() const { return m_rawBuffer + prefixSize(); }
+    void* buffer() const { return m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData); }
     Offset32* preprocessBuffer() const { return std::bit_cast<Offset32*>(m_rawBuffer); }
 
     Offset16* offsetTable16() const
     {
         ASSERT(!m_is32Bit);
-        return std::bit_cast<Offset16*>(m_rawBuffer + prefixSize());
+        return std::bit_cast<Offset16*>(m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData));
     }
     Offset32* offsetTable32() const
     {
         ASSERT(m_is32Bit);
-        return std::bit_cast<Offset32*>(m_rawBuffer + prefixSize() + s_offset16TableSize);
+        return std::bit_cast<Offset32*>(m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData) + s_offset16TableSize);
     }
 
     bool m_hasMetadata : 1;

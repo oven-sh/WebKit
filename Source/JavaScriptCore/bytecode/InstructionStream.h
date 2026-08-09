@@ -30,6 +30,7 @@
 #include "Instruction.h"
 #include <wtf/UnalignedAccess.h>
 #include <wtf/Vector.h>
+#include <span>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -52,22 +53,20 @@ public:
 
     size_t sizeInBytes() const
     {
-        return view().size();
+        return m_bytes.size();
     }
 
     using Offset = unsigned;
 
-    // Read view over either the owned (possibly still growing) buffer or borrowed immutable bytes. Always reads live.
-    struct View {
-        const InstructionBuffer* owned { nullptr };
-        std::span<const uint8_t> borrowed;
-        ALWAYS_INLINE size_t size() const { return owned ? owned->size() : borrowed.size(); }
-        ALWAYS_INLINE const uint8_t* data() const { return owned ? owned->span().data() : borrowed.data(); }
-        ALWAYS_INLINE const uint8_t& operator[](size_t i) const { return data()[i]; }
-    };
-
 private:
-    template<class InstructionBuffer>
+    // Refs read through the stream's span (one indirection, exactly like reading through a reference to the buffer), so a
+    // ref minted while a writer is still appending keeps seeing the current bytes: the writer refreshes the span after
+    // every mutation of its buffer.
+    using Bytes = std::span<const uint8_t>;
+
+public:
+    class Ref;
+private:
     class BaseRef {
         WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BaseRef);
 
@@ -75,81 +74,68 @@ private:
         template<typename> friend class InstructionStreamWriter;
 
     public:
-        BaseRef(const BaseRef<InstructionBuffer>& other)
-            : m_instructions(other.m_instructions)
-            ,  m_index(other.m_index)
-        { }
-
-        void operator=(const BaseRef<InstructionBuffer>& other)
-        {
-            m_instructions = other.m_instructions;
-            m_index = other.m_index;
-        }
-
         inline const InstructionType* operator->() const { return unwrap(); }
         inline const InstructionType* ptr() const { return unwrap(); }
 
-        bool operator==(const BaseRef<InstructionBuffer>& other) const
+        bool operator==(const BaseRef& other) const
         {
-            // Same stream (Views are held by value, so compare what they view, not their own addresses) and same offset.
-            if constexpr (std::is_same_v<std::remove_const_t<InstructionBuffer>, View>)
-                return m_instructions.owned == other.m_instructions.owned && m_instructions.borrowed.data() == other.m_instructions.borrowed.data() && m_index == other.m_index;
-            else
-                return &m_instructions == &other.m_instructions && m_index == other.m_index;
+            return m_bytes == other.m_bytes && m_index == other.m_index;
         }
 
-        BaseRef next() const
-        {
-            return BaseRef { m_instructions, m_index + ptr()->size() };
-        }
+        inline Ref next() const;
 
         inline Offset offset() const { return m_index; }
         inline BytecodeIndex index() const { return BytecodeIndex(offset()); }
 
         bool isValid() const
         {
-            return m_index < m_instructions.size();
+            return m_index < m_bytes->size();
         }
 
-    private:
-        inline const InstructionType* unwrap() const { return reinterpret_cast<const InstructionType*>(&m_instructions[m_index]); }
-
     protected:
-        BaseRef(std::conditional_t<std::is_same_v<std::remove_const_t<InstructionBuffer>, View>, View, InstructionBuffer&> instructions, size_t index)
-            : m_instructions(instructions)
+        BaseRef(const Bytes* bytes, size_t index)
+            : m_bytes(bytes)
             , m_index(index)
         { }
 
-        // Views (2 words, read-only) are held by value so a Ref can be minted from anywhere; growable buffers by reference.
-        std::conditional_t<std::is_same_v<std::remove_const_t<InstructionBuffer>, View>, View, InstructionBuffer&> m_instructions;
+        inline const InstructionType* unwrap() const { return reinterpret_cast<const InstructionType*>(m_bytes->data() + m_index); }
+
+        const Bytes* m_bytes;
         Offset m_index;
     };
 
 public:
-    using Ref = BaseRef<const View>;
+    class Ref : public BaseRef {
+        template<typename> friend class InstructionStream;
+        template<typename> friend class InstructionStreamWriter;
+        friend class BaseRef;
+    protected:
+        using BaseRef::BaseRef;
+    };
 
-    class MutableRef : public BaseRef<InstructionBuffer> {
+    class MutableRef : public BaseRef {
+        template<typename> friend class InstructionStream;
         template<typename> friend class InstructionStreamWriter;
 
     protected:
-        using BaseRef<InstructionBuffer>::BaseRef;
-        using BaseRef<InstructionBuffer>::m_index;
-        using BaseRef<InstructionBuffer>::m_instructions;
+        MutableRef(InstructionBuffer& buffer, const Bytes* bytes, size_t index)
+            : BaseRef(bytes, index)
+            , m_buffer(&buffer)
+        { }
+        using BaseRef::m_index;
 
     public:
-        Ref freeze() const  { return Ref { View { &m_instructions, { } }, m_index }; }
+        Ref freeze() const { return Ref { this->m_bytes, m_index }; }
         inline InstructionType* operator->() { return unwrap(); }
-        inline const InstructionType* operator->() const { return unwrap(); }
+        inline const InstructionType* operator->() const { return BaseRef::unwrap(); }
         inline InstructionType* ptr() { return unwrap(); }
-        inline const InstructionType* ptr() const { return unwrap(); }
-        inline operator Ref()
-        {
-            return Ref { View { &m_instructions, { } }, m_index };
-        }
+        inline const InstructionType* ptr() const { return BaseRef::unwrap(); }
+        inline operator Ref() const { return freeze(); }
 
     private:
-        inline InstructionType* unwrap() { return reinterpret_cast<InstructionType*>(&m_instructions[m_index]); }
-        inline const InstructionType* unwrap() const { return reinterpret_cast<const InstructionType*>(&m_instructions[m_index]); }
+        inline InstructionType* unwrap() { return reinterpret_cast<InstructionType*>(m_buffer->mutableSpan().data() + m_index); }
+
+        InstructionBuffer* m_buffer;
     };
 
 private:
@@ -180,66 +166,76 @@ private:
 public:
     inline iterator begin() const LIFETIME_BOUND
     {
-        return iterator { view(), 0 };
+        return iterator { &m_bytes, 0 };
     }
 
     inline iterator end() const LIFETIME_BOUND
     {
-        return iterator { view(), view().size() };
+        return iterator { &m_bytes, m_bytes.size() };
     }
 
     inline const Ref at(BytecodeIndex index) const { return at(index.offset()); }
     inline const Ref at(Offset offset) const
     {
-        ASSERT(offset < view().size());
-        return Ref { view(), offset };
+        ASSERT(offset < m_bytes.size());
+        return Ref { &m_bytes, offset };
     }
 
     inline size_t size() const
     {
-        return view().size();
+        return m_bytes.size();
     }
 
     const void* rawPointer() const
     {
-        return view().data();
+        return m_bytes.data();
     }
 
     bool contains(InstructionType* instruction) const
     {
         auto* pointer = std::bit_cast<const uint8_t*>(instruction);
-        return pointer >= view().data() && pointer < view().data() + view().size();
+        return pointer >= m_bytes.data() && pointer < m_bytes.data() + m_bytes.size();
     }
 
-    // Borrow an immutable instruction stream that lives elsewhere (e.g. inside an mmap'd bytecode cache) instead of copying it.
+    // Read an immutable instruction stream that lives elsewhere (inside a bytecode cache mapping) instead of copying it.
     enum BorrowTag { Borrow };
-    InstructionStream(std::span<const uint8_t> borrowed, BorrowTag)
-        : m_view { nullptr, borrowed }
+    InstructionStream(Bytes borrowed, BorrowTag)
+        : m_bytes(borrowed)
+        , m_isBorrowed(true)
     { }
-    bool isBorrowed() const { return !m_view.owned; }
+    bool isBorrowed() const { return m_isBorrowed; }
 
     InstructionStream(InstructionStream&& other)
         : m_instructions(WTF::move(other.m_instructions))
-        , m_view { other.m_view.owned ? &m_instructions : nullptr, other.m_view.borrowed }
+        , m_bytes(other.m_isBorrowed ? other.m_bytes : Bytes(m_instructions.span()))
+        , m_isBorrowed(other.m_isBorrowed)
     { }
     InstructionStream& operator=(InstructionStream&& other)
     {
         m_instructions = WTF::move(other.m_instructions);
-        m_view = View { other.m_view.owned ? &m_instructions : nullptr, other.m_view.borrowed };
+        m_isBorrowed = other.m_isBorrowed;
+        m_bytes = m_isBorrowed ? other.m_bytes : Bytes(m_instructions.span());
         return *this;
     }
 
 protected:
     explicit InstructionStream(InstructionBuffer&& instructions)
         : m_instructions(WTF::move(instructions))
-        , m_view { &m_instructions, { } }
+        , m_bytes(m_instructions.span())
     { }
 
-    ALWAYS_INLINE const View& view() const { return m_view; }
+    void didMutateBuffer() { m_bytes = m_instructions.span(); }
 
     InstructionBuffer m_instructions;
-    View m_view;
+    Bytes m_bytes;
+    bool m_isBorrowed { false };
 };
+
+template<typename InstructionType>
+inline typename InstructionStream<InstructionType>::Ref InstructionStream<InstructionType>::BaseRef::next() const
+{
+    return Ref { m_bytes, m_index + ptr()->size() };
+}
 
 template<typename InstructionType>
 class InstructionStreamWriter : public InstructionStream<InstructionType> {
@@ -250,6 +246,8 @@ public:
     using typename InstructionStream<InstructionType>::MutableRef;
     using typename InstructionStream<InstructionType>::Offset;
     using InstructionStream<InstructionType>::m_instructions;
+    using InstructionStream<InstructionType>::m_bytes;
+    using InstructionStream<InstructionType>::didMutateBuffer;
 
     InstructionStreamWriter()
         : InstructionStream<InstructionType>({ })
@@ -260,12 +258,13 @@ public:
         RELEASE_ASSERT(!m_instructions.size());
         RELEASE_ASSERT(!buffer.size());
         m_instructions = WTF::move(buffer);
+        didMutateBuffer();
     }
 
     inline MutableRef ref(Offset offset)
     {
         ASSERT(offset < m_instructions.size());
-        return MutableRef { m_instructions, offset };
+        return MutableRef { m_instructions, &m_bytes, offset };
     }
 
     void seek(unsigned position)
@@ -292,8 +291,10 @@ public:
     uint8_t* reserve()
     {
         ASSERT(!m_finalized);
-        if ((m_position + size) > m_instructions.size())
+        if ((m_position + size) > m_instructions.size()) {
             m_instructions.grow(m_position + size);
+            didMutateBuffer();
+        }
         auto* result = m_instructions.mutableSpan().data() + m_position;
         m_position += size;
         return result;
@@ -303,6 +304,7 @@ public:
     {
         ASSERT(ref.offset() < m_instructions.size());
         m_instructions.shrink(ref.offset());
+        didMutateBuffer();
         m_position = ref.offset();
     }
 
@@ -310,7 +312,9 @@ public:
     {
         m_finalized = true;
         m_instructions.shrinkToFit();
-        return std::unique_ptr<InstructionStream<InstructionType>> { new InstructionStream<InstructionType>(WTF::move(m_instructions)) };
+        auto result = std::unique_ptr<InstructionStream<InstructionType>> { new InstructionStream<InstructionType>(WTF::move(m_instructions)) };
+        didMutateBuffer();
+        return result;
     }
 
     std::unique_ptr<InstructionStream<InstructionType>> finalize(InstructionBuffer& usedBuffer)
@@ -322,13 +326,14 @@ public:
         memcpy(resultBuffer.mutableSpan().data(), m_instructions.span().data(), m_instructions.sizeInBytes());
 
         usedBuffer = WTF::move(m_instructions);
+        didMutateBuffer();
 
         return std::unique_ptr<InstructionStream<InstructionType>> { new InstructionStream<InstructionType>(WTF::move(resultBuffer)) };
     }
 
     MutableRef ref()
     {
-        return MutableRef { m_instructions, m_position };
+        return MutableRef { m_instructions, &m_bytes, m_position };
     }
 
     void swap(InstructionStreamWriter<InstructionType>& other)
@@ -336,6 +341,8 @@ public:
         std::swap(m_finalized, other.m_finalized);
         std::swap(m_position, other.m_position);
         m_instructions.swap(other.m_instructions);
+        didMutateBuffer();
+        other.didMutateBuffer();
     }
 
 private:
@@ -367,12 +374,12 @@ private:
 public:
     iterator begin()
     {
-        return iterator { m_instructions, 0 };
+        return iterator { m_instructions, &m_bytes, 0 };
     }
 
     iterator end()
     {
-        return iterator { m_instructions, m_instructions.size() };
+        return iterator { m_instructions, &m_bytes, m_instructions.size() };
     }
 
 private:

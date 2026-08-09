@@ -148,17 +148,23 @@ void UnlinkedMetadataTable::finalize()
     });
 #endif
 
-    ASSERT(!m_isLinked);
+    unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
     if (m_is32Bit) {
-        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::zeroedMalloc(s_offset16TableSize + s_offset32TableSize));
-        Offset32* buffer = std::bit_cast<Offset32*>(newBuffer + s_offset16TableSize);
+        // offset already accounts for s_offset16TableSize
+        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::malloc(valueProfileSize + sizeof(LinkingData) + s_offset32TableSize + offset));
+        memset(newBuffer, 0, valueProfileSize + sizeof(LinkingData) + s_offset16TableSize);
+        memset(newBuffer + valueProfileSize + sizeof(LinkingData) + s_offset16TableSize + s_offset32TableSize, 0, offset - s_offset16TableSize);
+        Offset32* buffer = std::bit_cast<Offset32*>(newBuffer + valueProfileSize + sizeof(LinkingData) + s_offset16TableSize);
         for (unsigned i = 0; i < s_offsetTableEntries; ++i)
             buffer[i] = preprocessBuffer()[i] + s_offset32TableSize;
         MetadataTableMalloc::free(m_rawBuffer);
         m_rawBuffer = newBuffer;
     } else {
-        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::malloc(s_offset16TableSize));
-        Offset16* buffer = std::bit_cast<Offset16*>(newBuffer);
+        // offset already accounts for s_offset16TableSize
+        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::malloc(valueProfileSize + sizeof(LinkingData) + offset));
+        memset(newBuffer, 0, valueProfileSize + sizeof(LinkingData));
+        memset(newBuffer + valueProfileSize + sizeof(LinkingData) + s_offset16TableSize, 0, offset - s_offset16TableSize);
+        Offset16* buffer = std::bit_cast<Offset16*>(newBuffer + valueProfileSize + sizeof(LinkingData));
         for (unsigned i = 0; i < s_offsetTableEntries; ++i)
             buffer[i] = preprocessBuffer()[i];
         MetadataTableMalloc::free(m_rawBuffer);
