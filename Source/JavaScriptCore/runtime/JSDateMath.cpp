@@ -564,6 +564,15 @@ void DateCache::timeZoneCacheSlow()
     m_timeZoneCache = std::unique_ptr<OpaqueICUTimeZone, OpaqueICUTimeZoneDeleter>(cache);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void DateCache::didRestoreFromStartupSnapshot()
+{
+    // The ICU objects belong to the process that built the snapshot: forget them without freeing, then reset like a timezone change.
+    (void)m_timeZoneCache.release();
+    clearForTimeZoneChange();
+}
+#endif
+
 void DateCache::clearForTimeZoneChange()
 {
     m_timeZoneCache.reset();

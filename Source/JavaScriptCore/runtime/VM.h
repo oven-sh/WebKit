@@ -154,6 +154,8 @@ class ShadowChicken;
 class SharedJITStubSet;
 class SourceProvider;
 class SourceProviderCache;
+class Decoder;
+class CachedBytecode;
 enum class SourceTaintedOrigin : uint8_t;
 class StackFrame;
 class StringSplitCache;
@@ -753,6 +755,15 @@ public:
 
     typedef UncheckedKeyHashMap<RefPtr<SourceProvider>, RefPtr<SourceProviderCache>> SourceProviderCacheMap;
     SourceProviderCacheMap sourceProviderCacheMap;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The live Decoder (if any) per CachedBytecode, so lazy and repeated (post-jettison) decodes share decoded
+    // strings/environments. Non-owning: a Decoder lives while executables still reference it and unregisters itself.
+    Ref<Decoder> ensureBytecodeCacheDecoder(Ref<CachedBytecode>&&, RefPtr<SourceProvider>&&);
+    void unregisterBytecodeCacheDecoder(Decoder&, CachedBytecode&);
+    Lock m_bytecodeCacheDecoderMapLock;
+    UncheckedKeyHashMap<CachedBytecode*, Decoder*> m_bytecodeCacheDecoderMap WTF_GUARDED_BY_LOCK(m_bytecodeCacheDecoderMapLock);
+#endif
 #if ENABLE(JIT)
     std::unique_ptr<JITThunks> jitStubs;
     MacroAssemblerCodeRef<JITThunkPtrTag> getCTIStub(ThunkGenerator);
@@ -982,6 +993,14 @@ public:
     JS_EXPORT_PRIVATE JSLock& apiLock();
     CodeCache* codeCache() LIFETIME_BOUND { return m_codeCache.get(); }
     IntlCache& intlCache() { return *m_intlCache; }
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned startupSnapshotEpoch() const { return m_startupSnapshotEpoch; } // bumped when this VM resumes in a new process from a snapshot; holders of foreign (non-GC-heap) handles revalidate against it
+    JS_EXPORT_PRIVATE void didRestoreFromStartupSnapshot();
+    JS_EXPORT_PRIVATE void refreshStackBoundsAfterSnapshotRestore();
+    JS_EXPORT_PRIVATE void completeAllJITPlansBeforeStartupSnapshot(); // call right after adopting the thread, before taking the JSLock
+#else
+    static constexpr unsigned startupSnapshotEpoch() { return 0; }
+#endif
 #if USE(BUN_JSC_ADDITIONS)
     // Clears both dateCache and intlCache; callable without including IntlCache.h
     // (which transitively includes ICU headers that Bun's C++ cannot see on macOS).
@@ -1276,6 +1295,9 @@ private:
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
     std::unique_ptr<CodeCache> m_codeCache;
     std::unique_ptr<IntlCache> m_intlCache;
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
     UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
     std::unique_ptr<TypeProfiler> m_typeProfiler;

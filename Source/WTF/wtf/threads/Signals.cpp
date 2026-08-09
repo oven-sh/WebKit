@@ -389,10 +389,15 @@ inline void setExceptionPorts(const AbstractLocker& threadGroupLocker, Thread& t
     RELEASE_ASSERT(result == KERN_SUCCESS, result, handlers.exceptionPort, handlers.addedExceptions, activeExceptions);
 }
 
-static ThreadGroup& activeThreads()
+static Ref<ThreadGroup>& activeThreadsGroup()
 {
     static NeverDestroyed<Ref<ThreadGroup>> activeThreads = ThreadGroup::create();
     return activeThreads.get();
+}
+
+static ThreadGroup& activeThreads()
+{
+    return activeThreadsGroup().get();
 }
 
 void registerThreadForMachExceptionHandling(Thread& thread)
@@ -563,6 +568,31 @@ void SignalHandlers::initialize()
 #endif
 }
 
+static void installSystemSignalHandlers()
+{
+    SignalHandlers& handlers = g_wtfConfig.signalHandlers;
+    for (unsigned i = 0; i < SignalHandlers::numberOfSignals; ++i) {
+        if (!handlers.numberOfHandlers[i])
+            continue;
+
+        Signal signal = static_cast<Signal>(i);
+        struct sigaction action;
+        action.sa_sigaction = jscSignalHandler;
+        auto result = sigfillset(&action.sa_mask);
+        RELEASE_ASSERT(!result);
+        // Do not block this signal since it is used on non-Darwin systems to suspend and resume threads.
+        RELEASE_ASSERT(g_wtfConfig.isThreadSuspendResumeSignalConfigured);
+        result = sigdelset(&action.sa_mask, g_wtfConfig.sigThreadSuspendResume);
+        RELEASE_ASSERT(!result);
+        action.sa_flags = SA_SIGINFO;
+        auto systemSignals = toSystemSignal(signal);
+        result = sigaction(std::get<0>(systemSignals), &action, &handlers.oldActions[offsetForSystemSignal(std::get<0>(systemSignals))]);
+        if (std::get<1>(systemSignals))
+            result |= sigaction(*std::get<1>(systemSignals), &action, &handlers.oldActions[offsetForSystemSignal(*std::get<1>(systemSignals))]);
+        RELEASE_ASSERT(!result);
+    }
+}
+
 void SignalHandlers::finalize()
 {
     Config::AssertNotFrozenScope assertScope;
@@ -575,29 +605,38 @@ void SignalHandlers::finalize()
         initMachExceptionHandlerThread();
 #endif
 
-    if (!handlers.useMach) {
-        for (unsigned i = 0; i < numberOfSignals; ++i) {
-            if (!handlers.numberOfHandlers[i])
-                continue;
-
-            Signal signal = static_cast<Signal>(i);
-            struct sigaction action;
-            action.sa_sigaction = jscSignalHandler;
-            auto result = sigfillset(&action.sa_mask);
-            RELEASE_ASSERT(!result);
-            // Do not block this signal since it is used on non-Darwin systems to suspend and resume threads.
-            RELEASE_ASSERT(g_wtfConfig.isThreadSuspendResumeSignalConfigured);
-            result = sigdelset(&action.sa_mask, g_wtfConfig.sigThreadSuspendResume);
-            RELEASE_ASSERT(!result);
-            action.sa_flags = SA_SIGINFO;
-            auto systemSignals = toSystemSignal(signal);
-            result = sigaction(std::get<0>(systemSignals), &action, &handlers.oldActions[offsetForSystemSignal(std::get<0>(systemSignals))]);
-            if (std::get<1>(systemSignals))
-                result |= sigaction(*std::get<1>(systemSignals), &action, &handlers.oldActions[offsetForSystemSignal(*std::get<1>(systemSignals))]);
-            RELEASE_ASSERT(!result);
-        }
-    }
+    if (!handlers.useMach)
+        installSystemSignalHandlers();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// A process resumed from a snapshot has this file's state (which handlers exist, which signals were activated) but none
+// of the kernel-side state behind it: install it again for this process. The config is writable again here; the caller
+// re-freezes it.
+void SignalHandlers::reinstallAfterSnapshotRestore()
+{
+    SignalHandlers& handlers = g_wtfConfig.signalHandlers;
+    if (handlers.initState != InitState::Finalized)
+        return;
+    g_wtfConfig.isPermanentlyFrozen = false;
+#if GIGACAGE_ENABLED
+    g_gigacageConfig.isPermanentlyFrozen = false;
+#endif
+#if HAVE(MACH_EXCEPTIONS)
+    if (handlers.useMach) {
+        handlers.exceptionPort = MACH_PORT_NULL;
+#if CPU(ARM64) && HAVE(HARDENED_MACH_EXCEPTIONS)
+        handlers.useHardenedHandler = false; // decided again for this process below
+#endif
+        initMachExceptionHandlerThread();
+        std::exchange(activeThreadsGroup(), ThreadGroup::create()).leakRef(); // the old group lists the build process's threads
+        registerThreadForMachExceptionHandling(Thread::currentSingleton());
+        return;
+    }
+#endif
+    installSystemSignalHandlers();
+}
+#endif
 
 } // namespace WTF
 

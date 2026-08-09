@@ -86,6 +86,9 @@ using SignalHandlerMemory = AlignedStorage<SignalHandler>;
 struct SignalHandlers {
     static void NODELETE initialize();
     static void finalize();
+#if USE(BUN_JSC_ADDITIONS)
+    WTF_EXPORT_PRIVATE static void reinstallAfterSnapshotRestore();
+#endif
 
     void add(Signal, SignalHandler&&);
     template<typename Func>

@@ -59,6 +59,9 @@ public:
     template<typename IntegerType>
     IntegerType randomNumber();
     void randomValues(std::span<uint8_t>);
+#if USE(BUN_JSC_ADDITIONS)
+    void forceStirOnNextUse() { Locker locker { m_lock }; m_count = 0; }
+#endif
 
 private:
     inline void NODELETE addRandomData(std::span<const uint8_t, 128>);
@@ -163,6 +166,14 @@ template<> unsigned cryptographicallyRandomNumber<unsigned>()
 {
     return sharedRandomNumberGenerator().randomNumber<unsigned>();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void restirCryptographicallyRandomNumberGeneratorForSnapshotRestore()
+{
+    reopenOSRandomSourceForSnapshotRestore(); // on Linux the OS source holds a /dev/urandom descriptor: the snapshot's is the build process's number
+    sharedRandomNumberGenerator().forceStirOnNextUse();
+}
+#endif
 
 void cryptographicallyRandomValues(std::span<uint8_t> buffer)
 {

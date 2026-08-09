@@ -102,10 +102,31 @@ void IntlSegmenter::initializeSegmenter(JSGlobalObject* globalObject, JSValue lo
 
     UErrorCode status = U_ZERO_ERROR;
     m_segmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(ubrk_open(type, m_locale.utf8().data(), nullptr, 0, &status));
+#if USE(BUN_JSC_ADDITIONS)
+    m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#endif
     if (U_FAILURE(status)) {
         throwTypeError(globalObject, scope, "failed to initialize Segmenter"_s);
         return;
     }
+}
+
+UBreakIterator* IntlSegmenter::breakIterator(JSGlobalObject* globalObject) const
+{
+    VM& vm = globalObject->vm();
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_startupSnapshotEpoch != vm.startupSnapshotEpoch()) [[unlikely]] {
+        (void)m_segmenter.release(); // belongs to the process that built the snapshot
+        UBreakIteratorType type = m_granularity == Granularity::Grapheme ? UBRK_CHARACTER : m_granularity == Granularity::Word ? UBRK_WORD : UBRK_SENTENCE;
+        UErrorCode status = U_ZERO_ERROR;
+        m_segmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(ubrk_open(type, m_locale.utf8().data(), nullptr, 0, &status));
+        if (m_segmenter)
+            m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+    }
+#else
+    UNUSED_PARAM(vm);
+#endif
+    return m_segmenter.get();
 }
 
 // https://tc39.es/proposal-intl-segmenter/#sec-intl.segmenter.prototype.segment
@@ -127,7 +148,7 @@ JSValue IntlSegmenter::segment(JSGlobalObject* globalObject, JSValue stringValue
     auto upconvertedCharacters = Box<Vector<char16_t>>::create(expectedCharacters.value());
 
     UErrorCode status = U_ZERO_ERROR;
-    auto segmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(cloneUBreakIterator(m_segmenter.get(), &status));
+    auto segmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(cloneUBreakIterator(breakIterator(globalObject), &status));
     if (U_FAILURE(status)) {
         throwTypeError(globalObject, scope, "failed to initialize Segments"_s);
         return { };

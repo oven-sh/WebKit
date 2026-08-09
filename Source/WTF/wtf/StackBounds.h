@@ -59,6 +59,11 @@ public:
     // This function is only effective for newly created threads. In some platform, it returns a bogus value for the main thread.
     static StackBounds newThreadStackBounds(PlatformThreadHandle);
 #endif
+#if OS(LINUX)
+#if USE(BUN_JSC_ADDITIONS)
+    WTF_EXPORT_PRIVATE static void forgetOldestEnvironForStartupSnapshotRestore();
+#endif
+#endif
     static StackBounds currentThreadStackBounds()
     {
         auto result = currentThreadStackBoundsInternal();
