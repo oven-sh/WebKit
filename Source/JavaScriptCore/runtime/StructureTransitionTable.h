@@ -153,9 +153,6 @@ inline bool setsReadOnlyOnNonAccessorProperties(TransitionKind transition)
 
 class StructureTransitionTable {
     static constexpr intptr_t UsingSingleSlotFlag = 1;
-public:
-    JS_EXPORT_PRIVATE static bool g_imageStructureTablesRedirected; // set when the heap has immortal (image) blocks
-private:
 
     class PointerKey {
     public:
@@ -287,45 +284,28 @@ public:
 private:
     friend class SingleSlotTransitionWeakOwner;
 
-    // Rule 2 (heap image): for a table embedded in an image Structure, the mutable word lives in a heap side slot
-    // (seeded from the imaged value) so adding transitions never writes the image cell.
-    JS_EXPORT_PRIVATE intptr_t& dataSlow() const; // write path: get-or-create the side slot
-    JS_EXPORT_PRIVATE intptr_t dataForReadSlow() const; // read path: peek the side slot, never creates one
-    ALWAYS_INLINE intptr_t& data() const
-    {
-        if (g_imageStructureTablesRedirected) [[unlikely]]
-            return dataSlow();
-        return m_data;
-    }
-    ALWAYS_INLINE intptr_t dataForRead() const
-    {
-        if (g_imageStructureTablesRedirected) [[unlikely]]
-            return dataForReadSlow();
-        return m_data;
-    }
-
     bool isUsingSingleSlot() const
     {
-        return dataForRead() & UsingSingleSlotFlag;
+        return m_data & UsingSingleSlotFlag;
     }
 
     TransitionMap* map() const
     {
         ASSERT(!isUsingSingleSlot());
-        return std::bit_cast<TransitionMap*>(dataForRead());
+        return std::bit_cast<TransitionMap*>(m_data);
     }
 
     void setMap(TransitionMap* map)
     {
         ASSERT(isUsingSingleSlot());
         // This implicitly clears the flag that indicates we're using a single transition
-        data() = std::bit_cast<intptr_t>(map);
+        m_data = std::bit_cast<intptr_t>(map);
         ASSERT(!isUsingSingleSlot());
     }
 
     void setSingleTransition(VM&, JSCell* owner, Structure*);
 
-    mutable intptr_t m_data { UsingSingleSlotFlag };
+    intptr_t m_data { UsingSingleSlotFlag };
 };
 
 } // namespace JSC

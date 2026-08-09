@@ -26,7 +26,7 @@
 #include "config.h"
 
 #include "UnlinkedCodeBlock.h"
-#include "Heap.h"
+#include "HeapInlines.h"
 
 #include "BaselineJITCode.h"
 #include "BytecodeLivenessAnalysis.h"

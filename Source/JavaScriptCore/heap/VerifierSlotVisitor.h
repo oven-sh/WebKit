@@ -24,7 +24,6 @@
  */
 
 #pragma once
-#include <functional>
 
 #include "AbstractSlotVisitor.h"
 #include "JSCJSValue.h"
@@ -60,8 +59,6 @@ class VerifierSlotVisitor : public AbstractSlotVisitor {
     using Base = AbstractSlotVisitor;
 public:
     using ReferrerToken = AbstractSlotVisitor::ReferrerToken;
-    // Experiment hook: when set, appendUnbarriered reports the edge instead of marking/pushing.
-    std::function<void(JSCell*)> m_edgeHook;
 
     struct MarkerData {
         MarkerData() = default;

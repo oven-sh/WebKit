@@ -56,6 +56,15 @@ inline JSC::Heap* Heap::heap(const JSValue v)
     return heap(v.asCell());
 }
 
+ALWAYS_INLINE bool Heap::isImageCell(const JSCell* cell)
+{
+    if (!cell)
+        return false;
+    if (cell->isPreciseAllocation())
+        return cell->preciseAllocation().isImmortal();
+    return cell->markedBlock().isImmortal();
+}
+
 // Defined in Heap.cpp with NEVER_INLINE to prevent LTO from breaking compiler barriers
 // ALWAYS_INLINE bool Heap::isMarked(const void* rawCell)
 // {

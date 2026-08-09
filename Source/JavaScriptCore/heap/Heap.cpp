@@ -1227,15 +1227,6 @@ void Heap::deleteUnmarkedCompiledCode()
     m_jitStubRoutines->deleteUnmarkedJettisonedStubRoutines(vm());
 }
 
-bool Heap::isImageCell(const JSCell* cell)
-{
-    if (!cell)
-        return false;
-    if (cell->isPreciseAllocation())
-        return cell->preciseAllocation().isImmortal();
-    return cell->markedBlock().isImmortal();
-}
-
 UnlinkedFunctionCodeBlock* Heap::imageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable* executable, CodeSpecializationKind kind)
 {
     auto it = m_imageUnlinkedCodeBlocks.find({ executable, static_cast<unsigned>(kind) });
@@ -1275,43 +1266,14 @@ void Heap::evacuateTablesForImage()
 }
 
 
-intptr_t& Heap::imageTransitionTableSlot(const StructureTransitionTable* table, intptr_t seed)
-{
-    auto& slot = m_imageTransitionTables.add(table, nullptr).iterator->value;
-    if (!slot) {
-        m_imageTransitionTableSlots.append(seed);
-        slot = &m_imageTransitionTableSlots.last();
-    }
-    return *slot;
-}
-
-const intptr_t* Heap::peekImageTransitionTableSlot(const StructureTransitionTable* table) const
-{
-    auto it = m_imageTransitionTables.find(table);
-    return it == m_imageTransitionTables.end() ? nullptr : it->value;
-}
-
-StructureChain*& Heap::imageCachedPrototypeChainSlot(const Structure* structure)
-{
-    auto& slot = m_imageCachedPrototypeChains.add(structure, nullptr).iterator->value;
-    if (!slot)
-        slot = makeUniqueWithoutFastMallocCheck<StructureChain*>(nullptr);
-    return *slot;
-}
 
 bool Heap::rememberImageCell(JSCell* cell)
 {
     // Image cells stay PossiblyBlack forever (their header is never written); dedupe per cycle via the side set.
-    static const bool logRemember = !!getenv("JSC_IMM_LOG_REMEMBER");
-    bool isNew; size_t total;
-    {
-        Locker locker { m_imageRememberedLock };
-        isNew = m_imageWrittenEver.add(cell).isNewEntry;
-        total = m_imageWrittenEver.size();
-        if (m_imageRememberedThisCycle.add(cell).isNewEntry)
-            m_mutatorMarkStack->append(cell);
-    }
-    if (logRemember && isNew) dataLogLn("[imm] remember ", RawPointer(cell), " ", cell->className(), " total=", total);
+    Locker locker { m_imageRememberedLock };
+    m_imageWrittenEver.add(cell);
+    if (m_imageRememberedThisCycle.add(cell).isNewEntry)
+        m_mutatorMarkStack->append(cell);
     return true;
 }
 
@@ -1896,38 +1858,6 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
             writeBarrier(codeBlock);
         });
 
-    if (m_objectSpace.hasImmortalBlocks() && m_collectionScope == CollectionScope::Eden && getenv("JSC_IMM_CHECK")) [[unlikely]] {
-        // Debug: find old(immortal) -> new(unmarked) edges the eden collection missed (i.e. a missing/ineffective barrier).
-        auto checker = makeUnique<VerifierSlotVisitor>(*this);
-        JSCell* parent = nullptr;
-        size_t missed = 0;
-        HashMap<CString, size_t> byEdge;
-        checker->m_edgeHook = [&](JSCell* child) {
-            if (child->isPreciseAllocation() || child->markedBlock().isImmortal())
-                return;
-            if (isMarked(child))
-                return;
-            missed++;
-            auto key = makeString(parent->className(), "(state="_s, static_cast<int>(parent->cellState()), ") -> "_s, child->className());
-            byEdge.add(key.utf8(), 0).iterator->value++;
-        };
-        m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
-            if (!handle->block().isImmortal())
-                return;
-            handle->forEachCell([&](size_t, HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
-                if (!isJSCellKind(kind) || !handle->block().isMarkedRaw(heapCell))
-                    return IterationStatus::Continue;
-                parent = static_cast<JSCell*>(heapCell);
-                parent->methodTable()->visitChildren(parent, *checker);
-                return IterationStatus::Continue;
-            });
-        });
-        if (missed) {
-            dataLogLn("[imm] EDEN MISSED EDGES: ", missed);
-            for (auto& e : byEdge)
-                dataLogLn("    ", e.key, " x", e.value);
-        }
-    }
     updateObjectCounts();
     endMarking();
 
@@ -3203,7 +3133,6 @@ static UNUSED_FUNCTION void visitSamplingProfiler(VM&, AbstractSlotVisitor&) { }
 
 void Heap::freezeCurrentHeapAsImmortalImage()
 {
-    StructureTransitionTable::g_imageStructureTablesRedirected = true;
     RELEASE_ASSERT(vm().currentThreadIsHoldingAPILock());
     {
         // Settle lazily-materialized state that would otherwise be written into image cells after freeze:
@@ -3218,16 +3147,14 @@ void Heap::freezeCurrentHeapAsImmortalImage()
         DeferGC deferGC(vm());
         size_t withTable = 0;
         for (Structure* structure : structures) {
-            structure->materializePropertyTableForImage(vm());
+            structure->prepareForImage(vm());
             if (structure->hasPropertyTableForImage())
                 withTable++;
         }
-        dataLogLnIf(!!getenv("JSC_IMM_LOG"), "[imm] pre-materialized property tables: ", withTable, " of ", structures.size(), " structures have a table");
+        dataLogLnIf(Options::verboseHeapImage(), "[imm] pre-materialized property tables: ", withTable, " of ", structures.size(), " structures have a table");
     }
-    m_isFreezingImage = true;
     collectNow(Sync, CollectionScope::Full);
-    m_isFreezingImage = false;
-    if (getenv("JSC_IMM_LOG")) {
+    if (Options::verboseHeapImage()) [[unlikely]] {
         size_t withTable = 0, total = 0;
         HeapIterationScope iterationScope(*this);
         m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
@@ -3269,7 +3196,7 @@ void Heap::freezeCurrentHeapAsImmortalImage()
             return IterationStatus::Continue;
         });
     }
-    if (getenv("JSC_IMM_LOG")) {
+    if (Options::verboseHeapImage()) [[unlikely]] {
         size_t states[4] = { 0, 0, 0, 0 };
         HashMap<CString, size_t> whiteByClass;
         HeapIterationScope iterationScope(*this);
@@ -3286,7 +3213,7 @@ void Heap::freezeCurrentHeapAsImmortalImage()
         for (auto& e : whiteByClass)
             dataLogLn("    white: ", e.key, " x", e.value);
     }
-    if (!getenv("JSC_IMM_NO_STATIC_STRINGS")) {
+    {
         size_t count = 0;
         HeapIterationScope iterationScope(*this);
         m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
@@ -3299,7 +3226,7 @@ void Heap::freezeCurrentHeapAsImmortalImage()
             return IterationStatus::Continue;
         });
         for (auto& entry : vm().atomStringTable()->table()) { if (StringImpl* impl = entry.get()) { impl->makeStaticForImage(); count++; } }
-        dataLogLnIf(!!getenv("JSC_IMM_LOG"), "[imm] made ", count, " StringImpls static");
+        dataLogLnIf(Options::verboseHeapImage(), "[imm] made ", count, " StringImpls static");
     }
 }
 
@@ -3312,8 +3239,6 @@ void Heap::addCoreConstraints()
                 return;
             for (auto& entry : m_imageUnlinkedCodeBlocks)
                 visitor.appendUnbarriered(JSValue(reinterpret_cast<JSCell*>(entry.value)));
-            for (auto& entry : m_imageCachedPrototypeChains)
-                visitor.appendUnbarriered(JSValue(reinterpret_cast<JSCell*>(*entry.value)));
             // Unwritten image cells can only reference image cells or the precise allocations that existed at freeze;
             // so the Full-GC roots are: every image cell written since freeze (side card set) + those precise allocations.
             if (m_collectionScope != CollectionScope::Full)

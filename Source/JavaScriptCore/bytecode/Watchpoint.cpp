@@ -25,7 +25,6 @@
 
 #include "config.h"
 #include "Watchpoint.h"
-#include "StructureTransitionTable.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefCounted.h>
 
@@ -117,7 +116,7 @@ static UncheckedKeyHashMap<WatchpointSet*, std::unique_ptr<WatchpointList>>& ima
 }
 static ALWAYS_INLINE bool isImageWatchpointSet(WatchpointSet* set)
 {
-    return StructureTransitionTable::g_imageStructureTablesRedirected && WTF::isInImageImmortalRange(set);
+    return WTF::isInImageImmortalRange(set);
 }
 WatchpointList* WatchpointSet::imageSideChain(bool createIfMissing)
 {

@@ -102,21 +102,4 @@ CodeBlockHash ExecutableBase::hashFor(CodeSpecializationKind kind) const
     return uncheckedDowncast<ScriptExecutable>(this)->hashFor(kind);
 }
 
-
-// Dense bump arena for LinkStates: 64 KB chunks, never freed (executables are effectively immortal in the workloads this targets;
-// a destroyed executable leaks 48 bytes). Not thread-safe: executables are created on the mutator thread.
-ExecutableBase::LinkState* ExecutableBase::allocateLinkState()
-{
-    static char* cursor = nullptr;
-    static char* end = nullptr;
-    constexpr size_t chunk = 64 * 1024;
-    if (static_cast<size_t>(end - cursor) < sizeof(LinkState)) {
-        cursor = static_cast<char*>(fastMalloc(chunk));
-        end = cursor + chunk;
-    }
-    auto* result = new (cursor) LinkState();
-    cursor += sizeof(LinkState);
-    return result;
-}
-
 } // namespace JSC

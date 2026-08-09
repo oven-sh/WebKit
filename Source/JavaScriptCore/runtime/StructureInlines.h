@@ -176,13 +176,12 @@ inline StructureChain* Structure::prototypeChain(VM& vm, JSGlobalObject* globalO
 {
     ASSERT(base->structure() == this);
     // We cache our prototype chain so our clients can share it.
-    StructureChain* chain = cachedPrototypeChain();
-    if (!isValid(globalObject, chain, base)) {
+    if (!isValid(globalObject, m_cachedPrototypeChain.get(), base)) {
         JSValue prototype = prototypeForLookup(globalObject, base);
-        chain = StructureChain::create(vm, prototype.isNull() ? nullptr : asObject(prototype));
-        setCachedPrototypeChain(vm, chain);
+        const_cast<Structure*>(this)->clearCachedPrototypeChain();
+        m_cachedPrototypeChain.set(vm, this, StructureChain::create(vm, prototype.isNull() ? nullptr : asObject(prototype)));
     }
-    return chain;
+    return m_cachedPrototypeChain.get();
 }
 
 inline bool Structure::isValid(JSGlobalObject* globalObject, StructureChain* cachedPrototypeChain, JSObject* base) const
@@ -592,7 +591,7 @@ ALWAYS_INLINE StructureTransitionTable::Hash::Key StructureTransitionTable::Hash
 
 inline Structure* StructureTransitionTable::trySingleTransition() const
 {
-    uintptr_t pointer = dataForRead(); // read: never materializes an image side slot
+    uintptr_t pointer = m_data;
     if (pointer & UsingSingleSlotFlag)
         return std::bit_cast<Structure*>(pointer & ~UsingSingleSlotFlag);
     return nullptr;
@@ -615,7 +614,7 @@ inline void StructureTransitionTable::finalizeUnconditionally(VM& vm, Collection
 {
     if (auto* transition = trySingleTransition()) {
         if (!vm.heap.isMarked(transition))
-            data() = UsingSingleSlotFlag;
+            m_data = UsingSingleSlotFlag;
     }
 }
 

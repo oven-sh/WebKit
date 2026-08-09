@@ -44,15 +44,18 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-bool Structure::isImageCellForLock(const Structure* structure)
-{
-    return Heap::isImageCell(structure);
-}
-
 ConcurrentJSLock& Structure::imageSideLock(const void* p)
 {
     static std::array<ConcurrentJSLock, 512> locks;
     return locks[(reinterpret_cast<uintptr_t>(p) >> 5) & 511];
+}
+
+void Structure::prepareForImage(VM& vm)
+{
+    // Pinned: transitions clone the table instead of stealing it, so the imaged table is never taken away (a cell write).
+    if (ensurePropertyTableIfNotEmpty(vm))
+        setIsPinnedPropertyTable(true);
+    setIsImageStructure(true);
 }
 
 template<typename DetailsFunc>
@@ -96,7 +99,7 @@ static UncheckedKeyHashSet<Structure*>& liveStructureSet = *(new UncheckedKeyHas
 inline void StructureTransitionTable::setSingleTransition(VM& vm, JSCell* owner, Structure* structure)
 {
     ASSERT(isUsingSingleSlot());
-    data() = std::bit_cast<intptr_t>(structure) | UsingSingleSlotFlag;
+    m_data = std::bit_cast<intptr_t>(structure) | UsingSingleSlotFlag;
     vm.writeBarrier(owner, structure);
 }
 
@@ -1419,7 +1422,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     
     // Image structures: visit without taking lock() (an identity write) and without dropping caches, so their pages stay clean.
-    bool isImage = Heap::isImageCell(thisObject);
+    bool isImage = thisObject->isImageStructure();
     std::optional<ConcurrentJSLocker> locker;
     if (!isImage)
         locker.emplace(thisObject->lock());
@@ -1440,7 +1443,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
     visitor.append(thisObject->m_previousOrRareData);
 
-    if (isImage || visitor.heap()->isFreezingImage() || thisObject->isPinnedPropertyTable() || thisObject->protectPropertyTableWhileTransitioning()) {
+    if (isImage || thisObject->isPinnedPropertyTable() || thisObject->protectPropertyTableWhileTransitioning()) {
         // NOTE: This can interleave in pin(), in which case it may see a null property table.
         // That's fine, because then the barrier will fire and we will scan this again.
         visitor.append(thisObject->m_propertyTableUnsafe);
@@ -1640,7 +1643,7 @@ void Structure::setCachedPropertyNameEnumerator(VM& vm, JSPropertyNameEnumerator
     ASSERT(!isDictionary());
     if (!hasRareData())
         allocateRareData(vm);
-    ASSERT(chain == cachedPrototypeChain());
+    ASSERT(chain == m_cachedPrototypeChain.get());
     rareData()->setCachedPropertyNameEnumerator(vm, this, enumerator, chain);
 }
 
@@ -1663,7 +1666,7 @@ bool Structure::canCachePropertyNameEnumerator(VM&) const
     if (!this->canCacheOwnPropertyNames())
         return false;
 
-    StructureChain* structureChain = cachedPrototypeChain();
+    StructureChain* structureChain = m_cachedPrototypeChain.get();
     ASSERT(structureChain);
     StructureID* currentStructureID = structureChain->head();
     while (true) {
@@ -1841,47 +1844,6 @@ void Structure::checkConsistency()
 }
 #endif
 
-
-StructureChain* Structure::cachedPrototypeChain() const
-{
-    if (vm().heap.objectSpace().hasImmortalBlocks() && Heap::isImageCell(this)) [[unlikely]] {
-        if (StructureChain* side = vm().heap.imageCachedPrototypeChainSlot(this))
-            return side;
-    }
-    return m_cachedPrototypeChain.get();
-}
-
-void Structure::setCachedPrototypeChain(VM& vm, StructureChain* chain) const
-{
-    if (vm.heap.objectSpace().hasImmortalBlocks() && Heap::isImageCell(this)) [[unlikely]] {
-        vm.heap.imageCachedPrototypeChainSlot(this) = chain; // side entry is a GC root; the image cell stays clean
-        return;
-    }
-    const_cast<Structure*>(this)->clearCachedPrototypeChain();
-    m_cachedPrototypeChain.setMayBeNull(vm, this, chain);
-}
-
-
-bool StructureTransitionTable::g_imageStructureTablesRedirected = false;
-
-intptr_t& StructureTransitionTable::dataSlow() const
-{
-    // Only ever redirected for tables inside image Structures; the table sits at a fixed offset in Structure.
-    const Structure* owner = std::bit_cast<const Structure*>(std::bit_cast<const char*>(this) - Structure::offsetOfTransitionTable());
-    if (!Heap::isImageCell(owner))
-        return m_data;
-    return owner->vm().heap.imageTransitionTableSlot(this, m_data);
-}
-
-intptr_t StructureTransitionTable::dataForReadSlow() const
-{
-    const Structure* owner = std::bit_cast<const Structure*>(std::bit_cast<const char*>(this) - Structure::offsetOfTransitionTable());
-    if (!Heap::isImageCell(owner))
-        return m_data;
-    if (const intptr_t* slot = owner->vm().heap.peekImageTransitionTableSlot(this))
-        return *slot;
-    return m_data;
-}
 
 } // namespace JSC
 

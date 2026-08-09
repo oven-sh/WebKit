@@ -650,8 +650,6 @@ public:
 
     inline JSString* defaultToPrimitiveFastAndNonObservable(VM&);
 
-    static constexpr ptrdiff_t offsetOfTransitionTable() { return OBJECT_OFFSETOF(Structure, m_transitionTable); }
-
     static constexpr ptrdiff_t prototypeOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_prototype);
@@ -784,11 +782,9 @@ public:
     
     static void dumpContextHeader(PrintStream&);
     
-    // Image (immortal) structures take a striped side lock so lock traffic never dirties their pages.
-    ConcurrentJSLock& lock() LIFETIME_BOUND { if (isImageCellForLock(this)) [[unlikely]] return imageSideLock(this); return m_lock; }
-    JS_EXPORT_PRIVATE static bool isImageCellForLock(const Structure*);
-    // Image structures own their property table permanently (transitions clone instead of stealing it), so they are never written.
-    void materializePropertyTableForImage(VM& vm) { if (ensurePropertyTableIfNotEmpty(vm)) setIsPinnedPropertyTable(true); }
+    // Image structures are locked through a striped side lock, so taking the lock never dirties their (shared, file-backed) pages.
+    ConcurrentJSLock& lock() LIFETIME_BOUND { if (isImageStructure()) [[unlikely]] return imageSideLock(this); return m_lock; }
+    JS_EXPORT_PRIVATE void prepareForImage(VM&); // heap freeze: settle what would otherwise be written into the cell later
     bool hasPropertyTableForImage() const { return !!m_propertyTableUnsafe.get(); }
     JS_EXPORT_PRIVATE static ConcurrentJSLock& imageSideLock(const void*);
 
@@ -858,6 +854,7 @@ public:
     DEFINE_BITFIELD(bool, hasUnderscoreProtoPropertyExcludingOriginalProto, HasUnderscoreProtoPropertyExcludingOriginalProto, 1, 28);
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
+    DEFINE_BITFIELD(bool, isImageStructure, IsImageStructure, 1, 31);
 
     enum class StructureVariant : uint8_t {
         Normal,
@@ -1034,8 +1031,6 @@ private:
     WriteBarrier<JSGlobalObject> m_realm;
     WriteBarrier<Unknown> m_prototype;
     mutable WriteBarrier<StructureChain> m_cachedPrototypeChain;
-    StructureChain* cachedPrototypeChain() const; // in-cell, or heap side slot for image structures
-    void setCachedPrototypeChain(VM&, StructureChain*) const;
 
     WriteBarrier<JSCell> m_previousOrRareData;
 

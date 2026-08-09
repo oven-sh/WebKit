@@ -44,7 +44,6 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
     : ScriptExecutable(vm.functionExecutableStructure.get(), vm, source, unlinkedExecutable->lexicallyScopedFeatures(), unlinkedExecutable->derivedContextType(), false, isInsideOrdinaryFunction || !unlinkedExecutable->isArrowFunction(), EvalContextType::None, intrinsic)
     , m_topLevelExecutable(topLevelExecutable ? topLevelExecutable : this, WriteBarrierEarlyInit)
     , m_unlinkedExecutable(unlinkedExecutable, WriteBarrierEarlyInit)
-    , m_extras(allocateExtras())
 {
     RELEASE_ASSERT(!source.isNull());
     ASSERT(source.length());
@@ -96,10 +95,10 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
 
     // Since FunctionExecutable's finalizer always needs to be run, we do not track FunctionExecutable via finalizerSet.
-    auto* codeBlockForCall = thisObject->codeBlockForCallSlot().get();
+    auto* codeBlockForCall = thisObject->m_codeBlockForCall.get();
     if (codeBlockForCall)
         visitCodeBlockEdge(visitor, codeBlockForCall);
-    auto* codeBlockForConstruct = thisObject->codeBlockForConstructSlot().get();
+    auto* codeBlockForConstruct = thisObject->m_codeBlockForConstruct.get();
     if (codeBlockForConstruct)
         visitCodeBlockEdge(visitor, codeBlockForConstruct);
 
@@ -114,7 +113,7 @@ void FunctionExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visit
 {
     VM& vm = visitor.vm();
     auto* executable = uncheckedDowncast<FunctionExecutable>(cell);
-    auto* codeBlockForCall = executable->codeBlockForCallSlot().get();
+    auto* codeBlockForCall = executable->m_codeBlockForCall.get();
     if (codeBlockForCall) {
         if (!visitor.isMarked(codeBlockForCall))
             runConstraint(NoLockingNecessary, visitor, codeBlockForCall);
@@ -217,22 +216,6 @@ auto FunctionExecutable::ensureTemplateObjectMap(VM&) -> TemplateObjectMap&
 {
     RareData& rareData = ensureRareData();
     return ensureTemplateObjectMapImpl(rareData.m_templateObjectMap);
-}
-
-
-FunctionExecutable::Extras* FunctionExecutable::allocateExtras()
-{
-    // Same dense bump arena idea as ExecutableBase::allocateLinkState (never freed; mutator thread only).
-    static char* cursor = nullptr;
-    static char* end = nullptr;
-    constexpr size_t chunk = 64 * 1024;
-    if (static_cast<size_t>(end - cursor) < sizeof(Extras)) {
-        cursor = static_cast<char*>(fastMalloc(chunk));
-        end = cursor + chunk;
-    }
-    auto* result = new (cursor) Extras();
-    cursor += sizeof(Extras);
-    return result;
 }
 
 } // namespace JSC

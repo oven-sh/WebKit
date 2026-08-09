@@ -486,18 +486,13 @@ public:
     JS_EXPORT_PRIVATE size_t extraMemorySize(); // Non-GC memory referenced by GC objects.
     // Experimental: after a synchronous Full GC, freeze every MarkedBlock as an immortal image block.
     JS_EXPORT_PRIVATE void freezeCurrentHeapAsImmortalImage();
-    static bool isImageCell(const JSCell* cell);
+    static inline bool isImageCell(const JSCell*);
     // Rule 2 (link state out of image cells): decoded UnlinkedFunctionCodeBlocks for image UnlinkedFunctionExecutables live here, not in the (never written) cell.
     UnlinkedFunctionCodeBlock* imageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind);
     void setImageUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind, UnlinkedFunctionCodeBlock*);
     void clearImageUnlinkedCodeBlocks() { m_imageUnlinkedCodeBlocks.clear(); }
-    // Rule 2: lazily-cached prototype chains of image Structures live here instead of the (never written) cell. Slot is stable (node-based map).
-    StructureChain*& imageCachedPrototypeChainSlot(const Structure*); // raw: entries are GC roots (Img constraint), so no owner barrier needed
-    intptr_t& imageTransitionTableSlot(const StructureTransitionTable*, intptr_t seed);
-    const intptr_t* peekImageTransitionTableSlot(const StructureTransitionTable*) const;
-    void evacuateTablesForImage();
-    JS_EXPORT_PRIVATE void resetPacingAfterImageRestore(); // after restore: re-home per-heap tables that take inserts every run
-    bool isFreezingImage() const { return m_isFreezingImage; }
+    void evacuateTablesForImage(); // after restore: re-home per-heap tables that take inserts every run
+    JS_EXPORT_PRIVATE void resetPacingAfterImageRestore();
     // Barrier slow path for image owners: side remembered set instead of cellState writes. Returns true if handled.
     bool rememberImageCell(JSCell*);
     // Called by the visitor right before it reads an image cell's fields, so a racing store re-remembers it.
@@ -930,12 +925,8 @@ private:
     // Prototype card table: image cells written since freeze (sticky, Full-GC roots) and this cycle (barrier dedupe).
     UncheckedKeyHashSet<JSCell*> m_imageWrittenEver;
     UncheckedKeyHashMap<std::pair<const UnlinkedFunctionExecutable*, unsigned>, UnlinkedFunctionCodeBlock*> m_imageUnlinkedCodeBlocks; // visited as roots by the Img constraint
-    UncheckedKeyHashMap<const Structure*, std::unique_ptr<StructureChain*>> m_imageCachedPrototypeChains; // ditto (unique_ptr for a stable slot address)
-    UncheckedKeyHashMap<const StructureTransitionTable*, intptr_t*> m_imageTransitionTables; // side words (storage below; stable addresses); single-transition targets are weak like the in-cell ones
-    SegmentedVector<intptr_t, 512> m_imageTransitionTableSlots;
     UncheckedKeyHashSet<JSCell*> m_imageRememberedThisCycle;
     Vector<JSCell*> m_imagePreciseRoots;
-    bool m_isFreezingImage { false };
     Lock m_imageRememberedLock;
     std::unique_ptr<MarkStackArray> m_raceMarkStack;
     std::unique_ptr<MarkingConstraintSet> m_constraintSet;

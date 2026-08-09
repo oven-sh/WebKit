@@ -39,16 +39,16 @@ inline Structure* FunctionExecutable::createStructure(VM& vm, JSGlobalObject* gl
 
 inline void FunctionExecutable::notifyCreation(VM& vm, JSFunction* function, const char* reason)
 {
-    m_extras->singleton.notifyWrite(vm, this, function, reason);
-    if (m_extras->singleton.hasBeenInvalidated())
+    m_singleton.notifyWrite(vm, this, function, reason);
+    if (m_singleton.hasBeenInvalidated())
         m_unlinkedExecutable->setSingletonHasBeenInvalidated();
 }
 
 inline void FunctionExecutable::finalizeUnconditionally(VM& vm, CollectionScope collectionScope)
 {
-    m_extras->singleton.finalizeUnconditionally(vm, collectionScope);
-    finalizeCodeBlockEdge(vm, codeBlockForCallSlot());
-    finalizeCodeBlockEdge(vm, codeBlockForConstructSlot());
+    m_singleton.finalizeUnconditionally(vm, collectionScope);
+    finalizeCodeBlockEdge(vm, m_codeBlockForCall);
+    finalizeCodeBlockEdge(vm, m_codeBlockForConstruct);
     vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(this);
 }
 
@@ -56,12 +56,12 @@ inline FunctionCodeBlock* FunctionExecutable::replaceCodeBlockWith(VM& vm, CodeS
 {
     if (kind == CodeSpecializationKind::CodeForCall) {
         FunctionCodeBlock* oldCodeBlock = codeBlockForCall();
-        codeBlockForCallSlot().setMayBeNull(vm, this, newCodeBlock);
+        m_codeBlockForCall.setMayBeNull(vm, this, newCodeBlock);
         return oldCodeBlock;
     }
     ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
     FunctionCodeBlock* oldCodeBlock = codeBlockForConstruct();
-    codeBlockForConstructSlot().setMayBeNull(vm, this, newCodeBlock);
+    m_codeBlockForConstruct.setMayBeNull(vm, this, newCodeBlock);
     return oldCodeBlock;
 }
 

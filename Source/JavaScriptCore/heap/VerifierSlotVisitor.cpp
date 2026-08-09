@@ -172,10 +172,6 @@ void VerifierSlotVisitor::appendUnbarriered(JSCell* cell)
 {
     if (!cell)
         return;
-    if (m_edgeHook) [[unlikely]] {
-        m_edgeHook(cell);
-        return;
-    }
 
     if (cell->isPreciseAllocation()) [[unlikely]] {
         if (isMarked(cell->preciseAllocation(), cell)) [[likely]]

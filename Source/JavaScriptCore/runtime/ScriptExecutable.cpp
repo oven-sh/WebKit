@@ -24,7 +24,6 @@
  */
 
 #include "config.h"
-#include <stdlib.h>
 
 #include "CodeBlock.h"
 #include "Debugger.h"
@@ -52,7 +51,9 @@ ScriptExecutable::ScriptExecutable(Structure* structure, VM& vm, const SourceCod
     : ExecutableBase(vm, structure)
     , m_source(source)
     , m_intrinsic(intrinsic)
+    , m_features(NoFeatures)
     , m_lexicallyScopedFeatures(lexicallyScopedFeatures)
+    , m_hasCapturedVariables(false)
     , m_neverInline(false)
     , m_neverOptimize(false)
     , m_neverFTLOptimize(false)
@@ -72,8 +73,6 @@ void ScriptExecutable::destroy(JSCell* cell)
 
 void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
 {
-    if (getenv("JSC_IMM_LOG")) [[unlikely]]
-        dataLogLn("[imm] clearCode exec=", RawPointer(this), " immortalBlock=", (!isPreciseAllocation() && markedBlock().isImmortal()));
     m_jitCodeForCall = nullptr;
     m_jitCodeForConstruct = nullptr;
     m_jitCodeForCallWithArityCheck = CodePtr<JSEntryPtrTag>();
@@ -82,8 +81,8 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
     switch (type()) {
     case FunctionExecutableType: {
         FunctionExecutable* executable = static_cast<FunctionExecutable*>(this);
-        executable->codeBlockForCallSlot().clear();
-        executable->codeBlockForConstructSlot().clear();
+        executable->m_codeBlockForCall.clear();
+        executable->m_codeBlockForConstruct.clear();
         break;
     }
     case EvalExecutableType: {
@@ -121,8 +120,6 @@ void ScriptExecutable::installCode(CodeBlock* codeBlock)
 
 void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType codeType, CodeSpecializationKind kind, Profiler::JettisonReason reason)
 {
-    if (getenv("JSC_IMM_LOG") && reason != Profiler::JettisonReason::NotJettisoned) [[unlikely]]
-        dataLogLn("[imm] installCode(jettison) exec=", RawPointer(this), " cb=", RawPointer(genericCodeBlock), " cbMarked=", genericCodeBlock ? vm.heap.isMarked(genericCodeBlock) : false, " reason=", static_cast<int>(reason));
     if (genericCodeBlock) {
         CODEBLOCK_LOG_EVENT(genericCodeBlock, "installCode", ());
         switch (reason) {

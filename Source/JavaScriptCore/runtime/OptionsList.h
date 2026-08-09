@@ -441,6 +441,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, allowDoubleShape, true, Normal, "debugging option to test disabling use of DoubleShape"_s) \
     v(Bool, useZombieMode, false, Normal, "debugging option to scribble over dead objects with 0xbadbeef0"_s) \
     v(Bool, useImmortalObjects, false, Normal, "debugging option to keep all objects alive forever"_s) \
+    v(Bool, verboseHeapImage, false, Normal, "log what freezing a heap into an image settled and left behind"_s) \
     v(Bool, sweepSynchronously, false, Normal, "debugging option to sweep all dead objects synchronously at GC end before resuming mutator"_s) \
     v(Unsigned, maxSingleAllocationSize, 0, Configurable, "debugging option to limit individual allocations to a max size (0 = limit not set, N = limit size in bytes)"_s) \
     \
