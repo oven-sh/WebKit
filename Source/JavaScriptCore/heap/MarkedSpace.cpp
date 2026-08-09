@@ -344,7 +344,8 @@ void MarkedSpace::prepareForConservativeScan()
         });
     unsigned index = m_preciseAllocationsOffsetForThisCollection;
     for (auto* start = m_preciseAllocationsForThisCollectionBegin; start != m_preciseAllocationsForThisCollectionEnd; ++start, ++index) {
-        (*start)->setIndexInSpace(index);
+        if ((*start)->indexInSpace() != index)
+            (*start)->setIndexInSpace(index);
         ASSERT(m_preciseAllocations[index] == *start);
         ASSERT(m_preciseAllocations[index]->indexInSpace() == index);
     }
@@ -398,6 +399,19 @@ MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
         });
     return result;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void MarkedSpace::freezeAllBlocksAsImmortal()
+{
+    HeapVersion newlyAllocatedVersion = this->newlyAllocatedVersion();
+    HeapVersion markingVersion = this->markingVersion();
+    forEachDirectory([&](BlockDirectory& directory) -> IterationStatus {
+        directory.makeAllBlocksImmortal(markingVersion, newlyAllocatedVersion);
+        return IterationStatus::Continue;
+    });
+    m_hasImmortalBlocks = true;
+}
+#endif
 
 void MarkedSpace::freeBlock(MarkedBlock::Handle* block)
 {

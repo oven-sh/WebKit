@@ -313,6 +313,10 @@ public:
         WTF::BitSet<atomsPerBlock> m_marks;
         WTF::BitSet<atomsPerBlock> m_newlyAllocated;
         void* m_verifierMemo { nullptr };
+#if USE(BUN_JSC_ADDITIONS)
+        // Immortal (snapshot) block: liveness is frozen in m_marks, the collector never writes here, never sweeps or allocates.
+        bool m_isImmortal { false };
+#endif
     };
     
 private:
@@ -403,6 +407,12 @@ public:
     
     bool isMarkedRaw(const void* p);
     HeapVersion markingVersion() const { return header().m_markingVersion; }
+#if USE(BUN_JSC_ADDITIONS)
+    bool isImmortal() const { return header().m_isImmortal; }
+    void makeImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion);
+#else
+    static constexpr bool isImmortal() { return false; }
+#endif
     
     const WTF::BitSet<atomsPerBlock>& marks() const;
     
@@ -584,6 +594,8 @@ inline unsigned MarkedBlock::atomNumber(const void* p)
 
 inline bool MarkedBlock::areMarksStale(HeapVersion markingVersion)
 {
+    if (isImmortal()) [[unlikely]]
+        return false; // a snapshot block keeps the version it was frozen with; its marks are its liveness
     return markingVersion != header().m_markingVersion;
 }
 
@@ -592,7 +604,7 @@ inline Dependency MarkedBlock::aboutToMark(HeapVersion markingVersion, HeapCell*
     HeapVersion version;
     Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
     if (version != markingVersion) [[unlikely]]
-        aboutToMarkSlow(markingVersion, cell);
+        aboutToMarkSlow(markingVersion, cell); // snapshot blocks keep a stale version forever; the slow path returns without writing
     return dependency;
 }
 
@@ -624,6 +636,9 @@ inline bool MarkedBlock::isMarked(const void* p, Dependency dependency)
 
 inline bool MarkedBlock::testAndSetMarked(const void* p, Dependency dependency)
 {
+    // Snapshot blocks need no case here: every snapshot cell a precise pointer can reach is live, so its frozen bit is set and
+    // concurrentTestAndSet returns without writing; dead snapshot cells are only ever proposed by conservative scanning,
+    // which consults isMarked (areMarksStale) first.
     assertMarksNotStale();
     return header().m_marks.concurrentTestAndSet(atomNumber(p), dependency);
 }

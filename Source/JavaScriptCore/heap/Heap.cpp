@@ -20,6 +20,9 @@
 
 #include "config.h"
 #include "Heap.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "VerifierSlotVisitor.h"
+#endif
 
 #include "JSCJSValueInlines.h"
 
@@ -122,6 +125,9 @@
 #include "JSFFICallback.h"
 #include "JSFFIFunction.h"
 #include "JSString.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "StructureInlines.h"
+#endif
 #include <wtf/text/ExternalStringImpl.h>
 #endif
 
@@ -1033,6 +1039,12 @@ void Heap::endMarking()
     
     m_objectSpace.endMarking();
     setMutatorShouldBeFenced(Options::forceFencedBarrier());
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_objectSpace.hasImmortalBlocks()) {
+        Locker locker { m_snapshotRememberedLock };
+        m_snapshotRememberedThisCycle.clear();
+    }
+#endif
 }
 
 size_t Heap::objectCount()
@@ -1180,6 +1192,9 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
 
 void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_snapshotUnlinkedCodeBlocks.clear();
+#endif
     if (m_collectionScope && effort == DeleteAllCodeIfNotCollecting)
         return;
 
@@ -1220,12 +1235,87 @@ void Heap::deleteUnmarkedCompiledCode()
     m_jitStubRoutines->deleteUnmarkedJettisonedStubRoutines(vm());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+UnlinkedFunctionCodeBlock* Heap::snapshotUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable* executable, CodeSpecializationKind kind)
+{
+    auto it = m_snapshotUnlinkedCodeBlocks.find({ executable, static_cast<unsigned>(kind) });
+    return it == m_snapshotUnlinkedCodeBlocks.end() ? nullptr : it->value;
+}
+
+void Heap::setSnapshotUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable* executable, CodeSpecializationKind kind, UnlinkedFunctionCodeBlock* codeBlock)
+{
+    if (codeBlock)
+        m_snapshotUnlinkedCodeBlocks.set({ executable, static_cast<unsigned>(kind) }, codeBlock);
+    else
+        m_snapshotUnlinkedCodeBlocks.remove({ executable, static_cast<unsigned>(kind) });
+}
+
+void Heap::resetPacingAfterSnapshotRestore()
+{
+    // The limits in the snapshot were computed when the snapshot cells were ordinary live cells; here they are immortal and
+    // never counted, so those limits would let everything allocated after the restore accumulate in fresh blocks before
+    // the first collection. Start over as an empty heap does.
+    m_sizeAfterLastCollect = 0;
+    m_sizeAfterLastFullCollect = 0;
+    m_sizeAfterLastEdenCollect = 0;
+    m_extraMemorySize = 0; // reported by cells that are now immortal; a full collection would drop it too
+    m_deprecatedExtraMemorySize = 0;
+    // First cycle triggers on the mortal live size alone (immortal cells are not counted), never later than this heap type's own floor.
+    m_maxHeapSize = std::min<size_t>(minHeapSize(m_heapType, m_ramSize), Options::mediumHeapSize());
+    m_maxEdenSize = m_maxHeapSize;
+}
+
+// A table that lives on in the restored process gets fresh backing storage: growing it in place would dirty snapshot pages.
+template<typename Table> static void rehomeOutOfSnapshotPages(Table& table)
+{
+    Table copy = table;
+    table.swap(copy);
+}
+
+void Heap::evacuateTablesForStartupSnapshot()
+{
+    m_objectSpace.blocks().evacuateStorage();
+    rehomeOutOfSnapshotPages(m_weakGCHashTables);
+    {
+        Locker locker { m_snapshotRememberedLock };
+        rehomeOutOfSnapshotPages(m_snapshotWrittenEver);
+    }
+    { decltype(m_snapshotUnlinkedCodeBlocks) fresh; m_snapshotUnlinkedCodeBlocks.swap(fresh); } // empty at snapshot time anyway
+    if (auto* cache = vm().megamorphicCache())
+        cache->age(CollectionScope::Full); // bumps the epoch (entries become misses) without rewriting the snapshotd entry arrays
+}
+
+
+
+uintptr_t Heap::s_snapshotImmortalRangeLo = 0;
+uintptr_t Heap::s_snapshotImmortalRangeSpan = 0;
+
+void Heap::rememberSnapshotCell(JSCell* cell)
+{
+    // Snapshot cells stay PossiblyBlack forever (their header is never written); dedupe per cycle via the side set.
+    Locker locker { m_snapshotRememberedLock };
+    m_snapshotWrittenEver.add(cell);
+    if (m_snapshotRememberedThisCycle.add(cell).isNewEntry)
+        m_mutatorMarkStack->append(cell);
+}
+
+void Heap::willVisitSnapshotCell(JSCell* cell)
+{
+    Locker locker { m_snapshotRememberedLock };
+    m_snapshotRememberedThisCycle.remove(cell);
+}
+#endif
+
 void Heap::addToRememberedSet(const JSCell* constCell)
 {
     JSCell* cell = const_cast<JSCell*>(constCell);
     ASSERT(cell);
     ASSERT(!Options::useConcurrentJIT() || !isCompilationThread());
     m_barriersExecuted++;
+    if (m_objectSpace.hasImmortalBlocks() && isStartupSnapshotCell(cell)) [[unlikely]] {
+        rememberSnapshotCell(cell);
+        return;
+    }
     if (m_mutatorShouldBeFenced) {
         WTF::loadLoadFence();
         if (!isMarked(cell)) {
@@ -3064,8 +3154,162 @@ constexpr bool samplingProfilerSupported = false;
 static UNUSED_FUNCTION void visitSamplingProfiler(VM&, AbstractSlotVisitor&) { };
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+void Heap::freezeCurrentHeapAsImmortalStartupSnapshot()
+{
+    RELEASE_ASSERT(vm().currentThreadIsHoldingAPILock());
+    vm().completeAllJITPlansBeforeStartupSnapshot(); // no compiler thread may be reading structures while prepareForStartupSnapshot() switches their lock
+    {
+        // Settle lazily-materialized state that would otherwise be written into snapshot cells after freeze:
+        // every Structure gets its property table now (and the freeze GC below keeps them).
+        Vector<Structure*> structures;
+        {
+            HeapIterationScope iterationScope(*this);
+            m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+                if (isJSCellKind(kind) && static_cast<JSCell*>(heapCell)->type() == StructureType)
+                    structures.append(static_cast<Structure*>(static_cast<JSCell*>(heapCell)));
+                return IterationStatus::Continue;
+            });
+        } // materializing tables allocates, which iteration forbids
+        DeferGC deferGC(vm());
+        size_t withTable = 0;
+        for (Structure* structure : structures) {
+            structure->prepareForStartupSnapshot(vm());
+            if (structure->hasPropertyTableForSnapshot())
+                withTable++;
+        }
+        dataLogLnIf(Options::verboseStartupSnapshotFreeze(), "[imm] pre-materialized property tables: ", withTable, " of ", structures.size(), " structures have a table");
+    }
+    collectNow(Sync, CollectionScope::Full);
+    if (Options::verboseStartupSnapshotFreeze()) [[unlikely]] {
+        size_t withTable = 0, total = 0;
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (isJSCellKind(kind) && static_cast<JSCell*>(heapCell)->type() == StructureType) {
+                total++;
+                if (static_cast<Structure*>(static_cast<JSCell*>(heapCell))->hasPropertyTableForSnapshot())
+                    withTable++;
+            }
+            return IterationStatus::Continue;
+        });
+        dataLogLn("[imm] after freeze GC: ", withTable, " of ", total, " structures have a table");
+    }
+    PreventCollectionScope preventCollectionScope(*this);
+    sweeper().stopSweeping(); // nothing sweeps immortal blocks; a pending incremental sweep would rewrite their pages
+    m_objectSpace.freezeAllBlocksAsImmortal();
+    m_objectSpace.forEachSubspace([](Subspace& subspace) {
+        if (subspace.isIsoSubspace())
+            static_cast<IsoSubspace&>(subspace).abandonLowerTierPreciseFreeListForSnapshot();
+        return IterationStatus::Continue;
+    });
+    for (PreciseAllocation* allocation : m_objectSpace.preciseAllocations()) {
+        if (!allocation->isLive())
+            continue;
+        allocation->makeImmortal();
+        if (isJSCellKind(allocation->attributes().cellKind)) {
+            JSCell* cell = static_cast<JSCell*>(allocation->cell());
+            m_snapshotPreciseRoots.append(cell);
+            if (cell->cellState() != CellState::PossiblyBlack)
+                cell->setCellState(CellState::PossiblyBlack); // so stores into it take the barrier slow path (-> side remembered set) like every other snapshot cell
+        }
+    }
+    {
+        // Cells still PossiblyGrey (remembered around the freeze GC) would get blackened on their next visit; settle them now
+        // (they stay on the mutator mark stack, so nothing is lost) so snapshot headers are never written afterwards.
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (isJSCellKind(kind) && !heapCell->isPreciseAllocation() && heapCell->markedBlock().isImmortal()) {
+                JSCell* cell = static_cast<JSCell*>(heapCell);
+                if (cell->cellState() != CellState::PossiblyBlack) {
+                    rememberSnapshotCell(cell);
+                    cell->setCellState(CellState::PossiblyBlack);
+                }
+            }
+            return IterationStatus::Continue;
+        });
+    }
+    if (Options::verboseStartupSnapshotFreeze()) [[unlikely]] {
+        size_t states[4] = { 0, 0, 0, 0 };
+        HashMap<CString, size_t> whiteByClass;
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind) || heapCell->isPreciseAllocation() || !heapCell->markedBlock().isImmortal())
+                return IterationStatus::Continue;
+            auto st = static_cast<unsigned>(static_cast<JSCell*>(heapCell)->cellState());
+            states[std::min(st, 3u)]++;
+            if (st == static_cast<unsigned>(CellState::DefinitelyWhite))
+                whiteByClass.add(static_cast<JSCell*>(heapCell)->className(), 0).iterator->value++;
+            return IterationStatus::Continue;
+        });
+        dataLogLn("[imm] frozen cellState histogram: PossiblyBlack=", states[0], " DefinitelyWhite=", states[1], " PossiblyGrey=", states[2], " other=", states[3]);
+        for (auto& e : whiteByClass)
+            dataLogLn("    white: ", e.key, " x", e.value);
+    }
+    {
+        size_t count = 0;
+        HeapIterationScope iterationScope(*this);
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind))
+                return IterationStatus::Continue;
+            JSCell* cell = static_cast<JSCell*>(heapCell);
+            if (cell->isString()) {
+                if (auto* impl = static_cast<JSString*>(cell)->tryGetValueImpl()) {
+                    impl->settleLazyHeaderWritesForStartupSnapshot();
+                    impl->makeStaticForSnapshot();
+                    count++;
+                }
+            }
+            return IterationStatus::Continue;
+        });
+        for (auto& entry : vm().atomStringTable()->table()) {
+            if (StringImpl* impl = entry.get()) {
+                impl->settleLazyHeaderWritesForStartupSnapshot();
+                impl->makeStaticForSnapshot();
+                count++;
+            }
+        }
+        dataLogLnIf(Options::verboseStartupSnapshotFreeze(), "[imm] made ", count, " StringImpls static");
+    }
+}
+#endif
+
 void Heap::addCoreConstraints()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_constraintSet->add(
+        "Img", "Immortal snapshot roots",
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            if (!m_objectSpace.hasImmortalBlocks())
+                return;
+            for (auto& entry : m_snapshotUnlinkedCodeBlocks)
+                visitor.appendUnbarriered(JSValue(static_cast<JSCell*>(entry.value)));
+            // Unwritten snapshot cells can only reference snapshot cells or the precise allocations that existed at freeze;
+            // so the Full-GC roots are: every snapshot cell written since freeze (side card set) + those precise allocations.
+            if (m_collectionScope != CollectionScope::Full)
+                return;
+            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
+            Vector<JSCell*> written;
+            {
+                Locker locker { m_snapshotRememberedLock };
+                written = copyToVector(m_snapshotWrittenEver);
+            }
+            for (JSCell* cell : written) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(visitor)>, SlotVisitor>)
+                    visitor.visitImmortalCellAsRoot(cell);
+                else
+                    visitor.appendUnbarriered(JSValue(cell));
+            }
+            for (JSCell* cell : m_snapshotPreciseRoots) { // immortal too: appendUnbarriered would see "already marked" and never look inside
+                if constexpr (std::is_same_v<std::decay_t<decltype(visitor)>, SlotVisitor>)
+                    visitor.visitImmortalCellAsRoot(cell);
+                else
+                    visitor.appendUnbarriered(JSValue(cell));
+            }
+        })),
+        ConstraintVolatility::GreyedByExecution);
+#endif
+
+
     m_constraintSet->add(
         "Cs", "Conservative Scan",
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this, lastVersion = static_cast<uint64_t>(0)] (auto& visitor) mutable {
@@ -3505,7 +3749,10 @@ void Heap::verifyGC()
         if (Heap::isMarked(cell))
             return;
 
-        dataLogLn("\n" "GC Verifier: ERROR cell ", RawPointer(cell), " was not marked");
+        dataLogLn("\n" "GC Verifier: ERROR cell ", RawPointer(cell), " was not marked",
+            " type=", isJSCellKind(cell->cellKind()) ? static_cast<JSCell*>(cell)->className() : "aux",
+            " immortalBlock=", (!cell->isPreciseAllocation() && cell->markedBlock().isImmortal()),
+            " cellState=", isJSCellKind(cell->cellKind()) ? static_cast<int>(static_cast<JSCell*>(cell)->cellState()) : -1);
         if (Options::verboseVerifyGC()) [[unlikely]]
             visitor.dumpMarkerData(cell);
         RELEASE_ASSERT(this->isMarked(cell));

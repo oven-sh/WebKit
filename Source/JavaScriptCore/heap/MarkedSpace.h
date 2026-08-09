@@ -127,6 +127,13 @@ public:
     template<typename Functor> void forEachLiveCell(HeapIterationScope&, const Functor&);
     template<typename Functor> void forEachDeadCell(HeapIterationScope&, const Functor&);
     template<typename Functor> void forEachBlock(const Functor&);
+#if USE(BUN_JSC_ADDITIONS)
+    // Snapshot: freeze every current block as an immortal snapshot block (call with the world stopped, right after a Full GC).
+    void freezeAllBlocksAsImmortal();
+    bool hasImmortalBlocks() const { return m_hasImmortalBlocks; }
+#else
+    static constexpr bool hasImmortalBlocks() { return false; }
+#endif
     template<typename Functor> void forEachSubspace(const Functor&);
 
     void shrink();
@@ -218,6 +225,9 @@ private:
     HeapVersion m_newlyAllocatedVersion { initialVersion };
     HeapVersion m_edenVersion { initialVersion };
     bool m_isIterating { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_hasImmortalBlocks { false };
+#endif
     bool m_isMarking { false };
     bool m_conservativeScanIsPrepared { false };
     Lock m_directoryLock;

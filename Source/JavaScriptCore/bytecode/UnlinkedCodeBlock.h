@@ -172,6 +172,10 @@ public:
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
     bool hasExpressionInfo() { return !m_expressionInfo->isEmpty(); }
+#if USE(BUN_JSC_ADDITIONS)
+    struct ComponentSizes { size_t instructions, expressionInfo, metadata, identifiers, constants, jumpTargets, profiles, rareData; };
+    JS_EXPORT_PRIVATE ComponentSizes componentSizesForCensus(); // memory attribution tooling
+#endif
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
@@ -324,7 +328,7 @@ public:
     static constexpr unsigned maxAge = 7;
 
     unsigned age() const { return m_age; }
-    void resetAge() { m_age = 0; }
+    void resetAge() { if (m_age) m_age = 0; }
 
     NeedsClassFieldInitializer needsClassFieldInitializer() const
     {

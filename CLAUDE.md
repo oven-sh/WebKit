@@ -149,6 +149,10 @@ High-performance memory allocator with:
    - Stack trace improvements
    - Better error reporting for development
 
+5. **Startup Snapshots**
+   - `heap/Heap.cpp` (`freezeCurrentHeapAsImmortalStartupSnapshot`, `didRestoreFromStartupSnapshot`), `runtime/VM.cpp`
+   - Freezes the live heap as immortal so an embedder can write the process's memory out and resume later launches from it
+
 ### USE_BUN_EVENT_LOOP
 Custom event loop implementation for Bun's runtime requirements
 

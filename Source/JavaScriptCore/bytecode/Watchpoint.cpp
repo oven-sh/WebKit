@@ -25,6 +25,10 @@
 
 #include "config.h"
 #include "Watchpoint.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/NeverDestroyed.h>
+#include <wtf/RefCounted.h>
+#endif
 
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
 #include "CachedSpecialPropertyAdaptiveStructureWatchpoint.h"
@@ -101,6 +105,39 @@ WatchpointSet::WatchpointSet(WatchpointState state)
 {
 }
 
+
+using WatchpointList = SentinelLinkedList<Watchpoint, BasicRawSentinelNode<Watchpoint>>;
+#if USE(BUN_JSC_ADDITIONS)
+// Snapshot: watchpoints added to a WatchpointSet that lives inside the snapshot go on a per-set side chain in fresh memory,
+// so the push doesn't splice into (and dirty) the snapshotd neighbours/sentinel. State bytes still change in the set itself
+// (JIT'd code reads them inline); the list is only ever walked here.
+static Lock s_snapshotSideChainsLock;
+static UncheckedKeyHashMap<WatchpointSet*, std::unique_ptr<WatchpointList>>& snapshotSideChains() WTF_REQUIRES_LOCK(s_snapshotSideChainsLock)
+{
+    static NeverDestroyed<UncheckedKeyHashMap<WatchpointSet*, std::unique_ptr<WatchpointList>>> map;
+    return map;
+}
+static ALWAYS_INLINE bool isSnapshotWatchpointSet(WatchpointSet* set)
+{
+    return Heap::isInSnapshotImmortalRange(set);
+}
+WatchpointList* WatchpointSet::snapshotSideChain(bool createIfMissing)
+{
+    if (!isSnapshotWatchpointSet(this))
+        return nullptr;
+    Locker locker { s_snapshotSideChainsLock };
+    auto& map = snapshotSideChains();
+    if (createIfMissing) {
+        auto& slot = map.add(this, nullptr).iterator->value;
+        if (!slot)
+            slot = makeUniqueWithoutFastMallocCheck<WatchpointList>();
+        return slot.get();
+    }
+    auto it = map.find(this);
+    return it == map.end() ? nullptr : it->value.get();
+}
+#endif
+
 WatchpointSet::~WatchpointSet()
 {
     // FIXME(rdar://165379969): This is here to silence a RefcountDebugger ASSERT. But the
@@ -113,6 +150,10 @@ WatchpointSet::~WatchpointSet()
     // either keeping the watchpoint set's owner alive, or does some weak reference thing.
     while (!m_set.isEmpty())
         m_set.begin()->remove();
+    if (auto* side = snapshotSideChain(false)) {
+        while (!side->isEmpty())
+            side->begin()->remove();
+    }
 }
 
 void WatchpointSet::add(Watchpoint* watchpoint)
@@ -121,9 +162,14 @@ void WatchpointSet::add(Watchpoint* watchpoint)
     ASSERT(state() != IsInvalidated);
     if (!watchpoint)
         return;
-    m_set.push(watchpoint);
-    m_setIsNotEmpty = true;
-    m_state = IsWatched;
+    if (auto* side = snapshotSideChain(true))
+        side->push(watchpoint);
+    else
+        m_set.push(watchpoint);
+    if (!m_setIsNotEmpty)
+        m_setIsNotEmpty = true;
+    if (m_state != IsWatched)
+        m_state = IsWatched;
 }
 
 void WatchpointSet::fireAllSlow(VM& vm, const FireDetail& detail)
@@ -164,8 +210,9 @@ void WatchpointSet::fireAllWatchpoints(VM& vm, const FireDetail& detail)
     // The safest thing to do is to DeferGCForAWhile to prevent this GC from happening.
     DeferGCForAWhile deferGC(vm);
     
-    while (!m_set.isEmpty()) {
-        Watchpoint& watchpoint = *m_set.begin();
+    WatchpointList* side = snapshotSideChain(false);
+    while (!m_set.isEmpty() || (side && !side->isEmpty())) {
+        Watchpoint& watchpoint = !m_set.isEmpty() ? *m_set.begin() : *side->begin();
         ASSERT(watchpoint.isOnList());
         
         // Removing the Watchpoint before firing it makes it possible to implement watchpoints
@@ -178,7 +225,6 @@ void WatchpointSet::fireAllWatchpoints(VM& vm, const FireDetail& detail)
         // possible to add itself to the transition watchpoint set of the singleton object's new
         // Structure.
         watchpoint.remove();
-        ASSERT(&*m_set.begin() != &watchpoint);
         ASSERT(!watchpoint.isOnList());
         
         watchpoint.fire(vm, detail);
@@ -191,6 +237,8 @@ void WatchpointSet::take(WatchpointSet* other)
 {
     ASSERT(state() == ClearWatchpoint);
     m_set.takeFrom(other->m_set);
+    if (auto* otherSide = other->snapshotSideChain(false))
+        m_set.takeFrom(*otherSide);
     m_setIsNotEmpty = other->m_setIsNotEmpty;
     m_state = other->m_state;
     other->m_setIsNotEmpty = false;

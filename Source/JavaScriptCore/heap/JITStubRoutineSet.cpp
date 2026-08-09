@@ -95,8 +95,10 @@ void JITStubRoutineSet::prepareForConservativeScan()
 void JITStubRoutineSet::clearMarks()
 {
     // Immutable code routines do not matter.
-    for (auto& entry : m_routines)
-        entry.routine->m_mayBeExecuting = false;
+    for (auto& entry : m_routines) {
+        if (entry.routine->m_mayBeExecuting)
+            entry.routine->m_mayBeExecuting = false;
+    }
 }
 
 void JITStubRoutineSet::markSlow(uintptr_t address)
@@ -135,8 +137,8 @@ void JITStubRoutineSet::deleteUnmarkedJettisonedStubRoutines(VM& vm)
     ASSERT(vm.heap.isInPhase(CollectorPhase::End));
 
     auto shouldRemove = [&](GCAwareJITStubRoutine* stub) {
-        if (!stub->m_ownerIsDead)
-            stub->m_ownerIsDead = stub->removeDeadOwners(vm);
+        if (!stub->m_ownerIsDead && stub->removeDeadOwners(vm))
+            stub->m_ownerIsDead = true;
 
         // If the stub is running right now, we should keep it alive regardless of whether owner CodeBlock gets dead.
         // It is OK since we already marked all the related cells.

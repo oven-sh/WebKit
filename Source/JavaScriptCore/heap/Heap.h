@@ -23,6 +23,7 @@
 
 #include "ArrayBuffer.h"
 #include "CellState.h"
+#include "CodeSpecializationKind.h"
 #include "CollectionScope.h"
 #include "CollectorPhase.h"
 #include "CompleteSubspace.h"
@@ -104,6 +105,11 @@ class SpaceTimeMutatorScheduler;
 class StopIfNecessaryTimer;
 class SweepingScope;
 class VM;
+class StructureTransitionTable;
+class StructureChain;
+class Structure;
+class UnlinkedFunctionExecutable;
+class UnlinkedFunctionCodeBlock;
 class VerifierSlotVisitor;
 class WeakGCHashTable;
 struct CurrentThreadState;
@@ -478,6 +484,32 @@ public:
     JS_EXPORT_PRIVATE bool unprotect(JSValue); // True when the protect count drops to 0.
     
     JS_EXPORT_PRIVATE size_t extraMemorySize(); // Non-GC memory referenced by GC objects.
+#if USE(BUN_JSC_ADDITIONS)
+    // Snapshot: after a synchronous full collection, freeze every MarkedBlock as an immortal snapshot block.
+    JS_EXPORT_PRIVATE void freezeCurrentHeapAsImmortalStartupSnapshot();
+    static inline bool isStartupSnapshotCell(const JSCell*);
+    // Rule 2 (link state out of snapshot cells): decoded UnlinkedFunctionCodeBlocks for snapshot UnlinkedFunctionExecutables live here, not in the (never written) cell.
+    UnlinkedFunctionCodeBlock* snapshotUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind);
+    void setSnapshotUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind, UnlinkedFunctionCodeBlock*);
+    void clearSnapshotUnlinkedCodeBlocks() { m_snapshotUnlinkedCodeBlocks.clear(); }
+    void evacuateTablesForStartupSnapshot(); // after restore: re-home per-heap tables that take inserts every run
+    JS_EXPORT_PRIVATE void resetPacingAfterSnapshotRestore();
+    // Barrier slow path for snapshot owners: side remembered set instead of cellState writes.
+    void rememberSnapshotCell(JSCell*);
+    // [lo, lo+span) is the mapped snapshot's allocator range (span 0: none); the embedder sets it at restore. Slow paths only.
+    JS_EXPORT_PRIVATE static uintptr_t s_snapshotImmortalRangeLo;
+    JS_EXPORT_PRIVATE static uintptr_t s_snapshotImmortalRangeSpan;
+    static bool isInSnapshotImmortalRange(const void* p) { return reinterpret_cast<uintptr_t>(p) - s_snapshotImmortalRangeLo < s_snapshotImmortalRangeSpan; }
+    // Called by the visitor right before it reads a snapshot cell's fields, so a racing store re-remembers it.
+    void willVisitSnapshotCell(JSCell*);
+#else
+    static bool isStartupSnapshotCell(const JSCell*) { return false; }
+    static bool isInSnapshotImmortalRange(const void*) { return false; }
+    UnlinkedFunctionCodeBlock* snapshotUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind) { return nullptr; }
+    void setSnapshotUnlinkedCodeBlockFor(const UnlinkedFunctionExecutable*, CodeSpecializationKind, UnlinkedFunctionCodeBlock*) { }
+    void rememberSnapshotCell(JSCell*) { }
+    void willVisitSnapshotCell(JSCell*) { }
+#endif
     JS_EXPORT_PRIVATE size_t size();
     JS_EXPORT_PRIVATE size_t capacity();
     JS_EXPORT_PRIVATE size_t objectCount();
@@ -902,6 +934,14 @@ private:
     std::unique_ptr<SlotVisitor> m_collectorSlotVisitor;
     std::unique_ptr<SlotVisitor> m_mutatorSlotVisitor;
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
+#if USE(BUN_JSC_ADDITIONS)
+    // Prototype card table: snapshot cells written since freeze (sticky, Full-GC roots) and this cycle (barrier dedupe).
+    Lock m_snapshotRememberedLock;
+    UncheckedKeyHashSet<JSCell*> m_snapshotWrittenEver WTF_GUARDED_BY_LOCK(m_snapshotRememberedLock);
+    UncheckedKeyHashMap<std::pair<const UnlinkedFunctionExecutable*, unsigned>, UnlinkedFunctionCodeBlock*> m_snapshotUnlinkedCodeBlocks; // visited as roots by the Img constraint
+    UncheckedKeyHashSet<JSCell*> m_snapshotRememberedThisCycle WTF_GUARDED_BY_LOCK(m_snapshotRememberedLock);
+    Vector<JSCell*> m_snapshotPreciseRoots;
+#endif
     std::unique_ptr<MarkStackArray> m_raceMarkStack;
     std::unique_ptr<MarkingConstraintSet> m_constraintSet;
     std::unique_ptr<VerifierSlotVisitor> m_verifierSlotVisitor;

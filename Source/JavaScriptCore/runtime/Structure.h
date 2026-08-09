@@ -782,7 +782,15 @@ public:
     
     static void dumpContextHeader(PrintStream&);
     
+#if USE(BUN_JSC_ADDITIONS)
+    // Snapshot structures are locked through a striped side lock, so taking the lock never dirties their (shared, file-backed) pages.
+    ConcurrentJSLock& lock() LIFETIME_BOUND { if (isStartupSnapshotStructure()) [[unlikely]] return snapshotSideLock(this); return m_lock; }
+    JS_EXPORT_PRIVATE void prepareForStartupSnapshot(VM&); // heap freeze: settle what would otherwise be written into the cell later
+    bool hasPropertyTableForSnapshot() const { return !!m_propertyTableUnsafe.get(); }
+    JS_EXPORT_PRIVATE static ConcurrentJSLock& snapshotSideLock(const void*);
+#else
     ConcurrentJSLock& lock() LIFETIME_BOUND { return m_lock; }
+#endif
 
     unsigned propertyHash() const { return m_propertyHash; }
     SeenProperties seenProperties() const { return m_seenProperties; }
@@ -850,6 +858,11 @@ public:
     DEFINE_BITFIELD(bool, hasUnderscoreProtoPropertyExcludingOriginalProto, HasUnderscoreProtoPropertyExcludingOriginalProto, 1, 28);
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
+#if USE(BUN_JSC_ADDITIONS)
+    DEFINE_BITFIELD(bool, isStartupSnapshotStructure, IsStartupSnapshotStructure, 1, 31);
+#else
+    static constexpr bool isStartupSnapshotStructure() { return false; }
+#endif
 
     enum class StructureVariant : uint8_t {
         Normal,
@@ -915,7 +928,7 @@ private:
     // and the list of structures that we visited before we got to it. If it returns a
     // non-null structure, it will also lock the structure that it returns; it is your job
     // to unlock it.
-    bool findStructuresAndMapForMaterialization(Vector<Structure*, 8>& structures, Structure*& structure, PropertyTable*&) WTF_ACQUIRES_LOCK_IF(true, structure->m_lock);
+    bool findStructuresAndMapForMaterialization(Vector<Structure*, 8>& structures, Structure*& structure, PropertyTable*&) WTF_ACQUIRES_LOCK_IF(true, structure->lock());
     
     static Structure* toDictionaryTransition(VM&, Structure*, DictionaryKind, DeferredStructureTransitionWatchpointFire* = nullptr);
 
