@@ -78,6 +78,9 @@ protected:
 };
 
 class Decoder : public RefCounted<Decoder> {
+public:
+    bool canBorrowPayload() const; // payload is process-lifetime (mmap'd / embedded), so decoded objects may alias it
+private:
     WTF_MAKE_NONCOPYABLE(Decoder);
 
 public:
@@ -97,8 +100,8 @@ public:
     void addLeafExecutable(const UnlinkedFunctionExecutable*, ptrdiff_t);
     RefPtr<SourceProvider> NODELETE provider() const;
 
-    template<typename Functor>
-    void addFinalizer(const Functor&);
+    void addFinalizer(void*, void (*)(void*));
+    void setIsRegisteredWithVM() { m_isRegisteredWithVM = true; }
 
 private:
     Decoder(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider>);
@@ -106,9 +109,10 @@ private:
     VM& m_vm;
     const Ref<CachedBytecode> m_cachedBytecode;
     UncheckedKeyHashMap<ptrdiff_t, void*> m_offsetToPtrMap;
-    Vector<std::function<void()>> m_finalizers;
+    Vector<std::pair<void*, void (*)(void*)>> m_finalizers;
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
+    bool m_isRegisteredWithVM { false };
 };
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*);
@@ -127,6 +131,7 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const UnlinkedFunctionCodeBlock*, BytecodeCacheError&);
 
 JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
+JS_EXPORT_PRIVATE void decodeFunctionCodeBlockFromExecutableRecord(Decoder&, int32_t cachedFunctionExecutableOffset, CodeSpecializationKind, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 
