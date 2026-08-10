@@ -264,6 +264,23 @@ WI.RecordingAction = class RecordingAction extends WI.Object
     get name() { return this._name; }
     get parameters() { return this._parameters; }
     get swizzleTypes() { return this._payloadSwizzleTypes; }
+
+    get recordingObjectIdentifiers()
+    {
+        let result = [];
+        if (Array.isArray(this._payloadReceiver))
+            result.push(this._payloadReceiver);
+
+        for (let index = 0; index < this._payloadSwizzleTypes.length; ++index) {
+            let swizzleType = this._payloadSwizzleTypes[index];
+            let identifier = this._payloadParameters[index];
+            if (WI.Recording.isObjectSwizzleType(swizzleType) && !isNaN(identifier))
+                result.push([identifier, swizzleType]);
+        }
+
+        return result;
+    }
+
     get stackTrace() { return this._stackTrace; }
     get snapshot() { return this._snapshot; }
     get receiver() { return this._receiver; }
@@ -385,14 +402,15 @@ WI.RecordingAction = class RecordingAction extends WI.Object
         if (this._payloadSnapshot >= 0)
             this._snapshot = snapshot;
         if (Array.isArray(this._payloadReceiver))
-            this._receiver = WI.Recording.displayNameForReceiver(this._payloadReceiver);
+            this._receiver = recording.displayNameForReceiver(this._payloadReceiver);
 
         if (this.isCanvasReceiver) {
             this._isFunction = false;
             this._isGetter = !this._parameters.length;
             this._isVisual = !this._isGetter;
         } else {
-            this._isFunction = WI.RecordingAction.isFunctionForType(recording.type, this._name);
+            let isWebGLObjectAction = this._receiver && (recording.isCanvasWebGL || recording.isCanvasWebGL2);
+            this._isFunction = isWebGLObjectAction || WI.RecordingAction.isFunctionForType(recording.type, this._name);
             this._isGetter = !this._isFunction && !this._parameters.length;
 
             if (this._snapshot)
@@ -402,7 +420,7 @@ WI.RecordingAction = class RecordingAction extends WI.Object
                 this._isVisual = visualNames ? visualNames.has(this._name) : false;
             }
 
-            if (this._valid) {
+            if (this._valid && !isWebGLObjectAction) {
                 let prototype = WI.RecordingAction._prototypeForType(recording.type);
                 if (prototype && !(name in prototype)) {
                     this.markInvalid();
@@ -755,14 +773,28 @@ WI.RecordingAction._visualNames = {
     [WI.Recording.Type.CanvasWebGL]: new Set([
         "clear",
         "drawArrays",
+        "drawArraysInstancedANGLE",
         "drawElements",
+        "drawElementsInstancedANGLE",
+        "multiDrawArraysWEBGL",
+        "multiDrawArraysInstancedWEBGL",
+        "multiDrawElementsWEBGL",
+        "multiDrawElementsInstancedWEBGL",
     ]),
     [WI.Recording.Type.CanvasWebGL2]: new Set([
         "clear",
         "drawArrays",
         "drawArraysInstanced",
+        "drawArraysInstancedBaseInstanceWEBGL",
         "drawElements",
         "drawElementsInstanced",
+        "drawElementsInstancedBaseVertexBaseInstanceWEBGL",
+        "multiDrawArraysWEBGL",
+        "multiDrawArraysInstancedBaseInstanceWEBGL",
+        "multiDrawArraysInstancedWEBGL",
+        "multiDrawElementsInstancedBaseVertexBaseInstanceWEBGL",
+        "multiDrawElementsInstancedWEBGL",
+        "multiDrawElementsWEBGL",
     ]),
     [WI.Recording.Type.CanvasWebGPU]: new Set([
         "copyExternalImageToTexture",

@@ -30,6 +30,7 @@
 #include "APIObject.h"
 #include "MessageReceiver.h"
 #include "TextExtractionAssertionScope.h"
+#include <WebCore/ProcessIdentifier.h>
 #include <WebCore/UserGestureTokenIdentifier.h>
 #include <WebCore/SpeechRecognitionConnectionClientIdentifier.h>
 #include <wtf/ApproximateTime.h>
@@ -683,6 +684,9 @@ enum class TextRecognitionUpdateResult : uint8_t;
 enum class MediaPlaybackState : uint8_t;
 enum class NavigatingToAppBoundDomain : bool;
 enum class NegotiatedLegacyTLS : bool;
+#if ENABLE(PDF_HUD)
+enum class PDFAccessibilityDisplayModeState : uint8_t;
+#endif
 #if ENABLE(UNIFIED_PDF)
 enum class PDFPluginDisplayMode : uint8_t;
 #endif
@@ -770,6 +774,7 @@ public:
 
     WebFrameProxy* mainFrame() const { return m_mainFrame.get(); }
     void setTopDocumentSyncData(Ref<WebCore::DocumentSyncData>&&);
+    Ref<WebCore::DocumentSyncData> topDocumentSyncData() const;
     WebFrameProxy* focusedFrame() const { return m_focusedFrame.get(); }
     WebFrameProxy* focusedOrMainFrame() const { return m_focusedFrame ? m_focusedFrame.get() : m_mainFrame.get(); }
 
@@ -1985,6 +1990,9 @@ public:
 
     void pdfZoomIn(PDFPluginIdentifier, WebCore::FrameIdentifier);
     void pdfZoomOut(PDFPluginIdentifier, WebCore::FrameIdentifier);
+#if ENABLE(AX_PDF_SUPPORT)
+    void pdfToggleAccessibilityDisplayMode(PDFPluginIdentifier, WebCore::FrameIdentifier);
+#endif
     void pdfSaveToPDF(PDFPluginIdentifier, WebCore::FrameIdentifier);
     void pdfOpenWithPreview(PDFPluginIdentifier, WebCore::FrameIdentifier);
 #endif
@@ -2547,6 +2555,9 @@ public:
 #if ENABLE(PDF_HUD)
     void createPDFHUD(PDFPluginIdentifier, WebCore::FrameIdentifier, const WebCore::IntRect&);
     void updatePDFHUDLocation(PDFPluginIdentifier, const WebCore::IntRect&);
+#if ENABLE(AX_PDF_SUPPORT)
+    void updatePDFHUDAccessibilityDisplayMode(PDFPluginIdentifier, PDFAccessibilityDisplayModeState);
+#endif
     void removePDFHUD(PDFPluginIdentifier);
     void showPDFHUD(PDFPluginIdentifier);
 #endif
@@ -2699,7 +2710,7 @@ public:
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS) && ENABLE(VIDEO)
-    void beginTextRecognitionForVideoInElementFullScreen(PlaybackSessionContextIdentifier, WebCore::ShareableBitmapHandle&&, WebCore::FloatRect);
+    void beginTextRecognitionForVideoInElementFullScreen(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, WebCore::ShareableBitmapHandle&&, WebCore::FloatRect);
     void cancelTextRecognitionForVideoInElementFullScreen();
 #endif
 
@@ -3049,6 +3060,8 @@ private:
     void removeAllMessageReceivers();
 
     void notifyProcessPoolToPrewarm();
+
+    void recordFirstPartyVisit(const URL&);
 
     bool attachmentElementEnabled();
     bool modelElementEnabled();
@@ -3436,7 +3449,7 @@ private:
     void restorePageCenterAndScale(IPC::Connection&, std::optional<WebCore::FloatPoint>, double scale);
 
     void elementDidFocus(IPC::Connection&, const FocusedElementInformation&, bool userIsInteracting, bool blurPreviousNode, OptionSet<WebCore::ActivityState> activityStateChanges, const UserData&);
-    void elementDidBlur();
+    void elementDidBlur(IPC::Connection&);
     void convertFocusedElementInformationRectsToMainFrameCoordinates(FocusedElementInformation, CompletionHandler<void(FocusedElementInformation)>&&);
     void updateInputContextAfterBlurringAndRefocusingElement();
     void didProgrammaticallyClearFocusedElement(WebCore::ElementContext&&);
@@ -3823,6 +3836,8 @@ private:
     RefPtr<WebFrameProxy> m_mainFrame;
     RefPtr<WebCore::DocumentSyncData> m_topDocumentSyncData;
     RefPtr<WebFrameProxy> m_focusedFrame;
+
+    std::optional<WebCore::ProcessIdentifier> m_focusedElementProcessID;
 
     String m_userAgent;
     String m_applicationNameForUserAgent;

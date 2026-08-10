@@ -91,6 +91,7 @@ SOFT_LINK_CLASS(SafariSafeBrowsing, SSBLookupContext);
 - (_WKJSHandle *)jsHandleForNodeIdentifier:(NSString *)nodeIdentifier searchText:(NSString *)searchText;
 - (_WKJSHandle *)containerJSHandleForNodeIdentifier:(NSString *)nodeIdentifier searchText:(NSString *)searchText;
 - (_WKJSHandle *)containerJSHandleForSearchTexts:(NSArray<NSString *> *)searchTexts nodeIdentifier:(NSString *)nodeIdentifier;
+- (WKFrameInfo *)frameInfoForNodeIdentifier:(NSString *)nodeIdentifier;
 @end
 
 @implementation WKWebView (TextExtractionTests)
@@ -206,6 +207,18 @@ SOFT_LINK_CLASS(SafariSafeBrowsing, SSBLookupContext);
     __block RetainPtr<_WKJSHandle> result;
     [self requestContainerJSHandleForSearchTexts:searchTexts nodeIdentifier:nodeIdentifier completionHandler:^(_WKJSHandle *handle) {
         result = handle;
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    return result.autorelease();
+}
+
+- (WKFrameInfo *)frameInfoForNodeIdentifier:(NSString *)nodeIdentifier
+{
+    __block bool done = false;
+    __block RetainPtr<WKFrameInfo> result;
+    [self requestFrameInfoForNodeIdentifier:nodeIdentifier completionHandler:^(WKFrameInfo *frameInfo) {
+        result = frameInfo;
         done = true;
     }];
     TestWebKitAPI::Util::run(&done);
@@ -361,6 +374,23 @@ TEST(TextExtractionTests, InteractionDebugDescription)
         [interaction setNodeIdentifier:extractNodeIdentifier(debugText, @"Checkmark icon")];
         description = [interaction debugDescriptionInWebView:webView error:&error];
         EXPECT_WK_STREQ("Click on img labeled “Checkmark icon” under button labeled “Submit form” with id “submit-with-icon”", description);
+        EXPECT_NULL(error);
+    }
+    {
+        RetainPtr interaction = adoptNS([[_WKTextExtractionInteraction alloc] initWithAction:_WKTextExtractionActionClick]);
+        [interaction setNodeIdentifier:extractNodeIdentifier(debugText, @"Open menu")];
+
+        [webView stringByEvaluatingJavaScript:@"document.getElementById('menu-link').setAttribute('href', '/search?q=webkit&lang=en')"];
+        description = [interaction debugDescriptionInWebView:webView error:&error];
+        EXPECT_WK_STREQ("Click on img labeled “Open menu” under link with href “/search?…” with id “menu-link”", description);
+        EXPECT_NULL(error);
+
+        RetainPtr longPathComponent = [@"" stringByPaddingToLength:99 withString:@"a" startingAtIndex:0];
+        [webView stringByEvaluatingJavaScript:[NSString stringWithFormat:@"document.getElementById('menu-link').setAttribute('href', '/%@')", longPathComponent.get()]];
+        description = [interaction debugDescriptionInWebView:webView error:&error];
+        RetainPtr expectedHref = [NSString stringWithFormat:@"/%@…", [longPathComponent.get() substringToIndex:78]];
+        RetainPtr expectedString = [NSString stringWithFormat:@"Click on img labeled “Open menu” under link with href “%@” with id “menu-link”", expectedHref.get()];
+        EXPECT_WK_STREQ(expectedString.get(), description);
         EXPECT_NULL(error);
     }
 }
@@ -621,6 +651,59 @@ TEST(TextExtractionTests, InteractionRemapsStaleNodeIdentifier)
     EXPECT_TRUE([summary containsString:@"stale"]);
     EXPECT_TRUE([summary containsString:@"re-resolved"]);
     EXPECT_EQ(1, [[webView objectByEvaluatingJavaScript:@"document.querySelector('.click-count').textContent"] intValue]);
+}
+
+TEST(TextExtractionTests, InteractionRemapsStaleNodeIdentifierWithURL)
+{
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [[configuration preferences] _setTextExtractionEnabled:YES];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration]);
+
+    auto makeDebugTextConfiguration = [] {
+        RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+        [configuration setFilterOptions:_WKTextExtractionFilterNone];
+        [configuration setIncludeURLs:YES];
+        [configuration setShortenURLs:YES];
+        [configuration setIncludeRects:NO];
+        return configuration;
+    };
+
+    RetainPtr accountPageMarkup = @"<div role='tablist'>"
+        "<a href='https://example.com/account' role='tab' aria-selected='true' aria-label='Account tab'>Account</a>"
+        "<a href='https://example.com/security' role='tab' aria-selected='false' aria-label='Security tab'>Security</a>"
+        "</div>";
+
+    RetainPtr securityPageMarkup = @"<div role='tablist'>"
+        "<a href='https://example.com/account' role='tab' aria-selected='false' aria-label='Account tab'>Account</a>"
+        "<a href='https://example.com/security' role='tab' aria-selected='true' aria-label='Security tab'>Security</a>"
+        "</div>"
+        "<script>"
+        "window.accountTabClicked = false;"
+        "document.querySelector(\"a[href='https://example.com/account']\").addEventListener('click', event => {"
+        "    event.preventDefault();"
+        "    window.accountTabClicked = true;"
+        "});"
+        "</script>";
+
+    [webView synchronouslyLoadHTMLString:accountPageMarkup baseURL:[NSURL URLWithString:@"https://example.com/account"]];
+    RetainPtr staleAccountTabIdentifier = extractNodeIdentifier([webView synchronouslyGetDebugText:makeDebugTextConfiguration()], @"Account tab");
+    EXPECT_NOT_NULL(staleAccountTabIdentifier);
+
+    [webView synchronouslyLoadHTMLString:securityPageMarkup baseURL:[NSURL URLWithString:@"https://example.com/security"]];
+    RetainPtr currentAccountTabIdentifier = extractNodeIdentifier([webView synchronouslyGetDebugText:makeDebugTextConfiguration()], @"Account tab");
+    EXPECT_NOT_NULL(currentAccountTabIdentifier);
+    EXPECT_FALSE([staleAccountTabIdentifier isEqualToString:currentAccountTabIdentifier]);
+
+    RetainPtr interaction = adoptNS([[_WKTextExtractionInteraction alloc] initWithAction:_WKTextExtractionActionClick]);
+    [interaction setNodeIdentifier:staleAccountTabIdentifier];
+
+    RetainPtr result = [webView synchronouslyPerformInteraction:interaction];
+    EXPECT_NULL([result error]);
+    RetainPtr summary = [result summary];
+    EXPECT_TRUE([summary containsString:@"stale"]);
+    EXPECT_TRUE([summary containsString:@"re-resolved"]);
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"window.accountTabClicked"] boolValue]);
 }
 
 TEST(TextExtractionTests, TargetNodeAndClientAttributes)
@@ -1876,6 +1959,67 @@ TEST(TextExtractionTests, SubframeOriginInDebugText)
     EXPECT_FALSE([debugText containsString:@"origin=127.0.0.1"]);
 }
 
+TEST(TextExtractionTests, RequestFrameInfoForNodeIdentifier)
+{
+    HTTPServer server { {
+        { "/subframe-cross.html"_s, { subFrameMarkup("Cross origin: click here"_s) } },
+        { "/subframe-same.html"_s, { subFrameMarkup("Same origin: click here"_s) } },
+    }, HTTPServer::Protocol::Http };
+
+    server.addResponse("/"_s, { mainFrameMarkup(server.port()) });
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:^{
+        RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+        [[configuration preferences] _setTextExtractionEnabled:YES];
+        return configuration.autorelease();
+    }()]);
+
+    __block RetainPtr subframes = adoptNS([NSMutableArray new]);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate setDidCommitLoadWithRequestInFrame:^(WKWebView *, NSURLRequest *, WKFrameInfo *frame) {
+        if (!frame.mainFrame && ![frame.request.URL.scheme isEqualToString:@"about"])
+            [subframes addObject:frame];
+    }];
+    [webView setNavigationDelegate:navigationDelegate];
+    [webView loadRequest:server.request()];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    Util::waitForConditionWithLogging([webView] {
+        return [[webView objectByEvaluatingJavaScript:@"subframeLoadedCount"] intValue] == 2;
+    }, 2, @"Expected subframes to finish loading.");
+
+    RetainPtr result = [webView synchronouslyExtractDebugTextResult:^{
+        RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+        [configuration setIncludeRects:NO];
+        [configuration setAdditionalFrames:subframes];
+        return configuration.autorelease();
+    }()];
+
+    RetainPtr debugText = [result textContent];
+    auto crossOriginToken = makeString("origin=localhost:"_s, server.port());
+
+    RetainPtr crossOriginFrameInfo = [result frameInfoForNodeIdentifier:extractNodeIdentifier(debugText, crossOriginToken.createNSString())];
+    EXPECT_NOT_NULL(crossOriginFrameInfo);
+    EXPECT_FALSE([crossOriginFrameInfo isMainFrame]);
+    EXPECT_WK_STREQ("/subframe-cross.html", [[crossOriginFrameInfo request].URL path]);
+
+    RetainPtr crossOriginButtonFrameInfo = [result frameInfoForNodeIdentifier:extractNodeIdentifier(debugText, @"Cross origin: click here")];
+    EXPECT_NOT_NULL(crossOriginButtonFrameInfo);
+    EXPECT_FALSE([crossOriginButtonFrameInfo isMainFrame]);
+    EXPECT_WK_STREQ("/subframe-cross.html", [[crossOriginButtonFrameInfo request].URL path]);
+
+    RetainPtr sameOriginButtonFrameInfo = [result frameInfoForNodeIdentifier:extractNodeIdentifier(debugText, @"Same origin: click here")];
+    EXPECT_NOT_NULL(sameOriginButtonFrameInfo);
+    EXPECT_FALSE([sameOriginButtonFrameInfo isMainFrame]);
+    EXPECT_WK_STREQ("/subframe-same.html", [[sameOriginButtonFrameInfo request].URL path]);
+
+    RetainPtr mainFrameInfo = [result frameInfoForNodeIdentifier:extractNodeIdentifier(debugText, @"Link to WebKit home page")];
+    EXPECT_NOT_NULL(mainFrameInfo);
+    EXPECT_TRUE([mainFrameInfo isMainFrame]);
+
+    EXPECT_NULL([result frameInfoForNodeIdentifier:@"not-a-node-identifier"]);
+}
+
 TEST(TextExtractionTests, ClickInteractionWithTextOnly)
 {
     RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
@@ -2758,6 +2902,76 @@ TEST(TextExtractionTests, ExtractFromPDFAsPlainText)
 
     EXPECT_TRUE([text containsString:@"Test PDF Content"]);
     EXPECT_TRUE([text containsString:@"555-555-1234"]);
+}
+
+static RetainPtr<TestWKWebView> loadPDFWithLinkInWebView()
+{
+    RetainPtr configuration = configurationForWebViewTestingUnifiedPDF();
+    [[configuration preferences] _setTextExtractionEnabled:YES];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration]);
+    [webView loadData:testPDFDataWithLink() MIMEType:@"application/pdf" characterEncodingName:@"" baseURL:[NSURL URLWithString:@"https://www.example.com/test-with-link.pdf"]];
+    [webView _test_waitForDidFinishNavigation];
+    return webView;
+}
+
+TEST(TextExtractionTests, ExtractFromPDFLink)
+{
+    RetainPtr webView = loadPDFWithLinkInWebView();
+    {
+        RetainPtr text = [webView synchronouslyGetDebugText:^{
+            RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+            [configuration setOutputFormat:_WKTextExtractionOutputFormatMarkdown];
+            return configuration.autorelease();
+        }()];
+
+        EXPECT_TRUE([text containsString:@"[our website](https://www.example.com/)"]);
+    }
+    {
+        RetainPtr text = [webView synchronouslyGetDebugText:^{
+            RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+            [configuration setOutputFormat:_WKTextExtractionOutputFormatHTML];
+            return configuration.autorelease();
+        }()];
+
+        EXPECT_TRUE([text containsString:@"<a href='https://www.example.com/'>our website</a>"]);
+    }
+    {
+        RetainPtr text = [webView synchronouslyGetDebugText:^{
+            RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+            [configuration setOutputFormat:_WKTextExtractionOutputFormatJSON];
+            return configuration.autorelease();
+        }()];
+
+        NSError *error = nil;
+        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:0 error:&error];
+        EXPECT_NULL(error);
+
+        NSDictionary *linkNode = nil;
+        for (NSDictionary *child in [json objectForKey:@"children"]) {
+            if ([[child objectForKey:@"type"] isEqualToString:@"link"]) {
+                linkNode = child;
+                break;
+            }
+        }
+
+        EXPECT_NOT_NULL(linkNode);
+        EXPECT_WK_STREQ("https://www.example.com/", [linkNode objectForKey:@"url"]);
+        NSArray *linkChildren = [linkNode objectForKey:@"children"];
+        EXPECT_EQ([linkChildren count], 1u);
+        EXPECT_WK_STREQ("our website", [[linkChildren firstObject] objectForKey:@"content"]);
+    }
+    {
+        RetainPtr text = [webView synchronouslyGetDebugText:^{
+            RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+            [configuration setOutputFormat:_WKTextExtractionOutputFormatTextTree];
+            return configuration.autorelease();
+        }()];
+
+        EXPECT_TRUE([text containsString:@"link"]);
+        EXPECT_TRUE([text containsString:@"url=https://www.example.com/"]);
+        EXPECT_TRUE([text containsString:@"our website"]);
+    }
 }
 
 #endif // ENABLE(UNIFIED_PDF)

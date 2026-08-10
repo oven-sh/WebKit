@@ -111,7 +111,8 @@ void SVGAnimateMotionElement::attributeChanged(const QualifiedName& name, const 
     SVGAnimationElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
     
-SVGAnimateMotionElement::RotateMode SVGAnimateMotionElement::rotateMode() const
+// https://w3c.github.io/svgwg/specs/animations/#RotateAttribute
+Variant<SVGAnimateMotionElement::RotateMode, float> SVGAnimateMotionElement::rotate() const
 {
     static MainThreadNeverDestroyed<const AtomString> autoReverse("auto-reverse"_s);
     auto& rotate = getAttribute(SVGNames::rotateAttr);
@@ -119,7 +120,7 @@ SVGAnimateMotionElement::RotateMode SVGAnimateMotionElement::rotateMode() const
         return RotateMode::Auto;
     if (rotate == autoReverse)
         return RotateMode::AutoReverse;
-    return RotateMode::Angle;
+    return valueOrDefault(parseNumber(rotate));
 }
 
 void SVGAnimateMotionElement::updateAnimationPath()
@@ -186,19 +187,6 @@ bool SVGAnimateMotionElement::setToAtEndOfDurationValue(const String& toAtEndOfD
     return true;
 }
 
-void SVGAnimateMotionElement::buildTransformForProgress(AffineTransform* transform, float percentage)
-{
-    ASSERT(!m_animationPath.isEmpty());
-
-    float positionOnPath = m_animationPath.length() * percentage;
-    auto traversalState(m_animationPath.traversalStateAtLength(positionOnPath));
-    if (!traversalState.success())
-        return;
-
-    FloatPoint position = traversalState.current();
-    transform->translate(position);
-}
-
 void SVGAnimateMotionElement::calculateAnimatedValue(float percentage, unsigned repeatCount)
 {
     RefPtr targetElement = this->targetElement();
@@ -233,27 +221,37 @@ void SVGAnimateMotionElement::calculateAnimatedValue(float percentage, unsigned 
         angle = rad2deg(delta.slopeAngleRadians());
     } else {
         // Path animation
-        buildTransformForProgress(transform, percentage);
+        ASSERT(!m_animationPath.isEmpty());
+
+        // Path traversal is O(segments), so walk the path once for the position and
+        // its normal angle, and at most once more for the accumulated repeats.
+        float pathLength = m_animationPath.length();
+
+        auto traversalState = m_animationPath.traversalStateAtLength(pathLength * percentage);
+        if (traversalState.success())
+            transform->translate(traversalState.current());
 
         if (isAccumulated() && repeatCount) {
-            for (unsigned i = 0; i < repeatCount; ++i)
-                buildTransformForProgress(transform, 1);
+            auto endOfPathState = m_animationPath.traversalStateAtLength(pathLength);
+            if (endOfPathState.success()) {
+                auto endOfPath = endOfPathState.current();
+                for (unsigned i = 0; i < repeatCount; ++i)
+                    transform->translate(endOfPath);
+            }
         }
 
-        auto traversalState = m_animationPath.traversalStateAtLength(m_animationPath.length() * percentage);
         angle = traversalState.normalAngle();
     }
 
-    switch (rotateMode()) {
-    case RotateMode::Auto:
-        break;
-    case RotateMode::AutoReverse:
-        angle += 180;
-        break;
-    case RotateMode::Angle:
-        angle = 0;
-        break;
-    }
+    WTF::switchOn(rotate(),
+        [&](RotateMode mode) {
+            if (mode == RotateMode::AutoReverse)
+                angle += 180.0f;
+        },
+        [&](float value) {
+            angle = value;
+        }
+    );
 
     transform->rotate(angle);
 }

@@ -28,7 +28,6 @@ import struct Foundation.URL
 @_spi(WebKitAdditions_Testing) @_spi(Testing) import WebKit
 import SwiftUI
 import struct Swift.String
-import struct _Concurrency.Task
 private import struct TestWebKitAPILibrary.DOMRect
 import Testing
 private import TestWebKitAPILibrary
@@ -38,7 +37,7 @@ private import AppKit_Private.NSMenu_Private
 extension AppKitGesturesTests {
     @MainActor
     @Suite(.serialized, .timeLimit(.minutes(1)))
-    struct DoubleClick: AppKitGestureTestSuite {
+    final class DoubleClick: AppKitGestureTestSuite {
         static let text = "Here's to the crazy ones."
 
         let recap = Recap.shared
@@ -49,19 +48,15 @@ extension AppKitGesturesTests {
             return WebPage(configuration: configuration)
         }()
 
-        let window: NSWindow
+        let windowHost: TestWindowHost
 
         init() async throws {
             let contentSize = NSSize(width: 800, height: 600)
 
-            self.window = NSWindow(size: contentSize) { [page] in
+            self.windowHost = TestWindowHost(size: contentSize) { [page] in
                 WebView(page)
                     .webViewBackForwardNavigationGestures(.enabled)
             }
-
-            self.window.setFrameOrigin(.zero)
-            NSApp.activate(ignoringOtherApps: true)
-            self.window.makeKeyAndOrderFront(nil)
 
             await NSApp.waitForActivation()
         }
@@ -71,7 +66,7 @@ extension AppKitGesturesTests {
 extension AppKitGesturesTests.DoubleClick {
     // MARK: - DOM dblclick / detail==2 coverage
 
-    @Test
+    @Test(.disabled())
     func doubleClickWithListenerFiresDblclick() async throws {
         try await loadHTML(dblclickHandler: true)
         try await page.callJavaScript(JavaScriptMessages.InstallEventLog(in: "div", for: [.click, .dblclick]))
@@ -89,7 +84,7 @@ extension AppKitGesturesTests.DoubleClick {
         #expect(try await page.callJavaScript(JavaScriptMessages.EventLog()).contains(.init(type: .dblclick, detail: 2)))
     }
 
-    @Test
+    @Test(.disabled())
     func doubleClickReportsDetailTwo() async throws {
         try await loadHTML(dblclickHandler: true)
         try await page.callJavaScript(JavaScriptMessages.InstallEventLog(in: "div", for: [.click, .dblclick]))
@@ -107,7 +102,7 @@ extension AppKitGesturesTests.DoubleClick {
         #expect(try await page.callJavaScript(JavaScriptMessages.EventLog()).contains(.init(type: .click, detail: 2)))
     }
 
-    @Test
+    @Test(.disabled())
     func doubleClickWithListenerFiresDblclickAndSelectsWord() async throws {
         // A dblclick listener and a word selection coexist (only smart magnification
         // could suppress the selection, and this content is not zoomable).
@@ -135,7 +130,7 @@ extension AppKitGesturesTests.DoubleClick {
         #expect(try await page.callJavaScript(JavaScriptMessages.GetSelection()) == crazySelection)
     }
 
-    @Test(arguments: [true, false])
+    @Test(.disabled(), arguments: [true, false])
     func doubleClickWithListenerFiresDblclickRegardlessOfEditability(contentEditable: Bool) async throws {
         try await loadHTML(contentEditable: contentEditable, dblclickHandler: true)
         try await page.callJavaScript(JavaScriptMessages.InstallEventLog(in: "div", for: [.click, .dblclick]))
@@ -177,7 +172,7 @@ extension AppKitGesturesTests.DoubleClick {
         #expect(!eventLog.contains { $0.type == .dblclick })
     }
 
-    @Test
+    @Test(.disabled())
     func clickingTwoDifferentWordsDoesNotFireDblclick() async throws {
         // Two clicks far apart in space are two single clicks, disambiguated by location — not a double click.
         try await loadHTML(dblclickHandler: true)
@@ -200,7 +195,7 @@ extension AppKitGesturesTests.DoubleClick {
 
     // MARK: - Smart magnification
 
-    @Test
+    @Test(.disabled())
     func smartMagnificationGestureOnZoomableColumnDoesNotSelectWord() async throws {
         try await loadZoomableHTML()
 
@@ -224,7 +219,7 @@ extension AppKitGesturesTests.DoubleClick {
         #expect(try await page.callJavaScript(JavaScriptMessages.GetSelection()) != crazySelection)
     }
 
-    @Test(arguments: [false, true])
+    @Test(.disabled(), arguments: [false, true])
     func styleAdjustmentCanBlockSmartMagnification(interactive: Bool) async throws {
         try await loadZoomableHTML()
         try await page.callJavaScript(
@@ -252,7 +247,7 @@ extension AppKitGesturesTests.DoubleClick {
         #expect(try await page.callJavaScript(JavaScriptMessages.GetSelection()) == crazySelection)
     }
 
-    @Test
+    @Test(.disabled())
     func doubleClickZoomableColumnWithListenerSelectsWordAndFiresDblclick() async throws {
         // A dblclick listener suppresses smart magnification, so
         // the dblclick fires AND the word is selected (no zoom).

@@ -43,6 +43,7 @@
 #include "BroadcastChannelRegistry.h"
 #include "CacheStorageProvider.h"
 #include "CachedImage.h"
+#include "CanvasRenderingContext.h"
 #include "CaptionDisplaySettingsClient.h"
 #include "Chrome.h"
 #include "ChromeClient.h"
@@ -119,6 +120,7 @@
 #include "LayoutDisallowedScope.h"
 #include "LegacySchemeRegistry.h"
 #include "LoaderStrategy.h"
+#include "LocalDOMWindow.h"
 #include "LocalFrameLoaderClient.h"
 #include "LocalFrameViewInlines.h"
 #include "LogInitialization.h"
@@ -131,6 +133,7 @@
 #include "ModelPlayerProvider.h"
 #include "NavigationScheduler.h"
 #include "Navigator.h"
+#include "NavigatorAudioSession.h"
 #include "NavigatorGamepad.h"
 #include "NavigatorMediaSession.h"
 #include "OpportunisticTaskScheduler.h"
@@ -920,6 +923,21 @@ DOMAudioSessionType Page::audioSessionType() const
 {
     return m_topDocumentSyncData->audioSessionType;
 }
+
+void Page::setAudioSessionState(DOMAudioSessionState audioSessionState)
+{
+    if (m_topDocumentSyncData->audioSessionState == audioSessionState)
+        return;
+
+    m_topDocumentSyncData->audioSessionState = audioSessionState;
+    if (settings().siteIsolationEnabled())
+        documentSyncClient().broadcastAudioSessionStateToOtherProcesses(audioSessionState);
+}
+
+DOMAudioSessionState Page::audioSessionState() const
+{
+    return m_topDocumentSyncData->audioSessionState;
+}
 #endif
 
 void Page::setUserDidInteractWithPage(bool didInteract)
@@ -989,6 +1007,19 @@ void Page::updateTopDocumentSyncData(const DocumentSyncSerializationData& data)
 #endif
         protect(m_topDocumentSyncData)->update(data);
         break;
+#if ENABLE(DOM_AUDIO_SESSION)
+    case DocumentSyncDataType::AudioSessionState:
+        protect(m_topDocumentSyncData)->update(data);
+        forEachDocument([](Document& document) {
+            RefPtr window = document.window();
+            RefPtr navigator = window ? window->optionalNavigator() : nullptr;
+            if (!navigator)
+                return;
+            if (RefPtr audioSession = NavigatorAudioSession::audioSessionIfExists(*navigator))
+                audioSession->topDocumentAudioSessionStateChanged();
+        });
+        break;
+#endif
     }
 }
 
@@ -1006,6 +1037,11 @@ void Page::setMainFrameURLFragment(String&& fragment)
 const URL& Page::mainFrameURL() const
 {
     return m_topDocumentSyncData->documentURL;
+}
+
+void Page::didObserveFirstPartyUserGesture()
+{
+    chrome().client().didObserveFirstPartyUserGesture();
 }
 
 SecurityOrigin& Page::mainFrameOrigin() const
@@ -2814,12 +2850,29 @@ std::optional<FramesPerSecond> Page::preferredRenderingUpdateFramesPerSecond(Opt
         }
     });
 
+    for (Ref canvasContext : m_gpuCanvasesRequestingPacing) {
+        if (auto canvasPreferredFrameRate = canvasContext->preferredRenderingUpdateFramesPerSecond()) {
+            if (!frameRate || *canvasPreferredFrameRate < *frameRate)
+                frameRate = *canvasPreferredFrameRate;
+        }
+    }
+
     return frameRate;
 }
 
 Seconds Page::preferredRenderingUpdateInterval() const
 {
     return preferredFrameInterval(m_throttlingReasons, m_displayNominalFramesPerSecond, settings().preferPageRenderingUpdatesNear60FPSEnabled());
+}
+
+void Page::addGPUCanvasRequestingRenderingUpdatePacing(CanvasRenderingContext& context)
+{
+    m_gpuCanvasesRequestingPacing.add(context);
+}
+
+void Page::removeGPUCanvasRequestingRenderingUpdatePacing(CanvasRenderingContext& context)
+{
+    m_gpuCanvasesRequestingPacing.remove(context);
 }
 
 void Page::setIsVisuallyIdleInternal(bool isVisuallyIdle)
@@ -4406,13 +4459,11 @@ bool Page::useDarkAppearance() const
         RefPtr view = localMainFrame->view();
         if (!view || view->mediaType() != screenAtom())
             return false;
-
-        if (auto* documentLoader = localMainFrame->loader().documentLoader()) {
-            auto colorSchemePreference = documentLoader->colorSchemePreference();
-            if (colorSchemePreference != ColorSchemePreference::NoPreference)
-                return colorSchemePreference == ColorSchemePreference::Dark;
-        }
     }
+
+    auto colorSchemePreference = protect(mainFrame())->colorSchemePreference();
+    if (colorSchemePreference != ColorSchemePreference::NoPreference)
+        return colorSchemePreference == ColorSchemePreference::Dark;
 
     return m_useDarkAppearance;
 #else

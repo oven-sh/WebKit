@@ -159,6 +159,7 @@ Tests/WebKit/WKWebView/GetComputedStyleAfterIframeRemoval.mm @nonARC
 Tests/WebKit/WKWebView/GetDisplayMedia.mm @nonARC
 Tests/WebKit/WKWebView/GetDisplayMediaWindowAndScreen.mm @nonARC
 Tests/WebKit/WKWebView/GetResourceData.mm @nonARC
+Tests/WebKit/WKWebView/GetUserMedia.mm @nonARC @no-unify
 Tests/WebKit/WKWebView/HistoryDelegate.mm @nonARC
 Tests/WebKit/WKWebView/HSTS.mm @nonARC
 Tests/WebKit/WKWebView/IDBCheckpointWAL.mm @nonARC
@@ -363,6 +364,7 @@ Tests/WebKit/WKWebView/WKWebExtensionAPIEvent.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIExtension.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIMenus.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPINamespace.mm @nonARC
+Tests/WebKit/WKWebView/WKWebExtensionAPIOffscreen.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIPermissions.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIScripting.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIStorage.mm @nonARC

@@ -29,9 +29,11 @@
 #include "RenderBlockInlines.h"
 #include "RenderButton.h"
 #include "RenderChildIterator.h"
+#include "RenderListItem.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderObjectInlines.h"
 #include "RenderTextControl.h"
+#include "RenderTreeBuilderList.h"
 #include "RenderTreeBuilderMultiColumn.h"
 #include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
@@ -86,6 +88,18 @@ struct ParentAndBeforeChild {
     RenderElement* parent { nullptr };
     RenderObject* beforeChild { nullptr };
 };
+
+static bool isExcludedMarker(const RenderBlock& parent, const RenderObject& child)
+{
+    CheckedPtr marker = dynamicDowncast<RenderListMarker>(child);
+    if (!marker || marker->isInside() || !marker->document().settings().listMarkerPositionedPostLayoutEnabled())
+        return false;
+    if (parent.childrenInline())
+        return false;
+    CheckedPtr listItem = dynamicDowncast<RenderListItem>(parent);
+    return listItem && !markerNeedsOwnLine(*listItem);
+}
+
 static std::optional<ParentAndBeforeChild> findParentAndBeforeChildForNonSibling(RenderBlock& parent, const RenderObject& child, RenderObject& beforeChild)
 {
     auto* beforeChildContainer = beforeChild.parent();
@@ -154,7 +168,10 @@ void RenderTreeBuilder::Block::attach(RenderBlock& parent, RenderPtr<RenderObjec
     }
 
     auto shouldBuildAnonymousBlock = [&] {
-        constexpr auto parentRequiresAnonymousBlock = EnumSet {
+        if (m_buildsSimpleAnonymousBlocks)
+            return true;
+
+        constexpr auto parentRequiresAnonymousBlockByDisplayValue = EnumSet {
             Style::DisplayType::BlockFlex,
             Style::DisplayType::InlineFlex,
             Style::DisplayType::BlockDeprecatedFlex,
@@ -162,11 +179,17 @@ void RenderTreeBuilder::Block::attach(RenderBlock& parent, RenderPtr<RenderObjec
             Style::DisplayType::BlockGrid,
             Style::DisplayType::InlineGrid
         };
-        return m_buildsSimpleAnonymousBlocks || parentRequiresAnonymousBlock.contains(parent.style().display().value);
+        if (parentRequiresAnonymousBlockByDisplayValue.contains(parent.style().display().value))
+            return true;
+#if ENABLE(MATHML)
+        if (parent.isRenderMathMLBlock())
+            return true;
+#endif
+        return parent.isFieldset() || parent.isRenderMultiColumnFlow();
     };
 
     if (!shouldBuildAnonymousBlock()) {
-        if (!parent.firstChild())
+        if (!parent.firstChild() && !child->isFloatingOrOutOfFlowPositioned())
             parent.setChildrenInline(child->isInline());
         else if (child->isInline())
             parent.setChildrenInline(true);
@@ -189,8 +212,9 @@ void RenderTreeBuilder::Block::attach(RenderBlock& parent, RenderPtr<RenderObjec
         return;
     }
 
-    // Parent and inflow child match.
-    if ((parent.childrenInline() && child->isInline()) || (!parent.childrenInline() && !child->isInline()))
+    // Parent and inflow child match. An excluded marker matches either way: it takes no part in in-flow layout, so
+    // it stays a direct child of the list item whatever the other children are, never forcing an anonymous block.
+    if ((parent.childrenInline() && child->isInline()) || (!parent.childrenInline() && !child->isInline()) || isExcludedMarker(parent, *child))
         return m_builder.attachToRenderElement(parent, WTF::move(child), beforeChild);
 
     // Inline parent with block child.

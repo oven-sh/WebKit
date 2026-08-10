@@ -57,7 +57,7 @@ public:
     
     WebSocketChannelIdentifier progressIdentifier() const { return m_progressIdentifier; }
 
-    static WebSocketFrame NODELETE createFrame(std::span<const uint8_t> data, WebSocketFrame::OpCode);
+    static WebSocketFrame createFrame(std::span<const uint8_t> data, WebSocketFrame::OpCode);
 
 private:
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;

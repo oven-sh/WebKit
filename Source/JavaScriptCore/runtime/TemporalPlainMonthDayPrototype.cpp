@@ -201,50 +201,8 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainMonthDayPrototypeFuncWith, (JSGlobalObject
     TemporalOverflow overflow = toTemporalOverflow(globalObject, options);
     RETURN_IF_EXCEPTION(scope, { });
 
-    // Steps 5+7: fields = ISODateToFields(calendar, plainMonthDay.[[ISODate]], ~month-day~);
-    //            fields = CalendarMergeFields(calendar, fields, partialMonthDay).
-    //   Fused inline: fill unset merged fields from the receiver's own monthCode/day.
-    TemporalCore::CalendarFieldsIn merged;
-
-    // day from ISODateToFields (use calendar day for non-ISO).
-    uint8_t currentCalDay = static_cast<uint8_t>(monthDay->plainMonthDay().day());
-    bool isISO = TemporalCore::calendarIsISO(calendarId);
-    if (!isISO) {
-        auto dayResult = TemporalCore::calendarDay(calendarId, monthDay->plainMonthDay().isoPlainDate());
-        if (dayResult)
-            currentCalDay = *dayResult;
-    }
-    // User's day takes priority over the receiver's.
-    merged.day = partialFields.day.has_value() ? partialFields.day : std::optional<uint8_t>(currentCalDay);
-
-    if (partialFields.month.has_value())
-        merged.month = partialFields.month;
-    if (partialFields.monthCode)
-        merged.monthCode = partialFields.monthCode;
-    if (partialFields.year)
-        merged.year = partialFields.year;
-    if (partialFields.era)
-        merged.era = partialFields.era;
-    if (partialFields.eraYear)
-        merged.eraYear = partialFields.eraYear;
-    if (!partialFields.month.has_value() && !partialFields.monthCode) {
-        // Neither given — fall back to current monthCode (non-ISO) or numeric month (ISO).
-        if (!isISO) {
-            auto mcStr = TemporalCore::calendarMonthCode(calendarId, monthDay->plainMonthDay().isoPlainDate());
-            if (!mcStr) [[unlikely]] {
-                throwRangeError(globalObject, scope, String(mcStr.error().message));
-                return { };
-            }
-            merged.monthCode = ISO8601::parseMonthCode(*mcStr);
-        } else
-            merged.month = std::optional<uint32_t>(monthDay->plainMonthDay().month());
-    }
-
-    if (!isISO && merged.month.has_value() && !merged.year && !(merged.era && merged.eraYear)) [[unlikely]]
-        return throwVMTypeError(globalObject, scope, "year is required with month for non-ISO calendar PlainMonthDay.with()"_s);
-
-    // Step 10: isoDate = ? CalendarMonthDayFromFields(calendar, fields, overflow).
-    auto resolved = TemporalCore::monthDayFromFields(calendarId, merged, overflow);
+    // Steps 5+7+10: ISODateToFields + CalendarMergeFields + CalendarMonthDayFromFields, in plainMonthDayWith.
+    auto resolved = TemporalCore::plainMonthDayWith(calendarId, monthDay->plainMonthDay().isoPlainDate(), partialFields, overflow);
     if (!resolved) [[unlikely]] {
         if (resolved.error().kind == TemporalErrorKind::TypeError)
             throwTypeError(globalObject, scope, String(resolved.error().message));
@@ -254,10 +212,8 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainMonthDayPrototypeFuncWith, (JSGlobalObject
     }
 
     // Step 11: Return ! CreateTemporalMonthDay(isoDate, calendar).
-    auto* withResult = TemporalPlainMonthDay::tryCreateIfValid(globalObject, globalObject->plainMonthDayStructure(), WTF::move(resolved->isoDate));
+    auto* withResult = createTemporalMonthDay(globalObject, WTF::move(resolved->isoDate), calendarId);
     RETURN_IF_EXCEPTION(scope, { });
-    if (withResult && calendarId != iso8601CalendarID())
-        withResult->setCalendarID(calendarId);
     return JSValue::encode(withResult);
 }
 
@@ -329,8 +285,6 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainMonthDayPrototypeFuncToPlainDate, (JSGloba
                 return throwVMRangeError(globalObject, scope, "eraYear must be finite"_s);
             merged.eraYear = clampTo<int32_t>(ey);
         }
-        if (merged.era.has_value() != merged.eraYear.has_value()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, "era and eraYear must both be present or both absent"_s);
     }
     JSValue yearProp = item->get(globalObject, vm.propertyNames->year);
     RETURN_IF_EXCEPTION(scope, { });
@@ -379,7 +333,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainMonthDayPrototypeFuncToPlainDate, (JSGloba
     }
 
     // Step 9: Return ! CreateTemporalDate(isoDate, calendar).
-    RELEASE_AND_RETURN(scope, JSValue::encode(TemporalPlainDate::tryCreateIfValid(globalObject, globalObject->plainDateStructure(), WTF::move(resolved->isoDate), resolved->calendarId)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(createTemporalDate(globalObject, WTF::move(resolved->isoDate), resolved->calendarId)));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.plainmonthday.prototype.valueof

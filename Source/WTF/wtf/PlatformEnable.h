@@ -737,10 +737,8 @@
 #endif
 #endif
 
-#if !defined(ENABLE_JUMP_ISLANDS) && ENABLE(JIT)
-#if (CPU(ARM64) && CPU(ADDRESS64)) || CPU(ARM_THUMB2)
+#if !defined(ENABLE_JUMP_ISLANDS) && ENABLE(JIT) && CPU(ARM64) && CPU(ADDRESS64)
 #define ENABLE_JUMP_ISLANDS 1
-#endif
 #endif
 
 /* FIXME: This should be turned into an #error invariant */
@@ -932,26 +930,6 @@
 #define ENABLE_YARR_JIT_DEBUG 0
 #endif
 
-/* Enable JIT'ing Regular Expressions that have nested parenthesis . */
-#if ENABLE(YARR_JIT) && (CPU(ARM64) || CPU(X86_64) || CPU(RISCV64))
-#define ENABLE_YARR_JIT_ALL_PARENS_EXPRESSIONS 1
-#define ENABLE_YARR_JIT_REGEXP_TEST_INLINE 1
-#endif
-
-/* Enable JIT'ing Regular Expressions that have back references. */
-#if ENABLE(YARR_JIT) && (CPU(ARM64) || CPU(X86_64) || CPU(RISCV64))
-#define ENABLE_YARR_JIT_BACKREFERENCES 1
-#if CPU(ARM64) || CPU(X86_64)
-#define ENABLE_YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS 1
-#else
-#define ENABLE_YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS 0
-#endif
-#endif
-
-#if ENABLE(YARR_JIT) && (CPU(ARM64) || CPU(X86_64) || CPU(RISCV64))
-#define ENABLE_YARR_JIT_UNICODE_EXPRESSIONS 1
-#endif
-
 /* Enables an optimiztion to advance two codepoints when we fail to match a non-BMP character */
 #if ENABLE(YARR_JIT) && CPU(ARM64)
 #define ENABLE_YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP 1
@@ -1013,11 +991,28 @@
 #define ENABLE_GC_VALIDATION 1
 #endif
 
-#if OS(DARWIN) && ENABLE(JIT) && USE(APPLE_INTERNAL_SDK) && CPU(ARM64E) && HAVE(JIT_CAGE) && !PLATFORM(MAC) && !PLATFORM(MACCATALYST)
+#if OS(DARWIN) && ENABLE(JIT) && USE(APPLE_INTERNAL_SDK) && CPU(ARM64E) && HAVE(JIT_CAGE)
+#if    HAVE(JIT_CAGE_RELAXATION) && !(PLATFORM(MAC) || PLATFORM(MACCATALYST))
 #define ENABLE_JIT_CAGE 1
+// FIXME: rdar://183646426
+#define ENABLE_JIT_CAGE_RELAXATION 0
+#elif  HAVE(JIT_CAGE_RELAXATION) &&  (PLATFORM(MAC) || PLATFORM(MACCATALYST))
+#define ENABLE_JIT_CAGE 0
+// FIXME: rdar://183649352
+#define ENABLE_JIT_CAGE_RELAXATION 0
+#elif !HAVE(JIT_CAGE_RELAXATION) && !(PLATFORM(MAC) || PLATFORM(MACCATALYST))
+#define ENABLE_JIT_CAGE 1
+#define ENABLE_JIT_CAGE_RELAXATION 0
+#elif !HAVE(JIT_CAGE_RELAXATION) &&  (PLATFORM(MAC) || PLATFORM(MACCATALYST))
+#define ENABLE_JIT_CAGE 0
+#define ENABLE_JIT_CAGE_RELAXATION 0
+#else
+#error "Should not be reached"
 #endif
+#endif // OS(DARWIN) && ENABLE(JIT) && USE(APPLE_INTERNAL_SDK) && CPU(ARM64E) && HAVE(JIT_CAGE)
 
-#if OS(DARWIN) && CPU(ADDRESS64) && ENABLE(JIT) && (ENABLE(JIT_CAGE) || ASSERT_ENABLED)
+#if !ENABLE(JIT_CAGE_RELAXATION) && (ENABLE(JIT_CAGE) \
+    || (ENABLE(JIT) && OS(DARWIN) && CPU(ADDRESS64) && ASSERT_ENABLED))
 #define ENABLE_JIT_OPERATION_VALIDATION 1
 #endif
 
@@ -1045,7 +1040,7 @@
    that executes each opcode. It cannot be supported by the CLoop since there's no way to embed the
    OpcodeID word in the CLoop's switch statement cases. It is also currently not implemented for MSVC.
 */
-#if !defined(ENABLE_LLINT_EMBEDDED_OPCODE_ID) && !ENABLE(C_LOOP) && (CPU(X86) || CPU(X86_64) || CPU(ARM64) || (CPU(ARM_THUMB2) && OS(DARWIN)) || CPU(RISCV64))
+#if !defined(ENABLE_LLINT_EMBEDDED_OPCODE_ID) && !ENABLE(C_LOOP) && (CPU(X86) || CPU(X86_64) || CPU(ARM64) || CPU(RISCV64))
 #define ENABLE_LLINT_EMBEDDED_OPCODE_ID 1
 #endif
 

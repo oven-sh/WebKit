@@ -4232,10 +4232,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
             insertChecks();
             VirtualRegister operand = virtualRegisterForArgumentIncludingThis(1, registerOffset);
-            if (enableInt52())
-                setResult(addToGraph(FiatInt52, get(operand)));
-            else
-                setResult(get(operand));
+            setResult(addToGraph(FiatInt52, get(operand)));
             return CallOptimizationResult::Inlined;
         }
 
@@ -5691,10 +5688,6 @@ bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DO
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& variant, Node* thisNode, Node* unwrapped, const ChecksFunctor& insertChecks)
 {
-#if USE(LARGE_TYPED_ARRAYS)
-    static_assert(enableInt52());
-#endif
-
     if (thisNode != unwrapped)
         return false;
 

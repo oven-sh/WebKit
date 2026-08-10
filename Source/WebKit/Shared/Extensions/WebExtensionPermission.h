@@ -48,6 +48,9 @@ public:
     static String menus();
     static String nativeMessaging();
     static String notifications();
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    static String offscreen();
+#endif
     static String scripting();
 #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
     static String sidePanel();

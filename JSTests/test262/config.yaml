@@ -4,7 +4,6 @@ flags:
   SharedArrayBuffer: useSharedArrayBuffer
   Atomics: useSharedArrayBuffer
   Temporal: useTemporal
-  Intl.Era-monthcode: useIntlEraMonthcode
   ShadowRealm: useShadowRealm
   json-parse-with-source: useJSONSourceTextAccess
   iterator-sequencing: useIteratorSequencing
@@ -17,7 +16,6 @@ skip:
     - FinalizationRegistry.prototype.cleanupSome
     - decorators
     - source-phase-imports
-    - Intl.Era-monthcode
     - await-dictionary
     - import-bytes
     - immutable-arraybuffer
@@ -25,9 +23,6 @@ skip:
   paths:
     # Depends on the nonextensible-applies-to-private proposal which JSC has not implemented yet.
     - test/language/import/import-defer/evaluation-triggers/ignore-private-name-access.js
-    # Incorrect tests, see https://github.com/tc39/test262/issues/4980
-    - test/language/import/import-defer/evaluation-triggers/ignore-super-property-set-exported.js
-    - test/language/import/import-defer/evaluation-triggers/ignore-super-property-set-not-exported.js
     - test/staging/Intl402
     - test/staging/JSON
   files:

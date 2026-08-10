@@ -1554,13 +1554,6 @@ private:
         m_token.m_type = m_lexer->lexWithoutClearingLineTerminator(&m_token, lexerFlags, strictMode());
     }
 
-    ALWAYS_INLINE void nextExpectIdentifier(OptionSet<LexerFlags> lexerFlags = { })
-    {
-        m_lastTokenLocation = m_token.location();
-        m_lastTokenType = m_token.m_type;
-        m_token.m_type = m_lexer->lexExpectIdentifier(&m_token, lexerFlags, strictMode());
-    }
-
     template <class TreeBuilder>
     ALWAYS_INLINE void lexCurrentTokenAgainUnderCurrentContext(TreeBuilder& context)
     {
@@ -1787,6 +1780,8 @@ private:
     template <class TreeBuilder> TreeStatement parseBlockStatement(TreeBuilder&, BlockType = BlockType::Normal);
     template <class TreeBuilder> TreeExpression parseExpression(TreeBuilder&);
     template <class TreeBuilder> TreeExpression parseAssignmentExpression(TreeBuilder&);
+    template <typename TreeBuilder> NEVER_INLINE TreeExpression parseArrowFunctionCandidate(TreeBuilder&, SavePoint&, const JSTokenLocation&, bool isArrowFunctionToken, bool wasOpenParen, size_t usedVariablesSize, bool& shouldReturnResult);
+    template <typename TreeBuilder> NEVER_INLINE TreeExpression parseDestructuringAssignment(TreeBuilder&, SavePoint&, const JSTokenLocation&, bool isPossiblePattern);
     template <class TreeBuilder> TreeExpression parseYieldExpression(TreeBuilder&);
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression parseConditionalExpression(TreeBuilder&);
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression parseBinaryExpression(TreeBuilder&);

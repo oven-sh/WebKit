@@ -44,16 +44,11 @@ public:
     static TemporalPlainDate* create(VM&, Structure*, ISO8601::PlainDate&&);
     static TemporalPlainDate* create(VM&, Structure*, ISO8601::PlainDate&&, String&&);
     static TemporalPlainDate* create(VM&, Structure*, ISO8601::PlainDate&&, CalendarID);
-    static TemporalPlainDate* tryCreateIfValid(JSGlobalObject*, Structure*, ISO8601::PlainDate&&);
-    static TemporalPlainDate* tryCreateIfValid(JSGlobalObject*, Structure*, ISO8601::PlainDate&&, String&& calendarId);
-    static TemporalPlainDate* tryCreateIfValid(JSGlobalObject*, Structure*, ISO8601::PlainDate&&, CalendarID);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     DECLARE_INFO;
 
     static ISO8601::PlainDate validateAndCreateISODateRecord(JSGlobalObject*, const ISO8601::Duration&);
-    static std::tuple<int32_t, unsigned, unsigned, std::optional<ParsedMonthCode>, TemporalOverflow, TemporalAnyProperties>
-    mergeDateFields(JSGlobalObject*, JSObject*, JSValue, int32_t, uint32_t, uint32_t);
     static TemporalPlainDate* from(JSGlobalObject*, JSValue item, JSValue options);
 
     ISO8601::PlainDate plainDate() const { return m_plainDate; }
@@ -68,10 +63,6 @@ public:
 #undef JSC_DEFINE_TEMPORAL_PLAIN_DATE_FIELD
 
     String monthCode() const { return ISO8601::monthCode(m_plainDate.month()); }
-    uint8_t dayOfWeek() const { return ISO8601::dayOfWeek(m_plainDate); }
-    uint16_t dayOfYear() const { return ISO8601::dayOfYear(m_plainDate); }
-    uint8_t weekOfYear() const { return ISO8601::weekOfYear(m_plainDate); }
-    int32_t yearOfWeek() const { return ISO8601::yearOfWeek(m_plainDate); }
 
     String toString() const;
 
@@ -89,5 +80,10 @@ private:
     ISO8601::PlainDate m_plainDate;
     CalendarID m_calendarID { 0 };
 };
+
+TemporalPlainDate* createTemporalDate(JSGlobalObject*, ISO8601::PlainDate&&);
+TemporalPlainDate* createTemporalDate(JSGlobalObject*, ISO8601::PlainDate&&, String&& calendarId);
+TemporalPlainDate* createTemporalDate(JSGlobalObject*, ISO8601::PlainDate&&, CalendarID);
+TemporalPlainDate* createTemporalDate(JSGlobalObject*, ISO8601::PlainDate&&, CalendarID, TemporalNewTarget);
 
 } // namespace JSC

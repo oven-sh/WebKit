@@ -34,6 +34,8 @@
 #include "DocumentPage.h"
 #include "Element.h"
 #include "FrameDestructionObserverInlines.h"
+#include "GPUCanvasContext.h"
+#include "GPUDevice.h"
 #include "HTMLCanvasElement.h"
 #include "HTMLImageElement.h"
 #include "HTMLVideoElement.h"
@@ -83,28 +85,7 @@ void PageCanvasAgent::internalDisable()
     InspectorCanvasAgent::internalDisable();
 }
 
-Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> PageCanvasAgent::requestNode(const Inspector::Protocol::Canvas::CanvasId& canvasId)
-{
-    Inspector::Protocol::ErrorString errorString;
-
-    auto inspectorCanvas = assertInspectorCanvas(errorString, canvasId);
-    if (!inspectorCanvas)
-        return makeUnexpected(errorString);
-
-    RefPtr node = inspectorCanvas->canvasElement();
-    if (!node)
-        return makeUnexpected("Missing element of canvas for given canvasId"_s);
-
-    // FIXME: <https://webkit.org/b/213499> Web Inspector: allow DOM nodes to be instrumented at any point, regardless of whether the main document has also been instrumented
-    Ref agents = m_instrumentingAgents.get();
-    int documentNodeId = agents->persistentDOMAgent()->boundNodeId(protect(node->document()).ptr());
-    if (!documentNodeId)
-        return makeUnexpected("Document must have been requested"_s);
-
-    return agents->persistentDOMAgent()->pushNodeToFrontend(errorString, documentNodeId, node);
-}
-
-Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> PageCanvasAgent::requestClientNodes(const Inspector::Protocol::Canvas::CanvasId& canvasId)
+Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> PageCanvasAgent::requestNodes(const Inspector::Protocol::Canvas::CanvasId& canvasId)
 {
     Inspector::Protocol::ErrorString errorString;
 
@@ -116,13 +97,47 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::N
     if (!inspectorCanvas)
         return makeUnexpected(errorString);
 
-    auto clientNodeIds = JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>::create();
-    for (auto& clientNode : inspectorCanvas->clientNodes()) {
+    auto nodeIds = JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>::create();
+    for (RefPtr canvasElement : inspectorCanvas->canvasElements()) {
         // FIXME: <https://webkit.org/b/213499> Web Inspector: allow DOM nodes to be instrumented at any point, regardless of whether the main document has also been instrumented
-        if (auto documentNodeId = domAgent->boundNodeId(protect(clientNode->document()).ptr()))
-            clientNodeIds->addItem(domAgent->pushNodeToFrontend(errorString, documentNodeId, clientNode));
+        auto documentNodeId = domAgent->boundNodeId(protect(canvasElement->document()).ptr());
+        if (!documentNodeId)
+            return makeUnexpected("Document must have been requested"_s);
+
+        auto currentNodeId = domAgent->pushNodeToFrontend(errorString, documentNodeId, canvasElement);
+        if (!currentNodeId)
+            return makeUnexpected(errorString);
+
+        nodeIds->addItem(currentNodeId);
     }
-    return clientNodeIds;
+
+    m_pendingNodesChange.remove(*inspectorCanvas);
+
+    return nodeIds;
+}
+
+Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> PageCanvasAgent::requestCSSCanvasClientNodes(const Inspector::Protocol::Canvas::CanvasId& canvasId)
+{
+    Inspector::Protocol::ErrorString errorString;
+
+    CheckedPtr domAgent = Ref { m_instrumentingAgents.get() }->persistentDOMAgent();
+    if (!domAgent)
+        return makeUnexpected("DOM domain must be enabled"_s);
+
+    auto inspectorCanvas = assertInspectorCanvas(errorString, canvasId);
+    if (!inspectorCanvas)
+        return makeUnexpected(errorString);
+
+    auto nodeIds = JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>::create();
+    for (RefPtr cssCanvasClientNode : inspectorCanvas->cssCanvasClientNodes()) {
+        // FIXME: <https://webkit.org/b/213499> Web Inspector: allow DOM nodes to be instrumented at any point, regardless of whether the main document has also been instrumented
+        if (auto documentNodeId = domAgent->boundNodeId(protect(cssCanvasClientNode->document()).ptr()))
+            nodeIds->addItem(domAgent->pushNodeToFrontend(errorString, documentNodeId, cssCanvasClientNode));
+    }
+
+    m_pendingCSSCanvasClientNodesChange.remove(*inspectorCanvas);
+
+    return nodeIds;
 }
 
 void PageCanvasAgent::frameNavigated(LocalFrame& frame)
@@ -134,9 +149,13 @@ void PageCanvasAgent::frameNavigated(LocalFrame& frame)
 
     Vector<InspectorCanvas*> inspectorCanvases;
     for (auto& inspectorCanvas : m_identifierToInspectorCanvas.values()) {
-        if (RefPtr canvasElement = inspectorCanvas->canvasElement()) {
-            if (canvasElement->document().frame() == &frame)
+        if (!inspectorCanvas->canvasContext())
+            continue;
+        for (RefPtr canvasElement : inspectorCanvas->canvasElements()) {
+            if (canvasElement->document().frame() == &frame) {
                 inspectorCanvases.append(inspectorCanvas.ptr());
+                break;
+            }
         }
     }
     for (RefPtr inspectorCanvas : inspectorCanvases)
@@ -151,21 +170,57 @@ void PageCanvasAgent::didChangeCSSCanvasClientNodes(CanvasBase& canvasBase)
         return;
     }
 
-    auto inspectorCanvas = findInspectorCanvas(*context);
+    RefPtr<InspectorCanvas> inspectorCanvas;
+    if (WeakPtr gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(*context)) {
+        WeakPtr device = gpuCanvasContext->device();
+        if (!device)
+            return;
+        inspectorCanvas = findInspectorCanvas(*device);
+    } else
+        inspectorCanvas = findInspectorCanvas(*context);
+
     ASSERT(inspectorCanvas);
     if (!inspectorCanvas)
         return;
 
-    m_frontendDispatcher->clientNodesChanged(inspectorCanvas->identifier());
+    dispatchCSSCanvasClientNodesChanged(*inspectorCanvas);
 }
 
 void PageCanvasAgent::didChangeGPUDeviceClientNodes(GPUDevice& device)
 {
+    InspectorCanvasAgent::didChangeGPUDeviceClientNodes(device);
+
     RefPtr inspectorCanvas = findInspectorCanvas(device);
     if (!inspectorCanvas)
         return;
 
-    m_frontendDispatcher->clientNodesChanged(inspectorCanvas->identifier());
+    dispatchCSSCanvasNamesChanged(*inspectorCanvas);
+    dispatchCSSCanvasClientNodesChanged(*inspectorCanvas);
+    dispatchNodesChanged(*inspectorCanvas);
+}
+
+void PageCanvasAgent::dispatchNodesChanged(InspectorCanvas& inspectorCanvas)
+{
+    if (!m_pendingNodesChange.add(inspectorCanvas).isNewEntry)
+        return;
+
+    m_frontendDispatcher->nodesChanged(inspectorCanvas.identifier());
+}
+
+void PageCanvasAgent::dispatchCSSCanvasClientNodesChanged(InspectorCanvas& inspectorCanvas)
+{
+    if (!m_pendingCSSCanvasClientNodesChange.add(inspectorCanvas).isNewEntry)
+        return;
+
+    m_frontendDispatcher->cssCanvasClientNodesChanged(inspectorCanvas.identifier());
+}
+
+void PageCanvasAgent::dispatchCSSCanvasNamesChanged(InspectorCanvas& inspectorCanvas)
+{
+    Ref cssCanvasNames = JSON::ArrayOf<String>::create();
+    for (auto& cssCanvasName : inspectorCanvas.cssCanvasNames())
+        cssCanvasNames->addItem(cssCanvasName);
+    m_frontendDispatcher->cssCanvasNamesChanged(inspectorCanvas.identifier(), WTF::move(cssCanvasNames));
 }
 
 bool PageCanvasAgent::matchesCurrentContext(ScriptExecutionContext* scriptExecutionContext) const

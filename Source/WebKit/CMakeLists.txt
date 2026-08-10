@@ -159,6 +159,7 @@ set(WebKit_BINDINGS_IN_FILES
     WebProcess/Extensions/Interfaces/WebExtensionAPIMenus
     WebProcess/Extensions/Interfaces/WebExtensionAPINamespace
     WebProcess/Extensions/Interfaces/WebExtensionAPINotifications
+    WebProcess/Extensions/Interfaces/WebExtensionAPIOffscreen
     WebProcess/Extensions/Interfaces/WebExtensionAPIPermissions
     WebProcess/Extensions/Interfaces/WebExtensionAPIPort
     WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime
@@ -516,6 +517,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/NavigationActionData.serialization.in
     Shared/NetworkProcessConnectionParameters.serialization.in
     Shared/NodeHitTestResult.serialization.in
+    Shared/PDFAccessibilityDisplayModeState.serialization.in
     Shared/PDFDisplayMode.serialization.in
     Shared/Pasteboard.serialization.in
     Shared/PlatformPopupMenuData.serialization.in

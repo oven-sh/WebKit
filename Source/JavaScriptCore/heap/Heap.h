@@ -31,7 +31,6 @@
 #include "GCIncomingRefCountedSet.h"
 #include "GCMemoryOperations.h"
 #include "GCRequest.h"
-#include "HandleSet.h"
 #include "HeapFinalizerCallback.h"
 #include "HeapObserver.h"
 #include "IsoCellSet.h"
@@ -43,6 +42,7 @@
 #include "MarkedSpace.h"
 #include "MutatorState.h"
 #include "PreciseSubspace.h"
+#include "StrongSet.h"
 #include "StructureID.h"
 #include "Synchronousness.h"
 #include "WeakHandleOwner.h"
@@ -494,7 +494,7 @@ public:
     template<typename Functor> inline void forEachCodeBlock(NOESCAPE const Functor&);
     template<typename Functor> inline void forEachCodeBlockIgnoringJITPlans(const AbstractLocker& codeBlockSetLocker, NOESCAPE const Functor&);
 
-    HandleSet* handleSet() LIFETIME_BOUND { return &m_handleSet; }
+    StrongSet* strongSet() LIFETIME_BOUND { return &m_strongSet; }
 
     JS_EXPORT_PRIVATE void willStartIterating();
     JS_EXPORT_PRIVATE void didFinishIterating();
@@ -673,7 +673,6 @@ private:
     friend class GCAwareJITStubRoutine;
     friend class GCLogging;
     friend class GCThread;
-    friend class HandleSet;
     friend class HeapUtil;
     friend class HeapVerifier;
     friend class JITStubRoutine;
@@ -913,7 +912,7 @@ private:
     Vector<std::unique_ptr<SlotVisitor>> m_parallelSlotVisitors;
     Vector<SlotVisitor*> m_availableParallelSlotVisitors WTF_GUARDED_BY_LOCK(m_parallelSlotVisitorLock);
     
-    HandleSet m_handleSet;
+    StrongSet m_strongSet;
     std::unique_ptr<CodeBlockSet> m_codeBlocks;
     std::unique_ptr<JITStubRoutineSet> m_jitStubRoutines;
     CFinalizerOwner m_cFinalizerOwner;

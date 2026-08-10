@@ -83,6 +83,7 @@
 #include "RenderLayerInlines.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderLayoutState.h"
+#include "RenderListItem.h"
 #include "RenderListMarker.h"
 #include "RenderMathMLBlock.h"
 #include "RenderMultiColumnFlow.h"
@@ -118,6 +119,8 @@
 #if ENABLE(SPATIAL_PORTAL)
 #include "ElementAncestorIteratorInlines.h"
 #include "HTMLModelElement.h"
+#include "SpatialPortalController.h"
+#include "StylePortalTransform.h"
 #include "TypedElementDescendantIteratorInlines.h"
 #endif
 
@@ -387,6 +390,15 @@ static void spatialPortalStyleDidChange(Element& element)
     for (Ref model : descendantsOfType<HTMLModelElement>(element))
         model->spatialPortalContextDidChange();
 }
+
+// TODO: rdar://182292652
+static PortalTransformKind portalTransformKind(const Style::PortalTransform& portalTransform)
+{
+    return portalTransform.switchOn(
+        [](CSS::Keyword::None) { return PortalTransformKind::None; },
+        [](CSS::Keyword::Auto) { return PortalTransformKind::Auto; }
+    );
+}
 #endif
 
 void RenderBox::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
@@ -505,10 +517,15 @@ void RenderBox::styleDidChange(Style::Difference diff, const Style::ComputedStyl
         layoutContext().invalidateAnchorDependenciesForScroller(*this);
 
 #if ENABLE(SPATIAL_PORTAL)
-    auto oldSpatial = oldStyle ? oldStyle->spatial() : SpatialType::None;
-    if (oldSpatial != newStyle.spatial()) {
-        if (RefPtr element = this->element())
+    if (RefPtr element = this->element()) {
+        auto oldSpatial = oldStyle ? oldStyle->spatial() : SpatialType::None;
+        if (oldSpatial != newStyle.spatial())
             spatialPortalStyleDidChange(*element);
+
+        if (newStyle.spatial() == SpatialType::Portal) {
+            if (CheckedPtr controller = element->spatialPortalController())
+                controller->setPortalTransform(portalTransformKind(newStyle.portalTransform()));
+        }
     }
 #endif
 }
@@ -1410,7 +1427,7 @@ LayoutSize RenderBox::cachedSizeForOverflowClip() const
     return layer()->size();
 }
 
-bool RenderBox::applyCachedClipAndScrollPosition(RepaintRects& rects, const RenderLayerModelObject* container, VisibleRectContext context) const
+bool RenderBox::applyCachedClipAndScrollPosition(RepaintRects& rects, const RenderLayerModelObject* container, const VisibleRectContext& context) const
 {
     flipForWritingMode(rects);
 
@@ -1633,19 +1650,13 @@ void RenderBox::markMarginAsTrimmed(Style::MarginTrimSide newTrimmedMargin)
     rareData.trimmedMargins = rareData.trimmedMargins | newTrimmedMargin;
 }
 
-void RenderBox::clearTrimmedMarginsMarkings()
-{
-    ASSERT(hasRareData());
-    ensureRareData().trimmedMargins = { };
-}
-
-bool RenderBox::hasTrimmedMargin(std::optional<Style::MarginTrimSide> marginTrimType) const
+bool RenderBox::hasTrimmedMargin(Style::MarginTrimSide marginTrimSide) const
 {
     if (!isInFlow())
         return false;
     if (!hasRareData())
         return false;
-    return marginTrimType ? rareData().trimmedMargins.contains(*marginTrimType) : !rareData().trimmedMargins.isEmpty();
+    return rareData().trimmedMargins.contains(marginTrimSide);
 }
 
 LayoutUnit RenderBox::adjustBorderBoxLogicalWidthForBoxSizing(const Style::Length<CSS::NonnegativeLayoutUnitClamped, float>& logicalWidth) const
@@ -1757,8 +1768,7 @@ bool RenderBox::hitTestBorderRadius(const HitTestLocation& hitTestLocation, cons
     borderRect.moveBy(adjustedLocation);
 
     auto borderShape = BorderShape::shapeForBorderRect(style(), borderRect);
-    // To handle non-round corners, BorderShape should do the hit-testing.
-    return hitTestLocation.intersects(borderShape.deprecatedRoundedRect());
+    return borderShape.shapeIntersectsHitTestLocation(hitTestLocation, style().deviceScaleFactor());
 }
 
 bool RenderBox::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction action)
@@ -2017,6 +2027,8 @@ static bool isCandidateForOpaquenessTest(const RenderBox& childBox)
     if (childStyle.usedVisibility() != Visibility::Visible)
         return false;
     if (!childStyle.shapeOutside().isNone())
+        return false;
+    if (childBox.hasClip())
         return false;
     if (!childBox.borderBoxWidth() || !childBox.borderBoxHeight())
         return false;
@@ -2719,7 +2731,7 @@ auto RenderBox::computeVisibleRectsUsingPaintOffset(const RepaintRects& rects) c
     return adjustedRects;
 }
 
-auto RenderBox::computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject* container, VisibleRectContext context) const -> std::optional<RepaintRects>
+auto RenderBox::computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject* container, const VisibleRectContext& context, VisibleRectState state) const -> std::optional<RepaintRects>
 {
     // The rect we compute at each step is shifted by our x/y offset in the parent container's coordinate space.
     // Only when we cross a writing mode boundary will we have to possibly flipForWritingMode (to convert into a more appropriate
@@ -2743,7 +2755,7 @@ auto RenderBox::computeVisibleRectsInContainer(const RepaintRects& rects, const 
     if (container == this) {
         if (container->writingMode().isBlockFlipped())
             flipForWritingMode(adjustedRects);
-        if (context.descendantNeedsEnclosingIntRect)
+        if (state.descendantNeedsEnclosingIntRect)
             adjustedRects.encloseToIntRects();
         return adjustedRects;
     }
@@ -2754,9 +2766,9 @@ auto RenderBox::computeVisibleRectsInContainer(const RepaintRects& rects, const 
         return adjustedRects;
 
     if (isWritingModeRoot()) {
-        if (!isOutOfFlowPositioned() || !context.dirtyRectIsFlipped) {
+        if (!isOutOfFlowPositioned() || !state.dirtyRectIsFlipped) {
             flipForWritingMode(adjustedRects);
-            context.dirtyRectIsFlipped = true;
+            state.dirtyRectIsFlipped = true;
         }
     }
 
@@ -2768,7 +2780,7 @@ auto RenderBox::computeVisibleRectsInContainer(const RepaintRects& rects, const 
         LayoutSize flooredLocationOffset = flooredIntSize(locationOffset);
         adjustedRects.expand(locationOffset - flooredLocationOffset);
         locationOffset = flooredLocationOffset;
-        context.descendantNeedsEnclosingIntRect = true;
+        state.descendantNeedsEnclosingIntRect = true;
     } else if (auto* columnFlow = dynamicDowncast<RenderMultiColumnFlow>(*this)) {
         // We won't normally run this code. Only when the container is null (i.e., we're trying
         // to get the rect in view coordinates) will we come in here, since normally container
@@ -2778,7 +2790,7 @@ auto RenderBox::computeVisibleRectsInContainer(const RepaintRects& rects, const 
         LayoutPoint physicalPoint(flipForWritingMode(adjustedRects.clippedOverflowRect.location()));
         if (auto* fragment = columnFlow->physicalTranslationFromFlowToFragment((physicalPoint))) {
             adjustedRects.clippedOverflowRect.setLocation(fragment->flipForWritingMode(physicalPoint));
-            return fragment->computeVisibleRectsInContainer(adjustedRects, container, context);
+            return fragment->computeVisibleRectsInContainer(adjustedRects, container, context, state);
         }
     }
 
@@ -2786,10 +2798,10 @@ auto RenderBox::computeVisibleRectsInContainer(const RepaintRects& rects, const 
     // in the parent's coordinate space that encloses us.
     auto position = styleToUse.position();
     if (hasLayer() && layer()->isTransformed()) {
-        context.hasPositionFixedDescendant = position == PositionType::Fixed;
+        state.hasPositionFixedDescendant = position == PositionType::Fixed;
         adjustedRects.transform(layer()->currentTransform(), protect(document())->deviceScaleFactor());
     } else if (position == PositionType::Fixed)
-        context.hasPositionFixedDescendant = true;
+        state.hasPositionFixedDescendant = true;
 
     adjustedRects.move(locationOffset);
 
@@ -2820,7 +2832,7 @@ auto RenderBox::computeVisibleRectsInContainer(const RepaintRects& rects, const 
         adjustedRects.move(-containerOffset);
         return adjustedRects;
     }
-    return localContainer->computeVisibleRectsInContainer(adjustedRects, container, context);
+    return localContainer->computeVisibleRectsInContainer(adjustedRects, container, context, state);
 }
 
 void RenderBox::repaintDuringLayoutIfMoved(const LayoutRect& oldRect)
@@ -3307,13 +3319,8 @@ template<typename Function>
 LayoutUnit RenderBox::computeOrTrimInlineMargin(const RenderBlock& containingBlock, Style::MarginTrimSide marginSide, NOESCAPE const Function& computeInlineMargin) const
 {
     if (containingBlock.shouldTrimChildMargin(marginSide, *this)) {
-        // FIXME(255434): This should be set when the margin is being trimmed
-        // within the context of its layout system (block, flex, grid) and should not 
-        // be done at this level within RenderBox. We should be able to leave the 
-        // trimming responsibility to each of those contexts and not need to
-        // do any of it here (trimming the margin and setting the rare data bit)
-        if (isGridItem() && (marginSide == Style::MarginTrimSide::InlineStart || marginSide == Style::MarginTrimSide::InlineEnd))
-            const_cast<RenderBox&>(*this).markMarginAsTrimmed(marginSide);
+        // FIXME(255434): The margin should be trimmed within the context of its layout
+        // system (block) and should not be done at this level within RenderBox.
         return 0_lu;
     }
     return computeInlineMargin();
@@ -4287,13 +4294,8 @@ void RenderBox::computeBlockDirectionMargins(const RenderBlock& containingBlock,
     auto constrainBlockMarginInAvailableSpaceOrTrim = [&](auto marginSideInBlockDirection) {
         ASSERT(marginSideInBlockDirection == Style::MarginTrimSide::BlockStart || marginSideInBlockDirection == Style::MarginTrimSide::BlockEnd);
         if (containingBlock.shouldTrimChildMargin(marginSideInBlockDirection, *this)) {
-            // FIXME(255434): This should be set when the margin is being trimmed
-            // within the context of its layout system (block, flex, grid) and should not
-            // be done at this level within RenderBox. We should be able to leave the
-            // trimming responsibility to each of those contexts and not need to
-            // do any of it here (trimming the margin and setting the rare data bit)
-            if (isGridItem())
-                const_cast<RenderBox&>(*this).markMarginAsTrimmed(marginSideInBlockDirection);
+            // FIXME(255434): The margin should be trimmed within the context of its layout
+            // system (block) and should not be done at this level within RenderBox.
             return 0_lu;
         }
 
@@ -4875,6 +4877,8 @@ LayoutRect RenderBox::applyVisualEffectOverflow(const LayoutRect& borderBox, Enu
 void RenderBox::addOverflowFromInFlowChildren(OptionSet<ComputeOverflowOptions> options)
 {
     for (auto& child : childrenOfType<RenderBox>(*this)) {
+        if (child.isExcludedMarker())
+            continue;
         if (!child.isFloatingOrOutOfFlowPositioned())
             addOverflowFromContainedBox(child, options);
     }

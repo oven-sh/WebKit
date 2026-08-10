@@ -62,6 +62,8 @@
 #include "RenderLayer.h"
 #include "RenderLayoutState.h"
 #include "RenderLineBreak.h"
+#include "RenderListItem.h"
+#include "RenderListMarker.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
 #include "SVGTextFragment.h"
@@ -467,6 +469,66 @@ static inline std::optional<Layout::BlockLayoutState::LineGrid> lineGrid(const R
     return { };
 }
 
+LineLayout::ExcludedMarkerList LineLayout::excludedMarkersForFirstFormattedLine(Layout::InlineLayoutState& layoutState)
+{
+    auto excludedMarkers = RenderListItem::excludedMarkersForContainer(flow(), flow().view().frameView().layoutContext().excludedMarkers());
+    if (excludedMarkers.isEmpty())
+        return { };
+
+    auto layoutBounds = Vector<Layout::InlineLayoutState::AscentAndDescent> { };
+    layoutBounds.reserveInitialCapacity(excludedMarkers.size());
+    for (auto& marker : excludedMarkers)
+        layoutBounds.append(marker->layoutBounds());
+    layoutState.setExcludedMarkerLayoutBounds(WTF::move(layoutBounds));
+
+    return excludedMarkers;
+}
+
+void LineLayout::setExcludedMarkerPositions(const ExcludedMarkerList& excludedMarkers)
+{
+    if (excludedMarkers.isEmpty() || !m_inlineContent || !m_inlineContent->hasContentfulInFlowBox())
+        return;
+
+    // The first line with content on it: a line holding nothing but collapsible whitespace or empty inline boxes is
+    // not one the marker's search would have settled for either, it carries on to the content that follows.
+    auto* firstContentfulLine = [&]() -> const InlineDisplay::Line* {
+        for (auto& line : m_inlineContent->displayContent().lines) {
+            if (line.hasContentfulInFlowBox())
+                return &line;
+        }
+        return { };
+    }();
+    if (!firstContentfulLine) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    auto lineBoxLogicalRect = firstContentfulLine->lineBoxLogicalRect();
+    auto isLeftToRight = flow().writingMode().isLogicalLeftInlineStart();
+    // How far the line start sits inwards from our content box start, which is what caps how far to the logical left
+    // (right in a right to left inline direction) a nesting list item's marker may go. An intruding float is the usual
+    // reason for it to be non zero.
+    auto lineStartInset = isLeftToRight ? lineBoxLogicalRect.x() : flow().contentBoxLogicalWidth() - lineBoxLogicalRect.maxX();
+    for (auto& marker : excludedMarkers) {
+        // Vertical: baseline aligned, with the ascent the inline formatting context would have given it.
+        auto markerAscent = [&]() -> float {
+            if (firstContentfulLine->baselineType() == FontBaseline::Ideographic)
+                return flow().style().metricsOfPrimaryFont().ascent(FontBaseline::Ideographic);
+            // An image marker's baseline is its margin box bottom (it has no block axis margins), a text driven one behaves as text and sits on the font baseline.
+            return marker->isImage() ? marker->logicalHeight().toFloat() : marker->style().metricsOfPrimaryFont().ascent(FontBaseline::Alphabetic);
+        }();
+        // Horizontal: just outside the line's inline start edge, which is the line's logical right in a right to left
+        // inline direction (the marker's start margin is what holds the gap, hence negative).
+        auto markerLogicalLeft = [&]() -> float {
+            if (isLeftToRight)
+                return lineBoxLogicalRect.x() + marker->marginStart();
+            return lineBoxLogicalRect.maxX() - marker->marginStart() - marker->logicalWidth();
+        }();
+        auto topLeft = FloatPoint { markerLogicalLeft, lineBoxLogicalRect.y() + firstContentfulLine->baseline() - markerAscent };
+        marker->setExcludedPosition({ flow(), topLeft, lineStartInset });
+    }
+}
+
 std::optional<LayoutRect> LineLayout::layout(RenderBlockFlow::MarginInfo& marginInfo, ForceFullLayout forcedFullLayout)
 {
     if (forcedFullLayout == ForceFullLayout::Yes && m_lineDamage)
@@ -512,11 +574,14 @@ std::optional<LayoutRect> LineLayout::layout(RenderBlockFlow::MarginInfo& margin
     auto inlineFormattingContext = Layout::InlineFormattingContext { rootLayoutBox(), layoutState(), parentBlockLayoutState };
     // Temporary, integration only.
     inlineFormattingContext.layoutState().setNestedListMarkerOffsets(m_boxGeometryUpdater.takeNestedListMarkerOffsets());
+    auto excludedMarkers = excludedMarkersForFirstFormattedLine(inlineFormattingContext.layoutState());
 
     auto layoutResult = inlineFormattingContext.layout(inlineContentConstraints(), m_lineDamage.get());
 
     auto didDiscardContent = layoutResult && layoutResult->didDiscardContent;
     auto repaintRect = constructContent(inlineFormattingContext.layoutState(), WTF::move(layoutResult));
+
+    setExcludedMarkerPositions(excludedMarkers);
 
     m_lineDamage = { };
 
@@ -865,7 +930,7 @@ bool LineLayout::isSelfCollapsingContent() const
             return false;
         if (line.hasBlockLevelBox()) {
             auto blockLevelBox = [&]() -> RenderBox* {
-                for (auto index = line.firstBoxIndex(); index < line.lastBoxIndex(); ++index) {
+                for (auto index = line.firstBoxIndex(); index <= line.lastBoxIndex(); ++index) {
                     if (displayContent.boxes[index].isBlockLevelBox())
                         return dynamicDowncast<RenderBox>(displayContent.boxes[index].layoutBox().rendererForIntegration());
                     ASSERT(displayContent.boxes[index].isInlineBox());
@@ -938,7 +1003,9 @@ std::optional<LayoutUnit> LineLayout::firstLineBaseline() const
         if (auto* blockLevelBox = m_inlineContent->blockLevelBoxForLine(line)) {
             // For block-in-inline look for the baseline of the child box.
             CheckedRef blockRenderer = downcast<RenderBox>(*blockLevelBox->layoutBox().rendererForIntegration());
-            return blockRenderer->firstLineBaseline();
+            if (auto baseline = blockRenderer->firstLineBaseline())
+                return blockRenderer->logicalTop() + *baseline;
+            return { };
         }
         return LayoutUnit { baselineForLine(line) };
     };
@@ -966,12 +1033,18 @@ std::optional<LayoutUnit> LineLayout::lastLineBaseline() const
         if (auto* blockLevelBox = m_inlineContent->blockLevelBoxForLine(line)) {
             // For block-in-inline look for the baseline of the child box.
             CheckedRef blockRenderer = downcast<RenderBox>(*blockLevelBox->layoutBox().rendererForIntegration());
-            return blockRenderer->lastLineBaseline();
+            if (auto baseline = blockRenderer->lastLineBaseline())
+                return blockRenderer->logicalTop() + *baseline;
+            return { };
         }
         return LayoutUnit { baselineForLine(line) };
     };
 
     for (auto& line : m_inlineContent->displayContent().lines | std::views::reverse) {
+        // A line clamped away in the block direction holds no visible content and so is not the last line with content.
+        // A line holding a block level box is the exception: what is visible there is decided inside that block, which runs this same look-up on its own lines.
+        if (line.isFullyTruncatedInBlockDirection() && !line.hasBlockLevelBox())
+            continue;
         if (auto baseline = baselineForLineOrBlock(line))
             return baseline;
     }

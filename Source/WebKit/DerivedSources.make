@@ -747,6 +747,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/Extensions/WebExtensionMenuItem.serialization.in \
 	Shared/Extensions/WebExtensionMessageSenderParameters.serialization.in \
 	Shared/Extensions/WebExtensionMessageTargetParameters.serialization.in \
+	Shared/Extensions/WebExtensionOffscreenDocumentParameters.serialization.in \
 	Shared/Extensions/WebExtensionSidebarParameters.serialization.in \
 	Shared/Extensions/WebExtensionStorage.serialization.in \
 	Shared/Extensions/WebExtensionTab.serialization.in \
@@ -783,6 +784,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/NavigationActionData.serialization.in \
 	Shared/NetworkProcessConnectionParameters.serialization.in \
 	Shared/NodeHitTestResult.serialization.in \
+	Shared/PDFAccessibilityDisplayModeState.serialization.in \
 	Shared/PDFDisplayMode.serialization.in \
 	Shared/Pasteboard.serialization.in \
 	Shared/PlatformPopupMenuData.serialization.in \
@@ -1062,6 +1064,7 @@ EXTENSION_INTERFACES = \
     WebExtensionAPIMenus \
     WebExtensionAPINamespace \
     WebExtensionAPINotifications \
+    WebExtensionAPIOffscreen \
     WebExtensionAPIPermissions \
     WebExtensionAPIPort \
     WebExtensionAPIRuntime \

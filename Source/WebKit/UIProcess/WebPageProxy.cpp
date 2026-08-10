@@ -5246,7 +5246,7 @@ TrackingType WebPageProxy::touchEventTrackingType(const WebTouchEvent& touchStar
 #if ENABLE(MAC_GESTURE_EVENTS)
 void WebPageProxy::sendGestureEvent(FrameIdentifier frameID, const NativeWebGestureEvent& event)
 {
-    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::EventDispatcher::GestureEvent(frameID, webPageIDInProcess(processContainingFrame(frameID)), event), [protectedThis = Ref { *this }, event] (IPC::Connection* connection, std::optional<WebEventType>&& eventType, bool handled, std::optional<WebCore::RemoteUserInputEventData>&& remoteUserInputEventData) {
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::EventDispatcher::GestureEvent(frameID, webPageIDInProcess(processContainingFrame(frameID)), event), [protectedThis = Ref { *this }](IPC::Connection* connection, std::optional<WebEventType>&& eventType, bool handled, std::optional<WebCore::RemoteUserInputEventData>&& remoteUserInputEventData) {
         if (!protectedThis->m_pageClient)
             return;
         if (!eventType)
@@ -5808,8 +5808,17 @@ void WebPageProxy::receivedNavigationActionPolicyDecision(WebProcessProxy& proce
             sourceURL = provisionalPage->provisionalURL();
     }
 
-    m_isLockdownModeExplicitlySet = (websitePolicies && websitePolicies->isLockdownModeExplicitlySet()) || m_configuration->isLockdownModeExplicitlySet();
-    auto lockdownMode = (websitePolicies ? websitePolicies->lockdownModeEnabled() : shouldEnableLockdownMode()) ? WebProcessProxy::LockdownMode::Enabled : WebProcessProxy::LockdownMode::Disabled;
+    // WKWebpagePreferences security restrictions are page-wide: a cross-site subframe must be placed
+    // in a process with the same restrictions as the main frame rather than have them recomputed from
+    // its own website policies.
+    RefPtr<WebFrameProxy> securityRestrictionsSourceFrame;
+    if (frame.isMainFrame())
+        m_isLockdownModeExplicitlySet = (websitePolicies && websitePolicies->isLockdownModeExplicitlySet()) || m_configuration->isLockdownModeExplicitlySet();
+    else
+        securityRestrictionsSourceFrame = m_mainFrame;
+
+    auto lockdownMode = securityRestrictionsSourceFrame ? securityRestrictionsSourceFrame->process().lockdownMode()
+        : ((websitePolicies ? websitePolicies->lockdownModeEnabled() : shouldEnableLockdownMode()) ? WebProcessProxy::LockdownMode::Enabled : WebProcessProxy::LockdownMode::Disabled);
 
     // Apply CSP upgrade-insecure-requests before computing Site. Only needed for remote-frame
     // navigations. Same-process navigations are already upgraded in the WebProcess.
@@ -5832,7 +5841,7 @@ void WebPageProxy::receivedNavigationActionPolicyDecision(WebProcessProxy& proce
     if (frame.isMainFrame() && shouldUseEnhancedSecurityHeuristics(preferences))
         internals().enhancedSecurityTracker.trackNavigation(navigation, hasOpenedPage(), internals().pageLoadState.httpFallbackInProgress());
 
-    auto enhancedSecurity = currentEnhancedSecurityState(websitePolicies.get());
+    auto enhancedSecurity = securityRestrictionsSourceFrame ? securityRestrictionsSourceFrame->process().enhancedSecurity() : currentEnhancedSecurityState(websitePolicies.get());
 
     if (RefPtr process = browsingContextGroup->processForSite(Site { navigation.currentRequest().url() }))
         enhancedSecurity = process->process().enhancedSecurity();
@@ -8577,6 +8586,18 @@ static OptionSet<CrossSiteNavigationDataTransfer::Flag> checkIfNavigationContain
     return navigationDataTransfer;
 }
 
+void WebPageProxy::recordFirstPartyVisit(const URL& url)
+{
+    if (url.isEmpty() || url.protocolIsAbout() || url.protocolIsFile())
+        return;
+
+    Site site { url };
+    if (site.isEmpty())
+        return;
+
+    websiteDataStore().isolatedSiteStore().addSite(site, IsolatedSiteStore::Signal::FirstPartyVisit);
+}
+
 void WebPageProxy::didCommitLoadForFrame(IPC::Connection& connection, FrameIdentifier frameID, FrameInfoData&& frameInfo, ResourceRequest&& request, std::optional<WebCore::NavigationIdentifier> navigationID, String&& mimeType, bool frameHasCustomContentProvider, FrameLoadType frameLoadType, bool usedLegacyTLS, bool wasPrivateRelayed, String&& proxyName, const WebCore::ResourceResponseSource source, bool containsPluginDocument, HasInsecureContent hasInsecureContent, MouseEventPolicy mouseEventPolicy, DocumentSecurityPolicy&& documentSecurityPolicy, HashSet<WebCore::SecurityOriginData>&& cspOriginsThatUpgradeInsecureNavigations, const UserData& userData, RestoredFromBackForwardCache restoredFromBackForwardCache, RefPtr<FrameState>&& redirectReplaceFrameState)
 {
     LOG(Loading, "(Loading) WebPageProxy %" PRIu64 " didCommitLoadForFrame in navigation %" PRIu64, identifier().toUInt64(), navigationID ? navigationID->toUInt64() : 0);
@@ -8594,8 +8615,10 @@ void WebPageProxy::didCommitLoadForFrame(IPC::Connection& connection, FrameIdent
 
     // BackForwardGoToItem is sent on the same connection ahead of this commit, so the current index
     // has already advanced; settle the cross-process traversal queue here; no-op unless a traversal is in flight.
-    if (frame->isMainFrame())
+    if (frame->isMainFrame()) {
         m_sessionHistoryTraversalQueue->traversalDidSettle();
+        recordFirstPartyVisit(request.url());
+    }
 
     if (frame->provisionalFrame()) {
         frame->commitProvisionalFrame(connection, frameID, WTF::move(frameInfo), WTF::move(request), navigationID, WTF::move(mimeType), frameHasCustomContentProvider, frameLoadType, usedLegacyTLS, wasPrivateRelayed, WTF::move(proxyName), source, containsPluginDocument, hasInsecureContent, mouseEventPolicy, WTF::move(documentSecurityPolicy), WTF::move(cspOriginsThatUpgradeInsecureNavigations), userData, restoredFromBackForwardCache, WTF::move(redirectReplaceFrameState));
@@ -8654,6 +8677,9 @@ void WebPageProxy::didCommitLoadForFrame(IPC::Connection& connection, FrameIdent
         process->didCommitMeaningfulProvisionalLoad();
 
     if (frame->isMainFrame()) {
+        if (!protect(preferences())->siteIsolationEnabled())
+            process->didCommitMainFrameLoadWithoutSiteIsolation(request.url());
+
         m_hasUpdatedRenderingAfterDidCommitLoad = false;
 #if PLATFORM(COCOA)
         if (RefPtr drawingAreaProxy = dynamicDowncast<RemoteLayerTreeDrawingAreaProxy>(*m_drawingArea))
@@ -8887,6 +8913,13 @@ void WebPageProxy::observeAndCreateRemoteSubframesInOtherProcesses(WebFrameProxy
 void WebPageProxy::setTopDocumentSyncData(Ref<WebCore::DocumentSyncData>&& data)
 {
     m_topDocumentSyncData = WTF::move(data);
+}
+
+Ref<WebCore::DocumentSyncData> WebPageProxy::topDocumentSyncData() const
+{
+    if (RefPtr topDocumentSyncData = m_topDocumentSyncData)
+        return topDocumentSyncData.releaseNonNull();
+    return WebCore::DocumentSyncData::create();
 }
 
 void WebPageProxy::broadcastDocumentSyncData(IPC::Connection& connection, const WebCore::DocumentSyncSerializationData& data)
@@ -9538,7 +9571,7 @@ RefPtr<FrameState> WebPageProxy::frameStateForBackForwardChildFrame(WebFrameProx
     if (!index)
         return nullptr;
 
-    RefPtr frameState = backForwardList().findFrameStateInItem(targetBackForwardItemIdentifier, frame.parentFrame()->frameID(), frame.frameID(), *index);
+    RefPtr frameState = backForwardList().findFrameStateInItem(targetBackForwardItemIdentifier, frame.parentFrame()->frameID(), frame.frameID(), *index, frame.frameName());
     if (!frameState)
         return nullptr;
 
@@ -18447,8 +18480,10 @@ void WebPageProxy::clearAppPrivacyReportTestingData(CompletionHandler<void()>&& 
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS) && ENABLE(VIDEO)
-void WebPageProxy::beginTextRecognitionForVideoInElementFullScreen(PlaybackSessionContextIdentifier identifier, ShareableBitmap::Handle&& bitmapHandle, FloatRect bounds)
+void WebPageProxy::beginTextRecognitionForVideoInElementFullScreen(IPC::Connection& connection, WebCore::HTMLMediaElementIdentifier mediaElementIdentifier, ShareableBitmap::Handle&& bitmapHandle, FloatRect bounds)
 {
+    auto identifier = PlaybackSessionContextIdentifier { mediaElementIdentifier, WebProcessProxy::fromConnection(connection)->coreProcessIdentifier() };
+
     RefPtr pageClient = this->pageClient();
     if (!pageClient || !pageClient->isTextRecognitionInFullscreenVideoEnabled())
         return;
@@ -18912,6 +18947,9 @@ INSTANTIATE_SEND_TO_PROCESS_CONTAINING_FRAME(WebPage::UpdateFrameScrollingMode);
 #if PLATFORM(MAC)
 INSTANTIATE_SEND_TO_PROCESS_CONTAINING_FRAME(WebPage::ZoomPDFOut);
 INSTANTIATE_SEND_TO_PROCESS_CONTAINING_FRAME(WebPage::ZoomPDFIn);
+#if ENABLE(AX_PDF_SUPPORT)
+INSTANTIATE_SEND_TO_PROCESS_CONTAINING_FRAME(WebPage::TogglePDFAccessibilityDisplayMode);
+#endif
 #endif
 #if ENABLE(MEDIA_STREAM)
 INSTANTIATE_SEND_TO_PROCESS_CONTAINING_FRAME(WebPage::UserMediaAccessWasDenied);
@@ -18961,6 +18999,7 @@ INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::SelectWit
 INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::SelectTextWithGranularityAtPoint);
 #endif
 #if PLATFORM(IOS_FAMILY)
+INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::UpdateSelectionWithTouches);
 INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::ApplyAutocorrection);
 INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::DrawToImage);
 INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::DrawToPDFiOS);
@@ -18978,6 +19017,10 @@ INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::OpenPDFWi
 #endif
 #if ENABLE(MEDIA_STREAM)
 INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::UserMediaAccessWasGranted);
+#endif
+#if PLATFORM(COCOA)
+INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::UpdateSelectionWithExtentPoint);
+INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME(WebPage::UpdateSelectionWithExtentPointAndBoundary);
 #endif
 #undef INSTANTIATE_SEND_WITH_ASYNC_REPLY_TO_PROCESS_CONTAINING_FRAME
 

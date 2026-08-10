@@ -345,8 +345,6 @@ auto SectionParser::parseTableHelper(bool isImport) -> PartialResult
     if (!limits) [[unlikely]]
         return makeUnexpected(WTF::move(limits.error()));
 
-    uint32_t clampedInitial = initial > maxTableEntries ? static_cast<uint32_t>(maxTableEntries) : static_cast<uint32_t>(initial);
-
     ASSERT(!maximum || *maximum >= initial);
 
     if (hasInitExpr) {
@@ -370,7 +368,7 @@ auto SectionParser::parseTableHelper(bool isImport) -> PartialResult
     }
 
     TableElementType tableType = isSubtype(type, funcrefType()) ? TableElementType::Funcref : TableElementType::Externref;
-    m_info->tables.append(TableInformation(clampedInitial, maximum, isImport, tableType, type, tableInitType, initialBitsOrImportNumber, isTable64));
+    m_info->tables.append(TableInformation(initial, maximum, isImport, tableType, type, tableInitType, initialBitsOrImportNumber, isTable64));
 
     return { };
 }
@@ -411,13 +409,13 @@ auto SectionParser::parseMemoryHelper(bool isImport) -> PartialResult
             return makeUnexpected(WTF::move(limits.error()));
         ASSERT(!maximum || *maximum >= initial);
 
-        const uint64_t maxDeclarablePageCount = isMemory64 ? maxMemory64Pages : maxMemoryPages;
+        const uint64_t maxDeclarablePageCount = maxDeclarablePages(AddressType { isMemory64 });
         WASM_PARSER_FAIL_IF(initial > maxDeclarablePageCount, "Memory's initial page count of "_s, initial, " is invalid"_s);
 
         // FIXME(wasm-memory64): for now IPInt checks m_cachedIsMemory64 (flag if memory 0 is 64-bit)
         // no matter which memory is being accessed
-        if (isMemory64)
-            WASM_PARSER_FAIL_IF(m_info->memoryCount(), "if using memory64 then multiple memories are illegal for now");
+        if (m_info->memoryCount())
+            WASM_PARSER_FAIL_IF(isMemory64 || m_info->memory(0).isMemory64(), "if using memory64 then multiple memories are illegal for now"_s);
 
         initialPageCount = PageCount(initial);
 

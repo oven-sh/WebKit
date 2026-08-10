@@ -66,14 +66,13 @@
             "properties": [
                 { "name": "canvasId", "$ref": "CanvasId", "description": "Canvas identifier." },
                 { "name": "contextType", "$ref": "ContextType", "description": "The type of rendering context backing the canvas." },
-                { "name": "width", "type": "number", "optional": true, "description": "Width of the canvas in pixels." },
-                { "name": "height", "type": "number", "optional": true, "description": "Height of the canvas in pixels." },
-                { "name": "nodeId", "$ref": "DOM.NodeId", "optional": true, "description": "The corresponding DOM node id." },
-                { "name": "cssCanvasName", "type": "string", "optional": true, "description": "The CSS canvas identifier, for canvases created with <code>document.getCSSCanvasContext</code>." },
+                { "name": "sizes", "type": "array", "items": { "$ref": "GenericTypes.Size" }, "optional": true },
+                { "name": "cssCanvasNames", "type": "array", "items": { "type": "string" }, "optional": true, "description": "The CSS canvas identifiers, for canvases created with <code>document.getCSSCanvasContext</code>." },
                 { "name": "contextAttributes", "$ref": "ContextAttributes", "optional": true, "description": "Context attributes for rendering contexts." },
                 { "name": "features", "type": "array", "items": { "type": "string" }, "optional": true, "description": "Enabled WebGPU device features." },
                 { "name": "memoryCost", "type": "number", "optional": true, "description": "Memory usage of the canvas in bytes." },
-                { "name": "stackTrace", "$ref": "Console.StackTrace", "optional": true, "description": "Backtrace that was captured when this canvas context was created." }
+                { "name": "stackTrace", "$ref": "Console.StackTrace", "optional": true, "description": "Backtrace that was captured when this canvas context was created." },
+                { "name": "name", "type": "string", "optional": true }
             ]
         },
         {
@@ -84,7 +83,8 @@
                 { "name": "programId", "$ref": "ProgramId" },
                 { "name": "programType", "$ref": "ProgramType" },
                 { "name": "canvasId", "$ref": "CanvasId" },
-                { "name": "sharesVertexFragmentShader", "type": "boolean", "optional": true, "description": "Indicates whether the vertex and fragment shader modules are the same object for a WebGPU render pipeline." }
+                { "name": "sharesVertexFragmentShader", "type": "boolean", "optional": true, "description": "Indicates whether the vertex and fragment shader modules are the same object for a WebGPU render pipeline." },
+                { "name": "name", "type": "string", "optional": true }
             ]
         }
     ],
@@ -98,14 +98,14 @@
             "description": "Disables Canvas domain events."
         },
         {
-            "name": "requestNode",
-            "description": "Gets the NodeId for the canvas node with the given CanvasId.",
+            "name": "requestNodes",
+            "description": "Gets the NodeIds for the canvas nodes with the given CanvasId.",
             "targetTypes": ["page"],
             "parameters": [
                 { "name": "canvasId", "$ref": "CanvasId", "description": "Canvas identifier." }
             ],
             "returns": [
-                { "name": "nodeId", "$ref": "DOM.NodeId", "description": "Node identifier for given canvas." }
+                { "name": "nodeIds", "type": "array", "items": { "$ref": "DOM.NodeId" }, "description": "Node identifiers for the given canvas." }
             ]
         },
         {
@@ -119,8 +119,8 @@
             ]
         },
         {
-            "name": "requestClientNodes",
-            "description": "Gets all <code>-webkit-canvas</code> nodes or active <code>HTMLCanvasElement</code> for a <code>WebGPUDevice</code>.",
+            "name": "requestCSSCanvasClientNodes",
+            "description": "Gets all nodes using a <code>-webkit-canvas</code> image associated with the given CanvasId.",
             "targetTypes": ["page"],
             "parameters": [
                 { "name": "canvasId", "$ref": "CanvasId" }
@@ -177,7 +177,7 @@
         {
             "name": "updateShader",
             "description": "Compiles and links the shader with identifier and type with the given source code.",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
+            "async": true,
             "parameters": [
                 { "name": "programId", "$ref": "ProgramId" },
                 { "name": "shaderType", "$ref": "ShaderType" },
@@ -195,7 +195,7 @@
         {
             "name": "setShaderProgramHighlighted",
             "description": "Enable/disable highlighting of the given shader program.",
-            "condition": "defined(ENABLE_WEBGL) && ENABLE_WEBGL",
+            "async": true,
             "parameters": [
                 { "name": "programId", "$ref": "ProgramId" },
                 { "name": "highlighted", "type": "boolean" }
@@ -219,8 +219,7 @@
             "name": "canvasSizeChanged",
             "parameters": [
                 { "name": "canvasId", "$ref": "CanvasId", "description": "Identifier of canvas that changed." },
-                { "name": "width", "type": "number", "description": "Width of the canvas in pixels." },
-                { "name": "height", "type": "number", "description": "Height of the canvas in pixels." }
+                { "name": "sizes", "type": "array", "items": { "$ref": "GenericTypes.Size" }, "optional": true }
             ]
         },
         {
@@ -239,10 +238,25 @@
             ]
         },
         {
-            "name": "clientNodesChanged",
+            "name": "nodesChanged",
             "targetTypes": ["page"],
             "parameters": [
                 { "name": "canvasId", "$ref": "CanvasId", "description": "Identifier of canvas that changed." }
+            ]
+        },
+        {
+            "name": "cssCanvasClientNodesChanged",
+            "targetTypes": ["page"],
+            "parameters": [
+                { "name": "canvasId", "$ref": "CanvasId", "description": "Identifier of canvas that changed." }
+            ]
+        },
+        {
+            "name": "cssCanvasNamesChanged",
+            "targetTypes": ["page"],
+            "parameters": [
+                { "name": "canvasId", "$ref": "CanvasId", "description": "Identifier of canvas that changed." },
+                { "name": "cssCanvasNames", "type": "array", "items": { "type": "string" }, "description": "The CSS canvas identifiers, for canvases created with <code>document.getCSSCanvasContext</code>." }
             ]
         },
         {

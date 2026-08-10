@@ -44,12 +44,12 @@ WorkerCanvasAgent::WorkerCanvasAgent(WorkerAgentContext& context)
 
 WorkerCanvasAgent::~WorkerCanvasAgent() = default;
 
-Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> WorkerCanvasAgent::requestNode(const Inspector::Protocol::Canvas::CanvasId&)
+Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> WorkerCanvasAgent::requestNodes(const Inspector::Protocol::Canvas::CanvasId&)
 {
     return makeUnexpected("Not supported"_s);
 }
 
-Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> WorkerCanvasAgent::requestClientNodes(const Inspector::Protocol::Canvas::CanvasId&)
+Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> WorkerCanvasAgent::requestCSSCanvasClientNodes(const Inspector::Protocol::Canvas::CanvasId&)
 {
     return makeUnexpected("Not supported"_s);
 }

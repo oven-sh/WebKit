@@ -4886,7 +4886,7 @@ class TestCheckChangeRelevance(BuildStepMixinAdditions, unittest.TestCase):
         queues = ['Commit-Queue', 'Style-EWS', 'GTK-Build-EWS', 'GTK-WK2-Tests-EWS',
                   'iOS-13-Build-EWS', 'iOS-13-Simulator-Build-EWS', 'iOS-13-Simulator-WK2-Tests-EWS',
                   'macOS-Catalina-Release-Build-EWS', 'macOS-Catalina-Release-WK2-Tests-EWS', 'macOS-Catalina-Debug-Build-EWS',
-                  'PlayStation-Build-EWS', 'Win-Build-EWS', 'WPE-Build-EWS', 'WebKitPerl-Tests-EWS', 'GTK-GTK3-LibWebRTC-Build-EWS']
+                  'PlayStation-Build-EWS', 'Win-Build-EWS', 'WPE-Build-EWS', 'WebKitPerl-Tests-EWS', 'GTK-GTK3-GCC-Build-EWS']
         for queue in queues:
             self.setup_step(CheckChangeRelevance())
             self.setProperty('buildername', queue)
@@ -9839,6 +9839,17 @@ class TestValidateCommitMessage(BuildStepMixinAdditions, unittest.TestCase):
         expected_remote_command_output = 'Reviewed by WebKit Reviewer.\n'
         self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
         self.expect_outcome(result=FAILURE, state_string="'WebKit Reviewer <reviewer@apple.com>' cannot review their own change")
+        return self.run_step()
+
+    def test_self_reviewer_cherry_pick(self):
+        self.setup_step(ValidateCommitMessage())
+        ValidateCommitMessage._files = lambda x: ['+++ Tools/CISupport/ews-build/steps.py']
+        self.setUpCommonProperties()
+        self.setProperty('author', 'WebKit Reviewer <reviewer@apple.com>')
+        self.setProperty('classification', ['Cherry-pick'])
+        expected_remote_command_output = '    Reviewed by WebKit Reviewer.\n'
+        self.expectCommonRemoteCommandsWithOutput(expected_remote_command_output)
+        self.expect_outcome(result=SUCCESS, state_string='Validated commit message')
         return self.run_step()
 
 

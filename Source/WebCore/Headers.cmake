@@ -619,6 +619,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/model-element/ModelPlayerIdentifier.h
     Modules/model-element/ModelPlayerProvider.h
     Modules/model-element/ModelPlayerTransformState.h
+    Modules/model-element/PortalTransform.h
     Modules/model-element/SpatialPortalController.h
 
     Modules/model-element/dummy/DummyModelPlayerProvider.h
@@ -1676,6 +1677,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     html/VideoFrameRequestCallback.h
     html/VoidCallback.h
 
+    html/canvas/CanvasElementImage.h
     html/canvas/PredefinedColorSpace.h
     html/canvas/WebGLAny.h
     html/canvas/WebGLBuffer.h
@@ -1941,6 +1943,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     loader/TextResourceDecoder.h
     loader/ThreadableLoader.h
     loader/ThreadableLoaderClient.h
+    loader/WebsitePolicies.h
     loader/archive/Archive.h
     loader/archive/ArchiveError.h
     loader/archive/ArchiveResource.h
@@ -2461,6 +2464,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/AlphaPremultiplication.h
     platform/graphics/AnimationFrameRate.h
     platform/graphics/ArrayPixelBuffer.h
+    platform/graphics/AsyncImageDecoder.h
     platform/graphics/AudioTrackPrivate.h
     platform/graphics/AudioTrackPrivateClient.h
     platform/graphics/AudioVideoRenderer.h
@@ -2526,6 +2530,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/FontFeatureValues.h
     platform/graphics/FontGenericFamilies.h
     platform/graphics/FontMetrics.h
+    platform/graphics/FontMetricsOverrides.h
     platform/graphics/FontPalette.h
     platform/graphics/FontPaletteValues.h
     platform/graphics/FontPlatformData.h
@@ -3320,6 +3325,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/fonts/StyleFontFamily.h
     style/values/fonts/StyleFontFamilyName.h
     style/values/fonts/StyleFontFeatureSettings.h
+    style/values/fonts/StyleFontMetricsOverride.h
     style/values/fonts/StyleFontPalette.h
     style/values/fonts/StyleFontSizeAdjust.h
     style/values/fonts/StyleFontStyle.h
@@ -3532,6 +3538,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     style/values/transforms/StylePerspective.h
     style/values/transforms/StylePerspectiveOrigin.h
+    style/values/transforms/StylePortalTransform.h
     style/values/transforms/StyleRotate.h
     style/values/transforms/StyleScale.h
     style/values/transforms/StyleTransform.h

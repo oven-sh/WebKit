@@ -1107,6 +1107,9 @@ bool RenderBlock::paintChild(RenderBox& child, PaintInfo& paintInfo, const Layou
     if (child.isExcludedAndPlacedInBorder())
         return true;
 
+    if (child.isExcludedMarker())
+        return true;
+
     if (child.isSkippedContent()) {
         ASSERT(child.isColumnSpanner());
         return true;
@@ -2459,7 +2462,7 @@ std::optional<LayoutUnit> RenderBlock::firstLineBaseline() const
 
     auto firstInFlowBaseline = [&] -> std::optional<LayoutUnit> {
         for (CheckedPtr child = firstInFlowChildBox(); child; child = child->nextInFlowSiblingBox()) {
-            if (child->isLegend() && child->isExcludedFromNormalLayout())
+            if ((child->isLegend() && child->isExcludedFromNormalLayout()) || child->isExcludedMarker())
                 continue;
             if (auto baseline = child->firstLineBaseline())
                 return child->logicalTop() + *baseline;
@@ -2479,7 +2482,7 @@ std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
 
     auto lastInFlowBaseline = [&] -> std::optional<LayoutUnit> {
         for (CheckedPtr child = lastInFlowChildBox(); child; child = child->previousInFlowSiblingBox()) {
-            if (child->isLegend() && child->isExcludedFromNormalLayout())
+            if ((child->isLegend() && child->isExcludedFromNormalLayout()) || child->isExcludedMarker())
                 continue;
             if (auto baseline = child->lastLineBaseline())
                 return child->logicalTop() + *baseline;
@@ -2806,6 +2809,8 @@ bool RenderBlock::updateFragmentRangeForBoxChild(const RenderBox& box) const
 
 void RenderBlock::setTrimmedMarginForChild(RenderBox& child, Style::MarginTrimSide side)
 {
+    // Only the block-axis sides: margin-trim applies to block containers and multi-column containers, and it has no
+    // effect on the inline-axis margins of their children.
     switch (side) {
     case Style::MarginTrimSide::BlockStart:
         setMarginBeforeForChild(child, 0_lu);
@@ -2813,14 +2818,9 @@ void RenderBlock::setTrimmedMarginForChild(RenderBox& child, Style::MarginTrimSi
     case Style::MarginTrimSide::BlockEnd:
         setMarginAfterForChild(child, 0_lu);
         break;
-    case Style::MarginTrimSide::InlineStart:
-        setMarginStartForChild(child, 0_lu);
-        break;
-    case Style::MarginTrimSide::InlineEnd:
-        setMarginEndForChild(child, 0_lu);
-        break;
     default:
-        ASSERT_NOT_IMPLEMENTED_YET();
+        ASSERT_NOT_REACHED();
+        break;
     }
 
     child.markMarginAsTrimmed(side);

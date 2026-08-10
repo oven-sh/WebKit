@@ -539,7 +539,9 @@ static inline bool compositingLogEnabled()
 {
     return LogCompositing.state == WTFLogChannelState::On;
 }
+#endif
 
+#if ENABLE(TREE_DEBUGGING)
 static inline bool layersLogEnabled()
 {
     return LogLayers.state == WTFLogChannelState::On;
@@ -3684,11 +3686,7 @@ Vector<CompositedClipData> RenderLayerCompositor::computeAncestorClippingStack(c
             return;
 
         auto infiniteRect = LayoutRect::infiniteRect();
-        auto renderableInfiniteRect = [] {
-            // Return a infinite-like rect whose values are such that, when converted to float pixel values, they can reasonably represent device pixels.
-            return LayoutRect(LayoutUnit::nearlyMin() / 32, LayoutUnit::nearlyMin() / 32, LayoutUnit::nearlyMax() / 16, LayoutUnit::nearlyMax() / 16);
-        }();
-
+        auto renderableInfiniteRect = LayoutRect::renderableInfiniteRect();
         if (clipRect.width() == infiniteRect.width()) {
             clipRect.setX(renderableInfiniteRect.x());
             clipRect.setWidth(renderableInfiniteRect.width());

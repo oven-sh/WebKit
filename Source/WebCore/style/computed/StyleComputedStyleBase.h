@@ -315,6 +315,7 @@ struct OverflowClipMargin;
 struct PaddingEdge;
 struct PageSize;
 struct Perspective;
+struct PortalTransform;
 struct Position;
 struct PositionAnchor;
 struct PositionArea;
@@ -479,6 +480,9 @@ public:
     inline InsideLink insideLink() const;
     inline void setInsideLink(InsideLink);
 
+    inline bool colorIsCurrentColorForHighlight() const;
+    inline void setColorIsCurrentColorForHighlight(bool);
+
     inline bool isLink() const;
     inline void setIsLink(bool);
 
@@ -590,6 +594,7 @@ public:
 
     inline bool hasAnyPublicPseudoStyles() const;
     inline bool hasPseudoStyle(PseudoElementType) const;
+    inline EnumSet<PseudoElementType> highlightPseudoElementTypes() const;
     inline void setHasPseudoStyles(EnumSet<PseudoElementType>);
 
     Style::ComputedStyle* NODELETE pseudoElementStyle(const PseudoElementIdentifier&) const;
@@ -646,6 +651,7 @@ public:
 #if ENABLE(TEXT_AUTOSIZING)
     void setSpecifiedLineHeight(LineHeight&&);
 #endif
+    void setSpecifiedLineHeightFromAnimation(LineHeight&&);
 
     void setLetterSpacingFromAnimation(LetterSpacing&&);
     void setWordSpacingFromAnimation(WordSpacing&&);

@@ -490,6 +490,9 @@ Modules/webcodecs/WebCodecsAudioEncoder.cpp
 Modules/webcodecs/WebCodecsBase.cpp
 Modules/webcodecs/WebCodecsEncodedAudioChunk.cpp
 Modules/webcodecs/WebCodecsEncodedVideoChunk.cpp
+Modules/webcodecs/WebCodecsImageDecoder.cpp
+Modules/webcodecs/WebCodecsImageTrack.cpp
+Modules/webcodecs/WebCodecsImageTrackList.cpp
 Modules/webcodecs/WebCodecsVideoDecoder.cpp
 Modules/webcodecs/WebCodecsVideoEncoder.cpp
 Modules/webcodecs/WebCodecsVideoFrame.cpp
@@ -800,6 +803,7 @@ bindings/js/JSUndoItemCustom.cpp
 bindings/js/JSWebAnimationCustom.cpp
 bindings/js/JSWebCodecsAudioDecoderCustom.cpp
 bindings/js/JSWebCodecsAudioEncoderCustom.cpp
+bindings/js/JSWebCodecsImageDecoderCustom.cpp
 bindings/js/JSWebCodecsVideoDecoderCustom.cpp
 bindings/js/JSWebCodecsVideoEncoderCustom.cpp
 bindings/js/JSWebGL2RenderingContextCustom.cpp
@@ -1746,9 +1750,11 @@ html/ValidatedFormListedElement.cpp
 html/ValidationMessage.cpp @header:RenderStyleGetters @cost:5
 html/WeekInputType.cpp
 html/canvas/ANGLEInstancedArrays.cpp
+html/canvas/CanvasElementImage.cpp
 html/canvas/CanvasFilterContextSwitcher.cpp
 html/canvas/CanvasGradient.cpp
 html/canvas/CanvasLayerContextSwitcher.cpp
+html/canvas/CanvasPaintEvent.cpp
 html/canvas/CanvasPath.cpp
 html/canvas/CanvasPattern.cpp
 html/canvas/CanvasRenderingContext.cpp
@@ -2568,6 +2574,7 @@ platform/graphics/AV1Utilities.cpp
 platform/graphics/AlphaPremultiplication.cpp
 platform/graphics/AnimationFrameRate.cpp
 platform/graphics/ArrayPixelBuffer.cpp
+platform/graphics/AsyncImageDecoder.cpp
 platform/graphics/BezierUtilities.cpp
 platform/graphics/BifurcatedGraphicsContext.cpp
 platform/graphics/BitmapImage.cpp
@@ -2656,7 +2663,6 @@ platform/graphics/ImageBufferDisplayListBackend.cpp
 platform/graphics/ImageDecoder.cpp
 platform/graphics/ImageFrame.cpp
 platform/graphics/ImageFrameAnimator.cpp
-platform/graphics/ImageFrameWorkQueue.cpp
 platform/graphics/ImagePaintingOptions.cpp
 platform/graphics/ImageResolution.cpp
 platform/graphics/ImageSource.cpp
@@ -2687,6 +2693,7 @@ platform/graphics/NativeImage.cpp
 platform/graphics/NativeImageSource.cpp
 platform/graphics/NullImageBufferBackend.cpp
 platform/graphics/Path.cpp
+platform/graphics/PathArcLengthMapper.cpp
 platform/graphics/PathImpl.cpp
 platform/graphics/PathSegment.cpp
 platform/graphics/PathSegmentData.cpp
@@ -2723,6 +2730,7 @@ platform/graphics/TypedArrayPixelBuffer.cpp
 platform/graphics/VP9Utilities.cpp
 platform/graphics/VelocityData.cpp
 platform/graphics/WOFFFileFormat.cpp
+platform/graphics/WebGPUFramePacer.cpp
 platform/graphics/WebMResourceClient.cpp
 platform/graphics/WidthIterator.cpp
 platform/graphics/controls/ApplePayButtonPart.cpp
@@ -3136,6 +3144,7 @@ rendering/svg/RenderSVGTransformableContainer.cpp
 rendering/svg/RenderSVGViewportContainer.cpp @header:RenderStyleGetters
 rendering/svg/SVGBoundingBoxComputation.cpp @header:RenderStyleGetters
 rendering/svg/SVGContainerLayout.cpp @header:RenderStyleGetters
+rendering/svg/SVGImageIntrinsicSizing.cpp @header:RenderStyleGetters
 rendering/svg/SVGInlineFlowBox.cpp
 rendering/svg/SVGInlineTextBox.cpp @header:RenderStyleGetters
 rendering/svg/SVGPathFromElement.cpp @header:RenderStyleGetters
@@ -3381,6 +3390,7 @@ style/values/flexbox/StyleFlexBasis.cpp
 style/values/fonts/StyleFontFamily.cpp
 style/values/fonts/StyleFontFamilyName.cpp
 style/values/fonts/StyleFontFeatureSettings.cpp
+style/values/fonts/StyleFontMetricsOverride.cpp
 style/values/fonts/StyleFontPalette.cpp
 style/values/fonts/StyleFontSizeAdjust.cpp @header:RenderStyleGetters @cost:5
 style/values/fonts/StyleFontStyle.cpp
@@ -3445,7 +3455,6 @@ style/values/motion/StyleOffsetPosition.cpp
 style/values/motion/StyleOffsetRotate.cpp
 style/values/motion/StyleRayFunction.cpp
 style/values/non-standard/StyleWebKitBoxReflect.cpp
-style/values/non-standard/StyleWebKitLineClamp.cpp
 style/values/non-standard/StyleWebKitLocale.cpp
 style/values/non-standard/StyleWebKitOverflowScrolling.cpp
 style/values/non-standard/StyleWebKitTextStrokeWidth.cpp
@@ -3459,7 +3468,6 @@ style/values/primitives/StyleCustomIdent.cpp
 style/values/primitives/StyleLengthResolution.cpp @header:RenderStyleGetters @cost:6
 style/values/primitives/StylePosition.cpp
 style/values/primitives/StylePrimitiveData.cpp
-style/values/primitives/StylePrimitiveNumericTypes+Conversions.cpp @header:RenderStyleGetters @cost:5
 style/values/primitives/StyleRatio.cpp
 style/values/primitives/StyleString.cpp
 style/values/primitives/StyleURL.cpp
@@ -3526,6 +3534,7 @@ style/values/transforms/functions/StyleSkewTransformFunction.cpp
 style/values/transforms/functions/StyleTransformFunctionBase.cpp
 style/values/transforms/functions/StyleTranslateTransformFunction.cpp
 style/values/transforms/StylePerspective.cpp
+style/values/transforms/StylePortalTransform.cpp
 style/values/transforms/StyleRotate.cpp
 style/values/transforms/StyleScale.cpp
 style/values/transforms/StyleTransform.cpp
@@ -3626,8 +3635,6 @@ svg/SVGPathByteStreamBuilder.cpp
 svg/SVGPathByteStreamSource.cpp
 svg/SVGPathElement.cpp @header:RenderStyleGetters
 svg/SVGPathParser.cpp
-svg/SVGPathSegListBuilder.cpp
-svg/SVGPathSegListSource.cpp
 svg/SVGPathStringBuilder.cpp
 svg/SVGPathStringViewSource.cpp
 svg/SVGPathTraversalStateBuilder.cpp
@@ -4009,8 +4016,10 @@ JSCacheQueryOptions.cpp
 JSCanvasCaptureMediaStreamTrack.cpp
 JSCanvasCompositing.cpp
 JSCanvasDirection.cpp
+JSCanvasDrawElementImage.cpp
 JSCanvasDrawImage.cpp
 JSCanvasDrawPath.cpp
+JSCanvasElementImage.cpp
 JSCanvasFillRule.cpp
 JSCanvasFillStrokeStyles.cpp
 JSCanvasFilters.cpp
@@ -4019,6 +4028,7 @@ JSCanvasImageData.cpp
 JSCanvasImageSmoothing.cpp
 JSCanvasLineCap.cpp
 JSCanvasLineJoin.cpp
+JSCanvasPaintEvent.cpp
 JSCanvasPath.cpp
 JSCanvasPathDrawingStyles.cpp
 JSCanvasPattern.cpp
@@ -4309,6 +4319,8 @@ JSGPUComputePassEncoder.cpp
 JSGPUComputePassTimestampWrites.cpp
 JSGPUComputePipeline.cpp
 JSGPUComputePipelineDescriptor.cpp
+JSGPUCopyElementImageDestination.cpp
+JSGPUCopyElementImageSource.cpp
 JSGPUCullMode.cpp
 JSGPUDebugCommandsMixin.cpp
 JSGPUDepthStencilState.cpp
@@ -4510,7 +4522,9 @@ JSHardwareAcceleration.cpp
 JSHashChangeEvent.cpp
 JSHdrMetadataType.cpp
 JSHighlight.cpp
+JSHighlightHitResult.cpp
 JSHighlightRegistry.cpp
+JSHighlightsFromPointOptions.cpp
 JSHistory.cpp
 JSHkdfParams.cpp
 JSHmacKeyParams.cpp
@@ -5001,27 +5015,6 @@ JSSVGMetadataElement.cpp
 JSSVGNumber.cpp
 JSSVGNumberList.cpp
 JSSVGPathElement.cpp
-JSSVGPathSeg.cpp
-JSSVGPathSegArcAbs.cpp
-JSSVGPathSegArcRel.cpp
-JSSVGPathSegClosePath.cpp
-JSSVGPathSegCurvetoCubicAbs.cpp
-JSSVGPathSegCurvetoCubicRel.cpp
-JSSVGPathSegCurvetoCubicSmoothAbs.cpp
-JSSVGPathSegCurvetoCubicSmoothRel.cpp
-JSSVGPathSegCurvetoQuadraticAbs.cpp
-JSSVGPathSegCurvetoQuadraticRel.cpp
-JSSVGPathSegCurvetoQuadraticSmoothAbs.cpp
-JSSVGPathSegCurvetoQuadraticSmoothRel.cpp
-JSSVGPathSegLinetoAbs.cpp
-JSSVGPathSegLinetoHorizontalAbs.cpp
-JSSVGPathSegLinetoHorizontalRel.cpp
-JSSVGPathSegLinetoRel.cpp
-JSSVGPathSegLinetoVerticalAbs.cpp
-JSSVGPathSegLinetoVerticalRel.cpp
-JSSVGPathSegList.cpp
-JSSVGPathSegMovetoAbs.cpp
-JSSVGPathSegMovetoRel.cpp
 JSSVGPatternElement.cpp
 JSSVGPoint.cpp
 JSSVGPointList.cpp
@@ -5226,6 +5219,10 @@ JSWebCodecsEncodedVideoChunkMetadata.cpp
 JSWebCodecsEncodedVideoChunkOutputCallback.cpp
 JSWebCodecsEncodedVideoChunkType.cpp
 JSWebCodecsErrorCallback.cpp
+JSWebCodecsImageDecoder.cpp
+JSWebCodecsImageDecodeResult.cpp
+JSWebCodecsImageTrack.cpp
+JSWebCodecsImageTrackList.cpp
 JSWebCodecsSvcOutputMetadata.cpp
 JSWebCodecsVideoDecoder.cpp
 JSWebCodecsVideoDecoderConfig.cpp
@@ -5250,6 +5247,7 @@ JSWebGLCompressedTextureS3TC.cpp
 JSWebGLCompressedTextureS3TCsRGB.cpp
 JSWebGLContextAttributes.cpp
 JSWebGLContextEvent.cpp
+JSWebGLCopyElementImageConfig.cpp
 JSWebGLDebugRendererInfo.cpp
 JSWebGLDebugShaders.cpp
 JSWebGLDepthTexture.cpp

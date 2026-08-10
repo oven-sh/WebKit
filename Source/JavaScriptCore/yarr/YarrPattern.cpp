@@ -53,7 +53,6 @@ public:
         , m_mayContainStrings(false)
         , m_invertedStrings(false)
         , m_compileMode(compileMode)
-        , m_characterWidths(CharacterClassWidths::Unknown)
         , m_canonicalMode(compileMode == CompileMode::Legacy ? CanonicalMode::UCS2 : CanonicalMode::Unicode)
     {
     }
@@ -69,7 +68,6 @@ public:
         m_anyCharacter = false;
         m_mayContainStrings = false;
         m_invertedStrings = false;
-        m_characterWidths = CharacterClassWidths::Unknown;
     }
 
     void NODELETE combiningSetOp(CharacterClassSetOp setOp)
@@ -152,6 +150,16 @@ public:
         if (other->hasStrings()) {
             m_mayContainStrings = true;
             m_invertedStrings = true;
+        }
+
+        if (!isUnionSetOp()) {
+            // FIXME: Flipping the pending op (intersect with complement == subtract, and vice versa)
+            // would avoid materializing the complement, but m_strings still needs the original op.
+            CharacterClass inverted;
+            addSortedInverted(0, 0xff, other->m_matches8, other->m_ranges8, inverted.m_matches8, inverted.m_ranges8);
+            addSortedInverted(0x100, UCHAR_MAX_VALUE, other->m_matches32, other->m_ranges32, inverted.m_matches32, inverted.m_ranges32);
+            append(&inverted);
+            return;
         }
 
         addSortedInverted(0, 0xff, other->m_matches8, other->m_ranges8, m_matches8, m_ranges8);
@@ -476,12 +484,11 @@ public:
         characterClass->m_matches32.swap(m_matches32);
         characterClass->m_ranges32.swap(m_ranges32);
         characterClass->m_anyCharacter = anyCharacter();
-        characterClass->m_characterWidths = characterWidths();
+        characterClass->m_characterWidths = characterWidths(*characterClass);
 
         buildLatin1TableIfBeneficial(*characterClass);
 
         m_anyCharacter = false;
-        m_characterWidths = CharacterClassWidths::Unknown;
 
         return characterClass;
     }
@@ -540,8 +547,6 @@ private:
         unsigned pos = 0;
         unsigned range = matches.size();
 
-        m_characterWidths |= (U_IS_BMP(ch) ? CharacterClassWidths::HasBMPChars : CharacterClassWidths::HasNonBMPChars);
-
         // binary chop, find position to insert char.
         while (range) {
             unsigned index = range >> 1;
@@ -587,11 +592,6 @@ private:
 
     void addSortedRange(Vector<CharacterRange>& ranges, char32_t lo, char32_t hi)
     {
-        if (U_IS_BMP(lo))
-            m_characterWidths |= CharacterClassWidths::HasBMPChars;
-        if (!U_IS_BMP(hi))
-            m_characterWidths |= CharacterClassWidths::HasNonBMPChars;
-
         auto iter = std::lower_bound(ranges.begin(), ranges.end(), lo,
             [](const CharacterRange& range, char32_t value) {
                 return static_cast<uint64_t>(range.end) + 1 < value;
@@ -1115,14 +1115,24 @@ private:
             m_anyCharacter = true;
     }
 
-    bool hasNonBMPCharacters()
+    static CharacterClassWidths characterWidths(const CharacterClass& characterClass)
     {
-        return m_characterWidths & CharacterClassWidths::HasNonBMPChars;
-    }
-
-    CharacterClassWidths NODELETE characterWidths()
-    {
-        return m_characterWidths;
+        CharacterClassWidths widths = CharacterClassWidths::Unknown;
+        if (!characterClass.m_matches8.isEmpty() || !characterClass.m_ranges8.isEmpty())
+            widths |= CharacterClassWidths::HasBMPChars;
+        if (!characterClass.m_matches32.isEmpty()) {
+            if (U_IS_BMP(characterClass.m_matches32.first()))
+                widths |= CharacterClassWidths::HasBMPChars;
+            if (!U_IS_BMP(characterClass.m_matches32.last()))
+                widths |= CharacterClassWidths::HasNonBMPChars;
+        }
+        if (!characterClass.m_ranges32.isEmpty()) {
+            if (U_IS_BMP(characterClass.m_ranges32.first().begin))
+                widths |= CharacterClassWidths::HasBMPChars;
+            if (!U_IS_BMP(characterClass.m_ranges32.last().end))
+                widths |= CharacterClassWidths::HasNonBMPChars;
+        }
+        return widths;
     }
 
     bool NODELETE anyCharacter()
@@ -1139,8 +1149,6 @@ private:
 
     CharacterClassSetOp m_setOp { CharacterClassSetOp::Default };
     CompileMode m_compileMode;
-    CharacterClassWidths m_characterWidths;
-    
     CanonicalMode m_canonicalMode;
 
     Vector<Vector<char32_t>> m_strings;
@@ -1291,6 +1299,21 @@ public:
     void assertionEOL()
     {
         m_alternative->m_terms.append(PatternTerm::EOL(m_flags));
+    }
+    void assertionBOI()
+    {
+        if (!m_alternative->m_terms.size() && !parenthesisInvert() && parenthesisMatchDirection() == Forward) {
+            m_alternative->m_startsWithBOL = true;
+            m_alternative->m_containsBOL = true;
+            m_pattern.m_containsBOL = true;
+        }
+        auto boiTerm = PatternTerm::BOI(m_flags);
+        boiTerm.setMatchDirection(parenthesisMatchDirection());
+        m_alternative->m_terms.append(boiTerm);
+    }
+    void assertionEOI(bool withOptionalLineTerminator)
+    {
+        m_alternative->m_terms.append(PatternTerm::EOI(withOptionalLineTerminator, m_flags));
     }
     void assertionWordBoundary(bool invert)
     {
@@ -1707,8 +1730,10 @@ public:
         std::unique_ptr<PatternDisjunction> newDisjunction;
         for (unsigned alt = 0; alt < disjunction->m_alternatives.size(); ++alt) {
             PatternAlternative* alternative = disjunction->m_alternatives[alt].get();
-            if (filterStartsWithBOL && alternative->m_startsWithBOL && alternative->matchDirection() != Backward)
+            if (filterStartsWithBOL && alternative->m_startsWithBOL) {
+                ASSERT(alternative->matchDirection() == Forward);
                 continue;
+            }
 
             auto copiedTerms = copyTerms(alternative, filterStartsWithBOL);
             if (!copiedTerms)
@@ -1773,7 +1798,7 @@ public:
         if ((term.type != PatternTerm::Type::ParenthesesSubpattern) && (term.type != PatternTerm::Type::ParentheticalAssertion))
             return PatternTerm(term);
         
-        if (auto* newDisjunction = copyDisjunction(term.parentheses.disjunction, filterStartsWithBOL && !term.invert())) {
+        if (auto* newDisjunction = copyDisjunction(term.parentheses.disjunction, filterStartsWithBOL && !term.invert() && term.matchDirection() == Forward)) {
             PatternTerm termCopy = term;
             termCopy.parentheses.disjunction = newDisjunction;
             m_pattern.m_hasCopiedParenSubexpressions = true;
@@ -1899,6 +1924,8 @@ public:
             switch (term.type) {
             case PatternTerm::Type::AssertionBOL:
             case PatternTerm::Type::AssertionEOL:
+            case PatternTerm::Type::AssertionBOI:
+            case PatternTerm::Type::AssertionEOI:
             case PatternTerm::Type::AssertionWordBoundary:
                 term.inputPosition = currentInputPosition;
                 break;
@@ -2401,6 +2428,7 @@ public:
                 bool termStartsWithBOL = false;
                 switch (term.type) {
                 case PatternTerm::Type::AssertionBOL:
+                case PatternTerm::Type::AssertionBOI:
                     termStartsWithBOL = term.matchDirection() == Forward;
                     break;
                 case PatternTerm::Type::ParenthesesSubpattern:
@@ -2445,6 +2473,8 @@ public:
         PatternDisjunction* disjunction = m_pattern.m_body;
         
         // We'll start by being safe, since `m` mode could change with modifiers
+        // FIXME: A \A anchored alternative could be made once-through even in a multiline pattern,
+        // but m_startsWithBOL does not distinguish \A from a multiline ^.
         if (m_pattern.m_containsModifiers || !m_pattern.m_containsBOL || m_pattern.multiline())
             return;
         
@@ -2600,12 +2630,16 @@ public:
 
     void computeEndAnchoredFixedSize()
     {
-        if (m_pattern.multiline() || m_pattern.sticky() || m_pattern.m_containsModifiers || m_pattern.m_containsBOL || m_pattern.m_containsUnsignedLengthPattern || !m_pattern.m_body->m_hasFixedSize || m_pattern.m_saveInitialStartValue)
+        if (m_pattern.sticky() || m_pattern.m_containsModifiers || m_pattern.m_containsBOL || m_pattern.m_containsUnsignedLengthPattern || !m_pattern.m_body->m_hasFixedSize || m_pattern.m_saveInitialStartValue)
             return;
 
         unsigned maximumSize = 0;
         for (auto& alternative : m_pattern.m_body->m_alternatives) {
-            if (!alternative->m_hasFixedSize || alternative->m_terms.isEmpty() || alternative->m_terms.last().type != PatternTerm::Type::AssertionEOL)
+            if (!alternative->m_hasFixedSize || alternative->m_terms.isEmpty())
+                return;
+            // Non-multiline $ and \z anchor the alternative at the end of input; \Z does not, since it can match before a trailing line terminator.
+            const PatternTerm& lastTerm = alternative->m_terms.last();
+            if (!(lastTerm.type == PatternTerm::Type::AssertionEOL && !lastTerm.multiline()) && !(lastTerm.type == PatternTerm::Type::AssertionEOI && !lastTerm.m_withOptionalLineTerminator))
                 return;
             maximumSize = std::max(maximumSize, alternative->m_minimumSize);
         }
@@ -3065,7 +3099,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
     YarrPatternConstructor constructor(*this, m_flags);
 
     {
-        ErrorCode error = parse(constructor, patternString, compileMode());
+        ErrorCode error = parse(constructor, patternString, compileMode(), quantifyInfinite, true, Options::useRegExpBufferBoundaries());
         if (hasError(constructor.error()))
             return constructor.error();
 
@@ -3294,6 +3328,12 @@ void PatternTerm::dump(PrintStream& out, YarrPattern* thisPattern, unsigned nest
     case Type::AssertionEOL:
         out.println("EOL");
         break;
+    case Type::AssertionBOI:
+        out.println("BOI");
+        break;
+    case Type::AssertionEOI:
+        out.println("EOI ", m_withOptionalLineTerminator ? "(\\Z)" : "(\\z)");
+        break;
     case Type::AssertionWordBoundary:
         out.println("word boundary");
         break;
@@ -3489,6 +3529,21 @@ std::unique_ptr<CharacterClass> anycharCreate()
     return characterClass;
 }
 
+bool CharacterClass::hasOnlyNonSurrogateBMPCharacters() const
+{
+    if (hasStrings() || !hasOnlyBMPCharacters())
+        return false;
+    for (auto character : m_matches32) {
+        if (U_IS_SURROGATE(character))
+            return false;
+    }
+    for (auto& range : m_ranges32) {
+        if (range.end >= 0xd800 && range.begin <= 0xdfff)
+            return false;
+    }
+    return true;
+}
+
 std::optional<char16_t> CharacterClass::hasSharedLeadSurrogate() const
 {
     if (!hasOnlyNonBMPCharacters())
@@ -3601,6 +3656,8 @@ private:
         switch (term.type) {
         case Type::AssertionBOL:
         case Type::AssertionEOL:
+        case Type::AssertionBOI:
+        case Type::AssertionEOI:
         case Type::AssertionWordBoundary:
         case Type::ParentheticalAssertion:
             return;
@@ -3692,18 +3749,17 @@ std::optional<WTF::BitSet<256>> computeFirstCharacterBitmap(StringView patternSt
     if (hasError(errorCode) || !pattern.m_body)
         return std::nullopt;
     if (!pattern.sticky()) {
-        if (pattern.global())
-            return std::nullopt;
-        if (pattern.multiline() || pattern.m_containsModifiers)
+        if (pattern.global() || pattern.m_containsModifiers)
             return std::nullopt;
         // Check the leading term rather than PatternAlternative::m_startsWithBOL: the parser sets
         // that flag optimistically and recomputeStartsWithBOL() corrects it, but here an over-eager
-        // flag is a wrong answer rather than a lost optimization.
+        // flag is a wrong answer rather than a lost optimization. \A anchors at the start of input
+        // regardless of the multiline flag, whereas a multiline ^ can also match after a line terminator.
         for (auto& alternative : pattern.m_body->m_alternatives) {
             if (alternative->m_terms.isEmpty())
                 return std::nullopt;
             const PatternTerm& firstTerm = alternative->m_terms[0];
-            if (firstTerm.type != PatternTerm::Type::AssertionBOL || firstTerm.m_matchDirection != Forward)
+            if ((firstTerm.type != PatternTerm::Type::AssertionBOI && (firstTerm.type != PatternTerm::Type::AssertionBOL || firstTerm.multiline())) || firstTerm.m_matchDirection != Forward)
                 return std::nullopt;
         }
     }

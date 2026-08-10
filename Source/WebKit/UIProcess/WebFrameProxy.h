@@ -186,6 +186,7 @@ public:
 
     void commitCertificateInfo(const URL&);
     void receivedMainResourceResponseWithCertificateInfo(String&&, WebCore::CertificateInfo&&);
+    void copyCertificateInfoForProcessSwapOnNavigationResponse(const URL&, const WebFrameProxy&);
 
     bool canProvideSource() const;
 
@@ -328,6 +329,7 @@ public:
     void requestJSHandleForExtractedText(WebCore::TextExtraction::ExtractedText&&, CompletionHandler<void(std::optional<JSHandleInfo>&&)>&&);
     void requestContainerJSHandleForExtractedText(WebCore::TextExtraction::ExtractedText&&, CompletionHandler<void(std::optional<JSHandleInfo>&&)>&&);
     void requestContainerJSHandleForSearchTexts(Vector<String>&&, std::optional<WebCore::NodeIdentifier>&&, CompletionHandler<void(std::optional<JSHandleInfo>&&)>&&);
+    void requestContentFrameIdentifierForNode(WebCore::NodeIdentifier, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>&&)>&&);
 
     void getSelectorPathsForNode(JSHandleInfo&&, CompletionHandler<void(Vector<HashSet<String>>&&)>&&);
     void getNodeForSelectorPaths(Vector<HashSet<String>>&&, CompletionHandler<void(std::optional<JSHandleInfo>&&)>&&);
@@ -340,7 +342,7 @@ private:
     WebFrameProxy(WebPageProxy&, FrameProcess&, WebCore::FrameIdentifier, WebCore::SandboxFlags, WebCore::ReferrerPolicy, WebCore::ScrollbarMode, WebFrameProxy*, WebFrameProxy*, IsMainFrame, std::optional<URL>&&);
 
     std::optional<SharedPreferencesForWebProcess> NODELETE sharedPreferencesForWebProcess() const;
-    void waitForCertificateInfoFromNetworkProcess(const String& hostAndPort);
+    WebCore::CertificateInfo certificateInfoFromNetworkProcess(const URL&) const;
 
     std::optional<WebCore::PageIdentifier> NODELETE pageIdentifier() const;
 

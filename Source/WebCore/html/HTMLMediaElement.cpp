@@ -5813,6 +5813,22 @@ void HTMLMediaElement::setSelectedTextTrack(TextTrack* trackToSelect)
         if (captionDisplayMode() != CaptionUserPreferences::CaptionDisplayMode::ForcedOnly && !trackList->isChangeEventScheduled())
             m_textTracks->scheduleChangeEvent();
     } else if (trackToSelect == &TextTrack::captionMenuOnItemSingleton()) {
+        bool hasShowingTrack = false;
+        for (int i = 0, length = trackList->length(); i < length; ++i) {
+            if (RefPtr { trackList->item(i) }->mode() == TextTrack::Mode::Showing) {
+                hasShowingTrack = true;
+                break;
+            }
+        }
+
+        if (!hasShowingTrack) {
+            if (RefPtr page = document().page()) {
+                Ref captionPreferences = protect(page->group())->ensureCaptionPreferences();
+                if (RefPtr trackToEnable = captionPreferences->bestTextTrackToEnable(*trackList))
+                    trackToEnable->setMode(TextTrack::Mode::Showing);
+            }
+        }
+
         if (captionDisplayMode() != CaptionUserPreferences::CaptionDisplayMode::AlwaysOn)
             m_textTracks->scheduleChangeEvent();
     } else {
@@ -6494,8 +6510,11 @@ void HTMLMediaElement::mediaPlayerPlaybackStateChanged()
     beginProcessingMediaPlayerCallback();
     if (playerPaused)
         pauseInternal();
-    else
+    else if (!seeking() || !isEnded()) {
+        // The extra conditions above prevent autoplay when seeking, which would start playback from 0
+        // and cause a spurious seek to 0 when seeking to the end of the media.
         playInternal();
+    }
     endProcessingMediaPlayerCallback();
 }
 
@@ -8086,6 +8105,15 @@ void HTMLMediaElement::didBecomeFullscreenElement()
     m_waitingToEnterFullscreen = false;
     setChangingVideoFullscreenMode(false);
     scheduleUpdatePlayState();
+
+    // The fullscreen transition just settled: RenderVideo's object-view-box crop-bypass is
+    // gated on isChangingVideoFullscreenMode(), so force a compositing update now to pick up
+    // the newly-unlocked bypass rather than relying solely on the :fullscreen pseudo-class
+    // style invalidation, which may lag behind this callback. Only needed when object-view-box
+    // is actually in play; forcing it unconditionally causes a redundant compositing pass on
+    // every video, visible as a brief mis-sized frame right as fullscreen settles.
+    if (CheckedPtr renderer = this->renderer(); renderer && renderer->hasObjectViewBoxSet())
+        renderer->contentChanged(ContentChangeType::Video);
 }
 
 void HTMLMediaElement::willStopBeingFullscreenElement()
@@ -8099,6 +8127,11 @@ void HTMLMediaElement::willStopBeingFullscreenElement()
 void HTMLMediaElement::didStopBeingFullscreenElement()
 {
     setChangingVideoFullscreenMode(false);
+
+    // See the matching comment in didBecomeFullscreenElement(): force a compositing update
+    // now that the crop-bypass is re-locked, rather than relying on style invalidation timing.
+    if (CheckedPtr renderer = this->renderer(); renderer && renderer->hasObjectViewBoxSet())
+        renderer->contentChanged(ContentChangeType::Video);
 }
 
 #if ENABLE(FULLSCREEN_API)
@@ -10254,6 +10287,15 @@ void HTMLMediaElement::audioSessionCategoryChanged(AudioSessionCategory category
         client.audioSessionCategoryChanged(category, mode, policy);
     });
 }
+
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+void HTMLMediaElement::hasObjectViewBoxChanged(bool hasObjectViewBox)
+{
+    m_clients.forEach([hasObjectViewBox] (auto& client) {
+        client.hasObjectViewBoxChanged(hasObjectViewBox);
+    });
+}
+#endif
 
 #if ENABLE(MEDIA_SESSION)
 RefPtr<MediaSession> HTMLMediaElement::mediaSessionIfNeededAndExists() const

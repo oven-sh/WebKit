@@ -144,9 +144,9 @@ void RemoteGPU::didReceiveInvalidMessage(IPC::StreamServerConnection&, IPC::Mess
     RefPtr gpuConnectionToWebProcess = m_gpuConnectionToWebProcess.get();
     uint64_t webProcessID = gpuConnectionToWebProcess ? gpuConnectionToWebProcess->webProcessIdentifier().toUInt64() : 0;
     RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, "Received an invalid message %s from WebContent process %" PRIu64 ", requesting for it to be terminated.", description(messageName), webProcessID);
-    callOnMainRunLoop([weakGPUConnectionToWebProcess = m_gpuConnectionToWebProcess] {
+    callOnMainRunLoop([weakGPUConnectionToWebProcess = m_gpuConnectionToWebProcess, messageName] {
         if (RefPtr gpuConnectionToWebProcess = weakGPUConnectionToWebProcess.get())
-            gpuConnectionToWebProcess->terminateWebProcess();
+            gpuConnectionToWebProcess->terminateWebProcess(messageName);
     });
 }
 
@@ -274,7 +274,11 @@ void RemoteGPU::paintNativeImageToImageBuffer(WebCore::NativeImage& nativeImage,
 #if ENABLE(GPU_PROCESS_MODEL)
 Vector<UniqueRef<WebCore::IOSurface>> RemoteGPU::createRenderBuffers(unsigned width, unsigned height, const WebCore::ProcessIdentity& processIdentity, bool standardDynamicRange)
 {
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
     const auto colorFormat = standardDynamicRange ? WebCore::IOSurface::Format::BGRA : WebCore::IOSurface::Format::RGBA16F;
+#else
+    const auto colorFormat = WebCore::IOSurface::Format::BGRA;
+#endif
     const auto colorSpace = standardDynamicRange ? WebCore::DestinationColorSpace::LinearDisplayP3() : WebCore::DestinationColorSpace::ExtendedLinearDisplayP3();
 
     Vector<UniqueRef<WebCore::IOSurface>> ioSurfaces;

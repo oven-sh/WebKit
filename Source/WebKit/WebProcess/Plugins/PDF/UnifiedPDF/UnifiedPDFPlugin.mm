@@ -123,6 +123,7 @@
 #include <wtf/cocoa/TypeCastsCocoa.h>
 #include <wtf/spi/darwin/OSVariantSPI.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/TextStream.h>
 
@@ -181,6 +182,11 @@ PDFAccessibilityDisplayMode UnifiedPDFPlugin::accessibilityDisplayMode() const
     return PDFAccessibilityDisplayMode::None;
 }
 
+PDFAccessibilityDisplayModeState UnifiedPDFPlugin::defaultAccessibilityDisplayModeStateForCurrentSettings() const
+{
+    return PDFAccessibilityDisplayModeState::Ineligible;
+}
+
 void applyPDFContentAXColorAdjustment(CGContextRef, PDFPage *, PDFAccessibilityDisplayMode)
 {
 }
@@ -188,6 +194,11 @@ void applyPDFContentAXColorAdjustment(CGContextRef, PDFPage *, PDFAccessibilityD
 WebCore::Color pdfPageBackgroundColor(PDFAccessibilityDisplayMode)
 {
     return WebCore::Color::white;
+}
+
+WebCore::Color pdfPluginBackgroundColor(PDFAccessibilityDisplayMode, const WebCore::Color& unadjustedColor)
+{
+    return unadjustedColor;
 }
 
 WebCore::BlendMode pdfSelectionBlendMode(PDFAccessibilityDisplayMode)
@@ -216,7 +227,8 @@ UnifiedPDFPlugin::UnifiedPDFPlugin(HTMLPlugInElement& element)
     this->setVerticalScrollElasticity(ScrollElasticity::Automatic);
     this->setHorizontalScrollElasticity(ScrollElasticity::Automatic);
 
-    m_accessibilityDisplayMode = accessibilityDisplayMode();
+    m_accessibilityDisplayModeState = defaultAccessibilityDisplayModeStateForCurrentSettings();
+    updateFullFramePluginBackgroundColor();
 
     Ref document = element.document();
     Ref annotationContainer = document->createElement(HTMLNames::divTag, false);
@@ -422,7 +434,7 @@ void UnifiedPDFPlugin::sizeToFitContentsIfNeeded()
 
     auto size = contentsSize();
     Ref pluginElement = m_view->pluginElement();
-    pluginElement->setInlineStyleProperty(CSSPropertyHeight, size.height(), CSSUnitType::CSS_PX);
+    pluginElement->setInlineStyleProperty(CSSPropertyHeight, size.height(), CSSUnitType::Px);
 }
 
 void UnifiedPDFPlugin::incrementalLoadingDidProgress()
@@ -782,17 +794,52 @@ void UnifiedPDFPlugin::didChangeSettings()
 
     protect(m_presentationController)->updateDebugBorders(showDebugBorders, showRepaintCounter);
 
-    auto displayMode = accessibilityDisplayMode();
-    if (m_accessibilityDisplayMode != displayMode) {
-        m_accessibilityDisplayMode = displayMode;
-
-        RefPtr presentationController = m_presentationController;
-        presentationController->invalidateRenderedContentForAccessibilityDisplayModeChange();
-        presentationController->updateForAccessibilityDisplayModeChange(displayMode);
-        updateScrollbarOverlayStyle();
-        setNeedsRepaintForIncrementalLoad();
-    }
+    auto defaultDisplayModeState = defaultAccessibilityDisplayModeStateForCurrentSettings();
+    auto isEligible = defaultDisplayModeState != PDFAccessibilityDisplayModeState::Ineligible;
+    auto wasEligible = m_accessibilityDisplayModeState != PDFAccessibilityDisplayModeState::Ineligible;
+    if (isEligible != wasEligible)
+        setAccessibilityDisplayModeState(defaultDisplayModeState);
 }
+
+void UnifiedPDFPlugin::setAccessibilityDisplayModeState(PDFAccessibilityDisplayModeState state)
+{
+    if (m_accessibilityDisplayModeState == state)
+        return;
+
+    m_accessibilityDisplayModeState = state;
+
+    RefPtr presentationController = m_presentationController;
+    presentationController->updateForAccessibilityDisplayModeChange();
+
+    if (RefPtr rootLayer = m_rootLayer)
+        rootLayer->setBackgroundColor(pluginBackgroundColor());
+    updateFullFramePluginBackgroundColor();
+
+    updateScrollbarOverlayStyle();
+
+#if ENABLE(PDF_HUD) && ENABLE(AX_PDF_SUPPORT)
+    updateHUDAccessibilityDisplayMode();
+#endif
+}
+
+Color UnifiedPDFPlugin::pluginBackgroundColor() const
+{
+    return pdfPluginBackgroundColor(accessibilityDisplayMode(), PDFPluginBase::pluginBackgroundColor());
+}
+
+#if ENABLE(PDF_HUD) && ENABLE(AX_PDF_SUPPORT)
+
+void UnifiedPDFPlugin::updateHUDAccessibilityDisplayMode()
+{
+    RefPtr frame = m_frame.get();
+    if (!frame)
+        return;
+
+    if (RefPtr page = frame->page())
+        page->updatePDFHUDAccessibilityDisplayMode(*this);
+}
+
+#endif // ENABLE(PDF_HUD)
 
 void UnifiedPDFPlugin::notifyFlushRequired(const GraphicsLayer*)
 {
@@ -1293,7 +1340,7 @@ void UnifiedPDFPlugin::setPageScaleFactor(double scale, std::optional<WebCore::I
     }
 
     if (origin) {
-        // Compensate for the subtraction of content insets that happens in ViewGestureController::handleMagnificationGestureEvent();
+        // Compensate for the subtraction of content insets that happens in ViewGestureController magnification gesture handling.
         // origin is not in root view coordinates.
         if (RefPtr frameView = m_frame->coreLocalFrame()->view()) {
             auto obscuredContentInsets = frameView->obscuredContentInsets();
@@ -1340,8 +1387,12 @@ bool UnifiedPDFPlugin::geometryDidChange(const IntSize& pluginSize, const Affine
         activeAnnotation->updateGeometry();
 #endif
 
-    if (sizeChanged)
-        updateLayout();
+    // A subframe PDF should keep fitting to its frame when the frame's size changes,
+    // until the user zooms. Pinning would freeze the scale computed at install time.
+    if (sizeChanged) {
+        bool shouldRefitToFrame = !isFullMainFramePlugin() && m_shouldUpdateAutoSizeScale == ShouldUpdateAutoSizeScale::Yes;
+        updateLayout(shouldRefitToFrame ? AdjustScaleAfterLayout::Yes : AdjustScaleAfterLayout::No);
+    }
 
 #if ENABLE(PDF_PAGE_NUMBER_INDICATOR)
     updatePageNumberIndicator();
@@ -1428,7 +1479,7 @@ void UnifiedPDFPlugin::updateLayout(AdjustScaleAfterLayout shouldAdjustScale, st
         LOG_WITH_STREAM(PDF, stream << "UnifiedPDFPlugin::updateLayout - on first layout, chose scale for actual size " << initialScaleFactor);
         setScaleFactor(initialScaleFactor);
 
-        if (!shouldSizeToFitContent())
+        if (!shouldSizeToFitContent() && isFullMainFramePlugin())
             m_shouldUpdateAutoSizeScale = ShouldUpdateAutoSizeScale::No;
     }
 
@@ -3223,6 +3274,68 @@ String UnifiedPDFPlugin::fullDocumentString() const
     return [pdfDocument() string];
 }
 
+PDFPluginTextExtractionContent UnifiedPDFPlugin::textExtractionContent() const
+{
+    if (!m_pdfDocument)
+        return { };
+
+    StringBuilder textBuilder;
+    Vector<PDFPluginTextExtractionLink> links;
+
+    for (PDFDocumentLayout::PageIndex pageIndex = 0; pageIndex < m_documentLayout.pageCount(); ++pageIndex) {
+        RetainPtr page = m_documentLayout.pageAtIndex(pageIndex);
+        if (!page)
+            continue;
+
+        String pageText = [page string];
+        if (pageText.isEmpty())
+            continue;
+
+        if (textBuilder.length())
+            textBuilder.append("\n\n"_s);
+
+        auto pageTextStart = textBuilder.length();
+        textBuilder.append(pageText);
+
+        RetainPtr annotationsInReadingOrder = [[page annotations] sortedArrayUsingComparator:^NSComparisonResult(PDFAnnotation *first, PDFAnnotation *second) {
+            auto firstBounds = [first bounds];
+            auto secondBounds = [second bounds];
+            if (firstBounds.origin.y != secondBounds.origin.y)
+                return firstBounds.origin.y > secondBounds.origin.y ? NSOrderedAscending : NSOrderedDescending;
+            if (firstBounds.origin.x != secondBounds.origin.x)
+                return firstBounds.origin.x < secondBounds.origin.x ? NSOrderedAscending : NSOrderedDescending;
+            return NSOrderedSame;
+        }];
+
+        size_t searchOffset = 0;
+        for (PDFAnnotation *annotation in annotationsInReadingOrder.get()) {
+            if (!annotationIsExternalLink(annotation))
+                continue;
+
+            URL url { [annotation URL] };
+            if (url.isEmpty())
+                continue;
+
+            RetainPtr linkSelection = [page selectionForRect:[annotation bounds]];
+            String linkText = linkSelection ? String { [linkSelection string] } : nullString();
+            if (linkText.isEmpty())
+                continue;
+
+            auto offset = pageText.find(linkText, searchOffset);
+            if (offset == notFound)
+                offset = pageText.find(linkText);
+            if (offset == notFound)
+                continue;
+
+            searchOffset = offset + linkText.length();
+
+            links.append(PDFPluginTextExtractionLink { WTF::move(url), CharacterRange { pageTextStart + offset, linkText.length() }, pageToRootView([annotation bounds], page) });
+        }
+    }
+
+    return { textBuilder.toString(), WTF::move(links) };
+}
+
 String UnifiedPDFPlugin::selectionString() const
 {
     if (!hasSelection())
@@ -3935,6 +4048,21 @@ void UnifiedPDFPlugin::zoomOut()
 void UnifiedPDFPlugin::resetZoom()
 {
     setScaleFactor(initialScale());
+}
+
+void UnifiedPDFPlugin::toggleAccessibilityDisplayMode()
+{
+    switch (accessibilityDisplayModeState()) {
+    case PDFAccessibilityDisplayModeState::Ineligible:
+        return;
+    case PDFAccessibilityDisplayModeState::Off:
+        setAccessibilityDisplayModeState(PDFAccessibilityDisplayModeState::On);
+        return;
+    case PDFAccessibilityDisplayModeState::On:
+        setAccessibilityDisplayModeState(PDFAccessibilityDisplayModeState::Off);
+        return;
+    }
+    ASSERT_NOT_REACHED();
 }
 
 #endif // ENABLE(PDF_HUD)

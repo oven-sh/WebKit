@@ -21,15 +21,16 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_SWIFTUI && !os(watchOS) && !os(tvOS)
+#if ENABLE_SWIFTUI && !WTF_PLATFORM_WATCHOS && !WTF_PLATFORM_APPLETV
 
 import Observation
 import SwiftUI
 import Testing
-import WebKit
+@_spi(Testing) import WebKit
+import WebKit_Private.WKWebViewPrivate
 @_spi(Experimental) import _WebKit_SwiftUI
 private import TestWebKitAPILibrary
-import struct _Concurrency.Task
+import struct Swift.String
 #if WTF_PLATFORM_MAC
 import AppKit
 #else
@@ -39,25 +40,60 @@ import UIKit
 @Observable
 @MainActor
 private final class ViewModel {
-    let page = WebPage()
+    struct Attachments: Equatable {
+        var inserted: Set<_WKAttachment> = []
+        var removed: Set<_WKAttachment> = []
+    }
+
+    let page: WebPage = {
+        var configuration = WebPage.Configuration()
+        configuration.attachmentElementEnabled = true
+        return WebPage(configuration: configuration)
+    }()
 
     var isEditable: Bool = false
+
+    // The `_WebKit_SwiftUI` qualifier is needed to disambiguate from WebKitLegacy's WebView.
+    // FIXME: Consider alternative designs to avoid this requirement.
+    var viewportWidth: _WebKit_SwiftUI.WebView.ViewportConfiguration_v0.Width? = nil
+    var viewportInitialScale: Float? = nil
+
+    var attachments = Attachments()
+}
+
+private struct TestView: View {
+    @Environment(ViewModel.self)
+    var model
+
+    var body: some View {
+        WebView(model.page)
+            .webViewContentEnvironmentV0(model.isEditable ? .editable : .standard)
+            .webViewViewportConfigurationV0(
+                width: model.viewportWidth,
+                initialScale: model.viewportInitialScale
+            )
+            .webViewOnAttachmentActivityPhase { phase in
+                switch phase.kind {
+                case .inserted(_):
+                    model.attachments.inserted.insert(phase.attachment)
+
+                case .removed:
+                    model.attachments.removed.insert(phase.attachment)
+
+                case .dataInvalidated:
+                    break
+
+                @unknown default:
+                    fatalError()
+                }
+            }
+    }
 }
 
 @MainActor
 struct WebViewTests {
     @Test
     func applyingContentEnvironmentAffectsPageSemantics() async throws {
-        struct TestView: View {
-            @Environment(ViewModel.self)
-            var model
-
-            var body: some View {
-                WebView(model.page)
-                    .webViewContentEnvironmentV0(model.isEditable ? .editable : .standard)
-            }
-        }
-
         func isContentEditable() async throws -> Bool {
             try await model.page.callJavaScript(returning: Bool.self) {
                 """
@@ -69,9 +105,11 @@ struct WebViewTests {
 
         let model = ViewModel()
 
-        render(observing: model) {
+        render {
             TestView()
                 .environment(model)
+        } observing: {
+            model.isEditable
         }
 
         model.isEditable = true
@@ -79,34 +117,127 @@ struct WebViewTests {
         try await model.page.load(html: #"<div id="div">hello</div>"#).wait()
         await model.page.waitForNextPresentationUpdate()
 
-        try await #expect(isContentEditable())
+        #expect(try await isContentEditable())
 
         model.isEditable = false
 
         await model.page.waitForNextPresentationUpdate()
 
-        try await #expect(!isContentEditable())
+        #expect(!(try await isContentEditable()))
     }
-}
 
-@MainActor
-func render(
-    observing observable: @escaping @isolated(any) @autoclosure @Sendable () -> some Observable & Sendable,
-    @ViewBuilder rootView: () -> some View
-) {
-    let resolvedView = rootView()
+    @Test
+    func onAttachmentActivityPhaseAffectsListeners() async throws {
+        let html = """
+            <meta name='viewport' content='width=device-width, initial-scale=1'>
+            <script>
+            focus = () => document.body.focus()
+            </script>
+            <body onload=focus() contenteditable></body>
+            """
 
-    #if WTF_PLATFORM_MAC
-    let viewController = NSHostingController(rootView: resolvedView)
-    #else
-    let viewController = UIHostingController(rootView: resolvedView)
-    #endif
+        let model = ViewModel()
 
-    Task.immediate {
-        for await _ in Observations(observable) {
-            viewController._render(seconds: 1.0 / 60.0)
+        render {
+            TestView()
+                .environment(model)
         }
+
+        try await model.page.load(html: html).wait()
+
+        let testHTMLData = try #require("<a href='#'>This is some HTML data</a>".data(using: .utf8))
+        let testImageFileURL = try #require(Bundle.testResources.url(forResource: "icon", withExtension: "png"))
+        let testImageData = try Data(contentsOf: testImageFileURL)
+
+        func insertAttachment(filename: String, contentType: String?, data: Data) async -> _WKAttachment? {
+            let fileWrapper = FileWrapper(regularFileWithContents: data)
+            fileWrapper.preferredFilename = filename
+
+            return await model.page.insertAttachment(fileWrapper: fileWrapper, contentType: contentType) as? _WKAttachment
+        }
+
+        let firstAttachment = await insertAttachment(filename: "foo", contentType: "text/html", data: testHTMLData)
+
+        #expect(model.attachments.removed == [])
+        #expect(model.attachments.inserted == [firstAttachment])
+
+        await model.page.executeEditCommand(.deleteBackward)
+
+        #expect(model.attachments.removed == [firstAttachment])
+        #expect(model.attachments.inserted == [firstAttachment])
+
+        let secondAttachment = await insertAttachment(filename: "bar.png", contentType: "text/html", data: testImageData)
+
+        #expect(model.attachments.removed == [firstAttachment])
+        #expect(model.attachments.inserted == [firstAttachment, secondAttachment])
     }
+
+    #if WTF_PLATFORM_IOS_FAMILY
+    @Test
+    func overrideViewportArgumentsAffectsPageViewport() async throws {
+        func bodyWidth() async throws -> Int {
+            await model.page.waitForNextPresentationUpdate()
+
+            return try await model.page.callJavaScript(returning: Int.self) {
+                """
+                return document.body.clientWidth;
+                """
+            }
+        }
+
+        let model = ViewModel()
+
+        render {
+            TestView()
+                .frame(width: 20, height: 20)
+                .environment(model)
+        } observing: {
+            (model.viewportWidth, model.viewportInitialScale)
+        }
+
+        let htmlWithInitialScale = """
+            <meta name='viewport' content='initial-scale=1'>
+            <div id='divWithViewportUnits' style='width: 100vw;'></div>
+            """
+
+        try await model.page.load(html: htmlWithInitialScale).wait()
+
+        try await #expect(bodyWidth() == 20)
+
+        model.viewportWidth = 1000
+        try await #expect(bodyWidth() == 1000)
+
+        model.viewportInitialScale = 1
+        try await #expect(bodyWidth() == 1000)
+        #expect(model.page.magnification == 1)
+
+        model.viewportInitialScale = 5
+        try await #expect(bodyWidth() == 1000)
+        #expect(model.page.magnification == 5)
+
+        model.viewportWidth = nil
+        model.viewportInitialScale = nil
+
+        try await #expect(bodyWidth() == 20)
+
+        let htmlWithWidth = """
+            <meta name='viewport' content='width=10'>
+            <div id='divWithViewportUnits' style='width: 100vw;'></div>
+            """
+
+        try await model.page.load(html: htmlWithWidth).wait()
+
+        try await #expect(bodyWidth() == 10)
+
+        model.viewportWidth = 1000
+        model.viewportInitialScale = 1
+        try await #expect(bodyWidth() == 1000)
+
+        model.viewportWidth = .deviceWidth
+        model.viewportInitialScale = 1
+        try await #expect(bodyWidth() == 20)
+    }
+    #endif // WTF_PLATFORM_IOS_FAMILY
 }
 
-#endif // ENABLE_SWIFTUI && !os(watchOS) && !os(tvOS)
+#endif // ENABLE_SWIFTUI && !WTF_PLATFORM_WATCHOS && !WTF_PLATFORM_APPLETV

@@ -4262,8 +4262,10 @@ JSC_DEFINE_HOST_FUNCTION(functionToCacheableDictionary, (JSGlobalObject* globalO
     JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0));
     if (!object)
         return throwVMTypeError(globalObject, scope, "Expected first argument to be an object"_s);
-    if (!object->structure()->isUncacheableDictionary())
-        object->convertToDictionary(vm);
+    if (auto* objectWithButterfly = dynamicDowncast<JSObjectWithButterfly>(object)) {
+        if (!objectWithButterfly->structure()->isUncacheableDictionary())
+            objectWithButterfly->convertToDictionary(vm);
+    }
     return JSValue::encode(object);
 }
 
@@ -4276,7 +4278,8 @@ JSC_DEFINE_HOST_FUNCTION(functionToUncacheableDictionary, (JSGlobalObject* globa
     JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0));
     if (!object)
         return throwVMTypeError(globalObject, scope, "Expected first argument to be an object"_s);
-    object->convertToUncacheableDictionary(vm);
+    if (auto* objectWithButterfly = dynamicDowncast<JSObjectWithButterfly>(object))
+        objectWithButterfly->convertToUncacheableDictionary(vm);
     return JSValue::encode(object);
 }
 
@@ -4404,8 +4407,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEnsureArrayStorage, (JSGlobalObject* globalObje
     VM& vm = globalObject->vm();
 
     JSValue arg = callFrame->argument(0);
-    if (arg.isObject())
-        asObject(arg)->ensureArrayStorage(vm);
+    if (auto* object = dynamicDowncast<JSObjectWithButterfly>(arg))
+        object->ensureArrayStorage(vm);
     return JSValue::encode(jsUndefined());
 }
 

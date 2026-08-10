@@ -2674,7 +2674,7 @@ class CheckStatusOfPR(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
     haltOnFailure = False
     EMBEDDED_CHECKS = ['ios', 'ios-safer-cpp', 'ios-sim', 'ios-wk2', 'ios-wk2-wpt', 'api-ios', 'vision', 'vision-sim', 'vision-wk2', 'tv', 'tv-sim', 'watch', 'watch-sim']
     MACOS_CHECKS = ['mac', 'mac-AS-debug', 'api-mac', 'api-mac-debug', 'mac-wk2', 'mac-AS-debug-wk2', 'mac-wk2-stress', 'mac-safer-cpp', 'jsc-x86-64', 'jsc-debug-arm64']
-    LINUX_CHECKS = ['gtk', 'gtk-wk2', 'api-gtk', 'wpe', 'gtk3-libwebrtc', 'wpe-wk2', 'api-wpe', 'jsc-wpe']
+    LINUX_CHECKS = ['gtk', 'gtk-wk2', 'api-gtk', 'wpe', 'gtk3-gcc', 'wpe-wk2', 'api-wpe', 'jsc-wpe']
     WINDOWS_CHECKS = ['win']
     EWS_WEBKIT_FAILED = 0
     EWS_WEBKIT_PASSED = 1
@@ -6804,6 +6804,7 @@ class PrintConfiguration(steps.ShellSequence, ShellMixin):
             return 'Unknown'
 
         build_to_name_mapping = {
+            '27': 'Golden Gate',
             '26': 'Tahoe',
             '15': 'Sequoia',
             '14': 'Sonoma'
@@ -7642,6 +7643,7 @@ class ValidateCommitMessage(steps.ShellSequence, ShellMixin, AddToLogMixin):
         head_ref = self.getProperty('github.head.ref', 'HEAD')
         valid_reviewers = self.getProperty('valid_reviewers', [])
         invalid_reviewers = self.getProperty('invalid_reviewers', [])
+        is_cherry_pick = self.getProperty('classification', []) == ['Cherry-pick']
         reviewer_error_msg = '' if valid_reviewers else ' and no valid reviewer found'
         invalid_msg = ' and {} are not reviewers' if len(invalid_reviewers) > 1 else ' and {} is not a reviewer'
         if invalid_reviewers:
@@ -7698,7 +7700,7 @@ class ValidateCommitMessage(steps.ShellSequence, ShellMixin, AddToLogMixin):
                     if not self.is_reviewer(reviewer):
                         self.summary = self.summary.format(reviewer)
                         break
-            elif reviewers and author and any([author.startswith(reviewer) for reviewer in reviewers]):
+            elif reviewers and author and not is_cherry_pick and any([author.startswith(reviewer) for reviewer in reviewers]):
                 self.summary = f"'{author}' cannot review their own change"
                 rc = FAILURE
             else:

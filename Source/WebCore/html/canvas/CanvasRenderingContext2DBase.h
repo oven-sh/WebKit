@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,7 @@
 
 #include "AffineTransform.h"
 #include "CanvasDirection.h"
+#include "CanvasElementImage.h"
 #include "CanvasFillRule.h"
 #include "CanvasLineCap.h"
 #include "CanvasLineJoin.h"
@@ -216,6 +217,11 @@ public:
     ExceptionOr<void> drawImage(CanvasImageSource&&, float dx, float dy, float dw, float dh);
     ExceptionOr<void> drawImage(CanvasImageSource&&, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh);
 
+    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, float dx, float dy);
+    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, float dx, float dy, float dw, float dh);
+    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, float sx, float sy, float sw, float sh, float dx, float dy);
+    ExceptionOr<Ref<DOMMatrix>> drawElementImage(CanvasElementImageSource&&, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh);
+
     void clearCanvas();
 
     using StyleVariant = Variant<String, Ref<CanvasGradient>, Ref<CanvasPattern>>;
@@ -329,6 +335,9 @@ public:
 
         String unparsedFont;
         FontProxy font;
+        // The font description `unparsedFont` was resolved against. Relative values in the font
+        // shorthand depend on it, so `font` is stale once it no longer matches the canvas element.
+        FontCascadeDescription fontResolutionBase;
 
         RefPtr<CanvasLayerContextSwitcher> targetSwitcher;
 
@@ -415,9 +424,9 @@ private:
     struct CachedContentsUnknown {
     };
     struct CachedContentsImageData {
-        CachedContentsImageData(CanvasRenderingContext2DBase&, Ref<ByteArrayPixelBuffer>);
+        CachedContentsImageData(CanvasRenderingContext2DBase&, Ref<ArrayPixelBuffer>);
 
-        Ref<ByteArrayPixelBuffer> imageData;
+        Ref<ArrayPixelBuffer> imageData;
         DeferrableOneShotTimer evictionTimer;
     };
 
@@ -504,8 +513,8 @@ private:
 
     FloatPoint textOffset(float width, TextDirection);
 
-    RefPtr<ByteArrayPixelBuffer> cacheImageDataIfPossible(const ImageData&, const IntRect& sourceRect, const IntPoint& destinationPosition);
-    RefPtr<ImageData> makeImageDataIfContentsCached(const IntRect& sourceRect, PredefinedColorSpace) const;
+    RefPtr<ArrayPixelBuffer> cacheImageDataIfPossible(const ImageData&, const IntRect& sourceRect, const IntPoint& destinationPosition);
+    RefPtr<ImageData> makeImageDataIfContentsCached(const IntRect& sourceRect, PixelFormat, PredefinedColorSpace) const;
     void evictCachedImageData();
 
     static constexpr unsigned MaxSaveCount = 1024 * 16;

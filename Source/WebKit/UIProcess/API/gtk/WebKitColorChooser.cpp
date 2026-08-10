@@ -60,18 +60,10 @@ void WebKitColorChooser::colorChooserRequestFinished(WebKitColorChooserRequest*,
     colorChooser->m_request = nullptr;
 }
 
-void WebKitColorChooser::colorChooserRequestRGBAChanged(WebKitColorChooserRequest* request, GParamSpec*, WebKitColorChooser* colorChooser)
-{
-    GdkRGBA rgba;
-    webkit_color_chooser_request_get_rgba(request, &rgba);
-    colorChooser->didChooseColor(gdkRGBAToColor(rgba));
-}
-
 void WebKitColorChooser::showColorPicker(const Color& color, const IntRect& rect)
 {
     m_initialColor = colorToGdkRGBA(color);
-    GRefPtr<WebKitColorChooserRequest> request = adoptGRef(webkitColorChooserRequestCreate(this));
-    g_signal_connect(request.get(), "notify::rgba", G_CALLBACK(WebKitColorChooser::colorChooserRequestRGBAChanged), this);
+    GRefPtr<WebKitColorChooserRequest> request = adoptGRef(webkitColorChooserRequestCreate(*this, color, m_elementRect));
     g_signal_connect(request.get(), "finished", G_CALLBACK(WebKitColorChooser::colorChooserRequestFinished), this);
 
     if (webkitWebViewEmitRunColorChooser(WEBKIT_WEB_VIEW(m_webView), request.get()))

@@ -447,7 +447,9 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/geolocation/PositionOptions.idl
 
     Modules/highlight/Highlight.idl
+    Modules/highlight/HighlightHitResult.idl
     Modules/highlight/HighlightRegistry.idl
+    Modules/highlight/HighlightsFromPointOptions.idl
 
     Modules/identity/DigitalCredential.idl
     Modules/identity/DigitalCredentialGetRequest.idl
@@ -881,6 +883,10 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/webcodecs/WebCodecsEncodedVideoChunkOutputCallback.idl
     Modules/webcodecs/WebCodecsEncodedVideoChunkType.idl
     Modules/webcodecs/WebCodecsErrorCallback.idl
+    Modules/webcodecs/WebCodecsImageDecodeResult.idl
+    Modules/webcodecs/WebCodecsImageDecoder.idl
+    Modules/webcodecs/WebCodecsImageTrack.idl
+    Modules/webcodecs/WebCodecsImageTrackList.idl
     Modules/webcodecs/WebCodecsSvcOutputMetadata.idl
     Modules/webcodecs/WebCodecsVideoDecoder.idl
     Modules/webcodecs/WebCodecsVideoDecoderConfig.idl
@@ -1358,10 +1364,12 @@ set(WebCore_NON_SVG_IDL_FILES
     html/VoidCallback.idl
 
     html/canvas/CanvasDirection.idl
+    html/canvas/CanvasElementImage.idl
     html/canvas/CanvasFillRule.idl
     html/canvas/CanvasGradient.idl
     html/canvas/CanvasLineCap.idl
     html/canvas/CanvasLineJoin.idl
+    html/canvas/CanvasPaintEvent.idl
     html/canvas/CanvasPattern.idl
     html/canvas/CanvasRenderingContext2D.idl
     html/canvas/CanvasRenderingContext2DSettings.idl
@@ -1622,27 +1630,6 @@ set(WebCore_SVG_IDL_FILES
     svg/SVGNumber.idl
     svg/SVGNumberList.idl
     svg/SVGPathElement.idl
-    svg/SVGPathSeg.idl
-    svg/SVGPathSegArcAbs.idl
-    svg/SVGPathSegArcRel.idl
-    svg/SVGPathSegClosePath.idl
-    svg/SVGPathSegCurvetoCubicAbs.idl
-    svg/SVGPathSegCurvetoCubicRel.idl
-    svg/SVGPathSegCurvetoCubicSmoothAbs.idl
-    svg/SVGPathSegCurvetoCubicSmoothRel.idl
-    svg/SVGPathSegCurvetoQuadraticAbs.idl
-    svg/SVGPathSegCurvetoQuadraticRel.idl
-    svg/SVGPathSegCurvetoQuadraticSmoothAbs.idl
-    svg/SVGPathSegCurvetoQuadraticSmoothRel.idl
-    svg/SVGPathSegLinetoAbs.idl
-    svg/SVGPathSegLinetoHorizontalAbs.idl
-    svg/SVGPathSegLinetoHorizontalRel.idl
-    svg/SVGPathSegLinetoRel.idl
-    svg/SVGPathSegLinetoVerticalAbs.idl
-    svg/SVGPathSegLinetoVerticalRel.idl
-    svg/SVGPathSegList.idl
-    svg/SVGPathSegMovetoAbs.idl
-    svg/SVGPathSegMovetoRel.idl
     svg/SVGPatternElement.idl
     svg/SVGPoint.idl
     svg/SVGPointList.idl
@@ -1832,6 +1819,8 @@ list(APPEND WebCore_NON_SVG_IDL_FILES
     Modules/WebGPU/GPUComputePassTimestampWrites.idl
     Modules/WebGPU/GPUComputePipeline.idl
     Modules/WebGPU/GPUComputePipelineDescriptor.idl
+    Modules/WebGPU/GPUCopyElementImageDestination.idl
+    Modules/WebGPU/GPUCopyElementImageSource.idl
     Modules/WebGPU/GPUCullMode.idl
     Modules/WebGPU/GPUDepthStencilState.idl
     Modules/WebGPU/GPUDevice.idl
@@ -2095,6 +2084,7 @@ set(WebCore_SUPPLEMENTAL_IDL_FILES
     html/PopoverInvokerElement.idl
 
     html/canvas/CanvasCompositing.idl
+    html/canvas/CanvasDrawElementImage.idl
     html/canvas/CanvasDrawImage.idl
     html/canvas/CanvasDrawPath.idl
     html/canvas/CanvasFillStrokeStyles.idl
@@ -2470,6 +2460,7 @@ list(APPEND WebCore_IDL_FILES
     html/canvas/WebGLCompressedTextureS3TCsRGB.idl
     html/canvas/WebGLContextAttributes.idl
     html/canvas/WebGLContextEvent.idl
+    html/canvas/WebGLCopyElementImageConfig.idl
     html/canvas/WebGLDebugRendererInfo.idl
     html/canvas/WebGLDebugShaders.idl
     html/canvas/WebGLDepthTexture.idl
@@ -2753,6 +2744,7 @@ set(MODERN_MEDIA_CONTROLS_SCRIPTS
     "${WEBCORE_DIR}/Modules/modern-media-controls/media/seek-forward-support.js"
     "${WEBCORE_DIR}/Modules/modern-media-controls/media/skip-back-support.js"
     "${WEBCORE_DIR}/Modules/modern-media-controls/media/skip-forward-support.js"
+    "${WEBCORE_DIR}/Modules/modern-media-controls/media/spatial-video-support.js"
     "${WEBCORE_DIR}/Modules/modern-media-controls/media/start-support.js"
     "${WEBCORE_DIR}/Modules/modern-media-controls/media/status-support.js"
     "${WEBCORE_DIR}/Modules/modern-media-controls/media/time-control-support.js"

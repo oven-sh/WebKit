@@ -440,7 +440,7 @@ enum class WebCore::ViewportFit : uint8_t {
     Cover,
 };
 
-enum class WebCore::InteractiveWidget : uint8_t {
+enum class WebCore::InteractiveWidgetValue : uint8_t {
     ResizesVisual,
     ResizesContent,
     OverlaysContent
@@ -1098,7 +1098,7 @@ struct WebCore::ViewportArguments {
     WebCore::ViewportArguments::Type type;
     WebCore::ViewportFit viewportFit;
     bool widthWasExplicit;
-    WebCore::InteractiveWidget interactiveWidget;
+    WebCore::InteractiveWidgetValue interactiveWidgetValue;
 };
 #endif // ENABLE(META_VIEWPORT)
 
@@ -4920,7 +4920,6 @@ header: <WebCore/TextExtractionTypes.h>
 [CustomHeader] struct WebCore::TextExtraction::Result {
     WebCore::TextExtraction::Item rootItem;
     unsigned visibleTextLength;
-    std::optional<String> pdfMarkdownContent;
 };
 
 header: <WebCore/TextExtractionTypes.h>
@@ -6521,7 +6520,8 @@ header: <WebCore/FilterRenderingMode.h>
 header: <WebCore/Filter.h>
 [OptionSet] enum class WebCore::FilterRenderingOption : uint8_t {
     ShowDebugOverlay,
-    FastAndLowQuality
+    FastAndLowQuality,
+    ApplyToSVGRenderer
 };
 
 header: <WebCore/FEComponentTransfer.h>
@@ -6995,6 +6995,14 @@ header: <WebCore/DocumentClasses.h>
 #if ENABLE(MODEL_PROCESS)
 header: <WebCore/StageModeOperations.h>
 enum class WebCore::StageModeOperation : bool;
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+header: <WebCore/PortalTransform.h>
+enum class WebCore::PortalTransformKind : uint8_t {
+    None,
+    Auto
+};
 #endif
 
 header: <WebCore/FixedContainerEdges.h>

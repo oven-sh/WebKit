@@ -180,6 +180,7 @@ public:
     void setPaused(bool, DOMPromiseDeferred<void>&&);
     double currentTime() const;
     void setCurrentTime(double);
+    void applyInitialAnimationState(ModelPlayer&);
 #endif
 
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE)
@@ -272,6 +273,9 @@ private:
 #if ENABLE(MODEL_ELEMENT_ENTITY_TRANSFORM)
     void didUpdateEntityTransform(ModelPlayer&, NodeIdentifier, const TransformationMatrix&) final;
 #endif
+#if ENABLE(SPATIAL_PORTAL)
+    void didUpdatePortalTransform(ModelPlayer&, const TransformationMatrix&) final { }
+#endif
 #if ENABLE(MODEL_ELEMENT_BOUNDING_BOX)
     void didUpdateBoundingBox(ModelPlayer&, NodeIdentifier, const FloatPoint3D&, const FloatPoint3D&) final;
 #endif
@@ -316,6 +320,8 @@ private:
     void updateAutoplay();
     bool loop() const;
     void updateLoop();
+    // A <model> inside a spatial portal has no player of its own; the portal owns one.
+    ModelPlayer* modelPlayerForAnimation() const;
 #endif
 
 #if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)

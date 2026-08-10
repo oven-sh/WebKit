@@ -84,46 +84,26 @@ CalendarID getTemporalCalendarIdentifierWithISODefault(JSGlobalObject* globalObj
     RELEASE_AND_RETURN(scope, toTemporalCalendarIdentifier(globalObject, calendarLike));
 }
 
-// https://tc39.es/proposal-temporal/#sec-temporal-calendarresolvefields
-static void calendarResolveFields(JSGlobalObject* globalObject, std::optional<int32_t> year, unsigned month, std::optional<ParsedMonthCode> monthCode, TemporalDateFormat format, CalendarID calendarId)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    bool isISO = calendarId == iso8601CalendarID();
-
-    if ((format == TemporalDateFormat::Date || format == TemporalDateFormat::YearMonth)
-        && !year) [[unlikely]] {
-        throwTypeError(globalObject, scope, "year must be supplied for this Temporal type"_s);
-        return;
-    }
-    if (monthCode) {
-        if (isISO) {
-            if (monthCode->isLeapMonth) [[unlikely]] {
-                throwRangeError(globalObject, scope, "iso8601 calendar does not have leap months"_s);
-                return;
-            }
-            if (monthCode->monthNumber > 12) [[unlikely]] {
-                throwRangeError(globalObject, scope, "month must be <= 12 with iso8601 calendar"_s);
-                return;
-            }
-            if (month != monthCode->monthNumber) [[unlikely]] {
-                throwRangeError(globalObject, scope, "month does not match month code"_s);
-                return;
-            }
-        }
-        // For non-ISO calendars, monthCode validation is handled by the ICU calendar.
-    }
-}
-
 // temporal_rs: CalendarFields::from_prop_bag
 // https://tc39.es/proposal-temporal/#sec-temporal-preparecalendarfields
 template<FieldSetType type>
-TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject(JSGlobalObject* globalObject, JSObject* bag, CalendarID calendarId)
+TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject(JSGlobalObject* globalObject, JSObject* bag, CalendarID calendarId, TemporalCore::TimeFieldsIn* timeFieldsOut)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     TemporalCore::CalendarFieldsIn fields;
+
+    auto readTimeField = [&](JSValue val, std::optional<double>& target) {
+        if (val.isUndefined())
+            return;
+        double d = val.toIntegerWithTruncation(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!std::isfinite(d)) [[unlikely]] {
+            throwRangeError(globalObject, scope, "Temporal time properties must be finite"_s);
+            return;
+        }
+        target = d;
+    };
 
     // day (not read for YearMonth per spec)
     if constexpr (type != FieldSetType::YearMonth) {
@@ -159,11 +139,30 @@ TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject(JSGlobalObject* glob
             }
             fields.eraYear = clampTo<int32_t>(ey);
         }
-        // era and eraYear must be provided together or not at all.
-        if (fields.era.has_value() != fields.eraYear.has_value()) [[unlikely]] {
-            throwTypeError(globalObject, scope, "era and eraYear must both be present or both absent"_s);
-            return fields;
-        }
+    }
+
+    // hour, microsecond, millisecond, minute (DateTime only; alphabetically before month)
+    if constexpr (type == FieldSetType::DateTime) {
+        ASSERT(timeFieldsOut);
+        JSValue hourProp = bag->get(globalObject, vm.propertyNames->hour);
+        RETURN_IF_EXCEPTION(scope, fields);
+        readTimeField(hourProp, timeFieldsOut->hour);
+        RETURN_IF_EXCEPTION(scope, fields);
+
+        JSValue microsecondProp = bag->get(globalObject, vm.propertyNames->microsecond);
+        RETURN_IF_EXCEPTION(scope, fields);
+        readTimeField(microsecondProp, timeFieldsOut->microsecond);
+        RETURN_IF_EXCEPTION(scope, fields);
+
+        JSValue millisecondProp = bag->get(globalObject, vm.propertyNames->millisecond);
+        RETURN_IF_EXCEPTION(scope, fields);
+        readTimeField(millisecondProp, timeFieldsOut->millisecond);
+        RETURN_IF_EXCEPTION(scope, fields);
+
+        JSValue minuteProp = bag->get(globalObject, vm.propertyNames->minute);
+        RETURN_IF_EXCEPTION(scope, fields);
+        readTimeField(minuteProp, timeFieldsOut->minute);
+        RETURN_IF_EXCEPTION(scope, fields);
     }
 
     // month
@@ -181,23 +180,27 @@ TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject(JSGlobalObject* glob
         }
     }
 
-    // monthCode
+    // monthCode (~to-month-code~: ParseMonthCode)
     {
         JSValue mcProp = bag->get(globalObject, vm.propertyNames->monthCode);
         RETURN_IF_EXCEPTION(scope, fields);
         if (!mcProp.isUndefined()) {
-            auto mcPrimitive = mcProp.toPrimitive(globalObject, PreferString);
+            fields.monthCode = parseMonthCode(globalObject, mcProp);
             RETURN_IF_EXCEPTION(scope, fields);
-            if (mcPrimitive.isString()) {
-                auto mcStr = asString(mcPrimitive)->value(globalObject);
-                RETURN_IF_EXCEPTION(scope, fields);
-                fields.monthCode = ISO8601::parseMonthCode(mcStr);
-                if (!fields.monthCode) [[unlikely]] {
-                    throwRangeError(globalObject, scope, "Invalid monthCode"_s);
-                    return fields;
-                }
-            }
         }
+    }
+
+    // nanosecond, second (DateTime only; alphabetically before year)
+    if constexpr (type == FieldSetType::DateTime) {
+        JSValue nanosecondProp = bag->get(globalObject, vm.propertyNames->nanosecond);
+        RETURN_IF_EXCEPTION(scope, fields);
+        readTimeField(nanosecondProp, timeFieldsOut->nanosecond);
+        RETURN_IF_EXCEPTION(scope, fields);
+
+        JSValue secondProp = bag->get(globalObject, vm.propertyNames->second);
+        RETURN_IF_EXCEPTION(scope, fields);
+        readTimeField(secondProp, timeFieldsOut->second);
+        RETURN_IF_EXCEPTION(scope, fields);
     }
 
     // year
@@ -279,11 +282,6 @@ ZonedDateTimeFields readZonedDateTimeFieldsFromObject(JSGlobalObject* globalObje
             }
             result.dateFields.eraYear = clampTo<int32_t>(ey);
             result.anyFieldSet = true;
-        }
-        // CalendarResolveFields requires era and eraYear to be present together or both absent.
-        if (result.dateFields.era.has_value() != result.dateFields.eraYear.has_value()) [[unlikely]] {
-            throwTypeError(globalObject, scope, "era and eraYear must both be present or both absent"_s);
-            return result;
         }
     }
 
@@ -374,19 +372,25 @@ ZonedDateTimeFields readZonedDateTimeFieldsFromObject(JSGlobalObject* globalObje
     readTimeField(vm.propertyNames->second, result.second);
     RETURN_IF_EXCEPTION(scope, result);
 
-    // timeZone (~to-temporal-time-zone-identifier~; Full mode only — step 9.d required field)
+    // timeZone (~to-temporal-time-zone-identifier~): required only for Full (step 9.d); read but
+    // optional for RelativeToDuration; not read at all for Partial (with() has no timeZone field).
     if constexpr (mode != ZonedDateTimeFieldMode::Partial) {
         JSValue v = bag->get(globalObject, vm.propertyNames->timeZone);
         RETURN_IF_EXCEPTION(scope, result);
-        if (v.isUndefined()) [[unlikely]] {
-            throwTypeError(globalObject, scope, "Temporal.ZonedDateTime.from: timeZone property is required"_s);
-            return result;
+        if constexpr (mode == ZonedDateTimeFieldMode::Full) {
+            if (v.isUndefined()) [[unlikely]] {
+                throwTypeError(globalObject, scope, "Temporal.ZonedDateTime.from: timeZone property is required"_s);
+                return result;
+            }
         }
-        // ToTemporalTimeZoneIdentifier: accepts ZonedDateTime or String.
-        auto timeZone = toTemporalTimeZoneIdentifier(globalObject, v);
-        RETURN_IF_EXCEPTION(scope, result);
-        ASSERT(timeZone);
-        result.timeZone = *timeZone;
+        if (!v.isUndefined()) {
+            // ToTemporalTimeZoneIdentifier: accepts ZonedDateTime or String.
+            auto timeZone = toTemporalTimeZoneIdentifier(globalObject, v);
+            RETURN_IF_EXCEPTION(scope, result);
+            ASSERT(timeZone);
+            result.timeZone = *timeZone;
+            result.timeZonePresent = true;
+        }
     }
 
     // year (~to-integer-with-truncation~)
@@ -443,56 +447,6 @@ std::optional<ParsedMonthCode> parseMonthCode(JSGlobalObject* globalObject, JSVa
         return { };
     }
     return parsed;
-}
-
-// https://tc39.es/proposal-temporal/#sec-temporal-isodatefromfields
-ISO8601::PlainDate isoDateFromFields(JSGlobalObject* globalObject, TemporalDateFormat format, int32_t year, uint32_t month, uint32_t day, std::optional<ParsedMonthCode> monthCode, TemporalOverflow overflow, CalendarID calendarId)
-{
-
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    calendarResolveFields(globalObject, year, month, monthCode, format, calendarId);
-    RETURN_IF_EXCEPTION(scope, { });
-
-    ASSERT(month > 0);
-    ASSERT(day > 0);
-
-    if (calendarId != iso8601CalendarID()) {
-        auto result = TemporalCore::calendarDateFromFields(
-            calendarId, std::optional<int32_t>(year), static_cast<uint8_t>(month), static_cast<uint8_t>(day),
-            std::nullopt, std::nullopt, monthCode, overflow);
-        if (!result) [[unlikely]] {
-            throwRangeError(globalObject, scope, String(result.error().message));
-            return { };
-        }
-        return *result;
-    }
-
-    if (overflow == TemporalOverflow::Constrain) {
-        month = std::min<uint32_t>(month, 12);
-        day = std::min<uint32_t>(day, ISO8601::daysInMonth(year, month));
-    }
-
-    auto plainDate = TemporalPlainDate::validateAndCreateISODateRecord(globalObject, ISO8601::Duration(year, month, 0LL, day, 0LL, 0LL, 0LL, 0LL, Int128(0), Int128(0)));
-    RETURN_IF_EXCEPTION(scope, { });
-
-    bool valid = true;
-    switch (format) {
-    case TemporalDateFormat::YearMonth:
-        valid = ISO8601::isYearMonthWithinLimits(plainDate.year(), plainDate.month());
-        break;
-    default:
-        valid = ISO8601::isDateTimeWithinLimits(plainDate.year(), plainDate.month(), plainDate.day(), 12, 0, 0, 0, 0, 0);
-        break;
-    }
-
-    if (!valid) [[unlikely]] {
-        throwRangeError(globalObject, scope, "date time is out of range of ECMAScript representation"_s);
-        return { };
-    }
-
-    return plainDate;
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-interprettemporaldatetimefields
@@ -566,11 +520,13 @@ ISO8601::Duration calendarDateUntil(CalendarID calendarId, const ISO8601::PlainD
     return *result;
 }
 
-template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::Date>(JSGlobalObject*, JSObject*, CalendarID);
-template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::YearMonth>(JSGlobalObject*, JSObject*, CalendarID);
-template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::MonthDay>(JSGlobalObject*, JSObject*, CalendarID);
+template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::Date>(JSGlobalObject*, JSObject*, CalendarID, TemporalCore::TimeFieldsIn*);
+template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::YearMonth>(JSGlobalObject*, JSObject*, CalendarID, TemporalCore::TimeFieldsIn*);
+template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::MonthDay>(JSGlobalObject*, JSObject*, CalendarID, TemporalCore::TimeFieldsIn*);
+template TemporalCore::CalendarFieldsIn readCalendarFieldsFromObject<FieldSetType::DateTime>(JSGlobalObject*, JSObject*, CalendarID, TemporalCore::TimeFieldsIn*);
 
 template ZonedDateTimeFields readZonedDateTimeFieldsFromObject<ZonedDateTimeFieldMode::Full>(JSGlobalObject*, JSObject*, CalendarID);
 template ZonedDateTimeFields readZonedDateTimeFieldsFromObject<ZonedDateTimeFieldMode::Partial>(JSGlobalObject*, JSObject*, CalendarID);
+template ZonedDateTimeFields readZonedDateTimeFieldsFromObject<ZonedDateTimeFieldMode::RelativeToDuration>(JSGlobalObject*, JSObject*, CalendarID);
 
 } // namespace JSC

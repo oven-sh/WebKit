@@ -27,6 +27,7 @@
 #include "FontCache.h"
 
 #include "Font.h"
+#include "FontCustomPlatformData.h"
 #include "FontDescription.h"
 #include "StyleFontSizeFunctions.h"
 #include <wtf/Assertions.h>
@@ -420,7 +421,7 @@ std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDe
     auto size = fontDescription.adjustedSizeForFontFace(fontCreationContext.sizeAdjust());
     auto features = computeFeatures(fontDescription, fontCreationContext);
     auto [syntheticBold, syntheticOblique] = computeSynthesisProperties(*typeface, fontDescription, options);
-    FontPlatformData platformData(WTF::move(typeface), size, syntheticBold, syntheticOblique, fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), WTF::move(features));
+    FontPlatformData platformData(WTF::move(typeface), size, syntheticBold, syntheticOblique, fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), WTF::move(features), fontCreationContext.metricsOverrides());
 
     platformData.updateSizeWithFontSizeAdjust(fontDescription.fontSizeAdjust(), fontDescription.computedSize());
     auto platformDataUniquePtr = makeUnique<FontPlatformData>(platformData);
@@ -431,6 +432,16 @@ std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDe
 ASCIILiteral FontCache::platformAlternateFamilyName(const String&)
 {
     return { };
+}
+
+void FontCache::platformReleaseNoncriticalMemory()
+{
+    for (auto& entry : m_fontCascadeCache.m_entries.values()) {
+        entry->fonts->forEachRealizedFont([](const Font& font) {
+            if (const auto* customPlatformData = font.platformData().customPlatformData())
+                customPlatformData->clearVariationTypefacesCache();
+        });
+    }
 }
 
 void FontCache::platformInvalidate()

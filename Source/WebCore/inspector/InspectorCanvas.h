@@ -28,6 +28,7 @@
 
 #include "CanvasRenderingContext2DBase.h"
 #include "InspectorCanvasProcessedArguments.h"
+#include "IntSize.h"
 #include "WebGL2RenderingContext.h"
 #include "WebGLRenderingContextBase.h"
 #include <JavaScriptCore/AsyncStackTrace.h>
@@ -72,13 +73,16 @@ public:
     CanvasRenderingContext* canvasContext() const;
     GPUDevice* deviceContext() const;
 
-    HTMLCanvasElement* canvasElement() const;
+    HashSet<HTMLCanvasElement*> canvasElements() const;
+
+    Vector<IntSize> sizes() const;
+    Vector<String> cssCanvasNames() const;
 
     ScriptExecutionContext* scriptExecutionContext() const;
 
     JSC::JSValue resolveContext(JSC::JSGlobalObject*);
 
-    HashSet<Element*> clientNodes() const;
+    HashSet<Element*> cssCanvasClientNodes() const;
     size_t memoryCost() const;
 
     void canvasChanged();
@@ -91,8 +95,7 @@ public:
     bool NODELETE currentFrameHasData() const;
 
     void recordAction(String&&, InspectorCanvasProcessedArguments&& = { });
-    void recordAction(String&&, RecordingSwizzleType, InspectorCanvasProcessedArguments&& = { });
-    void recordAction(String&&, uintptr_t receiver, RecordingSwizzleType, InspectorCanvasProcessedArguments&& = { });
+    void recordAction(String&&, InspectorCanvasProcessedArgument&& receiver, InspectorCanvasProcessedArguments&& = { });
 
     Ref<JSON::ArrayOf<Inspector::Protocol::Recording::Frame>> releaseFrames() { return m_frames.releaseNonNull(); }
 
@@ -144,7 +147,7 @@ private:
     >;
 
     int indexForData(DuplicateDataVariant);
-    size_t identifierForRecordingObject(uintptr_t);
+    size_t identifierForRecordingObject(RecordingSwizzleType, uintptr_t);
     Ref<JSON::Value> valueIndexForData(DuplicateDataVariant);
     String stringIndexForKey(const String&);
     Ref<Inspector::Protocol::Recording::InitialState> buildInitialState();
@@ -167,8 +170,8 @@ private:
     RefPtr<JSON::ArrayOf<JSON::Value>> m_serializedDuplicateData;
     Vector<DuplicateDataVariant> m_indexedDuplicateData;
 
-    HashMap<uintptr_t, size_t> m_recordingObjectIdentifiers;
-    size_t m_nextRecordingObjectIdentifier { 0 };
+    HashMap<uintptr_t, size_t> m_boundRecordingObjectIdentifiers;
+    HashMap<RecordingSwizzleType, size_t> m_nextRecordingObjectIdentifiers;
 
     String m_recordingName;
     MonotonicTime m_currentFrameStartTime { MonotonicTime::nan() };

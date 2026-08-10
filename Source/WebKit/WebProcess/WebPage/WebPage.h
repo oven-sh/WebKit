@@ -644,6 +644,11 @@ public:
 
     DrawingArea* drawingArea() const { return m_drawingArea.get(); }
 
+    // Mirror the drawing area's scrolling-delegation mode onto the main frame's RemoteFrameView so its
+    // coordinate conversions (e.g. selection rects) match the local main frame in the process that
+    // actually hosts it. Without this the proxy would double-subtract the main frame's scroll offset.
+    void updateRemoteMainFrameViewDelegatedScrolling();
+
 #if ENABLE(ASYNC_SCROLLING)
     WebCore::ScrollingCoordinator* scrollingCoordinator() const;
 #endif
@@ -661,6 +666,9 @@ public:
 #if ENABLE(PDF_HUD)
     void createPDFHUD(PDFPluginBase&, WebCore::FrameIdentifier, const WebCore::IntRect&);
     void updatePDFHUDLocation(PDFPluginBase&, const WebCore::IntRect&);
+#if ENABLE(AX_PDF_SUPPORT)
+    void updatePDFHUDAccessibilityDisplayMode(PDFPluginBase&);
+#endif
     void removePDFHUD(PDFPluginBase&);
     void showPDFHUD(PDFPluginBase&);
     void updatePDFHUDLocationsAfterRemoteFrameGeometryChange();
@@ -681,6 +689,9 @@ public:
 #if ENABLE(PDF_PLUGIN) && PLATFORM(MAC)
     void zoomPDFIn(PDFPluginIdentifier);
     void zoomPDFOut(PDFPluginIdentifier);
+#if ENABLE(AX_PDF_SUPPORT)
+    void togglePDFAccessibilityDisplayMode(PDFPluginIdentifier);
+#endif
     void savePDF(PDFPluginIdentifier, CompletionHandler<void(const String&, const URL&, std::span<const uint8_t>)>&&);
     void openPDFWithPreview(PDFPluginIdentifier, CompletionHandler<void(const String&, std::optional<FrameInfoData>&&, std::span<const uint8_t>)>&&);
 #endif
@@ -1348,6 +1359,7 @@ public:
     void registerRemoteFrameAccessibilityTokens(pid_t, WebCore::AccessibilityRemoteToken, WebCore::FrameIdentifier);
     WKAccessibilityWebPageObject* NODELETE accessibilityRemoteObject();
     WebCore::IntPoint remoteFrameOffsetInMainFrame();
+    WebCore::IntPoint mainFrameCoordinatesToRootView(WebCore::IntPoint) const;
     void createMockAccessibilityElement(pid_t);
     void sendAccessibilityTokenIfNeeded();
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)

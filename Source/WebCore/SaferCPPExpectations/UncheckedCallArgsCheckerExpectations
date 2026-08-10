@@ -16,7 +16,6 @@ accessibility/AXObjectCache.cpp
 accessibility/AccessibilityListBoxOption.cpp
 accessibility/AccessibilityMathMLElement.cpp
 accessibility/AccessibilityMenuListOption.cpp
-accessibility/AccessibilityMenuListPopup.cpp
 accessibility/AccessibilityNodeObject.cpp
 accessibility/AccessibilityObject.cpp
 accessibility/AccessibilityObjectInlines.h
@@ -150,7 +149,6 @@ inspector/agents/InspectorNetworkAgent.cpp
 inspector/agents/InspectorPageAgent.cpp
 inspector/agents/WebHeapAgent.cpp
 inspector/agents/frame/FrameCSSAgent.cpp
-inspector/agents/page/PageCanvasAgent.cpp
 inspector/agents/page/PageRuntimeAgent.cpp
 inspector/agents/worker/WorkerAuditAgent.cpp
 inspector/agents/worker/WorkerDebuggerAgent.cpp
@@ -339,7 +337,6 @@ rendering/RenderImageResource.cpp
 rendering/RenderInline.cpp
 rendering/RenderIterator.h
 rendering/RenderLayer.cpp
-rendering/RenderLayer.h
 rendering/RenderLayerBacking.cpp
 rendering/RenderLayerBacking.h
 rendering/RenderLayerBackingSVGAdditions.cpp

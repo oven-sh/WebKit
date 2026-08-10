@@ -778,6 +778,9 @@ void Document::populateDocumentSyncDataForNewlyConstructedDocument(DocumentSyncD
     case DocumentSyncDataType::AudioSessionType:
         m_syncData->audioSessionType = DOMAudioSession::Type::Auto;
         break;
+    case DocumentSyncDataType::AudioSessionState:
+        m_syncData->audioSessionState = DOMAudioSession::State::Inactive;
+        break;
 #endif
     // The following either have default values that match a newly constructed document
     // or are populated other ways even on newly constructed documents.
@@ -7118,6 +7121,16 @@ void Document::dispatchWindowLoadEvent()
         return;
     protect(window())->dispatchLoadEvent();
     m_loadEventFinished = true;
+
+    // A subframe that finished loading without ever being laid out was hidden (e.g. parent had
+    // display:none); note that so the first layout can fire resize for the 0x0 to actual size change.
+    if (RefPtr frameView = view()) {
+        if (!frameView->layoutContext().didFirstLayout()) {
+            if (RefPtr owner = ownerElement(); owner && !owner->renderer())
+                frameView->setLoadedWhileHidden();
+        }
+    }
+
     protect(cachedResourceLoader())->documentDidFinishLoadEvent();
 }
 
@@ -9538,7 +9551,7 @@ Document::RegionFixedPair Document::absoluteEventRegionForNode(Node& node)
     if (!rootRelativeBounds.isEmpty())
         region.unite(Region(enclosingIntRect(rootRelativeBounds)));
 
-    return RegionFixedPair(region, insideFixedPosition);
+    return RegionFixedPair(WTF::move(region), insideFixedPosition);
 }
 
 auto Document::absoluteRegionForWheelEventTargets() -> RegionFixedPair
@@ -9555,7 +9568,7 @@ auto Document::absoluteRegionForWheelEventTargets() -> RegionFixedPair
         insideFixedPosition |= targetRegionFixedPair.second;
     }
 
-    return RegionFixedPair(targetRegion, insideFixedPosition);
+    return RegionFixedPair(WTF::move(targetRegion), insideFixedPosition);
 }
 
 void Document::updateLastHandledUserGestureTimestamp(MonotonicTime time)
@@ -12085,12 +12098,8 @@ OptionSet<NoiseInjectionPolicy> Document::noiseInjectionPolicies() const
 
 OptionSet<AdvancedPrivacyProtections> Document::advancedPrivacyProtections() const
 {
-    RefPtr mainFrameDocument = this->mainFrameDocument();
-    if (!mainFrameDocument)
-        return { };
-
-    if (auto* loader = mainFrameDocument->loader())
-        return loader->advancedPrivacyProtections();
+    if (RefPtr page = this->page())
+        return page->advancedPrivacyProtections();
 
     return { };
 }

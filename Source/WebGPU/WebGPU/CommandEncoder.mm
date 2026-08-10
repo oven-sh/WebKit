@@ -1449,10 +1449,22 @@ void CommandEncoder::clearTextureIfNeeded(Texture& texture, NSUInteger mipLevel,
 
 bool CommandEncoder::waitForCommandBufferCompletion()
 {
-    if (RefPtr cachedCommandBuffer = m_cachedCommandBuffer.get())
-        return cachedCommandBuffer->waitForCompletion();
+    if (RefPtr cachedCommandBuffer = m_cachedCommandBuffer.get()) {
+        bool completed = cachedCommandBuffer->waitForCompletion();
+        if (double duration = cachedCommandBuffer->gpuExecutionDurationSeconds())
+            recordGPUExecutionWindowOnCanvasTextures(0, duration);
+        return completed;
+    }
 
     return true;
+}
+
+void CommandEncoder::recordGPUExecutionWindowOnCanvasTextures(double startTime, double endTime) const
+{
+    for (auto& texture : m_trackedTextures) {
+        if (texture->isCanvasBacking())
+            texture->recordGPUExecutionWindow(startTime, endTime);
+    }
 }
 
 bool CommandEncoder::encoderIsCurrent(id<MTLCommandEncoder> commandEncoder) const
@@ -2431,7 +2443,7 @@ bool CommandEncoder::useResidencySet(id<MTLResidencySet> residencySet)
 
 void CommandEncoder::skippedDrawIndexedValidation(uint64_t bufferIdentifier, DrawIndexCacheContainerIterator it)
 {
-    m_skippedDrawIndexedValidationKeys.add(bufferIdentifier, Vector<std::pair<DrawIndexCacheContainerValue, uint32_t>> { }).iterator->value.append(std::make_pair(DrawIndexCacheContainerValue(it->key.key()), it->value));
+    m_skippedDrawIndexedValidationKeys.add(bufferIdentifier, Vector<std::pair<DrawIndexCacheContainerValue, uint32_t>> { }).iterator->value.append(std::make_pair(DrawIndexCacheContainerValue(it->key.key()), it->value.vertexCount));
 }
 
 void CommandEncoder::rebindSamplersPreCommit(const BindGroup& group)

@@ -97,6 +97,7 @@
 #include "GlobalObjectMethodTable.h"
 #include "HeapIterationScope.h"
 #include "ImportMap.h"
+#include "IntlCache.h"
 #include "IntlCollator.h"
 #include "IntlCollatorPrototype.h"
 #include "IntlDateTimeFormat.h"
@@ -3039,6 +3040,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_stringConstructor);
 
     thisObject->m_defaultCollator.visit(visitor);
+    visitor.append(thisObject->m_cachedLocaleCompareCollator);
     thisObject->m_defaultDateTimeFormat.visit(visitor);
     thisObject->m_defaultDateFormat.visit(visitor);
     thisObject->m_defaultTimeFormat.visit(visitor);
@@ -3262,6 +3264,27 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, JSGlobalObject);
+
+IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
+{
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String localeString = locale->value(this);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (m_cachedLocaleCompareCollator && m_cachedLocaleCompareCollatorLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedLocaleCompareCollatorLocale == localeString)
+        return m_cachedLocaleCompareCollator.get();
+
+    IntlCollator* collator = IntlCollator::create(vm, collatorStructure());
+    collator->initializeCollator(this, locale, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    m_cachedLocaleCompareCollatorLocale = WTF::move(localeString);
+    m_cachedLocaleCompareCollatorLanguagesEpoch = vm.intlCache().languagesEpoch();
+    m_cachedLocaleCompareCollator.set(vm, this, collator);
+    return collator;
+}
 
 // JSGlobalObject::exposeDollarVM is defined in tools/JSDollarVM.cpp so that
 // release builds which compile JSDollarVM out do not carry a reference to it.

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,9 +39,11 @@
 #include "WebGLShader.h"
 #include "WebGLSync.h"
 #include "WebGLTexture.h"
+#include "WebGLTimerQueryEXT.h"
 #include "WebGLTransformFeedback.h"
 #include "WebGLUniformLocation.h"
 #include "WebGLVertexArrayObject.h"
+#include "WebGLVertexArrayObjectOES.h"
 
 namespace WebCore {
 
@@ -59,6 +62,12 @@ auto InspectorCanvasArgumentProcessor<IDLDictionary<DOMMatrix2DInit>>::operator(
 }
 
 auto InspectorCanvasArgumentProcessor<IDLDictionary<ImageDataSettings>>::operator()(InspectorCanvas&, const ImageDataSettings&) -> std::optional<InspectorCanvasProcessedArgument>
+{
+    // FIXME: Implement.
+    return std::nullopt;
+}
+
+auto InspectorCanvasArgumentProcessor<IDLDictionary<WebGLCopyElementImageConfig>>::operator()(InspectorCanvas&, const WebGLCopyElementImageConfig&) -> std::optional<InspectorCanvasProcessedArgument>
 {
     // FIXME: Implement.
     return std::nullopt;
@@ -160,6 +169,11 @@ auto InspectorCanvasArgumentProcessor<IDLInterface<ImageData>>::operator()(Inspe
     return {{ context.valueIndexForData(argument), RecordingSwizzleType::ImageData }};
 }
 
+auto InspectorCanvasArgumentProcessor<IDLInterface<CanvasElementImage>>::operator()(InspectorCanvas& context, const Ref<CanvasElementImage>&) -> std::optional<InspectorCanvasProcessedArgument>
+{
+    return {{ context.valueIndexForData("CanvasElementImage"_s), RecordingSwizzleType::None }};
+}
+
 #if ENABLE(OFFSCREEN_CANVAS)
 
 auto InspectorCanvasArgumentProcessor<IDLInterface<OffscreenCanvas>>::operator()(InspectorCanvas& context, const Ref<OffscreenCanvas>& argument) -> std::optional<InspectorCanvasProcessedArgument>
@@ -189,64 +203,120 @@ auto InspectorCanvasArgumentProcessor<IDLInterface<WebCodecsVideoFrame>>::operat
 
 #if ENABLE(WEBGL)
 
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLBuffer>>::operator()(InspectorCanvas&, const Ref<WebGLBuffer>& argument) -> std::optional<InspectorCanvasProcessedArgument>
+RecordingSwizzleType recordingSwizzleTypeForWebGLExtension(WebGLExtensionName name)
 {
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLBuffer }};
-}
+    switch (name) {
+    case WebGLExtensionName::ANGLEInstancedArrays:
+        return RecordingSwizzleType::ANGLEInstancedArrays;
+    case WebGLExtensionName::EXTBlendMinMax:
+        return RecordingSwizzleType::EXTBlendMinMax;
+    case WebGLExtensionName::EXTClipControl:
+        return RecordingSwizzleType::EXTClipControl;
+    case WebGLExtensionName::EXTColorBufferFloat:
+        return RecordingSwizzleType::EXTColorBufferFloat;
+    case WebGLExtensionName::EXTColorBufferHalfFloat:
+        return RecordingSwizzleType::EXTColorBufferHalfFloat;
+    case WebGLExtensionName::EXTConservativeDepth:
+        return RecordingSwizzleType::EXTConservativeDepth;
+    case WebGLExtensionName::EXTDepthClamp:
+        return RecordingSwizzleType::EXTDepthClamp;
+    case WebGLExtensionName::EXTDisjointTimerQuery:
+        return RecordingSwizzleType::EXTDisjointTimerQuery;
+    case WebGLExtensionName::EXTDisjointTimerQueryWebGL2:
+        return RecordingSwizzleType::EXTDisjointTimerQueryWebGL2;
+    case WebGLExtensionName::EXTFloatBlend:
+        return RecordingSwizzleType::EXTFloatBlend;
+    case WebGLExtensionName::EXTFragDepth:
+        return RecordingSwizzleType::EXTFragDepth;
+    case WebGLExtensionName::EXTPolygonOffsetClamp:
+        return RecordingSwizzleType::EXTPolygonOffsetClamp;
+    case WebGLExtensionName::EXTRenderSnorm:
+        return RecordingSwizzleType::EXTRenderSnorm;
+    case WebGLExtensionName::EXTShaderTextureLOD:
+        return RecordingSwizzleType::EXTShaderTextureLOD;
+    case WebGLExtensionName::EXTTextureCompressionBPTC:
+        return RecordingSwizzleType::EXTTextureCompressionBPTC;
+    case WebGLExtensionName::EXTTextureCompressionRGTC:
+        return RecordingSwizzleType::EXTTextureCompressionRGTC;
+    case WebGLExtensionName::EXTTextureFilterAnisotropic:
+        return RecordingSwizzleType::EXTTextureFilterAnisotropic;
+    case WebGLExtensionName::EXTTextureMirrorClampToEdge:
+        return RecordingSwizzleType::EXTTextureMirrorClampToEdge;
+    case WebGLExtensionName::EXTTextureNorm16:
+        return RecordingSwizzleType::EXTTextureNorm16;
+    case WebGLExtensionName::EXTsRGB:
+        return RecordingSwizzleType::EXTsRGB;
+    case WebGLExtensionName::KHRParallelShaderCompile:
+        return RecordingSwizzleType::KHRParallelShaderCompile;
+    case WebGLExtensionName::NVShaderNoperspectiveInterpolation:
+        return RecordingSwizzleType::NVShaderNoperspectiveInterpolation;
+    case WebGLExtensionName::OESDrawBuffersIndexed:
+        return RecordingSwizzleType::OESDrawBuffersIndexed;
+    case WebGLExtensionName::OESElementIndexUint:
+        return RecordingSwizzleType::OESElementIndexUint;
+    case WebGLExtensionName::OESFBORenderMipmap:
+        return RecordingSwizzleType::OESFBORenderMipmap;
+    case WebGLExtensionName::OESSampleVariables:
+        return RecordingSwizzleType::OESSampleVariables;
+    case WebGLExtensionName::OESShaderMultisampleInterpolation:
+        return RecordingSwizzleType::OESShaderMultisampleInterpolation;
+    case WebGLExtensionName::OESStandardDerivatives:
+        return RecordingSwizzleType::OESStandardDerivatives;
+    case WebGLExtensionName::OESTextureFloat:
+        return RecordingSwizzleType::OESTextureFloat;
+    case WebGLExtensionName::OESTextureFloatLinear:
+        return RecordingSwizzleType::OESTextureFloatLinear;
+    case WebGLExtensionName::OESTextureHalfFloat:
+        return RecordingSwizzleType::OESTextureHalfFloat;
+    case WebGLExtensionName::OESTextureHalfFloatLinear:
+        return RecordingSwizzleType::OESTextureHalfFloatLinear;
+    case WebGLExtensionName::OESVertexArrayObject:
+        return RecordingSwizzleType::OESVertexArrayObject;
+    case WebGLExtensionName::WebGLBlendFuncExtended:
+        return RecordingSwizzleType::WebGLBlendFuncExtended;
+    case WebGLExtensionName::WebGLClipCullDistance:
+        return RecordingSwizzleType::WebGLClipCullDistance;
+    case WebGLExtensionName::WebGLColorBufferFloat:
+        return RecordingSwizzleType::WebGLColorBufferFloat;
+    case WebGLExtensionName::WebGLCompressedTextureASTC:
+        return RecordingSwizzleType::WebGLCompressedTextureASTC;
+    case WebGLExtensionName::WebGLCompressedTextureETC:
+        return RecordingSwizzleType::WebGLCompressedTextureETC;
+    case WebGLExtensionName::WebGLCompressedTextureETC1:
+        return RecordingSwizzleType::WebGLCompressedTextureETC1;
+    case WebGLExtensionName::WebGLCompressedTexturePVRTC:
+        return RecordingSwizzleType::WebGLCompressedTexturePVRTC;
+    case WebGLExtensionName::WebGLCompressedTextureS3TC:
+        return RecordingSwizzleType::WebGLCompressedTextureS3TC;
+    case WebGLExtensionName::WebGLCompressedTextureS3TCsRGB:
+        return RecordingSwizzleType::WebGLCompressedTextureS3TCsRGB;
+    case WebGLExtensionName::WebGLDebugRendererInfo:
+        return RecordingSwizzleType::WebGLDebugRendererInfo;
+    case WebGLExtensionName::WebGLDebugShaders:
+        return RecordingSwizzleType::WebGLDebugShaders;
+    case WebGLExtensionName::WebGLDepthTexture:
+        return RecordingSwizzleType::WebGLDepthTexture;
+    case WebGLExtensionName::WebGLDrawBuffers:
+        return RecordingSwizzleType::WebGLDrawBuffers;
+    case WebGLExtensionName::WebGLDrawInstancedBaseVertexBaseInstance:
+        return RecordingSwizzleType::WebGLDrawInstancedBaseVertexBaseInstance;
+    case WebGLExtensionName::WebGLLoseContext:
+        return RecordingSwizzleType::WebGLLoseContext;
+    case WebGLExtensionName::WebGLMultiDraw:
+        return RecordingSwizzleType::WebGLMultiDraw;
+    case WebGLExtensionName::WebGLMultiDrawInstancedBaseVertexBaseInstance:
+        return RecordingSwizzleType::WebGLMultiDrawInstancedBaseVertexBaseInstance;
+    case WebGLExtensionName::WebGLPolygonMode:
+        return RecordingSwizzleType::WebGLPolygonMode;
+    case WebGLExtensionName::WebGLProvokingVertex:
+        return RecordingSwizzleType::WebGLProvokingVertex;
+    case WebGLExtensionName::WebGLRenderSharedExponent:
+        return RecordingSwizzleType::WebGLRenderSharedExponent;
+    case WebGLExtensionName::WebGLStencilTexturing:
+        return RecordingSwizzleType::WebGLStencilTexturing;
+    }
 
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLFramebuffer>>::operator()(InspectorCanvas&, const Ref<WebGLFramebuffer>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLFramebuffer }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLProgram>>::operator()(InspectorCanvas&, const Ref<WebGLProgram>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLProgram }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLQuery>>::operator()(InspectorCanvas&, const Ref<WebGLQuery>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLQuery }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLRenderbuffer>>::operator()(InspectorCanvas&, const Ref<WebGLRenderbuffer>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLRenderbuffer }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLSampler>>::operator()(InspectorCanvas&, const Ref<WebGLSampler>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLSampler }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLShader>>::operator()(InspectorCanvas&, const Ref<WebGLShader>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLShader }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLSync>>::operator()(InspectorCanvas&, const Ref<WebGLSync>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLSync }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLTexture>>::operator()(InspectorCanvas&, const Ref<WebGLTexture>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLTexture }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLUniformLocation>>::operator()(InspectorCanvas&, const Ref<WebGLUniformLocation>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(argument->location()), RecordingSwizzleType::WebGLUniformLocation }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLVertexArrayObject>>::operator()(InspectorCanvas&, const Ref<WebGLVertexArrayObject>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLVertexArrayObject }};
-}
-
-auto InspectorCanvasArgumentProcessor<IDLInterface<WebGLTransformFeedback>>::operator()(InspectorCanvas&, const Ref<WebGLTransformFeedback>& argument) -> std::optional<InspectorCanvasProcessedArgument>
-{
-    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLTransformFeedback }};
+    WTF_UNREACHABLE();
 }
 
 #endif // ENABLE(WEBGL)
@@ -283,6 +353,15 @@ auto InspectorCanvasArgumentProcessor<IDLCanvasPathRadiusUnion>::operator()(Insp
         },
         [](double radius) -> std::optional<InspectorCanvasProcessedArgument> {
             return {{ JSON::Value::create(radius), RecordingSwizzleType::Number }};
+        }
+    );
+}
+
+auto InspectorCanvasArgumentProcessor<IDLCanvasElementImageSourceUnion>::operator()(InspectorCanvas& context, const CanvasElementImageSource& argument) -> std::optional<InspectorCanvasProcessedArgument>
+{
+    return WTF::switchOn(argument,
+        [&]<typename T>(const Ref<T>& value) {
+            return InspectorCanvasArgumentProcessor<IDLInterface<T>>{}(context, value);
         }
     );
 }

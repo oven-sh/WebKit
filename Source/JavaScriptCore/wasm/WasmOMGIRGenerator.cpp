@@ -485,6 +485,16 @@ public:
         return m_currentBlock->appendNew<Value>(m_proc, Trunc, origin(), value);
     }
 
+    // A runtime operation takes an address operand -- an index, offset, count, delta or length -- as
+    // 64 bits, so that a 64-bit address memory or table can pass one whole, and it bounds checks all
+    // 64 bits. The upper half of an i32 operand is don't-care everywhere else, so zero it here.
+    Value* addressOperand(bool is64Bit, ExpressionType operand)
+    {
+        if (is64Bit)
+            return get(operand);
+        return pointerOfInt32(get(operand));
+    }
+
     // SIMD
     void NODELETE notifyFunctionUsesSIMD() { ASSERT(m_info.usesSIMD(m_functionIndex)); }
     [[nodiscard]] PartialResult addSIMDLoad(ExpressionType pointer, uint64_t offset, ExpressionType& result, uint8_t memoryIndex);
@@ -909,14 +919,8 @@ public:
     }
 
 private:
-    void NODELETE emitPrepareWasmOperation(BasicBlock* block)
+    void NODELETE emitPrepareWasmOperation(BasicBlock*)
     {
-#if !USE(BUILTIN_FRAME_ADDRESS) || ASSERT_ENABLED
-        // Prepare wasm operation calls.
-        block->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), framePointer(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTemporaryCallFrame()));
-#else
-        UNUSED_PARAM(block);
-#endif
     }
 
     template<typename OperationType, typename ...Args>
@@ -933,15 +937,15 @@ private:
     void emitWriteBarrierForJSWrapper();
     void emitWriteBarrier(Value* cell);
     Value* emitCheckAndPreparePointer(Value* pointer, uint64_t offset, uint32_t sizeOfOp, uint8_t memoryIndex);
-    B3::Kind memoryKind(B3::Opcode memoryOp);
-    Value* emitLoadOp(LoadOpType, Value* pointer, uint64_t offset);
-    void emitStoreOp(StoreOpType, Value* pointer, Value*, uint64_t offset);
+    B3::Kind memoryKind(B3::Opcode memoryOp, uint8_t memoryIndex);
+    Value* emitLoadOp(LoadOpType, Value* pointer, uint64_t offset, uint8_t memoryIndex);
+    void emitStoreOp(StoreOpType, Value* pointer, Value*, uint64_t offset, uint8_t memoryIndex);
 
     Value* sanitizeAtomicResult(ExtAtomicOpType, Type, Value* result);
-    Value* emitAtomicLoadOp(ExtAtomicOpType, Type, Value* pointer, uint64_t offset);
-    void emitAtomicStoreOp(ExtAtomicOpType, Type, Value* pointer, Value*, uint64_t offset);
-    Value* emitAtomicBinaryRMWOp(ExtAtomicOpType, Type, Value* pointer, Value*, uint64_t offset);
-    Value* emitAtomicCompareExchange(ExtAtomicOpType, Type, Value* pointer, Value* expected, Value*, uint64_t offset);
+    Value* emitAtomicLoadOp(ExtAtomicOpType, Type, Value* pointer, uint64_t offset, uint8_t memoryIndex);
+    void emitAtomicStoreOp(ExtAtomicOpType, Type, Value* pointer, Value*, uint64_t offset, uint8_t memoryIndex);
+    Value* emitAtomicBinaryRMWOp(ExtAtomicOpType, Type, Value* pointer, Value*, uint64_t offset, uint8_t memoryIndex);
+    Value* emitAtomicCompareExchange(ExtAtomicOpType, Type, Value* pointer, Value* expected, Value*, uint64_t offset, uint8_t memoryIndex);
 
     void mutatorFence();
 
@@ -1703,7 +1707,7 @@ auto OMGIRGenerator::addTableGet(unsigned tableIndex, ExpressionType index, Expr
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
     Value* resultValue = callWasmOperation(m_currentBlock, toB3Type(Types::Externref), operationGetWasmTableElement,
-        instanceValue(), constant(Int32, tableIndex), get(index));
+        instanceValue(), constant(Int32, tableIndex), addressOperand(m_info.table(tableIndex).addressType().is64Bit(), index));
     {
         result = push(resultValue);
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
@@ -1721,7 +1725,7 @@ auto OMGIRGenerator::addTableSet(unsigned tableIndex, ExpressionType index, Expr
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
     auto shouldThrow = callWasmOperation(m_currentBlock, B3::Int32, operationSetWasmTableElement,
-        instanceValue(), constant(Int32, tableIndex), get(index), get(value));
+        instanceValue(), constant(Int32, tableIndex), addressOperand(m_info.table(tableIndex).addressType().is64Bit(), index), get(value));
     {
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
             m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), shouldThrow, constant(Int32, 0)));
@@ -1763,7 +1767,7 @@ auto OMGIRGenerator::addTableInit(unsigned elementIndex, unsigned tableIndex, Ex
         instanceValue(),
         constant(Int32, elementIndex),
         constant(Int32, tableIndex),
-        get(dstOffset), get(srcOffset), get(length));
+        addressOperand(m_info.table(tableIndex).addressType().is64Bit(), dstOffset), get(srcOffset), get(length));
 
     {
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
@@ -1798,15 +1802,16 @@ auto OMGIRGenerator::addTableSize(unsigned tableIndex, ExpressionType& result) -
 auto OMGIRGenerator::addTableGrow(unsigned tableIndex, ExpressionType fill, ExpressionType delta, ExpressionType& result) -> PartialResult
 {
     result = push(callWasmOperation(m_currentBlock, toB3Type(m_info.table(tableIndex).addressType().asWasmType()), operationWasmTableGrow,
-        instanceValue(), constant(Int32, tableIndex), get(fill), get(delta)));
+        instanceValue(), constant(Int32, tableIndex), get(fill), addressOperand(m_info.table(tableIndex).addressType().is64Bit(), delta)));
 
     return { };
 }
 
 auto OMGIRGenerator::addTableFill(unsigned tableIndex, ExpressionType offset, ExpressionType fill, ExpressionType count) -> PartialResult
 {
+    bool isTable64 = m_info.table(tableIndex).addressType().is64Bit();
     Value* resultValue = callWasmOperation(m_currentBlock, toB3Type(Types::I32), operationWasmTableFill,
-        instanceValue(), constant(Int32, tableIndex), get(offset), get(fill), get(count));
+        instanceValue(), constant(Int32, tableIndex), addressOperand(isTable64, offset), get(fill), addressOperand(isTable64, count));
 
     {
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
@@ -1822,12 +1827,14 @@ auto OMGIRGenerator::addTableFill(unsigned tableIndex, ExpressionType offset, Ex
 
 auto OMGIRGenerator::addTableCopy(unsigned dstTableIndex, unsigned srcTableIndex, ExpressionType dstOffset, ExpressionType srcOffset, ExpressionType length) -> PartialResult
 {
+    bool dstIsTable64 = m_info.table(dstTableIndex).addressType().is64Bit();
+    bool srcIsTable64 = m_info.table(srcTableIndex).addressType().is64Bit();
     Value* resultValue = callWasmOperation(
         m_currentBlock, toB3Type(Types::I32), operationWasmTableCopy,
         instanceValue(),
         constant(Int32, dstTableIndex),
         constant(Int32, srcTableIndex),
-        get(dstOffset), get(srcOffset), get(length));
+        addressOperand(dstIsTable64, dstOffset), addressOperand(srcIsTable64, srcOffset), addressOperand(dstIsTable64 && srcIsTable64, length));
 
     {
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
@@ -2073,7 +2080,7 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
 auto OMGIRGenerator::addGrowMemory(ExpressionType delta, ExpressionType& result, uint8_t memoryIndex) -> PartialResult
 {
     result = push(callWasmOperation(m_currentBlock, m_info.memory(memoryIndex).addressType().asB3TypeKind(), operationGrowMemory,
-        instanceValue(), get(delta), constant(Int32, memoryIndex)));
+        instanceValue(), addressOperand(m_info.memory(memoryIndex).isMemory64(), delta), constant(Int32, memoryIndex)));
 
     restoreWebAssemblyGlobalState(m_info.memories, instanceValue(), m_currentBlock);
 
@@ -2107,13 +2114,9 @@ auto OMGIRGenerator::addCurrentMemory(ExpressionType& result, uint8_t memoryInde
 
 auto OMGIRGenerator::addMemoryFill(ExpressionType dstAddress, ExpressionType target, ExpressionType count, uint8_t memoryIndex) -> PartialResult
 {
-    auto* dstAddressValue = m_info.memory(memoryIndex).isMemory64()
-        ? get(dstAddress)
-        : m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(dstAddress));
+    auto* dstAddressValue = addressOperand(m_info.memory(memoryIndex).isMemory64(), dstAddress);
     auto* targetValue = get(target);
-    auto* countValue = m_info.memory(memoryIndex).isMemory64()
-        ? get(count)
-        : m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(count));
+    auto* countValue = addressOperand(m_info.memory(memoryIndex).isMemory64(), count);
 
     if (!memoryIndex) {
         auto* memorySize = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedMemory0Size()));
@@ -2151,16 +2154,12 @@ auto OMGIRGenerator::addMemoryFill(ExpressionType dstAddress, ExpressionType tar
 
 auto OMGIRGenerator::addMemoryInit(unsigned dataSegmentIndex, ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType length, uint8_t memoryIndex) -> PartialResult
 {
-    auto dstAddressValue = m_info.memory(memoryIndex).isMemory64()
-        ? get(dstAddress)
-        : m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(dstAddress));
-
-    auto srcAddressValue = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(srcAddress));
+    auto dstAddressValue = addressOperand(m_info.memory(memoryIndex).isMemory64(), dstAddress);
 
     Value* resultValue = callWasmOperation(m_currentBlock, toB3Type(Types::I32), operationWasmMemoryInit,
         instanceValue(),
         constant(Int32, dataSegmentIndex),
-        dstAddressValue, srcAddressValue, get(length), constant(Int32, memoryIndex));
+        dstAddressValue, get(srcAddress), get(length), constant(Int32, memoryIndex));
 
     {
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
@@ -2176,15 +2175,9 @@ auto OMGIRGenerator::addMemoryInit(unsigned dataSegmentIndex, ExpressionType dst
 
 auto OMGIRGenerator::addMemoryCopy(ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType count, uint8_t dstMemoryIndex, uint8_t srcMemoryIndex) -> PartialResult
 {
-    auto* dstAddressValue = m_info.memory(dstMemoryIndex).isMemory64()
-        ? get(dstAddress)
-        : m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(dstAddress));
-    auto* srcAddressValue = m_info.memory(srcMemoryIndex).isMemory64()
-        ? get(srcAddress)
-        : m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(srcAddress));
-    auto* countValue = m_info.memory(srcMemoryIndex).isMemory64() && m_info.memory(dstMemoryIndex).isMemory64()
-        ? get(count)
-        : m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(count));
+    auto* dstAddressValue = addressOperand(m_info.memory(dstMemoryIndex).isMemory64(), dstAddress);
+    auto* srcAddressValue = addressOperand(m_info.memory(srcMemoryIndex).isMemory64(), srcAddress);
+    auto* countValue = addressOperand(m_info.memory(srcMemoryIndex).isMemory64() && m_info.memory(dstMemoryIndex).isMemory64(), count);
 
     if (!dstMemoryIndex && !srcMemoryIndex) {
         auto* memorySize = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedMemory0Size()));
@@ -2503,7 +2496,7 @@ inline Value* OMGIRGenerator::emitCheckAndPreparePointer(Value* pointer, uint64_
 
     if (!memoryIndex) {
         // m_mode is the mode used for memory 0
-        switch (m_mode) {
+        switch (m_info.memoryModeForAccess(memoryIndex, m_mode)) {
         case MemoryMode::BoundsChecking: {
             // We're not using signal handling only when the memory is not shared.
             // Regardless of signaling, we must check that no memory access exceeds the current memory size.
@@ -2522,7 +2515,7 @@ inline Value* OMGIRGenerator::emitCheckAndPreparePointer(Value* pointer, uint64_
         }
 
         case MemoryMode::Signaling: {
-            RELEASE_ASSERT(!m_info.memory(memoryIndex).isMemory64());
+            RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!m_info.memory(memoryIndex).isMemory64());
             // We've virtually mapped 4GiB+redzone for this memory. Only the user-allocated pages are addressable, contiguously in range [0, current],
             // and everything above is mapped PROT_NONE. We don't need to perform any explicit bounds check in the 4GiB range because WebAssembly register
             // memory accesses are 32-bit. However WebAssembly register + offset accesses perform the addition in 64-bit which can push an access above
@@ -2622,98 +2615,98 @@ inline uint32_t sizeOfLoadOp(LoadOpType op)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-inline B3::Kind OMGIRGenerator::memoryKind(B3::Opcode memoryOp)
+inline B3::Kind OMGIRGenerator::memoryKind(B3::Opcode memoryOp, uint8_t memoryIndex)
 {
-    if (useSignalingMemory0() || m_info.memory(0).isShared())
+    if (memoryIndex || useSignalingMemory0() || m_info.memory(0).isShared())
         return trapping(memoryOp);
     return memoryOp;
 }
 
-inline Value* OMGIRGenerator::emitLoadOp(LoadOpType op, Value* pointer, uint64_t uoffset)
+inline Value* OMGIRGenerator::emitLoadOp(LoadOpType op, Value* pointer, uint64_t uoffset, uint8_t memoryIndex)
 {
     int32_t offset = fixupPointerPlusOffset(pointer, uoffset);
 
     switch (op) {
     case LoadOpType::I32Load8S: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8S), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8S, memoryIndex), origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return value;
     }
 
     case LoadOpType::I64Load8S: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8S), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8S, memoryIndex), origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, SExt32, origin(), value);
     }
 
     case LoadOpType::I32Load8U: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z, memoryIndex), origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return value;
     }
 
     case LoadOpType::I64Load8U: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z, memoryIndex), origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), value);
     }
 
     case LoadOpType::I32Load16S: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16S), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16S, memoryIndex), origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return value;
     }
 
     case LoadOpType::I64Load16S: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16S), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16S, memoryIndex), origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, SExt32, origin(), value);
     }
 
     case LoadOpType::I32Load16U: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z, memoryIndex), origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return value;
     }
 
     case LoadOpType::I64Load16U: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z, memoryIndex), origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), value);
     }
 
     case LoadOpType::I32Load: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int32, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), Int32, origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return value;
     }
 
     case LoadOpType::I64Load32U: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int32, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), Int32, origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), value);
     }
 
     case LoadOpType::I64Load32S: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int32, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), Int32, origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, SExt32, origin(), value);
     }
 
     case LoadOpType::I64Load: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int64, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), Int64, origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return value;
     }
 
     case LoadOpType::F32Load: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Float, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), Float, origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return value;
     }
 
     case LoadOpType::F64Load: {
-        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Double, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), Double, origin(), pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return value;
     }
@@ -2763,7 +2756,7 @@ auto OMGIRGenerator::load(LoadOpType op, ExpressionType pointerVar, ExpressionTy
         }
 
     } else
-        result = push(emitLoadOp(op, emitCheckAndPreparePointer(pointer, offset, sizeOfLoadOp(op), memoryIndex), offset));
+        result = push(emitLoadOp(op, emitCheckAndPreparePointer(pointer, offset, sizeOfLoadOp(op), memoryIndex), offset, memoryIndex));
 
     return { };
 }
@@ -2789,7 +2782,7 @@ inline uint32_t sizeOfStoreOp(StoreOpType op)
 }
 
 
-inline void OMGIRGenerator::emitStoreOp(StoreOpType op, Value* pointer, Value* value, uint64_t uoffset)
+inline void OMGIRGenerator::emitStoreOp(StoreOpType op, Value* pointer, Value* value, uint64_t uoffset, uint8_t memoryIndex)
 {
     int32_t offset = fixupPointerPlusOffset(pointer, uoffset);
 
@@ -2799,7 +2792,7 @@ inline void OMGIRGenerator::emitStoreOp(StoreOpType op, Value* pointer, Value* v
         [[fallthrough]];
 
     case StoreOpType::I32Store8: {
-        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store8), origin(), value, pointer, offset);
+        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store8, memoryIndex), origin(), value, pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
         return;
     }
@@ -2809,7 +2802,7 @@ inline void OMGIRGenerator::emitStoreOp(StoreOpType op, Value* pointer, Value* v
         [[fallthrough]];
 
     case StoreOpType::I32Store16: {
-        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store16), origin(), value, pointer, offset);
+        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store16, memoryIndex), origin(), value, pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
         return;
     }
@@ -2822,7 +2815,7 @@ inline void OMGIRGenerator::emitStoreOp(StoreOpType op, Value* pointer, Value* v
     case StoreOpType::I32Store:
     case StoreOpType::F32Store:
     case StoreOpType::F64Store: {
-        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store), origin(), value, pointer, offset);
+        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store, memoryIndex), origin(), value, pointer, offset);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
         return;
     }
@@ -2847,7 +2840,7 @@ auto OMGIRGenerator::store(StoreOpType op, ExpressionType pointerVar, Expression
             this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsMemoryAccess);
         });
     } else
-        emitStoreOp(op, emitCheckAndPreparePointer(pointer, offset, sizeOfStoreOp(op), memoryIndex), value, offset);
+        emitStoreOp(op, emitCheckAndPreparePointer(pointer, offset, sizeOfStoreOp(op), memoryIndex), value, offset, memoryIndex);
 
     return { };
 }
@@ -2902,7 +2895,7 @@ Value* OMGIRGenerator::fixupPointerPlusOffsetForAtomicOps(ExtAtomicOpType op, Va
     return pointer;
 }
 
-inline Value* OMGIRGenerator::emitAtomicLoadOp(ExtAtomicOpType op, Type valueType, Value* pointer, uint64_t uoffset)
+inline Value* OMGIRGenerator::emitAtomicLoadOp(ExtAtomicOpType op, Type valueType, Value* pointer, uint64_t uoffset, uint8_t memoryIndex)
 {
     pointer = fixupPointerPlusOffsetForAtomicOps(op, pointer, uoffset);
 
@@ -2921,7 +2914,7 @@ inline Value* OMGIRGenerator::emitAtomicLoadOp(ExtAtomicOpType op, Type valueTyp
         break;
     }
 
-    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicXchgAdd), origin(), accessWidth(op), value, pointer);
+    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicXchgAdd, memoryIndex), origin(), accessWidth(op), value, pointer);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
     m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
     return sanitizeAtomicResult(op, valueType, atomic);
@@ -2955,19 +2948,19 @@ auto OMGIRGenerator::atomicLoad(ExtAtomicOpType op, Type valueType, ExpressionTy
             break;
         }
     } else {
-        result = push(emitAtomicLoadOp(op, valueType, emitCheckAndPreparePointer(get(pointer), offset, sizeOfAtomicOpMemoryAccess(op), memoryIndex), offset));
+        result = push(emitAtomicLoadOp(op, valueType, emitCheckAndPreparePointer(get(pointer), offset, sizeOfAtomicOpMemoryAccess(op), memoryIndex), offset, memoryIndex));
     }
 
     return { };
 }
 
-inline void OMGIRGenerator::emitAtomicStoreOp(ExtAtomicOpType op, Type valueType, Value* pointer, Value* value, uint64_t uoffset)
+inline void OMGIRGenerator::emitAtomicStoreOp(ExtAtomicOpType op, Type valueType, Value* pointer, Value* value, uint64_t uoffset, uint8_t memoryIndex)
 {
     pointer = fixupPointerPlusOffsetForAtomicOps(op, pointer, uoffset);
 
     if (valueType.isI64() && accessWidth(op) != Width64)
         value = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Trunc, Origin(), value);
-    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicXchg), origin(), accessWidth(op), value, pointer);
+    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicXchg, memoryIndex), origin(), accessWidth(op), value, pointer);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
     m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
 }
@@ -2987,13 +2980,13 @@ auto OMGIRGenerator::atomicStore(ExtAtomicOpType op, Type valueType, ExpressionT
             this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsMemoryAccess);
         });
     } else {
-        emitAtomicStoreOp(op, valueType, emitCheckAndPreparePointer(get(pointer), offset, sizeOfAtomicOpMemoryAccess(op), memoryIndex), get(value), offset);
+        emitAtomicStoreOp(op, valueType, emitCheckAndPreparePointer(get(pointer), offset, sizeOfAtomicOpMemoryAccess(op), memoryIndex), get(value), offset, memoryIndex);
     }
 
     return { };
 }
 
-inline Value* OMGIRGenerator::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Value* pointer, Value* value, uint64_t uoffset)
+inline Value* OMGIRGenerator::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type valueType, Value* pointer, Value* value, uint64_t uoffset, uint8_t memoryIndex)
 {
     pointer = fixupPointerPlusOffsetForAtomicOps(op, pointer, uoffset);
 
@@ -3061,7 +3054,7 @@ inline Value* OMGIRGenerator::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type val
     if (valueType.isI64() && accessWidth(op) != Width64)
         value = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Trunc, Origin(), value);
 
-    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(opcode), origin(), accessWidth(op), value, pointer);
+    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(opcode, memoryIndex), origin(), accessWidth(op), value, pointer);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
     m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
     return sanitizeAtomicResult(op, valueType, atomic);
@@ -3095,20 +3088,20 @@ auto OMGIRGenerator::atomicBinaryRMW(ExtAtomicOpType op, Type valueType, Express
             break;
         }
     } else {
-        result = push(emitAtomicBinaryRMWOp(op, valueType, emitCheckAndPreparePointer(get(pointer), offset, sizeOfAtomicOpMemoryAccess(op), memoryIndex), get(value), offset));
+        result = push(emitAtomicBinaryRMWOp(op, valueType, emitCheckAndPreparePointer(get(pointer), offset, sizeOfAtomicOpMemoryAccess(op), memoryIndex), get(value), offset, memoryIndex));
     }
 
     return { };
 }
 
-Value* OMGIRGenerator::emitAtomicCompareExchange(ExtAtomicOpType op, Type valueType, Value* pointer, Value* expected, Value* value, uint64_t uoffset)
+Value* OMGIRGenerator::emitAtomicCompareExchange(ExtAtomicOpType op, Type valueType, Value* pointer, Value* expected, Value* value, uint64_t uoffset, uint8_t memoryIndex)
 {
     pointer = fixupPointerPlusOffsetForAtomicOps(op, pointer, uoffset);
 
     Width accessWidth = Wasm::accessWidth(op);
 
     if (widthForType(toB3Type(valueType)) == accessWidth) {
-        auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicStrongCAS), origin(), accessWidth, expected, value, pointer);
+        auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicStrongCAS, memoryIndex), origin(), accessWidth, expected, value, pointer);
         m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
         m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
         return sanitizeAtomicResult(op, valueType, atomic);
@@ -3161,7 +3154,7 @@ Value* OMGIRGenerator::emitAtomicCompareExchange(ExtAtomicOpType op, Type valueT
         truncatedValue = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Trunc, Origin(), value);
     }
 
-    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicStrongCAS), origin(), accessWidth, truncatedExpected, truncatedValue, pointer);
+    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicStrongCAS, memoryIndex), origin(), accessWidth, truncatedExpected, truncatedValue, pointer);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
     m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
     return sanitizeAtomicResult(op, valueType, atomic);
@@ -3212,7 +3205,7 @@ auto OMGIRGenerator::atomicCompareExchange(ExtAtomicOpType op, Type valueType, E
             break;
         }
     } else {
-        result = push(emitAtomicCompareExchange(op, valueType, emitCheckAndPreparePointer(get(pointer), offset, sizeOfAtomicOpMemoryAccess(op), memoryIndex), get(expected), get(value), offset));
+        result = push(emitAtomicCompareExchange(op, valueType, emitCheckAndPreparePointer(get(pointer), offset, sizeOfAtomicOpMemoryAccess(op), memoryIndex), get(expected), get(value), offset, memoryIndex));
     }
 
     return { };
@@ -3220,7 +3213,7 @@ auto OMGIRGenerator::atomicCompareExchange(ExtAtomicOpType op, Type valueType, E
 
 auto OMGIRGenerator::atomicWait(ExtAtomicOpType op, ExpressionType pointerVar, ExpressionType valueVar, ExpressionType timeoutVar, ExpressionType& result, uint64_t offset, uint8_t memoryIndex) -> PartialResult
 {
-    Value* pointer = get(pointerVar);
+    Value* pointer = addressOperand(m_info.memory(memoryIndex).isMemory64(), pointerVar);
     Value* value = get(valueVar);
     Value* timeout = get(timeoutVar);
     Value* resultValue = nullptr;
@@ -3248,7 +3241,7 @@ auto OMGIRGenerator::atomicWait(ExtAtomicOpType op, ExpressionType pointerVar, E
 auto OMGIRGenerator::atomicNotify(ExtAtomicOpType, ExpressionType pointer, ExpressionType count, ExpressionType& result, uint64_t offset, uint8_t memoryIndex) -> PartialResult
 {
     Value* resultValue = callWasmOperation(m_currentBlock, Int32, operationMemoryAtomicNotify,
-        instanceValue(), get(pointer), constant(Int64, offset), get(count), constant(Int32, memoryIndex));
+        instanceValue(), addressOperand(m_info.memory(memoryIndex).isMemory64(), pointer), constant(Int64, offset), get(count), constant(Int32, memoryIndex));
     {
         result = push(resultValue);
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
@@ -4308,7 +4301,7 @@ auto OMGIRGenerator::addSIMDLoad(ExpressionType pointerVariable, uint64_t uoffse
 {
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, 16, memoryIndex);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), B3::V128, origin(), ptr, offset);
+    auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), B3::V128, origin(), ptr, offset);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
     result = push(value);
 
@@ -4319,7 +4312,7 @@ auto OMGIRGenerator::addSIMDStore(ExpressionType value, ExpressionType pointerVa
 {
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, 16, memoryIndex);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store), origin(), get(value), ptr, offset);
+    auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store, memoryIndex), origin(), get(value), ptr, offset);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
 
     return { };
@@ -4363,7 +4356,7 @@ auto OMGIRGenerator::addSIMDLoadSplat(SIMDLaneOperation op, ExpressionType point
 
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize, memoryIndex);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp), type, origin(), ptr, offset);
+    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp, memoryIndex), type, origin(), ptr, offset);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, memLoad);
     result = push(m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorSplat, B3::V128, lane, SIMDSignMode::None, memLoad));
 
@@ -4407,7 +4400,7 @@ auto OMGIRGenerator::addSIMDLoadLane(SIMDLaneOperation op, ExpressionType pointe
 
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize, memoryIndex);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp), type, origin(), ptr, offset);
+    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp, memoryIndex), type, origin(), ptr, offset);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, memLoad);
     result = push(m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorReplaceLane, B3::V128, lane, SIMDSignMode::None, laneIndex, get(vectorVariable), memLoad));
 
@@ -4452,7 +4445,7 @@ auto OMGIRGenerator::addSIMDStoreLane(SIMDLaneOperation op, ExpressionType point
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize, memoryIndex);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
     Value* laneValue = m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorExtractLane, type, lane, byteSize < 4 ? SIMDSignMode::Unsigned : SIMDSignMode::None, laneIndex, get(vectorVariable));
-    auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(storeOp), origin(), laneValue, ptr, offset);
+    auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(storeOp, memoryIndex), origin(), laneValue, ptr, offset);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
 
     return { };
@@ -4495,7 +4488,7 @@ auto OMGIRGenerator::addSIMDLoadExtend(SIMDLaneOperation op, ExpressionType poin
 
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize, memoryIndex);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp), B3::Double, origin(), ptr, offset);
+    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp, memoryIndex), B3::Double, origin(), ptr, offset);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, memLoad);
     result = push(m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), VectorExtendLow, B3::V128, SIMDInfo { lane, signMode }, memLoad));
 
@@ -4525,7 +4518,7 @@ auto OMGIRGenerator::addSIMDLoadPad(SIMDLaneOperation op, ExpressionType pointer
 
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize, memoryIndex);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), loadType, origin(), ptr, offset);
+    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), loadType, origin(), ptr, offset);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, memLoad);
     result = push(m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorReplaceLane, B3::V128, lane, SIMDSignMode::None, idx,
         m_currentBlock->appendNew<Const128Value>(m_proc, origin(), v128_t { }),
@@ -5629,7 +5622,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
     {
         ShuffleEntry entry;
         entry.src = ShuffleLocation::fromStack(fpOffsetToSPOffset(CallFrame::returnPCOffset()));
-#if CPU(ARM) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(RISCV64)
         ASSERT(!calleeSaves.find(MacroAssembler::linkRegister));
         entry.dst = ShuffleLocation::fromGPR(MacroAssembler::linkRegister);
 #else
@@ -5835,7 +5828,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
 
     auto newSPAtPrologueOffsetFromSP = newFPOffsetFromSP + prologueStackPointerDelta();
 
-#if CPU(ARM) || CPU(ARM64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(RISCV64)
     // the return PC should already be in the linkRegister from the shuffle above.
     if (WasmOMGIRGeneratorInternal::verboseTailCalls) {
         jit.probeDebug([] (Probe::Context& context) {
@@ -6348,7 +6341,7 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
         ASSERT(tableIndex < m_info.tableCount());
         auto& tableInformation = m_info.table(tableIndex);
 
-        if (tableInformation.maximum() && tableInformation.maximum().value() == tableInformation.initial()) {
+        if (tableInformation.maximum() && tableInformation.maximum().value() == tableInformation.initial() && Table::isValidLength(tableInformation.initial())) {
             // The buffer is immutable & non-control-dependent since this table is not resizable / reaching to the maximum size.
             callableFunctionBufferLength = constant(B3::Int32, tableInformation.initial(), origin());
             if (!tableIndex) {
@@ -6722,10 +6715,8 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Compilati
     if (ionGraphPasses) [[unlikely]]
         procedure.setIonGraphPasses(*ionGraphPasses);
 
-    // This means we cannot use either StackmapGenerationParams::usedRegisters() or
-    // StackmapGenerationParams::unavailableRegisters(). In exchange for this concession, we
-    // don't strictly need to run Air::reportUsedRegisters(), which saves a bit of CPU time at
-    // optLevel=1.
+    // Skipping Air::reportUsedRegisters() costs us StackmapGenerationParams::usedRegisters() and
+    // StackmapGenerationParams::unavailableRegisters(), which OMG does not use.
     procedure.setNeedsUsedRegisters(false);
     
     procedure.setOptLevel(Options::wasmOMGOptimizationLevel());

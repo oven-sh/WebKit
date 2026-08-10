@@ -108,6 +108,13 @@ private:
 #if ENABLE(MODEL_ELEMENT_ENTITY_TRANSFORM)
     void didUpdateEntityTransform(ModelPlayer&, NodeIdentifier, const TransformationMatrix&) final { }
 #endif
+#if ENABLE(SPATIAL_PORTAL)
+    void didUpdatePortalTransform(ModelPlayer& player, const TransformationMatrix& transform) final
+    {
+        if (CheckedPtr controller = m_controller.get())
+            controller->modelDidUpdatePortalTransform(player, transform);
+    }
+#endif
 #if ENABLE(MODEL_ELEMENT_BOUNDING_BOX)
     void didUpdateBoundingBox(ModelPlayer&, NodeIdentifier, const FloatPoint3D&, const FloatPoint3D&) final { }
 #endif
@@ -203,8 +210,11 @@ void SpatialPortalController::unregisterChildModel(HTMLModelElement& model)
     if (hostedModelElement(nodeID) != &model)
         return;
 
-    unloadChildModel(nodeID);
     m_hostedModels.remove(nodeID);
+
+    // Unconditional, unlike unloadChildModel(): the player also tracks nodes that never loaded.
+    if (RefPtr player = m_modelPlayer)
+        player->unload(nodeID);
 
     if (m_hostedModels.isEmpty())
         deleteModelPlayer();
@@ -259,6 +269,10 @@ void SpatialPortalController::loadChildModelIfReady(HTMLModelElement& model)
         return;
 
     it->value.loadedModel = modelData;
+
+#if ENABLE(MODEL_ELEMENT_ANIMATIONS_CONTROL)
+    model.applyInitialAnimationState(*player);
+#endif
     player->load(nodeID, *modelData, portalContentSize(), false);
 }
 
@@ -323,7 +337,23 @@ ModelPlayer* SpatialPortalController::ensureModelPlayer()
         lazyInitialize(m_playerClient, PortalModelPlayerClient::create(*this));
 
     m_modelPlayer = provider->createModelPlayer(*m_playerClient);
+    if (!m_modelPlayer)
+        return nullptr;
+
+    m_modelPlayer->setPortalTransform(m_portalTransform);
+
     return m_modelPlayer.get();
+}
+
+void SpatialPortalController::setPortalTransform(PortalTransformKind kind)
+{
+    if (m_portalTransform == kind)
+        return;
+
+    m_portalTransform = kind;
+
+    if (RefPtr player = m_modelPlayer)
+        player->setPortalTransform(m_portalTransform);
 }
 
 void SpatialPortalController::deleteModelPlayer()
@@ -335,6 +365,9 @@ void SpatialPortalController::deleteModelPlayer()
     }
     for (auto& hostedModel : m_hostedModels.values())
         hostedModel.loadedModel = nullptr;
+
+    m_lastPushedContentSize = std::nullopt;
+    m_resolvedPortalTransform = std::nullopt;
 }
 
 void SpatialPortalController::unloadChildModel(NodeIdentifier nodeID)
@@ -382,8 +415,16 @@ void SpatialPortalController::configureGraphicsLayer(GraphicsLayer& graphicsLaye
 
 void SpatialPortalController::sizeMayHaveChanged()
 {
-    if (RefPtr player = m_modelPlayer)
-        player->sizeDidChange(portalContentSize());
+    RefPtr player = m_modelPlayer;
+    if (!player)
+        return;
+
+    auto size = portalContentSize();
+    if (m_lastPushedContentSize == size)
+        return;
+
+    m_lastPushedContentSize = size;
+    player->sizeDidChange(size);
 }
 
 void SpatialPortalController::modelDidFinishLoading(ModelPlayer&, NodeIdentifier nodeID)
@@ -423,6 +464,14 @@ void SpatialPortalController::modelDidUnload(ModelPlayer& player)
 void SpatialPortalController::modelDidUpdate(ModelPlayer&)
 {
     reconfigurePortalLayer();
+}
+
+void SpatialPortalController::modelDidUpdatePortalTransform(ModelPlayer& player, const TransformationMatrix& transform)
+{
+    if (&player != m_modelPlayer)
+        return;
+
+    m_resolvedPortalTransform = transform;
 }
 
 // Mirrors HTMLModelElement::logWarning().

@@ -2600,10 +2600,11 @@ static void testCalendarFieldsFunctions()
     auto rWith2 = plainYearMonthWith(id("iso8601"_s), { 2025, 3, 1 }, partialMonth, TemporalOverflow::Constrain);
     TCHECK_TRUE(rWith2.has_value() && rWith2->isoDate.year() == 2025 && rWith2->isoDate.month() == 7, "plainYearMonthWith: override month -> 2025-07");
 
-    // empty partial fields: ISO falls back year+monthCode from current, succeeds
+    // empty partial fields: ISO falls back year+monthCode from current, succeeds. Unreachable from
+    // JS — PrepareCalendarFields(..., ~partial~) throws before .with() ever gets here.
     CalendarFieldsIn emptyPartial;
     auto rWithEmpty = plainYearMonthWith(id("iso8601"_s), { 2025, 3, 1 }, emptyPartial, TemporalOverflow::Constrain);
-    TCHECK_TRUE(!rWithEmpty.has_value(), "plainYearMonthWith: empty partial -> TypeError (temporal_rs: fields.is_empty())");
+    TCHECK_TRUE(rWithEmpty.has_value() && rWithEmpty->isoDate.year() == 2025 && rWithEmpty->isoDate.month() == 3, "plainYearMonthWith: empty partial -> receiver 2025-03");
 
     f = { };
     f.year = 275761; // one past maxYear
@@ -2705,90 +2706,179 @@ static void testCalendarFieldsFunctions()
     TCHECK_TRUE(!rDW6.has_value() && rDW6.error().kind == TemporalErrorKind::RangeError, "plainDateWith: inconsistent year+era+eraYear -> RangeError");
 }
 
-static void testCalendarDateFromFields()
+static void testCalendarMergeFieldsWith()
 {
     using MC = ParsedMonthCode;
     auto id = calendarIDFromString;
 
-    // --- Non-lunisolar: year + month + day ---
-    // Gregory year->ISO
-    auto r = calendarDateFromFields(id("gregory"_s), 2024, 3, 15, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    // chinese (lunisolar): year-only change with month/monthCode absent must fall back via
+    // monthCode, not a raw ordinal, since 2023's leap-month layout differs from 2020's.
+    {
+        CalendarFieldsIn partial;
+        partial.year = 2023;
+        auto r = plainDateWith(id("chinese"_s), { 2020, 5, 23 }, partial, TemporalOverflow::Constrain);
+        TCHECK_TRUE(r.has_value() && r->isoDate.year() == 2023 && r->isoDate.month() == 5 && r->isoDate.day() == 19, "plainDateWith: chinese year-only change through leap-month year -> 2023-05-19");
+    }
+    {
+        CalendarFieldsIn partial;
+        partial.day = 10;
+        auto r = plainDateWith(id("chinese"_s), { 2020, 5, 23 }, partial, TemporalOverflow::Constrain);
+        TCHECK_TRUE(r.has_value() && r->isoDate.year() == 2020 && r->isoDate.month() == 6 && r->isoDate.day() == 1, "plainDateWith: chinese day-only change -> 2020-06-01");
+    }
+
+    // Same chinese leap-month case via plainYearMonthWith.
+    {
+        CalendarFieldsIn partial;
+        partial.year = 2023;
+        auto r = plainYearMonthWith(id("chinese"_s), { 2020, 5, 23 }, partial, TemporalOverflow::Constrain);
+        TCHECK_TRUE(r.has_value() && r->isoDate.year() == 2023 && r->isoDate.month() == 5 && r->isoDate.day() == 19, "plainYearMonthWith: chinese year-only change through leap-month year -> 2023-05-19");
+    }
+    {
+        // PlainYearMonth's stored ISO date always has day=1. Showa 64 Jan 1 = 1989-01-01
+        // (Heisei starts 1989-01-08); .with({month: 6}) re-derives era into Heisei.
+        CalendarFieldsIn partial;
+        partial.month = 6;
+        auto r = plainYearMonthWith(id("japanese"_s), { 1989, 1, 1 }, partial, TemporalOverflow::Constrain);
+        TCHECK_TRUE(r.has_value() && r->isoDate.year() == 1989 && r->isoDate.month() == 6, "plainYearMonthWith: japanese month change re-derives era -> 1989-06");
+    }
+
+    // plainMonthDayWith: ISO day/month-only changes.
+    {
+        CalendarFieldsIn base;
+        base.month = 6;
+        base.day = 15;
+        auto baseResolved = monthDayFromFields(id("iso8601"_s), base, TemporalOverflow::Constrain);
+        TCHECK_TRUE(baseResolved.has_value(), "plainMonthDayWith setup: iso base 06-15");
+
+        CalendarFieldsIn partialDay;
+        partialDay.day = 20;
+        auto r1 = plainMonthDayWith(id("iso8601"_s), baseResolved->isoDate, partialDay, TemporalOverflow::Constrain);
+        TCHECK_TRUE(r1.has_value() && r1->isoDate.month() == 6 && r1->isoDate.day() == 20, "plainMonthDayWith: iso day-only -> 06-20");
+
+        CalendarFieldsIn partialMonth;
+        partialMonth.month = 3;
+        auto r2 = plainMonthDayWith(id("iso8601"_s), baseResolved->isoDate, partialMonth, TemporalOverflow::Constrain);
+        TCHECK_TRUE(r2.has_value() && r2->isoDate.month() == 3 && r2->isoDate.day() == 15, "plainMonthDayWith: iso month-only -> 03-15");
+    }
+
+    // plainMonthDayWith: hebrew — month-without-year now throws via nonISOResolveFields.
+    {
+        CalendarFieldsIn base;
+        base.monthCode = MC { 5, false };
+        base.day = 1;
+        auto baseResolved = monthDayFromFields(id("hebrew"_s), base, TemporalOverflow::Constrain);
+        TCHECK_TRUE(baseResolved.has_value() && baseResolved->isoDate.year() == 1972 && baseResolved->isoDate.month() == 1 && baseResolved->isoDate.day() == 17, "plainMonthDayWith setup: hebrew M05 day=1 -> 1972-01-17");
+
+        CalendarFieldsIn partialDay;
+        partialDay.day = 10;
+        auto r1 = plainMonthDayWith(id("hebrew"_s), baseResolved->isoDate, partialDay, TemporalOverflow::Constrain);
+        TCHECK_TRUE(r1.has_value() && r1->isoDate.year() == 1972 && r1->isoDate.month() == 1 && r1->isoDate.day() == 26, "plainMonthDayWith: hebrew day-only -> 1972-01-26");
+
+        CalendarFieldsIn partialMonthNoYear;
+        partialMonthNoYear.month = 2;
+        auto r2 = plainMonthDayWith(id("hebrew"_s), baseResolved->isoDate, partialMonthNoYear, TemporalOverflow::Constrain);
+        TCHECK_TRUE(!r2.has_value() && r2.error().kind == TemporalErrorKind::TypeError, "plainMonthDayWith: hebrew month without year -> TypeError");
+
+        CalendarFieldsIn partialMonthYear;
+        partialMonthYear.month = 2;
+        partialMonthYear.year = 2020;
+        auto r3 = plainMonthDayWith(id("hebrew"_s), baseResolved->isoDate, partialMonthYear, TemporalOverflow::Constrain);
+        TCHECK_TRUE(r3.has_value() && r3->isoDate.year() == 1972 && r3->isoDate.month() == 10 && r3->isoDate.day() == 9, "plainMonthDayWith: hebrew month+year -> 1972-10-09");
+    }
+}
+
+static void testNonISOCalendarDateToISO()
+{
+    using MC = ParsedMonthCode;
+    auto id = calendarIDFromString;
+
+    auto fromEra = [&](CalendarID calendarId, StringView era, int32_t eraYear, uint8_t month, uint8_t day, std::optional<MC> monthCode, TemporalOverflow overflow) {
+        CalendarFieldsIn fields;
+        fields.era = era.toString();
+        fields.eraYear = eraYear;
+        fields.month = month;
+        fields.day = day;
+        fields.monthCode = monthCode;
+        return dateFromFields(calendarId, fields, overflow);
+    };
+
+    // --- Non-lunisolar: year + month + day (direct call) ---
+    auto r = nonISOCalendarDateToISO(id("gregory"_s), 2024, 3, 15, std::nullopt, TemporalOverflow::Reject);
     TCHECK_TRUE(r.has_value() && r->year() == 2024 && r->month() == 3 && r->day() == 15, "gregory: year+month+day");
 
-    // --- Era + eraYear ---
-    // Gregory ce era — year=nullopt: no user-provided year, consistency check skipped
-    auto rEra = calendarDateFromFields(id("gregory"_s), std::nullopt, 3, 15, StringView("ce"_s), 2024, std::nullopt, TemporalOverflow::Reject);
-    TCHECK_TRUE(rEra.has_value() && rEra->year() == 2024 && rEra->month() == 3 && rEra->day() == 15, "gregory: ce+eraYear");
+    // --- Era + eraYear (via dateFromFields — nonISOResolveFields collapses era into year) ---
+    auto rEra = fromEra(id("gregory"_s), "ce"_s, 2024, 3, 15, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rEra.has_value() && rEra->isoDate.year() == 2024 && rEra->isoDate.month() == 3 && rEra->isoDate.day() == 15, "gregory: ce+eraYear");
 
-    // Gregory bce era: eraYear 1 = ISO year 0 — year=nullopt (user didn't provide year)
-    auto rBce = calendarDateFromFields(id("gregory"_s), std::nullopt, 1, 1, StringView("bce"_s), 1, std::nullopt, TemporalOverflow::Reject);
-    TCHECK_TRUE(rBce.has_value() && !rBce->year(), "gregory: bce eraYear 1 = ISO 0");
+    // Gregory bce era: eraYear 1 = ISO year 0.
+    auto rBce = fromEra(id("gregory"_s), "bce"_s, 1, 1, 1, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rBce.has_value() && !rBce->isoDate.year(), "gregory: bce eraYear 1 = ISO 0");
 
-    // Japanese: modern era (reiwa year 6 = 2024) — year=nullopt
-    auto rJp = calendarDateFromFields(id("japanese"_s), std::nullopt, 1, 1, StringView("reiwa"_s), 6, std::nullopt, TemporalOverflow::Reject);
-    TCHECK_TRUE(rJp.has_value() && rJp->year() == 2024, "japanese: reiwa 6 = 2024");
+    // Japanese: modern era (reiwa year 6 = 2024).
+    auto rJp = fromEra(id("japanese"_s), "reiwa"_s, 6, 1, 1, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rJp.has_value() && rJp->isoDate.year() == 2024, "japanese: reiwa 6 = 2024");
 
-    // Japanese: pre-1868 "ce" era bypasses ICU — year=nullopt
-    auto rJpCe = calendarDateFromFields(id("japanese"_s), std::nullopt, 6, 15, StringView("ce"_s), 1600, std::nullopt, TemporalOverflow::Reject);
-    TCHECK_TRUE(rJpCe.has_value() && rJpCe->year() == 1600 && rJpCe->month() == 6 && rJpCe->day() == 15, "japanese: ce 1600 bypass");
+    // Japanese: pre-1868 "ce" era bypasses ICU.
+    auto rJpCe = fromEra(id("japanese"_s), "ce"_s, 1600, 6, 15, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rJpCe.has_value() && rJpCe->isoDate.year() == 1600 && rJpCe->isoDate.month() == 6 && rJpCe->isoDate.day() == 15, "japanese: ce 1600 bypass");
 
-    // ROC: positive year (roc era)
-    auto rRoc = calendarDateFromFields(id("roc"_s), 113, 1, 1, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    // ROC: positive year (roc era).
+    auto rRoc = nonISOCalendarDateToISO(id("roc"_s), 113, 1, 1, std::nullopt, TemporalOverflow::Reject);
     TCHECK_TRUE(rRoc.has_value() && rRoc->year() == 2024, "roc: year 113 = 2024");
 
-    // ROC: year 0 -> broc era (ISO 1911)
-    auto rRocBroc = calendarDateFromFields(id("roc"_s), 0, 1, 1, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    // ROC: year 0 -> broc era (ISO 1911).
+    auto rRocBroc = nonISOCalendarDateToISO(id("roc"_s), 0, 1, 1, std::nullopt, TemporalOverflow::Reject);
     TCHECK_TRUE(rRocBroc.has_value() && rRocBroc->year() == 1911, "roc: year 0 = ISO 1911");
 
     // --- Month code: non-lunisolar ---
-    // Gregory M03 = March
-    auto rMc = calendarDateFromFields(id("gregory"_s), 2024, 0, 15, std::nullopt, std::nullopt, MC { 3, false }, TemporalOverflow::Reject);
+    // Gregory M03 = March.
+    auto rMc = nonISOCalendarDateToISO(id("gregory"_s), 2024, 0, 15, MC { 3, false }, TemporalOverflow::Reject);
     TCHECK_TRUE(rMc.has_value() && rMc->month() == 3 && rMc->day() == 15, "gregory: monthCode M03");
 
     // --- Month code: Hebrew leap month ---
-    // Hebrew 5784 is a leap year; M05L = Adar I
-    auto rHebLeap = calendarDateFromFields(id("hebrew"_s), 5784, 0, 1, std::nullopt, std::nullopt, MC { 5, true }, TemporalOverflow::Reject);
+    // Hebrew 5784 is a leap year; M05L = Adar I.
+    auto rHebLeap = nonISOCalendarDateToISO(id("hebrew"_s), 5784, 0, 1, MC { 5, true }, TemporalOverflow::Reject);
     TCHECK_TRUE(rHebLeap.has_value(), "hebrew: M05L in leap year 5784");
 
-    // Hebrew 5783 is NOT a leap year; M05L constrain -> same month
-    auto rHebConstrain = calendarDateFromFields(id("hebrew"_s), 5783, 0, 1, std::nullopt, std::nullopt, MC { 5, true }, TemporalOverflow::Constrain);
+    // Hebrew 5783 is NOT a leap year; M05L constrain -> same month.
+    auto rHebConstrain = nonISOCalendarDateToISO(id("hebrew"_s), 5783, 0, 1, MC { 5, true }, TemporalOverflow::Constrain);
     TCHECK_TRUE(rHebConstrain.has_value(), "hebrew: M05L constrain in non-leap year 5783");
 
-    // Hebrew 5783 non-leap + M05L reject -> error
-    auto rHebReject = calendarDateFromFields(id("hebrew"_s), 5783, 0, 1, std::nullopt, std::nullopt, MC { 5, true }, TemporalOverflow::Reject);
+    // Hebrew 5783 non-leap + M05L reject -> error.
+    auto rHebReject = nonISOCalendarDateToISO(id("hebrew"_s), 5783, 0, 1, MC { 5, true }, TemporalOverflow::Reject);
     TCHECK_TRUE(!rHebReject.has_value(), "hebrew: M05L reject in non-leap year");
 
     // --- Overflow: constrain ---
-    // Gregory: day 32 in January -> day 31
-    auto rConstrain = calendarDateFromFields(id("gregory"_s), 2024, 1, 32, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Constrain);
+    // Gregory: day 32 in January -> day 31.
+    auto rConstrain = nonISOCalendarDateToISO(id("gregory"_s), 2024, 1, 32, std::nullopt, TemporalOverflow::Constrain);
     TCHECK_TRUE(rConstrain.has_value() && rConstrain->day() == 31, "gregory: day 32 constrain -> 31");
 
-    // Gregory: day 32 in January reject -> error
-    auto rReject = calendarDateFromFields(id("gregory"_s), 2024, 1, 32, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    // Gregory: day 32 in January reject -> error.
+    auto rReject = nonISOCalendarDateToISO(id("gregory"_s), 2024, 1, 32, std::nullopt, TemporalOverflow::Reject);
     TCHECK_TRUE(!rReject.has_value(), "gregory: day 32 reject -> error");
 
-    // --- Invalid era ---
-    auto rBadEra = calendarDateFromFields(id("gregory"_s), 0, 1, 1, StringView("invalid"_s), 2024, std::nullopt, TemporalOverflow::Reject);
-    TCHECK_TRUE(!rBadEra.has_value(), "gregory: invalid era -> error");
+    // --- Invalid era (via dateFromFields — era validity is enforced in nonISOResolveFields) ---
+    auto rBadEra = fromEra(id("gregory"_s), "invalid"_s, 2024, 1, 1, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(!rBadEra.has_value() && rBadEra.error().kind == TemporalErrorKind::RangeError, "gregory: invalid era -> RangeError");
 
     // Buddhist: user's `year` is BE (= Gregorian + 543).
-    auto rBud = calendarDateFromFields(id("buddhist"_s), 2567, 1, 1, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    auto rBud = nonISOCalendarDateToISO(id("buddhist"_s), 2567, 1, 1, std::nullopt, TemporalOverflow::Reject);
     TCHECK_TRUE(rBud.has_value() && rBud->year() == 2024, "buddhist: BE 2567 -> ISO 2024");
-    auto rBudEra = calendarDateFromFields(id("buddhist"_s), std::nullopt, 1, 1, StringView("be"_s), 2567, std::nullopt, TemporalOverflow::Reject);
-    TCHECK_TRUE(rBudEra.has_value() && rBudEra->year() == 2024, "buddhist: era be, eraYear=2567 -> ISO 2024");
+    auto rBudEra = fromEra(id("buddhist"_s), "be"_s, 2567, 1, 1, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rBudEra.has_value() && rBudEra->isoDate.year() == 2024, "buddhist: era be, eraYear=2567 -> ISO 2024");
     // Reference-year path: BE 2515 = Gregorian 1972 leap; Feb 29 must succeed.
-    auto rBudRef = calendarDateFromFields(id("buddhist"_s), 2515, 2, 29, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    auto rBudRef = nonISOCalendarDateToISO(id("buddhist"_s), 2515, 2, 29, std::nullopt, TemporalOverflow::Reject);
     TCHECK_TRUE(rBudRef.has_value() && rBudRef->year() == 1972 && rBudRef->day() == 29u, "buddhist: BE 2515 Feb 29 -> ISO 1972-02-29");
 
-    // Coptic am era: era 1 (AM), not era 0. AM 1740 M01 D01 = ISO 2023-09-12.
-    auto rCop = calendarDateFromFields(id("coptic"_s), std::nullopt, 1, 1, StringView("am"_s), 1740, std::nullopt, TemporalOverflow::Reject);
-    TCHECK_TRUE(rCop.has_value() && rCop->year() == 2023 && rCop->month() == 9u && rCop->day() == 12u, "coptic: am 1740 M01 D01 -> ISO 2023-09-12");
-    auto rCopY = calendarDateFromFields(id("coptic"_s), 1740, 1, 1, std::nullopt, std::nullopt, std::nullopt, TemporalOverflow::Reject);
+    // Coptic am era: AM 1740 M01 D01 = ISO 2023-09-12.
+    auto rCop = fromEra(id("coptic"_s), "am"_s, 1740, 1, 1, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rCop.has_value() && rCop->isoDate.year() == 2023 && rCop->isoDate.month() == 9u && rCop->isoDate.day() == 12u, "coptic: am 1740 M01 D01 -> ISO 2023-09-12");
+    auto rCopY = nonISOCalendarDateToISO(id("coptic"_s), 1740, 1, 1, std::nullopt, TemporalOverflow::Reject);
     TCHECK_TRUE(rCopY.has_value() && rCopY->year() == 2023, "coptic: year=1740 -> ISO 2023 (era-free)");
 
     // Ethiopic am era: same fix as Coptic. AM 2016 M01 D01 = ISO 2023-09-12.
-    auto rEth = calendarDateFromFields(id("ethiopic"_s), std::nullopt, 1, 1, StringView("am"_s), 2016, std::nullopt, TemporalOverflow::Reject);
-    TCHECK_TRUE(rEth.has_value() && rEth->year() == 2023, "ethiopic: am 2016 -> ISO 2023");
+    auto rEth = fromEra(id("ethiopic"_s), "am"_s, 2016, 1, 1, std::nullopt, TemporalOverflow::Reject);
+    TCHECK_TRUE(rEth.has_value() && rEth->isoDate.year() == 2023, "ethiopic: am 2016 -> ISO 2023");
 }
 
 static void testIsBuiltinCalendar()
@@ -2885,7 +2975,7 @@ static void testCalendarICUNonISO()
     TCHECK_EQ(*rPY, 1399, "persian: Nowruz 1399");
 
     // Islamic calendar: 2020-04-24 = 1 Ramadan 1441
-    auto rIM = calendarMonth(calendarIDFromString("islamic"_s), { 2020, 4, 24 });
+    auto rIM = calendarMonth(calendarIDFromString("islamic-tbla"_s), { 2020, 4, 24 });
     TCHECK_TRUE(rIM.has_value(), "islamic: month ok");
     TCHECK_EQ(*rIM, 9u, "islamic: Ramadan = month 9");
 
@@ -2937,10 +3027,24 @@ static void testExactTimeToLocalDateAndTime()
     TCHECK_EQ(time3.hour(), 19u, "localDT: UTC-5 epoch hour");
 }
 
+// Resolves an identifier to a TimeZone the way ToTemporalTimeZoneIdentifier steps 3-9 do:
+// parseTemporalTimeZoneString returns the Time Zone Identifier Parse Record, not a resolved zone.
+static std::optional<TimeZone> timeZoneFromIdentifier(StringView identifier)
+{
+    auto parse = ISO8601::parseTemporalTimeZoneString(identifier);
+    if (!parse)
+        return std::nullopt;
+    if (parse->offsetMinutes)
+        return TimeZone::fromUTCOffset(*parse->offsetMinutes * static_cast<int64_t>(ISO8601::ExactTime::nsPerMinute));
+    if (auto tzId = ISO8601::parseTimeZoneName(parse->name.span()))
+        return TimeZone::fromID(*tzId);
+    return std::nullopt;
+}
+
 static void testInterpretISODateTimeOffset()
 {
     // temporal_rs: interpret_isodatetime_offset tested via zdt_from_partial, zdt_offset_match_minutes
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (!utcOpt) {
         fprintf(stderr, "SKIP [interpretISODateTimeOffset]: UTC not available\n");
         return;
@@ -2951,16 +3055,16 @@ static void testInterpretISODateTimeOffset()
 
     // Step 1: start-of-day -> getStartOfDay
     {
-        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { }, true, OffsetBehaviour::Wall,
-            TemporalOffsetDisambiguation::Ignore, 0, false, utc, TemporalDisambiguation::Compatible);
+        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { }, UseStartOfDay::Yes, OffsetBehaviour::Wall,
+            TemporalOffsetDisambiguation::Ignore, 0, MatchBehaviour::MatchMinutes, utc, TemporalDisambiguation::Compatible);
         TCHECK_TRUE(r.has_value(), "interpretISO: start-of-day ok");
         TCHECK_EQ(r->epochNanoseconds(), Int128(1577836800000000000LL), "interpretISO: start-of-day = midnight UTC");
     }
 
     // Step 3: Wall -> GetEpochNanosecondsFor (ignore offset entirely)
     {
-        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { 12, 0, 0, 0, 0, 0 }, false,
-            OffsetBehaviour::Wall, TemporalOffsetDisambiguation::Ignore, 3600000000000LL, false,
+        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { 12, 0, 0, 0, 0, 0 }, UseStartOfDay::No,
+            OffsetBehaviour::Wall, TemporalOffsetDisambiguation::Ignore, 3600000000000LL, MatchBehaviour::MatchMinutes,
             utc, TemporalDisambiguation::Compatible);
         TCHECK_TRUE(r.has_value(), "interpretISO: Wall ok");
         TCHECK_EQ(r->epochNanoseconds(), epoch2020Jan1Noon, "interpretISO: Wall = noon UTC (offset ignored)");
@@ -2970,8 +3074,8 @@ static void testInterpretISODateTimeOffset()
     // 2020-01-01T12:00:00+01:00 -> epoch = noon_UTC - 1h = 11:00 UTC
     {
         constexpr Int128 epoch2020Jan1_11UTC { 1577876400000000000LL };
-        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { 12, 0, 0, 0, 0, 0 }, false,
-            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Use, 3600000000000LL, false,
+        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { 12, 0, 0, 0, 0, 0 }, UseStartOfDay::No,
+            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Use, 3600000000000LL, MatchBehaviour::MatchMinutes,
             utc, TemporalDisambiguation::Compatible);
         TCHECK_TRUE(r.has_value(), "interpretISO: Use ok");
         TCHECK_EQ(r->epochNanoseconds(), epoch2020Jan1_11UTC, "interpretISO: Use = noon - 1h offset");
@@ -2979,8 +3083,8 @@ static void testInterpretISODateTimeOffset()
 
     // Step 10b: Prefer — offset matches UTC (0), returns the UTC candidate
     {
-        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { 12, 0, 0, 0, 0, 0 }, false,
-            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Prefer, 0, false,
+        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { 12, 0, 0, 0, 0, 0 }, UseStartOfDay::No,
+            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Prefer, 0, MatchBehaviour::MatchMinutes,
             utc, TemporalDisambiguation::Compatible);
         TCHECK_TRUE(r.has_value(), "interpretISO: Prefer UTC=0 ok");
         TCHECK_EQ(r->epochNanoseconds(), epoch2020Jan1Noon, "interpretISO: Prefer UTC=0 = noon UTC");
@@ -2988,26 +3092,26 @@ static void testInterpretISODateTimeOffset()
 
     // Step 11: Reject — offset (+1h) doesn't match UTC (0) -> error
     {
-        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { 12, 0, 0, 0, 0, 0 }, false,
-            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Reject, 3600000000000LL, false,
+        auto r = interpretISODateTimeOffset({ 2020, 1, 1 }, { 12, 0, 0, 0, 0, 0 }, UseStartOfDay::No,
+            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Reject, 3600000000000LL, MatchBehaviour::MatchMinutes,
             utc, TemporalDisambiguation::Compatible);
         TCHECK_TRUE(!r.has_value(), "interpretISO: Reject mismatch -> error");
     }
 
     // Step 10c: match-minutes — Africa/Monrovia has offset -44:30 in 1970; -45:00 (rounded) is accepted
     // temporal_rs: zdt_offset_match_minutes test
-    auto monroviaOpt = ISO8601::parseTemporalTimeZoneIdentifier("Africa/Monrovia"_s);
+    auto monroviaOpt = timeZoneFromIdentifier("Africa/Monrovia"_s);
     if (monroviaOpt) {
         constexpr int64_t minus44m30s = -(44 * 60 + 30) * 1000000000LL; // -44min 30sec in ns
         constexpr int64_t minus45m = -(45 * 60) * 1000000000LL; // -45min in ns
-        // Exact match (-44:30) accepted — has sub-minute precision -> matchMinutes=false (exact match only)
-        auto rExact = interpretISODateTimeOffset({ 1970, 1, 1 }, { 0, 0, 0, 0, 0, 0 }, false,
-            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Reject, minus44m30s, true,
+        // Exact match (-44:30) accepted — a sub-minute offset string means ~match-exactly~.
+        auto rExact = interpretISODateTimeOffset({ 1970, 1, 1 }, { 0, 0, 0, 0, 0, 0 }, UseStartOfDay::No,
+            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Reject, minus44m30s, MatchBehaviour::MatchExactly,
             *monroviaOpt, TemporalDisambiguation::Compatible);
         TCHECK_TRUE(rExact.has_value(), "interpretISO: Monrovia exact -44:30 accepted");
-        // Rounded match (-45:00) accepted with matchMinutes=true — no sub-minute precision -> matchMinutes=true
-        auto rRounded = interpretISODateTimeOffset({ 1970, 1, 1 }, { 0, 0, 0, 0, 0, 0 }, false,
-            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Reject, minus45m, false,
+        // Rounded match (-45:00) accepted under ~match-minutes~ — minute-precision offset string.
+        auto rRounded = interpretISODateTimeOffset({ 1970, 1, 1 }, { 0, 0, 0, 0, 0, 0 }, UseStartOfDay::No,
+            OffsetBehaviour::Option, TemporalOffsetDisambiguation::Reject, minus45m, MatchBehaviour::MatchMinutes,
             *monroviaOpt, TemporalDisambiguation::Compatible);
         TCHECK_TRUE(rRounded.has_value(), "interpretISO: Monrovia rounded -45:00 accepted (match-minutes)");
     }
@@ -3030,7 +3134,7 @@ static void testTimeZoneICUWithIANA()
 {
     // America/New_York — standard time offset: -5h = -18000000000000 ns
     // Test with a winter date (no DST): 2020-01-15T12:00:00 UTC = 1579089600000000000 ns
-    auto nytzOpt = ISO8601::parseTemporalTimeZoneIdentifier("America/New_York"_s);
+    auto nytzOpt = timeZoneFromIdentifier("America/New_York"_s);
     if (!nytzOpt) {
         fprintf(stderr, "SKIP [IANA tests]: America/New_York not available\n");
         return;
@@ -3287,7 +3391,7 @@ static void testToZonedDateTime()
 {
     // temporal_rs: plain_date.rs::to_zoned_date_time
     // PlainDate 2020-01-01 -> ZDT with UTC -> epoch = 2020-01-01T00:00:00Z
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (!utcOpt) {
         fprintf(stderr, "SKIP [toZDT]: UTC not available\n");
         return;
@@ -3315,7 +3419,7 @@ static void testToZonedDateTimeError()
 {
     // temporal_rs: to_zoned_date_time_error — min date -271821-04-19 start-of-day is at or before min epoch.
 
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (!utcOpt) {
         fprintf(stderr, "SKIP [toZDTErr]: UTC not available\n");
         return;
@@ -3327,7 +3431,7 @@ static void testToZonedDateTimeError()
 static void testAddZonedDateTime()
 {
     // temporal_rs: basic_zdt_add (src/builtins/core/zoned_date_time/tests.rs)
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (!utcOpt) {
         fprintf(stderr, "SKIP [addZonedDateTime]: UTC not available\n");
         return;
@@ -3371,7 +3475,7 @@ static void testGetTimeZoneTransition()
     // temporal_rs: get_time_zone_transition (src/builtins/core/zoned_date_time/tests.rs)
 
     // 1. UTC-offset timezones have no transitions -> nullopt
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (!utcOpt) {
         fprintf(stderr, "SKIP [getTimeZoneTransition]: UTC not available\n");
         return;
@@ -3381,7 +3485,7 @@ static void testGetTimeZoneTransition()
     auto r2 = getTimeZoneTransition(*utcOpt, ISO8601::ExactTime(Int128(0)), TransitionDirection::Previous);
     TCHECK_TRUE(r2.has_value() && !r2->has_value(), "transition: UTC no previous");
     // UTC-offset +05:30 also has no transitions
-    auto plusOpt = ISO8601::parseTemporalTimeZoneIdentifier("+05:30"_s);
+    auto plusOpt = timeZoneFromIdentifier("+05:30"_s);
     if (plusOpt) {
         auto r3 = getTimeZoneTransition(*plusOpt, ISO8601::ExactTime(Int128(0)), TransitionDirection::Next);
         TCHECK_TRUE(r3.has_value() && !r3->has_value(), "transition: +05:30 no transitions");
@@ -3389,7 +3493,7 @@ static void testGetTimeZoneTransition()
 
     // 2. America/New_York DST transitions from a summer 2020 date
     // summer epoch: 2020-07-15T12:00:00Z = 1594814400000000000 ns
-    auto nyOpt = ISO8601::parseTemporalTimeZoneIdentifier("America/New_York"_s);
+    auto nyOpt = timeZoneFromIdentifier("America/New_York"_s);
     if (!nyOpt) {
         fprintf(stderr, "SKIP [getTimeZoneTransition]: America/New_York not available\n");
         return;
@@ -3414,7 +3518,7 @@ static void testGetTimeZoneTransition()
     // From temporal_rs test262 case: at 1970-01-01T00:00:00Z (epoch=0), London was on BST (+01:00).
     // TZDB has intermediate fake entries around 1968-1971 that don't change the UTC offset —
     // our 20-iteration skip loop must bypass them to find the real pre-BST transition.
-    auto londonOpt = ISO8601::parseTemporalTimeZoneIdentifier("Europe/London"_s);
+    auto londonOpt = timeZoneFromIdentifier("Europe/London"_s);
     if (!londonOpt) {
         fprintf(stderr, "SKIP [getTimeZoneTransition London]: Europe/London not available\n");
         return;
@@ -3438,20 +3542,28 @@ static void testGetTimeZoneTransition()
 static void testTimeZoneEquals()
 {
     // temporal_rs: canonicalize_equals (src/builtins/core/time_zone.rs)
+    // timeZoneEquals takes resolved identifiers, so each side goes through
+    // ToTemporalTimeZoneIdentifier first; an unresolvable identifier compares as unequal.
+    auto tzEquals = [](StringView id1, StringView id2) {
+        auto a = timeZoneFromIdentifier(id1);
+        auto b = timeZoneFromIdentifier(id2);
+        return a && b && timeZoneEquals(*a, *b);
+    };
+
     // 1. Identical string -> true
-    TCHECK_TRUE(timeZoneEquals("UTC"_s, "UTC"_s), "tzEquals: UTC=UTC");
-    TCHECK_TRUE(timeZoneEquals("+05:30"_s, "+05:30"_s), "tzEquals: +05:30=+05:30");
+    TCHECK_TRUE(tzEquals("UTC"_s, "UTC"_s), "tzEquals: UTC=UTC");
+    TCHECK_TRUE(tzEquals("+05:30"_s, "+05:30"_s), "tzEquals: +05:30=+05:30");
 
     // 2. Different strings -> false
-    TCHECK_TRUE(!timeZoneEquals("UTC"_s, "America/New_York"_s), "tzEquals: UTC!=NY");
-    TCHECK_TRUE(!timeZoneEquals("+05:30"_s, "+05:00"_s), "tzEquals: offset diff");
+    TCHECK_TRUE(!tzEquals("UTC"_s, "America/New_York"_s), "tzEquals: UTC!=NY");
+    TCHECK_TRUE(!tzEquals("+05:30"_s, "+05:00"_s), "tzEquals: offset diff");
 
     // 3. Offset vs named -> false
-    TCHECK_TRUE(!timeZoneEquals("+00:00"_s, "UTC"_s), "tzEquals: +00:00 != UTC (offset vs named)");
+    TCHECK_TRUE(!tzEquals("+00:00"_s, "UTC"_s), "tzEquals: +00:00 != UTC (offset vs named)");
 
     // 4. IANA aliases: Asia/Calcutta = Asia/Kolkata (canonicalized to same primary)
     // temporal_rs: canonicalize_equals test
-    TCHECK_TRUE(timeZoneEquals("Asia/Calcutta"_s, "Asia/Kolkata"_s), "tzEquals: Calcutta=Kolkata");
+    TCHECK_TRUE(tzEquals("Asia/Calcutta"_s, "Asia/Kolkata"_s), "tzEquals: Calcutta=Kolkata");
 }
 
 static void testPossibleEpochNsAtLimits()
@@ -3459,7 +3571,7 @@ static void testPossibleEpochNsAtLimits()
     // temporal_rs: test_possible_epoch_ns_at_limits (src/builtins/core/time_zone.rs)
     // At the min/max Temporal boundaries, getPossibleEpochNanosecondsFor must return exactly 1 candidate.
     // Just outside those boundaries, it must return empty (range error).
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (!utcOpt) {
         fprintf(stderr, "SKIP [epochNsLimits]: UTC not available\n");
         return;
@@ -3487,7 +3599,7 @@ static void testPossibleEpochNsAtLimits()
     TCHECK_TRUE(!rTooLate.has_value() || isGap(*rTooLate), "epochNsLimits: too-late = error/gap");
 
     // UTC offset timezone: +05:30 — same bounds should hold
-    auto plusOpt = ISO8601::parseTemporalTimeZoneIdentifier("+05:30"_s);
+    auto plusOpt = timeZoneFromIdentifier("+05:30"_s);
     if (plusOpt) {
         auto rPlusMin = getPossibleEpochNanosecondsFor(*plusOpt, { -271821, 4, 20 }, { 5, 30, 0, 0, 0, 0 });
         TCHECK_TRUE(rPlusMin.has_value() && std::holds_alternative<ISO8601::ExactTime>(*rPlusMin), "epochNsLimits: +05:30 min ok");
@@ -3559,7 +3671,7 @@ static void testNudgeFunctions()
     }
 
     // --- nudgeToZonedTime: UTC+0 timezone, P25H rounded to Hour ---
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (utcOpt) {
         ISO8601::PlainDate date { 2020, 1, 1 };
         ISO8601::PlainTime time;
@@ -3578,7 +3690,7 @@ static void testRoundRelativeToZonedDateTime()
     // round to largestUnit=Day -> expected: 1 day 1 hour
 
     // +04:30 = 4.5h = 16200s = 16200000000000 ns
-    auto tzOpt = ISO8601::parseTemporalTimeZoneIdentifier("+04:30"_s);
+    auto tzOpt = timeZoneFromIdentifier("+04:30"_s);
     if (!tzOpt) {
         fprintf(stderr, "SKIP [roundRelZDT]: +04:30 not available\n");
         return;
@@ -3603,7 +3715,7 @@ static void testDurationTotalZDT()
 {
     // temporal_rs: test_duration_total (ZDT path) — P2756H in months with DST differs from PlainDate path.
 
-    auto romeOpt = ISO8601::parseTemporalTimeZoneIdentifier("Europe/Rome"_s);
+    auto romeOpt = timeZoneFromIdentifier("Europe/Rome"_s);
     if (!romeOpt) {
         fprintf(stderr, "SKIP [totalZDT]: Europe/Rome not available\n");
         return;
@@ -3641,7 +3753,7 @@ static void testNudgePastEnd()
     // Zero duration, ZDT at max epoch (8.64e21 ns = 1e8 days * nsPerDay), round to Day/Minute
     // Rounding constructs end date = max + 1 day -> error
 
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (!utcOpt) {
         fprintf(stderr, "SKIP [nudgePast]: UTC not available\n");
         return;
@@ -3672,7 +3784,7 @@ static void testRoundZeroDurationZDT()
 {
     // temporal_rs: round_zero_duration with ZDT relativeTo
     // P0 duration, ZDT at UTC epoch=0, round to Day/Hour -> result is still zero
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (!utcOpt) {
         fprintf(stderr, "SKIP [roundZeroZDT]: UTC not available\n");
         return;
@@ -3692,7 +3804,7 @@ static void testRoundIncrementRegressionZDT()
     // temporal_rs: round_increment_regression_test ZDT path
     // P48H, round to Day, increment=2, with ZDT UTC at epoch=0
     // Expected: 2 days (same result as without relativeTo)
-    auto utcOpt = ISO8601::parseTemporalTimeZoneIdentifier("UTC"_s);
+    auto utcOpt = timeZoneFromIdentifier("UTC"_s);
     if (!utcOpt) {
         fprintf(stderr, "SKIP [roundIncZDT]: UTC not available\n");
         return;
@@ -3834,9 +3946,10 @@ static void runStressTests()
     testCalendarInLeapYearISO(); // ISO leap year
     testCalendarISO8601Fields(); // ISO field accessors
     testCalendarICUNonISO(); // Non-ISO calendars (hebrew, chinese, japanese, persian)
-    testCalendarDateFromFields(); // calendarDateFromFields: era, monthCode, overflow, ROC, Japanese, Buddhist, Coptic, Ethiopic
+    testNonISOCalendarDateToISO(); // nonISOCalendarDateToISO: era, monthCode, overflow, ROC, Japanese, Buddhist, Coptic, Ethiopic
     testIsBuiltinCalendar(); // Canonical Temporal calendar set + legacy aliases
     testCalendarFieldsFunctions(); // yearMonthFromFields, monthDayFromFields, differenceYearMonth, plainYearMonthAdd, etc.
+    testCalendarMergeFieldsWith(); // calendarMergeFields: chinese leap-month, japanese era-suppress, hebrew MonthDay
 
     // parseISODateTime
     testParseInstantString();

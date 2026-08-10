@@ -540,7 +540,7 @@ bool SubstitutionResolver::substituteAttrFunction(CSSParserTokenRange argumentsR
     enum class AttrType { RawString, Number, Unit, Percentage, Syntax };
     struct AttrTypeResult {
         AttrType type;
-        CSSUnitType unitType { CSSUnitType::CSS_UNKNOWN };
+        CSSUnitType unitType { CSSUnitType::Unknown };
         CSSCustomPropertySyntax syntax { };
     };
 
@@ -697,7 +697,7 @@ bool SubstitutionResolver::substituteAttrFunction(CSSParserTokenRange argumentsR
     case AttrType::Unit:
     case AttrType::Percentage: {
         // "If the <attr-unit> does not match a known CSS unit, it triggers fallback."
-        if (attrType == AttrType::Unit && parsedAttrType->unitType == CSSUnitType::CSS_UNKNOWN)
+        if (attrType == AttrType::Unit && parsedAttrType->unitType == CSSUnitType::Unknown)
             return substituteFailure();
         CSSTokenizer tokenizer(attributeValue.string().trim(isUnicodeCompatibleASCIIWhitespace<UChar>));
         auto tokenRange = tokenizer.tokenRange();
@@ -822,6 +822,12 @@ auto SubstitutionResolver::substituteRandomItemArgumentGrammar(CSSParserTokenRan
 bool SubstitutionResolver::substituteRandomItemFunction(CSSParserTokenRange range, Vector<CSSParserToken>& tokens, const CSSParserContext& context)
 {
     // https://drafts.csswg.org/css-values-5/#funcdef-random-item
+
+    // Reject random-item() when resolving a @container style() query value: random functions are
+    // disallowed outside an element context. (random() is rejected via a separate parse-time guard.)
+    // Whether they should be allowed here is an open question: https://github.com/w3c/csswg-drafts/issues/10982
+    if (m_styleBuilder.state().isResolvingContainerQueries())
+        return false;
 
     // <random-item-args> = random-item( <declaration-value>, [ <declaration-value>? ]# )
     auto randomItemArgs = substituteRandomItemArgumentGrammar(range, context);

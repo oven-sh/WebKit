@@ -131,11 +131,6 @@ bool Location::isGPR() const
     return m_kind == Gpr;
 }
 
-bool Location::isGPR2() const
-{
-    return m_kind == Gpr2;
-}
-
 bool Location::isFPR() const
 {
     return m_kind == Fpr;
@@ -223,18 +218,6 @@ FPRReg Location::asFPR() const
     return m_fpr;
 }
 
-GPRReg Location::asGPRlo() const
-{
-    ASSERT(isGPR2());
-    return m_gprlo;
-}
-
-GPRReg Location::asGPRhi() const
-{
-    ASSERT(isGPR2());
-    return m_gprhi;
-}
-
 void Location::dump(PrintStream& out) const
 {
     switch (m_kind) {
@@ -256,9 +239,6 @@ void Location::dump(PrintStream& out) const
     case StackArgument:
         out.print("StackArgument(", m_offset, ")");
         break;
-    case Gpr2:
-        out.print("GPR2(", m_gprhi, ",", m_gprlo, ")");
-        break;
     }
 }
 
@@ -269,8 +249,6 @@ bool Location::operator==(Location other) const
     switch (m_kind) {
     case Gpr:
         return m_gpr == other.m_gpr;
-    case Gpr2:
-        return m_gprlo == other.m_gprlo && m_gprhi == other.m_gprhi;
     case Fpr:
         return m_fpr == other.m_fpr;
     case Stack:
@@ -841,12 +819,25 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
     return { };
 }
 
+// A runtime operation takes an address operand -- an index, offset, count, delta or length -- as 64
+// bits, so that a 64-bit address memory or table can pass one whole, and it bounds checks all 64
+// bits. The upper half of an i32 operand is don't-care everywhere else, so zero it here.
+void BBQJIT::emitZeroExtendAddressOperand(bool is64Bit, Value operand)
+{
+    if (is64Bit || operand.isConst())
+        return;
+    Location location = loadIfNecessary(operand);
+    m_jit.zeroExtend32ToWord(location.asGPR(), location.asGPR());
+}
+
 // Tables
 
 [[nodiscard]] PartialResult BBQJIT::addTableSet(unsigned tableIndex, Value index, Value value)
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
     ASSERT(index.type() == m_info.table(tableIndex).addressType().asWasmTypeKind());
+
+    emitZeroExtendAddressOperand(m_info.table(tableIndex).addressType().is64Bit(), index);
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -873,6 +864,8 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
     ASSERT(dstOffset.type() == m_info.table(tableIndex).addressType().asWasmTypeKind());
     ASSERT(srcOffset.type() == TypeKind::I32);
     ASSERT(length.type() == TypeKind::I32);
+
+    emitZeroExtendAddressOperand(m_info.table(tableIndex).addressType().is64Bit(), dstOffset);
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -925,6 +918,8 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
     auto tableAddressTypeKind = m_info.table(tableIndex).addressType().asWasmTypeKind();
     ASSERT(delta.type() == tableAddressTypeKind);
 
+    emitZeroExtendAddressOperand(m_info.table(tableIndex).addressType().is64Bit(), delta);
+
     Vector<Value, 8> arguments = {
         instanceValue(),
         Value::fromI32(tableIndex),
@@ -939,8 +934,12 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
 
 [[nodiscard]] PartialResult BBQJIT::addTableFill(unsigned tableIndex, Value offset, Value fill, Value count)
 {
+    bool isTable64 = m_info.table(tableIndex).addressType().is64Bit();
     ASSERT(offset.type() == m_info.table(tableIndex).addressType().asWasmTypeKind());
     ASSERT(count.type() == m_info.table(tableIndex).addressType().asWasmTypeKind());
+
+    emitZeroExtendAddressOperand(isTable64, offset);
+    emitZeroExtendAddressOperand(isTable64, count);
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -962,9 +961,15 @@ PartialResult BBQJIT::addLocal(Type type, uint32_t numberOfLocals)
 
 [[nodiscard]] PartialResult BBQJIT::addTableCopy(unsigned dstTableIndex, unsigned srcTableIndex, Value dstOffset, Value srcOffset, Value length)
 {
-    ASSERT(dstOffset.type() == m_info.table(srcTableIndex).addressType().asWasmTypeKind());
-    ASSERT(srcOffset.type() == m_info.table(dstTableIndex).addressType().asWasmTypeKind());
-    ASSERT(m_info.table(dstTableIndex).addressType().is64Bit() && m_info.table(srcTableIndex).addressType().is64Bit() ? length.type() == TypeKind::I64 : length.type() == TypeKind::I32);
+    bool dstIsTable64 = m_info.table(dstTableIndex).addressType().is64Bit();
+    bool srcIsTable64 = m_info.table(srcTableIndex).addressType().is64Bit();
+    ASSERT(dstOffset.type() == m_info.table(dstTableIndex).addressType().asWasmTypeKind());
+    ASSERT(srcOffset.type() == m_info.table(srcTableIndex).addressType().asWasmTypeKind());
+    ASSERT(dstIsTable64 && srcIsTable64 ? length.type() == TypeKind::I64 : length.type() == TypeKind::I32);
+
+    emitZeroExtendAddressOperand(dstIsTable64, dstOffset);
+    emitZeroExtendAddressOperand(srcIsTable64, srcOffset);
+    emitZeroExtendAddressOperand(dstIsTable64 && srcIsTable64, length);
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -1095,10 +1100,10 @@ void BBQJIT::emitMutatorFence()
 
 // Memory
 
-Address BBQJIT::materializePointer(Location pointerLocation, uint32_t uoffset)
+Address BBQJIT::materializePointer(Location pointerLocation, uint64_t uoffset)
 {
-    if (static_cast<uint64_t>(uoffset) > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) || !B3::Air::Arg::isValidAddrForm(B3::Air::Move, static_cast<int32_t>(uoffset), Width::Width128)) {
-        m_jit.addPtr(TrustedImmPtr(static_cast<int64_t>(uoffset)), pointerLocation.asGPR());
+    if (uoffset > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) || !B3::Air::Arg::isValidAddrForm(B3::Air::Move, static_cast<int32_t>(uoffset), Width::Width128)) {
+        m_jit.addPtr(TrustedImmPtr(uoffset), pointerLocation.asGPR());
         return Address(pointerLocation.asGPR());
     }
     return Address(pointerLocation.asGPR(), static_cast<int32_t>(uoffset));
@@ -1106,6 +1111,8 @@ Address BBQJIT::materializePointer(Location pointerLocation, uint32_t uoffset)
 
 [[nodiscard]] PartialResult BBQJIT::addGrowMemory(Value delta, Value& result, uint8_t memoryIndex)
 {
+    emitZeroExtendAddressOperand(m_info.memory(memoryIndex).isMemory64(), delta);
+
     Vector<Value, 8> arguments = { instanceValue(), delta, Value::fromI32(memoryIndex) };
     result = topValue(m_info.memory(memoryIndex).addressType().asWasmTypeKind());
     emitCCall(&operationGrowMemory, arguments, result);
@@ -1144,17 +1151,9 @@ Address BBQJIT::materializePointer(Location pointerLocation, uint32_t uoffset)
     ASSERT(count.type() == m_info.memory(memoryIndex).addressType());
     ASSERT(targetValue.type() == TypeKind::I32);
 
-    if (!m_info.memory(memoryIndex).isMemory64()) {
-        if (!dstAddress.isConst()) {
-            Location dstLoc = loadIfNecessary(dstAddress);
-            m_jit.zeroExtend32ToWord(dstLoc.asGPR(), dstLoc.asGPR());
-        }
-
-        if (!count.isConst()) {
-            Location countLoc = loadIfNecessary(count);
-            m_jit.zeroExtend32ToWord(countLoc.asGPR(), countLoc.asGPR());
-        }
-    }
+    bool isMemory64 = m_info.memory(memoryIndex).isMemory64();
+    emitZeroExtendAddressOperand(isMemory64, dstAddress);
+    emitZeroExtendAddressOperand(isMemory64, count);
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -1182,26 +1181,11 @@ Address BBQJIT::materializePointer(Location pointerLocation, uint32_t uoffset)
     else
         ASSERT(count.type() == TypeKind::I32);
 
-    if (!m_info.memory(dstMemoryIndex).isMemory64()) {
-        if (!dstAddress.isConst()) {
-            Location dstLoc = loadIfNecessary(dstAddress);
-            m_jit.zeroExtend32ToWord(dstLoc.asGPR(), dstLoc.asGPR());
-        }
-    }
-
-    if (!m_info.memory(srcMemoryIndex).isMemory64()) {
-        if (!srcAddress.isConst()) {
-            Location srcLoc = loadIfNecessary(srcAddress);
-            m_jit.zeroExtend32ToWord(srcLoc.asGPR(), srcLoc.asGPR());
-        }
-    }
-
-    if (!m_info.memory(srcMemoryIndex).isMemory64() || !m_info.memory(dstMemoryIndex).isMemory64()) {
-        if (!count.isConst()) {
-            Location countLoc = loadIfNecessary(count);
-            m_jit.zeroExtend32ToWord(countLoc.asGPR(), countLoc.asGPR());
-        }
-    }
+    bool dstIsMemory64 = m_info.memory(dstMemoryIndex).isMemory64();
+    bool srcIsMemory64 = m_info.memory(srcMemoryIndex).isMemory64();
+    emitZeroExtendAddressOperand(dstIsMemory64, dstAddress);
+    emitZeroExtendAddressOperand(srcIsMemory64, srcAddress);
+    emitZeroExtendAddressOperand(dstIsMemory64 && srcIsMemory64, count);
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -1226,12 +1210,7 @@ Address BBQJIT::materializePointer(Location pointerLocation, uint32_t uoffset)
     ASSERT(srcAddress.type() == TypeKind::I32);
     ASSERT(length.type() == TypeKind::I32);
 
-    if (!m_info.memory(memoryIndex).isMemory64()) {
-        if (!dstAddress.isConst()) {
-            Location dstLoc = loadIfNecessary(dstAddress);
-            m_jit.zeroExtend32ToWord(dstLoc.asGPR(), dstLoc.asGPR());
-        }
-    }
+    emitZeroExtendAddressOperand(m_info.memory(memoryIndex).isMemory64(), dstAddress);
 
     Vector<Value, 8> arguments = {
         instanceValue(),
@@ -1344,6 +1323,8 @@ Address BBQJIT::materializePointer(Location pointerLocation, uint32_t uoffset)
 
 [[nodiscard]] PartialResult BBQJIT::atomicWait(ExtAtomicOpType op, ExpressionType pointer, ExpressionType value, ExpressionType timeout, ExpressionType& result, uint64_t uoffset, uint8_t memoryIndex)
 {
+    emitZeroExtendAddressOperand(m_info.memory(memoryIndex).isMemory64(), pointer);
+
     Vector<Value, 8> arguments = {
         instanceValue(),
         pointer,
@@ -1368,6 +1349,8 @@ Address BBQJIT::materializePointer(Location pointerLocation, uint32_t uoffset)
 
 [[nodiscard]] PartialResult BBQJIT::atomicNotify(ExtAtomicOpType op, ExpressionType pointer, ExpressionType count, ExpressionType& result, uint64_t uoffset, uint8_t memoryIndex)
 {
+    emitZeroExtendAddressOperand(m_info.memory(memoryIndex).isMemory64(), pointer);
+
     Vector<Value, 8> arguments = {
         instanceValue(),
         pointer,
@@ -4362,8 +4345,6 @@ void BBQJIT::saveValuesAcrossCallAndPassArguments(const Args& arguments, const C
                 binding = bindingFor(paramLocation.asGPR());
             else if (paramLocation.isFPR())
                 binding = bindingFor(paramLocation.asFPR());
-            else if (paramLocation.isGPR2())
-                binding = bindingFor(paramLocation.asGPRhi());
             if (!binding.toValue().isNone())
                 flushValue(binding.toValue());
         }
@@ -4400,8 +4381,6 @@ void BBQJIT::returnValuesFromCall(Vector<Value, N>& results, const RTT& function
                 currentBinding = bindingFor(returnLocation.asGPR());
             else if (returnLocation.isFPR())
                 currentBinding = bindingFor(returnLocation.asFPR());
-            else if (returnLocation.isGPR2())
-                currentBinding = bindingFor(returnLocation.asGPRhi());
             // There's no way to preserve an abritrary scratch over a call so we shouldn't try to do so.
             ASSERT(!currentBinding.isScratch());
         } else {
@@ -4845,7 +4824,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
             ASSERT(tableIndex < m_info.tableCount());
 
             auto& tableInformation = m_info.table(tableIndex);
-            if (tableInformation.maximum() && tableInformation.maximum().value() == tableInformation.initial()) {
+            if (tableInformation.maximum() && tableInformation.maximum().value() == tableInformation.initial() && Table::isValidLength(tableInformation.initial())) {
                 if (!tableIndex)
                     m_jit.loadPtr(Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfCachedTable0Buffer()), callableFunctionBuffer);
                 else {
@@ -4883,9 +4862,6 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
                 m_jit.zeroExtend32ToWord(calleeIndexLocation.asGPR(), calleeIndexLocation.asGPR());
 #if CPU(ARM64)
                 m_jit.addLeftShift64(callableFunctionBuffer, calleeIndexLocation.asGPR(), TrustedImm32(getLSBSet(sizeof(FuncRefTable::Function))), importableFunction);
-#elif CPU(ARM)
-                m_jit.lshiftPtr(TrustedImm32(getLSBSet(sizeof(FuncRefTable::Function))), calleeIndexLocation.asGPR());
-                m_jit.addPtr(callableFunctionBuffer, calleeIndexLocation.asGPR(), importableFunction);
 #else
                 m_jit.lshiftPtr(TrustedImm32(getLSBSet(sizeof(FuncRefTable::Function))), calleeIndexLocation.asGPR());
                 m_jit.addPtr(callableFunctionBuffer, calleeIndexLocation.asGPR(), importableFunction);
@@ -4894,9 +4870,6 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
                 m_jit.move(TrustedImmPtr(sizeof(FuncRefTable::Function)), importableFunction);
 #if CPU(ARM64)
                 m_jit.multiplyAddZeroExtend32(calleeIndexLocation.asGPR(), importableFunction, callableFunctionBuffer, importableFunction);
-#elif CPU(ARM)
-                m_jit.mul32(calleeIndexLocation.asGPR(), importableFunction);
-                m_jit.addPtr(callableFunctionBuffer, importableFunction);
 #else
                 m_jit.zeroExtend32ToWord(calleeIndexLocation.asGPR(), calleeIndexLocation.asGPR());
                 m_jit.mul64(calleeIndexLocation.asGPR(), importableFunction);
@@ -5100,10 +5073,7 @@ PartialResult BBQJIT::addFusedBranchCompare(OpType opType, ControlType& target, 
 
         if (operandLocation.isGPR())
             liveScratchGPRs.add(operandLocation.asGPR(), IgnoreVectors);
-        else if (operandLocation.isGPR2()) {
-            liveScratchGPRs.add(operandLocation.asGPRlo(), IgnoreVectors);
-            liveScratchGPRs.add(operandLocation.asGPRhi(), IgnoreVectors);
-        } else if (operandLocation.isFPR())
+        else if (operandLocation.isFPR())
             liveScratchFPRs.add(operandLocation.asFPR(), operand.type() == TypeKind::V128 ? Width128 : Width64);
     }
     if (!liveScratchFPRs.contains(scratches.fpr(0), IgnoreVectors))
@@ -5360,10 +5330,7 @@ PartialResult BBQJIT::addFusedBranchCompare(OpType opType, ControlType& target, 
             emitMove(left, leftLocation = Location::fromFPR(wasmScratchFPR));
         if (leftLocation.isGPR())
             liveScratchGPRs.add(leftLocation.asGPR(), IgnoreVectors);
-        else if (leftLocation.isGPR2()) {
-            liveScratchGPRs.add(leftLocation.asGPRlo(), IgnoreVectors);
-            liveScratchGPRs.add(leftLocation.asGPRhi(), IgnoreVectors);
-        } else if (leftLocation.isFPR())
+        else if (leftLocation.isFPR())
             liveScratchFPRs.add(leftLocation.asFPR(), left.type() == TypeKind::V128 ? Width128 : Width64);
 
         if (!right.isConst())
@@ -5372,10 +5339,7 @@ PartialResult BBQJIT::addFusedBranchCompare(OpType opType, ControlType& target, 
             emitMove(right, rightLocation = Location::fromFPR(wasmScratchFPR));
         if (rightLocation.isGPR())
             liveScratchGPRs.add(rightLocation.asGPR(), IgnoreVectors);
-        else if (rightLocation.isGPR2()) {
-            liveScratchGPRs.add(rightLocation.asGPRlo(), IgnoreVectors);
-            liveScratchGPRs.add(rightLocation.asGPRhi(), IgnoreVectors);
-        } else if (rightLocation.isFPR())
+        else if (rightLocation.isFPR())
             liveScratchFPRs.add(rightLocation.asFPR(), right.type() == TypeKind::V128 ? Width128 : Width64);
     }
     consume(left);
@@ -5559,9 +5523,6 @@ void BBQJIT::setLRUKey(Location location, LocalOrTempIndex key)
         m_gprAllocator.setSpillHint(location.asGPR(), key);
     } else if (location.isFPR()) {
         m_fprAllocator.setSpillHint(location.asFPR(), key);
-    } else if (location.isGPR2()) {
-        m_gprAllocator.setSpillHint(location.asGPRhi(), key);
-        m_gprAllocator.setSpillHint(location.asGPRlo(), key);
     }
 }
 
@@ -5583,10 +5544,8 @@ Location BBQJIT::allocateWithHint(Value value, Location hint)
     Location result;
     if (value.isFloat())
         result = Location::fromFPR(m_fprAllocator.allocate(*this, RegisterBinding::fromValue(value), nextLRUKey(), hint.isFPR() ? hint.asFPR() : InvalidFPRReg));
-    else if (!typeNeedsGPR2(value.type()))
-        result = Location::fromGPR(m_gprAllocator.allocate(*this, RegisterBinding::fromValue(value), nextLRUKey(), hint.isGPR() ? hint.asGPR() : InvalidGPRReg));
     else
-        RELEASE_ASSERT_NOT_REACHED();
+        result = Location::fromGPR(m_gprAllocator.allocate(*this, RegisterBinding::fromValue(value), nextLRUKey(), hint.isGPR() ? hint.asGPR() : InvalidGPRReg));
 
     if (value.isLocal())
         currentControlData().touch(value.asLocal());
@@ -5680,13 +5639,6 @@ Location BBQJIT::bind(Value value, Location loc)
             if (m_fprAllocator.freeRegisters().contains(loc.asFPR(), Width::Width128))
                 m_fprAllocator.bind(loc.asFPR(), RegisterBinding::fromValue(value), std::nullopt);
             ASSERT(bindingFor(loc.asFPR()) == RegisterBinding::fromValue(value));
-        } else if (loc.isGPR2()) {
-            if (m_gprAllocator.freeRegisters().contains(loc.asGPRlo(), IgnoreVectors))
-                m_gprAllocator.bind(loc.asGPRlo(), RegisterBinding::fromValue(value), std::nullopt);
-            ASSERT(bindingFor(loc.asGPRlo()) == RegisterBinding::fromValue(value));
-            if (m_gprAllocator.freeRegisters().contains(loc.asGPRhi(), IgnoreVectors))
-                m_gprAllocator.bind(loc.asGPRhi(), RegisterBinding::fromValue(value), std::nullopt);
-            ASSERT(bindingFor(loc.asGPRhi()) == RegisterBinding::fromValue(value));
         } else {
             if (m_gprAllocator.freeRegisters().contains(loc.asGPR(), IgnoreVectors))
                 m_gprAllocator.bind(loc.asGPR(), RegisterBinding::fromValue(value), std::nullopt);
@@ -5715,10 +5667,6 @@ void BBQJIT::unbind(Value value, Location loc)
         m_fprAllocator.unbind(loc.asFPR());
     else if (loc.isGPR())
         m_gprAllocator.unbind(loc.asGPR());
-    else if (loc.isGPR2()) {
-        m_gprAllocator.unbind(loc.asGPRlo());
-        m_gprAllocator.unbind(loc.asGPRhi());
-    }
     if (value.isLocal())
         m_locals[value.asLocal()] = m_localSlots[value.asLocal()];
     else if (value.isTemp())

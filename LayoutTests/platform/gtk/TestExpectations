@@ -87,7 +87,7 @@ webkit.org/b/320062 imported/w3c/web-platform-tests/web-animations/responsive/to
 #//////////////////////////////////////////////////////////////////////////////////////////
 
 # Accessibility
-webkit.org/b/214341 [ Debug ] accessibility/datalist.html [ Crash ]
+webkit.org/b/214341 [ Debug ] accessibility/datalist.html [ Crash Failure Pass ]
 webkit.org/b/215405 accessibility/gtk/text-for-range-combo-box.html [ Failure ]
 webkit.org/b/223862 accessibility/gtk/text-for-range-embedded-objects.html [ Failure ]
 webkit.org/b/223862 accessibility/gtk/text-for-range-entry-and-password.html [ Failure ]
@@ -104,7 +104,6 @@ webkit.org/b/235941 accessibility/gtk/text-at-offset-special-chars.html [ Failur
 webkit.org/b/235941 accessibility/gtk/caret-offsets.html [ Timeout ]
 
 imported/w3c/web-platform-tests/css/CSS2/normal-flow/max-width-107.xht [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/CSS2/stacking-context/composite-change-after-scroll-preserves-stacking-order.html [ ImageOnlyFailure ]
 
 # Times out, possibly missing automation:
 webkit.org/b/214677 imported/w3c/web-platform-tests/event-timing/interactionid-aux-pointerdown-and-pointerdown.html [ Skip ]
@@ -116,10 +115,8 @@ accessibility/gtk/media-controls-panel-title.html [ Failure ]
 # WebInspector.
 webkit.org/b/217966 [ Release ] inspector/console/queryHolders.html [ Failure Timeout ]
 webkit.org/b/218367 inspector/page/setScreenSizeOverride.html [ Failure Pass Timeout ]
-webkit.org/b/254733 inspector/canvas/recording-offscreen-webgl2-full.html [ Failure ]
-webkit.org/b/254733 inspector/canvas/recording-offscreen-webgl-full.html [ Failure ]
-webkit.org/b/254733 inspector/canvas/shaderProgram-add-remove-webgl2.html [ Failure ]
 webkit.org/b/254733 inspector/canvas/shaderProgram-add-remove-webgl.html [ Failure ]
+webkit.org/b/254733 inspector/canvas/shaderProgram-add-remove-webgl2.html [ Failure ]
 
 # Crash on EWS bot.
 webrtc/vp8-then-h264-gpu-process-crash.html [ Skip ]
@@ -127,7 +124,6 @@ webkit.org/b/229346 webrtc/multi-audio.html [ Timeout Pass Failure ]
 webkit.org/b/235885 webrtc/peer-connection-remote-audio-mute2.html [ Crash Pass Failure ]
 webkit.org/b/187064 webrtc/video-addTrack.html [ Crash Pass ]
 
-webkit.org/b/303925 webrtc/audio-replace-track.html [ Failure ]
 webkit.org/b/306021 webrtc/peer-connection-audio-unmute.html [ Pass Failure ]
 webkit.org/b/235885 webrtc/audio-peer-connection-webaudio.html [ Pass Failure ]
 webkit.org/b/308373 webrtc/encoded-streams-quirks.html [ Pass Timeout ]
@@ -308,7 +304,7 @@ webkit.org/b/137096 svg/text/text-altglyph-01-b.svg [ Failure ]
 
 # Since r200320 resource-timing feature is a runtime flag.
 webkit.org/b/158617 fast/dom/Window/window-properties-performance-resource-timing.html [ Failure ]
-webkit.org/b/315934 [ Release ] fast/dom/lazy-image-loading-document-leak.html [ Crash Pass ]
+webkit.org/b/315934 [ Release ] fast/dom/lazy-image-loading-document-leak.html [ Failure Pass ]
 
 # Resource timing tests are flaky due to redirect timing variability
 webkit.org/b/197473 imported/w3c/web-platform-tests/resource-timing/resource-timing-level1.sub.html [ Failure ]
@@ -447,8 +443,6 @@ webkit.org/b/306687 [ Release ] fast/dynamic/window-scrollbars-test.html [ Failu
 webkit.org/b/306688 [ Release ] fast/events/monotonic-event-time.html [ Failure Pass ]
 
 webkit.org/b/114735 svg/filters/filter-hidden-content.svg [ Failure Pass ]
-
-webkit.org/b/263872 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/progress-based-effect-delay.tentative.html [ ImageOnlyFailure ]
 
 webkit.org/b/127742 fast/spatial-navigation/snav-unit-overflow-and-scroll-in-direction.html [ Failure ]
 
@@ -986,6 +980,9 @@ css3/masking/reference-clip-path-animate-transform-repaint.html [ Failure Pass ]
 editing/pasteboard/paste-rtl-paragraph-with-leading-ltr-text.html [ ImageOnlyFailure ]
 
 webkit.org/b/308631 fast/flexbox/001.html [ Failure Pass ]
+
+webkit.org/b/321074 http/tests/inspector/dom/disconnect-dom-tree-after-main-frame-navigation.html [ Failure ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of non-crashing, non-flaky tests failing
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -1056,6 +1053,8 @@ webgl/2.0.y/conformance2/textures/misc/tex-image-with-bad-args-from-dom-elements
 
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-plus-filter.html [ ImageOnlyFailure ]
 
+imported/w3c/web-platform-tests/css/filter-effects/blur-text.html [ ImageOnlyFailure ]
+
 [ Debug ] media/video-concurrent-playback.html [ Pass Failure ]
 
 # Flaky tests Nov2023
@@ -1087,6 +1086,12 @@ webkit.org/b/273196 imported/w3c/web-platform-tests/html/semantics/popovers/popo
 
 fast/scrolling/gtk/repeated-mouse-wheel-smooth.html [ Pass Timeout ]
 compositing/repaint/copy-forward-dirty-region.html [ ImageOnlyFailure ]
+
+# Video's contents/clipping GraphicsLayers aren't represented in layerTreeAsText() output, same as WPE.
+webkit.org/b/309572 compositing/video/video-object-view-box-dynamic-change.html [ Failure ]
+webkit.org/b/309572 compositing/video/video-object-view-box-no-poster.html [ Failure ]
+webkit.org/b/309572 compositing/video/video-object-view-box-object-position-no-poster.html [ Failure ]
+webkit.org/b/309572 compositing/video/video-object-view-box-writing-mode-no-poster.html [ Failure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/window-resize-aborts-transition-before-ready.html [ Failure ]
 
 http/tests/login-status/login-status-api-getter-setter-functions.html [ Failure ]
@@ -1095,7 +1100,7 @@ imported/w3c/web-platform-tests/css/css-overflow/overflow-auto-scrolling-with-ma
 
 webkit.org/b/278719 fast/events/touch/basic-multi-touch-events.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/basic-multi-touch-events-limited.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/touch-target.html [ Timeout ]
+webkit.org/b/278719 fast/events/touch/touch-target.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/touch-target-limited.html [ Timeout ]
 
 webkit.org/b/278719 fast/events/touch/basic-single-touch-events.html [ Timeout ]
@@ -1127,8 +1132,6 @@ webkit.org/b/208984 fast/events/touch/touch-slider-no-js-touch-listener.html [ F
 
 webkit.org/b/213782 svg/custom/object-sizing-explicit-width.xhtml [ Failure Pass ]
 
-imported/w3c/web-platform-tests/css/css-position/sticky/position-sticky-escape-scroller-004.html [ ImageOnlyFailure ]
-
 webkit.org/b/255101 imported/w3c/web-platform-tests/css/css-backgrounds/background-clip-content-box-002.html [ ImageOnlyFailure ]
 
 http/tests/css/css-masking/mask-external-svg-fragment.html [ ImageOnlyFailure ]
@@ -1142,8 +1145,6 @@ imported/w3c/web-platform-tests/svg/painting/reftests/marker-path-011.svg [ Imag
 imported/w3c/web-platform-tests/svg/fonts/font-size-adjust-scale-text.svg [ ImageOnlyFailure ]
 
 media/adopt-node-after-showing-picker-crash.html [ Skip ]
-
-imported/w3c/web-platform-tests/css/css-view-transitions/navigation/skip-outbound-vt-before-reveal.html [ Failure Pass ]
 
 webkit.org/b/298727 css3/text-decoration/text-decoration-line-grammar-error-1.html [ Skip ]
 webkit.org/b/298727 css3/text-decoration/text-decoration-line-grammar-error-2.html [ Skip ]
@@ -1325,3 +1326,9 @@ webkit.org/b/137698 media/video-controls-drag.html [ Timeout ]
 
 webkit.org/b/320354 compositing/animation/animated-composited-inside-hidden.html [ Timeout Pass ]
 webkit.org/b/320354 compositing/backgrounds/fixed-background-on-descendant.html [ Timeout Pass ]
+
+imported/w3c/web-platform-tests/svg/painting/reftests/marker-path-001.svg [ ImageOnlyFailure ]
+
+webkit.org/b/321278 [ Release ] imported/w3c/web-platform-tests/css/CSS2/tables/table-anonymous-objects-214.html [ ImageOnlyFailure ]
+webkit.org/b/321281 [ Debug ] webrtc/video-disabled-black.html [ Crash Pass ]
+webkit.org/b/320649 [ Debug ] webrtc/disable-encryption.html [ Crash Pass ]

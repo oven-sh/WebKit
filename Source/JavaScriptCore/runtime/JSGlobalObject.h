@@ -308,6 +308,11 @@ public:
     LazyClassStructure m_dateTimeFormatStructure;
     LazyClassStructure m_numberFormatStructure;
 
+    // Cached collator object for String#localeCompare
+    WriteBarrier<IntlCollator> m_cachedLocaleCompareCollator;
+    String m_cachedLocaleCompareCollatorLocale;
+    uint64_t m_cachedLocaleCompareCollatorLanguagesEpoch { 0 };
+
     LazyClassStructure m_durationStructure;
     LazyClassStructure m_instantStructure;
     LazyClassStructure m_plainDateStructure;
@@ -833,6 +838,7 @@ public:
     JSIteratorConstructor* iteratorConstructor() const LIFETIME_BOUND { return m_iteratorConstructor.get(); }
 
     IntlCollator* defaultCollator() const LIFETIME_BOUND { return m_defaultCollator.get(this); }
+    IntlCollator* cachedLocaleCompareCollator(JSString* locale);
     bool canDoASCIIUCADUCETLocaleCompare() const { return m_canDoASCIIUCADUCETLocaleCompare; }
     IntlDateTimeFormat* defaultDateTimeFormat() const LIFETIME_BOUND { return m_defaultDateTimeFormat.get(this); }
     IntlDateTimeFormat* defaultDateFormat() const LIFETIME_BOUND { return m_defaultDateFormat.get(this); }

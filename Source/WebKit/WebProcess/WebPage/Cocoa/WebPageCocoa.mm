@@ -2378,7 +2378,7 @@ void WebPage::willCommitMainFrameData(MainFrameData& data, const TransactionID& 
     data.minimumScaleFactor = m_viewportConfiguration.minimumScale();
     data.maximumScaleFactor = m_viewportConfiguration.maximumScale();
     data.initialScaleFactor = m_viewportConfiguration.initialScale();
-    data.viewportMetaTagInteractiveWidget = m_viewportConfiguration.viewportArguments().interactiveWidget;
+    data.viewportMetaTagInteractiveWidget = m_viewportConfiguration.viewportArguments().interactiveWidgetValue;
     data.viewportMetaTagWidth = m_viewportConfiguration.viewportArguments().width;
     data.viewportMetaTagWidthWasExplicit = m_viewportConfiguration.viewportArguments().widthWasExplicit;
     data.viewportMetaTagCameFromImageDocument = m_viewportConfiguration.viewportArguments().type == ViewportArguments::Type::ImageDocument;
@@ -2461,6 +2461,23 @@ bool WebPage::shouldAllowSingleClickToChangeSelection(WebCore::Node& targetNode,
 #endif // !PLATFORM(MAC) || HAVE(APPKIT_GESTURES_SUPPORT)
 
     return true;
+}
+
+WebCore::IntPoint WebPage::mainFrameCoordinatesToRootView(WebCore::IntPoint point) const
+{
+    RefPtr frame = m_page->focusController().focusedOrMainFrame();
+    RefPtr view = frame ? frame->view() : nullptr;
+    if (!view || frame->localMainFrame()) {
+        // The main frame is in this process: rootViewToContents() on the focused frame's view already
+        // walks the (in-process) frame tree from the true root, so no extra conversion is needed here.
+        return point;
+    }
+
+    // The main frame is in another process. Convert the incoming main-frame root-view point into this
+    // frame's own root-view coordinates, applying the frame's offset within the top-level page as well
+    // as any CSS transforms on the remote ancestor frames -- a plain translation offset could not
+    // represent a scale. The caller re-applies this frame's own scroll via rootViewToContents().
+    return roundedIntPoint(view->convertFromRootViewAcrossIsolatedFrames(WebCore::FloatPoint { point }));
 }
 
 static std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventDataForSelectionGesture(WebCore::LocalFrame* localRootFrame, WebCore::IntPoint point)
@@ -2854,8 +2871,10 @@ void WebPage::updateSelectionWithExtentPointAndBoundary(WebCore::IntPoint point,
     }
 #endif // ENABLE(PDF_PLUGIN) && ENABLE(TWO_PHASE_CLICKS)
 
-    auto position = visiblePositionInFocusedNodeForPoint(*frame, point, isInteractingWithFocusedElement);
-    auto newRange = rangeForGranularityAtPoint(*frame, point, granularity, isInteractingWithFocusedElement);
+    auto localPoint = mainFrameCoordinatesToRootView(point);
+
+    auto position = visiblePositionInFocusedNodeForPoint(*frame, localPoint, isInteractingWithFocusedElement);
+    auto newRange = rangeForGranularityAtPoint(*frame, localPoint, granularity, isInteractingWithFocusedElement);
 
     if (position.isNull() || !m_initialSelection || !newRange)
         return callback(false);
@@ -2890,11 +2909,11 @@ void WebPage::updateSelectionWithExtentPointAndBoundary(WebCore::IntPoint point,
     // hot-zone enter/exit within a drag because the else branch cancels via the EventHandler, not
     // `WebPage::cancelAutoscroll`.
     if (!m_selectionAutoscrollDragOrigin)
-        m_selectionAutoscrollDragOrigin = point;
+        m_selectionAutoscrollDragOrigin = localPoint;
 
-    if (frame->eventHandler().isPointNearSelectionAutoscrollEdge(point, *m_selectionAutoscrollDragOrigin)) {
+    if (frame->eventHandler().isPointNearSelectionAutoscrollEdge(localPoint, *m_selectionAutoscrollDragOrigin)) {
         if (CheckedPtr renderer = rendererForSelectionAutoscroll(*frame))
-            frame->eventHandler().startSelectionAutoscroll(renderer.get(), point);
+            frame->eventHandler().startSelectionAutoscroll(renderer.get(), localPoint);
     } else
         frame->eventHandler().cancelSelectionAutoscroll();
 #endif
@@ -2916,7 +2935,7 @@ void WebPage::updateSelectionWithExtentPoint(WebCore::IntPoint point, bool isInt
     if (!frame)
         return callback(false);
 
-    auto position = visiblePositionInFocusedNodeForPoint(*frame, point, isInteractingWithFocusedElement);
+    auto position = visiblePositionInFocusedNodeForPoint(*frame, mainFrameCoordinatesToRootView(point), isInteractingWithFocusedElement);
 
     if (position.isNull())
         return callback(false);
@@ -3232,6 +3251,13 @@ Awaitable<std::optional<WebCore::FrameIdentifier>> WebPage::commitPotentialTap(s
     RefPtr localRootFrame = this->localRootFrame(frameID);
 
     auto reportFailedTap = [&] {
+        if (localRootFrame) {
+            if (RefPtr focusedFrame = m_page->focusController().focusedFrame(); focusedFrame && focusedFrame->frameType() == WebCore::Frame::FrameType::Remote) {
+                m_page->focusController().setFocusedFrame(localRootFrame.get());
+                if (m_isClosed)
+                    return;
+            }
+        }
 #if ENABLE(FOCUS_ADJUSTMENT_IN_SYNTHETIC_CLICK)
         if (localRootFrame) {
             m_page->focusController().setFocusedElement(nullptr, localRootFrame.get(), { .trigger = FocusTrigger::Click });

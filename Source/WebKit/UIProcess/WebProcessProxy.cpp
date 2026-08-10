@@ -1533,7 +1533,7 @@ void WebProcessProxy::didReceiveInvalidMessage(IPC::Connection& connection, IPC:
     WebProcessPool::didReceiveInvalidMessage(messageName);
 
     // Terminate the WebContent process.
-    terminate();
+    terminate(messageName);
 
     // Since we've invalidated the connection we'll never get a IPC::Connection::Client::didClose
     // callback so we'll explicitly call it here instead.
@@ -1957,7 +1957,7 @@ void WebProcessProxy::deleteWebsiteDataForOrigins(PAL::SessionID sessionID, Opti
     });
 }
 
-void WebProcessProxy::requestTermination(ProcessTerminationReason reason)
+void WebProcessProxy::requestTermination(ProcessTerminationReason reason, std::optional<IPC::MessageName> invalidMessageName)
 {
     if (state() == State::Terminated)
         return;
@@ -1965,7 +1965,7 @@ void WebProcessProxy::requestTermination(ProcessTerminationReason reason)
     Ref protectedThis { *this };
     WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "requestTermination: reason=%" PUBLIC_LOG_STRING, processTerminationReasonToString(reason).characters());
 
-    AuxiliaryProcessProxy::terminate();
+    AuxiliaryProcessProxy::terminate(invalidMessageName);
 
     processDidTerminateOrFailedToLaunch(reason);
 }
@@ -2453,6 +2453,13 @@ void WebProcessProxy::didCompleteAutofill(const WebCore::Site& site)
         dataStore->isolatedSiteStore().addSite(site, IsolatedSiteStore::Signal::Autofill);
 }
 
+void WebProcessProxy::didObserveFirstPartyUserGesture(const WebCore::Site& site)
+{
+    MESSAGE_CHECK(!site.isEmpty());
+    if (RefPtr dataStore = websiteDataStore())
+        dataStore->isolatedSiteStore().addSite(site, IsolatedSiteStore::Signal::FirstPartyUserGesture);
+}
+
 void WebProcessProxy::activePagesDomainsForTesting(CompletionHandler<void(Vector<String>&&)>&& completionHandler)
 {
     sendWithAsyncReply(Messages::WebProcess::GetActivePagesOriginsForTesting(), WTF::move(completionHandler));
@@ -2470,6 +2477,30 @@ void WebProcessProxy::didStartProvisionalLoadForMainFrame(const URL& url)
     RELEASE_ASSERT(!isInProcessCache());
     WEBPROCESSPROXY_RELEASE_LOG(Loading, "didStartProvisionalLoadForMainFrame:");
 
+    updateSiteForMainFrameNavigation(url);
+}
+
+void WebProcessProxy::didCommitMainFrameLoadWithoutSiteIsolation(const URL& url)
+{
+    RELEASE_ASSERT(!isInProcessCache());
+
+    // We need to update site state both in didStartProvisionalLoad and didCommitMainFrameLoad when
+    // Site Isolation is disabled. For instance:
+    //
+    // - Process A starts a provisional load
+    // - Response forces a BCG switch (e.g. due to COOP response header)
+    // - Process B commits the load after the BCG switch
+    //
+    // Now both process A and B have to update the sites associated with their WebProcessProxy. This
+    // code takes care of updating the state for process B.
+    //
+    // This is not necessary when site isolation is enabled, since that goes down a different site
+    // update path even in the case of a BCG switch (didStartUsingProcessForSiteIsolation).
+    updateSiteForMainFrameNavigation(url);
+}
+
+void WebProcessProxy::updateSiteForMainFrameNavigation(const URL& url)
+{
     // This process has been used for several registrable domains already.
     if (!m_site && m_site.error() == SiteState::MultipleSites)
         return;
@@ -2509,6 +2540,7 @@ void WebProcessProxy::didStartUsingProcessForSiteIsolation(const std::optional<W
 {
     if (!site) {
         ASSERT(m_site.error() == SiteState::NotYetSpecified || m_site.error() == SiteState::SharedProcess);
+        m_sharedProcessDomains.clear();
         m_site = makeUnexpected(SiteState::SharedProcess);
         m_sharedProcessMainFrameSite = mainFrameSite;
         return;
@@ -3417,7 +3449,8 @@ void WebProcessProxy::didPostMessage(WebPageProxyIdentifier pageID, UserContentC
     RefPtr page = WebPageProxy::fromIdentifier(pageID);
     if (!page)
         return completionHandler(makeUnexpected(String()));
-    MESSAGE_CHECK_COMPLETION(isAssociatedWithPage(pageID), completionHandler(makeUnexpected(String())));
+    if (!isAssociatedWithPage(pageID))
+        return completionHandler(makeUnexpected(String()));
     RefPtr controller = WebUserContentControllerProxy::get(identifier);
     if (!controller)
         return completionHandler(makeUnexpected(String()));

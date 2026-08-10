@@ -233,6 +233,9 @@ class PageClient;
 class PageClientImpl;
 class DrawingAreaProxy;
 class MediaSessionCoordinatorProxyPrivate;
+#if ENABLE(MAC_GESTURE_EVENTS)
+class NativeWebGestureEvent;
+#endif
 class BrowsingWarning;
 class ViewGestureController;
 class ViewSnapshot;
@@ -248,7 +251,9 @@ struct WebHitTestResultData;
 
 enum class ContinueUnsafeLoad : bool;
 enum class ForceSoftwareCapturingViewportSnapshot : bool;
+enum class PDFAccessibilityDisplayModeState : uint8_t;
 enum class UndoOrRedo : bool;
+enum class WebEventPhase : uint8_t;
 
 typedef id <NSValidatedUserInterfaceItem> ValidationItem;
 typedef Vector<RetainPtr<ValidationItem>> ValidationVector;
@@ -294,6 +299,7 @@ public:
 
     void createPDFHUD(PDFPluginIdentifier, WebCore::FrameIdentifier, const WebCore::IntRect&);
     void updatePDFHUDLocation(PDFPluginIdentifier, const WebCore::IntRect&);
+    void updatePDFHUDAccessibilityDisplayMode(PDFPluginIdentifier, PDFAccessibilityDisplayModeState);
     void convertPDFHUDBoundingBoxToWebViewCoordinates(WebCore::FrameIdentifier, WebCore::IntRect boundingBoxInFrameRootView, CompletionHandler<void(WebCore::IntRect)>&&);
     void removePDFHUD(PDFPluginIdentifier);
     void removeAllPDFHUDs();
@@ -678,7 +684,9 @@ public:
 
     RetainPtr<NSEvent> setLastMouseDownEvent(NSEvent *);
 
-    void gestureEventWasNotHandledByWebCore(NSEvent *);
+#if ENABLE(MAC_GESTURE_EVENTS)
+    void gestureEventWasNotHandledByWebCore(const NativeWebGestureEvent&);
+#endif
     void gestureEventWasNotHandledByWebCoreFromViewOnly(NSEvent *);
 
     void didRestoreScrollPosition();
@@ -911,6 +919,7 @@ public:
 #endif
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
+    void setUpGestureController();
     void addTextSelectionManager();
     bool isTextSelectedAtPoint(NSPoint);
     void beginSuppressingSingleClickGestureForTextSelection();
@@ -1026,6 +1035,8 @@ private:
     std::optional<EditorState::PostLayoutData> postLayoutDataForContentEditable();
     bool inputMethodUsesCorrectKeyEventOrder();
 
+    void magnificationGestureWasNotHandledByWebCoreFromViewOnly(float magnification, WebEventPhase, WebCore::FloatPoint originInViewCoordinates);
+
     WeakObjCPtr<WKWebView> m_view;
     const UniqueRef<PageClient> m_pageClient;
     const Ref<WebPageProxy> m_page;
@@ -1065,8 +1076,13 @@ private:
 #endif
 
     HashMap<WebKit::PDFPluginIdentifier, RetainPtr<NSView<WKPDFHUDView>>> _pdfHUDViews;
-    // PDF HUDs awaiting their initial async coordinate conversion, mapped to the latest location update.
-    HashMap<WebKit::PDFPluginIdentifier, WebCore::IntRect> m_pdfHUDsPendingCreation;
+    // PDF HUDs awaiting their initial async coordinate conversion, mapped to the latest location
+    // update and accessibility display mode state.
+    struct PendingHUDData {
+        WebCore::IntRect frameRootViewBox;
+        PDFAccessibilityDisplayModeState displayModeState;
+    };
+    HashMap<WebKit::PDFPluginIdentifier, PendingHUDData> m_pdfHUDsPendingCreation;
 
     RetainPtr<WKShareSheet> _shareSheet;
 

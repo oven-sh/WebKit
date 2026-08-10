@@ -108,6 +108,7 @@ class BadgeClient;
 class BroadcastChannelRegistry;
 class CacheStorageProvider;
 class CaptionDisplaySettingsClient;
+class CanvasRenderingContext;
 class Chrome;
 class CompositeEditCommand;
 class ContextMenuController;
@@ -268,6 +269,7 @@ enum class VisibilityState : bool;
 
 #if ENABLE(DOM_AUDIO_SESSION)
 enum class DOMAudioSessionType : uint8_t;
+enum class DOMAudioSessionState : uint8_t;
 #endif
 
 using MediaProducerMediaStateFlags = OptionSet<MediaProducerMediaState>;
@@ -430,6 +432,8 @@ public:
     Frame& mainFrame() const { return m_mainFrame.get(); }
     WEBCORE_EXPORT void setMainFrame(Ref<Frame>&&);
     WEBCORE_EXPORT const URL& NODELETE mainFrameURL() const LIFETIME_BOUND;
+
+    WEBCORE_EXPORT void didObserveFirstPartyUserGesture();
     SecurityOrigin& mainFrameOrigin() const;
     WEBCORE_EXPORT RefPtr<Frame> findFrameByPath(const Vector<uint64_t>& path) const;
 
@@ -437,6 +441,8 @@ public:
 #if ENABLE(DOM_AUDIO_SESSION)
     void setAudioSessionType(DOMAudioSessionType);
     DOMAudioSessionType NODELETE audioSessionType() const;
+    void setAudioSessionState(DOMAudioSessionState);
+    DOMAudioSessionState NODELETE audioSessionState() const;
 #endif
     void setUserDidInteractWithPage(bool);
     bool NODELETE userDidInteractWithPage() const;
@@ -662,6 +668,9 @@ public:
     static constexpr OptionSet<PreferredRenderingUpdateOption> allPreferredRenderingUpdateOptions = { PreferredRenderingUpdateOption::IncludeThrottlingReasons, PreferredRenderingUpdateOption::IncludeAnimationsFrameRate };
     WEBCORE_EXPORT std::optional<FramesPerSecond> preferredRenderingUpdateFramesPerSecond(OptionSet<PreferredRenderingUpdateOption> = allPreferredRenderingUpdateOptions) const;
     WEBCORE_EXPORT Seconds preferredRenderingUpdateInterval() const;
+
+    void addGPUCanvasRequestingRenderingUpdatePacing(CanvasRenderingContext&);
+    void removeGPUCanvasRequestingRenderingUpdatePacing(CanvasRenderingContext&);
 
     const FloatBoxExtent& contentInsets() const LIFETIME_BOUND { return m_contentInsets; }
     void setContentInsets(const FloatBoxExtent& insets) { m_contentInsets = insets; }
@@ -1409,6 +1418,7 @@ public:
 #endif
 
     void syncLocalFrameInfoToRemote();
+    RenderingUpdateScheduler& renderingUpdateScheduler() LIFETIME_BOUND;
 
 private:
     explicit Page(PageConfiguration&&);
@@ -1458,7 +1468,6 @@ private:
     void scheduleRenderingUpdateInternal();
     void prioritizeVisibleResources();
 
-    RenderingUpdateScheduler& renderingUpdateScheduler() LIFETIME_BOUND;
     RenderingUpdateScheduler* NODELETE existingRenderingUpdateScheduler() LIFETIME_BOUND;
 
     WheelEventTestMonitor& ensureWheelEventTestMonitor();
@@ -1711,6 +1720,8 @@ private:
     const Ref<ThermalMitigationNotifier> m_thermalMitigationNotifier;
     OptionSet<ThrottlingReason> m_throttlingReasons;
     OptionSet<ThrottlingReason> m_throttlingReasonsOverridenForTesting;
+
+    WeakHashSet<CanvasRenderingContext> m_gpuCanvasesRequestingPacing;
 
     std::optional<Navigation> m_navigationToLogWhenVisible;
 

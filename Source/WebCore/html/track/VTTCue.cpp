@@ -157,7 +157,7 @@ void VTTCueBox::applyCSSPropertiesWithRegion()
 
     // the 'left' property must be set to left
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double left) {
-        setInlineStyleProperty(CSSPropertyLeft, left, CSSUnitType::CSS_PERCENTAGE);
+        setInlineStyleProperty(CSSPropertyLeft, left, CSSUnitType::Percentage);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyLeft, CSSValueAuto);
     }), cue->left());
@@ -207,14 +207,14 @@ void VTTCueBox::applyCSSProperties()
 
     // the 'top' property must be set to top
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double top) {
-        setInlineStyleProperty(CSSPropertyTop, top, CSSUnitType::CSS_CQH);
+        setInlineStyleProperty(CSSPropertyTop, top, CSSUnitType::Cqh);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyTop, CSSValueAuto);
     }), cue->top());
 
     // the 'left' property must be set to left
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double left) {
-        setInlineStyleProperty(CSSPropertyLeft, left, CSSUnitType::CSS_CQW);
+        setInlineStyleProperty(CSSPropertyLeft, left, CSSUnitType::Cqw);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyLeft, CSSValueAuto);
     }), cue->left());
@@ -227,14 +227,14 @@ void VTTCueBox::applyCSSProperties()
 
     // the 'width' property must be set to width
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double width) {
-        setInlineStyleProperty(CSSPropertyWidth, width, CSSUnitType::CSS_CQW);
+        setInlineStyleProperty(CSSPropertyWidth, width, CSSUnitType::Cqw);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyWidth, CSSValueAuto);
     }), cue->width());
 
     // the 'height' property must be set to height
     WTF::visit(WTF::makeVisitor([this, protectedThis = Ref { *this }] (double height) {
-        setInlineStyleProperty(CSSPropertyHeight, height, CSSUnitType::CSS_CQH);
+        setInlineStyleProperty(CSSPropertyHeight, height, CSSUnitType::Cqh);
     }, [this, protectedThis = Ref { *this }] (auto) {
         setInlineStyleProperty(CSSPropertyHeight, CSSValueAuto);
     }), cue->height());
@@ -694,7 +694,7 @@ void VTTCue::determineTextDirection()
 
 double VTTCue::calculateComputedTextPosition() const
 {
-    // http://dev.w3.org/html5/webvtt/#dfn-cue-computed-position
+    // https://www.w3.org/TR/webvtt1/#cue-computed-position
     
     // 1. If the position is numeric, then return the value of the position and
     // abort these steps. (Otherwise, the position is the special value auto.)
@@ -702,18 +702,18 @@ double VTTCue::calculateComputedTextPosition() const
         return *m_textPosition;
     
     switch (m_cueAlignment) {
-    case AlignSetting::Start:
     case AlignSetting::Left:
-        // 2. If the cue text alignment is start or left, return 0 and abort these
+        // 2. If the cue text alignment is left, return 0 and abort these
         // steps.
         return 0;
-    case AlignSetting::End:
     case AlignSetting::Right:
-        // 3. If the cue text alignment is end or right, return 100 and abort these
+        // 3. If the cue text alignment is right, return 100 and abort these
         // steps.
         return 100;
     case AlignSetting::Center:
-        // 4. If the cue text alignment is center, return 50 and abort these steps.
+    case AlignSetting::Start:
+    case AlignSetting::End:
+        // 4. Otherwise, return 50 and abort these steps.
         return 50;
     }
 

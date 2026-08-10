@@ -462,7 +462,11 @@ void LineBuilder::initialize(const InlineRect& initialLineLogicalRect, const Inl
         auto& marginState = blockLayoutState().marginState();
         // If the previous line had no contentful in-flow content (float-only or empty), the same pending margin
         // is already baked into its top via this advance. Re-applying would double-count.
-        if (!marginState.atBeforeSideOfBlock && previousLine && previousLine->hasContentfulInFlowContent)
+        // A margin still at the before side of the block is only skipped when it can actually collapse out
+        // through that edge. When the root has a border or padding it cannot, so a self collapsing block on a
+        // previous line has already committed the margin and the line has to move down by it.
+        auto marginCollapsesThroughBeforeSide = marginState.atBeforeSideOfBlock && marginState.canCollapseMarginBeforeWithChildren;
+        if (!marginCollapsesThroughBeforeSide && previousLine && previousLine->hasContentfulInFlowContent)
             lineLogicalRect.moveVertically(marginState.margin());
         auto constraints = floatAvoidingRect(lineLogicalRect, { });
         m_lineIsConstrainedByFloat = constraints.constrainedSideSet;
@@ -690,7 +694,9 @@ UniqueRef<LineContent> LineBuilder::placeInlineAndFloatContent(const InlineItemR
                 // Text is justified according to the method specified by the text-justify property,
                 // in order to exactly fill the line box. Unless otherwise specified by text-align-last,
                 // the last line before a forced break or the end of the block is start-aligned.
-                auto hasTextAlignJustify = (isLastInlineContent || m_line.runs().last().isLineBreak()) ? rootStyle.textAlignLast() == Style::TextAlignLast::Justify : rootStyle.textAlign() == Style::TextAlign::Justify;
+                // A block level box inside an inline box starts a block, which is a forced line break too.
+                auto lineEndsWithForcedLineBreak = lineContent->lineBreakReason == LineContent::LineBreakReason::ForcedLineBreakByBlockContent || Line::hasTrailingForcedLineBreak(m_line.runs());
+                auto hasTextAlignJustify = (isLastInlineContent || lineEndsWithForcedLineBreak) ? rootStyle.textAlignLast() == Style::TextAlignLast::Justify : rootStyle.textAlign() == Style::TextAlign::Justify;
                 if (hasTextAlignJustify) {
                     // Detach trailing hanging whitespace into its own run so the text
                     // shaper applies expansion only to inter-word spaces in the content run.
@@ -1932,6 +1938,9 @@ bool LineBuilder::isLastLineWithInlineContent(const LineContent& lineContent, si
     }
     // Look ahead to see if there's more inline type of inline items.
     for (auto i = lineContent.range.endIndex(); i < needsLayoutEnd && i < m_inlineItemList.size(); ++i) {
+        // A block level box (block-in-inline) closes the inline content: whatever follows it starts after the block and can't extend this line, so this is the line's last inline content.
+        if (m_inlineItemList[i].isBlock())
+            return true;
         if (isContentfulOrHasDecoration(m_inlineItemList[i], formattingContext))
             return false;
     }

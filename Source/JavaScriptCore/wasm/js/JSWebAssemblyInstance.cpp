@@ -86,10 +86,7 @@ JSWebAssemblyInstance::JSWebAssemblyInstance(VM& vm, Structure* structure, JSWeb
     , m_vm(&vm)
     , m_jsModule(module, WriteBarrierEarlyInit)
     , m_moduleRecord(moduleRecord, WriteBarrierEarlyInit)
-    , m_memories(
-        // there must be space for a dummy memory, so if count is 0 make a FixedVector(1)
-        module->module().moduleInformation().memoryCount() ? module->module().moduleInformation().memoryCount() : 1
-    )
+    , m_memories(cachedMemoryBaseSizePairCount(module->module().moduleInformation()))
     , m_tables(module->module().moduleInformation().tableCount())
     , m_module(module->module())
     , m_moduleInformation(module->moduleInformation())
@@ -103,6 +100,8 @@ JSWebAssemblyInstance::JSWebAssemblyInstance(VM& vm, Structure* structure, JSWeb
 {
     for (unsigned i = 0; i < m_numImportFunctions; ++i)
         new (importFunctionInfo(i)) WasmOrJSImportableFunctionCallLinkInfo();
+
+    zeroSpan(cachedMemoryBaseSizePairs());
 
     m_globals = globals().data();
     memset(reinterpret_cast<uint8_t*>(globals().data()), 0, globals().size_bytes());
@@ -496,15 +495,15 @@ void JSWebAssemblyInstance::tableCopy(uint32_t dstOffset, uint32_t srcOffset, ui
     RELEASE_ASSERT(dstTable->type() == srcTable->type());
 
     auto forEachTableElement = [&](auto fn) {
-        if (dstTableIndex == srcTableIndex && dstOffset > srcOffset) {
+        if (dstTable == srcTable && dstOffset == srcOffset)
+            return;
+        if (dstOffset > srcOffset) {
             for (uint32_t index = length; index--;)
                 fn(dstTable, srcTable, dstOffset + index, srcOffset + index);
-        } else if (dstTableIndex == srcTableIndex && dstOffset == srcOffset)
             return;
-        else {
-            for (uint32_t index = 0; index < length; ++index)
-                fn(dstTable, srcTable, dstOffset + index, srcOffset + index);
         }
+        for (uint32_t index = 0; index < length; ++index)
+            fn(dstTable, srcTable, dstOffset + index, srcOffset + index);
     };
 
     if (dstTable->isExternrefTable()) {

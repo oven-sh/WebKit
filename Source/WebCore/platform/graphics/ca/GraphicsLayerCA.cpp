@@ -1409,7 +1409,11 @@ std::optional<PlatformLayerIdentifier> GraphicsLayerCA::contentsLayerIDForModel(
 
 void GraphicsLayerCA::setContentsToPlatformLayer(PlatformLayer* platformLayer, ContentsLayerPurpose purpose)
 {
-    if (m_contentsLayer && platformLayer == protect(m_contentsLayer)->platformLayer())
+    // When platformLayer is non-null, skip if the same layer is already set.
+    // When platformLayer is null, always proceed: a PlatformCALayerRemote also
+    // returns null from platformLayer(), so the naive check would incorrectly
+    // treat a clear request as a no-op, leaving the hardware video sublayer alive.
+    if (platformLayer && m_contentsLayer && platformLayer == protect(m_contentsLayer)->platformLayer())
         return;
 
     // FIXME: The passed in layer might be a raw layer or an externally created
@@ -4481,12 +4485,12 @@ void GraphicsLayerCA::setShowRepaintCounter(bool showCounter)
     noteLayerPropertyChanged(DebugIndicatorsChanged);
 }
 
-void GraphicsLayerCA::setShowFrameProcessBorders(bool showBorders)
+void GraphicsLayerCA::setShowFrameProcessBorders(bool showBorders, unsigned frameDepth)
 {
-    if (showBorders == m_showFrameProcessBorders)
+    if (showBorders == m_showFrameProcessBorders && frameDepth == m_frameProcessIndicatorDepth)
         return;
 
-    GraphicsLayer::setShowFrameProcessBorders(showBorders);
+    GraphicsLayer::setShowFrameProcessBorders(showBorders, frameDepth);
     noteLayerPropertyChanged(DebugIndicatorsChanged);
 }
 
