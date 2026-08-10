@@ -652,6 +652,11 @@ struct YarrPattern {
         }
         return anycharCached;
     }
+    // The DotStarEnclosure's two frame slots (YarrStackSpaceForDotStarEnclosure): the offset the
+    // match started from, and the end of the newline-free span known to follow it.
+    unsigned initialStartFrameLocation() const { return m_initialStartValueFrameLocation; }
+    unsigned noNewlineBeforeFrameLocation() const { return m_initialStartValueFrameLocation + 1; }
+
     CharacterClass* newlineCharacterClass()
     {
         if (!newlineCached) {

@@ -110,15 +110,15 @@ public:
     // more cheaply on x86_64, where the crossover sits higher and this gives up some of its reach.
     static constexpr int32_t maxCandidateFrequencyForSIMDSearch = 8;
 
-    // Below this, one occurrence alone already scales past maxCandidateFrequencyForSIMDSearch, so
-    // the sample cannot tell a rare candidate from a common one. Such a subject also says little
-    // about the later subjects a compile is reused for, since RegExp caches keep the first one's.
-    static constexpr unsigned minimumSampleSizeForFrequency = sampleSize / maxCandidateFrequencyForSIMDSearch;
-
     explicit SubjectSampler(CharSize charSize)
         : m_is8Bit(charSize == CharSize::Char8)
     {
     }
+
+    // Below this, one occurrence alone already scales past maxCandidateFrequencyForSIMDSearch, so
+    // the sample cannot tell a rare candidate from a common one. Such a subject also says little
+    // about the later subjects a compile is reused for, since RegExp caches keep the first one's.
+    static constexpr unsigned minimumSampleSizeForFrequency = sampleSize / maxCandidateFrequencyForSIMDSearch;
 
     bool canResolveCandidateFrequency() const { return m_size >= minimumSampleSizeForFrequency; }
 
@@ -273,8 +273,16 @@ std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequenc
             // weigh a frequent character against the stride it buys rather than subtracting it from
             // every position, or one common letter in a long range loses to a short range of rare ones.
             static constexpr int32_t falseCandidateCost = 2; // re-check cost relative to one skip step
+            // Unresolved, `frequency` is just the union's character count, which cannot see that a
+            // 63-character class hits ordinary text far more often than '@' does (['@', \w] would edge
+            // out '@' alone and then stop at nearly every position). Rate each unresolved character as
+            // about as common as one is in text with a few dozen distinct characters -- for the score
+            // only; eligibility (the 50% cutoff above) keeps counting, so a wide single class such as
+            // [A-Za-z_] still gets its prefilter.
+            static constexpr int32_t unresolvedCharacterWeight = 4;
+            int32_t weightedFrequency = sampler.canResolveCandidateFrequency() ? frequency : unresolvedCharacterWeight * frequency;
             int32_t point = static_cast<int32_t>(end - begin) * BoyerMooreBitmap::mapSize * BoyerMooreBitmap::mapSize
-                / (BoyerMooreBitmap::mapSize + falseCandidateCost * frequency);
+                / (BoyerMooreBitmap::mapSize + falseCandidateCost * weightedFrequency);
             if (matchingProbability >= 0 && point > biggestPoint) {
                 biggestPoint = point;
                 beginResult = begin;
@@ -4395,21 +4403,86 @@ class YarrGenerator final : public YarrJITInfo {
         m_usesT2 = true;
 
         MacroAssembler::JumpList foundBeginningNewLine;
-        MacroAssembler::JumpList saveStartIndex;
         MacroAssembler::JumpList foundEndingNewLine;
 
+        const unsigned initialStartSlot = m_pattern.initialStartFrameLocation();
+        // [initialStart, frame[noNewlineBeforeSlot]) is known to hold no line terminator. It only
+        // grows during a match, so an enclosure rejected for want of a line start (a /g RegExp
+        // resumed mid-line) does not rescan that span for every later occurrence.
+        const unsigned noNewlineBeforeSlot = m_pattern.noNewlineBeforeFrameLocation();
+
+        // Reads the code unit at input[position - 1] and appends to `taken` a jump taken when it is
+        // a line terminator (all of which are BMP non-surrogates, so no pair decoding is needed).
+        ASSERT(m_direction == Forward);
+        auto branchIfPrecededByNewline = [&](MacroAssembler::RegisterID position, MacroAssembler::JumpList& taken) {
+            readCodeUnit(1, character, position);
+            matchCharacterClass(character, scratch, taken, m_pattern.newlineCharacterClass());
+        };
+
+        // Without /m a ^ rejected once stays rejected for the rest of this match (later
+        // occurrences of the expression begin no earlier), which the noNewlineBefore slot records
+        // as bolUnsatisfiable so that those fail at once instead of re-walking their line.
+        static constexpr int32_t bolUnsatisfiable = -1;
+        bool bolIsTerminal = term->anchors.bolAnchor && !term->multiline();
+        MacroAssembler::JumpList rejectForBOL;
+        if (bolIsTerminal) {
+            loadFromFrame(noNewlineBeforeSlot, matchPos);
+            op.m_jumps.append(m_jit.branch32(MacroAssembler::Equal, matchPos, MacroAssembler::TrustedImm32(bolUnsatisfiable)));
+        }
+
         if (term->dotAll()) {
-            m_jit.move(MacroAssembler::TrustedImm32(0), matchPos);
-            setMatchStart(matchPos);
+            // With /s the leading .* reaches back to where matching began -- the start
+            // offset (lastIndex for /g), not position 0 -- and the trailing .* runs to the
+            // end, as the interpreter's matchDotStarEnclosure does. A leading ^ must hold at
+            // the match start: the start offset itself, or under /m the first line start
+            // after it that does not pass the wrapped expression's own start.
+            loadFromFrame(initialStartSlot, initialStart);
+            if (term->anchors.bolAnchor) {
+                MacroAssembler::JumpList atLineStart;
+                atLineStart.append(m_jit.branchTest32(MacroAssembler::Zero, initialStart));
+                if (!term->multiline())
+                    rejectForBOL.append(m_jit.jump());
+                else {
+                    branchIfPrecededByNewline(initialStart, atLineStart);
+                    // Scan [noNewlineBefore, expressionBegin) for a newline; the match then begins
+                    // just past it. None means this occurrence cannot satisfy ^ (remember how far
+                    // we looked).
+                    getMatchStart(matchPos); // expression begin
+                    loadFromFrame(noNewlineBeforeSlot, initialStart);
+                    MacroAssembler::Label scan(&m_jit);
+                    MacroAssembler::Jump exhausted = m_jit.branch32(MacroAssembler::AboveOrEqual, initialStart, matchPos);
+                    m_jit.add32(MacroAssembler::TrustedImm32(1), initialStart);
+                    MacroAssembler::JumpList found;
+                    branchIfPrecededByNewline(initialStart, found);
+                    m_jit.jump(scan);
+                    exhausted.link(&m_jit);
+                    storeToFrame(initialStart, noNewlineBeforeSlot); // max(noNewlineBefore, expressionBegin)
+                    op.m_jumps.append(m_jit.jump());
+                    found.link(&m_jit);
+                }
+                atLineStart.link(&m_jit);
+            }
+            setMatchStart(initialStart);
             m_jit.move(m_regs.length, m_regs.index);
+            if (!rejectForBOL.empty()) {
+                MacroAssembler::Jump done = m_jit.jump();
+                rejectForBOL.link(&m_jit);
+                storeToFrame(MacroAssembler::TrustedImm32(bolUnsatisfiable), noNewlineBeforeSlot);
+                op.m_jumps.append(m_jit.jump());
+                done.link(&m_jit);
+            }
             return;
         }
 
         ASSERT(!m_pattern.m_body->m_hasFixedSize);
+        // Walk back from the expression's begin to the start of its line, but not into the span
+        // already known to be newline-free (bound >= initialStart).
+        const MacroAssembler::RegisterID bound = initialStart;
         getMatchStart(matchPos);
-        loadFromFrame(m_pattern.m_initialStartValueFrameLocation, initialStart);
+        loadFromFrame(noNewlineBeforeSlot, bound);
 
-        saveStartIndex.append(m_jit.branch32(MacroAssembler::BelowOrEqual, matchPos, initialStart));
+        MacroAssembler::JumpList haveMatchBegin;
+        MacroAssembler::Jump insideKnownSpan = m_jit.branch32(MacroAssembler::BelowOrEqual, matchPos, bound);
         MacroAssembler::Label findBOLLoop(&m_jit);
         m_jit.sub32(MacroAssembler::TrustedImm32(1), matchPos);
         if (m_charSize == CharSize::Char8)
@@ -4417,16 +4490,33 @@ class YarrGenerator final : public YarrJITInfo {
         else
             m_jit.load16(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesTwo, 0), character);
         matchCharacterClass(character, scratch, foundBeginningNewLine, m_pattern.newlineCharacterClass());
+        m_jit.branch32(MacroAssembler::Above, matchPos, bound).linkTo(findBOLLoop, &m_jit);
 
-        m_jit.branch32(MacroAssembler::Above, matchPos, initialStart).linkTo(findBOLLoop, &m_jit);
-        saveStartIndex.append(m_jit.jump());
+        // Reached the bound without a newline: everything from the initial start to the
+        // expression is newline-free. Remember that, and begin at the initial start.
+        getMatchStart(matchPos);
+        storeToFrame(matchPos, noNewlineBeforeSlot);
+        insideKnownSpan.link(&m_jit);
+        loadFromFrame(initialStartSlot, matchPos);
+        haveMatchBegin.append(m_jit.jump());
 
         foundBeginningNewLine.link(&m_jit);
         m_jit.add32(MacroAssembler::TrustedImm32(1), matchPos); // Advance past newline
-        saveStartIndex.link(&m_jit);
+        haveMatchBegin.link(&m_jit);
 
-        if (!term->multiline() && term->anchors.bolAnchor)
-            op.m_jumps.append(m_jit.branchTest32(MacroAssembler::NonZero, matchPos));
+        if (term->anchors.bolAnchor) {
+            // matchPos is just past a newline (a line start under /m only) or the initial start,
+            // which is a line start only at 0 or, under /m, when preceded by a newline -- so a /g
+            // RegExp resumed mid-line does not satisfy ^. One test covers both arrivals.
+            MacroAssembler::JumpList atLineStart;
+            atLineStart.append(m_jit.branchTest32(MacroAssembler::Zero, matchPos));
+            if (term->multiline())
+                branchIfPrecededByNewline(matchPos, atLineStart);
+            if (bolIsTerminal)
+                storeToFrame(MacroAssembler::TrustedImm32(bolUnsatisfiable), noNewlineBeforeSlot);
+            op.m_jumps.append(m_jit.jump());
+            atLineStart.link(&m_jit);
+        }
 
         ASSERT(!m_pattern.m_body->m_hasFixedSize);
         setMatchStart(matchPos);
@@ -4935,7 +5025,7 @@ class YarrGenerator final : public YarrJITInfo {
                 // is now a labelled chain target rather than a fallthrough).
                 if (op.m_dispatch) {
                     generateDispatch(op);
-                    bindDispatchEntry(*op.m_dispatch, 0);
+                    bindDispatchEntry(*op.m_dispatch, op.m_dispatchAlternativeIndex);
                 }
 
                 // Calculate how much input we need to check for, and if non-zero check.
@@ -6467,11 +6557,23 @@ class YarrGenerator final : public YarrJITInfo {
         m_ops.last().m_previousOp = notFound;
         m_ops.last().m_term = term;
         m_ops.last().m_dispatch = dispatch;
-        m_ops.last().m_dispatchAlternativeIndex = 0;
         PatternDisjunction* disjunction = term->parentheses.disjunction;
         auto& alternatives = disjunction->m_alternatives;
+        // Under first-character dispatch, an alternative that the chains compare inline (see
+        // emitInlineLiteralAlternative) is only ever entered there: its regular body and backtrack
+        // code would be unreachable, so emit no ops for it at all. The Begin/Next op preceding each
+        // emitted alternative records that alternative's index in the disjunction, which is what
+        // the dispatch entry points and first-character sets are keyed by. (At least one
+        // alternative keeps its ops so the group's op structure stays well formed.)
+        auto emittedInline = [&](unsigned i) {
+            return dispatch && isInlineLiteralAlternative(*alternatives[i]);
+        };
+        bool everyAlternativeInline = dispatch && std::ranges::all_of(alternatives, [&](auto& alternative) { return isInlineLiteralAlternative(*alternative); });
         for (unsigned i = 0; i < alternatives.size(); ++i) {
+            if (emittedInline(i) && !(everyAlternativeInline && !i))
+                continue;
             size_t lastOpIndex = m_ops.size() - 1;
+            m_ops[lastOpIndex].m_dispatchAlternativeIndex = i;
 
             PatternAlternative* nestedAlternative = alternatives[i].get();
             {
@@ -6504,7 +6606,6 @@ class YarrGenerator final : public YarrJITInfo {
             thisOp.m_previousOp = lastOpIndex;
             thisOp.m_term = term;
             thisOp.m_dispatch = dispatch;
-            thisOp.m_dispatchAlternativeIndex = i + 1;
         }
         YarrOp& lastOp = m_ops.last();
         ASSERT(lastOp.m_op == alternativeNextOpCode);
@@ -7509,8 +7610,8 @@ class YarrGenerator final : public YarrJITInfo {
     {
         if (alternative.m_terms.isEmpty() || !alternative.m_hasFixedSize)
             return false;
-        if (alternative.m_minimumSize > maxInlineLiteralLength)
-            return false;
+        if (alternative.m_minimumSize > std::min<size_t>(maxInlineLiteralLength, Options::regExpDispatchMaxInlineLiteralLength()))
+            return false; // the constant bounds unrolling; the option can only lower it
         for (auto& term : alternative.m_terms) {
             if (term.type != PatternTerm::Type::PatternCharacter)
                 return false;
@@ -7539,12 +7640,75 @@ class YarrGenerator final : public YarrJITInfo {
             m_jit.add32(MacroAssembler::Imm32(extraClaim), m_regs.index);
             mismatch.append(m_jit.branch32(MacroAssembler::Above, m_regs.index, m_regs.length));
         }
+        // The literal's characters, in match order at consecutive frame offsets. Compare them a
+        // machine word at a time (8 Latin-1 or 4 UTF-16 units per 64-bit load), as the fused term
+        // path does, rather than one load and branch per character.
+        struct LiteralUnit {
+            Checked<unsigned> offset;
+            char32_t ch;
+            bool ignoreCase;
+        };
+        Vector<LiteralUnit, 32> units;
         for (auto& term : alternative.m_terms) {
-            char32_t ch = term.patternCharacter;
-            for (unsigned repeat = 0; repeat < term.quantityMaxCount; ++repeat) {
-                Checked<unsigned> offset = frameChecked - term.inputPosition - repeat;
-                mismatch.append(jumpIfCharNotEquals(ch, offset, character, term.ignoreCase()));
+            for (unsigned repeat = 0; repeat < term.quantityMaxCount; ++repeat)
+                units.append({ frameChecked - term.inputPosition - repeat, term.patternCharacter, term.ignoreCase() });
+        }
+        unsigned unitBits = m_charSize == CharSize::Char8 ? 8 : 16;
+        auto fusable = [&](const LiteralUnit& unit) {
+            // Only what a masked integer compare expresses: the unit itself, or an ASCII letter with
+            // the 0x20 case bit ORed in. (Wider or oddly-cased characters compare singly below.)
+            if (m_charSize == CharSize::Char8 ? unit.ch > 0xff : unit.ch > 0xffff)
+                return false;
+            return !unit.ignoreCase || isASCIIAlpha(unit.ch);
+        };
+        size_t i = 0;
+        while (i < units.size()) {
+            if (!fusable(units[i])) {
+                mismatch.append(jumpIfCharNotEquals(units[i].ch, units[i].offset, character, units[i].ignoreCase));
+                ++i;
+                continue;
             }
+            // Longest fusable run with consecutive offsets from i, capped at one 64-bit load.
+            size_t run = 1;
+            while (i + run < units.size() && run < 64 / unitBits && fusable(units[i + run]) && (units[i + run - 1].offset - units[i + run].offset) == 1u)
+                ++run;
+            size_t width = run >= 8 ? 8 : run >= 4 ? 4 : run >= 2 ? 2 : 1; // units per load
+            if (width * unitBits > 64)
+                width = 64 / unitBits;
+            uint64_t characters = 0;
+            uint64_t caseMask = 0;
+            for (size_t k = 0; k < width; ++k) {
+                characters |= static_cast<uint64_t>(units[i + k].ch) << (k * unitBits);
+                if (units[i + k].ignoreCase) {
+                    characters |= static_cast<uint64_t>(0x20) << (k * unitBits);
+                    caseMask |= static_cast<uint64_t>(0x20) << (k * unitBits);
+                }
+            }
+            MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(units[i].offset, character);
+            switch (width * unitBits) {
+            case 8:
+                m_jit.load8(address, character);
+                break;
+            case 16:
+                m_jit.load16Unaligned(address, character);
+                break;
+            case 32:
+                m_jit.load32WithUnalignedHalfWords(address, character);
+                break;
+            default:
+                m_jit.load64(address, character);
+                break;
+            }
+            if (width * unitBits == 64) {
+                if (caseMask)
+                    m_jit.or64(MacroAssembler::TrustedImm64(caseMask), character);
+                mismatch.append(m_jit.branch64(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm64(characters)));
+            } else {
+                if (caseMask)
+                    m_jit.or32(MacroAssembler::Imm32(static_cast<int32_t>(caseMask)), character);
+                mismatch.append(m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::Imm32(static_cast<int32_t>(characters))));
+            }
+            i += width;
         }
 
         // Full match: record where to unwind to, then skip to the group's End.
@@ -9101,7 +9265,8 @@ public:
 
         if (m_pattern.m_saveInitialStartValue) {
             ASSERT(!m_pattern.hasEndAnchoredFixedSize());
-            storeToFrame(m_regs.index, m_pattern.m_initialStartValueFrameLocation);
+            storeToFrame(m_regs.index, m_pattern.initialStartFrameLocation());
+            storeToFrame(m_regs.index, m_pattern.noNewlineBeforeFrameLocation());
         }
 
         generate();
@@ -9258,7 +9423,8 @@ public:
 
         if (m_pattern.m_saveInitialStartValue) {
             ASSERT(!m_pattern.hasEndAnchoredFixedSize());
-            storeToFrame(m_regs.index, m_pattern.m_initialStartValueFrameLocation);
+            storeToFrame(m_regs.index, m_pattern.initialStartFrameLocation());
+            storeToFrame(m_regs.index, m_pattern.noNewlineBeforeFrameLocation());
         }
 
         generate();

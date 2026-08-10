@@ -35,6 +35,8 @@
 #include <limits>
 #include <wtf/BitSet.h>
 #include <wtf/DataLog.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/StackCheck.h>
 #include <wtf/TriState.h>
 #include <wtf/Vector.h>
@@ -1087,8 +1089,18 @@ private:
                     }
                 }
 
-                while (matchesIndex < matches.size() && matches[matchesIndex] < ranges[rangesIndex].end + 1)
-                    matchesIndex++;
+                // Matches inside the range are redundant; drop them (one removal per run, so this
+                // stays linear) so every consumer, notably appendInverted's complement walk, sees
+                // disjoint matches and ranges.
+                size_t firstInside = matchesIndex;
+                while (firstInside < matches.size() && matches[firstInside] < ranges[rangesIndex].begin)
+                    firstInside++;
+                size_t pastInside = firstInside;
+                while (pastInside < matches.size() && matches[pastInside] <= ranges[rangesIndex].end)
+                    pastInside++;
+                if (pastInside > firstInside)
+                    matches.removeAt(firstInside, pastInside - firstInside);
+                matchesIndex = firstInside;
 
                 if (matchesIndex < matches.size()) {
                     if (matches[matchesIndex] > ranges[rangesIndex].end + 1) {
@@ -1199,6 +1211,9 @@ class YarrPatternConstructor {
             return &m_alternative->m_terms[m_termIndex];
         }
 
+        PatternAlternative* alternative() const { return m_alternative; }
+        unsigned termIndex() const { return m_termIndex; }
+
         bool NODELETE hasNamedGroup()
         {
             return !m_namedGroup.isNull();
@@ -1275,6 +1290,59 @@ public:
         thisGroupNameSubpatternIds.append(subpatternId);
     }
 
+    // A forward reference inside a lookbehind becomes a backreference as soon as the group it
+    // names closes within that lookbehind. Doing this at the group's own close (rather than only
+    // when the lookbehind closes) matters when an enclosing group is later quantified: quantifyAtom
+    // deep-copies the group, and a copy of a still-unresolved reference would stay a forward
+    // reference forever (/(?<=(?:\1(a))+)b/ used to match "xab").
+    // A still-pending forward reference that quantifyAtom (or optimizeBOL) deep-copies must be
+    // resolved in every copy, so each copy gets its own pending entry.
+    void registerCopiedForwardReferences(PatternAlternative* source, PatternAlternative* copy, const Vector<unsigned>& sourceTermIndices)
+    {
+        if (m_forwardReferencesInLookbehind.isEmpty())
+            return;
+        Vector<UnresolvedForwardReference> added;
+        for (auto& reference : m_forwardReferencesInLookbehind) {
+            if (reference.alternative() != source)
+                continue;
+            for (unsigned copiedIndex = 0; copiedIndex < sourceTermIndices.size(); ++copiedIndex) {
+                if (sourceTermIndices[copiedIndex] != reference.termIndex())
+                    continue;
+                if (reference.hasNamedGroup())
+                    added.append(UnresolvedForwardReference(copy, copiedIndex, reference.namedGroup()));
+                else
+                    added.append(UnresolvedForwardReference(copy, copiedIndex));
+            }
+        }
+        m_forwardReferencesInLookbehind.appendVector(added);
+    }
+
+    void resolveForwardReferencesInLookbehindTo(unsigned subpatternId)
+    {
+        if (m_forwardReferencesInLookbehind.isEmpty())
+            return;
+        // Whether `name` names this group (a duplicate name lists every id that carries it).
+        auto namesThisGroup = [&](const String& name) {
+            auto indices = m_pattern.m_namedGroupToParenIndices.find(name);
+            return indices != m_pattern.m_namedGroupToParenIndices.end() && indices->value.contains(subpatternId);
+        };
+        m_forwardReferencesInLookbehind.removeAllMatching([&](UnresolvedForwardReference& reference) {
+            PatternTerm* term = reference.term();
+            if (reference.hasNamedGroup()) {
+                if (!namesThisGroup(reference.namedGroup()) || term->type != PatternTerm::Type::NamedForwardReference)
+                    return false;
+                term->backReferenceSubpatternId = subpatternId;
+                term->convertToNamedBackreference();
+            } else {
+                if (term->backReferenceSubpatternId != subpatternId || term->type != PatternTerm::Type::NumberedForwardReference)
+                    return false;
+                term->convertToNumberedBackreference();
+            }
+            m_pattern.m_containsBackreferences = true;
+            return true;
+        });
+    }
+
     void tryConvertingForwardReferencesToBackreferences()
     {
         //  There are forward references that could actually be lookbehind back references.
@@ -1348,6 +1416,123 @@ public:
         m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     }
 
+    // Case-insensitive Unicode property escapes.
+    //
+    // Character classes are matched by plain code point membership, and case-insensitivity is
+    // handled by building classes that already hold every case variant (putChar / putRange add a
+    // character's whole canonical-equivalence group). Property escapes used to be appended
+    // verbatim, so /\p{Lu}/iu did not match 'a'. Under /iu the CharacterSetMatcher accepts ch when
+    // some member canonicalizes like ch, i.e. the class must be the closure of the property set:
+    //   \p{X}   -> closure(X)                       [^\p{X}] -> its complement (the term's invert)
+    //   \P{X}   -> closure(complement(X)) = complement(X - closure(closure(X) - X))
+    // Under /iv sets are folded first and ch is folded before the membership test, which in
+    // membership terms is closure(X) for \p{X} and complement(closure(X)) for \P{X}.
+    static void putCodePoints(CharacterClassConstructor& constructor, const CharacterClass& characterClass)
+    {
+        for (char32_t ch : characterClass.m_matches8)
+            constructor.putChar(ch);
+        for (auto& range : characterClass.m_ranges8)
+            constructor.putRange(range.begin, range.end);
+        for (char32_t ch : characterClass.m_matches32)
+            constructor.putChar(ch);
+        for (auto& range : characterClass.m_ranges32)
+            constructor.putRange(range.begin, range.end);
+    }
+
+    // These sets depend only on the property, so they are built once per process (patterns are
+    // rebuilt several times per RegExp, and \P{L}-sized closures take milliseconds) and shared;
+    // the classes are immutable once published.
+    struct IgnoreCasePropertyClasses {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(IgnoreCasePropertyClasses);
+        std::unique_ptr<CharacterClass> closure; // null: not enumerable
+        std::unique_ptr<CharacterClass> invertedCore; // null: not computed or not enumerable
+        bool closureComputed { false };
+        bool invertedCoreComputed { false };
+        bool invertedCoreIsBase { false };
+    };
+    static Lock& ignoreCasePropertyClassesLock()
+    {
+        static Lock lock;
+        return lock;
+    }
+    static IgnoreCasePropertyClasses& ignoreCasePropertyClassesFor(BuiltInCharacterClassID classID)
+    {
+        static NeverDestroyed<UncheckedKeyHashMap<unsigned, std::unique_ptr<IgnoreCasePropertyClasses>>> map;
+        auto& slot = map.get().add(static_cast<unsigned>(classID), nullptr).iterator->value;
+        if (!slot)
+            slot = makeUnique<IgnoreCasePropertyClasses>();
+        return *slot;
+    }
+
+    // closure(X) for a property class, or null if the class is not enumerable (table only / strings).
+    CharacterClass* ignoreCaseUnicodePropertyClass(BuiltInCharacterClassID classID)
+    {
+        Locker locker { ignoreCasePropertyClassesLock() };
+        auto& entry = ignoreCasePropertyClassesFor(classID);
+        if (!entry.closureComputed) {
+            CharacterClass* base = m_pattern.unicodeCharacterClassFor(classID);
+            if (base->hasSingleCharacters() && !base->hasStrings() && !base->m_anyCharacter) {
+                CharacterClassConstructor closed(true, CompileMode::UnicodeSets);
+                putCodePoints(closed, *base);
+                entry.closure = closed.charClass();
+            }
+            entry.closureComputed = true;
+        }
+        return entry.closure.get();
+    }
+
+    // K = X - closure(closure(X) - X): \P{X} under /iu is exactly [^K]. Null when not enumerable.
+    CharacterClass* ignoreCaseInvertedUnicodePropertyCore(BuiltInCharacterClassID classID)
+    {
+        CharacterClass* closure = ignoreCaseUnicodePropertyClass(classID);
+        CharacterClass* base = m_pattern.unicodeCharacterClassFor(classID);
+        Locker locker { ignoreCasePropertyClassesLock() };
+        auto& entry = ignoreCasePropertyClassesFor(classID);
+        if (entry.invertedCoreComputed)
+            return entry.invertedCoreIsBase ? base : entry.invertedCore.get();
+        CharacterClass* result = nullptr;
+        auto sameSet = [](const CharacterClass& a, const CharacterClass& b) {
+            auto sameRanges = [](const Vector<CharacterRange>& x, const Vector<CharacterRange>& y) {
+                if (x.size() != y.size())
+                    return false;
+                for (size_t i = 0; i < x.size(); ++i) {
+                    if (x[i].begin != y[i].begin || x[i].end != y[i].end)
+                        return false;
+                }
+                return true;
+            };
+            return a.m_matches8 == b.m_matches8 && a.m_matches32 == b.m_matches32 && sameRanges(a.m_ranges8, b.m_ranges8) && sameRanges(a.m_ranges32, b.m_ranges32);
+        };
+        if (closure && sameSet(*closure, *base)) {
+            entry.invertedCoreIsBase = true; // closed under case already (Any, ...): [^X] is exact
+            result = base;
+        } else if (closure) {
+            CharacterClassConstructor boundary(false, CompileMode::UnicodeSets); // closure(X) - X
+            boundary.append(closure);
+            boundary.combiningSetOp(CharacterClassSetOp::Subtraction);
+            boundary.append(base);
+            auto boundaryClass = boundary.charClass();
+
+            CharacterClassConstructor mixed(true, CompileMode::UnicodeSets); // groups only partly inside X
+            putCodePoints(mixed, *boundaryClass);
+            auto mixedClass = mixed.charClass();
+
+            CharacterClassConstructor core(false, CompileMode::UnicodeSets); // X minus those groups
+            core.append(base);
+            core.combiningSetOp(CharacterClassSetOp::Subtraction);
+            core.append(mixedClass.get());
+            entry.invertedCore = core.charClass();
+            result = entry.invertedCore.get();
+        }
+        entry.invertedCoreComputed = true;
+        return result;
+    }
+
+    bool isIgnoreCaseUnicodeProperty(BuiltInCharacterClassID classID) const
+    {
+        return classID >= BuiltInCharacterClassID::BaseUnicodePropertyID && ignoreCase() && m_pattern.eitherUnicode();
+    }
+
     void atomBuiltInCharacterClass(BuiltInCharacterClassID classID, bool invert)
     {
         switch (classID) {
@@ -1401,6 +1586,17 @@ public:
                 // Fall through for the case where the characterClass REALLY doesn't have strings.
             }
 
+            if (isIgnoreCaseUnicodeProperty(classID)) {
+                if (!invert || m_pattern.unicodeSets()) {
+                    if (CharacterClass* closure = ignoreCaseUnicodePropertyClass(classID)) {
+                        m_alternative->m_terms.append(PatternTerm(closure, invert, m_flags, parenthesisMatchDirection()));
+                        break;
+                    }
+                } else if (CharacterClass* core = ignoreCaseInvertedUnicodePropertyCore(classID)) {
+                    m_alternative->m_terms.append(PatternTerm(core, true, m_flags, parenthesisMatchDirection()));
+                    break;
+                }
+            }
             m_alternative->m_terms.append(PatternTerm(m_pattern.unicodeCharacterClassFor(classID), invert, m_flags, parenthesisMatchDirection()));
             break;
         }
@@ -1445,11 +1641,20 @@ public:
                 m_currentCharacterClassConstructor->append(invert ? m_pattern.nonwordcharCharacterClass() : m_pattern.wordcharCharacterClass());
             break;
         
-        default:
+        default: {
+            CharacterClass* characterClass = m_pattern.unicodeCharacterClassFor(classID);
+            if (isIgnoreCaseUnicodeProperty(classID)) {
+                if (!invert || m_pattern.unicodeSets()) {
+                    if (CharacterClass* closure = ignoreCaseUnicodePropertyClass(classID))
+                        characterClass = closure;
+                } else if (CharacterClass* core = ignoreCaseInvertedUnicodePropertyCore(classID))
+                    characterClass = core; // and still inverted below: [^K] == closure(complement(X))
+            }
             if (!invert)
-                m_currentCharacterClassConstructor->append(m_pattern.unicodeCharacterClassFor(classID));
+                m_currentCharacterClassConstructor->append(characterClass);
             else
-                m_currentCharacterClassConstructor->appendInverted(m_pattern.unicodeCharacterClassFor(classID));
+                m_currentCharacterClassConstructor->appendInverted(characterClass);
+        }
         }
     }
 
@@ -1620,6 +1825,9 @@ public:
 
         lastTerm.parentheses.lastSubpatternId = m_pattern.m_numSubpatterns;
 
+        if (lastTerm.type == PatternTerm::Type::ParenthesesSubpattern && lastTerm.capture() && insideLookbehind())
+            resolveForwardReferencesInLookbehindTo(lastTerm.parentheses.subpatternId);
+
         bool shouldTryConvertingForwardReferencesToBackreferences =
             lastTerm.type == PatternTerm::Type::ParentheticalAssertion
             && !m_forwardReferencesInLookbehind.isEmpty()
@@ -1693,8 +1901,11 @@ public:
             }
         }
 
+        // parenIndices.last() is the highest subpattern id carrying this name (duplicates included);
+        // if even that one closed before the outermost enclosing lookbehind opened, every group of
+        // this name lies before it and this is an ordinary (duplicate-aware) named backreference.
         bool capturedBeforeLookbehind = false;
-        if (parenthesisMatchDirection() == Backward && parenIndices.size() == 2) {
+        if (parenthesisMatchDirection() == Backward && parenIndices.size() >= 2) {
             unsigned outermostLookbehindFirstSubpatternId = m_pattern.m_numSubpatterns + 1;
             for (PatternAlternative* ancestor = m_alternative; ancestor->m_parent->m_parent; ancestor = ancestor->m_parent->m_parent) {
                 PatternTerm& enclosing = ancestor->m_parent->m_parent->lastTerm();
@@ -1751,7 +1962,8 @@ public:
             if (filterStartsWithBOL && alternative->m_startsWithBOL && alternative->matchDirection() != Backward)
                 continue;
 
-            auto copiedTerms = copyTerms(alternative, filterStartsWithBOL);
+            Vector<unsigned> sourceTermIndices;
+            auto copiedTerms = copyTerms(alternative, filterStartsWithBOL, sourceTermIndices);
             if (!copiedTerms)
                 continue;
 
@@ -1762,6 +1974,7 @@ public:
             PatternAlternative* newAlternative = newDisjunction->addNewAlternative(alternative->m_firstSubpatternId, alternative->matchDirection());
             newAlternative->m_lastSubpatternId = alternative->m_lastSubpatternId;
             newAlternative->m_terms = WTF::move(*copiedTerms);
+            registerCopiedForwardReferences(alternative, newAlternative, sourceTermIndices);
         }
 
         if (hasError(error())) {
@@ -1787,13 +2000,15 @@ public:
 
     // Copy the terms of `alternative`, dropping the parentheses copyTerm() filtered out. Returns
     // std::nullopt when one of those has to be matched, i.e. this alternative cannot match at all.
-    std::optional<Vector<PatternTerm>> copyTerms(PatternAlternative* alternative, bool filterStartsWithBOL)
+    std::optional<Vector<PatternTerm>> copyTerms(PatternAlternative* alternative, bool filterStartsWithBOL, Vector<unsigned>& sourceTermIndices)
     {
         Vector<PatternTerm> copiedTerms;
         copiedTerms.reserveInitialCapacity(alternative->m_terms.size());
-        for (auto& term : alternative->m_terms) {
+        for (unsigned termIndex = 0; termIndex < alternative->m_terms.size(); ++termIndex) {
+            auto& term = alternative->m_terms[termIndex];
             if (auto copied = copyTerm(term, filterStartsWithBOL)) {
                 copiedTerms.append(WTF::move(*copied));
+                sourceTermIndices.append(termIndex);
                 continue;
             }
             // Every alternative inside this parenthesis was filtered out, so it can only match at
@@ -2356,27 +2571,6 @@ public:
 
     void optimizePossessiveQuantifiers()
     {
-        auto rawClassContains = [](const CharacterClass* characterClass, char32_t ch) -> TriState {
-            if (characterClass->m_anyCharacter)
-                return TriState::True;
-
-            if (!characterClass->hasSingleCharacters())
-                return characterClass->m_table ? TriState::Indeterminate : TriState::False;
-
-            bool isLatin1Char = isLatin1(ch);
-            const auto& matches = isLatin1Char ? characterClass->m_matches8 : characterClass->m_matches32;
-            for (auto match : matches) {
-                if (match == ch)
-                    return TriState::True;
-            }
-            const auto& ranges = isLatin1Char ? characterClass->m_ranges8 : characterClass->m_ranges32;
-            for (auto range : ranges) {
-                if (ch >= range.begin && ch <= range.end)
-                    return TriState::True;
-            }
-            return TriState::False;
-        };
-
         auto termMatchesCharacter = [&](const PatternTerm& term, char32_t ch) -> TriState {
             if (term.type == PatternTerm::Type::PatternCharacter) {
                 char32_t pc = term.patternCharacter;
@@ -2392,7 +2586,7 @@ public:
             }
 
             ASSERT(term.type == PatternTerm::Type::CharacterClass);
-            TriState raw = rawClassContains(term.characterClass, ch);
+            TriState raw = classContainsCodePoint(*term.characterClass, ch);
             if (raw == TriState::Indeterminate)
                 return TriState::Indeterminate;
             if (term.invert())
@@ -2915,13 +3109,8 @@ public:
         m_pattern.m_disjunctions.append(WTF::move(groupDisjunction));
     }
 
-    bool containsCapturingTerms(PatternAlternative* alternative, size_t firstTermIndex, size_t endIndex)
+    static bool containsCapturingTerms(PatternAlternative* alternative, size_t firstTermIndex, size_t endIndex)
     {
-        if (!isSafeToRecurse()) [[unlikely]] {
-            m_error = ErrorCode::PatternTooLarge;
-            return true;
-        }
-
         Vector<PatternTerm>& terms = alternative->m_terms;
 
         ASSERT(endIndex <= terms.size());
@@ -2931,15 +3120,107 @@ public:
             if (term.m_capture)
                 return true;
 
-            if (term.type == PatternTerm::Type::ParenthesesSubpattern) {
-                PatternDisjunction* nestedDisjunction = term.parentheses.disjunction;
-                for (unsigned alt = 0; alt < nestedDisjunction->m_alternatives.size(); ++alt) {
-                    if (containsCapturingTerms(nestedDisjunction->m_alternatives[alt].get(), 0, nestedDisjunction->m_alternatives[alt]->m_terms.size()))
-                        return true;
-                }
-            }
+            if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && term.containsAnyCaptures())
+                return true;
         }
 
+        return false;
+    }
+
+    // Code point membership of a class (ignoring inversion at the term). Table-backed classes
+    // without explicit matches/ranges are answered from the table where the interpreter would
+    // (YarrInterpreter's testCharacterClass); an inverted-storage table is Indeterminate.
+    static TriState classContainsCodePoint(const CharacterClass& characterClass, char32_t ch)
+    {
+        if (characterClass.m_anyCharacter)
+            return TriState::True;
+        if (characterClass.hasStrings())
+            return TriState::Indeterminate;
+        if (!characterClass.hasSingleCharacters()) {
+            if (!characterClass.m_table)
+                return TriState::False;
+            if (characterClass.m_tableInverted || ch >= CharacterClass::tableSize)
+                return TriState::Indeterminate;
+            return characterClass.m_table[ch] ? TriState::True : TriState::False;
+        }
+        bool isLatin1Char = isLatin1(ch);
+        const auto& matches = isLatin1Char ? characterClass.m_matches8 : characterClass.m_matches32;
+        for (auto match : matches) {
+            if (match == ch)
+                return TriState::True;
+        }
+        const auto& ranges = isLatin1Char ? characterClass.m_ranges8 : characterClass.m_ranges32;
+        for (auto range : ranges) {
+            if (ch >= range.begin && ch <= range.end)
+                return TriState::True;
+        }
+        return TriState::False;
+    }
+
+    // The ECMAScript LineTerminator code points (what newlineCharacterClass() holds).
+    static constexpr char32_t lineTerminators[] = { 0x0a, 0x0d, 0x2028, 0x2029 };
+    static bool isLineTerminator(char32_t ch)
+    {
+        for (char32_t terminator : lineTerminators) {
+            if (ch == terminator)
+                return true;
+        }
+        return false;
+    }
+
+    static bool characterClassMayMatchNewline(const CharacterClass& characterClass, bool invert)
+    {
+        for (char32_t ch : lineTerminators) {
+            TriState contains = classContainsCodePoint(characterClass, ch);
+            if (contains == TriState::Indeterminate || (contains == TriState::True) != invert)
+                return true;
+        }
+        return false;
+    }
+
+    // Whether any term in [firstTermIndex, endIndex) could consume a line terminator.
+    // Conservative: anything not understood says yes.
+    bool termsMayMatchNewline(PatternAlternative* alternative, size_t firstTermIndex, size_t endIndex)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return true;
+
+        Vector<PatternTerm>& terms = alternative->m_terms;
+        for (size_t termIndex = firstTermIndex; termIndex < endIndex; ++termIndex) {
+            PatternTerm& term = terms[termIndex];
+            switch (term.type) {
+            case PatternTerm::Type::AssertionBOL:
+            case PatternTerm::Type::AssertionEOL:
+            case PatternTerm::Type::AssertionWordBoundary:
+                continue;
+            case PatternTerm::Type::PatternCharacter:
+                if (!term.quantityMaxCount)
+                    continue;
+                if (isLineTerminator(term.patternCharacter))
+                    return true;
+                continue;
+            case PatternTerm::Type::CharacterClass:
+                if (!term.quantityMaxCount)
+                    continue;
+                if (characterClassMayMatchNewline(*term.characterClass, term.invert()))
+                    return true;
+                continue;
+            case PatternTerm::Type::ParentheticalAssertion:
+                // Lookarounds consume nothing, so they cannot carry the expression's own
+                // span across a line terminator (whatever they inspect).
+                continue;
+            case PatternTerm::Type::ParenthesesSubpattern: {
+                PatternDisjunction* nestedDisjunction = term.parentheses.disjunction;
+                for (auto& nested : nestedDisjunction->m_alternatives) {
+                    if (termsMayMatchNewline(nested.get(), 0, nested->m_terms.size()))
+                        return true;
+                }
+                continue;
+            }
+            default:
+                return true;
+            }
+        }
         return false;
     }
 
@@ -2999,6 +3280,18 @@ public:
 
             size_t endIndex = termIndex;
             if (firstExpressionTerm >= endIndex)
+                return;
+
+            // Without /s the enclosure takes the FIRST occurrence of the expression at or
+            // after the start and widens it to the enclosing line. Greedy semantics take
+            // the LAST split point on that line where the expression matches, which is
+            // the same span only if the expression can never itself consume a line
+            // terminator: /^.*[e\s].*/ on "eq\n" is "eq\n" (the class takes the \n), not "eq".
+            // A trailing non-/m $ pins the end to the input's end regardless, and the start then
+            // depends only on the earliest expression start with a newline-free tail, which the
+            // enclosure's first-occurrence-then-advance search also finds; keep those (validators
+            // like /.*foo\s+bar.*$/) on the fast path.
+            if (!dotAll() && !(endsWithEOL && !multiline()) && termsMayMatchNewline(alternative, firstExpressionTerm, endIndex))
                 return;
 
             if (!containsCapturingTerms(alternative, firstExpressionTerm, endIndex)) {

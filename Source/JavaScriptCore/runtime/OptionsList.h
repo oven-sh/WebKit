@@ -107,6 +107,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useRegExpLookbehindJIT, true, Normal, "allows patterns containing lookbehind assertions to use the RegExp JIT"_s) \
     v(Bool, useRegExpAlternationFactoring, true, Normal, "factors shared prefixes out of wide alternations and folds wide top-level alternations into a group"_s) \
     v(Bool, useRegExpAlternationDispatch, true, Normal, "lets the RegExp JIT dispatch a group's alternatives on their first character and compare short literal alternatives inline"_s) \
+    v(Unsigned, regExpDispatchMaxInlineLiteralLength, 32, Normal, "longest literal alternative (up to the JIT's ceiling of 32) the RegExp JIT compares inline inside a first-character dispatch chain; 0 disables inline literals"_s) \
     \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \
     /* Bun Features */\
@@ -431,7 +432,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, minMarkedBlockUtilization, 0.9, Normal, nullptr) \
     v(Unsigned, slowPathAllocsBetweenGCs, 0, Normal, "force a GC on every Nth slow path alloc, where N is specified by this option"_s) \
     /* WARNING: this option is important for compatibility be *VERY* careful when lowering it. See: rdar://145585141 and https://bugs.webkit.org/show_bug.cgi?id=289330 */ \
-    v(Unsigned, maxRegExpStackSize, 128 * MB, Normal, nullptr) \
+    /* Cap on the bytecode RegExp interpreter's backtracking-context pool (allocated a page at a time, only while a match runs, and released after it). Each quantified-group iteration takes a context sized by the pattern's call frame, which grew with the ParenthesesOnce/BackReference slots and the alternation folding; 192MB keeps the reach interpreter-only patterns had at 128MB (prism/highlight.js tokenizers over ~600KB inputs). */ \
+    v(Unsigned, maxRegExpStackSize, 192 * MB, Normal, nullptr) \
     \
     v(Double, percentCPUPerMBForFullTimer, 0.0003125, Normal, nullptr) \
     v(Double, percentCPUPerMBForEdenTimer, 0.0025, Normal, nullptr) \

@@ -41,7 +41,7 @@ namespace JSC { namespace Yarr {
 #define YarrStackSpaceForBackTrackInfoParenthesesOnce 3
 #define YarrStackSpaceForBackTrackInfoParenthesesTerminal 2
 #define YarrStackSpaceForBackTrackInfoParentheses 4
-#define YarrStackSpaceForDotStarEnclosure 1
+#define YarrStackSpaceForDotStarEnclosure 2 // The start offset, and the end of the newline-free span known to follow it.
 
 static constexpr unsigned quantifyInfinite = UINT_MAX;
 static constexpr uint64_t quantifyInfinite64 = std::numeric_limits<uint64_t>::max();
