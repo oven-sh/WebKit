@@ -41,6 +41,7 @@
 #include "RegExpConstructorInlines.h"
 #include "RegExpGlobalDataInlines.h"
 #include "RegExpObjectInlines.h"
+#include "RegExpPrototype.h"
 #include "StringPrototypeInlines.h"
 #include "StringSplitCacheInlines.h"
 #include "SuperSampler.h"
@@ -347,6 +348,17 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
     bool hasNamedCaptures = regExp->hasNamedCaptures();
     bool hasDuplicateNamedCaptureGroups = regExp->hasDuplicateNamedCaptureGroups();
     Structure* groupsStructure = hasNamedCaptures ? regExp->ensureGroupsStructure(vm, globalObject) : nullptr;
+
+    if (!global && regExp->sticky()) {
+        // A sticky, non-global search replaces the single match at exactly lastIndex and then
+        // updates lastIndex (RegExpBuiltinExec via RegExp.prototype[@@replace]); the paths below
+        // all search from 0. Rare enough to leave to the generic implementation.
+        // (replaceValue was already stringified into replacementString when it is not callable;
+        // hand that over so a user toString runs once, as the spec requires.)
+        JSValue result = regExpReplaceGeneric(globalObject, regExpObject, string, callData.type == CallData::Type::None ? JSValue(jsString(vm, replacementString)) : replaceValue);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, result.toString(globalObject));
+    }
 
     if (global) {
         // ES5.1 15.5.4.10 step 8.a.

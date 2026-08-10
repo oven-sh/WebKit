@@ -1248,6 +1248,7 @@ private:
 
             Node* regExpObjectNode = m_node->child2().node();
             RegExp* regExp;
+            // (A sticky non-global RegExp replaces at its runtime lastIndex and updates it; not folded, see below.)
             if (RegExpObject* regExpObject = regExpObjectNode->dynamicCastConstant<RegExpObject*>()) {
                 JSGlobalObject* globalObject = regExpObject->realm();
                 if (m_graph.m_plan.isUnlinked() && globalObject != m_graph.globalObjectFor(m_node->origin.semantic)) {
@@ -1274,6 +1275,11 @@ private:
                 regExp = regExpObjectNode->castOperand<RegExp*>();
             } else {
                 dataLogLnIf(verbose, "Giving up because the regexp is unknown.");
+                break;
+            }
+
+            if (regExp->sticky() && !regExp->global()) {
+                dataLogLnIf(verbose, "Giving up because a sticky non-global RegExp depends on and updates lastIndex.");
                 break;
             }
 
