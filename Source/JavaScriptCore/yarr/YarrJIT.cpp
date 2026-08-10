@@ -1621,7 +1621,7 @@ class YarrGenerator final : public YarrJITInfo {
             // names the k'th character behind the forward frontier; mirrored, that
             // character lives at input[index + (k - 1)]. k == 0 (a peek at the
             // frontier itself, used by anchors) maps to input[index - 1].
-            Checked<int32_t> characterOffset = static_cast<int32_t>(negativeCharacterOffset.value()) - 1;
+            Checked<int32_t> characterOffset = static_cast<int32_t>(static_cast<int64_t>(negativeCharacterOffset.value()) - 1);
             unsigned positiveCharacterOffset = negativeCharacterOffset.value() ? negativeCharacterOffset.value() - 1 : 0;
             if (positiveCharacterOffset > maximumNegativeOffsetForCharacterSize) {
                 base = tempReg;
@@ -3009,12 +3009,17 @@ class YarrGenerator final : public YarrJITInfo {
             } else
                 loadSubPattern(subpatternId, patternIndex, patternTemp);
 
-            // An empty match is successful without consuming characters
+            // An empty match is successful without consuming characters. An
+            // undefined capture reads as an empty one; test both slots, since a
+            // capture inside a lookbehind is recorded end-first (see emitCaptureStart)
+            // and so is undefined while only its end slot is written.
             if (term->quantityType != QuantifierType::FixedCount || term->quantityMaxCount != 1) {
                 matches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternTemp));
+                matches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternIndex));
                 matches.append(m_jit.branch32(MacroAssembler::Equal, patternIndex, patternTemp));
             } else {
                 zeroLengthMatches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternTemp));
+                zeroLengthMatches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternIndex));
                 MacroAssembler::Jump tryNonZeroMatch = m_jit.branch32(MacroAssembler::NotEqual, patternIndex, patternTemp);
                 zeroLengthMatches.link(&m_jit);
                 storeToFrame(MacroAssembler::TrustedImm32(1), parenthesesFrameLocation + BackTrackInfoBackReference::matchAmountIndex());
@@ -3122,8 +3127,10 @@ class YarrGenerator final : public YarrJITInfo {
             } else
                 loadSubPattern(subpatternId, patternIndex, patternTemp);
 
-            // An empty match is successful without consuming characters
+            // An empty match is successful without consuming characters (an
+            // undefined capture, either slot -1, reads as empty; see above).
             zeroLengthMatches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternTemp));
+            zeroLengthMatches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternIndex));
             MacroAssembler::Jump tryNonZeroMatch = m_jit.branch32(MacroAssembler::NotEqual, patternIndex, patternTemp);
             zeroLengthMatches.link(&m_jit);
             storeToFrame(MacroAssembler::TrustedImm32(1), parenthesesFrameLocation + BackTrackInfoBackReference::matchAmountIndex());
@@ -3944,18 +3951,19 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
     }
 
-    void backtrackCharacterClassOnce(size_t opIndex, bool fallThroughToCharacterClassFixedCount)
+    void backtrackCharacterClassOnce(size_t opIndex)
     {
-        UNUSED_PARAM(fallThroughToCharacterClassFixedCount);
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
         if (m_decodeSurrogatePairs) {
             YarrOp& op = m_ops[opIndex];
             PatternTerm* term = op.m_term;
 
+            // The class may have consumed a surrogate pair, so restore the frontier from
+            // the frame rather than by arithmetic. Always: eliding this when the previous
+            // term "will reload anyway" depended on that term's own reload conditions and
+            // mis-restored the index once they changed (/\w{2}[^o]q|b/u on "fb\u{1F600}K").
             m_backtrackingState.link(*this, op);
-            // If we fallthough to the same CharacterClassOnce, we will override this index register, so we do not need to load here.
-            if (!fallThroughToCharacterClassFixedCount)
-                loadFromFrame(term->frameLocation + BackTrackInfoCharacterClass::beginIndex(), m_regs.index);
+            loadFromFrame(term->frameLocation + BackTrackInfoCharacterClass::beginIndex(), m_regs.index);
             m_backtrackingState.fallthrough();
         }
 #endif
@@ -4456,9 +4464,6 @@ class YarrGenerator final : public YarrJITInfo {
         YarrOp& op = m_ops[opIndex];
         PatternTerm* term = op.m_term;
 
-#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
-#endif
-
         switch (term->type) {
         case PatternTerm::Type::PatternCharacter:
             switch (term->quantityType) {
@@ -4553,18 +4558,9 @@ class YarrGenerator final : public YarrJITInfo {
         case PatternTerm::Type::CharacterClass:
             switch (term->quantityType) {
             case QuantifierType::FixedCount:
-                if (term->quantityMaxCount == 1) {
-                    bool fallThroughToCharacterClassFixedCount = false;
-                    if (opIndex != 0) {
-                        auto& previousOp = m_ops[opIndex - 1];
-                        if (previousOp.m_op == YarrOpCode::Term) {
-                            auto* term = previousOp.m_term;
-                            if (term->type == PatternTerm::Type::CharacterClass && term->quantityType == QuantifierType::FixedCount)
-                                fallThroughToCharacterClassFixedCount = true;
-                        }
-                    }
-                    backtrackCharacterClassOnce(opIndex, fallThroughToCharacterClassFixedCount);
-                } else
+                if (term->quantityMaxCount == 1)
+                    backtrackCharacterClassOnce(opIndex);
+                else
                     backtrackCharacterClassFixed(opIndex);
                 break;
             case QuantifierType::Greedy:
@@ -6865,14 +6861,14 @@ class YarrGenerator final : public YarrJITInfo {
         checkedOffset -= m_ops.last().m_checkAdjust;
         m_ops.last().m_checkedOffset = checkedOffset;
 
-        // The body's ops are emitted in the body's own direction. A body starts a
-        // fresh frame at position 0 whenever its coordinates are not the enclosing
-        // forward line: a lookbehind body is mirrored and numbered from 0, and a
-        // forward body nested inside a mirrored (Backward) body is renumbered from
-        // 0 by assignAlternativeOffsets, since it cannot inherit mirrored offsets.
-        // A forward body under a forward frame keeps the pattern layer's numbering
-        // and continues the enclosing checkedOffset. The Begin op has already
-        // placed the index register at the assertion point in every case.
+        // The body's ops are emitted in the body's own direction. A lookbehind body
+        // is a mirrored copy numbered from 0, so it starts a fresh frame
+        // (checkedOffset 0). A forward body keeps its coordinates and continues the
+        // enclosing checkedOffset: under a forward frame it uses the pattern layer's
+        // numbering; nested inside a mirrored (Backward) body it was renumbered by
+        // assignAlternativeOffsets from the assertion's virtual position, which is
+        // the same line. The Begin op has already placed the index register at the
+        // assertion point in every case.
         MatchDirection enclosingDirection = m_direction;
         m_direction = bodyDirection;
         if (bodyDirection == Backward)
@@ -6935,8 +6931,6 @@ class YarrGenerator final : public YarrJITInfo {
     {
         optimizeAlternative(alternative);
 
-        // The first term reads the match start's character until some term can
-        // move the frontier at runtime; from then on a read may land anywhere.
         for (unsigned i = 0; i < alternative->m_terms.size(); ++i) {
             PatternTerm* term = &alternative->m_terms[i];
 
@@ -6949,22 +6943,10 @@ class YarrGenerator final : public YarrJITInfo {
                 opCompileParentheticalAssertion(checkedOffset, term);
                 break;
 
-            default: {
+            default:
                 appendOp(term);
                 m_ops.last().m_checkedOffset = checkedOffset;
-                // Only a literal or a class term makes a single fixed-position read of
-                // the start character; assertions, forward references, and backreferences
-                // (a variable-length span match, never the start's one code point) do not.
-                bool readsInput = term->type == PatternTerm::Type::PatternCharacter || term->type == PatternTerm::Type::CharacterClass;
-                if (readsInput) {
-                    // Only a term that reads exactly once has its single read pinned to
-                    // the match start; a quantified term's later iterations peek beyond
-                    // it. The read variant only records that the start character is
-                    // non-BMP (it never moves the frontier), so a literal or a class head
-                    // that reads once at the start both qualify.
-                }
                 break;
-            }
             }
         }
     }
