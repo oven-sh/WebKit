@@ -53,3 +53,15 @@ shouldBe(/[\q{ab|ac|q1|q2|q3|q4|q5}a]/v.exec("xac")[0], "ac");
     try { matched = new RegExp("[\\q{" + "ab".repeat(25000) + "|q1|q2|q3|q4|q5}]", "v").exec("x" + "ab".repeat(25000)); } catch (e) { threw = e instanceof SyntaxError; }
     shouldBe(threw || (matched && matched[0].length === 50000), true);
 }
+// Hunt cases: any-character singles take the bare branch head themselves (no second way to match
+// one character), long shared prefixes compile, duplicate members are one member.
+{
+    const t = Date.now();
+    shouldBe(/^[\q{ab|cd|ef|gh|ij|kl}\s\S]*z$/v.test("a".repeat(26)), false);
+    shouldBe(Date.now() - t < 1000, true);
+    shouldBe("xaby".match(/[\q{ab|cd|ef|gh|ij|kl}\s\S]/gv), ["x", "ab", "y"]);
+    const P = "x".repeat(30000);
+    shouldBe(new RegExp("[\\q{" + P + "a|" + P + "b|cd|ef|gh|ij}]$", "v").exec("q" + P + "b")[0].length, 30001);
+    shouldBe(/^[\q{ab|ab}--\q{ab}]/v.exec("ab"), null);
+    shouldBe("ab a".match(/[\q{ab|ab|a|a|}]/gv), ["ab", "", "a", ""]);
+}

@@ -349,6 +349,7 @@ public:
         Vector<CharacterRange> emptyRanges;
 
         sort(disjunctionStrings);
+        removeRepeatedElements(disjunctionStrings); // \q{ab|ab} is the set {"ab"}; the set-op merges assume no repeats
 
         auto addCh = [&](char32_t ch) {
             if (isLatin1(ch))
@@ -1803,7 +1804,10 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             size_t end = begin;
             while (end < strings.size() && !strings[end].isEmpty() && strings[end][0] == head)
                 ++end;
-            bool headIsSingle = singlesContain(*characterClass, head) == TriState::True;
+            // (For an any-character class the class alternative takes the bare head itself; also ending
+            // it inside its branch would let two alternatives match one character -- exponential under
+            // a quantifier.)
+            bool headIsSingle = !characterClass->m_anyCharacter && singlesContain(*characterClass, head) == TriState::True;
             if (headIsSingle) {
                 branchHeads.putChar(head);
                 anyBranchHeadIsSingle = true;
@@ -1862,6 +1866,9 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
         };
         Vector<Branch, 8> branches;
         size_t leafCount = 0;
+      nextCharacter: // a single continuation with no early end loops here instead of recursing
+        branches.shrink(0);
+        leafCount = 0;
         for (size_t i = begin; i < end;) {
             if (strings[i].size() == depth) {
                 endsHere = true;
@@ -1893,7 +1900,13 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
                     atomPatternCharacter(strings[branches[0].begin][i], false);
             } else {
                 atomPatternCharacter(branches[0].ch, false);
-                emitStringTrieNode(strings, branches[0].begin, branches[0].end, depth + 1, branches[0].isLeaf);
+                if (hasError(m_error))
+                    return;
+                begin = branches[0].begin;
+                end = branches[0].end;
+                endsHere = branches[0].isLeaf;
+                ++depth;
+                goto nextCharacter;
             }
             return;
         }
