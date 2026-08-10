@@ -122,6 +122,9 @@ PreciseAllocation* PreciseAllocation::tryReallocate(size_t size, Subspace* subsp
     unsigned oldAdjustment = m_adjustment;
     void* oldBasePointer = basePointer();
 
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(!isImmortal()); // ButterflyInlines never reallocates a snapshot allocation
+#endif
     void* newSpace = subspace->alignedMemoryAllocator()->tryReallocateMemory(oldBasePointer, adjustedAlignmentAllocationSize);
     if (!newSpace)
         return nullptr;
@@ -232,6 +235,8 @@ PreciseAllocation::~PreciseAllocation()
 
 void PreciseAllocation::lastChanceToFinalize()
 {
+    if (isImmortal()) [[unlikely]]
+        return; // as for immortal blocks: abandoned, not finalized
     m_weakSet.lastChanceToFinalize();
     clearMarked();
     clearNewlyAllocated();
@@ -259,6 +264,8 @@ void PreciseAllocation::flip()
     // The dead object newly created before this  1 0      =>      1 0        =>       1 0       =>       0 0    => dead
     //                                                                                                    ^
     //                                                              This is ensured since this function is used only for full GC.
+    if (isImmortal())
+        return;
     m_isNewlyAllocated |= isMarked();
     m_isMarked.store(false, std::memory_order_relaxed);
 }
@@ -271,6 +278,8 @@ bool PreciseAllocation::isEmpty()
 void PreciseAllocation::sweep()
 {
     m_weakSet.sweep();
+    if (isImmortal())
+        return;
     
     if (m_hasValidCell && !isLive()) {
         if (m_attributes.destruction != DoesNotNeedDestruction)

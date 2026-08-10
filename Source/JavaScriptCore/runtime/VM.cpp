@@ -29,6 +29,9 @@
 #include "config.h"
 #include "VM.h"
 
+#include "CachedBytecode.h"
+#include "CachedTypes.h"
+
 #include "AbortReason.h"
 #include "AccessCase.h"
 #include "AggregateError.h"
@@ -154,6 +157,9 @@
 #include "WeakGCMapInlines.h"
 #include "WideningNumberPredictionFuzzerAgent.h"
 #include <wtf/CryptographicallyRandomNumber.h>
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/ParkingLot.h>
+#endif
 #include <wtf/ProcessID.h>
 #include <wtf/ReadWriteLock.h>
 #include <wtf/SimpleStats.h>
@@ -162,6 +168,9 @@
 #include <wtf/SystemTracing.h>
 #include <wtf/Threading.h>
 #include <wtf/text/AtomStringTable.h>
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/AutomaticThread.h>
+#endif
 #include <wtf/text/StringToIntegerConversion.h>
 
 #if ENABLE(DFG_JIT) || ENABLE(WEBASSEMBLY)
@@ -593,6 +602,60 @@ void VM::setCrossTaskToken(RefPtr<CrossTaskToken>&& token)
 void VM::queueMicrotask(QueuedTask&& task)
 {
     m_defaultMicrotaskQueue->enqueue(WTF::move(task));
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+void VM::completeAllJITPlansBeforeStartupSnapshot()
+{
+    // No compiler thread may touch the heap or install code while the snapshot is walked and written: JS plans are
+    // completed, wasm plans (BBQ/OMG tier-ups still running after the program warmed up) are cancelled and joined.
+#if ENABLE(JIT)
+    if (Options::useJIT())
+        JITWorklist::ensureGlobalWorklist().completeAllPlansForVM(*this);
+#endif
+#if ENABLE(WEBASSEMBLY)
+    if (Wasm::Worklist* worklist = Wasm::existingWorklistOrNull())
+        worklist->stopAllPlansForContext(*this);
+#endif
+}
+
+void VM::refreshStackBoundsAfterSnapshotRestore()
+{
+    // Stack addresses cached from the process that built the snapshot (its main thread's stack) are meaningless here.
+    m_stackPointerAtVMEntry = nullptr;
+    setLastStackTop(Thread::currentSingleton());
+    updateStackLimits();
+}
+
+void VM::didRestoreFromStartupSnapshot()
+{
+    m_startupSnapshotEpoch++;
+    refreshStackBoundsAfterSnapshotRestore();
+    ParkingLot::forgetAllForSnapshotRestore(); // parked entries in the snapshot are the builder's threads
+    restirCryptographicallyRandomNumberGeneratorForSnapshotRestore();
+    AutomaticThread::forgetUnderlyingThreadsForSnapshotRestore(); // GC collector/markers, JIT worklist threads: restart on next notify
+    (void)m_intlCache.release(); // ICU objects opened by the build process: forgotten, never closed here (as for dateCache)
+    m_intlCache = makeUnique<IntlCache>();
+    dateCache.didRestoreFromStartupSnapshot();
+    if (m_regExpCache)
+        m_regExpCache->deleteAllCode();
+    Heap::rehomeOutOfSnapshotPages(atomStringTable()->table());
+    heap.evacuateTablesForStartupSnapshot();
+    heap.resetPacingAfterSnapshotRestore();
+#if OS(UNIX) && !OS(DARWIN)
+    Thread::reinstallSuspendResumeSignalHandlerForStartupSnapshotRestore(); // thread suspension for GC/sampling on Linux
+#endif
+#if OS(UNIX)
+    WTF::SignalHandlers::reinstallAfterSnapshotRestore(); // wasm traps etc.: kernel-side handlers belong to the process that installed them
+#endif
+    WTF::Config::permanentlyFreeze();
+    {
+        // The decoders registered here are the building process's, frozen with the executables that hold them; a lookup in this
+        // process must produce a fresh one (which is what the re-decode paths rely on to leave the frozen objects untouched).
+        Locker locker { m_bytecodeCacheDecoderMapLock };
+        m_bytecodeCacheDecoderMap.clear();
+    }
 }
 #endif
 
@@ -1073,6 +1136,26 @@ SourceProviderCache* VM::addSourceProviderCache(SourceProvider* sourceProvider)
 void VM::clearSourceProviderCaches()
 {
     sourceProviderCacheMap.clear();
+}
+
+Ref<Decoder> VM::ensureBytecodeCacheDecoder(Ref<CachedBytecode>&& cachedBytecode, RefPtr<SourceProvider>&& provider)
+{
+    Locker locker { m_bytecodeCacheDecoderMapLock };
+    auto addResult = m_bytecodeCacheDecoderMap.add(cachedBytecode.ptr(), nullptr);
+    if (!addResult.isNewEntry)
+        return *addResult.iterator->value;
+    Ref decoder = Decoder::create(*this, WTF::move(cachedBytecode), WTF::move(provider));
+    addResult.iterator->value = decoder.ptr();
+    decoder->setIsRegisteredWithVM();
+    return decoder;
+}
+
+void VM::unregisterBytecodeCacheDecoder(Decoder& decoder, CachedBytecode& cachedBytecode)
+{
+    Locker locker { m_bytecodeCacheDecoderMapLock };
+    auto it = m_bytecodeCacheDecoderMap.find(&cachedBytecode);
+    if (it != m_bytecodeCacheDecoderMap.end() && it->value == &decoder)
+        m_bytecodeCacheDecoderMap.remove(it);
 }
 
 bool VM::hasExceptionsAfterHandlingTraps()

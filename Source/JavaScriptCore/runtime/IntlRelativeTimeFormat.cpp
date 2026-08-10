@@ -28,6 +28,7 @@
 #include "config.h"
 #include "IntlRelativeTimeFormat.h"
 
+#include "TopExceptionScope.h"
 #include "IntlNumberFormatInlines.h"
 #include "IntlObjectInlines.h"
 #include "IntlPartObject.h"
@@ -114,10 +115,25 @@ void IntlRelativeTimeFormat::initializeRelativeTimeFormat(JSGlobalObject* global
 
     m_numberingSystem = resolved.extensions[static_cast<unsigned>(RelevantExtensionKey::Nu)];
     m_dataLocale = resolved.dataLocale;
-    CString dataLocaleWithExtensions = m_numberingSystem.isNull() ? m_dataLocale.utf8() : makeString(m_dataLocale, "-u-nu-"_s, m_numberingSystem).utf8();
 
     m_style = intlOption<Style>(globalObject, options, vm.propertyNames->style, { { "long"_s, Style::Long }, { "short"_s, Style::Short }, { "narrow"_s, Style::Narrow } }, "style must be either \"long\", \"short\", or \"narrow\""_s, Style::Long);
     RETURN_IF_EXCEPTION(scope, void());
+
+    m_numeric = intlOption<bool>(globalObject, options, vm.propertyNames->numeric, { { "always"_s, true }, { "auto"_s, false } }, "numeric must be either \"always\" or \"auto\""_s, true);
+    RETURN_IF_EXCEPTION(scope, void());
+
+#if USE(BUN_JSC_ADDITIONS)
+    m_startupSnapshotEpoch = globalObject->vm().startupSnapshotEpoch();
+#endif
+    scope.release(); // whatever the opener throws is this initialization's to propagate
+    openICUObjects(globalObject);
+}
+
+// Builds the ICU objects from the resolved fields; run once at initialization and again in a process restored from a snapshot.
+void IntlRelativeTimeFormat::openICUObjects(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    CString dataLocaleWithExtensions = m_numberingSystem.isNull() ? m_dataLocale.utf8() : makeString(m_dataLocale, "-u-nu-"_s, m_numberingSystem).utf8();
     UDateRelativeDateTimeFormatterStyle icuStyle = UDAT_STYLE_LONG;
     switch (m_style) {
     case Style::Long:
@@ -130,9 +146,6 @@ void IntlRelativeTimeFormat::initializeRelativeTimeFormat(JSGlobalObject* global
         icuStyle = UDAT_STYLE_NARROW;
         break;
     }
-
-    m_numeric = intlOption<bool>(globalObject, options, vm.propertyNames->numeric, { { "always"_s, true }, { "auto"_s, false } }, "numeric must be either \"always\" or \"auto\""_s, true);
-    RETURN_IF_EXCEPTION(scope, void());
 
     UErrorCode status = U_ZERO_ERROR;
     auto numberFormat = std::unique_ptr<UNumberFormat, ICUDeleter<unum_close>>(unum_open(UNUM_DECIMAL, nullptr, 0, dataLocaleWithExtensions.data(), nullptr, &status));
@@ -179,6 +192,8 @@ void IntlRelativeTimeFormat::initializeRelativeTimeFormat(JSGlobalObject* global
         return;
     }
 }
+
+
 
 ASCIILiteral IntlRelativeTimeFormat::styleString(Style style)
 {
@@ -270,8 +285,35 @@ String IntlRelativeTimeFormat::formatInternal(JSGlobalObject* globalObject, doub
 }
 
 // https://tc39.es/ecma402/#sec-FormatRelativeTime
+
+void IntlRelativeTimeFormat::ensureICUObjectsForThisProcess(JSGlobalObject* globalObject) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    if (m_startupSnapshotEpoch == vm.startupSnapshotEpoch()) [[likely]]
+        return;
+    auto* self = const_cast<IntlRelativeTimeFormat*>(this);
+    // Opened by the process that built the snapshot, against an ICU this process does not share; leaked rather than closed.
+    (void)self->m_relativeDateTimeFormatter.release();
+    (void)self->m_formattedResult.release();
+    (void)self->m_cfpos.release();
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        self->openICUObjects(globalObject);
+        if (catchScope.exception()) [[unlikely]] {
+            (void)catchScope.tryClearException();
+            RELEASE_ASSERT_WITH_MESSAGE(false, "%s could not reopen its ICU objects in the restored process (different ICU?)", "IntlRelativeTimeFormat");
+        }
+    }
+    if (self->m_relativeDateTimeFormatter)
+        self->m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#else
+    UNUSED_PARAM(globalObject);
+#endif
+}
 JSValue IntlRelativeTimeFormat::format(JSGlobalObject* globalObject, double value, StringView unit) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -284,6 +326,7 @@ JSValue IntlRelativeTimeFormat::format(JSGlobalObject* globalObject, double valu
 // https://tc39.es/ecma402/#sec-FormatRelativeTimeToParts
 JSValue IntlRelativeTimeFormat::formatToParts(JSGlobalObject* globalObject, double value, StringView unit) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     ASSERT(m_relativeDateTimeFormatter);
     ASSERT(m_formattedResult);
     ASSERT(m_cfpos);

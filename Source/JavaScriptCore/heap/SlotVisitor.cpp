@@ -344,6 +344,18 @@ private:
     SlotVisitor& m_visitor;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+void SlotVisitor::visitImmortalCellAsRoot(const JSCell* cell)
+{
+    // Like visitChildren, but never writes the (frozen, already-black) header, so clean snapshot pages stay clean.
+    SetCurrentCellScope currentCellScope(*this, cell);
+    m_isFirstVisit = false;
+    m_heap.willVisitSnapshotCell(const_cast<JSCell*>(cell));
+    WTF::storeLoadFence();
+    cell->methodTable()->visitChildren(const_cast<JSCell*>(cell), *this);
+}
+#endif
+
 ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
 {
     ASSERT(m_heap.isMarked(cell));
@@ -362,7 +374,10 @@ ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
     // not clear to me that it would be correct or profitable to bail here if the object is already
     // black.
     
-    cell->setCellState(CellState::PossiblyBlack);
+    if (cell->cellState() != CellState::PossiblyBlack)
+        cell->setCellState(CellState::PossiblyBlack);
+    else if (m_heap.objectSpace().hasImmortalBlocks() && Heap::isStartupSnapshotCell(cell)) [[unlikely]]
+        m_heap.willVisitSnapshotCell(const_cast<JSCell*>(cell));
     
     WTF::storeLoadFence();
     

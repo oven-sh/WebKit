@@ -121,6 +121,7 @@ public:
     JSValue formatRange(JSGlobalObject*, JSValue startDate, JSValue endDate);
     JSValue formatRangeToParts(JSGlobalObject*, JSValue startDate, JSValue endDate);
     JSObject* resolvedOptions(JSGlobalObject*) const;
+    void ensureICUObjectsForThisProcess(JSGlobalObject*) const; // snapshot restore: the ICU handles came from another process
 
     static bool isTemporalObject(JSValue);
     static bool sameTemporalType(JSValue, JSValue);
@@ -213,7 +214,10 @@ private:
     static String buildSkeleton(Weekday, Era, Year, Month, Day, TriState, HourCycle, Hour, DayPeriod, Minute, Second, unsigned, TimeZoneName);
 
     WriteBarrier<JSBoundFunction> m_boundFormat;
-    std::unique_ptr<UDateIntervalFormat, UDateIntervalFormatDeleter> m_dateIntervalFormat;
+    mutable std::unique_ptr<UDateIntervalFormat, UDateIntervalFormatDeleter> m_dateIntervalFormat;
+#if USE(BUN_JSC_ADDITIONS)
+    mutable unsigned m_intervalFormatEpoch { 0 }; // this object's own lazily-built handle; the shared impl has its own epoch
+#endif
     RefPtr<const IntlDateTimeFormatImpl> m_impl;
 };
 
@@ -258,6 +262,10 @@ public:
     IntlDateTimeFormat::DateTimeStyle m_dateStyle { IntlDateTimeFormat::DateTimeStyle::None };
     IntlDateTimeFormat::DateTimeStyle m_timeStyle { IntlDateTimeFormat::DateTimeStyle::None };
     bool m_anyPresent { false };
+#if USE(BUN_JSC_ADDITIONS)
+    Vector<char16_t, 32> m_icuPattern; // the pattern m_dateFormat was opened with, so it can be opened again after a snapshot restore
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     Vector<char16_t, 32> m_userSkeleton; // user's explicit options as skeleton, before defaults injection; used by computeGetDateTimeFormat
     std::unique_ptr<UDateFormat, UDateFormatDeleter> m_dateFormat;
     mutable std::unique_ptr<IntlDateTimeFormatTemporalFormatterCache> m_temporalFormatterCache;

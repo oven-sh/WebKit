@@ -28,6 +28,7 @@
 #include "config.h"
 #include "IntlCollator.h"
 
+#include "TopExceptionScope.h"
 #include "IntlObjectInlines.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -224,8 +225,21 @@ void IntlCollator::initializeCollator(JSGlobalObject* globalObject, JSValue loca
     }
     dataLogLnIf(IntlCollatorInternal::verbose, "locale:(", resolved.locale, "),dataLocaleWithExtensions:(", dataLocaleWithExtensions, ")");
 
+    m_icuLocale = dataLocaleWithExtensions;
+#if USE(BUN_JSC_ADDITIONS)
+    m_startupSnapshotEpoch = globalObject->vm().startupSnapshotEpoch();
+#endif
+    scope.release(); // whatever the opener throws is this initialization's to propagate
+    openCollator(globalObject, ignorePunctuation);
+}
+
+// Opens and configures the ICU collator from the resolved fields. Called once when the object is initialized and again in a
+// process restored from a snapshot, whose ICU is not the one the existing handle came from.
+void IntlCollator::openCollator(JSGlobalObject* globalObject, TriState ignorePunctuation)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     UErrorCode status = U_ZERO_ERROR;
-    m_collator = std::unique_ptr<UCollator, UCollatorDeleter>(ucol_open(dataLocaleWithExtensions.data(), &status));
+    m_collator = std::unique_ptr<UCollator, UCollatorDeleter>(ucol_open(m_icuLocale.data(), &status));
     if (U_FAILURE(status)) {
         throwTypeError(globalObject, scope, "failed to initialize Collator"_s);
         return;
@@ -281,10 +295,34 @@ void IntlCollator::initializeCollator(JSGlobalObject* globalObject, JSValue loca
     }
 }
 
+UCollator* IntlCollator::collatorForThisProcess(JSGlobalObject* globalObject) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    if (m_startupSnapshotEpoch != vm.startupSnapshotEpoch()) [[unlikely]] {
+        (void)m_collator.release(); // the handle belongs to the process that built the snapshot; its ICU is gone
+        m_canDoASCIIUCADUCETComparison = TriState::Indeterminate; // a verdict about the old ICU's rules; this machine's may differ
+        {
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            const_cast<IntlCollator*>(this)->openCollator(globalObject, m_ignorePunctuation ? TriState::True : TriState::False);
+            if (catchScope.exception()) [[unlikely]] {
+                (void)catchScope.tryClearException();
+                RELEASE_ASSERT_WITH_MESSAGE(false, "Intl.Collator could not reopen its ICU collator in the restored process (different ICU?)");
+            }
+        }
+        m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+    }
+#else
+    UNUSED_PARAM(globalObject);
+#endif
+    return m_collator.get();
+}
+
 // https://tc39.es/ecma402/#sec-collator-comparestrings
 UCollationResult IntlCollator::compareStrings(JSGlobalObject* globalObject, StringView x, StringView y) const
 {
-    ASSERT(m_collator);
+    UCollator* collator = collatorForThisProcess(globalObject); // before the ASCII probe below, which uses the handle
+    ASSERT(collator);
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -304,14 +342,14 @@ UCollationResult IntlCollator::compareStrings(JSGlobalObject* globalObject, Stri
         if (x.is8Bit() && y.is8Bit() && x.containsOnlyASCII() && y.containsOnlyASCII()) {
             auto xCharacters = byteCast<char>(x.span8());
             auto yCharacters = byteCast<char>(y.span8());
-            return ucol_strcollUTF8(m_collator.get(), xCharacters.data(), xCharacters.size(), yCharacters.data(), yCharacters.size(), &status);
+            return ucol_strcollUTF8(collator, xCharacters.data(), xCharacters.size(), yCharacters.data(), yCharacters.size(), &status);
         }
 
         return std::nullopt;
     }());
 
     if (!result)
-        result = ucol_strcoll(m_collator.get(), x.upconvertedCharacters(), x.length(), y.upconvertedCharacters(), y.length());
+        result = ucol_strcoll(collator, x.upconvertedCharacters(), x.length(), y.upconvertedCharacters(), y.length());
 
     if (U_FAILURE(status)) {
         throwException(globalObject, scope, createError(globalObject, "Failed to compare strings."_s));

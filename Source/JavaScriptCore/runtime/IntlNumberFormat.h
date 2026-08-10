@@ -163,6 +163,8 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+
+    void ensureICUObjectsForThisProcess(JSGlobalObject*) const;
     void initializeNumberFormat(JSGlobalObject*, JSValue locales, JSValue optionsValue);
     JSValue format(JSGlobalObject*, double) const;
     JSValue format(JSGlobalObject*, IntlMathematicalValue&&) const;
@@ -223,6 +225,9 @@ private:
 
     WriteBarrier<JSBoundFunction> m_boundFormat;
     std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter> m_numberFormatter;
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter> m_numberRangeFormatter;
     String m_numberFormatterSkeleton;
     CString m_dataLocaleWithExtensions;

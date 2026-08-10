@@ -68,9 +68,16 @@ private:
 
     static ASCIILiteral granularityString(Granularity);
 
-    std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
+    UBreakIterator* breakIterator(JSGlobalObject*) const;
+
+    mutable std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
+#if USE(BUN_JSC_ADDITIONS)
+    mutable unsigned m_startupSnapshotEpoch { 0 };
+#endif
     String m_locale;
     Granularity m_granularity { Granularity::Grapheme };
+public:
+    static UBreakIteratorType breakIteratorTypeFor(Granularity granularity) { return granularity == Granularity::Grapheme ? UBRK_CHARACTER : granularity == Granularity::Word ? UBRK_WORD : UBRK_SENTENCE; }
 };
 
 } // namespace JSC

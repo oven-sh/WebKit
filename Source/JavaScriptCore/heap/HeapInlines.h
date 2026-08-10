@@ -56,6 +56,17 @@ inline JSC::Heap* Heap::heap(const JSValue v)
     return heap(v.asCell());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+ALWAYS_INLINE bool Heap::isStartupSnapshotCell(const JSCell* cell)
+{
+    if (!cell)
+        return false;
+    if (cell->isPreciseAllocation())
+        return cell->preciseAllocation().isImmortal();
+    return cell->markedBlock().isImmortal();
+}
+#endif
+
 // Defined in Heap.cpp with NEVER_INLINE to prevent LTO from breaking compiler barriers
 // ALWAYS_INLINE bool Heap::isMarked(const void* rawCell)
 // {

@@ -208,6 +208,9 @@ private:
     void noteLiveAuxiliaryCell(HeapCell*);
     
     void visitChildren(const JSCell*);
+#if USE(BUN_JSC_ADDITIONS)
+    void visitImmortalCellAsRoot(const JSCell*);
+#endif
 
     void propagateExternalMemoryVisitedIfNecessary();
     

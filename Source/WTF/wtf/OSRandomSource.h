@@ -35,4 +35,7 @@ namespace WTF {
 // partially filled.  Rather than calling this function directly, consider
 // calling cryptographicallyRandomNumber or cryptographicallyRandomValues.
 void cryptographicallyRandomValuesFromOS(std::span<uint8_t>);
+#if USE(BUN_JSC_ADDITIONS)
+WTF_EXPORT_PRIVATE void reopenOSRandomSourceForSnapshotRestore();
+#endif
 }

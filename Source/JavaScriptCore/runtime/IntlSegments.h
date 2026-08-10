@@ -46,7 +46,7 @@ public:
         return vm.intlSegmentsSpace<mode>();
     }
 
-    static IntlSegments* create(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>&&, JSString*, IntlSegmenter::Granularity);
+    static IntlSegments* create(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>&&, JSString*, IntlSegmenter::Granularity, const String& locale);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     DECLARE_INFO;
@@ -57,11 +57,16 @@ public:
     DECLARE_VISIT_CHILDREN;
 
 private:
-    IntlSegments(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>&&, IntlSegmenter::Granularity, JSString*);
+    IntlSegments(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>&&, IntlSegmenter::Granularity, JSString*, const String& locale);
 
     DECLARE_DEFAULT_FINISH_CREATION;
 
+    void ensureICUObjectsForThisProcess(JSGlobalObject*); // snapshot restore: the break iterator came from another process
     std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
+    String m_locale;
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     Box<Vector<char16_t>> m_buffer;
     WriteBarrier<JSString> m_string;
     IntlSegmenter::Granularity m_granularity;

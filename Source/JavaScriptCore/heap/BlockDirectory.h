@@ -70,6 +70,9 @@ public:
     void endMarking();
     void NODELETE snapshotUnsweptForEdenCollection();
     void NODELETE snapshotUnsweptForFullCollection();
+#if USE(BUN_JSC_ADDITIONS)
+    void makeAllBlocksImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion);
+#endif
     void sweep();
     void shrink();
     void assertNoUnswept();

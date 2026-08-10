@@ -102,15 +102,15 @@ void Structure::forEachPropertyConcurrently(const Functor& functor)
 
         if (!functor(PropertyTableEntry(structure->m_transitionPropertyName.get(), structure->transitionOffset(), structure->transitionPropertyAttributes()))) {
             if (didFindStructure) {
-                assertIsHeld(tableStructure->m_lock); // Sadly Clang needs some help here.
-                tableStructure->m_lock.unlock();
+                assertIsHeld(tableStructure->lock()); // Sadly Clang needs some help here.
+                tableStructure->lock().unlock();
             }
             return;
         }
     }
     
     if (didFindStructure) {
-        assertIsHeld(tableStructure->m_lock); // Sadly Clang needs some help here.
+        assertIsHeld(tableStructure->lock()); // Sadly Clang needs some help here.
         table->forEachProperty([&](const auto& entry) {
             if (seenProperties.contains(entry.key()))
                 return IterationStatus::Continue;
@@ -120,7 +120,7 @@ void Structure::forEachPropertyConcurrently(const Functor& functor)
 
             return IterationStatus::Continue;
         });
-        tableStructure->m_lock.unlock();
+        tableStructure->lock().unlock();
     }
 }
 
@@ -208,7 +208,7 @@ inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset
 
 inline WatchpointSet* Structure::propertyReplacementWatchpointSet(PropertyOffset offset)
 {
-    ConcurrentJSLocker locker(m_lock);
+    ConcurrentJSLocker locker(lock());
     StructureRareData* rareData = tryRareData();
     if (!rareData)
         return nullptr;
@@ -237,7 +237,7 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
 
-    GCSafeConcurrentJSLocker locker(m_lock, vm);
+    GCSafeConcurrentJSLocker locker(lock(), vm);
 
     switch (shouldPin) {
     case ShouldPin::Yes:
@@ -293,7 +293,7 @@ inline PropertyOffset Structure::remove(VM& vm, PropertyName propertyName, const
 {
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
-    GCSafeConcurrentJSLocker locker(m_lock, vm);
+    GCSafeConcurrentJSLocker locker(lock(), vm);
 
     switch (shouldPin) {
     case ShouldPin::Yes:
@@ -336,7 +336,7 @@ inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyNa
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
 
-    GCSafeConcurrentJSLocker locker(m_lock, vm);
+    GCSafeConcurrentJSLocker locker(lock(), vm);
 
     switch (shouldPin) {
     case ShouldPin::Yes:
@@ -404,7 +404,7 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     if (findResult.offset != invalidOffset)
         return std::tuple { findResult.offset, findResult.attributes, false };
 
-    GCSafeConcurrentJSLocker locker(m_lock, vm);
+    GCSafeConcurrentJSLocker locker(lock(), vm);
 
     pin(locker, vm, table);
 
@@ -575,7 +575,7 @@ ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructure(Str
 
 ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructureConcurrently(Structure* structure, UniquedStringImpl* uid, unsigned attributes, PropertyOffset& offset)
 {
-    ConcurrentJSLocker locker(structure->m_lock);
+    ConcurrentJSLocker locker(structure->lock());
     return addPropertyTransitionToExistingStructureImpl(structure, uid, attributes, offset);
 }
 

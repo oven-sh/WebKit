@@ -175,6 +175,38 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
 
 #endif // !OS(DARWIN)
 
+#if !OS(DARWIN)
+bool Thread::installSuspendResumeSignalHandler(int signal)
+{
+    struct sigaction action;
+    sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask, signal);
+
+    action.sa_sigaction = &signalHandlerSuspendResume;
+    action.sa_flags = SA_RESTART | SA_SIGINFO;
+
+    // Theoretically, this can have race conditions but currently, there is no way to deal with it,
+    // plus, we do not expect that this initialization is executed concurrently with the other
+    // initialization which also installs specific signals. If this is the problem, applications should
+    // change how to initialize things.
+    struct sigaction oldAction;
+    if (sigaction(signal, nullptr, &oldAction))
+        return false;
+    // It has signal already.
+    if (oldAction.sa_handler != SIG_DFL || std::bit_cast<void*>(oldAction.sa_sigaction) != std::bit_cast<void*>(SIG_DFL))
+        WTFLogAlways("Overriding existing handler for signal %d. Set JSC_SIGNAL_FOR_GC if you want WebKit to use a different signal", signal);
+    return !sigaction(signal, &action, 0);
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+// The disposition is kernel state: a process resumed from a startup snapshot has the configuration but not the handler.
+void Thread::reinstallSuspendResumeSignalHandlerForStartupSnapshotRestore()
+{
+    RELEASE_ASSERT(installSuspendResumeSignalHandler(g_wtfConfig.sigThreadSuspendResume));
+}
+#endif
+#endif
+
 void Thread::initializePlatformThreading()
 {
     if (!g_wtfConfig.isUserSpecifiedThreadSuspendResumeSignalConfigured) {
@@ -205,29 +237,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // Signal handlers are process global configuration.
     // Intentionally block sigThreadSuspendResume in the handler.
     // sigThreadSuspendResume will be allowed in the handler by sigsuspend.
-    auto attemptToSetSignal = [](int signal) -> bool {
-        struct sigaction action;
-        sigemptyset(&action.sa_mask);
-        sigaddset(&action.sa_mask, signal);
-
-        action.sa_sigaction = &signalHandlerSuspendResume;
-        action.sa_flags = SA_RESTART | SA_SIGINFO;
-
-        // Theoretically, this can have race conditions but currently, there is no way to deal with it,
-        // plus, we do not expect that this initialization is executed concurrently with the other
-        // initialization which also installs specific signals. If this is the problem, applications should
-        // change how to initialize things.
-        struct sigaction oldAction;
-        if (sigaction(signal, nullptr, &oldAction))
-            return false;
-        // It has signal already.
-        if (oldAction.sa_handler != SIG_DFL || std::bit_cast<void*>(oldAction.sa_sigaction) != std::bit_cast<void*>(SIG_DFL))
-            WTFLogAlways("Overriding existing handler for signal %d. Set JSC_SIGNAL_FOR_GC if you want WebKit to use a different signal", signal);
-        return !sigaction(signal, &action, 0);
-    };
-
-    bool signalIsInstalled = attemptToSetSignal(g_wtfConfig.sigThreadSuspendResume);
-    RELEASE_ASSERT(signalIsInstalled);
+    RELEASE_ASSERT(installSuspendResumeSignalHandler(g_wtfConfig.sigThreadSuspendResume));
 #endif
 }
 
@@ -671,6 +681,38 @@ Thread& Thread::initializeTLS(Ref<Thread>&& thread)
 #endif
     return threadInTLS;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Thread::adoptCurrentThreadForStartupSnapshot()
+{
+    pthread_t handle = pthread_self();
+    establishPlatformSpecificHandle(handle);
+#if OS(LINUX)
+    StackBounds::forgetOldestEnvironForStartupSnapshotRestore(); // the cached environ is the build process's: an address on its stack
+#endif
+    m_stack = StackBounds::currentThreadStackBounds();
+    m_savedLastStackTop = stack().origin();
+#if !HAVE(FAST_TLS)
+    // The snapshot's s_key was created in the build process; re-create keys here until that slot exists in this process.
+    for (int i = 0; i < 512; i++) {
+        pthread_key_t key;
+        if (pthread_key_create(&key, destructTLS))
+            break;
+        if (key == s_key)
+            break;
+        if (key > s_key) {
+            pthread_key_delete(key);
+            break;
+        }
+    }
+    // The embedder may already have recreated the slot; what must hold is that s_key exists in this process, which the set reports.
+    RELEASE_ASSERT(!pthread_setspecific(s_key, this));
+#else
+    _pthread_setspecific_direct(WTF_THREAD_DATA_KEY, this);
+    pthread_key_init_np(WTF_THREAD_DATA_KEY, &destructTLS);
+#endif
+}
+#endif
 
 void Thread::destructTLS(void* data)
 {

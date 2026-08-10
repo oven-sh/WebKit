@@ -172,6 +172,10 @@ public:
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
     bool hasExpressionInfo() { return !m_expressionInfo->isEmpty(); }
+#if USE(BUN_JSC_ADDITIONS)
+    struct ComponentSizes { size_t instructions { 0 }, expressionInfo { 0 }, metadata { 0 }, identifiers { 0 }, constants { 0 }, jumpTargets { 0 }, profiles { 0 }, rareData { 0 }; };
+    JS_EXPORT_PRIVATE ComponentSizes componentSizesForCensus(); // memory attribution tooling
+#endif
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
@@ -324,7 +328,7 @@ public:
     static constexpr unsigned maxAge = 7;
 
     unsigned age() const { return m_age; }
-    void resetAge() { m_age = 0; }
+    void resetAge() { if (m_age) m_age = 0; } // conditional so a snapshot cell that is already young is not written
 
     NeedsClassFieldInitializer needsClassFieldInitializer() const
     {

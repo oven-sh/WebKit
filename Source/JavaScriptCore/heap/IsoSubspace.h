@@ -54,6 +54,14 @@ public:
 
     void* tryAllocateLowerTierPrecise(size_t cellSize);
     void destroyLowerTierPreciseFreeList();
+#if USE(BUN_JSC_ADDITIONS)
+    // The free cells live in snapshot pages: never hand them out again.
+    void abandonLowerTierPreciseFreeListForSnapshot()
+    {
+        while (!m_lowerTierPreciseFreeList.isEmpty())
+            m_lowerTierPreciseFreeList.remove(&*m_lowerTierPreciseFreeList.begin());
+    }
+#endif
 
     void sweep();
 

@@ -551,6 +551,32 @@ void IntlNumberFormat::initializeNumberFormat(JSGlobalObject* globalObject, JSVa
     // Defer creation of the range formatter; it is only needed for formatRange / formatRangeToParts.
     m_numberFormatterSkeleton = WTF::move(skeleton);
     m_dataLocaleWithExtensions = WTF::move(dataLocaleWithExtensions);
+#if USE(BUN_JSC_ADDITIONS)
+    m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#endif
+}
+
+void IntlNumberFormat::ensureICUObjectsForThisProcess(JSGlobalObject* globalObject) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    if (m_startupSnapshotEpoch == vm.startupSnapshotEpoch()) [[likely]]
+        return;
+    auto* self = const_cast<IntlNumberFormat*>(this);
+    // Both were opened by the process that built the snapshot, against an ICU this process does not share: released, never
+    // closed. The formatter is opened again from the skeleton and locale kept for the range formatter, which itself is simply
+    // rebuilt on demand.
+    (void)self->m_numberFormatter.release();
+    (void)self->m_numberRangeFormatter.release();
+    StringView skeletonView { self->m_numberFormatterSkeleton };
+    auto upconverted = skeletonView.upconvertedCharacters();
+    UErrorCode status = U_ZERO_ERROR;
+    self->m_numberFormatter = std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter>(unumf_openForSkeletonAndLocale(upconverted.get(), skeletonView.length(), self->m_dataLocaleWithExtensions.data(), &status));
+    if (U_SUCCESS(status))
+        self->m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#else
+    UNUSED_PARAM(globalObject);
+#endif
 }
 
 UNumberRangeFormatter* IntlNumberFormat::createNumberRangeFormatterIfNecessary(JSGlobalObject* globalObject)
@@ -580,6 +606,7 @@ UNumberRangeFormatter* IntlNumberFormat::createNumberRangeFormatterIfNecessary(J
 // https://tc39.es/ecma402/#sec-formatnumber
 JSValue IntlNumberFormat::format(JSGlobalObject* globalObject, double value) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -603,6 +630,7 @@ JSValue IntlNumberFormat::format(JSGlobalObject* globalObject, double value) con
 // https://tc39.es/ecma402/#sec-formatnumber
 JSValue IntlNumberFormat::format(JSGlobalObject* globalObject, IntlMathematicalValue&& value) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -626,6 +654,7 @@ JSValue IntlNumberFormat::format(JSGlobalObject* globalObject, IntlMathematicalV
 
 JSValue IntlNumberFormat::formatRange(JSGlobalObject* globalObject, double start, double end)
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -658,6 +687,7 @@ JSValue IntlNumberFormat::formatRange(JSGlobalObject* globalObject, double start
 
 JSValue IntlNumberFormat::formatRange(JSGlobalObject* globalObject, IntlMathematicalValue&& start, IntlMathematicalValue&& end)
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -941,6 +971,7 @@ void IntlNumberFormat::formatRangeToPartsInternal(JSGlobalObject* globalObject, 
 
 JSValue IntlNumberFormat::formatRangeToParts(JSGlobalObject* globalObject, double start, double end)
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -989,6 +1020,7 @@ JSValue IntlNumberFormat::formatRangeToParts(JSGlobalObject* globalObject, doubl
 
 JSValue IntlNumberFormat::formatRangeToParts(JSGlobalObject* globalObject, IntlMathematicalValue&& start, IntlMathematicalValue&& end)
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1222,6 +1254,7 @@ JSValue IntlNumberFormat::useGroupingValue(VM& vm, UseGrouping useGrouping)
 // https://tc39.es/ecma402/#sec-intl.numberformat.prototype.resolvedoptions
 JSObject* IntlNumberFormat::resolvedOptions(JSGlobalObject* globalObject) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     if (m_numberingSystem.isNull())
         m_numberingSystem = defaultNumberingSystemForLocale(m_dataLocale);
@@ -1327,6 +1360,7 @@ void IntlNumberFormat::formatToPartsInternal(JSGlobalObject* globalObject, Style
 // https://tc39.github.io/ecma402/#sec-formatnumbertoparts
 JSValue IntlNumberFormat::formatToParts(JSGlobalObject* globalObject, double value, JSString* sourceType) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1367,6 +1401,7 @@ JSValue IntlNumberFormat::formatToParts(JSGlobalObject* globalObject, double val
 
 JSValue IntlNumberFormat::formatToParts(JSGlobalObject* globalObject, IntlMathematicalValue&& value, JSString* sourceType) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

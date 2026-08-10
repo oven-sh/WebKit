@@ -55,6 +55,10 @@ public:
 
     DECLARE_INFO;
 
+
+    void openICUObjects(JSGlobalObject*);
+
+    void ensureICUObjectsForThisProcess(JSGlobalObject*) const;
     void initializeDisplayNames(JSGlobalObject*, JSValue localesValue, JSValue optionsValue);
 
     JSValue of(JSGlobalObject*, JSValue) const;
@@ -76,6 +80,9 @@ private:
 
     using ULocaleDisplayNamesDeleter = ICUDeleter<uldn_close>;
     std::unique_ptr<ULocaleDisplayNames, ULocaleDisplayNamesDeleter> m_displayNames;
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     String m_locale;
     // FIXME: We should store it only when m_type is Currency.
     // https://bugs.webkit.org/show_bug.cgi?id=213773

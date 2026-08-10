@@ -194,6 +194,24 @@ static PropertyName NODELETE displayName(VM& vm, TemporalUnit unit)
 }
 
 // https://tc39.es/proposal-intl-duration-format/#sec-Intl.DurationFormat
+static UListFormatterWidth toUListFormatterWidth(IntlDurationFormat::Style style)
+{
+    // 6. Let listStyle be durationFormat.[[Style]].
+    // 7. If listStyle is "digital", then
+    //     a. Set listStyle to "short".
+    // 8. Perform ! CreateDataPropertyOrThrow(lfOpts, "style", listStyle).
+    switch (style) {
+    case IntlDurationFormat::Style::Long:
+        return ULISTFMT_WIDTH_WIDE;
+    case IntlDurationFormat::Style::Short:
+    case IntlDurationFormat::Style::Digital:
+        return ULISTFMT_WIDTH_SHORT;
+    case IntlDurationFormat::Style::Narrow:
+        return ULISTFMT_WIDTH_NARROW;
+    }
+    return ULISTFMT_WIDTH_WIDE;
+}
+
 void IntlDurationFormat::initializeDurationFormat(JSGlobalObject* globalObject, JSValue locales, JSValue optionsValue)
 {
     VM& vm = globalObject->vm();
@@ -264,22 +282,6 @@ void IntlDurationFormat::initializeDurationFormat(JSGlobalObject* globalObject, 
     RETURN_IF_EXCEPTION(scope, void());
 
     {
-        auto toUListFormatterWidth = [](Style style) {
-            // 6. Let listStyle be durationFormat.[[Style]].
-            // 7. If listStyle is "digital", then
-            //     a. Set listStyle to "short".
-            // 8. Perform ! CreateDataPropertyOrThrow(lfOpts, "style", listStyle).
-            switch (style) {
-            case Style::Long:
-                return ULISTFMT_WIDTH_WIDE;
-            case Style::Short:
-            case Style::Digital:
-                return ULISTFMT_WIDTH_SHORT;
-            case Style::Narrow:
-                return ULISTFMT_WIDTH_NARROW;
-            }
-            return ULISTFMT_WIDTH_WIDE;
-        };
 
         // 5. Perform ! CreateDataPropertyOrThrow(lfOpts, "type", "unit").
         UErrorCode status = U_ZERO_ERROR;
@@ -289,6 +291,29 @@ void IntlDurationFormat::initializeDurationFormat(JSGlobalObject* globalObject, 
             return;
         }
     }
+#if USE(BUN_JSC_ADDITIONS)
+    m_startupSnapshotEpoch = globalObject->vm().startupSnapshotEpoch();
+#endif
+}
+
+void IntlDurationFormat::ensureICUObjectsForThisProcess(JSGlobalObject* globalObject) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    if (m_startupSnapshotEpoch == vm.startupSnapshotEpoch()) [[likely]]
+        return;
+    auto* self = const_cast<IntlDurationFormat*>(this);
+    // Opened by the process that built the snapshot, against an ICU this process does not share: released, never closed. The
+    // per-unit number formatters are built lazily, so dropping the cache is enough for them; the list formatter is opened again.
+    (void)self->m_formatterCache.release();
+    (void)self->m_listFormat.release();
+    UErrorCode status = U_ZERO_ERROR;
+    self->m_listFormat = std::unique_ptr<UListFormatter, UListFormatterDeleter>(ulistfmt_openForType(m_locale.utf8().data(), ULISTFMT_TYPE_UNITS, toUListFormatterWidth(m_style), &status));
+    if (U_SUCCESS(status))
+        self->m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#else
+    UNUSED_PARAM(globalObject);
+#endif
 }
 
 const String& IntlDurationFormat::numberingSystem() const
@@ -690,6 +715,7 @@ UNumberFormatter* IntlDurationFormat::createNumberFormatterIfNecessary(JSGlobalO
 // https://tc39.es/proposal-intl-duration-format/#sec-Intl.DurationFormat.prototype.format
 JSValue IntlDurationFormat::format(JSGlobalObject* globalObject, ISO8601::Duration duration) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -733,6 +759,7 @@ JSValue IntlDurationFormat::format(JSGlobalObject* globalObject, ISO8601::Durati
 // https://tc39.es/proposal-intl-duration-format/#sec-Intl.DurationFormat.prototype.formatToParts
 JSValue IntlDurationFormat::formatToParts(JSGlobalObject* globalObject, ISO8601::Duration duration) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

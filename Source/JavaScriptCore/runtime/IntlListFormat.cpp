@@ -27,6 +27,7 @@
 #include "config.h"
 #include "IntlListFormat.h"
 
+#include "TopExceptionScope.h"
 #include "IntlObjectInlines.h"
 #include "IntlPartObject.h"
 #include "IteratorOperations.h"
@@ -109,6 +110,18 @@ void IntlListFormat::initializeListFormat(JSGlobalObject* globalObject, JSValue 
     m_style = intlOption<Style>(globalObject, options, vm.propertyNames->style, { { "long"_s, Style::Long }, { "short"_s, Style::Short }, { "narrow"_s, Style::Narrow } }, "style must be either \"long\", \"short\", or \"narrow\""_s, Style::Long);
     RETURN_IF_EXCEPTION(scope, void());
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_startupSnapshotEpoch = globalObject->vm().startupSnapshotEpoch();
+#endif
+    scope.release(); // whatever the opener throws is this initialization's to propagate
+    openICUObjects(globalObject);
+}
+
+// Builds the ICU objects from the resolved fields: once at initialization, and again in a process restored from a
+// snapshot, whose ICU is not the one the existing handles came from.
+void IntlListFormat::openICUObjects(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto toUListFormatterType = [](Type type) {
         switch (type) {
         case Type::Conjunction:
@@ -141,6 +154,30 @@ void IntlListFormat::initializeListFormat(JSGlobalObject* globalObject, JSValue 
     }
 }
 
+void IntlListFormat::ensureICUObjectsForThisProcess(JSGlobalObject* globalObject) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    if (m_startupSnapshotEpoch == vm.startupSnapshotEpoch()) [[likely]]
+        return;
+    auto* self = const_cast<IntlListFormat*>(this);
+    // Opened by the process that built the snapshot; released, never closed, since this ICU never allocated them.
+    (void)self->m_listFormat.release();
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        self->openICUObjects(globalObject);
+        if (catchScope.exception()) [[unlikely]] {
+            (void)catchScope.tryClearException();
+            RELEASE_ASSERT_WITH_MESSAGE(false, "%s could not reopen its ICU objects in the restored process (different ICU?)", "IntlListFormat");
+        }
+    }
+    if (self->m_listFormat)
+        self->m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#else
+    UNUSED_PARAM(globalObject);
+#endif
+}
+
 static Vector<String, 4> stringListFromIterable(JSGlobalObject* globalObject, JSValue iterable)
 {
     Vector<String, 4> result;
@@ -164,6 +201,7 @@ static Vector<String, 4> stringListFromIterable(JSGlobalObject* globalObject, JS
 // https://tc39.es/proposal-intl-list-format/#sec-Intl.ListFormat.prototype.format
 JSValue IntlListFormat::format(JSGlobalObject* globalObject, JSValue list) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -183,6 +221,7 @@ JSValue IntlListFormat::format(JSGlobalObject* globalObject, JSValue list) const
 // https://tc39.es/proposal-intl-list-format/#sec-Intl.ListFormat.prototype.formatToParts
 JSValue IntlListFormat::formatToParts(JSGlobalObject* globalObject, JSValue list) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

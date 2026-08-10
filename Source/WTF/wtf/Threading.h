@@ -291,6 +291,18 @@ public:
 #if OS(DARWIN)
     mach_port_t machThread() { return m_platformThread; }
 #endif
+#if USE(PTHREADS)
+    // Snapshot restore: make this (snapshot) Thread object describe the calling OS thread and install it as current.
+#if USE(BUN_JSC_ADDITIONS)
+    WTF_EXPORT_PRIVATE void adoptCurrentThreadForStartupSnapshot();
+#endif
+#endif
+#if !OS(DARWIN) && !OS(WINDOWS)
+    static bool installSuspendResumeSignalHandler(int signal);
+#if USE(BUN_JSC_ADDITIONS)
+    WTF_EXPORT_PRIVATE static void reinstallSuspendResumeSignalHandlerForStartupSnapshotRestore();
+#endif
+#endif
 
     bool isCompilationThread() const { return m_isCompilationThread; }
     bool isJSThread() const { return m_isJSThread; }

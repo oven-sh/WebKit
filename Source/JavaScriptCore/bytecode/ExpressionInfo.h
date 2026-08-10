@@ -214,7 +214,7 @@ private:
 
     Chapter* chapters() const
     {
-        return std::bit_cast<Chapter*>(this + 1);
+        return std::bit_cast<Chapter*>(payload());
     }
 
     EncodedInfo* encodedInfo() const
@@ -239,10 +239,14 @@ private:
 
     unsigned* payload() const
     {
+        if (m_borrowedPayload) [[unlikely]]
+            return m_borrowedPayload;
         return std::bit_cast<unsigned*>(this + 1);
     }
 
     static std::unique_ptr<ExpressionInfo> createUninitialized(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);
+    // Header-only object whose (immutable) payload lives elsewhere, e.g. inside an mmap'd bytecode cache.
+    static std::unique_ptr<ExpressionInfo> createBorrowed(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions, const unsigned* payload);
 
     static constexpr unsigned bitsPerWord = sizeof(unsigned) * CHAR_BIT;
 
@@ -323,6 +327,7 @@ private:
     unsigned m_numberOfChapters;
     unsigned m_numberOfEncodedInfo;
     unsigned m_numberOfEncodedInfoExtensions;
+    unsigned* m_borrowedPayload { nullptr };
     // Followed by the following which are allocated but are dynamically sized.
     //   Chapter chapters[numberOfChapters];
     //   EncodedInfo encodedInfo[numberOfEncodedInfo + numberOfEncodedInfoExtensions];

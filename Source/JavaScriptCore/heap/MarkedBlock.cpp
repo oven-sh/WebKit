@@ -47,6 +47,8 @@ namespace JSC {
 // compiler barriers (loadLoadFence/compilerFence) on x86_64.
 NEVER_INLINE bool MarkedBlock::isMarked(HeapVersion markingVersion, const void* p)
 {
+    if (isImmortal()) [[unlikely]]
+        return header().m_marks.get(atomNumber(p));
     HeapVersion version;
     Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
     if (version != markingVersion) [[unlikely]]
@@ -54,10 +56,28 @@ NEVER_INLINE bool MarkedBlock::isMarked(HeapVersion markingVersion, const void* 
     return header().m_marks.concurrentGet(atomNumber(p), dependency);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void MarkedBlock::makeImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion)
+{
+    // Runs right after a synchronous full GC + sweep: m_marks (if current) ∪ newlyAllocated (if current) is exactly the
+    // live set; every other slot is a zapped free cell that nothing references. That bitmap is frozen here and never
+    // written again, so the stock mark fast paths are safe on snapshot blocks: a live snapshot cell reads "already marked"
+    // (write-free), and a dead slot is unreachable by precise marking (conservative roots filter through isLive()).
+    if (header().m_markingVersion != markingVersion)
+        header().m_marks.clearAll();
+    if (header().m_newlyAllocatedVersion == newlyAllocatedVersion)
+        header().m_marks.merge(header().m_newlyAllocated);
+    header().m_markingVersion = markingVersion;
+    header().m_isImmortal = true;
+}
+#endif
+
 // NEVER_INLINE to prevent LTO from inlining this function, which can break
 // compiler barriers (Dependency::fence/loadLoadFence/compilerFence) on x86_64.
 NEVER_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell* cell)
 {
+    if (block().isImmortal()) [[unlikely]]
+        return block().isMarkedRaw(cell);
     m_directory->assertIsMutatorOrMutatorIsStopped();
     if (m_directory->isAllocated(this))
         return true;
@@ -333,6 +353,8 @@ inline void MarkedBlock::setupTestForDumpInfoAndCrash() { }
 
 void MarkedBlock::aboutToMarkSlow(HeapVersion markingVersion, HeapCell* cell)
 {
+    if (isImmortal()) [[unlikely]]
+        return;
     ASSERT(vm().heap.objectSpace().isMarking());
     setupTestForDumpInfoAndCrash();
 
@@ -420,7 +442,7 @@ void MarkedBlock::resetMarks()
 #if ASSERT_ENABLED
 void MarkedBlock::assertMarksNotStale()
 {
-    ASSERT(header().m_markingVersion == vm().heap.objectSpace().markingVersion());
+    ASSERT(isImmortal() || header().m_markingVersion == vm().heap.objectSpace().markingVersion());
 }
 #endif // ASSERT_ENABLED
 
@@ -548,6 +570,10 @@ Subspace* MarkedBlock::Handle::subspace() const
 
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
+    if (block().isImmortal()) [[unlikely]] {
+        dataLogLn("[imm] BUG: sweeping immortal block ", RawPointer(&block()), " toFreeList=", !!freeList, " dir empty=", m_directory->isEmpty(this), " canAlloc=", m_directory->isCanAllocate(this), " unswept=", m_directory->isUnswept(this), " immortalBit=", m_directory->isImmortal(this));
+        CRASH();
+    }
     SweepingScope sweepingScope(*heap());
     m_directory->assertIsMutatorOrMutatorIsStopped();
     ASSERT(m_directory->isInUse(this));
