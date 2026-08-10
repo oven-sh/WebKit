@@ -45,6 +45,7 @@
 #include "NumberPrototype.h"
 #include "RegExpCache.h"
 #include "RegExpObject.h"
+#include "RegExpObjectInlines.h"
 #include "StringPrototypeInlines.h"
 #include "WasmCallingConvention.h"
 #include "WebAssemblyFunction.h"
@@ -1317,9 +1318,10 @@ private:
                 lastIndex = result.end;
                 startPosition = lastIndex;
 
-                // special case of empty match
+                // special case of empty match: advance exactly as the runtime loops
+                // this models do (a whole surrogate pair for /u, /v).
                 if (result.empty()) {
-                    startPosition++;
+                    startPosition = advanceStringIndex(StringView(string), string.length(), result.end, regExp->eitherUnicode());
                     if (startPosition > string.length())
                         break;
                 }
