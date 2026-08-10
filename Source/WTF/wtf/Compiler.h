@@ -191,16 +191,24 @@
 
 /* ALWAYS_INLINE */
 
-/* TEMPORARY: Replace ALWAYS_INLINE with plain inline (no __always_inline__ attribute)
- * to debug LTO inlining issues on Alpine Linux.
- * This helps identify if the always_inline attribute is causing the FinalizationRegistry bug. */
+/* In GCC functions marked with no_sanitize_address cannot call functions that are marked with always_inline and not marked with no_sanitize_address.
+ * Therefore we need to give up on the enforcement of ALWAYS_INLINE when building with ASAN. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=67368 */
+#if !defined(ALWAYS_INLINE) && defined(NDEBUG) && !(COMPILER(GCC) && ASAN_ENABLED)
+#define ALWAYS_INLINE inline __attribute__((__always_inline__))
+#endif
+
 #if !defined(ALWAYS_INLINE)
 #define ALWAYS_INLINE inline
 #endif
 
 /* ALWAYS_INLINE_LAMBDA */
 
-/* TEMPORARY: Disable ALWAYS_INLINE_LAMBDA to debug LTO inlining issues on Alpine Linux. */
+/* In GCC functions marked with no_sanitize_address cannot call functions that are marked with always_inline and not marked with no_sanitize_address.
+ * Therefore we need to give up on the enforcement of ALWAYS_INLINE_LAMBDA when building with ASAN. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=67368 */
+#if !defined(ALWAYS_INLINE_LAMBDA) && defined(NDEBUG) && !(COMPILER(GCC) && ASAN_ENABLED)
+#define ALWAYS_INLINE_LAMBDA __attribute__((__always_inline__))
+#endif
+
 #if !defined(ALWAYS_INLINE_LAMBDA)
 #define ALWAYS_INLINE_LAMBDA
 #endif
