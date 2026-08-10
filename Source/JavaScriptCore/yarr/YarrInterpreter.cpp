@@ -2328,7 +2328,10 @@ public:
 
         freeDisjunctionContext(context);
 
-        pattern->m_allocator->stopAllocator();
+        // Keep a few overflow pools mapped between matches: patterns whose backtracking contexts
+        // outgrow the head page would otherwise map and unmap them around every match.
+        static constexpr size_t retainedAllocatorOverflowBytes = 64 * KB;
+        pattern->m_allocator->stopAllocator(retainedAllocatorOverflowBytes);
 
         ASSERT((result == JSRegExpResult::Match) == (output[0] != offsetNoMatch));
 

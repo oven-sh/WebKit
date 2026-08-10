@@ -106,9 +106,11 @@ public:
     // price is paid per candidate that fails to match. How often a candidate fails is not known
     // when compiling, leaving this frequency as the proxy. Measured on arm64: from here the scalar
     // loop is 2.2x faster on a keyword alternation whose candidates almost all fail, while below it
-    // the vector loop reaches 8x on subjects holding no candidate at all. The vector loop leaves
-    // more cheaply on x86_64, where the crossover sits higher and this gives up some of its reach.
+    // the vector loop reaches 8x on subjects holding no candidate at all. Applied on arm64 only: on
+    // x86_64 the vector loop leaves cheaply enough that it never measured slower than the scalar one.
     static constexpr int32_t maxCandidateFrequencyForSIMDSearch = 8;
+    // Without a usable sample (arm64), classes wider than this stay scalar, as before sampling.
+    static constexpr unsigned maxUnsampledCandidatesForSIMDSearch = 16;
 
     explicit SubjectSampler(CharSize charSize)
         : m_is8Bit(charSize == CharSize::Char8)
@@ -121,6 +123,22 @@ public:
     static constexpr unsigned minimumSampleSizeForFrequency = sampleSize / maxCandidateFrequencyForSIMDSearch;
 
     bool canResolveCandidateFrequency() const { return m_size >= minimumSampleSizeForFrequency; }
+
+    // Whether the vector scan is expected to beat the scalar loop for candidates of this sampled
+    // frequency (candidateCount of them); the one policy both the range scorer and the generator use.
+    static bool vectorScanPaysOff(const SubjectSampler& sampler, int32_t sampledFrequency, unsigned candidateCount)
+    {
+#if CPU(ARM64)
+        if (sampler.canResolveCandidateFrequency())
+            return sampledFrequency <= maxCandidateFrequencyForSIMDSearch;
+        return candidateCount <= maxUnsampledCandidatesForSIMDSearch;
+#else
+        UNUSED_PARAM(sampler);
+        UNUSED_PARAM(sampledFrequency);
+        UNUSED_PARAM(candidateCount);
+        return true;
+#endif
+    }
 
     int32_t NODELETE frequency(char16_t character) const
     {
@@ -219,13 +237,15 @@ public:
         return makeUniqueRef<BoyerMooreInfo>(charSize, length);
     }
 
-    std::optional<std::tuple<unsigned, unsigned>> findWorthwhileCharacterSequenceForLookahead(const SubjectSampler&) const;
+    // vectorScanAvailable: whether a single-position range would get generateBitInTableSIMDSearch's
+    // vector loop in this compile (the generator's own preconditions, see canUseVectorScan()).
+    std::optional<std::tuple<unsigned, unsigned>> findWorthwhileCharacterSequenceForLookahead(const SubjectSampler&, bool vectorScanAvailable) const;
     std::tuple<BoyerMooreBitmap::Map, BoyerMooreFastCandidates> createCandidateBitmap(unsigned begin, unsigned end) const;
 
     void dump(PrintStream&) const;
 
 private:
-    std::tuple<int32_t, unsigned, unsigned> findBestCharacterSequence(const SubjectSampler&) const;
+    std::tuple<int32_t, unsigned, unsigned> findBestCharacterSequence(const SubjectSampler&, bool vectorScanAvailable) const;
 
     Vector<BoyerMooreBitmap> m_characters;
     CharSize m_charSize;
@@ -233,7 +253,7 @@ private:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BoyerMooreInfo);
 
-std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequence(const SubjectSampler& sampler) const
+std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequence(const SubjectSampler& sampler, bool vectorScanAvailable) const
 {
     // The search loop tests one character against the union of the candidate sets in [begin, end)
     // and shifts by the length of that range, so a longer range shifts further while its union
@@ -283,6 +303,13 @@ std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequenc
             int32_t weightedFrequency = sampler.canResolveCandidateFrequency() ? frequency : unresolvedCharacterWeight * frequency;
             int32_t point = static_cast<int32_t>(end - begin) * BoyerMooreBitmap::mapSize * BoyerMooreBitmap::mapSize
                 / (BoyerMooreBitmap::mapSize + falseCandidateCost * weightedFrequency);
+            // A single-position range that gets the vector scan (see generateBitInTableSIMDSearch)
+            // inspects 16 characters per iteration: worth about as much as a scalar stride of this
+            // many, so a rare single character ('#' before six hex digits) is not traded for a wide
+            // two-position union that merely skips by 2.
+            static constexpr int32_t vectorScanStrideEquivalent = 10;
+            if (vectorScanAvailable && end - begin == 1 && SubjectSampler::vectorScanPaysOff(sampler, frequency, map.count()))
+                point *= vectorScanStrideEquivalent;
             if (matchingProbability >= 0 && point > biggestPoint) {
                 biggestPoint = point;
                 beginResult = begin;
@@ -297,9 +324,9 @@ std::tuple<int32_t, unsigned, unsigned> BoyerMooreInfo::findBestCharacterSequenc
     return std::tuple { biggestPoint, beginResult, endResult };
 }
 
-std::optional<std::tuple<unsigned, unsigned>> BoyerMooreInfo::findWorthwhileCharacterSequenceForLookahead(const SubjectSampler& sampler) const
+std::optional<std::tuple<unsigned, unsigned>> BoyerMooreInfo::findWorthwhileCharacterSequenceForLookahead(const SubjectSampler& sampler, bool vectorScanAvailable) const
 {
-    auto [biggestPoint, begin, end] = findBestCharacterSequence(sampler);
+    auto [biggestPoint, begin, end] = findBestCharacterSequence(sampler, vectorScanAvailable);
     if (biggestPoint < 0)
         return std::nullopt;
     return std::tuple { begin, end };
@@ -4804,7 +4831,7 @@ class YarrGenerator final : public YarrJITInfo {
 
                 // Emit fast skip path with stride if we have BoyerMooreInfo.
                 if (op.m_bmInfo) {
-                    auto range = op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler);
+                    auto range = op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan());
                     if (range) {
                         auto [beginIndex, endIndex] = *range;
                         ASSERT(endIndex <= alternative->m_minimumSize);
@@ -7904,7 +7931,7 @@ class YarrGenerator final : public YarrJITInfo {
         unsigned stubCount = 0;
         for (auto& chain : info->chains)
             stubCount += chain.alternativeIndices.size();
-        if (info->chains.size() > 96 || stubCount > 768)
+        if (info->chains.size() > alternationDispatchMaxChains || stubCount > alternationDispatchMaxStubs)
             return nullptr;
         if (m_charSize == CharSize::Char16) {
             for (unsigned i = 0; i < alternatives.size(); ++i) {
@@ -8639,10 +8666,30 @@ class YarrGenerator final : public YarrJITInfo {
         MacroAssembler::Label backtrackTarget;
     };
 
+    // The compile-wide preconditions of generateBitInTableSIMDSearch (the per-search ones -- stride,
+    // offsets, candidate frequency -- are checked there).
+    bool canUseVectorScan() const
+    {
+#if CPU(ARM64) || CPU(X86_64)
+        if (m_charSize != CharSize::Char8)
+            return false;
+        if (mayCall()) // calls clobber the vector registers
+            return false;
+        if (m_regs.vectorTemp0 == InvalidFPRReg || m_regs.vectorInput0 == InvalidFPRReg)
+            return false;
+#if CPU(X86_64)
+        if (!MacroAssembler::supportsAVX())
+            return false;
+#endif
+        return true;
+#else
+        return false;
+#endif
+    }
+
     std::optional<SkipBitInTableSIMDResult> generateBitInTableSIMDSearch(const BoyerMooreBitmap::Map& bitmap, const BoyerMooreFastCandidates& charactersFastPath, unsigned strideLength, unsigned endIndex, unsigned checkedOffset, MacroAssembler::JumpList& matched)
     {
-        // Only for Latin1 (8-bit characters)
-        if (m_charSize != CharSize::Char8)
+        if (!canUseVectorScan())
             return std::nullopt;
 
         // Only uses SIMD when advance_by == 1. For larger strides,
@@ -8651,18 +8698,20 @@ class YarrGenerator final : public YarrJITInfo {
         if (strideLength != 1)
             return std::nullopt;
 
-        // Leave the search scalar once candidates are too common for the vector loop's exit to pay
-        // for its reads. A sample too short to rate them falls back to counting them, as an absent
-        // sample already does.
-        int32_t frequency = 0;
-        if (m_sampler.canResolveCandidateFrequency()) {
+        // Leave the search scalar where candidates are too common for the vector loop's exit to pay
+        // for its reads (an arm64 effect, see SubjectSampler::vectorScanPaysOff; on x86_64 the
+        // vector loop measured at least as fast at every frequency tried and 2-3.7x faster on the
+        // common ones). An unresolved sample no longer counts class members past 16 as "frequent":
+        // that turned the vector loop off for every \d-led pattern whose RegExp saw a short subject
+        // first, for the life of that RegExp.
+        {
+            int32_t frequency = 0;
             bitmap.forEachSetBit([&](unsigned character) {
                 frequency += m_sampler.frequency(character);
             });
-        } else
-            frequency = bitmap.count();
-        if (frequency > SubjectSampler::maxCandidateFrequencyForSIMDSearch)
-            return std::nullopt;
+            if (!SubjectSampler::vectorScanPaysOff(m_sampler, frequency, bitmap.count()))
+                return std::nullopt;
+        }
 
         // Call can clobber SIMD registers
         if (mayCall())

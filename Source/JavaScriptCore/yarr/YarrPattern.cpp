@@ -3037,6 +3037,25 @@ public:
         wrapAlternativesForDispatch();
     }
 
+    // Conservative: false only when the alternative certainly begins with a character above Latin-1.
+    static bool mayBeginWithLatin1(const PatternAlternative& alternative)
+    {
+        if (alternative.m_terms.isEmpty())
+            return true;
+        const PatternTerm& first = alternative.m_terms[0];
+        if (!first.quantityMinCount)
+            return true;
+        switch (first.type) {
+        case PatternTerm::Type::PatternCharacter:
+            return first.patternCharacter <= 0xff || first.ignoreCase();
+        case PatternTerm::Type::CharacterClass:
+            return first.invert() || first.characterClass->m_anyCharacter || first.characterClass->m_table
+                || !first.characterClass->m_matches8.isEmpty() || !first.characterClass->m_ranges8.isEmpty();
+        default:
+            return true;
+        }
+    }
+
     void wrapAlternativesForDispatch()
     {
         PatternDisjunction* body = m_pattern.m_body;
@@ -3048,6 +3067,16 @@ public:
             ++firstRepeated;
         size_t repeatedCount = alternatives.size() - firstRepeated;
         if (repeatedCount < alternationFactoringMinRun)
+            return;
+        // Every alternative that can begin with a Latin-1 character costs the dispatcher at least
+        // one entry stub, so a run with more of those than it accepts (left that wide because
+        // factoring could not merge it, e.g. under /i) is never dispatched, and the wrapping group
+        // would only add its per-iteration bookkeeping. (Alternatives that begin above Latin-1 share
+        // one wide chain and cost no stub.)
+        size_t latin1LedCount = 0;
+        for (size_t i = firstRepeated; i < alternatives.size(); ++i)
+            latin1LedCount += mayBeginWithLatin1(*alternatives[i]);
+        if (latin1LedCount > alternationDispatchMaxStubs)
             return;
         if (repeatedCount < alternationWrapMinRunWhenFrameFree) {
             bool needsFrame = false;
