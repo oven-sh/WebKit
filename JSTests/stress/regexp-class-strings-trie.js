@@ -35,3 +35,21 @@ shouldBe(kw.exec("… 😁y=6")[1], "6");
 shouldBe(kw.exec("… \u{10400}z=7")[1], "7");
 shouldBe(kw.exec("… 😁x=6"), null);
 shouldBe(kw.exec("beta=1")[1], "1");
+// Review cases: /i and lookbehinds keep longest-first across case variants / suffixes; long
+// single strings do not recurse per character; branch heads that are single members end inside
+// their branch.
+shouldBe(/[\q{Ab|abcd}]/vi.exec("abcd")[0], "abcd");
+shouldBe(/[\q{abc|aB}]/vi.exec("abc")[0], "abc");
+shouldBe(/[\q{kx|Kxy|q1|q2|q3|q4|q5}]/vi.exec("kxy")[0], "kxy");
+shouldBe(/(?<=([\q{ba|cba|q1|q2|q3|q4|q5}]))x/v.exec("cbax")[1], "cba");
+shouldBe(/(?<=([\q{ab|zab|q1|q2|q3|q4|q5}]))x/v.exec("zabx")[1], "zab");
+shouldBe(/(?<=([\q{ab|ca|q1|q2|q3|q4|q5}\s\S]))$/v.exec("xca")[1], "ca");
+shouldBe(/^[\q{ab|ca|q1|q2|q3|q4|q5}\s\S]$/v.exec("ca")[0], "ca");
+shouldBe(/^[\q{ab|ca|q1|q2|q3|q4|q5}\s\S]/v.exec("cx")[0], "c");
+shouldBe(/[\q{ab|ac|q1|q2|q3|q4|q5}a]/v.exec("xa")[0], "a");
+shouldBe(/[\q{ab|ac|q1|q2|q3|q4|q5}a]/v.exec("xac")[0], "ac");
+{
+    let threw = false, matched = null;
+    try { matched = new RegExp("[\\q{" + "ab".repeat(25000) + "|q1|q2|q3|q4|q5}]", "v").exec("x" + "ab".repeat(25000)); } catch (e) { threw = e instanceof SyntaxError; }
+    shouldBe(threw || (matched && matched[0].length === 50000), true);
+}

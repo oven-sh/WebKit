@@ -1706,6 +1706,55 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
         m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     }
 
+    // One alternative per string, longest first, then the single characters, then the empty
+    // string if it is a member (it is shorter than any character, so it goes last).
+    void expandClassWithStringsFlat(CharacterClass* characterClass)
+    {
+        atomParenthesesSubpatternBegin(false);
+        unsigned alternativeCount = 0;
+        bool hasEmptyString = false;
+        for (auto& string : characterClass->m_strings) {
+            if (string.isEmpty()) {
+                hasEmptyString = true;
+                continue;
+            }
+            if (alternativeCount)
+                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
+            for (auto ch : string)
+                atomPatternCharacter(ch, /* hyphenIsRange */ false);
+            ++alternativeCount;
+        }
+        if (characterClass->hasSingleCharacters() || characterClass->m_anyCharacter) {
+            if (alternativeCount)
+                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
+            m_alternative->m_terms.append(PatternTerm(characterClass, false, m_flags, parenthesisMatchDirection()));
+            ++alternativeCount;
+        }
+        if (hasEmptyString && alternativeCount)
+            disjunction(CreateDisjunctionPurpose::ForNextAlternative);
+        atomParenthesesEnd();
+    }
+
+    // Whether ch is one of the class's single characters (its strings aside).
+    static TriState singlesContain(const CharacterClass& characterClass, char32_t ch)
+    {
+        if (characterClass.m_anyCharacter)
+            return TriState::True;
+        if (characterClass.m_table && !characterClass.hasSingleCharacters())
+            return TriState::Indeterminate;
+        auto inRanges = [ch](const Vector<CharacterRange>& ranges) {
+            for (auto& range : ranges) {
+                if (ch >= range.begin && ch <= range.end)
+                    return true;
+            }
+            return false;
+        };
+        bool found = ch <= 0xff
+            ? characterClass.m_matches8.contains(static_cast<char16_t>(ch)) || inRanges(characterClass.m_ranges8)
+            : characterClass.m_matches32.contains(ch) || inRanges(characterClass.m_ranges32);
+        return found ? TriState::True : TriState::False;
+    }
+
     // A class that contains strings matches, at each position, its longest member that matches
     // there (ClassStringDisjunction semantics), then backtracks to shorter ones. Emitting one
     // alternative per string, longest first, does that but tries thousands of alternatives for
@@ -1716,6 +1765,16 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     // for other characters cannot match at all, so the order of matches is unchanged.
     void expandClassWithStrings(CharacterClass* characterClass)
     {
+        // The trie's "no other branch can match here" argument needs exact, forward matching:
+        // under /i case variants of one prefix would sit in sibling branches, and matched backward
+        // (inside a lookbehind) members that are suffixes of one another do. Those keep the flat
+        // longest-first list, as do sets small enough for it not to matter.
+        static constexpr size_t minStringsForTrie = 6;
+        if (ignoreCase() || parenthesisMatchDirection() == Backward || characterClass->m_strings.size() < minStringsForTrie) {
+            expandClassWithStringsFlat(characterClass);
+            return;
+        }
+
         Vector<Vector<char32_t>> strings = characterClass->m_strings;
         std::ranges::sort(strings, [](const Vector<char32_t>& a, const Vector<char32_t>& b) {
             return std::ranges::lexicographical_compare(a, b);
@@ -1744,7 +1803,7 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             size_t end = begin;
             while (end < strings.size() && !strings[end].isEmpty() && strings[end][0] == head)
                 ++end;
-            bool headIsSingle = classContainsCodePoint(*characterClass, head) == TriState::True;
+            bool headIsSingle = singlesContain(*characterClass, head) == TriState::True;
             if (headIsSingle) {
                 branchHeads.putChar(head);
                 anyBranchHeadIsSingle = true;
@@ -1755,9 +1814,9 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             begin = end;
         }
 
-        if (characterClass->hasSingleCharacters()) {
+        if (characterClass->hasSingleCharacters() || characterClass->m_anyCharacter) {
             CharacterClass* singles = characterClass;
-            if (anyBranchHeadIsSingle) {
+            if (anyBranchHeadIsSingle && !characterClass->m_anyCharacter) {
                 auto heads = branchHeads.charClass();
                 CharacterClassConstructor remaining(false, CompileMode::UnicodeSets);
                 remaining.append(characterClass);
@@ -1791,6 +1850,10 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     // the empty alternative.
     void emitStringTrieNode(const Vector<Vector<char32_t>>& strings, size_t begin, size_t end, size_t depth, bool endsHere)
     {
+        if (!isSafeToRecurse()) [[unlikely]] {
+            m_error = ErrorCode::PatternTooLarge;
+            return;
+        }
         struct Branch {
             char32_t ch;
             size_t begin;
@@ -1824,14 +1887,14 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             // A single continuation and no early end: no group needed.
             if (gatherLeaves)
                 appendLeafClass(branches);
-            else {
+            else if (branches[0].end == branches[0].begin + 1) {
+                // One string left: emit its tail without recursing per character.
+                for (size_t i = depth; i < strings[branches[0].begin].size(); ++i)
+                    atomPatternCharacter(strings[branches[0].begin][i], false);
+            } else {
                 atomPatternCharacter(branches[0].ch, false);
                 emitStringTrieNode(strings, branches[0].begin, branches[0].end, depth + 1, branches[0].isLeaf);
             }
-            return;
-        }
-        if (!isSafeToRecurse()) {
-            m_error = ErrorCode::PatternTooLarge;
             return;
         }
         atomParenthesesSubpatternBegin(false);
@@ -3162,25 +3225,6 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
         wrapAlternativesForDispatch();
     }
 
-    // Conservative: false only when the alternative certainly begins with a character above Latin-1.
-    static bool mayBeginWithLatin1(const PatternAlternative& alternative)
-    {
-        if (alternative.m_terms.isEmpty())
-            return true;
-        const PatternTerm& first = alternative.m_terms[0];
-        if (!first.quantityMinCount)
-            return true;
-        switch (first.type) {
-        case PatternTerm::Type::PatternCharacter:
-            return first.patternCharacter <= 0xff || first.ignoreCase();
-        case PatternTerm::Type::CharacterClass:
-            return first.invert() || first.characterClass->m_anyCharacter || first.characterClass->m_table
-                || !first.characterClass->m_matches8.isEmpty() || !first.characterClass->m_ranges8.isEmpty();
-        default:
-            return true;
-        }
-    }
-
     void wrapAlternativesForDispatch()
     {
         PatternDisjunction* body = m_pattern.m_body;
@@ -3193,15 +3237,10 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
         size_t repeatedCount = alternatives.size() - firstRepeated;
         if (repeatedCount < alternationFactoringMinRun)
             return;
-        // Every alternative that can begin with a Latin-1 character costs the dispatcher at least
-        // one entry stub, so a run with more of those than it accepts (left that wide because
-        // factoring could not merge it, e.g. under /i) is never dispatched, and the wrapping group
-        // would only add its per-iteration bookkeeping. (Alternatives that begin above Latin-1 share
-        // one wide chain and cost no stub.)
-        size_t latin1LedCount = 0;
-        for (size_t i = firstRepeated; i < alternatives.size(); ++i)
-            latin1LedCount += mayBeginWithLatin1(*alternatives[i]);
-        if (latin1LedCount > alternationDispatchMaxStubs)
+        // Every alternative costs the dispatcher at least one entry stub, so a run wider than it
+        // accepts (left that wide because factoring could not merge it, e.g. under /i) is never
+        // dispatched, and the wrapping group would only add its per-iteration bookkeeping.
+        if (repeatedCount > alternationDispatchMaxStubs)
             return;
         if (repeatedCount < alternationWrapMinRunWhenFrameFree) {
             bool needsFrame = false;

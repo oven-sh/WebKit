@@ -7986,8 +7986,8 @@ class YarrGenerator final : public YarrJITInfo {
                 }
             }
             std::ranges::sort(cuts);
-            auto last = std::ranges::unique(cuts);
-            cuts.shrink(cuts.size() - (last.end() - last.begin()));
+            removeRepeatedElements(cuts);
+            size_t chainCountBeforeWide = info->chains.size();
             bool tooMany = false;
             for (size_t k = 0; k + 1 < cuts.size(); ++k) {
                 unsigned begin = cuts[k];
@@ -8008,7 +8008,9 @@ class YarrGenerator final : public YarrJITInfo {
                 }
             }
             if (tooMany) {
-                // One range for everything wide, tried against every alternative that can start wide.
+                // One range for everything wide, tried against every alternative that can start wide
+                // (and none of the chains minted for the abandoned intervals).
+                info->chains.shrink(chainCountBeforeWide);
                 Vector<unsigned, 4> members;
                 for (unsigned i = 0; i < alternatives.size(); ++i) {
                     if (sets[i].matchesWide())
