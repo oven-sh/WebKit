@@ -6550,7 +6550,8 @@ class YarrGenerator final : public YarrJITInfo {
     // original lookbehind body is never itself compiled, so a mirrored copy may
     // reuse its slots, and a renumbered forward body keeps its own.
     //
-    // Returns false (with m_failureReason set) only on offset overflow.
+    // Returns false, with m_failureReason set, on recursion depth, offset
+    // overflow, or a width disagreement with setupAlternativeOffsets.
 
     bool assignAlternativeOffsets(PatternAlternative* alternative, unsigned initialInputPosition)
     {
@@ -6652,7 +6653,14 @@ class YarrGenerator final : public YarrJITInfo {
         }
 
         // Mirroring reverses term order but must preserve the alternative's width.
-        RELEASE_ASSERT(alternative->m_minimumSize == (currentInputPosition - initialInputPosition));
+        // The width rules above replicate YarrPatternConstructor::setupAlternativeOffsets;
+        // should the two ever diverge, decline to JIT this pattern (the bytecode
+        // interpreter takes it) rather than emit code against a mis-sized frame.
+        ASSERT(alternative->m_minimumSize == (currentInputPosition - initialInputPosition));
+        if (alternative->m_minimumSize != (currentInputPosition - initialInputPosition)) [[unlikely]] {
+            m_failureReason = JITFailureReason::LookbehindLayoutMismatch;
+            return false;
+        }
         return true;
     }
 
@@ -9766,6 +9774,9 @@ static void dumpCompileFailure(JITFailureReason failure)
         break;
     case JITFailureReason::GeneratedCodeSizeTooLarge:
         dataLog("Can't JIT because generated code size exceeds limit\n");
+        break;
+    case JITFailureReason::LookbehindLayoutMismatch:
+        dataLog("Can't JIT a lookbehind whose mirrored layout disagrees with the pattern's offsets\n");
         break;
     }
 }
