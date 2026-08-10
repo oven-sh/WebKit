@@ -201,6 +201,9 @@ bool gatherDebuggerParseDataForSource(VM& vm, SourceProvider* provider, Debugger
     case SourceProviderSourceType::Program:
         return gatherDebuggerParseData<Program>(vm, completeSource, debuggerParseData);        
     case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+    case SourceProviderSourceType::BunTranspiledModule:
+#endif
         return gatherDebuggerParseData<Module>(vm, completeSource, debuggerParseData);
     default:
         return false;

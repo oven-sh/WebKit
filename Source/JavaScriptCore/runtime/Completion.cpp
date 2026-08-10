@@ -206,6 +206,9 @@ static ScriptFetchParameters::Type getSourceType(const SourceCode& source)
     case SourceProviderSourceType::WebAssembly:
         return ScriptFetchParameters::Type::WebAssembly;
     case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+    case SourceProviderSourceType::BunTranspiledModule:
+#endif
         return ScriptFetchParameters::Type::JavaScript;
     default:
         return ScriptFetchParameters::Type::None;
