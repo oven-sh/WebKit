@@ -127,7 +127,11 @@ NEVER_INLINE int RegExp::matchInlineAtCodePointBoundaries(JSGlobalObject* nullOr
 template<Yarr::MatchFrom matchFrom>
 ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
 {
-    if (!eitherUnicode() || s.is8Bit())
+    // Two separate predictable branches keep the common paths to a flag test plus a
+    // tail call; only a unicode pattern on a 16-bit subject needs the boundary fixup.
+    if (!eitherUnicode()) [[likely]]
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+    if (s.is8Bit()) [[likely]]
         return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
     return matchInlineAtCodePointBoundaries<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
 }
@@ -279,7 +283,9 @@ NEVER_INLINE MatchResult RegExp::matchInlineAtCodePointBoundaries(JSGlobalObject
 template<Yarr::MatchFrom matchFrom>
 ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
 {
-    if (!eitherUnicode() || s.is8Bit())
+    if (!eitherUnicode()) [[likely]]
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+    if (s.is8Bit()) [[likely]]
         return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
     return matchInlineAtCodePointBoundaries<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
 }
