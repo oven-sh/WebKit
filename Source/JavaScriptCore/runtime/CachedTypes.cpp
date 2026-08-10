@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "CachedTypes.h"
+#include <wtf/SetForScope.h>
 
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
@@ -55,6 +56,11 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+bool Decoder::canBorrowPayload() const
+{
+    return Options::useBorrowedBytecodeFromCache() && m_cachedBytecode->payloadIsPersistent();
+}
 
 namespace Yarr {
 enum class Flags : uint16_t;
@@ -293,8 +299,10 @@ Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvid
 
 Decoder::~Decoder()
 {
-    for (auto& finalizer : m_finalizers)
-        finalizer();
+    if (m_isRegisteredWithVM)
+        m_vm.unregisterBytecodeCacheDecoder(*this, m_cachedBytecode.get());
+    for (auto& [ptr, finalizer] : m_finalizers)
+        finalizer(ptr);
 }
 
 Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider)
@@ -349,13 +357,14 @@ void Decoder::setHandleForTDZEnvironment(CompactTDZEnvironment* environment, con
 
 void Decoder::addLeafExecutable(const UnlinkedFunctionExecutable* executable, ptrdiff_t offset)
 {
+    if (!m_recordsLeafExecutables)
+        return;
     m_cachedBytecode->leafExecutables().add(executable, offset);
 }
 
-template<typename Functor>
-void Decoder::addFinalizer(const Functor& fn)
+void Decoder::addFinalizer(void* ptr, void (*finalizer)(void*))
 {
-    m_finalizers.append(fn);
+    m_finalizers.append({ ptr, finalizer });
 }
 
 RefPtr<SourceProvider> Decoder::provider() const
@@ -487,6 +496,11 @@ public:
         for (unsigned i = 0; i < size; ++i)
             ::JSC::decode(decoder, buffer[i], array[i], args...);
     }
+    const T* borrow() const
+    {
+        static_assert(std::is_trivially_copyable_v<T>, "borrowing is a raw view of the encoded bytes");
+        return this->isEmpty() ? nullptr : this->template buffer<T>();
+    }
 };
 
 template<typename T, typename Source = SourceType<T>>
@@ -512,8 +526,11 @@ public:
         encoder.cachePtr(src, encoder.offsetOf(cachedObject));
     }
 
+    // Only for objects whose lifetime the Decoder itself guarantees (CachedRefPtr adds a finalizer holding a ref;
+    // TDZ environments are owned by the VM map or a finalizer). Uniquely-owned objects and GC cells can die while
+    // the Decoder lives, so they must always be decoded fresh via decode().
     template<typename... Args>
-    Source* decode(Decoder& decoder, bool& isNewAllocation, Args&&... args) const
+    Source* decodeShared(Decoder& decoder, bool& isNewAllocation, Args&&... args) const
     {
         if (this->isEmpty()) {
             isNewAllocation = false;
@@ -535,8 +552,9 @@ public:
     template<typename... Args>
     Source* decode(Decoder& decoder, Args&&... args) const
     {
-        bool unusedIsNewAllocation;
-        return decode(decoder, unusedIsNewAllocation, std::forward<Args>(args)...);
+        if (this->isEmpty())
+            return nullptr;
+        return get()->decode(decoder, std::forward<Args>(args)...);
     }
 
     const T* NODELETE operator->() const { return get(); }
@@ -570,12 +588,12 @@ public:
     RefPtr<Source, PtrTraits> decode(Decoder& decoder) const
     {
         bool isNewAllocation;
-        Source* decodedPtr = m_ptr.decode(decoder, isNewAllocation);
+        Source* decodedPtr = m_ptr.decodeShared(decoder, isNewAllocation);
         if (!decodedPtr)
             return nullptr;
         if (isNewAllocation) {
-            decoder.addFinalizer([=] {
-                WTF::DefaultRefDerefTraits<Source>::derefIfNotNull(decodedPtr);
+            decoder.addFinalizer(decodedPtr, [](void* ptr) {
+                WTF::DefaultRefDerefTraits<Source>::derefIfNotNull(static_cast<Source*>(ptr));
             });
         }
         auto result = adoptRef<Source, PtrTraits>(decodedPtr);
@@ -632,6 +650,14 @@ public:
         T* buffer = this->template allocate<T>(encoder, m_size);
         for (unsigned i = 0; i < m_size; ++i)
             ::JSC::encode(encoder, buffer[i], vector[i]);
+    }
+
+    std::span<const T> borrow() const // raw view of the encoded elements (only meaningful for trivially-encoded T like uint8_t)
+    {
+        static_assert(std::is_trivially_copyable_v<T>, "borrowing is a raw view of the encoded bytes");
+        if (!m_size)
+            return { };
+        return { this->template buffer<T>(), m_size };
     }
 
     template<typename... Args, typename VectorContainer>
@@ -1066,6 +1092,8 @@ public:
 
     std::unique_ptr<ExpressionInfo> decode(Decoder& decoder) const
     {
+        if (decoder.canBorrowPayload() && !m_storage.isEmpty())
+            return ExpressionInfo::createBorrowed(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions, m_storage.borrow());
         auto info = ExpressionInfo::createUninitialized(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
         m_storage.decode(decoder, info->payload(), info->payloadSize());
         return info;
@@ -1172,7 +1200,7 @@ public:
     CompactTDZEnvironmentMap::Handle decode(Decoder& decoder) const
     {
         bool isNewAllocation;
-        CompactTDZEnvironment* environment = m_environment.decode(decoder, isNewAllocation);
+        CompactTDZEnvironment* environment = m_environment.decodeShared(decoder, isNewAllocation);
         if (!environment) {
             ASSERT(!isNewAllocation);
             return CompactTDZEnvironmentMap::Handle();
@@ -1183,8 +1211,8 @@ public:
         bool isNewEntry;
         CompactTDZEnvironmentMap::Handle handle = decoder.vm().m_compactVariableMap->get(environment, isNewEntry);
         if (!isNewEntry) {
-            decoder.addFinalizer([=] {
-                delete environment;
+            decoder.addFinalizer(environment, [](void* ptr) {
+                delete static_cast<CompactTDZEnvironment*>(ptr);
             });
         }
         decoder.setHandleForTDZEnvironment(environment, handle);
@@ -1514,11 +1542,16 @@ class CachedInstructionStream : public CachedObject<JSInstructionStream> {
 public:
     void encode(Encoder& encoder, const JSInstructionStream& stream)
     {
+        RELEASE_ASSERT(!stream.isBorrowed()); // a borrowed stream's bytes live in the payload being read, not in m_instructions
         m_instructions.encode(encoder, stream.m_instructions);
     }
 
     JSInstructionStream* decode(Decoder& decoder) const
     {
+        if (decoder.canBorrowPayload()) {
+            // The cache outlives the VM's use of it (mmap'd / embedded): point at the bytes instead of copying them.
+            return new JSInstructionStream(m_instructions.borrow(), JSInstructionStream::Borrow);
+        }
         Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamBufferMalloc> instructionsVector;
         m_instructions.decode(decoder, instructionsVector);
         return new JSInstructionStream(WTF::move(instructionsVector));
@@ -2484,9 +2517,10 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     if (!cachedExecutable.unlinkedCodeBlockForCall().isEmpty() || !cachedExecutable.unlinkedCodeBlockForConstruct().isEmpty()) {
         checkBounds(m_cachedCodeBlockForCallOffset, cachedExecutable.unlinkedCodeBlockForCall());
         checkBounds(m_cachedCodeBlockForConstructOffset, cachedExecutable.unlinkedCodeBlockForConstruct());
-        if (m_isCached)
+        if (m_isCached) {
             m_decoder = &decoder;
-        else
+            m_cachedRecordOffset = static_cast<int32_t>(decoder.offsetOf(&cachedExecutable));
+        } else
             m_decoder = nullptr;
     }
 
@@ -2761,7 +2795,7 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
         before = MonotonicTime::now();
 
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
-    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider());
+    Ref decoder = vm.ensureBytecodeCacheDecoder(WTF::move(cachedBytecode), &key.source().provider());
     std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
     {
         DeferGC deferGC(vm);
@@ -2794,6 +2828,30 @@ void decodeFunctionCodeBlock(Decoder& decoder, int32_t cachedFunctionCodeBlockOf
     ASSERT(decoder.vm().heap.isDeferred());
     auto* cachedCodeBlock = static_cast<const CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock>*>(decoder.ptrForOffsetFromBase(cachedFunctionCodeBlockOffset));
     cachedCodeBlock->decode(decoder, codeBlock, owner);
+}
+
+void decodeFunctionCodeBlockForReDecode(Decoder& decoder, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>& codeBlock, const JSCell* owner)
+{
+    SetForScope reDecoding(decoder.m_recordsLeafExecutables, false);
+    decodeFunctionCodeBlock(decoder, cachedFunctionCodeBlockOffset, codeBlock, owner);
+}
+
+void decodeFunctionCodeBlockFromExecutableRecord(Decoder& decoder, int32_t cachedFunctionExecutableOffset, CodeSpecializationKind kind, WriteBarrier<UnlinkedFunctionCodeBlock>& codeBlock, const UnlinkedFunctionExecutable& executable)
+{
+    ASSERT(decoder.vm().heap.isDeferred());
+    if (cachedFunctionExecutableOffset <= 0 || static_cast<size_t>(cachedFunctionExecutableOffset) + sizeof(CachedFunctionExecutable) > decoder.size())
+        return;
+    auto* cachedExecutable = static_cast<const CachedFunctionExecutable*>(decoder.ptrForOffsetFromBase(cachedFunctionExecutableOffset));
+    // The offset was recorded against the payload this executable was first decoded from; the provider's payload could have been
+    // replaced or rewritten since, so the record must describe this very function before anything in it is trusted.
+    if (cachedExecutable->startOffset() != executable.startOffset() || cachedExecutable->unlinkedFunctionStart() != executable.unlinkedFunctionStart()
+        || cachedExecutable->lineCount() != executable.lineCount() || cachedExecutable->parameterCount() != executable.parameterCount())
+        return;
+    const auto& cachedCodeBlock = kind == CodeSpecializationKind::CodeForCall ? cachedExecutable->unlinkedCodeBlockForCall() : cachedExecutable->unlinkedCodeBlockForConstruct();
+    if (cachedCodeBlock.isEmpty())
+        return;
+    SetForScope reDecoding(decoder.m_recordsLeafExecutables, false);
+    cachedCodeBlock.decode(decoder, codeBlock, &executable);
 }
 
 } // namespace JSC
