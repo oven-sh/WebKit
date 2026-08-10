@@ -279,6 +279,11 @@ private:
     int8_t m_setIsNotEmpty;
 
     SentinelLinkedList<Watchpoint, BasicRawSentinelNode<Watchpoint>> m_set;
+#if USE(BUN_JSC_ADDITIONS)
+    SentinelLinkedList<Watchpoint, BasicRawSentinelNode<Watchpoint>>* snapshotSideChain(bool createIfMissing); // snapshot: post-restore additions to an snapshotd set
+#else
+    static constexpr SentinelLinkedList<Watchpoint, BasicRawSentinelNode<Watchpoint>>* snapshotSideChain(bool) { return nullptr; }
+#endif
 };
 
 // InlineWatchpointSet is a low-overhead, non-copyable watchpoint set in which
@@ -357,7 +362,8 @@ public:
             protect(fat())->fireAll(vm, fireDetails);
             return;
         }
-        if (decodeState(m_data) == ClearWatchpoint)
+        // Already-invalidated thin sets are terminal: skip the identity store (keeps clean/shared pages clean).
+        if (decodeState(m_data) != IsWatched)
             return;
         m_data = encodeState(IsInvalidated);
         WTF::storeStoreFence();
@@ -367,7 +373,7 @@ public:
     {
         if (isFat())
             protect(fat())->invalidate(vm, detail);
-        else
+        else if (decodeState(m_data) != IsInvalidated)
             m_data = encodeState(IsInvalidated);
     }
     

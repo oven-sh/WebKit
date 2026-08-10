@@ -40,6 +40,9 @@ public:
 
     TinyBloomFilter<uintptr_t> filter() const;
     const UncheckedKeyHashSet<MarkedBlock*>& set() const;
+#if USE(BUN_JSC_ADDITIONS)
+    void evacuateStorage() { auto copy = m_set; m_set.swap(copy); } // snapshot: move the table to fresh pages so inserts don't dirty snapshotd ones
+#endif
 
 private:
     void recomputeFilter();

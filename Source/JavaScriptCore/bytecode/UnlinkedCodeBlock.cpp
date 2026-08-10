@@ -26,6 +26,7 @@
 #include "config.h"
 
 #include "UnlinkedCodeBlock.h"
+#include "HeapInlines.h"
 
 #include "BaselineJITCode.h"
 #include "BytecodeLivenessAnalysis.h"
@@ -99,9 +100,14 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     UnlinkedCodeBlock* thisObject = uncheckedDowncast<UnlinkedCodeBlock>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    Locker locker { thisObject->cellLock() };
-    if (visitor.isFirstVisit())
-        thisObject->m_age = std::min<unsigned>(static_cast<unsigned>(thisObject->m_age) + 1, maxAge);
+    // Snapshot (immortal) code blocks are immutable and never jettisoned: no lock, no aging, so their pages stay clean.
+    bool isSnapshot = Heap::isStartupSnapshotCell(thisObject);
+    std::optional<Locker<JSCellLock>> locker;
+    if (!isSnapshot) {
+        locker.emplace(thisObject->cellLock());
+        if (visitor.isFirstVisit())
+            thisObject->m_age = std::min<unsigned>(static_cast<unsigned>(thisObject->m_age) + 1, maxAge);
+    }
     for (auto& barrier : thisObject->m_functionDecls)
         visitor.append(barrier);
     for (auto& barrier : thisObject->m_functionExprs)
@@ -109,9 +115,9 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendValues(thisObject->m_constantRegisters.span());
     size_t extraMemory = thisObject->metadataSizeInBytes();
     if (thisObject->m_instructions)
-        extraMemory += thisObject->m_instructions->sizeInBytes();
+        extraMemory += thisObject->m_instructions->ownedSizeInBytes();
     if (thisObject->hasRareData())
-        extraMemory += thisObject->m_rareData->sizeInBytes(locker);
+        extraMemory += locker ? thisObject->m_rareData->sizeInBytes(*locker) : thisObject->m_rareData->sizeInBytes(NoLockingNecessary);
     if (thisObject->m_expressionInfo)
         extraMemory += thisObject->m_expressionInfo->byteSize();
     extraMemory += thisObject->m_jumpTargets.byteSize();
@@ -348,4 +354,22 @@ void UnlinkedCodeBlock::allocateSharedProfiles(unsigned numBinaryArithProfiles, 
     m_unaryArithProfiles = FixedVector<UnaryArithProfile>(numUnaryArithProfiles);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+UnlinkedCodeBlock::ComponentSizes UnlinkedCodeBlock::componentSizesForCensus()
+{
+    ComponentSizes r { };
+    if (m_instructions)
+        r.instructions = m_instructions->sizeInBytes();
+    if (m_expressionInfo)
+        r.expressionInfo = m_expressionInfo->byteSize();
+    r.metadata = m_metadata->sizeInBytesForGC();
+    r.identifiers = m_identifiers.size() * sizeof(Identifier);
+    r.constants = m_constantRegisters.size() * sizeof(WriteBarrier<Unknown>) + m_constantsSourceCodeRepresentation.size() * sizeof(SourceCodeRepresentation);
+    r.jumpTargets = m_jumpTargets.size() * sizeof(JSInstructionStream::Offset);
+    r.profiles = m_valueProfiles.size() * sizeof(UnlinkedValueProfile) + m_arrayProfiles.size() * sizeof(UnlinkedArrayProfile) + m_binaryArithProfiles.size() * sizeof(BinaryArithProfile) + m_unaryArithProfiles.size() * sizeof(UnaryArithProfile);
+    if (m_rareData)
+        r.rareData = m_rareData->sizeInBytes(NoLockingNecessary);
+    return r;
+}
+#endif
 } // namespace JSC

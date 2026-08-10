@@ -328,6 +328,8 @@ public:
 
     size_t cost() const;
     size_t costDuringGC();
+    // Snapshot: do the lazy one-time writes (hash, did-report-cost) now so the string's header never changes after the freeze.
+    void settleLazyHeaderWritesForStartupSnapshot() const { hash(); m_hashAndFlags |= s_hashFlagDidReportCost; }
 
     WTF_EXPORT_PRIVATE size_t NODELETE sizeInBytes() const;
 
@@ -381,6 +383,7 @@ public:
     unsigned existingSymbolAwareHash() const;
 
     SUPPRESS_TSAN bool isStatic() const { return m_refCount.load(std::memory_order_relaxed) & s_refCountFlagIsStaticString; }
+    void makeStaticForSnapshot() { m_refCount.fetch_or(s_refCountFlagIsStaticString, std::memory_order_relaxed); }
 
     uint32_t refCount() const { return m_refCount.load(std::memory_order_relaxed) / s_refCountIncrement; }
     bool hasOneRef() const { return m_refCount.load(std::memory_order_relaxed) == s_refCountIncrement; }
@@ -1184,10 +1187,9 @@ inline void StringImpl::ref()
 {
     STRING_STATS_REF_STRING(*this);
 
-#if TSAN_ENABLED
+    // Static strings (which every string in a snapshot is made) never write their refcount, so their pages stay clean.
     if (isStatic())
         return;
-#endif
 
     m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed);
 }
@@ -1196,10 +1198,8 @@ inline void StringImpl::deref()
 {
     STRING_STATS_DEREF_STRING(*this);
 
-#if TSAN_ENABLED
     if (isStatic())
         return;
-#endif
 
     auto oldRefCount = m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed);
     if (oldRefCount != s_refCountIncrement)

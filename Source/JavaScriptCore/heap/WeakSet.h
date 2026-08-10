@@ -122,8 +122,12 @@ ALWAYS_INLINE void WeakSet::deallocate(WeakImpl* weakImpl)
 
 inline void WeakSet::resetAllocator()
 {
-    m_allocator = nullptr;
-    m_nextAllocator = m_blocks.head();
+    // Compare first: this runs for every weak set on every full collection, including the snapshot cells' whose values are
+    // already these, and a store would dirty their pages for nothing.
+    if (m_allocator)
+        m_allocator = nullptr;
+    if (WeakBlock* head = m_blocks.head(); m_nextAllocator != head)
+        m_nextAllocator = head;
 }
 
 } // namespace JSC

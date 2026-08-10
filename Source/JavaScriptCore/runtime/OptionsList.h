@@ -84,11 +84,14 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useFFIDirectCall, true, Normal, "FTL calls the native FFI target directly (no invoke thunk)"_s) \
     v(Bool, dumpFFIDisassembly, false, Normal, "disassemble generated FFI thunks/stubs"_s) \
     v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
+#define FOR_EACH_JSC_STARTUP_SNAPSHOT_OPTION(v) \
+    v(Bool, verboseStartupSnapshotFreeze, false, Normal, "log what freezing a heap into a snapshot settled and left behind"_s)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
     v(Bool, useExecutionCountForCodeBlockAging, false, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
     v(Double, codeBlockAgingLeaseMultiplier, 3.0, Normal, "When useExecutionCountForCodeBlockAging proves a CodeBlock is still active, renew its old-age TTL to this many multiples of timeToLive for its tier."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
+#define FOR_EACH_JSC_STARTUP_SNAPSHOT_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
 #endif
 
@@ -111,6 +114,10 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces."_s) \
     v(Bool, evalMode, false, Normal, "Set to true for less aggressive function call completion value discarding."_s) \
     FOR_EACH_JSC_FFI_OPTION(v) \
+    FOR_EACH_JSC_STARTUP_SNAPSHOT_OPTION(v) \
+    v(Bool, useBorrowedBytecodeFromCache, true, Normal, "instruction streams decoded from a persistent (mmap'd/embedded) bytecode cache alias the cache instead of copying"_s) \
+    v(Bool, useUnlinkedCodeBlockJettisoningForBytecodeCache, false, Normal, "If true, UnlinkedCodeBlocks decoded from a bytecode cache can also be jettisoned (regenerated from source or cache on next use)."_s) \
+    v(Unsigned, unlinkedCodeBlockJettisonAge, 7, Normal, "Number of full collections an UnlinkedCodeBlock survives without being linked before it is jettisoned."_s) \
     \
     v(Unsigned, maxPerThreadStackUsage, 5 * MB, Normal, "Max allowed stack usage by the VM"_s) \
     v(Unsigned, softReservedZoneSize, 128 * KB, Normal, "A buffer greater than reservedZoneSize that reserves space for stringifying exceptions."_s) \

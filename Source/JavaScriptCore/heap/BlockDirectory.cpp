@@ -264,6 +264,8 @@ void BlockDirectory::lastChanceToFinalize()
 {
     forEachBlock(
         [&] (MarkedBlock::Handle* block) {
+            if (block->block().isImmortal()) [[unlikely]]
+                return; // snapshot memory is abandoned, never finalized: the cells belong to every launch, not to this VM
             block->lastChanceToFinalize();
         });
 }
@@ -286,6 +288,11 @@ void BlockDirectory::beginMarkingForFullCollection()
     // as the next one is eden.
     markingNotEmptyBits().clearAll();
     markingRetiredBits().clearAll();
+#if USE(BUN_JSC_ADDITIONS)
+    // Immortal blocks are never marked into, but must still be iterated by forEachMarkedCell (unconditional finalizers etc.).
+    markingNotEmptyBits() |= immortalBits();
+    markingRetiredBits() |= immortalBits();
+#endif
 }
 
 void BlockDirectory::endMarking()
@@ -308,8 +315,8 @@ void BlockDirectory::endMarking()
     // vectors.
     
     // Sweeper is suspended so we don't need the lock here.
-    emptyBits() = liveBits() & ~markingNotEmptyBits();
-    canAllocateBits() = liveBits() & ~markingRetiredBits();
+    emptyBits() = liveBits() & ~markingNotEmptyBits() & ~immortalBits();
+    canAllocateBits() = liveBits() & ~markingRetiredBits() & ~immortalBits();
 
     switch (m_attributes.destruction) {
     case NeedsDestruction: {
@@ -342,14 +349,44 @@ void BlockDirectory::endMarking()
 void BlockDirectory::snapshotUnsweptForEdenCollection()
 {
     assertSweeperIsSuspended();
-    unsweptBits() |= edenBits();
+    unsweptBits() |= edenBits() & ~immortalBits();
 }
 
 void BlockDirectory::snapshotUnsweptForFullCollection()
 {
     assertSweeperIsSuspended();
-    unsweptBits() = liveBits();
+    unsweptBits() = liveBits() & ~immortalBits();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void BlockDirectory::makeAllBlocksImmortal(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion)
+{
+    // Return any block held by an allocator — stopAllocating() records exactly the handed-out cells as newlyAllocated
+    // (the free-list remainder stays dead) — then make allocators forget it.
+    {
+        Locker allocatorsLocker { m_localAllocatorsLock };
+        m_localAllocators.forEach([&](LocalAllocator* allocator) {
+            allocator->stopAllocating();
+            allocator->forgetCurrentBlock();
+        });
+    }
+    Locker locker(bitvectorLock());
+    assertSweeperIsSuspended();
+    for (size_t index = 0; index < m_blocks.size(); ++index) {
+        if (!isLive(index) || !m_blocks[index])
+            continue;
+        m_blocks[index]->block().makeImmortal(markingVersion, newlyAllocatedVersion);
+        setIsImmortal(index, true);
+        setIsMarkingNotEmpty(index, true);
+        setIsMarkingRetired(index, true);
+        setIsEmpty(index, false);
+        setIsCanAllocate(index, false);
+        setIsUnswept(index, false);
+        setIsEden(index, false);
+        setIsAllocated(index, false);
+    }
+}
+#endif
 
 MarkedBlock::Handle* BlockDirectory::findBlockToSweep(unsigned& unsweptCursor)
 {

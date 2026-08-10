@@ -265,7 +265,8 @@ void MarkedSpace::sweepPreciseAllocations()
             }
             continue;
         }
-        allocation->setIndexInSpace(dstIndex);
+        if (allocation->indexInSpace() != dstIndex) // snapshot allocations form a stable prefix: no store to their headers
+            allocation->setIndexInSpace(dstIndex);
         m_preciseAllocations[dstIndex++] = allocation;
     }
     m_preciseAllocations.shrinkCapacity(dstIndex);
@@ -344,7 +345,8 @@ void MarkedSpace::prepareForConservativeScan()
         });
     unsigned index = m_preciseAllocationsOffsetForThisCollection;
     for (auto* start = m_preciseAllocationsForThisCollectionBegin; start != m_preciseAllocationsForThisCollectionEnd; ++start, ++index) {
-        (*start)->setIndexInSpace(index);
+        if ((*start)->indexInSpace() != index)
+            (*start)->setIndexInSpace(index);
         ASSERT(m_preciseAllocations[index] == *start);
         ASSERT(m_preciseAllocations[index]->indexInSpace() == index);
     }
@@ -398,6 +400,19 @@ MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
         });
     return result;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void MarkedSpace::freezeAllBlocksAsImmortal()
+{
+    HeapVersion newlyAllocatedVersion = this->newlyAllocatedVersion();
+    HeapVersion markingVersion = this->markingVersion();
+    forEachDirectory([&](BlockDirectory& directory) -> IterationStatus {
+        directory.makeAllBlocksImmortal(markingVersion, newlyAllocatedVersion);
+        return IterationStatus::Continue;
+    });
+    m_hasImmortalBlocks = true;
+}
+#endif
 
 void MarkedSpace::freeBlock(MarkedBlock::Handle* block)
 {
@@ -468,8 +483,10 @@ void MarkedSpace::endMarking()
     
     m_newlyAllocatedVersion = nextVersion(m_newlyAllocatedVersion);
     
-    for (unsigned i = m_preciseAllocationsOffsetForThisCollection; i < m_preciseAllocations.size(); ++i)
-        m_preciseAllocations[i]->clearNewlyAllocated();
+    for (unsigned i = m_preciseAllocationsOffsetForThisCollection; i < m_preciseAllocations.size(); ++i) {
+        if (m_preciseAllocations[i]->isNewlyAllocated()) // same: an unconditional store would dirty every snapshot allocation's header
+            m_preciseAllocations[i]->clearNewlyAllocated();
+    }
 
     if (ASSERT_ENABLED) {
         for (PreciseAllocation* allocation : m_preciseAllocations)
