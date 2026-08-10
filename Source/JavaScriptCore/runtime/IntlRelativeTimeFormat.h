@@ -60,6 +60,8 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     void initializeRelativeTimeFormat(JSGlobalObject*, JSValue locales, JSValue options);
+    void openICUObjects(JSGlobalObject*);
+    void ensureICUObjectsForThisProcess(JSGlobalObject*) const;
     JSValue format(JSGlobalObject*, double, StringView unitString) const;
     JSValue formatToParts(JSGlobalObject*, double, StringView unitString) const;
     JSObject* resolvedOptions(JSGlobalObject*) const;
@@ -79,6 +81,9 @@ private:
     static ASCIILiteral styleString(Style);
 
     std::unique_ptr<URelativeDateTimeFormatter, URelativeDateTimeFormatterDeleter> m_relativeDateTimeFormatter;
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     mutable std::unique_ptr<UFormattedRelativeDateTime, ICUDeleter<ureldatefmt_closeResult>> m_formattedResult;
     mutable std::unique_ptr<UConstrainedFieldPosition, ICUDeleter<ucfpos_close>> m_cfpos;
 

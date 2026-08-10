@@ -60,6 +60,10 @@ public:
 
     DECLARE_INFO;
 
+
+    void openICUObjects(JSGlobalObject*);
+
+    void ensureICUObjectsForThisProcess(JSGlobalObject*) const;
     void initializeListFormat(JSGlobalObject*, JSValue localesValue, JSValue optionsValue);
 
     JSValue format(JSGlobalObject*, JSValue) const;
@@ -77,6 +81,10 @@ private:
     static ASCIILiteral styleString(Style);
 
     std::unique_ptr<UListFormatter, UListFormatterDeleter> m_listFormat;
+#if USE(BUN_JSC_ADDITIONS)
+
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     String m_locale;
     Type m_type { Type::Conjunction };
     Style m_style { Style::Long };

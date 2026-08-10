@@ -61,6 +61,8 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     void initializeCollator(JSGlobalObject*, JSValue locales, JSValue optionsValue);
+    void openCollator(JSGlobalObject*, TriState ignorePunctuation);
+    UCollator* collatorForThisProcess(JSGlobalObject*) const;
     UCollationResult compareStrings(JSGlobalObject*, StringView, StringView) const;
     JSObject* resolvedOptions(JSGlobalObject*) const;
 
@@ -100,7 +102,11 @@ private:
     static ASCIILiteral caseFirstString(CaseFirst);
 
     WriteBarrier<JSBoundFunction> m_boundCompare;
-    std::unique_ptr<UCollator, UCollatorDeleter> m_collator;
+    mutable std::unique_ptr<UCollator, UCollatorDeleter> m_collator;
+    CString m_icuLocale;
+#if USE(BUN_JSC_ADDITIONS)
+    mutable unsigned m_startupSnapshotEpoch { 0 };
+#endif
 
     String m_locale;
     String m_collation;

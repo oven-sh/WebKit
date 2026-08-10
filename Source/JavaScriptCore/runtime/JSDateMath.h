@@ -161,6 +161,11 @@ private:
     };
 
     void timeZoneCacheSlow();
+#if USE(BUN_JSC_ADDITIONS)
+public:
+    JS_EXPORT_PRIVATE void didRestoreFromStartupSnapshot();
+private:
+#endif
     LocalTimeOffset localTimeOffset(int64_t millisecondsFromEpoch, TimeType = TimeType::UTCTime);
 
     LocalTimeOffset calculateLocalTimeOffset(double millisecondsFromEpoch, TimeType inputTimeType);

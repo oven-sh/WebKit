@@ -142,6 +142,11 @@ public:
 
     // Unparks every thread from the queue associated with the given address, which cannot be null.
     WTF_EXPORT_PRIVATE static void unparkAll(const void* address);
+    // snapshot restore: every parked entry came from the process that built the snapshot (its threads); none of them
+    // exists here. Drop them all so an unpark for an address reaches a thread of *this* process instead of a dead entry.
+#if USE(BUN_JSC_ADDITIONS)
+    WTF_EXPORT_PRIVATE static void forgetAllForSnapshotRestore();
+#endif
 
     static uintptr_t currentThreadID();
 
@@ -177,6 +182,7 @@ private:
         const void* address, const ScopedLambda<intptr_t(UnparkResult)>& callback);
 
     WTF_EXPORT_PRIVATE static void forEachImpl(const ScopedLambda<void(uintptr_t, const void*)>&);
+
 };
 
 } // namespace WTF

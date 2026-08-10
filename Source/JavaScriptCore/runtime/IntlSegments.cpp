@@ -37,9 +37,9 @@ namespace JSC {
 
 const ClassInfo IntlSegments::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlSegments) };
 
-IntlSegments* IntlSegments::create(VM& vm, Structure* structure, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& segmenter, Box<Vector<char16_t>>&& buffer, JSString* string, IntlSegmenter::Granularity granularity)
+IntlSegments* IntlSegments::create(VM& vm, Structure* structure, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& segmenter, Box<Vector<char16_t>>&& buffer, JSString* string, IntlSegmenter::Granularity granularity, const String& locale)
 {
-    auto* object = new (NotNull, allocateCell<IntlSegments>(vm)) IntlSegments(vm, structure, WTF::move(segmenter), WTF::move(buffer), granularity, string);
+    auto* object = new (NotNull, allocateCell<IntlSegments>(vm)) IntlSegments(vm, structure, WTF::move(segmenter), WTF::move(buffer), granularity, string, locale);
     object->finishCreation(vm);
     return object;
 }
@@ -49,18 +49,41 @@ Structure* IntlSegments::createStructure(VM& vm, JSGlobalObject* globalObject, J
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-IntlSegments::IntlSegments(VM& vm, Structure* structure, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& segmenter, Box<Vector<char16_t>>&& buffer, IntlSegmenter::Granularity granularity, JSString* string)
+IntlSegments::IntlSegments(VM& vm, Structure* structure, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& segmenter, Box<Vector<char16_t>>&& buffer, IntlSegmenter::Granularity granularity, JSString* string, const String& locale)
     : Base(vm, structure)
     , m_segmenter(WTF::move(segmenter))
     , m_buffer(WTF::move(buffer))
     , m_string(string, WriteBarrierEarlyInit)
     , m_granularity(granularity)
 {
+    m_locale = locale;
+#if USE(BUN_JSC_ADDITIONS)
+    m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#endif
+}
+
+void IntlSegments::ensureICUObjectsForThisProcess(JSGlobalObject* globalObject)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    if (m_startupSnapshotEpoch == vm.startupSnapshotEpoch()) [[likely]]
+        return;
+    (void)m_segmenter.release(); // opened by the process that built the snapshot: released, never closed
+    UErrorCode status = U_ZERO_ERROR;
+    m_segmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(ubrk_open(IntlSegmenter::breakIteratorTypeFor(m_granularity), m_locale.utf8().data(), nullptr, 0, &status));
+    if (m_segmenter)
+        ubrk_setText(m_segmenter.get(), m_buffer->span().data(), m_buffer->size(), &status);
+    if (U_SUCCESS(status))
+        m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#else
+    UNUSED_PARAM(globalObject);
+#endif
 }
 
 // https://tc39.es/proposal-intl-segmenter/#sec-intl.segmenter.prototype.containing
 JSValue IntlSegments::containing(JSGlobalObject* globalObject, JSValue indexValue)
 {
+    ensureICUObjectsForThisProcess(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -88,6 +111,7 @@ JSValue IntlSegments::containing(JSGlobalObject* globalObject, JSValue indexValu
 // https://tc39.es/proposal-intl-segmenter/#sec-%segmentsprototype%-@@iterator
 JSObject* IntlSegments::createSegmentIterator(JSGlobalObject* globalObject)
 {
+    ensureICUObjectsForThisProcess(globalObject); // the clone below must come from a live handle
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -99,7 +123,7 @@ JSObject* IntlSegments::createSegmentIterator(JSGlobalObject* globalObject)
     }
 
     ubrk_first(segmenter.get());
-    return IntlSegmentIterator::create(vm, globalObject->segmentIteratorStructure(), WTF::move(segmenter), m_buffer, m_string.get(), m_granularity);
+    return IntlSegmentIterator::create(vm, globalObject->segmentIteratorStructure(), WTF::move(segmenter), m_buffer, m_string.get(), m_granularity, m_locale);
 }
 
 template<typename Visitor>

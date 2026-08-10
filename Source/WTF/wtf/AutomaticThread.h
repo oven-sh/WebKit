@@ -105,6 +105,9 @@ class WTF_EXPORT_PRIVATE AutomaticThread : public ThreadSafeRefCounted<Automatic
     WTF_MAKE_TZONE_ALLOCATED(AutomaticThread);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(AutomaticThread);
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static void forgetUnderlyingThreadsForSnapshotRestore(); // snapshot: pthreads from the build process don't exist here; restart on next notify
+#endif
     // Note that if you drop all of your references to an AutomaticThread then as soon as there is a
     // timeout during which it doesn't get woken up, it will simply die on its own. This is a
     // permanent kind of death where the AutomaticThread object goes away, rather than the temporary

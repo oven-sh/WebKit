@@ -27,6 +27,7 @@
 #include "config.h"
 #include "IntlPluralRules.h"
 
+#include "TopExceptionScope.h"
 #include "IntlNumberFormatInlines.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
@@ -134,6 +135,19 @@ void IntlPluralRules::initializePluralRules(JSGlobalObject* globalObject, JSValu
     setNumberFormatDigitOptions(globalObject, this, options, 0, 3, m_notation);
     RETURN_IF_EXCEPTION(scope, void());
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_startupSnapshotEpoch = globalObject->vm().startupSnapshotEpoch();
+#endif
+    scope.release(); // whatever the opener throws is this initialization's to propagate
+    openICUObjects(globalObject);
+}
+
+// Builds the ICU objects from the resolved fields: once at initialization, and again in a process restored from a
+// snapshot, whose ICU is not the one the existing handles came from.
+void IntlPluralRules::openICUObjects(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto locale = m_locale.utf8();
     UErrorCode status = U_ZERO_ERROR;
 
@@ -170,9 +184,36 @@ void IntlPluralRules::initializePluralRules(JSGlobalObject* globalObject, JSValu
     vm.heap.reportExtraMemoryAllocated(this, estimatedUPluralRulesSize);
 }
 
+void IntlPluralRules::ensureICUObjectsForThisProcess(JSGlobalObject* globalObject) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    if (m_startupSnapshotEpoch == vm.startupSnapshotEpoch()) [[likely]]
+        return;
+    auto* self = const_cast<IntlPluralRules*>(this);
+    // Opened by the process that built the snapshot; released, never closed, since this ICU never allocated them.
+    (void)self->m_pluralRules.release();
+    (void)self->m_numberFormatter.release();
+    (void)self->m_numberRangeFormatter.release();
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        self->openICUObjects(globalObject);
+        if (catchScope.exception()) [[unlikely]] {
+            (void)catchScope.tryClearException();
+            RELEASE_ASSERT_WITH_MESSAGE(false, "%s could not reopen its ICU objects in the restored process (different ICU?)", "IntlPluralRules");
+        }
+    }
+    if (self->m_pluralRules)
+        self->m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#else
+    UNUSED_PARAM(globalObject);
+#endif
+}
+
 // https://tc39.es/ecma402/#sec-intl.pluralrules.prototype.resolvedoptions
 JSObject* IntlPluralRules::resolvedOptions(JSGlobalObject* globalObject) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     ASSERT(m_pluralRules);
 
     VM& vm = globalObject->vm();
@@ -248,6 +289,7 @@ JSObject* IntlPluralRules::resolvedOptions(JSGlobalObject* globalObject) const
 // https://tc39.es/ecma402/#sec-resolveplural
 JSValue IntlPluralRules::select(JSGlobalObject* globalObject, double value) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     ASSERT(m_pluralRules);
 
     VM& vm = globalObject->vm();
@@ -273,6 +315,7 @@ JSValue IntlPluralRules::select(JSGlobalObject* globalObject, double value) cons
 
 JSValue IntlPluralRules::selectRange(JSGlobalObject* globalObject, double start, double end) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     ASSERT(m_numberRangeFormatter);
 
     VM& vm = globalObject->vm();

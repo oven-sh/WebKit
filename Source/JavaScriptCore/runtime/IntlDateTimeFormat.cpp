@@ -1088,6 +1088,11 @@ void IntlDateTimeFormat::initializeDateTimeFormat(JSGlobalObject* globalObject, 
     UErrorCode status = U_ZERO_ERROR;
     String timeZoneForICU = impl->m_timeZone.toICUString();
     impl->m_dateFormat = openDateFormat(dataLocaleWithExtensions, timeZoneForICU, patternBuffer.span(), status);
+#if USE(BUN_JSC_ADDITIONS)
+    impl->m_icuPattern = patternBuffer;
+    impl->m_startupSnapshotEpoch = globalObject->vm().startupSnapshotEpoch();
+    m_intervalFormatEpoch = impl->m_startupSnapshotEpoch;
+#endif
     if (U_FAILURE(status)) [[unlikely]] {
         throwTypeError(globalObject, scope, "failed to initialize DateTimeFormat"_s);
         return;
@@ -1394,8 +1399,34 @@ static void NODELETE replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(Contain
 }
 
 // https://tc39.es/proposal-temporal/#sec-formatdatetime
+
+void IntlDateTimeFormat::ensureICUObjectsForThisProcess(JSGlobalObject* globalObject) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    if (m_intervalFormatEpoch != vm.startupSnapshotEpoch()) [[unlikely]] {
+        (void)m_dateIntervalFormat.release(); // rebuilt on demand by formatRange
+        m_intervalFormatEpoch = vm.startupSnapshotEpoch();
+    }
+    auto* impl = const_cast<IntlDateTimeFormatImpl*>(m_impl.get());
+    if (!impl || impl->m_startupSnapshotEpoch == vm.startupSnapshotEpoch()) [[likely]]
+        return;
+    // Every handle here was opened by the process that built the snapshot, against an ICU this process does not share (on macOS
+    // it is the system's). The main formatter is opened again from what it was opened with; the ones built lazily are dropped
+    // and come back on demand. The old handles are leaked on purpose: closing them would hand foreign memory to this ICU.
+    (void)impl->m_dateFormat.release();
+    (void)impl->m_temporalFormatterCache.release(); // its formatters come back on demand
+    UErrorCode status = U_ZERO_ERROR;
+    impl->m_dateFormat = openDateFormat(impl->m_dataLocaleWithExtensions, impl->m_timeZone.toICUString(), impl->m_icuPattern.span(), status);
+    if (U_SUCCESS(status))
+        impl->m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#else
+    UNUSED_PARAM(globalObject);
+#endif
+}
 JSValue IntlDateTimeFormat::format(JSGlobalObject* globalObject, double value) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     ASSERT(m_impl->m_dateFormat);
 
     VM& vm = globalObject->vm();
@@ -1988,6 +2019,7 @@ static JSValue buildFormattedDateIntervalParts(JSGlobalObject* globalObject, con
 // https://tc39.es/proposal-temporal/#sec-formatdatetimerangetoparts
 JSValue IntlDateTimeFormat::formatRangeToParts(JSGlobalObject* globalObject, JSValue xValue, JSValue yValue)
 {
+    ensureICUObjectsForThisProcess(globalObject);
     ASSERT(m_impl->m_dateFormat);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2384,6 +2416,7 @@ std::unique_ptr<UDateFormat, IntlDateTimeFormat::UDateFormatDeleter> IntlDateTim
 // FormatDateTime(dateTimeFormat, x) — dispatches through HandleDateTimeValue for Temporal objects.
 JSValue IntlDateTimeFormat::format(JSGlobalObject* globalObject, JSValue x) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     ASSERT(m_impl->m_dateFormat);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2414,6 +2447,7 @@ JSValue IntlDateTimeFormat::format(JSGlobalObject* globalObject, JSValue x) cons
 // https://tc39.es/proposal-temporal/#sec-formatdatetimetoparts
 JSValue IntlDateTimeFormat::formatToParts(JSGlobalObject* globalObject, JSValue x) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
     ASSERT(m_impl->m_dateFormat);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2467,6 +2501,7 @@ IntlDateTimeFormat::createTemporalIntervalFormat(UDateFormat* tempFormat, Tempor
 // https://tc39.es/proposal-temporal/#sec-formatdatetimerange
 JSValue IntlDateTimeFormat::formatRange(JSGlobalObject* globalObject, JSValue xValue, JSValue yValue)
 {
+    ensureICUObjectsForThisProcess(globalObject);
     ASSERT(m_impl->m_dateFormat);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

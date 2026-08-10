@@ -26,6 +26,7 @@
 #include "config.h"
 #include "IntlDisplayNames.h"
 
+#include "TopExceptionScope.h"
 #include "IntlCache.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
@@ -105,6 +106,18 @@ void IntlDisplayNames::initializeDisplayNames(JSGlobalObject* globalObject, JSVa
     m_languageDisplay = intlOption<LanguageDisplay>(globalObject, options, vm.propertyNames->languageDisplay, { { "dialect"_s, LanguageDisplay::Dialect }, { "standard"_s, LanguageDisplay::Standard } }, "languageDisplay must be either \"dialect\" or \"standard\""_s, LanguageDisplay::Dialect);
     RETURN_IF_EXCEPTION(scope, void());
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_startupSnapshotEpoch = globalObject->vm().startupSnapshotEpoch();
+#endif
+    scope.release(); // whatever the opener throws is this initialization's to propagate
+    openICUObjects(globalObject);
+}
+
+// Builds the ICU objects from the resolved fields: once at initialization, and again in a process restored from a
+// snapshot, whose ICU is not the one the existing handles came from.
+void IntlDisplayNames::openICUObjects(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     UErrorCode status = U_ZERO_ERROR;
 
     UDisplayContext contexts[] = {
@@ -134,9 +147,34 @@ void IntlDisplayNames::initializeDisplayNames(JSGlobalObject* globalObject, JSVa
     }
 }
 
+void IntlDisplayNames::ensureICUObjectsForThisProcess(JSGlobalObject* globalObject) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    VM& vm = globalObject->vm();
+    if (m_startupSnapshotEpoch == vm.startupSnapshotEpoch()) [[likely]]
+        return;
+    auto* self = const_cast<IntlDisplayNames*>(this);
+    // Opened by the process that built the snapshot; released, never closed, since this ICU never allocated them.
+    (void)self->m_displayNames.release();
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        self->openICUObjects(globalObject);
+        if (catchScope.exception()) [[unlikely]] {
+            (void)catchScope.tryClearException();
+            RELEASE_ASSERT_WITH_MESSAGE(false, "%s could not reopen its ICU objects in the restored process (different ICU?)", "IntlDisplayNames");
+        }
+    }
+    if (self->m_displayNames)
+        self->m_startupSnapshotEpoch = vm.startupSnapshotEpoch();
+#else
+    UNUSED_PARAM(globalObject);
+#endif
+}
+
 // https://tc39.es/proposal-intl-displaynames/#sec-Intl.DisplayNames.prototype.of
 JSValue IntlDisplayNames::of(JSGlobalObject* globalObject, JSValue codeValue) const
 {
+    ensureICUObjectsForThisProcess(globalObject);
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -31,10 +31,25 @@
 
 namespace WTF {
 
-void cryptographicallyRandomValuesFromOS(std::span<uint8_t> buffer)
+static RandomDevice* s_sharedRandomDevice;
+static RandomDevice& sharedRandomDevice()
 {
     static NeverDestroyed<RandomDevice> device;
-    device.get().cryptographicallyRandomValues(buffer);
+    s_sharedRandomDevice = &device.get();
+    return device.get();
 }
+
+void cryptographicallyRandomValuesFromOS(std::span<uint8_t> buffer)
+{
+    sharedRandomDevice().cryptographicallyRandomValues(buffer);
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+void reopenOSRandomSourceForSnapshotRestore()
+{
+    if (s_sharedRandomDevice) // one created during the restore itself is already this process's
+        s_sharedRandomDevice->reopenForSnapshotRestore();
+}
+#endif
 
 }

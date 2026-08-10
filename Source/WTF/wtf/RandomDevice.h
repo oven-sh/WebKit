@@ -48,6 +48,9 @@ public:
     // cryptographicallyRandomNumber or cryptographicallyRandomValues.
     void cryptographicallyRandomValues(std::span<uint8_t> buffer);
 
+    // Snapshot restore: the descriptor number in a device restored from a snapshot belongs to the process that took it.
+    WTF_EXPORT_PRIVATE void reopenForSnapshotRestore();
+
 private:
 #if OS(DARWIN) || OS(FUCHSIA) || OS(WINDOWS)
 #elif OS(UNIX)

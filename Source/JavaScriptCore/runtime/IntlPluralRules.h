@@ -71,6 +71,10 @@ public:
     template<typename IntlType>
     friend void appendNumberFormatNotationOptionsToSkeleton(IntlType*, StringBuilder&);
 
+
+    void openICUObjects(JSGlobalObject*);
+
+    void ensureICUObjectsForThisProcess(JSGlobalObject*) const;
     void initializePluralRules(JSGlobalObject*, JSValue locales, JSValue options);
     JSValue select(JSGlobalObject*, double value) const;
     JSValue selectRange(JSGlobalObject*, double start, double end) const;
@@ -85,6 +89,10 @@ private:
     enum class Type : bool { Cardinal, Ordinal };
 
     std::unique_ptr<UPluralRules, UPluralRulesDeleter> m_pluralRules;
+#if USE(BUN_JSC_ADDITIONS)
+
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter> m_numberFormatter;
     std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter> m_numberRangeFormatter;
 

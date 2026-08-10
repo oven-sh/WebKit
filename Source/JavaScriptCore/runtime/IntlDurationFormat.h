@@ -59,6 +59,8 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+
+    void ensureICUObjectsForThisProcess(JSGlobalObject*) const;
     void initializeDurationFormat(JSGlobalObject*, JSValue localesValue, JSValue optionsValue);
 
     JSValue format(JSGlobalObject*, ISO8601::Duration) const;
@@ -112,6 +114,10 @@ private:
     };
 
     std::unique_ptr<UListFormatter, UListFormatterDeleter> m_listFormat;
+#if USE(BUN_JSC_ADDITIONS)
+
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     mutable std::unique_ptr<FormatterCache> m_formatterCache;
     String m_locale;
     String m_dataLocale;

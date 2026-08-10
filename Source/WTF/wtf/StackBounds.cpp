@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include <atomic>
 #include <wtf/StackBounds.h>
 
 #if OS(DARWIN)
@@ -95,6 +96,17 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #elif OS(UNIX) || OS(HAIKU)
 
+#if OS(LINUX)
+static std::atomic<char**> s_oldestEnviron;
+
+#if USE(BUN_JSC_ADDITIONS)
+void StackBounds::forgetOldestEnvironForStartupSnapshotRestore()
+{
+    s_oldestEnviron.store(nullptr, std::memory_order_relaxed);
+}
+#endif
+#endif
+
 #if OS(OPENBSD)
 
 StackBounds StackBounds::newThreadStackBounds(PlatformThreadHandle thread)
@@ -159,7 +171,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         void* bound = static_cast<char*>(origin) - size;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-        static char** oldestEnviron = environ;
+        char** oldestEnviron = s_oldestEnviron.load(std::memory_order_relaxed);
+        if (!oldestEnviron) {
+            oldestEnviron = environ;
+            char** expected = nullptr;
+            if (!s_oldestEnviron.compare_exchange_strong(expected, oldestEnviron, std::memory_order_relaxed))
+                oldestEnviron = expected;
+        }
 
         // In 32bit architecture, it is possible that environment variables are having a characters which looks like a pointer,
         // and conservative GC will find it as a live pointer. We would like to avoid that to precisely exclude non user stack

@@ -66,6 +66,12 @@ NEVER_INLINE NO_RETURN_DUE_TO_CRASH static void crashUnableToReadFromURandom()
 #if !OS(DARWIN) && !OS(FUCHSIA) && !OS(WINDOWS)
 RandomDevice::RandomDevice()
 {
+    reopenForSnapshotRestore();
+}
+
+void RandomDevice::reopenForSnapshotRestore()
+{
+    // Not closed: after a restore the number refers to whatever this process has there, which is not ours to close.
     int ret = 0;
     do {
         ret = open("/dev/urandom", O_RDONLY, 0);
@@ -73,6 +79,10 @@ RandomDevice::RandomDevice()
     m_fd = ret;
     if (m_fd < 0)
         crashUnableToOpenURandom(); // We need /dev/urandom for this API to work...
+}
+#else
+void RandomDevice::reopenForSnapshotRestore()
+{
 }
 #endif
 

@@ -47,7 +47,7 @@ public:
         return vm.intlSegmentIteratorSpace<mode>();
     }
 
-    static IntlSegmentIterator* create(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>, JSString*, IntlSegmenter::Granularity);
+    static IntlSegmentIterator* create(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>, JSString*, IntlSegmenter::Granularity, const String& locale);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     DECLARE_INFO;
@@ -57,11 +57,17 @@ public:
     DECLARE_VISIT_CHILDREN;
 
 private:
-    IntlSegmentIterator(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>&&, IntlSegmenter::Granularity, JSString*);
+    IntlSegmentIterator(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>&&, IntlSegmenter::Granularity, JSString*, const String& locale);
 
     DECLARE_DEFAULT_FINISH_CREATION;
 
+    void ensureICUObjectsForThisProcess(JSGlobalObject*);
     std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
+    String m_locale;
+    int32_t m_position { 0 }; // where the iterator stands, kept here so it can be re-established in a restored process
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_startupSnapshotEpoch { 0 };
+#endif
     Box<Vector<char16_t>> m_buffer;
     WriteBarrier<JSString> m_string;
     IntlSegmenter::Granularity m_granularity;
