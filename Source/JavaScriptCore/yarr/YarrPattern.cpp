@@ -1559,28 +1559,8 @@ public:
             if (characterClassMayContainStrings(classID)) {
                 auto characterClass = m_pattern.unicodeCharacterClassFor(classID);
                 if (characterClass->hasStrings()) {
-                    atomParenthesesSubpatternBegin(false);
-                    unsigned alternativeCount = 0;
-                    for (unsigned i = 0; i < characterClass->m_strings.size(); ++i) {
-                        if (alternativeCount)
-                            disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-
-                        auto string = characterClass->m_strings[i];
-
-                        for (auto ch : string)
-                            atomPatternCharacter(ch, /* hyphenIsRange */ false);
-
-                        ++alternativeCount;
-                    }
-
-                    if (characterClass->hasSingleCharacters()) {
-                        if (alternativeCount)
-                            disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-
-                        m_alternative->m_terms.append(PatternTerm(characterClass, invert, m_flags, parenthesisMatchDirection()));
-                    }
-
-                    atomParenthesesEnd();
+                    ASSERT(!invert);
+                    expandClassWithStrings(characterClass);
                     break;
                 }
                 // Fall through for the case where the characterClass REALLY doesn't have strings.
@@ -1718,31 +1698,176 @@ public:
                 return;
             }
 
-            atomParenthesesSubpatternBegin(false);
-            unsigned alternativeCount = 0;
-            for (unsigned i = 0; i < newCharacterClass->m_strings.size(); ++i) {
-                if (alternativeCount)
-                    disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-
-                auto string = newCharacterClass->m_strings[i];
-
-                for (auto ch : string)
-                    atomPatternCharacter(ch, /* hyphenIsRange */ false);
-
-                ++alternativeCount;
-            }
-
-            if (newCharacterClass->hasSingleCharacters()) {
-                if (alternativeCount)
-                    disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-
-                addCharacterClassTerm();
-            }
-
-            atomParenthesesEnd();
+m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
+            expandClassWithStrings(m_pattern.m_userCharacterClasses.last().get());
+            return;
         }
 
         m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
+    }
+
+    // A class that contains strings matches, at each position, its longest member that matches
+    // there (ClassStringDisjunction semantics), then backtracks to shorter ones. Emitting one
+    // alternative per string, longest first, does that but tries thousands of alternatives for
+    // \p{RGI_Emoji}. Emit a trie instead: one branch per distinct next character, deeper
+    // continuations before a node's own end, sibling leaves gathered into a class, and the single
+    // characters last (minus those that head a branch, which end inside their branch instead).
+    // Along the one path the input can follow, deeper-first is exactly longest-first, and branches
+    // for other characters cannot match at all, so the order of matches is unchanged.
+    void expandClassWithStrings(CharacterClass* characterClass)
+    {
+        Vector<Vector<char32_t>> strings = characterClass->m_strings;
+        std::ranges::sort(strings, [](const Vector<char32_t>& a, const Vector<char32_t>& b) {
+            return std::ranges::lexicographical_compare(a, b);
+        });
+        // (Sorted by code point sequence, so every trie node is a contiguous run of `strings`.)
+
+        atomParenthesesSubpatternBegin(false);
+        bool firstAlternative = true;
+        auto nextAlternative = [&] {
+            if (!firstAlternative)
+                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
+            firstAlternative = false;
+        };
+
+        CharacterClassConstructor branchHeads(false, CompileMode::UnicodeSets); // single characters that end inside a branch
+        bool anyBranchHeadIsSingle = false;
+        bool hasEmptyString = false;
+        size_t begin = 0;
+        while (begin < strings.size()) {
+            if (strings[begin].isEmpty()) { // [\q{}]: matches empty, after everything longer
+                hasEmptyString = true;
+                ++begin;
+                continue;
+            }
+            char32_t head = strings[begin][0];
+            size_t end = begin;
+            while (end < strings.size() && !strings[end].isEmpty() && strings[end][0] == head)
+                ++end;
+            bool headIsSingle = classContainsCodePoint(*characterClass, head) == TriState::True;
+            if (headIsSingle) {
+                branchHeads.putChar(head);
+                anyBranchHeadIsSingle = true;
+            }
+            nextAlternative();
+            atomPatternCharacter(head, /* hyphenIsRange */ false);
+            emitStringTrieNode(strings, begin, end, 1, headIsSingle);
+            begin = end;
+        }
+
+        if (characterClass->hasSingleCharacters()) {
+            CharacterClass* singles = characterClass;
+            if (anyBranchHeadIsSingle) {
+                auto heads = branchHeads.charClass();
+                CharacterClassConstructor remaining(false, CompileMode::UnicodeSets);
+                remaining.append(characterClass);
+                remaining.combiningSetOp(CharacterClassSetOp::Subtraction);
+                remaining.append(heads.get());
+                auto remainingClass = remaining.charClass();
+                remainingClass->m_strings.clear();
+                singles = remainingClass.get();
+                m_pattern.m_userCharacterClasses.append(WTF::move(remainingClass));
+            }
+            if (singles->hasSingleCharacters() || singles->m_anyCharacter) {
+                nextAlternative();
+                m_alternative->m_terms.append(PatternTerm(singles, false, m_flags, parenthesisMatchDirection()));
+            }
+        }
+        if (hasEmptyString) {
+            nextAlternative();
+            firstAlternative = false; // (an alternative with no terms)
+        } else if (firstAlternative) {
+            // Nothing can match (no strings, no characters): an always-failing alternative.
+            CharacterClassConstructor nothing(false, CompileMode::UnicodeSets);
+            m_pattern.m_userCharacterClasses.append(nothing.charClass());
+            m_alternative->m_terms.append(PatternTerm(m_pattern.m_userCharacterClasses.last().get(), false, m_flags, parenthesisMatchDirection()));
+        }
+        atomParenthesesEnd();
+    }
+
+    // strings[begin, end) share their first `depth` characters, which have been emitted. Emit what
+    // may follow: a branch per distinct next character (recursively), then the strings that end one
+    // character further as one class, then -- if a string (or single character) ends right here --
+    // the empty alternative.
+    void emitStringTrieNode(const Vector<Vector<char32_t>>& strings, size_t begin, size_t end, size_t depth, bool endsHere)
+    {
+        struct Branch {
+            char32_t ch;
+            size_t begin;
+            size_t end;
+            bool isLeaf; // exactly one string, ending right after ch
+        };
+        Vector<Branch, 8> branches;
+        size_t leafCount = 0;
+        for (size_t i = begin; i < end;) {
+            if (strings[i].size() == depth) {
+                endsHere = true;
+                ++i;
+                continue;
+            }
+            char32_t ch = strings[i][depth];
+            size_t j = i;
+            while (j < end && strings[j].size() > depth && strings[j][depth] == ch)
+                ++j;
+            bool isLeaf = j == i + 1 && strings[i].size() == depth + 1;
+            leafCount += isLeaf;
+            branches.append({ ch, i, j, isLeaf });
+            i = j;
+        }
+        if (branches.isEmpty()) {
+            ASSERT(endsHere);
+            return;
+        }
+        bool gatherLeaves = leafCount >= 2;
+        size_t alternativeCount = (gatherLeaves ? branches.size() - leafCount + 1 : branches.size()) + (endsHere ? 1 : 0);
+        if (alternativeCount == 1) {
+            // A single continuation and no early end: no group needed.
+            if (gatherLeaves)
+                appendLeafClass(branches);
+            else {
+                atomPatternCharacter(branches[0].ch, false);
+                emitStringTrieNode(strings, branches[0].begin, branches[0].end, depth + 1, branches[0].isLeaf);
+            }
+            return;
+        }
+        if (!isSafeToRecurse()) {
+            m_error = ErrorCode::PatternTooLarge;
+            return;
+        }
+        atomParenthesesSubpatternBegin(false);
+        bool first = true;
+        for (auto& branch : branches) {
+            if (gatherLeaves && branch.isLeaf)
+                continue;
+            if (!first)
+                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
+            first = false;
+            atomPatternCharacter(branch.ch, false);
+            emitStringTrieNode(strings, branch.begin, branch.end, depth + 1, branch.isLeaf);
+        }
+        if (gatherLeaves) {
+            if (!first)
+                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
+            first = false;
+            appendLeafClass(branches);
+        }
+        if (endsHere) {
+            ASSERT(!first);
+            disjunction(CreateDisjunctionPurpose::ForNextAlternative); // the empty alternative: end here
+        }
+        atomParenthesesEnd();
+    }
+
+    template<typename Branches>
+    void appendLeafClass(const Branches& branches)
+    {
+        CharacterClassConstructor leaves(ignoreCase(), CompileMode::UnicodeSets);
+        for (auto& branch : branches) {
+            if (branch.isLeaf)
+                leaves.putChar(branch.ch);
+        }
+        m_pattern.m_userCharacterClasses.append(leaves.charClass());
+        m_alternative->m_terms.append(PatternTerm(m_pattern.m_userCharacterClasses.last().get(), false, m_flags, parenthesisMatchDirection()));
     }
 
     void atomParenthesesSubpatternBegin(bool capture, std::optional<String> optGroupName = std::nullopt)

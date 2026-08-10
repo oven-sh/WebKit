@@ -45,7 +45,7 @@ namespace JSC { namespace Yarr {
 
 // First-character dispatch (YarrJIT) emits one entry stub per (chain, alternative) pair and gives up
 // past these bounds; YarrPattern consults the stub bound so as not to wrap a body it cannot serve.
-static constexpr unsigned alternationDispatchMaxChains = 96;
+static constexpr unsigned alternationDispatchMaxChains = 640;
 static constexpr unsigned alternationDispatchMaxStubs = 768;
 
 static constexpr unsigned quantifyInfinite = UINT_MAX;

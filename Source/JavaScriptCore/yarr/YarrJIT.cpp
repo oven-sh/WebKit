@@ -373,34 +373,75 @@ void BoyerMooreBitmap::dump(PrintStream& out) const
 // for dispatch: membership merely means the alternative is tried there.
 struct FirstCharacterSet {
     WTF::BitSet<256> latin1;
-    bool wide { false };
+    // Characters >= 0x100: exact ranges while few (unsorted until normalize()), else wideAny.
+    static constexpr size_t maxWideRanges = 64;
+    Vector<std::pair<char32_t, char32_t>, 4> wideRanges;
+    bool wideAny { false };
     bool any { false };
     // Whether analysis reached a term that must consume a character. If false
     // the alternative can match the empty string, which for dispatch is `any`.
     bool consumed { false };
 
+    void addWide(char32_t begin, char32_t end)
+    {
+        ASSERT(begin >= 256 && begin <= end);
+        if (wideAny)
+            return;
+        if (wideRanges.size() >= maxWideRanges) {
+            wideAny = true;
+            wideRanges.clear();
+            return;
+        }
+        wideRanges.append({ begin, end });
+    }
     void add(char32_t ch)
     {
         if (ch < 256)
             latin1.set(ch);
         else
-            wide = true;
+            addWide(ch, ch);
     }
     void addRange(char32_t begin, char32_t end)
     {
         for (char32_t ch = begin; ch <= end && ch < 256; ++ch)
             latin1.set(ch);
         if (end >= 256)
-            wide = true;
+            addWide(std::max<char32_t>(begin, 256), end);
     }
     void merge(const FirstCharacterSet& other)
     {
         latin1.merge(other.latin1);
-        wide |= other.wide;
         any |= other.any;
+        wideAny |= other.wideAny;
+        for (auto& range : other.wideRanges)
+            addWide(range.first, range.second);
+    }
+    void normalize()
+    {
+        std::ranges::sort(wideRanges);
+        Vector<std::pair<char32_t, char32_t>, 4> merged;
+        for (auto& range : wideRanges) {
+            if (!merged.isEmpty() && range.first <= merged.last().second + 1)
+                merged.last().second = std::max(merged.last().second, range.second);
+            else
+                merged.append(range);
+        }
+        wideRanges = WTF::move(merged);
     }
     bool matches(unsigned latin1Char) const { return any || latin1.get(latin1Char); }
-    bool matchesWide() const { return any || wide; }
+    bool matchesWide() const { return any || wideAny || !wideRanges.isEmpty(); }
+    bool matchesCodePoint(char32_t ch) const // ch >= 0x100; after normalize()
+    {
+        if (any || wideAny)
+            return true;
+        for (auto& range : wideRanges) {
+            if (ch < range.first)
+                return false;
+            if (ch <= range.second)
+                return true;
+        }
+        return false;
+    }
 };
 
 // First-character dispatch for a nested disjunction with many alternatives.
@@ -423,9 +464,14 @@ public:
         MacroAssembler::Label head; // start of the chain's stub sequence
     };
 
-    Vector<Chain, 8> chains; // distinct Latin-1 chains
+    Vector<Chain, 8> chains; // distinct chains
     std::array<unsigned, 256> chainForCharacter { }; // Latin-1 char -> chain index, or noChain
-    Chain wideChain; // characters >= 0x100 (16-bit strings only)
+    struct CodePointRange {
+        unsigned begin;
+        unsigned end;
+        unsigned chainId;
+    };
+    Vector<CodePointRange, 16> wideRouting; // contiguous over [0x100, 0x10FFFF] -> chain index or noChain (16-bit strings only)
     unsigned frameLocation { 0 }; // the group's frame; chainResume lives here
     Checked<unsigned> firstCharacterOffset; // read offset of the group's first character
     PatternDisjunction* disjunction { nullptr }; // the dispatched alternatives
@@ -7341,8 +7387,14 @@ class YarrGenerator final : public YarrJITInfo {
                     set.add(ch);
                 for (auto& range : characterClass->m_ranges8)
                     set.addRange(range.begin, range.end);
-                if (!characterClass->m_matches32.isEmpty() || !characterClass->m_ranges32.isEmpty() || characterClass->hasStrings())
-                    set.wide = true;
+                if (characterClass->hasStrings() || characterClass->m_matches32.size() + characterClass->m_ranges32.size() > FirstCharacterSet::maxWideRanges)
+                    set.wideAny = true;
+                else {
+                    for (char32_t ch : characterClass->m_matches32)
+                        set.add(ch);
+                    for (auto& range : characterClass->m_ranges32)
+                        set.addWide(range.begin, range.end);
+                }
             }
             return !!term.quantityMinCount;
         }
@@ -7397,11 +7449,7 @@ class YarrGenerator final : public YarrJITInfo {
     // maximal [begin,end] intervals with a constant target, sorted and contiguous
     // over 0..255. For group dispatch the target is a chain id; for body dispatch
     // it is the index of the first alternative that can start with the range.
-    struct DispatchRange {
-        unsigned begin;
-        unsigned end;
-        unsigned chainId;
-    };
+    using DispatchRange = DispatchInfo::CodePointRange;
 
     void bindBodyDispatchEntry(BodyDispatchInfo& info, unsigned alternativeIndex)
     {
@@ -7637,6 +7685,8 @@ class YarrGenerator final : public YarrJITInfo {
     {
         if (alternative.m_terms.isEmpty() || !alternative.m_hasFixedSize)
             return false;
+        if (m_decodeSurrogatePairs)
+            return false; // the inline compares and claims count one unit per character
         if (alternative.m_minimumSize > std::min<size_t>(maxInlineLiteralLength, Options::regExpDispatchMaxInlineLiteralLength()))
             return false; // the constant bounds unrolling; the option can only lower it
         for (auto& term : alternative.m_terms) {
@@ -7824,16 +7874,12 @@ class YarrGenerator final : public YarrJITInfo {
         for (auto& chain : info.chains)
             chain.head = emitDispatchChainStubs(info, chain.alternativeIndices);
         if (m_charSize == CharSize::Char16) {
-            if (info.wideChain.alternativeIndices.isEmpty()) {
-                MacroAssembler::Label failHead(m_jit);
-                info.wideChain.head = failHead;
-                info.groupFailJumps.append(m_jit.jump());
-            } else
-                info.wideChain.head = emitDispatchChainStubs(info, info.wideChain.alternativeIndices);
+            // Characters above Latin-1 (whole code points when this compile decodes surrogate
+            // pairs, since readCharacter did) get their own tree over code-point ranges.
+            wideCharacter.link(&m_jit);
+            emitDispatchTree(info, character, info.wideRouting, 0, info.wideRouting.size() - 1);
         }
         toTree.link(&m_jit);
-        if (m_charSize == CharSize::Char16)
-            wideCharacter.linkTo(info.wideChain.head, &m_jit);
 
         // Group the routing table into maximal ranges of equal chain id.
         Vector<DispatchRange, 16> ranges;
@@ -7869,8 +7915,9 @@ class YarrGenerator final : public YarrJITInfo {
             return nullptr;
         if (term->matchDirection() != Forward || m_direction != Forward)
             return nullptr;
-        if (m_decodeSurrogatePairs)
-            return nullptr;
+        // (A compile that decodes surrogate pairs reads whole code points below and routes them
+        // through the wide tree; its literal alternatives are entered rather than compared inline,
+        // see isInlineLiteralAlternative.)
 
         PatternDisjunction* disjunction = term->parentheses.disjunction;
         auto& alternatives = disjunction->m_alternatives;
@@ -7891,6 +7938,7 @@ class YarrGenerator final : public YarrJITInfo {
         unsigned anyCount = 0;
         for (auto& alternative : alternatives) {
             FirstCharacterSet set = computeFirstCharacterSet(*alternative);
+            set.normalize();
             if (set.any)
                 ++anyCount;
             sets.append(WTF::move(set));
@@ -7902,30 +7950,73 @@ class YarrGenerator final : public YarrJITInfo {
         // Route each Latin-1 character to the ordered chain of alternatives whose
         // set contains it; identical chains are shared (linear dedupe: chains are
         // few in practice).
+        auto chainIdFor = [&](Vector<unsigned, 4>&& members) -> unsigned {
+            if (members.isEmpty())
+                return DispatchInfo::noChain;
+            for (unsigned c = 0; c < info->chains.size(); ++c) {
+                if (info->chains[c].alternativeIndices == members)
+                    return c;
+            }
+            DispatchInfo::Chain chain;
+            chain.alternativeIndices = WTF::move(members);
+            info->chains.append(WTF::move(chain));
+            return info->chains.size() - 1;
+        };
         for (unsigned ch = 0; ch < 256; ++ch) {
             Vector<unsigned, 4> members;
             for (unsigned i = 0; i < alternatives.size(); ++i) {
                 if (sets[i].matches(ch))
                     members.append(i);
             }
-            if (members.isEmpty()) {
-                info->chainForCharacter[ch] = DispatchInfo::noChain;
-                continue;
+            info->chainForCharacter[ch] = chainIdFor(WTF::move(members));
+        }
+        if (m_charSize == CharSize::Char16) {
+            // Elementary code-point intervals over [0x100, 0x10FFFF] on which chain membership is
+            // constant: cut at every alternative's range boundaries, then merge equal neighbours.
+            static constexpr unsigned firstWide = 0x100;
+            static constexpr unsigned endOfCodePoints = 0x110000;
+            static constexpr size_t maxWideRoutingRanges = 2048;
+            Vector<unsigned, 32> cuts { firstWide, endOfCodePoints };
+            for (auto& set : sets) {
+                if (set.any || set.wideAny)
+                    continue;
+                for (auto& range : set.wideRanges) {
+                    cuts.append(range.first);
+                    cuts.append(range.second + 1);
+                }
             }
-            unsigned chainId = DispatchInfo::noChain;
-            for (unsigned c = 0; c < info->chains.size(); ++c) {
-                if (info->chains[c].alternativeIndices == members) {
-                    chainId = c;
+            std::ranges::sort(cuts);
+            auto last = std::ranges::unique(cuts);
+            cuts.shrink(cuts.size() - (last.end() - last.begin()));
+            bool tooMany = false;
+            for (size_t k = 0; k + 1 < cuts.size(); ++k) {
+                unsigned begin = cuts[k];
+                unsigned end = cuts[k + 1] - 1;
+                Vector<unsigned, 4> members;
+                for (unsigned i = 0; i < alternatives.size(); ++i) {
+                    if (sets[i].matchesCodePoint(begin))
+                        members.append(i);
+                }
+                unsigned chainId = chainIdFor(WTF::move(members));
+                if (!info->wideRouting.isEmpty() && info->wideRouting.last().chainId == chainId)
+                    info->wideRouting.last().end = end;
+                else
+                    info->wideRouting.append({ begin, end, chainId });
+                if (info->wideRouting.size() > maxWideRoutingRanges) {
+                    tooMany = true;
                     break;
                 }
             }
-            if (chainId == DispatchInfo::noChain) {
-                chainId = info->chains.size();
-                DispatchInfo::Chain chain;
-                chain.alternativeIndices = WTF::move(members);
-                info->chains.append(WTF::move(chain));
+            if (tooMany) {
+                // One range for everything wide, tried against every alternative that can start wide.
+                Vector<unsigned, 4> members;
+                for (unsigned i = 0; i < alternatives.size(); ++i) {
+                    if (sets[i].matchesWide())
+                        members.append(i);
+                }
+                info->wideRouting.clear();
+                info->wideRouting.append({ firstWide, endOfCodePoints - 1, chainIdFor(WTF::move(members)) });
             }
-            info->chainForCharacter[ch] = chainId;
         }
         // Bound the emitted stub code.
         unsigned stubCount = 0;
@@ -7933,12 +8024,6 @@ class YarrGenerator final : public YarrJITInfo {
             stubCount += chain.alternativeIndices.size();
         if (info->chains.size() > alternationDispatchMaxChains || stubCount > alternationDispatchMaxStubs)
             return nullptr;
-        if (m_charSize == CharSize::Char16) {
-            for (unsigned i = 0; i < alternatives.size(); ++i) {
-                if (sets[i].matchesWide())
-                    info->wideChain.alternativeIndices.append(i);
-            }
-        }
 
         // The group's first character is at the frame position where the group
         // starts, inside the input the enclosing alternative already claimed.
@@ -7975,8 +8060,13 @@ class YarrGenerator final : public YarrJITInfo {
                             dataLog("\\x", hex(ch, 2));
                     }
                 }
-                if (set.wide)
+                if (set.wideAny)
                     dataLog(" +wide");
+                for (auto& range : set.wideRanges) {
+                    dataLog(" U+", hex(range.first, 4));
+                    if (range.second != range.first)
+                        dataLog("..U+", hex(range.second, 4));
+                }
             }
             dataLogLn();
         }
