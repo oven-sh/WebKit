@@ -7946,36 +7946,30 @@ class YarrGenerator final : public YarrJITInfo {
         if (anyCount * 4 > alternatives.size())
             return nullptr;
 
-        // Route each Latin-1 character to the ordered chain of alternatives whose
-        // set contains it; identical chains are shared (linear dedupe: chains are
-        // few in practice).
-        // Chains are deduplicated through a hash of their member lists, and the whole attempt is
-        // abandoned as soon as the chain or stub bound is passed rather than after routing every
-        // character (a pattern built to defeat dispatch could otherwise spend seconds here).
-        UncheckedKeyHashMap<unsigned, Vector<unsigned, 2>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> chainsByHash;
+        // Route each Latin-1 character to the ordered chain of alternatives whose set contains it.
+        // Identical chains are shared (keyed by their member list), and the attempt is abandoned as
+        // soon as the chain or stub bound is passed rather than after routing every character (a
+        // pattern built to defeat dispatch could otherwise spend seconds here).
+        UncheckedKeyHashMap<Vector<unsigned, 4>, unsigned> chainIndexByMembers;
         unsigned stubCount = 0;
         bool overBudget = false;
         auto chainIdFor = [&](Vector<unsigned, 4>&& members) -> unsigned {
             if (members.isEmpty() || overBudget)
                 return DispatchInfo::noChain;
-            unsigned hash = members.size();
-            for (unsigned index : members)
-                hash = WTF::pairIntHash(hash, index);
-            auto& candidates = chainsByHash.add(hash, Vector<unsigned, 2>()).iterator->value;
-            for (unsigned c : candidates) {
-                if (info->chains[c].alternativeIndices == members)
-                    return c;
-            }
-            stubCount += members.size();
-            if (info->chains.size() + 1 > alternationDispatchMaxChains || stubCount > alternationDispatchMaxStubs) {
+            auto existing = chainIndexByMembers.find(members);
+            if (existing != chainIndexByMembers.end())
+                return existing->value;
+            if (info->chains.size() + 1 > alternationDispatchMaxChains || stubCount + members.size() > alternationDispatchMaxStubs) {
                 overBudget = true;
                 return DispatchInfo::noChain;
             }
+            stubCount += members.size();
+            unsigned chainId = info->chains.size();
+            chainIndexByMembers.add(members, chainId);
             DispatchInfo::Chain chain;
             chain.alternativeIndices = WTF::move(members);
             info->chains.append(WTF::move(chain));
-            candidates.append(info->chains.size() - 1);
-            return info->chains.size() - 1;
+            return chainId;
         };
         for (unsigned ch = 0; ch < 256; ++ch) {
             Vector<unsigned, 4> members;
@@ -8049,18 +8043,20 @@ class YarrGenerator final : public YarrJITInfo {
                     info->wideRouting.last().end = end;
                 else
                     info->wideRouting.append({ begin, end, chainId });
-                if (overBudget)
-                    return nullptr;
-                if (info->wideRouting.size() > maxWideRoutingRanges) {
+                if (overBudget || info->wideRouting.size() > maxWideRoutingRanges) {
                     tooMany = true;
                     break;
                 }
             }
             if (tooMany) {
                 // One range for everything wide, tried against every alternative that can start wide
-                // (and none of the chains minted for the abandoned intervals).
+                // (and none of the chains minted for the abandoned intervals, nor their stub budget).
                 info->chains.shrink(chainCountBeforeWide);
-                chainsByHash.clear(); // (indices past the shrink are stale; the fallback chain below may duplicate an early one, harmlessly)
+                chainIndexByMembers.removeIf([&](auto& entry) { return entry.value >= chainCountBeforeWide; });
+                stubCount = 0;
+                for (auto& chain : info->chains)
+                    stubCount += chain.alternativeIndices.size();
+                overBudget = false;
                 Vector<unsigned, 4> members;
                 for (unsigned i = 0; i < alternatives.size(); ++i) {
                     if (sets[i].matchesWide())
