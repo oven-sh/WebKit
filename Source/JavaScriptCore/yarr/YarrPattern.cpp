@@ -2908,19 +2908,19 @@ public:
     }
 
     // The [first, last] capture-subpattern ids actually contained in an
-    // alternative's terms (recursively). Parser bookkeeping on the alternative
+    // alternative's terms . Parser bookkeeping on the alternative
     // (m_firstSubpatternId / m_lastSubpatternId) is not reliable enough here:
     // m_lastSubpatternId is only set once a following sibling is parsed, and
     // sorting reorders which alternative comes first.
     static void accumulateCaptureRange(const PatternAlternative& alternative, unsigned& first, unsigned& last)
     {
         // A parenthesis term brackets its own capture (if any) and every capture nested in it as
-        // [subpatternId, lastSubpatternId] (empty when it holds none; see containsAnyCaptures()),
-        // so the top-level terms suffice -- no recursion into the nesting.
+        // [subpatternId, lastSubpatternId] (a superset after optimizeBOL's copies, which keep their
+        // ids; harmless here), so the top-level terms suffice -- no recursion into the nesting.
         for (auto& term : alternative.m_terms) {
             if (term.type != PatternTerm::Type::ParenthesesSubpattern && term.type != PatternTerm::Type::ParentheticalAssertion)
                 continue;
-            if (term.parentheses.subpatternId > term.parentheses.lastSubpatternId)
+            if (!term.containsAnyCaptures())
                 continue;
             first = std::min(first, term.parentheses.subpatternId);
             last = std::max(last, term.parentheses.lastSubpatternId);
@@ -3092,7 +3092,7 @@ public:
             }
         }
 
-        // The group's capture span brackets exactly the captures its alternatives
+        // The group's capture span brackets the captures its alternatives
         // contain, computed from the terms themselves (sorting reorders which
         // alternative is first, and the parser leaves the last body alternative's
         // m_lastSubpatternId unset, so per-alternative bookkeeping is not reliable).

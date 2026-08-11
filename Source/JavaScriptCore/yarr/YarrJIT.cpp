@@ -7756,8 +7756,7 @@ class YarrGenerator final : public YarrJITInfo {
             while (i + run < units.size() && run < maxLoadBits / unitBits && fusable(units[i + run]) && (units[i + run - 1].offset - units[i + run].offset) == 1u)
                 ++run;
             size_t width = run >= 8 ? 8 : run >= 4 ? 4 : run >= 2 ? 2 : 1; // units per load
-            if (width * unitBits > maxLoadBits)
-                width = maxLoadBits / unitBits;
+            ASSERT(width * unitBits <= maxLoadBits);
             uint64_t characters = 0;
             uint64_t caseMask = 0;
             for (size_t k = 0; k < width; ++k) {
@@ -7778,25 +7777,21 @@ class YarrGenerator final : public YarrJITInfo {
             case 32:
                 m_jit.load32WithUnalignedHalfWords(address, character);
                 break;
-            default:
 #if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+            case 64:
                 m_jit.load64(address, character);
-#else
-                RELEASE_ASSERT_NOT_REACHED();
-#endif
-                break;
-            }
-            if (width * unitBits == 64) {
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
                 if (caseMask)
                     m_jit.or64(MacroAssembler::TrustedImm64(caseMask), character);
                 mismatch.append(m_jit.branch64(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm64(characters)));
+                i += width;
+                continue;
 #endif
-            } else {
-                if (caseMask)
-                    m_jit.or32(MacroAssembler::Imm32(static_cast<int32_t>(caseMask)), character);
-                mismatch.append(m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::Imm32(static_cast<int32_t>(characters))));
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
             }
+            if (caseMask)
+                m_jit.or32(MacroAssembler::Imm32(static_cast<int32_t>(caseMask)), character);
+            mismatch.append(m_jit.branch32(MacroAssembler::NotEqual, character, MacroAssembler::Imm32(static_cast<int32_t>(characters))));
             i += width;
         }
 

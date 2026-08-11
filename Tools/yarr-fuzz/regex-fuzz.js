@@ -535,18 +535,36 @@ const profile = PROFILES[PROFILE] || PROFILES.mixed;
 // stream and the main stream advances by a fixed stride per case regardless.
 const forkRng = () => [s0, s1, s2, s3];
 const joinRng = (st) => { [s0, s1, s2, s3] = st; for (let i = 0; i < 7; ++i) rnd(); };
+
+// "file:<path>" profile: replay externally supplied cases ({p, f, s:[subjects]} per JSON line,
+// e.g. from mutate.mjs) through the same operations and encodings; SEED selects a slice of COUNT
+// cases starting at (SEED-1)*COUNT so the driver's seed ranges partition the file.
+let FILE_CASES = null;
+if (PROFILE.startsWith("file:")) {
+    const RF = typeof readFile !== "undefined" ? readFile : (f) => require("fs").readFileSync(f, "utf8");
+    const flagObj = (str) => Object.fromEntries([..."dgimsuvy"].map((k) => [k, str.includes(k)]));
+    FILE_CASES = RF(PROFILE.slice(5)).split("\n").filter(Boolean).map((l) => { try { const c = JSON.parse(l); return { src: c.p, flags: flagObj(c.f || ""), subjects: c.s || [""] }; } catch (e) { return null; } }).filter(Boolean);
+}
+const fileProfile = { ...PROFILES.mixed, sweep: 0.4, meta: 0.5, hotLoop: 0.15, p16: 0.5 };
 for (let idx = 0; idx < COUNT; ++idx) {
-    const pat = genPattern(profile);
-    const nSubj = pickW([[5, 1], [3, 2], [1, 3]]);
+    let pat, subjects = null;
+    if (FILE_CASES) {
+        const c = FILE_CASES[(SEED - 1) * COUNT + idx];
+        if (!c) break;
+        pat = { src: c.src, flags: c.flags, ctx: {} };
+        subjects = c.subjects;
+    } else
+        pat = genPattern(profile);
+    const nSubj = subjects ? subjects.length : pickW([[5, 1], [3, 2], [1, 3]]);
     let skipRest = false;
     for (let j = 0; j < nSubj; ++j) {
-        const subj = genSubject(pat, profile);
-        const use16 = chance(profile.p16);
+        const subj = subjects ? subjects[j] : genSubject(pat, profile);
+        const use16 = chance((subjects ? fileProfile : profile).p16);
         const saved = forkRng();
         if (!skipRest) {
             let rec;
             const t0 = Date.now();
-            try { rec = runCase(idx, pat, subj, use16, profile); }
+            try { rec = runCase(idx, pat, subj, use16, subjects ? fileProfile : profile); }
             catch (e) { rec = { p: safeStr(pat.src), f: flagStr(pat.flags), fatal: String(e) }; }
             const ms = Date.now() - t0;
             OUT(idx + "." + j + "\t" + JSON.stringify(rec) + "\t" + ms);
