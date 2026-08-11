@@ -112,7 +112,32 @@ ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, s
 }
 
 template<Yarr::MatchFrom matchFrom>
+NEVER_INLINE int RegExp::matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
+{
+    if (splitsSurrogatePair(s, startOffset))
+        --startOffset;
+    int result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+    while (result > static_cast<int>(startOffset) && splitsSurrogatePair(s, result)) {
+        startOffset = result + 1;
+        result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+    }
+    return result;
+}
+
+template<Yarr::MatchFrom matchFrom>
 ALWAYS_INLINE int RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
+{
+    // Two separate predictable branches keep the common paths to a flag test plus a
+    // tail call; only a unicode pattern on a 16-bit subject needs the boundary fixup.
+    if (!eitherUnicode()) [[likely]]
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+    if (s.is8Bit()) [[likely]]
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+    return matchInlineAtCodePointBoundaries<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
+}
+
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
 {
 #if ENABLE(REGEXP_TRACING)
     m_rtMatchCallCount++;
@@ -243,7 +268,30 @@ ALWAYS_INLINE void RegExp::compileIfNecessaryMatchOnly(VM& vm, Yarr::CharSize ch
 }
 
 template<Yarr::MatchFrom matchFrom>
+NEVER_INLINE MatchResult RegExp::matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
+{
+    if (splitsSurrogatePair(s, startOffset))
+        --startOffset;
+    MatchResult result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+    while (result && result.start > startOffset && splitsSurrogatePair(s, result.start)) {
+        startOffset = result.start + 1;
+        result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+    }
+    return result;
+}
+
+template<Yarr::MatchFrom matchFrom>
 ALWAYS_INLINE MatchResult RegExp::matchInline(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
+{
+    if (!eitherUnicode()) [[likely]]
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+    if (s.is8Bit()) [[likely]]
+        return matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+    return matchInlineAtCodePointBoundaries<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
+}
+
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset)
 {
 #if ENABLE(REGEXP_TRACING)
     m_rtMatchOnlyCallCount++;

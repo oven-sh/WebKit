@@ -133,14 +133,32 @@ private:
         return nullptr;
     }
 
-    void shrink()
+    // Releases the pools past the head, except that leading overflow pools are kept (reset to
+    // empty) while they fit retainedOverflowBytes: a client whose every use needs somewhat more than
+    // the head page would otherwise map and unmap pools around every single use.
+    void shrink(size_t retainedOverflowBytes)
     {
         ASSERT(!m_previous);
         m_current = m_start;
-        while (m_next) {
-            BumpPointerPool* nextNext = m_next->m_next;
-            m_next->destroy();
-            m_next = nextNext;
+        size_t retainedBytes = 0;
+        BumpPointerPool* lastRetained = this;
+        BumpPointerPool* pool = m_next;
+        while (pool && retainedBytes + pool->m_allocation.size() <= retainedOverflowBytes) {
+            retainedBytes += pool->m_allocation.size();
+            pool->m_current = pool->m_start;
+            lastRetained = pool;
+            pool = pool->m_next;
+        }
+        lastRetained->m_next = nullptr;
+        destroyChain(pool);
+    }
+
+    static void destroyChain(BumpPointerPool* pool)
+    {
+        while (pool) {
+            BumpPointerPool* next = pool->m_next;
+            pool->destroy();
+            pool = next;
         }
     }
 
@@ -223,9 +241,11 @@ private:
 // this allocator will be reaped, and underlying memory may be freed.
 //
 // (In practice we will still hold on to the initial pool to allow allocation
-// to be quickly restared, but aditional pools will be freed).
+// to be quickly restarted; additional pools are freed, except for as many
+// leading ones as fit the byte budget passed to stopAllocator(), which are
+// kept empty for the next start).
 //
-// This allocator is non-renetrant, it is encumbant on the clients to ensure
+// This allocator is non-reentrant; it is incumbent on the clients to ensure
 // startAllocator() is not called again until stopAllocator() has been called.
 class BumpPointerAllocator {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BumpPointerAllocator);
@@ -238,7 +258,7 @@ public:
     ~BumpPointerAllocator()
     {
         if (m_head)
-            m_head->destroy();
+            BumpPointerPool::destroyChain(m_head);
     }
 
     BumpPointerPool* startAllocator(size_t maxCapacity)
@@ -248,10 +268,18 @@ public:
         return m_head;
     }
 
-    void stopAllocator()
+    void stopAllocator(size_t retainedOverflowBytes = 0)
     {
         if (m_head)
-            m_head->shrink();
+            m_head->shrink(retainedOverflowBytes);
+    }
+
+    // Frees whatever a stopAllocator() budget kept (everything but the head page). Only between a
+    // stop and the next start; the next start maps pools again as it needs them.
+    void releaseRetainedPools()
+    {
+        if (m_head)
+            m_head->shrink(0);
     }
 
 private:

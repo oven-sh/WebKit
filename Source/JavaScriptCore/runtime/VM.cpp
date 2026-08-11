@@ -1044,6 +1044,13 @@ void VM::deleteAllCode(DeleteAllCodeEffort effort)
         m_codeCache->clear();
         m_builtinExecutables->clear();
         m_regExpCache->deleteAllCode();
+        {
+            // The RegExp interpreter's backtracking pools past its first page are only a cache
+            // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
+            // compiler threads that interpret take this lock.
+            Locker locker { m_regExpAllocatorLock };
+            m_regExpAllocator.releaseRetainedPools();
+        }
         heap.deleteAllCodeBlocks(effort);
         heap.deleteAllUnlinkedCodeBlocks(effort);
         heap.reportAbandonedObjectGraph();

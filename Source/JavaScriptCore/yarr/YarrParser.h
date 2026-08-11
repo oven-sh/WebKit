@@ -415,7 +415,6 @@ private:
             , m_setOp(CharacterClassSetOp::Default)
             , m_mayContainStrings(false)
             , m_inverted(false)
-            , m_processingEscape(false)
             , m_character(0)
         {
         }
@@ -573,11 +572,6 @@ private:
             return false;
         }
 
-        void setProcessingEscape()
-        {
-            m_processingEscape = true;
-        }
-
         /*
          * atomPatternCharacter():
          *
@@ -590,8 +584,6 @@ private:
         void atomPatternCharacter(char32_t ch, bool hyphenIsRange)
         {
             bool unionOpActive = m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union;
-            bool processingEscape = m_processingEscape;
-            m_processingEscape = false;
 
             auto processCharacter = [&] () {
                 m_character = ch;
@@ -625,7 +617,8 @@ private:
 
             case ClassSetConstructionState::Empty:
             case ClassSetConstructionState::AfterSetOperator:
-                if (!processingEscape && ch == '-') {
+                // (hyphenIsRange is false exactly for an escaped character.)
+                if (hyphenIsRange && ch == '-') {
                     m_errorCode = ErrorCode::InvalidClassSetCharacter;
                     return;
                 }
@@ -666,16 +659,19 @@ private:
                 return;
 
             case ClassSetConstructionState::AfterSetOperand:
-                if (!unionOpActive)
+                // A character right after a nested class or \q{...}: a union with it. (There is no
+                // cached character to flush in this state -- doing so added a stale one, U+0000
+                // after [\q{ab}x] -- and an escaped hyphen is an ordinary member here.)
+                if (!unionOpActive) {
                     m_errorCode = ErrorCode::InvalidClassSetOperation;
-
-                if (ch == '-')
-                    m_errorCode = ErrorCode::InvalidClassSetOperation;
-                else {
-                    m_delegate.atomCharacterClassAtom(m_character);
-                    switchFromDefaultOpToUnionOpIfNeeded();
-                    processCharacter();
+                    return;
                 }
+                if (hyphenIsRange && ch == '-') { // an unescaped '-' (a ClassSetSyntaxCharacter)
+                    m_errorCode = ErrorCode::InvalidClassSetOperation;
+                    return;
+                }
+                switchFromDefaultOpToUnionOpIfNeeded();
+                processCharacter();
                 return;
             }
         }
@@ -794,7 +790,6 @@ private:
         CharacterClassSetOp m_setOp;
         bool m_mayContainStrings;
         bool m_inverted;
-        bool m_processingEscape;
         char32_t m_character;
         Vector<NestingState> nestedParseState;
     };
@@ -1383,8 +1378,6 @@ private:
                     m_errorCode = ErrorCode::InvalidClassSetOperation;
                     return;
                 }
-
-                classSetConstructor.setProcessingEscape();
 
                 TokenType tokenType = parseClassSetEscape(classSetConstructor);
 
