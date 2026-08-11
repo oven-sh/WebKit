@@ -3191,6 +3191,15 @@ class YarrGenerator final : public YarrJITInfo {
             // beginIndex cannot be used here because it is overwritten on
             // each reentry iteration for partial match recovery.
             storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoBackReference::backReferenceSizeIndex());
+            // The backtrack code's zero-width progress guard reads matchAmount and beginIndex;
+            // start them at "no iterations, here" rather than whatever an earlier visit of this
+            // term (or another term sharing the slot) left behind. A zero-width iteration below
+            // does not touch beginIndex, so a stale value that happened to differ from the index
+            // let an undefined or empty capture be "matched" again and again, once per backtrack,
+            // until the match limit -- seen with a lazily quantified backreference inside a
+            // quantified group in a lookbehind.
+            storeToFrame(MacroAssembler::TrustedImm32(0), parenthesesFrameLocation + BackTrackInfoBackReference::matchAmountIndex());
+            storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoBackReference::beginIndex());
             matches.append(m_jit.jump());
 
             defineReentryLabel(op);
@@ -3208,14 +3217,19 @@ class YarrGenerator final : public YarrJITInfo {
             } else
                 loadSubPattern(subpatternId, patternIndex, patternTemp);
 
-            // An empty match is successful without consuming characters (an
-            // undefined capture, either slot -1, reads as empty; see above).
+            // Re-entry asks for one more iteration after the continuation failed. An iteration
+            // that can only match empty (an undefined capture -- either slot -1, see above -- or
+            // an empty one) ends where it started, which RepeatMatcher rejects once the minimum is
+            // met (and a non-greedy term's minimum is always 0 here: YarrPattern splits x{n,}? into
+            // x{n} x*?). Reporting it as another success instead handed the same position to the
+            // same continuation a second time: harmless alone, but it doubles the work at every
+            // nesting level, e.g. (?:\1*?.?|)+ inside a lookbehind went exponential.
             zeroLengthMatches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternTemp));
             zeroLengthMatches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternIndex));
             MacroAssembler::Jump tryNonZeroMatch = m_jit.branch32(MacroAssembler::NotEqual, patternIndex, patternTemp);
             zeroLengthMatches.link(&m_jit);
-            storeToFrame(MacroAssembler::TrustedImm32(1), parenthesesFrameLocation + BackTrackInfoBackReference::matchAmountIndex());
-            matches.append(m_jit.jump());
+            loadFromFrame(parenthesesFrameLocation + BackTrackInfoBackReference::backReferenceSizeIndex(), m_regs.index);
+            op.m_jumps.append(m_jit.jump());
             tryNonZeroMatch.link(&m_jit);
 
             // Check if we have input remaining to match.

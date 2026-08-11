@@ -185,3 +185,15 @@ shouldBe(/^a/.exec("ba"), null);
 shouldBe(/(?:^a)/.exec("ba"), null);
 shouldBe(/(^a)+/.exec("ba"), null);
 shouldBe(/(?:^a|^b)/.exec("cb"), null);
+
+// A lazily quantified backreference to an undefined or empty capture inside a quantified group in a
+// lookbehind: re-entry must not report a zero-width iteration as another success (exponential).
+{
+    const t0 = Date.now();
+    for (const re of [/(?<=[](?:\1*?.?|)+|()[])/, /()(?<=[](?:\1*?.?|)+)/, /(?<=[](?:\1+?.?|)+|()[])/, /(?<=[](?:\k<w>{0,3}?.?|)+|(?<w>)[])/])
+        shouldBe(re.exec("abcdefghijklmnopqrstuvwxyz0123456789"), null);
+    shouldBe(/(?<=(?:\1*?.?|)+)()$/.exec("abc").index, 3);
+    shouldBe("xaay".replace(/(?<=a(?:\1*?)+)()/g, "|"), "xa|a|y");
+    if (Date.now() - t0 > 2000)
+        throw new Error("lazy empty backreference in a lookbehind loop took " + (Date.now() - t0) + "ms");
+}

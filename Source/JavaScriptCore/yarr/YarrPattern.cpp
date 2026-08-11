@@ -87,8 +87,8 @@ public:
             return;
         }
 
-        for (size_t i = 0; i < other->m_strings.size(); ++i)
-            m_strings.append(other->m_strings[i]);
+        if (!other->m_strings.isEmpty())
+            unionStrings(other->m_strings); // both sides sorted and repeat-free, as the set operations expect
         for (size_t i = 0; i < other->m_matches8.size(); ++i)
             addSorted(m_matches8, other->m_matches8[i]);
         for (size_t i = 0; i < other->m_ranges8.size(); ++i)
