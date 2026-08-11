@@ -1912,7 +1912,7 @@ class YarrGenerator final : public YarrJITInfo {
         std::ranges::sort(dest.m_ranges32, [](auto& a, auto& b) { return a.begin < b.begin; });
     }
 
-#if ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
     // Sets firstCharacterAdditionalReadSize to 1 iff the match start position (index - minimumSize) holds a
     // complete non-BMP surrogate pair, so that a failed match attempt advances past the whole code point.
     // Emitted whenever an alternative is entered as the first one attempted at a start position;
@@ -2198,25 +2198,6 @@ class YarrGenerator final : public YarrJITInfo {
             m_jit.sub32(m_regs.index, MacroAssembler::Imm32(inputOffset), reg);
     }
 
-    // Consume `count` characters at the frame position: advance the forward
-    // frontier, or move the backward (mirrored) leftward cursor down.
-    void consumeIndex(unsigned count)
-    {
-        if (m_direction == Backward)
-            m_jit.sub32(MacroAssembler::Imm32(count), m_regs.index);
-        else
-            m_jit.add32(MacroAssembler::Imm32(count), m_regs.index);
-    }
-
-    // Give `count` characters back (undo a consume).
-    void rewindIndex(unsigned count)
-    {
-        if (m_direction == Backward)
-            m_jit.add32(MacroAssembler::Imm32(count), m_regs.index);
-        else
-            m_jit.sub32(MacroAssembler::Imm32(count), m_regs.index);
-    }
-
     // Give back the number of characters held in `countRegister`.
     void rewindIndex(MacroAssembler::RegisterID countRegister)
     {
@@ -2417,7 +2398,6 @@ class YarrGenerator final : public YarrJITInfo {
         // This flag is used to null out the subsequent pattern characters, when
         // multiple are fused to match as a group.
         bool m_isDeadCode { false };
-
 
         // Currently used in the case of some of the more complex management of
         // 'm_checkedOffset', to cache the offset used in this alternative, to avoid

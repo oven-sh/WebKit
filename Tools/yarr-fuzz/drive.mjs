@@ -3,7 +3,7 @@
 // compares outputs line-by-line, records mismatches / crashes / timeouts.
 // Usage: node drive.mjs --seeds 1-200 --count 400 --profile mixed --par 32 --configs jit,interp,gatesoff,node[,asan,asan-interp,base]
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
