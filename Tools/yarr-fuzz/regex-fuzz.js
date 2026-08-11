@@ -442,7 +442,7 @@ function runCase(idx, pat, subjectRaw, use16, profile) {
                 if (enc !== baseE) meta[name] = safeStr(enc.slice(0, 200));
             }
             // Other width, same content (only when the content fits Latin-1 so both widths exist).
-            if (HAVE_VM && !/[^ -ÿ]/.test(subjectRaw)) {
+            if (HAVE_VM && !/[^\0-\xff]/.test(subjectRaw)) {
                 const other = use16 ? subjectRaw : to16(subjectRaw); // flat 8-bit literal vs forced 16-bit
                 re.lastIndex = 0;
                 const oe = encMatch(re.exec(other), !!pat.flags.d);

@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 const here = dirname(fileURLToPath(import.meta.url));
 const dir = process.argv[2] || join(here, "out");
 const pairRe = new RegExp(process.argv[3] || "base");
@@ -25,7 +26,7 @@ for (const f of readdirSync(dir).filter((f) => f.startsWith("mismatch-"))) {
     }
 }
 console.log("unique mismatches:", rows.length, "skipped-known:", JSON.stringify(skipped));
-const script = join("/tmp/claude-0/-root/aa87c124-a679-4e40-8317-fec216f8986b/scratchpad", "tb-" + process.pid + ".js");
+const script = join(tmpdir(), "yarr-triage-base-" + process.pid + ".js");
 let out = [];
 for (const o of rows) {
     const p = unesc(o.a.p), f = o.a.f, s = unesc(o.a.s), w = o.a.w;

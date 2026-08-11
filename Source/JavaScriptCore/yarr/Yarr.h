@@ -43,10 +43,13 @@ namespace JSC { namespace Yarr {
 #define YarrStackSpaceForBackTrackInfoParentheses 4
 #define YarrStackSpaceForDotStarEnclosure 2 // The start offset, and the end of the newline-free span known to follow it.
 
-// First-character dispatch (YarrJIT) emits one entry stub per (chain, alternative) pair (a store
-// and a jump each) and gives up past these bounds; YarrPattern consults the stub bound so as not
-// to wrap a body it cannot serve. Sized to take the flat expansion of \p{RGI_Emoji} (~3,800
-// alternatives, ~1,400 distinct first code points).
+// First-character dispatch (YarrJIT) pays for its extra read only from a handful of alternatives
+// and characters up; it emits one entry stub per (chain, alternative) pair (a store and a jump each)
+// and gives up past the upper bounds. YarrPattern shapes groups it wants dispatched to fit these.
+// The upper bounds are sized to take the flat expansion of \p{RGI_Emoji} (~2,800 alternatives,
+// ~1,400 distinct first code points).
+static constexpr unsigned alternationDispatchMinAlternatives = 4;
+static constexpr unsigned alternationDispatchMinTotalSize = 12;
 static constexpr unsigned alternationDispatchMaxChains = 2048;
 static constexpr unsigned alternationDispatchMaxStubs = 4096;
 

@@ -430,18 +430,6 @@ struct FirstCharacterSet {
     }
     bool matches(unsigned latin1Char) const { return any || latin1.get(latin1Char); }
     bool matchesWide() const { return any || wideAny || !wideRanges.isEmpty(); }
-    bool matchesCodePoint(char32_t ch) const // ch >= 0x100; after normalize()
-    {
-        if (any || wideAny)
-            return true;
-        for (auto& range : wideRanges) {
-            if (ch < range.first)
-                return false;
-            if (ch <= range.second)
-                return true;
-        }
-        return false;
-    }
 };
 
 // First-character dispatch for a nested disjunction with many alternatives.
@@ -7912,8 +7900,6 @@ class YarrGenerator final : public YarrJITInfo {
     // emitted (so the first term of each alternative is still in position order).
     // First-character dispatch pays for its extra read only from a handful of
     // alternatives up; below that the sequential chain is faster.
-    static constexpr size_t alternationDispatchMinAlternatives = 4;
-    static constexpr size_t alternationDispatchMinTotalSize = 12;
     static constexpr size_t bodyDispatchMatchOnlyMinTotalSize = 64;
 
     DispatchInfo* tryPrepareDispatch(PatternTerm* term, Checked<unsigned> checkedOffset)
@@ -8011,8 +7997,7 @@ class YarrGenerator final : public YarrJITInfo {
             };
             Vector<RangeEvent, 64> events;
             Vector<uint8_t, 64> active; // depth, for an alternative's overlapping ranges
-            active.grow(alternatives.size());
-            active.fill(0);
+            active.fill(0, alternatives.size());
             for (unsigned i = 0; i < alternatives.size(); ++i) {
                 if (sets[i].any || sets[i].wideAny) {
                     active[i] = 1;

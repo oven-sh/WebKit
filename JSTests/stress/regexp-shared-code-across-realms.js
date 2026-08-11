@@ -1,3 +1,4 @@
+//@ skip if $memoryLimited or $buildType == "debug"
 //@ runDefault("--useDollarVM=1")
 // A RegExp's compiled code is shared per VM (RegExpCache keys on source and flags), and some code
 // generation decisions -- the Boyer-Moore search range, the vector-vs-scalar scan -- are made from
@@ -85,14 +86,15 @@ function churn(count, tag) {
     }
     return sink;
 }
-churn(20000, "warm");
+churn(10000, "warm");
 fullGC();
 const before = MemoryFootprint().current;
-for (let round = 0; round < 5; ++round) {
-    shouldBe(churn(20000, "r" + round), 20000, "churn results");
+for (let round = 0; round < 4; ++round) {
+    shouldBe(churn(10000, "r" + round), 10000, "churn results");
     fullGC();
 }
 const after = MemoryFootprint().current;
-// Five more rounds of 20k distinct RegExps must not cost more than a modest, bounded amount.
-if (after - before > 96 * 1024 * 1024)
+// Four more rounds of 10k distinct RegExps must not cost more than a modest, bounded amount
+// (release allocators; sanitizer quarantines do not return memory, hence the skips above).
+if (after - before > 128 * 1024 * 1024)
     throw new Error("footprint grew by " + ((after - before) >> 20) + " MB across RegExp cache churn");

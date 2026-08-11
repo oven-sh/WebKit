@@ -415,7 +415,6 @@ private:
             , m_setOp(CharacterClassSetOp::Default)
             , m_mayContainStrings(false)
             , m_inverted(false)
-            , m_processingEscape(false)
             , m_character(0)
         {
         }
@@ -573,11 +572,6 @@ private:
             return false;
         }
 
-        void setProcessingEscape()
-        {
-            m_processingEscape = true;
-        }
-
         /*
          * atomPatternCharacter():
          *
@@ -590,8 +584,6 @@ private:
         void atomPatternCharacter(char32_t ch, bool hyphenIsRange)
         {
             bool unionOpActive = m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union;
-            bool processingEscape = m_processingEscape;
-            m_processingEscape = false;
 
             auto processCharacter = [&] () {
                 m_character = ch;
@@ -625,8 +617,7 @@ private:
 
             case ClassSetConstructionState::Empty:
             case ClassSetConstructionState::AfterSetOperator:
-                // (hyphenIsRange is false exactly for an escaped character; m_processingEscape can be
-                // left over from an escape that did not come through here, such as \d or \q{...}.)
+                // (hyphenIsRange is false exactly for an escaped character.)
                 if (hyphenIsRange && ch == '-') {
                     m_errorCode = ErrorCode::InvalidClassSetCharacter;
                     return;
@@ -799,7 +790,6 @@ private:
         CharacterClassSetOp m_setOp;
         bool m_mayContainStrings;
         bool m_inverted;
-        bool m_processingEscape;
         char32_t m_character;
         Vector<NestingState> nestedParseState;
     };
@@ -1389,7 +1379,6 @@ private:
                     return;
                 }
 
-                classSetConstructor.setProcessingEscape();
 
                 TokenType tokenType = parseClassSetEscape(classSetConstructor);
 

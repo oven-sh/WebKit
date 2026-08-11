@@ -1718,8 +1718,18 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     // turn into a string list.)
     void expandClassWithStrings(CharacterClass* characterClass)
     {
-        static constexpr size_t minStringsForDispatchGroup = 4; // YarrJIT's alternationDispatchMinAlternatives
-        bool dispatchGroup = characterClass->m_strings.size() >= minStringsForDispatchGroup;
+        // (Only where the JIT could dispatch it -- forward, exact case, no empty member, and past
+        // the dispatcher's size floor -- since the extra group otherwise just costs frame slots.)
+        size_t stringCount = 0;
+        size_t totalStringLength = 0;
+        bool hasEmptyMember = false;
+        for (auto& string : characterClass->m_strings) {
+            hasEmptyMember |= string.isEmpty();
+            ++stringCount;
+            totalStringLength += string.size();
+        }
+        bool dispatchGroup = parenthesisMatchDirection() == Forward && !ignoreCase() && !hasEmptyMember
+            && stringCount >= alternationDispatchMinAlternatives && totalStringLength >= alternationDispatchMinTotalSize;
         if (dispatchGroup)
             atomParenthesesSubpatternBegin(false);
         atomParenthesesSubpatternBegin(false);

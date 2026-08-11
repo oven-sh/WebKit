@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 import { cpus } from "node:os";
 import { execFileSync } from "node:child_process";
 
@@ -16,7 +17,7 @@ const dirs = ["test/built-ins/RegExp", "test/annexB/built-ins/RegExp", "test/lan
 const files = execFileSync("find", [...dirs.map((d) => join(root, d)), "-name", "*.js", "-not", "-name", "*_FIXTURE.js"], { encoding: "utf8", maxBuffer: 1 << 26 }).trim().split("\n").sort();
 const harnessCache = {};
 const harness = (n) => harnessCache[n] ??= readFileSync(join(root, "harness", n), "utf8");
-const scratch = "/tmp/claude-0/-root/aa87c124-a679-4e40-8317-fec216f8986b/scratchpad/262-" + label;
+const scratch = join(tmpdir(), "yarr-run262-" + label + "-" + process.pid);
 mkdirSync(scratch, { recursive: true });
 
 function meta(src) {
@@ -55,7 +56,16 @@ await new Promise((resolve) => {
                 active--; done++;
                 let out;
                 if (m.negative) {
-                    out = err ? "PASS" : "FAIL: expected " + m.negative.type + " but succeeded";
+                    // A negative test passes only on an ordinary error exit naming the expected error,
+                    // never on a signal, a timeout kill, or a different error type.
+                    if (!err)
+                        out = "FAIL: expected " + m.negative.type + " but succeeded";
+                    else if (err.signal || err.killed)
+                        out = "FAIL: expected " + m.negative.type + " but got " + (err.signal || "killed");
+                    else if (!(stderr + stdout).includes(m.negative.type))
+                        out = "FAIL: expected " + m.negative.type + " but got: " + (stderr + stdout).trim().split("\n").slice(-1)[0].slice(0, 200);
+                    else
+                        out = "PASS";
                 } else if (err) {
                     out = "FAIL: " + (err.signal || err.code) + " " + (stderr + stdout).trim().split("\n").slice(-3).join(" | ").slice(0, 400);
                 } else out = "PASS";
