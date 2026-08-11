@@ -2277,6 +2277,13 @@ void CodeBlock::shrinkToFit(const ConcurrentJSLocker&, ShrinkMode shrinkMode)
 
 void CodeBlock::linkIncomingCall(JSCell* caller, CallLinkInfoBase* incoming)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // Every path that relinks a node removes it from its previous callee first, so a node that is still
+    // chained here would end up on two lists and corrupt both the next time either is walked. push() does
+    // not check this in release builds; trap it while the code that owns the node is still on the stack.
+    // incoming->prev() is the node's current neighbour, which identifies the list it is still on.
+    RELEASE_ASSERT(!incoming->isOnList(), incoming, incoming->prev(), static_cast<unsigned>(incoming->callSiteType()), this);
+#endif
     if (caller)
         noticeIncomingCall(caller);
     m_incomingCalls.push(incoming);
@@ -2291,8 +2298,23 @@ IGNORE_GCC_WARNINGS_BEGIN("dangling-pointer")
     // Note that upgrade may relink CallLinkInfo into newCodeBlock, and it is possible that |this| and newCodeBlock are the same.
     // This happens when newCodeBlock is installed by upgrading LLInt to Baseline. In that case, |this|'s m_incomingCalls will
     // be accumulated correctly.
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned unlinkedCount = 0;
+    while (!toBeRemoved.isEmpty()) {
+        CallLinkInfoBase* incoming = &*toBeRemoved.begin();
+        // The list is circular through the sentinel, so a chained node always has a successor. A node whose
+        // own link words are gone was re-initialized, or had its storage reused, while it was still chained
+        // into this CodeBlock. remove() would fault on the missing neighbour a few instructions later; failing
+        // here records the node, the callee being unlinked and how far into the list the damage starts, and
+        // keeps the node's (equally overwritten) type byte away from the dispatch in unlinkOrUpgrade().
+        RELEASE_ASSERT(incoming->next(), incoming, this, newCodeBlock, static_cast<unsigned>(jitType()), unlinkedCount);
+        incoming->unlinkOrUpgrade(vm, this, newCodeBlock);
+        ++unlinkedCount;
+    }
+#else
     while (!toBeRemoved.isEmpty())
         toBeRemoved.begin()->unlinkOrUpgrade(vm, this, newCodeBlock);
+#endif
 IGNORE_GCC_WARNINGS_END
 }
 

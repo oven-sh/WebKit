@@ -87,7 +87,10 @@ enum CapabilityLevel : uint8_t;
 }
 #endif
 
-#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
+// Bun is a JSCOnly port, so PLATFORM(MAC) is false even on macOS. The checker costs one word per
+// CodeBlock and turns a CodeBlock destroyed twice, or destroyed with somebody else's MetadataTable or
+// JITData, into a crash in ~CodeBlock instead of a later crash in whatever those structures still link to.
+#if PLATFORM(MAC) || PLATFORM(MACCATALYST) || USE(BUN_JSC_ADDITIONS)
 #define ENABLE_CODEBLOCK_CRASH_ANALYSIS 1 // FIXME: rdar://149223818
 #else
 #define ENABLE_CODEBLOCK_CRASH_ANALYSIS 0
