@@ -1038,7 +1038,14 @@ private:
 };
 /* This check is for normal Release builds; ASSERT_ENABLED changes the size. */
 #if !ASSERT_ENABLED
+#if USE(BUN_JSC_ADDITIONS) && OS(WINDOWS)
+// The MSVC ABI lays the bitfields out less densely, so CodeBlock is 224 bytes here before the
+// ENABLE(CODEBLOCK_CRASH_ANALYSIS) word and 232 with it. Elsewhere it goes from 216 to 224, which
+// stays inside the same 224-byte cell.
+static_assert(sizeof(CodeBlock) <= 232, "Keep it small for memory saving");
+#else
 static_assert(sizeof(CodeBlock) <= 224, "Keep it small for memory saving");
+#endif
 #endif
 
 template <typename ExecutableType>
