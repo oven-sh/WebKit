@@ -33,6 +33,11 @@ const CFG = {
     nodispatch:   { bin: REL,  args: [...common, "--useRegExpAlternationDispatch=0"] },
     nodfg:        { bin: REL,  args: [...common, "--useDFGJIT=0"] },
     eager:        { bin: REL,  args: [...common, "--thresholdForJITAfterWarmUp=5", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForFTLOptimizeAfterWarmUp=40", "--useConcurrentJIT=0"] },
+    // Every load the RegExp JIT makes from the subject is bounds-checked (crashes on an out-of-bounds read that
+    // ASAN cannot see because JIT code is not instrumented); slow, so pair it with a smaller --count.
+    verifyreads:  { bin: REL,  args: [...common, "--verifyRegExpJITReads=1"] },
+    // GC torture: collect continuously while matching, to shake out subject/RegExp lifetime bugs.
+    gcstress:     { bin: REL,  args: [...common, "--collectContinuously=1", "--useGenerationalGC=0", "--useConcurrentGC=1"] },
     asan:         { bin: ASAN, args: [...common], env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:allocator_may_return_null=1" } },
     "asan-interp":{ bin: ASAN, args: [...common, "--useRegExpJIT=0"], env: { ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:allocator_may_return_null=1" } },
     base:         { bin: BASE, args: [...common], env: { ASAN_OPTIONS: "detect_leaks=0:allocator_may_return_null=1" } },

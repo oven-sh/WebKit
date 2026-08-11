@@ -164,6 +164,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpCSSJITDisassembly, false, Normal, "dumps disassembly of CSS Selector JIT upon compilation"_s) \
     v(Bool, dumpRegExpDisassembly, false, Normal, "dumps disassembly of RegExp upon compilation"_s) \
     v(Bool, traceRegExpJITExecution, false, Normal, "traces RegExp JIT execution at reentry points"_s) \
+    v(Bool, verifyRegExpJITReads, false, Normal, "checks, before every load the RegExp JIT makes from the subject string, that the address lies within the subject (crashes otherwise); a fuzzing aid"_s) \
     v(Bool, dumpWasmDisassembly, false, Normal, "dumps disassembly of all wasm code upon compilation"_s) \
     v(OptionString, dumpWasmSourceFileName, nullptr, Normal, "log every wasm module validation, and dump source bytes to <filename>.0.wasm, <filename>.1.wasm, etc..."_s) \
     v(OptionString, wasmOMGFunctionsToDump, nullptr, Normal, "file with newline separated list of function indices to dump IR/disassembly for, if no such file exists, the function index itself"_s) \

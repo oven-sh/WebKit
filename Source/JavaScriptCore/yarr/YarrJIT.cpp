@@ -664,6 +664,31 @@ static constexpr MacroAssembler::TrustedImm32 surrogateTagMask = MacroAssembler:
 static constexpr MacroAssembler::TrustedImm32 surrogatePairTags = MacroAssembler::TrustedImm32(0xdc00d800);
 static constexpr MacroAssembler::TrustedImm32 surrogateTagShiftedRight11 = MacroAssembler::TrustedImm32(0xd800 >> 11);
 
+// Options::verifyRegExpJITReads(): precede a load from the subject with a probe that checks the
+// effective address range [address, address + bytes) against [input, input + length * unit) and
+// crashes when it strays. The input and length registers are never written by generated code, so
+// they are read back from the probe context. Purely a fuzzing aid; the probe saves and restores
+// the full register state around a C call, so it is far too slow for anything else.
+template<typename AddressType>
+static void emitVerifySubjectRead(CCallHelpers& jit, AddressType address, unsigned bytes, GPRReg inputReg, GPRReg lengthReg, unsigned unitShift, unsigned site)
+{
+    if (!Options::verifyRegExpJITReads()) [[likely]]
+        return;
+    jit.probeDebug([=](Probe::Context& context) {
+        uintptr_t effective;
+        if constexpr (std::is_same_v<AddressType, MacroAssembler::BaseIndex>)
+            effective = context.gpr(address.base) + (static_cast<uintptr_t>(context.gpr(address.index)) << static_cast<unsigned>(address.scale)) + static_cast<intptr_t>(address.offset);
+        else
+            effective = context.gpr(address.base) + static_cast<intptr_t>(address.offset);
+        uintptr_t start = context.gpr(inputReg);
+        uintptr_t end = start + (static_cast<uintptr_t>(static_cast<uint32_t>(context.gpr(lengthReg))) << unitShift);
+        if (effective < start || effective + bytes > end) {
+            dataLogLn("RegExp JIT subject read out of bounds at site ", site, ": [", RawPointer(reinterpret_cast<void*>(effective)), ", +", bytes, ") vs subject [", RawPointer(reinterpret_cast<void*>(start)), ", ", RawPointer(reinterpret_cast<void*>(end)), ")");
+            CRASH();
+        }
+    });
+}
+
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
 static void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::RegisterID resultReg)
 {
@@ -676,6 +701,7 @@ static void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::Re
         jit.swap(regs.regT0, resultReg);
 
     // A code unit that is not a surrogate is a BMP code point on its own.
+    emitVerifySubjectRead(jit, MacroAssembler::Address(regs.regUnicodeInputAndTrail), 2, regs.input, regs.length, 1, __LINE__);
     jit.load16Unaligned(MacroAssembler::Address(regs.regUnicodeInputAndTrail), resultReg);
     jit.urshift32(resultReg, MacroAssembler::TrustedImm32(11), regs.unicodeAndSubpatternIdTemp);
     done.append(jit.branch32(MacroAssembler::NotEqual, regs.unicodeAndSubpatternIdTemp, surrogateTagShiftedRight11));
@@ -685,6 +711,7 @@ static void tryReadUnicodeCharImpl(VM& vm, CCallHelpers& jit, MacroAssembler::Re
     slowCases.append(jit.branchPtr(MacroAssembler::Above, regs.unicodeAndSubpatternIdTemp, regs.endOfStringAddress));
 
     // Load the pair. If it is a proper surrogate pair, compute the non-BMP codepoint.
+    emitVerifySubjectRead(jit, MacroAssembler::Address(regs.regUnicodeInputAndTrail), 4, regs.input, regs.length, 1, __LINE__);
     jit.load32(MacroAssembler::Address(regs.regUnicodeInputAndTrail), resultReg);
     jit.and32(surrogateTagMask, resultReg, regs.unicodeAndSubpatternIdTemp);
     slowCases.append(jit.branch32(MacroAssembler::NotEqual, regs.unicodeAndSubpatternIdTemp, surrogatePairTags));
@@ -741,6 +768,7 @@ static void tryReadUnicodeCharSlowImpl(CCallHelpers& jit)
 
     // Load and try to process two UTF-16 characters.
     // If they are a proper surrogate pair, compute the non-BMP codepoint.
+    emitVerifySubjectRead(jit, MacroAssembler::Address(regs.regUnicodeInputAndTrail), 4, regs.input, regs.length, 1, __LINE__);
     jit.load32(MacroAssembler::Address(regs.regUnicodeInputAndTrail), resultReg);
 #if CPU(ARM64)
     jit.and32AndSetFlags(surrogateTagMask, resultReg, regs.unicodeAndSubpatternIdTemp);
@@ -775,6 +803,7 @@ static void tryReadUnicodeCharSlowImpl(CCallHelpers& jit)
     bmpDone.append(jit.branchPtr(MacroAssembler::Below, regs.regUnicodeInputAndTrail, regs.input));
 
     // Load the prior character and check if it is a leading surrogate.
+    emitVerifySubjectRead(jit, MacroAssembler::Address(regs.regUnicodeInputAndTrail), 2, regs.input, regs.length, 1, __LINE__);
     jit.load16Unaligned(MacroAssembler::Address(regs.regUnicodeInputAndTrail), regs.regUnicodeInputAndTrail);
     jit.and32(surrogateTagMask, regs.regUnicodeInputAndTrail, regs.unicodeAndSubpatternIdTemp);
     // It wasn't a leading surrogate, so return the original dangling surrogate.
@@ -786,6 +815,7 @@ static void tryReadUnicodeCharSlowImpl(CCallHelpers& jit)
 
     bmpOnly.link(&jit);
     // Can't read two characters, then just read one.
+    emitVerifySubjectRead(jit, MacroAssembler::Address(regs.regUnicodeInputAndTrail), 2, regs.input, regs.length, 1, __LINE__);
     jit.load16Unaligned(MacroAssembler::Address(regs.regUnicodeInputAndTrail), resultReg);
 
     // Is the character a trailing surrogate?
@@ -1666,6 +1696,12 @@ class YarrGenerator final : public YarrJITInfo {
         return m_jit.branch32(MacroAssembler::NotEqual, m_regs.index, m_regs.length);
     }
 
+    template<typename AddressType>
+    void verifySubjectRead(AddressType address, unsigned bytes, unsigned site)
+    {
+        emitVerifySubjectRead(m_jit, address, bytes, m_regs.input, m_regs.length, m_charSize == CharSize::Char8 ? 0 : 1, site);
+    }
+
     MacroAssembler::BaseIndex negativeOffsetIndexedAddress(Checked<unsigned> negativeCharacterOffset, MacroAssembler::RegisterID tempReg)
     {
         return negativeOffsetIndexedAddress(negativeCharacterOffset, tempReg, m_regs.index);
@@ -1768,6 +1804,7 @@ class YarrGenerator final : public YarrJITInfo {
         const MacroAssembler::RegisterID temp = m_regs.unicodeAndSubpatternIdTemp;
 
         m_jit.getEffectiveAddress(address, unitAddress);
+        verifySubjectRead(MacroAssembler::Address(unitAddress), 2, __LINE__);
         m_jit.load16(MacroAssembler::Address(unitAddress), resultReg);
 
         MacroAssembler::JumpList notAPair;
@@ -1778,6 +1815,7 @@ class YarrGenerator final : public YarrJITInfo {
         // The unit before must exist (unitAddress > input) ...
         notAPair.append(m_jit.branchPtr(MacroAssembler::BelowOrEqual, unitAddress, m_regs.input));
         // ... and be a lead surrogate: (unit & 0xfc00) == 0xd800.
+        verifySubjectRead(MacroAssembler::Address(unitAddress, -static_cast<int32_t>(sizeof(char16_t))), 2, __LINE__);
         m_jit.load16(MacroAssembler::Address(unitAddress, -static_cast<int32_t>(sizeof(char16_t))), temp2);
         m_jit.move(temp2, temp);
         m_jit.and32(MacroAssembler::TrustedImm32(0xfc00), temp);
@@ -1812,6 +1850,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(negativeCharacterOffset, character, indexReg);
         m_jit.getEffectiveAddress(address, m_regs.regUnicodeInputAndTrail);
+        verifySubjectRead(MacroAssembler::Address(m_regs.regUnicodeInputAndTrail), 4, __LINE__);
         m_jit.load32(MacroAssembler::Address(m_regs.regUnicodeInputAndTrail), character);
 
         // Fast path for a small matches-only trail set (e.g., OfAKindRegExp's
@@ -1931,6 +1970,7 @@ class YarrGenerator final : public YarrJITInfo {
         if (minimumSize == 1)
             startIsLastUnit = atEndOfInput();
 
+        verifySubjectRead(negativeOffsetIndexedAddress(minimumSize, m_regs.regT0, m_regs.index), 4, __LINE__);
         m_jit.load32(negativeOffsetIndexedAddress(minimumSize, m_regs.regT0, m_regs.index), m_regs.regT0);
         m_jit.and32(surrogateTagMask, m_regs.regT0);
         m_jit.compare32(MacroAssembler::Equal, m_regs.regT0, surrogatePairTags, m_regs.firstCharacterAdditionalReadSize);
@@ -1950,6 +1990,7 @@ class YarrGenerator final : public YarrJITInfo {
     {
         MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(negativeCharacterOffset, resultReg, indexReg);
 
+        verifySubjectRead(address, m_charSize == CharSize::Char8 ? 1 : 2, __LINE__);
         if (m_charSize == CharSize::Char8)
             m_jit.load8(address, resultReg);
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
@@ -1967,6 +2008,7 @@ class YarrGenerator final : public YarrJITInfo {
     {
         MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(negativeCharacterOffset, resultReg, m_regs.index);
 
+        verifySubjectRead(address, m_charSize == CharSize::Char8 ? 1 : 2, __LINE__);
         if (m_charSize == CharSize::Char8)
             m_jit.load8(address, resultReg);
         else
@@ -2001,6 +2043,7 @@ class YarrGenerator final : public YarrJITInfo {
     void readCodeUnit(Checked<unsigned> negativeCharacterOffset, MacroAssembler::RegisterID resultReg, MacroAssembler::RegisterID indexReg)
     {
         MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(negativeCharacterOffset, resultReg, indexReg);
+        verifySubjectRead(address, m_charSize == CharSize::Char8 ? 1 : 2, __LINE__);
         if (m_charSize == CharSize::Char8)
             m_jit.load8(address, resultReg);
         else
@@ -3584,6 +3627,7 @@ class YarrGenerator final : public YarrJITInfo {
                 };
 
                 auto check2 = [&] (Checked<unsigned> offset, uint16_t characters, uint16_t caseMask, MatchTargets& matchTargets) {
+                    verifySubjectRead(negativeOffsetIndexedAddress(offset, character), 2, __LINE__);
                     m_jit.load16Unaligned(negativeOffsetIndexedAddress(offset, character), character);
                     if (caseMask)
                         m_jit.or32(MacroAssembler::Imm32(caseMask), character);
@@ -3594,6 +3638,7 @@ class YarrGenerator final : public YarrJITInfo {
                 };
 
                 auto check4 = [&] (Checked<unsigned> offset, unsigned characters, unsigned caseMask, uint64_t ignoredCharsMask, MatchTargets& matchTargets) {
+                    verifySubjectRead(negativeOffsetIndexedAddress(offset, character), 4, __LINE__);
                     m_jit.load32WithUnalignedHalfWords(negativeOffsetIndexedAddress(offset, character), character);
                     if (ignoredCharsMask)
                         m_jit.and32(MacroAssembler::Imm32(~ignoredCharsMask), character);
@@ -3607,6 +3652,7 @@ class YarrGenerator final : public YarrJITInfo {
 
 #if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
                 auto check8 = [&] (Checked<unsigned> offset, uint64_t characters, uint64_t caseMask, uint64_t ignoredCharsMask, MatchTargets& matchTargets) {
+                    verifySubjectRead(negativeOffsetIndexedAddress(offset, character), 8, __LINE__);
                     m_jit.load64(negativeOffsetIndexedAddress(offset, character), character);
                     if (ignoredCharsMask)
                         m_jit.and64(MacroAssembler::TrustedImm64(~ignoredCharsMask), character);
@@ -3653,6 +3699,7 @@ class YarrGenerator final : public YarrJITInfo {
                 };
 
                 auto check2 = [&] (Checked<unsigned> offset, unsigned characters, unsigned caseMask, MatchTargets& matchTargets) {
+                    verifySubjectRead(negativeOffsetIndexedAddress(offset, character), 4, __LINE__);
                     m_jit.load32WithUnalignedHalfWords(negativeOffsetIndexedAddress(offset, character), character);
                     if (caseMask)
                         m_jit.or32(MacroAssembler::Imm32(caseMask), character);
@@ -3664,6 +3711,7 @@ class YarrGenerator final : public YarrJITInfo {
 
 #if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
                 auto check4 = [&] (Checked<unsigned> offset, uint64_t characters, uint64_t caseMask, uint64_t ignoredCharsMask, MatchTargets& matchTargets) {
+                    verifySubjectRead(negativeOffsetIndexedAddress(offset, character), 8, __LINE__);
                     m_jit.load64(negativeOffsetIndexedAddress(offset, character), character);
                     if (ignoredCharsMask)
                         m_jit.and64(MacroAssembler::TrustedImm64(~ignoredCharsMask), character);
@@ -4325,6 +4373,7 @@ class YarrGenerator final : public YarrJITInfo {
 
             MacroAssembler::Jump backtrackToBegin = m_jit.branchTest32(MacroAssembler::Zero, countRegister);
 
+            verifySubjectRead(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition + (m_direction == Backward ? 1 : 2), character), 4, __LINE__);
             if (m_direction == Backward)
                 m_jit.load32WithUnalignedHalfWords(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition + 1, character), character);
             else
@@ -4539,10 +4588,13 @@ class YarrGenerator final : public YarrJITInfo {
         MacroAssembler::Jump insideKnownSpan = m_jit.branch32(MacroAssembler::BelowOrEqual, matchPos, bound);
         MacroAssembler::Label findBOLLoop(&m_jit);
         m_jit.sub32(MacroAssembler::TrustedImm32(1), matchPos);
-        if (m_charSize == CharSize::Char8)
+        if (m_charSize == CharSize::Char8) {
+            verifySubjectRead(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesOne, 0), 1, __LINE__);
             m_jit.load8(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesOne, 0), character);
-        else
+        } else {
+            verifySubjectRead(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesTwo, 0), 2, __LINE__);
             m_jit.load16(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesTwo, 0), character);
+        }
         matchCharacterClass(character, scratch, foundBeginningNewLine, m_pattern.newlineCharacterClass());
         m_jit.branch32(MacroAssembler::Above, matchPos, bound).linkTo(findBOLLoop, &m_jit);
 
@@ -4579,10 +4631,13 @@ class YarrGenerator final : public YarrJITInfo {
 
         MacroAssembler::Label findEOLLoop(&m_jit);
         foundEndingNewLine.append(m_jit.branch32(MacroAssembler::Equal, matchPos, m_regs.length));
-        if (m_charSize == CharSize::Char8)
+        if (m_charSize == CharSize::Char8) {
+            verifySubjectRead(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesOne, 0), 1, __LINE__);
             m_jit.load8(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesOne, 0), character);
-        else
+        } else {
+            verifySubjectRead(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesTwo, 0), 2, __LINE__);
             m_jit.load16(MacroAssembler::BaseIndex(m_regs.input, matchPos, MacroAssembler::TimesTwo, 0), character);
+        }
         matchCharacterClass(character, scratch, foundEndingNewLine, m_pattern.newlineCharacterClass());
         m_jit.add32(MacroAssembler::TrustedImm32(1), matchPos);
         m_jit.jump(findEOLLoop);
@@ -4953,6 +5008,7 @@ class YarrGenerator final : public YarrJITInfo {
                     JIT_COMMENT(m_jit, "Shared-lead-surrogate body-alt filter");
                     auto loopHead = m_jit.label();
                     MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(op.m_checkedOffset, m_regs.regT0);
+                    verifySubjectRead(address, 2, __LINE__);
                     m_jit.load16Unaligned(address, m_regs.regT0);
                     auto matched = m_jit.branch32(MacroAssembler::Equal, m_regs.regT0, MacroAssembler::TrustedImm32(sharedLeadSurrogate));
                     jumpIfAvailableInput(1).linkTo(loopHead, &m_jit);
@@ -7747,6 +7803,7 @@ class YarrGenerator final : public YarrJITInfo {
                 }
             }
             MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(units[i].offset, character);
+            verifySubjectRead(address, width * unitBits / 8, __LINE__);
             switch (width * unitBits) {
             case 8:
                 m_jit.load8(address, character);
@@ -8641,6 +8698,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         // Load 16 bytes at 4 offsets into vectorInput0-3 (these are reloaded each iteration)
         // baseOffset is incorporated into the immediate offset to avoid an extra add instruction.
+        verifySubjectRead(MacroAssembler::Address(m_regs.regT0, baseOffset + 0), 16 + 3, __LINE__);
         m_jit.loadVector(MacroAssembler::Address(m_regs.regT0, baseOffset + 0), m_regs.vectorInput0);
         m_jit.loadVector(MacroAssembler::Address(m_regs.regT0, baseOffset + 1), m_regs.vectorInput1);
         m_jit.loadVector(MacroAssembler::Address(m_regs.regT0, baseOffset + 2), m_regs.vectorInput2);
@@ -8725,6 +8783,7 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.add64(m_regs.input, m_regs.index, m_regs.regT0);
 
         // Load 4 bytes at current position (baseOffset incorporated into offset)
+        verifySubjectRead(MacroAssembler::Address(m_regs.regT0, baseOffset), 4, __LINE__);
         m_jit.load32(MacroAssembler::Address(m_regs.regT0, baseOffset), m_regs.regT1);
 
         // Pattern 1: (word & mask1) == maskedChars1
@@ -8918,6 +8977,7 @@ class YarrGenerator final : public YarrJITInfo {
         auto simdLoopHead = m_jit.label();
 
         // Load 16 input bytes
+        verifySubjectRead(MacroAssembler::BaseIndex(m_regs.input, m_regs.index, MacroAssembler::TimesOne, baseOffset), 16, __LINE__);
         m_jit.loadVector(MacroAssembler::BaseIndex(m_regs.input, m_regs.index, MacroAssembler::TimesOne, baseOffset), m_regs.vectorInput0);
 
         // Step 1: Extract low nibbles (input & 0x0F) -> vectorScratch0
