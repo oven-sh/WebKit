@@ -625,7 +625,9 @@ private:
 
             case ClassSetConstructionState::Empty:
             case ClassSetConstructionState::AfterSetOperator:
-                if (!processingEscape && ch == '-') {
+                // (hyphenIsRange is false exactly for an escaped character; m_processingEscape can be
+                // left over from an escape that did not come through here, such as \d or \q{...}.)
+                if (hyphenIsRange && ch == '-') {
                     m_errorCode = ErrorCode::InvalidClassSetCharacter;
                     return;
                 }
@@ -666,16 +668,19 @@ private:
                 return;
 
             case ClassSetConstructionState::AfterSetOperand:
-                if (!unionOpActive)
+                // A character right after a nested class or \q{...}: a union with it. (There is no
+                // cached character to flush in this state -- doing so added a stale one, U+0000
+                // after [\q{ab}x] -- and an escaped hyphen is an ordinary member here.)
+                if (!unionOpActive) {
                     m_errorCode = ErrorCode::InvalidClassSetOperation;
-
-                if (ch == '-')
-                    m_errorCode = ErrorCode::InvalidClassSetOperation;
-                else {
-                    m_delegate.atomCharacterClassAtom(m_character);
-                    switchFromDefaultOpToUnionOpIfNeeded();
-                    processCharacter();
+                    return;
                 }
+                if (hyphenIsRange && ch == '-') { // an unescaped '-' (a ClassSetSyntaxCharacter)
+                    m_errorCode = ErrorCode::InvalidClassSetOperation;
+                    return;
+                }
+                switchFromDefaultOpToUnionOpIfNeeded();
+                processCharacter();
                 return;
             }
         }

@@ -43,10 +43,12 @@ namespace JSC { namespace Yarr {
 #define YarrStackSpaceForBackTrackInfoParentheses 4
 #define YarrStackSpaceForDotStarEnclosure 2 // The start offset, and the end of the newline-free span known to follow it.
 
-// First-character dispatch (YarrJIT) emits one entry stub per (chain, alternative) pair and gives up
-// past these bounds; YarrPattern consults the stub bound so as not to wrap a body it cannot serve.
-static constexpr unsigned alternationDispatchMaxChains = 640;
-static constexpr unsigned alternationDispatchMaxStubs = 768;
+// First-character dispatch (YarrJIT) emits one entry stub per (chain, alternative) pair (a store
+// and a jump each) and gives up past these bounds; YarrPattern consults the stub bound so as not
+// to wrap a body it cannot serve. Sized to take the flat expansion of \p{RGI_Emoji} (~3,800
+// alternatives, ~1,400 distinct first code points).
+static constexpr unsigned alternationDispatchMaxChains = 2048;
+static constexpr unsigned alternationDispatchMaxStubs = 4096;
 
 static constexpr unsigned quantifyInfinite = UINT_MAX;
 static constexpr uint64_t quantifyInfinite64 = std::numeric_limits<uint64_t>::max();

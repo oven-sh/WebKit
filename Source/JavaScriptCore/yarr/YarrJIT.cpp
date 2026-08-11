@@ -3191,15 +3191,6 @@ class YarrGenerator final : public YarrJITInfo {
             // beginIndex cannot be used here because it is overwritten on
             // each reentry iteration for partial match recovery.
             storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoBackReference::backReferenceSizeIndex());
-            // The backtrack code's zero-width progress guard reads matchAmount and beginIndex;
-            // start them at "no iterations, here" rather than whatever an earlier visit of this
-            // term (or another term sharing the slot) left behind. A zero-width iteration below
-            // does not touch beginIndex, so a stale value that happened to differ from the index
-            // let an undefined or empty capture be "matched" again and again, once per backtrack,
-            // until the match limit -- seen with a lazily quantified backreference inside a
-            // quantified group in a lookbehind.
-            storeToFrame(MacroAssembler::TrustedImm32(0), parenthesesFrameLocation + BackTrackInfoBackReference::matchAmountIndex());
-            storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoBackReference::beginIndex());
             matches.append(m_jit.jump());
 
             defineReentryLabel(op);
@@ -3217,36 +3208,44 @@ class YarrGenerator final : public YarrJITInfo {
             } else
                 loadSubPattern(subpatternId, patternIndex, patternTemp);
 
-            // Re-entry asks for one more iteration after the continuation failed. An iteration
-            // that can only match empty (an undefined capture -- either slot -1, see above -- or
-            // an empty one) ends where it started, which RepeatMatcher rejects once the minimum is
-            // met (and a non-greedy term's minimum is always 0 here: YarrPattern splits x{n,}? into
-            // x{n} x*?). Reporting it as another success instead handed the same position to the
-            // same continuation a second time: harmless alone, but it doubles the work at every
-            // nesting level, e.g. (?:\1*?.?|)+ inside a lookbehind went exponential.
-            zeroLengthMatches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternTemp));
-            zeroLengthMatches.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternIndex));
-            MacroAssembler::Jump tryNonZeroMatch = m_jit.branch32(MacroAssembler::NotEqual, patternIndex, patternTemp);
-            zeroLengthMatches.link(&m_jit);
-            loadFromFrame(parenthesesFrameLocation + BackTrackInfoBackReference::backReferenceSizeIndex(), m_regs.index);
-            op.m_jumps.append(m_jit.jump());
-            tryNonZeroMatch.link(&m_jit);
+            // Re-entry asks for one more iteration after the continuation failed. If that
+            // iteration cannot be had -- the capture is undefined (either slot -1, see above) or
+            // empty, so the iteration would end where it started, which RepeatMatcher rejects once
+            // the minimum is met (a non-greedy term's minimum is always 0 here: YarrPattern splits
+            // x{n,}? into x{n} x*?); or there is not enough input left for it; or the characters
+            // differ -- the term has no further way to match: restore the position it started at
+            // and fail, as the interpreter does. Each of these used to rejoin the success path at
+            // the unchanged position, handing the same state to the same continuation again:
+            // harmless once, but doubling the work at every enclosing level ((?:.\1*?)+,
+            // (?:\1*?.?|)+ in a lookbehind, ... went exponential and then hit the match limit,
+            // returning null or a short /g result where a match exists).
+            MacroAssembler::JumpList iterationFailed;
+            iterationFailed.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternTemp));
+            iterationFailed.append(m_jit.branch32(MacroAssembler::Equal, MacroAssembler::TrustedImm32(-1), patternIndex));
+            iterationFailed.append(zeroLengthMatches); // (a duplicate-named group none of whose groups participated)
+            iterationFailed.append(m_jit.branch32(MacroAssembler::Equal, patternIndex, patternTemp));
 
-            // Check if we have input remaining to match.
-            // Update beginIndex before the check so the backtrack code's
-            // zero-width progress guard sees the current position even
-            // when checkNotEnoughInput bails out early.
+            // Update beginIndex before the input check so the backtrack code's zero-width progress
+            // guard sees the current position.
             storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoBackReference::beginIndex());
             m_jit.sub32(patternIndex, patternTemp);
-            emitBackReferenceSpanClaim(matches, patternTemp, characterOrTemp, parenthesesFrameLocation);
+            emitBackReferenceSpanClaim(iterationFailed, patternTemp, characterOrTemp, parenthesesFrameLocation);
 
             matchBackreference(opIndex, incompleteMatches, characterOrTemp, patternIndex, patternTemp, subpatternIdReg == m_regs.unicodeAndSubpatternIdTemp ? subpatternIdReg : InvalidGPRReg);
             emitBackReferenceSpanFrontier(parenthesesFrameLocation);
 
             matches.append(m_jit.jump());
 
+            // The failure goes through this term's backtrack entry, whose zero-width progress
+            // guard (index == beginIndex with matchAmount >= 1, which holds on every re-entry) then
+            // takes the "no further way to match" exit to the previous term; so restore the start
+            // position into both the index and beginIndex. (Leaving beginIndex at the failed
+            // iteration's start would read as progress and replay the iterations forever.)
             incompleteMatches.link(&m_jit);
-            loadFromFrame(parenthesesFrameLocation + BackTrackInfoBackReference::beginIndex(), m_regs.index);
+            iterationFailed.link(&m_jit);
+            loadFromFrame(parenthesesFrameLocation + BackTrackInfoBackReference::backReferenceSizeIndex(), m_regs.index);
+            storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoBackReference::beginIndex());
+            op.m_jumps.append(m_jit.jump());
 
             matches.link(&m_jit);
             break;
@@ -8002,13 +8001,44 @@ class YarrGenerator final : public YarrJITInfo {
             std::ranges::sort(cuts);
             removeRepeatedElements(cuts);
             size_t chainCountBeforeWide = info->chains.size();
+            // Membership per interval by sweeping range starts and ends in step with the cuts (every
+            // range boundary is a cut), rather than probing every alternative at every interval:
+            // alternatives that can start with anything wide are members throughout.
+            struct RangeEvent {
+                unsigned at;
+                unsigned alternative;
+                bool enters;
+            };
+            Vector<RangeEvent, 64> events;
+            Vector<uint8_t, 64> active; // depth, for an alternative's overlapping ranges
+            active.grow(alternatives.size());
+            active.fill(0);
+            for (unsigned i = 0; i < alternatives.size(); ++i) {
+                if (sets[i].any || sets[i].wideAny) {
+                    active[i] = 1;
+                    continue;
+                }
+                for (auto& range : sets[i].wideRanges) {
+                    events.append({ range.first, i, true });
+                    events.append({ range.second + 1, i, false });
+                }
+            }
+            std::ranges::sort(events, [](const RangeEvent& a, const RangeEvent& b) { return a.at < b.at; });
+            size_t nextEvent = 0;
             bool tooMany = false;
             for (size_t k = 0; k + 1 < cuts.size(); ++k) {
                 unsigned begin = cuts[k];
                 unsigned end = cuts[k + 1] - 1;
+                while (nextEvent < events.size() && events[nextEvent].at <= begin) {
+                    auto& event = events[nextEvent++];
+                    if (event.enters)
+                        ++active[event.alternative];
+                    else
+                        --active[event.alternative];
+                }
                 Vector<unsigned, 4> members;
                 for (unsigned i = 0; i < alternatives.size(); ++i) {
-                    if (sets[i].matchesCodePoint(begin))
+                    if (active[i])
                         members.append(i);
                 }
                 unsigned chainId = chainIdFor(WTF::move(members));

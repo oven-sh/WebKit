@@ -245,7 +245,7 @@ private:
 // leading ones as fit the byte budget passed to stopAllocator(), which are
 // kept empty for the next start).
 //
-// This allocator is non-renetrant, it is encumbant on the clients to ensure
+// This allocator is non-reentrant; it is incumbent on the clients to ensure
 // startAllocator() is not called again until stopAllocator() has been called.
 class BumpPointerAllocator {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BumpPointerAllocator);

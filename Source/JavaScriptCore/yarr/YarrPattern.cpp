@@ -88,7 +88,7 @@ public:
         }
 
         if (!other->m_strings.isEmpty())
-            unionStrings(other->m_strings); // both sides sorted and repeat-free, as the set operations expect
+            performSetOpWithStrings(other->m_strings); // a union here: keeps m_strings sorted and repeat-free, as the set operations expect
         for (size_t i = 0; i < other->m_matches8.size(); ++i)
             addSorted(m_matches8, other->m_matches8[i]);
         for (size_t i = 0; i < other->m_ranges8.size(); ++i)
@@ -97,7 +97,6 @@ public:
             addSorted(m_matches32, other->m_matches32[i]);
         for (size_t i = 0; i < other->m_ranges32.size(); ++i)
             addSortedRange(m_ranges32, other->m_ranges32[i].begin, other->m_ranges32[i].end);
-        m_mayContainStrings |= other->hasStrings();
     }
 
     void appendInverted(const CharacterClass* other)
@@ -1707,10 +1706,22 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
         m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     }
 
-    // One alternative per string, longest first, then the single characters, then the empty
-    // string if it is a member (it is shorter than any character, so it goes last).
-    void expandClassWithStringsFlat(CharacterClass* characterClass)
+    // A class that contains strings matches, at each position, its longest member that matches there
+    // (ClassStringDisjunction semantics), then backtracks to shorter ones: one alternative per string,
+    // longest first, then the single characters, then the empty member. Prefix factoring
+    // (factorAlternatives) later shares common prefixes among those alternatives where that is safe,
+    // and the JIT dispatches them on their first code point, so \p{RGI_Emoji}'s ~3,800 alternatives
+    // are not tried one after the other. A list long enough to be dispatched sits in a group of
+    // its own inside the group the atom's quantifier (if any) applies to, because the dispatcher
+    // serves once-through groups only: \p{RGI_Emoji}+ then iterates at the speed \p{RGI_Emoji}
+    // matches. (Shorter lists keep the single group, the shape checkForTerminalParentheses can
+    // turn into a string list.)
+    void expandClassWithStrings(CharacterClass* characterClass)
     {
+        static constexpr size_t minStringsForDispatchGroup = 4; // YarrJIT's alternationDispatchMinAlternatives
+        bool dispatchGroup = characterClass->m_strings.size() >= minStringsForDispatchGroup;
+        if (dispatchGroup)
+            atomParenthesesSubpatternBegin(false);
         atomParenthesesSubpatternBegin(false);
         unsigned alternativeCount = 0;
         bool hasEmptyString = false;
@@ -1734,216 +1745,8 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
         if (hasEmptyString && alternativeCount)
             disjunction(CreateDisjunctionPurpose::ForNextAlternative);
         atomParenthesesEnd();
-    }
-
-    // Whether ch is one of the class's single characters (its strings aside).
-    static TriState singlesContain(const CharacterClass& characterClass, char32_t ch)
-    {
-        if (characterClass.m_anyCharacter)
-            return TriState::True;
-        if (characterClass.m_table && !characterClass.hasSingleCharacters())
-            return TriState::Indeterminate;
-        auto inRanges = [ch](const Vector<CharacterRange>& ranges) {
-            for (auto& range : ranges) {
-                if (ch >= range.begin && ch <= range.end)
-                    return true;
-            }
-            return false;
-        };
-        bool found = ch <= 0xff
-            ? characterClass.m_matches8.contains(static_cast<char16_t>(ch)) || inRanges(characterClass.m_ranges8)
-            : characterClass.m_matches32.contains(ch) || inRanges(characterClass.m_ranges32);
-        return found ? TriState::True : TriState::False;
-    }
-
-    // A class that contains strings matches, at each position, its longest member that matches
-    // there (ClassStringDisjunction semantics), then backtracks to shorter ones. Emitting one
-    // alternative per string, longest first, does that but tries thousands of alternatives for
-    // \p{RGI_Emoji}. Emit a trie instead: one branch per distinct next character, deeper
-    // continuations before a node's own end, sibling leaves gathered into a class, and the single
-    // characters last (minus those that head a branch, which end inside their branch instead).
-    // Along the one path the input can follow, deeper-first is exactly longest-first, and branches
-    // for other characters cannot match at all, so the order of matches is unchanged.
-    void expandClassWithStrings(CharacterClass* characterClass)
-    {
-        // The trie's "no other branch can match here" argument needs exact, forward matching:
-        // under /i case variants of one prefix would sit in sibling branches, and matched backward
-        // (inside a lookbehind) members that are suffixes of one another do. Those keep the flat
-        // longest-first list, as do sets small enough for it not to matter.
-        static constexpr size_t minStringsForTrie = 6;
-        if (ignoreCase() || parenthesisMatchDirection() == Backward || characterClass->m_strings.size() < minStringsForTrie) {
-            expandClassWithStringsFlat(characterClass);
-            return;
-        }
-
-        Vector<Vector<char32_t>> strings = characterClass->m_strings;
-        std::ranges::sort(strings, [](const Vector<char32_t>& a, const Vector<char32_t>& b) {
-            return std::ranges::lexicographical_compare(a, b);
-        });
-        // (Sorted by code point sequence, so every trie node is a contiguous run of `strings`.)
-
-        atomParenthesesSubpatternBegin(false);
-        bool firstAlternative = true;
-        auto nextAlternative = [&] {
-            if (!firstAlternative)
-                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-            firstAlternative = false;
-        };
-
-        CharacterClassConstructor branchHeads(false, CompileMode::UnicodeSets); // single characters that end inside a branch
-        bool anyBranchHeadIsSingle = false;
-        bool hasEmptyString = false;
-        size_t begin = 0;
-        while (begin < strings.size()) {
-            if (strings[begin].isEmpty()) { // [\q{}]: matches empty, after everything longer
-                hasEmptyString = true;
-                ++begin;
-                continue;
-            }
-            char32_t head = strings[begin][0];
-            size_t end = begin;
-            while (end < strings.size() && !strings[end].isEmpty() && strings[end][0] == head)
-                ++end;
-            // (For an any-character class the class alternative takes the bare head itself; also ending
-            // it inside its branch would let two alternatives match one character -- exponential under
-            // a quantifier.)
-            bool headIsSingle = !characterClass->m_anyCharacter && singlesContain(*characterClass, head) == TriState::True;
-            if (headIsSingle) {
-                branchHeads.putChar(head);
-                anyBranchHeadIsSingle = true;
-            }
-            nextAlternative();
-            atomPatternCharacter(head, /* hyphenIsRange */ false);
-            emitStringTrieNode(strings, begin, end, 1, headIsSingle);
-            begin = end;
-        }
-
-        if (characterClass->hasSingleCharacters() || characterClass->m_anyCharacter) {
-            CharacterClass* singles = characterClass;
-            if (anyBranchHeadIsSingle && !characterClass->m_anyCharacter) {
-                auto heads = branchHeads.charClass();
-                CharacterClassConstructor remaining(false, CompileMode::UnicodeSets);
-                remaining.append(characterClass);
-                remaining.combiningSetOp(CharacterClassSetOp::Subtraction);
-                remaining.append(heads.get());
-                auto remainingClass = remaining.charClass();
-                remainingClass->m_strings.clear();
-                singles = remainingClass.get();
-                m_pattern.m_userCharacterClasses.append(WTF::move(remainingClass));
-            }
-            if (singles->hasSingleCharacters() || singles->m_anyCharacter) {
-                nextAlternative();
-                m_alternative->m_terms.append(PatternTerm(singles, false, m_flags, parenthesisMatchDirection()));
-            }
-        }
-        if (hasEmptyString) {
-            nextAlternative();
-            firstAlternative = false; // (an alternative with no terms)
-        } else if (firstAlternative) {
-            // Nothing can match (no strings, no characters): an always-failing alternative.
-            CharacterClassConstructor nothing(false, CompileMode::UnicodeSets);
-            m_pattern.m_userCharacterClasses.append(nothing.charClass());
-            m_alternative->m_terms.append(PatternTerm(m_pattern.m_userCharacterClasses.last().get(), false, m_flags, parenthesisMatchDirection()));
-        }
-        atomParenthesesEnd();
-    }
-
-    // strings[begin, end) share their first `depth` characters, which have been emitted. Emit what
-    // may follow: a branch per distinct next character (recursively), then the strings that end one
-    // character further as one class, then -- if a string (or single character) ends right here --
-    // the empty alternative.
-    void emitStringTrieNode(const Vector<Vector<char32_t>>& strings, size_t begin, size_t end, size_t depth, bool endsHere)
-    {
-        if (!isSafeToRecurse()) [[unlikely]] {
-            m_error = ErrorCode::PatternTooLarge;
-            return;
-        }
-        struct Branch {
-            char32_t ch;
-            size_t begin;
-            size_t end;
-            bool isLeaf; // exactly one string, ending right after ch
-        };
-        Vector<Branch, 8> branches;
-        size_t leafCount = 0;
-      nextCharacter: // a single continuation with no early end loops here instead of recursing
-        branches.shrink(0);
-        leafCount = 0;
-        for (size_t i = begin; i < end;) {
-            if (strings[i].size() == depth) {
-                endsHere = true;
-                ++i;
-                continue;
-            }
-            char32_t ch = strings[i][depth];
-            size_t j = i;
-            while (j < end && strings[j].size() > depth && strings[j][depth] == ch)
-                ++j;
-            bool isLeaf = j == i + 1 && strings[i].size() == depth + 1;
-            leafCount += isLeaf;
-            branches.append({ ch, i, j, isLeaf });
-            i = j;
-        }
-        if (branches.isEmpty()) {
-            ASSERT(endsHere);
-            return;
-        }
-        bool gatherLeaves = leafCount >= 2;
-        size_t alternativeCount = (gatherLeaves ? branches.size() - leafCount + 1 : branches.size()) + (endsHere ? 1 : 0);
-        if (alternativeCount == 1) {
-            // A single continuation and no early end: no group needed.
-            if (gatherLeaves)
-                appendLeafClass(branches);
-            else if (branches[0].end == branches[0].begin + 1) {
-                // One string left: emit its tail without recursing per character.
-                for (size_t i = depth; i < strings[branches[0].begin].size(); ++i)
-                    atomPatternCharacter(strings[branches[0].begin][i], false);
-            } else {
-                atomPatternCharacter(branches[0].ch, false);
-                if (hasError(m_error))
-                    return;
-                begin = branches[0].begin;
-                end = branches[0].end;
-                endsHere = branches[0].isLeaf;
-                ++depth;
-                goto nextCharacter;
-            }
-            return;
-        }
-        atomParenthesesSubpatternBegin(false);
-        bool first = true;
-        for (auto& branch : branches) {
-            if (gatherLeaves && branch.isLeaf)
-                continue;
-            if (!first)
-                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-            first = false;
-            atomPatternCharacter(branch.ch, false);
-            emitStringTrieNode(strings, branch.begin, branch.end, depth + 1, branch.isLeaf);
-        }
-        if (gatherLeaves) {
-            if (!first)
-                disjunction(CreateDisjunctionPurpose::ForNextAlternative);
-            first = false;
-            appendLeafClass(branches);
-        }
-        if (endsHere) {
-            ASSERT(!first);
-            disjunction(CreateDisjunctionPurpose::ForNextAlternative); // the empty alternative: end here
-        }
-        atomParenthesesEnd();
-    }
-
-    template<typename Branches>
-    void appendLeafClass(const Branches& branches)
-    {
-        CharacterClassConstructor leaves(ignoreCase(), CompileMode::UnicodeSets);
-        for (auto& branch : branches) {
-            if (branch.isLeaf)
-                leaves.putChar(branch.ch);
-        }
-        m_pattern.m_userCharacterClasses.append(leaves.charClass());
-        m_alternative->m_terms.append(PatternTerm(m_pattern.m_userCharacterClasses.last().get(), false, m_flags, parenthesisMatchDirection()));
+        if (dispatchGroup)
+            atomParenthesesEnd();
     }
 
     void atomParenthesesSubpatternBegin(bool capture, std::optional<String> optGroupName = std::nullopt)
@@ -3210,12 +3013,20 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
         // that checkForTerminalParentheses already committed to a specialized
         // code shape (string lists, terminal parentheses) are left alone: that
         // shape is fixed by their alternatives, which restructuring would break.
+        //
+        // Not beneath a group that can repeat, though: every group factoring creates takes frame
+        // slots, sibling alternatives no longer share them (setupDisjunctionOffsets), and a repeating
+        // group saves and restores its whole frame span per iteration (and the interpreter sizes
+        // its per-iteration context by it) -- a few thousand shared-prefix alternatives under a +
+        // turned a 6-slot frame into thousands and ran out of backtracking space after ~6,000
+        // iterations. Such groups keep their flat alternatives, as on main.
         for (auto& alternative : alternatives) {
             for (auto& term : alternative->m_terms) {
                 if (term.type == PatternTerm::Type::ParenthesesSubpattern && term.parentheses.disjunction && !term.parentheses.isCopy
                     && !term.parentheses.isStringList && !term.parentheses.isTerminal
-                    && term.parentheses.disjunction->m_alternatives.size() > 1 && term.matchDirection() == Forward)
-                    factorAlternatives(*term.parentheses.disjunction);
+                    && term.quantityMaxCount == 1
+                    && !term.parentheses.disjunction->m_alternatives.isEmpty() && term.matchDirection() == Forward)
+                    factorAlternatives(*term.parentheses.disjunction); // (a single alternative has nothing to factor, but its groups may)
             }
         }
     }

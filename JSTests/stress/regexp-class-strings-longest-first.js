@@ -1,6 +1,6 @@
-// Classes containing strings (\q{...}, properties of strings) are expanded as a trie of
-// alternatives; the longest member matching at a position must still win, then shorter ones on
-// backtrack, and the empty string member matches last.
+// Classes containing strings (\q{...}, properties of strings): the longest member matching at a
+// position wins, then shorter ones on backtrack, single characters count as length 1, and the empty
+// member matches last -- across prefix factoring and first-code-point dispatch of the expansion.
 function shouldBe(actual, expected) { if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("expected " + JSON.stringify(expected) + " got " + JSON.stringify(actual)); }
 shouldBe("aab ab b".match(/[\q{aab|ab|b|a}]/gv), ["aab", "ab", "b"]);
 shouldBe("aab".match(/^[\q{aab|ab|a}]b/v), null);
@@ -35,9 +35,8 @@ shouldBe(kw.exec("… 😁y=6")[1], "6");
 shouldBe(kw.exec("… \u{10400}z=7")[1], "7");
 shouldBe(kw.exec("… 😁x=6"), null);
 shouldBe(kw.exec("beta=1")[1], "1");
-// Review cases: /i and lookbehinds keep longest-first across case variants / suffixes; long
-// single strings do not recurse per character; branch heads that are single members end inside
-// their branch.
+// Case variants under /i, suffixes inside lookbehinds, very long members, and members that are
+// also single characters keep the same order.
 shouldBe(/[\q{Ab|abcd}]/vi.exec("abcd")[0], "abcd");
 shouldBe(/[\q{abc|aB}]/vi.exec("abc")[0], "abc");
 shouldBe(/[\q{kx|Kxy|q1|q2|q3|q4|q5}]/vi.exec("kxy")[0], "kxy");
@@ -53,8 +52,8 @@ shouldBe(/[\q{ab|ac|q1|q2|q3|q4|q5}a]/v.exec("xac")[0], "ac");
     try { matched = new RegExp("[\\q{" + "ab".repeat(25000) + "|q1|q2|q3|q4|q5}]", "v").exec("x" + "ab".repeat(25000)); } catch (e) { threw = e instanceof SyntaxError; }
     shouldBe(threw || (matched && matched[0].length === 50000), true);
 }
-// Hunt cases: any-character singles take the bare branch head themselves (no second way to match
-// one character), long shared prefixes compile, duplicate members are one member.
+// An any-character class next to strings stays linear under a quantifier; long shared prefixes
+// compile; duplicate members are one member.
 {
     const t = Date.now();
     shouldBe(/^[\q{ab|cd|ef|gh|ij|kl}\s\S]*z$/v.test("a".repeat(26)), false);

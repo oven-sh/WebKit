@@ -194,6 +194,12 @@ shouldBe(/(?:^a|^b)/.exec("cb"), null);
         shouldBe(re.exec("abcdefghijklmnopqrstuvwxyz0123456789"), null);
     shouldBe(/(?<=(?:\1*?.?|)+)()$/.exec("abc").index, 3);
     shouldBe("xaay".replace(/(?<=a(?:\1*?)+)()/g, "|"), "xa|a|y");
+    // Result-based (the JIT used to hit its match limit here and return null / too few matches):
+    shouldBe(/z(bb)(?:.\1*?)+z/.exec("zbbcz" + "c".repeat(30))[0], "zbbcz");
+    shouldBe(/z(bb)(?:.\1{0,2}?)+z/.exec("zbbcz" + "c".repeat(30))[0], "zbbcz");
+    shouldBe(("x" + "ab".repeat(40)).match(/(?<=(?:\1*?a|)+()b)/g).length, 40);
+    shouldBe(/(?<=[](?:\1*?.?|)+(Q))|Q$/.exec("abcdefghijklmnopqrstuvwxyz01234" + "Q")[0], "Q");
+    shouldBe(/(?<=[](?:\1*?.?|)+(Q{30}))|0/.exec("abcdefghijklmnopqrstuvwxyz0" + "Q".repeat(30))[0], "0");
     if (Date.now() - t0 > 2000)
-        throw new Error("lazy empty backreference in a lookbehind loop took " + (Date.now() - t0) + "ms");
+        throw new Error("lazy backreference loops took " + (Date.now() - t0) + "ms");
 }
