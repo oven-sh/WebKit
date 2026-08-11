@@ -262,6 +262,9 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
         if (!sourceURL.isEmpty()) {
             errorInstance->setSourceURL(sourceURL);
         }
+
+        // materializeErrorInfoIfNeeded() formats the stack through the host, which reads this.
+        errorInstance->setHasParseLocation();
 #endif
 
         errorInstance->materializeErrorInfoIfNeeded(vm);
