@@ -1321,10 +1321,15 @@ public:
     {
         if (m_forwardReferencesInLookbehind.isEmpty())
             return;
-        // Whether `name` names this group (a duplicate name lists every id that carries it).
+        // Whether `name` names this group. The name's entry is [id, id] for a unique name and
+        // [duplicateNamedGroupId, id1, id2, ...] for a duplicate one (addCaptureGroupForName), so
+        // entry [0] is never compared: it is a repeat of the id or not a subpattern id at all.
         auto namesThisGroup = [&](const String& name) {
             auto indices = m_pattern.m_namedGroupToParenIndices.find(name);
-            return indices != m_pattern.m_namedGroupToParenIndices.end() && indices->value.contains(subpatternId);
+            if (indices == m_pattern.m_namedGroupToParenIndices.end())
+                return false;
+            auto ids = indices->value.span();
+            return ids.size() > 1 && std::ranges::find(ids.subspan(1), subpatternId) != ids.end();
         };
         m_forwardReferencesInLookbehind.removeAllMatching([&](UnresolvedForwardReference& reference) {
             PatternTerm* term = reference.term();
