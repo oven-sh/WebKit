@@ -606,15 +606,14 @@ inline bool MarkedBlock::isMarkedRaw(const void* p)
     return header().m_marks.get(atomNumber(p));
 }
 
-// Defined in MarkedBlock.cpp with NEVER_INLINE to prevent LTO from breaking compiler barriers
-// inline bool MarkedBlock::isMarked(HeapVersion markingVersion, const void* p)
-// {
-//     HeapVersion version;
-//     Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
-//     if (version != markingVersion) [[unlikely]]
-//         return false;
-//     return header().m_marks.concurrentGet(atomNumber(p), dependency);
-// }
+inline bool MarkedBlock::isMarked(HeapVersion markingVersion, const void* p)
+{
+    HeapVersion version;
+    Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
+    if (version != markingVersion) [[unlikely]]
+        return false;
+    return header().m_marks.concurrentGet(atomNumber(p), dependency);
+}
 
 inline bool MarkedBlock::isMarked(const void* p, Dependency dependency)
 {

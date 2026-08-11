@@ -97,7 +97,7 @@ void JSFinalizationRegistry::destroy(JSCell* table)
     static_cast<JSFinalizationRegistry*>(table)->~JSFinalizationRegistry();
 }
 
-NEVER_INLINE void JSFinalizationRegistry::finalizeUnconditionally(VM& vm, CollectionScope)
+void JSFinalizationRegistry::finalizeUnconditionally(VM& vm, CollectionScope)
 {
     Locker locker { cellLock() };
 
