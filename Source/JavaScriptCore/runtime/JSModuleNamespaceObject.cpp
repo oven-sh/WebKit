@@ -31,6 +31,9 @@
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "SyntheticModuleRecord.h"
+#endif
 
 namespace JSC {
 
@@ -194,6 +197,39 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
             throwVMError(globalObject, scope, createTDZError(globalObject, *uid));
             return false;
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        // Bun's mock.module / loader:"object" may back a synthetic module with the
+        // factory-returned object so that accessor exports stay live. The module
+        // environment slots still hold the first-read snapshot for static imports
+        // (which read slots directly), but dynamic import namespace access
+        // re-evaluates through the source object on every read. Keys absent from
+        // the source fall through to the environment slot so partial re-mocks keep
+        // un-overridden exports. Returning a plain uncacheable value keeps the
+        // JIT's module-namespace IC (which would inline the raw slot) from being
+        // installed; once the record's watchpoint has fired, the env-slot
+        // fallthrough is also returned uncacheable so the IC is never
+        // re-installed on a record that has ever had a live source.
+        if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(exportEntry.moduleRecord.get())) {
+            if (JSObject* source = synthetic->liveExportsSource()) [[unlikely]] {
+                PropertySlot sourceSlot(source, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool hasOwn = source->methodTable()->getOwnPropertySlot(source, globalObject, propertyName, sourceSlot);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (hasOwn) {
+                    slot.disableCaching();
+                    JSValue liveValue = sourceSlot.getValue(globalObject, propertyName);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), liveValue);
+                    return true;
+                }
+            }
+            if (!synthetic->liveExportsSourceWatchpointSet().isStillValid()) [[unlikely]] {
+                slot.disableCaching();
+                slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+                return true;
+            }
+        }
+#endif
 
         slot.setValueModuleNamespace(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value, environment, scopeOffset);
         return true;
@@ -452,6 +488,17 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     putResult = moduleNamespaceObject->put(moduleNamespaceObject, globalObject, name, value, putter);
     RETURN_IF_EXCEPTION(scope, {});
     moduleNamespaceObject->m_isOverridingValue = false;
+
+    // Keep the live-exports backing object (if any) consistent with the env
+    // slot so spyOn / re-mock writes are observed by namespace reads that
+    // forward through it.
+    if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(record)) {
+        if (JSObject* source = synthetic->liveExportsSource()) {
+            source->putDirect(vm, name, value, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
     return putResult;
 }
 

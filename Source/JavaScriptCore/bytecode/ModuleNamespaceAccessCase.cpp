@@ -34,6 +34,9 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
 #include "PropertyInlineCache.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "SyntheticModuleRecord.h"
+#endif
 
 namespace JSC {
 
@@ -43,6 +46,10 @@ ModuleNamespaceAccessCase::ModuleNamespaceAccessCase(VM& vm, JSCell* owner, Cach
 {
     m_moduleNamespaceObject.set(vm, owner, moduleNamespaceObject);
     m_moduleEnvironment.set(vm, owner, moduleEnvironment);
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(moduleEnvironment->moduleRecord()))
+        m_additionalSet = synthetic->liveExportsSourceWatchpointSet().inflate();
+#endif
 }
 
 Ref<AccessCase> ModuleNamespaceAccessCase::create(VM& vm, JSCell* owner, CacheableIdentifier identifier, JSModuleNamespaceObject* moduleNamespaceObject, JSModuleEnvironment* moduleEnvironment, ScopeOffset scopeOffset)

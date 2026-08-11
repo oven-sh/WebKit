@@ -73,6 +73,9 @@ void SyntheticModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     SyntheticModuleRecord* thisObject = uncheckedDowncast<SyntheticModuleRecord>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_liveExportsSource);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(SyntheticModuleRecord);
@@ -92,7 +95,19 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A trailing value with no matching name carries the live-exports backing
+    // object (Bun's mock.module / loader:"object" path).
+    JSObject* liveExportsSource = nullptr;
+    if (exportValues.size() == exportNames.size() + 1) {
+        JSValue extra = exportValues.at(exportNames.size());
+        if (extra.isObject())
+            liveExportsSource = asObject(extra);
+    }
+    ASSERT(exportNames.size() == exportValues.size() || liveExportsSource);
+#else
     ASSERT(exportNames.size() == exportValues.size());
+#endif
 
     auto* moduleRecord = create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), moduleKey);
     SymbolTable* exportSymbolTable = SymbolTable::create(vm);
@@ -121,9 +136,27 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
         ASSERT(putResult);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (liveExportsSource)
+        moduleRecord->setLiveExportsSource(vm, liveExportsSource);
+#endif
+
     return moduleRecord;
 
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void SyntheticModuleRecord::setLiveExportsSource(VM& vm, JSObject* source)
+{
+    m_liveExportsSource.setMayBeNull(vm, this, source);
+    // Any ModuleNamespaceAccessCase / DFG GetClosureVar compiled while no live
+    // source was installed reads the environment slot directly. Invalidate them
+    // the first time a source is installed so those sites re-enter
+    // getOwnPropertySlotCommon and observe the live-source forwarding.
+    if (source && m_liveExportsSourceWatchpointSet.isStillValid())
+        m_liveExportsSourceWatchpointSet.fireAll(vm, "SyntheticModuleRecord live-exports source installed");
+}
+#endif
 
 SyntheticModuleRecord* SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(JSGlobalObject* globalObject, const Identifier& moduleKey, JSValue defaultExport)
 {
