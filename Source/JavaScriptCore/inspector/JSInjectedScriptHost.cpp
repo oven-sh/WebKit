@@ -528,6 +528,7 @@ JSValue JSInjectedScriptHost::getInternalProperties(JSGlobalObject* globalObject
     JSValue value = callFrame->uncheckedArgument(0);
 
     JSValue internalProperties = impl().getInternalProperties(vm, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
     if (internalProperties)
         return internalProperties;
 
