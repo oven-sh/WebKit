@@ -39,6 +39,9 @@
 #include "JSWebAssemblyModule.h"
 #include "JSWebAssemblyTag.h"
 #include "ObjectConstructor.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "SyntheticModuleRecord.h"
+#endif
 #include "VariableWriteFireDetailInlines.h"
 #include "WasmConstExprGenerator.h"
 #include "WasmOperationsInlines.h"
@@ -229,6 +232,11 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
             }
 
             AbstractModuleRecord* importedRecord = resolution.moduleRecord;
+#if USE(BUN_JSC_ADDITIONS)
+            // The snapshot below reads the binding's slot directly, so a lazy export has to be filled in first.
+            SyntheticModuleRecord::materializeLazyExport(globalObject, importedRecord, resolution.localName);
+            RETURN_IF_EXCEPTION(scope, void());
+#endif
             JSModuleEnvironment* importedEnvironment = importedRecord->moduleEnvironmentMayBeNull();
             // It means that target module is not linked yet. In wasm loading, we allow this since we do not solve cyclic resolution as if JS's bindings.
             // At that time, error occurs since |value| is an empty, and later |value| becomes an undefined.
