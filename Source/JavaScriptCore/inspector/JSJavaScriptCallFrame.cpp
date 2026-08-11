@@ -84,7 +84,7 @@ JSValue JSJavaScriptCallFrame::evaluateWithScopeExtension(JSGlobalObject* global
     if (exception)
         throwException(globalObject, scope, exception);
 
-    return result;
+    RELEASE_AND_RETURN(scope, result);
 }
 
 static JSValue valueForScopeType(DebuggerScope* scope)
@@ -131,6 +131,7 @@ JSValue JSJavaScriptCallFrame::scopeDescriptions(JSGlobalObject* globalObject)
 
     int index = 0;
     JSArray* array = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(throwScope, { });
 
     DebuggerScope::iterator end = scopeChain->end();
     for (DebuggerScope::iterator iter = scopeChain->begin(); iter != end; ++iter) {
@@ -197,7 +198,7 @@ JSValue JSJavaScriptCallFrame::scopeChain(JSGlobalObject* globalObject) const
         return { };
     }
 
-    return constructArray(this->realm(), static_cast<ArrayAllocationProfile*>(nullptr), list);
+    RELEASE_AND_RETURN(scope, constructArray(this->realm(), static_cast<ArrayAllocationProfile*>(nullptr), list));
 }
 
 JSValue JSJavaScriptCallFrame::thisObject(JSGlobalObject* globalObject) const
