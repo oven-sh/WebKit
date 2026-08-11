@@ -141,7 +141,7 @@ JSValue JSInjectedScriptHost::evaluateWithScopeExtension(JSGlobalObject* globalO
     if (exception)
         throwException(globalObject, scope, exception);
 
-    return result;
+    RELEASE_AND_RETURN(scope, result);
 }
 
 JSValue JSInjectedScriptHost::internalConstructorName(JSGlobalObject* globalObject, CallFrame* callFrame)
@@ -796,6 +796,7 @@ JSValue JSInjectedScriptHost::weakMapEntries(JSGlobalObject* globalObject, CallF
 
     MarkedArgumentBuffer buffer;
     auto fetchCount = callFrame->argument(1).toIntegerOrInfinity(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     weakMap->takeSnapshot(buffer, clampTo<unsigned>(fetchCount));
     ASSERT(!buffer.hasOverflowed());
 
@@ -839,6 +840,7 @@ JSValue JSInjectedScriptHost::weakSetEntries(JSGlobalObject* globalObject, CallF
 
     MarkedArgumentBuffer buffer;
     auto fetchCount = callFrame->argument(1).toIntegerOrInfinity(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     weakSet->takeSnapshot(buffer, clampTo<unsigned>(fetchCount));
     ASSERT(!buffer.hasOverflowed());
 
