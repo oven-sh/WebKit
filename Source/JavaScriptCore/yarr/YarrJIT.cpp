@@ -7949,16 +7949,32 @@ class YarrGenerator final : public YarrJITInfo {
         // Route each Latin-1 character to the ordered chain of alternatives whose
         // set contains it; identical chains are shared (linear dedupe: chains are
         // few in practice).
+        // Chains are deduplicated through a hash of their member lists, and the whole attempt is
+        // abandoned as soon as the chain or stub bound is passed rather than after routing every
+        // character (a pattern built to defeat dispatch could otherwise spend seconds here).
+        UncheckedKeyHashMap<unsigned, Vector<unsigned, 2>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> chainsByHash;
+        unsigned stubCount = 0;
+        bool overBudget = false;
         auto chainIdFor = [&](Vector<unsigned, 4>&& members) -> unsigned {
-            if (members.isEmpty())
+            if (members.isEmpty() || overBudget)
                 return DispatchInfo::noChain;
-            for (unsigned c = 0; c < info->chains.size(); ++c) {
+            unsigned hash = members.size();
+            for (unsigned index : members)
+                hash = WTF::pairIntHash(hash, index);
+            auto& candidates = chainsByHash.add(hash, Vector<unsigned, 2>()).iterator->value;
+            for (unsigned c : candidates) {
                 if (info->chains[c].alternativeIndices == members)
                     return c;
+            }
+            stubCount += members.size();
+            if (info->chains.size() + 1 > alternationDispatchMaxChains || stubCount > alternationDispatchMaxStubs) {
+                overBudget = true;
+                return DispatchInfo::noChain;
             }
             DispatchInfo::Chain chain;
             chain.alternativeIndices = WTF::move(members);
             info->chains.append(WTF::move(chain));
+            candidates.append(info->chains.size() - 1);
             return info->chains.size() - 1;
         };
         for (unsigned ch = 0; ch < 256; ++ch) {
@@ -7968,6 +7984,8 @@ class YarrGenerator final : public YarrJITInfo {
                     members.append(i);
             }
             info->chainForCharacter[ch] = chainIdFor(WTF::move(members));
+            if (overBudget)
+                return nullptr;
         }
         if (m_charSize == CharSize::Char16) {
             // Elementary code-point intervals over [0x100, 0x10FFFF] on which chain membership is
@@ -8031,6 +8049,8 @@ class YarrGenerator final : public YarrJITInfo {
                     info->wideRouting.last().end = end;
                 else
                     info->wideRouting.append({ begin, end, chainId });
+                if (overBudget)
+                    return nullptr;
                 if (info->wideRouting.size() > maxWideRoutingRanges) {
                     tooMany = true;
                     break;
@@ -8040,6 +8060,7 @@ class YarrGenerator final : public YarrJITInfo {
                 // One range for everything wide, tried against every alternative that can start wide
                 // (and none of the chains minted for the abandoned intervals).
                 info->chains.shrink(chainCountBeforeWide);
+                chainsByHash.clear(); // (indices past the shrink are stale; the fallback chain below may duplicate an early one, harmlessly)
                 Vector<unsigned, 4> members;
                 for (unsigned i = 0; i < alternatives.size(); ++i) {
                     if (sets[i].matchesWide())
@@ -8049,11 +8070,7 @@ class YarrGenerator final : public YarrJITInfo {
                 info->wideRouting.append({ firstWide, endOfCodePoints - 1, chainIdFor(WTF::move(members)) });
             }
         }
-        // Bound the emitted stub code.
-        unsigned stubCount = 0;
-        for (auto& chain : info->chains)
-            stubCount += chain.alternativeIndices.size();
-        if (info->chains.size() > alternationDispatchMaxChains || stubCount > alternationDispatchMaxStubs)
+        if (overBudget)
             return nullptr;
 
         // The group's first character is at the frame position where the group

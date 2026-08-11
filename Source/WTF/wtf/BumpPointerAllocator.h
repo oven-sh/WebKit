@@ -274,6 +274,14 @@ public:
             m_head->shrink(retainedOverflowBytes);
     }
 
+    // Frees whatever a stopAllocator() budget kept (everything but the head page). Only between a
+    // stop and the next start; the next start maps pools again as it needs them.
+    void releaseRetainedPools()
+    {
+        if (m_head)
+            m_head->shrink(0);
+    }
+
 private:
     BumpPointerPool* m_head;
 };
