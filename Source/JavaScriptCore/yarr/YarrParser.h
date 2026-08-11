@@ -1379,7 +1379,6 @@ private:
                     return;
                 }
 
-
                 TokenType tokenType = parseClassSetEscape(classSetConstructor);
 
                 classSetConstructor.computeMayContainStrings(tokenType == TokenType::SetDisjunctionMayContainStrings);

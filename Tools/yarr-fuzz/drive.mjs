@@ -72,8 +72,9 @@ function normForNode(json) {
 }
 
 const summary = { seeds: 0, cases: 0, mismatches: {}, crashes: [], timeouts: [], incomplete: [] };
-const mismatchFile = join(OUTDIR, `mismatch-${PROFILE}.jsonl`);
-const crashFile = join(OUTDIR, `crash-${PROFILE}.jsonl`);
+const PROFILE_TAG = PROFILE.startsWith("file:") ? "file-" + PROFILE.slice(5).replace(/^.*\//, "").replace(/[^A-Za-z0-9._-]/g, "_") : PROFILE; // safe in filenames
+const mismatchFile = join(OUTDIR, `mismatch-${PROFILE_TAG}.jsonl`);
+const crashFile = join(OUTDIR, `crash-${PROFILE_TAG}.jsonl`);
 
 async function doSeed(seed) {
     const results = await Promise.all(CONFIGS.map((c) => runOne(c, seed)));
@@ -104,7 +105,7 @@ async function doSeed(seed) {
         for (const [k, v] of p.map) {
             if (v.includes('"META"')) {
                 summary.meta = (summary.meta || 0) + 1;
-                appendFileSync(join(OUTDIR, `meta-${PROFILE}.jsonl`), JSON.stringify({ cfg: r.cfgName, seed, k, profile: PROFILE, rec: safeParse(v) }) + "\n");
+                appendFileSync(join(OUTDIR, `meta-${PROFILE_TAG}.jsonl`), JSON.stringify({ cfg: r.cfgName, seed, k, profile: PROFILE, rec: safeParse(v) }) + "\n");
             }
         }
     }
@@ -149,4 +150,4 @@ await Promise.all(Array.from({ length: lanes }, async () => {
     }
 }));
 console.error(`== DONE profile=${PROFILE} seeds=${summary.seeds} cases=${summary.cases} meta=${summary.meta||0} mism=${JSON.stringify(summary.mismatches)} crashes=${summary.crashes.length} timeouts=${summary.timeouts.length} ${((Date.now() - t0) / 1000) | 0}s`);
-writeFileSync(join(OUTDIR, `summary-${PROFILE}-${seedLo}-${seedHi}.json`), JSON.stringify(summary, null, 1));
+writeFileSync(join(OUTDIR, `summary-${PROFILE_TAG}-${seedLo}-${seedHi}.json`), JSON.stringify(summary, null, 1));

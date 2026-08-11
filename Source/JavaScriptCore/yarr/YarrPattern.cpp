@@ -1698,7 +1698,7 @@ public:
                 return;
             }
 
-m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
+            m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             expandClassWithStrings(m_pattern.m_userCharacterClasses.last().get());
             return;
         }
@@ -2914,17 +2914,16 @@ m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     // sorting reorders which alternative comes first.
     static void accumulateCaptureRange(const PatternAlternative& alternative, unsigned& first, unsigned& last)
     {
+        // A parenthesis term brackets its own capture (if any) and every capture nested in it as
+        // [subpatternId, lastSubpatternId] (empty when it holds none; see containsAnyCaptures()),
+        // so the top-level terms suffice -- no recursion into the nesting.
         for (auto& term : alternative.m_terms) {
             if (term.type != PatternTerm::Type::ParenthesesSubpattern && term.type != PatternTerm::Type::ParentheticalAssertion)
                 continue;
-            if (term.capture()) {
-                first = std::min(first, term.parentheses.subpatternId);
-                last = std::max(last, term.parentheses.subpatternId);
-            }
-            if (auto* nested = term.parentheses.disjunction) {
-                for (auto& nestedAlternative : nested->m_alternatives)
-                    accumulateCaptureRange(*nestedAlternative, first, last);
-            }
+            if (term.parentheses.subpatternId > term.parentheses.lastSubpatternId)
+                continue;
+            first = std::min(first, term.parentheses.subpatternId);
+            last = std::max(last, term.parentheses.lastSubpatternId);
         }
     }
 

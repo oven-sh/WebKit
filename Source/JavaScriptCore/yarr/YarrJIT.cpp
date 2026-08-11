@@ -7732,6 +7732,11 @@ class YarrGenerator final : public YarrJITInfo {
                 units.append({ frameChecked - term.inputPosition - repeat, term.patternCharacter, term.ignoreCase() });
         }
         unsigned unitBits = m_charSize == CharSize::Char8 ? 8 : 16;
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
+        static constexpr unsigned maxLoadBits = 64;
+#else
+        static constexpr unsigned maxLoadBits = 32;
+#endif
         auto fusable = [&](const LiteralUnit& unit) {
             // Only what a masked integer compare expresses: the unit itself, or an ASCII letter with
             // the 0x20 case bit ORed in. (Wider or oddly-cased characters compare singly below.)
@@ -7748,11 +7753,11 @@ class YarrGenerator final : public YarrJITInfo {
             }
             // Longest fusable run with consecutive offsets from i, capped at one 64-bit load.
             size_t run = 1;
-            while (i + run < units.size() && run < 64 / unitBits && fusable(units[i + run]) && (units[i + run - 1].offset - units[i + run].offset) == 1u)
+            while (i + run < units.size() && run < maxLoadBits / unitBits && fusable(units[i + run]) && (units[i + run - 1].offset - units[i + run].offset) == 1u)
                 ++run;
             size_t width = run >= 8 ? 8 : run >= 4 ? 4 : run >= 2 ? 2 : 1; // units per load
-            if (width * unitBits > 64)
-                width = 64 / unitBits;
+            if (width * unitBits > maxLoadBits)
+                width = maxLoadBits / unitBits;
             uint64_t characters = 0;
             uint64_t caseMask = 0;
             for (size_t k = 0; k < width; ++k) {
@@ -7774,13 +7779,19 @@ class YarrGenerator final : public YarrJITInfo {
                 m_jit.load32WithUnalignedHalfWords(address, character);
                 break;
             default:
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
                 m_jit.load64(address, character);
+#else
+                RELEASE_ASSERT_NOT_REACHED();
+#endif
                 break;
             }
             if (width * unitBits == 64) {
+#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
                 if (caseMask)
                     m_jit.or64(MacroAssembler::TrustedImm64(caseMask), character);
                 mismatch.append(m_jit.branch64(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm64(characters)));
+#endif
             } else {
                 if (caseMask)
                     m_jit.or32(MacroAssembler::Imm32(static_cast<int32_t>(caseMask)), character);
@@ -7999,6 +8010,7 @@ class YarrGenerator final : public YarrJITInfo {
             std::ranges::sort(cuts);
             removeRepeatedElements(cuts);
             size_t chainCountBeforeWide = info->chains.size();
+            unsigned stubCountBeforeWide = stubCount;
             // Membership per interval by sweeping range starts and ends in step with the cuts (every
             // range boundary is a cut), rather than probing every alternative at every interval:
             // alternatives that can start with anything wide are members throughout.
@@ -8053,9 +8065,7 @@ class YarrGenerator final : public YarrJITInfo {
                 // (and none of the chains minted for the abandoned intervals, nor their stub budget).
                 info->chains.shrink(chainCountBeforeWide);
                 chainIndexByMembers.removeIf([&](auto& entry) { return entry.value >= chainCountBeforeWide; });
-                stubCount = 0;
-                for (auto& chain : info->chains)
-                    stubCount += chain.alternativeIndices.size();
+                stubCount = stubCountBeforeWide;
                 overBudget = false;
                 Vector<unsigned, 4> members;
                 for (unsigned i = 0; i < alternatives.size(); ++i) {
@@ -8847,14 +8857,6 @@ class YarrGenerator final : public YarrJITInfo {
                 return std::nullopt;
         }
 
-        // Call can clobber SIMD registers
-        if (mayCall())
-            return std::nullopt;
-
-        // Need valid SIMD registers
-        if (m_regs.vectorTemp0 == InvalidFPRReg || m_regs.vectorInput0 == InvalidFPRReg)
-            return std::nullopt;
-
         if (checkedOffset > 0x7fffffff)
             return std::nullopt;
 
@@ -8870,11 +8872,6 @@ class YarrGenerator final : public YarrJITInfo {
         auto totalOffset = minCharsNeeded + baseOffset;
         if (totalOffset.hasOverflowed())
             return std::nullopt;
-
-#if CPU(X86_64)
-        if (!MacroAssembler::supportsAVX())
-            return std::nullopt;
-#endif
 
 #if CPU(ARM64) || CPU(X86_64)
         JIT_COMMENT(m_jit, "BitInTable SIMD search");

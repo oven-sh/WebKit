@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 // Minimal test262 runner for the RegExp-related subset. Usage:
 //   node run262.mjs <label> <jsc> [jsc flags...]   -> writes out262/<label>.json {file: "PASS"|"FAIL: ..."}
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { execFile } from "node:child_process";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { cpus } from "node:os";
-import { execFileSync } from "node:child_process";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..", "JSTests", "test262");
