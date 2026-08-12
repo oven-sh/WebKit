@@ -120,6 +120,7 @@ public:
 
         HandlerInfo* cachedHandlerResult;
         CodeOrigin cachedCodeOrigin;
+        CodeOrigin cachedCatchOrigin;
         auto catchHandler = [&] (CodeOrigin origin) -> HandlerInfo* {
             ASSERT(origin);
             if (origin == cachedCodeOrigin)
@@ -133,13 +134,7 @@ public:
                 InlineCallFrame* inlineCallFrame = origin.inlineCallFrame();
                 CodeBlock* codeBlock = m_graph.baselineCodeBlockFor(inlineCallFrame);
                 if (HandlerInfo* handler = codeBlock->handlerForBytecodeIndex(bytecodeIndexToCheck)) {
-                    liveAtCatchHead.fill(false);
-
-                    BytecodeIndex catchBytecodeIndex = BytecodeIndex(handler->target);
-                    m_graph.forAllLocalsAndTmpsLiveInBytecode(CodeOrigin(catchBytecodeIndex, inlineCallFrame), [&] (Operand operand) {
-                        liveAtCatchHead.operand(operand) = true;
-                    });
-
+                    cachedCatchOrigin = CodeOrigin(BytecodeIndex(handler->target), inlineCallFrame);
                     cachedHandlerResult = handler;
                     break;
                 }
@@ -154,6 +149,14 @@ public:
             }
 
             return cachedHandlerResult;
+        };
+
+        // Liveness at the head of the handler most recently returned by catchHandler().
+        auto computeLiveAtCatchHead = [&] {
+            liveAtCatchHead.fill(false);
+            m_graph.forAllLocalsAndTmpsLiveInBytecode(cachedCatchOrigin, [&] (Operand operand) {
+                liveAtCatchHead.operand(operand) = true;
+            });
         };
 
         Operands<VariableAccessData*> currentBlockAccessData(OperandsLike, block->variablesAtTail, nullptr);
@@ -188,9 +191,18 @@ public:
 
             {
                 HandlerInfo* newHandler = catchHandler(node->origin.semantic);
-                if (newHandler != currentExceptionHandler && currentExceptionHandler)
-                    flushEverything(node->origin, nodeIndex);
-                currentExceptionHandler = newHandler;
+                if (newHandler != currentExceptionHandler) {
+                    // liveAtCatchHead still describes the handler we are leaving. Flush for it before
+                    // switching over to the liveness of the handler we are entering, otherwise a
+                    // transition straight from one handler into another (e.g. leaving a try range that
+                    // is nested inside another one) flushes the outer handler's locals instead of the
+                    // inner handler's.
+                    if (currentExceptionHandler)
+                        flushEverything(node->origin, nodeIndex);
+                    currentExceptionHandler = newHandler;
+                    if (newHandler)
+                        computeLiveAtCatchHead();
+                }
             }
 
             if (currentExceptionHandler && (node->op() == SetLocal || node->op() == SetArgumentDefinitely || node->op() == SetArgumentMaybe)) {
