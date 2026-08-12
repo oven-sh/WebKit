@@ -186,8 +186,9 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     export MIGCOM="$(which migcom)" && \
     export ENABLE_ASSERTS="AUTO" && \
     if [ -n "${ENABLE_SANITIZERS}" ]; then export ENABLE_ASSERTS="ON"; fi && \
-    export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
-    export CXXFLAGS="${CROSS} -nostdinc++ -isystem ${MACOS_SDK}/usr/include/c++/v1 ${DEFAULT_CFLAGS} ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
+    export G=$(if [ "$WEBKIT_RELEASE_TYPE" = "Debug" ] || [ -n "${ENABLE_SANITIZERS:-}" ]; then echo ""; else echo "-g1"; fi) && \
+    export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} $G ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
+    export CXXFLAGS="${CROSS} -nostdinc++ -isystem ${MACOS_SDK}/usr/include/c++/v1 ${DEFAULT_CFLAGS} $G ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
     cd /webkitbuild && \
     cmake \
     -DCMAKE_SYSTEM_NAME=Darwin \

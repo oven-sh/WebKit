@@ -160,8 +160,9 @@ ENV WEBKIT_OUT_DIR=/webkitbuild
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export TARGET_TRIPLE="${ANDROID_ARCH}-unknown-linux-android${ANDROID_API}" && \
     export CROSS="--target=${TARGET_TRIPLE} --sysroot=${NDK_SYSROOT}" && \
-    export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} ${LTO_FLAG} -isystem /icu/include -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
-    export CXXFLAGS="${CROSS} -isystem ${NDK_SYSROOT}/usr/include/c++/v1 ${DEFAULT_CFLAGS} ${MARCH_FLAG} ${LTO_FLAG} -isystem /icu/include -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
+    export G=$(if [ "$WEBKIT_RELEASE_TYPE" = "Debug" ] || [ -n "${ENABLE_SANITIZERS:-}" ]; then echo ""; else echo "-g1"; fi) && \
+    export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} $G ${MARCH_FLAG} ${LTO_FLAG} -isystem /icu/include -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
+    export CXXFLAGS="${CROSS} -isystem ${NDK_SYSROOT}/usr/include/c++/v1 ${DEFAULT_CFLAGS} $G ${MARCH_FLAG} ${LTO_FLAG} -isystem /icu/include -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
     cd /webkitbuild && \
     cmake \
     -DCMAKE_SYSTEM_NAME=Linux \
