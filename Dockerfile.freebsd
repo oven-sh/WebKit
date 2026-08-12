@@ -91,7 +91,8 @@ RUN mkdir -p /icu-host && cd /icu-host \
 
 # Target build.
 #
-# GENCCODE_ASSEMBLY_TYPE: ICU's configure only picks the assembly data path for
+# GENCCODE_ASSEMBLY (icudefs.mk's name; pkgdataMakefile writes it into icupkg.inc as
+# GENCCODE_ASSEMBLY_TYPE): ICU's configure only picks the assembly data path for
 # *-linux* / i*86-*bsd hosts (configure.ac ~line 651). On x86_64/aarch64 freebsd it
 # falls back to having genccode write the data as an ELF object modelled on a probe
 # object compiled with our CFLAGS, which is bitcode under -flto ("match-arch file
@@ -122,7 +123,7 @@ RUN --mount=type=tmpfs,target=/icu \
         --enable-static --disable-shared --with-data-packaging=static \
         --disable-samples --disable-tests --disable-debug \
       || { cat config.log; exit 1; }; } && \
-    make -j$(nproc) GENCCODE_ASSEMBLY_TYPE="-a gcc" && \
+    make -j$(nproc) GENCCODE_ASSEMBLY="-a gcc" && \
     cp lib/*.a /output/lib && \
     cp -r i18n/unicode/* common/unicode/* /output/include/unicode
 
