@@ -17,6 +17,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
+      actions: read
     uses: ./.github/workflows/build-reusable.yml
     with:
       build_ref: ${{ github.sha }}
