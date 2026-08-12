@@ -649,16 +649,64 @@ jobs:
       - run: lsipc
       - run: whoami
 
-      # Every build job uploads <label>/bun-webkit.tar.gz, so the release is every bun-webkit-* artifact of this run.
+      # Every build job uploads <label>/bun-webkit.tar.gz. This list is the release: a label missing from the run fails the job.
       - name: Download artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          ARTIFACTS: |
+            # linux
+            bun-webkit-linux-amd64
+            bun-webkit-linux-amd64-lto
+            bun-webkit-linux-amd64-debug
+            bun-webkit-linux-amd64-asan
+            bun-webkit-linux-amd64-debug-asan
+            bun-webkit-linux-arm64
+            bun-webkit-linux-arm64-lto
+            bun-webkit-linux-arm64-debug
+            bun-webkit-linux-arm64-asan
+            bun-webkit-linux-arm64-debug-asan
+            # linux-musl
+            bun-webkit-linux-amd64-musl
+            bun-webkit-linux-amd64-musl-lto
+            bun-webkit-linux-amd64-musl-debug
+            bun-webkit-linux-arm64-musl
+            bun-webkit-linux-arm64-musl-lto
+            bun-webkit-linux-arm64-musl-debug
+            # macos-cross
+            bun-webkit-macos-arm64
+            bun-webkit-macos-arm64-lto
+            bun-webkit-macos-arm64-debug
+            bun-webkit-macos-arm64-asan
+            bun-webkit-macos-arm64-debug-asan
+            bun-webkit-macos-amd64
+            bun-webkit-macos-amd64-lto
+            bun-webkit-macos-amd64-debug
+            # windows / windows-cross
+            bun-webkit-windows-amd64
+            bun-webkit-windows-amd64-lto
+            bun-webkit-windows-amd64-debug
+            bun-webkit-windows-amd64-asan
+            bun-webkit-windows-arm64
+            bun-webkit-windows-arm64-debug
+            # freebsd
+            bun-webkit-freebsd-amd64
+            bun-webkit-freebsd-amd64-lto
+            bun-webkit-freebsd-amd64-debug
+            bun-webkit-freebsd-arm64
+            bun-webkit-freebsd-arm64-lto
+            bun-webkit-freebsd-arm64-debug
+            # linux-android
+            bun-webkit-linux-arm64-android
+            bun-webkit-linux-arm64-android-lto
+            bun-webkit-linux-arm64-android-debug
+            bun-webkit-linux-amd64-android
+            bun-webkit-linux-amd64-android-lto
+            bun-webkit-linux-amd64-android-debug
         run: |
           set -euo pipefail
-          gh api "repos/${GH_REPO}/actions/runs/${GITHUB_RUN_ID}/artifacts" --paginate \
-            -q '.artifacts[] | select(.expired | not) | .name' | grep '^bun-webkit-' | sort -u > artifacts.txt
-          echo "$(wc -l < artifacts.txt) artifacts:"; cat artifacts.txt
+          grep -v '^ *#' <<< "$ARTIFACTS" | grep . > artifacts.txt
+          echo "$(wc -l < artifacts.txt) artifacts"
           xargs -P 16 -I{} sh -euc 'gh run download "$GITHUB_RUN_ID" -n "$1" -D "dl/$1" && echo "downloaded $1"' _ {} < artifacts.txt
           mkdir -p out
           while read -r name; do mv "dl/$name/bun-webkit.tar.gz" "out/$name.tar.gz"; done < artifacts.txt
@@ -682,4 +730,4 @@ jobs:
             [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
             gh release create "$TAG" "${flags[@]}"
           fi
-          ls out/*.tar.gz | xargs -P 8 -I{} sh -euc 'gh release upload "$TAG" "$1" --clobber && echo "uploaded $1"' _ {}
+          xargs -P 8 -I{} sh -euc 'gh release upload "$TAG" "out/$1.tar.gz" --clobber && echo "uploaded $1"' _ {} < artifacts.txt
