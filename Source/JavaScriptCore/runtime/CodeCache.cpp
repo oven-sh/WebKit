@@ -182,7 +182,16 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
         derivedContextType, evalContextType, isArrowFunctionContext, codeGenerationMode,
         std::nullopt);
     UnlinkedCodeBlockType* unlinkedCodeBlock = m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
-    if (unlinkedCodeBlock && Options::useCodeCache()) {
+    bool canReuse = unlinkedCodeBlock && Options::useCodeCache();
+#if USE(BUN_JSC_ADDITIONS)
+    if (!canReuse) {
+        if (JSCell* pinned = source.provider()->pinnedUnlinkedCode(key)) {
+            unlinkedCodeBlock = uncheckedDowncast<UnlinkedCodeBlockType>(pinned);
+            canReuse = true;
+        }
+    }
+#endif
+    if (canReuse) {
         unsigned lineCount = unlinkedCodeBlock->lineCount();
         unsigned startColumn = unlinkedCodeBlock->startColumn() + source.startColumn().oneBasedInt();
         bool endColumnIsOnStartLine = !lineCount;
@@ -204,6 +213,11 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
             return encodeCodeBlock(vm, key, unlinkedCodeBlock);
         });
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (unlinkedCodeBlock)
+        source.provider()->pinUnlinkedCode(key, unlinkedCodeBlock);
+#endif
 
     return unlinkedCodeBlock;
 }

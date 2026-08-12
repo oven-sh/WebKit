@@ -49,6 +49,10 @@ namespace JSC {
 class SourceCode;
 class UnlinkedFunctionExecutable;
 class UnlinkedFunctionCodeBlock;
+#if USE(BUN_JSC_ADDITIONS)
+class JSCell;
+class SourceCodeKey;
+#endif
 
 enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
     Program,
@@ -79,6 +83,16 @@ public:
     JS_EXPORT_PRIVATE virtual void commitCachedBytecode() const { }
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
+
+    // The live-cell counterpart of cachedBytecode() / cacheBytecode(). When the CodeCache misses
+    // for a global code block (program, eval or module) of this provider's source it asks
+    // pinnedUnlinkedCode() before parsing, and it offers whatever it does parse to
+    // pinUnlinkedCode(). The cell is the UnlinkedCodeBlock subclass matching the key's code type.
+    // A provider that keeps the cell alive makes every evaluation of its source, in any realm,
+    // reuse one parse, independently of the CodeCache's capacity heuristics; it must stop
+    // returning the cell before the cell can be collected.
+    JS_EXPORT_PRIVATE virtual JSCell* pinnedUnlinkedCode(const SourceCodeKey&) const { return nullptr; }
+    JS_EXPORT_PRIVATE virtual void pinUnlinkedCode(const SourceCodeKey&, JSCell*) const { }
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
