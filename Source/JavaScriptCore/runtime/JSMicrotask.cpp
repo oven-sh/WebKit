@@ -1489,6 +1489,9 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
         {
             // The module bodies in this graph are the continuation of the import() call, so
             // they run under the async context captured there (JSModuleLoader::loadModule).
+            // Modules held back by a top-level-await dependency execute later, from
+            // AsyncModuleExecutionDone, which reinstalls the context executeAsync snapshots
+            // while running inside this scope.
             AsyncContextSwapScope asyncContextScope(vm, globalObject, dynamicPayload->importerAsyncContext());
             evaluatePromise = module->evaluate(globalObject, dynamicPayload->referrerAsyncOrder());
         }
@@ -2199,7 +2202,15 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionDone: {
-        auto* module = uncheckedDowncast<JSModuleRecord>(arguments[2]);
+        // CyclicModuleRecord::executeAsync wraps the module together with Bun's
+        // async context in an InternalFieldTuple when a context was active as the
+        // module started executing, so that the waiting ancestors executed by
+        // asyncExecutionFulfilled run under that context too.
+        JSValue contextArg = arguments[2];
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
+#endif
+        auto* module = uncheckedDowncast<JSModuleRecord>(contextArg);
         RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(module->realm(), module, arguments[1], static_cast<JSPromise::Status>(payload)));
     }
 
