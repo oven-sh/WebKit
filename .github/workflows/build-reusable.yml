@@ -707,7 +707,13 @@ jobs:
           set -euo pipefail
           grep -v '^ *#' <<< "$ARTIFACTS" | grep . > artifacts.txt
           echo "$(wc -l < artifacts.txt) artifacts"
-          xargs -P 16 -I{} sh -euc 'gh run download "$GITHUB_RUN_ID" -n "$1" -D "dl/$1" && echo "downloaded $1"' _ {} < artifacts.txt
+          xargs -P 16 -I{} sh -euc '
+            for attempt in 1 2 3 4 5; do
+              rm -rf "dl/$1"
+              gh run download "$GITHUB_RUN_ID" -n "$1" -D "dl/$1" && { echo "downloaded $1"; exit 0; }
+              echo "download of $1 failed (attempt $attempt)"; sleep $((attempt * 5))
+            done
+            exit 1' _ {} < artifacts.txt
           mkdir -p out
           while read -r name; do mv "dl/$name/bun-webkit.tar.gz" "out/$name.tar.gz"; done < artifacts.txt
           ls -la out
@@ -730,4 +736,17 @@ jobs:
             [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
             gh release create "$TAG" "${flags[@]}"
           fi
-          xargs -P 8 -I{} sh -euc 'gh release upload "$TAG" "out/$1.tar.gz" --clobber && echo "uploaded $1"' _ {} < artifacts.txt
+          # a release just created is not visible to every API replica yet; uploads racing it get "release not found"
+          for i in $(seq 1 30); do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 2; done
+          gh release view "$TAG" >/dev/null
+          xargs -P 8 -I{} sh -euc '
+            for attempt in 1 2 3 4 5; do
+              gh release upload "$TAG" "out/$1.tar.gz" --clobber && { echo "uploaded $1"; exit 0; }
+              echo "upload of $1 failed (attempt $attempt)"; sleep $((attempt * 5))
+            done
+            exit 1' _ {} < artifacts.txt || true
+          gh release view "$TAG" --json assets --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
+          if missing=$(comm -23 <(sort artifacts.txt) uploaded.txt | grep .); then
+            echo "assets missing from $TAG:"; echo "$missing"; exit 1
+          fi
+          echo "$(wc -l < uploaded.txt) assets on $TAG"
