@@ -49,7 +49,7 @@ public:
     }
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static ModuleLoaderPayload* create(VM&, JSPromise*, bool deferred = false, int64_t referrerAsyncOrder = -1);
+    static ModuleLoaderPayload* create(VM&, JSPromise*, bool deferred = false, int64_t referrerAsyncOrder = -1, JSValue importerAsyncContext = jsUndefined());
 
     JSPromise* promise() const { return m_promise.get(); }
 
@@ -59,6 +59,8 @@ public:
     bool deferred() const { return m_deferred; }
 #if USE(BUN_JSC_ADDITIONS)
     int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
+    // The async context (AsyncLocalStorage store) active at the import() call site.
+    JSValue importerAsyncContext() const { return m_importerAsyncContext.get(); }
 #endif
 
     bool decrementRemaining()
@@ -68,13 +70,14 @@ public:
     }
 
 private:
-    ModuleLoaderPayload(VM&, Structure*, JSPromise*, bool deferred, int64_t referrerAsyncOrder);
+    ModuleLoaderPayload(VM&, Structure*, JSPromise*, bool deferred, int64_t referrerAsyncOrder, JSValue importerAsyncContext);
 
     void finishCreation(VM&);
 
     WriteBarrier<JSPromise> m_promise;
     WriteBarrier<Unknown> m_fulfillment;
 #if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_importerAsyncContext;
     int64_t m_referrerAsyncOrder { -1 };
 #endif
     uint8_t m_remainingFulfillments { 2 };

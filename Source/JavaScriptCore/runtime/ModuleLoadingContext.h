@@ -61,7 +61,7 @@ public:
     };
 
     static ModuleLoadingContext* create(VM&, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    static ModuleLoadingContext* create(VM&, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
+    static ModuleLoadingContext* create(VM&, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, JSValue importerAsyncContext = jsUndefined());
 
     Step step() const { return m_step; }
     void setStep(Step s) { m_step = s; }
@@ -80,11 +80,13 @@ public:
     bool deferred() const { return m_flags.contains(ModuleLoadFlag::Deferred); }
 #if USE(BUN_JSC_ADDITIONS)
     int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
+    // The async context (AsyncLocalStorage store) active at the import() call site.
+    JSValue importerAsyncContext() const { return m_importerAsyncContext.get(); }
 #endif
 
 private:
     ModuleLoadingContext(VM&, Structure*, Step, const JSModuleLoader::ModuleReferrer&, AbstractModuleRecord::ModuleRequest&&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    ModuleLoadingContext(VM&, Structure*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
+    ModuleLoadingContext(VM&, Structure*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder, JSValue importerAsyncContext);
 
     Step m_step { Step::Main };
     AbstractModuleRecord::ModuleRequest m_moduleRequest;
@@ -94,6 +96,7 @@ private:
     WriteBarrier<Unknown> m_referrer;
     WriteBarrier<AbstractModuleRecord> m_module;
 #if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_importerAsyncContext;
     int64_t m_referrerAsyncOrder { -1 };
 #endif
     OptionSet<ModuleLoadFlag> m_flags;

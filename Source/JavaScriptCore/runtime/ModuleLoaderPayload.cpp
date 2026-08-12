@@ -33,16 +33,18 @@ namespace JSC {
 
 const ClassInfo ModuleLoaderPayload::s_info = { "ModuleLoaderPayload"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleLoaderPayload) };
 
-ModuleLoaderPayload::ModuleLoaderPayload(VM& vm, Structure* structure, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder)
+ModuleLoaderPayload::ModuleLoaderPayload(VM& vm, Structure* structure, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder, JSValue importerAsyncContext)
     : Base(vm, structure)
     , m_promise(promise, WriteBarrierEarlyInit)
 #if USE(BUN_JSC_ADDITIONS)
+    , m_importerAsyncContext(importerAsyncContext, WriteBarrierEarlyInit)
     , m_referrerAsyncOrder(referrerAsyncOrder)
 #endif
     , m_deferred(deferred)
 {
 #if !USE(BUN_JSC_ADDITIONS)
     UNUSED_PARAM(referrerAsyncOrder);
+    UNUSED_PARAM(importerAsyncContext);
 #endif
 }
 
@@ -60,13 +62,16 @@ void ModuleLoaderPayload::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_promise);
     visitor.append(thisObject->m_fulfillment);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_importerAsyncContext);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(ModuleLoaderPayload);
 
-ModuleLoaderPayload* ModuleLoaderPayload::create(VM& vm, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder)
+ModuleLoaderPayload* ModuleLoaderPayload::create(VM& vm, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder, JSValue importerAsyncContext)
 {
-    ModuleLoaderPayload* instance = new (NotNull, allocateCell<ModuleLoaderPayload>(vm)) ModuleLoaderPayload(vm, vm.moduleLoaderPayloadStructure.get(), promise, deferred, referrerAsyncOrder);
+    ModuleLoaderPayload* instance = new (NotNull, allocateCell<ModuleLoaderPayload>(vm)) ModuleLoaderPayload(vm, vm.moduleLoaderPayloadStructure.get(), promise, deferred, referrerAsyncOrder, importerAsyncContext);
     instance->finishCreation(vm);
     return instance;
 }
