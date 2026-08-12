@@ -492,11 +492,25 @@ jobs:
             CMAKE_BUILD_TYPE: "Release"
             USE_MIMALLOC: "ON"
             USE_EXTERNAL_MIMALLOC: "ON"
+          - label: bun-webkit-freebsd-amd64-lto
+            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
+            freebsd_arch: x86_64
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-freebsd-amd64-debug
             freebsd_arch: x86_64
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Debug"
           - label: bun-webkit-freebsd-arm64
+            freebsd_arch: aarch64
+            package_json_arch: "arm64"
+            CMAKE_BUILD_TYPE: "Release"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
+          - label: bun-webkit-freebsd-arm64-lto
+            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
             freebsd_arch: aarch64
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
@@ -523,7 +537,7 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          FREEBSD_ARCH="${{matrix.freebsd_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash freebsd-release.sh
+          FREEBSD_ARCH="${{matrix.freebsd_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash freebsd-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["freebsd"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -549,11 +563,25 @@ jobs:
             CMAKE_BUILD_TYPE: "Release"
             USE_MIMALLOC: "ON"
             USE_EXTERNAL_MIMALLOC: "ON"
+          - label: bun-webkit-linux-arm64-android-lto
+            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
+            android_arch: aarch64
+            package_json_arch: "arm64"
+            CMAKE_BUILD_TYPE: "Release"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
           - label: bun-webkit-linux-arm64-android-debug
             android_arch: aarch64
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Debug"
           - label: bun-webkit-linux-amd64-android
+            android_arch: x86_64
+            package_json_arch: "x64"
+            CMAKE_BUILD_TYPE: "Release"
+            USE_MIMALLOC: "ON"
+            USE_EXTERNAL_MIMALLOC: "ON"
+          - label: bun-webkit-linux-amd64-android-lto
+            lto_flag: "-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables"
             android_arch: x86_64
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
@@ -580,7 +608,7 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
-          ANDROID_ARCH="${{matrix.android_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash android-release.sh
+          ANDROID_ARCH="${{matrix.android_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash android-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["android"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
@@ -596,6 +624,7 @@ jobs:
     name: release
     permissions:
       contents: write
+      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs:
@@ -619,200 +648,21 @@ jobs:
       - run: lspci
       - run: lsipc
       - run: whoami
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64
-          path: ${{runner.temp}}/bun-webkit-linux-amd64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64
-          path: ${{runner.temp}}/bun-webkit-linux-arm64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-debug
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-debug-asan
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-debug-asan
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-debug
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-debug-asan
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-debug-asan
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-macos-arm64
-          path: ${{runner.temp}}/bun-webkit-macos-arm64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-macos-arm64-asan
-          path: ${{runner.temp}}/bun-webkit-macos-arm64-asan
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-macos-arm64-debug
-          path: ${{runner.temp}}/bun-webkit-macos-arm64-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-macos-arm64-debug-asan
-          path: ${{runner.temp}}/bun-webkit-macos-arm64-debug-asan
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-asan
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-asan
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-asan
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-asan
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-macos-amd64-debug
-          path: ${{runner.temp}}/bun-webkit-macos-amd64-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-macos-amd64
-          path: ${{runner.temp}}/bun-webkit-macos-amd64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-macos-arm64-lto
-          path: ${{runner.temp}}/bun-webkit-macos-arm64-lto
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-macos-amd64-lto
-          path: ${{runner.temp}}/bun-webkit-macos-amd64-lto
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-lto
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-lto
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-lto
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-lto
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-windows-amd64
-          path: ${{runner.temp}}/bun-webkit-windows-amd64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-windows-amd64-asan
-          path: ${{runner.temp}}/bun-webkit-windows-amd64-asan
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-windows-amd64-debug
-          path: ${{runner.temp}}/bun-webkit-windows-amd64-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-windows-arm64
-          path: ${{runner.temp}}/bun-webkit-windows-arm64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-windows-arm64-debug
-          path: ${{runner.temp}}/bun-webkit-windows-arm64-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-windows-amd64-lto
-          path: ${{runner.temp}}/bun-webkit-windows-amd64-lto
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-musl
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-musl
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-musl
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-musl
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-musl-debug
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-musl-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-musl-debug
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-musl-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-musl-lto
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-musl-lto
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-android
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-android
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-arm64-android-debug
-          path: ${{runner.temp}}/bun-webkit-linux-arm64-android-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-android
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-android
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-linux-amd64-android-debug
-          path: ${{runner.temp}}/bun-webkit-linux-amd64-android-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-freebsd-amd64
-          path: ${{runner.temp}}/bun-webkit-freebsd-amd64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-freebsd-amd64-debug
-          path: ${{runner.temp}}/bun-webkit-freebsd-amd64-debug
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-freebsd-arm64
-          path: ${{runner.temp}}/bun-webkit-freebsd-arm64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bun-webkit-freebsd-arm64-debug
-          path: ${{runner.temp}}/bun-webkit-freebsd-arm64-debug
 
-      - name: Rename files
+      # Every build job uploads <label>/bun-webkit.tar.gz, so the release is every bun-webkit-* artifact of this run.
+      - name: Download artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
+          gh api "repos/${GH_REPO}/actions/runs/${GITHUB_RUN_ID}/artifacts" --paginate \
+            -q '.artifacts[] | select(.expired | not) | .name' | grep '^bun-webkit-' | sort -u > artifacts.txt
+          echo "$(wc -l < artifacts.txt) artifacts:"; cat artifacts.txt
+          xargs -P 16 -I{} sh -euc 'gh run download "$GITHUB_RUN_ID" -n "$1" -D "dl/$1" && echo "downloaded $1"' _ {} < artifacts.txt
           mkdir -p out
-          mv ${{runner.temp}}/bun-webkit-linux-amd64/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-musl/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-musl.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-musl/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-musl.tar.gz
-          mv ${{runner.temp}}/bun-webkit-macos-arm64/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64.tar.gz
-          mv ${{runner.temp}}/bun-webkit-macos-arm64-asan/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64-asan.tar.gz
-          mv ${{runner.temp}}/bun-webkit-macos-amd64/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64.tar.gz
-          mv ${{runner.temp}}/bun-webkit-macos-arm64-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64-lto.tar.gz
-          mv ${{runner.temp}}/bun-webkit-macos-amd64-lto/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-lto.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-debug-asan/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-debug-asan.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-debug-asan/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-debug-asan.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-debug/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-musl-debug/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-musl-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-musl-debug/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-musl-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-asan/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-asan.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-asan/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-asan.tar.gz
-          mv ${{runner.temp}}/bun-webkit-macos-arm64-debug/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-macos-arm64-debug-asan/bun-webkit.tar.gz ./out/bun-webkit-macos-arm64-debug-asan.tar.gz
-          mv ${{runner.temp}}/bun-webkit-macos-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-macos-amd64-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-lto.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-lto.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-musl-lto.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-musl-lto.tar.gz
-          mv ${{runner.temp}}/bun-webkit-windows-amd64/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64.tar.gz
-          mv ${{runner.temp}}/bun-webkit-windows-amd64-asan/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-asan.tar.gz
-          mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-windows-arm64/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64.tar.gz
-          mv ${{runner.temp}}/bun-webkit-windows-arm64-debug/bun-webkit.tar.gz ./out/bun-webkit-windows-arm64-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-windows-amd64-lto/bun-webkit.tar.gz ./out/bun-webkit-windows-amd64-lto.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-android/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-android.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-android-debug/bun-webkit.tar.gz ./out/bun-webkit-linux-arm64-android-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-android/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-android.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-amd64-android-debug/bun-webkit.tar.gz ./out/bun-webkit-linux-amd64-android-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-freebsd-amd64/bun-webkit.tar.gz ./out/bun-webkit-freebsd-amd64.tar.gz
-          mv ${{runner.temp}}/bun-webkit-freebsd-amd64-debug/bun-webkit.tar.gz ./out/bun-webkit-freebsd-amd64-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-freebsd-arm64/bun-webkit.tar.gz ./out/bun-webkit-freebsd-arm64.tar.gz
-          mv ${{runner.temp}}/bun-webkit-freebsd-arm64-debug/bun-webkit.tar.gz ./out/bun-webkit-freebsd-arm64-debug.tar.gz
+          while read -r name; do mv "dl/$name/bun-webkit.tar.gz" "out/$name.tar.gz"; done < artifacts.txt
+          ls -la out
 
       - name: Set release info
         id: release_info
@@ -820,76 +670,16 @@ jobs:
           echo "tag=${{ inputs.release_tag }}" >> $GITHUB_OUTPUT
 
       - name: Release
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
-        with:
-          generate_release_notes: true
-          tag_name: ${{ inputs.release_tag }}
-          prerelease: ${{ inputs.is_prerelease }}
-
-      - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          files: |
-            ./out/bun-webkit-linux-amd64.tar.gz
-            ./out/bun-webkit-linux-arm64.tar.gz
-            ./out/bun-webkit-linux-amd64-lto.tar.gz
-            ./out/bun-webkit-linux-arm64-lto.tar.gz
-            ./out/bun-webkit-linux-amd64-asan.tar.gz
-            ./out/bun-webkit-linux-arm64-asan.tar.gz
-            ./out/bun-webkit-linux-amd64-debug.tar.gz
-            ./out/bun-webkit-linux-arm64-debug.tar.gz
-            ./out/bun-webkit-linux-amd64-debug-asan.tar.gz
-            ./out/bun-webkit-linux-arm64-debug-asan.tar.gz
-
-      - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          files: |
-            ./out/bun-webkit-linux-amd64-musl.tar.gz
-            ./out/bun-webkit-linux-arm64-musl.tar.gz
-            ./out/bun-webkit-linux-amd64-musl-lto.tar.gz
-            ./out/bun-webkit-linux-arm64-musl-lto.tar.gz
-            ./out/bun-webkit-linux-amd64-musl-debug.tar.gz
-            ./out/bun-webkit-linux-arm64-musl-debug.tar.gz
-
-      - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          files: |
-            ./out/bun-webkit-linux-arm64-android.tar.gz
-            ./out/bun-webkit-linux-arm64-android-debug.tar.gz
-            ./out/bun-webkit-linux-amd64-android.tar.gz
-            ./out/bun-webkit-linux-amd64-android-debug.tar.gz
-
-      - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          files: |
-            ./out/bun-webkit-freebsd-amd64.tar.gz
-            ./out/bun-webkit-freebsd-amd64-debug.tar.gz
-            ./out/bun-webkit-freebsd-arm64.tar.gz
-            ./out/bun-webkit-freebsd-arm64-debug.tar.gz
-
-      - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          files: |
-            ./out/bun-webkit-macos-arm64.tar.gz
-            ./out/bun-webkit-macos-arm64-asan.tar.gz
-            ./out/bun-webkit-macos-arm64-debug.tar.gz
-            ./out/bun-webkit-macos-arm64-debug-asan.tar.gz
-            ./out/bun-webkit-macos-amd64.tar.gz
-            ./out/bun-webkit-macos-amd64-debug.tar.gz
-            ./out/bun-webkit-macos-arm64-lto.tar.gz
-            ./out/bun-webkit-macos-amd64-lto.tar.gz
-
-      - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          files: |
-            ./out/bun-webkit-windows-amd64.tar.gz
-            ./out/bun-webkit-windows-amd64-asan.tar.gz
-            ./out/bun-webkit-windows-amd64-debug.tar.gz
-            ./out/bun-webkit-windows-arm64.tar.gz
-            ./out/bun-webkit-windows-arm64-debug.tar.gz
-            ./out/bun-webkit-windows-amd64-lto.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag }}
+          PRERELEASE: ${{ inputs.is_prerelease }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            flags=(--title "$TAG" --generate-notes)
+            [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
+            gh release create "$TAG" "${flags[@]}"
+          fi
+          ls out/*.tar.gz | xargs -P 8 -I{} sh -euc 'gh release upload "$TAG" "$1" --clobber && echo "uploaded $1"' _ {}
