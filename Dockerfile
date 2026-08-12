@@ -4,7 +4,7 @@ ARG CPU=native
 ARG LTO_FLAG="-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables "
 ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
 ARG LLVM_VERSION="21"
-# -g is the debug/asan level; the build steps append -g1 (line tables only) for release and -lto, see $G below.
+# The -lto variants append -g1 (line tables only) after this, see $G below; every other variant keeps full -g.
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
@@ -226,7 +226,7 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 COPY icu/ /icu-bun/
 ADD https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz /icu.tgz
 RUN --mount=type=tmpfs,target=/icu \
-    export G=$(if [ "$WEBKIT_RELEASE_TYPE" = "Debug" ] || [ -n "${ENABLE_SANITIZERS:-}" ]; then echo ""; else echo "-g1"; fi) && \
+    export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CFLAGS="$CFLAGS $G -Os -std=c17 $LTO_FLAG" && \
     export CXXFLAGS="$CXXFLAGS $G -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
@@ -260,7 +260,7 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     unset C_INCLUDE_PATH && \
-    export G=$(if [ "$WEBKIT_RELEASE_TYPE" = "Debug" ] || [ -n "${ENABLE_SANITIZERS:-}" ]; then echo ""; else echo "-g1"; fi) && \
+    export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CFLAGS="$CFLAGS $G $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
     export CXXFLAGS="$CXXFLAGS $G $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
     export ENABLE_ASSERTS="AUTO" && \
