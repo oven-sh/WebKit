@@ -18,7 +18,7 @@
 # Differences from the native Windows build:
 #   - ICU is cross-compiled from source with clang's GNU driver + llvm-ar
 #     instead of MSBuild + the ICU Visual Studio solution. Same version
-#     (73.2), same /MT static CRT, same U_STATIC_IMPLEMENTATION, same
+#     (78.3), same /MT static CRT, same U_STATIC_IMPLEMENTATION, same
 #     statically-embedded 32 MB data table.
 #   - The "patch the cmake .bat files" workaround is not needed: cmake on a
 #     Linux host generates POSIX shell commands for custom commands.
@@ -42,10 +42,9 @@ ARG XWIN_SHA256="31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4c
 # eventually retired.
 ARG MSVC_CRT_VERSION="14.44.17.14"
 ARG WIN_SDK_VERSION="10.0.26100"
-ARG ICU_VERSION="73-2"
-ARG ICU_VERSION_UNDERSCORE="73_2"
-ARG ICU_MAJOR="73"
-ARG ICU_SHA256="818a80712ed3caacd9b652305e01afc7fa167e6f2e94996da44b90c2ab604ce1"
+ARG ICU_VERSION="78.3"
+ARG ICU_MAJOR="78"
+ARG ICU_SHA256="3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0"
 
 # ───────────────────────────────────────────────────────────────────────────
 # base — LLVM + the xwin-splatted MSVC CRT and Windows SDK
@@ -193,7 +192,6 @@ ARG WIN_TRIPLE_ARCH
 ARG WEBKIT_RELEASE_TYPE
 ARG ICU_MARCH_FLAG
 ARG ICU_VERSION
-ARG ICU_VERSION_UNDERSCORE
 ARG ICU_MAJOR
 ARG ICU_SHA256
 ARG LLVM_VERSION
@@ -216,7 +214,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf
 COPY icu/ /icu-bun/
 
 ADD --checksum=sha256:${ICU_SHA256} \
-    https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION_UNDERSCORE}-src.tgz /icu-src.tgz
+    https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz /icu-src.tgz
 # The udata.cpp patch adds the weak per-item decompression hook (see the
 # stage comment above); it lands in the cross-built sicuuc.lib.
 RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz && \

@@ -58,7 +58,7 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
 # After tar, patch udata.cpp with a per-item decompression hook (a weak extern
 # Bun defines; null in ICU's own tools).
 #
-# After the first `make` (which produces bin/icupkg), filter data/in/icudt75l.dat
+# After the first `make` (which produces bin/icupkg), filter data/in/icudt78l.dat
 # to drop converters/translit/stringprep/confusables/unames — Bun has zero
 # ucnv_/utrans_/usprep_/uspoof_ consumers — then rebuild.
 #
@@ -70,7 +70,7 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
 # Items matching icu/keep-raw.txt stay uncompressed (too expensive to decode lazily).
 # The repacked libicudata.a also embeds the trained zstd dictionary.
 COPY icu/ /icu-bun/
-ADD https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz /icu.tgz
+ADD --checksum=sha256:3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0 https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz /icu.tgz
 RUN --mount=type=tmpfs,target=/icu \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CFLAGS -Os -std=c17 $LTO_FLAG" && \
@@ -83,12 +83,12 @@ RUN --mount=type=tmpfs,target=/icu \
     cd source && \
     ./configure  --enable-static --disable-shared --with-data-packaging=static --disable-samples --disable-debug --disable-tests && \
     make -j$(nproc) && \
-    bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
-    bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
-    mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
+    bin/icupkg -l data/in/icudt78l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
+    bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
+    mv -f data/in/icudt78l_filtered.dat data/in/icudt78l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
-    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt75l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg
+    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt78l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg
 
 FROM base as build_webkit
 

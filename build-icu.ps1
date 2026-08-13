@@ -29,7 +29,7 @@ if (-not $OutputDir) {
 $ICU_LIB_DIR = Join-Path $OutputDir "lib"
 $ICU_INCLUDE_DIR = Join-Path $OutputDir "include"
 
-$ICU_SOURCE_URL = "https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-src.tgz"
+$ICU_SOURCE_URL = "https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz"
 
 # Verify Python 3 is available (required for ICU data build)
 try {
@@ -314,14 +314,14 @@ if (Test-Path $i18nLibSrc) {
 
 # ICU data library - output location depends on platform
 $binDir = if ($Platform -eq "x64") { "bin64" } else { "bin$Platform" }
-$icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "..\$binDir\sicudt73.lib"
+$icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "..\$binDir\sicudt78.lib"
 
 # Check alternative locations
 if (-not (Test-Path $icuDataLibSrc)) {
-    $icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "data\out\tmp\sicudt73.lib"
+    $icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "data\out\tmp\sicudt78.lib"
 }
 if (-not (Test-Path $icuDataLibSrc)) {
-    $icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "data\out\sicudt73.lib"
+    $icuDataLibSrc = Join-Path $ICU_SOURCE_DIR "data\out\sicudt78.lib"
 }
 if (-not (Test-Path $icuDataLibSrc)) {
     $foundLib = Get-ChildItem -Path $OutputDir -Recurse -Filter "sicudt*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
