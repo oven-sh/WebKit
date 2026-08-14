@@ -470,7 +470,12 @@ JSValue atomicsWaitImpl(JSGlobalObject* globalObject, JSArrayType* typedArray, u
     case WaiterListManager::WaitSyncResult::TimedOut:
         return vm.smallStrings.timedOutString();
     case WaiterListManager::WaitSyncResult::Terminated:
-        vm.throwTerminationException();
+        // The request may still be an unhandled NeedTermination trap fired from another thread
+        // while we were blocked; handling it records the request and throws the TerminationException.
+        if (vm.hasTerminationRequest())
+            vm.throwTerminationException();
+        else
+            vm.traps().handleTraps(VMTraps::NeedTermination);
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
