@@ -86,7 +86,7 @@ public:
 
     ALWAYS_INLINE void tryAdd(PropertySlot& slot, JSObject* object, PropertyName propName, bool result)
     {
-        if (parseIndex(propName))
+        if (parseTypedArrayIndex(propName))
             return;
 
         if (!slot.isCacheable() && !slot.isUnset())

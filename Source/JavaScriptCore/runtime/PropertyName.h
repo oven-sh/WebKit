@@ -128,6 +128,26 @@ ALWAYS_INLINE std::optional<uint32_t> parseIndex(PropertyName propertyName)
     return parseIndex(*uid);
 }
 
+// Like parseIndex(), but also accepts UINT32_MAX. parseIndex() is capped at
+// MAX_ARRAY_INDEX (0xFFFFFFFE) because a regular Array's length is a uint32 and
+// the largest index is length-1. A TypedArray's length is a size_t bounded by
+// MAX_ARRAY_BUFFER_SIZE / elementSize, so for 1-byte element types the last
+// valid index can be 0xFFFFFFFF. UINT32_MAX is the only value that fits in a
+// uint32 and is rejected by parseIndex(), so it's the only extra case to cover.
+ALWAYS_INLINE std::optional<uint32_t> parseTypedArrayIndex(PropertyName propertyName)
+{
+    auto uid = propertyName.uid();
+    if (!uid)
+        return std::nullopt;
+    if (uid->isSymbol())
+        return std::nullopt;
+    if (std::optional<uint32_t> index = parseIndex(*uid))
+        return index;
+    if (uid->length() == 10 && equal(uid, "4294967295"_span8)) [[unlikely]]
+        return UINT32_MAX;
+    return std::nullopt;
+}
+
 template<typename CharacterType>
 ALWAYS_INLINE std::optional<bool> fastIsCanonicalNumericIndexString(std::span<const CharacterType> characters)
 {
