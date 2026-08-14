@@ -2175,15 +2175,18 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     case InternalMicrotask::BunInvokeJobWithArguments: {
         // Simple job invocation with arguments:
         // arguments[0]: job function
-        // arguments[1-4]: arguments (optional)
+        // arguments[1-2]: arguments (optional)
+        // arguments[3]: async context the job was queued under (optional; installed
+        //               for the call, and what names the job's scheduling domain)
         JSValue job = arguments[0];
         MarkedArgumentBuffer args;
         // Add non-empty arguments only
-        for (size_t i = 1; i < maxMicrotaskArguments; ++i) {
+        for (size_t i = 1; i < 3; ++i) {
             if (!arguments[i].isEmpty())
                 args.append(arguments[i]);
         }
         ASSERT(!args.hasOverflowed());
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
         scope.release();
         call(globalObject, job, jsUndefined(), args, "job is not a function"_s);
         return;
