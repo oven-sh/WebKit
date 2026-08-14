@@ -53,8 +53,10 @@ class Signature;
 class VM;
 class NativeExecutable;
 
-// List up super common stubs so that we initialize them eagerly.
-#define JSC_FOR_EACH_COMMON_THUNK(macro) \
+// Thunks needed during VM construction or referenced from JIT compilation
+// threads. These are compiled eagerly in JITThunks::initialize() so that
+// ctiStub(CommonJITThunkID) can return them without locking.
+#define JSC_FOR_EACH_EAGER_COMMON_THUNK(macro) \
     macro(HandleException, handleExceptionGenerator) \
     macro(CheckException, checkExceptionGenerator) \
     macro(NativeCall, nativeCallGenerator) \
@@ -75,6 +77,12 @@ class NativeExecutable;
     macro(PolymorphicTopTierThunk, polymorphicTopTierThunk) \
     macro(PolymorphicTopTierThunkForClosure, polymorphicTopTierThunkForClosure) \
     macro(ReturnFromBaseline, returnFromBaselineGenerator) \
+
+// Inline-cache handler thunks. Each of these is the code pointer for a single
+// IC shape and is only requested from InlineCacheCompiler on the mutator
+// thread once a matching access is repatched. They are compiled lazily on
+// first use.
+#define JSC_FOR_EACH_LAZY_COMMON_THUNK(macro) \
     macro(GetByIdLoadOwnPropertyHandler, getByIdLoadOwnPropertyHandler) \
     macro(GetByIdLoadPrototypePropertyHandler, getByIdLoadPrototypePropertyHandler) \
     macro(GetByIdMissHandler, getByIdMissHandler) \
@@ -175,6 +183,10 @@ class NativeExecutable;
     macro(PutByValWithFalseKeyTransitionReallocatingHandler, putByValWithFalseKeyTransitionReallocatingHandler) \
     macro(PutByValWithFalseKeyTransitionReallocatingOutOfLineHandler, putByValWithFalseKeyTransitionReallocatingOutOfLineHandler) \
 
+#define JSC_FOR_EACH_COMMON_THUNK(macro) \
+    JSC_FOR_EACH_EAGER_COMMON_THUNK(macro) \
+    JSC_FOR_EACH_LAZY_COMMON_THUNK(macro) \
+
 enum class CommonJITThunkID : uint8_t {
 #define JSC_DEFINE_COMMON_JIT_THUNK_ID(name, func) name,
 JSC_FOR_EACH_COMMON_THUNK(JSC_DEFINE_COMMON_JIT_THUNK_ID)
@@ -200,7 +212,7 @@ public:
     CodePtr<JITThunkPtrTag> ctiInternalFunctionCall(VM&);
     CodePtr<JITThunkPtrTag> ctiInternalFunctionConstruct(VM&);
 
-    MacroAssemblerCodeRef<JITThunkPtrTag> ctiStub(CommonJITThunkID);
+    MacroAssemblerCodeRef<JITThunkPtrTag> ctiStub(VM&, CommonJITThunkID);
     MacroAssemblerCodeRef<JITThunkPtrTag> ctiStub(VM&, ThunkGenerator);
     MacroAssemblerCodeRef<JITThunkPtrTag> ctiSlowPathFunctionStub(VM&, SlowPathFunction);
 
