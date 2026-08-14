@@ -45,11 +45,13 @@ class Waiter final : public WTF::BasicRawSentinelNode<Waiter>, public ThreadSafe
 public:
     Waiter(VM*);
     Waiter(JSPromise*);
-    JS_EXPORT_PRIVATE ~Waiter();
+    ~Waiter();
 
     // Sync waiter only; any thread. Wake the VM's thread if it is parked in Atomics.wait /
     // memory.atomic.wait so that it sees the termination request that was just fired.
     void notifyOfTerminationRequest();
+    // Sync waiter only; its own thread, holding the lock of the list it is (un)parking on.
+    void setParkedList(RefPtr<WaiterList>&&);
 
     bool isAsync() const
     {
@@ -115,8 +117,6 @@ public:
     void dump(PrintStream&) const;
 
 private:
-    friend class WaiterListManager;
-
     VM* m_vm { nullptr };
     // Cached at construction to avoid a cross-VM race: unregister(JSGlobalObject*) runs on
     // one VM's sweep thread; reading ticket->target()->realm() would race with another VM's

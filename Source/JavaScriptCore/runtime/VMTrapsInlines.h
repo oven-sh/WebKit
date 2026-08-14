@@ -50,8 +50,7 @@ inline void VMTraps::deferTermination(DeferAction deferAction)
 inline void VMTraps::undoDeferTermination(DeferAction deferAction)
 {
     ASSERT(m_deferTerminationCount > 0);
-    ASSERT(!m_suspendedTerminationException || vm().hasTerminationRequest());
-    if (!--m_deferTerminationCount && vm().hasTerminationRequest()) [[unlikely]]
+    if (!--m_deferTerminationCount && (m_suspendedTerminationException || vm().hasTerminationRequest())) [[unlikely]]
         undoDeferTerminationSlow(deferAction);
 }
 

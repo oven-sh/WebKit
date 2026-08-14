@@ -747,7 +747,7 @@ static inline int32_t waitImpl(VM& vm, ValueType* pointer, ValueType expectedVal
     case WaiterListManager::WaitSyncResult::TimedOut:
         return static_cast<int32_t>(result);
     case WaiterListManager::WaitSyncResult::Terminated:
-        ASSERT(vm.hasPendingTerminationException() || vm.traps().isDeferringTermination());
+        ASSERT(vm.hasPendingTerminationException());
         return -1;
     }
     RELEASE_ASSERT_NOT_REACHED();

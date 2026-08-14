@@ -470,7 +470,7 @@ JSValue atomicsWaitImpl(JSGlobalObject* globalObject, JSArrayType* typedArray, u
     case WaiterListManager::WaitSyncResult::TimedOut:
         return vm.smallStrings.timedOutString();
     case WaiterListManager::WaitSyncResult::Terminated:
-        ASSERT(vm.hasPendingTerminationException() || vm.traps().isDeferringTermination());
+        ASSERT(vm.hasPendingTerminationException());
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
