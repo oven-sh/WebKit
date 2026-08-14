@@ -451,8 +451,10 @@ namespace FFI {
 void retireThreadsafeInvocation(ThreadsafeInvocation& invocation)
 {
     ThreadsafeCallbackHandle& handle = invocation.handle();
-    if (handle.endInvocation() && handle.callback())
+    if (handle.endInvocation() && handle.callback()) {
+        JSLockHolder locker(handle.callback()->vm());
         handle.callback()->unroot();
+    }
 }
 
 // The owning thread, routed here by the embedder while the callback's context still accepts tasks.
@@ -467,7 +469,6 @@ void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
     JSGlobalObject* globalObject = callback->globalObject();
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    // Retired (and possibly unrooted) under the API lock.
     struct RetireInvocation {
         ThreadsafeInvocation& invocation;
         ~RetireInvocation() { retireThreadsafeInvocation(invocation); }

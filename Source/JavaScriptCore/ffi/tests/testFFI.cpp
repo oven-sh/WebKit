@@ -2343,29 +2343,30 @@ static void testThreadsafeCallbackOutlivesVM()
                 FFI_CHECK(!!signature);
                 JSFFICallback* callback = signature ? JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), target, signature.releaseNonNull(), true, nullptr) : nullptr;
                 FFI_CHECK(callback && callback->nativeEntrypoint());
-                if (!callback || !callback->nativeEntrypoint()) {
-                    gcUnprotect(globalObject);
-                    continue;
+                if (callback && callback->nativeEntrypoint())
+                    entry = reinterpret_cast<Entry>(callback->nativeEntrypoint());
+
+                if (entry) {
+                    // Live: the call is queued for the owning thread and the native caller sees zero.
+                    FFI_CHECK_EQ(entry(1), 0);
+                    auto queued = takeThreadsafeTestQueue();
+                    FFI_CHECK_EQ(queued.size(), 1u);
+                    for (auto& invocation : queued)
+                        FFI::runThreadsafeInvocation(*invocation);
+                    FFI_CHECK_EQ(s_threadsafeTargetCalls, 1u);
+
+                    if (ending == Ending::PendingAtTeardown)
+                        FFI_CHECK_EQ(entry(2), 0); // left in the queue across the teardown below
+                    if (ending == Ending::Closed)
+                        callback->close();
                 }
-                entry = reinterpret_cast<Entry>(callback->nativeEntrypoint());
-
-                // Live: the call is queued for the owning thread and the native caller sees zero.
-                FFI_CHECK_EQ(entry(1), 0);
-                auto queued = takeThreadsafeTestQueue();
-                FFI_CHECK_EQ(queued.size(), 1u);
-                for (auto& invocation : queued)
-                    FFI::runThreadsafeInvocation(*invocation);
-                FFI_CHECK_EQ(s_threadsafeTargetCalls, 1u);
-
-                if (ending == Ending::PendingAtTeardown)
-                    FFI_CHECK_EQ(entry(2), 0); // left in the queue across the teardown below
-                if (ending == Ending::Closed)
-                    callback->close();
                 gcUnprotect(globalObject);
             }
             JSLockHolder locker(vm);
             vm.derefSuppressingSaferCPPChecking();
         }
+        if (!entry)
+            continue;
 
         // Cell, global object and VM are gone; the entrypoint is still mapped and drops the call.
         FFI_CHECK_EQ(entry(3), 0);
