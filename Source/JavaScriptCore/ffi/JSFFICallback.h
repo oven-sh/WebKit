@@ -27,10 +27,10 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
+#include "FFIContext.h"
 #include "FFISignature.h"
 #include "JSObject.h"
 #include "MacroAssemblerCodeRef.h"
-#include <atomic>
 
 namespace JSC {
 
@@ -58,6 +58,7 @@ public:
     static JSObject* createPrototype(VM&, JSGlobalObject*);
 
     JS_EXPORT_PRIVATE void* nativeEntrypoint() const;
+    const MacroAssemblerCodeRef<JITThunkPtrTag>& entryCode() const;
 
     JS_EXPORT_PRIVATE void close();
     bool isClosed() const { return m_closed; }
@@ -65,25 +66,8 @@ public:
     JSObject* callable() const { return m_callable.get(); }
     const char* setReturnCString(const CString&);
     FFI::Signature& signature() const { return m_signature.get(); }
-    bool isThreadsafe() const { return m_threadsafe; }
-    void* embedderContext() const { return m_embedderContext; }
-    static constexpr unsigned closedBit = 0x80000000u;
-    static constexpr unsigned countMask = 0x7fffffffu;
-    bool tryBeginThreadsafeInvocation()
-    {
-        unsigned state = m_threadsafeState.load(std::memory_order_acquire);
-        do {
-            if (state & closedBit)
-                return false;
-        } while (!m_threadsafeState.compare_exchange_weak(state, state + 1, std::memory_order_acq_rel, std::memory_order_acquire));
-        return true;
-    }
-    bool endThreadsafeInvocation()
-    {
-        unsigned state = m_threadsafeState.fetch_sub(1, std::memory_order_acq_rel) - 1;
-        return (state & closedBit) && !(state & countMask);
-    }
-    bool markClosedAndReportPending() { return m_threadsafeState.fetch_or(closedBit, std::memory_order_acq_rel) & countMask; }
+    bool isThreadsafe() const { return !!m_threadsafe; }
+    FFI::ThreadsafeCallbackHandle* threadsafeHandle() const { return m_threadsafe.get(); }
     void unroot();
 
 private:
@@ -95,10 +79,8 @@ private:
     WriteBarrier<JSObject> m_callable;
     Ref<FFI::Signature> m_signature;
     Vector<char, 64> m_returnCString;
-    MacroAssemblerCodeRef<JITThunkPtrTag> m_entryCode;
-    void* m_embedderContext { nullptr }; // opaque, embedder-owned; passed to threadsafe dispatch
-    std::atomic<unsigned> m_threadsafeState { 0 }; // closedBit | pending-invocation count (see above)
-    bool m_threadsafe { false };
+    MacroAssemblerCodeRef<JITThunkPtrTag> m_entryCode; // a threadsafe callback's lives in its handle instead
+    RefPtr<FFI::ThreadsafeCallbackHandle> m_threadsafe;
     bool m_closed { false };
 };
 

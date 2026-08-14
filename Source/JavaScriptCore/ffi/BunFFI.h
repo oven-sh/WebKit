@@ -50,6 +50,8 @@ JS_EXPORT_PRIVATE RefPtr<Signature> signatureFromJS(JSGlobalObject*, JSValue des
 class ThreadsafeInvocation;
 JS_EXPORT_PRIVATE JSFFICallback* createCallback(JSGlobalObject*, Ref<Signature>&&, JSObject* callable, bool threadsafe, void* embedderContext);
 JS_EXPORT_PRIVATE void runThreadsafeInvocation(ThreadsafeInvocation&);
+// For an invocation the embedder's dispatch accepted but will not run (owning thread).
+JS_EXPORT_PRIVATE void retireThreadsafeInvocation(ThreadsafeInvocation&);
 
 } // namespace FFI
 

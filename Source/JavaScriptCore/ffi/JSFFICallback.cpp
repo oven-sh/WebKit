@@ -60,7 +60,16 @@ JSFFICallback::JSFFICallback(VM& vm, Structure* structure, Ref<FFI::Signature>&&
 {
 }
 
-JSFFICallback::~JSFFICallback() = default;
+JSFFICallback::~JSFFICallback()
+{
+    if (!m_threadsafe)
+        return;
+    m_threadsafe->cellDestroyed();
+    // Never close()d, so native code was never told to stop calling the entrypoint (the global object is
+    // going away under it): keep the handle, and with it the thunk, alive for the rest of the process.
+    if (!m_closed)
+        m_threadsafe->ref();
+}
 
 void JSFFICallback::destroy(JSCell* cell)
 {
@@ -106,11 +115,11 @@ JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Struc
         return nullptr;
     }
     JSFFICallback* callback = new (NotNull, allocateCell<JSFFICallback>(vm)) JSFFICallback(vm, structure, WTF::move(signature));
-    callback->m_threadsafe = threadsafe;
-    callback->m_embedderContext = embedderContext;
+    if (threadsafe)
+        callback->m_threadsafe = FFI::ThreadsafeCallbackHandle::create(callback, callback->m_signature.copyRef(), embedderContext);
     callback->finishCreation(vm, callable);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!callback->m_entryCode) [[unlikely]] {
+    if (!callback->entryCode()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
@@ -127,22 +136,31 @@ void JSFFICallback::finishCreation(VM& vm, JSObject* callable)
     m_callable.set(vm, this, callable);
 
 #if FFI_CALLBACK_THUNK_SUPPORTED
-    m_entryCode = FFI::generateCallbackThunk(vm, *this);
-    if (!m_entryCode) [[unlikely]]
+    auto entryCode = FFI::generateCallbackThunk(vm, *this);
+    if (!entryCode) [[unlikely]]
         return; // create() throws the OutOfMemoryError.
+    if (m_threadsafe)
+        m_threadsafe->setEntryCode(WTF::move(entryCode));
+    else
+        m_entryCode = WTF::move(entryCode);
 
     if (Options::verboseFFI()) [[unlikely]]
         dataLogLn("FFI: created JSFFICallback ", RawPointer(this), " signature ", m_signature->toString(), " entrypoint ", RawPointer(nativeEntrypoint()));
 
     constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     putDirect(vm, Identifier::fromString(vm, "ptr"_s), FFI::pointerToJSValue(globalObject(), reinterpret_cast<uint64_t>(nativeEntrypoint())), attributes);
-    putDirect(vm, Identifier::fromString(vm, "threadsafe"_s), jsBoolean(m_threadsafe), attributes);
+    putDirect(vm, Identifier::fromString(vm, "threadsafe"_s), jsBoolean(isThreadsafe()), attributes);
 #endif
+}
+
+const MacroAssemblerCodeRef<JITThunkPtrTag>& JSFFICallback::entryCode() const
+{
+    return m_threadsafe ? m_threadsafe->entryCode() : m_entryCode;
 }
 
 void* JSFFICallback::nativeEntrypoint() const
 {
-    return untagCFunctionPtr<void*, JITThunkPtrTag>(m_entryCode.code().taggedPtr());
+    return untagCFunctionPtr<void*, JITThunkPtrTag>(entryCode().code().taggedPtr());
 }
 
 const char* JSFFICallback::setReturnCString(const CString& string)
@@ -159,7 +177,8 @@ void JSFFICallback::close()
         return;
     m_closed = true;
     VM& vm = this->vm();
-    if (!markClosedAndReportPending())
+    // A threadsafe callback with invocations still queued stays rooted until the last of them has run.
+    if (!m_threadsafe || !m_threadsafe->markClosedAndReportPending())
         unroot();
     constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     putDirect(vm, Identifier::fromString(vm, "ptr"_s), jsNull(), attributes);
