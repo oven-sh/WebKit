@@ -265,18 +265,23 @@ public:
     //
     // A microtask's domain is read from the async context it captured when it was
     // queued: a context array whose first element is a Symbol over the embedder's
-    // sentinel uid is [sentinel, domainId, ...AsyncLocalStorage pairs]. Tasks with no such context are
-    // in domain 0. While a domain drain is active, drainImpl() runs only tasks of that
-    // domain (plus domain-neutral pass-through jobs) and moves every other task that
-    // reaches the front into the drain's `deferred` deque; when the drain ends they are
-    // put back at the front of the queue in their original order.
+    // sentinel uid is [sentinel, domainId, ...AsyncLocalStorage pairs]. Tasks with no
+    // such context are in domain 0. While a domain drain is active, drainImpl() runs
+    // only tasks of that domain (plus domain-neutral jobs) and moves every other task
+    // that reaches the front into the drain's `deferred` deque; when the drain ends they
+    // are put back at the front of the queue in their original order.
     struct DomainDrain {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DomainDrain);
-        explicit DomainDrain(uint32_t domain)
+        DomainDrain(uint32_t domain, bool admitsLoaderJobs)
             : domain(domain)
+            , admitsLoaderJobs(admitsLoaderJobs)
         {
         }
         uint32_t domain { 0 };
+        // Whether module-loader pipeline jobs, which cannot be attributed, run in this
+        // drain (a run that may await an import) or wait like anything foreign (a run
+        // that cannot depend on one). See isDomainNeutralMicrotask.
+        bool admitsLoaderJobs { false };
         unsigned executed { 0 };
         MarkedMicrotaskDeque deferred;
     };
@@ -291,13 +296,17 @@ public:
     // for the same domain runs too) and returns how many ran. Safe to call while a
     // checkpoint or another domain drain is already on the stack.
     template<bool useCallOnEachMicrotask>
-    inline unsigned performDomainDrain(VM&, uint32_t domain);
+    inline unsigned performDomainDrain(VM&, uint32_t domain, bool admitsLoaderJobs);
 #endif
 
     void beginMarking()
     {
         m_queue.beginMarking();
         m_toKeep.beginMarking();
+#if USE(BUN_JSC_ADDITIONS)
+        for (auto& drain : m_domainDrains)
+            drain->deferred.beginMarking();
+#endif
     }
 
     DECLARE_VISIT_AGGREGATE;

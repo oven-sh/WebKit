@@ -158,7 +158,7 @@ inline void MicrotaskQueue::performMicrotaskCheckpoint(VM& vm, NOESCAPE const In
 
 #if USE(BUN_JSC_ADDITIONS)
 template<bool useCallOnEachMicrotask>
-inline unsigned MicrotaskQueue::performDomainDrain(VM& vm, uint32_t domain)
+inline unsigned MicrotaskQueue::performDomainDrain(VM& vm, uint32_t domain, bool admitsLoaderJobs)
 {
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (vm.executionForbidden()) [[unlikely]] {
@@ -170,7 +170,7 @@ inline unsigned MicrotaskQueue::performDomainDrain(VM& vm, uint32_t domain)
         return 0;
     }
 
-    m_domainDrains.append(makeUnique<DomainDrain>(domain));
+    m_domainDrains.append(makeUnique<DomainDrain>(domain, admitsLoaderJobs));
     {
         std::optional<VMEntryScope> entryScope;
         JSGlobalObject* currentGlobalObject = nullptr;

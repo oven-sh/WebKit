@@ -1505,7 +1505,7 @@ void VM::drainMicrotasks()
     // Inside a scoped run a checkpoint drains only the run's domain, and it is not the
     // end of the outer frame's synchronous execution, so WeakRef versions are left alone.
     if (m_microtaskDrainDomain) [[unlikely]] {
-        drainMicrotasksInDomain(m_microtaskDrainSentinel, m_microtaskDrainDomain);
+        drainMicrotasksInDomain(m_microtaskDrainSentinel, m_microtaskDrainDomain, m_microtaskDrainAdmitsLoaderJobs);
         return;
     }
 #endif
@@ -1542,24 +1542,13 @@ void VM::drainMicrotasksForGlobalObject(JSGlobalObject* globalObject)
     m_defaultMicrotaskQueue->clearForGlobalObject(globalObject);
 }
 
-void VM::drainMicrotasksInDomain(WTF::SymbolImpl* sentinel, uint32_t domain)
+void VM::drainMicrotasksInDomain(WTF::SymbolImpl* sentinel, uint32_t domain, bool admitsLoaderJobs)
 {
     if (m_drainMicrotaskDelayScopeCount) [[unlikely]]
         return;
 
     m_defaultMicrotaskQueue->setDomainSentinel(sentinel);
-    // Rejection callbacks fired by didExhaustMicrotaskQueue() may queue more work for
-    // this domain, so repeat until a pass runs nothing.
-    while (true) {
-        unsigned executed = m_defaultMicrotaskQueue->performDomainDrain</* useCallOnEachMicrotask */ true>(*this, domain);
-        if (hasPendingTerminationException()) [[unlikely]]
-            return;
-        didExhaustMicrotaskQueue();
-        if (hasPendingTerminationException()) [[unlikely]]
-            return;
-        if (!executed || m_defaultMicrotaskQueue->isEmpty())
-            break;
-    }
+    m_defaultMicrotaskQueue->performDomainDrain</* useCallOnEachMicrotask */ true>(*this, domain, admitsLoaderJobs);
 }
 #endif
 

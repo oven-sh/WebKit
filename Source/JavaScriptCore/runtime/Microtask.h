@@ -120,12 +120,14 @@ constexpr bool isModuleLoaderInternalMicrotask(InternalMicrotask task)
 //    observable effect of their own — the reactions they trigger carry their own
 //    contexts — and deferring them would stall `await Promise.all(...)` or a
 //    `.catch()` hop in an await chain inside a scoped run.
-//  - the module-loader pipeline (fetch/instantiate/link/evaluate steps and dynamic
-//    import settlement). Its reactions are keyed by loader state, not by the
-//    importer's context, so they cannot be attributed; deferring them would stall
-//    any `import()` inside a run. AsyncModuleExecutionResume is excluded: it does
-//    carry the module's async context and resumes user code.
-constexpr bool isDomainNeutralMicrotask(InternalMicrotask task)
+//  - when the drain admits them, the module-loader pipeline (fetch/instantiate/
+//    link/evaluate steps and dynamic import settlement). Its reactions are keyed
+//    by loader state, not by the importer's context, so they cannot be attributed;
+//    a run that may await an `import()` has to let them through (accepting that an
+//    import started outside it may progress inside), while a run that cannot depend
+//    on one keeps them out like anything foreign. AsyncModuleExecutionResume is
+//    never neutral: it carries the module's async context and resumes user code.
+constexpr bool isDomainNeutralMicrotask(InternalMicrotask task, bool admitsLoaderJobs)
 {
     static_assert(static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob) == static_cast<uint8_t>(InternalMicrotask::PromiseResolveWithoutHandlerJob) + 5);
     if (task == InternalMicrotask::PromiseFinallyAwaitJob)
@@ -133,7 +135,7 @@ constexpr bool isDomainNeutralMicrotask(InternalMicrotask task)
     if (static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::PromiseResolveWithoutHandlerJob)
         && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob))
         return true;
-    return task != InternalMicrotask::AsyncModuleExecutionResume && isModuleLoaderInternalMicrotask(task);
+    return admitsLoaderJobs && task != InternalMicrotask::AsyncModuleExecutionResume && isModuleLoaderInternalMicrotask(task);
 }
 #else
 constexpr unsigned maxMicrotaskArguments = 3;

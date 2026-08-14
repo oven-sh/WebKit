@@ -37,7 +37,7 @@
 #include "JSGlobalObject.h"
 #include "JSMicrotask.h"
 #include "JSMicrotaskDispatcher.h"
-#include "JSObject.h"
+#include "JSObjectInlines.h"
 #include "MicrotaskCallInlines.h"
 #include "MicrotaskQueueInlines.h"
 #include "ScriptProfilingScope.h"
@@ -147,19 +147,15 @@ uint32_t MicrotaskQueue::domainOfContext(SymbolImpl& sentinel, JSValue context)
     }
     if (!isJSArray(cell))
         return 0;
-    // Read the butterfly directly: no getters, no side effects. The embedder keeps the
-    // domain pair at indices 0 and 1 and only ever stores it in a contiguous array.
+    // No getters, no side effects: this runs on arbitrary task arguments (a user's
+    // resolution value may be a holey or slow-put array). The embedder keeps the
+    // domain pair at indices 0 and 1.
     JSArray* array = uncheckedDowncast<JSArray>(cell);
-    if ((array->indexingType() & IndexingShapeMask) != ContiguousShape)
+    JSValue first = array->tryGetIndexQuickly(0u);
+    if (!first || !first.isSymbol() || &asSymbol(first)->uid() != &sentinel)
         return 0;
-    Butterfly* butterfly = array->butterfly();
-    if (butterfly->publicLength() < 2)
-        return 0;
-    JSValue first = butterfly->contiguous().at(array, 0).get();
-    if (!first.isSymbol() || &asSymbol(first)->uid() != &sentinel)
-        return 0;
-    JSValue domain = butterfly->contiguous().at(array, 1).get();
-    return domain.isInt32() ? static_cast<uint32_t>(domain.asInt32()) : 0;
+    JSValue domain = array->tryGetIndexQuickly(1u);
+    return domain && domain.isInt32() ? static_cast<uint32_t>(domain.asInt32()) : 0;
 }
 
 uint32_t MicrotaskQueue::domainOf(const QueuedTask& task) const
@@ -230,11 +226,10 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
 #if USE(BUN_JSC_ADDITIONS)
         if (hasActiveDomainDrain()) [[unlikely]] {
             auto& drain = *m_domainDrains.last();
-            if (!isDomainNeutralMicrotask(front.job()) && domainOf(front) != drain.domain) {
+            if (!isDomainNeutralMicrotask(front.job(), drain.admitsLoaderJobs) && domainOf(front) != drain.domain) {
                 drain.deferred.enqueue(m_queue.dequeue());
                 continue;
             }
-            ++drain.executed;
         }
 #endif
 
@@ -252,6 +247,10 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
                 return { globalObject, false };
 
             auto task = m_queue.dequeue();
+#if USE(BUN_JSC_ADDITIONS)
+            if (hasActiveDomainDrain()) [[unlikely]]
+                ++m_domainDrains.last()->executed;
+#endif
             if (!runMicrotask(globalObject, catchScope, vm, task, &microtaskCallCache)) [[unlikely]] {
                 clear();
                 return { nullptr, true };
@@ -266,6 +265,10 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
             EnsureStillAliveScope dispatcherScope(jsMicrotaskDispatcher);
 
             auto task = m_queue.dequeue();
+#if USE(BUN_JSC_ADDITIONS)
+            if (hasActiveDomainDrain()) [[unlikely]]
+                ++m_domainDrains.last()->executed;
+#endif
             QueuedTask::Result result;
             {
                 ScriptProfilingScope profilingScope(globalObject, ProfilingReason::Microtask);
