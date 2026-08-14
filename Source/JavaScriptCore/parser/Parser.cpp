@@ -2389,7 +2389,9 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
         else
             failIfFalse(parseSourceElements(syntaxChecker, CheckForStrictMode), bodyType == StandardFunctionBodyBlock ? "Cannot parse body of this function" : "Cannot parse body of this arrow function");
     }
-    unsigned endColumn = tokenColumn();
+    // For an expression body the current token is already past the function (and possibly on another line); use the
+    // body's last token, as the '}' is for a block body and as the SourceProviderCache path in parseFunctionInfo() does.
+    unsigned endColumn = isArrowFunctionBodyExpression ? m_lastTokenLocation.startOffset - m_lastTokenLocation.lineStartOffset : tokenColumn();
     SuperBinding functionSuperBinding = adjustSuperBindingForBaseConstructor(constructorKind, superBinding, sourceParseMode(), currentScope());
     ImplementationVisibility implementationVisibility = this->implementationVisibility();
     if (isAsyncFunctionWrapperParseMode(sourceParseMode()) && currentScope()->usesAwait()) {
@@ -2605,6 +2607,13 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     int startColumn = -1;
     FunctionBodyType functionBodyType;
 
+    // Track this per function so it can be stored in, and replayed from, the SourceProviderCache; otherwise whether
+    // the enclosing code gets NoEvalCacheFeature would depend on whether this function's body was skipped.
+    bool enclosingCodeContainsTaggedTemplate = std::exchange(m_seenTaggedTemplateInNonReparsingFunctionMode, false);
+    auto propagateContainsTaggedTemplate = makeScopeExit([&] {
+        m_seenTaggedTemplateInNonReparsingFunctionMode |= enclosingCodeContainsTaggedTemplate;
+    });
+
     auto tryLoadCachedFunction = [&] () -> bool {
         if (!Options::useSourceProviderCache()) [[unlikely]]
             return false;
@@ -2651,6 +2660,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
                 mode, functionBodyType == ArrowFunctionBodyExpression);
             functionInfo.endOffset = cachedInfo->endFunctionOffset;
             functionInfo.parameterCount = cachedInfo->parameterCount;
+            m_seenTaggedTemplateInNonReparsingFunctionMode = cachedInfo->containsTaggedTemplate;
 
             functionScope->restoreFromSourceProviderCache(cachedInfo);
             popScope(functionScope, TreeBuilder::NeedsFreeVariableInfo);
@@ -2889,6 +2899,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         parameters.constructorKind = constructorKind;
         parameters.expectedSuperBinding = expectedSuperBinding;
         parameters.implementationVisibility = implementationVisibility;
+        parameters.containsTaggedTemplate = m_seenTaggedTemplateInNonReparsingFunctionMode;
         if (functionBodyType == ArrowFunctionBodyExpression) {
             parameters.isBodyArrowExpression = true;
             parameters.tokenType = m_token.m_type;

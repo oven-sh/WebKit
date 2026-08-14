@@ -85,7 +85,7 @@ struct HandlerInfoBase {
     uint32_t start;
     uint32_t end;
     uint32_t target;
-    uint32_t typeBits : 2; // HandlerType
+    uint32_t typeBits; // HandlerType. A whole word rather than a bit-field so that no bits are left indeterminate; UnlinkedHandlerInfo is serialized as-is.
 };
 
 struct UnlinkedHandlerInfo : public HandlerInfoBase {

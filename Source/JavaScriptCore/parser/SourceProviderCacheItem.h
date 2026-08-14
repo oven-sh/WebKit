@@ -56,6 +56,7 @@ struct SourceProviderCacheItemCreationParameters {
     bool usesImportMeta : 1 { false };
     bool needsSuperBinding : 1 { false };
     bool isBodyArrowExpression : 1 { false };
+    bool containsTaggedTemplate : 1 { false };
 };
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SourceProviderCacheItem);
@@ -108,6 +109,7 @@ public:
     unsigned constructorKind : 2; // ConstructorKind
     unsigned implementationVisibility : 2; // ImplementationVisibility
     bool usesImportMeta : 1 { false };
+    bool containsTaggedTemplate : 1 { false };
 
     PackedPtr<UniquedStringImpl>* usedVariables() const { return const_cast<PackedPtr<UniquedStringImpl>*>(m_variables); }
 
@@ -151,6 +153,7 @@ inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCach
     , constructorKind(static_cast<unsigned>(parameters.constructorKind))
     , implementationVisibility(static_cast<unsigned>(parameters.implementationVisibility))
     , usesImportMeta(parameters.usesImportMeta)
+    , containsTaggedTemplate(parameters.containsTaggedTemplate)
 {
     ASSERT(tokenType == static_cast<unsigned>(parameters.tokenType));
     ASSERT(innerArrowFunctionFeatures == static_cast<unsigned>(parameters.innerArrowFunctionFeatures));

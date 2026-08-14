@@ -219,6 +219,9 @@ private:
             if (static_cast<size_t>(offset + size) > capacity())
                 return false;
 
+            // The cached objects placed here are default-initialized and have padding, and the alignment gap
+            // before them is never written; zero it all so the serialized bytes depend only on what is encoded.
+            zeroSpan(m_buffer.mutableSpan().subspan(m_offset, offset + size - m_offset));
             result = offset;
             m_offset = offset + size;
             return true;
@@ -250,6 +253,7 @@ private:
             if (size == m_offset)
                 return;
             RELEASE_ASSERT(static_cast<size_t>(size) <= capacity());
+            zeroSpan(m_buffer.mutableSpan().subspan(m_offset, size - m_offset));
             m_offset = size;
         }
 
@@ -698,9 +702,6 @@ private:
     CachedVector<CachedPair<Key, Value>> m_entries;
 };
 
-template<typename Key, typename Value, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>>
-using CachedMemoryCompactLookupOnlyRobinHoodHashMap = CachedHashMap<Key, Value, HashArg, KeyTraitsArg, MappedTraitsArg, WTF::MemoryCompactLookupOnlyRobinHoodHashTableTraits>;
-
 template<typename Key, typename Value, unsigned Capacity, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>>
 class CachedInlineMap : public VariableLengthObject<InlineMap<SourceType<Key>, SourceType<Value>, Capacity, HashArg, KeyTraitsArg, MappedTraitsArg>> {
 
@@ -942,7 +943,12 @@ class CachedStringJumpTable : public CachedObject<UnlinkedStringJumpTable> {
 public:
     void encode(Encoder& encoder, const UnlinkedStringJumpTable& jumpTable)
     {
-        m_offsetTable.encode(encoder, jumpTable.m_offsetTable);
+        // The table's iteration order depends on its address (RobinHoodHashTable seeds its hash with it),
+        // so serialize the entries in m_indexInTable order to keep the encoding deterministic.
+        OffsetTableEntries entries(jumpTable.m_offsetTable.size());
+        for (const auto& entry : jumpTable.m_offsetTable)
+            entries[entry.value.m_indexInTable] = { entry.key, entry.value };
+        m_offsetTable.encode(encoder, entries);
         m_minLength = jumpTable.m_minLength;
         m_maxLength = jumpTable.m_maxLength;
         m_defaultOffset = jumpTable.m_defaultOffset;
@@ -950,14 +956,19 @@ public:
 
     void decode(Decoder& decoder, UnlinkedStringJumpTable& jumpTable) const
     {
-        m_offsetTable.decode(decoder, jumpTable.m_offsetTable);
+        OffsetTableEntries entries;
+        m_offsetTable.decode(decoder, entries);
+        for (auto& entry : entries)
+            jumpTable.m_offsetTable.add(WTF::move(entry.first), entry.second);
         jumpTable.m_minLength = m_minLength;
         jumpTable.m_maxLength = m_maxLength;
         jumpTable.m_defaultOffset = m_defaultOffset;
     }
 
 private:
-    CachedMemoryCompactLookupOnlyRobinHoodHashMap<CachedRefPtr<CachedStringImpl>, UnlinkedStringJumpTable::OffsetLocation> m_offsetTable;
+    using OffsetTableEntries = Vector<std::pair<RefPtr<StringImpl>, UnlinkedStringJumpTable::OffsetLocation>>;
+
+    CachedVector<CachedPair<CachedRefPtr<CachedStringImpl>, UnlinkedStringJumpTable::OffsetLocation>> m_offsetTable;
     unsigned m_minLength { 0 };
     unsigned m_maxLength { 0 };
     int32_t m_defaultOffset { 0 };
@@ -1128,14 +1139,22 @@ class CachedCompactTDZEnvironment : public CachedObject<CompactTDZEnvironment> {
 public:
     void encode(Encoder& encoder, const CompactTDZEnvironment& env)
     {
+        CompactTDZEnvironment::Compact compact;
         if (std::holds_alternative<CompactTDZEnvironment::Compact>(env.m_variables))
-            m_variables.encode(encoder, std::get<CompactTDZEnvironment::Compact>(env.m_variables));
+            compact = std::get<CompactTDZEnvironment::Compact>(env.m_variables);
         else {
-            CompactTDZEnvironment::Compact compact;
             for (auto& key : std::get<CompactTDZEnvironment::Inflated>(env.m_variables))
                 compact.append(key);
-            m_variables.encode(encoder, compact);
         }
+        // In memory the names are ordered by address (sortCompact(), which decode() reapplies) or by hash table slot,
+        // so serialize them in an order that depends only on their contents.
+        std::ranges::sort(compact, [](auto& a, auto& b) {
+            auto result = codePointCompare(StringView(a.get()), StringView(b.get()));
+            if (is_neq(result))
+                return is_lt(result);
+            return a->isSymbol() < b->isSymbol();
+        });
+        m_variables.encode(encoder, compact);
         m_hash = env.m_hash;
     }
 
