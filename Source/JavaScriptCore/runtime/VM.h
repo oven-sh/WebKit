@@ -1042,12 +1042,6 @@ public:
     JS_EXPORT_PRIVATE void drainMicrotasks();
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
-
-    // Domain drains (see MicrotaskQueue::DomainDrain): while one is active on the default
-    // queue, drainMicrotasks() drains only the active domain and is not treated as the
-    // end of the outer frame's synchronous execution (no WeakRef finalization, no
-    // unhandled-rejection notification: the outer frame is mid-job).
-    uint32_t microtaskDrainDomain() const;
 #endif
     void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTF::move(func); }
     void callOnEachMicrotaskTick()
@@ -1306,8 +1300,6 @@ private:
     LazyUniqueRef<VM, ShadowChicken> m_shadowChicken;
     std::unique_ptr<BytecodeIntrinsicRegistry> m_bytecodeIntrinsicRegistry;
     uint64_t m_drainMicrotaskDelayScopeCount { 0 };
-#if USE(BUN_JSC_ADDITIONS)
-#endif
 
     // FIXME: We should remove handled promises from this list at GC flip. <https://webkit.org/b/201005>
     Vector<Strong<JSPromise>> m_aboutToBeNotifiedRejectedPromises;

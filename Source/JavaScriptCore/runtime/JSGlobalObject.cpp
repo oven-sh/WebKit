@@ -44,7 +44,6 @@
 #include "SuppressedErrorConstructorInlines.h"
 #include "AggregateErrorPrototypeInlines.h"
 #include "ArrayConstructor.h"
-#include "AsyncContextSwapScope.h"
 #include "SuppressedErrorPrototypeInlines.h"
 #include "ArrayConstructorInlines.h"
 #include "ArrayIteratorPrototypeInlines.h"
@@ -782,10 +781,11 @@ JSC_DEFINE_HOST_FUNCTION(enqueueJob, (JSGlobalObject* globalObject, CallFrame* c
 {
     auto* job = uncheckedDowncast<JSFunction>(callFrame->argument(0));
     ASSERT(job->realm() == globalObject);
-    ASSERT_WITH_MESSAGE(callFrame->argumentCount() <= 3, "@enqueueJob forwards at most two arguments; the fourth microtask slot carries the async context");
     JSValue argument0 = callFrame->argument(1);
     JSValue argument1 = callFrame->argument(2);
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, job, argument0, argument1, AsyncContextSwapScope::current(globalObject) };
+    JSValue argument2 = callFrame->argument(3);
+    // maxMicrotaskArguments=4: job + 3 user arguments
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, job, argument0, argument1, argument2 };
     globalObject->vm().queueMicrotask(WTF::move(task));
     return encodedJSUndefined();
 }

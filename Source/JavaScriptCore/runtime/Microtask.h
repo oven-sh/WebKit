@@ -90,7 +90,7 @@ enum class InternalMicrotask : uint8_t {
     Opaque, // Dispatch must handle everything.
 #if USE(BUN_JSC_ADDITIONS)
     BunPerformMicrotaskJob, // Bun's performMicrotask function with async context
-    BunInvokeJobWithArguments, // Invoke a function with up to 2 arguments under the async context in slot 3
+    BunInvokeJobWithArguments, // Invoke job function with up to 4 arguments
 #endif
 };
 
@@ -112,12 +112,10 @@ constexpr bool isModuleLoaderInternalMicrotask(InternalMicrotask task)
         && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportModuleNamespace);
 }
 
-// The module-loader pipeline (fetch/instantiate/link/evaluate steps and dynamic
-// import settlement) that a domain drain admits regardless of when it was queued, if
-// the drain admits loader jobs at all (MicrotaskQueue::DomainDrain::admitsLoaderJobs).
-// AsyncModuleExecutionResume is excluded: it resumes user module code and is
-// attributed like any other task.
-constexpr bool isDomainDrainLoaderJob(InternalMicrotask task)
+// The module-loader pipeline steps a MicrotaskQueue::DrainScope keeps in the queue
+// when it admits loader jobs. AsyncModuleExecutionResume resumes user module code and
+// PromiseFulfillWithoutHandlerJob is a plain settlement; both wait like anything else.
+constexpr bool isDrainScopeLoaderJob(InternalMicrotask task)
 {
     return task != InternalMicrotask::AsyncModuleExecutionResume
         && task != InternalMicrotask::PromiseFulfillWithoutHandlerJob

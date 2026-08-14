@@ -65,10 +65,6 @@ inline std::optional<MicrotaskIdentifier> QueuedTask::identifier() const
 
 inline void MicrotaskQueue::enqueue(QueuedTask&& task)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    if (hasActiveDomainDrain()) [[unlikely]]
-        task.m_domain = domainForEnqueue(task);
-#endif
     if (task.isJSMicrotaskDispatcher()) [[unlikely]] {
         enqueueSlow(WTF::move(task));
         return;
@@ -99,8 +95,8 @@ inline void MicrotaskQueue::clearForGlobalObject(JSGlobalObject* targetGlobalObj
         return;
     m_queue.clearForGlobalObject(targetGlobalObject);
     m_toKeep.clearForGlobalObject(targetGlobalObject);
-    for (auto& drain : m_domainDrains)
-        drain->deferred.clearForGlobalObject(targetGlobalObject);
+    for (auto& scope : m_drainScopes)
+        scope->deferred.clearForGlobalObject(targetGlobalObject);
 }
 #endif
 
@@ -161,40 +157,6 @@ inline void MicrotaskQueue::performMicrotaskCheckpoint(VM& vm, NOESCAPE const In
     }
     m_queue.swap(m_toKeep);
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-template<bool useCallOnEachMicrotask>
-inline void MicrotaskQueue::performDomainDrain(VM& vm)
-{
-    ASSERT(hasActiveDomainDrain());
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (vm.executionForbidden()) [[unlikely]] {
-        clear();
-        return;
-    }
-    if (vm.disallowVMEntryCount) [[unlikely]] {
-        VM::checkVMEntryPermission();
-        return;
-    }
-
-    std::optional<VMEntryScope> entryScope;
-    JSGlobalObject* currentGlobalObject = nullptr;
-    while (true) {
-        auto [nextGlobalObject, done] = drain<useCallOnEachMicrotask>(currentGlobalObject, vm, catchScope);
-        if (done)
-            break;
-        if (nextGlobalObject) {
-            if (!entryScope)
-                entryScope.emplace(vm, nextGlobalObject);
-            else
-                entryScope->setGlobalObject(nextGlobalObject);
-        } else
-            entryScope = std::nullopt;
-        currentGlobalObject = nextGlobalObject;
-    }
-    vm.didEnterVM = true;
-}
-#endif
 
 
 } // namespace JSC

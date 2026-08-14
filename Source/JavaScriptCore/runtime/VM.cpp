@@ -1501,15 +1501,23 @@ void VM::drainMicrotasks()
     if (m_drainMicrotaskDelayScopeCount) [[unlikely]]
         return;
 
+    if (executionForbidden()) [[unlikely]]
+        m_defaultMicrotaskQueue->clear();
 #if USE(BUN_JSC_ADDITIONS)
-    if (m_defaultMicrotaskQueue->hasActiveDomainDrain()) [[unlikely]] {
-        m_defaultMicrotaskQueue->performDomainDrain</* useCallOnEachMicrotask */ true>(*this);
+    else if (m_defaultMicrotaskQueue->hasOpenDrainScope()) [[unlikely]] {
+        // See MicrotaskQueue::DrainScope: run what the scope has queued, but this is not
+        // the end of the outer frame's synchronous execution.
+        std::optional<VMEntryScope> entryScope;
+        if (!m_defaultMicrotaskQueue->isEmpty())
+            entryScope.emplace(*this, nullptr);
+        m_defaultMicrotaskQueue->performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(*this,
+            [&](JSGlobalObject*, JSGlobalObject* nextGlobalObject) {
+                if (entryScope && nextGlobalObject)
+                    entryScope->setGlobalObject(nextGlobalObject);
+            });
         return;
     }
 #endif
-
-    if (executionForbidden()) [[unlikely]]
-        m_defaultMicrotaskQueue->clear();
     else {
         std::optional<VMEntryScope> entryScope;
         if (!m_defaultMicrotaskQueue->isEmpty())
@@ -1538,11 +1546,6 @@ void VM::drainMicrotasks()
 void VM::drainMicrotasksForGlobalObject(JSGlobalObject* globalObject)
 {
     m_defaultMicrotaskQueue->clearForGlobalObject(globalObject);
-}
-
-uint32_t VM::microtaskDrainDomain() const
-{
-    return m_defaultMicrotaskQueue->activeDomainDrain();
 }
 #endif
 

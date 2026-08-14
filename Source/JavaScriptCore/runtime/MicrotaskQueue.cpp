@@ -29,21 +29,16 @@
 #include "Debugger.h"
 #include "DeferTermination.h"
 #include "GlobalObjectMethodTable.h"
+#include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
 #include "JSMicrotask.h"
 #include "JSMicrotaskDispatcher.h"
+#include "JSObject.h"
 #include "MicrotaskCallInlines.h"
 #include "MicrotaskQueueInlines.h"
 #include "ScriptProfilingScope.h"
 #include "SlotVisitorInlines.h"
 #include <wtf/TZoneMallocInlines.h>
-
-#if USE(BUN_JSC_ADDITIONS)
-#include "InternalFieldTuple.h"
-#include "JSArray.h"
-#include "JSObjectInlines.h"
-#include "Symbol.h"
-#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -128,69 +123,39 @@ void MicrotaskQueue::visitAggregateImpl(Visitor& visitor)
     m_queue.visitAggregate(visitor);
     m_toKeep.visitAggregate(visitor);
 #if USE(BUN_JSC_ADDITIONS)
-    for (auto& drain : m_domainDrains)
-        drain->deferred.visitAggregate(visitor);
+    for (auto& scope : m_drainScopes)
+        scope->deferred.visitAggregate(visitor);
 #endif
 }
 DEFINE_VISIT_AGGREGATE(MicrotaskQueue);
 
 #if USE(BUN_JSC_ADDITIONS)
-uint32_t MicrotaskQueue::domainOfContext(SymbolImpl& sentinel, JSValue context)
+void MicrotaskQueue::beginDrainScope(bool admitLoaderJobs)
 {
-    if (!context || !context.isCell())
-        return 0;
-    JSCell* cell = context.asCell();
-    if (cell->type() == InternalFieldTupleType) {
-        JSValue inner = uncheckedDowncast<InternalFieldTuple>(cell)->getInternalField(1);
-        if (!inner || !inner.isCell())
-            return 0;
-        cell = inner.asCell();
+    auto scope = makeUnique<DrainScope>();
+    // Everything queued so far predates the scope. (Order within `deferred` and within
+    // what stays is preserved; kept loader jobs simply run earlier than they would have.)
+    MarkedMicrotaskDeque kept;
+    while (!m_queue.isEmpty()) {
+        QueuedTask task = m_queue.dequeue();
+        if (admitLoaderJobs && isDrainScopeLoaderJob(task.job()))
+            kept.enqueue(WTF::move(task));
+        else
+            scope->deferred.enqueue(WTF::move(task));
     }
-    if (!isJSArray(cell))
-        return 0;
-    // No getters, no side effects: this runs on arbitrary task arguments (a user's
-    // resolution value may be a holey or slow-put array). The embedder keeps the
-    // domain pair at indices 0 and 1.
-    JSArray* array = uncheckedDowncast<JSArray>(cell);
-    JSValue first = array->tryGetIndexQuickly(0u);
-    if (!first || !first.isSymbol() || &asSymbol(first)->uid() != &sentinel)
-        return 0;
-    JSValue domain = array->tryGetIndexQuickly(1u);
-    return domain && domain.isUInt32() ? domain.asUInt32() : 0;
+    m_queue.swap(kept);
+    m_drainScopes.append(WTF::move(scope));
 }
 
-uint32_t MicrotaskQueue::domainForEnqueue(const QueuedTask& task) const
+void MicrotaskQueue::endDrainScope()
 {
-    ASSERT(hasActiveDomainDrain());
-    // Which argument holds the captured async context depends on the job kind and no
-    // other argument can be one (the sentinel is private to the embedder), so look at
-    // all of them rather than keep a per-kind table in sync.
-    if (m_domainSentinel) {
-        for (JSValue argument : task.arguments()) {
-            if (uint32_t domain = domainOfContext(*m_domainSentinel, argument))
-                return domain;
-        }
-    }
-    // No captured domain: it is being queued by whatever the active drain is running.
-    return m_domainDrains.last()->domain;
-}
-
-void MicrotaskQueue::beginDomainDrain(uint32_t domain, bool admitsLoaderJobs)
-{
-    ASSERT(domain);
-    ASSERT(m_domainDrains.isEmpty() || m_domainDrains.last()->domain < domain);
-    m_domainDrains.append(makeUnique<DomainDrain>(domain, admitsLoaderJobs));
-}
-
-void MicrotaskQueue::endDomainDrain()
-{
-    ASSERT(hasActiveDomainDrain());
-    // Prepend while the drain is still on the stack, so the deferred tasks are never
+    ASSERT(hasOpenDrainScope());
+    // Prepend while the scope is still on the stack, so the deferred tasks are never
     // unreachable from visitAggregate.
-    auto& deferred = m_domainDrains.last()->deferred;
+    auto& deferred = m_drainScopes.last()->deferred;
     while (!deferred.isEmpty())
         m_queue.prepend(deferred.takeLast());
-    m_domainDrains.removeLast();
+    m_drainScopes.removeLast();
 }
 #endif
 
@@ -241,21 +206,8 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
 {
     MicrotaskCallCache microtaskCallCache;
 
-#if USE(BUN_JSC_ADDITIONS)
-    // Drains begin and end balanced within any task run below, so the active one is
-    // invariant across this loop.
-    DomainDrain* const domainDrain = m_domainDrains.isEmpty() ? nullptr : m_domainDrains.last().get();
-#endif
     while (!m_queue.isEmpty()) {
         auto& front = m_queue.front();
-
-#if USE(BUN_JSC_ADDITIONS)
-        if (domainDrain && front.domain() < domainDrain->domain
-            && !(domainDrain->admitsLoaderJobs && isDomainDrainLoaderJob(front.job()))) [[unlikely]] {
-            domainDrain->deferred.enqueue(m_queue.dequeue());
-            continue;
-        }
-#endif
 
         if (!front.isJSMicrotaskDispatcher()) [[likely]] {
             auto* globalObject = uncheckedDowncast<JSGlobalObject>(front.dispatcher());
