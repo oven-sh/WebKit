@@ -2366,6 +2366,10 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
 {
     SetForScope overrideParsingClassFieldInitializer(m_parserState.isParsingClassFieldInitializer, bodyType != StandardFunctionBodyBlock && m_parserState.isParsingClassFieldInitializer);
     SetForScope maybeUnmaskAsync(m_parserState.classFieldInitMasksAsync, !isAsyncFunctionParseMode(m_parseMode) && m_parserState.classFieldInitMasksAsync);
+    // allowAwait is cleared while a parameter list that reserves `await` is parsed (see parseFunctionInfo). This function
+    // may be nested in such a parameter list, but its body is not part of it: whether `await` is an identifier in the body
+    // is decided by the body's own scope (canUseIdentifierAwait), exactly as for a function that is not nested in parameters.
+    SetForScope overrideAllowAwait(m_parserState.allowAwait, true);
     bool isArrowFunctionBodyExpression = bodyType == ArrowFunctionBodyExpression;
     if (!isArrowFunctionBodyExpression) {
         next();
