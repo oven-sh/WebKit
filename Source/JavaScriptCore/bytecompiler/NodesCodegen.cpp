@@ -4267,6 +4267,14 @@ static inline StatementNode* singleStatement(StatementNode* statementNode)
 bool IfElseNode::tryFoldBreakAndContinue(BytecodeGenerator& generator, StatementNode* ifBlock,
     Label*& trueTarget, FallThroughMode& fallThroughMode)
 {
+    // Folding leaves the if block with no bytecode of its own: a true condition jumps straight to
+    // the break or continue target and a false one falls through. The op_profile_control_flow that
+    // emitBytecode emits for the block would then be the first thing on the fall-through path and
+    // record the block as executed exactly when it was skipped, so the control flow profiler needs
+    // the block emitted in full.
+    if (generator.shouldEmitControlFlowProfilerHooks())
+        return false;
+
     StatementNode* singleStatement = JSC::singleStatement(ifBlock);
     if (!singleStatement)
         return false;
