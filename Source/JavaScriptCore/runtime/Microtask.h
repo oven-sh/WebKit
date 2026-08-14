@@ -112,19 +112,28 @@ constexpr bool isModuleLoaderInternalMicrotask(InternalMicrotask task)
         && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportModuleNamespace);
 }
 
-// True for pass-through jobs that settle a promise without invoking a handler.
-// They capture no async context (so no scheduling domain can be read from them)
-// and have no observable effect of their own — the reactions they trigger carry
-// their own contexts — so a domain drain runs them wherever they surface instead
-// of deferring them; otherwise `await Promise.all(...)` or a `.catch()` hop in an
-// await chain would stall inside a scoped run.
+// True for jobs a domain drain runs wherever they surface instead of deferring:
+//  - pass-through jobs that settle a promise without invoking a handler
+//    (PromiseResolveWithoutHandlerJob, PromiseFulfillWithoutHandlerJob, the
+//    Promise.{all,allSettled,any,race} element jobs, PromiseFinallyAwaitJob). They
+//    capture no async context (so no domain can be read from them) and have no
+//    observable effect of their own — the reactions they trigger carry their own
+//    contexts — and deferring them would stall `await Promise.all(...)` or a
+//    `.catch()` hop in an await chain inside a scoped run.
+//  - the module-loader pipeline (fetch/instantiate/link/evaluate steps and dynamic
+//    import settlement). Its reactions are keyed by loader state, not by the
+//    importer's context, so they cannot be attributed; deferring them would stall
+//    any `import()` inside a run. AsyncModuleExecutionResume is excluded: it does
+//    carry the module's async context and resumes user code.
 constexpr bool isDomainNeutralMicrotask(InternalMicrotask task)
 {
     static_assert(static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob) == static_cast<uint8_t>(InternalMicrotask::PromiseResolveWithoutHandlerJob) + 5);
     if (task == InternalMicrotask::PromiseFinallyAwaitJob)
         return true;
-    return static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::PromiseResolveWithoutHandlerJob)
-        && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob);
+    if (static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::PromiseResolveWithoutHandlerJob)
+        && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob))
+        return true;
+    return task != InternalMicrotask::AsyncModuleExecutionResume && isModuleLoaderInternalMicrotask(task);
 }
 #else
 constexpr unsigned maxMicrotaskArguments = 3;
