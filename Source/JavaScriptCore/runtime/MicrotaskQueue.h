@@ -37,7 +37,9 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/VectorTraits.h>
+#if USE(BUN_JSC_ADDITIONS)
 #include <wtf/text/SymbolImpl.h>
+#endif
 
 namespace JSC {
 class JSCell;
@@ -138,6 +140,11 @@ public:
     // Typically holds JSPromise::Status or a nested InternalMicrotask value.
     uint8_t payload() const { return static_cast<uint8_t>(m_dispatcher.type() >> 8); }
     std::span<const JSValue, maxArguments> arguments() const { return std::span<const JSValue, maxArguments> { m_arguments, maxArguments }; }
+#if USE(BUN_JSC_ADDITIONS)
+    // See MicrotaskQueue::DomainDrain. Stamped by MicrotaskQueue::enqueue while a
+    // drain is active; 0 otherwise (which is older than every drain).
+    uint32_t domain() const { return m_domain; }
+#endif
 
 private:
     bool isJSMicrotaskDispatcher() const
@@ -148,6 +155,9 @@ private:
     static constexpr uintptr_t isJSMicrotaskDispatcherFlag = 0x1;
     CompactPointerTuple<JSCell*, uint16_t> m_dispatcher;
     JSValue m_arguments[maxArguments] { };
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t m_domain { 0 };
+#endif
 };
 #if USE(BUN_JSC_ADDITIONS)
 static_assert(sizeof(QueuedTask) <= 48, "Size of QueuedTask is critical for performance");
@@ -239,6 +249,9 @@ public:
 
     inline void enqueue(QueuedTask&&);
     JS_EXPORT_PRIVATE void enqueueSlow(QueuedTask&&);
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t domainForEnqueue(const QueuedTask&) const;
+#endif
 
     bool isEmpty() const
     {
@@ -261,15 +274,22 @@ public:
     // Defined in MicrotaskQueueInlines.h (requires MarkedMicrotaskDeque::clearForGlobalObject).
     inline void clearForGlobalObject(JSGlobalObject* targetGlobalObject);
 
-    // Scheduling domains (Bun scoped event-loop runs).
+    // Scheduling domains (Bun domain runs).
     //
-    // A microtask's domain is read from the async context it captured when it was
-    // queued: a context array whose first element is a Symbol over the embedder's
-    // sentinel uid is [sentinel, domainId, ...AsyncLocalStorage pairs]. Tasks with no
-    // such context are in domain 0. While a domain drain is active, drainImpl() runs
-    // only tasks of that domain (plus domain-neutral jobs) and moves every other task
-    // that reaches the front into the drain's `deferred` deque; when the drain ends they
-    // are put back at the front of the queue in their original order.
+    // The embedder can turn its event loop from inside a synchronous frame while
+    // admitting only work that frame caused (a "domain run"). Domains are ordered:
+    // a run is named by the value of a monotonic counter when it began, and a task
+    // belongs to it iff the task was queued since then (by the run's own code, or by
+    // a run nested inside it). While a drain for domain D is active, drainImpl() runs
+    // only tasks with domain() >= D and moves every older task that reaches the front
+    // into the drain's `deferred` deque; endDomainDrain() puts them back at the front
+    // of the queue in their original order. Drains nest as a stack.
+    //
+    // A task's domain is stamped when it is enqueued during a drain: the domain named
+    // by the async context it captured, if any — a context array whose first element
+    // is a Symbol over the embedder's sentinel uid is [sentinel, domain, ...] — else the
+    // active drain's domain (it is being queued by code the drain is running). Outside
+    // any drain tasks are stamped 0, older than every drain.
     struct DomainDrain {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DomainDrain);
         DomainDrain(uint32_t domain, bool admitsLoaderJobs)
@@ -278,25 +298,32 @@ public:
         {
         }
         uint32_t domain { 0 };
-        // Whether module-loader pipeline jobs, which cannot be attributed, run in this
-        // drain (a run that may await an import) or wait like anything foreign (a run
-        // that cannot depend on one). See isDomainNeutralMicrotask.
+        // Whether module-loader pipeline jobs queued before the drain began still run in
+        // it: their promises are keyed by loader state shared with the outer program (a
+        // run awaiting an `import()` of a module already being fetched depends on them),
+        // so a run that may import admits them and a run that cannot depend on one does
+        // not. See isDomainDrainLoaderJob.
         bool admitsLoaderJobs { false };
-        unsigned executed { 0 };
         MarkedMicrotaskDeque deferred;
     };
 
     bool hasActiveDomainDrain() const { return !m_domainDrains.isEmpty(); }
-    void setDomainSentinel(SymbolImpl* sentinel) { m_domainSentinel = sentinel; }
-    SymbolImpl* domainSentinel() const { return m_domainSentinel; }
+    // 0 when no drain is active.
+    uint32_t activeDomainDrain() const { return m_domainDrains.isEmpty() ? 0 : m_domainDrains.last()->domain; }
+    bool activeDomainDrainAdmitsLoaderJobs() const { return !m_domainDrains.isEmpty() && m_domainDrains.last()->admitsLoaderJobs; }
+    // The embedder's private sentinel uid; set once, before the first drain.
+    void setDomainSentinel(SymbolImpl& sentinel) { m_domainSentinel = &sentinel; }
     JS_EXPORT_PRIVATE static uint32_t domainOfContext(SymbolImpl& sentinel, JSValue context);
-    JS_EXPORT_PRIVATE uint32_t domainOf(const QueuedTask&) const;
 
-    // Runs every queued task attributed to `domain` (transitively: whatever they queue
-    // for the same domain runs too) and returns how many ran. Safe to call while a
-    // checkpoint or another domain drain is already on the stack.
+    // Push / pop a drain. Between the two, every checkpoint on this queue
+    // (performMicrotaskCheckpoint or performDomainDrain) is scoped to the drain.
+    JS_EXPORT_PRIVATE void beginDomainDrain(uint32_t domain, bool admitsLoaderJobs);
+    JS_EXPORT_PRIVATE void endDomainDrain();
+
+    // Runs every queued task of the active drain's domain (transitively: whatever they
+    // queue runs too). Safe to call while a checkpoint is already on the stack.
     template<bool useCallOnEachMicrotask>
-    inline unsigned performDomainDrain(VM&, uint32_t domain, bool admitsLoaderJobs);
+    inline void performDomainDrain(VM&);
 #endif
 
     void beginMarking()

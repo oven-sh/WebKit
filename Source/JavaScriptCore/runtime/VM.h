@@ -1043,24 +1043,11 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
 
-    // Scheduling domains (see MicrotaskQueue::DomainDrain). While the embedder has a
-    // scoped event-loop run active it sets the run's domain here; drainMicrotasks()
-    // then drains only that domain's microtasks, so every existing checkpoint call site
-    // is run-aware without changes. `sentinel` is the private symbol uid that marks a
-    // context array as carrying a domain; it must outlive the VM's microtask queues.
-    void setMicrotaskDrainDomain(WTF::SymbolImpl* sentinel, uint32_t domain, bool admitsLoaderJobs)
-    {
-        m_microtaskDrainSentinel = sentinel;
-        m_microtaskDrainDomain = domain;
-        m_microtaskDrainAdmitsLoaderJobs = admitsLoaderJobs;
-    }
-    uint32_t microtaskDrainDomain() const { return m_microtaskDrainDomain; }
-    bool microtaskDrainAdmitsLoaderJobs() const { return m_microtaskDrainAdmitsLoaderJobs; }
-    WTF::SymbolImpl* microtaskDrainSentinel() const { return m_microtaskDrainSentinel; }
-    // See MicrotaskQueue::DomainDrain. Runs the domain's tasks (and what they queue for
-    // it) to exhaustion. Unhandled-rejection notification is left to the next full
-    // checkpoint: the outer frame is mid-job and may still attach handlers.
-    JS_EXPORT_PRIVATE void drainMicrotasksInDomain(WTF::SymbolImpl* sentinel, uint32_t domain, bool admitsLoaderJobs);
+    // Domain drains (see MicrotaskQueue::DomainDrain): while one is active on the default
+    // queue, drainMicrotasks() drains only the active domain and is not treated as the
+    // end of the outer frame's synchronous execution (no WeakRef finalization, no
+    // unhandled-rejection notification: the outer frame is mid-job).
+    uint32_t microtaskDrainDomain() const;
 #endif
     void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTF::move(func); }
     void callOnEachMicrotaskTick()
@@ -1320,9 +1307,6 @@ private:
     std::unique_ptr<BytecodeIntrinsicRegistry> m_bytecodeIntrinsicRegistry;
     uint64_t m_drainMicrotaskDelayScopeCount { 0 };
 #if USE(BUN_JSC_ADDITIONS)
-    uint32_t m_microtaskDrainDomain { 0 };
-    bool m_microtaskDrainAdmitsLoaderJobs { false };
-    WTF::SymbolImpl* m_microtaskDrainSentinel { nullptr };
 #endif
 
     // FIXME: We should remove handled promises from this list at GC flip. <https://webkit.org/b/201005>

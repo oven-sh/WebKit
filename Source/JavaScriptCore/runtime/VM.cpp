@@ -1502,10 +1502,8 @@ void VM::drainMicrotasks()
         return;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Inside a scoped run a checkpoint drains only the run's domain, and it is not the
-    // end of the outer frame's synchronous execution, so WeakRef versions are left alone.
-    if (m_microtaskDrainDomain) [[unlikely]] {
-        drainMicrotasksInDomain(m_microtaskDrainSentinel, m_microtaskDrainDomain, m_microtaskDrainAdmitsLoaderJobs);
+    if (m_defaultMicrotaskQueue->hasActiveDomainDrain()) [[unlikely]] {
+        m_defaultMicrotaskQueue->performDomainDrain</* useCallOnEachMicrotask */ true>(*this);
         return;
     }
 #endif
@@ -1542,13 +1540,9 @@ void VM::drainMicrotasksForGlobalObject(JSGlobalObject* globalObject)
     m_defaultMicrotaskQueue->clearForGlobalObject(globalObject);
 }
 
-void VM::drainMicrotasksInDomain(WTF::SymbolImpl* sentinel, uint32_t domain, bool admitsLoaderJobs)
+uint32_t VM::microtaskDrainDomain() const
 {
-    if (m_drainMicrotaskDelayScopeCount) [[unlikely]]
-        return;
-
-    m_defaultMicrotaskQueue->setDomainSentinel(sentinel);
-    m_defaultMicrotaskQueue->performDomainDrain</* useCallOnEachMicrotask */ true>(*this, domain, admitsLoaderJobs);
+    return m_defaultMicrotaskQueue->activeDomainDrain();
 }
 #endif
 

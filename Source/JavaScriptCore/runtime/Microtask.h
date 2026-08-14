@@ -90,7 +90,7 @@ enum class InternalMicrotask : uint8_t {
     Opaque, // Dispatch must handle everything.
 #if USE(BUN_JSC_ADDITIONS)
     BunPerformMicrotaskJob, // Bun's performMicrotask function with async context
-    BunInvokeJobWithArguments, // Invoke job function with up to 2 arguments under an optional async context
+    BunInvokeJobWithArguments, // Invoke a function with up to 2 arguments under the async context in slot 3
 #endif
 };
 
@@ -112,30 +112,16 @@ constexpr bool isModuleLoaderInternalMicrotask(InternalMicrotask task)
         && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportModuleNamespace);
 }
 
-// True for jobs a domain drain runs wherever they surface instead of deferring:
-//  - pass-through jobs that settle a promise without invoking a handler
-//    (PromiseResolveWithoutHandlerJob, PromiseFulfillWithoutHandlerJob, the
-//    Promise.{all,allSettled,any,race} element jobs, PromiseFinallyAwaitJob). They
-//    capture no async context (so no domain can be read from them) and have no
-//    observable effect of their own — the reactions they trigger carry their own
-//    contexts — and deferring them would stall `await Promise.all(...)` or a
-//    `.catch()` hop in an await chain inside a scoped run.
-//  - when the drain admits them, the module-loader pipeline (fetch/instantiate/
-//    link/evaluate steps and dynamic import settlement). Its reactions are keyed
-//    by loader state, not by the importer's context, so they cannot be attributed;
-//    a run that may await an `import()` has to let them through (accepting that an
-//    import started outside it may progress inside), while a run that cannot depend
-//    on one keeps them out like anything foreign. AsyncModuleExecutionResume is
-//    never neutral: it carries the module's async context and resumes user code.
-constexpr bool isDomainNeutralMicrotask(InternalMicrotask task, bool admitsLoaderJobs)
+// The module-loader pipeline (fetch/instantiate/link/evaluate steps and dynamic
+// import settlement) that a domain drain admits regardless of when it was queued, if
+// the drain admits loader jobs at all (MicrotaskQueue::DomainDrain::admitsLoaderJobs).
+// AsyncModuleExecutionResume is excluded: it resumes user module code and is
+// attributed like any other task.
+constexpr bool isDomainDrainLoaderJob(InternalMicrotask task)
 {
-    static_assert(static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob) == static_cast<uint8_t>(InternalMicrotask::PromiseResolveWithoutHandlerJob) + 5);
-    if (task == InternalMicrotask::PromiseFinallyAwaitJob)
-        return true;
-    if (static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::PromiseResolveWithoutHandlerJob)
-        && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob))
-        return true;
-    return admitsLoaderJobs && task != InternalMicrotask::AsyncModuleExecutionResume && isModuleLoaderInternalMicrotask(task);
+    return task != InternalMicrotask::AsyncModuleExecutionResume
+        && task != InternalMicrotask::PromiseFulfillWithoutHandlerJob
+        && isModuleLoaderInternalMicrotask(task);
 }
 #else
 constexpr unsigned maxMicrotaskArguments = 3;

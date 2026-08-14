@@ -2186,6 +2186,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
                 args.append(arguments[i]);
         }
         ASSERT(!args.hasOverflowed());
+        ASSERT(arguments[3].isEmpty() || arguments[3].isUndefined() || arguments[3].isCell());
         AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
         scope.release();
         call(globalObject, job, jsUndefined(), args, "job is not a function"_s);
