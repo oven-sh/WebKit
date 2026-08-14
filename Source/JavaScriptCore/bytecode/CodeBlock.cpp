@@ -401,19 +401,39 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
 }
 
-// The function that runs a class's instance or static field initializers is synthesized by
-// BytecodeGenerator::emitNewClassFieldInitializerFunction from a FunctionMetadataNode that has no positions of
-// its own and takes the source of the scope that defines the class. It therefore has no text range: its function
-// start/end cover [0, length of that scope's source) and its first and last basic blocks run to the start and to
-// the end of that scope's source, none of which is where the class is. The type and control flow profilers must
-// not record those as ranges of the owner's source: the function range reports the text at the start of the
-// source as a function that has not executed until an instance is created (and as one that has afterwards), and
-// the blocks report everything in the defining scope as executed once the initializer runs. The fields' text is
-// covered by the basic block of the code that defines the class; the blocks that the control flow inside the
-// initializer expressions delimits have real boundaries and are still recorded.
-static bool hasSourceRangeForProfiling(SourceParseMode parseMode)
+// The bytecode generator synthesizes two kinds of functions for a class that do not exist in the source of the
+// code that defines the class, and the type and control flow profilers must not record either as a range of that
+// source (FunctionHasExecutedCache and the function gaps of basic blocks), because their function start/end are
+// not offsets into it:
+//
+// - The function that runs the class's instance or static field initializers
+//   (BytecodeGenerator::emitNewClassFieldInitializerFunction) is created from a FunctionMetadataNode that has no
+//   positions of its own over the source of the defining scope, so its range is [0, length of that scope's source),
+//   i.e. the start of the source: recorded, it reports whatever is there as a function that has not executed until
+//   an instance is created, and as one that has afterwards. For the same reason its own first and last basic blocks
+//   run to the start and to the end of the defining scope's source and would report everything in that scope as
+//   executed once the initializer runs; see insertBasicBlockBoundariesForControlFlowProfiler(). The blocks that the
+//   control flow inside the initializer expressions delimits have real boundaries and are still recorded.
+// - The default constructor of a class that does not declare one (BytecodeGenerator::emitNewDefaultConstructor)
+//   is created from BuiltinExecutables' template, so its range is made of offsets into that template. Its own code
+//   block is linked against the template (UnlinkedFunctionExecutable::linkedSourceCode()), so the range recorded in
+//   the defining code's source would never be marked as executed either.
+//
+// The class's text stays covered by the basic block of the code that defines it, as it is for a class that
+// declares its constructor and has no fields.
+static bool isClassFieldInitializer(SourceParseMode parseMode)
 {
-    return parseMode != SourceParseMode::ClassFieldInitializerMode;
+    return parseMode == SourceParseMode::ClassFieldInitializerMode;
+}
+
+static bool isSynthesizedClassFunction(const UnlinkedFunctionExecutable* executable)
+{
+    return isClassFieldInitializer(executable->parseMode()) || executable->isBuiltinDefaultClassConstructor();
+}
+
+static bool isSynthesizedClassFunction(const UnlinkedCodeBlock* codeBlock)
+{
+    return isClassFieldInitializer(codeBlock->parseMode()) || codeBlock->isBuiltinDefaultClassConstructor();
 }
 
 // The main purpose of this function is to generate linked bytecode from unlinked bytecode. The process
@@ -434,7 +454,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if ((m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes()) && hasSourceRangeForProfiling(unlinkedCodeBlock->parseMode()))
+    if ((m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes()) && !isSynthesizedClassFunction(unlinkedCodeBlock))
         vm.functionHasExecutedCache()->removeUnexecutedRange(ownerExecutable->sourceID(), ownerExecutable->typeProfilingStartOffset(), ownerExecutable->typeProfilingEndOffset());
 
     ScriptExecutable* topLevelExecutable = ownerExecutable->topLevelExecutable();
@@ -458,7 +478,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     m_functionDecls = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionDecls());
     for (size_t count = unlinkedCodeBlock->numberOfFunctionDecls(), i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
-        if (shouldUpdateFunctionHasExecutedCache && hasSourceRangeForProfiling(unlinkedExecutable->parseMode()))
+        if (shouldUpdateFunctionHasExecutedCache && !isSynthesizedClassFunction(unlinkedExecutable))
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
         m_functionDecls[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
     }
@@ -466,7 +486,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     m_functionExprs = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionExprs());
     for (size_t count = unlinkedCodeBlock->numberOfFunctionExprs(), i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
-        if (shouldUpdateFunctionHasExecutedCache && hasSourceRangeForProfiling(unlinkedExecutable->parseMode()))
+        if (shouldUpdateFunctionHasExecutedCache && !isSynthesizedClassFunction(unlinkedExecutable))
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
         m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
     }
@@ -3643,9 +3663,9 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
     if (!unlinkedCodeBlock()->hasOpProfileControlFlowBytecodeOffsets())
         return;
     const FixedVector<JSInstructionStream::Offset>& bytecodeOffsets = unlinkedCodeBlock()->opProfileControlFlowBytecodeOffsets();
-    // See hasSourceRangeForProfiling(): a class field initializer's first basic block starts at the beginning of the
+    // See isSynthesizedClassFunction(): a class field initializer's first basic block starts at the beginning of the
     // source of the scope that defines the class, and its last one ends at the end of that source.
-    bool skipFirstAndLastBasicBlock = !hasSourceRangeForProfiling(unlinkedCodeBlock()->parseMode());
+    bool skipFirstAndLastBasicBlock = isClassFieldInitializer(unlinkedCodeBlock()->parseMode());
     for (size_t i = 0, offsetsLength = bytecodeOffsets.size(); i < offsetsLength; i++) {
         // Because op_profile_control_flow is emitted at the beginning of every basic block, finding
         // the next op_profile_control_flow will give us the text range of a single basic block.
@@ -3703,7 +3723,7 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         // inside the CodeBlock's instruction stream.
         auto insertFunctionGaps = [basicBlockLocation, basicBlockStartOffset, basicBlockEndOffset] (const WriteBarrier<FunctionExecutable>& functionExecutable) {
             const UnlinkedFunctionExecutable* executable = functionExecutable->unlinkedExecutable();
-            if (!hasSourceRangeForProfiling(executable->parseMode()))
+            if (isSynthesizedClassFunction(executable))
                 return;
             int functionStart = executable->unlinkedFunctionStart();
             int functionEnd = executable->unlinkedFunctionEnd();
