@@ -778,7 +778,8 @@ namespace JSC {
         RegisterID* emitNewFunction(RegisterID* dst, FunctionMetadataNode*);
         RegisterID* emitNewFunctionExpression(RegisterID* dst, FuncExprNode*);
         RegisterID* emitNewDefaultConstructor(RegisterID* dst, ConstructorKind, const Identifier& name, const Identifier& ecmaName, const SourceCode& classSource, NeedsClassFieldInitializer, PrivateBrandRequirement);
-        RegisterID* emitNewClassFieldInitializerFunction(RegisterID* dst, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>&&, bool isDerived);
+        enum class ClassFieldInitializerKind : bool { Instance, Static };
+        RegisterID* emitNewClassFieldInitializerFunction(RegisterID* dst, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>&&, bool isDerived, ClassFieldInitializerKind);
         RegisterID* emitNewArrowFunctionExpression(RegisterID*, ArrowFuncExprNode*);
         RegisterID* emitNewMethodDefinition(RegisterID* dst, MethodDefinitionNode*);
         RegisterID* emitNewRegExp(RegisterID* dst, RegExp*);
