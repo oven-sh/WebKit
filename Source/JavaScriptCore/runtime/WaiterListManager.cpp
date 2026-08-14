@@ -62,6 +62,44 @@ Waiter::Waiter(JSPromise* promise)
 {
 }
 
+Waiter::~Waiter() = default;
+
+void Waiter::setParkedList(RefPtr<WaiterList>&& list)
+{
+    ASSERT(!m_isAsync);
+    Locker locker { m_parkedListLock };
+    m_parkedList = WTF::move(list);
+}
+
+void Waiter::notifyOfTerminationRequest()
+{
+    ASSERT(!m_isAsync);
+    RefPtr<WaiterList> parkedList;
+    {
+        Locker locker { m_parkedListLock };
+        parkedList = m_parkedList;
+    }
+    // Not parked (yet): waitSyncImpl publishes the list before it tests for the request, so a wait
+    // that starts after this sees the NeedTermination trap our caller has already fired.
+    if (!parkedList)
+        return;
+    // Notify under the list's lock, which the waiter holds from testing for the request until it is
+    // parked, so that the notification cannot fall in between.
+    Locker listLocker { parkedList->lock };
+    m_condition.notifyOne();
+}
+
+// A termination is only ever established (VM::hasTerminationRequest) by the mutator thread itself,
+// which cannot do that while it is parked in a wait. Another thread asking this VM to terminate
+// (VM::notifyNeedTermination) is visible as the pending NeedTermination trap. Neither interrupts the
+// wait while termination is being deferred (DeferTermination); it takes effect when the deferral ends.
+static ALWAYS_INLINE bool shouldStopWaitingForTermination(VM& vm)
+{
+    if (vm.traps().isDeferringTermination()) [[unlikely]]
+        return false;
+    return vm.hasTerminationRequest() || vm.traps().needHandling(VMTraps::NeedTermination);
+}
+
 
 WaiterListManager& WaiterListManager::singleton()
 {
@@ -91,9 +129,12 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
 
         list->addLast(listLocker, syncWaiter);
         dataLogLnIf(WaiterListsManagerInternal::verbose, "<WaiterListManager> <Thread:", Thread::currentSingleton(), "> added a new SyncWaiter=", syncWaiter.get(), " to a waiterList for ptr ", RawPointer(ptr));
+        syncWaiter->setParkedList(list.copyRef());
 
-        while (syncWaiter->isOnList() && time.now() < time && !vm.hasTerminationRequest())
+        while (syncWaiter->isOnList() && time.now() < time && !shouldStopWaitingForTermination(vm))
             syncWaiter->condition().waitUntil(list->lock, time.approximate<WallTime>());
+
+        syncWaiter->setParkedList(nullptr);
 
         // At this point, syncWaiter should be either notified (dequeued) or timeout (not dequeued).
         bool didGetDequeued = !syncWaiter->isOnList();
@@ -102,8 +143,20 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
 
         didGetDequeued = list->findAndRemove(listLocker, syncWaiter);
         ASSERT(didGetDequeued);
-        return vm.hasTerminationRequest() ? WaitSyncResult::Terminated : WaitSyncResult::TimedOut;
+        if (!shouldStopWaitingForTermination(vm))
+            return WaitSyncResult::TimedOut;
     }
+
+    // The wait was cut short by a termination request: leave with it established and the
+    // TerminationException thrown, consuming the trap if another thread's request is what woke us
+    // (as VMTraps::handleTraps() would, minus jettisoning the code blocks that have trap breakpoints
+    // installed, which throwing from here does not need).
+    ASSERT(!vm.traps().isDeferringTermination());
+    if (vm.traps().clearTrap(VMTraps::NeedTermination))
+        vm.setHasTerminationRequest();
+    if (!vm.hasPendingTerminationException())
+        vm.throwTerminationException();
+    return WaitSyncResult::Terminated;
 }
 
 template <typename ValueType>
