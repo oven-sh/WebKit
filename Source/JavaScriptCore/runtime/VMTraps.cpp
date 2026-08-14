@@ -537,19 +537,11 @@ void VMTraps::deferTerminationSlow(DeferAction)
 
     VM& vm = this->vm();
     if (vm.hasPendingTerminationException()) [[unlikely]] {
-        // Clear the TerminationExeption for the duration of the deferral; m_suspendedTerminationException
-        // is how we remember to re-throw it in undoDeferTerminationSlow().
-        //
-        // The request has normally not been reset yet, because only the exit of the outermost
-        // VMEntryScope resets it. But a client may leave the TerminationException pending past
-        // that exit (so that nothing re-enters the VM until the client tears it down) and still
-        // reach a DeferTermination scope from host code, e.g. a LazyProperty initializer. Keep the
-        // request set while deferring, so that the rest of the VM sees a termination in progress,
-        // and remember to put it back afterwards.
-        if (!vm.hasTerminationRequest()) {
-            vm.setHasTerminationRequest();
-            m_didSetTerminationRequestForDeferral = true;
-        }
+        ASSERT(vm.hasTerminationRequest());
+        // While we clear the TerminationExeption here, hasTerminationRequest() remains true and
+        // is how we remember that we still need a TerminationException when we stop deferring.
+        // hasTerminationRequest() will eventually trigger a re-throw of TerminationExeption
+        // after we stop deferring.
         vm.clearException();
         m_suspendedTerminationException = true;
     }
@@ -560,24 +552,11 @@ void VMTraps::undoDeferTerminationSlow(DeferAction deferAction)
     ASSERT(m_deferTerminationCount == 0);
 
     VM& vm = this->vm();
-    if (m_suspendedTerminationException) {
-        // Re-throw what deferTerminationSlow() suspended, then leave the request as it was before the
-        // deferral. It may have been reset meanwhile, if the deferred code entered the VM and that
-        // (outermost) VMEntryScope has exited; it has to be set while the exception is thrown.
-        bool hadRequestBeforeDeferral = !std::exchange(m_didSetTerminationRequestForDeferral, false);
-        if (!vm.hasTerminationRequest())
-            vm.setHasTerminationRequest();
+    ASSERT(vm.hasTerminationRequest());
+    if (m_suspendedTerminationException || (deferAction == DeferAction::DeferUntilEndOfScope)) {
         vm.throwTerminationException();
         m_suspendedTerminationException = false;
-        if (!hadRequestBeforeDeferral)
-            vm.clearHasTerminationRequest();
-        return;
-    }
-
-    ASSERT(vm.hasTerminationRequest());
-    if (deferAction == DeferAction::DeferUntilEndOfScope)
-        vm.throwTerminationException();
-    else
+    } else if (deferAction == DeferAction::DeferForAWhile)
         fireTrap(NeedTermination); // Let the next trap check handle it.
 }
 

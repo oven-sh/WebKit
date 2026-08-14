@@ -328,7 +328,6 @@ private:
     bool m_needToInvalidateCodeBlocks { false };
     bool m_isShuttingDown { false };
     bool m_suspendedTerminationException { false };
-    bool m_didSetTerminationRequestForDeferral { false };
     bool m_threadStopRequested { false };
     bool m_trapsDeferred { false };
 
