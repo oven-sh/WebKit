@@ -32,12 +32,15 @@ namespace WTF {
 // always the same value.
 static String platformLanguage()
 {
+    // language[_territory][.codeset][@modifier]: only language and territory name a locale. Strip the
+    // rest first so "C.UTF-8" (glibc, and bionic's default) is recognized as the C locale below.
     auto localeDefault = String::fromLatin1(setlocale(LC_CTYPE, nullptr));
+    if (auto suffix = localeDefault.find([](UChar c) { return c == '.' || c == '@'; }); suffix != notFound)
+        localeDefault = localeDefault.left(suffix);
     if (localeDefault.isEmpty() || equalIgnoringASCIICase(localeDefault, "C"_s) || equalIgnoringASCIICase(localeDefault, "POSIX"_s))
         return "en-US"_s;
 
-    auto normalizedDefault = makeStringByReplacingAll(localeDefault, '_', '-');
-    return normalizedDefault.left(normalizedDefault.find('.'));
+    return makeStringByReplacingAll(localeDefault, '_', '-');
 }
 
 Vector<String> platformUserPreferredLanguages(ShouldMinimizeLanguages)
