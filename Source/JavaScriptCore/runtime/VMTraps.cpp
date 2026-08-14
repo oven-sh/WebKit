@@ -549,7 +549,6 @@ void VMTraps::deferTerminationSlow(DeferAction)
         // the request is re-established for the duration of the deferral, so that the exception
         // is re-thrown rather than dropped, and reset again afterwards.
         if (!vm.hasTerminationRequest()) {
-            ASSERT(!vm.entryScope);
             vm.setHasTerminationRequest();
             m_didSetTerminationRequestForDeferral = true;
         }

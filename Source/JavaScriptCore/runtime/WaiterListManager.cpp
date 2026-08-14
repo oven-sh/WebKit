@@ -143,11 +143,12 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
             return WaitSyncResult::TimedOut;
     }
 
-    // The wait was cut short by a termination request: leave with the TerminationException thrown, by
-    // handling the trap now if another thread's request is what woke us.
-    if (vm.traps().needHandling(VMTraps::NeedTermination))
-        vm.traps().handleTraps(VMTraps::NeedTermination);
-    else if (!vm.hasPendingTerminationException())
+    // The wait was cut short by a termination request: leave with it established and the
+    // TerminationException thrown, consuming the trap if another thread's request is what woke us
+    // (what VMTraps::handleTraps() does for NeedTermination, without its trap check's stack walk).
+    if (vm.traps().clearTrap(VMTraps::NeedTermination))
+        vm.setHasTerminationRequest();
+    if (!vm.hasPendingTerminationException() && !vm.traps().isDeferringTermination())
         vm.throwTerminationException();
     return WaitSyncResult::Terminated;
 }
