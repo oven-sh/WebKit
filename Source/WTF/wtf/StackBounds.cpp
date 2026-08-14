@@ -42,6 +42,12 @@
 #include <unistd.h>
 #endif
 
+#if OS(FREEBSD)
+#include <link.h>
+#include <sys/resource.h>
+#include <unistd.h>
+#endif
+
 #if OS(QNX)
 #include <sys/storage.h>
 #endif
@@ -171,6 +177,42 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         if (stackBounds.contains(oldestEnviron))
             stackBounds = { oldestEnviron, bound };
         return stackBounds;
+    }
+#elif OS(FREEBSD)
+    // libthr reports the main thread's stack as RLIMIT_STACK below its top, but when the executable
+    // carries a sized PT_GNU_STACK (ld -z stack-size) exec maps only trunc_page(p_memsz) for it,
+    // raising rlim_cur to that if it was smaller and leaving it alone if it was larger. The usable
+    // stack is therefore min(rlim_cur, trunc_page(p_memsz)) below the origin; without this a binary
+    // linked with a stack size below the rlimit overruns its real stack before any check here fires.
+    if (pthread_main_np() == 1) {
+        size_t reservation = 0;
+        // The main program is the first object rtld hands to the callback.
+        dl_iterate_phdr([](dl_phdr_info* info, size_t, void* data) -> int {
+            for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+                if (info->dlpi_phdr[i].p_type == PT_GNU_STACK) {
+                    *static_cast<size_t*>(data) = info->dlpi_phdr[i].p_memsz;
+                    break;
+                }
+            }
+            return 1;
+        }, &reservation);
+        size_t pageSize = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+        reservation &= ~(pageSize - 1);
+        rlimit limit;
+        if (!getrlimit(RLIMIT_STACK, &limit) && limit.rlim_cur != RLIM_INFINITY) {
+            if (!reservation || limit.rlim_cur < reservation)
+                reservation = limit.rlim_cur;
+        }
+        void* origin = ret.origin();
+        if (reservation > pageSize && reservation < reinterpret_cast<uintptr_t>(origin)) {
+            // The lowest page(s) of the reservation are the kernel's guard (security.bsd.stack_guard_page, 1 by default).
+            reservation -= pageSize;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+            void* bound = static_cast<char*>(origin) - reservation;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            if (bound > ret.end())
+                return StackBounds { origin, bound };
+        }
     }
 #endif
     return ret;
