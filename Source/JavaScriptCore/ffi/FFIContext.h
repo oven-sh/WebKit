@@ -29,9 +29,12 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
+#include "FFISignature.h"
 #include "HeapObserver.h"
 #include "JSExportMacros.h"
+#include "MacroAssemblerCodeRef.h"
 #include "WriteBarrier.h"
+#include <atomic>
 #include <span>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/MallocSpan.h>
@@ -50,29 +53,91 @@ class VM;
 
 namespace JSC { namespace FFI {
 
+// What the entry thunk of a `threadsafe` JSFFICallback targets in place of the cell. Native code may
+// call that thunk from any thread and at any time — including after the callback's global object and VM
+// are gone (a terminated worker), which the embedder cannot always sequence against `close()`. So
+// nothing the foreign thread touches lives in the GC cell: the thunk code, the signature, the
+// closed/pending state and the embedder's routing token live here, and once an entrypoint has been handed
+// out the handle (and so the thunk) is never freed: a call arriving after close() or after the cell and
+// VM are gone counts itself out and returns zero rather than jumping into freed code. Only the owning
+// thread reads `callback()`.
+class ThreadsafeCallbackHandle final : public ThreadSafeRefCounted<ThreadsafeCallbackHandle> {
+    WTF_MAKE_TZONE_ALLOCATED(ThreadsafeCallbackHandle);
+public:
+    static Ref<ThreadsafeCallbackHandle> create(JSFFICallback* callback, Ref<Signature>&& signature, void* embedderContext)
+    {
+        return adoptRef(*new ThreadsafeCallbackHandle(callback, WTF::move(signature), embedderContext));
+    }
+
+    Signature& signature() const { return m_signature.get(); }
+    void* embedderContext() const { return m_embedderContext; }
+    JSFFICallback* callback() const { return m_callback; } // owning thread; null once the cell is destroyed
+
+    void setEntryCode(MacroAssemblerCodeRef<JITThunkPtrTag>&& code) { m_entryCode = WTF::move(code); }
+    const MacroAssemblerCodeRef<JITThunkPtrTag>& entryCode() const { return m_entryCode; }
+
+    static constexpr unsigned closedBit = 0x80000000u;
+    static constexpr unsigned countMask = 0x7fffffffu;
+    // Any thread: count an invocation in unless closed.
+    bool tryBeginInvocation()
+    {
+        unsigned state = m_state.load(std::memory_order_acquire);
+        do {
+            if (state & closedBit)
+                return false;
+        } while (!m_state.compare_exchange_weak(state, state + 1, std::memory_order_acq_rel, std::memory_order_acquire));
+        return true;
+    }
+    // Owning thread: whether this was the last pending invocation of a closed callback.
+    bool endInvocation()
+    {
+        unsigned state = m_state.fetch_sub(1, std::memory_order_acq_rel) - 1;
+        return (state & closedBit) && !(state & countMask);
+    }
+    // Owning thread: whether invocations are still pending.
+    bool markClosedAndReportPending() { return m_state.fetch_or(closedBit, std::memory_order_acq_rel) & countMask; }
+    void cellDestroyed()
+    {
+        m_callback = nullptr;
+        m_state.fetch_or(closedBit, std::memory_order_acq_rel);
+    }
+
+private:
+    ThreadsafeCallbackHandle(JSFFICallback* callback, Ref<Signature>&& signature, void* embedderContext)
+        : m_signature(WTF::move(signature))
+        , m_embedderContext(embedderContext)
+        , m_callback(callback)
+    {
+    }
+
+    const Ref<Signature> m_signature;
+    void* const m_embedderContext;
+    JSFFICallback* m_callback;
+    MacroAssemblerCodeRef<JITThunkPtrTag> m_entryCode;
+    std::atomic<unsigned> m_state { 0 }; // closedBit | pending-invocation count
+};
+
 class ThreadsafeInvocation final : public ThreadSafeRefCounted<ThreadsafeInvocation> {
     WTF_MAKE_TZONE_ALLOCATED(ThreadsafeInvocation);
 public:
-    static Ref<ThreadsafeInvocation> create(JSFFICallback* callback, void* embedderContext, std::span<const uint64_t> slots)
+    static Ref<ThreadsafeInvocation> create(ThreadsafeCallbackHandle& handle, std::span<const uint64_t> slots)
     {
-        return adoptRef(*new ThreadsafeInvocation(callback, embedderContext, slots));
+        return adoptRef(*new ThreadsafeInvocation(handle, slots));
     }
 
-    JSFFICallback* callback() const { return m_callback; }
-    void* embedderContext() const { return m_embedderContext; }
+    ThreadsafeCallbackHandle& handle() const { return m_handle.get(); }
+    void* embedderContext() const { return m_handle->embedderContext(); }
     std::span<uint64_t> slots() { return m_slots.mutableSpan(); }
     std::span<const uint64_t> slots() const { return m_slots.span(); }
 
 private:
-    ThreadsafeInvocation(JSFFICallback* callback, void* embedderContext, std::span<const uint64_t> slots)
-        : m_callback(callback)
-        , m_embedderContext(embedderContext)
+    ThreadsafeInvocation(ThreadsafeCallbackHandle& handle, std::span<const uint64_t> slots)
+        : m_handle(handle)
         , m_slots(slots)
     {
     }
 
-    JSFFICallback* m_callback;
-    void* m_embedderContext;
+    const Ref<ThreadsafeCallbackHandle> m_handle;
     Vector<uint64_t, 8> m_slots;
 };
 

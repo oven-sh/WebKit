@@ -4813,11 +4813,8 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainThreadsafeCallbacks, (JSGlobalObject* glob
             break;
         }
     }
-    for (; index < pending.size(); ++index) {
-        JSFFICallback* callback = pending[index]->callback();
-        if (callback->endThreadsafeInvocation())
-            callback->unroot();
-    }
+    for (; index < pending.size(); ++index)
+        FFI::retireThreadsafeInvocation(*pending[index]);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsNumber(pending.size()));
 }

@@ -38,6 +38,7 @@ namespace JSC { namespace FFI {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FFIContext);
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadsafeCallbackHandle);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadsafeInvocation);
 
 FFIContext::ThreadsafeDispatchFunction FFIContext::s_threadsafeDispatch { nullptr };
