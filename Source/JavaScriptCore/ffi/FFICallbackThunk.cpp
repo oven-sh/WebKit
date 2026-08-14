@@ -46,6 +46,7 @@
 #include "LinkBuffer.h"
 #include "MarkedVector.h"
 #include "Options.h"
+#include <wtf/RawPointer.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC {
@@ -369,7 +370,8 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatchThreadsafe, EncodedJSValue, (FFI::Th
     if (handle->tryBeginInvocation()) [[likely]] {
         auto invocation = FFI::ThreadsafeInvocation::create(*handle, std::span<const uint64_t>(slots, argumentCount));
         dispatch(invocation.get());
-    }
+    } else if (Options::verboseFFI()) [[unlikely]]
+        dataLogLn("FFI: dropped a call to closed threadsafe callback ", RawPointer(handle), " (", handle->signature().toString(), "); returning zero");
     slots[argumentCount] = 0;
     return { encodedJSUndefined(), nullptr };
 }
@@ -456,17 +458,20 @@ void retireThreadsafeInvocation(ThreadsafeInvocation& invocation)
 // The owning thread, routed here by the embedder while the callback's context still accepts tasks.
 void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
 {
-    struct RetireInvocation {
-        ThreadsafeInvocation& invocation;
-        ~RetireInvocation() { retireThreadsafeInvocation(invocation); }
-    } retire { invocation };
     JSFFICallback* callback = invocation.handle().callback();
-    if (!callback)
+    if (!callback) {
+        retireThreadsafeInvocation(invocation);
         return;
+    }
 
     JSGlobalObject* globalObject = callback->globalObject();
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
+    // Retired (and possibly unrooted) under the API lock.
+    struct RetireInvocation {
+        ThreadsafeInvocation& invocation;
+        ~RetireInvocation() { retireThreadsafeInvocation(invocation); }
+    } retire { invocation };
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Signature& signature = callback->signature();

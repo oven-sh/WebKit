@@ -65,10 +65,11 @@ JSFFICallback::~JSFFICallback()
     if (!m_threadsafe)
         return;
     m_threadsafe->cellDestroyed();
-    // An entrypoint was handed out and never close()d, so native code was never told to stop calling it
-    // (the global object is going away under it): keep the handle, and with it the thunk, alive for the
-    // rest of the process.
-    if (!m_closed && m_threadsafe->entryCode())
+    // Once an entrypoint has been handed out, native code may call it at any later time -- there is no
+    // happens-before between a foreign thread leaving the thunk and this thread freeing it, close()d or
+    // not -- so the handle, and with it the thunk, stays alive for the rest of the process. Late calls
+    // count themselves out and return zero.
+    if (m_threadsafe->entryCode())
         m_threadsafe->ref();
 }
 
@@ -125,6 +126,13 @@ JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Struc
         return nullptr;
     }
     globalObject->ffiContext().addLiveCallback(vm, *globalObject, callback);
+    // A threadsafe callback's handle reads the cell through a raw pointer that only ~JSFFICallback clears,
+    // and cells are swept lazily: the cell must not be able to die (and sit unswept, still reachable from
+    // a delivered invocation) while its VM lives on -- as it could if it were rooted only through a global
+    // object that is itself collected. Root it VM-wide until it is closed and drained; it then dies only
+    // by close() or with the VM, whose last sweep runs the destructor before anything else can run.
+    if (threadsafe)
+        vm.heap.protect(callback);
     return callback;
 #endif
 }
@@ -189,6 +197,8 @@ void JSFFICallback::unroot()
 {
     if (auto* globalObject = this->globalObject())
         globalObject->ffiContext().removeLiveCallback(*globalObject, this);
+    if (m_threadsafe)
+        vm().heap.unprotect(this);
 }
 
 template<typename Visitor>

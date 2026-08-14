@@ -56,9 +56,10 @@ namespace JSC { namespace FFI {
 // call that thunk from any thread and at any time — including after the callback's global object and VM
 // are gone (a terminated worker), which the embedder cannot always sequence against `close()`. So
 // nothing the foreign thread touches lives in the GC cell: the thunk code, the signature, the
-// closed/pending state and the embedder's routing token live here, and a cell destroyed while its
-// callback was never `close()`d leaves this handle (and so the thunk) alive for good, turning late calls
-// into no-ops rather than jumps into freed code. Only the owning thread reads `callback()`.
+// closed/pending state and the embedder's routing token live here, and once an entrypoint has been handed
+// out the handle (and so the thunk) is never freed: a call arriving after close() or after the cell and
+// VM are gone counts itself out and returns zero rather than jumping into freed code. Only the owning
+// thread reads `callback()`.
 class ThreadsafeCallbackHandle final : public ThreadSafeRefCounted<ThreadsafeCallbackHandle> {
     WTF_MAKE_TZONE_ALLOCATED(ThreadsafeCallbackHandle);
 public:
