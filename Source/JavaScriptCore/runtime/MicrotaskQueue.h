@@ -35,7 +35,9 @@
 #include <wtf/RefCounted.h>
 #include <wtf/SentinelLinkedList.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
 #include <wtf/VectorTraits.h>
+#include <wtf/text/SymbolImpl.h>
 
 namespace JSC {
 class JSCell;
@@ -190,6 +192,22 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     // Defined in MicrotaskQueueInlines.h (requires globalObject() from QueuedTask).
     inline void clearForGlobalObject(JSGlobalObject* targetGlobalObject);
+
+    // Re-insert at the front. Everything already in the deque shifts by one, so the
+    // "already marked" prefix can no longer be trusted; rescan from the start.
+    void prepend(QueuedTask&& task)
+    {
+        m_queue.prepend(WTF::move(task));
+        m_markedBefore = 0;
+    }
+
+    QueuedTask takeLast()
+    {
+        QueuedTask task = m_queue.takeLast();
+        if (m_markedBefore > m_queue.size())
+            m_markedBefore = m_queue.size();
+        return task;
+    }
 #endif
 
     void beginMarking()
@@ -233,11 +251,47 @@ public:
     {
         m_queue.clear();
         m_toKeep.clear();
+#if USE(BUN_JSC_ADDITIONS)
+        for (auto& drain : m_domainDrains)
+            drain->deferred.clear();
+#endif
     }
 
 #if USE(BUN_JSC_ADDITIONS)
     // Defined in MicrotaskQueueInlines.h (requires MarkedMicrotaskDeque::clearForGlobalObject).
     inline void clearForGlobalObject(JSGlobalObject* targetGlobalObject);
+
+    // Scheduling domains (Bun scoped event-loop runs).
+    //
+    // A microtask's domain is read from the async context it captured when it was
+    // queued: a context array whose first element is a Symbol over the embedder's
+    // sentinel uid is [sentinel, domainId, ...AsyncLocalStorage pairs]. Tasks with no such context are
+    // in domain 0. While a domain drain is active, drainImpl() runs only tasks of that
+    // domain (plus domain-neutral pass-through jobs) and moves every other task that
+    // reaches the front into the drain's `deferred` deque; when the drain ends they are
+    // put back at the front of the queue in their original order.
+    struct DomainDrain {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DomainDrain);
+        explicit DomainDrain(uint32_t domain)
+            : domain(domain)
+        {
+        }
+        uint32_t domain { 0 };
+        unsigned executed { 0 };
+        MarkedMicrotaskDeque deferred;
+    };
+
+    bool hasActiveDomainDrain() const { return !m_domainDrains.isEmpty(); }
+    void setDomainSentinel(SymbolImpl* sentinel) { m_domainSentinel = sentinel; }
+    SymbolImpl* domainSentinel() const { return m_domainSentinel; }
+    JS_EXPORT_PRIVATE static uint32_t domainOfContext(SymbolImpl& sentinel, JSValue context);
+    JS_EXPORT_PRIVATE uint32_t domainOf(const QueuedTask&) const;
+
+    // Runs every queued task attributed to `domain` (transitively: whatever they queue
+    // for the same domain runs too) and returns how many ran. Safe to call while a
+    // checkpoint or another domain drain is already on the stack.
+    template<bool useCallOnEachMicrotask>
+    inline unsigned performDomainDrain(VM&, uint32_t domain);
 #endif
 
     void beginMarking()
@@ -288,6 +342,10 @@ private:
 
     MarkedMicrotaskDeque m_queue;
     MarkedMicrotaskDeque m_toKeep;
+#if USE(BUN_JSC_ADDITIONS)
+    Vector<std::unique_ptr<DomainDrain>, 2> m_domainDrains; // innermost last
+    SymbolImpl* m_domainSentinel { nullptr }; // owned by the embedder for the VM's lifetime
+#endif
 };
 
 JS_EXPORT_PRIVATE void runMicrotaskWithDebugger(JSGlobalObject*, VM&, QueuedTask&);

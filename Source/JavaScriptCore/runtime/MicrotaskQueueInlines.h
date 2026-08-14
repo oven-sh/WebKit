@@ -156,5 +156,45 @@ inline void MicrotaskQueue::performMicrotaskCheckpoint(VM& vm, NOESCAPE const In
     m_queue.swap(m_toKeep);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+template<bool useCallOnEachMicrotask>
+inline unsigned MicrotaskQueue::performDomainDrain(VM& vm, uint32_t domain)
+{
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (vm.executionForbidden()) [[unlikely]] {
+        clear();
+        return 0;
+    }
+    if (vm.disallowVMEntryCount) [[unlikely]] {
+        VM::checkVMEntryPermission();
+        return 0;
+    }
+
+    m_domainDrains.append(makeUnique<DomainDrain>(domain));
+    {
+        std::optional<VMEntryScope> entryScope;
+        JSGlobalObject* currentGlobalObject = nullptr;
+        while (true) {
+            auto [nextGlobalObject, done] = drain<useCallOnEachMicrotask>(currentGlobalObject, vm, catchScope);
+            if (done)
+                break;
+            if (nextGlobalObject) {
+                if (!entryScope)
+                    entryScope.emplace(vm, nextGlobalObject);
+                else
+                    entryScope->setGlobalObject(nextGlobalObject);
+            } else
+                entryScope = std::nullopt;
+            currentGlobalObject = nextGlobalObject;
+        }
+        vm.didEnterVM = true;
+    }
+    std::unique_ptr<DomainDrain> drain = m_domainDrains.takeLast();
+    while (!drain->deferred.isEmpty())
+        m_queue.prepend(drain->deferred.takeLast());
+    return drain->executed;
+}
+#endif
+
 
 } // namespace JSC

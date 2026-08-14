@@ -29,7 +29,11 @@
 #include "Debugger.h"
 #include "DeferTermination.h"
 #include "GlobalObjectMethodTable.h"
+#include "ButterflyInlines.h"
+#include "InternalFieldTuple.h"
+#include "JSArray.h"
 #include "JSCJSValueInlines.h"
+#include "Symbol.h"
 #include "JSGlobalObject.h"
 #include "JSMicrotask.h"
 #include "JSMicrotaskDispatcher.h"
@@ -122,8 +126,56 @@ void MicrotaskQueue::visitAggregateImpl(Visitor& visitor)
 {
     m_queue.visitAggregate(visitor);
     m_toKeep.visitAggregate(visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    for (auto& drain : m_domainDrains)
+        drain->deferred.visitAggregate(visitor);
+#endif
 }
 DEFINE_VISIT_AGGREGATE(MicrotaskQueue);
+
+#if USE(BUN_JSC_ADDITIONS)
+uint32_t MicrotaskQueue::domainOfContext(SymbolImpl& sentinel, JSValue context)
+{
+    if (!context || !context.isCell())
+        return 0;
+    JSCell* cell = context.asCell();
+    if (cell->type() == InternalFieldTupleType) {
+        JSValue inner = uncheckedDowncast<InternalFieldTuple>(cell)->getInternalField(1);
+        if (!inner || !inner.isCell())
+            return 0;
+        cell = inner.asCell();
+    }
+    if (!isJSArray(cell))
+        return 0;
+    // Read the butterfly directly: no getters, no side effects. The embedder keeps the
+    // domain pair at indices 0 and 1 and only ever stores it in a contiguous array.
+    JSArray* array = uncheckedDowncast<JSArray>(cell);
+    if ((array->indexingType() & IndexingShapeMask) != ContiguousShape)
+        return 0;
+    Butterfly* butterfly = array->butterfly();
+    if (butterfly->publicLength() < 2)
+        return 0;
+    JSValue first = butterfly->contiguous().at(array, 0).get();
+    if (!first.isSymbol() || &asSymbol(first)->uid() != &sentinel)
+        return 0;
+    JSValue domain = butterfly->contiguous().at(array, 1).get();
+    return domain.isInt32() ? static_cast<uint32_t>(domain.asInt32()) : 0;
+}
+
+uint32_t MicrotaskQueue::domainOf(const QueuedTask& task) const
+{
+    if (!m_domainSentinel)
+        return 0;
+    // Which argument holds the captured context depends on the job kind; only a
+    // runtime-made context array can start with the sentinel, so checking every
+    // argument cannot misattribute a user value.
+    for (JSValue argument : task.arguments()) {
+        if (uint32_t domain = domainOfContext(*m_domainSentinel, argument))
+            return domain;
+    }
+    return 0;
+}
+#endif
 
 void MicrotaskQueue::enqueueSlow(QueuedTask&& task)
 {
@@ -174,6 +226,17 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
 
     while (!m_queue.isEmpty()) {
         auto& front = m_queue.front();
+
+#if USE(BUN_JSC_ADDITIONS)
+        if (hasActiveDomainDrain()) [[unlikely]] {
+            auto& drain = *m_domainDrains.last();
+            if (!isDomainNeutralMicrotask(front.job()) && domainOf(front) != drain.domain) {
+                drain.deferred.enqueue(m_queue.dequeue());
+                continue;
+            }
+            ++drain.executed;
+        }
+#endif
 
         if (!front.isJSMicrotaskDispatcher()) [[likely]] {
             auto* globalObject = uncheckedDowncast<JSGlobalObject>(front.dispatcher());

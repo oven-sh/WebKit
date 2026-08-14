@@ -111,6 +111,21 @@ constexpr bool isModuleLoaderInternalMicrotask(InternalMicrotask task)
     return static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::AsyncModuleExecutionResume)
         && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::ImportModuleNamespace);
 }
+
+// True for pass-through jobs that settle a promise without invoking a handler.
+// They capture no async context (so no scheduling domain can be read from them)
+// and have no observable effect of their own — the reactions they trigger carry
+// their own contexts — so a domain drain runs them wherever they surface instead
+// of deferring them; otherwise `await Promise.all(...)` or a `.catch()` hop in an
+// await chain would stall inside a scoped run.
+constexpr bool isDomainNeutralMicrotask(InternalMicrotask task)
+{
+    static_assert(static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob) == static_cast<uint8_t>(InternalMicrotask::PromiseResolveWithoutHandlerJob) + 5);
+    if (task == InternalMicrotask::PromiseFinallyAwaitJob)
+        return true;
+    return static_cast<uint8_t>(task) >= static_cast<uint8_t>(InternalMicrotask::PromiseResolveWithoutHandlerJob)
+        && static_cast<uint8_t>(task) <= static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob);
+}
 #else
 constexpr unsigned maxMicrotaskArguments = 3;
 #endif
