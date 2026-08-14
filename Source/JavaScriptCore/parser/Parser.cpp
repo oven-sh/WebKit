@@ -147,7 +147,7 @@ Parser<LexerType>::Parser(VM& vm, const SourceCode& source, ImplementationVisibi
     m_token.m_startPosition.line = source.firstLine().oneBasedInt();
     m_token.m_startPosition.offset = source.startOffset();
     m_token.m_startPosition.lineStartOffset = source.startOffset();
-    m_token.m_endPosition.offset = source.startOffset();
+    m_token.m_endPosition = m_token.m_startPosition;
     m_functionCache = vm.addSourceProviderCache(source.provider());
 
     Scope* scope = pushScope();
@@ -2657,11 +2657,18 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
             
             m_token = cachedInfo->endFunctionToken();
 
-            if (endColumnIsOnStartLine)
+            if (endColumnIsOnStartLine) {
                 m_token.m_startPosition.lineStartOffset = currentLineStartOffset;
+                if (m_token.m_endPosition.line == m_token.m_startPosition.line)
+                    m_token.m_endPosition.lineStartOffset = currentLineStartOffset;
+            }
 
-            m_lexer->setOffset(m_token.m_endPosition.offset, m_token.m_startPosition.lineStartOffset);
-            m_lexer->setLineNumber(m_token.m_startPosition.line);
+            // Resume lexing where the function's last token ends. For an arrow function with an expression body that
+            // token can span lines (a template literal, a string with line continuations), so the lexer needs the
+            // line that token ends on, not the one it starts on; otherwise every line after the function is off by
+            // the number of line terminators inside the token.
+            m_lexer->setOffset(m_token.m_endPosition.offset, m_token.m_endPosition.lineStartOffset);
+            m_lexer->setLineNumber(m_token.m_endPosition.line);
 
             switch (functionBodyType) {
             case ArrowFunctionBodyExpression:
@@ -2861,10 +2868,12 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     }
 
     JSTokenLocation location = m_token.location();
+    JSTextPosition positionAfterLastToken = m_token.m_endPosition;
     functionInfo.endOffset = m_token.m_data.offset;
     
     if (functionBodyType == ArrowFunctionBodyExpression) {
         location = locationBeforeLastToken();
+        positionAfterLastToken = m_positionAfterLastToken;
         functionInfo.endOffset = location.endOffset;
     } else {
         recordFunctionEntryLocation(JSTextPosition(startLocation.line, startLocation.startOffset, startLocation.lineStartOffset));
@@ -2885,6 +2894,9 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         parameters.lastTokenStartOffset = location.startOffset;
         parameters.lastTokenEndOffset = location.endOffset;
         parameters.lastTokenLineStartOffset = location.lineStartOffset;
+        ASSERT(static_cast<unsigned>(positionAfterLastToken.offset) == location.endOffset);
+        parameters.lastTokenEndLine = positionAfterLastToken.line;
+        parameters.lastTokenEndLineStartOffset = positionAfterLastToken.lineStartOffset;
         parameters.parameterCount = functionInfo.parameterCount;
         parameters.constructorKind = constructorKind;
         parameters.expectedSuperBinding = expectedSuperBinding;
@@ -3460,7 +3472,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                 loc.lineStartOffset = position.lineStartOffset;
                 loc.startOffset = position.offset;
                 loc.endOffset = position.offset;
-                restoreLexerState(LexerState { position.offset, static_cast<unsigned>(position.lineStartOffset), loc, static_cast<unsigned>(position.line), hasLineTerminatorBeforeToken, ERRORTOK });
+                restoreLexerState(LexerState { position.offset, static_cast<unsigned>(position.lineStartOffset), loc, position, static_cast<unsigned>(position.line), hasLineTerminatorBeforeToken, ERRORTOK });
             }
             JSTokenLocation startLocation(tokenLocation());
             JSTextPosition startPosition = tokenStartPosition();
@@ -3491,7 +3503,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                     loc.lineStartOffset = initializerPosition->lineStartOffset;
                     loc.startOffset = initializerPosition->offset;
                     loc.endOffset = initializerPosition->offset;
-                    restoreLexerState(LexerState { initializerPosition->offset, static_cast<unsigned>(initializerPosition->lineStartOffset), loc, static_cast<unsigned>(initializerPosition->line), hasLineTerminatorBeforeToken, ERRORTOK });
+                    restoreLexerState(LexerState { initializerPosition->offset, static_cast<unsigned>(initializerPosition->lineStartOffset), loc, *initializerPosition, static_cast<unsigned>(initializerPosition->line), hasLineTerminatorBeforeToken, ERRORTOK });
                 }
                 // parseExpression() is more permissive way to parse AssignmentExpression than parseAssignmentExpression() that is used in parseClass().
                 // This is very intentional: we need to fail for `foo = 1, 2` but support reparsing `foo = (1, 2)`, which is tricky because open paren

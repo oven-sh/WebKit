@@ -42,6 +42,8 @@ struct SourceProviderCacheItemCreationParameters {
     unsigned lastTokenStartOffset { 0 };
     unsigned lastTokenEndOffset { 0 };
     unsigned lastTokenLineStartOffset { 0 };
+    unsigned lastTokenEndLine { 0 };
+    unsigned lastTokenEndLineStartOffset { 0 };
     unsigned endFunctionOffset { 0 };
     unsigned parameterCount { 0 };
     LexicallyScopedFeatures lexicallyScopedFeatures { 0 };
@@ -74,6 +76,8 @@ public:
         token.m_startPosition.line = lastTokenLine;
         token.m_startPosition.lineStartOffset = lastTokenLineStartOffset;
         token.m_endPosition.offset = lastTokenEndOffset;
+        token.m_endPosition.line = lastTokenEndLine;
+        token.m_endPosition.lineStartOffset = lastTokenEndLineStartOffset;
         // token.m_location.sourceOffset is initialized once by the client. So,
         // we do not need to set it here.
         return token;
@@ -102,6 +106,8 @@ public:
     bool taintedByWithScope : 1;
     unsigned lastTokenLineStartOffset : 31;
     bool isBodyArrowExpression : 1;
+    unsigned lastTokenEndLine : 31;
+    unsigned lastTokenEndLineStartOffset : 31;
     unsigned usedVariablesCount;
     unsigned tokenType : 24; // JSTokenType
     unsigned innerArrowFunctionFeatures : 6; // InnerArrowFunctionCodeFeatures
@@ -145,6 +151,8 @@ inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCach
     , taintedByWithScope(parameters.lexicallyScopedFeatures & TaintedByWithScopeLexicallyScopedFeature)
     , lastTokenLineStartOffset(parameters.lastTokenLineStartOffset)
     , isBodyArrowExpression(parameters.isBodyArrowExpression)
+    , lastTokenEndLine(parameters.lastTokenEndLine)
+    , lastTokenEndLineStartOffset(parameters.lastTokenEndLineStartOffset)
     , usedVariablesCount(parameters.usedVariables.size())
     , tokenType(static_cast<unsigned>(parameters.tokenType))
     , innerArrowFunctionFeatures(static_cast<unsigned>(parameters.innerArrowFunctionFeatures))
