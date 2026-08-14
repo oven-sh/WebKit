@@ -327,7 +327,7 @@ private:
         }
 
         if (vm.traps().hasTrapBit(NeedTermination))
-            vm.syncWaiter()->condition().notifyOne();
+            vm.syncWaiter()->notifyOfTerminationRequest();
 
         {
             Locker locker { *m_lock };
@@ -398,7 +398,6 @@ CONCURRENT_SAFE void VMTraps::requestThreadStopIfNeeded(Locker<Lock>& locker)
     ASSERT(!m_threadStopRequested);
     ASSERT(!m_isShuttingDown);
 
-    VM& vm = this->vm();
     m_stack.requestStop();
 
     m_needToInvalidateCodeBlocks = true;
@@ -409,17 +408,19 @@ CONCURRENT_SAFE void VMTraps::requestThreadStopIfNeeded(Locker<Lock>& locker)
         // has received the trap request. We'll call it from another thread so that
         // requestThreadStopIfNeeded() does not block.
         if (!m_signalSender)
-            m_signalSender = adoptRef(new SignalSender(locker, vm));
+            m_signalSender = adoptRef(new SignalSender(locker, vm()));
         m_signalSender->notify(locker);
     }
 #else
     UNUSED_PARAM(locker);
 #endif
 
-    if (hasTrapBit(NeedTermination))
-        vm.syncWaiter()->condition().notifyOne();
-
     m_threadStopRequested = true;
+}
+
+void VMTraps::notifySyncWaiterOfTermination()
+{
+    vm().syncWaiter()->notifyOfTerminationRequest();
 }
 
 CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()

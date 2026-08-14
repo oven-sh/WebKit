@@ -249,7 +249,12 @@ public:
         // Trap bit must be set before we update the thread stop request.
         if (isAsyncEvent(event))
             updateThreadStopRequestIfNeeded();
+        // A thread parked in Atomics.wait / memory.atomic.wait handles no traps; wake it so it sees this one.
+        if (event == NeedTermination)
+            notifySyncWaiterOfTermination();
     }
+
+    JS_EXPORT_PRIVATE CONCURRENT_SAFE void notifySyncWaiterOfTermination();
 
     // The following returns true if a trap was handled.
     bool handleTraps(BitField mask = AsyncEvents);
