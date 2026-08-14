@@ -100,7 +100,6 @@ public:
     Encoder(VM& vm, FileSystem::FileHandle& fileHandle)
         : m_vm(vm)
         , m_fileHandle(fileHandle)
-        , m_baseOffset(0)
         , m_currentPage(nullptr)
     {
         allocateNewPage();
@@ -113,7 +112,7 @@ public:
         RELEASE_ASSERT(size);
         ptrdiff_t offset;
         if (m_currentPage->malloc(size, offset))
-            return Allocation { m_currentPage->buffer() + offset, m_baseOffset + offset };
+            return Allocation { m_currentPage->buffer() + offset, m_currentPage->baseOffset() + offset };
         allocateNewPage(size);
         return malloc(size);
     }
@@ -126,12 +125,11 @@ public:
 
     ptrdiff_t offsetOf(const void* address)
     {
-        ptrdiff_t offset;
-        ptrdiff_t baseOffset = 0;
-        for (const auto& page : m_pages) {
-            if (page.getOffset(address, offset))
-                return baseOffset + offset;
-            baseOffset += page.size();
+        // Encoding is depth-first, so the address is almost always in the most recently allocated pages.
+        for (unsigned i = m_pages.size(); i--;) {
+            ptrdiff_t offset;
+            if (m_pages[i].getOffset(address, offset))
+                return m_pages[i].baseOffset() + offset;
         }
         RELEASE_ASSERT_NOT_REACHED();
         return 0;
@@ -165,7 +163,7 @@ public:
             return releaseMapped(error);
         }
 
-        size_t size = m_baseOffset + m_currentPage->size();
+        size_t size = m_currentPage->baseOffset() + m_currentPage->size();
         auto buffer = MallocSpan<uint8_t, VMMalloc>::malloc(size);
         auto bufferSpan = buffer.mutableSpan();
         for (const auto& page : m_pages)
@@ -177,7 +175,7 @@ public:
 private:
     RefPtr<CachedBytecode> releaseMapped(BytecodeCacheError& error)
     {
-        size_t size = m_baseOffset + m_currentPage->size();
+        size_t size = m_currentPage->baseOffset() + m_currentPage->size();
         if (!m_fileHandle.truncate(size)) {
             error = BytecodeCacheError::StandardError(errno);
             return nullptr;
@@ -207,8 +205,9 @@ private:
 
     class Page {
     public:
-        Page(size_t size)
+        Page(size_t size, ptrdiff_t baseOffset)
             : m_buffer(MallocSpan<uint8_t, VMMalloc>::malloc(size))
+            , m_baseOffset(baseOffset)
         {
         }
 
@@ -229,6 +228,7 @@ private:
         const uint8_t* NODELETE buffer() const { return m_buffer.span().data(); }
         uint8_t* NODELETE buffer() { return m_buffer.mutableSpan().data(); }
         size_t size() const { return static_cast<size_t>(m_offset); }
+        ptrdiff_t baseOffset() const { return m_baseOffset; }
 
         std::span<uint8_t> mutableSpan() LIFETIME_BOUND { return m_buffer.mutableSpan().first(size()); }
         std::span<const uint8_t> span() const LIFETIME_BOUND { return m_buffer.span().first(size()); }
@@ -258,26 +258,26 @@ private:
 
         MallocSpan<uint8_t, VMMalloc> m_buffer;
         ptrdiff_t m_offset { 0 };
+        ptrdiff_t m_baseOffset;
     };
 
     void allocateNewPage(size_t size = 0)
     {
         static size_t minPageSize = pageSize();
+        ptrdiff_t baseOffset = 0;
         if (m_currentPage) {
             m_currentPage->alignEnd();
-            m_baseOffset += m_currentPage->size();
+            baseOffset = m_currentPage->baseOffset() + m_currentPage->size();
         }
-        if (size < minPageSize)
-            size = minPageSize;
-        else
-            size = roundUpToMultipleOf(minPageSize, size);
-        m_pages.append(Page { size });
+        // Make each new page at least as large as everything encoded so far, so the number of pages
+        // (which offsetOf() walks for every pointer encoded) is logarithmic rather than linear in the size of the cache.
+        size = roundUpToMultipleOf(minPageSize, std::max({ size, minPageSize, static_cast<size_t>(baseOffset) }));
+        m_pages.append(Page { size, baseOffset });
         m_currentPage = &m_pages.last();
     }
 
     VM& m_vm;
     FileSystem::FileHandle& m_fileHandle;
-    ptrdiff_t m_baseOffset;
     Page* m_currentPage;
     Vector<Page> m_pages;
     UncheckedKeyHashMap<const void*, ptrdiff_t> m_ptrToOffsetMap;
