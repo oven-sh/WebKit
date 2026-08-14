@@ -65,9 +65,10 @@ JSFFICallback::~JSFFICallback()
     if (!m_threadsafe)
         return;
     m_threadsafe->cellDestroyed();
-    // Never close()d, so native code was never told to stop calling the entrypoint (the global object is
-    // going away under it): keep the handle, and with it the thunk, alive for the rest of the process.
-    if (!m_closed)
+    // An entrypoint was handed out and never close()d, so native code was never told to stop calling it
+    // (the global object is going away under it): keep the handle, and with it the thunk, alive for the
+    // rest of the process.
+    if (!m_closed && m_threadsafe->entryCode())
         m_threadsafe->ref();
 }
 

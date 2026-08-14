@@ -45,6 +45,7 @@ class JSFFICallback;
 class VM;
 
 namespace FFI {
+class ThreadsafeCallbackHandle;
 
 #if FFI_CALLBACK_THUNK_SUPPORTED
 MacroAssemblerCodeRef<JITThunkPtrTag> generateCallbackThunk(VM&, JSFFICallback&);
