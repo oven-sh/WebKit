@@ -45,6 +45,9 @@
 namespace JSC {
 
 class EvalExecutable;
+#if USE(BUN_JSC_ADDITIONS)
+class GlobalExecutable;
+#endif
 class IndirectEvalExecutable;
 class Identifier;
 class DirectEvalExecutable;
@@ -265,6 +268,12 @@ template <> struct CacheTypes<UnlinkedModuleProgramCodeBlock> {
 UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM&, DirectEvalExecutable*, const SourceCode&, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment*);
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType);
 UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType);
+
+#if USE(BUN_JSC_ADDITIONS)
+// What a CodeCache hit does besides returning the block: the executable learns the parse results
+// (newCodeBlockFor() requires them) and the provider the //# sourceURL / sourceMappingURL directives.
+void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedCodeBlock*);
+#endif
 
 void writeCodeBlock(const SourceCodeKey&, const SourceCodeValue&);
 RefPtr<CachedBytecode> serializeBytecode(VM&, UnlinkedCodeBlock*, const SourceCode&, SourceCodeType, LexicallyScopedFeatures, JSParserScriptMode, FileSystem::FileHandle&, BytecodeCacheError&, OptionSet<CodeGenerationMode>);

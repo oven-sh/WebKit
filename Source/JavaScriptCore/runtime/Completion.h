@@ -41,6 +41,9 @@ class ParserError;
 class ScriptFetcher;
 class SourceCode;
 class Symbol;
+#if USE(BUN_JSC_ADDITIONS)
+class UnlinkedProgramCodeBlock;
+#endif
 class VM;
 class JSPromise;
 
@@ -57,6 +60,13 @@ inline JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& sourceCo
     NakedPtr<Exception> unused;
     return evaluate(globalObject, sourceCode, thisValue, unused);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// evaluate() with the block the caller compiled from the source earlier (possibly for another global object) in
+// place of the CodeCache lookup; see ProgramExecutable::initializeGlobalProperties() for what the block has to be.
+// The caller keeps the block alive; JSC roots nothing beyond the call. A null block makes this the plain evaluate().
+JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, const SourceCode&, UnlinkedProgramCodeBlock*, JSValue thisValue, NakedPtr<Exception>& returnedException);
+#endif
 
 JS_EXPORT_PRIVATE JSValue profiledEvaluate(JSGlobalObject*, ProfilingReason, const SourceCode&, JSValue thisValue, NakedPtr<Exception>& returnedException);
 inline JSValue profiledEvaluate(JSGlobalObject* globalObject, ProfilingReason reason, const SourceCode& sourceCode, JSValue thisValue = JSValue())
