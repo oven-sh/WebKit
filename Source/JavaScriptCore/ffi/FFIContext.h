@@ -34,6 +34,7 @@
 #include "JSExportMacros.h"
 #include "MacroAssemblerCodeRef.h"
 #include "WriteBarrier.h"
+#include <atomic>
 #include <span>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/MallocSpan.h>
