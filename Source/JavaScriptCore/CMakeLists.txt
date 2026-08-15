@@ -1200,6 +1200,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/CagedBarrierPtr.h
     runtime/CallData.h
     runtime/CellSize.h
+    runtime/TerminationDeadline.h
     runtime/TopExceptionScope.h
     runtime/ClassInfo.h
     runtime/CloneBase.h
