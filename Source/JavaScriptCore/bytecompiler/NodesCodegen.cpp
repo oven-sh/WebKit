@@ -366,6 +366,10 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
     ExpectedFunction expectedFunction = NoExpectedFunction;
     RefPtr<RegisterID> tag = nullptr;
     RefPtr<RegisterID> base = nullptr;
+    // Set for super.tag`...` and super[tag]`...`. A super property reference looks the tag up on the home object's
+    // prototype (|base|) but is called with the current |this| (https://tc39.es/ecma262/#sec-evaluatecall step 1.a.i,
+    // GetThisValue of a Super Reference), exactly like super.tag(...) in FunctionCallDotNode / FunctionCallBracketNode.
+    RefPtr<RegisterID> thisValue = nullptr;
     if (!m_tag->isLocation()) {
         tag = generator.newTemporary();
         tag = generator.emitNode(tag.get(), m_tag);
@@ -390,21 +394,30 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
         }
     } else if (m_tag->isBracketAccessorNode()) {
         BracketAccessorNode* bracket = static_cast<BracketAccessorNode*>(m_tag);
-        base = generator.newTemporary();
-        base = generator.emitNode(base.get(), bracket->base());
-        RefPtr<RegisterID> property = generator.emitNodeForProperty(bracket->subscript());
         if (bracket->base()->isSuperNode()) {
-            RefPtr<RegisterID> thisValue = generator.ensureThis();
+            thisValue = generator.ensureThis();
+            base = emitSuperBaseForCallee(generator);
+        } else {
+            base = generator.newTemporary();
+            base = generator.emitNode(base.get(), bracket->base());
+        }
+        RefPtr<RegisterID> property = generator.emitNodeForProperty(bracket->subscript());
+        if (thisValue)
             tag = generator.emitGetByVal(generator.newTemporary(), base.get(), thisValue.get(), property.get());
-        } else
+        else
             tag = generator.emitGetByVal(generator.newTemporary(), base.get(), property.get());
     } else {
         ASSERT(m_tag->isDotAccessorNode());
         DotAccessorNode* dot = static_cast<DotAccessorNode*>(m_tag);
         tag = generator.newTemporary();
-        base = generator.newTemporary();
-        base = generator.emitNode(base.get(), dot->base());
-        tag = dot->emitGetPropertyValue(generator, tag.get(), base.get());
+        if (dot->base()->isSuperNode()) {
+            thisValue = generator.ensureThis();
+            base = emitSuperBaseForCallee(generator);
+        } else {
+            base = generator.newTemporary();
+            base = generator.emitNode(base.get(), dot->base());
+        }
+        tag = dot->emitGetPropertyValue(generator, tag.get(), base.get(), thisValue);
     }
 
     RefPtr<RegisterID> templateObject = generator.emitGetTemplateObject(nullptr, this);
@@ -414,7 +427,9 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
         ++expressionsCount;
 
     CallArguments callArguments(generator, nullptr, 1 + expressionsCount);
-    if (base)
+    if (thisValue)
+        generator.move(callArguments.thisRegister(), thisValue.get());
+    else if (base)
         generator.move(callArguments.thisRegister(), base.get());
     else
         generator.emitLoad(callArguments.thisRegister(), jsUndefined());
