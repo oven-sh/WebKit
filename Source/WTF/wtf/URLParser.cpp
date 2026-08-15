@@ -396,8 +396,10 @@ template<typename CharacterType> ALWAYS_INLINE static uint8_t scanClass(Characte
 {
     if constexpr (sizeof(CharacterType) == 1)
         return scanClassTable[character];
-    return character <= 0xFF ? scanClassTable[character] : (PathStop | QueryStop | FragmentStop | OpaquePathStop | HostNotPlain | HostPercentOrNonASCII);
+    // Every non-Latin-1 character has the same classes as U+00FF.
+    return character <= 0xFF ? scanClassTable[character] : scanClassTable[0xFF];
 }
+static_assert(scanClassTable[0xFF] == (PathStop | QueryStop | FragmentStop | OpaquePathStop | HostNotPlain | HostPercentOrNonASCII));
 
 // Finds the first character in [begin, end) whose scanClass() has any of the stopClass bits, 16 bytes at a time.
 // vectorStop computes, for a vector of code units, a mask of the lanes that are stop characters.
