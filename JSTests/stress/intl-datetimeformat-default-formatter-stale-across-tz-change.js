@@ -1,17 +1,17 @@
-//@ skip
-// FIXME: https://bugs.webkit.org/show_bug.cgi?id=318362
-// Skipped: exposes a known, deferred bug. Distinct from the DateInstanceData
-// staleness covered by intl-datetimeformat-stale-data-*-across-tz-change.js:
-// there the stale state is a held Date instance's cached GregorianDateTime,
-// while here even a freshly created Date is affected. The per-global default
-// formatters (JSGlobalObject::m_defaultDateTimeFormat / m_defaultDateFormat /
+//@ runDefault("--useDollarVM=1")
+//@ skip if $hostOS == "playstation"
+
+// https://bugs.webkit.org/show_bug.cgi?id=318362
+// Distinct from the DateInstanceData staleness covered by
+// intl-datetimeformat-stale-data-*-across-tz-change.js: there the stale state
+// is a held Date instance's cached GregorianDateTime, while here even a freshly
+// created Date is affected. The per-global default formatters
+// (JSGlobalObject::m_defaultDateTimeFormat / m_defaultDateFormat /
 // m_defaultTimeFormat) backing the no-argument Date.prototype.toLocale*String
-// paths are initialized once and never invalidated, so after a host TZ change
-// they keep formatting in the old time zone while every other construction
-// shape moves.
-//
-// Remove the //@ skip (and add the "skip if $hostOS == playstation" guard the
-// sibling tests use) once the default formatters are invalidated on TZ change.
+// paths capture the DateCache's default time zone when they are materialized,
+// so they have to be re-armed once the DateCache has been refreshed for a time
+// zone change (DateCache::cachedTimeZoneID() moved), or they keep formatting in
+// the old time zone while every other construction shape moves.
 
 function expect(label, got, want)
 {

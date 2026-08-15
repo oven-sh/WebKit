@@ -99,6 +99,12 @@ public:
 
     JS_EXPORT_PRIVATE void clearForTimeZoneChange();
 
+    // The WTF::lastTimeZoneID() this cache was last cleared for, i.e. the time zone its contents
+    // (and anything derived from them, such as JSGlobalObject's default IntlDateTimeFormats)
+    // reflect. Unlike WTF::lastTimeZoneID() itself it only moves once this cache has actually been
+    // refreshed, so consumers keyed on it can never capture a stale default time zone under a new ID.
+    uint64_t cachedTimeZoneID() const { return m_cachedTimeZoneID; }
+
     TimeZone defaultTimeZone();
     String timeZoneDisplayName(bool isDST);
     Ref<DateInstanceData> NODELETE cachedDateInstanceData(double millisecondsFromEpoch);
