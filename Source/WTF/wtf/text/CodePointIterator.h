@@ -62,6 +62,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     {
         return m_data.empty();
     }
+
+    ALWAYS_INLINE const CharacterType* position() const { return m_data.data(); }
+    ALWAYS_INLINE std::span<const CharacterType> remainingCodeUnits() const { return m_data; }
     
     ALWAYS_INLINE size_t codeUnitsSince(const CharacterType* reference) const
     {

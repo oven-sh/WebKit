@@ -70,18 +70,22 @@ public:
     WTF_EXPORT_PRIVATE static std::optional<String> formURLDecode(StringView input);
 
 private:
-    URLParser(String&&, const URL& = { }, const URLTextEncoding* = nullptr);
-    URL result() { return m_url; }
+    // Parses into `result`, which must be a default-constructed URL.
+    URLParser(URL& result, const String&, const URL& base = { }, const URLTextEncoding* = nullptr);
+    URLParser(URL& result, String&&, const URL& base = { }, const URLTextEncoding* = nullptr);
+    void parse(const URL& base, const URLTextEncoding*);
+    String releaseInputString();
 
     friend class URL;
 
-    URL m_url;
-    Vector<Latin1Character> m_asciiBuffer;
+    URL& m_url;
+    Vector<Latin1Character, 256> m_asciiBuffer;
     bool m_urlIsSpecial { false };
     bool m_urlIsFile { false };
     bool m_hostHasPercentOrNonASCII { false };
     bool m_didSeeSyntaxViolation { false };
-    String m_inputString;
+    String m_ownedInputString;
+    const String& m_inputString;
     const void* m_inputBegin { nullptr };
 
     static constexpr size_t defaultInlineBufferSize = 2048;
@@ -113,6 +117,7 @@ private:
     template<typename CharacterType> void consumeDoubleDotPathSegment(CodePointIterator<CharacterType>&);
     template<typename CharacterType> void appendWindowsDriveLetter(CodePointIterator<CharacterType>&);
     template<typename CharacterType> size_t currentPosition(const CodePointIterator<CharacterType>&);
+    template<typename CharacterType> size_t currentPosition(const CharacterType*);
     template<typename UnsignedIntegerType> void appendNumberToASCIIBuffer(UnsignedIntegerType);
     template<bool(*isInCodeSet)(char32_t), typename CharacterType> void utf8PercentEncode(const CodePointIterator<CharacterType>&);
     template<typename CharacterType> void utf8QueryEncode(const CodePointIterator<CharacterType>&);
@@ -124,6 +129,7 @@ private:
     void percentEncodeByte(uint8_t);
     void appendToASCIIBuffer(char32_t);
     void appendToASCIIBuffer(std::span<const Latin1Character>);
+    void appendToASCIIBuffer(std::span<const char16_t>);
     template<typename CharacterType> void encodeNonUTF8Query(const Vector<char16_t>& source, const URLTextEncoding&, CodePointIterator<CharacterType>);
     void copyASCIIStringUntil(const String&, size_t length);
     bool copyBaseWindowsDriveLetter(const URL&);
@@ -136,9 +142,7 @@ private:
     using IPv4Address = uint32_t;
     void serializeIPv4(IPv4Address);
     enum class IPv4ParsingError;
-    enum class IPv4PieceParsingError;
-    template<typename CharacterTypeForSyntaxViolation, typename CharacterType> Expected<IPv4Address, IPv4ParsingError> parseIPv4Host(const CodePointIterator<CharacterTypeForSyntaxViolation>&, CodePointIterator<CharacterType>);
-    template<typename CharacterType> Expected<uint32_t, URLParser::IPv4PieceParsingError> parseIPv4Piece(CodePointIterator<CharacterType>&, bool& syntaxViolation);
+    template<typename CharacterTypeForSyntaxViolation, typename CharacterType> Expected<IPv4Address, IPv4ParsingError> parseIPv4Host(const CodePointIterator<CharacterTypeForSyntaxViolation>&, std::span<const CharacterType>);
     using IPv6Address = std::array<uint16_t, 8>;
     template<typename CharacterType> std::optional<IPv6Address> parseIPv6Host(CodePointIterator<CharacterType>);
     template<typename CharacterType> std::optional<uint32_t> NODELETE parseIPv4PieceInsideIPv6(CodePointIterator<CharacterType>&);

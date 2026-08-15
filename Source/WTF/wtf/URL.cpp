@@ -45,30 +45,22 @@
 
 namespace WTF {
 
-void URL::invalidate()
-{
-    m_isValid = false;
-    m_protocolIsInHTTPFamily = false;
-    m_hasOpaquePath = false;
-    m_schemeEnd = 0;
-    m_userStart = 0;
-    m_userEnd = 0;
-    m_passwordEnd = 0;
-    m_hostEnd = 0;
-    m_portLength = 0;
-    m_pathEnd = 0;
-    m_pathAfterLastSlash = 0;
-    m_queryEnd = 0;
-}
-
 URL::URL(const URL& base, const String& relative, const URLTextEncoding* encoding)
 {
-    *this = URLParser(String { relative },  base, encoding).result();
+    invalidate();
+    URLParser(*this, relative,  base, encoding);
 }
 
 URL::URL(String&& absoluteURL, const URLTextEncoding* encoding)
 {
-    *this = URLParser(WTF::move(absoluteURL), URL(), encoding).result();
+    invalidate();
+    URLParser(*this, WTF::move(absoluteURL), URL(), encoding);
+}
+
+URL::URL(const String& absoluteURL, const URLTextEncoding* encoding)
+{
+    invalidate();
+    URLParser(*this, absoluteURL, URL(), encoding);
 }
 
 static bool NODELETE shouldTrimFromURL(char16_t character)
@@ -701,12 +693,16 @@ static String percentEncodeCharacters(const StringType& input, bool(*shouldEncod
 
 void URL::parse(String&& string)
 {
-    *this = URLParser(WTF::move(string)).result();
+    URL result;
+    URLParser(result, WTF::move(string));
+    *this = WTF::move(result);
 }
 
 void URL::parseAllowingC0AtEnd(String&& string)
 {
-    *this = URLParser(WTF::move(string), { }, URLTextEncodingSentinelAllowingC0AtEnd).result();
+    URL result;
+    URLParser(result, WTF::move(string), { }, URLTextEncodingSentinelAllowingC0AtEnd);
+    *this = WTF::move(result);
 }
 
 void URL::remove(unsigned start, unsigned length)
