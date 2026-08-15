@@ -45,7 +45,6 @@ class JSFFICallback;
 class VM;
 
 namespace FFI {
-class ThreadsafeCallbackHandle;
 
 #if FFI_CALLBACK_THUNK_SUPPORTED
 MacroAssemblerCodeRef<JITThunkPtrTag> generateCallbackThunk(VM&, JSFFICallback&);
@@ -55,7 +54,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateCallbackThunk(VM&, JSFFICallback&)
 
 #if FFI_CALLBACK_THUNK_SUPPORTED
 JSC_DECLARE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback*, uint64_t*));
-JSC_DECLARE_JIT_OPERATION(ffiCallbackDispatchThreadsafe, EncodedJSValue, (FFI::ThreadsafeCallbackHandle*, uint64_t*));
+JSC_DECLARE_JIT_OPERATION(ffiCallbackDispatchThreadsafe, EncodedJSValue, (JSFFICallback*, uint64_t*));
 #endif // FFI_CALLBACK_THUNK_SUPPORTED
 
 } // namespace JSC

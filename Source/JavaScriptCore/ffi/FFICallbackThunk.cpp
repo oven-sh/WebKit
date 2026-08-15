@@ -46,7 +46,6 @@
 #include "LinkBuffer.h"
 #include "MarkedVector.h"
 #include "Options.h"
-#include <wtf/RawPointer.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC {
@@ -275,15 +274,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateCallbackThunk(VM&, JSFFICallback& 
     }
 
     jit.addPtr(CCallHelpers::TrustedImm32(slotsOffsetFromFP), GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
-    // A threadsafe thunk may run when the cell (and its VM) no longer exist: it is handed the handle,
-    // which outlives them, and never the cell.
-    if (auto* handle = callback.threadsafeHandle()) {
-        jit.move(CCallHelpers::TrustedImmPtr(handle), GPRInfo::argumentGPR0);
-        jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(ffiCallbackDispatchThreadsafe)), thunkScratchGPR);
-    } else {
-        jit.move(CCallHelpers::TrustedImmPtr(&callback), GPRInfo::argumentGPR0);
-        jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(ffiCallbackDispatch)), thunkScratchGPR);
-    }
+    jit.move(CCallHelpers::TrustedImmPtr(&callback), GPRInfo::argumentGPR0);
+    auto dispatchOperation = callback.isThreadsafe() ? tagCFunction<OperationPtrTag>(ffiCallbackDispatchThreadsafe) : tagCFunction<OperationPtrTag>(ffiCallbackDispatch);
+    jit.move(CCallHelpers::TrustedImmPtr(dispatchOperation), thunkScratchGPR);
     jit.call(thunkScratchGPR, OperationPtrTag);
 
     const CCallHelpers::Address returnSlot(GPRInfo::callFrameRegister, slotsOffsetFromFP + static_cast<int>(argumentCount * slotSize));
@@ -360,18 +353,17 @@ private:
 
 } // namespace FFI
 
-// Any thread, any time — possibly after the callback's cell, global object and VM are gone. Touches only
-// the handle.
-JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatchThreadsafe, EncodedJSValue, (FFI::ThreadsafeCallbackHandle* handle, uint64_t* slots))
+JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatchThreadsafe, EncodedJSValue, (JSFFICallback* callback, uint64_t* slots))
 {
-    const unsigned argumentCount = handle->signature().argumentCount();
+    ASSERT(callback->isThreadsafe());
+    FFI::Signature& signature = callback->signature();
+    const unsigned argumentCount = signature.argumentCount();
     auto dispatch = FFI::FFIContext::threadsafeDispatch();
     RELEASE_ASSERT(dispatch);
-    if (handle->tryBeginInvocation()) [[likely]] {
-        auto invocation = FFI::ThreadsafeInvocation::create(*handle, std::span<const uint64_t>(slots, argumentCount));
+    if (callback->tryBeginThreadsafeInvocation()) [[likely]] {
+        auto invocation = FFI::ThreadsafeInvocation::create(callback, callback->embedderContext(), std::span<const uint64_t>(slots, argumentCount));
         dispatch(invocation.get());
-    } else if (Options::verboseFFI()) [[unlikely]]
-        dataLogLn("FFI: dropped a call to closed threadsafe callback ", RawPointer(handle), " (", handle->signature().toString(), "); returning zero");
+    }
     slots[argumentCount] = 0;
     return { encodedJSUndefined(), nullptr };
 }
@@ -448,31 +440,21 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* ca
 
 namespace FFI {
 
-void retireThreadsafeInvocation(ThreadsafeInvocation& invocation)
-{
-    ThreadsafeCallbackHandle& handle = invocation.handle();
-    if (handle.endInvocation() && handle.callback()) {
-        JSLockHolder locker(handle.callback()->vm());
-        handle.callback()->unroot();
-    }
-}
-
-// The owning thread, routed here by the embedder while the callback's context still accepts tasks.
 void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
 {
-    JSFFICallback* callback = invocation.handle().callback();
-    if (!callback) {
-        retireThreadsafeInvocation(invocation);
-        return;
-    }
+    JSFFICallback* callback = invocation.callback();
+    struct RetireInvocation {
+        JSFFICallback* callback;
+        ~RetireInvocation()
+        {
+            if (callback->endThreadsafeInvocation())
+                callback->unroot();
+        }
+    } retire { callback };
 
     JSGlobalObject* globalObject = callback->globalObject();
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
-    struct RetireInvocation {
-        ThreadsafeInvocation& invocation;
-        ~RetireInvocation() { retireThreadsafeInvocation(invocation); }
-    } retire { invocation };
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Signature& signature = callback->signature();
@@ -508,10 +490,6 @@ namespace FFI {
 void runThreadsafeInvocation(ThreadsafeInvocation&)
 {
     RELEASE_ASSERT_NOT_REACHED(); // unreachable: no threadsafe callback exists to have queued this
-}
-void retireThreadsafeInvocation(ThreadsafeInvocation&)
-{
-    RELEASE_ASSERT_NOT_REACHED();
 }
 } // namespace FFI
 
