@@ -110,7 +110,9 @@ RUN mkdir -p /icu-host && cd /icu-host \
 # 35 KB here rather than the ~8 KB they compress to elsewhere, and the udata.cpp
 # decompression hook is not applied either. icu/rbbi-clone-allocation-failure.patch
 # (ubrk_clone reports an allocation failure instead of crashing) is a plain bug fix
-# and is applied wherever ICU is built.
+# and is applied to this target tree like to every ICU that ships in a prebuilt;
+# the host tree above only provides icupkg and stays as is. The patched behaviour
+# is checked in ./Dockerfile, which builds the same patched source natively.
 COPY icu/ /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export TARGET_TRIPLE="${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION}" && \

@@ -217,8 +217,9 @@ ADD --checksum=sha256:${ICU_SHA256} \
     https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz /icu-src.tgz
 # The udata.cpp patch adds the weak per-item decompression hook (see the
 # stage comment above); the rbbi.cpp patch makes ubrk_clone report an
-# allocation failure instead of crashing. Both land in the cross-built
-# sicuuc.lib (the native build-icu.ps1 applies the rbbi.cpp one too).
+# allocation failure instead of crashing (its behaviour is checked in
+# ./Dockerfile, which builds the same source natively). Both land in the
+# cross-built sicuuc.lib; the native build-icu.ps1 applies the rbbi.cpp one too.
 RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz && \
     patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch && \
     patch -p1 -d /icu-src < /icu-bun/rbbi-clone-allocation-failure.patch

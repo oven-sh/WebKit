@@ -57,7 +57,8 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
 
 # After tar, patch udata.cpp with a per-item decompression hook (a weak extern
 # Bun defines; null in ICU's own tools), and rbbi.cpp so that ubrk_clone reports
-# an allocation failure instead of crashing (icu/rbbi-clone-allocation-failure.patch).
+# an allocation failure instead of crashing (icu/rbbi-clone-allocation-failure.patch;
+# the patched behaviour is checked in ./Dockerfile, which builds the same source).
 #
 # After the first `make` (which produces bin/icupkg), filter data/in/icudt78l.dat
 # to drop converters/translit/stringprep/confusables/unames — Bun has zero

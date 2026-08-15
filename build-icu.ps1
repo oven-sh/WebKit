@@ -75,9 +75,14 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
     # Source fixes from ./icu, applied from the tarball root (the directory that
     # contains source/) exactly like the Dockerfiles' `patch -p1`. They are applied
     # together with the extraction, so like an ICU version bump they need a fresh
-    # $OutputDir to take effect. udata-decompress-hook.patch is deliberately not
-    # in this list: it is only useful together with icu/compress-data.ts, which
-    # this native build does not run.
+    # $OutputDir to take effect. (The patched behaviour itself is checked by
+    # icu/rbbi-clone-allocation-failure-check.cpp in ../Dockerfile; the source is
+    # the same here.)
+    #
+    # udata-decompress-hook.patch must NOT be added to this list: it is only useful
+    # together with icu/compress-data.ts, which this build does not run, and its
+    # __attribute__((weak)) does not compile with cl.exe, which builds everything in
+    # STAGE 1 below and, on ARM64, STAGE 2 as well.
     $icuRoot = Split-Path -Parent $ICU_SOURCE_DIR
     $icuPatchDir = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "icu"
     foreach ($patchName in @("rbbi-clone-allocation-failure.patch")) {

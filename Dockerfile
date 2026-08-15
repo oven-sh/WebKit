@@ -201,6 +201,10 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 # After tar, patch udata.cpp with a per-item decompression hook (a weak extern
 # Bun defines; null in ICU's own tools), and rbbi.cpp so that ubrk_clone reports
 # an allocation failure instead of crashing (icu/rbbi-clone-allocation-failure.patch).
+# After the final `make`, icu/rbbi-clone-allocation-failure-check.cpp is linked
+# against the libraries just built and run: it fails each allocation ubrk_clone
+# makes in turn and dies (failing the build) if any of them still crashes. The
+# other ICU builds apply the same patch to the same source and rely on this run.
 #
 # After the first `make` (which produces bin/icupkg), filter data/in/icudt78l.dat
 # to drop converters/translit/stringprep/confusables/unames — Bun has zero
@@ -246,6 +250,8 @@ RUN --mount=type=tmpfs,target=/icu \
     bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
     mv -f data/in/icudt78l_filtered.dat data/in/icudt78l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
+    $CXX $CXXFLAGS $LDFLAGS -Icommon /icu-bun/rbbi-clone-allocation-failure-check.cpp -o ../rbbi-clone-allocation-failure-check lib/libicuuc.a lib/libicudata.a -ldl -lpthread -lm && \
+    ../rbbi-clone-allocation-failure-check && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
     node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt78l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg
 

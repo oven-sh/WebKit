@@ -23,7 +23,17 @@ rules-string constructor, the other in-tree user of operator=) reports a copy
 with a failed fErrorCode as a failed clone, which the C API already maps to
 U_MEMORY_ALLOCATION_ERROR. Successful clones are unchanged.
 
-Present in ICU 73.2 and 78.3 and still in ICU main at the time of writing.
+rbbi-clone-allocation-failure-check.cpp exercises this against the freshly built
+libraries in ../Dockerfile: per granularity it fails each allocation ubrk_clone
+makes in turn. Unpatched (73.2 and 78.3 alike, including the libicuuc.a in the
+shipped prebuilts) every allocation except the iterator object's own crashes the
+process; patched, each one comes back as nullptr + U_MEMORY_ALLOCATION_ERROR.
+
+Present in ICU 73.2 and 78.3 and, at the time of writing, unfixed in ICU main
+(where this still applies, with a one line offset; not reported upstream yet).
+When an ICU bump makes these hunks fail to apply, drop the patch lines and run
+the build: the check program says whether upstream now handles this itself (in
+which case this file can go) or the hunks just need rebasing.
 
 --- a/source/common/rbbi.cpp
 +++ b/source/common/rbbi.cpp
