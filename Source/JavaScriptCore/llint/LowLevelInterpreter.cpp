@@ -672,7 +672,11 @@ __asm__(
 // the alignment directives in the offlineasm output ("Failed to evaluate function
 // length in SEH unwind info", llvm/llvm-project#47432, the bug the -fno-unwind-tables
 // in CMakeLists.txt works around), whereas the data fixups below are resolved after
-// layout.
+// layout. The RVAs are spelled ".long symbol@IMGREL" rather than ".rva symbol" (the
+// two assemble to the same IMAGE_REL_*_ADDR32NB relocation) because LTO's scan of the
+// module asm for the symbols it references does not see .rva operands: with .rva, a
+// -flto build internalizes jscJITSEHHandler and the link fails with an undefined
+// symbol referenced from .xdata.
 #if CPU(X86_64)
 __asm__(
     ".section .xdata,\"dr\"\n"
@@ -687,13 +691,13 @@ __asm__(
     ".byte 0x05\n" // FrameRegister rbp, FrameOffset 0
     ".byte 4, 0x03\n" // offset 4: UWOP_SET_FPREG
     ".byte 1, 0x50\n" // offset 1: UWOP_PUSH_NONVOL rbp
-    ".rva " SYMBOL_STRING(jscJITSEHHandler) "\n"
+    ".long " SYMBOL_STRING(jscJITSEHHandler) "@IMGREL\n"
 
     ".section .pdata,\"dr\"\n"
     ".p2align 2\n"
-    ".rva " SYMBOL_STRING(jsc_llint_begin) "\n"
-    ".rva " SYMBOL_STRING(jsc_llint_end) "\n"
-    ".rva " LOCAL_LABEL_STRING(jsc_llint_unwind_info) "\n"
+    ".long " SYMBOL_STRING(jsc_llint_begin) "@IMGREL\n"
+    ".long " SYMBOL_STRING(jsc_llint_end) "@IMGREL\n"
+    ".long " LOCAL_LABEL_STRING(jsc_llint_unwind_info) "@IMGREL\n"
 
     ".text\n"
 );
@@ -718,12 +722,12 @@ __asm__(
     // FunctionLength:18 | Version:2 = 0 | X:1 = 1 (handler present) | E:1 = 0 | EpilogCount:5 = 0 | CodeWords:5 = 1
     ".long ((" SYMBOL_STRING(jsc_llint_end) " - " SYMBOL_STRING(jsc_llint_begin) ") >> 2) | (1 << 20) | (1 << 27)\n"
     ".byte 0xE1, 0x81, 0xE4, 0xE3\n" // set_fp; save_fplr_x 16; end; nop (padding)
-    ".rva " SYMBOL_STRING(jscJITSEHHandler) "\n"
+    ".long " SYMBOL_STRING(jscJITSEHHandler) "@IMGREL\n"
 
     ".section .pdata,\"dr\"\n"
     ".p2align 2\n"
-    ".rva " SYMBOL_STRING(jsc_llint_begin) "\n"
-    ".rva " LOCAL_LABEL_STRING(jsc_llint_unwind_info) "\n"
+    ".long " SYMBOL_STRING(jsc_llint_begin) "@IMGREL\n"
+    ".long " LOCAL_LABEL_STRING(jsc_llint_unwind_info) "@IMGREL\n"
 
     ".text\n"
 );
