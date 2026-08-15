@@ -71,6 +71,20 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
     $extractDir = Split-Path -Parent $OutputDir
     tar.exe -xzf $ICU_TARBALL -C $extractDir
     if ($LASTEXITCODE -ne 0) { throw "tar failed with exit code $LASTEXITCODE" }
+
+    # Source fixes from ./icu, applied from the tarball root (the directory that
+    # contains source/) exactly like the Dockerfiles' `patch -p1`. They are applied
+    # together with the extraction, so like an ICU version bump they need a fresh
+    # $OutputDir to take effect. udata-decompress-hook.patch is deliberately not
+    # in this list: it is only useful together with icu/compress-data.ts, which
+    # this native build does not run.
+    $icuRoot = Split-Path -Parent $ICU_SOURCE_DIR
+    $icuPatchDir = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "icu"
+    foreach ($patchName in @("rbbi-clone-allocation-failure.patch")) {
+        Write-Host ":: Applying $patchName"
+        git -C $icuRoot apply (Join-Path $icuPatchDir $patchName)
+        if ($LASTEXITCODE -ne 0) { throw "git apply $patchName failed with exit code $LASTEXITCODE" }
+    }
 }
 
 if ($Platform -eq "x64") {

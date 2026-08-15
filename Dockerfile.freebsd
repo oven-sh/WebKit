@@ -24,7 +24,7 @@ ARG FREEBSD_ARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget unzip xz-utils ca-certificates \
-    cmake ninja-build make git \
+    cmake ninja-build make git patch \
     ruby ruby-getoptlong perl python3 rsync file cpio \
     lsb-release software-properties-common gnupg \
     && rm -rf /var/lib/apt/lists/*
@@ -107,14 +107,20 @@ RUN mkdir -p /icu-host && cd /icu-host \
 # through the algorithmic numbering systems in numberingSystems.res (see the note and
 # the staleness guard in ./Dockerfile).
 # This image does not run compress-data.ts, so those five items cost their raw
-# 35 KB here rather than the ~8 KB they compress to elsewhere.
+# 35 KB here rather than the ~8 KB they compress to elsewhere, and the udata.cpp
+# decompression hook is not applied either. icu/rbbi-clone-allocation-failure.patch
+# (ubrk_clone reports an allocation failure instead of crashing) is a plain bug fix
+# and is applied wherever ICU is built.
+COPY icu/ /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export TARGET_TRIPLE="${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION}" && \
     export CROSS_FLAGS="--target=${TARGET_TRIPLE} --sysroot=${FREEBSD_SYSROOT}" && \
     export CFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c17 ${LTO_FLAG}" && \
     export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
     export LDFLAGS="${CROSS_FLAGS} -fuse-ld=lld" && \
-    cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && cd source && \
+    cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && \
+    patch -p1 < /icu-bun/rbbi-clone-allocation-failure.patch && \
+    cd source && \
     /icu-host/source/bin/icupkg -l data/in/icudt78l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
     /icu-host/source/bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
     mv -f data/in/icudt78l_filtered.dat data/in/icudt78l.dat && \

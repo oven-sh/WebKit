@@ -198,7 +198,7 @@ ARG LLVM_VERSION
 
 # Tools for icu/compress-data.ts: zstd CLI (built from source — noble's apt
 # has 1.5.5; 1.5.7 matches Bun's vendored decoder), node (>= 23.6 for type
-# stripping), and patch for the udata.cpp hook.
+# stripping), and patch for the icu/*.patch files.
 ARG ZSTD_VERSION=1.5.7
 ARG NODE_VERSION=24.16.0
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* && \
@@ -216,9 +216,12 @@ COPY icu/ /icu-bun/
 ADD --checksum=sha256:${ICU_SHA256} \
     https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz /icu-src.tgz
 # The udata.cpp patch adds the weak per-item decompression hook (see the
-# stage comment above); it lands in the cross-built sicuuc.lib.
+# stage comment above); the rbbi.cpp patch makes ubrk_clone report an
+# allocation failure instead of crashing. Both land in the cross-built
+# sicuuc.lib (the native build-icu.ps1 applies the rbbi.cpp one too).
 RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz && \
-    patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch
+    patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch && \
+    patch -p1 -d /icu-src < /icu-bun/rbbi-clone-allocation-failure.patch
 
 # Stage 1: host build — only the tools matter.
 RUN mkdir -p /icu-host && cd /icu-host && \

@@ -199,7 +199,8 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 # Download and build ICU.
 #
 # After tar, patch udata.cpp with a per-item decompression hook (a weak extern
-# Bun defines; null in ICU's own tools).
+# Bun defines; null in ICU's own tools), and rbbi.cpp so that ubrk_clone reports
+# an allocation failure instead of crashing (icu/rbbi-clone-allocation-failure.patch).
 #
 # After the first `make` (which produces bin/icupkg), filter data/in/icudt78l.dat
 # to drop converters/translit/stringprep/confusables/unames — Bun has zero
@@ -234,6 +235,7 @@ RUN --mount=type=tmpfs,target=/icu \
     tar -xf /icu.tgz --strip-components=1 && \
     rm /icu.tgz && \
     patch -p1 < /icu-bun/udata-decompress-hook.patch && \
+    patch -p1 < /icu-bun/rbbi-clone-allocation-failure.patch && \
     cd source && \
     ./configure --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
     make -j$(nproc) && \
