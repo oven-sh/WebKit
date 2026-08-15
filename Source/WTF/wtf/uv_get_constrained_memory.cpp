@@ -141,6 +141,38 @@ static char* uv__cgroup1_find_memory_controller(char buf[1024],
     return p;
 }
 
+/* Given a buffer with the contents of /proc/self/cgroup, finds the location
+ * and length of the process's path in the cgroup v2 hierarchy, which is the
+ * "0::<path>" line. This disregards the leading / for easy concatenation of
+ * paths. Returns NULL if there is no such line (a pure cgroup v1 host).
+ *
+ * On a cgroup v2 host this line is usually the only one, but it is not
+ * guaranteed to be: a cgroup v1 hierarchy mounted with only a name and no
+ * controllers ("mount -t cgroup -o none,name=foo") coexists with cgroup v2 and
+ * adds an "N:name=foo:<path>" line, and the kernel lists hierarchies by
+ * descending id, so such lines sort before the "0::" line. */
+static char* uv__cgroup2_find_path(char buf[1024], int* n)
+{
+    char* line = buf;
+
+    while (*line != '\0') {
+        if (strncmp(line, "0::", 3) == 0) {
+            char* p = line + strlen("0::");
+            if (*p == '/')
+                p++;
+            *n = (int)strcspn(p, "\n");
+            return p;
+        }
+
+        line = strchr(line, '\n');
+        if (line == NULL)
+            break;
+        line++;
+    }
+
+    return NULL;
+}
+
 static void uv__get_cgroup1_memory_limits(char buf[1024], uint64_t* high,
     uint64_t* max)
 {
@@ -182,17 +214,12 @@ update_limits:
         *max = UINT64_MAX;
 }
 
-static void uv__get_cgroup2_memory_limits(char buf[1024], uint64_t* high,
+/* p and n locate the process's cgroup v2 path, see uv__cgroup2_find_path(). */
+static void uv__get_cgroup2_memory_limits(const char* p, int n, uint64_t* high,
     uint64_t* max)
 {
     char path[4097];
     char filename[4097];
-    char* p;
-    int n;
-
-    /* Find out where the controller is mounted. */
-    p = buf + strlen("0::/");
-    n = (int)strcspn(p, "\n");
 
     snprintf(path, sizeof(path), "/sys/fs/cgroup/%.*s", n, p);
 
@@ -227,12 +254,19 @@ static uint64_t uv__get_cgroup_constrained_memory(char buf[1024])
 {
     uint64_t high;
     uint64_t max;
+    char* p;
+    int n;
 
-    /* In the case of cgroupv2, we'll only have a single entry. */
-    if (strncmp(buf, "0::/", 4))
-        uv__get_cgroup1_memory_limits(buf, &high, &max);
+    /* A controller is bound to exactly one hierarchy. If the process has a
+     * cgroup v1 memory controller line (cgroup v1 or hybrid host), the limits
+     * live there; otherwise they live in the cgroup v2 hierarchy, if there is
+     * one. The "0::" line is not necessarily the first line of the file, see
+     * uv__cgroup2_find_path(). */
+    if (uv__cgroup1_find_memory_controller(buf, &n) == NULL
+        && (p = uv__cgroup2_find_path(buf, &n)) != NULL)
+        uv__get_cgroup2_memory_limits(p, n, &high, &max);
     else
-        uv__get_cgroup2_memory_limits(buf, &high, &max);
+        uv__get_cgroup1_memory_limits(buf, &high, &max);
 
     if (high == 0 || max == 0)
         return 0;
@@ -322,7 +356,8 @@ static int uv__get_cgroup1_constrained_cpu(char buf[1024])
     return cpus < 1 ? 1 : cpus;
 }
 
-static int uv__get_cgroup2_constrained_cpu(char buf[1024])
+/* p and n locate the process's cgroup v2 path, see uv__cgroup2_find_path(). */
+static int uv__get_cgroup2_constrained_cpu(const char* p, int n)
 {
     char path[4097];
     char filename[4097];
@@ -330,9 +365,6 @@ static int uv__get_cgroup2_constrained_cpu(char buf[1024])
     long long quota;
     long long period;
     int min_cpus = 0;
-
-    char* p = buf + strlen("0::/");
-    int n = (int)strcspn(p, "\n");
 
     snprintf(path, sizeof(path), "/sys/fs/cgroup/%.*s", n, p);
 
@@ -363,12 +395,17 @@ static int uv__get_cgroup2_constrained_cpu(char buf[1024])
 int uv_get_constrained_cpu()
 {
     char buf[1024];
+    char* p;
+    int n;
 
     if (uv__slurp("/proc/self/cgroup", buf, sizeof(buf)))
         return 0;
 
-    if (strncmp(buf, "0::/", 4) == 0)
-        return uv__get_cgroup2_constrained_cpu(buf);
+    /* Same hierarchy selection as uv__get_cgroup_constrained_memory(), for
+     * the cpu controller. */
+    if (uv__cgroup1_find_cpu_controller(buf, &n) == NULL
+        && (p = uv__cgroup2_find_path(buf, &n)) != NULL)
+        return uv__get_cgroup2_constrained_cpu(p, n);
     return uv__get_cgroup1_constrained_cpu(buf);
 }
 
