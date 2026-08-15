@@ -174,6 +174,12 @@ constexpr bool validateDFGDoesGC = ENABLE_DFG_DOES_GC_VALIDATION;
 #if USE(BUN_JSC_ADDITIONS)
 using StackTraceAppenderFunction = WTF::Function<void(VM&, JSCell* owner, Vector<StackFrame>& stackTrace, size_t maxToAppend)>;
 using ErrorInfoFunction = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, void* bunErrorData)>;
+// Like ErrorInfoFunction, but also receives the ErrorInstance whose stack trace is being
+// rendered. ErrorInstance::computeErrorInfo runs it from the GC's unconditional finalizers
+// (the frames are about to be dropped), so it must not allocate on the JS heap; the instance
+// is there so the embedder can read the error's name and message for the header of the
+// stack string, which ErrorInfoFunction cannot do. Preferred over ErrorInfoFunction when set.
+using ErrorInfoFunctionWithErrorInstance = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject* errorInstance, void* bunErrorData)>;
 using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*, void* bunErrorData)>;
 #endif
 
@@ -1081,6 +1087,9 @@ public:
     const ErrorInfoFunction& onComputeErrorInfo() const { return m_onComputeErrorInfo; }
     ErrorInfoFunction& onComputeErrorInfo() { return m_onComputeErrorInfo; }
     
+    const ErrorInfoFunctionWithErrorInstance& onComputeErrorInfoWithErrorInstance() const { return m_onComputeErrorInfoWithErrorInstance; }
+    ErrorInfoFunctionWithErrorInstance& onComputeErrorInfoWithErrorInstance() { return m_onComputeErrorInfoWithErrorInstance; }
+    
     const ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() const { return m_onComputeErrorInfoJSValue; }
     ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() { return m_onComputeErrorInfoJSValue; }
     
@@ -1089,6 +1098,7 @@ public:
 
     void setOnAppendStackTrace(StackTraceAppenderFunction&& function) { m_onAppendStackTrace = WTF::move(function); }
     void setOnComputeErrorInfo(ErrorInfoFunction&& function) { m_onComputeErrorInfo = WTF::move(function); }
+    void setOnComputeErrorInfoWithErrorInstance(ErrorInfoFunctionWithErrorInstance&& function) { m_onComputeErrorInfoWithErrorInstance = WTF::move(function); }
     void setOnComputeErrorInfoJSValue(ErrorInfoFunctionJSValue&& function) { m_onComputeErrorInfoJSValue = WTF::move(function); }
     void setComputeLineColumnWithSourcemap(WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
 #endif
@@ -1326,6 +1336,7 @@ private:
     WTF::Function<void(VM&)> m_onEachMicrotaskTick;
 #if USE(BUN_JSC_ADDITIONS)
     ErrorInfoFunction m_onComputeErrorInfo;
+    ErrorInfoFunctionWithErrorInstance m_onComputeErrorInfoWithErrorInstance;
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
     StackTraceAppenderFunction m_onAppendStackTrace;
     WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)> m_computeLineColumnWithSourcemap;

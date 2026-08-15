@@ -372,11 +372,14 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
     UNUSED_PARAM(allocationAllowed);
 
     if (m_stackTrace && !m_stackTrace->isEmpty()) {
+        auto& fnWithErrorInstance = vm.onComputeErrorInfoWithErrorInstance();
         auto& fn = vm.onComputeErrorInfo();
         WTF::String stackString;
-        if (fn) {
+        if (fnWithErrorInstance || fn) {
             if (m_stackPropertyAlreadyMaterialized)
                 stackString = emptyString();
+            else if (fnWithErrorInstance)
+                stackString = fnWithErrorInstance(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this, this->bunErrorData());
             else
                 stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this->bunErrorData());
         } else {
