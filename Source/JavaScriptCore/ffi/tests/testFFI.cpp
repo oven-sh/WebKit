@@ -30,6 +30,7 @@
 #include "Options.h"
 #include <wtf/Compiler.h>
 #include <wtf/DataLog.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/RawHex.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/StringCommon.h>
@@ -57,6 +58,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSBigIntInlines.h"
 #include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
+#include "BunFFI.h"
 #include "JSFFICallback.h"
 #include "JSFFIFunction.h"
 #include "JSFunction.h"
@@ -918,10 +920,6 @@ static void testDoubleToInt64()
     FFI_CHECK_EQ(FFI::doubleToInt64(twoTo64), std::numeric_limits<int64_t>::max());
     FFI_CHECK_EQ(FFI::doubleToInt64(-twoTo64), std::numeric_limits<int64_t>::min());
 #endif
-
-    static const double corpus[] = { 0.0, -0.0, 1.0, -1.0, -1.5, 1.5, 255.75, -255.75, twoTo63, -twoTo63, twoTo64, nan, inf, -inf, 4294967295.5, -4294967295.5, 1e300, -1e300, 4.9e-324 };
-    for (double value : corpus)
-        FFI_CHECK_EQ_HEX(FFI::doubleToUInt64(value), std::bit_cast<uint64_t>(FFI::doubleToInt64(value)));
 }
 
 enum class ExpectThrow : bool { No, Yes };
@@ -1103,20 +1101,56 @@ static void testConversions()
     expectSlot(T::Int64, jsNumber(-2147483647 - 1), 0xffffffff80000000ull);
     expectSlot(T::Int64, jsNumber(4294967296.0), 4294967296ull);
     expectSlot(T::Int64, jsNumber(1e18), 1000000000000000000ull);
-    expectSlot(T::Int64, jsNumber(-1.5), std::bit_cast<uint64_t>(FFI::doubleToInt64(-1.5)));
-    expectSlot(T::Int64, jsNumber(9223372036854775808.0), std::bit_cast<uint64_t>(FFI::doubleToInt64(9223372036854775808.0)));
-    expectSlot(T::Int64, jsNumber(nan), std::bit_cast<uint64_t>(FFI::doubleToInt64(nan)));
+    expectSlot(T::Int64, jsNumber(-1.5), allOnes);
+    expectSlot(T::Int64, JSValue(JSValue::EncodeAsDouble, -1.0), allOnes); // the same number as jsNumber(-1), boxed as a double
+    expectSlot(T::Int64, jsNumber(-4294967297.0), 0xfffffffeffffffffull);
+    expectSlot(T::Int64, jsNumber(-9007199254740992.0), 0xffe0000000000000ull); // -2^53
+    expectSlot(T::Int64, jsNumber(9223372036854774784.0), 0x7ffffffffffffc00ull); // largest double below 2^63
+    expectSlot(T::Int64, jsNumber(-9223372036854775808.0), 0x8000000000000000ull); // INT64_MIN exactly
+    // Out of range: the low 64 bits of the truncated value, like Int32 above, on every CPU.
+    expectSlot(T::Int64, jsNumber(9223372036854775808.0), 0x8000000000000000ull); // 2^63 wraps to INT64_MIN
+    expectSlot(T::Int64, jsNumber(13835058055282163712.0), 0xc000000000000000ull); // 2^63 + 2^62
+    expectSlot(T::Int64, jsNumber(18446744073709551616.0), 0); // 2^64
+    expectSlot(T::Int64, jsNumber(18446744073709555712.0), 4096); // 2^64 + 2^12 (the next double after 2^64)
+    expectSlot(T::Int64, jsNumber(-18446744073709555712.0), static_cast<uint64_t>(-4096));
+    expectSlot(T::Int64, jsNumber(1e300), 0); // no mantissa bit lands in the low 64 bits
+    expectSlot(T::Int64, jsNumber(nan), 0);
+    expectSlot(T::Int64, jsNumber(inf), 0);
+    expectSlot(T::Int64, jsNumber(-inf), 0);
+    expectSlot(T::Int64, jsNumber(-0.0), 0);
+    expectSlot(T::Int64, jsNumber(4.9e-324), 0);
     expectSlot(T::Int64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(std::numeric_limits<int64_t>::max())), 0x7fffffffffffffffull);
     expectSlot(T::Int64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(std::numeric_limits<int64_t>::min())), 0x8000000000000000ull);
     expectSlot(T::Int64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(-1)), allOnes);
     expectSlot(T::Int64, JSBigInt::createFrom(globalObject, static_cast<uint64_t>(0xffffffffffffffffull)), allOnes); // 2^64-1 mod 2^64
     expectSlot(T::Uint64, jsNumber(-1), allOnes);
-    expectSlot(T::Uint64, jsNumber(2.5), std::bit_cast<uint64_t>(FFI::doubleToInt64(2.5)));
+    expectSlot(T::Uint64, jsNumber(2.5), 2);
+    // A Number reaches a u64 with the same bits however it is boxed (int32 / double) and as the BigInt of the same value.
+    expectSlot(T::Uint64, JSValue(JSValue::EncodeAsDouble, -1.0), allOnes);
+    expectSlot(T::Uint64, jsNumber(-1.5), allOnes);
+    expectSlot(T::Uint64, jsNumber(-7.5), allOnes - 6);
+    expectSlot(T::Uint64, jsNumber(-4294967297.0), 0xfffffffeffffffffull);
+    expectSlot(T::Uint64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(-4294967297ll)), 0xfffffffeffffffffull);
+    expectSlot(T::Uint64, jsNumber(9223372036854775808.0), 0x8000000000000000ull); // 2^63 is a plain in-range u64
+    expectSlot(T::Uint64, jsNumber(13835058055282163712.0), 0xc000000000000000ull); // 2^63 + 2^62
+    expectSlot(T::Uint64, jsNumber(18446744073709549568.0), 0xfffffffffffff800ull); // largest double below 2^64
+    expectSlot(T::Uint64, jsNumber(18446744073709551616.0), 0); // 2^64 wraps like Uint32(2^32) above
+    expectSlot(T::Uint64, jsNumber(18446744073709555712.0), 4096); // 2^64 + 2^12
+    expectSlot(T::Uint64, jsNumber(nan), 0);
+    expectSlot(T::Uint64, jsNumber(inf), 0);
+    expectSlot(T::Uint64, jsNumber(-inf), 0);
+    expectSlot(T::Uint64, jsNumber(-0.5), 0);
     expectSlot(T::Uint64, JSBigInt::createFrom(globalObject, static_cast<uint64_t>(0xdeadbeefcafebabeull)), 0xdeadbeefcafebabeull);
     expectSlot(T::Uint64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(-2)), allOnes - 1); // BigInt(-2) mod 2^64
     expectSlot(T::Int64Fast, jsNumber(-42), std::bit_cast<uint64_t>(static_cast<int64_t>(-42)));
+    expectSlot(T::Int64Fast, jsNumber(-1.5), allOnes);
+    expectSlot(T::Int64Fast, jsNumber(9223372036854775808.0), 0x8000000000000000ull);
+    expectSlot(T::Int64Fast, jsNumber(nan), 0);
     expectSlot(T::Int64Fast, JSBigInt::createFrom(globalObject, static_cast<int64_t>(1) << 60), static_cast<uint64_t>(1) << 60);
     expectSlot(T::Uint64Fast, jsNumber(9007199254740992.0), 9007199254740992ull);
+    expectSlot(T::Uint64Fast, jsNumber(-1.5), allOnes);
+    expectSlot(T::Uint64Fast, jsNumber(13835058055282163712.0), 0xc000000000000000ull);
+    expectSlot(T::Uint64Fast, jsNumber(nan), 0);
     expectSlot(T::Uint64Fast, JSBigInt::createFrom(globalObject, static_cast<uint64_t>(1) << 63), static_cast<uint64_t>(1) << 63);
 
     expectSlot(T::Double, jsNumber(1.5), std::bit_cast<uint64_t>(1.5));
@@ -2293,6 +2327,94 @@ static void testFixtureTable()
     FFI_CHECK_EQ(ffi_mix_5(1, -1, 3, -4, 5, -6, 7, -8), 1 * 1.0 + 2 * -1.0 + 3 * 3.0 + 4 * -4.0 + 5 * 5.0 + 6 * -6.0 + 7 * 7.0 + 8 * -8.0);
 }
 
+
+static Lock s_threadsafeTestQueueLock;
+static Vector<RefPtr<FFI::ThreadsafeInvocation>>& threadsafeTestQueue()
+{
+    static NeverDestroyed<Vector<RefPtr<FFI::ThreadsafeInvocation>>> queue;
+    return queue;
+}
+static void threadsafeTestDispatch(FFI::ThreadsafeInvocation& invocation)
+{
+    Locker locker { s_threadsafeTestQueueLock };
+    threadsafeTestQueue().append(&invocation);
+}
+static Vector<RefPtr<FFI::ThreadsafeInvocation>> takeThreadsafeTestQueue()
+{
+    Locker locker { s_threadsafeTestQueueLock };
+    return std::exchange(threadsafeTestQueue(), { });
+}
+static unsigned s_threadsafeTargetCalls;
+JSC_DECLARE_HOST_FUNCTION(functionThreadsafeTarget);
+JSC_DEFINE_HOST_FUNCTION(functionThreadsafeTarget, (JSGlobalObject*, CallFrame*))
+{
+    ++s_threadsafeTargetCalls;
+    return JSValue::encode(jsNumber(7));
+}
+
+// A threadsafe callback's entrypoint must stay callable -- dropping the call and returning zero -- after
+// close(), after its global object and VM are destroyed, and for an invocation that was pending when they
+// were. Runs outside any VM's lock: it creates and destroys VMs of its own.
+static void testThreadsafeCallbackOutlivesVM()
+{
+    FFI::FFIContext::setThreadsafeDispatch(threadsafeTestDispatch);
+    using Entry = int32_t (*)(int32_t);
+    enum class Ending { Unclosed, Closed, PendingAtTeardown };
+    for (Ending ending : { Ending::Unclosed, Ending::Closed, Ending::PendingAtTeardown }) {
+        Entry entry = nullptr;
+        s_threadsafeTargetCalls = 0;
+        {
+            VM& vm = VM::create(HeapType::Large).leakRef();
+            {
+                JSLockHolder locker(vm);
+                JSGlobalObject* globalObject = JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, jsNull()));
+                gcProtect(globalObject);
+                JSFunction* target = JSFunction::create(vm, globalObject, 0, "threadsafeTarget"_s, functionThreadsafeTarget, ImplementationVisibility::Public);
+                Vector<FFI::Type> argumentTypes { FFI::Type::Int32 };
+                RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(argumentTypes.span(), FFI::Type::Int32);
+                FFI_CHECK(!!signature);
+                JSFFICallback* callback = signature ? JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), target, signature.releaseNonNull(), true, nullptr) : nullptr;
+                FFI_CHECK(callback && callback->nativeEntrypoint());
+                if (callback && callback->nativeEntrypoint())
+                    entry = reinterpret_cast<Entry>(callback->nativeEntrypoint());
+
+                if (entry) {
+                    // Live: the call is queued for the owning thread and the native caller sees zero.
+                    FFI_CHECK_EQ(entry(1), 0);
+                    auto queued = takeThreadsafeTestQueue();
+                    FFI_CHECK_EQ(queued.size(), 1u);
+                    for (auto& invocation : queued)
+                        FFI::runThreadsafeInvocation(*invocation);
+                    FFI_CHECK_EQ(s_threadsafeTargetCalls, 1u);
+
+                    if (ending == Ending::PendingAtTeardown)
+                        FFI_CHECK_EQ(entry(2), 0); // left in the queue across the teardown below
+                    if (ending == Ending::Closed)
+                        callback->close();
+                }
+                gcUnprotect(globalObject);
+            }
+            JSLockHolder locker(vm);
+            vm.derefSuppressingSaferCPPChecking();
+        }
+        if (!entry)
+            continue;
+
+        // Cell, global object and VM are gone; the entrypoint is still mapped and drops the call.
+        FFI_CHECK_EQ(entry(3), 0);
+        FFI_CHECK_EQ(entry(4), 0);
+        auto late = takeThreadsafeTestQueue();
+        if (ending == Ending::PendingAtTeardown) {
+            // The invocation queued before teardown is retired harmlessly; nothing new was queued.
+            FFI_CHECK_EQ(late.size(), 1u);
+            for (auto& invocation : late)
+                FFI::retireThreadsafeInvocation(*invocation);
+        } else
+            FFI_CHECK(late.isEmpty());
+        FFI_CHECK_EQ(s_threadsafeTargetCalls, 1u);
+    }
+}
+
 } // anonymous namespace
 
 static int runAll()
@@ -2322,6 +2444,7 @@ static int runAll()
         RUN(testJSFFIFunctionEndToEnd());
         RUN(testCallbackThunkEndToEnd());
     }
+    RUN(testThreadsafeCallbackOutlivesVM());
 
     dataLogLn(s_failureCount ? "FAILED: " : "OK: ", s_checkCount - s_failureCount, " checks passed, ", s_failureCount, " failed.");
     VM& leaked = s_vm.releaseNonNull().leakRef();

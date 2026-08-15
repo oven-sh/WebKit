@@ -131,7 +131,16 @@ RefPtr<CachedBytecode> generateModuleBytecode(VM& vm, const SourceCode& source, 
     return serializeBytecode(vm, unlinkedCodeBlock, source, SourceCodeType::ModuleType, lexicallyScopedFeatures, scriptMode, fileHandle, error, { });
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue thisValue, NakedPtr<Exception>& returnedException)
+{
+    return evaluate(globalObject, source, nullptr, thisValue, returnedException);
+}
+
+JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, UnlinkedProgramCodeBlock* precompiled, JSValue thisValue, NakedPtr<Exception>& returnedException)
+#else
+JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue thisValue, NakedPtr<Exception>& returnedException)
+#endif
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
@@ -142,7 +151,11 @@ JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue
     if (!thisValue || thisValue.isUndefinedOrNull())
         thisValue = globalObject;
     JSObject* thisObj = uncheckedDowncast<JSObject>(thisValue.toThis(globalObject, ECMAMode::sloppy()));
+#if USE(BUN_JSC_ADDITIONS)
+    JSValue result = vm.interpreter.executeProgram(source, globalObject, thisObj, precompiled);
+#else
     JSValue result = vm.interpreter.executeProgram(source, globalObject, thisObj);
+#endif
 
     if (scope.exception()) [[unlikely]] {
         returnedException = scope.exception();

@@ -35,7 +35,6 @@
 #include "JSCJSValue.h"
 #include "JSExportMacros.h"
 #include "OperationResult.h"
-#include <bit>
 
 namespace JSC {
 
@@ -49,12 +48,10 @@ JS_EXPORT_PRIVATE JSValue jsValueFromSlot(JSGlobalObject*, FFIContext&, Type, ui
 
 JS_EXPORT_PRIVATE JSValue pointerToJSValue(JSGlobalObject*, uint64_t address);
 
+// The pointer-typed argument conversion for a Number: the CPU's truncating double -> int64 instruction,
+// which is also what the IC stub and the DFG emit inline (truncateDoubleToInt64) for those types.
+// i64 / u64 arguments use the modular JSC::toInt64 instead; see writeInt64Slot.
 JS_EXPORT_PRIVATE int64_t doubleToInt64(double);
-
-inline uint64_t doubleToUInt64(double value)
-{
-    return std::bit_cast<uint64_t>(doubleToInt64(value));
-}
 
 } // namespace FFI
 
