@@ -838,6 +838,10 @@ private:
     };
 
     bool overCriticalMemoryThreshold(MemoryThresholdCallType memoryThresholdCallType = MemoryThresholdCallType::Cached);
+
+    // The eden this cycle is being paced against: m_maxEdenSize, capped to m_maxEdenSizeWhenCritical while we are
+    // over the critical memory threshold, the same way collectIfNecessaryOrDefer() caps the bytes it allows per cycle.
+    size_t effectiveMaxEdenSize();
     
     template<typename Visitor>
     void iterateExecutingAndCompilingCodeBlocks(Visitor&, NOESCAPE const Function<void(CodeBlock*)>&);
