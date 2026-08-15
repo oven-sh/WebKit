@@ -113,6 +113,10 @@
 #include "WeakMapPrototype.h"
 #include "WeakSetPrototype.h"
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "StringRecursionChecker.h"
+#endif
+
 #if ENABLE(JIT)
 #if ENABLE(DFG_JIT)
 
@@ -1747,6 +1751,13 @@ static ALWAYS_INLINE JSString* arrayJoinWithStringSeparator(JSGlobalObject* glob
 
     auto view = separator->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Same as arrayProtoFuncJoin, which this operation stands in for once a join call site is DFG or FTL compiled.
+    StringRecursionChecker checker(scope.vm(), array);
+    if (checker.isRecursive()) [[unlikely]]
+        return jsEmptyString(scope.vm());
+#endif
 
     bool sawHoles = false;
     bool genericCase = false;

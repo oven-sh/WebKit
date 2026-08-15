@@ -35,6 +35,10 @@
 #include "VMInlines.h"
 #include <wtf/Assertions.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "StringRecursionChecker.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -1063,6 +1067,12 @@ JSString* JSArray::fastToString(JSGlobalObject* globalObject)
         throwStackOverflowError(globalObject, scope);
         return nullptr;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    StringRecursionChecker checker(vm, this);
+    if (checker.isRecursive()) [[unlikely]]
+        return jsEmptyString(vm);
+#endif
 
     if (canUseFastArrayJoin(this)) [[likely]] {
         const Latin1Character comma = ',';

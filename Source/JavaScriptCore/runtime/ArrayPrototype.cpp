@@ -47,6 +47,10 @@
 #include <wtf/MathExtras.h>
 #include <wtf/StdMap.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "StringRecursionChecker.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -324,6 +328,12 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncToLocaleString, (JSGlobalObject* globalOb
     JSObject* thisObject = thisValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
+#if USE(BUN_JSC_ADDITIONS)
+    StringRecursionChecker checker(vm, thisObject);
+    if (checker.isRecursive()) [[unlikely]]
+        return JSValue::encode(jsEmptyString(vm));
+#endif
+
     // 2. Let len be ? ToLength(? Get(array, "length")).
     uint64_t length = toLength(globalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -457,6 +467,12 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncJoin, (JSGlobalObject* globalObject, Call
     EXCEPTION_ASSERT(!!scope.exception() == !thisObject);
     if (!thisObject) [[unlikely]]
         return encodedJSValue();
+
+#if USE(BUN_JSC_ADDITIONS)
+    StringRecursionChecker checker(vm, thisObject);
+    if (checker.isRecursive()) [[unlikely]]
+        return JSValue::encode(jsEmptyString(vm));
+#endif
 
     // 2. Let len be ? ToLength(? Get(O, "length")).
     uint64_t length = toLength(globalObject, thisObject);

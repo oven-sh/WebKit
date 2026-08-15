@@ -924,6 +924,12 @@ public:
     Interpreter interpreter;
     VMEntryScope* entryScope { nullptr };
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Maintained by StringRecursionChecker: the objects whose array to string conversion is on the stack right now.
+    JSObject* stringRecursionCheckFirstObject { nullptr };
+    UncheckedKeyHashSet<JSObject*> stringRecursionCheckVisitedObjects;
+#endif
+
     DateCache dateCache;
 
     std::unique_ptr<Profiler::Database> m_perBytecodeProfiler;
