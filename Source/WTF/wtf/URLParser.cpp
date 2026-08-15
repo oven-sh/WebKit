@@ -28,6 +28,7 @@
 
 #include <array>
 #include <functional>
+#include <wtf/SIMDHelpers.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/CodePointIterator.h>
 #include <wtf/text/MakeString.h>
@@ -396,6 +397,65 @@ template<typename CharacterType> ALWAYS_INLINE static uint8_t scanClass(Characte
     if constexpr (sizeof(CharacterType) == 1)
         return scanClassTable[character];
     return character <= 0xFF ? scanClassTable[character] : (PathStop | QueryStop | FragmentStop | OpaquePathStop | HostNotPlain | HostPercentOrNonASCII);
+}
+
+// Finds the first character in [begin, end) whose scanClass() has any of the stopClass bits, 16 bytes at a time.
+// vectorStop computes, for a vector of code units, a mask of the lanes that are stop characters.
+template<uint8_t stopClass, typename CharacterType, typename VectorStop>
+ALWAYS_INLINE static const CharacterType* findStopCharacter(const CharacterType* begin, const CharacterType* end, const VectorStop& vectorStop)
+{
+    auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
+        return SIMD::findFirstNonZeroIndex(vectorStop(input));
+    };
+    auto scalarMatch = [](CharacterType character) ALWAYS_INLINE_LAMBDA {
+        return scanClass(character) & stopClass;
+    };
+    return SIMD::find(std::span(begin, end), vectorMatch, scalarMatch);
+}
+
+// These mirror the PathStop, QueryStop, FragmentStop and OpaquePathStop bits of scanClassTable.
+template<typename CharacterType>
+ALWAYS_INLINE static const CharacterType* findPathStopCharacter(const CharacterType* begin, const CharacterType* end)
+{
+    return findStopCharacter<PathStop>(begin, end, [](auto input) ALWAYS_INLINE_LAMBDA {
+        using UnsignedType = SameSizeUnsignedInteger<CharacterType>;
+        return SIMD::bitOr(SIMD::lessThan(input, SIMD::splat<UnsignedType>(0x21)), SIMD::greaterThan(input, SIMD::splat<UnsignedType>(0x7E)),
+            SIMD::equal<'"', '#', '/', '<', '>', '?', '\\', '^', '`', '{', '}'>(input));
+    });
+}
+
+template<typename CharacterType>
+ALWAYS_INLINE static const CharacterType* findQueryStopCharacter(const CharacterType* begin, const CharacterType* end)
+{
+    return findStopCharacter<QueryStop>(begin, end, [](auto input) ALWAYS_INLINE_LAMBDA {
+        using UnsignedType = SameSizeUnsignedInteger<CharacterType>;
+        return SIMD::bitOr(SIMD::lessThan(input, SIMD::splat<UnsignedType>(0x21)), SIMD::greaterThan(input, SIMD::splat<UnsignedType>(0x7E)),
+            SIMD::equal<'"', '#', '\'', '<', '>'>(input));
+    });
+}
+
+template<typename CharacterType>
+ALWAYS_INLINE static const CharacterType* findFragmentStopCharacter(const CharacterType* begin, const CharacterType* end)
+{
+    return findStopCharacter<FragmentStop>(begin, end, [](auto input) ALWAYS_INLINE_LAMBDA {
+        using UnsignedType = SameSizeUnsignedInteger<CharacterType>;
+        return SIMD::bitOr(SIMD::lessThan(input, SIMD::splat<UnsignedType>(0x21)), SIMD::greaterThan(input, SIMD::splat<UnsignedType>(0x7E)),
+            SIMD::equal<'"', '<', '>', '`'>(input));
+    });
+}
+
+template<typename CharacterType>
+ALWAYS_INLINE static const CharacterType* findOpaquePathStopCharacterOrSlash(const CharacterType* begin, const CharacterType* end)
+{
+    auto vectorMatch = [](auto input) ALWAYS_INLINE_LAMBDA {
+        using UnsignedType = SameSizeUnsignedInteger<CharacterType>;
+        return SIMD::findFirstNonZeroIndex(SIMD::bitOr(SIMD::lessThan(input, SIMD::splat<UnsignedType>(0x21)), SIMD::greaterThan(input, SIMD::splat<UnsignedType>(0x7E)),
+            SIMD::equal<'#', '?', '/'>(input)));
+    };
+    auto scalarMatch = [](CharacterType character) ALWAYS_INLINE_LAMBDA {
+        return (scanClass(character) & OpaquePathStop) || character == '/';
+    };
+    return SIMD::find(std::span(begin, end), vectorMatch, scalarMatch);
 }
 
 template<typename CharacterType>
@@ -1425,8 +1485,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         while (p != inputEnd) {
             if ((*p == '.' || *p == '%') && (isSingleDotPathSegment(iteratorAt(p)) || isDoubleDotPathSegment(iteratorAt(p)))) [[unlikely]]
                 break;
-            while (p != inputEnd && !(scanClass(*p) & PathStop))
-                ++p;
+            p = findPathStopCharacter(p, inputEnd);
             if (p == inputEnd || *p != '/')
                 break;
             ++p;
@@ -1445,8 +1504,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                 break;
             }
             state = State::UTF8Query;
-            while (p != inputEnd && !(scanClass(*p) & QueryStop))
-                ++p;
+            p = findQueryStopCharacter(p, inputEnd);
             c = iteratorAt(p);
             if (p == inputEnd || *p != '#')
                 break;
@@ -1458,8 +1516,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
             break;
         ASSERT(*p == '#');
         state = State::Fragment;
-        while (p != inputEnd && !(scanClass(*p) & FragmentStop))
-            ++p;
+        p = findFragmentStopCharacter(p, inputEnd);
         c = iteratorAt(p);
     } while (false);
 
@@ -2146,8 +2203,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                     }
                 }
                 auto* runStart = p;
-                while (p != inputEnd && !(scanClass(*p) & PathStop))
-                    ++p;
+                p = findPathStopCharacter(p, inputEnd);
                 appendToASCIIBuffer(std::span(runStart, p));
                 if (p != inputEnd && (*p == '/' || (m_urlIsSpecial && *p == '\\'))) {
                     if (*p == '\\') [[unlikely]]
@@ -2190,16 +2246,17 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
             LOG_STATE("OpaquePath");
             auto* start = positionOf(c);
             auto* p = start;
-            const CharacterType* lastSlash = nullptr;
-            while (p != inputEnd && !(scanClass(*p) & OpaquePathStop)) {
-                if (*p == '/')
-                    lastSlash = p;
-                ++p;
+            const CharacterType* afterLastSlash = nullptr;
+            while (true) {
+                p = findOpaquePathStopCharacterOrSlash(p, inputEnd);
+                if (p == inputEnd || *p != '/')
+                    break;
+                afterLastSlash = ++p;
             }
-            if (lastSlash) {
-                appendToASCIIBuffer(std::span(start, lastSlash + 1));
-                m_url.m_pathAfterLastSlash = currentPosition(lastSlash + 1);
-                start = lastSlash + 1;
+            if (afterLastSlash) {
+                appendToASCIIBuffer(std::span(start, afterLastSlash));
+                m_url.m_pathAfterLastSlash = currentPosition(afterLastSlash);
+                start = afterLastSlash;
             }
             appendToASCIIBuffer(std::span(start, p));
             c = iteratorAt(p);
@@ -2242,9 +2299,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
             LOG_STATE("UTF8Query");
             ASSERT(queryBegin == CodePointIterator<CharacterType>());
             auto* start = positionOf(c);
-            auto* p = start;
-            while (p != inputEnd && !(scanClass(*p) & QueryStop))
-                ++p;
+            auto* p = findQueryStopCharacter(start, inputEnd);
             appendToASCIIBuffer(std::span(start, p));
             c = iteratorAt(p);
             if (c.atEnd() || isTabOrNewline(*c))
@@ -2276,9 +2331,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         case State::Fragment: {
             URL_PARSER_LOG("State Fragment");
             auto* start = positionOf(c);
-            auto* p = start;
-            while (p != inputEnd && !(scanClass(*p) & FragmentStop))
-                ++p;
+            auto* p = findFragmentStopCharacter(start, inputEnd);
             appendToASCIIBuffer(std::span(start, p));
             c = iteratorAt(p);
             if (c.atEnd() || isTabOrNewline(*c))
@@ -2800,8 +2853,6 @@ std::optional<uint32_t> URLParser::parseIPv4PieceInsideIPv6(std::span<const Char
         if (piece > 255)
             return std::nullopt;
         ++p;
-        while (p != end && isTabOrNewline(*p)) [[unlikely]]
-            ++p;
         if (p == end)
             break;
         if (*p == '.')
@@ -2828,8 +2879,6 @@ std::optional<URLParser::IPv4Address> URLParser::parseIPv4AddressInsideIPv6(std:
             if (remaining.front() != '.')
                 return std::nullopt;
             remaining = remaining.subspan(1);
-            while (!remaining.empty() && isTabOrNewline(remaining.front())) [[unlikely]]
-                remaining = remaining.subspan(1);
         } else if (!remaining.empty())
             return std::nullopt;
     }
@@ -2837,20 +2886,13 @@ std::optional<URLParser::IPv4Address> URLParser::parseIPv4AddressInsideIPv6(std:
     return address;
 }
 
+// https://url.spec.whatwg.org/#concept-ipv6-parser
+// `address` is what is between the brackets, with tabs and newlines already removed (and reported).
 template<typename CharacterType>
-std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator<CharacterType> hostBegin)
+std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator<CharacterType> hostBegin, std::span<const CharacterType> addressCharacters)
 {
-    ASSERT(*hostBegin == '[');
-    auto* p = hostBegin.position();
-    auto* end = p + hostBegin.remainingCodeUnits().size();
-    auto advance = [&]() ALWAYS_INLINE_LAMBDA {
-        ++p;
-        while (p != end && isTabOrNewline(*p)) [[unlikely]] {
-            syntaxViolation(hostBegin);
-            ++p;
-        }
-    };
-    advance();
+    auto* p = addressCharacters.data();
+    auto* end = p + addressCharacters.size();
     if (p == end)
         return std::nullopt;
 
@@ -2861,12 +2903,12 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
     bool immediatelyAfterCompress = false;
 
     if (*p == ':') {
-        advance();
+        ++p;
         if (p == end)
             return std::nullopt;
         if (*p != ':')
             return std::nullopt;
-        advance();
+        ++p;
         ++piecePointer;
         compressPointer = piecePointer;
         immediatelyAfterCompress = true;
@@ -2878,7 +2920,7 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
         if (*p == ':') {
             if (compressPointer)
                 return std::nullopt;
-            advance();
+            ++p;
             ++piecePointer;
             compressPointer = piecePointer;
             immediatelyAfterCompress = true;
@@ -2900,19 +2942,25 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
         uint16_t value = 0;
         size_t length = 0;
         bool leadingZeros = false;
-        for (; length < 4; length++) {
-            if (p == end)
-                break;
-            auto character = *p;
-            if (!isASCIIHexDigit(character))
-                break;
-            if (isASCIIUpper(character)) [[unlikely]]
-                syntaxViolation(hostBegin);
-            if (character == '0' && !length)
-                leadingZeros = true;
-            value = value * 0x10 + toASCIIHexValue(character);
-            advance();
+        bool sawUppercase = false;
+        for (; length < 4 && p != end; ++length, ++p) {
+            unsigned character = *p;
+            unsigned digitValue;
+            if (isASCIIDigit(character))
+                digitValue = character - '0';
+            else {
+                unsigned lowercased = character | 0x20;
+                if (lowercased < 'a' || lowercased > 'f')
+                    break;
+                digitValue = lowercased - 'a' + 10;
+                sawUppercase |= !(character & 0x20);
+            }
+            if (!length)
+                leadingZeros = character == '0';
+            value = value * 0x10 + digitValue;
         }
+        if (sawUppercase) [[unlikely]]
+            syntaxViolation(hostBegin);
 
         previousValueWasZero = !value;
         if ((value && leadingZeros) || (previousValueWasZero && (length > 1 || immediatelyAfterCompress))) [[unlikely]]
@@ -2923,7 +2971,7 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
             break;
         if (piecePointer == 8 || *p != ':')
             return std::nullopt;
-        advance();
+        ++p;
         if (p == end)
             syntaxViolation(hostBegin);
 
@@ -2955,22 +3003,18 @@ template<typename SyntaxViolationHandler>
 URLParser::Latin1Buffer URLParser::percentDecodeImpl(std::span<const Latin1Character> input, SyntaxViolationHandler&& syntaxViolationHandler)
 {
     Latin1Buffer output;
-    output.reserveInitialCapacity(input.size());
-
+    output.grow(input.size());
+    size_t outputLength = 0;
     for (size_t i = 0; i < input.size(); ++i) {
         uint8_t byte = input[i];
-        if (byte != '%')
-            output.append(byte);
-        else if (i + 2 < input.size()) {
-            if (isASCIIHexDigit(input[i + 1]) && isASCIIHexDigit(input[i + 2])) {
-                syntaxViolationHandler();
-                output.append(toASCIIHexValue(input[i + 1], input[i + 2]));
-                i += 2;
-            } else
-                output.append(byte);
-        } else
-            output.append(byte);
+        if (byte == '%' && i + 2 < input.size() && isASCIIHexDigit(input[i + 1]) && isASCIIHexDigit(input[i + 2])) [[unlikely]] {
+            syntaxViolationHandler();
+            byte = toASCIIHexValue(input[i + 1], input[i + 2]);
+            i += 2;
+        }
+        output[outputLength++] = byte;
     }
+    output.shrink(outputLength);
     return output;
 }
 
@@ -3009,22 +3053,21 @@ template<typename CharacterType> std::optional<URLParser::Latin1Buffer> URLParse
 {
     Latin1Buffer ascii;
     if (domain.containsOnlyASCII()) {
-        size_t length = domain.length();
-        if (domain.is8Bit()) {
-            auto characters = domain.span8();
-            ascii.appendUsingFunctor(length, [&](size_t i) {
-                if (isASCIIUpper(characters[i])) [[unlikely]]
-                    syntaxViolation(iteratorForSyntaxViolationPosition);
-                return toASCIILower(characters[i]);
-            });
-        } else {
-            auto characters = domain.span16();
-            ascii.appendUsingFunctor(length, [&](size_t i) {
-                if (isASCIIUpper(characters[i])) [[unlikely]]
-                    syntaxViolation(iteratorForSyntaxViolationPosition);
-                return toASCIILower(characters[i]);
-            });
-        }
+        ascii.grow(domain.length());
+        bool sawUppercase = false;
+        auto lowercase = [&](auto characters) {
+            for (size_t i = 0; i < characters.size(); ++i) {
+                auto character = characters[i];
+                sawUppercase |= isASCIIUpper(character);
+                ascii[i] = toASCIILower(character);
+            }
+        };
+        if (domain.is8Bit())
+            lowercase(domain.span8());
+        else
+            lowercase(domain.span16());
+        if (sawUppercase) [[unlikely]]
+            syntaxViolation(iteratorForSyntaxViolationPosition);
         return ascii;
     }
 
@@ -3153,12 +3196,31 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
     if (*iterator == ':')
         return HostParsingResult::InvalidHost;
     if (*iterator == '[') {
-        auto ipv6End = iterator;
-        while (!ipv6End.atEnd() && *ipv6End != ']')
-            ++ipv6End;
-        if (ipv6End.atEnd())
+        auto* addressBegin = iterator.position() + 1;
+        auto* end = iterator.position() + iterator.remainingCodeUnits().size();
+        auto* addressEnd = addressBegin;
+        bool hasTabOrNewline = false;
+        for (; addressEnd != end && *addressEnd != ']'; ++addressEnd)
+            hasTabOrNewline |= isTabOrNewline(*addressEnd);
+        if (addressEnd == end)
             return HostParsingResult::InvalidHost;
-        if (auto address = parseIPv6Host(CodePointIterator<CharacterType>(iterator, ipv6End))) {
+        auto ipv6End = CodePointIterator<CharacterType>(std::span(addressEnd, end));
+        std::span<const CharacterType> addressCharacters(addressBegin, addressEnd);
+        // The longest valid address is 0000:0000:0000:0000:0000:0000:000.000.000.000.
+        std::array<CharacterType, 45> buffer;
+        if (hasTabOrNewline) [[unlikely]] {
+            syntaxViolation(iterator);
+            size_t length = 0;
+            for (auto character : addressCharacters) {
+                if (isTabOrNewline(character))
+                    continue;
+                if (length == buffer.size())
+                    return HostParsingResult::InvalidHost;
+                buffer[length++] = character;
+            }
+            addressCharacters = std::span<const CharacterType>(buffer).first(length);
+        }
+        if (auto address = parseIPv6Host(iterator, addressCharacters)) {
             if (m_didSeeSyntaxViolation) [[unlikely]]
                 serializeIPv6(address.value());
             if (!ipv6End.atEnd()) {
@@ -3286,14 +3348,18 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
     bool hasNonASCII = false;
     bool hasPercent = false;
     bool hasTabOrNewline = false;
-    for (; hostEnd != end && *hostEnd != ':'; ++hostEnd) {
+    for (; hostEnd != end; ++hostEnd) {
         auto character = *hostEnd;
-        if (isTabOrNewline(character)) [[unlikely]]
+        if (!(scanClass(character) & (HostNotPlain | HostPercentOrNonASCII))) [[likely]]
+            continue;
+        if (character == ':')
+            break;
+        if (character == '%')
+            hasPercent = true;
+        else if (isTabOrNewline(character)) [[unlikely]]
             hasTabOrNewline = true;
         else if (!isASCII(character))
             hasNonASCII = true;
-        else if (character == '%')
-            hasPercent = true;
     }
     iterator = CodePointIterator<CharacterType>(std::span(hostEnd, end));
     std::span<const CharacterType> host(hostCharactersBegin, hostEnd);
@@ -3358,24 +3424,39 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         return HostParsingResult::InvalidHost;
     Latin1Buffer& asciiDomainValue = asciiDomain.value();
 
-    auto address = parseIPv4Host(hostBegin, std::span<const Latin1Character>(asciiDomainValue.span()));
-    if (address) {
-        serializeIPv4(address.value());
-        m_url.m_hostEnd = currentPosition(iterator);
-        if (iterator.atEnd()) {
-            m_url.m_portLength = 0;
-            return HostParsingResult::IPv4WithoutPort;
-        }
-        return parsePort(iterator) ? HostParsingResult::IPv4WithPort : HostParsingResult::InvalidHost;
+    bool mayBeIPv4OrEndInANumber;
+    {
+        auto* begin = asciiDomainValue.begin();
+        auto* labelEnd = asciiDomainValue.end();
+        if (labelEnd != begin && labelEnd[-1] == '.')
+            --labelEnd;
+        auto* label = labelEnd;
+        while (label != begin && (isASCIIHexDigit(label[-1]) || (label[-1] | 0x20) == 'x'))
+            --label;
+        mayBeIPv4OrEndInANumber = (label == begin || label[-1] == '.') && label != labelEnd && isASCIIDigit(*label);
     }
-    if (address.error() == IPv4ParsingError::Failure)
-        return HostParsingResult::InvalidHost;
+    if (mayBeIPv4OrEndInANumber) [[unlikely]] {
+        auto address = parseIPv4Host(hostBegin, std::span<const Latin1Character>(asciiDomainValue.span()));
+        if (address) {
+            serializeIPv4(address.value());
+            m_url.m_hostEnd = currentPosition(iterator);
+            if (iterator.atEnd()) {
+                m_url.m_portLength = 0;
+                return HostParsingResult::IPv4WithoutPort;
+            }
+            return parsePort(iterator) ? HostParsingResult::IPv4WithPort : HostParsingResult::InvalidHost;
+        }
+        if (address.error() == IPv4ParsingError::Failure)
+            return HostParsingResult::InvalidHost;
+    }
 
     appendToASCIIBuffer(asciiDomainValue.span());
     m_url.m_hostEnd = currentPosition(iterator);
-    auto hostStart = m_url.hostStart();
-    if (dnsNameEndsInNumber(parsedDataView(hostStart, m_url.m_hostEnd - hostStart))) [[unlikely]]
-        return HostParsingResult::InvalidHost;
+    if (mayBeIPv4OrEndInANumber) [[unlikely]] {
+        auto hostStart = m_url.hostStart();
+        if (dnsNameEndsInNumber(parsedDataView(hostStart, m_url.m_hostEnd - hostStart))) [[unlikely]]
+            return HostParsingResult::InvalidHost;
+    }
     if (!iterator.atEnd())
         return parsePort(iterator) ? HostParsingResult::DNSNameWithPort : HostParsingResult::InvalidHost;
 
