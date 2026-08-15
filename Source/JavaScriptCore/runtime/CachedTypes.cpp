@@ -1654,10 +1654,9 @@ public:
     {
         Base::encode(encoder, sourceProvider);
 #if USE(BUN_JSC_ADDITIONS)
-        // SourceCodeKey::operator== under BUN_JSC_ADDITIONS does not compare source
-        // text, so encoding it here only wastes ~source_size bytes of bytecode and
-        // forces a ~source_size heap allocation at decode time. Store length only —
-        // the comparison still validates length() and host().
+        // decode() reuses the Decoder's runtime provider, so the decoded key's
+        // UnlinkedSourceCode matches by pointer and SourceCodeKey::operator== never
+        // compares source bytes. Store length only; source text here is dead weight.
         m_sourceLength = sourceProvider.source().length();
 #else
         m_source.encode(encoder, sourceProvider.source().toString());
@@ -1674,24 +1673,16 @@ public:
 #endif
     {
 #if USE(BUN_JSC_ADDITIONS)
-        // Reuse the runtime SourceProvider the Decoder was constructed with rather
-        // than allocating a fresh StringSourceProvider holding a heap copy of the
-        // source. The decoded key is only used for SourceCodeKey equality, which
-        // under BUN_JSC_ADDITIONS does not look at source bytes.
-        //
-        // Base::decode is intentionally skipped: the runtime provider already has
-        // its sourceURLDirective / sourceMappingURLDirective / sourceTaintedOrigin
-        // set, and the decoded key only needs sourceOrigin().url().host() and
-        // length() for equality. CachedSourceProviderShape fields are offset-based
-        // (not stream-based), so leaving them undecoded does not affect later reads.
+        // Reuse the Decoder's runtime provider so SourceCodeKey::operator== takes the
+        // m_sourceCode pointer fast-path. sourceType is ignored: bun encodes as Program
+        // but decodes against a Zig::SourceProvider. Length guards the wrong-file case.
         if (RefPtr<SourceProvider> provider = decoder.provider()) {
-            if (provider->sourceType() == sourceType && provider->source().length() == m_sourceLength)
+            if (provider->source().length() == m_sourceLength)
                 return provider.leakRef();
         }
-        // Fallback for callers that did not supply a provider: decode without source
-        // bytes. SourceCodeKey::operator== ignores string(), but length() is compared,
-        // so synthesize a provider whose source() is empty — length() will mismatch
-        // and the cache entry will be rejected, which is the conservative behaviour.
+        // No provider supplied (isCachedBytecodeStillValid, decodeSourceCodeKey): the
+        // empty-source provider makes string() mismatch the runtime key, so the cache
+        // entry is conservatively rejected.
         String decodedSource;
 #else
         String decodedSource = m_source.decode(decoder);
