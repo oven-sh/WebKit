@@ -327,7 +327,7 @@ bool isForbiddenHostCodePoint(char16_t character)
 
 template<typename CharacterType> ALWAYS_INLINE static bool isC0Control(CharacterType character) { return character <= 0x1F; }
 template<typename CharacterType> ALWAYS_INLINE static bool isC0ControlOrSpace(CharacterType character) { return character <= 0x20; }
-template<typename CharacterType> ALWAYS_INLINE static bool isTabOrNewline(CharacterType character) { return character <= 0xD && character >= 0x9 && character != 0xB && character != 0xC; }
+template<typename CharacterType> ALWAYS_INLINE static bool isTabOrNewline(CharacterType character) { return character <= 0xD && ((1u << character) & ((1u << '\t') | (1u << '\n') | (1u << '\r'))); }
 template<typename CharacterType> ALWAYS_INLINE static bool isInC0ControlEncodeSet(CharacterType character) { return character > 0x7E || isC0Control(character); }
 template<typename CharacterType> ALWAYS_INLINE static bool isInFragmentEncodeSet(CharacterType character) { return character > 0x7E || character == '`' || ((characterClassTable[character] & QueryEncode) && character != '#'); }
 template<typename CharacterType> ALWAYS_INLINE static bool isInPathEncodeSet(CharacterType character) { return character > 0x7E || characterClassTable[character] & PathEncode; }
@@ -486,6 +486,20 @@ ALWAYS_INLINE void URLParser::appendToASCIIBuffer(std::span<const char16_t> char
 {
     if (m_didSeeSyntaxViolation) [[unlikely]]
         m_asciiBuffer.append(characters);
+}
+
+template<typename CharacterType>
+ALWAYS_INLINE void URLParser::appendToASCIIBufferLowercased(std::span<const CharacterType> characters)
+{
+    if (m_didSeeSyntaxViolation) [[unlikely]] {
+        size_t oldSize = m_asciiBuffer.size();
+        m_asciiBuffer.grow(oldSize + characters.size());
+        auto destination = m_asciiBuffer.mutableSpan().subspan(oldSize);
+        for (size_t i = 0; i < characters.size(); ++i) {
+            ASSERT(isASCII(characters[i]));
+            destination[i] = toASCIILower(characters[i]);
+        }
+    }
 }
 
 template<typename CharacterType>
@@ -1460,13 +1474,26 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         case State::SchemeStart: {
             LOG_STATE("SchemeStart");
             bool reachedSchemeEnd = false;
-            if (isASCIILower(*c)) [[likely]] {
+            if (isASCIIAlpha(*c)) [[likely]] {
                 auto* start = positionOf(c);
-                auto* p = start + 1;
-                while (p != inputEnd && (scanClass(*p) & SchemeContinue))
-                    ++p;
+                auto* p = start;
+                const CharacterType* firstUppercase = nullptr;
+                for (; p != inputEnd; ++p) {
+                    if (scanClass(*p) & SchemeContinue) [[likely]]
+                        continue;
+                    if (!isASCIIUpper(*p))
+                        break;
+                    if (!firstUppercase)
+                        firstUppercase = p;
+                }
                 if (p != inputEnd && *p == ':') [[likely]] {
-                    appendToASCIIBuffer(std::span(start, p));
+                    if (!firstUppercase) [[likely]]
+                        appendToASCIIBuffer(std::span(start, p));
+                    else {
+                        appendToASCIIBuffer(std::span(start, firstUppercase));
+                        syntaxViolation(iteratorAt(firstUppercase));
+                        appendToASCIIBufferLowercased(std::span(firstUppercase, p));
+                    }
                     c = iteratorAt(p);
                     state = State::Scheme;
                     reachedSchemeEnd = true;
@@ -2655,53 +2682,69 @@ Expected<URLParser::IPv4Address, URLParser::IPv4ParsingError> URLParser::parseIP
         if (pieceCount >= 4 || *p == '.')
             return makeUnexpected(IPv4ParsingError::NotIPv4);
 
-        enum class State : uint8_t { UnknownBase, OctalOrHex, Decimal, Octal, Hex };
-        State state = State::UnknownBase;
         uint64_t value = 0;
         bool pieceDidOverflow = false;
-        for (; p != end; ++p) {
-            auto character = *p;
-            if (isTabOrNewline(character)) [[unlikely]] {
+        constexpr uint64_t maxValue = std::numeric_limits<uint32_t>::max();
+        if (*p == '0') [[unlikely]] {
+            ++p;
+            while (p != end && isTabOrNewline(*p)) [[unlikely]] {
                 didSeeSyntaxViolation = true;
-                continue;
+                ++p;
             }
-            if (character == '.')
-                break;
-            if (state == State::UnknownBase) {
-                if (character == '0') [[unlikely]] {
-                    state = State::OctalOrHex;
-                    continue;
-                }
-                state = State::Decimal;
-            } else if (state == State::OctalOrHex) {
+            if (p != end && *p != '.') {
                 didSeeSyntaxViolation = true;
-                if (character == 'x' || character == 'X') {
-                    state = State::Hex;
-                    continue;
+                if (*p == 'x' || *p == 'X') {
+                    for (++p; p != end; ++p) {
+                        auto character = *p;
+                        if (isASCIIHexDigit(character)) [[likely]] {
+                            value = value * 16 + toASCIIHexValue(character);
+                            if (value > maxValue) [[unlikely]] {
+                                pieceDidOverflow = true;
+                                break;
+                            }
+                        } else if (character == '.')
+                            break;
+                        else if (isTabOrNewline(character)) [[unlikely]]
+                            didSeeSyntaxViolation = true;
+                        else
+                            return makeUnexpected(IPv4ParsingError::NotIPv4);
+                    }
+                } else {
+                    for (; p != end; ++p) {
+                        auto character = *p;
+                        if (character >= '0' && character <= '7') [[likely]] {
+                            value = value * 8 + (character - '0');
+                            if (value > maxValue) [[unlikely]] {
+                                pieceDidOverflow = true;
+                                break;
+                            }
+                        } else if (character == '.')
+                            break;
+                        else if (isTabOrNewline(character)) [[unlikely]]
+                            didSeeSyntaxViolation = true;
+                        else
+                            return makeUnexpected(IPv4ParsingError::NotIPv4);
+                    }
                 }
-                state = State::Octal;
             }
-            if (state == State::Decimal) {
-                if (!isASCIIDigit(character))
+        } else {
+            for (; p != end; ++p) {
+                auto character = *p;
+                if (isASCIIDigit(character)) [[likely]] {
+                    value = value * 10 + (character - '0');
+                    if (value > maxValue) [[unlikely]] {
+                        pieceDidOverflow = true;
+                        break;
+                    }
+                } else if (character == '.')
+                    break;
+                else if (isTabOrNewline(character)) [[unlikely]]
+                    didSeeSyntaxViolation = true;
+                else
                     return makeUnexpected(IPv4ParsingError::NotIPv4);
-                value = value * 10 + (character - '0');
-            } else if (state == State::Octal) {
-                if (character < '0' || character > '7')
-                    return makeUnexpected(IPv4ParsingError::NotIPv4);
-                value = value * 8 + (character - '0');
-            } else {
-                ASSERT(state == State::Hex);
-                if (!isASCIIHexDigit(character))
-                    return makeUnexpected(IPv4ParsingError::NotIPv4);
-                value = value * 16 + toASCIIHexValue(character);
-            }
-            if (value > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
-                // The overflowing digit is left unconsumed and starts a new piece, so what follows can
-                // only decide between Failure and NotIPv4.
-                pieceDidOverflow = true;
-                break;
             }
         }
+        // On overflow the overflowing digit is left unconsumed and starts a new piece, so what follows can only decide between Failure and NotIPv4.
         if (pieceDidOverflow) [[unlikely]] {
             didSeeOverflow = true;
             pieces[pieceCount++] = 0;
@@ -2737,63 +2780,78 @@ Expected<URLParser::IPv4Address, URLParser::IPv4ParsingError> URLParser::parseIP
 }
 
 template<typename CharacterType>
-std::optional<uint32_t> URLParser::parseIPv4PieceInsideIPv6(CodePointIterator<CharacterType>& iterator)
+std::optional<uint32_t> URLParser::parseIPv4PieceInsideIPv6(std::span<const CharacterType>& remaining)
 {
-    if (iterator.atEnd())
+    auto* p = remaining.data();
+    auto* end = p + remaining.size();
+    if (p == end)
         return std::nullopt;
     uint32_t piece = 0;
     bool leadingZeros = false;
-    while (!iterator.atEnd()) {
-        if (!isASCIIDigit(*iterator))
+    while (p != end) {
+        if (!isASCIIDigit(*p))
             return std::nullopt;
-        if (!piece && *iterator == '0') {
+        if (!piece && *p == '0') {
             if (leadingZeros)
                 return std::nullopt;
             leadingZeros = true;
         }
-        piece = piece * 10 + *iterator - '0';
+        piece = piece * 10 + *p - '0';
         if (piece > 255)
             return std::nullopt;
-        advance<CharacterType, ReportSyntaxViolation::No>(iterator);
-        if (iterator.atEnd())
+        ++p;
+        while (p != end && isTabOrNewline(*p)) [[unlikely]]
+            ++p;
+        if (p == end)
             break;
-        if (*iterator == '.')
+        if (*p == '.')
             break;
     }
+    remaining = std::span(p, end);
     if (piece && leadingZeros)
         return std::nullopt;
     return piece;
 }
 
 template<typename CharacterType>
-std::optional<URLParser::IPv4Address> URLParser::parseIPv4AddressInsideIPv6(CodePointIterator<CharacterType> iterator)
+std::optional<URLParser::IPv4Address> URLParser::parseIPv4AddressInsideIPv6(std::span<const CharacterType> remaining)
 {
     IPv4Address address = 0;
     for (size_t i = 0; i < 4; ++i) {
-        if (std::optional<uint32_t> piece = parseIPv4PieceInsideIPv6(iterator))
+        if (std::optional<uint32_t> piece = parseIPv4PieceInsideIPv6(remaining))
             address = (address << 8) + piece.value();
         else
             return std::nullopt;
         if (i < 3) {
-            if (iterator.atEnd())
+            if (remaining.empty())
                 return std::nullopt;
-            if (*iterator != '.')
+            if (remaining.front() != '.')
                 return std::nullopt;
-            advance<CharacterType, ReportSyntaxViolation::No>(iterator);
-        } else if (!iterator.atEnd())
+            remaining = remaining.subspan(1);
+            while (!remaining.empty() && isTabOrNewline(remaining.front())) [[unlikely]]
+                remaining = remaining.subspan(1);
+        } else if (!remaining.empty())
             return std::nullopt;
     }
-    ASSERT(iterator.atEnd());
+    ASSERT(remaining.empty());
     return address;
 }
 
 template<typename CharacterType>
-std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator<CharacterType> c)
+std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator<CharacterType> hostBegin)
 {
-    ASSERT(*c == '[');
-    const auto hostBegin = c;
-    advance(c, hostBegin);
-    if (c.atEnd())
+    ASSERT(*hostBegin == '[');
+    auto* p = hostBegin.position();
+    auto* end = p + hostBegin.remainingCodeUnits().size();
+    auto advance = [&]() ALWAYS_INLINE_LAMBDA {
+        ++p;
+        while (p != end && isTabOrNewline(*p)) [[unlikely]] {
+            syntaxViolation(hostBegin);
+            ++p;
+        }
+    };
+    advance();
+    if (p == end)
         return std::nullopt;
 
     IPv6Address address = {{0, 0, 0, 0, 0, 0, 0, 0}};
@@ -2802,25 +2860,25 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
     bool previousValueWasZero = false;
     bool immediatelyAfterCompress = false;
 
-    if (*c == ':') {
-        advance(c, hostBegin);
-        if (c.atEnd())
+    if (*p == ':') {
+        advance();
+        if (p == end)
             return std::nullopt;
-        if (*c != ':')
+        if (*p != ':')
             return std::nullopt;
-        advance(c, hostBegin);
+        advance();
         ++piecePointer;
         compressPointer = piecePointer;
         immediatelyAfterCompress = true;
     }
-    
-    while (!c.atEnd()) {
+
+    while (p != end) {
         if (piecePointer == 8)
             return std::nullopt;
-        if (*c == ':') {
+        if (*p == ':') {
             if (compressPointer)
                 return std::nullopt;
-            advance(c, hostBegin);
+            advance();
             ++piecePointer;
             compressPointer = piecePointer;
             immediatelyAfterCompress = true;
@@ -2829,13 +2887,13 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
             continue;
         }
         if (piecePointer == 6 || (compressPointer && piecePointer < 6)) {
-            if (std::optional<IPv4Address> ipv4Address = parseIPv4AddressInsideIPv6(c)) {
+            if (std::optional<IPv4Address> ipv4Address = parseIPv4AddressInsideIPv6(std::span(p, end))) {
                 if (compressPointer && piecePointer == 5)
                     return std::nullopt;
                 syntaxViolation(hostBegin);
                 address[piecePointer++] = ipv4Address.value() >> 16;
                 address[piecePointer++] = ipv4Address.value() & 0xFFFF;
-                c = { };
+                p = end;
                 break;
             }
         }
@@ -2843,37 +2901,38 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
         size_t length = 0;
         bool leadingZeros = false;
         for (; length < 4; length++) {
-            if (c.atEnd())
+            if (p == end)
                 break;
-            if (!isASCIIHexDigit(*c))
+            auto character = *p;
+            if (!isASCIIHexDigit(character))
                 break;
-            if (isASCIIUpper(*c))
+            if (isASCIIUpper(character)) [[unlikely]]
                 syntaxViolation(hostBegin);
-            if (*c == '0' && !length)
+            if (character == '0' && !length)
                 leadingZeros = true;
-            value = value * 0x10 + toASCIIHexValue(*c);
-            advance(c, hostBegin);
+            value = value * 0x10 + toASCIIHexValue(character);
+            advance();
         }
-        
+
         previousValueWasZero = !value;
         if ((value && leadingZeros) || (previousValueWasZero && (length > 1 || immediatelyAfterCompress))) [[unlikely]]
             syntaxViolation(hostBegin);
 
         address[piecePointer++] = value;
-        if (c.atEnd())
+        if (p == end)
             break;
-        if (piecePointer == 8 || *c != ':')
+        if (piecePointer == 8 || *p != ':')
             return std::nullopt;
-        advance(c, hostBegin);
-        if (c.atEnd())
+        advance();
+        if (p == end)
             syntaxViolation(hostBegin);
 
         immediatelyAfterCompress = false;
     }
-    
-    if (!c.atEnd())
+
+    if (p != end)
         return std::nullopt;
-    
+
     if (compressPointer) {
         size_t swaps = piecePointer - compressPointer.value();
         piecePointer = 7;
@@ -2887,7 +2946,7 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
         possibleCompressPointer.value()++;
     if (compressPointer != possibleCompressPointer) [[unlikely]]
         syntaxViolation(hostBegin);
-    
+
     return address;
 }
 
@@ -2946,7 +3005,7 @@ void URLParser::addNonSpecialDotSlash()
     m_url.m_queryEnd += 2;
 }
 
-template<typename CharacterType> std::optional<URLParser::Latin1Buffer> URLParser::domainToASCII(StringImpl& domain, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition)
+template<typename CharacterType> std::optional<URLParser::Latin1Buffer> URLParser::domainToASCII(StringView domain, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition)
 {
     Latin1Buffer ascii;
     if (domain.containsOnlyASCII()) {
@@ -2972,7 +3031,7 @@ template<typename CharacterType> std::optional<URLParser::Latin1Buffer> URLParse
     std::array<char16_t, hostnameBufferLength> hostnameBuffer;
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    size_t numCharactersConverted = uidna_nameToASCII(&internationalDomainNameTranscoder(), StringView(domain).upconvertedCharacters(), domain.length(), hostnameBuffer.data(), hostnameBufferLength, &processingDetails, &error);
+    size_t numCharactersConverted = uidna_nameToASCII(&internationalDomainNameTranscoder(), domain.upconvertedCharacters(), domain.length(), hostnameBuffer.data(), hostnameBufferLength, &processingDetails, &error);
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
 #if ASSERT_ENABLED
@@ -2984,7 +3043,7 @@ template<typename CharacterType> std::optional<URLParser::Latin1Buffer> URLParse
         UNUSED_PARAM(numCharactersConverted);
 #endif // ASSERT_ENABLED
         ascii.append(std::span { hostnameBuffer }.first(numCharactersConverted));
-        if (domain != StringView(ascii.span()))
+        if (!m_didSeeSyntaxViolation && domain != StringView(ascii.span()))
             syntaxViolation(iteratorForSyntaxViolationPosition);
         return ascii;
     }
@@ -3138,23 +3197,27 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
     
     if (!m_hostHasPercentOrNonASCII) [[likely]] {
         auto hostIterator = iterator;
-        auto* hostBegin = reinterpret_cast<const CharacterType*>(m_inputBegin) + hostIterator.codeUnitsSince(reinterpret_cast<const CharacterType*>(m_inputBegin));
+        auto* hostBegin = iterator.position();
+        auto* end = hostBegin + iterator.remainingCodeUnits().size();
+        auto* hostEnd = hostBegin;
         bool hasUppercase = false;
         bool hasTabOrNewline = false;
-        for (; !iterator.atEnd(); ++iterator) {
-            auto character = *iterator;
-            if (isTabOrNewline(character)) [[unlikely]] {
-                hasTabOrNewline = true;
+        for (; hostEnd != end; ++hostEnd) {
+            auto character = *hostEnd;
+            if (!(scanClass(character) & (HostNotPlain | HostStop))) [[likely]]
                 continue;
-            }
             if (character == ':')
                 break;
-            if (isForbiddenDomainCodePoint(character))
-                return HostParsingResult::InvalidHost;
-            if (isASCIIUpper(character)) [[unlikely]]
+            if (isTabOrNewline(character)) [[unlikely]]
+                hasTabOrNewline = true;
+            else if (isASCIIUpper(character))
                 hasUppercase = true;
+            else {
+                ASSERT(isForbiddenDomainCodePoint(character));
+                return HostParsingResult::InvalidHost;
+            }
         }
-        auto* hostEnd = hostBegin + iterator.codeUnitsSince(hostIterator);
+        iterator = CodePointIterator<CharacterType>(std::span(hostEnd, end));
 
         // parseIPv4Host() can only return something other than NotIPv4, and dnsNameEndsInNumber() can only be true,
         // when the last label starts with a digit and is made of characters that can occur in a number.
@@ -3186,7 +3249,14 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         }
         if (!hasUppercase && !hasTabOrNewline) [[likely]]
             appendToASCIIBuffer(std::span(hostBegin, hostEnd));
-        else {
+        else if (!hasTabOrNewline) {
+            auto* firstUppercase = hostBegin;
+            while (!isASCIIUpper(*firstUppercase))
+                ++firstUppercase;
+            appendToASCIIBuffer(std::span(hostBegin, firstUppercase));
+            syntaxViolation(CodePointIterator(std::span(firstUppercase, hostEnd)));
+            appendToASCIIBufferLowercased(std::span(firstUppercase, hostEnd));
+        } else {
             for (; hostIterator != iterator; ++hostIterator) {
                 if (isTabOrNewline(*hostIterator)) [[unlikely]] {
                     syntaxViolation(hostIterator);
@@ -3210,33 +3280,80 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
     }
     
     const auto hostBegin = iterator;
-    
-    Latin1Buffer utf8Encoded;
-    for (; !iterator.atEnd(); ++iterator) {
-        if (isTabOrNewline(*iterator)) [[unlikely]] {
-            syntaxViolation(hostBegin);
-            continue;
-        }
-        if (*iterator == ':')
-            break;
-        if (!isASCII(*iterator)) [[unlikely]]
-            syntaxViolation(hostBegin);
-
-        std::array<uint8_t, U8_MAX_LENGTH> buffer;
-        size_t offset = 0;
-        UBool isError = false;
-        U8_APPEND(buffer, offset, U8_MAX_LENGTH, *iterator, isError);
-        if (isError)
-            return HostParsingResult::InvalidHost;
-        utf8Encoded.append(std::span { buffer }.first(offset));
+    auto* hostCharactersBegin = iterator.position();
+    auto* end = hostCharactersBegin + iterator.remainingCodeUnits().size();
+    auto* hostEnd = hostCharactersBegin;
+    bool hasNonASCII = false;
+    bool hasPercent = false;
+    bool hasTabOrNewline = false;
+    for (; hostEnd != end && *hostEnd != ':'; ++hostEnd) {
+        auto character = *hostEnd;
+        if (isTabOrNewline(character)) [[unlikely]]
+            hasTabOrNewline = true;
+        else if (!isASCII(character))
+            hasNonASCII = true;
+        else if (character == '%')
+            hasPercent = true;
     }
-    Latin1Buffer percentDecoded = percentDecode(utf8Encoded.span(), hostBegin);
-    String domain = String::fromUTF8(percentDecoded.span());
-    if (domain.isNull())
-        return HostParsingResult::InvalidHost;
-    if (domain != StringView(percentDecoded.span()))
+    iterator = CodePointIterator<CharacterType>(std::span(hostEnd, end));
+    std::span<const CharacterType> host(hostCharactersBegin, hostEnd);
+    if (hasTabOrNewline || hasNonASCII)
         syntaxViolation(hostBegin);
-    auto asciiDomain = domainToASCII(*domain.impl(), hostBegin);
+
+    std::optional<Latin1Buffer> asciiDomain;
+    if (!hasPercent) [[likely]] {
+        Vector<char16_t, 256> buffer;
+        std::span<const char16_t> domain;
+        bool needsCopy = true;
+        if constexpr (std::is_same_v<CharacterType, char16_t>) {
+            if (!hasTabOrNewline) [[likely]] {
+                domain = host;
+                needsCopy = false;
+            }
+        }
+        if (needsCopy) {
+            buffer.reserveInitialCapacity(host.size());
+            for (auto character : host) {
+                if (!isTabOrNewline(character)) [[likely]]
+                    buffer.append(character);
+            }
+            domain = buffer.span();
+        }
+        if constexpr (std::is_same_v<CharacterType, char16_t>) {
+            if (hasUnpairedSurrogate(domain)) [[unlikely]]
+                return HostParsingResult::InvalidHost;
+        }
+        asciiDomain = domainToASCII(domain, hostBegin);
+    } else {
+        Latin1Buffer utf8Encoded;
+        if constexpr (std::is_same_v<CharacterType, Latin1Character>) {
+            if (!hasNonASCII && !hasTabOrNewline) [[likely]] {
+                utf8Encoded.append(host);
+                host = { };
+            }
+        }
+        for (auto codePoints = CodePointIterator<CharacterType>(host); !codePoints.atEnd(); ++codePoints) {
+            if (isTabOrNewline(*codePoints)) [[unlikely]]
+                continue;
+            std::array<uint8_t, U8_MAX_LENGTH> buffer;
+            size_t offset = 0;
+            UBool isError = false;
+            U8_APPEND(buffer, offset, U8_MAX_LENGTH, *codePoints, isError);
+            if (isError)
+                return HostParsingResult::InvalidHost;
+            utf8Encoded.append(std::span { buffer }.first(offset));
+        }
+        Latin1Buffer percentDecoded = percentDecode(utf8Encoded.span(), hostBegin);
+        if (charactersAreAllASCII(percentDecoded.span()))
+            asciiDomain = domainToASCII(percentDecoded.span(), hostBegin);
+        else {
+            String domain = String::fromUTF8(percentDecoded.span());
+            if (domain.isNull())
+                return HostParsingResult::InvalidHost;
+            syntaxViolation(hostBegin);
+            asciiDomain = domainToASCII(domain, hostBegin);
+        }
+    }
     if (!asciiDomain || hasForbiddenHostCodePoint(asciiDomain.value()))
         return HostParsingResult::InvalidHost;
     Latin1Buffer& asciiDomainValue = asciiDomain.value();

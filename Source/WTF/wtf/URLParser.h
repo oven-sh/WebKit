@@ -121,7 +121,7 @@ private:
     template<typename UnsignedIntegerType> void appendNumberToASCIIBuffer(UnsignedIntegerType);
     template<bool(*isInCodeSet)(char32_t), typename CharacterType> void utf8PercentEncode(const CodePointIterator<CharacterType>&);
     template<typename CharacterType> void utf8QueryEncode(const CodePointIterator<CharacterType>&);
-    template<typename CharacterType> std::optional<Latin1Buffer> domainToASCII(StringImpl&, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition);
+    template<typename CharacterType> std::optional<Latin1Buffer> domainToASCII(StringView, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition);
     template<typename SyntaxViolationHandler> static Latin1Buffer percentDecodeImpl(std::span<const Latin1Character>, SyntaxViolationHandler&&);
     template<typename CharacterType> Latin1Buffer percentDecode(std::span<const Latin1Character>, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition);
     static Latin1Buffer percentDecode(std::span<const Latin1Character>);
@@ -130,6 +130,7 @@ private:
     void appendToASCIIBuffer(char32_t);
     void appendToASCIIBuffer(std::span<const Latin1Character>);
     void appendToASCIIBuffer(std::span<const char16_t>);
+    template<typename CharacterType> void appendToASCIIBufferLowercased(std::span<const CharacterType>);
     template<typename CharacterType> void encodeNonUTF8Query(const Vector<char16_t>& source, const URLTextEncoding&, CodePointIterator<CharacterType>);
     void copyASCIIStringUntil(const String&, size_t length);
     bool copyBaseWindowsDriveLetter(const URL&);
@@ -145,8 +146,8 @@ private:
     template<typename CharacterTypeForSyntaxViolation, typename CharacterType> Expected<IPv4Address, IPv4ParsingError> parseIPv4Host(const CodePointIterator<CharacterTypeForSyntaxViolation>&, std::span<const CharacterType>);
     using IPv6Address = std::array<uint16_t, 8>;
     template<typename CharacterType> std::optional<IPv6Address> parseIPv6Host(CodePointIterator<CharacterType>);
-    template<typename CharacterType> std::optional<uint32_t> NODELETE parseIPv4PieceInsideIPv6(CodePointIterator<CharacterType>&);
-    template<typename CharacterType> std::optional<IPv4Address> NODELETE parseIPv4AddressInsideIPv6(CodePointIterator<CharacterType>);
+    template<typename CharacterType> std::optional<uint32_t> NODELETE parseIPv4PieceInsideIPv6(std::span<const CharacterType>&);
+    template<typename CharacterType> std::optional<IPv4Address> NODELETE parseIPv4AddressInsideIPv6(std::span<const CharacterType>);
     void serializeIPv6Piece(uint16_t piece);
     void serializeIPv6(IPv6Address);
 
