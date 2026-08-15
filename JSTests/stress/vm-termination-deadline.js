@@ -1,7 +1,7 @@
 //@ runDefault("--useDollarVM=1")
 
-// VM::requestTerminationAt() / VM::cancelTerminationRequest(), through $vm.callWithTimeLimit(fn, ms):
-// an embedder's scoped, wall-clock time limit (node:vm's `timeout`).
+// VM::addTerminationDeadline() / VM::cancelTermination() / VM::hasPendingTermination(), through
+// $vm.callWithTimeLimit(fn, ms): an embedder's wall-clock time limit on one call (node:vm's `timeout`).
 
 function spin(ms) {
     const start = preciseTime();
@@ -24,15 +24,26 @@ function timesOut(fn, ms) {
     return false;
 }
 
-// A limit that passes while its call is running cuts the call short...
+function nothingLeftBehind(what) {
+    shouldBe($vm.hasPendingTermination(), false, `${what}: something is still pending`);
+    spin(30); // ...and ordinary code right after runs to completion.
+}
+
+// A limit that passes while its call is running cuts the call short, and nothing of it is left behind.
 shouldBe(timesOut(() => { for (;;) { } }, 20), true, "endless loop under a 20ms limit");
-// ...and nothing of it is left behind: this runs to completion.
-spin(50);
+nothingLeftBehind("after a fired limit");
 
-// It is wall-clock: time spent blocked counts.
-shouldBe(timesOut(() => { $vm.sleepSeconds && $vm.sleepSeconds(1); for (;;) { } }, 20), true, "blocked then looping");
+// A limit that passes while its call is blocked in native code takes effect once it is back running script.
+shouldBe(timesOut(() => { sleepSeconds(0.1); for (;;) { } }, 40), true, "blocked past a 40ms limit, then looping");
+nothingLeftBehind("after a limit that passed while blocked");
 
-// A call that finishes within its limit returns its value, and the limit expiring afterwards terminates nothing.
+// A limit that passes after its call has returned to native code, with the request not yet acted on (no trap
+// check happens between sleepSeconds() returning and the arrow function returning): the call counts as having
+// completed, and the unhandled request is withdrawn rather than left for the next loop to run into.
+shouldBe(timesOut(() => sleepSeconds(0.05), 10), false, "limit passes with the request never acted on");
+nothingLeftBehind("after an unhandled request was withdrawn");
+
+// A call that finishes within its limit returns its value; the limit expiring afterwards terminates nothing.
 shouldBe($vm.callWithTimeLimit(() => 42, 20), 42, "quick call");
 spin(50);
 let ran = 0;
@@ -42,7 +53,8 @@ for (let i = 0; i < 20; i++) {
     spin(5);
     ran++;
 }
-shouldBe(ran, 20, "twenty short-limit calls followed by ordinary code");
+shouldBe(ran, 20, "twenty short-limit calls interleaved with ordinary code");
+nothingLeftBehind("after twenty short limits");
 
 // Anything else the call throws is unaffected.
 try {
@@ -55,12 +67,13 @@ try {
 // Nested limits each keep their own deadline:
 // - the inner one fires; the outer call catches that (catchable) error and carries on within its budget;
 shouldBe($vm.callWithTimeLimit(() => { const r = timesOut(() => { for (;;) { } }, 20); spin(30); return r; }, 5000), true, "inner limit inside a generous outer one");
-// - the outer one fires while the inner call (with a generous limit) is running: it is the outer call that times out;
+// - the outer one fires while the inner call (with a generous limit) is running: it is the outer call that times
+//   out — the inner call is cut short by a request that is not its own and lets it through;
 shouldBe(timesOut(() => $vm.callWithTimeLimit(() => { for (;;) { } }, 5000), 30), true, "outer limit around a generous inner one");
-// - both pass before the inner call ends: the inner error is caught by the outer function, which must still be
-//   stopped by its own, already-passed limit rather than loop forever.
-shouldBe(timesOut(() => { try { $vm.callWithTimeLimit(() => { for (;;) { } }, 60); } catch { } for (;;) { } }, 30), true, "both limits passed");
-spin(50);
+// - both pass before the inner call ends (it is blocked past both): the inner call's error is caught by the outer
+//   function, which must nevertheless be stopped by its own, already-passed limit rather than loop forever.
+shouldBe(timesOut(() => { try { $vm.callWithTimeLimit(() => { sleepSeconds(0.1); for (;;) { } }, 20); } catch { } for (;;) { } }, 40), true, "both limits passed");
+nothingLeftBehind("after nested limits");
 
-// cancelTerminationRequest() with nothing requested withdraws nothing.
-shouldBe($vm.cancelTerminationRequest(), false, "nothing to cancel");
+// With nothing requested there is nothing to withdraw.
+shouldBe($vm.cancelTermination(), false, "nothing to cancel");

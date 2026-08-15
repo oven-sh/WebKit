@@ -774,6 +774,7 @@ runtime/CacheableIdentifier.cpp
 runtime/CachedBytecode.cpp
 runtime/CachedSpecialPropertyAdaptiveStructureWatchpoint.cpp
 runtime/CachedTypes.cpp
+runtime/TerminationDeadline.cpp
 runtime/TopExceptionScope.cpp
 runtime/ClassInfo.cpp
 runtime/ClonedArguments.cpp
