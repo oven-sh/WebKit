@@ -68,12 +68,6 @@ void IntlSegmenter::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(IntlSegmenter);
 
-size_t IntlSegmenter::estimatedSize(JSCell* cell, VM& vm)
-{
-    auto* thisObject = uncheckedDowncast<IntlSegmenter>(cell);
-    return Base::estimatedSize(cell, vm) + (thisObject->m_segmenter ? estimatedUBreakIteratorSize : 0);
-}
-
 // https://tc39.es/proposal-intl-segmenter/#sec-intl.segmenter
 void IntlSegmenter::initializeSegmenter(JSGlobalObject* globalObject, JSValue locales, JSValue optionsValue)
 {

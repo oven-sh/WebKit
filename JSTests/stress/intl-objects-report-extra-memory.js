@@ -1,10 +1,9 @@
 //@ memoryHog!
 //@ runDefault
 
-// Intl.Segmenter, the Segments object segment() returns and the iterator Segments creates each own ICU memory, and
-// Segments additionally a UTF-16 copy of the whole input. All of it has to be reported to the GC: gcHeapSize() is the
-// live size the GC saw in its last collection, including the extra memory cells reported, and the same numbers drive
-// when the GC decides to collect.
+// Intl objects own ICU objects the GC cannot see, and the Segments object segment() returns additionally a UTF-16 copy
+// of the whole input. All of it has to be reported to the heap: gcHeapSize() is the live size the GC saw in its last
+// collection, including the extra memory cells reported, and the same numbers drive when the GC decides to collect.
 
 function shouldBe(actual, expected, what) {
     if (actual !== expected)
@@ -36,25 +35,29 @@ const segmenter = new Intl.Segmenter("en");
     shouldBe(segments.containing(5).index, 5, "segments still works");
 }
 
-// Each break iterator ICU allocates is around 1.5 KB (a clone) to 7 KB (a fresh one); the cells holding them are
-// a few dozen bytes. 1000 of them have to show up as at least 1 MB of live heap.
+// The ICU object behind each of these is 1.5 KB (a collator, a cloned break iterator) to 9 KB (a relative time
+// formatter); the cell holding it is a few dozen bytes. 1000 of them have to show up as at least 1 MB of live heap.
 {
+    const emptySegments = segmenter.segment("");
+    const constructors = {
+        "Intl.Segmenter": () => new Intl.Segmenter("en", { granularity: "word" }),
+        "Intl.Collator": () => new Intl.Collator("en"),
+        "Intl.DisplayNames": () => new Intl.DisplayNames("en", { type: "region" }),
+        "Intl.RelativeTimeFormat": () => new Intl.RelativeTimeFormat("en"),
+        "Segments[Symbol.iterator]": () => emptySegments[Symbol.iterator](),
+    };
     const count = 1000;
-    const base = liveHeapSize();
-    const segmenters = [];
-    for (let i = 0; i < count; ++i)
-        segmenters.push(new Intl.Segmenter("en", { granularity: "word" }));
-    const withSegmenters = liveHeapSize() - base;
-    shouldBe(withSegmenters >= count * 1000, true, `${count} Segmenters report their break iterators (grew by ${withSegmenters})`);
-
-    const segments = segmenter.segment("");
-    const iterators = [];
-    for (let i = 0; i < count; ++i)
-        iterators.push(segments[Symbol.iterator]());
-    const withIterators = liveHeapSize() - withSegmenters - base;
-    shouldBe(withIterators >= count * 1000, true, `${count} iterators report their break iterators (grew by ${withIterators})`);
-
-    shouldBe(segmenters.length + iterators.length, 2 * count, "everything is still alive");
+    const keep = [];
+    for (const [name, construct] of Object.entries(constructors)) {
+        const base = liveHeapSize();
+        const instances = [];
+        for (let i = 0; i < count; ++i)
+            instances.push(construct());
+        const grewBy = liveHeapSize() - base;
+        shouldBe(grewBy >= count * 1000, true, `${count} ${name} objects report their ICU objects (grew by ${grewBy})`);
+        keep.push(instances);
+    }
+    shouldBe(keep.length, Object.keys(constructors).length, "everything is still alive");
 }
 
 // The reporting is what makes the GC run at all in a loop like this: every call copies the 1 MB input into a 2 MB

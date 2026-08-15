@@ -55,7 +55,6 @@ public:
     JSObject* next(JSGlobalObject*);
 
     DECLARE_VISIT_CHILDREN;
-    static size_t estimatedSize(JSCell*, VM&);
 
 private:
     IntlSegmentIterator(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>&&, IntlSegmenter::Granularity, JSString*);

@@ -75,11 +75,6 @@ void IntlSegmentIterator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(IntlSegmentIterator);
 
-size_t IntlSegmentIterator::estimatedSize(JSCell* cell, VM& vm)
-{
-    return Base::estimatedSize(cell, vm) + estimatedClonedUBreakIteratorSize;
-}
-
 JSObject* IntlSegmentIterator::next(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
