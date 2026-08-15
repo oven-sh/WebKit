@@ -79,6 +79,7 @@
 #include "WasmCapabilities.h"
 #include <bmalloc/BPlatform.h>
 #include <unicode/uversion.h>
+#include <wtf/ThreadSpecific.h>
 #include <wtf/ApproximateTime.h>
 #include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
@@ -2155,6 +2156,11 @@ static JSC_DECLARE_HOST_FUNCTION(functionBaselineJITTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionNoInline);
 static JSC_DECLARE_HOST_FUNCTION(functionTriggerMemoryPressure);
 static JSC_DECLARE_HOST_FUNCTION(functionGC);
+static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationAfter);
+static JSC_DECLARE_HOST_FUNCTION(functionTerminationDeadlineDidFire);
+static JSC_DECLARE_HOST_FUNCTION(functionCancelTerminationDeadline);
+static JSC_DECLARE_HOST_FUNCTION(functionCancelTerminationRequest);
+static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionGCSweepAsynchronously);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSubspaceHashes);
@@ -2654,6 +2660,109 @@ JSC_DEFINE_HOST_FUNCTION(functionGC, (JSGlobalObject* globalObject, CallFrame*))
     DollarVMAssertScope assertScope;
     VMInspector::gc(&globalObject->vm());
     return JSValue::encode(jsUndefined());
+}
+
+// VM::requestTerminationAt() / TerminationDeadline::didFire() / cancel() / VM::cancelTerminationRequest().
+// Deadlines are referred to by the small integer requestTerminationAfter() returns.
+// Usage: const d = $vm.requestTerminationAfter(ms); ... $vm.terminationDeadlineDidFire(d); $vm.cancelTerminationDeadline(d); $vm.cancelTerminationRequest();
+static Vector<Ref<VM::TerminationDeadline>>& terminationDeadlinesForTesting()
+{
+    static LazyNeverDestroyed<ThreadSpecific<Vector<Ref<VM::TerminationDeadline>>>> deadlines;
+    static std::once_flag once;
+    std::call_once(once, [] { deadlines.construct(); });
+    return *deadlines.get();
+}
+
+static VM::TerminationDeadline* terminationDeadlineArgument(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned index = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto& deadlines = terminationDeadlinesForTesting();
+    if (index >= deadlines.size()) {
+        throwRangeError(globalObject, scope, "no such termination deadline"_s);
+        return nullptr;
+    }
+    return deadlines[index].ptr();
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationAfter, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double ms = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto& deadlines = terminationDeadlinesForTesting();
+    deadlines.append(vm.requestTerminationAt(MonotonicTime::now() + Seconds::fromMilliseconds(ms)));
+    return JSValue::encode(jsNumber(deadlines.size() - 1));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionTerminationDeadlineDidFire, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* deadline = terminationDeadlineArgument(globalObject, callFrame);
+    if (!deadline)
+        return { };
+    return JSValue::encode(jsBoolean(deadline->didFire()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCancelTerminationDeadline, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* deadline = terminationDeadlineArgument(globalObject, callFrame);
+    if (!deadline)
+        return { };
+    return JSValue::encode(jsBoolean(deadline->cancel()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCancelTerminationRequest, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsBoolean(globalObject->vm().cancelTerminationRequest()));
+}
+
+// What an embedder builds from the two (node:vm's `timeout`): call `fn` with a wall-clock limit of `ms`;
+// if the limit cut it short, withdraw the termination and throw a RangeError "timed out" in its place,
+// while an enclosing limited call whose own limit has passed by then stays cut short.
+// Usage: $vm.callWithTimeLimit(fn, ms)
+static thread_local Vector<VM::TerminationDeadline*>* s_activeTimeLimits;
+
+JSC_DEFINE_HOST_FUNCTION(functionCallWithTimeLimit, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = callFrame->argument(0);
+    double ms = callFrame->argument(1).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto callData = JSC::getCallData(function);
+    if (callData.type == CallData::Type::None)
+        return throwVMTypeError(globalObject, scope, "expected a function"_s);
+
+    if (!s_activeTimeLimits)
+        s_activeTimeLimits = new Vector<VM::TerminationDeadline*>;
+    Ref deadline = vm.requestTerminationAt(MonotonicTime::now() + Seconds::fromMilliseconds(ms));
+    s_activeTimeLimits->append(deadline.ptr());
+    JSValue result = call(globalObject, function, callData, jsUndefined(), ArgList());
+    s_activeTimeLimits->removeLast();
+    if (!deadline->cancel())
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+
+    // Our limit passed: the termination — requested, thrown, or not even handled yet — is ours to withdraw.
+    bool wasCutShort = vm.hasPendingTerminationException();
+    vm.cancelTerminationRequest();
+    // An enclosing limited call whose limit has also passed made the same request; make it again.
+    for (auto* enclosing : *s_activeTimeLimits) {
+        if (enclosing->didFire()) {
+            vm.notifyNeedTermination();
+            break;
+        }
+    }
+    if (!wasCutShort)
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    return throwVMRangeError(globalObject, scope, "timed out"_s);
 }
 
 // Runs a full GC synchronously.
@@ -4991,6 +5100,11 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, alwaysAllow, "triggerMemoryPressure"_s, functionTriggerMemoryPressure, 0);
     addFunction(vm, alwaysAllow, "gc"_s, functionGC, 0);
+    addFunction(vm, alwaysAllow, "requestTerminationAfter"_s, functionRequestTerminationAfter, 1);
+    addFunction(vm, alwaysAllow, "terminationDeadlineDidFire"_s, functionTerminationDeadlineDidFire, 1);
+    addFunction(vm, alwaysAllow, "cancelTerminationDeadline"_s, functionCancelTerminationDeadline, 1);
+    addFunction(vm, alwaysAllow, "cancelTerminationRequest"_s, functionCancelTerminationRequest, 0);
+    addFunction(vm, alwaysAllow, "callWithTimeLimit"_s, functionCallWithTimeLimit, 2);
     addFunction(vm, alwaysAllow, "gcSweepAsynchronously"_s, functionGCSweepAsynchronously, 0);
     addFunction(vm, alwaysAllow, "edenGC"_s, functionEdenGC, 0);
     addFunction(vm, alwaysAllow, "dumpSubspaceHashes"_s, functionDumpSubspaceHashes, 0);

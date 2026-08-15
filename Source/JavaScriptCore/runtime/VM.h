@@ -57,6 +57,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/LazyRef.h>
 #include <wtf/LazyUniqueRef.h>
 #include <wtf/Lock.h>
+#include <wtf/MonotonicTime.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/MallocPtr.h>
 #include <wtf/ObjectIdentifier.h>
 #include <wtf/ThreadSafeRefCountedWithSuppressingSaferCPPChecking.h>
@@ -1107,6 +1109,39 @@ public:
     CONCURRENT_SAFE void notifyNeedTermination() { traps().fireTrap(VMTraps::NeedTermination); }
     CONCURRENT_SAFE void notifyNeedWatchdogCheck() { traps().fireTrap(VMTraps::NeedWatchdogCheck); }
 
+    // A request that this VM terminate its current execution once a wall-clock deadline passes: an
+    // embedder's scoped time limit (node:vm's `timeout`), as opposed to the CPU-time, whole-VM Watchdog.
+    // When the deadline passes the request is made via notifyNeedTermination() from a timer thread,
+    // unless it was cancelled first; that is safe against this VM having been destroyed by then.
+    // requestTerminationAt() and cancel() are called on the VM's thread with the API lock held.
+    class TerminationDeadline : public ThreadSafeRefCounted<TerminationDeadline> {
+        WTF_MAKE_NONCOPYABLE(TerminationDeadline);
+    public:
+        MonotonicTime deadline() const { return m_deadline; }
+        // The deadline passed and termination was requested (whether or not it has been acted on yet).
+        bool didFire() const { return m_fired.load(std::memory_order_acquire); }
+        // It will not fire from now on. Returns whether it already had. Idempotent.
+        JS_EXPORT_PRIVATE bool cancel();
+        JS_EXPORT_PRIVATE ~TerminationDeadline();
+
+    private:
+        friend class VM;
+        TerminationDeadline(VM&, MonotonicTime);
+        const MonotonicTime m_deadline;
+        std::atomic<bool> m_fired { false };
+        class Set;
+        const Ref<Set> m_set;
+    };
+    JS_EXPORT_PRIVATE Ref<TerminationDeadline> requestTerminationAt(MonotonicTime);
+
+    // Withdraws a termination the embedder requested (notifyNeedTermination(), or a TerminationDeadline
+    // that fired) and no longer wants honoured — the time-limited scope is over — in whichever form it
+    // has reached by now: the not-yet-handled trap, the termination-request flag, and the
+    // TerminationException if it is the pending exception. What ran under the request stays cut short;
+    // what runs next is unaffected. API lock held, not inside a DeferTermination scope. Returns whether
+    // there was anything to withdraw.
+    JS_EXPORT_PRIVATE bool cancelTerminationRequest();
+
     CONCURRENT_SAFE void requestStop()
     {
         requestEntryScopeService(ConcurrentEntryScopeService::NeedStopTheWorld); // FIXME rdar://161576886
@@ -1291,6 +1326,7 @@ private:
     unsigned m_controlFlowProfilerEnabledCount { 0 };
     MallocPtr<EncodedJSValue, VMMalloc> m_exceptionFuzzBuffer;
     LazyRef<VM, Watchdog> m_watchdog;
+    RefPtr<TerminationDeadline::Set> m_terminationDeadlines;
     LazyUniqueRef<VM, HeapProfiler> m_heapProfiler;
     LazyUniqueRef<VM, AdaptiveStringSearcherTables> m_stringSearcherTables;
 #if ENABLE(SAMPLING_PROFILER)

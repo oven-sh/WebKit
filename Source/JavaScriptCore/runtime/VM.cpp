@@ -145,6 +145,7 @@
 #include "VMInlines.h"
 #include "VMManager.h"
 #include "VMTrapsInlines.h"
+#include <wtf/WorkQueue.h>
 #include "VariableEnvironment.h"
 #include "WaiterListManager.h"
 #include "WasmDebugServerUtilities.h"
@@ -596,6 +597,96 @@ void VM::queueMicrotask(QueuedTask&& task)
 }
 #endif
 
+// The VM's pending TerminationDeadlines, earliest first, and the timer that serves them: at most one
+// WorkQueue timer is outstanding for the earliest deadline (plus a superseded one after an earlier
+// deadline is added), the shape JSC's Watchdog uses, so cancelled deadlines do not pile up as timers.
+class VM::TerminationDeadline::Set final : public ThreadSafeRefCounted<Set> {
+public:
+    static Ref<Set> create(VM& vm) { return adoptRef(*new Set(vm)); }
+
+    void add(Ref<TerminationDeadline>&& deadline)
+    {
+        Locker locker { m_lock };
+        ASSERT(m_vm);
+        size_t index = 0;
+        while (index < m_deadlines.size() && m_deadlines[index]->m_deadline <= deadline->m_deadline)
+            ++index;
+        m_deadlines.insert(index, WTF::move(deadline));
+        armTimerIfNeeded();
+    }
+
+    bool remove(TerminationDeadline& deadline)
+    {
+        Locker locker { m_lock };
+        m_deadlines.removeFirstMatching([&](auto& d) { return d.ptr() == &deadline; });
+        return deadline.didFire();
+    }
+
+    static void vmIsBeingDestroyed(Set& set)
+    {
+        Locker locker { set.m_lock };
+        set.m_vm = nullptr;
+        set.m_deadlines.clear();
+    }
+
+private:
+    explicit Set(VM& vm)
+        : m_vm(&vm)
+    {
+    }
+
+    void armTimerIfNeeded() WTF_REQUIRES_LOCK(m_lock)
+    {
+        if (m_deadlines.isEmpty())
+            return;
+        MonotonicTime earliest = m_deadlines.first()->m_deadline;
+        if (m_timerArmedFor && *m_timerArmedFor <= earliest)
+            return;
+        m_timerArmedFor = earliest;
+        VMTraps::queue().dispatchAfter(std::max(earliest - MonotonicTime::now(), 0_s), [protectedThis = Ref { *this }, earliest] {
+            protectedThis->timerFired(earliest);
+        });
+    }
+
+    void timerFired(MonotonicTime armedFor)
+    {
+        Locker locker { m_lock };
+        if (m_timerArmedFor == armedFor)
+            m_timerArmedFor = std::nullopt;
+        if (!m_vm)
+            return;
+        MonotonicTime now = MonotonicTime::now();
+        bool requested = false;
+        while (!m_deadlines.isEmpty() && m_deadlines.first()->m_deadline <= now) {
+            m_deadlines.first()->m_fired.store(true, std::memory_order_release);
+            m_deadlines.removeAt(0);
+            requested = true;
+        }
+        if (requested)
+            m_vm->notifyNeedTermination();
+        armTimerIfNeeded();
+    }
+
+    Lock m_lock;
+    VM* m_vm WTF_GUARDED_BY_LOCK(m_lock);
+    Vector<Ref<TerminationDeadline>, 2> m_deadlines WTF_GUARDED_BY_LOCK(m_lock);
+    std::optional<MonotonicTime> m_timerArmedFor WTF_GUARDED_BY_LOCK(m_lock);
+};
+
+VM::TerminationDeadline::TerminationDeadline(VM& vm, MonotonicTime deadline)
+    : m_deadline(deadline)
+    , m_set(*vm.m_terminationDeadlines)
+{
+}
+
+VM::TerminationDeadline::~TerminationDeadline() = default;
+
+bool VM::TerminationDeadline::cancel()
+{
+    return m_set->remove(*this);
+}
+
+
 VM::~VM()
 {
     // Remove from VMManager before marking as no longer in service or cancelling traps,
@@ -615,6 +706,8 @@ VM::~VM()
 #endif
     if (RefPtr watchdog = this->watchdog(); watchdog) [[unlikely]]
         watchdog->willDestroyVM(this);
+    if (m_terminationDeadlines) [[unlikely]]
+        TerminationDeadline::Set::vmIsBeingDestroyed(*std::exchange(m_terminationDeadlines, nullptr));
     traps().willDestroyVM();
     m_isInService = false;
     WTF::storeStoreFence();
@@ -1093,6 +1186,34 @@ void VM::setHasTerminationRequest()
 {
     m_hasTerminationRequest = true;
     requestEntryScopeService(ConcurrentEntryScopeService::ResetTerminationRequest);
+}
+
+Ref<VM::TerminationDeadline> VM::requestTerminationAt(MonotonicTime deadline)
+{
+    ASSERT(currentThreadIsHoldingAPILock());
+    // Requested from another thread later on: the exception object it needs must exist by then.
+    ensureTerminationException();
+    if (!m_terminationDeadlines)
+        m_terminationDeadlines = TerminationDeadline::Set::create(*this);
+    Ref request = adoptRef(*new TerminationDeadline(*this, deadline));
+    m_terminationDeadlines->add(request.copyRef());
+    return request;
+}
+
+bool VM::cancelTerminationRequest()
+{
+    ASSERT(currentThreadIsHoldingAPILock());
+    ASSERT(!traps().isDeferringTermination());
+    bool withdrew = traps().clearTrap(VMTraps::NeedTermination);
+    if (hasPendingTerminationException()) {
+        clearException();
+        withdrew = true;
+    }
+    if (hasTerminationRequest()) {
+        clearHasTerminationRequest();
+        withdrew = true;
+    }
+    return withdrew;
 }
 
 void VM::setException(Exception* exception)
