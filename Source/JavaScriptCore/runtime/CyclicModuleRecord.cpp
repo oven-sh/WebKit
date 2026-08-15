@@ -481,6 +481,12 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
         ASSERT(module->status() == Status::Evaluated);
         // 9.c. Assert: module.[[EvaluationError]] and result are the same Completion Record.
         ASSERT(module->evaluationError() == exception->value());
+        // A TerminationException is not an evaluation result to hand to the promise: it propagates. It is
+        // still pending on the scope — unless a DeferTerminationForAWhile since step 9 (a collection during
+        // the stores above) stashed it to re-fire at the next trap check, in which case the scope is empty
+        // and rejectWithCaughtException would find nothing to reject with.
+        if (vm.isTerminationException(exception)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, capability);
         // 9.d. Perform ! Call(capability.[[Reject]], undefined, « result.[[Value]] »).
         capability->rejectWithCaughtException(vm, scope);
     // 10. Else,
@@ -518,6 +524,8 @@ void CyclicModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capabi
         JSValue result = wasmModule->evaluate(globalObject);
         if (capability) {
             if (Exception* exception = scope.exception()) {
+                if (vm.isTerminationException(exception)) [[unlikely]]
+                    return; // propagates; see evaluate() step 9
                 JSModuleLoader::attachErrorInfo(globalObject, exception, wasmModule, wasmModule->moduleKey(), ScriptFetchParameters::WebAssembly, JSModuleLoader::ModuleFailure::Kind::Evaluation);
                 capability->rejectWithCaughtException(vm, scope);
             } else
