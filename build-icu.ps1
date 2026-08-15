@@ -76,7 +76,7 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
     # contains source/) exactly like the Dockerfiles' `patch -p1`. They are applied
     # together with the extraction, so like an ICU version bump they need a fresh
     # $OutputDir to take effect. (The patched behaviour itself is checked by
-    # icu/rbbi-clone-allocation-failure-check.cpp in ../Dockerfile; the source is
+    # icu/rbbi-clone-allocation-failure-check.cpp in ./Dockerfile; the source is
     # the same here.)
     #
     # udata-decompress-hook.patch must NOT be added to this list: it is only useful
