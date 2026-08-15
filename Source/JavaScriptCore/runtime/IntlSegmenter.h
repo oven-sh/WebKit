@@ -33,6 +33,12 @@ namespace JSC {
 
 using UBreakIteratorDeleter = ICUDeleter<ubrk_close>;
 
+// Measured with ICU 78. ubrk_open() allocates the iterator, its caches and a private copy of the rule source
+// (4.5 KB for grapheme, 5 KB for sentence, 7 KB for word). A clone shares the rules with the iterator it was
+// cloned from and allocates about 1.5 KB.
+inline constexpr size_t estimatedUBreakIteratorSize = 5000;
+inline constexpr size_t estimatedClonedUBreakIteratorSize = 1500;
+
 class IntlSegmenter final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -61,6 +67,9 @@ public:
 
     JSValue segment(JSGlobalObject*, JSValue) const;
     JSObject* resolvedOptions(JSGlobalObject*) const;
+
+    DECLARE_VISIT_CHILDREN;
+    static size_t estimatedSize(JSCell*, VM&);
 
 private:
     IntlSegmenter(VM&, Structure*);

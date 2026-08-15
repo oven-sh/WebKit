@@ -54,6 +54,26 @@ IntlSegmenter::IntlSegmenter(VM& vm, Structure* structure)
 {
 }
 
+template<typename Visitor>
+void IntlSegmenter::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<IntlSegmenter>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    Base::visitChildren(thisObject, visitor);
+
+    if (thisObject->m_segmenter)
+        visitor.reportExtraMemoryVisited(estimatedUBreakIteratorSize);
+}
+
+DEFINE_VISIT_CHILDREN(IntlSegmenter);
+
+size_t IntlSegmenter::estimatedSize(JSCell* cell, VM& vm)
+{
+    auto* thisObject = uncheckedDowncast<IntlSegmenter>(cell);
+    return Base::estimatedSize(cell, vm) + (thisObject->m_segmenter ? estimatedUBreakIteratorSize : 0);
+}
+
 // https://tc39.es/proposal-intl-segmenter/#sec-intl.segmenter
 void IntlSegmenter::initializeSegmenter(JSGlobalObject* globalObject, JSValue locales, JSValue optionsValue)
 {
@@ -106,6 +126,7 @@ void IntlSegmenter::initializeSegmenter(JSGlobalObject* globalObject, JSValue lo
         throwTypeError(globalObject, scope, "failed to initialize Segmenter"_s);
         return;
     }
+    vm.heap.reportExtraMemoryAllocated(this, estimatedUBreakIteratorSize);
 }
 
 // https://tc39.es/proposal-intl-segmenter/#sec-intl.segmenter.prototype.segment
@@ -124,7 +145,7 @@ JSValue IntlSegmenter::segment(JSGlobalObject* globalObject, JSValue stringValue
         return { };
     }
 
-    auto upconvertedCharacters = Box<Vector<char16_t>>::create(expectedCharacters.value());
+    auto upconvertedCharacters = Box<Vector<char16_t>>::create(WTF::move(expectedCharacters.value()));
 
     UErrorCode status = U_ZERO_ERROR;
     auto segmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(cloneUBreakIterator(m_segmenter.get(), &status));

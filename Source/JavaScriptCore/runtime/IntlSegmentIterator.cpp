@@ -56,15 +56,29 @@ IntlSegmentIterator::IntlSegmentIterator(VM& vm, Structure* structure, std::uniq
 {
 }
 
+// m_buffer is shared with, and accounted for by, the IntlSegments this iterator was created from; only the cloned break iterator is new.
+void IntlSegmentIterator::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+    vm.heap.reportExtraMemoryAllocated(this, estimatedClonedUBreakIteratorSize);
+}
+
 template<typename Visitor>
 void IntlSegmentIterator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<IntlSegmentIterator>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_string);
+    visitor.reportExtraMemoryVisited(estimatedClonedUBreakIteratorSize);
 }
 
 DEFINE_VISIT_CHILDREN(IntlSegmentIterator);
+
+size_t IntlSegmentIterator::estimatedSize(JSCell* cell, VM& vm)
+{
+    return Base::estimatedSize(cell, vm) + estimatedClonedUBreakIteratorSize;
+}
 
 JSObject* IntlSegmentIterator::next(JSGlobalObject* globalObject)
 {
