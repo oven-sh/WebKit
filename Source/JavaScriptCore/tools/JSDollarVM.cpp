@@ -2255,6 +2255,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionICUVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUMinorVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUHeaderVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionSetHostTimeZone);
+static JSC_DECLARE_HOST_FUNCTION(functionOverrideDateNow);
 static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionAsanEnabled);
@@ -4249,6 +4250,24 @@ JSC_DEFINE_HOST_FUNCTION(functionSetHostTimeZone, (JSGlobalObject* globalObject,
     return JSValue::encode(jsBoolean(WTF::setHostTimeZoneForTesting(tz)));
 }
 
+// Usage: $vm.overrideDateNow(819331200000)
+// Pins the current time this global object reports (Date.now(), new Date(), Date(), Intl,
+// Temporal.Now) to the given epoch milliseconds, the way an embedder's setSystemTime() does
+// through JSGlobalObject::overridenDateNow. $vm.overrideDateNow() (or NaN) goes back to the
+// real clock.
+JSC_DEFINE_HOST_FUNCTION(functionOverrideDateNow, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    double epochMilliseconds = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    globalObject->overridenDateNow = epochMilliseconds;
+    return JSValue::encode(jsUndefined());
+}
+
 // Returns true if Debug ASSERTs are enabled.
 // Usage: $vm.assertEnabled()
 JSC_DEFINE_HOST_FUNCTION(functionAssertEnabled, (JSGlobalObject*, CallFrame*))
@@ -5190,6 +5209,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "icuMinorVersion"_s, functionICUMinorVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuHeaderVersion"_s, functionICUHeaderVersion, 0);
     addFunction(vm, alwaysAllow, "setHostTimeZone"_s, functionSetHostTimeZone, 1);
+    addFunction(vm, alwaysAllow, "overrideDateNow"_s, functionOverrideDateNow, 1);
 
     addFunction(vm, alwaysAllow, "assertEnabled"_s, functionAssertEnabled, 0);
     addFunction(vm, alwaysAllow, "securityAssertEnabled"_s, functionSecurityAssertEnabled, 0);
