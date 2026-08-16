@@ -145,8 +145,9 @@ JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject) const
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue error = m_error.get()) {
         if (m_status == Status::FetchFailed) {
+            // See JSModuleLoader::hostLoadImportedModule: only host-marked fetch failures are copied.
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(error))
-                RELEASE_AND_RETURN(scope, JSModuleLoader::duplicateError(globalObject, errorInstance));
+                RELEASE_AND_RETURN(scope, JSModuleLoader::maybeDuplicateFetchError(globalObject, errorInstance));
         }
         RELEASE_AND_RETURN(scope, error);
     }

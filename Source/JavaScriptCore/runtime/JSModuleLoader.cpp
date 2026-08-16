@@ -695,7 +695,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         // To avoid a race condition, instantiation errors need to be checked later, not here.
         if (JSValue fetchError = mapEntry->fetchError()) {
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(fetchError)) {
-                fetchError = JSModuleLoader::duplicateError(globalObject, errorInstance);
+                // Like moduleGraphLoadingError and moduleLoadTopRejected, only copy the errors the host marked as
+                // fetch failures (the WPT requirement duplicateError exists for). Anything else the host rejected
+                // with is replayed as-is: duplicateError keeps only the type and message, which drops own properties
+                // such as AggregateError's errors.
+                fetchError = JSModuleLoader::maybeDuplicateFetchError(globalObject, errorInstance);
                 RETURN_IF_EXCEPTION(scope, nullptr);
             }
 
