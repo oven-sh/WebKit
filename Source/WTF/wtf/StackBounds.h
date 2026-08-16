@@ -114,6 +114,12 @@ public:
         return StackBounds(origin, m_bound);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Bun computes the bounds once per thread (Bun__StackCheck__initialize) for threads that are not
+    // WTF threads, which is the once-per-thread use currentThreadStackBounds() is meant for.
+    static StackBounds currentThreadStackBoundsForEmbedder() { return currentThreadStackBounds(); }
+#endif
+
 private:
     StackBounds(void* origin, void* end)
         : m_origin(origin)
