@@ -1643,7 +1643,14 @@ class CachedStringSourceProvider : public CachedSourceProviderShape<StringSource
     using Base = CachedSourceProviderShape<StringSourceProvider, CachedStringSourceProvider>;
 
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    // Takes the base type for the same reason decode() returns it: Bun's runtime
+    // provider is a SourceProvider sibling of StringSourceProvider, and only
+    // base-class API is used below.
+    void encode(Encoder& encoder, const SourceProvider& sourceProvider)
+#else
     void encode(Encoder& encoder, const StringSourceProvider& sourceProvider)
+#endif
     {
         Base::encode(encoder, sourceProvider);
 #if USE(BUN_JSC_ADDITIONS)
@@ -1744,7 +1751,12 @@ public:
         switch (m_sourceType) {
         case SourceProviderSourceType::Program:
         case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule:
+            this->allocate<CachedStringSourceProvider>(encoder)->encode(encoder, sourceProvider);
+#else
             this->allocate<CachedStringSourceProvider>(encoder)->encode(encoder, reinterpret_cast<const StringSourceProvider&>(sourceProvider));
+#endif
             break;
 #if ENABLE(WEBASSEMBLY)
         case SourceProviderSourceType::WebAssembly:
@@ -1761,6 +1773,9 @@ public:
         switch (m_sourceType) {
         case SourceProviderSourceType::Program:
         case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule:
+#endif
             return this->buffer<CachedStringSourceProvider>()->decode(decoder, m_sourceType);
 #if ENABLE(WEBASSEMBLY)
         case SourceProviderSourceType::WebAssembly:

@@ -132,6 +132,7 @@
 #include "SubspaceInlines.h"
 #include "SymbolInlines.h"
 #include "SymbolTableInlines.h"
+#include "TerminationDeadline.h"
 #include "TestRunnerUtils.h"
 #include "ThunkGenerators.h"
 #include "TypeProfiler.h"
@@ -615,6 +616,8 @@ VM::~VM()
 #endif
     if (RefPtr watchdog = this->watchdog(); watchdog) [[unlikely]]
         watchdog->willDestroyVM(this);
+    if (RefPtr deadlines = std::exchange(m_terminationDeadlines, nullptr)) [[unlikely]]
+        deadlines->willDestroyVM();
     traps().willDestroyVM();
     m_isInService = false;
     WTF::storeStoreFence();
@@ -1044,6 +1047,13 @@ void VM::deleteAllCode(DeleteAllCodeEffort effort)
         m_codeCache->clear();
         m_builtinExecutables->clear();
         m_regExpCache->deleteAllCode();
+        {
+            // The RegExp interpreter's backtracking pools past its first page are only a cache
+            // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
+            // compiler threads that interpret take this lock.
+            Locker locker { m_regExpAllocatorLock };
+            m_regExpAllocator.releaseRetainedPools();
+        }
         heap.deleteAllCodeBlocks(effort);
         heap.deleteAllUnlinkedCodeBlocks(effort);
         heap.reportAbandonedObjectGraph();
@@ -1086,6 +1096,35 @@ void VM::setHasTerminationRequest()
 {
     m_hasTerminationRequest = true;
     requestEntryScopeService(ConcurrentEntryScopeService::ResetTerminationRequest);
+}
+
+Ref<TerminationDeadline> VM::addTerminationDeadline(MonotonicTime deadline)
+{
+    ASSERT(currentThreadIsHoldingAPILock());
+    ASSERT(!m_executionForbiddenOnTermination);
+    RELEASE_ASSERT(deadline == deadline); // not NaN
+    // throwTerminationException() will need it, on a request made from another thread by then.
+    ensureTerminationException();
+    if (!m_terminationDeadlines)
+        m_terminationDeadlines = TerminationDeadlineSet::create(*this);
+    return m_terminationDeadlines->add(deadline);
+}
+
+bool VM::cancelTermination()
+{
+    ASSERT(currentThreadIsHoldingAPILock());
+    ASSERT(!traps().isDeferringTermination());
+    ASSERT(!m_executionForbiddenOnTermination);
+    bool wasPending = traps().clearTrap(VMTraps::NeedTermination);
+    if (hasPendingTerminationException()) {
+        clearException();
+        wasPending = true;
+    }
+    if (hasTerminationRequest()) {
+        clearHasTerminationRequest();
+        wasPending = true;
+    }
+    return wasPending;
 }
 
 void VM::setException(Exception* exception)

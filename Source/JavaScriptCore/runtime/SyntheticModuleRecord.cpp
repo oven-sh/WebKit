@@ -73,6 +73,9 @@ void SyntheticModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     SyntheticModuleRecord* thisObject = uncheckedDowncast<SyntheticModuleRecord>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_lazyExportsSource);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(SyntheticModuleRecord);
@@ -87,7 +90,16 @@ JSValue SyntheticModuleRecord::evaluate(JSGlobalObject*)
     return jsUndefined();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues)
+{
+    return tryCreateWithExportNamesAndValues(globalObject, moduleKey, exportNames, exportValues, nullptr);
+}
+
+SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues, JSObject* lazyExportsSource)
+#else
+SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues)
+#endif
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -110,9 +122,21 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
     moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
     RETURN_IF_EXCEPTION(scope, { });
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasLazyExports = false;
+#endif
     for (unsigned index = 0; index < exportNames.size(); ++index) {
         PropertyName exportName = exportNames[index];
         JSValue exportValue = exportValues.at(index);
+#if USE(BUN_JSC_ADDITIONS)
+        if (!exportValue) {
+            // Lazy export: JSModuleEnvironment::create() above initialized the binding to the TDZ value, and it stays
+            // that way until materializeLazyExport() fills it in.
+            ASSERT(lazyExportsSource);
+            hasLazyExports = true;
+            continue;
+        }
+#endif
         constexpr bool shouldThrowReadOnlyError = false;
         constexpr bool ignoreReadOnlyErrors = true;
         bool putResult = false;
@@ -121,9 +145,69 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
         ASSERT(putResult);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (hasLazyExports)
+        moduleRecord->m_lazyExportsSource.set(vm, moduleRecord, lazyExportsSource);
+#endif
+
     return moduleRecord;
 
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, PropertyName localName)
+{
+    JSObject* source = m_lazyExportsSource.get();
+    if (!source)
+        return;
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // *namespace* lives in the same symbol table but is not an export; getModuleNamespace() owns that binding.
+    if (localName == vm.propertyNames->starNamespacePrivateName)
+        return;
+
+    JSModuleEnvironment* environment = moduleEnvironment();
+    SymbolTable* symbolTable = environment->symbolTable();
+    ScopeOffset scopeOffset;
+    {
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        auto iter = symbolTable->find(locker, localName.uid());
+        if (iter == symbolTable->end(locker))
+            return;
+        scopeOffset = iter->value.scopeOffset();
+    }
+
+    // Either the value was provided up front, an earlier call materialized it, or something wrote the binding
+    // directly (JSModuleNamespaceObject::overrideExportValue). In all of those cases the binding is what it should be.
+    if (environment->variableAt(scopeOffset).get())
+        return;
+
+    JSValue value = source->get(globalObject, localName);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    // The getter may have re-entered and filled this binding itself. Whatever got there first is what any binding
+    // created in the meantime has observed, so keep it.
+    if (environment->variableAt(scopeOffset).get())
+        return;
+
+    constexpr bool shouldThrowReadOnlyError = false;
+    constexpr bool ignoreReadOnlyErrors = true;
+    bool putResult = false;
+    symbolTablePutTouchWatchpointSet(environment, globalObject, localName, value, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+    RETURN_IF_EXCEPTION(scope, void());
+    ASSERT(putResult);
+}
+
+void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, AbstractModuleRecord* moduleRecord, PropertyName localName)
+{
+    auto* syntheticModuleRecord = dynamicDowncast<SyntheticModuleRecord>(moduleRecord);
+    if (!syntheticModuleRecord || !syntheticModuleRecord->hasLazyExports()) [[likely]]
+        return;
+    syntheticModuleRecord->materializeLazyExport(globalObject, localName);
+}
+#endif
 
 SyntheticModuleRecord* SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(JSGlobalObject* globalObject, const Identifier& moduleKey, JSValue defaultExport)
 {

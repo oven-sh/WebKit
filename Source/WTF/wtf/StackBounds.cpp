@@ -42,6 +42,15 @@
 #include <unistd.h>
 #endif
 
+#if OS(FREEBSD)
+#include <link.h>
+#include <sys/auxv.h>
+#include <sys/procctl.h>
+#include <sys/resource.h>
+#include <sys/sysctl.h>
+#include <unistd.h>
+#endif
+
 #if OS(QNX)
 #include <sys/storage.h>
 #endif
@@ -171,6 +180,58 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         if (stackBounds.contains(oldestEnviron))
             stackBounds = { oldestEnviron, bound };
         return stackBounds;
+    }
+#elif OS(FREEBSD)
+    // libthr reports the main thread's stack as RLIMIT_STACK below its top, but when the executable
+    // carries a sized PT_GNU_STACK (ld -z stack-size) exec maps only trunc_page(p_memsz) for it,
+    // raising rlim_cur to that if it was smaller and leaving it alone if it was larger. The usable
+    // stack is therefore min(rlim_cur, trunc_page(p_memsz)) below the origin, less the kernel's guard
+    // pages at the bottom of the mapping; without this a binary linked with a stack size below the
+    // rlimit overruns its real stack before any check here fires.
+    if (pthread_main_np() == 1) {
+        size_t pageSize = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+        size_t reservation = 0;
+        auto narrow = [&](size_t size) {
+            if (size && (!reservation || size < reservation))
+                reservation = size;
+        };
+        // rtld keeps the main program at the head of its object list, so it is the first callback.
+        size_t gnuStackSize = 0;
+        dl_iterate_phdr([](dl_phdr_info* info, size_t, void* data) -> int {
+            for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+                if (info->dlpi_phdr[i].p_type == PT_GNU_STACK) {
+                    *static_cast<size_t*>(data) = info->dlpi_phdr[i].p_memsz;
+                    break;
+                }
+            }
+            return 1;
+        }, &gnuStackSize);
+        narrow(gnuStackSize & ~(pageSize - 1));
+        // rlim_cur as exec left it (immune to a later setrlimit raise past the mapping) and as it is now.
+        unsigned long execStackLimit = 0;
+        if (!elf_aux_info(AT_USRSTACKLIM, &execStackLimit, sizeof(execStackLimit)))
+            narrow(execStackLimit);
+        rlimit limit;
+        if (!getrlimit(RLIMIT_STACK, &limit) && limit.rlim_cur != RLIM_INFINITY)
+            narrow(limit.rlim_cur);
+
+        size_t guard = pageSize;
+        int guardPages = 0;
+        size_t guardPagesSize = sizeof(guardPages);
+        if (!sysctlbyname("security.bsd.stack_guard_page", &guardPages, &guardPagesSize, nullptr, 0))
+            guard = guardPages > 0 ? static_cast<size_t>(guardPages) * pageSize : 0;
+        int stackGap = 0;
+        if (!procctl(P_PID, getpid(), PROC_STACKGAP_STATUS, &stackGap) && (stackGap & PROC_STACKGAP_DISABLE))
+            guard = 0;
+
+        void* origin = ret.origin();
+        if (reservation > guard && reservation < reinterpret_cast<uintptr_t>(origin)) {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+            void* bound = static_cast<char*>(origin) - (reservation - guard);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            if (bound > ret.end())
+                return StackBounds { origin, bound };
+        }
     }
 #endif
     return ret;

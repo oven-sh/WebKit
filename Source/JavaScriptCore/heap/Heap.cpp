@@ -135,18 +135,6 @@
 
 namespace JSC {
 
-// NEVER_INLINE to prevent LTO from inlining this function, which can break
-// compiler barriers in MarkedBlock::isMarked on x86_64.
-NEVER_INLINE bool Heap::isMarked(const void* rawCell)
-{
-    ASSERT(!m_isMarkingForGCVerifier);
-    HeapCell* cell = std::bit_cast<HeapCell*>(rawCell);
-    if (cell->isPreciseAllocation())
-        return cell->preciseAllocation().isMarked();
-    MarkedBlock& block = cell->markedBlock();
-    return block.isMarked(m_objectSpace.markingVersion(), cell);
-}
-
 namespace HeapInternal {
 static constexpr bool verbose = false;
 static constexpr bool verboseStop = false;

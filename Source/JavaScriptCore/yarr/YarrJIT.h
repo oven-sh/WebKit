@@ -58,12 +58,12 @@ class YarrCodeBlock;
 enum class JITFailureReason : uint8_t {
     DecodeSurrogatePair,
     BackReference,
-    Lookbehind,
     ParenthesizedSubpattern,
     ParenthesisNestedTooDeep,
     ExecutableMemoryAllocationFailure,
     OffsetTooLarge,
     GeneratedCodeSizeTooLarge,
+    LookbehindLayoutMismatch,
 };
 
 class BoyerMooreFastCandidates {

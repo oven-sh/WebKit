@@ -44,6 +44,7 @@
 #include "JSFFICallback.h"
 #include "JSGlobalObject.h"
 #include "JSString.h"
+#include "MathCommon.h"
 #include "PureNaN.h"
 #include <bit>
 #include <cmath>
@@ -170,22 +171,27 @@ static bool writeIntegerSlot(JSGlobalObject* globalObject, Type type, JSValue va
     return true;
 }
 
+// Every branch stores the low 64 bits of the value's two's complement representation, which is the
+// same bit pattern for the signed and the unsigned types (ToBigInt64 and ToBigUint64 only differ in
+// how the callee reads it), so the type only matters for the error message.
 static bool writeInt64Slot(JSGlobalObject* globalObject, Type type, JSValue value, uint64_t& slotOut)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    bool isUnsigned = type == Type::Uint64 || type == Type::Uint64Fast;
     if (value.isInt32()) {
         slotOut = static_cast<uint64_t>(static_cast<int64_t>(value.asInt32()));
         return true;
     }
     if (value.isDouble()) {
-        slotOut = isUnsigned ? doubleToUInt64(value.asDouble()) : static_cast<uint64_t>(doubleToInt64(value.asDouble()));
+        // Modular like writeIntegerSlot's ToInt32, not doubleToInt64's hardware truncation: that has no
+        // representation for u64 values in [2^63, 2^64) and gives NaN and out-of-range values a
+        // different answer on x86-64 (INT64_MIN) than on arm64 (0 / saturated).
+        slotOut = static_cast<uint64_t>(toInt64(value.asDouble()));
         return true;
     }
     if (value.isBigInt()) {
-        slotOut = isUnsigned ? JSBigInt::toBigUInt64(value) : static_cast<uint64_t>(JSBigInt::toBigInt64(value));
+        slotOut = JSBigInt::toBigUInt64(value);
         return true;
     }
     return throwCannotConvert(globalObject, scope, type);
