@@ -1078,10 +1078,9 @@ void URLParser::copyASCIIStringUntil(const String& string, size_t length)
     if (string.is8Bit())
         appendToASCIIBuffer(string.span8().first(length));
     else {
-        for (auto character : string.span16().first(length)) {
-            ASSERT_WITH_SECURITY_IMPLICATION(isASCII(character));
-            appendToASCIIBuffer(character);
-        }
+        auto characters = string.span16().first(length);
+        ASSERT_WITH_SECURITY_IMPLICATION(charactersAreAllASCII(characters));
+        appendToASCIIBuffer(characters);
     }
 }
 
