@@ -1912,16 +1912,24 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                 auto* start = positionOf(c);
                 auto* p = findHostCharacterOfInterest(start, inputEnd);
                 uint16_t classes = 0;
-                for (; p != inputEnd; ++p) {
-                    uint16_t characterClass = scanClass(*p);
-                    classes |= characterClass;
-                    if (!(characterClass & HostStop)) [[likely]]
-                        continue;
-                    if (*p == '\\' && !m_urlIsSpecial) [[unlikely]] {
-                        classes |= NonSpecialHostNotPlain;
-                        continue;
+                if (m_urlIsSpecial) {
+                    if (p != inputEnd) {
+                        classes = scanClass(*p);
+                        if (!(classes & HostStop))
+                            p = findEndOfSpecialAuthority(p + 1, inputEnd, classes);
                     }
-                    break;
+                } else {
+                    for (; p != inputEnd; ++p) {
+                        uint16_t characterClass = scanClass(*p);
+                        classes |= characterClass;
+                        if (!(characterClass & HostStop)) [[likely]]
+                            continue;
+                        if (*p == '\\') [[unlikely]] {
+                            classes |= NonSpecialHostNotPlain;
+                            continue;
+                        }
+                        break;
+                    }
                 }
                 if (p != inputEnd && *p == '@') [[unlikely]] {
                     auto* lastAt = p;
@@ -2027,16 +2035,17 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                 auto* start = positionOf(c);
                 auto* p = findHostCharacterOfInterest(start, inputEnd);
                 uint16_t classes = 0;
-                for (; p != inputEnd; ++p) {
+                while (p != inputEnd) {
                     uint16_t characterClass = scanClass(*p);
                     classes |= characterClass;
-                    if (!(characterClass & HostStop)) [[likely]]
-                        continue;
-                    if (*p == '@' || (*p == '\\' && !m_urlIsSpecial)) [[unlikely]] {
+                    if (characterClass & HostStop) {
+                        if (*p != '@' && (*p != '\\' || m_urlIsSpecial))
+                            break;
                         classes |= HostNotPlain | NonSpecialHostNotPlain;
-                        continue;
                     }
-                    break;
+                    ++p;
+                    if (m_urlIsSpecial)
+                        p = findEndOfSpecialAuthority(p, inputEnd, classes);
                 }
                 bool hostIsPlain = p != start && (m_urlIsSpecial ? !(classes & HostNotPlain) && !lastLabelMayBeANumber(start, p) : !(classes & NonSpecialHostNotPlain));
                 if (hostIsPlain) [[likely]] {
