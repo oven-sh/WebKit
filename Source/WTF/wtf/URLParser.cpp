@@ -428,6 +428,29 @@ template<typename CharacterType> ALWAYS_INLINE static bool lastLabelMayBeANumber
         return false;
     return label != end && isASCIIDigit(*label);
 }
+
+// Four decimal pieces, each at most 255 and without leading zeros: an IPv4 address that serializes to exactly these characters.
+template<typename CharacterType> ALWAYS_INLINE static std::optional<uint32_t> parseCanonicalIPv4Address(const CharacterType* p, const CharacterType* end)
+{
+    uint32_t address = 0;
+    for (unsigned piece = 0; ; ++piece) {
+        if (p == end || !isASCIIDigit(*p))
+            return std::nullopt;
+        unsigned value = *p++ - '0';
+        if (value) {
+            while (p != end && isASCIIDigit(*p) && value <= 255)
+                value = value * 10 + *p++ - '0';
+            if (value > 255)
+                return std::nullopt;
+        }
+        address = address << 8 | value;
+        if (piece == 3)
+            return p == end ? std::optional<uint32_t>(address) : std::nullopt;
+        if (p == end || *p != '.')
+            return std::nullopt;
+        ++p;
+    }
+}
 static_assert(scanClassTable[0xFF] == (PathStop | QueryStop | FragmentStop | OpaquePathStop | HostNotPlain | HostPercentOrNonASCII | NonSpecialHostNotPlain | HostNotDomainCharacter));
 
 // Narrows 16 UTF-16 code units to bytes for classification. Code units that do not fit saturate to 0xFF (or to 0 on x86,
@@ -453,6 +476,81 @@ ALWAYS_INLINE static simde_uint8x16_t loadForClassification(const CharacterType*
         return narrowForClassification(SIMD::load(std::bit_cast<const uint16_t*>(p)), SIMD::load(std::bit_cast<const uint16_t*>(p + 8)));
 }
 
+#if (CPU(X86_64) && defined(__SSSE3__)) || CPU(ARM64)
+#define URL_PARSER_HAVE_TABLE_LOOKUP_CLASSIFIER 1
+// Classifies 16 bytes at once with two 16-entry table lookups (pshufb / tbl): a byte is a stop when
+// lowNibbleTable[b & 0xF] & highNibbleTable[b >> 4] is non-zero. High nibbles whose sixteen bytes have the same stop pattern
+// share a bit, so any set with at most eight distinct patterns fits; the patterns come straight from scanClassTable, so the
+// vector and scalar classifications cannot disagree.
+struct NibbleTables {
+    simde_uint8x16_t low;
+    simde_uint8x16_t high;
+    bool fits;
+};
+
+template<uint16_t stopClass, char... additionalStopCharacters>
+static consteval NibbleTables makeNibbleTables()
+{
+    auto isStop = [](unsigned byte) constexpr {
+        return (scanClassTable[byte] & stopClass) || ((byte == static_cast<uint8_t>(additionalStopCharacters)) || ...);
+    };
+    std::array<uint16_t, 16> patterns { };
+    for (unsigned highNibble = 0; highNibble < 16; ++highNibble) {
+        for (unsigned lowNibble = 0; lowNibble < 16; ++lowNibble) {
+            if (isStop(highNibble << 4 | lowNibble))
+                patterns[highNibble] |= 1 << lowNibble;
+        }
+    }
+    std::array<uint8_t, 16> low { };
+    std::array<uint8_t, 16> high { };
+    unsigned bitsUsed = 0;
+    for (unsigned highNibble = 0; highNibble < 16; ++highNibble) {
+        if (!patterns[highNibble] || high[highNibble])
+            continue;
+        if (bitsUsed == 8)
+            return { { }, { }, false };
+        uint8_t bit = 1 << bitsUsed++;
+        for (unsigned other = highNibble; other < 16; ++other) {
+            if (patterns[other] == patterns[highNibble])
+                high[other] |= bit;
+        }
+        for (unsigned lowNibble = 0; lowNibble < 16; ++lowNibble) {
+            if (patterns[highNibble] & (1 << lowNibble))
+                low[lowNibble] |= bit;
+        }
+    }
+    return { std::bit_cast<simde_uint8x16_t>(low), std::bit_cast<simde_uint8x16_t>(high), true };
+}
+
+// Non-zero (not necessarily 0xFF) in every lane that is a stop.
+template<uint16_t stopClass, char... additionalStopCharacters>
+ALWAYS_INLINE static simde_uint8x16_t classifyStops(simde_uint8x16_t input)
+{
+    static constexpr NibbleTables tables = makeNibbleTables<stopClass, additionalStopCharacters...>();
+    static_assert(tables.fits);
+#if CPU(X86_64)
+    __m128i bytes = simde_uint8x16_to_m128i(input);
+    __m128i lowNibbles = _mm_and_si128(bytes, _mm_set1_epi8(0xF));
+    __m128i highNibbles = _mm_and_si128(_mm_srli_epi16(bytes, 4), _mm_set1_epi8(0xF));
+    return simde_uint8x16_from_m128i(_mm_and_si128(_mm_shuffle_epi8(simde_uint8x16_to_m128i(tables.low), lowNibbles), _mm_shuffle_epi8(simde_uint8x16_to_m128i(tables.high), highNibbles)));
+#else
+    return simde_vandq_u8(simde_vqtbl1q_u8(tables.low, simde_vandq_u8(input, simde_vdupq_n_u8(0xF))), simde_vqtbl1q_u8(tables.high, simde_vshrq_n_u8(input, 4)));
+#endif
+}
+
+ALWAYS_INLINE static std::optional<uint8_t> findFirstNonZeroLane(simde_uint8x16_t lanes)
+{
+#if CPU(X86_64)
+    uint16_t zeroMask = _mm_movemask_epi8(_mm_cmpeq_epi8(simde_uint8x16_to_m128i(lanes), _mm_setzero_si128()));
+    if (zeroMask == 0xFFFF)
+        return std::nullopt;
+    return std::countr_zero(static_cast<uint16_t>(~zeroMask));
+#else
+    return SIMD::findFirstNonZeroIndex(simde_vtstq_u8(lanes, lanes));
+#endif
+}
+#endif
+
 template<uint16_t stopClass, char additionalStopCharacter = 0, typename CharacterType, typename VectorStop>
 ALWAYS_INLINE static const CharacterType* findStopCharacter(const CharacterType* begin, const CharacterType* end, const VectorStop& vectorStop)
 {
@@ -463,12 +561,20 @@ ALWAYS_INLINE static const CharacterType* findStopCharacter(const CharacterType*
     size_t length = end - begin;
     auto* cursor = begin;
     if (length >= stride) {
+        auto firstStop = [&](const CharacterType* p) ALWAYS_INLINE_LAMBDA {
+#if URL_PARSER_HAVE_TABLE_LOOKUP_CLASSIFIER
+            UNUSED_PARAM(vectorStop);
+            return findFirstNonZeroLane(classifyStops<stopClass, additionalStopCharacter>(loadBlock(p)));
+#else
+            return SIMD::findFirstNonZeroIndex(vectorStop(loadBlock(p)));
+#endif
+        };
         for (; cursor + stride <= end; cursor += stride) {
-            if (auto index = SIMD::findFirstNonZeroIndex(vectorStop(loadBlock(cursor))))
+            if (auto index = firstStop(cursor))
                 return cursor + *index;
         }
         if (cursor < end) {
-            if (auto index = SIMD::findFirstNonZeroIndex(vectorStop(loadBlock(end - stride))))
+            if (auto index = firstStop(end - stride))
                 return end - stride + *index;
         }
         return end;
@@ -501,7 +607,13 @@ ALWAYS_INLINE static const CharacterType* findPathRunEnd(const CharacterType* be
             auto slashes = SIMD::equal<'/'>(input);
             auto dotOrPercent = SIMD::equal<'.', '%'>(input);
             auto nextIsDotOrPercent = simde_vextq_u8(dotOrPercent, SIMD::splat8(0xFF), 1);
+#if URL_PARSER_HAVE_TABLE_LOOKUP_CLASSIFIER
+            // PathStop includes '/'; take slashes back out unless they may start a dot segment.
+            auto notStop = simde_vceqq_u8(classifyStops<PathStop>(input), SIMD::splat8(0));
+            auto stops = SIMD::bitOr(simde_vmvnq_u8(SIMD::bitOr(notStop, slashes)), SIMD::bitAnd(slashes, nextIsDotOrPercent));
+#else
             auto stops = SIMD::bitOr(controlSpaceOrNonASCII(input), SIMD::equal<'"', '#', '<', '>', '?', '\\', '^', '`', '{', '}'>(input), SIMD::bitAnd(slashes, nextIsDotOrPercent));
+#endif
             if (auto index = SIMD::findFirstNonZeroIndex(stops)) {
                 if (auto slash = SIMD::findLastNonZeroIndex(SIMD::bitAnd(slashes, SIMD::lessThan(laneIndices, SIMD::splat8(*index)))))
                     lastSlash = block + *slash;
@@ -956,6 +1068,24 @@ enum class Scheme {
     HTTPS,
     NonSpecial
 };
+
+static constexpr unsigned defaultPort(Scheme scheme)
+{
+    switch (scheme) {
+    case Scheme::WS:
+    case Scheme::HTTP:
+        return 80;
+    case Scheme::WSS:
+    case Scheme::HTTPS:
+        return 443;
+    case Scheme::FTP:
+        return 21;
+    case Scheme::File:
+    case Scheme::NonSpecial:
+        break;
+    }
+    return std::numeric_limits<unsigned>::max();
+}
 
 template<typename CharactersType>
 ALWAYS_INLINE static Scheme schemeType(const CharactersType& scheme, size_t length)
@@ -1564,26 +1694,44 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         auto* hostStart = p;
         uint16_t classes = 0;
         p = findHostCharacterOfInterest(p, inputEnd);
-        if (p != inputEnd) {
-            classes = scanClass(*p);
-            if (!(classes & HostStop))
-                p = findEndOfSpecialAuthority(p + 1, inputEnd, classes);
+        auto* hostEnd = p;
+        bool hasPort = false;
+        if (p != inputEnd && *p == ':' && p != hostStart) {
+            // A decimal, non-default port with no leading zero after a plain host or canonical IPv4 address is copied as is.
+            auto* q = p + 1;
+            unsigned port = 0;
+            while (q != inputEnd && q - p <= 5 && isASCIIDigit(*q))
+                port = port * 10 + *q++ - '0';
+            auto digits = q - p - 1;
+            hasPort = digits && (q == inputEnd || *q == '/' || *q == '?' || *q == '#')
+                && (digits == 1 || p[1] != '0') && port <= std::numeric_limits<uint16_t>::max() && port != defaultPort(urlSchemeType)
+                && (!lastLabelMayBeANumber(hostStart, hostEnd) || parseCanonicalIPv4Address(hostStart, hostEnd));
+            if (hasPort)
+                p = q;
         }
-        if ((p != inputEnd && *p == '@') || (classes & HostNotPlain) || lastLabelMayBeANumber(hostStart, p)) [[unlikely]] {
-            if (classes & HostPercentOrNonASCII)
-                m_hostHasPercentOrNonASCII = true;
-            state = State::AuthorityOrHost;
-            c = iteratorAt(p);
-            break;
+        if (!hasPort) {
+            if (p != inputEnd) {
+                classes = scanClass(*p);
+                if (!(classes & HostStop))
+                    p = findEndOfSpecialAuthority(p + 1, inputEnd, classes);
+            }
+            if ((p != inputEnd && *p == '@') || (classes & HostNotPlain) || (lastLabelMayBeANumber(hostStart, p) && !parseCanonicalIPv4Address(hostStart, p))) [[unlikely]] {
+                if (classes & HostPercentOrNonASCII)
+                    m_hostHasPercentOrNonASCII = true;
+                state = State::AuthorityOrHost;
+                c = iteratorAt(p);
+                break;
+            }
+            hostEnd = p;
         }
-        ASSERT(p != hostStart);
+        ASSERT(hostEnd != hostStart);
         m_url.m_userEnd = m_url.m_userStart;
         m_url.m_passwordEnd = m_url.m_userStart;
-        m_url.m_hostEnd = p - inputBegin;
-        m_url.m_portLength = 0;
+        m_url.m_hostEnd = hostEnd - inputBegin;
+        m_url.m_portLength = p - hostEnd;
         state = State::Path;
         if (p == inputEnd) {
-            // "scheme://host" -> "scheme://host/". Common enough to construct the result directly rather than through m_asciiBuffer.
+            // "scheme://host[:port]" -> "scheme://host[:port]/". Common enough to construct the result directly rather than through m_asciiBuffer.
             m_didSeeSyntaxViolation = true;
             size_t length = p - inputBegin;
             std::span<Latin1Character> buffer;
@@ -2929,31 +3077,8 @@ Expected<URLParser::IPv4Address, URLParser::IPv4ParsingError> URLParser::parseIP
     auto* p = host.data();
     auto* end = p + host.size();
 
-    // Four decimal pieces without leading zeros need none of the bookkeeping below.
-    {
-        IPv4Address address = 0;
-        auto* q = p;
-        for (unsigned piece = 0; ; ++piece) {
-            if (q == end || !isASCIIDigit(*q))
-                break;
-            unsigned value = *q++ - '0';
-            if (value) {
-                while (q != end && isASCIIDigit(*q) && value <= 255)
-                    value = value * 10 + *q++ - '0';
-                if (value > 255)
-                    break;
-            }
-            address = address << 8 | value;
-            if (piece == 3) {
-                if (q == end)
-                    return address;
-                break;
-            }
-            if (q == end || *q != '.')
-                break;
-            ++q;
-        }
-    }
+    if (auto address = parseCanonicalIPv4Address(p, end))
+        return *address;
 
     std::array<uint32_t, 4> pieces;
     unsigned pieceCount = 0;
