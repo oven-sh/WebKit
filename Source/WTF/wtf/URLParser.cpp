@@ -351,6 +351,7 @@ enum ScanClass : uint16_t {
     HostNotPlain = 1 << 6, // Authority scan: anything other than [a-z0-9-._~!$&'()*+,;=] etc; i.e. forbidden-domain, upper case, '%', '[', ':', non-ASCII.
     HostPercentOrNonASCII = 1 << 7,
     NonSpecialHostNotPlain = 1 << 8, // Authority scan of a non-special URL: forbidden host code point, ':', '%', C0 control or non-ASCII.
+    HostNotDomainCharacter = 1 << 9, // HostNotPlain other than ASCII upper case: not even a domain character after lowercasing.
 };
 
 static constexpr std::array<uint16_t, 256> scanClassTable = [] {
@@ -369,7 +370,9 @@ static constexpr std::array<uint16_t, 256> scanClassTable = [] {
             bits |= OpaquePathStop;
         if (c == '/' || c == '\\' || c == '?' || c == '#' || c == '@')
             bits |= HostStop;
-        if (c > 0x7E || c <= 0x20 || (characterClassTable[c] & ForbiddenDomain) || isASCIIUpper(c) || c == '[' || c == ']' || c == ':')
+        if (c > 0x7E || c <= 0x20 || (characterClassTable[c] & ForbiddenDomain) || c == '[' || c == ']' || c == ':')
+            bits |= HostNotPlain | HostNotDomainCharacter;
+        if (isASCIIUpper(c))
             bits |= HostNotPlain;
         if (c > 0x7F || c == '%')
             bits |= HostPercentOrNonASCII;
@@ -377,7 +380,7 @@ static constexpr std::array<uint16_t, 256> scanClassTable = [] {
             bits |= NonSpecialHostNotPlain;
         // The authority scanners accumulate the class of the stop character too, so keep it from looking like a host character class.
         if (bits & HostStop)
-            bits &= ~(HostNotPlain | HostPercentOrNonASCII | NonSpecialHostNotPlain);
+            bits &= ~(HostNotPlain | HostPercentOrNonASCII | NonSpecialHostNotPlain | HostNotDomainCharacter);
         table[c] = bits;
     }
     return table;
@@ -402,7 +405,7 @@ template<typename CharacterType> ALWAYS_INLINE static uint16_t scanClass(Charact
     // Every non-Latin-1 character has the same classes as U+00FF.
     return character <= 0xFF ? scanClassTable[character] : scanClassTable[0xFF];
 }
-static_assert(scanClassTable[0xFF] == (PathStop | QueryStop | FragmentStop | OpaquePathStop | HostNotPlain | HostPercentOrNonASCII | NonSpecialHostNotPlain));
+static_assert(scanClassTable[0xFF] == (PathStop | QueryStop | FragmentStop | OpaquePathStop | HostNotPlain | HostPercentOrNonASCII | NonSpecialHostNotPlain | HostNotDomainCharacter));
 
 // Finds the first character in [begin, end) whose scanClass() has any of the stopClass bits, 16 bytes at a time.
 // vectorStop computes, for a vector of code units, a mask of the lanes that are stop characters.
@@ -3322,23 +3325,25 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         auto* hostBegin = iterator.position();
         auto* end = hostBegin + iterator.remainingCodeUnits().size();
         auto* hostEnd = hostBegin;
-        bool hasUppercase = false;
         bool hasTabOrNewline = false;
+        uint16_t domainCharacterClasses = 0;
         for (; hostEnd != end; ++hostEnd) {
             auto character = *hostEnd;
-            if (!(scanClass(character) & (HostNotPlain | HostStop))) [[likely]]
+            auto characterClass = scanClass(character);
+            if (!(characterClass & (HostNotDomainCharacter | HostStop))) [[likely]] {
+                domainCharacterClasses |= characterClass;
                 continue;
+            }
             if (character == ':')
                 break;
             if (isTabOrNewline(character)) [[unlikely]]
                 hasTabOrNewline = true;
-            else if (isASCIIUpper(character))
-                hasUppercase = true;
             else {
                 ASSERT(isForbiddenDomainCodePoint(character));
                 return HostParsingResult::InvalidHost;
             }
         }
+        bool hasUppercase = domainCharacterClasses & HostNotPlain;
         iterator = CodePointIterator<CharacterType>(std::span(hostEnd, end));
 
         // parseIPv4Host() can only return something other than NotIPv4, and dnsNameEndsInNumber() can only be true,
@@ -3452,11 +3457,9 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         asciiDomain = domainToASCII(domain, hostBegin);
     } else {
         Latin1Buffer utf8Encoded;
-        if constexpr (std::is_same_v<CharacterType, Latin1Character>) {
-            if (!hasNonASCII && !hasTabOrNewline) [[likely]] {
-                utf8Encoded.append(host);
-                host = { };
-            }
+        if (!hasNonASCII && !hasTabOrNewline) [[likely]] {
+            utf8Encoded.append(host);
+            host = { };
         }
         for (auto codePoints = CodePointIterator<CharacterType>(host); !codePoints.atEnd(); ++codePoints) {
             if (isTabOrNewline(*codePoints)) [[unlikely]]
