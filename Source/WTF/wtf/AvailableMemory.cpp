@@ -123,10 +123,12 @@ struct LinuxMemory {
         if (numBytes <= 0)
             return 0;
 
+        // The resident set size is the second of statm's seven fields; the five after it are still in the
+        // buffer, so the parse must stop at the end of the number rather than require the end of the input.
         auto parsingBuffer = spanReinterpretCast<const Latin1Character>(unsafeMakeSpan(statmBuffer.data(), numBytes));
         skipUntil<isASCIIWhitespace>(parsingBuffer);
         if (parsingBuffer.size() && isASCIIWhitespace(parsingBuffer[0])) {
-            auto result = checkedProduct<size_t>(pageSize, parseInteger<size_t>(parsingBuffer).value_or(0));
+            auto result = checkedProduct<size_t>(pageSize, parseIntegerAllowingTrailingJunk<size_t>(parsingBuffer).value_or(0));
             if (!result.hasOverflowed()) [[likely]]
                 return result.value();
         }
