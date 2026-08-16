@@ -352,6 +352,7 @@ enum ScanClass : uint16_t {
     HostPercentOrNonASCII = 1 << 7,
     NonSpecialHostNotPlain = 1 << 8, // Authority scan of a non-special URL: forbidden host code point, ':', '%', C0 control or non-ASCII.
     HostNotDomainCharacter = 1 << 9, // HostNotPlain other than ASCII upper case: not even a domain character after lowercasing.
+    IPv4NumberCharacter = 1 << 10, // Can appear in an IPv4 piece: hex digits and x/X.
 };
 
 static constexpr std::array<uint16_t, 256> scanClassTable = [] {
@@ -374,6 +375,8 @@ static constexpr std::array<uint16_t, 256> scanClassTable = [] {
             bits |= HostNotPlain | HostNotDomainCharacter;
         if (isASCIIUpper(c))
             bits |= HostNotPlain;
+        if (isASCIIHexDigit(c) || c == 'x' || c == 'X')
+            bits |= IPv4NumberCharacter;
         if (c > 0x7F || c == '%')
             bits |= HostPercentOrNonASCII;
         if (c > 0x7E || c <= 0x20 || (characterClassTable[c] & ForbiddenHost) || c == '%')
@@ -502,6 +505,25 @@ ALWAYS_INLINE static const CharacterType* findHostCharacterOfInterest(const Char
     });
 }
 
+// Finds the end of a special-scheme authority component (one of / \\ ? # @ or the end) starting from a character that
+// already makes the host not plain, accumulating whether a '%' or non-ASCII character was seen on the way.
+template<typename CharacterType>
+ALWAYS_INLINE static const CharacterType* findEndOfSpecialAuthority(const CharacterType* p, const CharacterType* end, uint16_t& classes)
+{
+    while (true) {
+        p = findStopCharacter<HostStop | HostPercentOrNonASCII>(p, end, [](simde_uint8x16_t input) ALWAYS_INLINE_LAMBDA {
+            return SIMD::bitOr(SIMD::greaterThan(input, SIMD::splat8(0x7E)), SIMD::equal<'/', '?', '#', '\\', '@', '%', 0>(input));
+        });
+        if (p == end)
+            return p;
+        auto characterClass = scanClass(*p);
+        classes |= characterClass;
+        if (characterClass & HostStop)
+            return p;
+        ++p;
+    }
+}
+
 template<typename CharacterType>
 ALWAYS_INLINE bool URLParser::isForbiddenHostCodePoint(CharacterType character)
 {
@@ -592,7 +614,7 @@ ALWAYS_INLINE void URLParser::appendToASCIIBuffer(std::span<const char16_t> char
         return;
     size_t length = characters.size();
     auto* source = characters.data();
-    if (length < 16) {
+    if (length <= 4) {
         for (auto character : characters) {
             ASSERT(isASCII(character));
             m_asciiBuffer.append(static_cast<Latin1Character>(character));
@@ -602,6 +624,13 @@ ALWAYS_INLINE void URLParser::appendToASCIIBuffer(std::span<const char16_t> char
     size_t oldSize = m_asciiBuffer.size();
     m_asciiBuffer.grow(oldSize + length);
     auto* destination = std::bit_cast<uint8_t*>(m_asciiBuffer.mutableSpan().data()) + oldSize;
+    if (length < 16) {
+        for (size_t i = 0; i < length; ++i) {
+            ASSERT(isASCII(source[i]));
+            destination[i] = source[i];
+        }
+        return;
+    }
     size_t i = 0;
     for (; i + 16 <= length; i += 16)
         SIMD::store(narrowForClassification(SIMD::load(std::bit_cast<const uint16_t*>(source + i)), SIMD::load(std::bit_cast<const uint16_t*>(source + i + 8))), destination + i);
@@ -1412,12 +1441,12 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         if (end == start)
             return false;
         auto last = end[-1];
-        if (!isASCIIHexDigit(last) && (last | 0x20) != 'x' && last != '.') [[likely]]
+        if (!(scanClass(last) & IPv4NumberCharacter) && last != '.') [[likely]]
             return false;
         if (last == '.')
             --end;
         auto* label = end;
-        while (label != start && (isASCIIHexDigit(label[-1]) || (label[-1] | 0x20) == 'x'))
+        while (label != start && (scanClass(label[-1]) & IPv4NumberCharacter))
             --label;
         if (label != start && label[-1] != '.')
             return false;
@@ -1502,11 +1531,11 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
 
         auto* hostStart = p;
         uint16_t classes = 0;
-        for (p = findHostCharacterOfInterest(p, inputEnd); p != inputEnd; ++p) {
-            uint16_t characterClass = scanClass(*p);
-            classes |= characterClass;
-            if (characterClass & HostStop)
-                break;
+        p = findHostCharacterOfInterest(p, inputEnd);
+        if (p != inputEnd) {
+            classes = scanClass(*p);
+            if (!(classes & HostStop))
+                p = findEndOfSpecialAuthority(p + 1, inputEnd, classes);
         }
         if ((p != inputEnd && *p == '@') || (classes & HostNotPlain) || lastLabelMayBeANumber(hostStart, p)) [[unlikely]] {
             if (classes & HostPercentOrNonASCII)
@@ -2836,6 +2865,32 @@ Expected<URLParser::IPv4Address, URLParser::IPv4ParsingError> URLParser::parseIP
     auto* p = host.data();
     auto* end = p + host.size();
 
+    // Four decimal pieces without leading zeros need none of the bookkeeping below.
+    {
+        IPv4Address address = 0;
+        auto* q = p;
+        for (unsigned piece = 0; ; ++piece) {
+            if (q == end || !isASCIIDigit(*q))
+                break;
+            unsigned value = *q++ - '0';
+            if (value) {
+                while (q != end && isASCIIDigit(*q) && value <= 255)
+                    value = value * 10 + *q++ - '0';
+                if (value > 255)
+                    break;
+            }
+            address = address << 8 | value;
+            if (piece == 3) {
+                if (q == end)
+                    return address;
+                break;
+            }
+            if (q == end || *q != '.')
+                break;
+            ++q;
+        }
+    }
+
     std::array<uint32_t, 4> pieces;
     unsigned pieceCount = 0;
     bool didSeeSyntaxViolation = false;
@@ -3381,7 +3436,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         auto hostIterator = iterator;
         auto* hostBegin = iterator.position();
         auto* end = hostBegin + iterator.remainingCodeUnits().size();
-        auto* hostEnd = hostBegin;
+        auto* hostEnd = findHostCharacterOfInterest(hostBegin, end);
         bool hasTabOrNewline = false;
         uint16_t domainCharacterClasses = 0;
         for (; hostEnd != end; ++hostEnd) {
@@ -3411,7 +3466,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
             if (labelEnd != hostBegin && labelEnd[-1] == '.')
                 --labelEnd;
             auto* label = labelEnd;
-            while (label != hostBegin && (isASCIIHexDigit(label[-1]) || (label[-1] | 0x20) == 'x'))
+            while (label != hostBegin && (scanClass(label[-1]) & IPv4NumberCharacter))
                 --label;
             mayBeIPv4OrEndInANumber = (label == hostBegin || label[-1] == '.') && label != labelEnd && isASCIIDigit(*label);
         }
@@ -3582,7 +3637,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         if (labelEnd != begin && labelEnd[-1] == '.')
             --labelEnd;
         auto* label = labelEnd;
-        while (label != begin && (isASCIIHexDigit(label[-1]) || (label[-1] | 0x20) == 'x'))
+        while (label != begin && (scanClass(label[-1]) & IPv4NumberCharacter))
             --label;
         mayBeIPv4OrEndInANumber = (label == begin || label[-1] == '.') && label != labelEnd && isASCIIDigit(*label);
     }
