@@ -272,6 +272,13 @@ ipintOp(_loop, macro()
     # loop
     # We already validateOpcodeConfig in ipintLoopOSR.
     ipintLoopOSR(1)
+    # VMTraps poll: requestStop() sets m_trapAwareSoftStackLimit = UINTPTR_MAX, so a pure
+    # Wasm loop (no calls) observes termination/watchdog requests at each back-edge instead of
+    # only at the next function prologue. sp as the first comparand (not second) because ARM64
+    # cannot encode sp as Rm in SUBS.
+    bpaeq sp, JSWebAssemblyInstance::m_stackMirror + StackManager::Mirror::m_trapAwareSoftStackLimit[wasmInstance], .ipint_loop_no_trap
+    jmp _ipint_loop_check_vm_traps
+.ipint_loop_no_trap:
     loadb IPInt::InstructionLengthMetadata::length[MC], t0
     advancePCByReg(t0)
     advanceMCByReg(constexpr (sizeof(IPInt::InstructionLengthMetadata)))

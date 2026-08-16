@@ -1173,6 +1173,22 @@ macro handleDebuggerTrapIfNeeded()
     addp 4 * MachineRegisterSize, sp
 end
 
+# Slow path for ipintOp(_loop) when m_trapAwareSoftStackLimit has been poisoned by
+# VMTraps::requestStop(). Services the pending async trap; on Termination the call
+# throws (operationCallMayThrow unwinds), otherwise PC/MC (restored by
+# operationCallMayThrow, still pointing at the loop opcode) are advanced past it and
+# the next instruction is dispatched.
+op(ipint_loop_check_vm_traps, macro ()
+    operationCallMayThrow(macro()
+        move cfr, a1
+        cCall2(_ipint_extern_handle_vm_traps_at_loop)
+    end)
+    loadb IPInt::InstructionLengthMetadata::length[MC], t0
+    advancePCByReg(t0)
+    advanceMCByReg(constexpr (sizeof(IPInt::InstructionLengthMetadata)))
+    nextIPIntInstruction()
+end)
+
 op(wasm_ipint_check_debugger_hook_and_throw_trap, macro ()
     handleDebuggerTrapIfNeeded()
     # r0 == 0 i.e. DebuggerTrapStatus::ResolvedByDebugger i.e. this was purely a debugger trap / breakpoint,

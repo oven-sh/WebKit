@@ -1467,6 +1467,22 @@ WASM_IPINT_EXTERN_CPP_DECL(check_stack_and_vm_traps, void* candidateNewStackPoin
     IPINT_THROW(Wasm::ExceptionType::StackOverflow);
 }
 
+// Reached from the loop back-edge when m_trapAwareSoftStackLimit has been poisoned by
+// VMTraps::requestStop(). Services whatever async trap is pending (NeedTermination /
+// NeedWatchdogCheck / NeedStopTheWorld / NeedDebuggerBreak); resumes the loop when it
+// wasn't a termination. Without this a pure-Wasm loop never observes VMTraps at all.
+WASM_IPINT_EXTERN_CPP_DECL(handle_vm_traps_at_loop, CallFrame* callFrame)
+{
+    UNUSED_PARAM(callFrame);
+    VM& vm = instance->vm();
+    if (vm.traps().handleTrapsIfNeeded()) {
+        if (vm.hasPendingTerminationException())
+            IPINT_THROW(Wasm::ExceptionType::Termination);
+        ASSERT(!vm.exceptionForInspection());
+    }
+    IPINT_END();
+}
+
 #if ENABLE(WEBASSEMBLY_DEBUGGER)
 static UNUSED_FUNCTION void displayWasmDebugState(JSWebAssemblyInstance* instance, Wasm::IPIntCallee* callee, CallFrame* callFrame, IPIntStackEntry* sp)
 {

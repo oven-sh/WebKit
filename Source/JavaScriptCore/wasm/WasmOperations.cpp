@@ -1171,6 +1171,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe:
     context.gpr(GPRInfo::nonPreservedNonArgumentGPR0) = std::bit_cast<UCPURegister>(callee.loopEntrypoints()[loopIndex].taggedPtr());
 }
 
+// Reached from BBQ/OMG loop heads when m_trapAwareSoftStackLimit has been poisoned by
+// VMTraps::requestStop() (e.g. VM::notifyNeedTermination()). Services whatever async trap
+// is pending and reports whether a TerminationException was raised so the caller can unwind;
+// otherwise all registers are restored by the probe and the loop resumes. Without this a
+// pure-Wasm loop that never calls into JS (e.g. `loop { br 0 }`) never observes VMTraps and
+// cannot be preempted by worker.terminate() / the watchdog.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmHandleTrapsAtLoop, void, (Probe::Context& context))
+{
+    JSWebAssemblyInstance* instance = context.gpr<JSWebAssemblyInstance*>(GPRInfo::wasmContextInstancePointer);
+    VM& vm = instance->vm();
+    vm.traps().handleTrapsIfNeeded();
+    context.gpr(GPRInfo::nonPreservedNonArgumentGPR0) = static_cast<UCPURegister>(vm.hasPendingTerminationException());
+}
+
 #endif
 
 #if ENABLE(WEBASSEMBLY_BBQJIT)
