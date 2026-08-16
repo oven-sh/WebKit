@@ -700,7 +700,10 @@ public:
 
     // Every reader of the current JS time, in every tier, must go through
     // this helper: Date.now() (dateNow / operationDateNow), new Date()
-    // (constructDate), Date() (callDate), and Intl (dateNowImpl).
+    // (constructDate), Date() (callDate), and Intl (dateNowImpl). The one
+    // exception is Temporal.Now (systemUTCEpochNanoseconds in TemporalNow.cpp),
+    // which needs the unoverridden clock at nanosecond resolution and so
+    // checks overridenDateNow itself.
     double jsDateNow() const
     {
         double ms = overridenDateNow;

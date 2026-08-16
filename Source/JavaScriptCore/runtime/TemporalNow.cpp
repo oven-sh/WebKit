@@ -21,6 +21,7 @@
 #include "config.h"
 #include "TemporalNow.h"
 
+#include "Error.h"
 #include "ISO8601.h"
 #include "JSCJSValueInlines.h"
 #include "JSDateMath.h"
@@ -35,6 +36,7 @@
 #include "TemporalZonedDateTime.h"
 #include "TimeZoneICUBridge.h"
 #include <wtf/DateMath.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC {
 
@@ -90,10 +92,44 @@ void TemporalNow::finishCreation(VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
+// https://tc39.es/proposal-temporal/#sec-temporal-systemutcepochnanoseconds
+//
+// JSGlobalObject::overridenDateNow is the clock an embedder's setSystemTime() ("bun test") installs.
+// Date.now(), new Date(), Date() and Intl read it through JSGlobalObject::jsDateNow(); Temporal.Now
+// has to report the same instant while it is set, and the real clock at full resolution otherwise.
+// The override is in milliseconds and gets the TimeClip `new Date()` gives it, so the values that
+// make an Invalid Date there (out of the Date range, which is also the Temporal range) are a
+// RangeError here.
+static ISO8601::ExactTime systemUTCEpochNanoseconds(JSGlobalObject* globalObject)
+{
+    double overriddenDateNow = globalObject->overridenDateNow;
+    if (std::isnan(overriddenDateNow)) [[likely]]
+        return ISO8601::ExactTime::now();
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    double epochMilliseconds = timeClip(overriddenDateNow);
+    if (std::isnan(epochMilliseconds)) [[unlikely]] {
+        throwRangeError(globalObject, scope, makeString("Overridden current time "_s, overriddenDateNow, " ms is outside of supported range for Temporal.Now"_s));
+        return { };
+    }
+
+    auto exactTime = ISO8601::ExactTime::fromEpochMilliseconds(static_cast<int64_t>(epochMilliseconds));
+    ASSERT(exactTime.isValid());
+    return exactTime;
+}
+
 // https://tc39.es/proposal-temporal/#sec-temporal.now.instant
 JSC_DEFINE_HOST_FUNCTION(temporalNowFuncInstant, (JSGlobalObject* globalObject, CallFrame*))
 {
-    return JSValue::encode(TemporalInstant::create(globalObject->vm(), globalObject->instantStructure(), ISO8601::ExactTime::now()));
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto exactTime = systemUTCEpochNanoseconds(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    return JSValue::encode(TemporalInstant::create(vm, globalObject->instantStructure(), exactTime));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.now.timezoneid
@@ -125,7 +161,8 @@ static ISO8601::PlainDateTime systemDateTime(JSGlobalObject* globalObject, JSVal
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 3: Let epochNs be SystemUTCEpochNanoseconds().
-    auto exactTime = ISO8601::ExactTime::now();
+    auto exactTime = systemUTCEpochNanoseconds(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
 
     // Step 4: Return GetISODateTimeFor(tz, epochNs).
     if (!tzOpt) {
@@ -199,8 +236,11 @@ JSC_DEFINE_HOST_FUNCTION(temporalNowFuncZonedDateTimeISO, (JSGlobalObject* globa
     TimeZone tz = tzOpt ? *tzOpt : vm.dateCache.defaultTimeZone();
 
     // Step 2: Let epochNs be SystemUTCEpochNanoseconds().
+    auto exactTime = systemUTCEpochNanoseconds(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
     // Step 3: Return ! CreateTemporalZonedDateTime(epochNs, tz, "iso8601").
-    RELEASE_AND_RETURN(scope, JSValue::encode(TemporalZonedDateTime::create(vm, globalObject->zonedDateTimeStructure(), ISO8601::ExactTime::now(), tz, iso8601CalendarID())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(TemporalZonedDateTime::create(vm, globalObject->zonedDateTimeStructure(), exactTime, tz, iso8601CalendarID())));
 }
 
 } // namespace JSC
