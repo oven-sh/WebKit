@@ -2283,6 +2283,23 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
             state = State::Path;
             break;
         case State::FileHost:
+            if (c == authorityOrHostBegin) {
+                auto* p = findHostCharacterOfInterest(positionOf(c), inputEnd);
+                uint16_t classes = 0;
+                while (p != inputEnd) {
+                    uint16_t characterClass = scanClass(*p);
+                    classes |= characterClass;
+                    if ((characterClass & HostStop) && *p != '@')
+                        break;
+                    p = findEndOfSpecialAuthority(p + 1, inputEnd, classes);
+                }
+                if (classes & HostPercentOrNonASCII)
+                    m_hostHasPercentOrNonASCII = true;
+                c = iteratorAt(p);
+                if (c.atEnd())
+                    break;
+                ASSERT(isSlashQuestionOrHash(*c));
+            }
             do {
                 LOG_STATE("FileHost");
                 if (isSlashQuestionOrHash(*c)) {
