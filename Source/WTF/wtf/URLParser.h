@@ -71,10 +71,7 @@ public:
 
 private:
     // Parses into `result`, which must be a default-constructed URL.
-    URLParser(URL& result, const String&, const URL& base = { }, const URLTextEncoding* = nullptr);
     URLParser(URL& result, String&&, const URL& base = { }, const URLTextEncoding* = nullptr);
-    void parse(const URL& base, const URLTextEncoding*);
-    String releaseInputString();
 
     friend class URL;
 
@@ -84,8 +81,7 @@ private:
     bool m_urlIsFile { false };
     bool m_hostHasPercentOrNonASCII { false };
     bool m_didSeeSyntaxViolation { false };
-    String m_ownedInputString;
-    const String& m_inputString;
+    String m_inputString;
     const void* m_inputBegin { nullptr };
 
     static constexpr size_t defaultInlineBufferSize = 2048;

@@ -48,19 +48,13 @@ namespace WTF {
 URL::URL(const URL& base, const String& relative, const URLTextEncoding* encoding)
 {
     invalidate();
-    URLParser(*this, relative,  base, encoding);
+    URLParser(*this, String { relative },  base, encoding);
 }
 
 URL::URL(String&& absoluteURL, const URLTextEncoding* encoding)
 {
     invalidate();
     URLParser(*this, WTF::move(absoluteURL), URL(), encoding);
-}
-
-URL::URL(const String& absoluteURL, const URLTextEncoding* encoding)
-{
-    invalidate();
-    URLParser(*this, absoluteURL, URL(), encoding);
 }
 
 static bool NODELETE shouldTrimFromURL(char16_t character)

@@ -72,7 +72,10 @@ public:
     // Parses the input string as an absolute URL. If you need to parse a relative URL, call the constructor above
     // taking a base URL and a relative URL string.
     WTF_EXPORT_PRIVATE explicit URL(String&& absoluteURL, const URLTextEncoding* = nullptr);
-    WTF_EXPORT_PRIVATE explicit URL(const String& absoluteURL, const URLTextEncoding* = nullptr);
+    explicit URL(const String& absoluteURL, const URLTextEncoding* encoding = nullptr)
+        : URL(String { absoluteURL }, encoding)
+    {
+    }
 
     URL(const URL&) = default;
     URL& operator=(const URL&) = default;

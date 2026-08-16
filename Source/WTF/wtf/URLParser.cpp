@@ -389,6 +389,7 @@ static constexpr std::array<uint16_t, 256> scanClassTable = [] {
     return table;
 }();
 
+
 template<typename CharacterType> ALWAYS_INLINE static bool charactersAreHTTP(const CharacterType* characters)
 {
 #if CPU(LITTLE_ENDIAN)
@@ -407,6 +408,25 @@ template<typename CharacterType> ALWAYS_INLINE static uint16_t scanClass(Charact
         return scanClassTable[character];
     // Every non-Latin-1 character has the same classes as U+00FF.
     return character <= 0xFF ? scanClassTable[character] : scanClassTable[0xFF];
+}
+
+// parseIPv4Host() can only return something other than NotIPv4, and https://url.spec.whatwg.org/#ends-in-a-number-checker
+// can only be true, when the last label is non-empty, starts with an ASCII digit and consists of hex digits and x/X.
+template<typename CharacterType> ALWAYS_INLINE static bool lastLabelMayBeANumber(const CharacterType* start, const CharacterType* end)
+{
+    if (end == start)
+        return false;
+    auto last = end[-1];
+    if (!(scanClass(last) & IPv4NumberCharacter) && last != '.') [[likely]]
+        return false;
+    if (last == '.')
+        --end;
+    auto* label = end;
+    while (label != start && (scanClass(label[-1]) & IPv4NumberCharacter))
+        --label;
+    if (label != start && label[-1] != '.')
+        return false;
+    return label != end && isASCIIDigit(*label);
 }
 static_assert(scanClassTable[0xFF] == (PathStop | QueryStop | FragmentStop | OpaquePathStop | HostNotPlain | HostPercentOrNonASCII | NonSpecialHostNotPlain | HostNotDomainCharacter));
 
@@ -1305,7 +1325,7 @@ NEVER_INLINE void URLParser::beginSyntaxViolation(const CodePointIterator<Charac
 void URLParser::failure()
 {
     m_url.invalidate();
-    m_url.m_string = releaseInputString();
+    m_url.m_string = WTF::move(m_inputString);
 }
 
 template<typename CharacterType>
@@ -1384,27 +1404,7 @@ ALWAYS_INLINE size_t URLParser::currentPosition(const CharacterType* position)
 
 URLParser::URLParser(URL& result, String&& input, const URL& base, const URLTextEncoding* nonUTF8QueryEncoding)
     : m_url(result)
-    , m_ownedInputString(WTF::move(input))
-    , m_inputString(m_ownedInputString)
-{
-    parse(base, nonUTF8QueryEncoding);
-}
-
-URLParser::URLParser(URL& result, const String& input, const URL& base, const URLTextEncoding* nonUTF8QueryEncoding)
-    : m_url(result)
-    , m_inputString(input)
-{
-    parse(base, nonUTF8QueryEncoding);
-}
-
-String URLParser::releaseInputString()
-{
-    if (&m_inputString == &m_ownedInputString)
-        return WTF::move(m_ownedInputString);
-    return m_inputString;
-}
-
-void URLParser::parse(const URL& base, const URLTextEncoding* nonUTF8QueryEncoding)
+    , m_inputString(WTF::move(input))
 {
     ASSERT(!m_url.isValid());
     ASSERT(m_url.m_string.isNull());
@@ -1483,23 +1483,6 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
     };
     auto iteratorAt = [&](const CharacterType* position) ALWAYS_INLINE_LAMBDA {
         return CodePointIterator<CharacterType>(std::span<const CharacterType>(position, inputEnd));
-    };
-    // https://url.spec.whatwg.org/#ends-in-a-number-checker can only be true when this is:
-    // the last label is non-empty, starts with an ASCII digit and consists of hex digits and x/X.
-    auto lastLabelMayBeANumber = [](const CharacterType* start, const CharacterType* end) ALWAYS_INLINE_LAMBDA {
-        if (end == start)
-            return false;
-        auto last = end[-1];
-        if (!(scanClass(last) & IPv4NumberCharacter) && last != '.') [[likely]]
-            return false;
-        if (last == '.')
-            --end;
-        auto* label = end;
-        while (label != start && (scanClass(label[-1]) & IPv4NumberCharacter))
-            --label;
-        if (label != start && label[-1] != '.')
-            return false;
-        return label != end && isASCIIDigit(*label);
     };
 
     enum class State : uint8_t {
@@ -2766,7 +2749,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
     }
 
     if (!m_didSeeSyntaxViolation) [[likely]] {
-        m_url.m_string = releaseInputString();
+        m_url.m_string = WTF::move(m_inputString);
         ASSERT(m_asciiBuffer.isEmpty());
     } else
         m_url.m_string = String::adopt(WTF::move(m_asciiBuffer));
@@ -3536,18 +3519,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         bool hasUppercase = domainCharacterClasses & HostNotPlain;
         iterator = CodePointIterator<CharacterType>(std::span(hostEnd, end));
 
-        // parseIPv4Host() can only return something other than NotIPv4, and dnsNameEndsInNumber() can only be true,
-        // when the last label starts with a digit and is made of characters that can occur in a number.
-        bool mayBeIPv4OrEndInANumber = hasTabOrNewline;
-        if (!hasTabOrNewline) {
-            auto* labelEnd = hostEnd;
-            if (labelEnd != hostBegin && labelEnd[-1] == '.')
-                --labelEnd;
-            auto* label = labelEnd;
-            while (label != hostBegin && (scanClass(label[-1]) & IPv4NumberCharacter))
-                --label;
-            mayBeIPv4OrEndInANumber = (label == hostBegin || label[-1] == '.') && label != labelEnd && isASCIIDigit(*label);
-        }
+        bool mayBeIPv4OrEndInANumber = hasTabOrNewline || lastLabelMayBeANumber(hostBegin, hostEnd);
 
         if (mayBeIPv4OrEndInANumber) [[unlikely]] {
             auto address = parseIPv4Host(hostIterator, std::span(hostBegin, hostEnd));
@@ -3627,6 +3599,9 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         std::span<const char16_t> domain;
         bool needsCopy = true;
         if constexpr (std::is_same_v<CharacterType, char16_t>) {
+            // Checked before removing tabs and newlines: a surrogate pair split by one is two unpaired surrogates.
+            if (hasUnpairedSurrogate(host)) [[unlikely]]
+                return HostParsingResult::InvalidHost;
             if (!hasTabOrNewline) [[likely]] {
                 domain = host;
                 needsCopy = false;
@@ -3639,10 +3614,6 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
                     buffer.append(character);
             }
             domain = buffer.span();
-        }
-        if constexpr (std::is_same_v<CharacterType, char16_t>) {
-            if (hasUnpairedSurrogate(domain)) [[unlikely]]
-                return HostParsingResult::InvalidHost;
         }
         asciiDomain = domainToASCII(domain, hostBegin);
     } else if (!hasNonASCII && !hasTabOrNewline) [[likely]] {
@@ -3708,17 +3679,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         return HostParsingResult::InvalidHost;
     Latin1Buffer& asciiDomainValue = asciiDomain.value();
 
-    bool mayBeIPv4OrEndInANumber;
-    {
-        auto* begin = asciiDomainValue.begin();
-        auto* labelEnd = asciiDomainValue.end();
-        if (labelEnd != begin && labelEnd[-1] == '.')
-            --labelEnd;
-        auto* label = labelEnd;
-        while (label != begin && (scanClass(label[-1]) & IPv4NumberCharacter))
-            --label;
-        mayBeIPv4OrEndInANumber = (label == begin || label[-1] == '.') && label != labelEnd && isASCIIDigit(*label);
-    }
+    bool mayBeIPv4OrEndInANumber = lastLabelMayBeANumber(asciiDomainValue.begin(), asciiDomainValue.end());
     if (mayBeIPv4OrEndInANumber) [[unlikely]] {
         auto address = parseIPv4Host(hostBegin, std::span<const Latin1Character>(asciiDomainValue.span()));
         if (address) {
