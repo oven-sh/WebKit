@@ -175,6 +175,12 @@ protected:
     bool m_stackPropertyAlreadyMaterialized : 1;
     bool m_nativeGetterTypeError : 1;
     bool m_parseError : 1;
+#if USE(BUN_JSC_ADDITIONS)
+    // m_stackString holds only frame lines (from onComputeErrorInfoFrames in the GC
+    // finalizer, where the instance must not be read); the "Name: message" header is
+    // added when the string is published by materializeErrorInfoIfNeeded.
+    bool m_stackStringNeedsNameAndMessage : 1;
+#endif
 #if ENABLE(WEBASSEMBLY)
     bool m_catchableFromWasm : 1;
 #endif

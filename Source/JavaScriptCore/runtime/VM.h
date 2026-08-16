@@ -1085,6 +1085,11 @@ public:
     const ErrorInfoFunction& onComputeErrorInfo() const { return m_onComputeErrorInfo; }
     ErrorInfoFunction& onComputeErrorInfo() { return m_onComputeErrorInfo; }
     
+    // Like onComputeErrorInfo, but renders only the frame lines; ErrorInstance adds
+    // the "Name: message" header at materialization. Preferred when set.
+    const ErrorInfoFunction& onComputeErrorInfoFrames() const { return m_onComputeErrorInfoFrames; }
+    ErrorInfoFunction& onComputeErrorInfoFrames() { return m_onComputeErrorInfoFrames; }
+    
     const ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() const { return m_onComputeErrorInfoJSValue; }
     ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() { return m_onComputeErrorInfoJSValue; }
     
@@ -1093,6 +1098,7 @@ public:
 
     void setOnAppendStackTrace(StackTraceAppenderFunction&& function) { m_onAppendStackTrace = WTF::move(function); }
     void setOnComputeErrorInfo(ErrorInfoFunction&& function) { m_onComputeErrorInfo = WTF::move(function); }
+    void setOnComputeErrorInfoFrames(ErrorInfoFunction&& function) { m_onComputeErrorInfoFrames = WTF::move(function); }
     void setOnComputeErrorInfoJSValue(ErrorInfoFunctionJSValue&& function) { m_onComputeErrorInfoJSValue = WTF::move(function); }
     void setComputeLineColumnWithSourcemap(WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
 #endif
@@ -1331,6 +1337,7 @@ private:
     WTF::Function<void(VM&)> m_onEachMicrotaskTick;
 #if USE(BUN_JSC_ADDITIONS)
     ErrorInfoFunction m_onComputeErrorInfo;
+    ErrorInfoFunction m_onComputeErrorInfoFrames;
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
     StackTraceAppenderFunction m_onAppendStackTrace;
     WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)> m_computeLineColumnWithSourcemap;

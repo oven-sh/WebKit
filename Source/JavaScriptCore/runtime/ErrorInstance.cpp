@@ -29,6 +29,7 @@
 #include "JSCInlines.h"
 #include "ParseInt.h"
 #include "StackFrame.h"
+#include "TopExceptionScope.h"
 #include "VM.h"
 #include <wtf/text/MakeString.h>
 
@@ -45,6 +46,9 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
     , m_stackPropertyAlreadyMaterialized(false)
     , m_nativeGetterTypeError(false)
     , m_parseError(false)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_stackStringNeedsNameAndMessage(false)
+#endif
 #if ENABLE(WEBASSEMBLY)
     , m_catchableFromWasm(true)
 #endif // ENABLE(WEBASSEMBLY)
@@ -390,9 +394,21 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
     UNUSED_PARAM(allocationAllowed);
 
     if (m_stackTrace && !m_stackTrace->isEmpty()) {
+        auto& framesFn = vm.onComputeErrorInfoFrames();
         auto& fn = vm.onComputeErrorInfo();
         WTF::String stackString;
-        if (fn) {
+        bool needsNameAndMessage = false;
+        if (framesFn) {
+            // Renders only the frame lines: this can run from the GC finalizer
+            // (finalizeUnconditionally), where the instance's properties must not be
+            // read. materializeErrorInfoIfNeeded adds the "Name: message" header.
+            if (m_stackPropertyAlreadyMaterialized)
+                stackString = emptyString();
+            else {
+                stackString = framesFn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this->bunErrorData());
+                needsNameAndMessage = true;
+            }
+        } else if (fn) {
             if (m_stackPropertyAlreadyMaterialized)
                 stackString = emptyString();
             else
@@ -412,6 +428,9 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
             Locker locker { cellLock() };
             m_stackTrace = nullptr;
             m_stackString = WTF::move(stackString);
+#if USE(BUN_JSC_ADDITIONS)
+            m_stackStringNeedsNameAndMessage = needsNameAndMessage;
+#endif
         }
 
     }
@@ -470,6 +489,19 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 Locker locker { cellLock() };
                 stackString = WTF::move(m_stackString);
             }
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_stackStringNeedsNameAndMessage) {
+                m_stackStringNeedsNameAndMessage = false;
+                // The cached string holds only frame lines (rendered during GC, where
+                // the instance could not be read). Add the header now that it can be.
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                String header = sanitizedToString(globalObject());
+                if (scope.exception()) [[unlikely]]
+                    (void)scope.tryClearException();
+                if (!header.isEmpty())
+                    stackString = makeString(header, stackString);
+            }
+#endif
             putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), attributes);
         }
         m_errorInfoMaterialized = true;
