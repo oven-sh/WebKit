@@ -57,10 +57,14 @@ int numberOfProcessorCores()
     
     ASCIILiteral coresEnvName = "WTF_numberOfProcessorCores";
     CString coresEnv = getenv(coresEnvName);
+#if !USE(BUN_JSC_ADDITIONS)
+    // Bun reports this value as navigator.hardwareConcurrency and os.availableParallelism(), which
+    // (as in Node) do not follow NUMBER_OF_PROCESSORS.
     if (coresEnv.isNull()) {
         coresEnvName = "NUMBER_OF_PROCESSORS";
         coresEnv = getenv(coresEnvName);
     }
+#endif
     if (!coresEnv.isNull()) {
         if (auto numberOfCores = parseInteger<unsigned>(coresEnv.span())) {
             s_numberOfCores = *numberOfCores;
