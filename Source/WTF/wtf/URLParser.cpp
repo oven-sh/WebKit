@@ -3197,19 +3197,16 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
         bool sawUppercase = false;
         for (; length < 4 && p != end; ++length, ++p) {
             unsigned character = *p;
-            unsigned digitValue;
-            if (isASCIIDigit(character))
-                digitValue = character - '0';
-            else {
-                unsigned lowercased = character | 0x20;
-                if (lowercased < 'a' || lowercased > 'f')
-                    break;
-                digitValue = lowercased - 'a' + 10;
-                sawUppercase |= !(character & 0x20);
-            }
+            unsigned decimalValue = character - '0';
+            unsigned letterValue = (character | 0x20) - 'a';
+            bool isDecimal = decimalValue < 10;
+            bool isHexLetter = letterValue < 6;
+            if (!isDecimal && !isHexLetter)
+                break;
+            sawUppercase |= isHexLetter && !(character & 0x20);
             if (!length)
                 leadingZeros = character == '0';
-            value = value * 0x10 + digitValue;
+            value = value * 0x10 + (isDecimal ? decimalValue : letterValue + 10);
         }
         if (sawUppercase) [[unlikely]]
             syntaxViolation(hostBegin);
