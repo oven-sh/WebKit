@@ -1520,6 +1520,7 @@ private:
         int startOffset;
         unsigned oldLineStartOffset;
         JSTokenLocation lastTokenLocation;
+        JSTextPosition positionAfterLastToken;
         unsigned oldLineNumber;
         bool hasLineTerminatorBeforeToken;
         JSTokenType lastTokenType;
@@ -1543,6 +1544,7 @@ private:
     ALWAYS_INLINE void next(OptionSet<LexerFlags> lexerFlags = { })
     {
         m_lastTokenLocation = m_token.location();
+        m_positionAfterLastToken = m_token.m_endPosition;
         m_lastTokenType = m_token.m_type;
         m_token.m_type = m_lexer->lex(&m_token, lexerFlags, strictMode());
     }
@@ -1550,6 +1552,7 @@ private:
     ALWAYS_INLINE void nextWithoutClearingLineTerminator(OptionSet<LexerFlags> lexerFlags = { })
     {
         m_lastTokenLocation = m_token.location();
+        m_positionAfterLastToken = m_token.m_endPosition;
         m_lastTokenType = m_token.m_type;
         m_token.m_type = m_lexer->lexWithoutClearingLineTerminator(&m_token, lexerFlags, strictMode());
     }
@@ -1557,6 +1560,7 @@ private:
     ALWAYS_INLINE void nextExpectIdentifier(OptionSet<LexerFlags> lexerFlags = { })
     {
         m_lastTokenLocation = m_token.location();
+        m_positionAfterLastToken = m_token.m_endPosition;
         m_lastTokenType = m_token.m_type;
         m_token.m_type = m_lexer->lexExpectIdentifier(&m_token, lexerFlags, strictMode());
     }
@@ -2006,6 +2010,7 @@ private:
         result.startOffset = m_token.m_startPosition.offset;
         result.oldLineStartOffset = m_token.m_startPosition.lineStartOffset;
         result.lastTokenLocation = m_lastTokenLocation;
+        result.positionAfterLastToken = m_positionAfterLastToken;
         result.oldLineNumber = m_token.m_startPosition.line;
         // Why is this reading from Lexer fine while we are re-lexing the same token?
         // This is because this flag is updated and indicating whether we have a line
@@ -2028,7 +2033,7 @@ private:
         m_token.m_startPosition.line = lexerState.lastTokenLocation.line;
         m_token.m_startPosition.offset = lexerState.lastTokenLocation.startOffset;
         m_token.m_startPosition.lineStartOffset = lexerState.lastTokenLocation.lineStartOffset;
-        m_token.m_endPosition.offset = lexerState.lastTokenLocation.endOffset;
+        m_token.m_endPosition = lexerState.positionAfterLastToken;
         nextWithoutClearingLineTerminator();
     }
 
@@ -2116,6 +2121,11 @@ private:
     bool m_parsingBuiltin;
     bool m_isEvalContext;
 
+    // The lexer's position right after the token described by m_lastTokenLocation, i.e. its end offset on the line
+    // it ends on (lastTokenEndPosition() pairs that offset with the line the token starts on instead). A function
+    // skipped through m_functionCache resumes lexing from here, which matters when the function's last token spans
+    // lines: an arrow function whose expression body ends in a multi-line template literal.
+    JSTextPosition m_positionAfterLastToken;
     RefPtr<SourceProviderCache> m_functionCache;
     CallOrApplyDepthScope* m_callOrApplyDepthScope { nullptr };
     RefPtr<ModuleScopeData> m_moduleScopeData;
