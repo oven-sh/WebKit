@@ -489,6 +489,19 @@ ALWAYS_INLINE static const CharacterType* findOpaquePathStopCharacterOrSlash(con
     });
 }
 
+// Skips characters that are plain in a host for both special and non-special schemes (16 at a time), stopping at the
+// first character that has HostNotPlain or HostStop, or at end.
+template<typename CharacterType>
+ALWAYS_INLINE static const CharacterType* findHostCharacterOfInterest(const CharacterType* begin, const CharacterType* end)
+{
+    return findStopCharacter<HostNotPlain | HostStop>(begin, end, [](simde_uint8x16_t input) ALWAYS_INLINE_LAMBDA {
+        // C0 and space, DEL and non-ASCII, '@' through '^' (upper case and @ [ \\ ] ^), and # % / : < > ? |.
+        return SIMD::bitOr(controlSpaceOrNonASCII(input),
+            SIMD::lessThanOrEqual(SIMD::sub(input, SIMD::splat8('@')), SIMD::splat8('^' - '@')),
+            SIMD::equal<'#', '%', '/', ':', '<', '>', '?', '|'>(input));
+    });
+}
+
 template<typename CharacterType>
 ALWAYS_INLINE bool URLParser::isForbiddenHostCodePoint(CharacterType character)
 {
@@ -580,10 +593,10 @@ ALWAYS_INLINE void URLParser::appendToASCIIBuffer(std::span<const char16_t> char
     size_t length = characters.size();
     auto* source = characters.data();
     if (length < 16) {
-        m_asciiBuffer.appendUsingFunctor(length, [&](size_t i) {
-            ASSERT(isASCII(source[i]));
-            return static_cast<Latin1Character>(source[i]);
-        });
+        for (auto character : characters) {
+            ASSERT(isASCII(character));
+            m_asciiBuffer.append(static_cast<Latin1Character>(character));
+        }
         return;
     }
     size_t oldSize = m_asciiBuffer.size();
@@ -1484,12 +1497,11 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
 
         auto* hostStart = p;
         uint16_t classes = 0;
-        while (p != inputEnd) {
+        for (p = findHostCharacterOfInterest(p, inputEnd); p != inputEnd; ++p) {
             uint16_t characterClass = scanClass(*p);
             classes |= characterClass;
             if (characterClass & HostStop)
                 break;
-            ++p;
         }
         if ((p != inputEnd && *p == '@') || (classes & HostNotPlain) || lastLabelMayBeANumber(hostStart, p)) [[unlikely]] {
             if (classes & HostPercentOrNonASCII)
@@ -1860,7 +1872,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         case State::AuthorityOrHost:
             if (c == authorityOrHostBegin) [[likely]] {
                 auto* start = positionOf(c);
-                auto* p = start;
+                auto* p = findHostCharacterOfInterest(start, inputEnd);
                 uint16_t classes = 0;
                 for (; p != inputEnd; ++p) {
                     uint16_t characterClass = scanClass(*p);
@@ -1975,7 +1987,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         case State::Host:
             if (c == authorityOrHostBegin) [[likely]] {
                 auto* start = positionOf(c);
-                auto* p = start;
+                auto* p = findHostCharacterOfInterest(start, inputEnd);
                 uint16_t classes = 0;
                 for (; p != inputEnd; ++p) {
                     uint16_t characterClass = scanClass(*p);
@@ -3495,12 +3507,43 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
                 return HostParsingResult::InvalidHost;
         }
         asciiDomain = domainToASCII(domain, hostBegin);
+    } else if (!hasNonASCII && !hasTabOrNewline) [[likely]] {
+        // Percent-decode, lowercase and validate in one pass; equivalent to percentDecode(), String::fromUTF8() and
+        // domainToASCII() below as long as the decoded bytes are ASCII, which is checked.
+        Latin1Buffer ascii;
+        ascii.grow(host.size());
+        size_t asciiLength = 0;
+        bool didDecode = false;
+        bool sawUppercase = false;
+        bool sawNonASCIIByte = false;
+        for (size_t i = 0; i < host.size(); ++i) {
+            uint8_t byte = host[i];
+            if (byte == '%' && i + 2 < host.size() && isASCIIHexDigit(host[i + 1]) && isASCIIHexDigit(host[i + 2])) {
+                byte = toASCIIHexValue(host[i + 1], host[i + 2]);
+                i += 2;
+                didDecode = true;
+                sawNonASCIIByte |= !isASCII(byte);
+            }
+            sawUppercase |= isASCIIUpper(byte);
+            ascii[asciiLength++] = toASCIILower(byte);
+        }
+        ascii.shrink(asciiLength);
+        if (!sawNonASCIIByte) [[likely]] {
+            if (didDecode || sawUppercase)
+                syntaxViolation(hostBegin);
+            asciiDomain = WTF::move(ascii);
+        } else {
+            Latin1Buffer utf8Encoded;
+            utf8Encoded.append(host);
+            Latin1Buffer percentDecoded = percentDecode(utf8Encoded.span(), hostBegin);
+            String domain = String::fromUTF8(percentDecoded.span());
+            if (domain.isNull())
+                return HostParsingResult::InvalidHost;
+            syntaxViolation(hostBegin);
+            asciiDomain = domainToASCII(domain, hostBegin);
+        }
     } else {
         Latin1Buffer utf8Encoded;
-        if (!hasNonASCII && !hasTabOrNewline) [[likely]] {
-            utf8Encoded.append(host);
-            host = { };
-        }
         for (auto codePoints = CodePointIterator<CharacterType>(host); !codePoints.atEnd(); ++codePoints) {
             if (isTabOrNewline(*codePoints)) [[unlikely]]
                 continue;
