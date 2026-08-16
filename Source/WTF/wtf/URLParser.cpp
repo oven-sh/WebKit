@@ -1409,7 +1409,12 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
     // https://url.spec.whatwg.org/#ends-in-a-number-checker can only be true when this is:
     // the last label is non-empty, starts with an ASCII digit and consists of hex digits and x/X.
     auto lastLabelMayBeANumber = [](const CharacterType* start, const CharacterType* end) ALWAYS_INLINE_LAMBDA {
-        if (end != start && end[-1] == '.')
+        if (end == start)
+            return false;
+        auto last = end[-1];
+        if (!isASCIIHexDigit(last) && (last | 0x20) != 'x' && last != '.') [[likely]]
+            return false;
+        if (last == '.')
             --end;
         auto* label = end;
         while (label != start && (isASCIIHexDigit(label[-1]) || (label[-1] | 0x20) == 'x'))
