@@ -2392,10 +2392,8 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                 const CharacterType* lastSlash;
                 p = findPathRunEnd(p, inputEnd, lastSlash);
                 appendToASCIIBuffer(std::span(runStart, p));
-                if (lastSlash) {
-                    ASSERT(lastSlash + 1 < p);
+                if (lastSlash)
                     m_url.m_pathAfterLastSlash = currentPosition(p) - (p - lastSlash - 1);
-                }
                 if (p != inputEnd && (*p == '/' || (m_urlIsSpecial && *p == '\\'))) {
                     if (*p == '\\') [[unlikely]]
                         syntaxViolation(iteratorAt(p));
