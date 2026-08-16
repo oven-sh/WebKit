@@ -224,7 +224,7 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
 
     // Async functions should have Private visibility for correct stack traces.
     // See https://bugs.webkit.org/show_bug.cgi?id=304740
-    if (isAsyncFunction)
+    if (scanned.isAsyncFunction)
         implementationVisibility = std::max(implementationVisibility, ImplementationVisibility::Private);
 
     JSTokenLocation start;
