@@ -1103,6 +1103,30 @@ public:
     JS_EXPORT_PRIVATE bool hasExceptionsAfterHandlingTraps();
 
     CONCURRENT_SAFE void notifyNeedDebuggerBreak() { traps().fireTrap(VMTraps::NeedDebuggerBreak); }
+#if USE(BUN_JSC_ADDITIONS)
+    // Lets an embedder service NeedDebuggerBreak itself, e.g. to attach a debugger to a program
+    // that is already running and enter Debugger::breakProgram() from code that was compiled
+    // without op_debug sites. VMTraps::handleDebuggerBreak() calls it on the owning thread with
+    // the API lock held, with no exception pending, and it must return the same way; it may
+    // run JS and pause. It is never nested: a NeedDebuggerBreak fired while it runs is taken
+    // again once it returns. Termination requested meanwhile is deferred and re-fired after it.
+    //
+    // Where it runs: op_check_traps (loop headers, every tier), or wherever the embedder calls
+    // traps().handleTrapsIfNeeded(VMTraps::NeedDebuggerBreak) itself. The LLInt and IPInt
+    // function prologues deliberately do not service this bit, because they run before the
+    // callee's frame is initialised. Nothing else retires the bit either: an embedder that
+    // keeps the API lock while idle has to make that call from its idle loop, otherwise the
+    // signal sender keeps interrupting the thread until some loop happens to run.
+    //
+    // What it buys: pausing and evaluating in code that was already running. Breakpoints,
+    // `debugger` statements and stepping only take effect in code compiled after the debugger
+    // attached (CodeGenerationMode::Debugger), i.e. once the currently running code has been
+    // re-entered after the VM went idle; Debugger degrades steps out of such frames to a pause
+    // at the next opportunity.
+    using DebuggerTrapCallback = void (*)(VM&);
+    CONCURRENT_SAFE void setDebuggerTrapCallback(DebuggerTrapCallback cb) { m_debuggerTrapCallback.store(cb, std::memory_order_release); }
+    DebuggerTrapCallback debuggerTrapCallback() const { return m_debuggerTrapCallback.load(std::memory_order_acquire); }
+#endif
     CONCURRENT_SAFE void notifyNeedShellTimeoutCheck() { traps().fireTrap(VMTraps::NeedShellTimeoutCheck); }
     CONCURRENT_SAFE void notifyNeedTermination() { traps().fireTrap(VMTraps::NeedTermination); }
     CONCURRENT_SAFE void notifyNeedWatchdogCheck() { traps().fireTrap(VMTraps::NeedWatchdogCheck); }
@@ -1360,6 +1384,9 @@ private:
     const Ref<Waiter> m_syncWaiter;
 
     std::atomic<int64_t> m_numberOfActiveJITPlans { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    std::atomic<DebuggerTrapCallback> m_debuggerTrapCallback { nullptr };
+#endif
 
     Vector<Function<void()>> m_didPopListeners;
 

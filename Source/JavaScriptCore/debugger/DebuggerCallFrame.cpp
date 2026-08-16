@@ -150,11 +150,21 @@ DebuggerScope* DebuggerCallFrame::scope(VM& vm)
 
     if (!m_scope) {
         JSScope* scope;
+#if !USE(BUN_JSC_ADDITIONS)
         CodeBlock* codeBlock = m_validMachineFrame->isNativeCalleeFrame() ? nullptr : m_validMachineFrame->codeBlock();
+#endif
         if (isTailDeleted())
             scope = m_shadowChickenFrame.scope;
+#if USE(BUN_JSC_ADDITIONS)
+        // A pause entered through a VM trap can sit on frames whose scope register is not live
+        // (see CallFrame::scopeIfScopeRegisterIsLive); the callee's scope is the answer there,
+        // as it is for any frame of code compiled without debugging opcodes.
+        else if (JSScope* liveScope = m_validMachineFrame->scopeIfScopeRegisterIsLive())
+            scope = liveScope;
+#else
         else if (codeBlock && codeBlock->scopeRegister().isValid())
             scope = m_validMachineFrame->scope(codeBlock->scopeRegister().offset());
+#endif
         else if (JSCallee* callee = dynamicDowncast<JSCallee>(m_validMachineFrame->jsCallee()))
             scope = callee->scope();
         else

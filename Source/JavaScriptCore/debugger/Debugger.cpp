@@ -239,8 +239,22 @@ void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
 
     globalObject->setDebugger(nullptr);
 
-    if (m_globalObjects.isEmpty())
+    if (m_globalObjects.isEmpty()) {
         clearParsedData();
+#if USE(BUN_JSC_ADDITIONS)
+        // A pause started from a VM trap can be stepped out of into code that has no
+        // debug opcodes, so the step never completes and the frontend may disconnect
+        // (detaching us) while it is still armed. Nothing above runs in that case because
+        // we are not paused, so drop the stale state here: clearDebuggerRequests() has
+        // already reset the per-CodeBlock stepping flags, and a later attach() followed
+        // by setSteppingMode(SteppingModeEnabled) must not be a no-op.
+        m_currentCallFrame = nullptr;
+        resetImmediatePauseState();
+        resetEventualPauseState();
+        resetAsyncPauseState();
+        m_steppingMode = SteppingModeDisabled;
+#endif
+    }
 }
 
 bool Debugger::isAttached(JSGlobalObject* globalObject)
@@ -969,11 +983,33 @@ void Debugger::continueProgram()
     m_doneProcessingDebuggerEvents = true;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// breakProgram() can be entered from a VM trap while the paused frame is running code that
+// was compiled before the debugger attached. Such a frame has no op_debug sites, so the
+// atStatement / returnEvent hooks that complete a step-next/over/out targeted at it never
+// run: the step would silently act as "continue" while leaving m_pauseOnCallFrame pointing at
+// a frame that is going away. Pausing at the next opportunity instead (the behaviour of
+// step-into) completes as soon as any code with debug opcodes runs and leaves nothing armed.
+bool Debugger::currentCallFrameCanCompleteStep() const
+{
+    if (!m_currentCallFrame || m_currentCallFrame->isNativeCalleeFrame())
+        return true;
+    CodeBlock* codeBlock = m_currentCallFrame->codeBlock();
+    return !codeBlock || codeBlock->wasCompiledWithDebuggingOpcodes();
+}
+#endif
+
 void Debugger::stepNextExpression()
 {
     if (!m_isPaused)
         return;
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (!currentCallFrameCanCompleteStep()) {
+        stepIntoStatement();
+        return;
+    }
+#endif
     m_pauseOnCallFrame = m_currentCallFrame;
     m_pauseOnStepNext = true;
     setSteppingMode(SteppingModeEnabled);
@@ -995,6 +1031,12 @@ void Debugger::stepOverStatement()
     if (!m_isPaused)
         return;
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (!currentCallFrameCanCompleteStep()) {
+        stepIntoStatement();
+        return;
+    }
+#endif
     m_pauseOnCallFrame = m_currentCallFrame;
     setSteppingMode(SteppingModeEnabled);
     m_doneProcessingDebuggerEvents = true;
@@ -1005,6 +1047,12 @@ void Debugger::stepOutOfFunction()
     if (!m_isPaused)
         return;
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (!currentCallFrameCanCompleteStep()) {
+        stepIntoStatement();
+        return;
+    }
+#endif
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
     m_pauseOnCallFrame = m_currentCallFrame ? m_currentCallFrame->callerFrame(topEntryFrame) : nullptr;
     m_pauseOnStepOut = true;

@@ -315,6 +315,9 @@ private:
     void resetImmediatePauseState();
     void NODELETE resetEventualPauseState();
     void resetAsyncPauseState();
+#if USE(BUN_JSC_ADDITIONS)
+    bool currentCallFrameCanCompleteStep() const;
+#endif
 
     enum SteppingMode {
         SteppingModeDisabled,

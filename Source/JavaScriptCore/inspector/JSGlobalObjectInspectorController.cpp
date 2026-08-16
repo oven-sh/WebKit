@@ -149,9 +149,6 @@ void JSGlobalObjectInspectorController::connectFrontend(FrontendChannel& fronten
 
 void JSGlobalObjectInspectorController::disconnectFrontend(FrontendChannel& frontendChannel)
 {
-    // FIXME: change this to notify agents which frontend has disconnected (by id).
-    m_agents.willDestroyFrontendAndBackend(DisconnectReason::InspectorDestroyed);
-
     m_frontendRouter->disconnectFrontend(frontendChannel);
 
     m_isAutomaticInspection = false;
@@ -160,6 +157,9 @@ void JSGlobalObjectInspectorController::disconnectFrontend(FrontendChannel& fron
     bool disconnectedLastFrontend = !m_frontendRouter->hasFrontends();
     if (!disconnectedLastFrontend)
         return;
+
+    // FIXME: change this to notify agents which frontend has disconnected (by id).
+    m_agents.willDestroyFrontendAndBackend(DisconnectReason::InspectorDestroyed);
 
 #if ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)
     if (m_augmentingClient)

@@ -560,7 +560,14 @@ UGPRPair SYSV_ABI llint_check_stack_and_vm_traps(CallFrame* callFrame, const JSI
 #endif
     }
 
-    if (vm.traps().handleTrapsIfNeeded()) {
+#if USE(BUN_JSC_ADDITIONS)
+    // This frame is at bytecode 0 with op_enter still to run, so it cannot be paused on; the
+    // debugger trap callback (VM::setDebuggerTrapCallback) waits for the next op_check_traps.
+    bool handledTraps = vm.traps().handleTrapsIfNeeded(VMTraps::NonDebuggerAsyncEvents);
+#else
+    bool handledTraps = vm.traps().handleTrapsIfNeeded();
+#endif
+    if (handledTraps) {
         if (vm.hasPendingTerminationException()) {
             throwScope.release();
             callFrame->convertToZombieFrame(vm, codeBlock);

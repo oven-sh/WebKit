@@ -1454,7 +1454,14 @@ WASM_IPINT_EXTERN_CPP_DECL(check_stack_and_vm_traps, void* candidateNewStackPoin
     UNUSED_PARAM(callFrame);
 #endif
 
-    if (vm.traps().handleTrapsIfNeeded()) {
+#if USE(BUN_JSC_ADDITIONS)
+    // Nothing stores vm.topCallFrame on the way here, so the debugger trap callback
+    // (VM::setDebuggerTrapCallback) would walk a stale stack; it waits for a JS op_check_traps.
+    bool handledTraps = vm.traps().handleTrapsIfNeeded(VMTraps::NonDebuggerAsyncEvents);
+#else
+    bool handledTraps = vm.traps().handleTrapsIfNeeded();
+#endif
+    if (handledTraps) {
         if (vm.hasPendingTerminationException())
             IPINT_THROW(Wasm::ExceptionType::Termination);
         ASSERT(!vm.exceptionForInspection());

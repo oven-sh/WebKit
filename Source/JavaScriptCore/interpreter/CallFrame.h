@@ -269,6 +269,12 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         // CodeOrigin(BytecodeIndex(0)) if we're in native code.
         JS_EXPORT_PRIVATE CodeOrigin codeOrigin() const;
 
+#if USE(BUN_JSC_ADDITIONS)
+        // The scope held in this frame's scope register, or null whenever that slot cannot be
+        // trusted; callers then fall back to the callee's scope. See CallFrame.cpp.
+        JSScope* scopeIfScopeRegisterIsLive() const;
+#endif
+
         inline Register* topOfFrame();
 
         const JSInstruction* NODELETE currentVPC() const; // This only makes sense in the LLInt and baseline.
