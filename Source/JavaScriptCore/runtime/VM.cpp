@@ -274,6 +274,9 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     , m_regExpCache(makeUnique<RegExpCache>())
     , m_compactVariableMap(adoptRef(*new CompactTDZEnvironmentMap))
     , m_syncResumeCallCache(makeUniqueRef<MicrotaskCallCache>())
+#if USE(BUN_JSC_ADDITIONS)
+    , m_hostCallCache(makeUniqueRef<MicrotaskCallCache>())
+#endif
     , m_codeCache(makeUnique<CodeCache>())
     , m_intlCache(makeUnique<IntlCache>())
     , m_builtinExecutables(makeUnique<BuiltinExecutables>(*this))
@@ -1919,6 +1922,9 @@ void VM::beginMarking()
 void VM::finalizeUnconditionally()
 {
     m_syncResumeCallCache->finalizeUnconditionally(*this);
+#if USE(BUN_JSC_ADDITIONS)
+    m_hostCallCache->finalizeUnconditionally(*this);
+#endif
 }
 
 template<typename Visitor>

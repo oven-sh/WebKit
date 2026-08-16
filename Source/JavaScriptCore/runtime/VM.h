@@ -949,6 +949,15 @@ public:
     const UniqueRef<MicrotaskCallCache> m_syncResumeCallCache;
     MicrotaskCallCache& syncResumeCallCache() { return m_syncResumeCallCache.get(); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Used by the embedder for its native-to-JS callback calls (event loop callbacks such as
+    // timers, server request handlers and socket handlers), which are a small set of functions
+    // invoked over and over. Same lifetime rules as m_syncResumeCallCache: entries are weak and
+    // dropped in finalizeUnconditionally().
+    const UniqueRef<MicrotaskCallCache> m_hostCallCache;
+    MicrotaskCallCache& hostCallCache() { return m_hostCallCache.get(); }
+#endif
+
     enum class StructureChainIntegrityEvent : uint8_t {
         Add,
         Remove,
