@@ -4619,6 +4619,49 @@ auto OMGIRGenerator::addLoop(BlockSignature&& signature, std::span<TypedExpressi
     }
 
     m_currentBlock = body;
+
+    // VMTraps poll: requestStop() (e.g. VM::notifyNeedTermination) poisons
+    // m_trapAwareSoftStackLimit to UINTPTR_MAX so a pure-Wasm loop observes termination /
+    // watchdog requests at each back-edge instead of never. Match FTL compileCheckTraps: lower
+    // the poll as plain B3 IR (Load + Above + Branch) so the hot path carries no clobber set,
+    // and confine the probe patchpoint to a Rare block. fp stands in for sp (B3 has no SP value);
+    // fp > sp so fp < limit only under the poisoned-limit, which is the branch we want.
+    {
+        BasicBlock* slowPath = m_proc.addBlock();
+        BasicBlock* continuation = m_proc.addBlock();
+
+        Value* limit = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTrapAwareSoftStackLimit()));
+        m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(),
+            m_currentBlock->appendNew<Value>(m_proc, Above, origin(), limit, framePointer()),
+            FrequentedBlock(slowPath, FrequencyClass::Rare), FrequentedBlock(continuation));
+        slowPath->addPredecessor(m_currentBlock);
+        continuation->addPredecessor(m_currentBlock);
+
+        m_currentBlock = slowPath;
+        // The probe preserves all live state for the resume case (non-termination async traps
+        // like NeedStopTheWorld); clobbers apply only to this rare block.
+        B3::PatchpointValue* handle = m_currentBlock->appendNew<B3::PatchpointValue>(m_proc, B3::Void, origin());
+        Effects effects = Effects::none();
+        effects.reads = B3::HeapRange::top();
+        effects.exitsSideways = true;
+        handle->effects = effects;
+        RegisterSet clobbers = RegisterSet::macroClobberedGPRs();
+        clobbers.add(GPRInfo::nonPreservedNonArgumentGPR0, IgnoreVectors);
+        handle->clobber(clobbers);
+        handle->append(instanceValue(), ValueRep::reg(GPRInfo::wasmContextInstancePointer));
+        handle->setGenerator([this, origin = this->origin()](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            jit.probe(tagCFunction<JITProbePtrTag>(operationWasmHandleTrapsAtLoop), nullptr);
+            CCallHelpers::Jump resume = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::nonPreservedNonArgumentGPR0);
+            this->emitExceptionCheck(jit, origin, ExceptionType::Termination);
+            resume.link(&jit);
+        });
+        m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
+        continuation->addPredecessor(m_currentBlock);
+
+        m_currentBlock = continuation;
+    }
+
     return { };
 }
 

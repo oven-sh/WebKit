@@ -69,6 +69,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerTierUpNow, void, (CallFra
 #if ENABLE(WEBASSEMBLY_OMGJIT) || ENABLE(WEBASSEMBLY_BBQJIT)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe::Context&));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe::Context&));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmHandleTrapsAtLoop, void, (Probe::Context&));
 #endif
 #if ENABLE(WEBASSEMBLY_BBQJIT)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmMaterializeBaselineData, void, (CallFrame*, JSWebAssemblyInstance*));

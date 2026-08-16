@@ -177,6 +177,7 @@ public:
     using FunctionWrapperMap = UncheckedKeyHashMap<uint32_t, WriteBarrier<Unknown>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
     static constexpr ptrdiff_t offsetOfSoftStackLimit() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit(); }
+    static constexpr ptrdiff_t offsetOfTrapAwareSoftStackLimit() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit(); }
 
     Wasm::Module& module() const { return m_module.get(); }
     SourceTaintedOrigin taintedness() const { return m_sourceProvider->sourceTaintedOrigin(); }

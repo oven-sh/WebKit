@@ -3648,6 +3648,24 @@ void BBQJIT::emitLoopTierUpCheckAndOSREntryData(const ControlData& data, std::sp
     ASSERT(enclosingStack.size() >= args.size());
     auto enclosingWithoutArgs = enclosingStack.first(enclosingStack.size() - args.size());
     emitLoopTierUpCheckAndOSREntryData(result, enclosingWithoutArgs, loopIndex);
+
+    // VMTraps poll: requestStop() (e.g. VM::notifyNeedTermination) poisons
+    // m_trapAwareSoftStackLimit so a pure-Wasm loop observes termination/watchdog requests at
+    // each back-edge instead of never. The slow path runs under jit.probe so all live state is
+    // preserved for the resume case (non-termination async traps like NeedStopTheWorld).
+    JIT_COMMENT(m_jit, "Loop VMTraps poll");
+    static_assert(GPRInfo::nonPreservedNonArgumentGPR0 == wasmScratchGPR);
+    // sp as the left comparand: matches the offsetOfSoftStackLimit() checks above and avoids
+    // ARM64's extra mov when sp is Rm.
+    Jump needTrapHandling = m_jit.branchPtr(CCallHelpers::Below, MacroAssembler::stackPointerRegister, CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfTrapAwareSoftStackLimit()));
+    MacroAssembler::Label trapResume = m_jit.label();
+    addLatePath(origin(), [needTrapHandling, trapResume](BBQJIT& bbq, CCallHelpers& jit) {
+        needTrapHandling.link(&jit);
+        jit.probe(tagCFunction<JITProbePtrTag>(operationWasmHandleTrapsAtLoop), nullptr);
+        bbq.recordJumpToThrowException(ExceptionType::Termination, jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::nonPreservedNonArgumentGPR0));
+        jit.jump().linkTo(trapResume, &jit);
+    });
+
     return { };
 }
 
