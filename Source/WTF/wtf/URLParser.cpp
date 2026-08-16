@@ -407,63 +407,86 @@ template<typename CharacterType> ALWAYS_INLINE static uint16_t scanClass(Charact
 }
 static_assert(scanClassTable[0xFF] == (PathStop | QueryStop | FragmentStop | OpaquePathStop | HostNotPlain | HostPercentOrNonASCII | NonSpecialHostNotPlain | HostNotDomainCharacter));
 
-// Finds the first character in [begin, end) whose scanClass() has any of the stopClass bits, 16 bytes at a time.
-// vectorStop computes, for a vector of code units, a mask of the lanes that are stop characters.
-template<uint16_t stopClass, typename CharacterType, typename VectorStop>
+// Narrows 16 UTF-16 code units to bytes for classification. Code units that do not fit saturate to 0xFF (or to 0 on x86,
+// where the pack is signed); both are stop characters for every scanner below, as is every character above 0x7E.
+ALWAYS_INLINE static simde_uint8x16_t narrowForClassification(simde_uint16x8_t low, simde_uint16x8_t high)
+{
+#if CPU(X86_SSE2)
+    return simde_uint8x16_from_m128i(_mm_packus_epi16(simde_uint16x8_to_m128i(low), simde_uint16x8_to_m128i(high)));
+#else
+    return simde_vcombine_u8(simde_vqmovn_u16(low), simde_vqmovn_u16(high));
+#endif
+}
+
+// Finds the first character in [begin, end) whose scanClass() has any of the stopClass bits, 16 characters at a time.
+// vectorStop computes, for 16 bytes, a mask of the lanes that are stop characters; it must treat 0, 0xFF and everything
+// above 0x7E as stops.
+template<uint16_t stopClass, char additionalStopCharacter = 0, typename CharacterType, typename VectorStop>
 ALWAYS_INLINE static const CharacterType* findStopCharacter(const CharacterType* begin, const CharacterType* end, const VectorStop& vectorStop)
 {
-    auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
-        return SIMD::findFirstNonZeroIndex(vectorStop(input));
+    constexpr size_t stride = 16;
+    auto loadBlock = [&](const CharacterType* p) ALWAYS_INLINE_LAMBDA {
+        if constexpr (sizeof(CharacterType) == 1)
+            return SIMD::load(std::bit_cast<const uint8_t*>(p));
+        else
+            return narrowForClassification(SIMD::load(std::bit_cast<const uint16_t*>(p)), SIMD::load(std::bit_cast<const uint16_t*>(p + 8)));
     };
-    auto scalarMatch = [](CharacterType character) ALWAYS_INLINE_LAMBDA {
-        return scanClass(character) & stopClass;
-    };
-    return SIMD::find(std::span(begin, end), vectorMatch, scalarMatch);
+    size_t length = end - begin;
+    auto* cursor = begin;
+    if (length >= stride) {
+        for (; cursor + stride <= end; cursor += stride) {
+            if (auto index = SIMD::findFirstNonZeroIndex(vectorStop(loadBlock(cursor))))
+                return cursor + *index;
+        }
+        if (cursor < end) {
+            if (auto index = SIMD::findFirstNonZeroIndex(vectorStop(loadBlock(end - stride))))
+                return end - stride + *index;
+        }
+        return end;
+    }
+    for (; cursor != end; ++cursor) {
+        if ((scanClass(*cursor) & stopClass) || (additionalStopCharacter && *cursor == additionalStopCharacter))
+            return cursor;
+    }
+    return end;
+}
+
+ALWAYS_INLINE static simde_uint8x16_t controlSpaceOrNonASCII(simde_uint8x16_t input)
+{
+    return SIMD::bitOr(SIMD::lessThan(input, SIMD::splat8(0x21)), SIMD::greaterThan(input, SIMD::splat8(0x7E)));
 }
 
 // These mirror the PathStop, QueryStop, FragmentStop and OpaquePathStop bits of scanClassTable.
 template<typename CharacterType>
 ALWAYS_INLINE static const CharacterType* findPathStopCharacter(const CharacterType* begin, const CharacterType* end)
 {
-    return findStopCharacter<PathStop>(begin, end, [](auto input) ALWAYS_INLINE_LAMBDA {
-        using UnsignedType = SameSizeUnsignedInteger<CharacterType>;
-        return SIMD::bitOr(SIMD::lessThan(input, SIMD::splat<UnsignedType>(0x21)), SIMD::greaterThan(input, SIMD::splat<UnsignedType>(0x7E)),
-            SIMD::equal<'"', '#', '/', '<', '>', '?', '\\', '^', '`', '{', '}'>(input));
+    return findStopCharacter<PathStop>(begin, end, [](simde_uint8x16_t input) ALWAYS_INLINE_LAMBDA {
+        return SIMD::bitOr(controlSpaceOrNonASCII(input), SIMD::equal<'"', '#', '/', '<', '>', '?', '\\', '^', '`', '{', '}'>(input));
     });
 }
 
 template<typename CharacterType>
 ALWAYS_INLINE static const CharacterType* findQueryStopCharacter(const CharacterType* begin, const CharacterType* end)
 {
-    return findStopCharacter<QueryStop>(begin, end, [](auto input) ALWAYS_INLINE_LAMBDA {
-        using UnsignedType = SameSizeUnsignedInteger<CharacterType>;
-        return SIMD::bitOr(SIMD::lessThan(input, SIMD::splat<UnsignedType>(0x21)), SIMD::greaterThan(input, SIMD::splat<UnsignedType>(0x7E)),
-            SIMD::equal<'"', '#', '\'', '<', '>'>(input));
+    return findStopCharacter<QueryStop>(begin, end, [](simde_uint8x16_t input) ALWAYS_INLINE_LAMBDA {
+        return SIMD::bitOr(controlSpaceOrNonASCII(input), SIMD::equal<'"', '#', '\'', '<', '>'>(input));
     });
 }
 
 template<typename CharacterType>
 ALWAYS_INLINE static const CharacterType* findFragmentStopCharacter(const CharacterType* begin, const CharacterType* end)
 {
-    return findStopCharacter<FragmentStop>(begin, end, [](auto input) ALWAYS_INLINE_LAMBDA {
-        using UnsignedType = SameSizeUnsignedInteger<CharacterType>;
-        return SIMD::bitOr(SIMD::lessThan(input, SIMD::splat<UnsignedType>(0x21)), SIMD::greaterThan(input, SIMD::splat<UnsignedType>(0x7E)),
-            SIMD::equal<'"', '<', '>', '`'>(input));
+    return findStopCharacter<FragmentStop>(begin, end, [](simde_uint8x16_t input) ALWAYS_INLINE_LAMBDA {
+        return SIMD::bitOr(controlSpaceOrNonASCII(input), SIMD::equal<'"', '<', '>', '`'>(input));
     });
 }
 
 template<typename CharacterType>
 ALWAYS_INLINE static const CharacterType* findOpaquePathStopCharacterOrSlash(const CharacterType* begin, const CharacterType* end)
 {
-    auto vectorMatch = [](auto input) ALWAYS_INLINE_LAMBDA {
-        using UnsignedType = SameSizeUnsignedInteger<CharacterType>;
-        return SIMD::findFirstNonZeroIndex(SIMD::bitOr(SIMD::lessThan(input, SIMD::splat<UnsignedType>(0x21)), SIMD::greaterThan(input, SIMD::splat<UnsignedType>(0x7E)),
-            SIMD::equal<'#', '?', '/'>(input)));
-    };
-    auto scalarMatch = [](CharacterType character) ALWAYS_INLINE_LAMBDA {
-        return (scanClass(character) & OpaquePathStop) || character == '/';
-    };
-    return SIMD::find(std::span(begin, end), vectorMatch, scalarMatch);
+    return findStopCharacter<OpaquePathStop, '/'>(begin, end, [](simde_uint8x16_t input) ALWAYS_INLINE_LAMBDA {
+        return SIMD::bitOr(controlSpaceOrNonASCII(input), SIMD::equal<'#', '?', '/'>(input));
+    });
 }
 
 template<typename CharacterType>
@@ -552,8 +575,25 @@ ALWAYS_INLINE void URLParser::appendToASCIIBuffer(std::span<const Latin1Characte
 
 ALWAYS_INLINE void URLParser::appendToASCIIBuffer(std::span<const char16_t> characters)
 {
-    if (m_didSeeSyntaxViolation) [[unlikely]]
-        m_asciiBuffer.append(characters);
+    if (!m_didSeeSyntaxViolation) [[likely]]
+        return;
+    size_t length = characters.size();
+    auto* source = characters.data();
+    if (length < 16) {
+        m_asciiBuffer.appendUsingFunctor(length, [&](size_t i) {
+            ASSERT(isASCII(source[i]));
+            return static_cast<Latin1Character>(source[i]);
+        });
+        return;
+    }
+    size_t oldSize = m_asciiBuffer.size();
+    m_asciiBuffer.grow(oldSize + length);
+    auto* destination = std::bit_cast<uint8_t*>(m_asciiBuffer.mutableSpan().data()) + oldSize;
+    size_t i = 0;
+    for (; i + 16 <= length; i += 16)
+        SIMD::store(narrowForClassification(SIMD::load(std::bit_cast<const uint16_t*>(source + i)), SIMD::load(std::bit_cast<const uint16_t*>(source + i + 8))), destination + i);
+    if (i < length)
+        SIMD::store(narrowForClassification(SIMD::load(std::bit_cast<const uint16_t*>(source + length - 16)), SIMD::load(std::bit_cast<const uint16_t*>(source + length - 8))), destination + length - 16);
 }
 
 template<typename CharacterType>
