@@ -424,15 +424,21 @@ ALWAYS_INLINE static simde_uint8x16_t narrowForClassification(simde_uint16x8_t l
 // Finds the first character in [begin, end) whose scanClass() has any of the stopClass bits, 16 characters at a time.
 // vectorStop computes, for 16 bytes, a mask of the lanes that are stop characters; it must treat 0, 0xFF and everything
 // above 0x7E as stops.
+template<typename CharacterType>
+ALWAYS_INLINE static simde_uint8x16_t loadForClassification(const CharacterType* p)
+{
+    if constexpr (sizeof(CharacterType) == 1)
+        return SIMD::load(std::bit_cast<const uint8_t*>(p));
+    else
+        return narrowForClassification(SIMD::load(std::bit_cast<const uint16_t*>(p)), SIMD::load(std::bit_cast<const uint16_t*>(p + 8)));
+}
+
 template<uint16_t stopClass, char additionalStopCharacter = 0, typename CharacterType, typename VectorStop>
 ALWAYS_INLINE static const CharacterType* findStopCharacter(const CharacterType* begin, const CharacterType* end, const VectorStop& vectorStop)
 {
     constexpr size_t stride = 16;
     auto loadBlock = [&](const CharacterType* p) ALWAYS_INLINE_LAMBDA {
-        if constexpr (sizeof(CharacterType) == 1)
-            return SIMD::load(std::bit_cast<const uint8_t*>(p));
-        else
-            return narrowForClassification(SIMD::load(std::bit_cast<const uint16_t*>(p)), SIMD::load(std::bit_cast<const uint16_t*>(p + 8)));
+        return loadForClassification(p);
     };
     size_t length = end - begin;
     auto* cursor = begin;
@@ -459,13 +465,53 @@ ALWAYS_INLINE static simde_uint8x16_t controlSpaceOrNonASCII(simde_uint8x16_t in
     return SIMD::bitOr(SIMD::lessThan(input, SIMD::splat8(0x21)), SIMD::greaterThan(input, SIMD::splat8(0x7E)));
 }
 
-// These mirror the PathStop, QueryStop, FragmentStop and OpaquePathStop bits of scanClassTable.
+// These mirror the PathStop, QueryStop, FragmentStop and OpaquePathStop bits of scanClassTable. In a path, '/' only ends the
+// run if it may start a dot segment (it is followed by '.' or '%') or is the last character examined; other slashes are part
+// of the run and the last of them is reported.
 template<typename CharacterType>
-ALWAYS_INLINE static const CharacterType* findPathStopCharacter(const CharacterType* begin, const CharacterType* end)
+ALWAYS_INLINE static const CharacterType* findPathRunEnd(const CharacterType* begin, const CharacterType* end, const CharacterType*& lastSlash)
 {
-    return findStopCharacter<PathStop>(begin, end, [](simde_uint8x16_t input) ALWAYS_INLINE_LAMBDA {
-        return SIMD::bitOr(controlSpaceOrNonASCII(input), SIMD::equal<'"', '#', '/', '<', '>', '?', '\\', '^', '`', '{', '}'>(input));
-    });
+    lastSlash = nullptr;
+    constexpr size_t stride = 16;
+    size_t length = end - begin;
+    if (length >= stride) {
+        constexpr simde_uint8x16_t laneIndices { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+        auto step = [&](const CharacterType* block) ALWAYS_INLINE_LAMBDA -> const CharacterType* {
+            auto input = loadForClassification(block);
+            auto slashes = SIMD::equal<'/'>(input);
+            auto dotOrPercent = SIMD::equal<'.', '%'>(input);
+            auto nextIsDotOrPercent = simde_vextq_u8(dotOrPercent, SIMD::splat8(0xFF), 1);
+            auto stops = SIMD::bitOr(controlSpaceOrNonASCII(input), SIMD::equal<'"', '#', '<', '>', '?', '\\', '^', '`', '{', '}'>(input), SIMD::bitAnd(slashes, nextIsDotOrPercent));
+            if (auto index = SIMD::findFirstNonZeroIndex(stops)) {
+                if (auto slash = SIMD::findLastNonZeroIndex(SIMD::bitAnd(slashes, SIMD::lessThan(laneIndices, SIMD::splat8(*index)))))
+                    lastSlash = block + *slash;
+                return block + *index;
+            }
+            if (auto slash = SIMD::findLastNonZeroIndex(slashes))
+                lastSlash = block + *slash;
+            return nullptr;
+        };
+        auto* cursor = begin;
+        for (; cursor + stride <= end; cursor += stride) {
+            if (auto* stop = step(cursor))
+                return stop;
+        }
+        if (cursor < end) {
+            if (auto* stop = step(end - stride))
+                return stop;
+        }
+        return end;
+    }
+    for (auto* cursor = begin; cursor != end; ++cursor) {
+        if (!(scanClass(*cursor) & PathStop)) [[likely]]
+            continue;
+        if (*cursor == '/' && end - cursor > 1 && cursor[1] != '.' && cursor[1] != '%') {
+            lastSlash = cursor;
+            continue;
+        }
+        return cursor;
+    }
+    return end;
 }
 
 template<typename CharacterType>
@@ -1583,7 +1629,10 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         while (p != inputEnd) {
             if ((*p == '.' || *p == '%') && (isSingleDotPathSegment(iteratorAt(p)) || isDoubleDotPathSegment(iteratorAt(p)))) [[unlikely]]
                 break;
-            p = findPathStopCharacter(p, inputEnd);
+            const CharacterType* lastSlash;
+            p = findPathRunEnd(p, inputEnd, lastSlash);
+            if (lastSlash)
+                m_url.m_pathAfterLastSlash = lastSlash + 1 - inputBegin;
             if (p == inputEnd || *p != '/')
                 break;
             ++p;
@@ -2341,8 +2390,13 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                     }
                 }
                 auto* runStart = p;
-                p = findPathStopCharacter(p, inputEnd);
+                const CharacterType* lastSlash;
+                p = findPathRunEnd(p, inputEnd, lastSlash);
                 appendToASCIIBuffer(std::span(runStart, p));
+                if (lastSlash) {
+                    ASSERT(lastSlash + 1 < p);
+                    m_url.m_pathAfterLastSlash = currentPosition(p) - (p - lastSlash - 1);
+                }
                 if (p != inputEnd && (*p == '/' || (m_urlIsSpecial && *p == '\\'))) {
                     if (*p == '\\') [[unlikely]]
                         syntaxViolation(iteratorAt(p));
