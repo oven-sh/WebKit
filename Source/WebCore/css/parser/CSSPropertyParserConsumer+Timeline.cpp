@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2024 Apple Inc. All rights reserved.
- * Copyright (C) 2024 Samuel Weinig <sam@webkit.org>
+ * Copyright (C) 2024-2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,7 +37,9 @@
 #include "CSSScrollValue.h"
 #include "CSSValuePair.h"
 #include "CSSViewValue.h"
+#include "StyleBuilderState.h"
 #include "StyleSingleAnimationRange.h"
+#include "StyleViewTimelineInsetItem.h"
 
 namespace WebCore {
 namespace CSSPropertyParserHelpers {
@@ -64,6 +66,32 @@ static RefPtr<CSSValue> consumeTimelineRangeName(CSSParserTokenRange& range)
     if (isTimelineRangeName(range.peek().id()))
         return CSSKeywordValue::create(CSS::Keyword { range.consumeIncludingWhitespace().id() });
     return nullptr;
+}
+
+std::optional<Style::SingleAnimationRangeName> parseTimelineRangeNameRaw(const String& rangeString)
+{
+    if (rangeString == "cover"_s)
+        return Style::SingleAnimationRangeName::Cover;
+    if (rangeString == "contain"_s)
+        return Style::SingleAnimationRangeName::Contain;
+    if (rangeString == "entry"_s)
+        return Style::SingleAnimationRangeName::Entry;
+    if (rangeString == "exit"_s)
+        return Style::SingleAnimationRangeName::Exit;
+    if (rangeString == "entry-crossing"_s)
+        return Style::SingleAnimationRangeName::EntryCrossing;
+    if (rangeString == "exit-crossing"_s)
+        return Style::SingleAnimationRangeName::ExitCrossing;
+    if (rangeString == "scroll"_s)
+        return Style::SingleAnimationRangeName::Scroll;
+    return std::nullopt;
+}
+
+std::optional<Style::SingleAnimationRangeName> parseTimelineRangeNameOrNormalRaw(const String& rangeString)
+{
+    if (rangeString == "normal"_s)
+        return Style::SingleAnimationRangeName::Normal;
+    return parseTimelineRangeNameRaw(rangeString);
 }
 
 RefPtr<CSSValue> consumeAnimationTimelineScroll(CSSParserTokenRange& range, CSS::PropertyParserState&)
@@ -142,7 +170,7 @@ RefPtr<CSSValue> consumeSingleViewTimelineInsetItem(CSSParserTokenRange& range, 
     return startInset;
 }
 
-RefPtr<CSSValue> parseSingleViewTimelineInsetItem(const String& string, const CSSParserContext& context)
+std::optional<Style::ViewTimelineInsetItem> parseAbsoluteSingleViewTimelineInsetItemRaw(const String& string, const CSSParserContext& context, const Document& document)
 {
     auto tokenizer = CSSTokenizer(string);
     auto range = tokenizer.tokenRange();
@@ -150,8 +178,10 @@ RefPtr<CSSValue> parseSingleViewTimelineInsetItem(const String& string, const CS
     // Handle leading whitespace.
     range.consumeWhitespace();
 
-    auto state = CSS::PropertyParserState { .context = context };
-    auto result = consumeSingleViewTimelineInsetItem(range, state);
+    auto state = CSS::PropertyParserState { .context = context, .absoluteLengthUnitsOnly = true };
+    auto parsedValue = consumeSingleViewTimelineInsetItem(range, state);
+    if (!parsedValue)
+        return { };
 
     // Handle trailing whitespace.
     range.consumeWhitespace();
@@ -159,7 +189,12 @@ RefPtr<CSSValue> parseSingleViewTimelineInsetItem(const String& string, const CS
     if (!range.atEnd())
         return { };
 
-    return result;
+    auto dummyStyle = Style::ComputedStyle::create();
+    auto dummyState = Style::BuilderState::create(dummyStyle, Style::BuilderContext { document });
+
+    ASSERT(parsedValue->computedStyleDependencies().isAbsolute());
+
+    return Style::toStyleFromCSSValue<Style::ViewTimelineInsetItem>(*CheckedPtr { dummyState.ptr() }, *parsedValue);
 }
 
 RefPtr<CSSValue> consumeSingleAnimationRange(CSSParserTokenRange& range, CSS::PropertyParserState& state, Style::SingleAnimationRangeType type)
@@ -173,7 +208,7 @@ RefPtr<CSSValue> consumeSingleAnimationRange(CSSParserTokenRange& range, CSS::Pr
                 return false;
             },
             [type](const CSSPrimitiveValue::Raw& raw) {
-                if (raw.unit != CSSUnitType::CSS_PERCENTAGE)
+                if (raw.unit != CSSUnitType::Percentage)
                     return false;
                 if (type == Style::SingleAnimationRangeType::Start)
                     return raw.value == 0;
@@ -206,7 +241,8 @@ RefPtr<CSSValue> consumeSingleAnimationRangeEnd(CSSParserTokenRange& range, CSS:
     return consumeSingleAnimationRange(range, state, Style::SingleAnimationRangeType::End);
 }
 
-RefPtr<CSSValue> parseSingleAnimationRange(const String& string, const CSSParserContext& context, Style::SingleAnimationRangeType type)
+template<typename T>
+static std::optional<T> parseAbsoluteSingleAnimationRangeEdgeRaw(const String& string, const CSSParserContext& context, const Document& document)
 {
     auto tokenizer = CSSTokenizer(string);
     auto range = tokenizer.tokenRange();
@@ -214,8 +250,10 @@ RefPtr<CSSValue> parseSingleAnimationRange(const String& string, const CSSParser
     // Handle leading whitespace.
     range.consumeWhitespace();
 
-    auto state = CSS::PropertyParserState { .context = context };
-    auto result = consumeSingleAnimationRange(range, state, type);
+    auto state = CSS::PropertyParserState { .context = context, .absoluteLengthUnitsOnly = true };
+    auto parsedValue = consumeSingleAnimationRange(range, state, T::type);
+    if (!parsedValue)
+        return { };
 
     // Handle trailing whitespace.
     range.consumeWhitespace();
@@ -223,7 +261,22 @@ RefPtr<CSSValue> parseSingleAnimationRange(const String& string, const CSSParser
     if (!range.atEnd())
         return { };
 
-    return result;
+    auto dummyStyle = Style::ComputedStyle::create();
+    auto dummyState = Style::BuilderState::create(dummyStyle, Style::BuilderContext { document });
+
+    ASSERT(parsedValue->computedStyleDependencies().isAbsolute());
+
+    return Style::toStyleFromCSSValue<T>(*CheckedPtr { dummyState.ptr() }, *parsedValue);
+}
+
+std::optional<Style::SingleAnimationRangeStart> parseAbsoluteSingleAnimationRangeStartRaw(const String& string, const CSSParserContext& context, const Document& document)
+{
+    return parseAbsoluteSingleAnimationRangeEdgeRaw<Style::SingleAnimationRangeStart>(string, context, document);
+}
+
+std::optional<Style::SingleAnimationRangeEnd> parseAbsoluteSingleAnimationRangeEndRaw(const String& string, const CSSParserContext& context, const Document& document)
+{
+    return parseAbsoluteSingleAnimationRangeEdgeRaw<Style::SingleAnimationRangeEnd>(string, context, document);
 }
 
 } // namespace CSSPropertyParserHelpers

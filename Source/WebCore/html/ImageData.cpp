@@ -179,7 +179,7 @@ Ref<ByteArrayPixelBuffer> ImageData::byteArrayPixelBuffer() const
 Ref<Float16ArrayPixelBuffer> ImageData::float16ArrayPixelBuffer() const
 {
     Ref float16Data = m_data.asFloat16Array();
-    PixelBufferFormat format { AlphaPremultiplication::Unpremultiplied, PixelFormat::RGBA16F, toDestinationColorSpace(m_colorSpace) };
+    PixelBufferFormat format { AlphaPremultiplication::Unpremultiplied, PixelFormat::RGBA16F, toExtendedDestinationColorSpace(m_colorSpace) };
     return Float16ArrayPixelBuffer::create(format, m_size, float16Data.get());
 }
 #endif // ENABLE(PIXEL_FORMAT_RGBA16F)
@@ -189,11 +189,9 @@ Ref<PixelBuffer> ImageData::pixelBuffer() const
     switch (m_data.pixelFormat()) {
     case ImageDataPixelFormat::RgbaUnorm8:
         return byteArrayPixelBuffer();
-    case ImageDataPixelFormat::RgbaFloat16:
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
+    case ImageDataPixelFormat::RgbaFloat16:
         return float16ArrayPixelBuffer();
-#else
-        RELEASE_ASSERT_NOT_REACHED("Unexpected ImageDataPixelFormat::RgbaFloat16");
 #endif
     }
     RELEASE_ASSERT_NOT_REACHED("Unexpected ImageDataPixelFormat value");

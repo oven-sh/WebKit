@@ -635,6 +635,21 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
         if (m_document->settings().detailsAutoExpandEnabled() && m_element->isInUserAgentShadowTree() && m_element->userAgentPart() == UserAgentParts::detailsContent())
             style.setAutoRevealsWhenFound();
 
+#if ENABLE(IMAGE_ANALYSIS)
+        // Don't allow selecting individual glyphs on text recognized inside an image:
+        if (m_element->isInUserAgentShadowTree() && m_element->userAgentPart() == UserAgentParts::internalImageOverlayText()) {
+            switch (style.webkitUserSelect()) {
+            case UserSelect::All:
+            case UserSelect::None:
+                break;
+            case UserSelect::Auto:
+            case UserSelect::Text:
+                style.setWebkitUserSelect(UserSelect::All);
+                break;
+            }
+        }
+#endif
+
         if (RefPtr htmlElement = dynamicDowncast<HTMLElement>(element); htmlElement && htmlElement->isHiddenUntilFound())
             style.setAutoRevealsWhenFound();
     }
@@ -811,6 +826,24 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
 #endif
 
     adjustForSiteSpecificQuirks(style);
+
+    adjustUsedUserSelect(style);
+}
+
+void Adjuster::adjustUsedUserSelect(Style::ComputedStyle& style) const
+{
+    auto value = style.webkitUserSelect();
+
+    // On editable, non-draggable content, 'none' is overridden so that the content can
+    // still be selected and carets can be placed in it.
+    if (style.userModify() != UserModify::ReadOnly && style.userDrag() != UserDrag::Element && value == UserSelect::None)
+        value = UserSelect::Text;
+
+    // 'auto' means nothing stronger was inherited, so it is handled as 'text'.
+    if (value == UserSelect::Auto)
+        value = UserSelect::Text;
+
+    style.setUsedUserSelect(value);
 }
 
 static bool NODELETE hasEffectiveDisplayNoneForDisplayContents(const Element& element)
@@ -1019,17 +1052,6 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
             style.setDisplayMaintainingOriginalDisplay(DisplayType::None);
     }
 
-    // zillow.com rdar://171279940
-    // FIXME(309831): Remove after rdar://172303198 is implemented.
-    if (documentQuirks.needsZillowFloorplanMarginQuirk()) {
-        if (m_element->hasTagName(imgTag)) {
-            if (RefPtr parent = m_element->parentElement(); parent && parent->idForStyleResolution() == "floorplan_panel"_s) {
-                style.setMarginLeft(CSS::Keyword::Auto { });
-                style.setMarginRight(CSS::Keyword::Auto { });
-            }
-        }
-    }
-
     // yahoo.com rdar://170502516
     if (documentQuirks.needsYahooVolumeSliderQuirk()) {
         static MainThreadNeverDestroyed<const AtomString> className("vjs-volume-control"_s);
@@ -1075,7 +1097,7 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
     if (documentQuirks.needsPrimeVideoUserSelectNoneQuirk()) {
         static MainThreadNeverDestroyed<const AtomString> className("webPlayerSDKUiContainer"_s);
         if (m_element->hasClassName(className))
-            style.setUserSelect(UserSelect::None);
+            style.setWebkitUserSelect(UserSelect::None);
     }
 
     if (auto tikTokOverflowingContentQuery = documentQuirks.needsTikTokOverflowingContentQuirk(protect(*m_element), m_parentStyle)) {

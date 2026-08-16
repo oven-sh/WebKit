@@ -105,6 +105,7 @@ public:
 
     static GetByStatus computeFor(CodeBlock* baselineBlock, ICStatusMap& baselineMap, ICStatusContextStack& dfgContextStack, CodeOrigin);
     static GetByStatus computeFor(JSGlobalObject*, const StructureSet&, CacheableIdentifier, LookupMode);
+    static GetByStatus computeFor(CodeBlock* profiledBlock, BytecodeIndex, JSGlobalObject*, const StructureSet&, CacheableIdentifier, LookupMode);
 
     State state() const { return m_state; }
     
@@ -142,7 +143,7 @@ public:
     
     DECLARE_VISIT_AGGREGATE;
     template<typename Visitor> void markIfCheap(Visitor&);
-    bool finalize(VM&); // Return true if this gets to live.
+    bool isStillLive(VM&);
 
     bool appendVariant(const GetByVariant&);
     void shrinkToFit();

@@ -79,6 +79,11 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyTable, (JSGlobalObject* globalObj
             throwTypeError(globalObject, throwScope, "WebAssembly.Table 'address' must be a string of value 'i32' or 'i64'"_s);
             return { };
         }
+
+        if (addressType.is64Bit() && !Options::useWasmMemory64()) {
+            throwTypeError(globalObject, throwScope, "WebAssembly.Table 'address' of 'i64' requires Memory64 to be enabled"_s);
+            return { };
+        }
     }
 
     Wasm::TableElementType type;
@@ -111,10 +116,10 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyTable, (JSGlobalObject* globalObj
     uint64_t initial64 = addressValueToUint64(globalObject, initialSizeValue, addressType);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
-    if (initial64 > Wasm::maxTableInitializationEntries)
-        return throwVMRangeError(globalObject, throwScope, WTF::makeString("WebAssembly.Table 'initial' value is above the upper bound "_s, Wasm::maxTableInitializationEntries));
+    if (!Wasm::Table::isValidLength(initial64))
+        return throwVMRangeError(globalObject, throwScope, WTF::makeString("WebAssembly.Table 'initial' value is above the upper bound "_s, Wasm::maxTableEntries));
 
-    uint32_t initial = initial64;
+    uint32_t initial = static_cast<uint32_t>(initial64);
 
     // In WebIDL, "present" means that [[Get]] result is undefined, not [[HasProperty]] result.
     // https://webidl.spec.whatwg.org/#idl-dictionaries

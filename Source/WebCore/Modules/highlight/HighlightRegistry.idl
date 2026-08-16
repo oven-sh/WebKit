@@ -29,4 +29,6 @@
     Exposed=Window
 ] interface HighlightRegistry {
     maplike<[AtomString] DOMString, Highlight>;
+
+    [CallWith=CurrentDocument, EnabledBySetting=HighlightsFromPointEnabled] sequence<HighlightHitResult> highlightsFromPoint(float x, float y, optional HighlightsFromPointOptions options = {});
 };

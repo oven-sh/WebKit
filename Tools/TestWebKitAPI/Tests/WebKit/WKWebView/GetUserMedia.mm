@@ -1699,6 +1699,22 @@ TEST(WebKit2, DoNotUnmuteWhenTakingAThumbnail)
 #endif
 
 #if WK_HAVE_C_SPI
+// media-session-capture.html records MediaSession action handler calls, track mute/unmute events and
+// setXXXActive() promise resolutions into a single list. Unmuting an audio capture track waits on the
+// audio session activation, so arm a wait before triggering it and await it before triggering the next
+// operation.
+static void armActionState(TestWKWebView *webView, NSString *state)
+{
+    [webView objectByCallingAsyncFunction:@"return armActionState(state)" withArguments:@{ @"state": state }];
+}
+
+static void waitForActionState(TestWKWebView *webView, NSString *state)
+{
+    NSError *error = nil;
+    [webView objectByCallingAsyncFunction:@"return awaitActionState(state)" withArguments:@{ @"state": state } error:&error];
+    EXPECT_NULL(error);
+}
+
 TEST(WebKit2, WebRTCAndRemoteCommands)
 {
     [TestProtocol registerWithScheme:@"https"];
@@ -1831,13 +1847,16 @@ TEST(WebKit2, ToggleCameraCaptureWhenRestarting)
     EXPECT_TRUE(waitUntilCameraState(webView.get(), WKMediaCaptureStateMuted));
     EXPECT_TRUE(waitUntilMicrophoneState(webView.get(), WKMediaCaptureStateMuted));
 
-    // Unmute via MediaSession.
+    // Unmute via MediaSession. Unmuting waits on the audio session activation, so arm a wait before
+    // triggering it and await it before checking the recorded order.
     cameraCaptureStateChange = false;
     done = false;
+    armActionState(webView.get(), @"unmuting camera");
     [webView stringByEvaluatingJavaScript:@"setCameraActive(true)"];
     TestWebKitAPI::Util::run(&done);
 
     EXPECT_TRUE(waitUntilCameraState(webView.get(), WKMediaCaptureStateActive));
+    waitForActionState(webView.get(), @"unmuting camera");
 
     // Validate handlers/events order.
     done = false;
@@ -1897,15 +1916,20 @@ TEST(WebKit2, ToggleMicrophoneCaptureWhenRestarting)
     EXPECT_TRUE(waitUntilCameraState(webView.get(), WKMediaCaptureStateMuted));
     EXPECT_TRUE(waitUntilMicrophoneState(webView.get(), WKMediaCaptureStateMuted));
 
-    // Unmute via MediaSession.
+    // Unmute via MediaSession. Unmuting waits on the audio session activation, so arm a wait before
+    // triggering it and await it before checking the recorded order.
     cameraCaptureStateChange = false;
     microphoneCaptureStateChange = false;
     done = false;
+    armActionState(webView.get(), @"unmuting microphone");
     [webView stringByEvaluatingJavaScript:@"setMicrophoneActive(true)"];
     TestWebKitAPI::Util::run(&done);
 
     EXPECT_TRUE(waitUntilMicrophoneState(webView.get(), WKMediaCaptureStateActive));
+    waitForActionState(webView.get(), @"unmuting microphone");
 
+    // The camera must stay muted. There is no event for "nothing happened", so give any stray unmute a
+    // chance to arrive before checking.
     sleep(0.5_s);
     EXPECT_TRUE(waitUntilCameraState(webView.get(), WKMediaCaptureStateMuted));
 

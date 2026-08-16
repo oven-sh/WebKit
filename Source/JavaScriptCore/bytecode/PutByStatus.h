@@ -102,12 +102,12 @@ public:
     
     static PutByStatus computeFor(CodeBlock*, ICStatusMap&, BytecodeIndex, ExitFlag, CallLinkStatus::ExitSiteData);
     static PutByStatus computeFor(JSGlobalObject*, const StructureSet&, CacheableIdentifier, bool isDirect, PrivateFieldPutKind);
-    
+    static PutByStatus computeFor(CodeBlock* profiledBlock, BytecodeIndex, JSGlobalObject*, const StructureSet&, CacheableIdentifier, bool isDirect, PrivateFieldPutKind);
+
     static PutByStatus computeFor(CodeBlock* baselineBlock, ICStatusMap& baselineMap, ICStatusContextStack&, CodeOrigin);
 
 #if ENABLE(JIT)
-    static PutByStatus computeForPropertyInlineCache
-(const ConcurrentJSLocker&, CodeBlock* baselineBlock, PropertyInlineCache*, CodeOrigin);
+    static PutByStatus computeForPropertyInlineCache(const ConcurrentJSLocker&, CodeBlock* baselineBlock, PropertyInlineCache*, CodeOrigin);
 #endif
     
     State state() const { return m_state; }
@@ -149,7 +149,7 @@ public:
 
     DECLARE_VISIT_AGGREGATE;
     template<typename Visitor> void markIfCheap(Visitor&);
-    bool finalize(VM&);
+    bool isStillLive(VM&);
     
     void merge(const PutByStatus&);
     
@@ -159,8 +159,7 @@ public:
     
 private:
 #if ENABLE(JIT)
-    static PutByStatus computeForPropertyInlineCache
-(const ConcurrentJSLocker&, CodeBlock*, PropertyInlineCache*, CallLinkStatus::ExitSiteData, CodeOrigin);
+    static PutByStatus computeForPropertyInlineCache(const ConcurrentJSLocker&, CodeBlock*, PropertyInlineCache*, CallLinkStatus::ExitSiteData, CodeOrigin);
 #endif
     static PutByStatus computeFromLLInt(CodeBlock*, BytecodeIndex);
     

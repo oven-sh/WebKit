@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,6 +52,7 @@
 #include <wtf/MallocSpan.h>
 
 #if PLATFORM(COCOA)
+#include "ColorSpaceCG.h"
 #include <Accelerate/Accelerate.h>
 #include <wtf/cf/VectorCF.h>
 
@@ -521,6 +522,23 @@ static void imageBytesForSource(WebGPU::Queue& backing, const GPUImageCopyExtern
             RetainPtr platformImage = nativeImage->platformImage();
             if (!platformImage)
                 return callback({ }, 0, 0);
+
+            if (CGColorSpaceGetModel(CGImageGetColorSpace(platformImage.get())) == kCGColorSpaceModelIndexed) {
+                auto indexedWidth = CGImageGetWidth(platformImage.get());
+                auto indexedHeight = CGImageGetHeight(platformImage.get());
+                RetainPtr bitmapContext = adoptCF(CGBitmapContextCreate(nullptr, indexedWidth, indexedHeight, 8, indexedWidth * 4, sRGBColorSpaceSingleton(), static_cast<uint32_t>(kCGImageAlphaPremultipliedLast) | static_cast<uint32_t>(kCGBitmapByteOrder32Big)));
+                if (!bitmapContext)
+                    return callback({ }, 0, 0);
+
+                CGContextSetBlendMode(bitmapContext.get(), kCGBlendModeCopy);
+                CGContextSetInterpolationQuality(bitmapContext.get(), kCGInterpolationNone);
+                CGContextDrawImage(bitmapContext.get(), CGRectMake(0, 0, indexedWidth, indexedHeight), platformImage.get());
+
+                platformImage = adoptCF(CGBitmapContextCreateImage(bitmapContext.get()));
+                if (!platformImage)
+                    return callback({ }, 0, 0);
+            }
+
             RetainPtr pixelDataCfData = adoptCF(CGDataProviderCopyData(RetainPtr { CGImageGetDataProvider(platformImage.get()) }.get()));
             if (!pixelDataCfData)
                 return callback({ }, 0, 0);
@@ -1217,6 +1235,11 @@ ExceptionOr<void> GPUQueue::copyExternalImageToTexture(ScriptExecutionContext& c
     callbackScopeIsSafe = false;
 
     return { };
+}
+
+ExceptionOr<void> GPUQueue::copyElementImageToTexture(const GPUCopyElementImageSource&, const GPUCopyElementImageDestination&)
+{
+    return Exception { ExceptionCode::InvalidStateError };
 }
 
 } // namespace WebCore

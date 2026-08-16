@@ -2641,7 +2641,7 @@ def check_namespace_indentation(clean_lines, line_number, file_extension, file_s
 _ALLOW_ALL_UPPERCASE_ENUM = ['JSTokenType']
 
 # Enum value allowlist
-_ALLOW_ABBREVIATION_ENUM_VALUES = ['AM', 'CF', 'COOP', 'GPU', 'LTR', 'PM', 'RTL', 'URL', 'XHR']
+_ALLOW_ABBREVIATION_ENUM_VALUES = ['AM', 'CF', 'COOP', 'GPU', 'JSON', 'LTR', 'PM', 'RTL', 'URL', 'XHR']
 
 
 def check_enum_members(clean_lines, line_number, enum_state, error):
@@ -4211,6 +4211,11 @@ def check_include_line(filename, file_extension, clean_lines, line_number, inclu
               'Replace WTF::BlockPtr with WTF::Function. '
               'WTF::BlockPtr is not safe to use until JavaScriptCore builds with ARC enabled.')
 
+    if include == 'objc/objc-runtime.h':
+        error(line_number, 'build/objc_runtime_header', 5,
+              'Do not include <objc/objc-runtime.h>; it is not available in all SDKs.  '
+              'Include <objc/message.h> and/or <objc/runtime.h> instead.')
+
     # Look for any of the stream classes that are part of standard C++.
     if match(r'(f|ind|io|i|o|parse|pf|stdio|str|)?stream$', include):
         error(line_number, 'readability/streams', 3,
@@ -5250,6 +5255,7 @@ class CppChecker(object):
         'build/include_order',
         'build/include_what_you_use',
         'build/namespaces',
+        'build/objc_runtime_header',
         'build/printf_format',
         'build/storage_class',
         'build/using_std',

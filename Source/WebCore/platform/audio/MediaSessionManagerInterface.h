@@ -72,7 +72,7 @@ public:
     virtual bool hasNoSession() const;
 
     virtual bool activeAudioSessionRequired() const;
-    virtual bool hasActiveAudioSession() const;
+    virtual bool hasActiveAudioSession(PlatformMediaSessionInterface&) const;
     virtual bool canProduceAudio() const;
 
     virtual void setShouldDeactivateAudioSession(bool should) { m_shouldDeactivateAudioSession = should; };
@@ -96,6 +96,7 @@ public:
     virtual bool registeredAsNowPlayingApplication() const { return false; }
     virtual bool haveEverRegisteredAsNowPlayingApplication() const { return false; }
     virtual void resetHaveEverRegisteredAsNowPlayingApplicationForTesting() { };
+    virtual void resetToConsistentStateForTesting();
 
     virtual bool willIgnoreSystemInterruptions() const { return m_willIgnoreSystemInterruptions; }
     virtual void setWillIgnoreSystemInterruptions(bool ignore) { m_willIgnoreSystemInterruptions = ignore; }
@@ -151,7 +152,12 @@ public:
     virtual void addAudioCaptureSource(AudioCaptureSource&);
     virtual void removeAudioCaptureSource(AudioCaptureSource&);
     enum class IsCaptureStarting : bool { No, Yes };
-    virtual void audioCaptureSourceStateChanged(IsCaptureStarting);
+    // The returned promise settles once the audio session category resulting from this state change has
+    // been applied to AudioSession::singleton() in this process. Ordering-sensitive callers (e.g.
+    // getUserMedia resolution) await it so they observe the up-to-date category; other callers may
+    // ignore the result. The base implementation applies the category synchronously and returns an
+    // already-resolved promise; RemoteMediaSessionManager settles it from its async IPC reply.
+    virtual Ref<GenericPromise> audioCaptureSourceStateChanged(IsCaptureStarting);
     virtual size_t audioCaptureSourceCount() const { return m_audioCaptureSources.computeSize(); }
 
     virtual void processDidReceiveRemoteControlCommand(PlatformMediaSessionRemoteControlCommandType, const PlatformMediaSessionRemoteCommandArgument&);
@@ -243,7 +249,9 @@ private:
     bool m_alreadyScheduledSessionStatedUpdate { false };
     bool m_hasScheduledSessionStateUpdate { false };
     mutable bool m_isApplicationInBackground { false };
+#if USE(AUDIO_SESSION)
     bool m_becameActive { false };
+#endif
 };
 
 #if !RELEASE_LOG_DISABLED

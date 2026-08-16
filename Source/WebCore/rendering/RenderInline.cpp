@@ -57,7 +57,6 @@
 #include "Settings.h"
 #include "TransformState.h"
 #include "VisiblePosition.h"
-#include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -473,7 +472,7 @@ LayoutRect RenderInline::linesVisualOverflowBoundingBox() const
     return rect;
 }
 
-LayoutRect RenderInline::clippedOverflowRect(const RenderLayerModelObject* repaintContainer, VisibleRectContext context) const
+LayoutRect RenderInline::clippedOverflowRect(const RenderLayerModelObject* repaintContainer, const VisibleRectContext& context) const
 {
     // Only first-letter renderers are allowed in here during layout. They mutate the tree triggering repaints.
 #ifndef NDEBUG
@@ -567,7 +566,7 @@ auto RenderInline::computeVisibleRectsUsingPaintOffset(const RepaintRects& rects
     return adjustedRects;
 }
 
-auto RenderInline::computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject* container, VisibleRectContext context) const -> std::optional<RepaintRects>
+auto RenderInline::computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject* container, const VisibleRectContext& context, VisibleRectState state) const -> std::optional<RepaintRects>
 {
     // Repaint offset cache is only valid for root-relative repainting
     if (view().frameView().layoutContext().isPaintOffsetCacheEnabled() && !container && !context.options.contains(VisibleRectContext::Option::UseEdgeInclusiveIntersection))
@@ -593,8 +592,9 @@ auto RenderInline::computeVisibleRectsInContainer(const RepaintRects& rects, con
 
     if (localContainer->hasNonVisibleOverflow()) {
         // FIXME: Respect the value of context.options.
-        SetForScope change(context.options, context.options | VisibleRectContext::Option::ApplyCompositedContainerScrolls);
-        bool isEmpty = !downcast<RenderLayerModelObject>(*localContainer).applyCachedClipAndScrollPosition(adjustedRects, container, context);
+        auto containerContext = context;
+        containerContext.options.add(VisibleRectContext::Option::ApplyCompositedContainerScrolls);
+        bool isEmpty = !downcast<RenderLayerModelObject>(*localContainer).applyCachedClipAndScrollPosition(adjustedRects, container, containerContext);
         if (isEmpty) {
             if (context.options.contains(VisibleRectContext::Option::UseEdgeInclusiveIntersection))
                 return std::nullopt;
@@ -609,7 +609,7 @@ auto RenderInline::computeVisibleRectsInContainer(const RepaintRects& rects, con
         return adjustedRects;
     }
 
-    return localContainer->computeVisibleRectsInContainer(adjustedRects, container, context);
+    return localContainer->computeVisibleRectsInContainer(adjustedRects, container, context, state);
 }
 
 LayoutSize RenderInline::offsetFromContainer(const RenderElement& container, const LayoutPoint&, bool* offsetDependsOnPoint) const
@@ -717,13 +717,16 @@ LegacyInlineFlowBox* RenderInline::createAndAppendInlineFlowBox()
 LayoutSize RenderInline::offsetForInFlowPositionedInline(const RenderBox* child) const
 {
     // FIXME: This function isn't right with mixed writing modes.
-    if (!isInFlowPositioned()) {
+    // An inline box is the containing block for an out-of-flow child when it is in-flow positioned, and also when
+    // something else about it makes it one, e.g. a filter. Either way the child's static position is relative to the
+    // inline's own content, so it needs the offset of the line the inline starts on.
+    if (!canContainAbsolutelyPositionedObjects()) {
         ASSERT_NOT_REACHED();
         return { };
     }
 
     if (!hasLayer()) {
-        // It looks like we are inflow positioned but no layer created yet. It essentially means we don't have an position offset yet.
+        // It looks like we are a containing block but no layer created yet. It essentially means we don't have a position offset yet.
         return { };
     }
 

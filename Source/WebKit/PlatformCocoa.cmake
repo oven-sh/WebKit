@@ -218,6 +218,7 @@ list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/UIProcess/ios/forms"
     "${WEBKIT_DIR}/UIProcess/ios/fullscreen"
     "${WEBKIT_DIR}/UIProcess/mac"
+    "${WEBKIT_DIR}/UIProcess/mac/AppKitGestures"
     "${WEBKIT_DIR}/WebKitSwift/GroupActivities"
     "${WEBKIT_DIR}/WebKitSwift/IdentityDocumentServices"
     "${WEBKIT_DIR}/WebKitSwift/MarketplaceKit"
@@ -472,9 +473,11 @@ list(APPEND WebKit_SOURCES
     ${WEBKIT_DIR}/UIProcess/WebPageProxy.swift
     ${WEBKIT_DIR}/UIProcess/mac/_WKCaptionStyleMenuControllerAVKitMac.mm
     ${WEBKIT_DIR}/UIProcess/mac/_WKCaptionStyleMenuControllerMac.mm
-    ${WEBKIT_DIR}/UIProcess/mac/WKAppKitGestureController.swift
-    ${WEBKIT_DIR}/UIProcess/mac/WKDirectionalScrollLockTracker.swift
-    ${WEBKIT_DIR}/UIProcess/mac/WKFastScrollTracker.swift
+    ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKAppKitGestureController.swift
+    ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKDOMDoubleClickGestureRecognizer.swift
+    ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKDirectionalScrollLockTracker.swift
+    ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKFastScrollTracker.swift
+    ${WEBKIT_DIR}/UIProcess/mac/SpatialShim.swift
     ${WEBKIT_DIR}/UIProcess/mac/WKTextSelectionController.swift
     ${WEBKIT_DIR}/UIProcess/PDF/WKAlternatePDFHUDView.swift
     ${WEBKIT_DIR}/UIProcess/PDF/WKDefaultPDFHUDView.swift
@@ -1379,6 +1382,7 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     UIProcess/API/Cocoa/_WKTextManipulationItem.h
     UIProcess/API/Cocoa/_WKTextManipulationToken.h
     UIProcess/API/Cocoa/_WKThumbnailView.h
+    UIProcess/API/Cocoa/_WKTranslationDelegate.h
     UIProcess/API/Cocoa/_WKUserContentWorld.h
     UIProcess/API/Cocoa/_WKUserInitiatedAction.h
     UIProcess/API/Cocoa/_WKUserStyleSheet.h
@@ -1543,10 +1547,10 @@ configure_file(${WEBKIT_DIR}/Modules/iOS.modulemap ${CMAKE_BINARY_DIR}/WebKit/Mo
 
 # FIXME: Generate module.private.modulemap. https://bugs.webkit.org/show_bug.cgi?id=312083
 
-make_directory("${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework")
+file(MAKE_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework")
 
 set(_webkit_swiftmodule_dir "${CMAKE_BINARY_DIR}/WebKit/Modules/WebKit.swiftmodule")
-make_directory(${_webkit_swiftmodule_dir})
+file(MAKE_DIRECTORY ${_webkit_swiftmodule_dir})
 set(_webkit_swift_output "${CMAKE_BINARY_DIR}/Source/WebKit")
 set(_webkit_swift_arch "${CMAKE_OSX_ARCHITECTURES}")
 if (NOT _webkit_swift_arch)
@@ -1599,7 +1603,7 @@ add_custom_command(
 )
 add_custom_target(WebKit_StageSwiftModule DEPENDS ${_webkit_staged_swiftmodule_artifacts})
 
-make_directory("${CMAKE_BINARY_DIR}/WebKit/Modules/WebKit.swiftcrossimport")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/WebKit/Modules/WebKit.swiftcrossimport")
 file(WRITE "${CMAKE_BINARY_DIR}/WebKit/Modules/WebKit.swiftcrossimport/SwiftUI.swiftoverlay"
 "---\nversion: 1\nmodules:\n- name: _WebKit_SwiftUI\n")
 
@@ -1758,7 +1762,7 @@ with open(sys.argv[2], 'wb') as f:
 
     function(WEBKIT_IOS_XPC_SERVICE _target _bundle_identifier _info_plist _executable_name _xpc_entitlements)
         set(_service_dir ${WebKit_XPC_SERVICE_DIR}/${_bundle_identifier}.xpc)
-        make_directory(${_service_dir})
+        file(MAKE_DIRECTORY ${_service_dir})
 
         set(BUNDLE_VERSION ${MACOSX_FRAMEWORK_BUNDLE_VERSION})
         set(SHORT_VERSION_STRING ${WEBKIT_MAC_VERSION})
@@ -1922,7 +1926,7 @@ with open(sys.argv[2], 'wb') as f:
     function(WEBKIT_IOS_EXTENSION _name _bundle_id _info_plist _swift_source _entitlements)
         set(_appex_dir ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/${_name}.appex)
         set(_executable_name ${_bundle_id})
-        make_directory(${_appex_dir})
+        file(MAKE_DIRECTORY ${_appex_dir})
 
         set(BUNDLE_VERSION ${MACOSX_FRAMEWORK_BUNDLE_VERSION})
         set(EXECUTABLE_NAME ${_executable_name})
@@ -2027,7 +2031,7 @@ with open(sys.argv[2], 'wb') as f:
 
     set(_sb_profiles_dir "${WEBKIT_DIR}/Resources/SandboxProfiles/ios")
     set(_sb_output_dir "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Resources")
-    make_directory(${_sb_output_dir})
+    file(MAKE_DIRECTORY ${_sb_output_dir})
 
     set(_sb_include_flags
         -I ${WEBKIT_DIR}
@@ -2153,14 +2157,7 @@ target_compile_options(WebKitSwift PRIVATE
     "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-DBUILDING_WITH_CMAKE=1>"
 )
 
-# Explicit-module-build for WebKitSwift Swift compile. Mirrors the macro
-# WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER's enablement of the
-# same flags for WebKit / WebGPU / PAL. https://bugs.webkit.org/show_bug.cgi?id=312083
 target_compile_options(WebKitSwift PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:-explicit-module-build>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fexperimental-late-parse-attributes>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fexperimental-bounds-safety-attributes>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-module-cache-path ${CMAKE_BINARY_DIR}/SwiftModuleCache>"
     # Swift macro expansion runs swift-plugin-server under sandbox-exec;
     # -disable-sandbox avoids a nested sandbox_apply failure in a sandboxed build.
     "$<$<COMPILE_LANGUAGE:Swift>:-disable-sandbox>"
@@ -2266,15 +2263,7 @@ if (USE_LIBWEBRTC)
     endforeach ()
 endif ()
 
-# Explicit-module-build for _WebKit_SwiftUI Swift compile. The dep graph
-# includes WebKit (the cross-import-overlay does `@_exported public import WebKit`)
-# so libSwiftScan must be able to find WebKit.swiftmodule built by our cmake
-# WebKit target. https://bugs.webkit.org/show_bug.cgi?id=312083
 target_compile_options(_WebKit_SwiftUI PRIVATE
-    "$<$<COMPILE_LANGUAGE:Swift>:-explicit-module-build>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fexperimental-late-parse-attributes>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fexperimental-bounds-safety-attributes>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-module-cache-path ${CMAKE_BINARY_DIR}/SwiftModuleCache>"
     # @Entry and other SwiftUI macros run swift-plugin-server under sandbox-exec;
     # -disable-sandbox avoids a nested sandbox_apply failure in a sandboxed build.
     "$<$<COMPILE_LANGUAGE:Swift>:-disable-sandbox>"
@@ -2539,15 +2528,15 @@ function(WEBKIT_DEFINE_XPC_SERVICES)
     set(RUNLOOP_TYPE NSRunLoop)
     set(WebKit_XPC_SERVICE_DIR ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Versions/A/XPCServices)
     # Relative symlink (matches Xcode layout; absolute breaks if build dir is moved).
-    make_directory("${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework")
+    file(MAKE_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework")
     file(CREATE_LINK "Versions/Current/XPCServices"
                      "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/XPCServices" SYMBOLIC)
 
     function(WEBKIT_XPC_SERVICE _target _bundle_identifier _info_plist _executable_name)
         set(_service_dir ${WebKit_XPC_SERVICE_DIR}/${_bundle_identifier}.xpc/Contents)
-        make_directory(${_service_dir}/MacOS)
-        make_directory(${_service_dir}/_CodeSignature)
-        make_directory(${_service_dir}/Resources)
+        file(MAKE_DIRECTORY ${_service_dir}/MacOS)
+        file(MAKE_DIRECTORY ${_service_dir}/_CodeSignature)
+        file(MAKE_DIRECTORY ${_service_dir}/Resources)
 
         # FIXME: These version strings don't match Xcode's.
         set(BUNDLE_VERSION ${WEBKIT_VERSION})

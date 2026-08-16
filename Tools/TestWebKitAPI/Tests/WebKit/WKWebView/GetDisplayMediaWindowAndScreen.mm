@@ -345,6 +345,7 @@ TEST(WebKit2, ToggleScreenshare)
     // Validate handlers/events order.
     messageReceived = false;
     [webView stringByEvaluatingJavaScript:@"validateActionState('deactivating screenshare, muting screenshare, setScreenshareActive not successful, setScreenshareActive successful, unmuting screenshare, end')"];
+    TestWebKitAPI::Util::run(&messageReceived);
 
     [delegate resetWasPrompted];
 

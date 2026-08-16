@@ -123,6 +123,7 @@ public:
     bool isOffsetRotateValue() const { return m_classType == ClassType::OffsetRotate; }
     bool isPaintImageValue() const { return m_classType == ClassType::PaintImage; }
     bool isPair() const { return m_classType == ClassType::ValuePair; }
+    bool isParamValue() const { return m_classType == ClassType::Param; }
     bool isPath() const { return m_classType == ClassType::Path; }
     bool isShorthandSubstitutionValue() const { return m_classType == ClassType::ShorthandSubstitution; }
     bool isPositionValue() const { return m_classType == ClassType::Position; }
@@ -165,9 +166,6 @@ public:
     ComputedStyleDependencies computedStyleDependencies() const;
     void collectComputedStyleDependencies(ComputedStyleDependencies&) const;
 
-    // Checks to see if the provided conversion data is sufficient to resolve the dependencies of the CSSValue.
-    bool canResolveDependenciesWithConversionData(const CSSToLengthConversionData&) const;
-
     bool equals(const CSSValue&) const;
     bool operator==(const CSSValue& other) const { return equals(other); }
 
@@ -181,7 +179,7 @@ public:
     enum StaticCSSValueTag { StaticCSSValue };
 
     static constexpr size_t ValueSeparatorBits = 2;
-    enum ValueSeparator : uint8_t { SpaceSeparator, CommaSeparator, SlashSeparator };
+    enum class ValueSeparator : uint8_t { Space, Comma, Slash };
 
     inline const CSSValue& first() const; // CSSValuePair
     inline const CSSValue& second() const; // CSSValuePair
@@ -254,6 +252,7 @@ protected:
         MaskBorderSource,
         MaskBorderWidth,
         OffsetRotate,
+        Param,
         Path,
         ShorthandSubstitution,
         Position,
@@ -294,7 +293,7 @@ protected:
 
     WEBCORE_EXPORT void operator delete(CSSValue*, std::destroying_delete_t);
 
-    ValueSeparator separator() const { return static_cast<ValueSeparator>(m_valueSeparator); }
+    ValueSeparator separator() const { return m_valueSeparator; }
     ASCIILiteral separatorCSSText() const { return separatorCSSText(separator()); };
 
 private:
@@ -315,7 +314,7 @@ protected:
     uint8_t m_isImplicitInitialValue : 1 { false };
 
     // CSSValueList and CSSValuePair:
-    uint8_t m_valueSeparator : ValueSeparatorBits { 0 };
+    ValueSeparator m_valueSeparator : ValueSeparatorBits { ValueSeparator::Space };
 
 private:
     ClassType m_classType : ClassTypeBits;

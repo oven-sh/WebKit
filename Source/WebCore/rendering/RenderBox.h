@@ -191,8 +191,7 @@ public:
     void computeAndSetBlockDirectionMargins(const RenderBlock& containingBlock);
 
     void markMarginAsTrimmed(Style::MarginTrimSide);
-    void clearTrimmedMarginsMarkings();
-    bool NODELETE hasTrimmedMargin(std::optional<Style::MarginTrimSide>) const;
+    bool NODELETE hasTrimmedMargin(Style::MarginTrimSide) const;
 
     enum class VisualEffectOverflowOption : uint8_t {
         ExcludeFilterOutsets,
@@ -534,13 +533,13 @@ public:
     FloatRect objectBoundingBox() const override { return borderBoxRect(); }
 
     RepaintRects localRectsForRepaint(RepaintOutlineBounds) const override;
-    std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, VisibleRectContext) const override;
+    std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState) const override;
     void repaintDuringLayoutIfMoved(const LayoutRect&);
     virtual void repaintOverhangingFloats(bool paintAllDescendants);
 
     // Returns false if the rect has no intersection with the applied clip rect. When the context specifies edge-inclusive
     // intersection, this return value allows distinguishing between no intersection and zero-area intersection.
-    bool applyCachedClipAndScrollPosition(RepaintRects&, const RenderLayerModelObject* container, VisibleRectContext) const final;
+    bool applyCachedClipAndScrollPosition(RepaintRects&, const RenderLayerModelObject* container, const VisibleRectContext&) const final;
 
     enum class RenderBoxFragmentInfoFlags : bool { CacheRenderBoxFragmentInfo, DoNotCacheRenderBoxFragmentInfo };
 

@@ -68,13 +68,15 @@ bool ContainerQueryEvaluator::evaluate(const CQ::ContainerQuery& containerQuery)
     return false;
 }
 
-static const Style::ComputedStyle* styleForContainer(const Element& container, CQ::ContainerRequirements requirements, const ContainerQueryEvaluationState* evaluationState)
+static CheckedPtr<const ComputedStyle> styleForContainer(const Element& container, CQ::ContainerRequirements requirements, const ContainerQueryEvaluationState* evaluationState)
 {
     // Queries that don't need a size container (style and scroll-state queries) resolve
     // against the container's style, which may not be committed to the render tree yet.
     // Look it up from the currently computed style update instead.
-    if (!requirements.needsSizeContainer() && evaluationState && evaluationState->styleUpdate)
-        return evaluationState->styleUpdate->elementStyle(container);
+    if (!requirements.needsSizeContainer() && evaluationState && evaluationState->newStyleDuringResolutionMap) {
+        if (CheckedPtr newContainerStyle = evaluationState->newStyleDuringResolutionMap->get(container))
+            return newContainerStyle;
+    }
 
     return container.existingComputedStyle();
 }
@@ -105,7 +107,7 @@ auto ContainerQueryEvaluator::featureEvaluationContextForCondition(const CQ::Con
 
     Ref document = element->document();
 
-    CheckedPtr rootStyle = [&] () -> const Style::ComputedStyle* {
+    auto rootStyle = [&] () -> CheckedPtr<const Style::ComputedStyle> {
         RefPtr rootElement = document->documentElement();
         if (!rootElement)
             return nullptr;
@@ -114,9 +116,15 @@ auto ContainerQueryEvaluator::featureEvaluationContextForCondition(const CQ::Con
     }();
 
     return MQ::FeatureEvaluationContext {
-        document.get(),
-        CSSToLengthConversionData { *containerStyle, rootStyle.get(), containerParentStyle.get(), document->renderView(), container.get() },
-        container->renderer()
+        .document = document.get(),
+        .conversionData = CSSToLengthConversionData {
+            *containerStyle,
+            rootStyle.get(),
+            containerParentStyle.get(),
+            document->renderView(),
+            container.get()
+        },
+        .renderer = container->renderer(),
     };
 }
 
@@ -184,7 +192,7 @@ RefPtr<const Element> ContainerQueryEvaluator::selectContainer(CQ::ContainerRequ
 
         // ::part() selectors query the composed tree
         if (selectionMode == SelectionMode::PartPseudoElement)
-            return element.assignedSlot();
+            return element;
 
         // ::slotted() selectors can query containers inside the shadow tree, including the slot itself.
         if (scopeOrdinal >= ScopeOrdinal::FirstSlot && scopeOrdinal <= ScopeOrdinal::SlotLimit)

@@ -49,13 +49,13 @@
         "\"overflowWrap() / setOverflowWrap() / initialOverflowWrap()\".",
         "",
         "* style-builder-custom:",
-        "A string that is \"All\", \"Initial\", \"Inherit\", or \"Value\" or some combination",
-        "of the latter three separated by '|' (e.g. \"Inherit|Value\"). These options",
-        "are described as follows:",
+        "A string that is \"All\", \"Initial\", \"Inherit\", \"Value\", \"HighlightInitial\",",
+        "\"HighlightInherit\", or \"HighlightValue\", or some combination of all but the first,",
+        "separated by '|' (e.g. \"Inherit|Value\"). These options are described as follows:",
         "",
         "All - the CSS property requires special handling to set its initial value,",
         "inherit value, and its value. Prefer this option over listing the individual",
-        "options.",
+        "options. Does not include HighlightInherit.",
         "",
         "Initial - the CSS property requires special handling to set its initial value.",
         "",
@@ -63,6 +63,11 @@
         "",
         "Value - the CSS property requires special handling to set its value, and a",
         "regular converter helper cannot be used.",
+        "",
+        "HighlightInitial, HighlightInherit and HighlightValue - as above, but for the property in a",
+        "highlight pseudo-element, where it behaves differently. Only for properties that apply to",
+        "them, and HighlightInherit is required for a property that needs a custom Inherit and",
+        "inherits in highlight pseudo-elements.",
         "",
         "The custom code for the property should be located in css/StyleBuilderCustom.h",
         "and named applyValue[CSSPropertyName]().",
@@ -77,6 +82,13 @@
         "* color-property:",
         "Indicates that this CSS property is color-related (populates",
         "CSSProperty::isColorProperty().",
+        "",
+        "* applies-to-highlight-pseudo-elements:",
+        "A string that is \"no\" (the default), \"yes\", or \"yes-without-inheritance\". Anything but",
+        "\"no\" allows the property in the highlight pseudo-element cascade. \"yes\" also inherits it",
+        "from the corresponding highlight pseudo-element of the parent element, rather than from the",
+        "originating element.",
+        "https://drafts.csswg.org/css-pseudo-4/#highlight-cascade",
         "",
         "* fast-path-inherited:",
         "Indicates that this CSS property can use the fast-path inheritance mechanism.",
@@ -395,7 +407,7 @@
                 "color-property": true,
                 "color-property-traits-color-custom": true,
                 "color-property-traits-visited-link-color-custom": true,
-                "style-builder-custom": "Initial|Value",
+                "style-builder-custom": "Initial|Value|HighlightInitial|HighlightInherit|HighlightValue",
                 "style-extractor-custom": true,
                 "fast-path-inherited": true,
                 "skip-computed-style-initial": true,
@@ -410,7 +422,8 @@
                 "computed-style-type": "WebCore::Color",
                 "computed-style-visited-link-storage-path": ["m_inheritedData"],
                 "computed-style-visited-dependent-exported": true,
-                "parser-grammar": "<color>"
+                "parser-grammar": "<color>",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-color",
@@ -740,6 +753,7 @@
             "codegen-properties": {
                 "font-property": true,
                 "high-priority": true,
+                "computed-style-getter-exported": true,
                 "computed-style-storage-container": "opaque",
                 "computed-style-storage-path": ["m_inheritedData", "fontData", "fontCascade"],
                 "computed-style-storage-kind": "value",
@@ -767,6 +781,7 @@
                 "font-description-name-for-methods": "Weight",
                 "font-property": true,
                 "high-priority": true,
+                "computed-style-getter-exported": true,
                 "computed-style-storage-container": "opaque",
                 "computed-style-storage-path": ["m_inheritedData", "fontData", "fontCascade"],
                 "computed-style-storage-kind": "value",
@@ -926,6 +941,7 @@
                 "font-description-name-for-methods": "FeatureSettings",
                 "font-property": true,
                 "high-priority": true,
+                "computed-style-getter-nodelete": false,
                 "computed-style-storage-container": "opaque",
                 "computed-style-storage-path": ["m_inheritedData", "fontData", "fontCascade"],
                 "computed-style-storage-kind": "value",
@@ -950,6 +966,7 @@
                 "font-description-name-for-methods": "VariationSettings",
                 "font-property": true,
                 "high-priority": true,
+                "computed-style-getter-nodelete": false,
                 "computed-style-storage-container": "opaque",
                 "computed-style-storage-path": ["m_inheritedData", "fontData", "fontCascade"],
                 "computed-style-storage-kind": "value",
@@ -1156,6 +1173,7 @@
                 "font-description-name-for-methods": "VariantAlternates",
                 "font-property": true,
                 "high-priority": true,
+                "computed-style-getter-nodelete": false,
                 "computed-style-storage-container": "opaque",
                 "computed-style-storage-path": ["m_inheritedData", "fontData", "fontCascade"],
                 "computed-style-storage-kind": "value",
@@ -2303,7 +2321,8 @@
                 "computed-style-type": "Style::Color",
                 "computed-style-visited-link-storage-path": ["m_nonInheritedData", "miscData", "visitedLinkColor"],
                 "computed-style-visited-dependent-applying-color-filter-exported": true,
-                "parser-grammar": "<color>"
+                "parser-grammar": "<color>",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-backgrounds",
@@ -4914,7 +4933,8 @@
                 "visited-link-color-support": true,
                 "parser-grammar": "none | <color> | [ <url> [ none | <color> ]? ]",
                 "parser-grammar-comment": "Current spec grammar is 'none | <color> | [ <url> [ none | <color> ]? ] | context-fill | context-stroke'",
-                "comment": "Also specified (with different grammar) in CSS Fill and Stroke Module Level 3"
+                "comment": "Also specified (with different grammar) in CSS Fill and Stroke Module Level 3",
+                "applies-to-highlight-pseudo-elements": "yes-without-inheritance"
             },
             "specification": {
                 "category": "svg",
@@ -5485,6 +5505,7 @@
                 {
                     "enable-if": "ENABLE_TEXT_AUTOSIZING",
                     "animation-wrapper-requires-getter": "specifiedLineHeight",
+                    "animation-wrapper-requires-setter": "setSpecifiedLineHeightFromAnimation",
                     "style-builder-custom": "All",
                     "style-extractor-custom": true,
                     "computed-style-storage-path": ["m_inheritedData"],
@@ -5506,6 +5527,24 @@
             "specification": {
                 "category": "css-inline",
                 "url": "https://www.w3.org/TR/css-inline-3/#line-height-property"
+            }
+        },
+        "link-parameters": {
+            "animation-type": "discrete",
+            "initial": "none",
+            "values": [
+                "none"
+            ],
+            "codegen-properties": {
+                "settings-flag": "cssLinkParametersEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "reference",
+                "computed-style-type": "Style::LinkParameters",
+                "parser-grammar": "none | <param()>#"
+            },
+            "specification": {
+                "category": "css-link-params",
+                "url": "https://drafts.csswg.org/css-link-params/#propdef-link-parameters"
             }
         },
         "list-style": {
@@ -7928,6 +7967,46 @@
                 "url": "https://svgwg.org/svg2-draft/interact.html#PointerEventsProperty"
             }
         },
+        "portal-action": {
+            "animation-type": "discrete",
+            "initial": "none",
+            "values": [
+                "none",
+                "orbit"
+            ],
+            "codegen-properties": {
+                "enable-if": "ENABLE_SPATIAL_PORTAL",
+                "settings-flag": "spatialPortalEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "enum",
+                "computed-style-type": "PortalActionType",
+                "parser-grammar": "<<values>>"
+            },
+            "specification": {
+                "url": "https://webkit.github.io/explainers/css-spatial/Overview.html#stage-interactivity"
+            },
+            "status": "in development"
+        },
+        "portal-transform": {
+            "animation-type": "discrete",
+            "initial": "auto",
+            "values": [
+                "none",
+                "auto"
+            ],
+            "codegen-properties": {
+                "enable-if": "ENABLE_SPATIAL_PORTAL",
+                "settings-flag": "spatialPortalEnabled",
+                "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
+                "computed-style-storage-kind": "reference",
+                "computed-style-type": "Style::PortalTransform",
+                "parser-grammar": "<<values>>"
+            },
+            "specification": {
+                "url": "https://webkit.github.io/explainers/css-spatial/Overview.html#portals"
+            },
+            "status": "in development"
+        },
         "position": {
             "animation-type": "discrete",
             "initial": "static",
@@ -8197,7 +8276,8 @@
                 "visited-link-color-support": true,
                 "parser-grammar": "none | <color> | [ <url> [ none | <color> ]? ]",
                 "parser-grammar-comment": "Current spec grammar is 'none | <color> | [ <url> [ none | <color> ]? ] | context-fill | context-stroke'",
-                "comment": "Also specified (with different grammar) in CSS Fill and Stroke Module Level 3"
+                "comment": "Also specified (with different grammar) in CSS Fill and Stroke Module Level 3",
+                "applies-to-highlight-pseudo-elements": "yes-without-inheritance"
             },
             "specification": {
                 "category": "svg",
@@ -8346,7 +8426,8 @@
                 "computed-style-visited-link-storage-path": ["m_inheritedRareData"],
                 "visited-link-color-support": true,
                 "color-property": true,
-                "parser-grammar": "<color>"
+                "parser-grammar": "<color>",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "status": "supported",
             "specification": {
@@ -8364,7 +8445,8 @@
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::StrokeWidth",
-                "parser-grammar": "<length-percentage [0,inf]> | <number [0,inf]>"
+                "parser-grammar": "<length-percentage [0,inf]> | <number [0,inf]>",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "status": "supported",
             "specification": {
@@ -8497,6 +8579,7 @@
                 }
             ],
             "codegen-properties": {
+                "computed-style-getter-exported": true,
                 "computed-style-storage-path": ["m_inheritedFlags"],
                 "computed-style-storage-container": "struct",
                 "computed-style-storage-kind": "enum",
@@ -8660,7 +8743,8 @@
                 "parser-function": "consumeTextShadow",
                 "parser-grammar-unused": "none | [ <color>? && <length>{2,3} ]#",
                 "parser-grammar-unused-reason": "Needs support for the strong value representation.",
-                "parser-grammar-comment": "FIXME: Current implementation is a bit closer to box-shadow, where the third (and optional) length representing blur radius is non-negative."
+                "parser-grammar-comment": "FIXME: Current implementation is a bit closer to box-shadow, where the third (and optional) length representing blur radius is non-negative.",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -9051,10 +9135,11 @@
             "codegen-properties": {
                 "longhands": [
                     "white-space-collapse",
-                    "text-wrap-mode"
+                    "text-wrap-mode",
+                    "white-space-trim"
                 ],
                 "parser-function": "consumeWhiteSpaceShorthand",
-                "parser-grammar-unused": "normal | pre | pre-wrap | pre-line | [ <'white-space-collapse'> || <'text-wrap-mode'> ]",
+                "parser-grammar-unused": "normal | pre | pre-wrap | pre-line | [ <'white-space-collapse'> || <'text-wrap-mode'> || <'white-space-trim'> ]",
                 "parser-grammar-unused-reason": "Needs support for shorthand grammars."
             },
             "specification": {
@@ -11325,7 +11410,7 @@
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::WebkitLineClamp",
-                "parser-grammar": "none | <percentage [0,inf]> | <integer [1,inf]>"
+                "parser-grammar": "none | <integer [1,inf]>"
             },
             "status": "non-standard"
         },
@@ -11589,7 +11674,7 @@
                 "computed-style-has-explicitly-set-policy": "value-only",
                 "computed-style-has-explicitly-set-storage-path": ["m_nonInheritedData", "miscData"],
                 "computed-style-storage-path": ["m_inheritedRareData"],
-                "computed-style-storage-kind": "value",
+                "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::ColorScheme",
                 "top-priority": true,
                 "top-priority-reason": "This is a top priority property to ensure that its value can be checked when resolving colors.",
@@ -11817,7 +11902,8 @@
                 "shorthand-pattern": "StandardSpaceSeparated",
                 "style-extractor-custom": true,
                 "parser-grammar-unused": "<'text-decoration-line'> || <'text-decoration-style'> || <'text-decoration-color'>",
-                "parser-grammar-unused-reason": "Needs support for shorthand grammars."
+                "parser-grammar-unused-reason": "Needs support for shorthand grammars.",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -11848,7 +11934,8 @@
                 "computed-style-storage-kind": "raw",
                 "computed-style-type": "Style::TextDecorationLine",
                 "parser-grammar": "none | [ underline || overline || line-through || blink ]@(no-single-item-opt) | spelling-error@(settings-flag=cssTextDecorationLineErrorValues) | grammar-error@(settings-flag=cssTextDecorationLineErrorValues)",
-                "parser-exported": true
+                "parser-exported": true,
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -11872,7 +11959,8 @@
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "enum",
                 "computed-style-type": "TextDecorationStyle",
-                "parser-grammar": "<<values>>"
+                "parser-grammar": "<<values>>",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -11893,7 +11981,8 @@
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::Color",
                 "computed-style-visited-link-storage-path": ["m_nonInheritedData", "miscData", "visitedLinkColor"],
-                "parser-grammar": "<color>"
+                "parser-grammar": "<color>",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -11911,7 +12000,8 @@
                 ],
                 "parser-function": "consumeTextDecorationSkipShorthand",
                 "parser-grammar-unused": "none | auto | ink@(aliased-to=auto)",
-                "parser-grammar-unused-reason": "Needs support for shorthand grammars."
+                "parser-grammar-unused-reason": "Needs support for shorthand grammars.",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -11931,7 +12021,8 @@
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "enum",
                 "computed-style-type": "TextDecorationSkipInk",
-                "parser-grammar": "<<values>>"
+                "parser-grammar": "<<values>>",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -11956,7 +12047,8 @@
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "raw",
                 "computed-style-type": "Style::TextUnderlinePosition",
-                "parser-grammar": "auto | [ [ under | from-font ] || [ left | right ] ]@(no-single-item-opt)"
+                "parser-grammar": "auto | [ [ under | from-font ] || [ left | right ] ]@(no-single-item-opt)",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -11971,7 +12063,8 @@
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::TextUnderlineOffset",
-                "parser-grammar": "auto | <length-percentage>"
+                "parser-grammar": "auto | <length-percentage>",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -11989,7 +12082,8 @@
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::TextDecorationThickness",
-                "parser-grammar": "auto | from-font | <length-percentage>"
+                "parser-grammar": "auto | from-font | <length-percentage>",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -12007,7 +12101,8 @@
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::TextDecorationInset",
-                "parser-grammar": "auto | <length>{1,2}@(type=CSSValuePair default=previous)"
+                "parser-grammar": "auto | <length>{1,2}@(type=CSSValuePair default=previous)",
+                "applies-to-highlight-pseudo-elements": "yes"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -12020,6 +12115,7 @@
             "initial": "none",
             "codegen-properties": {
                 "skip-style-builder": true,
+                "computed-style-getter-exported": true,
                 "computed-style-name-for-methods": "TextDecorationLineInEffect",
                 "computed-style-storage-path": ["m_inheritedFlags"],
                 "computed-style-storage-container": "struct",
@@ -12459,11 +12555,33 @@
             "status": "non-standard"
         },
         "-webkit-user-select": {
-            "animation-type": "not animatable (needs triage)",
-            "animation-type-comment": "Current spec for standard 'user-select' animation type is 'discrete'",
+            "animation-type": "not animatable (legacy)",
             "inherited": true,
             "initial": "text",
-            "initial-comment": "Current spec for standard 'user-select' initial is 'auto'",
+            "initial-comment": "Legacy behavior - 'auto' is folded into 'text'",
+            "values": [
+                "auto",
+                "text",
+                "none",
+                "all"
+            ],
+            "codegen-properties": {
+                "computed-style-has-explicitly-set-policy": "value-only",
+                "computed-style-has-explicitly-set-storage-path": ["m_inheritedRareData"],
+                "computed-style-name-for-methods": "WebkitUserSelect",
+                "computed-style-storage-path": ["m_inheritedRareData"],
+                "computed-style-storage-kind": "enum",
+                "computed-style-type": "UserSelect",
+                "parser-grammar": "<<values>>",
+                "comment": "Not an alias of 'user-select': this property is inherited, it overrides 'user-select' whenever it has been specified (hence the has-explicitly-set flag)."
+            },
+            "status": "non-standard"
+        },
+        "user-select": {
+            "animation-type": "not animatable (needs triage)",
+            "animation-type-comment": "Current spec animation type is 'discrete'",
+            "inherited": false,
+            "initial": "auto",
             "values": [
                 "auto",
                 "text",
@@ -12475,10 +12593,11 @@
                 "all"
             ],
             "codegen-properties": {
-                "computed-style-storage-path": ["m_inheritedRareData"],
+                "computed-style-storage-path": ["m_nonInheritedData", "miscData"],
                 "computed-style-storage-kind": "enum",
                 "computed-style-type": "UserSelect",
-                "parser-grammar": "<<values>>"
+                "parser-grammar": "<<values>>",
+                "settings-flag": "cssUserSelectEnabled"
             },
             "status": {
                 "status": "experimental"
@@ -13498,7 +13617,6 @@
                 "none"
             ],
             "codegen-properties": {
-                "settings-flag": "cssAnchorPositioningEnabled",
                 "computed-style-name-for-methods": "AnchorNames",
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "reference",
@@ -13517,8 +13635,7 @@
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::NameScope",
-                "parser-grammar": "none | all | <dashed-ident>#",
-                "settings-flag": "cssAnchorPositioningEnabled"
+                "parser-grammar": "none | all | <dashed-ident>#"
             },
             "specification": {
                 "category": "css-anchor-position",
@@ -13534,7 +13651,6 @@
                 "auto"
             ],
             "codegen-properties": {
-                "settings-flag": "cssAnchorPositioningEnabled",
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::PositionAnchor",
@@ -13553,7 +13669,6 @@
                 "none"
             ],
             "codegen-properties": {
-                "settings-flag": "cssAnchorPositioningEnabled",
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "value",
                 "computed-style-type": "Style::PositionArea",
@@ -13572,7 +13687,6 @@
                     "position-try-order",
                     "position-try-fallbacks"
                 ],
-                "settings-flag": "cssAnchorPositioningEnabled",
                 "parser-function": "consumePositionTryShorthand",
                 "parser-grammar-unused": "<'position-try-order'>? <'position-try-fallbacks'>",
                 "parser-grammar-unused-reason": "Needs support for shorthand grammars."
@@ -13593,7 +13707,6 @@
                 "most-inline-size"
             ],
             "codegen-properties": {
-                "settings-flag": "cssAnchorPositioningEnabled",
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "enum",
                 "computed-style-type": "Style::PositionTryOrder",
@@ -13611,7 +13724,6 @@
                 "none"
             ],
             "codegen-properties": {
-                "settings-flag": "cssAnchorPositioningEnabled",
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "reference",
                 "computed-style-type": "Style::PositionTryFallbacks",
@@ -13636,7 +13748,6 @@
                 "no-overflow"
             ],
             "codegen-properties": {
-                "settings-flag": "cssAnchorPositioningEnabled",
                 "computed-style-initial-custom": true,
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "raw",
@@ -14415,6 +14526,11 @@
             "shortname": "CSS Line Grid",
             "longname": "CSS Line Grid Module",
             "url": "https://www.w3.org/TR/css-line-grid-1/"
+        },
+        "css-link-params": {
+            "shortname": "CSS Linked Parameters",
+            "longname": "CSS Linked Parameters Module",
+            "url": "https://drafts.csswg.org/css-link-params/"
         },
         "css-lists": {
             "shortname": "CSS Lists and Counters",
@@ -15766,6 +15882,15 @@
             "specification": {
                 "category": "css-fonts-4",
                 "url": "https://drafts.csswg.org/css-fonts-4/#feature-value-name-value"
+            }
+        },
+        "<param()>": {
+            "grammar-unused": "param( <dashed-ident> , <declaration-value>? )",
+            "grammar-unused-reason": "Needs support for an optional <declaration-value> whose preceding comma is still required.",
+            "grammar-function": "consumeParamFunction",
+            "specification": {
+                "category": "css-link-params",
+                "url": "https://drafts.csswg.org/css-link-params/#funcdef-param"
             }
         }
     }

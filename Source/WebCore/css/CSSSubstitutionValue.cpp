@@ -30,14 +30,29 @@
 #include "config.h"
 #include "CSSSubstitutionValue.h"
 
+#include "CSSSubstitutionParser.h"
 #include "CSSVariableData.h"
 
 namespace WebCore {
+
+// The tokens are flat, including nested ones, and functionId() is CSSValueInvalid for anything that
+// is not a function token, so a linear scan finds inherit() at any depth.
+static bool containsInheritFunctionToken(const CSSVariableData& data)
+{
+    if (!data.context().cssInheritFunctionEnabled)
+        return false;
+    for (auto& token : data.tokens()) {
+        if (token.functionId() == CSSValueInherit)
+            return true;
+    }
+    return false;
+}
 
 CSSSubstitutionValue::CSSSubstitutionValue(Ref<CSSVariableData>&& data, const CSSNamespacePrefixMap& namespacePrefixMap)
     : CSSValue(ClassType::Substitution)
     , m_data(WTF::move(data))
     , m_namespacePrefixMap(namespacePrefixMap)
+    , m_containsInheritFunction(containsInheritFunctionToken(m_data))
 {
     cacheSimpleReference();
 }
@@ -93,13 +108,19 @@ void CSSSubstitutionValue::cacheSimpleReference()
 
     variableRange.consumeWhitespace();
 
-    auto variableName = variableRange.consumeIncludingWhitespace().value().toAtomString();
+    // var() names a <custom-property-name> and env() an <ident>. Anything else takes the full
+    // substitution path, since var()'s name argument may be any <declaration-value>.
+    auto& nameToken = variableRange.consumeIncludingWhitespace();
+    if (nameToken.type() != IdentToken)
+        return;
+    if (functionId == CSSValueVar && !CSSSubstitutionParser::isValidCustomPropertyName(nameToken))
+        return;
 
     // No fallback support on this path.
     if (!variableRange.atEnd())
         return;
 
-    m_simpleReference = SimpleReference { variableName, functionId };
+    m_simpleReference = SimpleReference { nameToken.value().toAtomString(), functionId };
 }
 
 } // namespace WebCore

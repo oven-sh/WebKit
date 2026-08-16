@@ -1652,7 +1652,6 @@ editing/input/scroll-viewport-page-up-down.html [ Pass Failure ]
 # webkit.org/b/282046 REGRESSION(285592@main): [ macOS iOS wk2 ] http/tests/site-isolation/load-event.html are near constant failures.
 http/tests/site-isolation/load-event.html [ Pass Failure ]
 webkit.org/b/289347 http/tests/site-isolation/fullscreen.html [ Pass Failure ]
-webkit.org/b/289347 http/tests/site-isolation/fullscreen-escape-key.html [ Pass Failure ]
 
 # webkit.org/b/281923  [ Sequoia+ ] 3 tests in http/tests/cookies/same-site are constant failure (failure in EWS)
 [ Sequoia+ ] http/tests/cookies/same-site/fetch-after-navigating-iframe-in-cross-origin-page.html [ Failure ]
@@ -1926,8 +1925,11 @@ accessibility/mac/text-operation/text-operation-lowercase.html [ Slow ]
 accessibility/mac/text-operation/text-operation-capitalize.html [ Slow ]
 accessibility/datetime/input-date-field-labels-and-value-changes.html [ Slow ]
 accessibility/list/list-active-element-selected-children.html [ Slow ]
+accessibility/isolated-tree/list/list-active-element-selected-children.html [ Slow ]
 accessibility/display-contents/aria-hidden.html [ Slow ]
+accessibility/isolated-tree/display-contents/aria-hidden.html [ Slow ]
 accessibility/display-contents/aria-grid.html [ Slow ]
+accessibility/isolated-tree/display-contents/aria-grid.html [ Slow ]
 animations/CSSKeyframesRule-name-null.html [ Slow ]
 animations/CSSKeyframesRule-parameters.html [ Slow ]
 apple-visual-effects/apple-visual-effect-automatic-vibrancy.html [ Slow ]
@@ -2439,3 +2441,29 @@ webkit.org/b/318258 [ Debug ] ipc/fecolormatrix-type-values-mismatch-crash.html 
 webkit.org/b/319798 [ arm64 ] imported/w3c/web-platform-tests/media-source/mediasource-seek-beyond-duration.html [ Pass Failure ]
 
 webkit.org/b/320245 [ Release x86_64 ] imported/w3c/web-platform-tests/web-locks/bfcache/abort.tentative.https.html [ Pass Crash ]
+
+webkit.org/b/320913 http/tests/security/contentSecurityPolicy/multipart-three-part.py [ Pass Crash Timeout ]
+
+webkit.org/b/320326 imported/w3c/web-platform-tests/css/css-highlight-api/painting/custom-highlight-dynamic-font-metrics-001.html [ Pass ImageOnlyFailure ]
+
+webkit.org/b/321103 [ Debug ] imported/w3c/web-platform-tests/uievents/textInput/enter-textarea-contenteditable.html [ Pass Failure ]
+
+
+webkit.org/b/321185 [ Debug ] imported/w3c/web-platform-tests/wasm/core/float_exprs.wast.js.html [ Pass Timeout ]
+
+webkit.org/b/321191 imported/w3c/web-platform-tests/service-workers/service-worker/fetch-event.https.h2.html [ Pass Crash Failure ]
+
+webkit.org/b/321312 imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-getSynchronizationSources.https.html [ Pass Failure ]
+
+# webkit.org/b/321298 [ Release ] REGRESSION(316423@main): [macOS Release] imported/w3c/web-platform-tests/wasm/serialization/memory/window-success.tentative.https.html is a flaky crash
+[ Release ] imported/w3c/web-platform-tests/wasm/serialization/memory/window-nested-dedicated-worker-failure.tentative.https.html [ Skip ]
+[ Release ] imported/w3c/web-platform-tests/wasm/serialization/memory/window-sharedworker-failure.tentative.https.html [ Skip ]
+
+# Debug assertion in PaymentRequest::suspend() when a request is Interactive as the document enters the back/forward cache
+webkit.org/b/321524 [ Debug ] imported/w3c/web-platform-tests/payment-request/payment-request-show-method.https.html [ Skip ]
+
+webkit.org/b/321726 imported/w3c/web-platform-tests/largest-contentful-paint/observe-svg-data-uri-image.html [ Pass Failure ]
+
+webkit.org/b/321819 media/video-multiple-concurrent-playback.html [ Pass Failure ]
+
+webkit.org/b/321823 [ Debug ] imported/w3c/web-platform-tests/fullscreen/model/move-to-fullscreen-iframe.html [ Pass Crash ]

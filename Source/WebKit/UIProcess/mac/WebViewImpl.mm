@@ -48,6 +48,7 @@
 #import "NativeWebMouseEvent.h"
 #import "NativeWebWheelEvent.h"
 #import "NetworkProcessMessages.h"
+#import "PDFAccessibilityDisplayModeState.h"
 #import "PDFPluginIdentifier.h"
 #import "PageClient.h"
 #import "PageClientImplMac.h"
@@ -184,10 +185,10 @@
 #import <wtf/SoftLinking.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/cf/TypeCastsCF.h>
+#import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
-#import <wtf/spi/darwin/OSVariantSPI.h>
 #import <wtf/text/MakeString.h>
 
 #if ENABLE(WEB_AUTHN)
@@ -1349,7 +1350,7 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     [NSApp registerServicesMenuSendTypes:PasteboardTypes::forSelectionSingleton() returnTypes:PasteboardTypes::forEditingSingleton()];
 
     // Occlusion notifications are not always sent in the base system, and stale occlusion state can result in various misbehaviors.
-    if (os_variant_is_basesystem("WebKit"))
+    if (isInBaseSystem())
         setWindowOcclusionDetectionEnabled(false);
 
 #if ENABLE(TILED_CA_DRAWING_AREA)
@@ -1443,7 +1444,7 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     }, viewStateHysteresis);
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
-    m_appKitGestureController = adoptNS([[WKAppKitGestureController alloc] initWithPage:m_page viewImpl:*this]);
+    m_appKitGestureController = adoptNS([[WKAppKitGestureController alloc] initWithView:view]);
     m_textSelectionController = adoptNS([[WKTextSelectionController alloc] initWithView:view]);
 #endif
 
@@ -1544,6 +1545,14 @@ void WebViewImpl::didRelaunchProcess()
 
     accessibilityRegisterUIProcessTokens();
     windowDidChangeScreen(); // Make sure DisplayID is set.
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+    // FIXME: Should we delay initialization till the end of the auxiliary process launch lifecycle?
+
+    // Ensure we pick up any preference changes between web view initialization and web process launch.
+    if (RetainPtr appKitGestureController = m_appKitGestureController)
+        [appKitGestureController preferencesDidChange];
+#endif
 }
 
 void WebViewImpl::scrollingCoordinatorWasCreated()
@@ -1788,6 +1797,20 @@ void WebViewImpl::viewDidEndLiveResize()
     [m_layoutStrategy didEndLiveResize];
 }
 
+static WKPDFHUDViewAccessibilityDisplayModeState platformAccessibilityDisplayModeState(PDFAccessibilityDisplayModeState state)
+{
+    switch (state) {
+    case PDFAccessibilityDisplayModeState::Ineligible:
+        return WKPDFHUDViewAccessibilityDisplayModeStateUnavailable;
+    case PDFAccessibilityDisplayModeState::Off:
+        return WKPDFHUDViewAccessibilityDisplayModeStateInactive;
+    case PDFAccessibilityDisplayModeState::On:
+        return WKPDFHUDViewAccessibilityDisplayModeStateActive;
+    }
+    ASSERT_NOT_REACHED();
+    return WKPDFHUDViewAccessibilityDisplayModeStateUnavailable;
+}
+
 void WebViewImpl::createPDFHUD(PDFPluginIdentifier identifier, WebCore::FrameIdentifier frameID, const WebCore::IntRect& boundingBoxInFrameRootView)
 {
     removePDFHUD(identifier);
@@ -1808,6 +1831,12 @@ void WebViewImpl::createPDFHUD(PDFPluginIdentifier identifier, WebCore::FrameIde
             page->pdfZoomOut(identifier, frameID);
             return;
 
+        case WKPDFHUDViewControlActionToggleAccessibilityDisplayMode:
+#if ENABLE(AX_PDF_SUPPORT)
+            page->pdfToggleAccessibilityDisplayMode(identifier, frameID);
+#endif
+            return;
+
         case WKPDFHUDViewControlActionOpenInPreview:
             page->pdfOpenWithPreview(identifier, frameID);
             return;
@@ -1821,15 +1850,15 @@ void WebViewImpl::createPDFHUD(PDFPluginIdentifier identifier, WebCore::FrameIde
     // The bounding box is in the plugin frame's local root view coordinates.
     // For cross-origin <iframe> PDFs, this lacks the subframe's offset in the
     // page, so we need to convert that to top level web view coordinates.
-    m_pdfHUDsPendingCreation.set(identifier, boundingBoxInFrameRootView);
+    m_pdfHUDsPendingCreation.set(identifier, PendingHUDData { boundingBoxInFrameRootView, PDFAccessibilityDisplayModeState::Ineligible });
     convertPDFHUDBoundingBoxToWebViewCoordinates(frameID, boundingBoxInFrameRootView, [weakThis = WeakPtr { *this }, identifier, frameID, requestedBox = boundingBoxInFrameRootView, actionHandler](const WebCore::IntRect& boundingBoxInWebView) {
         CheckedPtr checkedThis = weakThis.get();
         if (!checkedThis)
             return;
 
-        auto latestBoxInFrameRootView = checkedThis->m_pdfHUDsPendingCreation.takeOptional(identifier);
         // In case the PDF HUD was removed while the conversion was in flight.
-        if (!latestBoxInFrameRootView)
+        auto pendingData = checkedThis->m_pdfHUDsPendingCreation.takeOptional(identifier);
+        if (!pendingData)
             return;
 
         const auto compositingBordersVisible = protect(checkedThis->m_page->preferences())->compositingBordersVisible();
@@ -1837,12 +1866,14 @@ void WebViewImpl::createPDFHUD(PDFPluginIdentifier identifier, WebCore::FrameIde
         RetainPtr<Class> hudType = protect(checkedThis->m_page->preferences())->useAlternatePDFHUD() ? WKAlternatePDFHUDView.class : WKDefaultPDFHUDView.class;
         RetainPtr<NSView<WKPDFHUDView>> hud = adoptNS([[hudType alloc] initWithFrame:boundingBoxInWebView frameIdentifier:frameID.toUInt64() compositingBordersVisible:compositingBordersVisible actionHandler:actionHandler.get()]);
 
+        [hud setAccessibilityDisplayModeState:platformAccessibilityDisplayModeState(pendingData->displayModeState)];
+
         [checkedThis->m_view.get() addSubview:hud];
         checkedThis->_pdfHUDViews.add(identifier, WTF::move(hud));
 
         // If a HUD update arrived while the conversion was in flight, apply it now that the HUD exists.
-        if (latestBoxInFrameRootView != requestedBox)
-            checkedThis->updatePDFHUDLocation(identifier, *latestBoxInFrameRootView);
+        if (pendingData->frameRootViewBox != requestedBox)
+            checkedThis->updatePDFHUDLocation(identifier, pendingData->frameRootViewBox);
     });
 }
 
@@ -1851,7 +1882,7 @@ void WebViewImpl::updatePDFHUDLocation(PDFPluginIdentifier identifier, const Web
     RetainPtr hud = _pdfHUDViews.get(identifier);
     if (!hud) {
         if (auto it = m_pdfHUDsPendingCreation.find(identifier); it != m_pdfHUDsPendingCreation.end())
-            it->value = boundingBoxInFrameRootView;
+            it->value.frameRootViewBox = boundingBoxInFrameRootView;
         return;
     }
 
@@ -1877,6 +1908,17 @@ void WebViewImpl::convertPDFHUDBoundingBoxToWebViewCoordinates(WebCore::FrameIde
             })
             .value_or(fallback));
     });
+}
+
+void WebViewImpl::updatePDFHUDAccessibilityDisplayMode(PDFPluginIdentifier identifier, PDFAccessibilityDisplayModeState accessibilityDisplayModeState)
+{
+    if (RetainPtr hud = _pdfHUDViews.get(identifier)) {
+        [hud setAccessibilityDisplayModeState:platformAccessibilityDisplayModeState(accessibilityDisplayModeState)];
+        return;
+    }
+
+    if (auto it = m_pdfHUDsPendingCreation.find(identifier); it != m_pdfHUDsPendingCreation.end())
+        it->value.displayModeState = accessibilityDisplayModeState;
 }
 
 void WebViewImpl::removePDFHUD(PDFPluginIdentifier identifier)
@@ -2026,6 +2068,16 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_END
 
         weakThis->m_page->windowAndViewFramesChanged(viewFrameInWindowCoordinates, accessibilityPosition);
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+        // The view's on-screen position may have just changed for reasons that don't perturb
+        // layout or scroll offsets -- a window move, or an ancestor NSScrollView/NSClipView
+        // repositioning this view (renewGState) -- so nothing else would otherwise trigger a
+        // refresh of the AXFrameGeometry used to compute screen-space AXFrame values (see
+        // AccessibilityObject::convertFrameToSpace). Do it explicitly here, since every geometry
+        // change that matters for accessibility funnels through this deferred dispatch.
+        weakThis->m_page->updateAccessibilityFrameGeometry();
+#endif
     });
 }
 
@@ -3908,7 +3960,7 @@ void WebViewImpl::preferencesDidChange()
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
     if (RetainPtr appKitGestureController = m_appKitGestureController)
-        [appKitGestureController enableGesturesIfNeeded];
+        [appKitGestureController preferencesDidChange];
 #endif
 }
 
@@ -5730,16 +5782,18 @@ void WebViewImpl::magnifyWithEvent(NSEvent *event)
 
     Ref gestureController = ensureGestureController();
 
+    auto magnification = event.magnification;
+    auto phase = WebEventFactory::phaseForEvent(event);
 #if ENABLE(MAC_GESTURE_EVENTS)
     if (gestureController->hasActiveMagnificationGesture()) {
-        gestureController->handleMagnificationGestureEvent(event, [m_view.get() convertPoint:event.locationInWindow fromView:nil]);
+        gestureController->handleMagnificationGesture(magnification, phase, [m_view.get() convertPoint:event.locationInWindow fromView:nil]);
         return;
     }
 
     if (auto webEvent = NativeWebGestureEvent::create(event, m_view.getAutoreleased()))
         m_page->handleGestureEvent(*webEvent);
 #else
-    gestureController->handleMagnificationGestureEvent(event, [m_view.get() convertPoint:event.locationInWindow fromView:nil]);
+    gestureController->handleMagnificationGesture(magnification, phase, [m_view.get() convertPoint:event.locationInWindow fromView:nil]);
 #endif
 }
 
@@ -5770,16 +5824,37 @@ void WebViewImpl::rotateWithEvent(NSEvent *event)
 }
 #endif
 
-void WebViewImpl::gestureEventWasNotHandledByWebCore(NSEvent *event)
+#if ENABLE(MAC_GESTURE_EVENTS)
+
+void WebViewImpl::gestureEventWasNotHandledByWebCore(const NativeWebGestureEvent& event)
 {
-    [m_view.get() _web_gestureEventWasNotHandledByWebCore:event];
+    // FIXME: We need to drive the -_gestureEventWasNotHandledByWebCore: SPI even when there is no backing NSEvent.
+    if (RetainPtr nativeEvent = event.nativeEvent()) {
+        [m_view.get() _web_gestureEventWasNotHandledByWebCore:nativeEvent];
+        return;
+    }
+
+    if (event.kind() != NativeWebGestureEvent::Kind::Magnification || !event.allowsNativeZoom())
+        return;
+
+    magnificationGestureWasNotHandledByWebCoreFromViewOnly(event.gestureScale(), event.phase(), event.position());
 }
+
+#endif
 
 void WebViewImpl::gestureEventWasNotHandledByWebCoreFromViewOnly(NSEvent *event)
 {
+    if (event.type != NSEventTypeMagnify)
+        return;
+
+    magnificationGestureWasNotHandledByWebCoreFromViewOnly(event.magnification, WebEventFactory::phaseForEvent(event), [m_view.get() convertPoint:event.locationInWindow fromView:nil]);
+}
+
+void WebViewImpl::magnificationGestureWasNotHandledByWebCoreFromViewOnly(float magnification, WebEventPhase phase, FloatPoint originInViewCoordinates)
+{
 #if ENABLE(MAC_GESTURE_EVENTS)
     if (m_allowsMagnification && m_gestureController)
-        m_gestureController->gestureEventWasNotHandledByWebCore(event, [m_view.get() convertPoint:event.locationInWindow fromView:nil]);
+        m_gestureController->handleMagnificationGesture(magnification, phase, originInViewCoordinates);
 #endif
 }
 
@@ -6576,8 +6651,7 @@ void WebViewImpl::showInlinePredictionsForCandidate(NSTextCheckingResult *candid
         if (!weakThis)
             return;
 
-        // FIXME: rdar://105809280 Adopt NSTextCheckingSoftSpaceRangeKey once it is in more builds.
-        RetainPtr<NSValue> softSpaceRangeValue = resultDictionary[@"SoftSpaceRange"];
+        RetainPtr<NSValue> softSpaceRangeValue = resultDictionary[NSTextCheckingSoftSpaceRangeKey];
         if (!softSpaceRangeValue)
             return;
 
@@ -8244,6 +8318,11 @@ void WebViewImpl::showCaptionDisplaySettings(WebCore::HTMLMediaElementIdentifier
 #endif
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
+void WebViewImpl::setUpGestureController()
+{
+    [m_appKitGestureController setUp];
+}
+
 void WebViewImpl::addTextSelectionManager()
 {
     [m_textSelectionController addTextSelectionManager];

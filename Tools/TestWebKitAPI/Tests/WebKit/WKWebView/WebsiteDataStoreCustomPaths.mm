@@ -32,6 +32,7 @@
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import <JavaScriptCore/JSCConfig.h>
+#import <Network/Network.h>
 #import <WebCore/SQLiteFileSystem.h>
 #import <WebCore/SecurityOriginData.h>
 #import <WebKit/WKHTTPCookieStorePrivate.h>
@@ -589,6 +590,55 @@ TEST(WebKit, WebsiteDataStoreRenameOrigin)
         }];
     }];
     TestWebKitAPI::Util::run(&done);
+}
+
+static RetainPtr<NSSet> displayNamesOfDataRecords(WKWebsiteDataStore *dataStore, NSSet *types)
+{
+    __block RetainPtr<NSMutableSet> displayNames = adoptNS([[NSMutableSet alloc] init]);
+    __block bool done = false;
+    [dataStore fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *records) {
+        for (WKWebsiteDataRecord *record in records)
+            [displayNames addObject:record.displayName];
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    return displayNames;
+}
+
+TEST(WebKit, WebsiteDataStoreRenameOriginRemovesSourceOriginData)
+{
+    NSSet *allTypes = [WKWebsiteDataStore allWebsiteDataTypes];
+
+    __block bool done = false;
+    [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:allTypes modifiedSince:[NSDate distantPast] completionHandler:^{
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    NSURL *exampleURL = [NSURL URLWithString:@"https://example.com/"];
+    NSURL *webKitURL = [NSURL URLWithString:@"https://webkit.org/"];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] init]);
+    [webView synchronouslyLoadHTMLString:@"<script>localStorage.setItem('testkey', 'testvalue')</script>" baseURL:exampleURL];
+
+    // DOMCache is not one of the renamed types, so it is what verifies that data left behind gets deleted.
+    EXPECT_WK_STREQ("ok", [webView objectByCallingAsyncFunction:@"const cache = await caches.open('testcache'); await cache.put('https://example.com/resource', new Response('body')); return 'ok';" withArguments:@{ }]);
+
+    WKWebsiteDataStore *dataStore = [webView configuration].websiteDataStore;
+    EXPECT_TRUE([displayNamesOfDataRecords(dataStore, allTypes).get() containsObject:@"example.com"]);
+
+    RetainPtr renamedTypes = adoptNS([[NSSet alloc] initWithObjects:WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeIndexedDBDatabases, nil]);
+    done = false;
+    [dataStore _renameOrigin:exampleURL to:webKitURL forDataOfTypes:renamedTypes.get() completionHandler:^{
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    [webView synchronouslyLoadHTMLString:@"hello" baseURL:webKitURL];
+    EXPECT_WK_STREQ("testvalue", [webView stringByEvaluatingJavaScript:@"localStorage.getItem('testkey')"]);
+
+    EXPECT_FALSE([displayNamesOfDataRecords(dataStore, allTypes).get() containsObject:@"example.com"]);
 }
 
 TEST(WebKit, NetworkCacheDirectory)
@@ -1482,6 +1532,74 @@ TEST(WKWebsiteDataStore, FetchDiskCacheDataFromDifferentStores)
         done = true;
     }];
     TestWebKitAPI::Util::run(&done);
+}
+
+TEST(WKWebsiteDataStore, RemoveDiskCacheDataForOrigin)
+{
+    using namespace TestWebKitAPI;
+
+    HTTPServer server({
+        { "/example"_s, { { { "Cache-Control"_s, "max-age=1000000"_s } }, "example"_s } },
+        { "/webkit"_s, { { { "Cache-Control"_s, "max-age=1000000"_s } }, "webkit"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr endpoint = adoptNS(nw_endpoint_create_host("127.0.0.1", [NSString stringWithFormat:@"%d", server.port()].UTF8String));
+    RetainPtr proxyConfig = adoptNS(nw_proxy_config_create_http_connect(endpoint.get(), nullptr));
+
+    WKWebsiteDataStore *dataStore = [WKWebsiteDataStore defaultDataStore];
+    dataStore.proxyConfigurations = @[ proxyConfig.get() ];
+
+    NSSet *types = [NSSet setWithObject:WKWebsiteDataTypeDiskCache];
+
+    done = false;
+    [dataStore removeDataOfTypes:types modifiedSince:[NSDate distantPast] completionHandler:^{
+        done = true;
+    }];
+    Util::run(&done);
+
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    [configuration setWebsiteDataStore:dataStore];
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get()]);
+    [webView synchronouslyLoadRequestIgnoringSSLErrors:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/example"]]];
+    [webView synchronouslyLoadRequestIgnoringSSLErrors:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://webkit.org/webkit"]]];
+
+    // The cache is written after the load finishes.
+    __block RetainPtr<NSArray<WKWebsiteDataRecord *>> records;
+    while ([records count] < 2) {
+        done = false;
+        [dataStore fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *fetchedRecords) {
+            records = fetchedRecords;
+            done = true;
+        }];
+        Util::run(&done);
+    }
+    EXPECT_EQ([records count], 2u);
+
+    RetainPtr<WKWebsiteDataRecord> exampleRecord;
+    for (WKWebsiteDataRecord *record in records.get()) {
+        if ([record.displayName isEqualToString:@"example.com"])
+            exampleRecord = record;
+    }
+    EXPECT_TRUE(!!exampleRecord);
+
+    done = false;
+    [dataStore removeDataOfTypes:types forDataRecords:@[ exampleRecord.get() ] completionHandler:^{
+        [dataStore fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *remainingRecords) {
+            EXPECT_EQ([remainingRecords count], 1u);
+            EXPECT_WK_STREQ([[remainingRecords firstObject] displayName], @"webkit.org");
+            done = true;
+        }];
+    }];
+    Util::run(&done);
+
+    // Clean up defaultDataStore after test. The proxy has to be unset too, or later tests using the
+    // default store are routed through this test's server.
+    done = false;
+    [dataStore removeDataOfTypes:types modifiedSince:[NSDate distantPast] completionHandler:^{
+        done = true;
+    }];
+    Util::run(&done);
+    dataStore.proxyConfigurations = nil;
 }
 
 TEST(WKWebsiteDataStoreConfiguration, InitWithIdentifier)

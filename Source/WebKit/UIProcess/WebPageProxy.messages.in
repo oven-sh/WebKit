@@ -63,6 +63,8 @@ messages -> WebPageProxy {
 #endif
     SetAccessibilityMode(enum:uint8_t WebCore::AccessibilityMode mode)
 
+    TranslateAccessibilityAnnouncementStrings(Vector<String> strings, String targetLocaleIdentifier) -> (Vector<String> translatedStrings)
+
 #if PLATFORM(COCOA) || PLATFORM(GTK)
     ShowValidationMessage(WebCore::IntRect anchorRect, String message, std::optional<WebCore::FrameIdentifier> rootFrameID)
     HideValidationMessage()
@@ -147,7 +149,7 @@ messages -> WebPageProxy {
     DidCancelClientRedirectForFrame(WebCore::FrameIdentifier frameID)
     DidChangeProvisionalURLForFrame(WebCore::FrameIdentifier frameID, std::optional<WebCore::NavigationIdentifier> navigationID, URL url)
     DidFailProvisionalLoadForFrame(struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, String provisionalURL, WebCore::ResourceError error, enum:bool WebCore::WillContinueLoading willContinueLoading, WebKit::UserData userData, enum:bool WebCore::WillInternallyHandleFailure willInternallyHandleFailure)
-    DidCommitLoadForFrame(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, String mimeType, bool hasCustomContentProvider, enum:uint8_t WebCore::FrameLoadType loadType, bool usedLegacyTLS, bool wasPrivateRelayed, String proxyName, enum:uint8_t WebCore::ResourceResponseSource source, bool containsPluginDocument, enum:bool WebCore::HasInsecureContent hasInsecureContent, enum:uint8_t WebCore::MouseEventPolicy mouseEventPolicy, struct WebCore::DocumentSecurityPolicy documentSecurityPolicy, HashSet<WebCore::SecurityOriginData> cspOriginsThatUpgradeInsecureNavigations, WebKit::UserData userData, enum:bool WebCore::RestoredFromBackForwardCache restoredFromBackForwardCache, RefPtr<WebKit::FrameState> redirectReplaceFrameState)
+    DidCommitLoadForFrame(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, String mimeType, bool hasCustomContentProvider, enum:uint8_t WebCore::FrameLoadType loadType, bool hasCertificateInfo, bool usedLegacyTLS, bool wasPrivateRelayed, String proxyName, enum:uint8_t WebCore::ResourceResponseSource source, bool containsPluginDocument, enum:bool WebCore::HasInsecureContent hasInsecureContent, enum:uint8_t WebCore::MouseEventPolicy mouseEventPolicy, struct WebCore::DocumentSecurityPolicy documentSecurityPolicy, HashSet<WebCore::SecurityOriginData> cspOriginsThatUpgradeInsecureNavigations, WebKit::UserData userData, enum:bool WebCore::RestoredFromBackForwardCache restoredFromBackForwardCache, RefPtr<WebKit::FrameState> redirectReplaceFrameState)
     DidFailLoadForFrame(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, WebCore::ResourceError error, WebKit::UserData userData)
     DidFinishDocumentLoadForFrame(WebCore::FrameIdentifier frameID, std::optional<WebCore::NavigationIdentifier> navigationID, WebKit::UserData userData, WallTime timestamp)
     DidFinishLoadForFrame(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, WebKit::UserData userData, WallTime timestamp)
@@ -419,7 +421,7 @@ messages -> WebPageProxy {
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS) && ENABLE(VIDEO)
-    [EnabledBy=TextRecognitionInVideosEnabled] BeginTextRecognitionForVideoInElementFullScreen(WebKit::PlaybackSessionContextIdentifier contextId, WebCore::ShareableBitmapHandle bitmapHandle, WebCore::FloatRect videoBounds)
+    [EnabledBy=TextRecognitionInVideosEnabled] BeginTextRecognitionForVideoInElementFullScreen(WebCore::MediaPlayerClientIdentifier mediaElementIdentifier, WebCore::ShareableBitmapHandle bitmapHandle, WebCore::FloatRect videoBounds)
     [EnabledBy=TextRecognitionInVideosEnabled] CancelTextRecognitionForVideoInElementFullScreen()
 #endif
 
@@ -578,6 +580,9 @@ messages -> WebPageProxy {
 #if ENABLE(PDF_HUD)
     CreatePDFHUD(WebKit::PDFPluginIdentifier identifier, WebCore::FrameIdentifier frameID, WebCore::IntRect boundingBox)
     UpdatePDFHUDLocation(WebKit::PDFPluginIdentifier identifier, WebCore::IntRect boundingBox)
+#if ENABLE(AX_PDF_SUPPORT)
+    UpdatePDFHUDAccessibilityDisplayMode(WebKit::PDFPluginIdentifier identifier, enum:uint8_t WebKit::PDFAccessibilityDisplayModeState accessibilityDisplayModeState)
+#endif
     RemovePDFHUD(WebKit::PDFPluginIdentifier identifier)
     ShowPDFHUD(WebKit::PDFPluginIdentifier identifier)
 #endif

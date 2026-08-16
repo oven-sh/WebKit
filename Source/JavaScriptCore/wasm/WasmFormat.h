@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Apple Inc. All rights reserved.
+ * Copyright (C) 2022 the V8 project authors. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -304,6 +305,37 @@ inline bool isExnref(Type type)
     return isRefType(type) && type.index() == typeIndexFromTypeKind(TypeKind::Exnref);
 }
 
+// Placing a field in WasmGC Struct, but tracking a gap happening due to alignment requirement.
+// We keep one gap slot so far if exists, and attempt to reuse this gap when it is possible.
+inline unsigned placeStructField(size_t fieldSize, unsigned& currentOffset, unsigned& gapPosition, unsigned& gapSize)
+{
+    if (fieldSize <= gapSize) {
+        unsigned alignedGap = WTF::roundUpToMultipleOf(fieldSize, gapPosition);
+        unsigned gapBefore = alignedGap - gapPosition;
+        unsigned alignedGapSize = gapSize - gapBefore;
+        if (fieldSize <= alignedGapSize) {
+            unsigned gapAfter = alignedGapSize - fieldSize;
+            if (gapBefore > gapAfter)
+                gapSize = gapBefore;
+            else {
+                gapPosition = alignedGap + fieldSize;
+                gapSize = gapAfter;
+            }
+            return alignedGap;
+        }
+    }
+
+    unsigned oldOffset = currentOffset;
+    currentOffset = WTF::roundUpToMultipleOf(fieldSize, currentOffset);
+    unsigned gap = currentOffset - oldOffset;
+    if (gap > gapSize) {
+        gapSize = gap;
+        gapPosition = oldOffset;
+    }
+    unsigned offset = currentOffset;
+    currentOffset += fieldSize;
+    return offset;
+}
 inline JSString* typeToJSAPIString(VM& vm, Type type)
 {
     switch (type.kind()) {
@@ -794,7 +826,7 @@ public:
         ASSERT(!*this);
     }
 
-    TableInformation(uint32_t initial, std::optional<uint32_t> maximum, bool isImport, TableElementType type, Type wasmType, InitializationType initType, uint64_t initialBitsOrImportNumber, bool isTable64)
+    TableInformation(uint64_t initial, std::optional<uint64_t> maximum, bool isImport, TableElementType type, Type wasmType, InitializationType initType, uint64_t initialBitsOrImportNumber, bool isTable64)
         : m_wasmType(wasmType)
         , m_maximum(maximum)
         , m_initialBitsOrImportNumber(initialBitsOrImportNumber)
@@ -810,8 +842,10 @@ public:
 
     explicit operator bool() const { return m_isValid; }
     bool isImport() const { return m_isImport; }
-    uint32_t initial() const { return m_initial; }
-    std::optional<uint32_t> maximum() const { return m_maximum; }
+    // The size the module declared, which may be larger than any table this implementation can
+    // create. It is checked when the table is created, not when the declaration is parsed.
+    uint64_t initial() const { return m_initial; }
+    std::optional<uint64_t> maximum() const { return m_maximum; }
     TableElementType type() const { return m_type; }
     Type wasmType() const { return m_wasmType; }
     InitializationType initType() const { return m_initType; }
@@ -820,9 +854,9 @@ public:
 
 private:
     Type m_wasmType;
-    std::optional<uint32_t> m_maximum;
+    std::optional<uint64_t> m_maximum;
     uint64_t m_initialBitsOrImportNumber;
-    uint32_t m_initial;
+    uint64_t m_initial;
     TableElementType m_type;
     Wasm::AddressType m_addressType;
     InitializationType m_initType { Default };

@@ -757,17 +757,52 @@ using TwoDigit = UInt128;
 using TwoDigit = uint64_t;
 #endif
 
+// Where a column's carry lives between the three accumulator digits. Keeping it in the condition
+// flags is the shortest instruction sequence, but there is only one flag register, so a scheduler
+// interleaving several accumulations has to save and restore it. Materializing the carry as a value
+// costs an instruction per term and lets those accumulations overlap freely.
+enum class CarryForm : uint8_t { Flags, Value };
+
+template<CarryForm carryForm>
 class DigitColumnAccumulator {
     using Digit = JSBigInt::Digit;
 public:
     ALWAYS_INLINE void mac(Digit a, Digit b)
     {
         TwoDigit prod = static_cast<TwoDigit>(a) * b;
+        if constexpr (carryForm == CarryForm::Value) {
+            Digit carry = 0;
+            t0 = addCarrying(t0, static_cast<Digit>(prod), 0, carry);
+            t1 = addCarrying(t1, static_cast<Digit>(prod >> JSBigInt::digitBits), carry, carry);
+            t2 += carry;
+            return;
+        }
         TwoDigit sum0 = static_cast<TwoDigit>(t0) + static_cast<Digit>(prod);
         t0 = static_cast<Digit>(sum0);
         TwoDigit sum1 = static_cast<TwoDigit>(t1) + static_cast<Digit>(prod >> JSBigInt::digitBits) + static_cast<Digit>(sum0 >> JSBigInt::digitBits);
         t1 = static_cast<Digit>(sum1);
         t2 += static_cast<Digit>(sum1 >> JSBigInt::digitBits);
+    }
+
+    // Accumulates 2 * a * b. The doubled product needs one bit more than the two digits prod
+    // occupies, and that bit lands in t2, the digit above the pair.
+    ALWAYS_INLINE void macDoubled(Digit a, Digit b)
+    {
+        TwoDigit prod = static_cast<TwoDigit>(a) * b;
+        Digit high = static_cast<Digit>(prod >> (JSBigInt::digitBits * 2 - 1));
+        TwoDigit doubled = prod << 1;
+        if constexpr (carryForm == CarryForm::Value) {
+            Digit carry = 0;
+            t0 = addCarrying(t0, static_cast<Digit>(doubled), 0, carry);
+            t1 = addCarrying(t1, static_cast<Digit>(doubled >> JSBigInt::digitBits), carry, carry);
+            t2 += carry + high;
+            return;
+        }
+        TwoDigit sum0 = static_cast<TwoDigit>(t0) + static_cast<Digit>(doubled);
+        t0 = static_cast<Digit>(sum0);
+        TwoDigit sum1 = static_cast<TwoDigit>(t1) + static_cast<Digit>(doubled >> JSBigInt::digitBits) + static_cast<Digit>(sum0 >> JSBigInt::digitBits);
+        t1 = static_cast<Digit>(sum1);
+        t2 += static_cast<Digit>(sum1 >> JSBigInt::digitBits) + high;
     }
 
     ALWAYS_INLINE Digit storeAndShift()
@@ -786,6 +821,30 @@ public:
     ALWAYS_INLINE bool fitsInLow() const { return !t1 && !t2; }
 
 private:
+    ALWAYS_INLINE static Digit addCarrying(Digit a, Digit b, Digit carryIn, Digit& carryOut)
+    {
+#if COMPILER(GCC) && GCC_VERSION < 150000
+        Digit sum = 0;
+        bool carry0 = __builtin_add_overflow(a, b, &sum);
+        Digit result = 0;
+        bool carry1 = __builtin_add_overflow(sum, carryIn, &result);
+        carryOut = static_cast<Digit>(carry0 | carry1);
+        return result;
+#else
+        if constexpr (sizeof(Digit) == sizeof(unsigned long long)) {
+            unsigned long long out = 0;
+            Digit result = __builtin_addcll(a, b, carryIn, &out);
+            carryOut = static_cast<Digit>(out);
+            return result;
+        } else {
+            unsigned out = 0;
+            Digit result = __builtin_addc(a, b, carryIn, &out);
+            carryOut = static_cast<Digit>(out);
+            return result;
+        }
+#endif
+    }
+
     Digit t0 { 0 };
     Digit t1 { 0 };
     Digit t2 { 0 };
@@ -819,8 +878,38 @@ public:
         }
     }
 
+    // Column K of a * a. The pairs (I, J) and (J, I) contribute the same product, so it is
+    // accumulated once at twice the weight, halving the digit multiplies to N * (N + 1) / 2.
+    template<size_t K, size_t I = 0>
+    ALWAYS_INLINE void computeSquareColumn(std::span<const Digit, N> a)
+    {
+        if constexpr (I < N) {
+            constexpr int J = static_cast<int>(K) - static_cast<int>(I);
+            if constexpr (J >= static_cast<int>(I) && J < static_cast<int>(N)) {
+                if constexpr (J == static_cast<int>(I))
+                    m_accumulator.mac(a[I], a[I]);
+                else
+                    m_accumulator.macDoubled(a[I], a[J]);
+            }
+            computeSquareColumn<K, I + 1>(a);
+        }
+    }
+
+    template<size_t K = 0>
+    ALWAYS_INLINE void squarePass(std::span<Digit, N * 2> r, std::span<const Digit, N> a)
+    {
+        if constexpr (K < 2 * N - 1) {
+            computeSquareColumn<K>(a);
+            r[K] = m_accumulator.storeAndShift();
+            squarePass<K + 1>(r, a);
+        } else {
+            ASSERT(m_accumulator.fitsInLow());
+            r[N * 2 - 1] = m_accumulator.low();
+        }
+    }
+
 private:
-    DigitColumnAccumulator m_accumulator;
+    DigitColumnAccumulator<CarryForm::Value> m_accumulator;
 };
 
 template<size_t N>
@@ -838,6 +927,21 @@ std::span<JSBigInt::Digit, N * 2> JSBigInt::multiplyCombaFixed(std::span<const D
 
     CombaAccumulator<N> acc;
     acc.template pass<>(result, a, b);
+    return result;
+}
+
+template<size_t N>
+std::span<JSBigInt::Digit, N * 2> JSBigInt::squareCombaFixed(std::span<const Digit, N> x, std::span<Digit, N * 2> result)
+{
+    static_assert(N == 1 || N == 2 || N == 4 || N == 8 || N == maxCombaFixedSize);
+    std::array<Digit, N> a;
+
+    // Ensure that all loads are done before entering to computation. This allows compiler to use registers for all elements.
+    for (size_t i = 0; i < N; ++i)
+        a[i] = x[i];
+
+    CombaAccumulator<N> acc;
+    acc.template squarePass<>(result, a);
     return result;
 }
 
@@ -949,7 +1053,7 @@ void JSBigInt::multiplySpecialLow(std::span<const Digit> xSpan, std::span<const 
     const auto* y = ySpan.data();
     auto* result = resultSpan.data();
 
-    DigitColumnAccumulator accumulator;
+    DigitColumnAccumulator<CarryForm::Flags> accumulator;
     size_t lastColumn = resultSpan.size() - 1;
     size_t mainEnd = std::min({ xSpan.size(), ySpan.size(), lastColumn });
     size_t column = 0;
@@ -989,7 +1093,7 @@ void JSBigInt::multiplySpecialHigh(std::span<const Digit> xSpan, std::span<const
     const auto* y = ySpan.data();
     auto* result = resultSpan.data();
 
-    DigitColumnAccumulator accumulator;
+    DigitColumnAccumulator<CarryForm::Flags> accumulator;
     size_t column = startPosition;
 
     // Expanding phase: column < ySpan.size(), so the term range starts at 0.
@@ -1054,7 +1158,7 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyComba(std::span<const Digit> xSpan,
     const size_t xSize = xSpan.size();
     const size_t ySize = ySpan.size();
 
-    DigitColumnAccumulator accumulator;
+    DigitColumnAccumulator<CarryForm::Flags> accumulator;
     for (size_t i = 0; i < ySize; ++i) {
         for (size_t j = 0; j <= i; ++j)
             accumulator.mac(x[j], y[i - j]);
@@ -1084,7 +1188,7 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyComba(std::span<const Digit> xSpan,
 // error bound that cachedMod's corrective loop relies on depends on that accumulation order.
 
 // Accumulates x[j] * y[i - j] for j in [min, max] into acc.
-ALWAYS_INLINE static void multiplySpecialColumn(const JSBigInt::Digit* x, const JSBigInt::Digit* y, size_t i, size_t min, size_t max, DigitColumnAccumulator& acc)
+ALWAYS_INLINE static void multiplySpecialColumn(const JSBigInt::Digit* x, const JSBigInt::Digit* y, size_t i, size_t min, size_t max, DigitColumnAccumulator<CarryForm::Flags>& acc)
 {
     for (size_t j = min; j <= max; ++j)
         acc.mac(x[j], y[i - j]);
@@ -1101,7 +1205,7 @@ ALWAYS_INLINE void JSBigInt::multiplySpecialHighFixed(std::span<const Digit, XSi
     const auto* y = ySpan.data();
     auto* result = resultSpan.data();
 
-    DigitColumnAccumulator acc;
+    DigitColumnAccumulator<CarryForm::Flags> acc;
     for (size_t i = StartPosition; i <= loopEnd; ++i) {
         size_t minXIndex = i < YSize ? 0 : i - (YSize - 1);
         multiplySpecialColumn(x, y, i, minXIndex, std::min(i, XSize - 1), acc);
@@ -1124,7 +1228,7 @@ ALWAYS_INLINE void JSBigInt::multiplySpecialLowFixed(std::span<const Digit, XSiz
     const auto* y = ySpan.data();
     auto* result = resultSpan.data();
 
-    DigitColumnAccumulator acc;
+    DigitColumnAccumulator<CarryForm::Flags> acc;
     size_t i = 0;
 
     // Expanding phase: both operands still cover the whole column, so the term range is exactly
@@ -1140,6 +1244,45 @@ ALWAYS_INLINE void JSBigInt::multiplySpecialLowFixed(std::span<const Digit, XSiz
         multiplySpecialColumn(x, y, i, i - maxYIndex, std::min(i, XSize - 1), acc);
         result[i] = acc.storeAndShift();
     }
+}
+
+ALWAYS_INLINE std::span<JSBigInt::Digit> JSBigInt::multiplyDigitsInto(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+{
+    ASSERT(!y.empty());
+    ASSERT(x.size() >= y.size());
+    ASSERT(result.size() >= x.size() + y.size());
+
+    if (x.size() == y.size()) {
+        // Aliased operands mean squaring, which needs only half of the digit multiplies.
+        bool isSquare = x.data() == y.data();
+        switch (y.size()) {
+        case 1:
+            if (isSquare)
+                return squareCombaFixed<1>(x.first<1>(), result.first<2>());
+            return multiplyCombaFixed<1>(x.first<1>(), y.first<1>(), result.first<2>());
+        case 2:
+            if (isSquare)
+                return squareCombaFixed<2>(x.first<2>(), result.first<4>());
+            return multiplyCombaFixed<2>(x.first<2>(), y.first<2>(), result.first<4>());
+        case 4:
+            if (isSquare)
+                return squareCombaFixed<4>(x.first<4>(), result.first<8>());
+            return multiplyCombaFixed<4>(x.first<4>(), y.first<4>(), result.first<8>());
+        case 8:
+            if (isSquare)
+                return squareCombaFixed<8>(x.first<8>(), result.first<16>());
+            return multiplyCombaFixed<8>(x.first<8>(), y.first<8>(), result.first<16>());
+        case 16:
+            if (isSquare)
+                return squareCombaFixed<16>(x.first<16>(), result.first<32>());
+            return multiplyCombaFixed<16>(x.first<16>(), y.first<16>(), result.first<32>());
+        }
+    }
+    if (y.size() == 1)
+        return multiplySingle(x, y[0], result);
+    if (shouldUseComba(x.size(), y.size()))
+        return multiplyComba(x, y, result);
+    return multiplySchoolbook(x, y, result);
 }
 
 template <typename BigIntImpl1, typename BigIntImpl2>
@@ -1192,27 +1335,7 @@ JSBigInt::ImplResult JSBigInt::multiplyImpl(JSGlobalObject* globalObject, BigInt
     bigInt->finishCreation(vm);
     bigInt->setSign(resultSign);
 
-    std::span<Digit> result = ([](std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> span) -> std::span<Digit> {
-        if (x.size() == y.size()) {
-            switch (y.size()) {
-            case 1:
-                return multiplyCombaFixed<1>(x.template first<1>(), y.template first<1>(), span.first<2>());
-            case 2:
-                return multiplyCombaFixed<2>(x.template first<2>(), y.template first<2>(), span.first<4>());
-            case 4:
-                return multiplyCombaFixed<4>(x.template first<4>(), y.template first<4>(), span.first<8>());
-            case 8:
-                return multiplyCombaFixed<8>(x.template first<8>(), y.template first<8>(), span.first<16>());
-            case 16:
-                return multiplyCombaFixed<16>(x.template first<16>(), y.template first<16>(), span.first<32>());
-            }
-        }
-        if (y.size() == 1)
-            return multiplySingle(x, y[0], span);
-        if (shouldUseComba(x.size(), y.size()))
-            return multiplyComba(x, y, span);
-        return multiplySchoolbook(x, y, span);
-    }(xSpan, ySpan, bigInt->digits()));
+    std::span<Digit> result = multiplyDigitsInto(xSpan, ySpan, bigInt->digits());
     ASSERT(!result.empty());
     if (!result.back())
         result = result.first(result.size() - 1);
@@ -1853,7 +1976,7 @@ std::span<JSBigInt::Digit> JSBigInt::addDigits(std::span<const Digit> x, std::sp
     if (x.size() < y.size())
         std::swap(x, y);
     RELEASE_ASSERT(result.size() >= x.size() + 1);
-    return normalize(addSchoolbook(x, y, result));
+    return normalize(addDigitsInto(x, y, result));
 }
 
 std::span<JSBigInt::Digit> JSBigInt::multiplyDigits(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
@@ -1865,11 +1988,7 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyDigits(std::span<const Digit> x, st
     if (x.size() < y.size())
         std::swap(x, y);
     RELEASE_ASSERT(result.size() >= x.size() + y.size());
-    if (y.size() == 1)
-        return normalize(multiplySingle(x, y[0], result));
-    if (shouldUseComba(x.size(), y.size()))
-        return normalize(multiplyComba(x, y, result));
-    return normalize(multiplySchoolbook(x, y, result));
+    return normalize(multiplyDigitsInto(x, y, result));
 }
 
 std::span<JSBigInt::Digit> JSBigInt::divideDigits(std::span<Digit> quotient, std::span<const Digit> x, std::span<const Digit> y)
@@ -2100,6 +2219,31 @@ JSBigInt::Digit JSBigInt::cachedModFoldFactor(std::span<const Digit> b)
     return rSpan[0];
 }
 
+// Subtract b from the value high * 2^(n * digitBits) + r once, if that value is at least b, and
+// return the new high digit. The difference is always formed and then selected in or discarded, so
+// no branch depends on the comparison; the borrow out of the low n digits answers it, since a borrow
+// is covered exactly when high is non-zero.
+template<typename RSpan, typename BSpan>
+ALWAYS_INLINE JSBigInt::Digit JSBigInt::reduceOnce(RSpan r, BSpan b, Digit high)
+{
+    constexpr size_t capacity = BSpan::extent == std::dynamic_extent ? maxCachedModDivisorSize : BSpan::extent;
+    size_t n = b.size();
+    ASSERT(n <= capacity && r.size() >= n);
+
+    std::array<Digit, capacity> difference;
+    Digit borrow = 0;
+    for (size_t i = 0; i < n; ++i) {
+        Digit borrowOut = 0;
+        difference[i] = digitSub2(r[i], b[i], borrow, borrowOut);
+        borrow = borrowOut;
+    }
+
+    bool subtract = high || !borrow;
+    for (size_t i = 0; i < n; ++i)
+        r[i] = subtract ? difference[i] : r[i];
+    return subtract ? high - borrow : high;
+}
+
 // This is Crandall reduction implementation. When factor is not appropriate for efficiency, we use
 // Barrett reduction instead.
 //
@@ -2160,6 +2304,16 @@ ALWAYS_INLINE void JSBigInt::cachedModFoldImpl(RSpan r, ASpan a, BSpan b, Digit 
         carry = propagate;
     }
 
+    // Peel the first corrective subtraction off as a branch-free one. With q at least two the loop
+    // below runs zero or one time in a near-even split, so its branch mispredicts about half the
+    // time; with q one no subtraction is ever needed, the branch always predicts, and the select
+    // would be pure overhead. q is one exactly when b is more than half of 2^(n * digitBits), that
+    // is when b's top bit is set. Static extents only: the select unrolls and costs a fixed amount
+    // there, whereas for a large dynamic n it costs more than the branch it replaces.
+    if constexpr (BSpan::extent != std::dynamic_extent) {
+        if (!(b.back() >> (digitBits - 1)))
+            carry = reduceOnce(r, b, carry);
+    }
     while (carry || greaterThanOrEqual(r, b))
         carry -= inplaceSub(r, b);
 }
@@ -2639,7 +2793,9 @@ JSBigInt::ImplResult JSBigInt::addImpl(JSGlobalObject* globalObject, BigIntImpl1
     // x + -y == x - y == -(y - x)
     // -x + y == y - x == -(x - y)
     ComparisonResult comparisonResult = absoluteCompare(x, y);
-    if (comparisonResult == ComparisonResult::GreaterThan || comparisonResult == ComparisonResult::Equal)
+    if (comparisonResult == ComparisonResult::Equal)
+        return zeroImpl(globalObject->vm());
+    if (comparisonResult == ComparisonResult::GreaterThan)
         return absoluteSub(globalObject, x, y, xSign);
 
     return absoluteSub(globalObject, y, x, !xSign);
@@ -2671,7 +2827,9 @@ JSBigInt::ImplResult JSBigInt::subImpl(JSGlobalObject* globalObject, BigIntImpl1
     // x - y == -(y - x)
     // (-x) - (-y) == y - x == -(x - y)
     ComparisonResult comparisonResult = absoluteCompare(x, y);
-    if (comparisonResult == ComparisonResult::GreaterThan || comparisonResult == ComparisonResult::Equal)
+    if (comparisonResult == ComparisonResult::Equal)
+        return zeroImpl(globalObject->vm());
+    if (comparisonResult == ComparisonResult::GreaterThan)
         return absoluteSub(globalObject, x, y, xSign);
 
     return absoluteSub(globalObject, y, x, !xSign);
@@ -3305,6 +3463,39 @@ std::span<JSBigInt::Digit> JSBigInt::addSchoolbook(std::span<const Digit> x, std
     return result.first(i);
 }
 
+template<size_t N>
+ALWAYS_INLINE std::span<JSBigInt::Digit, N + 1> JSBigInt::addSchoolbookFixed(std::span<const Digit, N> x, std::span<const Digit, N> y, std::span<Digit, N + 1> result)
+{
+    Digit carry = 0;
+    for (size_t i = 0; i < N; ++i) {
+        Digit newCarry = 0;
+        result[i] = digitAdd3(x[i], y[i], carry, newCarry);
+        carry = newCarry;
+    }
+    result[N] = carry;
+    return result;
+}
+
+ALWAYS_INLINE std::span<JSBigInt::Digit> JSBigInt::addDigitsInto(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+{
+    ASSERT(x.size() >= y.size());
+    ASSERT(result.size() >= x.size() + 1);
+
+    if (x.size() == y.size()) {
+        switch (x.size()) {
+        case 1:
+            return addSchoolbookFixed<1>(x.first<1>(), y.first<1>(), result.first<2>());
+        case 2:
+            return addSchoolbookFixed<2>(x.first<2>(), y.first<2>(), result.first<3>());
+        case 3:
+            return addSchoolbookFixed<3>(x.first<3>(), y.first<3>(), result.first<4>());
+        case 4:
+            return addSchoolbookFixed<4>(x.first<4>(), y.first<4>(), result.first<5>());
+        }
+    }
+    return addSchoolbook(x, y, result);
+}
+
 template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::absoluteAdd(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y, bool resultSign)
 {
@@ -3342,7 +3533,7 @@ JSBigInt::ImplResult JSBigInt::absoluteAdd(JSGlobalObject* globalObject, BigIntI
     bigInt->finishCreation(vm);
     bigInt->setSign(resultSign);
 
-    auto span = addSchoolbook(x.digits(), y.digits(), bigInt->digits());
+    auto span = addDigitsInto(x.digits(), y.digits(), bigInt->digits());
     ASSERT(!span.empty());
     if (!span.back())
         bigInt->setLength(span.size() - 1);
@@ -3372,29 +3563,56 @@ std::span<JSBigInt::Digit> JSBigInt::subSchoolbook(std::span<const Digit> x, std
     return result.first(x.size());
 }
 
+template<size_t N>
+ALWAYS_INLINE std::span<JSBigInt::Digit, N> JSBigInt::subSchoolbookFixed(std::span<const Digit, N> x, std::span<const Digit, N> y, std::span<Digit, N> result)
+{
+    Digit borrow = 0;
+    for (size_t i = 0; i < N; ++i) {
+        Digit newBorrow = 0;
+        result[i] = digitSub2(x[i], y[i], borrow, newBorrow);
+        borrow = newBorrow;
+    }
+    ASSERT(!borrow);
+    return result;
+}
+
+ALWAYS_INLINE std::span<JSBigInt::Digit> JSBigInt::subDigitsInto(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+{
+    ASSERT(x.size() >= y.size());
+    ASSERT(compareDigits(x, y) != ComparisonResult::LessThan);
+    ASSERT(result.size() >= x.size());
+
+    if (x.size() == y.size()) {
+        switch (x.size()) {
+        case 1:
+            return subSchoolbookFixed<1>(x.first<1>(), y.first<1>(), result.first<1>());
+        case 2:
+            return subSchoolbookFixed<2>(x.first<2>(), y.first<2>(), result.first<2>());
+        case 3:
+            return subSchoolbookFixed<3>(x.first<3>(), y.first<3>(), result.first<3>());
+        case 4:
+            return subSchoolbookFixed<4>(x.first<4>(), y.first<4>(), result.first<4>());
+        }
+    }
+    return subSchoolbook(x, y, result);
+}
+
 template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::absoluteSub(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y, bool resultSign)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ComparisonResult comparisonResult = absoluteCompare(x, y);
-    ASSERT(x.length() >= y.length());
-    ASSERT(comparisonResult == ComparisonResult::GreaterThan || comparisonResult == ComparisonResult::Equal);
-
-    if (x.isZero()) {
-        ASSERT(y.isZero());
-        return { x };
-    }
+    // Callers fold the equal case into zero, so |x| > |y| here and neither x nor the difference is
+    // zero.
+    ASSERT(absoluteCompare(x, y) == ComparisonResult::GreaterThan);
+    ASSERT(!x.isZero());
 
     if (y.isZero()) {
         if (resultSign == x.sign())
             return ImplResult { x };
         RELEASE_AND_RETURN(scope, JSBigInt::unaryMinusImpl(globalObject, x));
     }
-
-    if (comparisonResult == ComparisonResult::Equal)
-        RELEASE_AND_RETURN(scope, zeroImpl(vm));
 
     unsigned resultLength = x.length();
     if (resultLength > maxInPlaceSubSize) [[unlikely]] {
@@ -3413,9 +3631,8 @@ JSBigInt::ImplResult JSBigInt::absoluteSub(JSGlobalObject* globalObject, BigIntI
     bigInt->finishCreation(vm);
     bigInt->setSign(resultSign);
 
-    auto span = normalize(subSchoolbook(x.digits(), y.digits(), bigInt->digits()));
-    if (span.empty())
-        RELEASE_AND_RETURN(scope, zeroImpl(vm));
+    auto span = normalize(subDigitsInto(x.digits(), y.digits(), bigInt->digits()));
+    ASSERT(!span.empty());
     bigInt->setLength(span.size());
     return bigInt;
 }

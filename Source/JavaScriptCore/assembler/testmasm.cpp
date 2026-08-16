@@ -4394,7 +4394,7 @@ void testLoadExtend_BaseIndex_RegisterID(const Scenario* scenarios, size_t numbe
 }
 
 template<typename T, typename Scenario, typename CompileFunctor>
-void testLoadExtend_voidp_RegisterID(const Scenario* scenarios, size_t numberOfScenarios, CompileFunctor compileFunctor)
+UNUSED_FUNCTION void testLoadExtend_voidp_RegisterID(const Scenario* scenarios, size_t numberOfScenarios, CompileFunctor compileFunctor)
 {
     for (size_t i = 0; i < numberOfScenarios; ++i) {
         auto test = compile([&] (CCallHelpers& jit) {
@@ -4445,7 +4445,7 @@ const SignedLoad16to32Scenario signedLoad16to32Scenarios[] = {
 // void loadAcq8SignedExtendTo32(Address address, RegisterID dest)
 void testLoadAcq8SignedExtendTo32_Address_RegisterID()
 {
-#if CPU(ARM64) || CPU(ARM)
+#if CPU(ARM64)
     testLoadExtend_Address_RegisterID<int8_t, int32_t>(signedLoad8to32Scenarios, ARRAY_SIZE(signedLoad8to32Scenarios),
         [] (CCallHelpers& jit, int offset) {
             constexpr GPRReg resultAddressGPR = GPRInfo::argumentGPR0;
@@ -4505,7 +4505,7 @@ void testLoad8SignedExtendTo32_voidp_RegisterID()
 // void loadAcq16SignedExtendTo32(Address address, RegisterID dest)
 void testLoadAcq16SignedExtendTo32_Address_RegisterID()
 {
-#if CPU(ARM64) || CPU(ARM)
+#if CPU(ARM64)
     testLoadExtend_Address_RegisterID<int16_t, int32_t>(signedLoad16to32Scenarios, ARRAY_SIZE(signedLoad16to32Scenarios),
         [] (CCallHelpers& jit, int offset) {
             constexpr GPRReg resultAddressGPR = GPRInfo::argumentGPR0;

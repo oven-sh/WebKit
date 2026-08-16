@@ -1,14 +1,11 @@
-css/CSSComputedStyleDeclaration.cpp
-css/CSSPropertyInitialValues.cpp
 css/DOMMatrixReadOnly.cpp
-css/StyleSheetList.cpp
-css/parser/CSSPropertyParserConsumer+String.cpp
-css/values/color/CSSKeywordColor.cpp
 dom/Document.cpp
 dom/FragmentDirectiveRangeFinder.cpp
 dom/UserGestureIndicator.cpp
 [ macOS ] inspector/InspectorFrontendHost.cpp
 layout/formattingContexts/inline/InlineLineBuilder.cpp
+layout/integration/LayoutIntegrationFormattingContextLayout.cpp
+layout/integration/inline/LayoutIntegrationLineLayout.cpp
 loader/EmptyClients.cpp
 loader/TextResourceDecoder.cpp
 page/EventHandler.cpp
@@ -17,6 +14,4 @@ page/text-extraction/TextExtraction.cpp
 rendering/RenderGeometryMap.cpp
 rendering/StyledMarkedText.cpp
 rendering/TextDecorationPainter.cpp
-rendering/svg/RenderSVGHiddenContainer.cpp
-rendering/svg/legacy/LegacyRenderSVGHiddenContainer.cpp
 testing/Internals.cpp

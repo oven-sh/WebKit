@@ -54,16 +54,6 @@ public:
         : m_pageIdentifier(pageIdentifier) { }
 
 private:
-    Ref<GenericPromise> tryToSetAudioSessionActive(bool active, PlatformMediaSessionInterface*) final
-    {
-#if USE(AUDIO_SESSION)
-        return AudioSession::singleton().tryToSetActive(active);
-#else
-        UNUSED_PARAM(active);
-        return GenericPromise::createAndResolve();
-#endif
-    }
-
     void hasActiveNowPlayingSessionChanged(PlatformMediaSessionInterface*) final
     {
         if (RefPtr page = m_pageIdentifier ? Page::fromPageIdentifier(*m_pageIdentifier) : nullptr)
@@ -175,6 +165,24 @@ void MediaSessionManagerInterface::resetRestrictions()
     m_restrictions[indexFromMediaType(PlatformMediaSession::MediaType::DOMMediaSession)] = MediaSessionRestriction::NoRestrictions;
 }
 
+void MediaSessionManagerInterface::resetToConsistentStateForTesting()
+{
+#if ENABLE(VIDEO)
+    resetHaveEverRegisteredAsNowPlayingApplicationForTesting();
+    resetRestrictions();
+    resetSessionState();
+    setWillIgnoreSystemInterruptions(true);
+    applicationWillEnterForeground(false);
+#endif
+    setIsPlayingToAutomotiveHeadUnit(false);
+
+#if USE(AUDIO_SESSION)
+    AudioSession::singleton().setCategoryOverride(AudioSessionCategory::None);
+    AudioSession::singleton().tryToSetActive(false)->whenSettled(RunLoop::mainSingleton(), [](auto&&) { });
+    AudioSession::singleton().endInterruptionForTesting();
+#endif
+}
+
 bool MediaSessionManagerInterface::isMediaSessionManagerGLib() const
 {
     return false;
@@ -201,7 +209,7 @@ bool MediaSessionManagerInterface::activeAudioSessionRequired() const
 #endif
 }
 
-bool MediaSessionManagerInterface::hasActiveAudioSession() const
+bool MediaSessionManagerInterface::hasActiveAudioSession(PlatformMediaSessionInterface&) const
 {
 #if USE(AUDIO_SESSION)
     return m_becameActive;
@@ -561,7 +569,7 @@ void MediaSessionManagerInterface::sessionWillBeginPlayback(PlatformMediaSession
     }
 #endif
 
-    if (!activeAudioSessionRequired() || m_becameActive) {
+    if (!activeAudioSessionRequired() || hasActiveAudioSession(session)) {
         completeWillBeginPlayback(true);
         return;
     }
@@ -582,9 +590,17 @@ void MediaSessionManagerInterface::enforceConcurrentPlaybackRestriction(Platform
     if (!restrictions.contains(MediaSessionRestriction::ConcurrentPlaybackNotPermitted))
         return;
 
+    // Only the current session claims exclusivity. A session that stopped being current while its
+    // admission was in flight, or whose mediaType changed after another session started, would
+    // otherwise pause the session that started last.
+    if (currentSession() != &newSession)
+        return;
+
     forEachMatchingSession([&newSession](auto& otherSession) {
         bool isOther = &otherSession == &newSession;
-        bool isPlaying = otherSession.state() == PlatformMediaSession::State::Playing;
+        // preparingToPlay() covers a session whose own admission has not completed yet: it intends to
+        // play, so it must not survive this restriction just because its state is not Playing.
+        bool isPlaying = otherSession.state() == PlatformMediaSession::State::Playing || otherSession.preparingToPlay();
         bool canConcurrent = otherSession.canPlayConcurrently(newSession);
         if (isOther)
             return false;
@@ -698,17 +714,23 @@ void MediaSessionManagerInterface::removeAudioCaptureSource(AudioCaptureSource& 
     scheduleUpdateSessionState();
 }
 
-void MediaSessionManagerInterface::audioCaptureSourceStateChanged(IsCaptureStarting isCaptureStarting)
+Ref<GenericPromise> MediaSessionManagerInterface::audioCaptureSourceStateChanged(IsCaptureStarting isCaptureStarting)
 {
     updateSessionState();
 #if USE(AUDIO_SESSION)
+    // Activation and deactivation are requested synchronously, so a caller that does not wait on the
+    // returned promise still observes AudioSession::isActive() as soon as this returns
+    // (RemoteAudioSession reflects the requested state optimistically). The promise settles once the
+    // activation has completed, for callers that need an active session — the getUserMedia promise and
+    // the track unmute event.
     if (isCaptureStarting == IsCaptureStarting::Yes)
-        maybeActivateAudioSession();
-    else
-        maybeDeactivateAudioSession();
+        return maybeActivateAudioSession();
+
+    maybeDeactivateAudioSession();
 #else
     UNUSED_PARAM(isCaptureStarting);
 #endif
+    return GenericPromise::createAndResolve();
 }
 
 int MediaSessionManagerInterface::countActiveAudioCaptureSources()

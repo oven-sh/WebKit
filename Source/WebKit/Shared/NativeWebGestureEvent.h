@@ -36,12 +36,32 @@ namespace WebKit {
 
 class NativeWebGestureEvent final : public WebGestureEvent {
 public:
-    static std::optional<NativeWebGestureEvent> create(NSEvent *, NSView *);
+    // Distinguishes magnify from rotate without needing a backing NSEvent.
+    enum class Kind : uint8_t { Magnification, Rotation };
 
+    struct Init {
+        Kind kind;
+        Phase phase;
+        WebCore::FloatPoint locationInWindow;
+        float gestureScale { 0 };
+        float gestureRotation { 0 };
+        MonotonicTime timestamp;
+        bool allowsNativeZoom { true };
+    };
+
+    static std::optional<NativeWebGestureEvent> create(NSEvent *, NSView *);
+    static std::optional<NativeWebGestureEvent> create(const Init&, NSView *);
+
+    bool allowsNativeZoom() const { return m_allowsNativeZoom; }
+    Kind kind() const { return m_kind; }
     NSEvent *nativeEvent() const { return m_nativeEvent.get(); }
 
 private:
-    explicit NativeWebGestureEvent(WebEventType, NSEvent *, NSView *);
+    static std::optional<NativeWebGestureEvent> create(const Init&, NSView *, NSEvent *);
+    explicit NativeWebGestureEvent(WebEventType, const Init&, NSView *, NSEvent *);
+
+    bool m_allowsNativeZoom { true };
+    Kind m_kind;
     RetainPtr<NSEvent> m_nativeEvent;
 };
 

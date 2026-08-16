@@ -494,6 +494,8 @@ void WebFullScreenManager::performEnterFullScreen()
                 willEnterFullScreen(element, WTF::move(willEnterFullScreenCallback), WTF::move(didEnterFullScreenCallback));
                 return;
             }
+            m_page->prepareToExitElementFullScreen();
+            invalidate();
             willEnterFullScreenCallback(Exception { ExceptionCode::InvalidStateError });
             didEnterFullScreenCallback(false);
         });
@@ -565,8 +567,12 @@ void WebFullScreenManager::willEnterFullScreen(Element& element, CompletionHandl
     m_page->isInFullscreenChanged(WebPage::IsInFullscreenMode::Yes);
 
     auto result = protect(protect(element.document())->fullscreen())->willEnterFullscreen(element, mode);
-    if (result.hasException())
+    if (result.hasException()) {
         close();
+        willEnterFullscreenCallback(result);
+        didEnterFullscreenCallback(false);
+        return;
+    }
     willEnterFullscreenCallback(result);
 
 #if !PLATFORM(IOS_FAMILY)
@@ -577,6 +583,7 @@ void WebFullScreenManager::willEnterFullScreen(Element& element, CompletionHandl
 
     RefPtr frame = element.document().frame();
     if (!frame) {
+        close();
         didEnterFullscreenCallback(false);
         return;
     }
@@ -675,7 +682,7 @@ void WebFullScreenManager::willExitFullScreen(CompletionHandler<void()>&& comple
 #endif
     // FIXME: The order of these frames is switched, but that is kept for historical reasons.
     // It should probably be fixed to be consistent at some point.
-    m_page->sendWithAsyncReply(Messages::WebFullScreenManagerProxy::BeganExitFullScreen(*m_elementFrameIdentifier, m_finalFrameInRootViewCoordinates, m_initialFrameInRootViewCoordinates), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] mutable {
+    m_page->sendWithAsyncReply(Messages::WebFullScreenManagerProxy::BeganExitFullScreen(m_finalFrameInRootViewCoordinates, m_initialFrameInRootViewCoordinates), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] mutable {
         didExitFullScreen(WTF::move(completionHandler));
     });
 }
@@ -801,6 +808,7 @@ void WebFullScreenManager::close()
         return;
     m_closing = true;
     ALWAYS_LOG(LOGIDENTIFIER);
+    m_page->isInFullscreenChanged(WebPage::IsInFullscreenMode::No);
     m_page->closeFullScreen();
     invalidate();
     m_closing = false;

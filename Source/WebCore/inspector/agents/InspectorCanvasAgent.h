@@ -33,7 +33,6 @@
 #include "Timer.h"
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
 #include <JavaScriptCore/InspectorFrontendDispatchers.h>
-#include <cstdint>
 #include <initializer_list>
 #include <wtf/CheckedPtr.h>
 #include <wtf/CheckedRef.h>
@@ -62,6 +61,10 @@ class WebGLProgram;
 class WebGLRenderingContextBase;
 #endif // ENABLE(WEBGL)
 
+namespace WebGPU {
+class RenderPipeline;
+}
+
 class InspectorCanvasAgent : public InspectorAgentBase, public Inspector::CanvasBackendDispatcherHandler, public CanvasObserver, public CanMakeCheckedPtr<InspectorCanvasAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorCanvasAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorCanvasAgent);
@@ -87,13 +90,9 @@ public:
     Inspector::Protocol::ErrorStringOr<void> startRecording(const Inspector::Protocol::Canvas::CanvasId&, std::optional<int>&& frameCount, std::optional<int>&& memoryLimit);
     Inspector::Protocol::ErrorStringOr<void> stopRecording(const Inspector::Protocol::Canvas::CanvasId&);
     Inspector::Protocol::ErrorStringOr<String> requestShaderSource(const Inspector::Protocol::Canvas::ProgramId&, Inspector::Protocol::Canvas::ShaderType);
-#if ENABLE(WEBGL)
-    Inspector::Protocol::ErrorStringOr<void> updateShader(const Inspector::Protocol::Canvas::ProgramId&, Inspector::Protocol::Canvas::ShaderType, const String& source);
-#endif
+    void updateShader(const Inspector::Protocol::Canvas::ProgramId&, Inspector::Protocol::Canvas::ShaderType, const String& source, Ref<UpdateShaderCallback>&&);
     Inspector::Protocol::ErrorStringOr<void> setShaderProgramDisabled(const Inspector::Protocol::Canvas::ProgramId&, bool disabled);
-#if ENABLE(WEBGL)
-    Inspector::Protocol::ErrorStringOr<void> setShaderProgramHighlighted(const Inspector::Protocol::Canvas::ProgramId&, bool highlighted);
-#endif // ENABLE(WEBGL)
+    void setShaderProgramHighlighted(const Inspector::Protocol::Canvas::ProgramId&, bool highlighted, Ref<SetShaderProgramHighlightedCallback>&&);
 
     // CanvasObserver
     void canvasChanged(CanvasBase&, const FloatRect&) final;
@@ -118,17 +117,22 @@ public:
 #endif // ENABLE(WEBGL)
     void didCreateWebGPUDevice(GPUDevice&);
     void willDestroyWebGPUDevice(GPUDevice&);
+    virtual void didChangeGPUDeviceClientNodes(GPUDevice&);
+    void didChangeWebGPUMemory(GPUDevice&);
     void didCreateWebGPUComputePipeline(GPUDevice&, GPUComputePipeline&);
     void willDestroyWebGPUComputePipeline(GPUComputePipeline&);
     void didCreateWebGPURenderPipeline(GPUDevice&, GPURenderPipeline&);
     void willDestroyWebGPURenderPipeline(GPURenderPipeline&);
     bool isWebGPURenderPipelineDisabled(GPURenderPipeline&);
     void didFinishRecordingCanvasFrame(GPUDevice&, bool forceDispatch = false);
+    RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlighting(GPURenderPipeline&, unsigned canvasColorAttachmentMask);
 
     void recordAction(CanvasRenderingContext&, String&&, InspectorCanvasProcessedArguments&& = { });
-    void recordAction(CanvasRenderingContext&, RecordingSwizzleType, String&&, InspectorCanvasProcessedArguments&& = { });
+    void recordAction(CanvasRenderingContext&, InspectorCanvasProcessedArgument&& receiver, String&&, InspectorCanvasProcessedArguments&& = { });
     void recordAction(GPUDevice&, String&&, InspectorCanvasProcessedArguments&& = { });
-    void recordAction(GPUDevice&, uintptr_t receiver, RecordingSwizzleType, String&&, InspectorCanvasProcessedArguments&& = { });
+    void recordAction(GPUDevice&, InspectorCanvasProcessedArgument&& receiver, String&&, InspectorCanvasProcessedArguments&& = { });
+    void recordActionResult(CanvasRenderingContext&, InspectorCanvasProcessedArgument&&);
+    void recordActionResult(GPUDevice&, InspectorCanvasProcessedArgument&&);
 
     RefPtr<InspectorCanvas> assertInspectorCanvas(Inspector::Protocol::ErrorString&, const String& canvasId);
     RefPtr<InspectorCanvas> findInspectorCanvas(const CanvasRenderingContext&);
@@ -143,6 +147,7 @@ protected:
     void reset();
     void unbindCanvas(InspectorCanvas&);
 
+    virtual Ref<Inspector::Protocol::Canvas::Canvas> buildObjectForCanvas(InspectorCanvas&, bool captureBacktrace);
     virtual bool matchesCurrentContext(ScriptExecutionContext*) const = 0;
 
     const UniqueRef<Inspector::CanvasFrontendDispatcher> m_frontendDispatcher;
@@ -165,6 +170,7 @@ private:
 
     InspectorCanvas& bindCanvas(CanvasRenderingContext&, bool captureBacktrace);
     InspectorCanvas& bindCanvas(GPUDevice&, bool captureBacktrace);
+    void dispatchCanvasSizeChanged(InspectorCanvas&);
 
     void unbindProgram(InspectorShaderProgram&);
     RefPtr<InspectorShaderProgram> assertInspectorProgram(Inspector::Protocol::ErrorString&, const String& programId);

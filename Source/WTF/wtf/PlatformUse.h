@@ -140,13 +140,6 @@
 /* https://bugs.webkit.org/show_bug.cgi?id=214777 */
 #define USE_BIGINT32 0
 
-/* FIXME: This name should be more specific if it is only for use with CallFrame* */
-/* Use __builtin_frame_address(1) to get CallFrame* */
-/* Windows ARM64 is excluded - __builtin_frame_address(1) causes crashes in DFG operations */
-#if (CPU(ARM64) || CPU(X86_64)) && !(OS(WINDOWS) && CPU(ARM64))
-#define USE_BUILTIN_FRAME_ADDRESS 1
-#endif
-
 #if OS(DARWIN) && CPU(ARM64) && HAVE(REMAP_JIT)
 #define USE_EXECUTE_ONLY_JIT_WRITE_FUNCTION 1
 #endif

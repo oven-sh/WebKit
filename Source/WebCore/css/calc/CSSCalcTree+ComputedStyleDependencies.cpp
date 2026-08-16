@@ -34,7 +34,7 @@
 namespace WebCore {
 namespace CSSCalc {
 
-static void collectComputedStyleDependencies(const Child& root, ComputedStyleDependencies& dependencies)
+void collectComputedStyleDependencies(const Child& root, ComputedStyleDependencies& dependencies)
 {
     WTF::switchOn(root,
         [&](const Number&) {
@@ -55,10 +55,10 @@ static void collectComputedStyleDependencies(const Child& root, ComputedStyleDep
                 CSS::collectComputedStyleDependencies(dependencies, *lengthUnit);
         },
         [&](const SiblingCount&) {
-            // No potential dependencies.
+            dependencies.siblingFunctions = true;
         },
         [&](const SiblingIndex&) {
-            // No potential dependencies.
+            dependencies.siblingFunctions = true;
         },
         [&](const IndirectNode<CalcMix>& root) {
             for (const auto& item : root->children) {
@@ -67,12 +67,12 @@ static void collectComputedStyleDependencies(const Child& root, ComputedStyleDep
             }
         },
         [&](const IndirectNode<Anchor>& anchor) {
-            dependencies.anchors = true;
+            dependencies.anchorFunctions = true;
             if (anchor->fallback)
                 collectComputedStyleDependencies(*anchor->fallback, dependencies);
         },
         [&](const IndirectNode<AnchorSize>& anchorSize) {
-            dependencies.anchors = true;
+            dependencies.anchorFunctions = true;
             if (anchorSize->fallback)
                 collectComputedStyleDependencies(*anchorSize->fallback, dependencies);
         },

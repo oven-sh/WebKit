@@ -75,6 +75,7 @@
 #include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ScriptCallStackFactory.h>
+#include <ranges>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/Function.h>
 #include <wtf/RefPtr.h>
@@ -157,17 +158,91 @@ static bool canvasContextMatchesDevice(const CanvasRenderingContext& context, co
     return gpuCanvasContext && gpuCanvasContext->device() == &device;
 }
 
-HTMLCanvasElement* InspectorCanvas::canvasElement() const
+HashSet<HTMLCanvasElement*> InspectorCanvas::canvasElements() const
 {
     return WTF::switchOn(m_context,
         [](const WeakRef<CanvasRenderingContext>& weakContext) {
             Ref context = weakContext;
-            return dynamicDowncast<HTMLCanvasElement>(context->canvasBase());
+
+            HashSet<HTMLCanvasElement*> canvasElements;
+            if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(context->canvasBase()))
+                canvasElements.add(canvasElement);
+            return canvasElements;
         },
-        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>&) -> HTMLCanvasElement* {
-            return nullptr;
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
+
+            HashSet<HTMLCanvasElement*> canvasElements;
+            Locker locker { CanvasRenderingContext::instancesLock() };
+            for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
+                if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
+                    continue;
+
+                if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(context->canvasBase()))
+                    canvasElements.add(canvasElement);
+            }
+            return canvasElements;
         }
     );
+}
+
+Vector<IntSize> InspectorCanvas::sizes() const
+{
+    return WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& weakContext) -> Vector<IntSize> {
+            Ref context = weakContext;
+            return { context->canvasBase().size() };
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
+
+            Vector<IntSize> sizes;
+            Locker locker { CanvasRenderingContext::instancesLock() };
+            for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
+                if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
+                    continue;
+
+                sizes.appendIfNotContains(context->canvasBase().size());
+            }
+            return sizes;
+        }
+    );
+}
+
+Vector<String> InspectorCanvas::cssCanvasNames() const
+{
+    auto cssCanvasNames = WTF::switchOn(m_context,
+        [](const WeakRef<CanvasRenderingContext>& weakContext) {
+            Ref context = weakContext;
+
+            Vector<String> cssCanvasNames;
+            if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(context->canvasBase())) {
+                if (String cssCanvasName = canvasElement->document().nameForCSSCanvasElement(*canvasElement); !cssCanvasName.isEmpty())
+                    cssCanvasNames.append(cssCanvasName);
+            }
+            return cssCanvasNames;
+        },
+        [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
+            Ref device = weakDevice;
+
+            Vector<String> cssCanvasNames;
+            Locker locker { CanvasRenderingContext::instancesLock() };
+            for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
+                if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
+                    continue;
+
+                if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(context->canvasBase())) {
+                    if (String cssCanvasName = canvasElement->document().nameForCSSCanvasElement(*canvasElement); !cssCanvasName.isEmpty())
+                        cssCanvasNames.appendIfNotContains(cssCanvasName);
+                }
+
+            }
+            return cssCanvasNames;
+        }
+    );
+
+    std::ranges::sort(cssCanvasNames, codePointCompareLessThan);
+    return cssCanvasNames;
 }
 
 ScriptExecutionContext* InspectorCanvas::scriptExecutionContext() const
@@ -215,7 +290,7 @@ JSC::JSValue InspectorCanvas::resolveContext(JSC::JSGlobalObject* exec)
     );
 }
 
-HashSet<Element*> InspectorCanvas::clientNodes() const
+HashSet<Element*> InspectorCanvas::cssCanvasClientNodes() const
 {
     return WTF::switchOn(m_context,
         [](const WeakRef<CanvasRenderingContext>& weakContext) {
@@ -224,15 +299,16 @@ HashSet<Element*> InspectorCanvas::clientNodes() const
         },
         [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) {
             Ref device = weakDevice;
-            HashSet<Element*> clientNodes;
+            HashSet<Element*> cssCanvasClientNodes;
             Locker locker { CanvasRenderingContext::instancesLock() };
             for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
                 if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
                     continue;
-                if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(context->canvasBase()))
-                    clientNodes.add(canvasElement);
+
+                for (auto& cssCanvasClientNode : context->canvasBase().cssCanvasClients())
+                    cssCanvasClientNodes.add(cssCanvasClientNode);
             }
-            return clientNodes;
+            return cssCanvasClientNodes;
         }
     );
 }
@@ -248,7 +324,7 @@ size_t InspectorCanvas::memoryCost() const
         [](const WeakRef<GPUDevice, WeakPtrImplWithEventTargetData>& weakDevice) -> size_t {
             Ref device = weakDevice;
 
-            CheckedSize memoryCost;
+            CheckedSize memoryCost = device->memoryCost();
             Locker locker { CanvasRenderingContext::instancesLock() };
             for (SUPPRESS_UNCOUNTED_ARG auto* context : CanvasRenderingContext::instances()) {
                 if (!context->isContextThread() || !canvasContextMatchesDevice(*context, device))
@@ -284,8 +360,8 @@ void InspectorCanvas::resetRecordingData()
     m_currentActions = nullptr;
     m_serializedDuplicateData = nullptr;
     m_indexedDuplicateData.clear();
-    m_recordingObjectIdentifiers.clear();
-    m_nextRecordingObjectIdentifier = 0;
+    m_boundRecordingObjectIdentifiers.clear();
+    m_nextRecordingObjectIdentifiers.clear();
     m_recordingName = { };
     m_bufferLimit = 100 * 1024 * 1024;
     m_bufferUsed = 0;
@@ -316,7 +392,13 @@ static bool shouldSnapshotWebGLAction(const String& name)
 {
     return name == "clear"_s
         || name == "drawArrays"_s
-        || name == "drawElements"_s;
+        || name == "drawArraysInstancedANGLE"_s
+        || name == "drawElements"_s
+        || name == "drawElementsInstancedANGLE"_s
+        || name == "multiDrawArraysWEBGL"_s
+        || name == "multiDrawArraysInstancedWEBGL"_s
+        || name == "multiDrawElementsWEBGL"_s
+        || name == "multiDrawElementsInstancedWEBGL"_s;
 }
 
 static bool shouldSnapshotWebGL2Action(const String& name)
@@ -324,8 +406,16 @@ static bool shouldSnapshotWebGL2Action(const String& name)
     return name == "clear"_s
         || name == "drawArrays"_s
         || name == "drawArraysInstanced"_s
+        || name == "drawArraysInstancedBaseInstanceWEBGL"_s
         || name == "drawElements"_s
-        || name == "drawElementsInstanced"_s;
+        || name == "drawElementsInstanced"_s
+        || name == "drawElementsInstancedBaseVertexBaseInstanceWEBGL"_s
+        || name == "multiDrawArraysWEBGL"_s
+        || name == "multiDrawArraysInstancedBaseInstanceWEBGL"_s
+        || name == "multiDrawArraysInstancedWEBGL"_s
+        || name == "multiDrawElementsInstancedBaseVertexBaseInstanceWEBGL"_s
+        || name == "multiDrawElementsInstancedWEBGL"_s
+        || name == "multiDrawElementsWEBGL"_s;
 }
 #endif
 
@@ -334,7 +424,8 @@ static bool shouldSnapshotWebGPUAction(RecordingSwizzleType receiverSwizzleType,
     if (receiverSwizzleType == RecordingSwizzleType::GPUQueue) {
         return name == "submit"_s
             || name == "writeTexture"_s
-            || name == "copyExternalImageToTexture"_s;
+            || name == "copyExternalImageToTexture"_s
+            || name == "copyElementImageToTexture"_s;
     }
     return false;
 }
@@ -384,39 +475,51 @@ void InspectorCanvas::recordAction(String&& name, InspectorCanvasProcessedArgume
     }
 
     m_lastRecordedAction = buildAction(WTF::move(name), WTF::move(arguments));
-    if (receiver)
+    if (receiver) {
+        protect(m_lastRecordedAction)->addItem(-1); // Add the result placeholder.
         protect(m_lastRecordedAction)->addItem(receiver.releaseNonNull());
+    }
     m_bufferUsed += protect(m_lastRecordedAction)->memoryCost();
     protect(m_currentActions)->addItem(*m_lastRecordedAction);
 }
 
-static Ref<JSON::ArrayOf<int>> buildActionReceiver(size_t identifier, RecordingSwizzleType swizzleType)
+static Ref<JSON::ArrayOf<int>> buildActionObject(int identifier, RecordingSwizzleType swizzleType)
 {
-    RELEASE_ASSERT(identifier <= static_cast<size_t>(std::numeric_limits<int>::max()));
-
-    auto receiver = JSON::ArrayOf<int>::create();
-    receiver->addItem(static_cast<int>(identifier));
-    receiver->addItem(static_cast<int>(swizzleType));
-    return receiver;
+    auto object = JSON::ArrayOf<int>::create();
+    object->addItem(identifier);
+    object->addItem(static_cast<int>(swizzleType));
+    return object;
 }
 
-void InspectorCanvas::recordAction(String&& name, RecordingSwizzleType receiverSwizzleType, InspectorCanvasProcessedArguments&& arguments)
+void InspectorCanvas::recordAction(String&& name, InspectorCanvasProcessedArgument&& receiver, InspectorCanvasProcessedArguments&& arguments)
 {
-    ASSERT(receiverSwizzleType == RecordingSwizzleType::Canvas);
+    auto identifier = receiver.value->asInteger();
+    RELEASE_ASSERT(identifier);
 
-    recordAction(WTF::move(name), WTF::move(arguments), buildActionReceiver(0, receiverSwizzleType));
-}
+    bool shouldSnapshot = shouldSnapshotWebGPUAction(receiver.swizzleType, name);
 
-void InspectorCanvas::recordAction(String&& name, uintptr_t receiver, RecordingSwizzleType receiverSwizzleType, InspectorCanvasProcessedArguments&& arguments)
-{
-    ASSERT(deviceContext());
-
-    bool shouldSnapshot = shouldSnapshotWebGPUAction(receiverSwizzleType, name);
-
-    recordAction(WTF::move(name), WTF::move(arguments), buildActionReceiver(identifierForRecordingObject(receiver), receiverSwizzleType));
+    recordAction(WTF::move(name), WTF::move(arguments), buildActionObject(*identifier, receiver.swizzleType));
 
     if (shouldSnapshot)
         m_contentChanged = true;
+}
+
+void InspectorCanvas::recordActionResult(InspectorCanvasProcessedArgument&& result)
+{
+    if (!m_lastRecordedAction)
+        return;
+
+    auto identifier = result.value->asInteger();
+    RELEASE_ASSERT(identifier);
+
+    Ref lastRecordedAction = *m_lastRecordedAction;
+    m_bufferUsed -= lastRecordedAction->memoryCost();
+    auto resultObject = buildActionObject(*identifier, result.swizzleType);
+    if (lastRecordedAction->length() == 4)
+        lastRecordedAction->addItem(WTF::move(resultObject));
+    else
+        lastRecordedAction->setItem(4, WTF::move(resultObject));
+    m_bufferUsed += lastRecordedAction->memoryCost();
 }
 
 void InspectorCanvas::finalizeFrame()
@@ -581,18 +684,6 @@ Ref<Inspector::Protocol::Canvas::Canvas> InspectorCanvas::buildObjectForCanvas(b
                 .setContextType(contextType)
                 .release();
 
-            const auto& size = context->canvasBase().size();
-            result->setWidth(size.width());
-            result->setHeight(size.height());
-
-            if (RefPtr node = dynamicDowncast<HTMLCanvasElement>(context->canvasBase())) {
-                String cssCanvasName = node->document().nameForCSSCanvasElement(*node);
-                if (!cssCanvasName.isEmpty())
-                    result->setCssCanvasName(cssCanvasName);
-
-                // FIXME: <https://webkit.org/b/178282> Web Inspector: send a DOM node with each Canvas payload and eliminate Canvas.requestNode
-            }
-
             if (auto attributes = buildObjectForCanvasContextAttributes(context))
                 result->setContextAttributes(attributes.releaseNonNull());
 
@@ -611,9 +702,30 @@ Ref<Inspector::Protocol::Canvas::Canvas> InspectorCanvas::buildObjectForCanvas(b
                 features->addItem(feature);
             result->setFeatures(WTF::move(features));
 
+            if (auto label = device->label(); !label.isEmpty())
+                result->setName(label);
+
             return result;
         }
     );
+
+    if (auto sizes = this->sizes(); !sizes.isEmpty()) {
+        auto sizesPayload = JSON::ArrayOf<Inspector::Protocol::GenericTypes::Size>::create();
+        for (auto& size : sizes) {
+            sizesPayload->addItem(Inspector::Protocol::GenericTypes::Size::create()
+                .setWidth(size.width())
+                .setHeight(size.height())
+                .release());
+        }
+        canvas->setSizes(WTF::move(sizesPayload));
+    }
+
+    if (auto cssCanvasNames = this->cssCanvasNames(); !cssCanvasNames.isEmpty()) {
+        auto cssCanvasNamesPayload = JSON::ArrayOf<String>::create();
+        for (auto& cssCanvasName : cssCanvasNames)
+            cssCanvasNamesPayload->addItem(cssCanvasName);
+        canvas->setCssCanvasNames(WTF::move(cssCanvasNamesPayload));
+    }
 
     if (size_t memoryCost = this->memoryCost())
         canvas->setMemoryCost(memoryCost);
@@ -724,6 +836,8 @@ void InspectorCanvas::appendActionSnapshotIfNeeded()
             Ref lastRecordedAction = *m_lastRecordedAction;
             m_bufferUsed -= lastRecordedAction->memoryCost();
             if (lastRecordedAction->length() == 4)
+                lastRecordedAction->addItem(-1); // Add the result if needed.
+            if (lastRecordedAction->length() == 5)
                 lastRecordedAction->addItem(-1); // Add the receiver if needed.
             lastRecordedAction->addItem(indexForData(*content));
             m_bufferUsed += lastRecordedAction->memoryCost();
@@ -875,10 +989,12 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
     return static_cast<int>(index);
 }
 
-size_t InspectorCanvas::identifierForRecordingObject(uintptr_t object)
+size_t InspectorCanvas::identifierForRecordingObject(RecordingSwizzleType swizzleType, uintptr_t object)
 {
-    return m_recordingObjectIdentifiers.ensure(object, [&] {
-        return ++m_nextRecordingObjectIdentifier;
+    return m_boundRecordingObjectIdentifiers.ensure(object, [&] {
+        return m_nextRecordingObjectIdentifiers.ensure(swizzleType, [] {
+            return 1;
+        }).iterator->value++;
     }).iterator->value;
 }
 

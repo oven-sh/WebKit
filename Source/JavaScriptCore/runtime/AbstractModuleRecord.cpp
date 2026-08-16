@@ -68,9 +68,10 @@ auto AbstractModuleRecord::AsyncEvaluationOrder::order(int64_t order) -> AsyncEv
     return *this;
 }
 
-AbstractModuleRecord::AbstractModuleRecord(VM& vm, Structure* structure, Identifier moduleKey)
+AbstractModuleRecord::AbstractModuleRecord(VM& vm, Structure* structure, Identifier moduleKey, SourceProviderSourceType sourceType)
     : Base(vm, structure)
     , m_moduleKey(WTF::move(moduleKey))
+    , m_sourceType(sourceType)
 {
 }
 
@@ -995,8 +996,8 @@ void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashS
         auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module);
         if (!cyclic)
             continue;
-        // 6. If module.[[Status]] is either EVALUATING or EVALUATED, return result.
-        if (cyclic->status() == CyclicModuleRecord::Status::Evaluating || cyclic->status() == CyclicModuleRecord::Status::Evaluated)
+        // 6. If module.[[Status]] is either EVALUATING or IsModuleSCCEvaluated(module), return result.
+        if (cyclic->status() == CyclicModuleRecord::Status::Evaluating || cyclic->isSCCEvaluated())
             continue;
         // 7. If module.[[HasTLA]] is true, then
         if (cyclic->hasTLA()) {
@@ -1033,14 +1034,17 @@ bool AbstractModuleRecord::readyForSyncExecution()
         // 4. Append module to seen.
         if (!seen.add(module).isNewEntry)
             continue;
-        // 5. If module.[[Status]] is EVALUATED, return true.
-        if (cyclic->status() == CyclicModuleRecord::Status::Evaluated)
+        // 5. If IsModuleSCCEvaluated(module), return true.
+        if (cyclic->isSCCEvaluated())
             continue;
         // 6. If module.[[Status]] is either EVALUATING or EVALUATING-ASYNC, return false.
         if (cyclic->status() == CyclicModuleRecord::Status::Evaluating || cyclic->status() == CyclicModuleRecord::Status::EvaluatingAsync)
             return false;
-        // 7. Assert: module.[[Status]] is LINKED.
-        ASSERT(cyclic->status() == CyclicModuleRecord::Status::Linked);
+        // 7. Assert: module.[[Status]] is LINKED or EVALUATED.
+        // EVALUATED is reachable for a module whose own body has run inside a cycle that is still
+        // awaiting; the walk below then reaches its EVALUATING-ASYNC cycle root and returns false.
+        // https://github.com/tc39/proposal-defer-import-eval/issues/86
+        ASSERT(cyclic->status() == CyclicModuleRecord::Status::Linked || cyclic->status() == CyclicModuleRecord::Status::Evaluated);
         // 8. If module.[[HasTLA]] is true, return false.
         if (cyclic->hasTLA())
             return false;
@@ -1503,16 +1507,25 @@ static String printableName(const Identifier& ident)
 
 ScriptFetchParameters::Type AbstractModuleRecord::moduleType() const
 {
-    if (is<JSModuleRecord>(this))
-        return ScriptFetchParameters::JavaScript;
-    if (is<SyntheticModuleRecord>(this))
-        return ScriptFetchParameters::JSON;
-#if ENABLE(WEBASSEMBLY)
-    if (is<WebAssemblyModuleRecord>(this))
-        return ScriptFetchParameters::WebAssembly;
+    switch (m_sourceType) {
+    case SourceProviderSourceType::Text:
+        return ScriptFetchParameters::Type::Text;
+    case SourceProviderSourceType::JSON:
+        return ScriptFetchParameters::Type::JSON;
+    case SourceProviderSourceType::Module:
+    case SourceProviderSourceType::Program:
+    case SourceProviderSourceType::Synthetic:
+#if USE(BUN_JSC_ADDITIONS)
+    case SourceProviderSourceType::BunTranspiledModule:
 #endif
-    RELEASE_ASSERT_NOT_REACHED();
-    return ScriptFetchParameters::None;
+        return ScriptFetchParameters::Type::JavaScript;
+    case SourceProviderSourceType::WebAssembly:
+        return ScriptFetchParameters::Type::WebAssembly;
+    case SourceProviderSourceType::ImportMap:
+        RELEASE_ASSERT_NOT_REACHED();
+        return ScriptFetchParameters::Type::None;
+    }
+    return ScriptFetchParameters::Type::None;
 }
 
 void AbstractModuleRecord::setCycleRoot(VM& vm, CyclicModuleRecord* newRoot)

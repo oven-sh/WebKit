@@ -757,21 +757,12 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case UInt32ToNumber: {
         JSValue child = forNode(node->child1()).value();
         if (doesOverflow(node->arithMode())) {
-            if (enableInt52()) {
-                if (child && child.isAnyInt()) {
-                    int64_t machineInt = child.asAnyInt();
-                    setConstant(node, jsNumber(static_cast<uint32_t>(machineInt)));
-                    break;
-                }
-                setNonCellTypeForNode(node, SpecInt52Any);
+            if (child && child.isAnyInt()) {
+                int64_t machineInt = child.asAnyInt();
+                setConstant(node, jsNumber(static_cast<uint32_t>(machineInt)));
                 break;
             }
-            if (child && child.isInt32()) {
-                uint32_t value = child.asInt32();
-                setConstant(node, jsNumber(value));
-                break;
-            }
-            setNonCellTypeForNode(node, SpecAnyIntAsDouble);
+            setNonCellTypeForNode(node, SpecInt52Any);
             break;
         }
         if (child && child.isInt32()) {
@@ -6155,13 +6146,19 @@ void AbstractInterpreter<AbstractStateType>::forAllValues(
         NodeFlowProjection::forEach(
             m_state.block()->at(i),
             [&] (NodeFlowProjection nodeProjection) {
+                if (nodeProjection->isTuple()) {
+                    for (unsigned index = 0; index < nodeProjection->tupleSize(); ++index)
+                        functor(forTupleNode(nodeProjection, index));
+                    return;
+                }
                 functor(forNode(nodeProjection));
             });
     }
     if (m_graph.m_form == SSA) {
         for (NodeFlowProjection node : m_state.block()->ssa->liveAtHead) {
-            if (node.isStillValid())
-                functor(forNode(node));
+            if (!node.isStillValid() || node->isTuple())
+                continue;
+            functor(forNode(node));
         }
     }
     for (size_t i = m_state.size(); i--;)
@@ -6242,6 +6239,8 @@ void AbstractInterpreter<AbstractStateType>::dump(PrintStream& out)
     UncheckedKeyHashSet<NodeFlowProjection> seen;
     if (m_graph.m_form == SSA) {
         for (NodeFlowProjection node : m_state.block()->ssa->liveAtHead) {
+            if (node->isTuple())
+                continue;
             seen.add(node);
             AbstractValue& value = forNode(node);
             if (value.isClear())
@@ -6253,6 +6252,15 @@ void AbstractInterpreter<AbstractStateType>::dump(PrintStream& out)
         NodeFlowProjection::forEach(
             m_state.block()->at(i), [&] (NodeFlowProjection nodeProjection) {
                 seen.add(nodeProjection);
+                if (nodeProjection->isTuple()) {
+                    for (unsigned index = 0; index < nodeProjection->tupleSize(); ++index) {
+                        AbstractValue& value = forTupleNode(nodeProjection, index);
+                        if (value.isClear())
+                            continue;
+                        out.print(comma, nodeProjection, "<<"_s, index, ":"_s, value);
+                    }
+                    return;
+                }
                 AbstractValue& value = forNode(nodeProjection);
                 if (value.isClear())
                     return;
@@ -6261,7 +6269,7 @@ void AbstractInterpreter<AbstractStateType>::dump(PrintStream& out)
     }
     if (m_graph.m_form == SSA) {
         for (NodeFlowProjection node : m_state.block()->ssa->liveAtTail) {
-            if (seen.contains(node))
+            if (node->isTuple() || seen.contains(node))
                 continue;
             AbstractValue& value = forNode(node);
             if (value.isClear())

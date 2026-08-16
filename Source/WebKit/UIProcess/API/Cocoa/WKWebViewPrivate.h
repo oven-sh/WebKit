@@ -170,6 +170,7 @@ typedef NS_ENUM(NSInteger, _WKImmediateActionType) {
 @protocol _WKInputDelegate;
 @protocol _WKResourceLoadDelegate;
 @protocol _WKTextManipulationDelegate;
+@protocol _WKTranslationDelegate;
 
 @interface WKWebView (WKPrivate)
 
@@ -220,7 +221,7 @@ typedef NS_ENUM(NSInteger, _WKImmediateActionType) {
 @property (copy, setter=_setCustomUserAgent:) NSString *_customUserAgent;
 
 @property (nonatomic, readonly, getter=_isPlayingAudio) BOOL _playingAudio WK_API_AVAILABLE(macos(10.13.4), ios(11.3));
-@property (nonatomic, setter=_setUserContentExtensionsEnabled:) BOOL _userContentExtensionsEnabled WK_API_AVAILABLE(macos(10.11), ios(9.0));
+@property (nonatomic, setter=_setUserContentExtensionsEnabled:) BOOL _userContentExtensionsEnabled WK_API_DEPRECATED("No longer supported", macos(10.11, WK_MAC_TBA), ios(9.0, WK_IOS_TBA));
 
 @property (nonatomic, readonly) pid_t _webProcessIdentifier;
 @property (nonatomic, readonly) pid_t _provisionalWebProcessIdentifier WK_API_AVAILABLE(macos(10.14.4), ios(12.2));
@@ -262,6 +263,15 @@ for this property.
 - (void)_startTextManipulationsWithConfiguration:(_WKTextManipulationConfiguration *)configuration completion:(void(^)(void))completionHandler WK_API_AVAILABLE(macos(10.15.4), ios(13.4));
 - (void)_completeTextManipulation:(_WKTextManipulationItem *)item completion:(void(^)(BOOL success))completionHandler WK_API_AVAILABLE(macos(10.15.4), ios(13.4));
 - (void)_completeTextManipulationForItems:(NSArray<_WKTextManipulationItem *> *)items completion:(void(^)(NSArray<NSError *> *errors))completionHandler WK_API_AVAILABLE(macos(11.0), ios(14.0));
+
+@property (nonatomic, weak, setter=_setTranslationDelegate:) id<_WKTranslationDelegate> _translationDelegate WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
+/*! @abstract Non-nil while this web view is presenting the document as a machine translation.
+ @discussion Set this to the target locale when entering a translated rendering, and to nil when
+ returning to the original content. WebKit uses it to decide whether accessibility announcements
+ need translating, and reports it as the language of announcements it has translated.
+ */
+@property (nonatomic, copy, setter=_setDisplayedTranslationLocaleIdentifier:) NSString *_displayedTranslationLocaleIdentifier WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 
 @property (nonatomic, setter=_setAddsVisitedLinks:) BOOL _addsVisitedLinks;
 
@@ -383,7 +393,7 @@ for this property.
 // Set to 0 to have the page length equal the view length.
 @property (nonatomic, setter=_setPageLength:) CGFloat _pageLength;
 @property (nonatomic, setter=_setGapBetweenPages:) CGFloat _gapBetweenPages;
-@property (nonatomic, setter=_setPaginationLineGridEnabled:) BOOL _paginationLineGridEnabled;
+@property (nonatomic, setter=_setPaginationLineGridEnabled:) BOOL _paginationLineGridEnabled WK_API_DEPRECATED("Line grid pagination is no longer supported", macos(10.10, WK_MAC_TBA), ios(8.0, WK_IOS_TBA));
 @property (readonly) NSUInteger _pageCount;
 
 @property (nonatomic, readonly) BOOL _supportsTextZoom;
@@ -750,7 +760,7 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 @property (nonatomic, readonly) BOOL _shouldAvoidResizingWhenInputViewBoundsChange WK_API_AVAILABLE(ios(13.0));
 @property (nonatomic, readonly) BOOL _contentViewIsFirstResponder WK_API_AVAILABLE(ios(12.2));
 
-@property (nonatomic, readonly) CGRect _uiTextCaretRect WK_API_AVAILABLE(ios(10.3));
+@property (nonatomic, readonly) CGRect _uiTextCaretRect WK_API_DEPRECATED("No longer supported", ios(10.3, WK_IOS_TBA));
 
 @property (nonatomic, readonly) UIView *_safeBrowsingWarning WK_API_AVAILABLE(macos(10.14.4), ios(12.2));
 

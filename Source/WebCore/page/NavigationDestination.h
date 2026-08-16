@@ -45,6 +45,7 @@ public:
     ~NavigationDestination();
 
     const URL& url() const LIFETIME_BOUND { return m_url; };
+    void setURL(URL&& url) { m_url = WTF::move(url); }
     String key() const { return m_entry ? m_entry->key() : String(); };
     String id() const { return m_entry ? m_entry->id() : String(); };
     int64_t index() const { return m_entry ? m_entry->index() : -1; };

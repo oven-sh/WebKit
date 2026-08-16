@@ -39,6 +39,7 @@ set(TestWTF_SOURCES
     Tests/WTF/BitSet.cpp
     Tests/WTF/BitVector.cpp
     Tests/WTF/BloomFilter.cpp
+    Tests/WTF/Borrow.cpp
     Tests/WTF/BorrowedBytes.cpp
     Tests/WTF/BoxPtr.cpp
     Tests/WTF/BumpPointerAllocator.cpp
@@ -46,6 +47,8 @@ set(TestWTF_SOURCES
     Tests/WTF/CStringView.cpp
     Tests/WTF/CharacterProperties.cpp
     Tests/WTF/CheckedArithmeticOperations.cpp
+    Tests/WTF/CheckedPtr.cpp
+    Tests/WTF/CheckedRef.cpp
     Tests/WTF/CompactPtr.cpp
     Tests/WTF/CompactRefPtr.cpp
     Tests/WTF/CompactRefPtrTuple.cpp
@@ -111,6 +114,7 @@ set(TestWTF_SOURCES
     Tests/WTF/RedBlackTree.cpp
     Tests/WTF/Ref.cpp
     Tests/WTF/RefCountedFixedVector.cpp
+    Tests/WTF/RefCountedWithInlineWeakPtr.cpp
     Tests/WTF/RefCounter.cpp
     Tests/WTF/RefLogger.cpp
     Tests/WTF/RefPtr.cpp
@@ -154,6 +158,7 @@ set(TestWTF_SOURCES
     Tests/WTF/UniqueRef.cpp
     Tests/WTF/UniqueRefVector.cpp
     Tests/WTF/Vector.cpp
+    Tests/WTF/VectorBorrow.cpp
     Tests/WTF/WTFString.cpp
     Tests/WTF/WeakPtr.cpp
     Tests/WTF/WorkQueue.cpp
@@ -186,6 +191,7 @@ if (ENABLE_JAVASCRIPTCORE)
         Tests/JavaScriptCore/MarkedVector.cpp
         Tests/JavaScriptCore/PropertySlot.cpp
         Tests/JavaScriptCore/RegularExpression.cpp
+        Tests/JavaScriptCore/StrongBlock.cpp
     )
 
     set(TestJavaScriptCore_LIBRARIES
@@ -270,6 +276,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/TransformationMatrix.cpp
         Tests/WebCore/URLParserTextEncoding.cpp
         Tests/WebCore/URLPatternTests.cpp
+        Tests/WebCore/WebTransportHeaderValidation.cpp
         Tests/WebCore/WritingModeTests.cpp
         Tests/WebCore/XRCompositionLayer.cpp
     )
@@ -504,7 +511,9 @@ if (ENABLE_WEBKIT)
             Tests/IPC/ArgumentCoderTests.cpp
             Tests/IPC/ConnectionTests.cpp
             Tests/IPC/EventTests.cpp
+            Tests/IPC/IPCEventTests.cpp
             Tests/IPC/IPCTestUtilities.cpp
+            Tests/IPC/MachMessageTests.cpp
             Tests/IPC/MessageLogEndToEndTests.cpp
             Tests/IPC/MessageLogTests.cpp
             Tests/IPC/MessageSenderTests.cpp
@@ -526,6 +535,7 @@ if (ENABLE_WEBKIT)
             ${WebKit_FRAMEWORK_HEADERS_DIR}
             ${WEBKIT_DIR}/Platform
             ${WEBKIT_DIR}/Platform/IPC
+            ${WEBKIT_DIR}/Platform/IPC/cocoa
             ${WEBKIT_DIR}/Shared
             ${WEBKIT_DIR}/Shared/API/c
             ${WebKit_DERIVED_SOURCES_DIR}

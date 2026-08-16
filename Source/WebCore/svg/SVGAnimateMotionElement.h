@@ -22,10 +22,9 @@
 
 #include "Path.h"
 #include "SVGAnimationElement.h"
+#include <wtf/Variant.h>
 
 namespace WebCore {
-
-class AffineTransform;
 
 class SVGAnimateMotionElement final : public SVGAnimationElement {
     WTF_MAKE_TZONE_ALLOCATED(SVGAnimateMotionElement);
@@ -51,13 +50,11 @@ private:
     void applyResultsToTarget() override;
     std::optional<float> calculateDistance(const String& fromString, const String& toString) override;
 
-    enum class RotateMode : uint8_t {
-        Angle,
+    enum class RotateMode : bool {
         Auto,
         AutoReverse
     };
-    RotateMode rotateMode() const;
-    void buildTransformForProgress(AffineTransform*, float percentage);
+    Variant<RotateMode, float> rotate() const;
 
     void updateAnimationMode() override;
     void childrenChanged(const ChildChange&) final;

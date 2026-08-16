@@ -111,6 +111,7 @@ public:
     void invalidateCachedViewportSizeExcludingZoom() const { m_cachedViewportSizeExcludingZoom = std::nullopt; }
 
     FloatRect currentViewBoxRect() const;
+    bool hasSynthesizedViewBoxForSVGImage() const;
 
     AffineTransform viewBoxToViewTransform(float viewWidth, float viewHeight) const;
     bool hasTransformRelatedAttributes() const final;
@@ -164,6 +165,8 @@ private:
     Ref<SVGPoint> m_currentTranslate { SVGPoint::create() };
 
     mutable std::optional<FloatSize> m_cachedViewportSizeExcludingZoom;
+
+    float m_currentScale { 1 };
 
     const Ref<SVGAnimatedLength> m_x { SVGAnimatedLength::create(this, SVGLengthMode::Width) };
     const Ref<SVGAnimatedLength> m_y { SVGAnimatedLength::create(this, SVGLengthMode::Height) };
