@@ -145,7 +145,7 @@ private:
     enum class IPv4ParsingError;
     template<typename CharacterTypeForSyntaxViolation, typename CharacterType> Expected<IPv4Address, IPv4ParsingError> parseIPv4Host(const CodePointIterator<CharacterTypeForSyntaxViolation>&, std::span<const CharacterType>);
     using IPv6Address = std::array<uint16_t, 8>;
-    template<typename CharacterType> std::optional<IPv6Address> parseIPv6Host(CodePointIterator<CharacterType>);
+    template<typename CharacterType> std::optional<IPv6Address> parseIPv6Host(CodePointIterator<CharacterType> hostBeginForSyntaxViolation, std::span<const CharacterType> address);
     template<typename CharacterType> std::optional<uint32_t> NODELETE parseIPv4PieceInsideIPv6(std::span<const CharacterType>&);
     template<typename CharacterType> std::optional<IPv4Address> NODELETE parseIPv4AddressInsideIPv6(std::span<const CharacterType>);
     void serializeIPv6Piece(uint16_t piece);
