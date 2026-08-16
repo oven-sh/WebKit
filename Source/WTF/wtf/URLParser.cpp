@@ -718,12 +718,10 @@ static void percentEncodeByte(uint8_t byte, Vector<Latin1Character>& buffer)
     buffer.append(lowerNibbleToASCIIHexDigit(byte));
 }
 
-void URLParser::percentEncodeByte(uint8_t byte)
+ALWAYS_INLINE void URLParser::percentEncodeByte(uint8_t byte)
 {
     ASSERT(m_didSeeSyntaxViolation);
-    appendToASCIIBuffer('%');
-    appendToASCIIBuffer(upperNibbleToASCIIHexDigit(byte));
-    appendToASCIIBuffer(lowerNibbleToASCIIHexDigit(byte));
+    m_asciiBuffer.appendList<Latin1Character>({ '%', static_cast<Latin1Character>(upperNibbleToASCIIHexDigit(byte)), static_cast<Latin1Character>(lowerNibbleToASCIIHexDigit(byte)) });
 }
 
 static constexpr auto replacementCharacterUTF8PercentEncoded = "%EF%BF%BD"_s;
@@ -1236,10 +1234,16 @@ void URLParser::popPath()
 }
 
 template<typename CharacterType>
-void URLParser::syntaxViolation(const CodePointIterator<CharacterType>& iterator)
+ALWAYS_INLINE void URLParser::syntaxViolation(const CodePointIterator<CharacterType>& iterator)
 {
-    if (m_didSeeSyntaxViolation)
-        return;
+    if (!m_didSeeSyntaxViolation) [[unlikely]]
+        beginSyntaxViolation(iterator);
+}
+
+template<typename CharacterType>
+NEVER_INLINE void URLParser::beginSyntaxViolation(const CodePointIterator<CharacterType>& iterator)
+{
+    ASSERT(!m_didSeeSyntaxViolation);
     m_didSeeSyntaxViolation = true;
     
     ASSERT(m_asciiBuffer.isEmpty());

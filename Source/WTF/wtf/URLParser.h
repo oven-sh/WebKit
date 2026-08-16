@@ -105,6 +105,7 @@ private:
     void advance(CodePointIterator<CharacterType>&, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition);
     template<typename CharacterType> bool NODELETE takesTwoAdvancesUntilEnd(CodePointIterator<CharacterType>);
     template<typename CharacterType> void syntaxViolation(const CodePointIterator<CharacterType>&);
+    template<typename CharacterType> void beginSyntaxViolation(const CodePointIterator<CharacterType>&);
     template<typename CharacterType> bool isPercentEncodedDot(CodePointIterator<CharacterType>);
     template<typename CharacterType> bool isWindowsDriveLetter(CodePointIterator<CharacterType>);
     template<typename CharacterType> bool isSingleDotPathSegment(CodePointIterator<CharacterType>);
