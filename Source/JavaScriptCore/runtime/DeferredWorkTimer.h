@@ -93,6 +93,7 @@ public:
     bool NODELETE hasPendingWork(Ticket&);
     bool hasDependencyInPendingWork(Ticket&, JSCell* dependency);
     bool cancelPendingWork(Ticket&);
+    JS_EXPORT_PRIVATE void cancelPendingWorkCrossThread(const WeakTicket&);
     void cancelPendingWorkSafe(JSGlobalObject*);
 
     // If the script execution owner your ticket is associated with gets canceled
@@ -124,6 +125,7 @@ private:
     bool m_shouldStopRunLoopWhenAllTicketsFinish { false };
     bool m_currentlyRunningTask { false };
     Deque<std::tuple<Ref<Ticket>, Task>> m_tasks WTF_GUARDED_BY_LOCK(m_taskLock);
+    Deque<Ref<Ticket>> m_cancelledTickets WTF_GUARDED_BY_LOCK(m_taskLock);
     UncheckedKeyHashSet<Ref<Ticket>> m_pendingTickets;
 };
 

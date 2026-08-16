@@ -314,6 +314,18 @@ void Waiter::cancelAndClear(const AbstractLocker& listLocker)
     clearTimer(listLocker);
 }
 
+// Like cancelAndClear, but safe to call from a thread that does not hold this
+// waiter's VM's API lock (e.g. whichever thread destroys a SharedArrayBuffer
+// another VM is waiting on): the ticket cancellation is handed to the owning
+// VM instead of being performed here.
+void Waiter::cancelCrossThreadAndClear(const AbstractLocker& listLocker)
+{
+    ASSERT(m_isAsync);
+    m_vm->deferredWorkTimer->cancelPendingWorkCrossThread(m_ticket);
+    clearTicket(listLocker);
+    clearTimer(listLocker);
+}
+
 void WaiterListManager::unregister(VM* vm)
 {
     Locker waiterListsLocker { m_waiterListsLock };
@@ -386,8 +398,12 @@ void WaiterListManager::unregister(uint8_t* arrayPtr, size_t size)
                 // case, we have to remove it since all lists associating to the SAB (about destructing)
                 // must be removed. This is because there may be a new SAB with a waiter at the same address.
                 // Therefore, we will let `clearWeakTickets` to handle this special case.
+                //
+                // The SAB destructor runs on whichever thread happens to drop the last reference,
+                // which is not necessarily the thread of the VM that owns this waiter's ticket.
+                // So the cancellation must be marshalled to the owning VM rather than performed here.
                 if (!waiter->hasTimer(listLocker))
-                    waiter->cancelAndClear(listLocker);
+                    waiter->cancelCrossThreadAndClear(listLocker);
                 return true;
             });
 
