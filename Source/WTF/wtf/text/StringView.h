@@ -1282,11 +1282,7 @@ inline bool hasUnpairedSurrogate(StringView string)
     // Fast path for 8-bit strings; they can't have any surrogates.
     if (string.is8Bit())
         return false;
-    for (auto codePoint : string.codePoints()) {
-        if (U_IS_SURROGATE(codePoint))
-            return true;
-    }
-    return false;
+    return !isWellFormedUTF16(string.span16());
 }
 
 inline size_t findCommon(StringView haystack, StringView needle, unsigned start)

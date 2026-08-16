@@ -43,8 +43,8 @@ URL::URL(GUri* uri)
     }
 
     GUniquePtr<char> uriString(g_uri_to_string(uri));
-    URLParser parser(String::fromUTF8(uriString.get()));
-    *this = parser.result();
+    invalidate();
+    URLParser(*this, String::fromUTF8(uriString.get()));
 }
 
 GRefPtr<GUri> URL::createGUri() const
