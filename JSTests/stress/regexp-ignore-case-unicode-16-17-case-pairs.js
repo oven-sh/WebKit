@@ -87,9 +87,10 @@ for (let i = 0; i < 50; ++i) {
     checkUnrelated(0x0264, 0x0263, "i");
 }
 
-// Case-insensitive ranges in classes cover the new partners too.
-shouldBe(/[\ua7cc-\ua7db]/i.test("\ua7cd"), true, "range containing both halves");
-shouldBe(/[\u0190-\u01a0]/i.test("\ua7dc"), true, "U+A7DC falls into a range holding U+019B");
-shouldBe(/[\ua7c0-\ua7ff]/i.test("\u019b"), true, "U+019B falls into a range holding U+A7DC");
-shouldBe(/[\ua7c0-\ua7ff]/i.test("\u0264"), true, "U+0264 falls into a range holding U+A7CB");
-shouldBe(/[\u1c80-\u1c8f]/i.test("\u1c8a"), true, "range holding both TJE letters");
+// Case-insensitive ranges in classes cover the new partners too. Each tested
+// character lies outside the range and can only match through its partner.
+shouldBe(/[\ua7cc-\ua7da]/i.test("\ua7db"), true, "U+A7DB matches through U+A7DA at the end of the range");
+shouldBe(/[\u0190-\u01a0]/i.test("\ua7dc"), true, "U+A7DC matches through U+019B inside the range");
+shouldBe(/[\ua7c0-\ua7ff]/i.test("\u019b"), true, "U+019B matches through U+A7DC inside the range");
+shouldBe(/[\ua7c0-\ua7ff]/i.test("\u0264"), true, "U+0264 matches through U+A7CB inside the range");
+shouldBe(/[\u1c80-\u1c89]/i.test("\u1c8a"), true, "U+1C8A matches through U+1C89 at the end of the range");
