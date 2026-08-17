@@ -172,10 +172,22 @@ bool Thread::establishHandle(NewThreadContext& data, StackAllocationSpecificatio
     if (stackSpec.kind() == StackAllocationSpecification::Kind::SizeOnly)
         stackSize = stackSpec.sizeBytes();
     unsigned initFlag = stackSize ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0;
-    HANDLE threadHandle = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, stackSize, wtfThreadEntryPoint, &data, initFlag, &threadIdentifier));
-    if (!threadHandle) {
-        LOG_ERROR("Failed to create thread at entry point %p with data %p: %d", wtfThreadEntryPoint, &data, errno);
-        return false;
+    // _beginthreadex fails when either its parameter block (CRT heap) or the
+    // new thread's initial stack cannot be committed. Commit-limit refusals
+    // are frequently transient (see virtualAllocWithRetry in OSAllocatorWin.cpp)
+    // and the caller RELEASE_ASSERTs on failure, so always retry for a while.
+    static constexpr unsigned maxAttempts = 10;
+    static constexpr DWORD delayMs = 50;
+    HANDLE threadHandle = nullptr;
+    for (unsigned attempt = 0;; ++attempt) {
+        threadHandle = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, stackSize, wtfThreadEntryPoint, &data, initFlag, &threadIdentifier));
+        if (threadHandle) [[likely]]
+            break;
+        if (attempt == maxAttempts) {
+            LOG_ERROR("Failed to create thread at entry point %p with data %p: errno %d, last error %lu", wtfThreadEntryPoint, &data, errno, GetLastError());
+            return false;
+        }
+        Sleep(delayMs);
     }
     establishPlatformSpecificHandle(threadHandle, threadIdentifier);
     return true;

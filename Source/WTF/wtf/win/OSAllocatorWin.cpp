@@ -45,6 +45,27 @@ static inline DWORD protection(bool writable, bool executable)
         (writable ? PAGE_READWRITE : PAGE_READONLY);
 }
 
+// Commit-limit refusals are frequently transient (the pagefile is still
+// growing, or other processes release commit moments later), so wait for one
+// to clear before treating it as fatal. Same policy as libpas'
+// virtual_alloc_with_retry and mimalloc's retry_on_oom.
+static void* virtualAllocWithRetry(void* address, size_t bytes, DWORD allocationType, DWORD protection)
+{
+    static constexpr unsigned maxAttempts = 10;
+    static constexpr DWORD delayMs = 50;
+    for (unsigned attempt = 0;; ++attempt) {
+        void* result = VirtualAlloc(address, bytes, allocationType, protection);
+        if (result) [[likely]]
+            return result;
+        if (!(allocationType & MEM_COMMIT) || attempt == maxAttempts)
+            return nullptr;
+        DWORD error = GetLastError();
+        if (error != ERROR_COMMITMENT_LIMIT && error != ERROR_NOT_ENOUGH_MEMORY)
+            return nullptr;
+        Sleep(delayMs);
+    }
+}
+
 void* OSAllocator::tryReserveUncommitted(size_t bytes, Usage, void* address, bool writable, bool executable, bool, unsigned)
 {
     return VirtualAlloc(address, bytes, MEM_RESERVE, protection(writable, executable));
@@ -79,7 +100,7 @@ void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, 
 
 void* OSAllocator::tryReserveAndCommit(size_t bytes, Usage, void* address, bool writable, bool executable, bool, unsigned)
 {
-    return VirtualAlloc(address, bytes, MEM_RESERVE | MEM_COMMIT, protection(writable, executable));
+    return virtualAllocWithRetry(address, bytes, MEM_RESERVE | MEM_COMMIT, protection(writable, executable));
 }
 
 void* OSAllocator::reserveAndCommit(size_t bytes, Usage usage, void* address, bool writable, bool executable, bool jitCageEnabled, unsigned numGuardPagesToAddOnEachEnd)
@@ -91,9 +112,11 @@ void* OSAllocator::reserveAndCommit(size_t bytes, Usage usage, void* address, bo
 
 void OSAllocator::commit(void* address, size_t bytes, bool writable, bool executable)
 {
-    void* result = VirtualAlloc(address, bytes, MEM_COMMIT, protection(writable, executable));
-    if (!result)
+    void* result = virtualAllocWithRetry(address, bytes, MEM_COMMIT, protection(writable, executable));
+    if (!result) [[unlikely]] {
+        dataLogLn("OSAllocator::commit of ", bytes, " bytes failed: ", static_cast<int>(GetLastError()));
         CRASH();
+    }
 }
 
 void OSAllocator::decommit(void* address, size_t bytes)
@@ -157,7 +180,7 @@ bool OSAllocator::tryProtect(void* address, size_t bytes, bool readable, bool wr
         ASSERT(memInfo.RegionSize > 0);
         ASSERT(static_cast<char*>(memInfo.BaseAddress) == currentPtr);
         size_t chunkSize = std::min(static_cast<size_t>(memInfo.RegionSize), bytes - totalSeen);
-        if (!VirtualAlloc(currentPtr, chunkSize, MEM_COMMIT, protection))
+        if (!virtualAllocWithRetry(currentPtr, chunkSize, MEM_COMMIT, protection))
             return false;
         currentPtr += chunkSize;
         totalSeen += chunkSize;
