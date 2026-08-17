@@ -1120,6 +1120,11 @@ TEST_F(WTF_URLParser, AdditionalTests)
         { "http"_s, ""_s, ""_s, "w"_s, 0, "/%F0%90%85%95"_s, ""_s, ""_s, "http://w/%F0%90%85%95"_s }, testTabsValueForSurrogatePairs);
     shouldFail(utf16String<10>({'h', 't', 't', 'p', ':', '/', surrogateBegin, invalidSurrogateEnd, '/', '\0'}));
     shouldFail(utf16String<9>({'h', 't', 't', 'p', ':', '/', replacementCharacter, '/', '\0'}));
+    // A surrogate pair in a host split by a tab is two unpaired surrogates, like elsewhere in the URL.
+    checkURL(utf16String<10>({'h', 't', 't', 'p', ':', '/', '/', 0xD83D, 0xDCA9, '\0'}),
+        { "http"_s, ""_s, ""_s, "xn--ls8h"_s, 0, "/"_s, ""_s, ""_s, "http://xn--ls8h/"_s }, testTabsValueForSurrogatePairs);
+    shouldFail(utf16String<11>({'h', 't', 't', 'p', ':', '/', '/', 0xD83D, '\t', 0xDCA9, '\0'}));
+    shouldFail(utf16String<12>({'f', 'i', 'l', 'e', ':', '/', '/', 0xD83D, '\n', 0xDCA9, '/', '\0'}));
     
     // URLParser matches Chrome and Firefox but not URL::parse.
     checkURLDifferences(utf16String<12>({'h', 't', 't', 'p', ':', '/', '/', 'w', '/', surrogateBegin, invalidSurrogateEnd}),

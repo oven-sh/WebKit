@@ -62,6 +62,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     {
         return m_data.empty();
     }
+
+    ALWAYS_INLINE const CharacterType* position() const { return m_data.data(); }
+    ALWAYS_INLINE std::span<const CharacterType> remainingCodeUnits() const { return m_data; }
     
     ALWAYS_INLINE size_t codeUnitsSince(const CharacterType* reference) const
     {
@@ -78,17 +81,20 @@ private:
     std::span<const CharacterType> m_data;
 };
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 template<>
 ALWAYS_INLINE char32_t CodePointIterator<Latin1Character>::operator*() const
 {
     ASSERT(!atEnd());
-    return m_data.front();
+    return *m_data.data();
 }
 
 template<>
 ALWAYS_INLINE auto CodePointIterator<Latin1Character>::operator++() -> CodePointIterator&
 {
-    skip(m_data, 1);
+    ASSERT(!atEnd());
+    m_data = { m_data.data() + 1, m_data.size() - 1 };
     return *this;
 }
 
@@ -96,20 +102,26 @@ template<>
 ALWAYS_INLINE char32_t CodePointIterator<char16_t>::operator*() const
 {
     ASSERT(!atEnd());
-    char32_t c;
-    U16_GET(m_data, 0, 0, m_data.size(), c);
+    auto* data = m_data.data();
+    char32_t c = data[0];
+    if (U16_IS_LEAD(c) && m_data.size() > 1 && U16_IS_TRAIL(data[1])) [[unlikely]]
+        return U16_GET_SUPPLEMENTARY(c, data[1]);
     return c;
 }
 
 template<>
 ALWAYS_INLINE auto CodePointIterator<char16_t>::operator++() -> CodePointIterator&
 {
-    unsigned i = 0;
-    size_t length = m_data.size();
-    U16_FWD_1(m_data, i, length);
-    skip(m_data, i);
+    ASSERT(!atEnd());
+    auto* data = m_data.data();
+    size_t length = 1;
+    if (U16_IS_LEAD(data[0]) && m_data.size() > 1 && U16_IS_TRAIL(data[1])) [[unlikely]]
+        length = 2;
+    m_data = { data + length, m_data.size() - length };
     return *this;
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 template<typename CharacterType> CodePointIterator(std::span<const CharacterType>) -> CodePointIterator<CharacterType>;
 

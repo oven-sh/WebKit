@@ -30,7 +30,6 @@
 #include "Options.h"
 #include <wtf/Compiler.h>
 #include <wtf/DataLog.h>
-#include <wtf/NeverDestroyed.h>
 #include <wtf/RawHex.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/StringCommon.h>
@@ -58,7 +57,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSBigIntInlines.h"
 #include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
-#include "BunFFI.h"
 #include "JSFFICallback.h"
 #include "JSFFIFunction.h"
 #include "JSFunction.h"
@@ -2327,94 +2325,6 @@ static void testFixtureTable()
     FFI_CHECK_EQ(ffi_mix_5(1, -1, 3, -4, 5, -6, 7, -8), 1 * 1.0 + 2 * -1.0 + 3 * 3.0 + 4 * -4.0 + 5 * 5.0 + 6 * -6.0 + 7 * 7.0 + 8 * -8.0);
 }
 
-
-static Lock s_threadsafeTestQueueLock;
-static Vector<RefPtr<FFI::ThreadsafeInvocation>>& threadsafeTestQueue()
-{
-    static NeverDestroyed<Vector<RefPtr<FFI::ThreadsafeInvocation>>> queue;
-    return queue;
-}
-static void threadsafeTestDispatch(FFI::ThreadsafeInvocation& invocation)
-{
-    Locker locker { s_threadsafeTestQueueLock };
-    threadsafeTestQueue().append(&invocation);
-}
-static Vector<RefPtr<FFI::ThreadsafeInvocation>> takeThreadsafeTestQueue()
-{
-    Locker locker { s_threadsafeTestQueueLock };
-    return std::exchange(threadsafeTestQueue(), { });
-}
-static unsigned s_threadsafeTargetCalls;
-JSC_DECLARE_HOST_FUNCTION(functionThreadsafeTarget);
-JSC_DEFINE_HOST_FUNCTION(functionThreadsafeTarget, (JSGlobalObject*, CallFrame*))
-{
-    ++s_threadsafeTargetCalls;
-    return JSValue::encode(jsNumber(7));
-}
-
-// A threadsafe callback's entrypoint must stay callable -- dropping the call and returning zero -- after
-// close(), after its global object and VM are destroyed, and for an invocation that was pending when they
-// were. Runs outside any VM's lock: it creates and destroys VMs of its own.
-static void testThreadsafeCallbackOutlivesVM()
-{
-    FFI::FFIContext::setThreadsafeDispatch(threadsafeTestDispatch);
-    using Entry = int32_t (*)(int32_t);
-    enum class Ending { Unclosed, Closed, PendingAtTeardown };
-    for (Ending ending : { Ending::Unclosed, Ending::Closed, Ending::PendingAtTeardown }) {
-        Entry entry = nullptr;
-        s_threadsafeTargetCalls = 0;
-        {
-            VM& vm = VM::create(HeapType::Large).leakRef();
-            {
-                JSLockHolder locker(vm);
-                JSGlobalObject* globalObject = JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, jsNull()));
-                gcProtect(globalObject);
-                JSFunction* target = JSFunction::create(vm, globalObject, 0, "threadsafeTarget"_s, functionThreadsafeTarget, ImplementationVisibility::Public);
-                Vector<FFI::Type> argumentTypes { FFI::Type::Int32 };
-                RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(argumentTypes.span(), FFI::Type::Int32);
-                FFI_CHECK(!!signature);
-                JSFFICallback* callback = signature ? JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), target, signature.releaseNonNull(), true, nullptr) : nullptr;
-                FFI_CHECK(callback && callback->nativeEntrypoint());
-                if (callback && callback->nativeEntrypoint())
-                    entry = reinterpret_cast<Entry>(callback->nativeEntrypoint());
-
-                if (entry) {
-                    // Live: the call is queued for the owning thread and the native caller sees zero.
-                    FFI_CHECK_EQ(entry(1), 0);
-                    auto queued = takeThreadsafeTestQueue();
-                    FFI_CHECK_EQ(queued.size(), 1u);
-                    for (auto& invocation : queued)
-                        FFI::runThreadsafeInvocation(*invocation);
-                    FFI_CHECK_EQ(s_threadsafeTargetCalls, 1u);
-
-                    if (ending == Ending::PendingAtTeardown)
-                        FFI_CHECK_EQ(entry(2), 0); // left in the queue across the teardown below
-                    if (ending == Ending::Closed)
-                        callback->close();
-                }
-                gcUnprotect(globalObject);
-            }
-            JSLockHolder locker(vm);
-            vm.derefSuppressingSaferCPPChecking();
-        }
-        if (!entry)
-            continue;
-
-        // Cell, global object and VM are gone; the entrypoint is still mapped and drops the call.
-        FFI_CHECK_EQ(entry(3), 0);
-        FFI_CHECK_EQ(entry(4), 0);
-        auto late = takeThreadsafeTestQueue();
-        if (ending == Ending::PendingAtTeardown) {
-            // The invocation queued before teardown is retired harmlessly; nothing new was queued.
-            FFI_CHECK_EQ(late.size(), 1u);
-            for (auto& invocation : late)
-                FFI::retireThreadsafeInvocation(*invocation);
-        } else
-            FFI_CHECK(late.isEmpty());
-        FFI_CHECK_EQ(s_threadsafeTargetCalls, 1u);
-    }
-}
-
 } // anonymous namespace
 
 static int runAll()
@@ -2444,7 +2354,6 @@ static int runAll()
         RUN(testJSFFIFunctionEndToEnd());
         RUN(testCallbackThunkEndToEnd());
     }
-    RUN(testThreadsafeCallbackOutlivesVM());
 
     dataLogLn(s_failureCount ? "FAILED: " : "OK: ", s_checkCount - s_failureCount, " checks passed, ", s_failureCount, " failed.");
     VM& leaked = s_vm.releaseNonNull().leakRef();
