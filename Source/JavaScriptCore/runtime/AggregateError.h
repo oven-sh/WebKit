@@ -31,4 +31,14 @@ namespace JSC {
 
 ErrorInstance* createAggregateError(VM&, Structure*, JSArray* errors, const String& message, JSValue cause, ErrorInstance::SourceAppender = nullptr, RuntimeType = TypeNothing, bool useCurrentFrame = true);
 
+inline ErrorInstance* createAggregateErrorForPromiseAnyRejection(VM& vm, Structure* structure, JSArray* errors)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    String message = "All promises were rejected"_s;
+#else
+    String message;
+#endif
+    return createAggregateError(vm, structure, errors, message, JSValue());
+}
+
 } // namespace JSC

@@ -425,7 +425,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
 
     auto& fn = vm.onComputeErrorInfoJSValue();
-    if (fn && m_stackTrace && !m_stackTrace->isEmpty()) {
+    if (fn && m_stackTrace) {
+        bool hasFrames = !m_stackTrace->isEmpty();
         m_errorInfoMaterialized = true;
         DeferGCForAWhile deferGC(vm);
 
@@ -442,10 +443,12 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
 
-        putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
-        putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
-        if (!m_sourceURL.isEmpty())
-            putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        if (hasFrames) {
+            putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
+            putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
+            if (!m_sourceURL.isEmpty())
+                putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        }
 
         if (!m_stackPropertyAlreadyMaterialized)
             putDirect(vm, vm.propertyNames->stack, stack, attributes);
