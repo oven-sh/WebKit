@@ -37,6 +37,15 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+static JSObject* createSetFromResultObject(JSGlobalObject* globalObject, size_t readLength, size_t writeLength)
+{
+    VM& vm = globalObject->vm();
+    JSObject* resultObject = constructEmptyObject(globalObject);
+    resultObject->putDirect(vm, vm.propertyNames->read, jsNumber(readLength));
+    resultObject->putDirect(vm, vm.propertyNames->written, jsNumber(writeLength));
+    return resultObject;
+}
+
 JSC_DEFINE_HOST_FUNCTION(uint8ArrayPrototypeSetFromBase64, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -96,20 +105,22 @@ JSC_DEFINE_HOST_FUNCTION(uint8ArrayPrototypeSetFromBase64, (JSGlobalObject* glob
     if (isIntegerIndexedObjectOutOfBounds(uint8Array, byteLengthGetter)) [[unlikely]]
         return throwVMTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
 
+    // https://tc39.es/proposal-arraybuffer-base64/spec/#sec-frombase64 step 3: with no room to write,
+    // nothing is read, so the string is not looked at and cannot be rejected.
+    size_t maxLength = uint8Array->length();
+    if (!maxLength) [[unlikely]]
+        return JSValue::encode(createSetFromResultObject(globalObject, 0, 0));
+
     auto gcOwnedData = jsString->view(globalObject);
     StringView view = gcOwnedData;
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto [shouldThrowError, readLength, writeLength] = fromBase64(view, std::span { uint8Array->typedVector(), uint8Array->length() }, alphabet, lastChunkHandling);
+    auto [shouldThrowError, readLength, writeLength] = fromBase64(view, std::span { uint8Array->typedVector(), maxLength }, alphabet, lastChunkHandling);
     ASSERT(readLength <= view.length());
     if (shouldThrowError == WTF::FromBase64ShouldThrowError::Yes) [[unlikely]]
         return JSValue::encode(throwSyntaxError(globalObject, scope, "Uint8Array.prototype.setFromBase64 requires a valid base64 string"_s));
 
-    JSObject* resultObject = constructEmptyObject(globalObject);
-    resultObject->putDirect(vm, vm.propertyNames->read, jsNumber(readLength));
-    resultObject->putDirect(vm, vm.propertyNames->written, jsNumber(writeLength));
-
-    return JSValue::encode(resultObject);
+    return JSValue::encode(createSetFromResultObject(globalObject, readLength, writeLength));
 }
 
 JSC_DEFINE_HOST_FUNCTION(uint8ArrayPrototypeSetFromHex, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -149,10 +160,7 @@ JSC_DEFINE_HOST_FUNCTION(uint8ArrayPrototypeSetFromHex, (JSGlobalObject* globalO
     if (!success) [[unlikely]]
         return JSValue::encode(throwSyntaxError(globalObject, scope, "Uint8Array.prototype.setFromHex requires a string containing only \"0123456789abcdefABCDEF\""_s));
 
-    JSObject* resultObject = constructEmptyObject(globalObject);
-    resultObject->putDirect(vm, vm.propertyNames->read, jsNumber(readCount));
-    resultObject->putDirect(vm, vm.propertyNames->written, jsNumber(writtenCount));
-    return JSValue::encode(resultObject);
+    return JSValue::encode(createSetFromResultObject(globalObject, readCount, writtenCount));
 }
 
 JSC_DEFINE_HOST_FUNCTION(uint8ArrayPrototypeToBase64, (JSGlobalObject* globalObject, CallFrame* callFrame))
