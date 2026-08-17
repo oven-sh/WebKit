@@ -478,6 +478,21 @@ public:
         for (unsigned i = 0; i < size; ++i)
             ::JSC::decode(decoder, buffer[i], array[i], args...);
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Direct pointer to the encoded element bytes, valid only for element
+    // types whose Cached form is the value itself (T == SourceType<T>).
+    // Points into the CachedBytecode buffer; caller must already know the
+    // element count (CachedArray does not store it). Returns nullptr when
+    // empty so callers can pass it through without dereferencing.
+    const T* borrowedBuffer(unsigned size) const
+    {
+        static_assert(std::is_same_v<T, SourceType<T>>, "borrowedBuffer requires identity encode/decode");
+        if (!size)
+            return nullptr;
+        return this->template buffer<T>();
+    }
+#endif
 };
 
 template<typename T, typename Source = SourceType<T>>
@@ -635,6 +650,20 @@ public:
         for (unsigned i = 0; i < m_size; ++i)
             ::JSC::decode(decoder, buffer[i], vector[i], args...);
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Direct view over the encoded element bytes, valid only for element types
+    // whose Cached form is the value itself (T == SourceType<T>). The returned
+    // span points into the CachedBytecode buffer the Decoder is reading from
+    // and is valid for as long as that buffer is alive.
+    std::span<const T> borrowedSpan() const
+    {
+        static_assert(std::is_same_v<T, SourceType<T>>, "borrowedSpan requires identity encode/decode");
+        if (!m_size)
+            return { };
+        return { this->template buffer<T>(), m_size };
+    }
+#endif
 
 private:
     unsigned m_size;
@@ -1057,9 +1086,23 @@ public:
 
     std::unique_ptr<ExpressionInfo> decode(Decoder& decoder) const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // The chapters/encodedInfo payload is a CachedArray<unsigned> stored
+        // verbatim, so the decoded ExpressionInfo can read it straight from
+        // the CachedBytecode buffer instead of FastMalloc-ing
+        // totalSizeInBytes() and memcpying. The CachedBytecode outlives every
+        // cache-derived UnlinkedCodeBlock (held by Decoder::m_cachedBytecode
+        // and the runtime SourceProvider; m_isGeneratedFromCache disables
+        // jettisoning), so the borrowed payload is valid for the lifetime of
+        // every reader.
+        UNUSED_PARAM(decoder);
+        unsigned payloadCount = ExpressionInfo::payloadSizeInBytes(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions) / sizeof(unsigned);
+        return ExpressionInfo::createBorrowed(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions, m_storage.borrowedBuffer(payloadCount));
+#else
         auto info = ExpressionInfo::createUninitialized(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
         m_storage.decode(decoder, info->payload(), info->payloadSize());
         return info;
+#endif
     }
 
 private:
@@ -1505,14 +1548,35 @@ class CachedInstructionStream : public CachedObject<JSInstructionStream> {
 public:
     void encode(Encoder& encoder, const JSInstructionStream& stream)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // Encode from the read-view rather than the owning Vector so that a
+        // borrowed stream (whose Vector is empty) round-trips correctly. In
+        // practice encode is only reached for BytecodeGenerator-produced
+        // streams, where both agree.
+        m_instructions.encode(encoder, stream.view());
+#else
         m_instructions.encode(encoder, stream.m_instructions);
+#endif
     }
 
     JSInstructionStream* decode(Decoder& decoder) const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // The instruction bytes are stored verbatim (CachedVector<uint8_t> uses
+        // identity encode/decode), so the decoded JSInstructionStream can read
+        // them directly from the CachedBytecode buffer instead of heap-copying
+        // into a fresh Vector. The CachedBytecode outlives every UnlinkedCodeBlock
+        // produced from it: it is held by Decoder::m_cachedBytecode (kept alive
+        // by every still-lazy UnlinkedFunctionExecutable) and by the runtime
+        // SourceProvider, and m_isGeneratedFromCache disables jettisoning of
+        // cache-derived UnlinkedCodeBlocks.
+        UNUSED_PARAM(decoder);
+        return JSInstructionStream::createBorrowed(m_instructions.borrowedSpan()).release();
+#else
         Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamBufferMalloc> instructionsVector;
         m_instructions.decode(decoder, instructionsVector);
         return new JSInstructionStream(WTF::move(instructionsVector));
+#endif
     }
 
 private:

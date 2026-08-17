@@ -214,7 +214,11 @@ private:
 
     Chapter* chapters() const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        return std::bit_cast<Chapter*>(payload());
+#else
         return std::bit_cast<Chapter*>(this + 1);
+#endif
     }
 
     EncodedInfo* encodedInfo() const
@@ -239,10 +243,26 @@ private:
 
     unsigned* payload() const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // When borrowed (createBorrowed), the trailing storage holds a single
+        // const unsigned* to the externally-owned chapters/encodedInfo bytes
+        // (the CachedBytecode buffer) instead of the inline payload itself.
+        // Keeps sizeof(ExpressionInfo) unchanged for the owned case.
+        if (m_isBorrowedPayload)
+            return const_cast<unsigned*>(*std::bit_cast<const unsigned* const*>(this + 1));
+#endif
         return std::bit_cast<unsigned*>(this + 1);
     }
 
     static std::unique_ptr<ExpressionInfo> createUninitialized(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);
+#if USE(BUN_JSC_ADDITIONS)
+    // Allocate only the fixed header (with its mutable LineColumn cache) and
+    // point chapters()/encodedInfo() at an externally-owned payload that the
+    // caller guarantees outlives this object — used by the bytecode-cache
+    // decoder to read straight from the mmapped CachedBytecode instead of
+    // FastMalloc'ing and memcpying totalSizeInBytes().
+    static std::unique_ptr<ExpressionInfo> createBorrowed(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions, const unsigned* borrowedPayload);
+#endif
 
     static constexpr unsigned bitsPerWord = sizeof(unsigned) * CHAR_BIT;
 
@@ -322,10 +342,21 @@ private:
     mutable LineColumnMap m_cachedLineColumns;
     unsigned m_numberOfChapters;
     unsigned m_numberOfEncodedInfo;
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_numberOfEncodedInfoExtensions : 31;
+    unsigned m_isBorrowedPayload : 1 { false };
+    // Followed by the following which are allocated but are dynamically sized.
+    //   if !m_isBorrowedPayload:
+    //     Chapter chapters[numberOfChapters];
+    //     EncodedInfo encodedInfo[numberOfEncodedInfo + numberOfEncodedInfoExtensions];
+    //   else:
+    //     const unsigned* (single pointer to the externally-owned payload)
+#else
     unsigned m_numberOfEncodedInfoExtensions;
     // Followed by the following which are allocated but are dynamically sized.
     //   Chapter chapters[numberOfChapters];
     //   EncodedInfo encodedInfo[numberOfEncodedInfo + numberOfEncodedInfoExtensions];
+#endif
 
     friend class CachedExpressionInfo;
 };

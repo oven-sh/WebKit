@@ -49,10 +49,29 @@ class InstructionStream {
     friend class CachedInstructionStream;
 public:
     using InstructionBuffer = Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamBufferMalloc>;
+#if USE(BUN_JSC_ADDITIONS)
+    // Read-only view over instruction bytes. Backed by either m_instructions
+    // (owning) or by externally-owned storage that outlives this stream — in
+    // practice the mmapped CachedBytecode that the bytecode-cache decoder
+    // reads from. view() picks the right one: owned takes precedence so an
+    // InstructionStreamWriter mid-generation (whose Vector grows) always
+    // reads its current bytes, and a borrowed stream (empty Vector) falls
+    // through to m_borrowed.
+    using InstructionSpan = std::span<const uint8_t>;
+
+    InstructionSpan view() const
+    {
+        return m_instructions.isEmpty() ? m_borrowed : InstructionSpan { m_instructions.span() };
+    }
+#endif
 
     size_t sizeInBytes() const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        return view().size();
+#else
         return m_instructions.size();
+#endif
     }
 
     using Offset = unsigned;
@@ -111,7 +130,46 @@ private:
     };
 
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    // Ref holds an InstructionSpan by value rather than the original
+    // InstructionBuffer& so it can refer either to the owning Vector's
+    // current storage or to a borrowed CachedBytecode span. Its public
+    // surface (operator->, ptr(), next(), offset(), index(), isValid(),
+    // operator==) matches the upstream BaseRef<const InstructionBuffer>.
+    class Ref {
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Ref);
+        template<typename> friend class InstructionStream;
+
+    public:
+        Ref(const Ref&) = default;
+        Ref& operator=(const Ref&) = default;
+
+        inline const InstructionType* operator->() const { return unwrap(); }
+        inline const InstructionType* ptr() const { return unwrap(); }
+
+        bool operator==(const Ref& other) const { return m_span.data() == other.m_span.data() && m_index == other.m_index; }
+
+        Ref next() const { return Ref { m_span, m_index + ptr()->size() }; }
+
+        inline Offset offset() const { return m_index; }
+        inline BytecodeIndex index() const { return BytecodeIndex(offset()); }
+        bool isValid() const { return m_index < m_span.size(); }
+
+    private:
+        inline const InstructionType* unwrap() const { return reinterpret_cast<const InstructionType*>(&m_span[m_index]); }
+
+    protected:
+        Ref(InstructionSpan span, size_t index)
+            : m_span(span)
+            , m_index(index)
+        { }
+
+        InstructionSpan m_span;
+        Offset m_index;
+    };
+#else
     using Ref = BaseRef<const InstructionBuffer>;
+#endif
 
     class MutableRef : public BaseRef<InstructionBuffer> {
         template<typename> friend class InstructionStreamWriter;
@@ -122,14 +180,22 @@ public:
         using BaseRef<InstructionBuffer>::m_instructions;
 
     public:
+#if USE(BUN_JSC_ADDITIONS)
+        Ref freeze() const  { return Ref { InstructionSpan { m_instructions.span() }, m_index }; }
+#else
         Ref freeze() const  { return Ref { m_instructions, m_index }; }
+#endif
         inline InstructionType* operator->() { return unwrap(); }
         inline const InstructionType* operator->() const { return unwrap(); }
         inline InstructionType* ptr() { return unwrap(); }
         inline const InstructionType* ptr() const { return unwrap(); }
         inline operator Ref()
         {
+#if USE(BUN_JSC_ADDITIONS)
+            return Ref { InstructionSpan { m_instructions.span() }, m_index };
+#else
             return Ref { m_instructions, m_index };
+#endif
         }
 
     private:
@@ -163,6 +229,39 @@ private:
     };
 
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    inline iterator begin() const LIFETIME_BOUND { return iterator { view(), 0 }; }
+    inline iterator end() const LIFETIME_BOUND { auto v = view(); return iterator { v, v.size() }; }
+
+    inline const Ref at(BytecodeIndex index) const { return at(index.offset()); }
+    inline const Ref at(Offset offset) const
+    {
+        auto v = view();
+        ASSERT(offset < v.size());
+        return Ref { v, offset };
+    }
+
+    inline size_t size() const { return view().size(); }
+    const void* rawPointer() const { return view().data(); }
+
+    bool contains(InstructionType* instruction) const
+    {
+        auto v = view();
+        auto* pointer = std::bit_cast<const uint8_t*>(instruction);
+        return !v.empty() && pointer >= v.data() && pointer < v.data() + v.size();
+    }
+
+    // Construct a stream that borrows externally-owned instruction bytes
+    // (e.g. directly from a mmapped CachedBytecode span). The caller is
+    // responsible for the borrowed storage outliving this stream — in the
+    // bytecode-cache decode path that lifetime is the CachedBytecode itself,
+    // which is held by the Decoder and the SourceProvider for the lifetime
+    // of every UnlinkedCodeBlock that came from it.
+    static std::unique_ptr<InstructionStream> createBorrowed(InstructionSpan borrowed)
+    {
+        return std::unique_ptr<InstructionStream> { new InstructionStream(BorrowedTag { }, borrowed) };
+    }
+#else
     inline iterator begin() const LIFETIME_BOUND
     {
         return iterator { m_instructions, 0 };
@@ -195,13 +294,24 @@ public:
         auto* pointer = std::bit_cast<const uint8_t*>(instruction);
         return pointer >= m_instructions.begin() && pointer < m_instructions.end();
     }
+#endif
 
 protected:
     explicit InstructionStream(InstructionBuffer&& instructions)
         : m_instructions(WTF::move(instructions))
     { }
 
+#if USE(BUN_JSC_ADDITIONS)
+    struct BorrowedTag { };
+    InstructionStream(BorrowedTag, InstructionSpan borrowed)
+        : m_borrowed(borrowed)
+    { }
+#endif
+
     InstructionBuffer m_instructions;
+#if USE(BUN_JSC_ADDITIONS)
+    InstructionSpan m_borrowed;
+#endif
 };
 
 template<typename InstructionType>
