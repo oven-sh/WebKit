@@ -7,7 +7,7 @@ on:
   workflow_call:
     inputs:
       build_ref:
-        description: 'Git ref to build (commit SHA, branch, or tag)'
+        description: 'What to build; release_tag is created at it (full commit SHA or branch name)'
         type: string
         required: true
       release_tag:
@@ -728,11 +728,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.release_tag }}
+          BUILD_REF: ${{ inputs.build_ref }}
           PRERELEASE: ${{ inputs.is_prerelease }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            flags=(--title "$TAG" --generate-notes)
+            # without --target the tag is created at main's HEAD of this moment, which is never the
+            # PR head a preview was built from and is not the main commit either once something lands during the build
+            flags=(--title "$TAG" --target "$BUILD_REF" --generate-notes)
             [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
             gh release create "$TAG" "${flags[@]}"
           fi
