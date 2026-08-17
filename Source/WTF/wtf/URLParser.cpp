@@ -3452,8 +3452,14 @@ template<typename CharacterType> std::optional<URLParser::Latin1Buffer> URLParse
 
 bool URLParser::hasForbiddenHostCodePoint(const URLParser::Latin1Buffer& asciiDomain)
 {
-    for (auto character : asciiDomain) {
-        if (isForbiddenDomainCodePoint(character))
+    // HostNotDomainCharacter is the forbidden domain code points plus tab, newline and non-ASCII, none of which ICU emits.
+    auto* begin = asciiDomain.begin();
+    auto* end = asciiDomain.end();
+    auto* p = findStopCharacter<HostNotDomainCharacter | HostStop>(begin, end, [](simde_uint8x16_t input) ALWAYS_INLINE_LAMBDA {
+        return SIMD::bitOr(controlSpaceOrNonASCII(input), SIMD::equal<'#', '/', ':', '<', '>', '?', '@', '[', '\\', ']', '^', '|', '%'>(input));
+    });
+    for (; p != end; ++p) {
+        if (*p <= 0x7F && characterClassTable[*p] & ForbiddenDomain)
             return true;
     }
     return false;
@@ -3696,22 +3702,67 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
     const auto hostBegin = iterator;
     auto* hostCharactersBegin = iterator.position();
     auto* end = hostCharactersBegin + iterator.remainingCodeUnits().size();
-    auto* hostEnd = hostCharactersBegin;
     bool hasNonASCII = false;
     bool hasPercent = false;
     bool hasTabOrNewline = false;
-    for (; hostEnd != end; ++hostEnd) {
-        auto character = *hostEnd;
-        if (!(scanClass(character) & (HostNotPlain | HostPercentOrNonASCII))) [[likely]]
-            continue;
-        if (character == ':')
-            break;
-        if (character == '%')
-            hasPercent = true;
-        else if (isTabOrNewline(character)) [[unlikely]]
-            hasTabOrNewline = true;
-        else if (!isASCII(character))
-            hasNonASCII = true;
+    bool mayHaveUnpairedSurrogate = sizeof(CharacterType) == 2;
+    // The host ends at the first ':' (IPv6 literals were handled above); find it, then classify what is before it,
+    // 16 characters at a time when there are that many.
+    auto* hostEnd = hostCharactersBegin;
+    constexpr size_t stride = 16;
+    if (static_cast<size_t>(end - hostEnd) >= stride) {
+        hostEnd = findStopCharacter<0, ':'>(hostEnd, end, [](simde_uint8x16_t input) ALWAYS_INLINE_LAMBDA {
+            return SIMD::equal<':'>(input);
+        });
+    } else {
+        while (hostEnd != end && *hostEnd != ':')
+            ++hostEnd;
+    }
+    if (static_cast<size_t>(hostEnd - hostCharactersBegin) >= stride) {
+        auto percent = SIMD::splat8(0);
+        auto tabOrNewline = SIMD::splat8(0);
+        auto nonASCII = SIMD::splat8(0);
+        auto highBytes = SIMD::splat8(0);
+        auto step = [&](const CharacterType* block) ALWAYS_INLINE_LAMBDA {
+            simde_uint8x16_t bytes;
+            if constexpr (sizeof(CharacterType) == 1)
+                bytes = SIMD::load(std::bit_cast<const uint8_t*>(block));
+            else {
+                auto low = SIMD::load(std::bit_cast<const uint16_t*>(block));
+                auto high = SIMD::load(std::bit_cast<const uint16_t*>(block + 8));
+                bytes = narrowForClassification(low, high);
+                highBytes = SIMD::bitOr(highBytes, narrowForClassification(simde_vshrq_n_u16(low, 8), simde_vshrq_n_u16(high, 8)));
+            }
+            percent = SIMD::bitOr(percent, SIMD::equal<'%'>(bytes));
+            tabOrNewline = SIMD::bitOr(tabOrNewline, SIMD::equal<'\t', '\n', '\r'>(bytes));
+            nonASCII = SIMD::bitOr(nonASCII, bytes);
+        };
+        auto* cursor = hostCharactersBegin;
+        for (; cursor + stride <= hostEnd; cursor += stride)
+            step(cursor);
+        if (cursor < hostEnd)
+            step(hostEnd - stride);
+        hasPercent = SIMD::isNonZero(percent);
+        hasTabOrNewline = SIMD::isNonZero(tabOrNewline);
+        hasNonASCII = SIMD::isNonZero(SIMD::bitAnd(nonASCII, SIMD::splat8(0x80)));
+        if constexpr (sizeof(CharacterType) == 2) {
+            // The narrowed bytes saturate (to 0 or 0xFF) for code units above 0xFF, so those are told apart by their high byte.
+            hasNonASCII |= SIMD::isNonZero(highBytes);
+            // Surrogates are 0xD800-0xDFFF; without a high byte of at least 0xD8 there cannot be one.
+            mayHaveUnpairedSurrogate = SIMD::isNonZero(SIMD::greaterThanOrEqual(highBytes, SIMD::splat8(0xD8)));
+        }
+    } else {
+        for (auto* q = hostCharactersBegin; q != hostEnd; ++q) {
+            auto character = *q;
+            if (!(scanClass(character) & (HostNotPlain | HostPercentOrNonASCII))) [[likely]]
+                continue;
+            if (character == '%')
+                hasPercent = true;
+            else if (isTabOrNewline(character)) [[unlikely]]
+                hasTabOrNewline = true;
+            else if (!isASCII(character))
+                hasNonASCII = true;
+        }
     }
     iterator = CodePointIterator<CharacterType>(std::span(hostEnd, end));
     std::span<const CharacterType> host(hostCharactersBegin, hostEnd);
@@ -3725,7 +3776,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
         bool needsCopy = true;
         if constexpr (std::is_same_v<CharacterType, char16_t>) {
             // Checked before removing tabs and newlines: a surrogate pair split by one is two unpaired surrogates.
-            if (hasUnpairedSurrogate(host)) [[unlikely]]
+            if (mayHaveUnpairedSurrogate && hasUnpairedSurrogate(host)) [[unlikely]]
                 return HostParsingResult::InvalidHost;
             if (!hasTabOrNewline) [[likely]] {
                 domain = host;
