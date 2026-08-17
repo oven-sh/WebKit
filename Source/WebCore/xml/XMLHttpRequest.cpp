@@ -112,16 +112,6 @@ Ref<XMLHttpRequest> XMLHttpRequest::create(ScriptExecutionContext& context)
 
 XMLHttpRequest::XMLHttpRequest(ScriptExecutionContext& context)
     : ActiveDOMObject(&context)
-    , m_async(true)
-    , m_includeCredentials(false)
-    , m_sendFlag(false)
-    , m_createdDocument(false)
-    , m_error(false)
-    , m_uploadListenerFlag(false)
-    , m_uploadComplete(false)
-    , m_responseCacheIsValid(false)
-    , m_readyState(static_cast<unsigned>(UNSENT))
-    , m_responseType(static_cast<unsigned>(ResponseType::EmptyString))
     , m_progressEventThrottle(makeUniqueRef<XMLHttpRequestProgressEventThrottle>(*this))
     , m_timeoutTimer(*this, &XMLHttpRequest::timeoutTimerFired)
 {
@@ -262,7 +252,7 @@ ExceptionOr<void> XMLHttpRequest::setResponseType(ResponseType type)
         return Exception { ExceptionCode::InvalidAccessError };
     }
 
-    m_responseType = static_cast<unsigned>(type);
+    m_responseType = type;
     return { };
 }
 
@@ -290,7 +280,7 @@ void XMLHttpRequest::changeState(State newState)
         // of this scope.
         auto eventFiringActivity = makePendingActivity(*this);
 
-        m_readyState = static_cast<State>(newState);
+        m_readyState = newState;
         if (readyState() == DONE) {
             // The XHR object itself holds on to the responseText, and
             // thus has extra cost even independent of any
@@ -498,22 +488,10 @@ ExceptionOr<void> XMLHttpRequest::send(String&& body)
     if (auto result = prepareToSend())
         return WTF::move(result.value());
 
-    if (!body.isNull() && m_method != "GET"_s && m_method != "HEAD"_s) {
-        String contentType = m_requestHeaders.get(HTTPHeaderName::ContentType);
-        if (contentType.isNull()) {
-            m_requestHeaders.set(HTTPHeaderName::ContentType, HTTPHeaderValues::textPlainContentType());
-        } else {
-            replaceCharsetInMediaTypeIfNeeded(contentType);
-            m_requestHeaders.set(HTTPHeaderName::ContentType, contentType);
-        }
+    if (body.isNull())
+        return createRequest();
 
-        m_requestEntityBody = FormData::create(PAL::TextCodecUTF8::encodeUTF8(body));
-        Locker locker { m_gcLock };
-        if (m_upload)
-            m_requestEntityBody->setAlwaysStream(true);
-    }
-
-    return createRequest();
+    return sendStringData(WTF::move(body), HTTPHeaderValues::textPlainContentType());
 }
 
 ExceptionOr<void> XMLHttpRequest::send(Ref<Blob>&& body)
@@ -547,9 +525,31 @@ ExceptionOr<void> XMLHttpRequest::send(Ref<Blob>&& body)
 
 ExceptionOr<void> XMLHttpRequest::send(Ref<URLSearchParams>&& params)
 {
-    if (!m_requestHeaders.contains(HTTPHeaderName::ContentType))
-        m_requestHeaders.set(HTTPHeaderName::ContentType, "application/x-www-form-urlencoded;charset=UTF-8"_s);
-    return send(params->toString());
+    if (auto result = prepareToSend())
+        return WTF::move(result.value());
+
+    return sendStringData(params->toString(), HTTPHeaderValues::formURLEncodedContentType());
+}
+
+// https://xhr.spec.whatwg.org/#dom-xmlhttprequest-send steps 3 and 4, for bodies that are serialized to a UTF-8 string.
+ExceptionOr<void> XMLHttpRequest::sendStringData(String&& body, const String& defaultContentType)
+{
+    if (m_method != "GET"_s && m_method != "HEAD"_s) {
+        String contentType = m_requestHeaders.get(HTTPHeaderName::ContentType);
+        if (contentType.isNull())
+            m_requestHeaders.set(HTTPHeaderName::ContentType, defaultContentType);
+        else {
+            replaceCharsetInMediaTypeIfNeeded(contentType);
+            m_requestHeaders.set(HTTPHeaderName::ContentType, contentType);
+        }
+
+        m_requestEntityBody = FormData::create(PAL::TextCodecUTF8::encodeUTF8(body));
+        Locker locker { m_gcLock };
+        if (m_upload)
+            m_requestEntityBody->setAlwaysStream(true);
+    }
+
+    return createRequest();
 }
 
 ExceptionOr<void> XMLHttpRequest::send(Ref<DOMFormData>&& body)
@@ -706,7 +706,7 @@ void XMLHttpRequest::abort()
         dispatchErrorEvents(eventNames().abortEvent);
     }
     if (readyState() == DONE)
-        m_readyState = static_cast<State>(UNSENT);
+        m_readyState = UNSENT;
 }
 
 bool XMLHttpRequest::internalAbort()
@@ -789,9 +789,13 @@ void XMLHttpRequest::abortError()
 
 size_t XMLHttpRequest::memoryCost() const
 {
-    if (readyState() == DONE)
-        return m_responseBuilder.length() * 2;
-    return 0;
+    if (readyState() != DONE)
+        return 0;
+
+    // Text responses are decoded into m_responseBuilder, binary ones (arraybuffer / blob) are
+    // accumulated in m_binaryResponseBuilder. Only one of the two is populated for a given
+    // response type.
+    return m_responseBuilder.length() * 2 + m_binaryResponseBuilder.size();
 }
 
 ExceptionOr<void> XMLHttpRequest::overrideMimeType(const String& mimeType)
@@ -1172,8 +1176,7 @@ void XMLHttpRequest::didReachTimeout()
     m_exceptionCode = ExceptionCode::TimeoutError;
 
     if (!m_async) {
-        m_readyState = static_cast<State>(DONE);
-        m_exceptionCode = ExceptionCode::TimeoutError;
+        m_readyState = DONE;
         return;
     }
 

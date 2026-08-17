@@ -887,7 +887,7 @@ public:
         return numberOfSlotsForMaxOffset(maxOffset(), m_inlineCapacity);
     }
 
-    void finalizeUnconditionally(VM&, CollectionScope);
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
 
 protected:
     Structure(VM&, StructureVariant, Structure* previous); // Branded/Normal only

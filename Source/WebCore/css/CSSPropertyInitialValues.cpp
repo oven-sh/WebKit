@@ -55,7 +55,8 @@ static bool NODELETE isValueIDPair(const CSSValue& value, CSSValueID valueID)
     return value.isPair() && isValueID(value.first(), valueID) && isValueID(value.second(), valueID);
 }
 
-static bool NODELETE isNumber(const CSSPrimitiveValue& value, CSSPrimitiveValue::Raw number)
+// FIXME: SUPPRESS_NODELETE shouldn't be necessary.
+SUPPRESS_NODELETE static bool NODELETE isNumber(const CSSPrimitiveValue& value, CSSPrimitiveValue::Raw number)
 {
     return WTF::switchOn(value,
         [&](const CSSPrimitiveValue::Calc&) {
@@ -67,8 +68,9 @@ static bool NODELETE isNumber(const CSSPrimitiveValue& value, CSSPrimitiveValue:
     );
 }
 
+// FIXME: SUPPRESS_NODELETE shouldn't be necessary.
 template<auto unit>
-static bool NODELETE isNumber(const CSSPrimitiveValue& value, CSS::ValueLiteral<unit> literal)
+SUPPRESS_NODELETE static bool NODELETE isNumber(const CSSPrimitiveValue& value, CSS::ValueLiteral<unit> literal)
 {
     return WTF::switchOn(value,
         [&](const CSSPrimitiveValue::Calc&) {
@@ -190,7 +192,7 @@ ASCIILiteral initialValueTextForLonghand(CSSPropertyID longhand)
         },
         [](CSSPrimitiveValue::Raw initialValue) {
             switch (initialValue.unit) {
-            case CSSUnitType::CSS_NUMBER:
+            case CSSUnitType::Number:
                 if (initialValue.value == 0.0)
                     return "0"_s;
                 if (initialValue.value == 1.0)
@@ -202,7 +204,7 @@ ASCIILiteral initialValueTextForLonghand(CSSPropertyID longhand)
                 if (initialValue.value == 8.0)
                     return "8"_s;
                 break;
-            case CSSUnitType::CSS_PERCENTAGE:
+            case CSSUnitType::Percentage:
                 if (initialValue.value == 0.0)
                     return "0%"_s;
                 if (initialValue.value == 50.0)
@@ -210,13 +212,13 @@ ASCIILiteral initialValueTextForLonghand(CSSPropertyID longhand)
                 if (initialValue.value == 100.0)
                     return "100%"_s;
                 break;
-            case CSSUnitType::CSS_PX:
+            case CSSUnitType::Px:
                 if (initialValue.value == 0.0)
                     return "0px"_s;
                 if (initialValue.value == 1.0)
                     return "1px"_s;
                 break;
-            case CSSUnitType::CSS_S:
+            case CSSUnitType::S:
                 if (initialValue.value == 0.0)
                     return "0s"_s;
                 break;

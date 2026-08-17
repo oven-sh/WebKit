@@ -256,7 +256,7 @@ template<typename CharacterType> void ContentSecurityPolicySourceList::parse(Str
             // Wildcard hosts and keyword sources ('self', 'unsafe-inline',
             // etc.) aren't stored in m_list, but as attributes on the source
             // list itself.
-            if (source->scheme.isEmpty() && source->host.value.isEmpty())
+            if (source->scheme.isEmpty() && source->host.value.isEmpty() && !source->port.value && source->path.isEmpty())
                 continue;
             if (isCSPDirectiveName(source->host.value))
                 m_policy->reportDirectiveAsSourceExpression(m_directiveName, source->host.value);
@@ -482,9 +482,9 @@ template<typename CharacterType> StringView ContentSecurityPolicySourceList::par
     return begin.first(buffer.position() - begin.data());
 }
 
-// host              = [ "*." ] 1*host-char *( "." 1*host-char )
-//                   / "*"
-// host-char         = ALPHA / DIGIT / "-"
+// https://w3c.github.io/webappsec-csp/#grammardef-host-char
+// host-part = "*" / [ "*." ] 1*host-char *( "." 1*host-char ) [ "." ]
+// host-char = ALPHA / DIGIT / "-"
 //
 template<typename CharacterType> std::optional<ContentSecurityPolicySourceList::Host> ContentSecurityPolicySourceList::parseHost(std::span<const CharacterType> span)
 {
@@ -503,6 +503,9 @@ template<typename CharacterType> std::optional<ContentSecurityPolicySourceList::
             return host;
 
         if (!skipExactly(buffer, '.'))
+            return std::nullopt;
+
+        if (buffer.atEnd())
             return std::nullopt;
     }
 

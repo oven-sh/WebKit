@@ -226,12 +226,12 @@ void GPUProcess::initializeGPUProcess(GPUProcessCreationParameters&& parameters,
     WTF::Thread::setCurrentThreadIsUserInitiated();
     WebCore::initializeCommonAtomStrings();
 
-    Ref memoryPressureHandler = MemoryPressureHandler::singleton();
-    memoryPressureHandler->setLowMemoryHandler([weakThis = WeakPtr { *this }] (Critical critical, Synchronous synchronous) {
+    auto& memoryPressureHandler = MemoryPressureHandler::singleton();
+    memoryPressureHandler.setLowMemoryHandler([weakThis = WeakPtr { *this }] (Critical critical, Synchronous synchronous) {
         if (RefPtr process = weakThis.get())
             process->lowMemoryHandler(critical, synchronous);
     });
-    memoryPressureHandler->install();
+    memoryPressureHandler.install();
 
 #if PLATFORM(IOS_FAMILY) || ENABLE(ROUTING_ARBITRATION)
     DeprecatedGlobalSettings::setShouldManageAudioSessionCategory(true);
@@ -608,21 +608,6 @@ RemoteAudioSessionProxyManager& GPUProcess::audioSessionManager() const
 }
 #endif
 
-#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-void GPUProcess::tryToSetAudioSessionActiveForProcess(WebCore::ProcessIdentifier identifier, bool active, CompletionHandler<void(GenericPromise::Result&&)>&& completionHandler)
-{
-#if USE(AUDIO_SESSION)
-    protect(audioSessionManager())->tryToSetActiveForProcess(identifier, active)->whenSettled(RunLoop::mainSingleton(), [completionHandler = WTF::move(completionHandler)](auto&& result) mutable {
-        completionHandler(WTF::move(result));
-    });
-#else
-    UNUSED_PARAM(identifier);
-    UNUSED_PARAM(active);
-    completionHandler(makeUnexpected(GenericPromise::RejectValueType { }));
-#endif
-}
-#endif
-
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
 WorkQueue& GPUProcess::videoMediaStreamTrackRendererQueue()
 {
@@ -646,9 +631,9 @@ void GPUProcess::webProcessConnectionCountForTesting(CompletionHandler<void(uint
     completionHandler(GPUConnectionToWebProcess::objectCountForTesting());
 }
 
-void GPUProcess::terminateWebProcess(WebCore::ProcessIdentifier identifier)
+void GPUProcess::terminateWebProcess(WebCore::ProcessIdentifier identifier, IPC::MessageName invalidMessageName)
 {
-    protect(parentProcessConnection())->send(Messages::GPUProcessProxy::TerminateWebProcess(identifier), 0);
+    protect(parentProcessConnection())->send(Messages::GPUProcessProxy::TerminateWebProcess(identifier, invalidMessageName), 0);
 }
 
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)

@@ -51,6 +51,7 @@
 #include "LineSelection.h"
 #include "LocalFrame.h"
 #include "Logging.h"
+#include "LogicalSelectionOffsetCachesInlines.h"
 #include "RenderBlockFlowInlines.h"
 #include "RenderBlockInlines.h"
 #include "RenderBoxInlines.h"
@@ -101,6 +102,7 @@ bool RenderBlock::s_canPropagateFloatIntoSibling = false;
 struct SameSizeAsMarginInfo {
     uint32_t bitfields : 16;
     LayoutUnit margins[2];
+    LayoutUnit marginBeforeWithClearance;
 };
 
 static_assert(sizeof(MarginValues) == sizeof(LayoutUnit[4]), "MarginValues should stay small");
@@ -159,7 +161,7 @@ RenderBlockFlow::MarginInfo::MarginInfo(const RenderBlockFlow& block, IgnoreScro
     m_negativeMargin = m_canCollapseMarginBeforeWithChildren ? block.maxNegativeMarginBefore() : 0_lu;
 }
 
-RenderBlockFlow::MarginInfo::MarginInfo(bool canCollapseWithChildren, bool canCollapseMarginBeforeWithChildren, bool canCollapseMarginAfterWithChildren, bool quirkContainer, bool atBeforeSideOfBlock, bool atAfterSideOfBlock,  bool hasMarginBeforeQuirk, bool hasMarginAfterQuirk, bool determinedMarginBeforeQuirk, LayoutUnit positiveMargin, LayoutUnit negativeMargin)
+RenderBlockFlow::MarginInfo::MarginInfo(bool canCollapseWithChildren, bool canCollapseMarginBeforeWithChildren, bool canCollapseMarginAfterWithChildren, bool quirkContainer, bool atBeforeSideOfBlock, bool atAfterSideOfBlock,  bool hasMarginBeforeQuirk, bool hasMarginAfterQuirk, bool determinedMarginBeforeQuirk, LayoutUnit positiveMargin, LayoutUnit negativeMargin, LayoutUnit marginBeforeWithClearance)
     : m_canCollapseWithChildren(canCollapseWithChildren)
     , m_canCollapseMarginBeforeWithChildren(canCollapseMarginBeforeWithChildren)
     , m_canCollapseMarginAfterWithChildren(canCollapseMarginAfterWithChildren)
@@ -171,6 +173,7 @@ RenderBlockFlow::MarginInfo::MarginInfo(bool canCollapseWithChildren, bool canCo
     , m_determinedMarginBeforeQuirk(determinedMarginBeforeQuirk)
     , m_positiveMargin(positiveMargin)
     , m_negativeMargin(negativeMargin)
+    , m_marginBeforeWithClearance(marginBeforeWithClearance)
 {
 }
 
@@ -1048,7 +1051,7 @@ RenderBlockFlow::BlockPositionAndMargin RenderBlockFlow::layoutBlockChildFromInl
     if (previousMarginTrimBlockStart)
         layoutState->setMarginTrimBlockStart(*previousMarginTrimBlockStart);
 
-    return { child.logicalTop(), logicalHeight(), marginInfo };
+    return { logicalTopForChild(child), logicalHeight(), marginInfo };
 }
 
 void RenderBlockFlow::trimBlockEndChildrenMargins()
@@ -3623,7 +3626,8 @@ GapRects RenderBlockFlow::inlineSelectionGaps(RenderBlock& rootBlock, const Layo
     }
 
     // FIXME: Do we really need to check for SVG content here?
-    auto hasInlineOrSVGContent = hasContentfulInlineLine() || (svgTextLayout() && svgTextLayout()->lineCount());
+    // A line carrying nothing but a block level box still has gaps to fill: that box's own, and the ones beside it.
+    auto hasInlineOrSVGContent = (inlineLayout() && inlineLayout()->hasContentfulInlineOrBlockLine()) || (svgTextLayout() && svgTextLayout()->lineCount());
     if (!hasInlineOrSVGContent) {
         // Update our lastLogicalTop to be the bottom of the block. <hr>s or empty blocks with height can trip this case.
         if (containsStart)
@@ -3701,6 +3705,8 @@ GapRects RenderBlockFlow::inlineSelectionGaps(RenderBlock& rootBlock, const Layo
         return result;
     };
 
+    auto childCache = LogicalSelectionOffsetCaches { *this, cache };
+
     InlineIterator::LineBoxIterator lastSelectedLineBox;
     auto lineBox = InlineIterator::firstLineBoxFor(*this);
     for (; lineBox && !hasSelectedChildren(lineBox); lineBox.traverseNext()) { }
@@ -3709,20 +3715,52 @@ GapRects RenderBlockFlow::inlineSelectionGaps(RenderBlock& rootBlock, const Layo
 
     // Now paint the gaps for the lines.
     for (; lineBox && hasSelectedChildren(lineBox); lineBox.traverseNext()) {
-        auto selectionTop =  LayoutUnit { LineSelection::logicalTopAdjustedForPrecedingBlock(*lineBox) };
+        auto selectionTop = LayoutUnit { LineSelection::logicalTopAdjustedForPrecedingBlock(*lineBox) };
         auto selectionHeight = LayoutUnit { std::max(0.f, LineSelection::logicalBottom(*lineBox) - selectionTop) };
 
-        if (!containsStart && !lastSelectedLineBox
-            && selectionState() != HighlightState::Start
-            && selectionState() != HighlightState::Both)
+        auto lineState = LineSelection::selectionState(*lineBox);
+
+        CheckedPtr blockContainerWithOwnGaps = [&]() -> RenderBlock* {
+            // A block level box on a line that lays out content of its own fills its own gaps, so ask it for them
+            // instead of filling gaps around it, the way blockSelectionGaps chooses between the two per block child.
+            auto blockLevelBox = lineBox->blockLevelBox();
+            if (!blockLevelBox || blockLevelBox->selectionState() == RenderObject::HighlightState::None)
+                return { };
+            auto* blockContainer = dynamicDowncast<RenderBlock>(const_cast<RenderObject&>(blockLevelBox->renderer()));
+            if (!blockContainer || blockContainer->shouldPaintSelectionGaps() || blockContainer->canBeSelectionLeaf())
+                return { };
+            return blockContainer;
+        }();
+
+        // Fill the gap above this line the way the block path fills the gap above a block level child, from the
+        // bottom of the content before it. The first selected line has no content of ours above it, so it keeps
+        // deferring to whoever laid out what precedes us.
+        auto fillGapAboveLine = [&] {
+            if (blockContainerWithOwnGaps)
+                return false;
+            if (lastSelectedLineBox)
+                return lineState == RenderObject::HighlightState::End || lineState == RenderObject::HighlightState::Inside;
+            return !containsStart && selectionState() != HighlightState::Start && selectionState() != HighlightState::Both;
+        };
+        if (fillGapAboveLine())
             result.uniteCenter(blockSelectionGap(rootBlock, rootBlockPhysicalPosition, offsetFromRootBlock, lastLogicalTop, lastLogicalLeft, lastLogicalRight, selectionTop, cache, paintInfo));
 
         LayoutRect logicalRect { LayoutUnit(lineBox->contentLogicalLeft()), selectionTop, LayoutUnit(lineBox->contentLogicalWidth()), selectionTop + selectionHeight };
         logicalRect.move(isHorizontalWritingMode() ? offsetFromRootBlock : offsetFromRootBlock.transposedSize());
         LayoutRect physicalRect = rootBlock.logicalRectToPhysicalRect(rootBlockPhysicalPosition, logicalRect);
-        if (!paintInfo || (isHorizontalWritingMode() && physicalRect.y() < paintInfo->rect.maxY() && physicalRect.maxY() > paintInfo->rect.y())
+        if (blockContainerWithOwnGaps) {
+            result.unite(blockContainerWithOwnGaps->selectionGaps(rootBlock, rootBlockPhysicalPosition,
+                LayoutSize(offsetFromRootBlock.width() + blockContainerWithOwnGaps->x(), offsetFromRootBlock.height() + blockContainerWithOwnGaps->y()),
+                lastLogicalTop, lastLogicalLeft, lastLogicalRight, childCache, paintInfo));
+        } else if (!paintInfo || (isHorizontalWritingMode() && physicalRect.y() < paintInfo->rect.maxY() && physicalRect.maxY() > paintInfo->rect.y())
             || (!isHorizontalWritingMode() && physicalRect.x() < paintInfo->rect.maxX() && physicalRect.maxX() > paintInfo->rect.x()))
             result.unite(lineSelectionGap(lineBox, selectionTop, selectionHeight));
+
+        // Fill the bottom of this line forward so the next line's gap starts from it. The block path does the same
+        // per block level child; updating only after the loop leaves every line but the first with a stale value.
+        auto lineSelectionBottom = LayoutUnit { LineSelection::logicalBottom(*lineBox) };
+        updateLastLogicalValues(blockDirectionOffset(rootBlock, offsetFromRootBlock) + lineSelectionBottom,
+            logicalLeftSelectionOffset(rootBlock, lineSelectionBottom, cache), logicalRightSelectionOffset(rootBlock, lineSelectionBottom, cache));
 
         lastSelectedLineBox = lineBox;
     }
@@ -4126,9 +4164,22 @@ bool RenderBlockFlow::layoutSimpleBlockContentInInline(MarginInfo& marginInfo)
     for (auto walker = InlineWalker(*this); !walker.atEnd(); walker.advance()) {
         ASSERT(!walker.current()->selfNeedsLayout());
 
-        auto* blockRenderer = dynamicDowncast<RenderBox>(*walker.current());
-        if (!blockRenderer || !blockRenderer->isBlockLevelBox())
+        CheckedRef renderer = *walker.current();
+        CheckedPtr blockRenderer = dynamicDowncast<RenderBox>(renderer.get());
+        if (!blockRenderer || !blockRenderer->isBlockLevelBox()) {
+            // The line this content sits on consumes the margin after of the preceding block level box as the
+            // spacing before the line, so nothing is left to collapse with the container's margin after.
+            auto isContentfulInline = [&] {
+                if (CheckedPtr text = dynamicDowncast<RenderText>(renderer.get()))
+                    return text->hasRenderedText();
+                return !is<RenderInline>(renderer.get()) && !renderer->isFloatingOrOutOfFlowPositioned();
+            };
+            if (isContentfulInline()) {
+                marginInfo.setMargin({ }, { });
+                marginInfo.setAtBeforeSideOfBlock(false);
+            }
             continue;
+        }
 
         auto logicalHeight = blockRenderer->logicalHeight();
         auto isEligibleForBlockOnlyLayout = [&] {
@@ -4562,20 +4613,26 @@ void RenderBlockFlow::adjustComputedFontSizes(float size, float visibleWidth)
     // Don't do any work if the block is smaller than the visible area.
     if (visibleWidth >= borderBoxWidth())
         return;
-    
+
     unsigned lineCount = m_lineCountForTextAutosizing;
     if (lineCount == NOT_SET) {
         if (style().usedVisibility() != Visibility::Visible)
             lineCount = NO_LINE;
         else {
+            auto lineCountIgnoringBlockLevelBoxes = [](const RenderBlockFlow& blockContainer) -> size_t {
+                if (CheckedPtr inlineLayout = blockContainer.inlineLayout())
+                    return inlineLayout->lineCountIgnoringBlockLevelBoxes();
+                return blockContainer.lineCount();
+            };
+
             size_t lineCountInBlock = 0;
             if (childrenInline())
-                lineCountInBlock = this->lineCount();
+                lineCountInBlock = lineCountIgnoringBlockLevelBoxes(*this);
             else {
                 for (auto& listItem : childrenOfType<RenderListItem>(*this)) {
                     if (!listItem.childrenInline() || listItem.style().usedVisibility() != Visibility::Visible)
                         continue;
-                    lineCountInBlock += listItem.lineCount();
+                    lineCountInBlock += lineCountIgnoringBlockLevelBoxes(listItem);
                     if (lineCountInBlock > 1)
                         break;
                 }

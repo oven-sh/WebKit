@@ -55,6 +55,7 @@ enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
     Module,
     WebAssembly,
     JSON,
+    Text,
     Synthetic,
     ImportMap,
 #if USE(BUN_JSC_ADDITIONS)
@@ -97,6 +98,20 @@ public:
 
     JS_EXPORT_PRIVATE TextPosition startPosition() const { return m_startPosition; }
     JS_EXPORT_PRIVATE SourceProviderSourceType sourceType() const { return m_sourceType; }
+    bool isModuleType() const
+    {
+        switch (m_sourceType) {
+        case SourceProviderSourceType::Module:
+        case SourceProviderSourceType::JSON:
+        case SourceProviderSourceType::Text:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule:
+#endif
+            return true;
+        default:
+            return false;
+        }
+    }
 
     SourceID asID()
     {

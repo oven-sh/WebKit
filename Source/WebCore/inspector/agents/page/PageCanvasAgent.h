@@ -27,6 +27,7 @@
 
 #include "InspectorCanvasAgent.h"
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 
@@ -42,13 +43,13 @@ public:
     ~PageCanvasAgent();
 
     // CanvasBackendDispatcherHandler
-    Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> requestNode(const Inspector::Protocol::Canvas::CanvasId&) override;
-    Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> requestClientNodes(const Inspector::Protocol::Canvas::CanvasId&) override;
+    Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> requestNodes(const Inspector::Protocol::Canvas::CanvasId&) override;
+    Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::NodeId>>> requestCSSCanvasClientNodes(const Inspector::Protocol::Canvas::CanvasId&) override;
 
     // InspectorInstrumentation
     void frameNavigated(LocalFrame&);
     void didChangeCSSCanvasClientNodes(CanvasBase&);
-    void didChangeGPUDeviceClientNodes(GPUDevice&);
+    void didChangeGPUDeviceClientNodes(GPUDevice&) override;
 
 private:
     bool enabled() const override;
@@ -56,9 +57,15 @@ private:
     void internalEnable() override;
     void internalDisable() override;
 
+    void dispatchNodesChanged(InspectorCanvas&);
+    void dispatchCSSCanvasClientNodesChanged(InspectorCanvas&);
+    void dispatchCSSCanvasNamesChanged(InspectorCanvas&);
+
     bool matchesCurrentContext(ScriptExecutionContext*) const override;
 
     WeakRef<Page> m_inspectedPage;
+    WeakHashSet<InspectorCanvas> m_pendingNodesChange;
+    WeakHashSet<InspectorCanvas> m_pendingCSSCanvasClientNodesChange;
 };
 
 } // namespace WebCore

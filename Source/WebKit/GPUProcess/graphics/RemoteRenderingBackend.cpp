@@ -152,7 +152,6 @@ void RemoteRenderingBackend::workQueueInitialize()
     assertIsCurrent(workQueue());
     m_streamConnection->open(*this, m_workQueue.get());
     m_streamConnection->startReceivingMessages(*this, Messages::RemoteRenderingBackend::messageReceiverName(), m_renderingBackendIdentifier.toUInt64());
-    send(Messages::RemoteRenderingBackendProxy::DidInitialize(workQueue().wakeUpSemaphore(), m_streamConnection->clientWaitSemaphore()));
 }
 
 void RemoteRenderingBackend::workQueueUninitialize()
@@ -173,8 +172,8 @@ void RemoteRenderingBackend::workQueueUninitialize()
 void RemoteRenderingBackend::didReceiveInvalidMessage(IPC::StreamServerConnection&, IPC::MessageName messageName, const Vector<uint32_t>&)
 {
     RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, "Received an invalid message %s from WebContent process %" PRIu64 ", requesting for it to be terminated.", description(messageName), m_gpuConnectionToWebProcess->webProcessIdentifier().toUInt64());
-    callOnMainRunLoop([gpuConnectionToWebProcess = m_gpuConnectionToWebProcess] {
-        gpuConnectionToWebProcess->terminateWebProcess();
+    callOnMainRunLoop([gpuConnectionToWebProcess = m_gpuConnectionToWebProcess, messageName] {
+        gpuConnectionToWebProcess->terminateWebProcess(messageName);
     });
 }
 
@@ -403,10 +402,11 @@ void RemoteRenderingBackend::cacheNativeImage(ShareableBitmap::Handle&& handle, 
     MESSAGE_CHECK(success, "NativeImage already cached.");
 }
 
-void RemoteRenderingBackend::cacheNativeImageFromSharedNativeImage(WebCore::RenderingResourceIdentifier identifier)
+void RemoteRenderingBackend::cacheNativeImageFromSharedNativeImage(RemoteNativeImageReadReference&& reference)
 {
     assertIsCurrent(workQueue());
-    RefPtr image = m_sharedResourceCache->takeNativeImage(identifier);
+    auto identifier = reference.identifier();
+    RefPtr image = m_sharedResourceCache->readNativeImage(WTF::move(reference), defaultRemoteSharedResourceCacheTimeout);
     MESSAGE_CHECK(image, "Shared NativeImage not found.");
     bool success = m_remoteResourceCache.cacheNativeImage(identifier, image.releaseNonNull());
     MESSAGE_CHECK(success, "NativeImage already cached.");

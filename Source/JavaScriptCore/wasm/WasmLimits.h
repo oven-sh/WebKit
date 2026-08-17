@@ -29,6 +29,10 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include <JavaScriptCore/PageCount.h>
+#include <JavaScriptCore/WasmAddressType.h>
+
+#include <algorithm>
 #include <cstdint>
 
 namespace JSC {
@@ -44,7 +48,7 @@ constexpr size_t maxTypes = 1000000;
 constexpr size_t maxFunctions = 1000000;
 constexpr size_t maxImports = 1000000;
 constexpr size_t maxExports = 1000000;
-constexpr size_t maxExceptions = 100000;
+constexpr size_t maxExceptions = 1000000;
 constexpr size_t maxGlobals = 1000000;
 constexpr size_t maxDataSegments = 100000;
 constexpr size_t maxMemories = 100;
@@ -62,11 +66,31 @@ constexpr size_t maxFunctionParams = 1000;
 constexpr size_t maxFunctionReturns = 1000;
 
 constexpr size_t maxTableEntries = 10000000;
-constexpr size_t maxTableInitializationEntries = 10000000;
 constexpr unsigned maxTables = 100000;
 
-constexpr uint64_t maxMemoryPages = 1ULL << 16;
-constexpr uint64_t maxMemory64Pages = (1ULL << 37) - 1;
+constexpr uint64_t maxMemory32Pages = PageCount::maxMemory32PageCount;
+constexpr uint64_t maxMemory64Pages = PageCount::maxPageCount;
+
+constexpr uint64_t maxDeclarablePages(AddressType addressType)
+{
+    return addressType.is64Bit() ? maxMemory64Pages : maxMemory32Pages;
+}
+
+// MAX_ARRAY_BUFFER_SIZE is not a page multiple on 32-bit, and a memory's size always is.
+constexpr uint64_t maxPageAlignedArrayBufferBytes = (MAX_ARRAY_BUFFER_SIZE / PageCount::pageSize) * PageCount::pageSize;
+
+// The largest byte length the buffer of a memory of this address type may advertise. A memory64 may
+// declare more pages than a byte length can express, and on 32-bit a declared maximum need not be
+// representable either; growth is bounded separately.
+constexpr uint64_t maxBufferByteLength(AddressType addressType)
+{
+    return std::min<uint64_t>(maxDeclarablePages(addressType), maxPageAlignedArrayBufferBytes / PageCount::pageSize) * PageCount::pageSize;
+}
+
+#if USE(LARGE_TYPED_ARRAYS)
+static_assert(maxBufferByteLength(AddressType { AddressType::I32 }) == maxMemory32Pages * PageCount::pageSize);
+static_assert(maxBufferByteLength(AddressType { AddressType::I64 }) == maxPageAlignedArrayBufferBytes);
+#endif
 
 // Limit of GC arrays in bytes. This is not included in the limits in the
 // JS API spec, but we set a limit to avoid complicated boundary conditions.

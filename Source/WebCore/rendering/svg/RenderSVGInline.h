@@ -22,6 +22,7 @@
 #pragma once
 
 #include "RenderInline.h"
+#include "SVGPaintServerCache.h"
 
 namespace WebCore {
 
@@ -61,10 +62,10 @@ private:
 
     bool needsHasSVGTransformFlags() const final;
 
-    LayoutRect clippedOverflowRect(const RenderLayerModelObject* repaintContainer, VisibleRectContext) const final;
+    LayoutRect clippedOverflowRect(const RenderLayerModelObject* repaintContainer, const VisibleRectContext&) const final;
     RepaintRects rectsForRepaintingAfterLayout(const RenderLayerModelObject* repaintContainer, RepaintOutlineBounds) const final;
 
-    std::optional<FloatRect> computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject* container, VisibleRectContext) const final;
+    std::optional<FloatRect> computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState) const final;
 
     void mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState&, OptionSet<MapCoordinatesMode>, bool* wasFixed) const final;
     const RenderElement* pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&) const final;
@@ -74,6 +75,10 @@ private:
 
     void willBeDestroyed() final;
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
+
+    SVGPaintServerCache* svgPaintServerCache() const final { return &m_svgPaintServerCache; }
+
+    mutable SVGPaintServerCache m_svgPaintServerCache;
 };
 
 } // namespace WebCore

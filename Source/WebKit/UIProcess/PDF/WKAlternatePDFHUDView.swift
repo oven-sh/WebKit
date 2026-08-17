@@ -27,22 +27,37 @@ import AppKit
 public import Foundation
 import WebKit_Internal
 @_weakLinked @_spi(Private) import SwiftUI
+private import Observation
+private import wtf.Core.cocoa.RuntimeApplicationChecksCocoa
 
-private struct Controls: View {
+@Observable
+@MainActor
+final class PDFHUDControlsModel {
+    var isAutoHidden = false
+    var isHovered = false
+    private(set) var resetSeed: UInt32 = 0
+
+    var accessibilityDisplayModeState: WKPDFHUDViewAccessibilityDisplayModeState = .unavailable
+
+    var isVisible: Bool {
+        !isAutoHidden || isHovered
+    }
+
+    func show() {
+        isAutoHidden = false
+        resetSeed &+= 1
+    }
+}
+
+struct PDFHUDControls: View {
+    static let hoverMargin: CGFloat = 24
     private static let autoHideDelay: Duration = .seconds(3)
 
     let showSystemActions: Bool
     let action: (WKPDFHUDViewControlAction) -> Void
 
-    @State
-    private var initialHideTimerFired = false
-
-    @State
-    private var isHovered = false
-
-    private var isVisible: Bool {
-        !initialHideTimerFired || isHovered
-    }
+    @Environment(PDFHUDControlsModel.self)
+    private var model
 
     var body: some View {
         ControlGroup {
@@ -53,6 +68,28 @@ private struct Controls: View {
             Button("Zoom In", systemImage: "plus.magnifyingglass") {
                 action(.zoomIn)
             }
+
+            #if ENABLE_AX_PDF_SUPPORT
+            if model.accessibilityDisplayModeState != .unavailable {
+                Button {
+                    action(.toggleAccessibilityDisplayMode)
+                } label: {
+                    Label {
+                        Text(
+                            WKPDFHUDViewAccessibilityDisplayModeLabel(
+                                model.accessibilityDisplayModeState == .active
+                            )
+                        )
+                    } icon: {
+                        Image(
+                            _internalSystemName: WKPDFHUDViewAccessibilityDisplayModeSymbolName(
+                                model.accessibilityDisplayModeState == .active
+                            )
+                        )
+                    }
+                }
+            }
+            #endif
 
             if showSystemActions {
                 Button {
@@ -71,18 +108,20 @@ private struct Controls: View {
             }
         }
         .labelStyle(.iconOnly)
-        .opacity(isVisible ? 1 : 0)
-        .animation(.easeInOut, value: isVisible)
+        .opacity(model.isVisible ? 1 : 0)
+        .animation(.easeInOut, value: model.isVisible)
         #if USE_APPLE_INTERNAL_SDK && HAVE_NSGLASSEFFECTVIEW_EFFECT_IS_INTERACTIVE
         .controlGroupStyle(.toolbar)
         #endif
+        .padding(Self.hoverMargin)
+        .contentShape(.rect)
         .onHover {
-            isHovered = $0
+            model.isHovered = $0
         }
-        .task {
+        .task(id: model.resetSeed) {
             try? await Task.sleep(for: Self.autoHideDelay)
             guard !Task.isCancelled else { return }
-            initialHideTimerFired = true
+            model.isAutoHidden = true
         }
     }
 }
@@ -94,6 +133,9 @@ extension WKAlternatePDFHUDView {
 
     let frameIdentifier: UInt64
 
+    @nonobjc
+    final let model = PDFHUDControlsModel()
+
     init(
         frame: NSRect,
         frameIdentifier: UInt64,
@@ -104,14 +146,20 @@ extension WKAlternatePDFHUDView {
 
         super.init(frame: frame)
 
-        let controls = Controls(showSystemActions: !isInRecoveryOS(), action: actionHandler)
+        let controls = PDFHUDControls(showSystemActions: !WTF.isInBaseSystem(), action: actionHandler)
+            .environment(model)
 
         let hostingView = NSHostingView(rootView: controls)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(hostingView)
         hostingView.centerXAnchor.constraint(equalTo: centerXAnchor).isActive = true
-        hostingView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.barVerticalOffset).isActive = true
+        hostingView.bottomAnchor
+            .constraint(
+                equalTo: bottomAnchor,
+                constant: -Self.barVerticalOffset + PDFHUDControls.hoverMargin
+            )
+            .isActive = true
     }
 
     // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
@@ -122,7 +170,11 @@ extension WKAlternatePDFHUDView {
     }
 
     func show() {
-        // FIXME: Implement `WKAlternatePDFHUDView.show`.
+        model.show()
+    }
+
+    func setAccessibilityDisplayModeState(_ state: WKPDFHUDViewAccessibilityDisplayModeState) {
+        model.accessibilityDisplayModeState = state
     }
 }
 

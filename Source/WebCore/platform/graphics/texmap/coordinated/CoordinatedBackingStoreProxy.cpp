@@ -21,8 +21,10 @@
 #include "CoordinatedBackingStoreProxy.h"
 
 #if USE(COORDINATED_GRAPHICS)
+#include "CoordinatedAnimatedBackingStoreClient.h"
 #include "CoordinatedPlatformLayer.h"
 #include "CoordinatedTileBuffer.h"
+#include "GraphicsLayerCoordinated.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
 #include <wtf/CheckedArithmetic.h>
@@ -35,6 +37,11 @@
 #if USE(SKIA)
 #include "SkiaPaintingEngine.h"
 #include "SkiaRecordingResult.h"
+#endif
+
+#if USE(CAIRO)
+#include "CairoPaintingContext.h"
+#include "CairoPaintingEngine.h"
 #endif
 
 namespace WebCore {
@@ -97,13 +104,37 @@ Ref<CoordinatedBackingStoreProxy> CoordinatedBackingStoreProxy::create()
     return adoptRef(*new CoordinatedBackingStoreProxy());
 }
 
-OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStoreProxy::updateIfNeeded(const IntRect& unscaledVisibleRect, const IntRect& unscaledContentsRect, float contentsScale, bool shouldCreateAndDestroyTiles, const Vector<IntRect, 1>& dirtyRegion, Damage& damage, CoordinatedPlatformLayer& layer)
+CoordinatedBackingStoreProxy::~CoordinatedBackingStoreProxy()
 {
-    assertIsHeld(layer.lock());
+    ASSERT(!m_animatedBackingStoreClient);
+}
+
+void CoordinatedBackingStoreProxy::invalidate()
+{
+    setAffectedByTransformAnimation(false);
+}
+
+void CoordinatedBackingStoreProxy::setAffectedByTransformAnimation(bool affectedByTransformAnimation)
+{
+    if (affectedByTransformAnimation && !m_animatedBackingStoreClient)
+        m_animatedBackingStoreClient = CoordinatedAnimatedBackingStoreClient::create();
+    else if (!affectedByTransformAnimation && m_animatedBackingStoreClient) {
+        m_animatedBackingStoreClient->invalidate();
+        m_animatedBackingStoreClient = nullptr;
+    }
+}
+
+OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStoreProxy::updateIfNeeded(const IntRect& unscaledVisibleRect, const FloatSize& unscaledSize, const FloatRect& unscaledViewportRect, float contentsScale, bool contentsOpaque, bool shouldCreateAndDestroyTiles, const Vector<IntRect, 1>& dirtyRegion, Damage& damage, CoordinatedPlatformLayer& layer)
+{
+    assertIsMainThread();
+    ASSERT(layer.owner());
     Vector<uint32_t> tilesToCreate;
     Vector<uint32_t> tilesToRemove;
     if (shouldCreateAndDestroyTiles)
-        createOrDestroyTiles(unscaledVisibleRect, unscaledContentsRect, enclosingIntRect(layer.visibleRect()).size(), contentsScale, layer.maxTextureSize(), damage, tilesToCreate, tilesToRemove);
+        createOrDestroyTiles(unscaledVisibleRect, IntRect { { }, IntSize(unscaledSize) }, enclosingIntRect(unscaledViewportRect).size(), contentsScale, layer.maxTextureSize(), damage, tilesToCreate, tilesToRemove);
+
+    if (m_animatedBackingStoreClient)
+        m_animatedBackingStoreClient->update(layer.owner(), unscaledViewportRect, m_coverRect, unscaledSize, contentsScale);
 
     if (!m_tiles.isEmpty())
         invalidateRegion(dirtyRegion);
@@ -127,9 +158,11 @@ OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStorePro
     if (dirtyTilesCount) {
         WTFBeginSignpost(this, UpdateTiles, "dirty tiles: %u", dirtyTilesCount);
 
+        auto& paintingEngine = layer.client().paintingEngine();
+
 #if USE(SKIA)
         // Record only once the whole layer.
-        auto recording = layer.record(tileDirtyRectUnion, dirtyTilesCount);
+        auto recording = paintingEngine.record(*layer.owner(), tileDirtyRectUnion, contentsOpaque, contentsScale, dirtyTilesCount);
 #endif
 
         unsigned dirtyTileIndex = 0;
@@ -141,9 +174,13 @@ OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStorePro
                 tile.rect.x(), tile.rect.y(), tile.rect.width(), tile.rect.height(), tile.dirtyRect.x(), tile.dirtyRect.y(), tile.dirtyRect.width(), tile.dirtyRect.height());
 
 #if USE(SKIA)
-            auto buffer = layer.replay(recording.copyRef(), tile.rect, tile.dirtyRect);
+            auto buffer = paintingEngine.replay(*layer.owner(), recording.copyRef(), tile.rect, tile.dirtyRect);
 #else
-            auto buffer = layer.paint(tile.dirtyRect);
+            FloatRect scaledDirtyRect(tile.dirtyRect);
+            scaledDirtyRect.scale(1 / contentsScale);
+
+            auto buffer = CoordinatedUnacceleratedTileBuffer::create(tile.dirtyRect.size(), contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);
+            paintingEngine.paint(*layer.owner(), buffer.get(), tile.dirtyRect, enclosingIntRect(scaledDirtyRect), IntRect { { }, tile.dirtyRect.size() }, contentsScale);
 #endif
 
             IntRect updateRect(tile.dirtyRect);

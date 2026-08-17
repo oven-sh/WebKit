@@ -150,7 +150,8 @@ std::optional<CachedResource::Type> LinkLoader::resourceTypeFromAsAttribute(cons
 {
     if (equalLettersIgnoringASCIICase(as, "fetch"_s))
         return CachedResource::Type::RawResource;
-    auto destination = parseEnumerationFromString<FetchRequestDestination>(as);
+    // `as` is an enumerated attribute, so its keywords are matched ASCII case-insensitively.
+    auto destination = parseEnumerationFromString<FetchRequestDestination>(as.convertToASCIILowercase());
     if (!destination) {
         if (shouldLogError == ShouldLog::Yes)
             document.addConsoleMessage(MessageSource::Other, MessageLevel::Error, "<link rel=preload> must have a valid `as` value"_s);
@@ -205,6 +206,12 @@ std::optional<CachedResource::Type> LinkLoader::resourceTypeFromAsAttribute(cons
         return CachedResource::Type::Script;
     case FetchRequestDestination::Style:
         return CachedResource::Type::CSSStyleSheet;
+    case FetchRequestDestination::Text:
+        if (isModulePreload == IsModulePreload::Yes)
+            return CachedResource::Type::Text;
+        if (shouldLogError == ShouldLog::Yes)
+            document.addConsoleMessage(MessageSource::Other, MessageLevel::Error, "<link rel=preload> does not support `text` as `as` value"_s);
+        return std::nullopt;
     case FetchRequestDestination::Track:
 #if ENABLE(VIDEO)
         return CachedResource::Type::TextTrackResource;
@@ -229,6 +236,7 @@ static RefPtr<LinkPreloadResourceClient> createLinkPreloadResourceClient(CachedR
     case CachedResource::Type::ImageResource:
         return LinkPreloadImageResourceClient::create(loader, downcast<CachedImage>(resource));
     case CachedResource::Type::JSON:
+    case CachedResource::Type::Text:
     case CachedResource::Type::Script:
         return LinkPreloadDefaultResourceClient::create(loader, downcast<CachedScript>(resource));
     case CachedResource::Type::CSSStyleSheet:
@@ -278,6 +286,8 @@ bool LinkLoader::isSupportedType(CachedResource::Type resourceType, const String
         return MIMETypeRegistry::isSupportedJSONMIMEType(mimeType);
     case CachedResource::Type::Script:
         return MIMETypeRegistry::isSupportedJavaScriptMIMEType(mimeType);
+    case CachedResource::Type::Text:
+        return true;
     case CachedResource::Type::CSSStyleSheet:
         return MIMETypeRegistry::isSupportedStyleSheetMIMEType(mimeType);
     case CachedResource::Type::FontResource:
@@ -347,7 +357,7 @@ RefPtr<LinkPreloadResourceClient> LinkLoader::preloadIfNeeded(const LinkLoadPara
         type = LinkLoader::resourceTypeFromAsAttribute(params.as, document, ShouldLog::No, IsModulePreload::Yes);
         if (!type)
             type = CachedResource::Type::Script;
-        if (type && type != CachedResource::Type::Script && type != CachedResource::Type::JSON) {
+        if (type && type != CachedResource::Type::Script && type != CachedResource::Type::JSON && type != CachedResource::Type::Text) {
             if (loader)
                 loader->triggerError();
             return nullptr;

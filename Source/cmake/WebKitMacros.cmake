@@ -551,9 +551,7 @@ macro(_WEBKIT_TARGET_LINK_FRAMEWORK _target)
         get_property(_linked_into GLOBAL PROPERTY ${framework}_LINKED_INTO)
 
         # See if the target is linking a framework that the specified framework is already linked into
-        # Quoted: _LINKED_INTO is unset for every framework in a static build, and CMake 4.4 rejects
-        # the resulting empty STREQUAL/IN_LIST operands at parse time before the NOT can short-circuit.
-        if ((NOT _linked_into) OR ("${framework}" STREQUAL "${_linked_into}") OR (NOT "${_linked_into}" IN_LIST ${_target}_FRAMEWORKS))
+        if ((NOT _linked_into) OR (framework STREQUAL _linked_into) OR (NOT _linked_into IN_LIST ${_target}_FRAMEWORKS))
             list(APPEND ${_target}_PRIVATE_LIBRARIES WebKit::${framework})
 
             # The WebKit:: alias targets do not propagate OBJECT libraries so the
@@ -942,6 +940,44 @@ function(_webkit_platform_args_empty_input _outvar)
     set(${_outvar} "${_empty_input}" PARENT_SCOPE)
 endfunction()
 
+# Collect the global definitions used by C++ from COMPILE_DEFINITIONS and the
+# -D flags in CMAKE_CXX_FLAGS / CMAKE_CXX_FLAGS_<CONFIG>. The Swift clang
+# importer must use the same definitions.
+# Keep the real compile order so definitions from CMAKE_CXX_FLAGS take precedence
+function(_webkit_cxx_preprocessor_definitions _outvar)
+    set(_defs "")
+    get_directory_property(_dir_defs DIRECTORY "${CMAKE_SOURCE_DIR}/Source" COMPILE_DEFINITIONS)
+    foreach (_d IN LISTS _dir_defs)
+        list(APPEND _defs "-D${_d}")
+    endforeach ()
+
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type_upper)
+    foreach (_flags IN ITEMS "${CMAKE_CXX_FLAGS}" "${CMAKE_CXX_FLAGS_${_build_type_upper}}")
+        if (NOT _flags)
+            continue ()
+        endif ()
+        # Quote-aware, so -DFOO="a b" survives as one token.
+        separate_arguments(_tokens NATIVE_COMMAND "${_flags}")
+        set(_want_value FALSE)
+        foreach (_t IN LISTS _tokens)
+            if (_want_value)
+                list(APPEND _defs "-D${_t}")
+                set(_want_value FALSE)
+            elseif (_t STREQUAL "-D")
+                set(_want_value TRUE)  # the `-D FOO` spelling
+            elseif (_t MATCHES "^-D.")
+                list(APPEND _defs "${_t}")
+            endif ()
+        endforeach ()
+    endforeach ()
+
+    # Build-system plumbing rather than feature configuration: the importer and
+    # the preprocess steps below -include cmakeconfig.h directly, and pulling in
+    # config.h through HAVE_CONFIG_H would drag in per-port prefix headers.
+    list(FILTER _defs EXCLUDE REGEX "^-D(BUILDING_WITH_CMAKE|HAVE_CONFIG_H)($|=)")
+    set(${_outvar} ${_defs} PARENT_SCOPE)
+endfunction()
+
 # Shared clang preprocess prefix for the two functions below, so the clang-cl
 # workaround lives in one place. Each caller adds its own flags after this.
 function(_webkit_platform_args_clang_prefix _outvar _depfile _mt_target _wtf_include_dir)
@@ -978,14 +1014,9 @@ function(webkit_generate_platform_feature_defines_file _out_path_var)
     _webkit_platform_args_empty_input(_empty_input)
     _webkit_platform_args_clang_prefix(_clang_cmd
         "${_depfile}" "${_defines_file}" "${CMAKE_SOURCE_DIR}/Source/WTF")
-    # Match what a real C-family compile sees (globals, frameworks, arch, stubs).
-    # Read from a fixed directory so the result doesn't depend on the caller's.
-    get_directory_property(_dir_defs DIRECTORY "${CMAKE_SOURCE_DIR}/Source" COMPILE_DEFINITIONS)
-    foreach (_d IN LISTS _dir_defs)
-        if (NOT _d MATCHES "^(BUILDING_WITH_CMAKE|HAVE_CONFIG_H)($|=)")
-            list(APPEND _clang_cmd "-D${_d}")
-        endif ()
-    endforeach ()
+    # Match what a real C-family compile sees (definitions, frameworks, arch, stubs).
+    _webkit_cxx_preprocessor_definitions(_cxx_defs)
+    list(APPEND _clang_cmd ${_cxx_defs})
     if (CMAKE_OSX_SYSROOT)
         list(APPEND _clang_cmd "-isysroot" "${CMAKE_OSX_SYSROOT}"
             "-F" "${CMAKE_BINARY_DIR}"
@@ -1014,12 +1045,8 @@ function(webkit_generate_platform_feature_defines_file _out_path_var)
         list(APPEND _clang_cmd "-I" "${WebKitAdditions_FRAMEWORK_HEADERS_DIR}")
         list(APPEND _command_deps WebKitAdditions_CopyHeaders)
     endif ()
-    # NDEBUG affects ASSERT_ENABLED -> ENABLE_SECURITY_ASSERTIONS, and
-    # -fsanitize=* drives ASAN_ENABLED -> ENABLE_IPC_TESTING_API.
-    string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type_upper)
-    if (CMAKE_CXX_FLAGS_${_build_type_upper} MATCHES "NDEBUG" OR CMAKE_CXX_FLAGS MATCHES "NDEBUG")
-        list(APPEND _clang_cmd "-DNDEBUG")
-    endif ()
+    # -fsanitize=* drives ASAN_ENABLED -> ENABLE_IPC_TESTING_API. (NDEBUG and
+    # ASSERT_ENABLED come from _webkit_cxx_preprocessor_definitions() above.)
     list(APPEND _clang_cmd ${ENABLED_COMPILER_SANITIZERS})
     list(APPEND _clang_cmd "${_empty_input}")
 
@@ -1064,19 +1091,17 @@ function(_WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS _outvar)
         # implicitly so PAL/WebKit hash to the same module-cache dir.
         list(APPEND _flags -fexperimental-bounds-safety-attributes)
     endif ()
-    string(TOUPPER "${CMAKE_BUILD_TYPE}" _bt)
-    if (CMAKE_CXX_FLAGS_${_bt} MATCHES "NDEBUG" OR CMAKE_CXX_FLAGS MATCHES "NDEBUG")
-        list(APPEND _flags -DNDEBUG -DRELEASE_WITHOUT_OPTIMIZATIONS)
+    # Every -D the C++ compiles get, so the importer's view of layout-affecting
+    # macros (NDEBUG, ASSERT_ENABLED, _LIBCPP_HARDENING_MODE, ...) matches theirs.
+    _webkit_cxx_preprocessor_definitions(_cxx_defs)
+    list(APPEND _flags ${_cxx_defs})
+    # The importer parses headers without -O, so wtf/Compiler.h's non-Debug
+    # #error needs silencing wherever NDEBUG is in effect.
+    set(_ndebug_defs ${_cxx_defs})
+    list(FILTER _ndebug_defs INCLUDE REGEX "^-DNDEBUG($|=)")
+    if (_ndebug_defs)
+        list(APPEND _flags -DRELEASE_WITHOUT_OPTIMIZATIONS)
     endif ()
-    # Globals from add_definitions() (BUILDING_WEBKIT=1, PAS_BMALLOC=1,
-    # _LIBCPP_HARDENING_MODE=...). Read from a fixed directory so every caller
-    # sees the same set regardless of its own add_definitions().
-    get_directory_property(_dir_defs DIRECTORY "${CMAKE_SOURCE_DIR}/Source" COMPILE_DEFINITIONS)
-    foreach (_d IN LISTS _dir_defs)
-        if (NOT _d MATCHES "^(BUILDING_WITH_CMAKE|HAVE_CONFIG_H)($|=)")
-            list(APPEND _flags "-D${_d}")
-        endif ()
-    endforeach ()
     # cmakeconfig.h's ENABLE_/HAVE_/USE_ values are NOT enumerated here. They
     # come in via the per-target @-response file generated by
     # _webkit_generate_platform_swift_args, which preprocesses wtf/Platform.h
@@ -1105,11 +1130,9 @@ function(_webkit_generate_platform_swift_args _target _resp_path _ordering_dep)
     if (WEBKIT_ADDITIONS_INCLUDE_PATH)
         list(APPEND _clang_cmd "-I" "${WEBKIT_ADDITIONS_INCLUDE_PATH}")
     endif ()
-    # NDEBUG affects ASSERT_ENABLED -> ENABLE_SECURITY_ASSERTIONS -> struct layouts.
-    string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type_upper)
-    if (CMAKE_CXX_FLAGS_${_build_type_upper} MATCHES "NDEBUG" OR CMAKE_CXX_FLAGS MATCHES "NDEBUG")
-        list(APPEND _clang_cmd "-DNDEBUG")
-    endif ()
+    # Use the same global definitions as C++ when deriving the Swift compilation arguments.
+    _webkit_cxx_preprocessor_definitions(_cxx_defs)
+    list(APPEND _clang_cmd ${_cxx_defs})
     # -fsanitize=* drives ASAN_ENABLED etc; keep this preprocess in sync with C++.
     list(APPEND _clang_cmd ${ENABLED_COMPILER_SANITIZERS})
     list(APPEND _clang_cmd "${_empty_input}")
@@ -1313,7 +1336,7 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
         # module.modulemap, and Swift's embedded clang already loads the one from
         # /opt/swift/usr/lib/swift/clang/include. Forwarding both makes every
         # _Builtin_* / opencl_c module get defined twice and aborts -emit-module.
-        if (NOT APPLE)
+        if (NOT APPLE AND NOT WIN32)
             foreach (_dir IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
                 if (_dir MATCHES "^/usr/lib/gcc/")
                     continue ()
@@ -1349,34 +1372,6 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
         # found". -disable-sandbox skips the inner sandbox; the macros are
         # WebKit's own, so the isolation it provides isn't load-bearing here.
         list(APPEND _swift_options "-disable-sandbox")
-        # Explicit module builds (EMB) pre-build all Clang PCMs once via
-        # libSwiftScan, so each swift-frontend process reuses them rather than
-        # rebuilding from scratch. This is faster when many Swift source files
-        # import the same C++ interop modules. Targets opt in by setting
-        # ${_target}_SWIFT_EXPLICIT_MODULE_BUILD before the macro call.
-        # All Apple targets (PAL/WebGPU/WebKit on iOS and Mac) use EMB;
-        # non-Apple builds rely on -module-cache-path for implicit sharing.
-        if (${_target}_SWIFT_EXPLICIT_MODULE_BUILD)
-            list(APPEND _swift_options "-explicit-module-build")
-            # Force experimental clang attributes ON to match cached SwiftShims
-            # PCM content. SDK swiftinterfaces carry -strict-memory-safety in
-            # their swift-module-flags-ignorable, which on older swift-driver
-            # paths implicitly enables late-parse-attributes and
-            # bounds-safety-attributes when building SwiftShims PCM. Without
-            # the explicit flags here, our consumer's clang has them OFF and
-            # rejects the cached PCM with
-            #   "experimental late parsing of attributes was enabled in
-            #    precompiled file but is currently disabled" (or the
-            #    equivalent for bounds-safety).
-            # https://bugs.webkit.org/show_bug.cgi?id=312083
-            list(APPEND _swift_options
-                "-Xcc" "-fexperimental-bounds-safety-attributes"
-                "-Xcc" "-fexperimental-late-parse-attributes"
-            )
-        endif ()
-        list(APPEND _swift_options "-module-cache-path" "${CMAKE_BINARY_DIR}/SwiftModuleCache")
-        set_property(DIRECTORY "${CMAKE_BINARY_DIR}" APPEND PROPERTY ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/SwiftModuleCache")
-        list(APPEND _swift_options "-track-system-dependencies")
         # We'll use these options both for mainstream cmake invocations of swiftc (here)
         # and for our own invocation to output an interoperability .h file (later).
         # target_compile_options deduplicates repeated tokens, so collapse each

@@ -46,6 +46,11 @@
 #include <WebCore/StageModeOperations.h>
 #endif
 
+#if ENABLE(SPATIAL_PORTAL)
+#include <WebCore/PortalAction.h>
+#include <WebCore/PortalTransform.h>
+#endif
+
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
 #include <WebCore/PlatformDynamicRangeLimit.h>
 #endif
@@ -153,6 +158,11 @@ public:
 
 #if ENABLE(MODEL_ELEMENT_PORTAL)
     virtual void setHasPortal(bool);
+#endif
+
+#if ENABLE(SPATIAL_PORTAL)
+    virtual void setPortalTransform(PortalTransformKind);
+    virtual void setPortalAction(PortalActionKind);
 #endif
 
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE)

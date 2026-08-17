@@ -70,6 +70,9 @@
 #include "TextTrackList.h"
 #include "UserGestureIndicator.h"
 #include "VTTCue.h"
+#include "VideoTrack.h"
+#include "VideoTrackConfiguration.h"
+#include "VideoTrackList.h"
 #include "VoidCallback.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/Function.h>
@@ -352,6 +355,48 @@ bool MediaControlsHost::isMediaControlsMacInlineSizeSpecsEnabled() const
 #else
     return false;
 #endif
+}
+
+bool MediaControlsHost::spatialVideoRenderingEnabled() const
+{
+    return m_mediaElement->document().settings().spatialVideoRenderingEnabled();
+}
+
+static RefPtr<VideoTrackConfiguration> selectedVideoTrackConfiguration(HTMLMediaElement& mediaElement)
+{
+    RefPtr videoTracks = mediaElement.videoTracks();
+    if (!videoTracks)
+        return nullptr;
+    RefPtr selectedTrack = videoTracks->selectedItem();
+    if (!selectedTrack)
+        return nullptr;
+    return &selectedTrack->configuration();
+}
+
+String MediaControlsHost::spatialVideoProjectionKind() const
+{
+    RefPtr configuration = selectedVideoTrackConfiguration(protect(m_mediaElement));
+    if (!configuration)
+        return emptyString();
+
+    auto metadata = configuration->immersiveVideoMetadata();
+    if (!metadata)
+        return emptyString();
+
+    return convertEnumerationToString(metadata->kind);
+}
+
+std::optional<int32_t> MediaControlsHost::spatialVideoHorizontalFieldOfView() const
+{
+    RefPtr configuration = selectedVideoTrackConfiguration(protect(m_mediaElement));
+    if (!configuration)
+        return std::nullopt;
+
+    auto metadata = configuration->immersiveVideoMetadata();
+    if (!metadata)
+        return std::nullopt;
+
+    return metadata->horizontalFieldOfView;
 }
 
 bool MediaControlsHost::isAVExperienceControllerFullscreenEnabled() const
@@ -644,16 +689,8 @@ auto MediaControlsHost::mediaControlsContextMenuItems(String&& optionsJSONString
                 // captions are "Off" which track would be chosen if
                 // captions are turned on.
                 RefPtr<TextTrack> bestTrackToEnable;
-                if (allTracksDisabled) {
-                    int bestScore = 0;
-                    for (auto& track : sortedTextTracks) {
-                        auto score = captionPreferences->textTrackSelectionScore(track, CaptionUserPreferences::CaptionDisplayMode::AlwaysOn);
-                        if (score <= bestScore)
-                            continue;
-                        bestTrackToEnable = track.ptr();
-                        bestScore = score;
-                    }
-                }
+                if (allTracksDisabled)
+                    bestTrackToEnable = captionPreferences->bestTextTrackToEnable(*textTracks);
 
                 Vector<MenuItem> subtitleMenuItems;
                 subtitleMenuItems.append(createMenuItem(TextTrack::captionMenuOnItemSingleton(), captionPreferences->displayNameForTrack(TextTrack::captionMenuOnItemSingleton()), !allTracksDisabled));
@@ -822,9 +859,11 @@ bool MediaControlsHost::showMediaControlsContextMenu(HTMLElement& target, String
             },
             [&] (Ref<TextTrack>& selectedTextTrack) {
                 protectedThis->savePreviouslySelectedTextTrackIfNecessary();
-                for (auto& track : idMap.values()) {
-                    if (auto* textTrack = std::get_if<Ref<TextTrack>>(&track))
-                        (*textTrack)->setMode(TextTrack::Mode::Disabled);
+                if (selectedTextTrack.ptr() != &TextTrack::captionMenuOnItemSingleton()) {
+                    for (auto& track : idMap.values()) {
+                        if (auto* textTrack = std::get_if<Ref<TextTrack>>(&track))
+                            (*textTrack)->setMode(TextTrack::Mode::Disabled);
+                    }
                 }
                 mediaElement->setSelectedTextTrack(selectedTextTrack.ptr());
             },

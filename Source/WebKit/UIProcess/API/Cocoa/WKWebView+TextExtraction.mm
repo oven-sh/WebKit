@@ -47,6 +47,8 @@
 #import "WebPreferences.h"
 #import "_WKTextExtractionInternal.h"
 #if PLATFORM(IOS_FAMILY)
+#import "APIPageConfiguration.h"
+#import "RemoteLayerTreeDrawingAreaProxyIOS.h"
 #import "WKContentViewInteraction.h"
 #endif
 #import <WebCore/DataDetectorType.h>
@@ -65,7 +67,16 @@
 #import <wtf/cocoa/SpanCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
+constexpr Seconds defaultInteractionPresentationUpdateTimeout = 100_ms;
+
 #if PLATFORM(IOS_FAMILY)
+namespace ForcedDisplayRefreshProperties {
+constexpr Seconds refreshInterval = 250_ms;
+constexpr Seconds maximumDuration = 2_min;
+constexpr Seconds interactionPresentationUpdateTimeout = 1_s;
+static_assert(interactionPresentationUpdateTimeout > refreshInterval);
+}
+
 static std::optional<WebCore::NodeIdentifier> activeContextMenuTargetNodeIdentifier(WKContentView *contentView)
 {
     return [contentView activeContextMenuElementContext].and_then([](const auto& elementContext) {
@@ -396,18 +407,6 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
             WTF::move(maxWordsPerParagraph),
             WTF::move(topHostName),
         };
-        if (result->pdfMarkdownContent) {
-            RELEASE_LOG(TextExtraction, "<%@: %p> PDF extraction complete (%.0f ms)", [strongSelf class], strongSelf.get(), (MonotonicTime::now() - startTime).milliseconds());
-            auto formattedText = WebKit::formatPDFMarkdownForOutput(*result->pdfMarkdownContent, outputFormat);
-            completionHandler(adoptNS([[_WKTextExtractionResult alloc]
-                initWithWebView:strongSelf
-                origin:wrapper(API::SecurityOrigin::create(origin))
-                textContent:formattedText.createNSString()
-                filteredOutAnyText:NO
-                shortenedURLs:@{ }
-                textToContainerMap:{ }]));
-            return;
-        }
 
         WebKit::convertToText(WTF::move(result->rootItem), WTF::move(options), [weakSelf, startTime, urlCache, origin = WTF::move(origin), completionHandler = WTF::move(completionHandler), endTextExtractionScope = WTF::move(endTextExtractionScope)](auto&& result) {
             RetainPtr strongSelf = weakSelf.get();
@@ -514,6 +513,16 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
     if (!page || !targetFrame)
         return completionHandler(adoptNS([[_WKTextExtractionInteractionResult alloc] initWithErrorDescription:@"Web view is invalid" summary:nil interactedElementBounds:CGRectNull]));
 
+    auto presentationUpdateTimeout = defaultInteractionPresentationUpdateTimeout;
+#if PLATFORM(IOS_FAMILY)
+    if (page->configuration().backgroundTextExtractionEnabled()) {
+        if (RefPtr drawingArea = dynamicDowncast<WebKit::RemoteLayerTreeDrawingAreaProxyIOS>(page->drawingArea())) {
+            drawingArea->startForcedDisplayRefreshWindow(ForcedDisplayRefreshProperties::refreshInterval, ForcedDisplayRefreshProperties::maximumDuration);
+            presentationUpdateTimeout = ForcedDisplayRefreshProperties::interactionPresentationUpdateTimeout;
+        }
+    }
+#endif
+
     UniqueRef assertionScope = page->createTextExtractionAssertionScope();
     auto interactionForRetry = interaction;
     targetFrame->handleTextExtractionInteraction(WTF::move(interaction), [
@@ -525,6 +534,7 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
         staleNodeNote,
         shouldResolveStaleNodeIdentifier,
         interaction = WTF::move(interactionForRetry),
+        presentationUpdateTimeout,
         completionHandler = makeBlockPtr(WTF::move(completionHandler))
     ](bool success, String&& description, WebCore::FloatRect interactedElementBounds) mutable {
         RetainPtr strongSelf = weakSelf.get();
@@ -587,7 +597,7 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
             aggregator.get()();
         });
 
-        RunLoop::mainSingleton().dispatchAfter(100_ms, [aggregator] {
+        RunLoop::mainSingleton().dispatchAfter(presentationUpdateTimeout, [aggregator] {
             aggregator.get()();
         });
     });
@@ -1209,6 +1219,30 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
     auto searchTexts = makeVector<String>(texts);
     targetFrame->requestContainerJSHandleForSearchTexts(WTF::move(searchTexts), WTF::move(targetNodeIdentifier), [completion = makeBlockPtr(completion)](auto&& info) {
         completion(info ? wrapper(API::JSHandle::create(WTF::move(*info))).get() : nil);
+    });
+}
+
+- (void)_requestFrameInfoForNodeIdentifier:(NSString *)nodeIdentifierString completionHandler:(void (^)(WKFrameInfo *))completion
+{
+    auto identifiers = WebKit::parseExtractedNodeInfo(String { nodeIdentifierString });
+    if (!identifiers)
+        return completion(nil);
+
+    RefPtr enclosingFrame = _page->mainFrame();
+    if (identifiers->frameIdentifier)
+        enclosingFrame = WebKit::WebFrameProxy::webFrame(identifiers->frameIdentifier);
+
+    if (!enclosingFrame)
+        return completion(nil);
+
+    enclosingFrame->requestContentFrameIdentifierForNode(identifiers->nodeIdentifier, [completion = makeBlockPtr(completion), enclosingFrame](auto&& contentFrameIdentifier) mutable {
+        RefPtr targetFrame = WebKit::WebFrameProxy::webFrame(contentFrameIdentifier);
+        if (!targetFrame)
+            targetFrame = WTF::move(enclosingFrame);
+
+        targetFrame->getFrameInfo([completion = WTF::move(completion)](auto&& info) {
+            completion(info ? wrapper(API::FrameInfo::create(WTF::move(*info))) : nil);
+        });
     });
 }
 

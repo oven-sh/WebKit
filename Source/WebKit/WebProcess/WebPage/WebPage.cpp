@@ -929,6 +929,8 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     pageConfiguration.imageTranslationLanguageIdentifiers = WTF::move(parameters.imageTranslationLanguageIdentifiers);
 #endif
 
+    pageConfiguration.displayedTranslationLocaleIdentifier = WTF::move(parameters.displayedTranslationLocaleIdentifier);
+
     if (parameters.textManipulationParameters) {
         m_textManipulationIncludesSubframes = parameters.textManipulationParameters->includeSubframes;
         m_internals->textManipulationExclusionRules = WTF::move(parameters.textManipulationParameters->exclusionRules);
@@ -1046,14 +1048,26 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
         for (auto& childParameters : remotePageParameters->frameTreeParameters.children)
             constructFrameTree(m_mainFrame.get(), childParameters);
 
+        RefPtr remoteMainFrame = dynamicDowncast<RemoteFrame>(page->mainFrame());
+
+        // The top document lives in another process, so adopt the state it has synchronized so far.
+        // A page hosting the local main frame owns that state and shares it with its Document, so
+        // it must keep the object it already has.
+        if (remoteMainFrame) {
+            Ref topDocumentSyncData = remotePageParameters->topDocumentSyncData;
+            page->updateTopDocumentSyncData(WTF::move(topDocumentSyncData));
+        }
+
         // Use the origin from FrameTreeSyncData so Page::mainFrameOrigin() reflects the inherited origin.
-        RefPtr<SecurityOrigin> mainFrameOrigin = dynamicDowncast<RemoteFrame>(page->mainFrame()) ? protect(page->mainFrame())->frameDocumentSecurityOrigin() : nullptr;
+        RefPtr<SecurityOrigin> mainFrameOrigin = remoteMainFrame ? protect(page->mainFrame())->frameDocumentSecurityOrigin() : nullptr;
         page->setMainFrameURLAndOrigin(remotePageParameters->initialMainDocumentURL, WTF::move(mainFrameOrigin));
 
         if (auto websitePolicies = remotePageParameters->websitePoliciesData) {
             if (auto* remoteMainFrameClient = m_mainFrame->remoteFrameClient())
                 remoteMainFrameClient->applyWebsitePolicies(WTF::move(*remotePageParameters->websitePoliciesData));
         }
+
+        updateRemoteMainFrameViewDelegatedScrolling();
     }
     if (auto&& provisionalFrameCreationParameters = parameters.provisionalFrameCreationParameters) {
         ASSERT(page->settings().siteIsolationEnabled());
@@ -1973,6 +1987,20 @@ bool WebPage::shouldDispatchSyntheticMouseEventsWhenModifyingSelection() const
 {
     RefPtr localTopDocument = protect(corePage())->localTopDocument();
     return localTopDocument && localTopDocument->quirks().shouldDispatchSyntheticMouseEventsWhenModifyingSelection();
+}
+
+void WebPage::updateRemoteMainFrameViewDelegatedScrolling()
+{
+    RefPtr drawingArea = m_drawingArea;
+    if (!drawingArea)
+        return;
+
+    RefPtr remoteMainFrame = dynamicDowncast<WebCore::RemoteFrame>(protect(corePage())->mainFrame());
+    if (!remoteMainFrame)
+        return;
+
+    if (RefPtr view = remoteMainFrame->view())
+        view->setDelegatedScrollingMode(drawingArea->delegatedScrollingMode());
 }
 
 #if !PLATFORM(IOS_FAMILY)
@@ -5841,7 +5869,7 @@ void WebPage::closeFullScreen()
 {
     removeReasonsToDisallowLayoutViewportHeightExpansion(DisallowLayoutViewportHeightExpansionReason::ElementFullScreen);
 
-    send(Messages::WebFullScreenManagerProxy::Close());
+    send(Messages::WebFullScreenManagerProxy::CloseFullScreen());
 }
 
 void WebPage::prepareToEnterElementFullScreen()
@@ -9049,15 +9077,17 @@ void WebPage::suspendWithFrameItem(BackForwardFrameItemIdentifier identifier, Co
         return completionHandler(false);
     }
 
-    // Detach the current root frames instead of freezing the whole page, so a same-site navigation
-    // later reusing this WebPage for a new root frame doesn't get frozen too.
-    HashSet<WeakRef<WebCore::LocalFrame>> detachedFrames;
-    for (auto& weakFrame : copyToVector(page->rootFrames())) {
-        Ref frame = weakFrame.get();
-        detachedFrames.add(weakFrame);
-        page->removeRootFrame(frame);
+    if (!page->localMainFrame()) {
+        // Detach the current root frames instead of freezing the whole page, so a same-site navigation
+        // later reusing this WebPage for a new root frame doesn't get frozen too.
+        HashSet<WeakRef<WebCore::LocalFrame>> detachedFrames;
+        for (auto& weakFrame : copyToVector(page->rootFrames())) {
+            Ref frame = weakFrame.get();
+            detachedFrames.add(weakFrame);
+            page->removeRootFrame(frame);
+        }
+        BackForwardCache::singleton().setDetachedRootFramesForFrameItem(identifier, WTF::move(detachedFrames));
     }
-    BackForwardCache::singleton().setDetachedRootFramesForFrameItem(identifier, WTF::move(detachedFrames));
 
     m_isSuspended = true;
     WEBPAGE_RELEASE_LOG(ProcessSwapping, "suspendWithFrameItem: Successfully cached page");
@@ -9914,6 +9944,12 @@ void WebPage::startVisualTranslation(const String& sourceLanguageIdentifier, con
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 
+void WebPage::setDisplayedTranslationLocaleIdentifier(String&& localeIdentifier)
+{
+    if (RefPtr page = m_page)
+        page->setDisplayedTranslationLocaleIdentifier(WTF::move(localeIdentifier));
+}
+
 void WebPage::requestImageBitmap(const ElementContext& context, CompletionHandler<void(std::optional<ShareableBitmap::Handle>&&, const String& sourceMIMEType)>&& completion)
 {
     RefPtr element = elementForContext(context);
@@ -10197,7 +10233,7 @@ void WebPage::beginTextRecognitionForVideoInElementFullScreen(const HTMLVideoEle
         if (!protectedThis || protectedThis->m_elementIsPerformingTextRecognitionInElementFullScreen != identifier)
             return;
         if (auto handle = (*result)->createHandle())
-            protectedThis->send(Messages::WebPageProxy::BeginTextRecognitionForVideoInElementFullScreen(processQualify(identifier), WTF::move(*handle), rectInRootView));
+            protectedThis->send(Messages::WebPageProxy::BeginTextRecognitionForVideoInElementFullScreen(identifier, WTF::move(*handle), rectInRootView));
         protectedThis->m_elementIsPerformingTextRecognitionInElementFullScreen.reset();
     });
 }

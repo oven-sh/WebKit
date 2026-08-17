@@ -109,7 +109,7 @@ public:
     virtual Type type() const = 0;
 
     void connect();
-    virtual void terminate();
+    virtual void terminate(std::optional<IPC::MessageName> invalidMessageName = std::nullopt);
 
     ProcessThrottler& throttler() { return m_throttler; }
     const ProcessThrottler& throttler() const { return m_throttler; }
@@ -294,7 +294,7 @@ protected:
     };
 
 #if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
-    void createLogStream(IPC::StreamServerConnectionHandle&&, LogStreamIdentifier, CompletionHandler<void(IPC::Semaphore& streamWakeUpSemaphore, IPC::Semaphore& streamClientWaitSemaphore)>&&);
+    void createLogStream(IPC::StreamServerConnectionHandle&&, LogStreamIdentifier, CompletionHandler<void()>&&);
 #else
     void createLogStream(LogStreamIdentifier, CompletionHandler<void()>&&);
 #endif

@@ -111,6 +111,14 @@ constexpr auto allPublicPseudoElementTypes = EnumSet {
     PseudoElementType::ViewTransitionNew
 };
 
+constexpr auto allHighlightPseudoElementTypes = EnumSet {
+    PseudoElementType::GrammarError,
+    PseudoElementType::Highlight,
+    PseudoElementType::Selection,
+    PseudoElementType::SpellingError,
+    PseudoElementType::TargetText
+};
+
 constexpr auto allInternalPseudoElementTypes = EnumSet {
     PseudoElementType::WebKitScrollbarThumb,
     PseudoElementType::WebKitScrollbarButton,
@@ -282,6 +290,11 @@ enum class TableLayoutType : bool {
 enum class SpatialType : bool {
     None,
     Portal
+};
+
+enum class PortalActionType : bool {
+    None,
+    Orbit
 };
 
 enum class TextCombine : bool {
@@ -494,7 +507,8 @@ enum class UserDrag : uint8_t {
 enum class UserSelect : uint8_t {
     None,
     Text,
-    All
+    All,
+    Auto
 };
 
 // CSS3 Image Values
@@ -1213,6 +1227,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, WebCore::Overflow);
 WTF::TextStream& operator<<(WTF::TextStream&, OverflowAlignment);
 WTF::TextStream& operator<<(WTF::TextStream&, OverflowWrap);
 WTF::TextStream& operator<<(WTF::TextStream&, PointerEvents);
+WTF::TextStream& operator<<(WTF::TextStream&, PortalActionType);
 WTF::TextStream& operator<<(WTF::TextStream&, PositionType);
 WTF::TextStream& operator<<(WTF::TextStream&, PrintColorAdjust);
 WTF::TextStream& operator<<(WTF::TextStream&, PseudoElementType);

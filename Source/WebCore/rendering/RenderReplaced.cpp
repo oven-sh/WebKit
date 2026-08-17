@@ -37,6 +37,7 @@
 #include "HTMLParserIdioms.h"
 #include "HighlightRegistry.h"
 #include "InlineIteratorBox.h"
+#include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorLineBoxInlines.h"
 #include "LayoutRepainter.h"
 #include "LegacyRenderSVGRoot.h"
@@ -605,6 +606,11 @@ void RenderReplaced::computeIntrinsicSizesConstrainedByTransferredMinMaxSizes(Fl
     }
 }
 
+bool RenderReplaced::hasObjectViewBoxSet() const
+{
+    return !style().objectViewBox().isNone();
+}
+
 std::optional<FloatRect> RenderReplaced::resolvedObjectViewBox(const FloatSize& physicalIntrinsicSize) const
 {
     auto viewBox = style().objectViewBox().tryRect();
@@ -644,11 +650,11 @@ bool RenderReplaced::objectViewBoxIsContainedWithinNaturalSize() const
     return FloatRect({ }, FloatSize(intrinsicSize())).contains(*viewBox);
 }
 
-LayoutRect RenderReplaced::computePaintRectForObjectViewBox(const LayoutRect& destRect) const
+LayoutRect RenderReplaced::computePaintRectForObjectViewBox(const LayoutRect& destRect, const LayoutSize& intrinsicSize) const
 {
     if (!style().objectViewBox().isNone()) {
-        if (auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize())))
-            return LayoutRect(fullRectFromSubrectAndSize(FloatSize(intrinsicSize()), *viewBox, FloatRect(destRect)));
+        if (auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize)))
+            return LayoutRect(fullRectFromSubrectAndSize(FloatSize(intrinsicSize), *viewBox, FloatRect(destRect)));
     }
     return destRect;
 }

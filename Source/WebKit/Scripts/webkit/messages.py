@@ -689,6 +689,9 @@ def types_that_cannot_be_forward_declared():
         'WebKit::LegacyCustomProtocolID',
         'WebKit::PlaybackSessionContextIdentifier',
         'WebKit::RemoteMediaResourceLoaderIdentifier',
+        'WebKit::RemoteNativeImageReadReference',
+        'WebKit::RemoteNativeImageReference',
+        'WebKit::RemoteNativeImageWriteReference',
         'WebKit::RemoteVideoFrameReadReference',
         'WebKit::RemoteVideoFrameWriteReference',
         'WebKit::RenderingUpdateID',
@@ -1146,6 +1149,7 @@ def headers_for_type(type, for_implementation_file=False):
         'Inspector::SearchMatch': ['<WebCore/InspectorResourceUtilities.h>'],
         'Inspector::SearchResult': ['<WebCore/InspectorResourceUtilities.h>'],
         'IPC::AsyncReplyID': ['"Connection.h"'],
+        'IPC::MessageName': ['"MessageNames.h"'],
         'IPC::Signal': ['"IPCEvent.h"'],
         'IPC::Semaphore': ['"IPCSemaphore.h"'],
         'IPC::StreamServerConnectionHandle': ['"StreamServerConnection.h"'],
@@ -1391,6 +1395,8 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::PlaybackTargetClientContextID': ['<WebCore/PlaybackTargetClientContextIdentifier.h>'],
         'WebCore::PluginInfo': ['<WebCore/PluginData.h>'],
         'WebCore::PolicyAction': ['<WebCore/FrameLoaderTypes.h>'],
+        'WebCore::PortalActionKind': ['<WebCore/PortalAction.h>'],
+        'WebCore::PortalTransformKind': ['<WebCore/PortalTransform.h>'],
         'WebCore::NonSerializedDataIdentifier': ['<WebCore/NonSerializedDataIdentifier.h>'],
         'WebCore::PreserveResolution': ['<WebCore/ImageBufferBackend.h>'],
         'WebCore::ProcessIdentifier': ['<WebCore/ProcessIdentifier.h>'],
@@ -1589,6 +1595,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::MessageBatchIdentifier': ['"NetworkConnectionToWebProcess.h"'],
         'WebKit::NetworkActivityTracker::CompletionCode': ['"NetworkActivityTracker.h"'],
         'WebKit::PageGroupIdentifier': ['"IdentifierTypes.h"'],
+        'WebKit::PDFAccessibilityDisplayModeState': ['"PDFAccessibilityDisplayModeState.h"'],
         'WebKit::PDFPluginDisplayMode': ['"PDFDisplayMode.h"'],
         'WebKit::RealmIdentifier': ['"IdentifierTypes.h"'],
         'WebKit::PaymentSetupConfiguration': ['"PaymentSetupConfigurationWebKit.h"'],
@@ -1602,6 +1609,9 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::RemoteLayerBackingStoreProperties': ['"RemoteLayerBackingStore.h"'],
         'WebKit::RemoteVideoFrameReadReference': ['"RemoteVideoFrameIdentifier.h"'],
         'WebKit::RemoteVideoFrameWriteReference': ['"RemoteVideoFrameIdentifier.h"'],
+        'WebKit::RemoteNativeImageReference': ['"RemoteNativeImageIdentifier.h"'],
+        'WebKit::RemoteNativeImageReadReference': ['"RemoteNativeImageIdentifier.h"'],
+        'WebKit::RemoteNativeImageWriteReference': ['"RemoteNativeImageIdentifier.h"'],
         'WebKit::RespectSelectionAnchor': ['"GestureTypes.h"'],
         'WebKit::SandboxExtensionHandle': ['"SandboxExtension.h"'],
         'WebKit::ScriptTrackingPrivacyHost': ['"ScriptTrackingPrivacyFilter.h"'],
@@ -1820,33 +1830,13 @@ def process_name_enumerator(dispatched_x):
     return dispatched_x
 
 
-def generate_enabled_by_for_receiver(receiver, messages):
+def generate_target_and_enabled_by_statements(receiver, messages):
     enabled_by = receiver.receiver_enabled_by
     enabled_by_conjunction = receiver.receiver_enabled_by_conjunction
-    shared_preferences_retrieval = [
-        '    auto sharedPreferences = sharedPreferencesForWebProcess(%s);\n' % ('connection' if receiver.shared_preferences_needs_connection else ''),
-        '    UNUSED_VARIABLE(sharedPreferences);\n'
-    ]
-    result = []
-    if not enabled_by:
-        if any([message.enabled_by for message in messages]):
-            result += shared_preferences_retrieval
-        return result
+    needs_shared_preferences = bool(enabled_by) or any([message.enabled_by for message in messages])
+    connection_argument = 'connection' if receiver.shared_preferences_needs_connection else ''
 
-    runtime_enablement = generate_enabled_by(receiver, enabled_by, enabled_by_conjunction)
-    return shared_preferences_retrieval + [
-        '    if (!sharedPreferences || !%s) {\n' % ('(%s)' % runtime_enablement if len(enabled_by) > 1 else runtime_enablement),
-        '        RELEASE_LOG_ERROR(IPC, "Message %s received by a disabled message receiver %s", IPC::description(decoder.messageName()).characters());\n' % ('%s', receiver.name),
-        '        decoder.markInvalid();\n',
-        '        return;\n',
-        '    }\n',
-    ]
-
-
-def generate_get_target_statements(receiver):
-    result = []
-
-    def append_swift_get_target_statements(result):
+    def append_swift_statements(result):
         result.append('    auto target = getMessageTarget();\n')
         if receiver.has_attribute(STREAM_ATTRIBUTE):
             # Stream receivers hold the target weakly and dispatch off the main thread, so a null
@@ -1868,8 +1858,25 @@ def generate_get_target_statements(receiver):
             result.append('        decoder.markInvalid();\n')
             result.append('        return;\n')
             result.append('    }\n')
+        if needs_shared_preferences:
+            result.append('    auto sharedPreferences = target->sharedPreferencesForWebProcess(%s);\n' % connection_argument)
 
-    if_swift_enabled(receiver, result, append_swift_get_target_statements, None)
+    def append_cpp_statements(result):
+        result.append('    auto sharedPreferences = sharedPreferencesForWebProcess(%s);\n' % connection_argument)
+
+    result = []
+    if_swift_enabled(receiver, result, append_swift_statements, append_cpp_statements if needs_shared_preferences else None)
+    if needs_shared_preferences:
+        result.append('    UNUSED_VARIABLE(sharedPreferences);\n')
+    if enabled_by:
+        runtime_enablement = generate_enabled_by(receiver, enabled_by, enabled_by_conjunction)
+        result += [
+            '    if (!sharedPreferences || !%s) {\n' % ('(%s)' % runtime_enablement if len(enabled_by) > 1 else runtime_enablement),
+            '        RELEASE_LOG_ERROR(IPC, "Message %s received by a disabled message receiver %s", IPC::description(decoder.messageName()).characters());\n' % ('%s', receiver.name),
+            '        decoder.markInvalid();\n',
+            '        return;\n',
+            '    }\n',
+        ]
     return result
 
 
@@ -1934,10 +1941,9 @@ def generate_message_handler(receiver):
     if receiver.has_attribute(STREAM_ATTRIBUTE):
         append_with_potentially_swiftified_classname(receiver, result, 'void %s::didReceiveStreamMessage(IPC::StreamServerConnection& connection, IPC::Decoder& decoder)\n')
         result.append('{\n')
-        result += generate_enabled_by_for_receiver(receiver, receiver.messages)
         assert(not receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE))
         assert(not receiver.has_attribute(WANTS_ASYNC_DISPATCH_MESSAGE_ATTRIBUTE))
-        result += generate_get_target_statements(receiver)
+        result += generate_target_and_enabled_by_statements(receiver, receiver.messages)
         result += async_message_statements
         result += sync_message_statements
         if (receiver.superclass):
@@ -1954,9 +1960,7 @@ def generate_message_handler(receiver):
         else:
             append_with_potentially_swiftified_classname(receiver, result, 'void %s::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& decoder)\n')
         result.append('{\n')
-        enable_by_statement = generate_enabled_by_for_receiver(receiver, async_messages)
-        result += enable_by_statement
-        result += generate_get_target_statements(receiver)
+        result += generate_target_and_enabled_by_statements(receiver, async_messages)
         result += async_message_statements
         if receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE) or receiver.has_attribute(WANTS_ASYNC_DISPATCH_MESSAGE_ATTRIBUTE):
             result.append('    if (dispatchMessage(connection, decoder))\n')
@@ -1975,8 +1979,7 @@ def generate_message_handler(receiver):
         append_with_potentially_swiftified_classname(receiver, result, 'void %s::didReceiveSyncMessage(IPC::Connection& connection, IPC::Decoder& decoder, UniqueRef<IPC::Encoder>& replyEncoder)\n')
         result.append('{\n')
         result += generate_dispatched_for_x(receiver.receiver_dispatched_to)
-        result += generate_enabled_by_for_receiver(receiver, sync_messages)
-        result += generate_get_target_statements(receiver)
+        result += generate_target_and_enabled_by_statements(receiver, sync_messages)
         result += sync_message_statements
         if receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE):
             result.append('    if (dispatchSyncMessage(connection, decoder, replyEncoder))\n')

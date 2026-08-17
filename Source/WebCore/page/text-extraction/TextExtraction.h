@@ -41,6 +41,8 @@ namespace TextExtraction {
 
 WEBCORE_EXPORT Result extractItem(Request&&, LocalFrame&);
 
+WEBCORE_EXPORT String shortenedURLString(const URL&);
+
 WEBCORE_EXPORT Vector<std::pair<String, FloatRect>> extractAllTextAndRects(Page&);
 
 WEBCORE_EXPORT void handleInteraction(Interaction&&, LocalFrame&, CompletionHandler<void(bool, String&&, FloatRect)>&&);
@@ -52,6 +54,7 @@ WEBCORE_EXPORT std::optional<SimpleRange> rangeForExtractedText(const LocalFrame
 WEBCORE_EXPORT RefPtr<Element> elementForExtractedText(const LocalFrame&, ExtractedText&&);
 WEBCORE_EXPORT RefPtr<Element> containerElementForExtractedText(const LocalFrame&, ExtractedText&&);
 WEBCORE_EXPORT RefPtr<Element> containerElementForSearchTexts(const LocalFrame&, Vector<String>&&, std::optional<NodeIdentifier>&&);
+WEBCORE_EXPORT std::optional<FrameIdentifier> contentFrameIdentifierForNode(NodeIdentifier);
 
 WEBCORE_EXPORT Vector<FilterRule> extractRules(Vector<FilterRuleData>&&);
 

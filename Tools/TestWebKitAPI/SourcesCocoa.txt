@@ -70,6 +70,7 @@ Tests/WTF/cocoa/URLExtras.mm @nonARC
 Tests/WebCore/cocoa/WebAVPlayerControllerLeakTests.mm @nonARC
 
 Tests/WebKit/WKWebView/AVFoundationPreference.mm @nonARC
+Tests/WebKit/WKWebView/AccessibilityAnnouncementTranslation.mm @nonARC
 Tests/WebKit/WKWebView/AdaptiveImageGlyph.mm @nonARC
 Tests/WebKit/WKWebView/AdditionalReadAccessAllowedURLs.mm @nonARC
 Tests/WebKit/WKWebView/AdditionalSupportedImageTypes.mm @nonARC
@@ -159,13 +160,15 @@ Tests/WebKit/WKWebView/GetComputedStyleAfterIframeRemoval.mm @nonARC
 Tests/WebKit/WKWebView/GetDisplayMedia.mm @nonARC
 Tests/WebKit/WKWebView/GetDisplayMediaWindowAndScreen.mm @nonARC
 Tests/WebKit/WKWebView/GetResourceData.mm @nonARC
+Tests/WebKit/WKWebView/GetUserMedia.mm @nonARC @no-unify
 Tests/WebKit/WKWebView/HistoryDelegate.mm @nonARC
 Tests/WebKit/WKWebView/HSTS.mm @nonARC
+Tests/WebKit/WKWebView/HTTP2Server.mm @nonARC
+Tests/WebKit/WKWebView/HTTP3Server.mm @nonARC
 Tests/WebKit/WKWebView/IDBCheckpointWAL.mm @nonARC
 Tests/WebKit/WKWebView/IDBDeleteRecovery.mm @nonARC
 Tests/WebKit/WKWebView/IDBIndexUpgradeToV2.mm @nonARC
 Tests/WebKit/WKWebView/IDBObjectStoreInfoUpgradeToV2.mm @nonARC
-Tests/WebKit/WKWebView/IPCSharedMemoryFallback.mm @nonARC
 Tests/WebKit/WKWebView/IPCTestingAPI.mm @nonARC
 Tests/WebKit/WKWebView/IconLoadingDelegate.mm @nonARC
 Tests/WebKit/WKWebView/ImageAnalysisTests.mm @nonARC
@@ -363,6 +366,7 @@ Tests/WebKit/WKWebView/WKWebExtensionAPIEvent.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIExtension.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIMenus.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPINamespace.mm @nonARC
+Tests/WebKit/WKWebView/WKWebExtensionAPIOffscreen.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIPermissions.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIScripting.mm @nonARC
 Tests/WebKit/WKWebView/WKWebExtensionAPIStorage.mm @nonARC

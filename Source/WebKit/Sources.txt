@@ -678,6 +678,7 @@ UIProcess/WebAuthentication/WebAuthenticationRequestData.cpp
 
 UIProcess/WebsiteData/EnhancedSecuritySitesHolder.cpp
 UIProcess/WebsiteData/EnhancedSecuritySitesPersistence.cpp
+UIProcess/WebsiteData/IsolatedSitePersistence.cpp
 UIProcess/WebsiteData/IsolatedSiteStore.cpp
 UIProcess/WebsiteData/WebDeviceOrientationAndMotionAccessController.cpp
 UIProcess/WebsiteData/WebsiteDataRecord.cpp
@@ -708,7 +709,9 @@ WebProcess/Extensions/WebExtensionContextProxy.cpp
 WebProcess/Extensions/WebExtensionControllerProxy.cpp
 
 WebProcess/Extensions/API/WebExtensionAPIAlarms.cpp
+WebProcess/Extensions/API/WebExtensionAPINamespace.cpp
 WebProcess/Extensions/API/WebExtensionAPITest.cpp
+WebProcess/Extensions/API/WebExtensionAPIWebPageNamespace.cpp
 
 WebProcess/FileAPI/BlobRegistryProxy.cpp
 
@@ -975,7 +978,6 @@ WebProcess/XR/PlatformXRSystemProxy.cpp
 AudioVideoRendererRemoteMessageReceiverMessageReceiver.cpp
 IPCConnectionTesterMessageReceiver.cpp
 IPCStreamTesterMessageReceiver.cpp
-IPCStreamTesterProxyMessageReceiver.cpp
 IPCTesterMessageReceiver.cpp
 IPCTesterReceiverMessageReceiver.cpp
 ModelProcessModelPlayerManagerProxyMessageReceiver.cpp

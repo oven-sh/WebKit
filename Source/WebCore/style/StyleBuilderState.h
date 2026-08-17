@@ -52,6 +52,7 @@ struct RandomCachingKey;
 
 namespace Style {
 
+class BuilderStatePropertyScope;
 class BuilderState;
 class Builder;
 class CustomPropertyRegistry;
@@ -95,6 +96,9 @@ struct RegisteredSubstitutionAttribute {
 struct BuilderContext {
     const Ref<const Document> document;
     const Style::ComputedStyle* parentStyle { };
+    // For highlight pseudo-elements: the corresponding highlight pseudo-element style of the
+    // originating element's parent, if any. https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
+    const Style::ComputedStyle* parentHighlightStyle { };
     const Style::ComputedStyle* rootElementStyle { };
     RefPtr<const Element> element { };
     CheckedPtr<TreeResolutionState> treeResolutionState { };
@@ -122,6 +126,14 @@ public:
 
     const ComputedStyle& parentStyle() const LIFETIME_BOUND { return *m_context.parentStyle; }
 
+    // The highlight pseudo-element style this one inherits from. Null for the highlight
+    // pseudo-element of the root element, and for anything that isn't a highlight pseudo-element.
+    // https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
+    const ComputedStyle* parentHighlightStyle() const LIFETIME_BOUND { return m_context.parentHighlightStyle; }
+
+    // True for any highlight pseudo-element style, including one with nothing to inherit from.
+    inline bool isBuildingHighlightStyle() const;
+
     Builder* callingContextBuilder() const { return m_context.callingContextBuilder; }
 
     const Style::ComputedStyle* rootElementStyle() const LIFETIME_BOUND { return m_context.rootElementStyle; }
@@ -130,6 +142,9 @@ public:
     const Element* element() const { return m_context.element.get(); }
 
     const CSSRegisteredCustomProperty* registeredProperty(const AtomString&) const;
+
+    // The registrations of the custom function being evaluated, if any. These shadow the document's.
+    const LocalPropertyRegistry* localPropertyRegistry() const { return m_context.localPropertyRegistry; }
 
     inline void setZoom(Zoom);
     inline void setUsedZoom(float);
@@ -167,12 +182,16 @@ public:
     void setIsBuildingKeyframeStyle() { m_isBuildingKeyframeStyle = true; }
     bool hasRevertRuleOrLayerInKeyframeStyle() const { return m_hasRevertRuleOrLayerInKeyframeStyle; }
 
+    void setIsResolvingContainerQueries() { m_isResolvingContainerQueries = true; }
+    bool isResolvingContainerQueries() const { return m_isResolvingContainerQueries; }
+
     bool isAuthorOrigin() const
     {
         return m_currentProperty && m_currentProperty->origin == PropertyCascade::Origin::Author;
     }
 
     CSSPropertyID NODELETE cssPropertyID() const;
+    AtomString NODELETE customPropertyName() const;
 
     bool NODELETE isCurrentPropertyInvalidAtComputedValueTime() const;
     void NODELETE setCurrentPropertyInvalidAtComputedValueTime();
@@ -241,6 +260,7 @@ public:
 private:
     // See the comment in maybeUpdateFontForLetterSpacingOrWordSpacing() about why this needs to be a friend.
     friend void maybeUpdateFontForLetterSpacingOrWordSpacing(BuilderState&, CSSValue&);
+    friend class BuilderStatePropertyScope;
     friend class Builder;
     friend class SubstitutionResolver;
 
@@ -257,10 +277,21 @@ private:
     void updateFontForOrientationChange();
     void updateFontForSizeChange();
 
+    void setCurrentProperty(const PropertyCascade::Property* property)
+    {
+        if (property) {
+            m_currentProperty = property;
+            m_cssToLengthConversionData.m_property = m_currentProperty->id;
+        } else {
+            m_currentProperty = nullptr;
+            m_cssToLengthConversionData.m_property = CSSPropertyInvalid;
+        }
+    }
+
     Style::ComputedStyle& m_style;
     BuilderContext m_context;
 
-    const CSSToLengthConversionData m_cssToLengthConversionData;
+    CSSToLengthConversionData m_cssToLengthConversionData;
 
     HashSet<AtomString> m_appliedCustomProperties;
     GuardedSubstitutionContexts m_guardedSubstitutionContexts;
@@ -276,6 +307,26 @@ private:
 
     bool m_isBuildingKeyframeStyle { false };
     bool m_hasRevertRuleOrLayerInKeyframeStyle { false };
+    bool m_isResolvingContainerQueries { false };
+};
+
+class BuilderStatePropertyScope {
+public:
+    BuilderStatePropertyScope(BuilderState& state, const PropertyCascade::Property* newProperty)
+        : m_state { state }
+        , m_propertyToRestore { m_state.m_currentProperty }
+    {
+        m_state.setCurrentProperty(newProperty);
+    }
+
+    ~BuilderStatePropertyScope()
+    {
+        m_state.setCurrentProperty(m_propertyToRestore);
+    }
+
+private:
+    BuilderState& m_state;
+    const PropertyCascade::Property* m_propertyToRestore;
 };
 
 } // namespace Style

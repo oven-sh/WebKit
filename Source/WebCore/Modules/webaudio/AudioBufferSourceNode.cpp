@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010 Google Inc. All rights reserved.
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -219,8 +219,11 @@ bool AudioBufferSourceNode::renderFromBuffer(AudioBus& bus, unsigned destination
 
     // Avoid converting from time to sample-frames twice by computing
     // the grain end time first before computing the sample frame.
+    // When looping, playback is bounded by the loop points below (and stopped
+    // via m_endTime for a grain), so the grain duration must not clamp maxFrame
+    // here; otherwise a loopStart past the grain end collapses the loop range.
     unsigned maxFrame;
-    if (m_isGrain)
+    if (m_isGrain && !m_isLooping)
         maxFrame = AudioUtilities::timeToSampleFrame(m_grainOffset + m_grainDuration, bufferSampleRate);
     else
         maxFrame = bufferLength;
@@ -352,10 +355,10 @@ bool AudioBufferSourceNode::renderFromBuffer(AudioBus& bus, unsigned destination
         virtualReadIndex = readIndex;
     } else if (reverse) {
         unsigned maxFrame = static_cast<unsigned>(virtualMaxFrame);
-        unsigned minFrame = static_cast<unsigned>(floorf(virtualMinFrame));
+        unsigned minFrame = static_cast<unsigned>(std::floor(virtualMinFrame));
 
         while (framesToProcess--) {
-            unsigned readIndex = static_cast<unsigned>(floorf(virtualReadIndex));
+            unsigned readIndex = static_cast<unsigned>(std::floor(virtualReadIndex));
             float interpolationFactor = virtualReadIndex - readIndex;
 
             unsigned readIndex2 = readIndex + 1;

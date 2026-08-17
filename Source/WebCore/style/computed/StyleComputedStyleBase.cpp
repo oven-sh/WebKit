@@ -72,6 +72,11 @@ ComputedStyleBase::~ComputedStyleBase()
 #endif
 }
 
+bool ComputedStyleBase::effectiveInertOutOfLine() const
+{
+    return effectiveInert();
+}
+
 #if ENABLE(TEXT_AUTOSIZING)
 
 // MARK: - Text Autosizing
@@ -181,6 +186,11 @@ void ComputedStyleBase::addCustomPaintWatchProperty(const AtomString& name)
 
 // MARK: - FontCascade support.
 
+const FontCascade& ComputedStyleBase::fontCascadeOutOfLine() const
+{
+    return fontCascade();
+}
+
 FontCascade& ComputedStyleBase::mutableFontCascadeWithoutUpdate()
 {
     return m_inheritedData.access().fontData.access().fontCascade;
@@ -230,6 +240,11 @@ bool ComputedStyleBase::setFontDescriptionWithoutUpdate(FontCascadeDescription&&
     return true;
 }
 
+const Font& ComputedStyleBase::primaryFont() const
+{
+    return m_inheritedData->fontData->fontCascade.primaryFont();
+}
+
 const FontMetrics& ComputedStyleBase::metricsOfPrimaryFont() const
 {
     return m_inheritedData->fontData->fontCascade.metricsOfPrimaryFont();
@@ -275,6 +290,23 @@ void ComputedStyleBase::setSpecifiedLineHeight(LineHeight&& lineHeight)
 }
 
 #endif
+
+void ComputedStyleBase::setSpecifiedLineHeightFromAnimation(LineHeight&& lineHeight)
+{
+#if ENABLE(TEXT_AUTOSIZING)
+    bool specifiedLineHeightChanged = m_inheritedData->specifiedLineHeight != lineHeight;
+    bool lineHeightChanged = m_inheritedData->lineHeight != lineHeight;
+    if (specifiedLineHeightChanged || lineHeightChanged) {
+        auto& access = m_inheritedData.access();
+        if (specifiedLineHeightChanged)
+            access.specifiedLineHeight = lineHeight;
+        if (lineHeightChanged)
+            access.lineHeight = WTF::move(lineHeight);
+    }
+#else
+    SET_VAR(m_inheritedData, lineHeight, WTF::move(lineHeight));
+#endif
+}
 
 void ComputedStyleBase::setLetterSpacingFromAnimation(LetterSpacing&& value)
 {

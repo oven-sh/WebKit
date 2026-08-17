@@ -33,7 +33,7 @@ namespace WebCore {
 
 class SMILTime {
 public:
-    SMILTime() : m_time(0) { }
+    SMILTime() = default;
     SMILTime(double time) : m_time(time) { ASSERT(!std::isnan(time)); }
     SMILTime(Seconds time) : m_time(time.value()) { ASSERT(!std::isnan(time.value())); }
     SMILTime(const SMILTime& o) : m_time(o.m_time) { }
@@ -52,7 +52,7 @@ private:
     static const double unresolvedValue;
     static const double indefiniteValue;
 
-    double m_time;
+    double m_time { 0 };
 };
 
 class SMILTimeWithOrigin {
@@ -81,7 +81,11 @@ private:
     Origin m_origin;
 };
 
-inline bool operator==(const SMILTime& a, const SMILTime& b) { return a.isFinite() && a.value() == b.value(); }
+// This has to compare the raw values to stay consistent with operator<=> below, which the compiler
+// also uses to rewrite <, >, <= and >=. Testing isFinite() here would make the unresolved and the
+// indefinite value unequal to themselves, so that "a != b", "a <= b" and "a >= b" would all be true
+// at once for them.
+inline bool operator==(const SMILTime& a, const SMILTime& b) { return a.value() == b.value(); }
 inline bool operator!(const SMILTime& a) { return !a.isFinite() || !a.value(); }
 inline auto operator<=>(const SMILTime& a, const SMILTime& b) { return a.value() <=> b.value(); }
 inline auto operator<=>(const SMILTimeWithOrigin& a, const SMILTimeWithOrigin& b) { return a.time() <=> b.time(); }

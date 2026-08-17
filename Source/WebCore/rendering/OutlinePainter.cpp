@@ -95,7 +95,7 @@ void OutlinePainter::paintOutline(const RenderElement& renderer, const LayoutRec
 
     auto zoom = styleToUse->usedZoomForLength();
     auto outlineWidth = Style::evaluate<LayoutUnit>(styleToUse->usedOutlineWidth(), zoom, deviceScaleFactor(renderer));
-    auto outlineOffset = Style::evaluate<LayoutUnit>(styleToUse->usedOutlineOffset(), zoom);
+    auto outlineOffset = Style::evaluate<LayoutUnit>(styleToUse->usedOutlineOffset(), zoom, deviceScaleFactor(renderer));
 
     auto outerRect = paintRect;
     outerRect.inflate(outlineOffset + outlineWidth);
@@ -107,7 +107,7 @@ void OutlinePainter::paintOutline(const RenderElement& renderer, const LayoutRec
     auto closedEdges = RectEdges<bool> { true };
 
     auto outlineEdgeWidths = RectEdges<LayoutUnit> { outlineWidth };
-    auto outlineShape = BorderShape::shapeForOffsetRect(styleToUse.get(), paintRect, outerRect, outlineEdgeWidths, closedEdges, ConstantThicknessOffset::Yes);
+    auto outlineShape = BorderShape::shapeForOffsetRect(styleToUse.get(), paintRect, outerRect, outlineEdgeWidths, closedEdges);
 
     auto bleedAvoidance = BleedAvoidance::ShrinkBackground;
     auto appliedClipAlready = false;
@@ -204,7 +204,7 @@ void OutlinePainter::paintOutlineWithLineRects(const RenderInline& renderer, con
     auto zoom = styleToUse->usedZoomForLength();
     auto deviceScaleFactor = WebCore::deviceScaleFactor(renderer);
 
-    auto outlineOffset = Style::evaluate<float>(styleToUse->usedOutlineOffset(), zoom);
+    auto outlineOffset = Style::evaluate<float>(styleToUse->usedOutlineOffset(), zoom, deviceScaleFactor);
     auto outlineWidth = Style::evaluate<float>(styleToUse->usedOutlineWidth(), zoom, deviceScaleFactor);
 
     Vector<FloatRect> pixelSnappedRects;
@@ -279,7 +279,7 @@ void OutlinePainter::paintFocusRing(const RenderElement& renderer, const Vector<
     auto deviceScaleFactor = WebCore::deviceScaleFactor(renderer);
     auto zoom = style->usedZoomForLength();
 
-    auto outlineOffset = Style::evaluate<float>(style->usedOutlineOffset(), zoom);
+    auto outlineOffset = Style::evaluate<float>(style->usedOutlineOffset(), zoom, deviceScaleFactor);
 
     Vector<FloatRect> pixelSnappedFocusRingRects;
     for (auto rect : focusRingRects) {
@@ -314,7 +314,7 @@ void OutlinePainter::paintFocusRing(const RenderElement& renderer, const Vector<
         auto borderRect = focusRingRects[0];
         auto outlineRect = borderRect;
         outlineRect.inflate(LayoutUnit(outlineOffset));
-        auto outlineShape = BorderShape::shapeForOffsetRect(style.get(), borderRect, outlineRect, RectEdges<LayoutUnit> { }, RectEdges<bool> { true }, ConstantThicknessOffset::Yes);
+        auto outlineShape = BorderShape::shapeForOffsetRect(style.get(), borderRect, outlineRect, RectEdges<LayoutUnit> { }, RectEdges<bool> { true });
         auto path = outlineShape.pathForOuterShape(deviceScaleFactor);
         drawFocusRing(m_paintInfo.context(), path, style.get(), focusRingColor);
         return;

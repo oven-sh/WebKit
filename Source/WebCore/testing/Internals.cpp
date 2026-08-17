@@ -433,10 +433,6 @@
 #include "NavigatorMediaSession.h"
 #endif
 
-#if ENABLE(MEDIA_SESSION) && USE(GLIB)
-#include "MediaSessionManagerGLib.h"
-#endif
-
 #if ENABLE(IMAGE_ANALYSIS)
 #include "TextRecognitionResult.h"
 #endif
@@ -671,25 +667,21 @@ void Internals::resetToConsistentState(Page& page)
         localMainFrame->editor().toggleOverwriteModeEnabled();
     localMainFrame->loader().clearTestingOverrides();
 
-    RefPtr sessionManager = page.mediaSessionManager();
 #if ENABLE(VIDEO)
     page.group().ensureCaptionPreferences().setCaptionDisplayMode(CaptionUserPreferences::CaptionDisplayMode::ForcedOnly);
     page.group().ensureCaptionPreferences().setCaptionsStyleSheetOverride(emptyString());
     page.group().ensureCaptionPreferences().setPreferredLanguage(emptyString());
 
-    sessionManager->resetHaveEverRegisteredAsNowPlayingApplicationForTesting();
-    sessionManager->resetRestrictions();
-    sessionManager->resetSessionState();
-    sessionManager->setWillIgnoreSystemInterruptions(true);
-    sessionManager->applicationWillEnterForeground(false);
     if (page.mediaPlaybackIsSuspended())
         page.resumeAllMediaPlayback();
 #endif
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    sessionManager->setIsPlayingToAutomotiveHeadUnit(false);
+    if (RefPtr sessionManager = page.mediaSessionManager())
+        sessionManager->resetToConsistentStateForTesting();
 #endif
     AXObjectCache::setEnhancedUserInterfaceAccessibility(false);
     AXObjectCache::disableAccessibilityForTesting();
+    AXObjectCache::setAnnouncementTranslationTimeoutForTesting(std::nullopt);
     WebCore::setShouldMockParentSearchResultsForTesting(false);
     WebCore::setShouldMockChildFrameSearchResultsForTesting(false);
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -764,22 +756,11 @@ void Internals::resetToConsistentState(Page& page)
     WebCore::setContentSizeCategory(kCTFontContentSizeCategoryL);
 #endif
 
-#if ENABLE(MEDIA_SESSION) && USE(GLIB)
-    if (auto* glibSessionManager = dynamicDowncast<MediaSessionManagerGLib>(sessionManager.get()))
-        glibSessionManager->setDBusNotificationsEnabled(false);
-#endif
-
 #if PLATFORM(COCOA)
     setOverrideEnhanceTextLegibility(false);
 #endif
 
     TextPainter::setForceUseGlyphDisplayListForTesting(false);
-
-#if USE(AUDIO_SESSION)
-    AudioSession::singleton().setCategoryOverride(AudioSessionCategory::None);
-    AudioSession::singleton().tryToSetActive(false)->whenSettled(RunLoop::mainSingleton(), [](auto&&) { });
-    AudioSession::singleton().endInterruptionForTesting();
-#endif
 
 #if ENABLE(DAMAGE_TRACKING)
     page.chrome().client().resetDamageHistoryForTesting();
@@ -1661,7 +1642,7 @@ float Internals::usedOutlineOffset(Element& element)
     auto* style = element.computedStyle();
     if (!style)
         return 0;
-    return Style::evaluate<float>(style->usedOutlineOffset(), style->usedZoomForLength());
+    return Style::evaluate<float>(style->usedOutlineOffset(), style->usedZoomForLength(), style->deviceScaleFactor());
 }
 
 Node& Internals::ensureUserAgentShadowRoot(Element& host)
@@ -4791,6 +4772,11 @@ void Internals::forceAXObjectCacheUpdate() const
     }
 }
 
+void Internals::setAccessibilityAnnouncementTranslationTimeout(double seconds)
+{
+    AXObjectCache::setAnnouncementTranslationTimeoutForTesting(Seconds { seconds });
+}
+
 unsigned Internals::liveRegionSnapshotBuildCount() const
 {
     if (RefPtr document = contextDocument()) {
@@ -7043,6 +7029,22 @@ auto Internals::audioSessionCategory() const -> AudioSessionCategory
 #endif
 }
 
+void Internals::systemAudioSessionCategory(DOMPromiseDeferred<IDLEnumeration<AudioSessionCategory>>&& promise)
+{
+#if USE(AUDIO_SESSION)
+    AudioSession::singleton().systemCategoryForTesting()->whenSettled(RunLoop::mainSingleton(),
+        [promise = WTF::move(promise)](auto&& result) mutable {
+            if (!result) {
+                promise.reject(Exception { ExceptionCode::InvalidStateError, "Could not read the system audio session category"_s });
+                return;
+            }
+            promise.resolve(*result);
+        });
+#else
+    promise.resolve(AudioSessionCategory::None);
+#endif
+}
+
 auto Internals::audioSessionMode() const -> AudioSessionMode
 {
 #if USE(AUDIO_SESSION)
@@ -8142,7 +8144,7 @@ void Internals::loadArtworkImage(String&& url, ArtworkImagePromise&& promise)
             promise->reject(Exception { ExceptionCode::InvalidAccessError, "No image retrieved."_s });
             return;
         }
-        promise->settle(WebCodecsVideoFrame::create(*document, *nativeImage));
+        promise->settle(WebCodecsVideoFrame::create(*document, *nativeImage, { }));
     });
     m_artworkLoader->requestImageResource();
 }
@@ -8769,15 +8771,28 @@ unsigned Internals::numberOfHostedModelsInSpatialPortal(Element& element)
     return controller ? controller->numberOfHostedModels() : 0;
 }
 
-unsigned Internals::numberOfLoadedModelsInSpatialPortal(Element& element)
-{
-    CheckedPtr controller = element.spatialPortalController();
-    return controller ? controller->numberOfLoadedModels() : 0;
-}
-
 bool Internals::establishesSpatialPortal(Element& element)
 {
     return element.establishesSpatialPortal();
+}
+
+// Returned as column-major values.
+std::optional<Vector<double>> Internals::spatialPortalResolvedTransform(Element& element)
+{
+    CheckedPtr controller = element.spatialPortalController();
+    if (!controller)
+        return std::nullopt;
+
+    auto& transform = controller->resolvedPortalTransform();
+    if (!transform)
+        return std::nullopt;
+
+    return Vector<double> {
+        transform->m11(), transform->m12(), transform->m13(), transform->m14(),
+        transform->m21(), transform->m22(), transform->m23(), transform->m24(),
+        transform->m31(), transform->m32(), transform->m33(), transform->m34(),
+        transform->m41(), transform->m42(), transform->m43(), transform->m44()
+    };
 }
 #endif
 

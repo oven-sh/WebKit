@@ -398,16 +398,14 @@ static std::optional<LayoutRect> computeClippedRectInRootContentsSpace(const Lay
                 { rect },
                 &renderer->view(),
                 {
-                    .hasPositionFixedDescendant = false,
-                    .dirtyRectIsFlipped = false,
-                    .descendantNeedsEnclosingIntRect = false,
                     .options = {
                         VisibleRectContext::Option::UseEdgeInclusiveIntersection,
                         VisibleRectContext::Option::ApplyCompositedClips,
                         VisibleRectContext::Option::ApplyCompositedContainerScrolls
                     },
                     .scrollMargin = scrollMargin
-                }
+                },
+                { }
             );
 
             return visibleRects.transform([] (auto&& repaintRects) { return repaintRects.clippedOverflowRect; } );
@@ -472,53 +470,6 @@ static std::optional<LayoutRect> computeClippedRectInRootContentsSpace(const Lay
 
     absoluteClippedRect->moveBy(enclosingFrameParentView->childFrameOwnerContentBoxLocation(*enclosingFrame));
     return computeClippedRectInRootContentsSpace(*absoluteClippedRect, targetSecurityOrigin, enclosingFrame.get(), WTF::move(scrollMargin));
-}
-
-// Equivalent to FrameView::convertFromContainingView.
-static FloatRect convertFromContainingView(const FrameView& frameView, const FrameView& parentView, FloatRect rect)
-{
-    if (is<LocalFrameView>(parentView)) {
-        // If we can compute it the old way, do so.
-        return frameView.convertFromContainingView(rect);
-    }
-
-    rect = parentView.viewToContents(rect);
-
-    auto transform = parentView.absoluteToChildFrameOwnerLocalTransform(frameView.frame());
-    FloatRect transformed = transform.projectQuad(rect).boundingBox();
-    transformed.moveBy(-parentView.childFrameOwnerContentBoxLocation(frameView.frame()));
-
-    return transformed;
-}
-
-// Equivalent to Widget::convertFromRootView.
-static FloatRect convertFromRootView(const FrameView& frameView, FloatRect rect)
-{
-    auto parentView = [&frameView] () -> RefPtr<const FrameView> {
-        if (RefPtr parent = dynamicDowncast<FrameView>(frameView.parent()))
-            return parent;
-
-        // When Site Isolation is enabled, Widget::m_parent is not populated if
-        // frameView is RemoteFrameView. Workaround this by using the frame tree parent.
-        // FIXME: fix the underlying issue instead.
-        if (RefPtr parent = frameView.frame().tree().parent())
-            return parent->virtualView();
-
-        return nullptr;
-    }();
-
-    if (parentView) {
-        FloatRect parentRect = convertFromRootView(*parentView, rect);
-        return convertFromContainingView(frameView, *parentView, parentRect);
-    }
-
-    return rect;
-}
-
-// Equivalent to rootViewToContents.
-static FloatRect mainFrameViewToContents(const FrameView& targetFrameView, FloatRect rect)
-{
-    return targetFrameView.viewToContents(convertFromRootView(targetFrameView, rect));
 }
 
 auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRegistration& registration, FrameView& hostFrameView, Element& target, ApplyRootMargin applyRootMargin) const -> IntersectionObservationState
@@ -642,16 +593,14 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
                 { localTargetBounds },
                 rootRenderer,
                 {
-                    .hasPositionFixedDescendant = false,
-                    .dirtyRectIsFlipped = false,
-                    .descendantNeedsEnclosingIntRect = false,
                     .options = {
                         VisibleRectContext::Option::UseEdgeInclusiveIntersection,
                         VisibleRectContext::Option::ApplyCompositedClips,
                         VisibleRectContext::Option::ApplyCompositedContainerScrolls
                     },
                     .scrollMargin = { }
-                }
+                },
+                { }
             );
             if (!result)
                 return std::nullopt;
@@ -696,7 +645,7 @@ auto IntersectionObserver::computeIntersectionState(const IntersectionObserverRe
             intersectionState.absoluteIntersectionRect = rootAbsoluteIntersectionRect;
         else {
             auto rootViewIntersectionRect = hostFrameView.contentsToView(rootAbsoluteIntersectionRect);
-            intersectionState.absoluteIntersectionRect = mainFrameViewToContents(targetRenderer->view().frameView(), rootViewIntersectionRect);
+            intersectionState.absoluteIntersectionRect = targetRenderer->view().frameView().rootViewToContentsAcrossIsolatedFrames(rootViewIntersectionRect);
         }
 
         intersectionState.isIntersecting = intersectionState.absoluteIntersectionRect->edgeInclusiveIntersect(*intersectionState.absoluteTargetRect);
