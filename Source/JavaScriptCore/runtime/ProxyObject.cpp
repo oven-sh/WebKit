@@ -1251,8 +1251,11 @@ JSValue ProxyObject::performGetPrototype(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, { });
 
     JSObject* target = this->target();
-    if (getPrototypeOfMethod.isUndefined()) 
-        RELEASE_AND_RETURN(scope, target->getPrototype(globalObject));
+    if (getPrototypeOfMethod.isUndefined()) {
+        JSValue result = target->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        return result;
+    }
 
     MarkedArgumentBuffer arguments;
     arguments.append(target);
