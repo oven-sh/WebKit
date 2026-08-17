@@ -334,6 +334,13 @@ void ShadowChicken::update(VM& vm, CallFrame* callFrame)
             bool isTailDeleted = false;
             JSScope* scope = nullptr;
             CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() ? nullptr : callFrame->codeBlock();
+#if USE(BUN_JSC_ADDITIONS)
+            // Same rule as DebuggerCallFrame::scope(): this walk can now also happen from a
+            // debugger pause entered through a VM trap, so the slot is only read when it is live.
+            if (JSScope* liveScope = callFrame->scopeIfScopeRegisterIsLive())
+                scope = liveScope;
+            else if (foundFrame) {
+#else
             JSValue scopeValue = callFrame->bytecodeIndex() && codeBlock && codeBlock->scopeRegister().isValid()
                 ? callFrame->registers()[codeBlock->scopeRegister().offset()].jsValue()
                 : jsUndefined();
@@ -341,6 +348,7 @@ void ShadowChicken::update(VM& vm, CallFrame* callFrame)
                 scope = uncheckedDowncast<JSScope>(scopeValue.asCell());
                 RELEASE_ASSERT(scope->inherits<JSScope>());
             } else if (foundFrame) {
+#endif
                 scope = m_log[indexInLog].scope;
                 if (scope)
                     RELEASE_ASSERT(scope->inherits<JSScope>());

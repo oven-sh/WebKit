@@ -158,6 +158,25 @@ CodeOrigin CallFrame::codeOrigin() const
     return CodeOrigin(callSiteIndex().bytecodeIndex());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSScope* CallFrame::scopeIfScopeRegisterIsLive() const
+{
+    // BytecodeUseDef keeps the scope register live only in code compiled with debugging
+    // opcodes, and only after op_enter. Outside of that the slot holds whatever happened to
+    // be there: the DFG does not allocate it, a baseline frame reached by OSR exit from such
+    // code has a dead value in it, and a VM trap serviced in the prologue sees a frame whose
+    // locals have not been written at all. Between op_enter and op_get_scope it is undefined.
+    if (isNativeCalleeFrame())
+        return nullptr;
+    CodeBlock* codeBlock = this->codeBlock();
+    if (!codeBlock || !codeBlock->wasCompiledWithDebuggingOpcodes() || !codeBlock->scopeRegister().isValid())
+        return nullptr;
+    if (!bytecodeIndex().offset())
+        return nullptr;
+    return dynamicDowncast<JSScope>(registers()[codeBlock->scopeRegister().offset()].jsValue());
+}
+#endif
+
 Register* CallFrame::topOfFrameInternal()
 {
     CodeBlock* codeBlock = this->codeBlock();

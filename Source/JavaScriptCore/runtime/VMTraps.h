@@ -307,25 +307,35 @@ private:
     JS_EXPORT_PRIVATE void deferTerminationSlow(DeferAction);
     JS_EXPORT_PRIVATE void undoDeferTerminationSlow(DeferAction);
 
+#if ENABLE(SIGNAL_BASED_VM_TRAPS) || USE(BUN_JSC_ADDITIONS)
+    void invalidateCodeBlocksOnStack();
+    void invalidateCodeBlocksOnStack(CallFrame* topCallFrame);
+    void invalidateCodeBlocksOnStack(Locker<Lock>& codeBlockSetLocker, CallFrame* topCallFrame);
+    void jettisonOptimizedCodeBlocksOnStack(Locker<Lock>& codeBlockSetLocker, CallFrame* topCallFrame);
+#else
+    void invalidateCodeBlocksOnStack() { }
+    void invalidateCodeBlocksOnStack(CallFrame*) { }
+#endif
+
 #if ENABLE(SIGNAL_BASED_VM_TRAPS)
     class SignalSender;
     friend class SignalSender;
 
-    void invalidateCodeBlocksOnStack();
-    void invalidateCodeBlocksOnStack(CallFrame* topCallFrame);
-    void invalidateCodeBlocksOnStack(Locker<Lock>& codeBlockSetLocker, CallFrame* topCallFrame);
-
     void addSignalSender(SignalSender*);
     void removeSignalSender(SignalSender*);
-#else
-    void invalidateCodeBlocksOnStack() { }
-    void invalidateCodeBlocksOnStack(CallFrame*) { }
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+    void handleDebuggerBreak();
 #endif
 
     StackManager m_stack;
     Atomic<BitField> m_trapBits { 0 };
     unsigned m_deferTerminationCount { 0 };
     bool m_needToInvalidateCodeBlocks { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_isHandlingDebuggerBreak { false };
+#endif
     bool m_isShuttingDown { false };
     bool m_suspendedTerminationException { false };
     bool m_threadStopRequested { false };

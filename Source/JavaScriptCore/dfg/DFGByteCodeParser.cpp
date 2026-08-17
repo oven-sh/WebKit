@@ -7439,7 +7439,21 @@ void ByteCodeParser::handleGetScope(VirtualRegister destination)
 
 void ByteCodeParser::handleCheckTraps()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::usePollingTraps() || m_graph.m_plan.isUnlinked()) {
+        addToGraph(CheckTraps);
+        // With polling traps the debugger trap callback (VMTraps::handleDebuggerBreak) runs
+        // arbitrary JS from inside this frame and jettisons the code blocks on the stack before
+        // returning; this is where the frame then leaves, instead of carrying on with whatever
+        // it had hoisted above the loop.
+        if (!m_graph.m_plan.isUnlinked())
+            addToGraph(InvalidationPoint);
+        return;
+    }
+    addToGraph(InvalidationPoint);
+#else
     addToGraph((Options::usePollingTraps() || m_graph.m_plan.isUnlinked()) ? CheckTraps : InvalidationPoint);
+#endif
 }
 
 void ByteCodeParser::emitPutById(

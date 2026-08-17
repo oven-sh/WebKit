@@ -30,6 +30,7 @@
 #include "CodeBlock.h"
 #include "CodeBlockSet.h"
 #include "DFGCommonData.h"
+#include "DeferTermination.h"
 #include "ExceptionHelpers.h"
 #include "HeapInlines.h"
 #include "JSCJSValueInlines.h"
@@ -45,6 +46,7 @@
 #include <wtf/Condition.h>
 #include <wtf/ProcessID.h>
 #include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 #include <wtf/ThreadMessage.h>
 #include <wtf/threads/Signals.h>
 
@@ -166,6 +168,10 @@ void VMTraps::tryInstallTrapBreakpoints(VMTraps::SignalContext& context, StackBo
     }
 }
 
+#endif // ENABLE(SIGNAL_BASED_VM_TRAPS)
+
+#if ENABLE(SIGNAL_BASED_VM_TRAPS) || USE(BUN_JSC_ADDITIONS)
+
 void VMTraps::invalidateCodeBlocksOnStack()
 {
     invalidateCodeBlocksOnStack(vm().topCallFrame);
@@ -177,13 +183,17 @@ void VMTraps::invalidateCodeBlocksOnStack(CallFrame* topCallFrame)
     invalidateCodeBlocksOnStack(codeBlockSetLocker, topCallFrame);
 }
     
-void VMTraps::invalidateCodeBlocksOnStack(Locker<Lock>&, CallFrame* topCallFrame)
+void VMTraps::invalidateCodeBlocksOnStack(Locker<Lock>& codeBlockSetLocker, CallFrame* topCallFrame)
 {
     if (!m_needToInvalidateCodeBlocks)
         return;
 
     m_needToInvalidateCodeBlocks = false;
+    jettisonOptimizedCodeBlocksOnStack(codeBlockSetLocker, topCallFrame);
+}
 
+void VMTraps::jettisonOptimizedCodeBlocksOnStack(Locker<Lock>&, CallFrame* topCallFrame)
+{
     EntryFrame* entryFrame = vm().topEntryFrame;
     CallFrame* callFrame = topCallFrame;
 
@@ -197,6 +207,10 @@ void VMTraps::invalidateCodeBlocksOnStack(Locker<Lock>&, CallFrame* topCallFrame
         callFrame = callFrame->callerFrame(entryFrame);
     }
 }
+
+#endif // ENABLE(SIGNAL_BASED_VM_TRAPS) || USE(BUN_JSC_ADDITIONS)
+
+#if ENABLE(SIGNAL_BASED_VM_TRAPS)
 
 class VMTraps::SignalSender final : public ThreadSafeRefCounted<VMTraps::SignalSender> {
 public:
@@ -451,6 +465,14 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     if (isDeferringTermination())
         mask &= ~NeedTermination;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // JS run by the debugger trap callback polls the traps too. Leave the bit alone while the
+    // callback is on the stack; the handleTraps() loop that invoked it picks the re-fire up once
+    // it returns, so re-fires coalesce instead of nesting one callback inside another.
+    if (m_isHandlingDebuggerBreak)
+        mask &= ~NeedDebuggerBreak;
+#endif
+
     {
         Locker codeBlockSetLocker { vm.heap.codeBlockSet().getLock() };
         vm.heap.forEachCodeBlockIgnoringJITPlans(codeBlockSetLocker, [&] (CodeBlock* codeBlock) {
@@ -484,7 +506,11 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
         auto event = takeTopPriorityTrap(mask);
         switch (event) {
         case NeedDebuggerBreak:
+#if USE(BUN_JSC_ADDITIONS)
+            handleDebuggerBreak();
+#else
             invalidateCodeBlocksOnStack(vm.topCallFrame);
+#endif
             didHandleTrap = true;
             break;
 
@@ -523,6 +549,43 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     }
     RELEASE_AND_RETURN(scope, didHandleTrap);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void VMTraps::handleDebuggerBreak()
+{
+    VM& vm = this->vm();
+    auto callback = vm.debuggerTrapCallback();
+    if (!callback) {
+        invalidateCodeBlocksOnStack(vm.topCallFrame);
+        return;
+    }
+
+    // With signal based traps the frame that was running optimized code has already left it
+    // through the trap breakpoints by the time we get here, and any optimized frames below it
+    // are parked at calls, so the callback may re-enter the VM without jettisoning the rest of
+    // the stack; doing so on every delivery would deoptimize the program once per CDP batch.
+    // With polling traps the caller can be a DFG/FTL CheckTraps site inside a live frame. That
+    // frame must not continue past the poll with state it computed before the callback ran, so
+    // jettison the stack unconditionally and let the InvalidationPoint the DFG emits after
+    // CheckTraps (see ByteCodeParser::handleCheckTraps) exit to baseline on return.
+    if (Options::usePollingTraps()) {
+        Locker codeBlockSetLocker { vm.heap.codeBlockSet().getLock() };
+        m_needToInvalidateCodeBlocks = false;
+        jettisonOptimizedCodeBlocksOnStack(codeBlockSetLocker, vm.topCallFrame);
+    } else
+        m_needToInvalidateCodeBlocks = false;
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    {
+        SetForScope handling(m_isHandlingDebuggerBreak, true);
+        // A termination that arrives while the debugger is being serviced is re-fired as a trap
+        // when this scope ends and taken by the handleTraps() loop that called us.
+        DeferTerminationForAWhile deferTermination(vm);
+        callback(vm);
+    }
+    scope.releaseAssertNoExceptionExceptTermination();
+}
+#endif
 
 bool VMTraps::handleTrapsIfNeeded(VMTraps::BitField mask)
 {
