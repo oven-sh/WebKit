@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CachedTypes.h"
+#include <limits>
 #include "ExecutableInfo.h"
 #include "JSCInlines.h"
 #include "Parser.h"
@@ -43,6 +44,11 @@
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
+
+// Depth for eager nested-function bytecode generation: 0 = only the top-level code block,
+// N = also its descendants up to N levels; maxBytecodeCacheDepth = unbounded (historical).
+static constexpr unsigned maxBytecodeCacheDepth = std::numeric_limits<unsigned>::max();
+JS_EXPORT_PRIVATE unsigned bytecodeCacheDepthFromOptions();
 
 class EvalExecutable;
 #if USE(BUN_JSC_ADDITIONS)
@@ -266,8 +272,13 @@ template <> struct CacheTypes<UnlinkedModuleProgramCodeBlock> {
 };
 
 UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM&, DirectEvalExecutable*, const SourceCode&, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment*);
-UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType);
-UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType);
+UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = maxBytecodeCacheDepth);
+UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = maxBytecodeCacheDepth);
+
+// Eagerly compile `executable` and every function nested beneath it, so that the whole
+// tree can be serialized with encodeFunctionExecutable(). `parentSource` is the source
+// the executable was created from, not its own linked sub-range.
+JS_EXPORT_PRIVATE UnlinkedFunctionCodeBlock* recursivelyGenerateUnlinkedCodeBlockForFunctionExecutable(VM&, UnlinkedFunctionExecutable*, const SourceCode& parentSource, ParserError&, unsigned depth = maxBytecodeCacheDepth);
 
 #if USE(BUN_JSC_ADDITIONS)
 // What a CodeCache hit does besides returning the block: the executable learns the parse results
@@ -279,5 +290,6 @@ void writeCodeBlock(const SourceCodeKey&, const SourceCodeValue&);
 RefPtr<CachedBytecode> serializeBytecode(VM&, UnlinkedCodeBlock*, const SourceCode&, SourceCodeType, LexicallyScopedFeatures, JSParserScriptMode, FileSystem::FileHandle&, BytecodeCacheError&, OptionSet<CodeGenerationMode>);
 SourceCodeKey sourceCodeKeyForSerializedProgram(VM&, const SourceCode&);
 SourceCodeKey sourceCodeKeyForSerializedModule(VM&, const SourceCode&);
+JS_EXPORT_PRIVATE SourceCodeKey sourceCodeKeyForSerializedFunctionExecutable(VM&, const SourceCode&, const String& name);
 
 } // namespace JSC
