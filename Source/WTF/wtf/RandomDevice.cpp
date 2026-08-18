@@ -37,7 +37,9 @@
 
 #if OS(WINDOWS)
 #include <windows.h>
+#include <algorithm>
 #include <bcrypt.h>
+#include <limits>
 #include <mutex>
 #endif
 
@@ -107,11 +109,12 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
             amountRead += currentRead;
     }
 #elif OS(WINDOWS)
-    // ProcessPrng (bcryptprimitives.dll, Windows 10+) is the primitive that
-    // BCryptGenRandom and RtlGenRandom bottom out in; calling it directly
-    // avoids loading the CNG/CryptoAPI provider stacks. It has no import
-    // library, so resolve it once. Fall back to BCryptGenRandom with the
-    // system-preferred RNG where it is unavailable.
+    // ProcessPrng (bcryptprimitives.dll, Windows 8 / Server 2008 R2 and later)
+    // is the primitive that BCryptGenRandom and RtlGenRandom bottom out in;
+    // calling it directly avoids loading the CNG/CryptoAPI provider stacks. It
+    // has no import library, so resolve it once (it is documented to always
+    // return TRUE; the check keeps this fail-closed regardless). Fall back to
+    // BCryptGenRandom with the system-preferred RNG where it is unavailable.
     using ProcessPrngFunction = BOOL (WINAPI*)(PBYTE, SIZE_T);
     using BCryptGenRandomFunction = NTSTATUS (WINAPI*)(BCRYPT_ALG_HANDLE, PUCHAR, ULONG, ULONG);
     static ProcessPrngFunction processPrng;
@@ -132,8 +135,12 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
             CRASH();
         return;
     }
-    if (!BCRYPT_SUCCESS(bcryptGenRandom(nullptr, buffer.data(), static_cast<ULONG>(buffer.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG)))
-        CRASH();
+    for (auto remaining = buffer; !remaining.empty(); ) {
+        ULONG chunk = static_cast<ULONG>(std::min<size_t>(remaining.size(), std::numeric_limits<ULONG>::max()));
+        if (!BCRYPT_SUCCESS(bcryptGenRandom(nullptr, remaining.data(), chunk, BCRYPT_USE_SYSTEM_PREFERRED_RNG)))
+            CRASH();
+        remaining = remaining.subspan(chunk);
+    }
 #else
 #error "This configuration doesn't have a strong source of randomness."
 // WARNING: When adding new sources of OS randomness, the randomness must
