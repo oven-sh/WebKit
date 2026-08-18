@@ -140,6 +140,12 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
 
     if (scope->isGlobalObject()) {
         JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(scope);
+#if USE(BUN_JSC_ADDITIONS)
+        // Never hand out a symbol-table slot: the variable then resolves below like any other global property, and
+        // since such a global object is not property-cacheable, every get_from_scope / put_to_scope reaches its
+        // method table.
+        if (!globalObject->interceptsGlobalScope()) [[likely]]
+#endif
         {
             SymbolTable* symbolTable = globalObject->symbolTable();
             ConcurrentJSLocker locker(symbolTable->m_lock);

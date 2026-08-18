@@ -518,6 +518,7 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isAsyncContextTrackingEnabled { false };
+    bool m_interceptsGlobalScope { false };
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
@@ -773,6 +774,12 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTrackingEnabled; }
     void setAsyncContextTrackingEnabled(bool isEnabled) { m_isAsyncContextTrackingEnabled = isEnabled; }
+    // A global object whose getOwnPropertySlot / put / defineOwnProperty overrides stand between global code and its
+    // variables (node:vm's contextified globals): global-scope identifier accesses are never linked to a symbol-table
+    // slot (they resolve as uncached global properties, so every read and write reaches the overrides), and var /
+    // function declaration checks and bindings see what the overrides report. Set before any code runs in it.
+    bool interceptsGlobalScope() const { return m_interceptsGlobalScope; }
+    JS_EXPORT_PRIVATE void setInterceptsGlobalScope();
     static constexpr ptrdiff_t offsetOfAsyncContextData() { return OBJECT_OFFSETOF(JSGlobalObject, m_asyncContextData); }
 #endif
 

@@ -543,6 +543,10 @@ inline bool JSGlobalObject::canDeclareGlobalVar(const Identifier& ident)
         return true;
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+#if USE(BUN_JSC_ADDITIONS)
+    if (interceptsGlobalScope()) [[unlikely]]
+        return methodTable()->getOwnPropertySlot(this, this, ident, slot);
+#endif
     return getOwnPropertySlot(this, this, ident, slot);
 }
 
@@ -554,8 +558,19 @@ inline void JSGlobalObject::createGlobalVarBinding(const Identifier& ident)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasProperty;
+    if (interceptsGlobalScope()) [[unlikely]] {
+        hasProperty = methodTable()->getOwnPropertySlot(this, this, ident, slot);
+        RETURN_IF_EXCEPTION(scope, void());
+    } else {
+        hasProperty = getOwnPropertySlot(this, this, ident, slot);
+        scope.assertNoExceptionExceptTermination();
+    }
+#else
     bool hasProperty = getOwnPropertySlot(this, this, ident, slot);
     scope.assertNoExceptionExceptTermination();
+#endif
     if (hasProperty) [[unlikely]]
         return;
 

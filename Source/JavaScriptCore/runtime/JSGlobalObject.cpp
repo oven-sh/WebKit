@@ -2487,13 +2487,26 @@ bool JSGlobalObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSGlobalObject::setInterceptsGlobalScope()
+{
+    // Otherwise get_from_scope / put_to_scope would cache a structure offset after their first trip through the overrides.
+    ASSERT(structure()->typeInfo().prohibitsPropertyCaching());
+    m_interceptsGlobalScope = true;
+}
+#endif
+
 // https://tc39.es/ecma262/#sec-candeclareglobalfunction
 bool JSGlobalObject::canDeclareGlobalFunction(const Identifier& ident)
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasProperty = interceptsGlobalScope() ? methodTable()->getOwnPropertySlot(this, this, ident, slot) : getOwnPropertySlot(this, this, ident, slot);
+#else
     bool hasProperty = getOwnPropertySlot(this, this, ident, slot);
+#endif
     RETURN_IF_EXCEPTION(scope, { });
     if (!hasProperty) [[likely]]
         return isStructureExtensible();
@@ -2514,7 +2527,11 @@ void JSGlobalObject::createGlobalFunctionBinding(const Identifier& ident)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasProperty = interceptsGlobalScope() ? methodTable()->getOwnPropertySlot(this, this, ident, slot) : getOwnPropertySlot(this, this, ident, slot);
+#else
     bool hasProperty = getOwnPropertySlot(this, this, ident, slot);
+#endif
     RETURN_IF_EXCEPTION(scope, void());
     if (hasProperty) [[unlikely]] {
         if (slot.attributes() & PropertyAttribute::DontDelete) {
