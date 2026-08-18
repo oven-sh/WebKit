@@ -53,7 +53,7 @@ static void* virtualAllocWithRetry(void* address, size_t bytes, DWORD allocation
 {
     static constexpr unsigned maxAttempts = 10;
     static constexpr DWORD delayMs = 50;
-    for (unsigned attempt = 0;; ++attempt) {
+    for (unsigned attempt = 1;; ++attempt) {
         void* result = VirtualAlloc(address, bytes, allocationType, protection);
         if (result) [[likely]]
             return result;
