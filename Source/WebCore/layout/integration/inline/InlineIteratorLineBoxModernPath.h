@@ -61,13 +61,26 @@ public:
     {
         if (formattingContextRoot().writingMode().isLineInverted() || !m_lineIndex)
             return contentLogicalTop();
-        return LineBoxIteratorModernPath { *m_inlineContent, m_lineIndex - 1 }.contentLogicalBottom();
+        for (auto precedingLineIndex = m_lineIndex; precedingLineIndex--;) {
+            auto precedingLineBox = LineBoxIteratorModernPath { *m_inlineContent, precedingLineIndex };
+            if (!precedingLineBox.line().hasContentfulInFlowBox())
+                continue;
+            if (precedingLineBox.hasBlockLevelBox())
+                break;
+            if (precedingLineBox.logicalBottom() < logicalTop())
+                break;
+            return precedingLineBox.contentLogicalBottom();
+        }
+        return contentLogicalTop();
     }
     float contentLogicalBottomAdjustedForFollowingLineBox() const
     {
         if (!formattingContextRoot().writingMode().isLineInverted() || m_lineIndex == lines().size() - 1)
             return contentLogicalBottom();
-        return LineBoxIteratorModernPath { *m_inlineContent, m_lineIndex + 1 }.contentLogicalTop();
+        auto followingLineBox = LineBoxIteratorModernPath { *m_inlineContent, m_lineIndex + 1 };
+        if (followingLineBox.hasBlockLevelBox())
+            return contentLogicalBottom();
+        return followingLineBox.contentLogicalTop();
     }
 
     float contentLogicalLeft() const

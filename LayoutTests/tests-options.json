@@ -1823,6 +1823,9 @@
     "imported/w3c/web-platform-tests/css/CSS2/linebox/animations/line-height-interpolation.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/css/css-anchor-position/long-anchor-chain-crash.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/css/css-animations/CSSAnimation-effect.tentative.html": [
         "slow"
     ],
@@ -3005,6 +3008,9 @@
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/compressed-large-resources-002.tentative.https.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/fetch/compression-dictionary/compressed-large-resources-dictionary-hashes.tentative.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/fetch/compression-dictionary/dictionary-clear-site-data-cache.tentative.https.html": [
         "slow"
     ],
@@ -3968,6 +3974,9 @@
     "imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/track/track-element/track-webvtt-markup.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/html/semantics/embedded-content/the-iframe-element/cross-site/iframe-loading-lazy-nested-cross-site.sub.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/html/semantics/embedded-content/the-iframe-element/iframe_sandbox_navigation_download_allow_downloads.sub.tentative.html": [
         "slow"
     ],
@@ -4844,7 +4853,7 @@
     "imported/w3c/web-platform-tests/mathml/relations/css-styling/ignored-properties-001.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/mathml/relations/html5-tree/math-global-event-handlers.tentative.html": [
+    "imported/w3c/web-platform-tests/mathml/relations/html5-tree/math-global-event-handlers.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/mathml/relations/html5-tree/tabindex-002.html": [
@@ -5528,6 +5537,15 @@
     "imported/w3c/web-platform-tests/preload/link-header-preload-non-html.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/preload/modulepreload-already-in-module-map.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/preload/modulepreload-consumed-by-script.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/preload/modulepreload-fires-before-dependencies.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/preload/modulepreload.html": [
         "slow"
     ],
@@ -5553,6 +5571,9 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/preload/preload-error.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/preload/preload-imagesrcset-in-markup.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/preload/preload-imagesrcset-no-href.html": [
@@ -6773,13 +6794,13 @@
     "imported/w3c/web-platform-tests/webaudio/the-audio-api/the-analysernode-interface/test-analyser-minimum.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/webaudio/the-audio-api/the-analysernode-interface/test-analyser-output.html": [
-        "slow"
-    ],
     "imported/w3c/web-platform-tests/webaudio/the-audio-api/the-analysernode-interface/test-analyser-resume-after-suspended.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audiocontext-interface/suspend-with-navigation.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediastreamaudiosourcenode-interface/mediastreamaudiosourcenode-from-context-with-different-rate.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/webauthn/createcredential-abort.https.html": [

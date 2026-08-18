@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2025 Apple Inc. All rights reserved.
+// Copyright (C) 2018-2026 Apple Inc. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -512,6 +512,7 @@ UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIDevToolsPanels.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIEventCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIExtensionCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIMenusCocoa.mm
+UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIOffscreenCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIPermissionsCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIPortCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIRuntimeCocoa.mm
@@ -628,6 +629,7 @@ UIProcess/ios/WKWebGeolocationPolicyDeciderIOS.mm @nonARC
 
 UIProcess/Launcher/cocoa/ProcessLauncherCocoa.mm @nonARC
 
+UIProcess/mac/AppKitGestures/WKAppKitGestureController.mm @nonARC
 UIProcess/mac/CorrectionPanel.mm @nonARC
 UIProcess/mac/DisplayLinkMac.cpp
 UIProcess/mac/PageClientImplMac.mm @nonARC
@@ -647,7 +649,6 @@ UIProcess/mac/WebProcessProxyMac.mm @nonARC
 UIProcess/mac/WindowServerConnection.mm @nonARC
 UIProcess/mac/WKFullScreenWindowController.mm @nonARC
 UIProcess/mac/WKImmediateActionController.mm @nonARC
-UIProcess/mac/WKAppKitGestureController.mm @nonARC
 UIProcess/mac/PositionInformationManager.cpp
 UIProcess/mac/WKPrintingView.mm @nonARC
 UIProcess/mac/WKQuickLookPreviewController.mm @nonARC
@@ -770,8 +771,8 @@ WebProcess/Extensions/API/Cocoa/WebExtensionAPIEventCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIExtensionCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPILocalizationCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIMenusCocoa.mm
-WebProcess/Extensions/API/Cocoa/WebExtensionAPINamespaceCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPINotificationsCocoa.mm
+WebProcess/Extensions/API/Cocoa/WebExtensionAPIOffscreenCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIPermissionsCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIPortCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
@@ -784,7 +785,6 @@ WebProcess/Extensions/API/Cocoa/WebExtensionAPITabsCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPITestCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigationCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigationEventCocoa.mm
-WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebPageNamespaceCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestEventCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWindowsCocoa.mm

@@ -426,9 +426,9 @@ template<CSSPropertyID propertyID> struct MarginEdgeSharedAdaptor {
             // A renderer will have a specific margin marked as trimmed by setting its rare data bit if:
             // 1.) The layout system the box is in has this logic (setting the rare data bit for this
             // specific margin) implemented
-            // 2.) The block container/flexbox/grid has this margin specified in its margin-trim style
+            // 2.) The block container/grid has this margin specified in its margin-trim style
             // If marginTrimSide is empty we will check if any of the supported margins are in the style
-            if (renderer.isFlexItem() || renderer.isGridItem())
+            if (renderer.isGridItem())
                 return renderer.parent()->style().marginTrim().contains(marginTrimSide());
 
             // Even though margin-trim is not inherited, it is possible for nested block level boxes
@@ -447,7 +447,7 @@ template<CSSPropertyID propertyID> struct MarginEdgeSharedAdaptor {
 
         auto toMarginTrimSide = [](const RenderBox& renderer) -> MarginTrimSide {
             auto formattingContextRootStyle = [](const RenderBox& renderer) -> const ComputedStyle& {
-                if (auto* ancestorToUse = (renderer.isFlexItem() || renderer.isGridItem()) ? renderer.parent() : renderer.containingBlock())
+                if (auto* ancestorToUse = renderer.isGridItem() ? renderer.parent() : renderer.containingBlock())
                     return ancestorToUse->style();
                 ASSERT_NOT_REACHED();
                 return renderer.style();
@@ -758,26 +758,14 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyLineHeight> {
             [&](const CSS::Keyword::Normal& keyword) {
                 return functor(keyword);
             },
-            [&](const LineHeight::Fixed& fixed) {
+            [&](const LineHeight::Length& fixed) {
                 return functor(fixed);
             },
-            [&](const LineHeight::Percentage& percentage) {
-                // CSSValueConversion<LineHeight> will convert a percentage value to a fixed value,
-                // and a number value to a percentage value. To be able to roundtrip a number value, we thus
-                // look for a percent value and convert it back to a number.
+            [&](const LineHeight::Number& number) {
                 if (state.valueType == ExtractorState::PropertyValueType::Computed)
-                    return functor(Number<CSS::Nonnegative> { percentage.value / 100 });
+                    return functor(number);
 
-                // This is imperfect, because it doesn't include the zoom factor and the real computation
-                // for how high to be in pixels does include things like minimum font size and the zoom factor.
-                // On the other hand, since font-size doesn't include the zoom factor, we really can't do
-                // that here either.
-                return functor(Length<CSS::Nonnegative> { percentage.value * state.style.fontDescription().unzoomedComputedSize() / 100 });
-            },
-            [&](const LineHeight::Calc& calc) {
-                // FIXME: We pass ZoomFactor::none() but it really is not clear why we are even evaluating calc
-                // here. We should probably revisit this and figure out another way to do this.
-                return functor(Length<CSS::Nonnegative> { evaluate<float>(calc, 0.0f, ZoomFactor::none()) });
+                return functor(LineHeight::Length { number.value * state.style.fontDescription().unzoomedComputedSize() });
             }
         );
     }
@@ -1298,24 +1286,38 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyWhiteSpace> {
     {
         auto whiteSpaceCollapse = state.style.whiteSpaceCollapse();
         auto textWrapMode = state.style.textWrapMode();
+        auto whiteSpaceTrim = state.style.whiteSpaceTrim();
 
-        // Convert to backwards-compatible keywords if possible.
-        if (whiteSpaceCollapse == WhiteSpaceCollapse::Collapse && textWrapMode == TextWrapMode::Wrap)
-            return functor(CSS::Keyword::Normal { });
-        if (whiteSpaceCollapse == WhiteSpaceCollapse::Preserve && textWrapMode == TextWrapMode::NoWrap)
-            return functor(CSS::Keyword::Pre { });
-        if (whiteSpaceCollapse == WhiteSpaceCollapse::Preserve && textWrapMode == TextWrapMode::Wrap)
-            return functor(CSS::Keyword::PreWrap { });
-        if (whiteSpaceCollapse == WhiteSpaceCollapse::PreserveBreaks && textWrapMode == TextWrapMode::Wrap)
-            return functor(CSS::Keyword::PreLine { });
+        if (whiteSpaceTrim.isNone()) {
+            // Convert to backwards-compatible keywords if possible.
+            if (whiteSpaceCollapse == WhiteSpaceCollapse::Collapse && textWrapMode == TextWrapMode::Wrap)
+                return functor(CSS::Keyword::Normal { });
+            if (whiteSpaceCollapse == WhiteSpaceCollapse::Preserve && textWrapMode == TextWrapMode::NoWrap)
+                return functor(CSS::Keyword::Pre { });
+            if (whiteSpaceCollapse == WhiteSpaceCollapse::Preserve && textWrapMode == TextWrapMode::Wrap)
+                return functor(CSS::Keyword::PreWrap { });
+            if (whiteSpaceCollapse == WhiteSpaceCollapse::PreserveBreaks && textWrapMode == TextWrapMode::Wrap)
+                return functor(CSS::Keyword::PreLine { });
 
+            // Omit default longhand values.
+            if (whiteSpaceCollapse == ComputedStyle::initialWhiteSpaceCollapse())
+                return functor(textWrapMode);
+            if (textWrapMode == ComputedStyle::initialTextWrapMode())
+                return functor(whiteSpaceCollapse);
+
+            return functor(SpaceSeparatedTuple { whiteSpaceCollapse, textWrapMode });
+        }
+
+        // white-space-trim has a non-initial value, so the backwards-compatible keywords don't apply.
         // Omit default longhand values.
+        if (whiteSpaceCollapse == ComputedStyle::initialWhiteSpaceCollapse() && textWrapMode == ComputedStyle::initialTextWrapMode())
+            return functor(whiteSpaceTrim);
         if (whiteSpaceCollapse == ComputedStyle::initialWhiteSpaceCollapse())
-            return functor(textWrapMode);
+            return functor(SpaceSeparatedTuple { textWrapMode, whiteSpaceTrim });
         if (textWrapMode == ComputedStyle::initialTextWrapMode())
-            return functor(whiteSpaceCollapse);
+            return functor(SpaceSeparatedTuple { whiteSpaceCollapse, whiteSpaceTrim });
 
-        return functor(SpaceSeparatedTuple { whiteSpaceCollapse, textWrapMode });
+        return functor(SpaceSeparatedTuple { whiteSpaceCollapse, textWrapMode, whiteSpaceTrim });
     }
 };
 

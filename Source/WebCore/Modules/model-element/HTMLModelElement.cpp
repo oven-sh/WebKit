@@ -200,13 +200,30 @@ void HTMLModelElement::suspend(ReasonForSuspension reasonForSuspension)
 {
     RELEASE_LOG(ModelElement, "%p - HTMLModelElement::suspend(): %d", this, static_cast<int>(reasonForSuspension));
 
-    if (reasonForSuspension == ReasonForSuspension::BackForwardCache)
-        unloadModelPlayer(true);
+    if (reasonForSuspension != ReasonForSuspension::BackForwardCache)
+        return;
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (CheckedPtr controller = m_lastRegisteredPortalController.get()) {
+        controller->childWasSuspended(*this);
+        return;
+    }
+#endif
+
+    unloadModelPlayer(true);
 }
 
 void HTMLModelElement::resume()
 {
     RELEASE_LOG(ModelElement, "%p - HTMLModelElement::resume()", this);
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (CheckedPtr controller = m_lastRegisteredPortalController.get()) {
+        controller->childVisibilityStateChanged(*this);
+        return;
+    }
+#endif
+
     startLoadModelTimer();
 }
 
@@ -342,6 +359,21 @@ HTMLModelElement& HTMLModelElement::readyPromiseResolve()
 
 void HTMLModelElement::visibilityStateChanged()
 {
+#if ENABLE(SPATIAL_PORTAL)
+    if (CheckedPtr controller = m_lastRegisteredPortalController.get()) {
+        controller->childVisibilityStateChanged(*this);
+
+        if (!isVisible()) {
+            m_loadModelTimer = nullptr;
+            return;
+        }
+
+        if (isModelDeferred())
+            startLoadModelTimer();
+        return;
+    }
+#endif
+
     RefPtr modelPlayer = m_modelPlayer;
     if (modelPlayer)
         modelPlayer->visibilityStateDidChange();
@@ -416,6 +448,11 @@ SpatialPortalController* HTMLModelElement::findPortalController() const
     return ancestor ? ancestor->spatialPortalController() : nullptr;
 }
 
+SpatialPortalController* HTMLModelElement::lastRegisteredPortalController() const
+{
+    return m_lastRegisteredPortalController.get();
+}
+
 void HTMLModelElement::updateSpatialPortalController()
 {
     CheckedPtr controller = findPortalController();
@@ -449,6 +486,10 @@ void HTMLModelElement::didFailLoadingInsidePortal(const ResourceError&)
 void HTMLModelElement::spatialPortalContextDidChange()
 {
     updateSpatialPortalController();
+
+#if ENABLE(MODEL_ELEMENT_STAGE_MODE)
+    updateStageMode();
+#endif
 
     queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [](auto& element) {
         element.deletePendingModelPlayer();
@@ -766,6 +807,11 @@ void HTMLModelElement::createModelPlayer()
     if (!model)
         return;
 
+#if ENABLE(SPATIAL_PORTAL)
+    if (isInsidePortal())
+        return triggerModelPlayerCreationCallbacksIfNeeded(Exception { ExceptionCode::AbortError, "Model is hosted by a spatial portal"_s });
+#endif
+
     if (modelContainerSizeIsEmpty())
         return triggerModelPlayerCreationCallbacksIfNeeded(Exception { ExceptionCode::AbortError, "Model container size is empty"_s });
 
@@ -821,9 +867,7 @@ void HTMLModelElement::createModelPlayer()
     auto nodeID = nodeIdentifier();
 
 #if ENABLE(MODEL_ELEMENT_ANIMATIONS_CONTROL)
-    modelPlayer->setAutoplay(nodeID, autoplay());
-    modelPlayer->setLoop(nodeID, loop());
-    modelPlayer->setPlaybackRate(nodeID, m_playbackRate, [](double) { });
+    applyInitialAnimationState(*modelPlayer);
 #endif
 
 #if ENABLE(MODEL_ELEMENT_PORTAL)
@@ -1444,6 +1488,27 @@ void HTMLModelElement::setCamera(HTMLModelElementCamera camera, DOMPromiseDeferr
 
 #if ENABLE(MODEL_ELEMENT_ANIMATIONS_CONTROL)
 
+ModelPlayer* HTMLModelElement::modelPlayerForAnimation() const
+{
+    if (m_modelPlayer)
+        return m_modelPlayer.get();
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (CheckedPtr controller = m_lastRegisteredPortalController.get())
+        return controller->playerForChild(nodeIdentifier());
+#endif
+
+    return nullptr;
+}
+
+void HTMLModelElement::applyInitialAnimationState(ModelPlayer& modelPlayer)
+{
+    auto nodeID = nodeIdentifier();
+    modelPlayer.setAutoplay(nodeID, autoplay());
+    modelPlayer.setLoop(nodeID, loop());
+    modelPlayer.setPlaybackRate(nodeID, m_playbackRate, [](double) { });
+}
+
 void HTMLModelElement::setPlaybackRate(double playbackRate)
 {
     if (m_playbackRate == playbackRate)
@@ -1451,18 +1516,20 @@ void HTMLModelElement::setPlaybackRate(double playbackRate)
 
     m_playbackRate = playbackRate;
 
-    if (m_modelPlayer)
-        m_modelPlayer->setPlaybackRate(nodeIdentifier(), playbackRate, [](double) { });
+    if (RefPtr modelPlayer = modelPlayerForAnimation())
+        modelPlayer->setPlaybackRate(nodeIdentifier(), playbackRate, [](double) { });
 }
 
 double HTMLModelElement::duration() const
 {
-    return m_modelPlayer ? m_modelPlayer->duration(nodeIdentifier()) : 0;
+    RefPtr modelPlayer = modelPlayerForAnimation();
+    return modelPlayer ? modelPlayer->duration(nodeIdentifier()) : 0;
 }
 
 bool HTMLModelElement::paused() const
 {
-    return m_modelPlayer ? m_modelPlayer->paused(nodeIdentifier()) : true;
+    RefPtr modelPlayer = modelPlayerForAnimation();
+    return modelPlayer ? modelPlayer->paused(nodeIdentifier()) : true;
 }
 
 void HTMLModelElement::play(DOMPromiseDeferred<void>&& promise)
@@ -1477,12 +1544,13 @@ void HTMLModelElement::pause(DOMPromiseDeferred<void>&& promise)
 
 void HTMLModelElement::setPaused(bool paused, DOMPromiseDeferred<void>&& promise)
 {
-    if (!m_modelPlayer) {
+    RefPtr modelPlayer = modelPlayerForAnimation();
+    if (!modelPlayer) {
         promise.reject();
         return;
     }
 
-    m_modelPlayer->setPaused(nodeIdentifier(), paused, [promise = WTF::move(promise)] (bool succeeded) mutable {
+    modelPlayer->setPaused(nodeIdentifier(), paused, [promise = WTF::move(promise)] (bool succeeded) mutable {
         if (succeeded)
             promise.resolve();
         else
@@ -1497,8 +1565,8 @@ bool HTMLModelElement::autoplay() const
 
 void HTMLModelElement::updateAutoplay()
 {
-    if (m_modelPlayer)
-        m_modelPlayer->setAutoplay(nodeIdentifier(), autoplay());
+    if (RefPtr modelPlayer = modelPlayerForAnimation())
+        modelPlayer->setAutoplay(nodeIdentifier(), autoplay());
 }
 
 bool HTMLModelElement::loop() const
@@ -1508,19 +1576,20 @@ bool HTMLModelElement::loop() const
 
 void HTMLModelElement::updateLoop()
 {
-    if (m_modelPlayer)
-        m_modelPlayer->setLoop(nodeIdentifier(), loop());
+    if (RefPtr modelPlayer = modelPlayerForAnimation())
+        modelPlayer->setLoop(nodeIdentifier(), loop());
 }
 
 double HTMLModelElement::currentTime() const
 {
-    return m_modelPlayer ? m_modelPlayer->currentTime(nodeIdentifier()).seconds() : 0;
+    RefPtr modelPlayer = modelPlayerForAnimation();
+    return modelPlayer ? modelPlayer->currentTime(nodeIdentifier()).seconds() : 0;
 }
 
 void HTMLModelElement::setCurrentTime(double currentTime)
 {
-    if (m_modelPlayer)
-        m_modelPlayer->setCurrentTime(nodeIdentifier(), Seconds(currentTime), [] { });
+    if (RefPtr modelPlayer = modelPlayerForAnimation())
+        modelPlayer->setCurrentTime(nodeIdentifier(), Seconds(currentTime), [] { });
 }
 
 #endif
@@ -1529,6 +1598,11 @@ void HTMLModelElement::setCurrentTime(double currentTime)
 
 WebCore::StageModeOperation HTMLModelElement::stageMode() const
 {
+#if ENABLE(SPATIAL_PORTAL)
+    if (isInsidePortal())
+        return WebCore::StageModeOperation::None;
+#endif
+
     String attr = attributeWithoutSynchronization(HTMLNames::stagemodeAttr);
     if (equalLettersIgnoringASCIICase(attr, "orbit"_s))
         return WebCore::StageModeOperation::Orbit;
@@ -1550,12 +1624,10 @@ void HTMLModelElement::updateStageMode()
         addEventListener(eventNames().touchstartEvent, *m_eventListener, { });
         addEventListener(eventNames().touchmoveEvent, *m_eventListener, { });
         addEventListener(eventNames().touchendEvent, *m_eventListener, { });
-        document().didAddTouchEventHandler(*this);
     } else {
         removeEventListener(eventNames().touchstartEvent, *m_eventListener, { });
         removeEventListener(eventNames().touchmoveEvent, *m_eventListener, { });
         removeEventListener(eventNames().touchendEvent, *m_eventListener, { });
-        document().didRemoveTouchEventHandler(*this);
     }
 
 #endif
@@ -2001,6 +2073,12 @@ void HTMLModelElement::stop()
 
     m_loadModelTimer = nullptr;
 
+#if ENABLE(SPATIAL_PORTAL)
+    if (CheckedPtr controller = m_lastRegisteredPortalController.get())
+        controller->unregisterChildModel(*this);
+    m_lastRegisteredPortalController = nullptr;
+#endif
+
     // Once an active DOM object has been stopped it cannot be restarted,
     // so we can delete the model player now.
     deletePendingModelPlayer();
@@ -2185,43 +2263,40 @@ bool HTMLModelElement::isModelDeferred() const
     return !m_model && !m_resource;
 }
 
+bool HTMLModelElement::hasLiveModelPlayer() const
+{
+#if ENABLE(SPATIAL_PORTAL)
+    if (CheckedPtr controller = m_lastRegisteredPortalController.get())
+        return controller->childIsLoaded(nodeIdentifier());
+#endif
+    RefPtr modelPlayer = m_modelPlayer;
+    return modelPlayer && !modelPlayer->isPlaceholder();
+}
+
 bool HTMLModelElement::isModelLoading() const
 {
     if (!isVisible())
         return false;
 
-    if ((!m_model && m_resource) || (m_model && !m_modelPlayer))
-        return true;
+    if (!m_model)
+        return !!m_resource;
 
-    RefPtr modelPlayer = m_modelPlayer;
-    return modelPlayer && modelPlayer->isPlaceholder();
+    return !hasLiveModelPlayer();
 }
 
 bool HTMLModelElement::isModelLoaded() const
 {
-    if (!isVisible())
-        return false;
-
-    RefPtr modelPlayer = m_modelPlayer;
-    return modelPlayer && !modelPlayer->isPlaceholder();
+    return isVisible() && hasLiveModelPlayer();
 }
 
 bool HTMLModelElement::isModelUnloading() const
 {
-    if (isVisible())
-        return false;
-
-    RefPtr modelPlayer = m_modelPlayer;
-    return modelPlayer && !modelPlayer->isPlaceholder();
+    return !isVisible() && hasLiveModelPlayer();
 }
 
 bool HTMLModelElement::isModelUnloaded() const
 {
-    if (isVisible() || !m_model)
-        return false;
-
-    RefPtr modelPlayer = m_modelPlayer;
-    return !modelPlayer || modelPlayer->isPlaceholder();
+    return !isVisible() && m_model && !hasLiveModelPlayer();
 }
 
 String HTMLModelElement::modelElementStateForTesting() const

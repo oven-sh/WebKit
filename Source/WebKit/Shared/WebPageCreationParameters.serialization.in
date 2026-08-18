@@ -303,6 +303,8 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     std::optional<WebCore::ImageTranslationLanguageIdentifiers> imageTranslationLanguageIdentifiers;
 #endif
 
+    String displayedTranslationLocaleIdentifier;
+
     std::optional<WebKit::TextManipulationParameters> textManipulationParameters;
 
     bool isPopup;
@@ -317,4 +319,5 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     URL initialMainDocumentURL;
     WebKit::FrameTreeCreationParameters frameTreeParameters;
     std::optional<WebKit::WebsitePoliciesData> websitePoliciesData;
+    Ref<WebCore::DocumentSyncData> topDocumentSyncData;
 }

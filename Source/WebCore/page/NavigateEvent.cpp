@@ -41,6 +41,7 @@
 #include "Navigation.h"
 #include "NavigationNavigationType.h"
 #include "ScriptWrappableInlines.h"
+#include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -114,6 +115,12 @@ JSC::JSValue NavigateEvent::info()
     return m_info.getValue();
 }
 
+void NavigateEvent::setInfo(JSC::JSGlobalObject& globalObject, JSC::JSValue info)
+{
+    Locker<JSC::JSLock> locker(globalObject.vm().apiLock());
+    m_info.set(globalObject, wrapper(), info);
+}
+
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigateevent-intercept
 ExceptionOr<void> NavigateEvent::intercept(Document& document, NavigationInterceptOptions&& options)
 {
@@ -125,6 +132,13 @@ ExceptionOr<void> NavigateEvent::intercept(Document& document, NavigationInterce
 
     if (!isBeingDispatched())
         return Exception { ExceptionCode::InvalidStateError, "Event is not being dispatched"_s };
+
+    if (document.settings().navigationAPIPrecommitHandlerEnabled() && options.precommitHandler) {
+        if (!cancelable())
+            return Exception { ExceptionCode::InvalidStateError, "A precommitHandler can only be used on a cancelable navigation"_s };
+
+        m_precommitHandlers.append(options.precommitHandler.releaseNonNull());
+    }
 
     ASSERT(!m_interceptionState || m_interceptionState == InterceptionState::Intercepted);
 
@@ -157,26 +171,26 @@ void NavigateEvent::processScrollBehavior(Document& document)
         return;
     }
 
-    if (!document.url().hasFragmentIdentifier()) {
-        if (m_navigationType == NavigationNavigationType::Reload)
-            document.frame()->loader().history().restoreScrollPositionAndViewState();
-        else
-            protect(protect(document)->frame()->view())->setScrollPosition({ 0, 0 });
-        return;
+    if (document.url().hasFragmentIdentifier()) {
+        if (!document.haveStylesheetsLoaded()) {
+            document.setGotoAnchorNeededAfterStylesheetsLoad(true);
+            return;
+        }
+
+        // LocalFrameView::scrollToFragment() only fails when the document's indicated part
+        // is null, and it clears the CSS :target element itself in that case.
+        if (protect(protect(document)->frame()->view())->scrollToFragment(document.url()))
+            return;
     }
 
-    // LocalFrameView::scrollToFragment() will fail only when anchor is not found
-    // if the url has fragment and the fragment is not text fragment.
-    if (!document.findAnchor(document.url().fragmentIdentifier())) {
-        if (m_navigationType == NavigationNavigationType::Reload)
-            document.frame()->loader().history().restoreScrollPositionAndViewState();
-        return;
-    }
+    // The document's indicated part is null, so clear the CSS :target element and scroll
+    // to the beginning of the document.
+    document.setCSSTarget(nullptr);
 
-    if (!document.haveStylesheetsLoaded())
-        document.setGotoAnchorNeededAfterStylesheetsLoad(true);
+    if (m_navigationType == NavigationNavigationType::Reload)
+        document.frame()->loader().history().restoreScrollPositionAndViewState();
     else
-        protect(protect(document)->frame()->view())->scrollToFragment(document.url());
+        protect(protect(document)->frame()->view())->setScrollPosition({ 0, 0 });
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigateevent-scroll

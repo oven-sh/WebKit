@@ -88,8 +88,8 @@ public:
     JSValue cachedSpecialProperty(CachedSpecialPropertyKey) const;
     void cacheSpecialProperty(JSGlobalObject*, VM&, Structure* baseStructure, JSValue, CachedSpecialPropertyKey, const PropertySlot&);
 
-    TriState cachedHasDefaultToPrimitiveFastAndNonObservable() const { return m_cachedHasDefaultToPrimitiveFastAndNonObservable; }
-    void setCachedHasDefaultToPrimitiveFastAndNonObservable(TriState mode) { m_cachedHasDefaultToPrimitiveFastAndNonObservable = mode; }
+    TriState cachedHasDefaultToPrimitiveFastAndNonObservable() const { return static_cast<TriState>(m_cachedHasDefaultToPrimitiveFastAndNonObservable); }
+    void setCachedHasDefaultToPrimitiveFastAndNonObservable(TriState mode) { m_cachedHasDefaultToPrimitiveFastAndNonObservable = static_cast<unsigned>(mode); }
 
     JSPropertyNameEnumerator* cachedPropertyNameEnumerator() const;
     uintptr_t cachedPropertyNameEnumeratorAndFlag() const;
@@ -130,7 +130,7 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    void finalizeUnconditionally(VM&, CollectionScope);
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
 
     static constexpr uintptr_t cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag = 1;
     static constexpr uintptr_t cachedPropertyNameEnumeratorMask = ~static_cast<uintptr_t>(1);
@@ -181,8 +181,11 @@ private:
     WriteBarrierStructureID m_previous;
     PropertyOffset m_maxOffset;
     PropertyOffset m_transitionOffset;
-    unsigned m_activeReplacementWatchpointSet { 0 };
-    TriState m_cachedHasDefaultToPrimitiveFastAndNonObservable : 2 { TriState::Indeterminate };
+    unsigned m_activeReplacementWatchpointSet : 30 { 0 };
+    unsigned m_cachedHasDefaultToPrimitiveFastAndNonObservable : 2 { static_cast<unsigned>(TriState::Indeterminate) }; // TriState
 };
+#ifdef NDEBUG
+static_assert(sizeof(StructureRareData) <= 96, "StructureRareData should remain small");
+#endif
 
 } // namespace JSC

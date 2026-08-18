@@ -63,6 +63,7 @@
 #include "Quirks.h"
 #include "RealtimeMediaSourceCenter.h"
 #include "ScriptExecutionContext.h"
+#include "ScriptExecutionContextInlines.h"
 #include "Settings.h"
 #include "WebAudioSourceProvider.h"
 #include <JavaScriptCore/ConsoleTypes.h>
@@ -548,9 +549,14 @@ void MediaStreamTrack::trackMutedChanged(MediaStreamTrackPrivate&)
         return;
 
     bool muted = m_private->muted();
+    RefPtr<GenericPromise> sessionActivated;
     if (isAudio() && isCaptureTrack()) {
-        if (RefPtr manager = mediaSessionManager())
-            manager->audioCaptureSourceStateChanged(muted ? MediaSessionManagerInterface::IsCaptureStarting::No : MediaSessionManagerInterface::IsCaptureStarting::Yes);
+        if (RefPtr manager = mediaSessionManager()) {
+            Ref stateChanged = manager->audioCaptureSourceStateChanged(muted ? MediaSessionManagerInterface::IsCaptureStarting::No : MediaSessionManagerInterface::IsCaptureStarting::Yes);
+            // Only unmuting has something to wait for: muting requests deactivation without waiting.
+            if (!muted)
+                sessionActivated = WTF::move(stateChanged);
+        }
     }
 
     Function<void()> updateMuted = [this, protectedThis = Ref { *this }, muted] {
@@ -573,7 +579,13 @@ void MediaStreamTrack::trackMutedChanged(MediaStreamTrackPrivate&)
 
     if (m_shouldFireMuteEventImmediately)
         updateMuted();
-    else {
+    else if (sessionActivated) {
+        // Unmuting an audio capture track activates the audio session asynchronously. Delay the event
+        // until it has, so listeners observe an active session.
+        context->enqueueTaskWhenSettled(sessionActivated.releaseNonNull(), TaskSource::Networking, [updateMuted = WTF::move(updateMuted)](auto&&) mutable {
+            updateMuted();
+        });
+    } else {
         queueTaskKeepingObjectAlive(*this, TaskSource::Networking, [updateMuted = WTF::move(updateMuted)](auto&) {
             updateMuted();
         });

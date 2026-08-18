@@ -43,6 +43,7 @@
 #include "WebExtensionAPIMenus.h"
 #include "WebExtensionAPINotifications.h"
 #include "WebExtensionAPIObject.h"
+#include "WebExtensionAPIOffscreen.h"
 #include "WebExtensionAPIPermissions.h"
 #include "WebExtensionAPIRuntime.h"
 #include "WebExtensionAPIScripting.h"
@@ -64,9 +65,8 @@ class WebExtensionAPINamespace : public WebExtensionAPIObject, public JSWebExten
     WEB_EXTENSION_DECLARE_JS_WRAPPER_CLASS(WebExtensionAPINamespace, namespace, browser);
 
 public:
-#if PLATFORM(COCOA)
     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
-
+#if PLATFORM(COCOA)
     WebExtensionAPIAction& action();
 #endif
     WebExtensionAPIAlarms& alarms();
@@ -84,6 +84,9 @@ public:
     WebExtensionAPILocalization& i18n();
     WebExtensionAPIMenus& menus();
     WebExtensionAPINotifications& notifications();
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    WebExtensionAPIOffscreen& offscreen();
+#endif
     WebExtensionAPIAction& pageAction() { return action(); }
     WebExtensionAPIPermissions& permissions();
     WebExtensionAPIRuntime& runtime() const final;
@@ -119,6 +122,9 @@ private:
     RefPtr<WebExtensionAPILocalization> m_i18n;
     RefPtr<WebExtensionAPIMenus> m_menus;
     RefPtr<WebExtensionAPINotifications> m_notifications;
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    RefPtr<WebExtensionAPIOffscreen> m_offscreen;
+#endif
     RefPtr<WebExtensionAPIPermissions> m_permissions;
     mutable RefPtr<WebExtensionAPIRuntime> m_runtime;
     RefPtr<WebExtensionAPIScripting> m_scripting;

@@ -39,6 +39,7 @@
 #include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <JavaScriptCore/ScriptCallStackFactory.h>
+#include <wtf/CallbackAggregator.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
@@ -163,25 +164,32 @@ String InspectorShaderProgram::requestShaderSource(Inspector::Protocol::Canvas::
     );
 }
 
-bool InspectorShaderProgram::updateShader(Inspector::Protocol::Canvas::ShaderType shaderType, const String& source)
+void InspectorShaderProgram::updateShader(Inspector::Protocol::Canvas::ShaderType shaderType, const String& source, CompletionHandler<void(bool)>&& completionHandler)
 {
-    UNUSED_PARAM(shaderType);
-    UNUSED_PARAM(source);
-    return WTF::switchOn(m_program
+    WTF::switchOn(m_program
 #if ENABLE(WEBGL)
         , [&](const WeakRef<WebGLProgram>& weakProgram) {
             Ref program = weakProgram.get();
             RefPtr shader = shaderForType(program.get(), shaderType);
-            if (!shader)
-                return false;
+            if (!shader) {
+                completionHandler(false);
+                return;
+            }
+
             RefPtr context = dynamicDowncast<WebGLRenderingContextBase>(m_canvas->canvasContext());
-            if (!context)
-                return false;
+            if (!context) {
+                completionHandler(false);
+                return;
+            }
+
             context->shaderSource(*shader, source);
             context->compileShader(*shader);
             auto compileStatus = context->getShaderParameter(*shader, GraphicsContextGL::COMPILE_STATUS);
-            if (!std::holds_alternative<bool>(compileStatus))
-                return false;
+            if (!std::holds_alternative<bool>(compileStatus)) {
+                completionHandler(false);
+                return;
+            }
+
             if (std::get<bool>(compileStatus))
                 context->linkProgramWithoutInvalidatingAttribLocations(program.get());
             else {
@@ -192,11 +200,55 @@ bool InspectorShaderProgram::updateShader(Inspector::Protocol::Canvas::ShaderTyp
                     scriptContext->addConsoleMessage(makeUnique<ConsoleMessage>(MessageSource::Rendering, MessageType::Log, MessageLevel::Error, message));
                 }
             }
-            return true;
+            completionHandler(true);
         }
 #endif // ENABLE(WEBGL)
-        , [](const WeakRef<GPUComputePipeline>&) { return false; }
-        , [](const WeakRef<GPURenderPipeline>&) { return false; }
+        , [&](const WeakRef<GPUComputePipeline>& weakPipeline) {
+            Ref pipeline = weakPipeline.get();
+            switch (shaderType) {
+            case Inspector::Protocol::Canvas::ShaderType::Vertex:
+            case Inspector::Protocol::Canvas::ShaderType::Fragment:
+                completionHandler(false);
+                return;
+            case Inspector::Protocol::Canvas::ShaderType::Compute:
+                pipeline->updateShader(source, WTF::move(completionHandler));
+                return;
+            }
+
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        , [&](const WeakRef<GPURenderPipeline>& weakPipeline) {
+            Ref pipeline = weakPipeline.get();
+            auto didUpdateShader = [protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](bool updated) mutable {
+                if (!updated) {
+                    completionHandler(false);
+                    return;
+                }
+
+                protectedThis->invalidateRenderPipelinesForHighlighting();
+                if (!protectedThis->m_highlighted) {
+                    completionHandler(true);
+                    return;
+                }
+
+                protectedThis->prepareRenderPipelinesForHighlighting([completionHandler = WTF::move(completionHandler)]() mutable {
+                    completionHandler(true);
+                });
+            };
+            switch (shaderType) {
+            case Inspector::Protocol::Canvas::ShaderType::Vertex:
+                pipeline->updateVertexShader(source, WTF::move(didUpdateShader));
+                return;
+            case Inspector::Protocol::Canvas::ShaderType::Fragment:
+                pipeline->updateFragmentShader(source, WTF::move(didUpdateShader));
+                return;
+            case Inspector::Protocol::Canvas::ShaderType::Compute:
+                didUpdateShader(false);
+                return;
+            }
+
+            RELEASE_ASSERT_NOT_REACHED();
+        }
     );
 }
 
@@ -217,16 +269,100 @@ bool InspectorShaderProgram::setDisabled(bool disabled)
     );
 }
 
+bool InspectorShaderProgram::setHighlighted(bool highlighted)
+{
+    bool supported = WTF::switchOn(m_program
+#if ENABLE(WEBGL)
+        , [](const WeakRef<WebGLProgram>&) { return true; }
+#endif // ENABLE(WEBGL)
+        , [](const WeakRef<GPUComputePipeline>&) { return false; }
+        , [](const WeakRef<GPURenderPipeline>& weakPipeline) {
+            return !weakPipeline->fragmentShaderSource().isNull();
+        }
+    );
+    if (!supported)
+        return false;
+
+    m_highlighted = highlighted;
+    if (!highlighted)
+        invalidateRenderPipelinesForHighlighting();
+    return true;
+}
+
+void InspectorShaderProgram::invalidateRenderPipelinesForHighlighting()
+{
+    ++m_renderPipelineHighlightGeneration;
+    m_renderPipelinesForHighlighting.clear();
+    m_renderPipelineHighlightRequestGenerations.clear();
+}
+
+void InspectorShaderProgram::prepareRenderPipelinesForHighlighting(CompletionHandler<void()>&& completionHandler)
+{
+    Ref callbackAggregator = CallbackAggregator::create(WTF::move(completionHandler));
+    for (auto canvasColorAttachmentMask : m_canvasColorAttachmentMasks)
+        requestRenderPipelineForHighlighting(canvasColorAttachmentMask, [callbackAggregator = callbackAggregator.copyRef()] { });
+}
+
+void InspectorShaderProgram::requestRenderPipelineForHighlighting(unsigned canvasColorAttachmentMask, CompletionHandler<void()>&& completionHandler)
+{
+    if (!m_highlighted || m_renderPipelinesForHighlighting.contains(canvasColorAttachmentMask) || m_renderPipelineHighlightRequestGenerations.contains(canvasColorAttachmentMask)) {
+        completionHandler();
+        return;
+    }
+
+    RefPtr pipeline = renderPipeline();
+    if (!pipeline) {
+        completionHandler();
+        return;
+    }
+
+    auto generation = m_renderPipelineHighlightGeneration;
+    m_renderPipelineHighlightRequestGenerations.add(canvasColorAttachmentMask, generation);
+    pipeline->createPipelineForInspectorHighlight(canvasColorAttachmentMask, [protectedThis = Ref { *this }, canvasColorAttachmentMask, generation, completionHandler = WTF::move(completionHandler)](RefPtr<WebGPU::RenderPipeline>&& pipeline) mutable {
+        auto request = protectedThis->m_renderPipelineHighlightRequestGenerations.find(canvasColorAttachmentMask);
+        if (request != protectedThis->m_renderPipelineHighlightRequestGenerations.end() && request->value == generation) {
+            protectedThis->m_renderPipelineHighlightRequestGenerations.remove(request);
+            if (pipeline && protectedThis->m_highlighted && protectedThis->m_renderPipelineHighlightGeneration == generation)
+                protectedThis->m_renderPipelinesForHighlighting.add(canvasColorAttachmentMask, pipeline.releaseNonNull());
+        }
+        completionHandler();
+    });
+}
+
+RefPtr<WebGPU::RenderPipeline> InspectorShaderProgram::renderPipelineForHighlighting(unsigned canvasColorAttachmentMask)
+{
+    if (!canvasColorAttachmentMask)
+        return nullptr;
+
+    m_canvasColorAttachmentMasks.add(canvasColorAttachmentMask);
+    if (!m_highlighted)
+        return nullptr;
+
+    if (auto it = m_renderPipelinesForHighlighting.find(canvasColorAttachmentMask); it != m_renderPipelinesForHighlighting.end())
+        return it->value.ptr();
+
+    requestRenderPipelineForHighlighting(canvasColorAttachmentMask, [] { });
+
+    if (auto it = m_renderPipelinesForHighlighting.find(canvasColorAttachmentMask); it != m_renderPipelinesForHighlighting.end())
+        return it->value.ptr();
+    return nullptr;
+}
+
 Ref<Inspector::Protocol::Canvas::ShaderProgram> InspectorShaderProgram::buildObjectForShaderProgram()
 {
     auto programType = Inspector::Protocol::Canvas::ProgramType::Render;
     bool sharesVertexFragmentShader = false;
+    String name;
     WTF::switchOn(m_program
 #if ENABLE(WEBGL)
         , [](const WeakRef<WebGLProgram>&) { }
 #endif // ENABLE(WEBGL)
-        , [&](const WeakRef<GPUComputePipeline>&) {
+        , [&](const WeakRef<GPUComputePipeline>& weakPipeline) {
+            Ref pipeline = weakPipeline.get();
+
             programType = Inspector::Protocol::Canvas::ProgramType::Compute;
+
+            name = pipeline->label();
         }
         , [&](const WeakRef<GPURenderPipeline>& weakPipeline) {
             Ref pipeline = weakPipeline.get();
@@ -236,6 +372,8 @@ Ref<Inspector::Protocol::Canvas::ShaderProgram> InspectorShaderProgram::buildObj
                 programType = Inspector::Protocol::Canvas::ProgramType::Vertex;
             else
                 sharesVertexFragmentShader = pipeline->sharesVertexFragmentShader();
+
+            name = pipeline->label();
         }
     );
     auto payload = Inspector::Protocol::Canvas::ShaderProgram::create()
@@ -245,6 +383,8 @@ Ref<Inspector::Protocol::Canvas::ShaderProgram> InspectorShaderProgram::buildObj
         .release();
     if (sharesVertexFragmentShader)
         payload->setSharesVertexFragmentShader(true);
+    if (!name.isEmpty())
+        payload->setName(name);
     return payload;
 }
 

@@ -278,11 +278,21 @@ void AssemblyHelpers::callExceptionFuzz(VM& vm, GPRReg exceptionReg)
         storeDouble(FPRInfo::toRegister(i), Address(GPRInfo::regT0));
     }
 
+    // An exception check can be emitted where the caller still holds its return address in the link
+    // register, so the call below has to leave that register as it found it.
+#if CPU(ARM64) || CPU(RISCV64)
+    pushPair(framePointerRegister, linkRegister);
+#endif
+
     // Set up one argument.
     move(TrustedImmPtr(&vm), GPRInfo::argumentGPR0);
     move(TrustedImmPtr(tagCFunction<OperationPtrTag>(operationExceptionFuzzWithCallFrame)), GPRInfo::nonPreservedNonReturnGPR);
     prepareCallOperation(vm);
     call(GPRInfo::nonPreservedNonReturnGPR, OperationPtrTag);
+
+#if CPU(ARM64) || CPU(RISCV64)
+    popPair(framePointerRegister, linkRegister);
+#endif
 
     for (unsigned i = 0; i < FPRInfo::numberOfRegisters; ++i) {
         move(TrustedImmPtr(buffer + GPRInfo::numberOfRegisters + i), GPRInfo::regT0);
@@ -929,11 +939,9 @@ void AssemblyHelpers::emitAllocateWithNonNullAllocator(GPRReg resultGPR, const J
     if (allocator.isConstant())
         move(TrustedImmPtr(allocator.allocator().localAllocator()), allocatorGPR);
 
-#if CPU(ARM) || CPU(ARM64)
-    auto dataTempRegister = getCachedDataTempRegisterIDAndInvalidate();
-#endif
-
 #if CPU(ARM64)
+    auto dataTempRegister = getCachedDataTempRegisterIDAndInvalidate();
+
     // On ARM64, we can leverage instructions like load-pair and shifted-add to make loading from the free list
     // and extracting interval information use less instructions.
 
@@ -946,8 +954,8 @@ void AssemblyHelpers::emitAllocateWithNonNullAllocator(GPRReg resultGPR, const J
     loadPairPtr(allocatorGPR, TrustedImm32(LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()), resultGPR, scratchGPR);
     popPath = branchPtr(RelationalCondition::AboveOrEqual, resultGPR, scratchGPR);
     auto bumpLabel = label();
-    if (allocator.isConstant())
-        addPtr(TrustedImm32(allocator.allocator().cellSize()), resultGPR, scratchGPR);
+    if (allocator.hasConstantCellSize())
+        addPtr(TrustedImm32(allocator.constantCellSize()), resultGPR, scratchGPR);
     else {
         load32(Address(allocatorGPR, LocalAllocator::offsetOfCellSize()), scratchGPR);
         addPtr(resultGPR, scratchGPR);
@@ -972,8 +980,8 @@ void AssemblyHelpers::emitAllocateWithNonNullAllocator(GPRReg resultGPR, const J
     loadPtr(Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()), resultGPR);
     popPath = branchPtr(RelationalCondition::AboveOrEqual, resultGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd()));
     auto bumpLabel = label();
-    if (allocator.isConstant())
-        add64(TrustedImm32(allocator.allocator().cellSize()), Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()));
+    if (allocator.hasConstantCellSize())
+        add64(TrustedImm32(allocator.constantCellSize()), Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()));
     else {
         load32(Address(allocatorGPR, LocalAllocator::offsetOfCellSize()), scratchGPR);
         add64(scratchGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()));
@@ -1001,9 +1009,9 @@ void AssemblyHelpers::emitAllocateWithNonNullAllocator(GPRReg resultGPR, const J
     loadPtr(Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd()), scratchGPR);
     popPath = branchPtr(RelationalCondition::AboveOrEqual, resultGPR, scratchGPR);
     auto bumpLabel = label();
-    if (allocator.isConstant()) {
+    if (allocator.hasConstantCellSize()) {
         move(resultGPR, scratchGPR);
-        addPtr(TrustedImm32(allocator.allocator().cellSize()), scratchGPR);
+        addPtr(TrustedImm32(allocator.constantCellSize()), scratchGPR);
     } else {
         load32(Address(allocatorGPR, LocalAllocator::offsetOfCellSize()), scratchGPR);
         addPtr(resultGPR, scratchGPR);
@@ -1050,6 +1058,7 @@ void AssemblyHelpers::emitAllocate(GPRReg resultGPR, const JITAllocator& allocat
         slowPath.append(branchTestPtr(Zero, allocatorGPR));
         break;
     case JITAllocator::VariableNonNull:
+    case JITAllocator::VariableNonNullWithConstantCellSize:
         break;
     }
 
@@ -1498,9 +1507,6 @@ void AssemblyHelpers::storeWasmContextInstance(GPRReg src)
 void AssemblyHelpers::prepareWasmCallOperation(GPRReg instanceGPR)
 {
     UNUSED_PARAM(instanceGPR);
-#if !USE(BUILTIN_FRAME_ADDRESS) || ASSERT_ENABLED
-    storePtr(GPRInfo::callFrameRegister, Address(instanceGPR, JSWebAssemblyInstance::offsetOfTemporaryCallFrame()));
-#endif
 }
 
 #endif // ENABLE(WEBASSEMBLY)
@@ -2035,7 +2041,7 @@ void AssemblyHelpers::loadTypedArrayLength(GPRReg baseGPR, GPRReg valueGPR, GPRR
 
 
 #if ENABLE(WEBASSEMBLY)
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64)
 AssemblyHelpers::JumpList AssemblyHelpers::checkWasmStackOverflow(GPRReg instanceGPR, TrustedImm32 checkSize, GPRReg framePointerGPR)
 {
 #if CPU(ARM64)
@@ -2045,7 +2051,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::checkWasmStackOverflow(GPRReg instanc
     addPtr(checkSize, memoryTempRegister); // TrustedImm32 would use dataTempRegister. Thus let's have limit in memoryTempRegister.
     overflow.append(branchPtr(LessThan, framePointerGPR, memoryTempRegister));
     return overflow;
-#elif CPU(X86_64) || CPU(ARM)
+#elif CPU(X86_64)
     loadPtr(Address(instanceGPR, JSWebAssemblyInstance::offsetOfSoftStackLimit()), scratchRegister());
     JumpList overflow;
     // Because address is within 48bit, this addition never causes overflow.

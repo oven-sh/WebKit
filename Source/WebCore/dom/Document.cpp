@@ -62,7 +62,6 @@
 #include "ComposedTreeAncestorIterator.h"
 #include "ComposedTreeIterator.h"
 #include "CompositionEvent.h"
-#include "ConstantPropertyMap.h"
 #include "ContentSecurityPolicy.h"
 #include "ContentVisibilityDocumentState.h"
 #include "ContentfulPaintChecker.h"
@@ -777,6 +776,9 @@ void Document::populateDocumentSyncDataForNewlyConstructedDocument(DocumentSyncD
 #if ENABLE(DOM_AUDIO_SESSION)
     case DocumentSyncDataType::AudioSessionType:
         m_syncData->audioSessionType = DOMAudioSession::Type::Auto;
+        break;
+    case DocumentSyncDataType::AudioSessionState:
+        m_syncData->audioSessionState = DOMAudioSession::State::Inactive;
         break;
 #endif
     // The following either have default values that match a newly constructed document
@@ -6196,7 +6198,8 @@ void Document::processCaptureStateDidChange(Function<bool(const Page&)>&& isPage
     if (!hasRealtimeMediaSource(m_captureSources, filterSource))
         return;
 
-    eventLoop().queueTask(TaskSource::MediaElement, [weakDocument = WeakPtr { *this }, weakSession = WeakPtr { *mediaSession }, isPageMuted = isPageMutedCallback(*page), filterSource = WTF::move(filterSource), isPageMutedCallback = WTF::move(isPageMutedCallback), action] {
+    bool isPageMuted = isPageMutedCallback(*page);
+    eventLoop().queueTask(TaskSource::MediaElement, [weakDocument = WeakPtr { *this }, weakSession = WeakPtr { *mediaSession }, isPageMuted, filterSource = WTF::move(filterSource), isPageMutedCallback = WTF::move(isPageMutedCallback), action] {
         RefPtr protecteDocument = weakDocument.get();
         if (!protecteDocument)
             return;
@@ -7118,6 +7121,16 @@ void Document::dispatchWindowLoadEvent()
         return;
     protect(window())->dispatchLoadEvent();
     m_loadEventFinished = true;
+
+    // A subframe that finished loading without ever being laid out was hidden (e.g. parent had
+    // display:none); note that so the first layout can fire resize for the 0x0 to actual size change.
+    if (RefPtr frameView = view()) {
+        if (!frameView->layoutContext().didFirstLayout()) {
+            if (RefPtr owner = ownerElement(); owner && !owner->renderer())
+                frameView->setLoadedWhileHidden();
+        }
+    }
+
     protect(cachedResourceLoader())->documentDidFinishLoadEvent();
 }
 
@@ -9538,7 +9551,7 @@ Document::RegionFixedPair Document::absoluteEventRegionForNode(Node& node)
     if (!rootRelativeBounds.isEmpty())
         region.unite(Region(enclosingIntRect(rootRelativeBounds)));
 
-    return RegionFixedPair(region, insideFixedPosition);
+    return RegionFixedPair(WTF::move(region), insideFixedPosition);
 }
 
 auto Document::absoluteRegionForWheelEventTargets() -> RegionFixedPair
@@ -9555,7 +9568,7 @@ auto Document::absoluteRegionForWheelEventTargets() -> RegionFixedPair
         insideFixedPosition |= targetRegionFixedPair.second;
     }
 
-    return RegionFixedPair(targetRegion, insideFixedPosition);
+    return RegionFixedPair(WTF::move(targetRegion), insideFixedPosition);
 }
 
 void Document::updateLastHandledUserGestureTimestamp(MonotonicTime time)
@@ -10470,6 +10483,9 @@ static void updateAndNotifyIntersectionObservers(const Vector<WeakPtr<Intersecti
 
 void Document::updateRemoteIntersectionObservers()
 {
+    if (m_remoteIntersectionObservers.isEmpty())
+        return;
+
     RefPtr page = this->page();
     if (!page)
         return;
@@ -10477,6 +10493,16 @@ void Document::updateRemoteIntersectionObservers()
     RefPtr mainFrame = this->page()->mainFrame();
     if (!mainFrame)
         return;
+
+    RefPtr frameView = view();
+    if (!frameView)
+        return;
+
+    bool needsLayout = frameView->layoutContext().isLayoutPending() || (renderView() && renderView()->needsLayout());
+    if (needsLayout || hasPendingStyleRecalc()) {
+        scheduleRenderingUpdate(RenderingUpdateStep::IntersectionObservations);
+        return;
+    }
 
     updateAndNotifyIntersectionObservers(m_remoteIntersectionObservers, *mainFrame);
 }
@@ -10667,15 +10693,6 @@ void Document::didRemoveInDocumentShadowRoot(ShadowRoot& shadowRoot)
 {
     ASSERT(m_inDocumentShadowRoots.contains(shadowRoot));
     m_inDocumentShadowRoots.remove(shadowRoot);
-}
-
-ConstantPropertyMap& Document::constantProperties() const
-{
-    if (!m_constantPropertyMap) {
-        auto& thisDocument = const_cast<Document&>(*this);
-        thisDocument.m_constantPropertyMap = makeUnique<ConstantPropertyMap>(thisDocument);
-    }
-    return *m_constantPropertyMap;
 }
 
 void Document::orientationChanged(IntDegrees orientation)
@@ -12085,12 +12102,8 @@ OptionSet<NoiseInjectionPolicy> Document::noiseInjectionPolicies() const
 
 OptionSet<AdvancedPrivacyProtections> Document::advancedPrivacyProtections() const
 {
-    RefPtr mainFrameDocument = this->mainFrameDocument();
-    if (!mainFrameDocument)
-        return { };
-
-    if (auto* loader = mainFrameDocument->loader())
-        return loader->advancedPrivacyProtections();
+    if (RefPtr page = this->page())
+        return page->advancedPrivacyProtections();
 
     return { };
 }

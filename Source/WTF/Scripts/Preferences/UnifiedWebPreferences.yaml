@@ -694,7 +694,21 @@ AsyncClipboardAPIEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)" : true
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)" : true
+      default: false
+    WebCore:
+      default: false
+
+AsyncClipboardRichContentEnabled:
+  type: bool
+  status: internal
+  humanReadableName: "Async clipboard rich content"
+  humanReadableDescription: "Enable rich content types in the async clipboard API"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
       default: false
@@ -1062,20 +1076,6 @@ CSS3DTransformBackfaceVisibilityInteroperabilityEnabled:
     WebCore:
       default: false
 
-CSSAnchorPositioningEnabled:
-  type: bool
-  status: stable
-  category: css
-  humanReadableName: "CSS Anchor Positioning"
-  humanReadableDescription: "Enable CSS Anchor Positioning"
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-    WebCore:
-      default: true
-
 CSSAppearanceBaseEnabled:
   type: bool
   status: testable
@@ -1177,16 +1177,16 @@ CSSConstrainedDynamicRangeLimitEnabled:
 CSSCornerShapeEnabled:
   type: bool
   category: css
-  status: preview
+  status: stable
   humanReadableName: "CSS corner-shape property"
   humanReadableDescription: "Enable support for CSS corner-shape property"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSCounterStyleAtRuleImageSymbolsEnabled:
   type: bool
@@ -1246,17 +1246,17 @@ CSSFieldSizingEnabled:
 
 CSSFontFaceMetricOverrideDescriptorsEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "CSS @font-face metric override descriptors"
   humanReadableDescription: "Enable CSS @font-face metric override descriptors"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSFontSynthesisStyleObliqueOnlyEnabled:
   type: bool
@@ -1303,17 +1303,17 @@ CSSFunctionAtRuleEnabled:
 
 CSSIdentFunctionEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "CSS ident() function"
   humanReadableDescription: "Enable the CSS Values 5 ident() function"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSIfFunctionEnabled:
   type: bool
@@ -1321,6 +1321,20 @@ CSSIfFunctionEnabled:
   status: stable
   humanReadableName: "CSS if() function"
   humanReadableDescription: "Enable CSS Values 5 if() conditional substitution function"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
+CSSInheritFunctionEnabled:
+  type: bool
+  status: stable
+  category: css
+  humanReadableName: "CSS inherit() function"
+  humanReadableDescription: "Enable the CSS Values 5 inherit() function"
   defaultValue:
     WebKitLegacy:
       default: true
@@ -1385,6 +1399,20 @@ CSSLineFitEdgeEnabled:
     WebCore:
       default: false
 
+CSSLinkParametersEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS Linked Parameters"
+  humanReadableDescription: "Enable passing CSS link parameters to linked resources"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSMarkerContentEnabled:
   type: bool
   status: stable
@@ -1415,17 +1443,17 @@ CSSMathDepthEnabled:
       
 CSSObjectViewBoxEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "CSS object-view-box property"
   humanReadableDescription: "Enable support for CSS object-view-box property"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSOverflowClipMarginEnabled:
   type: bool
@@ -1490,16 +1518,16 @@ CSSRandomFunctionEnabled:
 CSSRandomItemFunctionEnabled:
   type: bool
   category: css
-  status: testable
+  status: stable
   humanReadableName: "CSS random-item()"
   humanReadableDescription: "Enable support for CSS Values and Units Module Level 5 random-item()"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSRhythmicSizingEnabled:
   type: bool
@@ -1714,6 +1742,20 @@ CSSTextWrapPrettyEnabled:
      WebCore:
        default: true
 
+CSSToggleFunctionEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS toggle() function"
+  humanReadableDescription: "Enable CSS Values 5 toggle() function"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSTransformStyleSeparatedEnabled:
   type: bool
   status: testable
@@ -1801,6 +1843,20 @@ CSSUnprefixedBackdropFilterEnabled:
       "ENABLE(UNPREFIXED_BACKDROP_FILTER)": true
       default: false
 
+CSSUserSelectEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS Unprefixed User Select"
+  humanReadableDescription: "Enable the unprefixed user-select CSS property"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSWhiteSpaceTrimEnabled:
   type: bool
   status: stable
@@ -1870,10 +1926,10 @@ CanvasColorSpaceEnabled:
   humanReadableDescription: "Enable use of predefined canvas color spaces"
   defaultValue:
     WebKitLegacy:
-      "PLATFORM(COCOA)": true
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebKit:
-      "PLATFORM(COCOA)": true
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
       default: false
@@ -2422,7 +2478,7 @@ DOMPasteAccessRequestsEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      "PLATFORM(IOS) || PLATFORM(MAC) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(VISION)": true
+      "PLATFORM(IOS) || PLATFORM(MAC) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN) || PLATFORM(VISION)": true
       default: false
     WebCore:
       default: false
@@ -3496,18 +3552,18 @@ FullScreenEnabled:
 
 FullScreenKeyboardLock:
   type: bool
-  status: stable
+  status: unstable
   category: dom
   humanReadableName: "Fullscreen API based Keyboard Lock"
   humanReadableDescription: "Fullscreen API based Keyboard Lock"
   condition: ENABLE(FULLSCREEN_API)
   defaultValue:
     WebKitLegacy:
-      default: true
+      default: false
     WebKit:
-      default: true
+      default: false
     WebCore:
-      default: true
+      default: false
 
 FullscreenRequirementForScreenOrientationLockingEnabled:
   type: bool
@@ -3919,6 +3975,20 @@ HiddenUntilFoundEnabled:
      WebCore:
        default: true
 
+HighlightsFromPointEnabled:
+   type: bool
+   status: stable
+   category: css
+   humanReadableName: "CSS Custom Highlight API: highlightsFromPoint()"
+   humanReadableDescription: "Enable the CSS Custom Highlight API highlightsFromPoint() method"
+   defaultValue:
+     WebKitLegacy:
+       default: true
+     WebKit:
+       default: true
+     WebCore:
+       default: true
+
 HorizontalBannerViewOverlaysEnabled:
   type: bool
   status: internal
@@ -4141,7 +4211,7 @@ ImageControlsEnabled:
 
 ImportDeferEnabled:
   type: bool
-  status: testable
+  status: stable
   category: javascript
   humanReadableName: "Import Defer"
   humanReadableDescription: "Enable deferred module import."
@@ -4150,7 +4220,20 @@ ImportDeferEnabled:
   sharedPreferenceForWebProcess: true
   defaultValue:
     WebKit:
-      default: false
+      default: true
+
+ImportTextEnabled:
+  type: bool
+  status: stable
+  category: javascript
+  humanReadableName: "Import Text"
+  humanReadableDescription: "Enable text module import."
+  webcoreBinding: none
+  jscOptionName: useImportText
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: true
 
 InactiveMediaCaptureStreamRepromptIntervalInMinutes:
   type: double
@@ -4306,7 +4389,8 @@ InputTypeColorEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      "PLATFORM(COCOA) && !PLATFORM(WATCHOS) || PLATFORM(GTK)": true
+      "PLATFORM(COCOA) && !PLATFORM(WATCHOS)": true
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
       default: false
@@ -4561,19 +4645,6 @@ InterruptVideoOnPageVisibilityChangeEnabled:
     WebCore:
       default: false
 
-IntlEraMonthcodeEnabled:
-  type: bool
-  status: testable
-  category: javascript
-  humanReadableName: "Intl Era and Month Code"
-  humanReadableDescription: "Enable Intl.Era-monthcode proposal."
-  webcoreBinding: none
-  jscOptionName: useIntlEraMonthcode
-  sharedPreferenceForWebProcess: true
-  defaultValue:
-    WebKit:
-      default: false
-
 InvisibleAutoplayNotPermitted:
   type: bool
   status: embedder
@@ -4712,7 +4783,7 @@ IsThirdPartyCookieBlockingDisabled:
 
 IteratorChunkingEnabled:
   type: bool
-  status: testable
+  status: stable
   category: javascript
   humanReadableName: "Iterator Chunking"
   humanReadableDescription: "Expose the Iterator.prototype.chunks and Iterator.prototype.windows methods."
@@ -4721,7 +4792,7 @@ IteratorChunkingEnabled:
   sharedPreferenceForWebProcess: true
   defaultValue:
     WebKit:
-      default: false
+      default: true
 
 IteratorIncludesEnabled:
   type: bool
@@ -4738,7 +4809,7 @@ IteratorIncludesEnabled:
 
 IteratorJoinEnabled:
   type: bool
-  status: testable
+  status: stable
   category: javascript
   humanReadableName: "Iterator Join"
   humanReadableDescription: "Expose the Iterator.prototype.join method."
@@ -4747,7 +4818,7 @@ IteratorJoinEnabled:
   sharedPreferenceForWebProcess: true
   defaultValue:
     WebKit:
-      default: false
+      default: true
 
 IteratorSequencingEnabled:
   type: bool
@@ -4871,7 +4942,7 @@ JavaScriptRuntimeFlags:
 
 JointIterationEnabled:
   type: bool
-  status: testable
+  status: stable
   category: javascript
   humanReadableName: "Joint Iteration"
   humanReadableDescription: "Expose the Iterator.zip and Iterator.zipKeyed methods"
@@ -4879,12 +4950,8 @@ JointIterationEnabled:
   jscOptionName: useJointIteration
   sharedPreferenceForWebProcess: true
   defaultValue:
-    WebKitLegacy:
-      default: false
     WebKit:
-      default: false
-    WebCore:
-      default: false
+      default: true
 
 KeyboardDismissalGestureEnabled:
   type: bool
@@ -5175,6 +5242,20 @@ LinkSanitizerEnabled:
       default: false
     WebCore:
       default: false
+
+ListMarkerPositionedPostLayoutEnabled:
+  type: bool
+  status: stable
+  category: css
+  humanReadableName: "Position outside list markers after layout"
+  humanReadableDescription: "Keep an outside list marker as the list item's first child and position it after layout, instead of reparenting it into the descendant that holds the first line box"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
 
 LoadDeferringEnabled:
   type: bool
@@ -5930,7 +6011,7 @@ MediaVideoCodecIDsAllowedInLockdownMode:
 
 MetaViewportInteractiveWidgetEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "Meta Viewport Interactive Widget"
   humanReadableDescription: "Enable the interactive-widget attribute on the viewport meta element"
@@ -5938,6 +6019,7 @@ MetaViewportInteractiveWidgetEnabled:
     WebKitLegacy:
       default: false
     WebKit:
+      "PLATFORM(COCOA)": true
       default: false
     WebCore:
       default: false
@@ -6218,6 +6300,22 @@ NavigationAPIEnabled:
   category: dom
   humanReadableName: "Navigation API"
   humanReadableDescription: "Enable Navigation API"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
+      default: false
+    WebCore:
+      "PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)": true
+      default: false
+
+NavigationAPIPrecommitHandlerEnabled:
+  type: bool
+  status: stable
+  category: dom
+  humanReadableName: "Navigation API Precommit Handler"
+  humanReadableDescription: "Enable Navigation API Precommit Handler"
   defaultValue:
     WebKitLegacy:
       default: false
@@ -6840,17 +6938,17 @@ PopoverAttributeEnabled:
 
 PopoverHintEnabled:
   type: bool
-  status: preview
+  status: stable
   category: html
   humanReadableName: "HTML popover hint type"
   humanReadableDescription: "Enable popover='hint' type support"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 PreferFasterClickOverDoubleTap:
   type: bool
@@ -6992,7 +7090,7 @@ PropagateDamagingInformation:
      WebKitLegacy:
        default: false
      WebKit:
-       "PLATFORM(GTK)": true
+       "PLATFORM(GTK) || PLATFORM(WPE)": true
        default: false
      WebCore:
        default: false
@@ -7109,6 +7207,19 @@ ReadableStreamTransferEnabled:
       default: true
     WebKit:
       default: true
+
+RegExpBufferBoundariesEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "RegExp Buffer Boundaries"
+  humanReadableDescription: "Allow the use in regular expressions of \\\\A, \\\\z and \\\\Z from the RegExp Buffer Boundaries proposal"
+  webcoreBinding: none
+  jscOptionName: useRegExpBufferBoundaries
+  sharedPreferenceForWebProcess: true
+  defaultValue:
+    WebKit:
+      default: false
 
 RemoteMediaSessionManagerEnabled:
   type: bool
@@ -7380,7 +7491,7 @@ SKAttributionEnabled:
 
 SVGExternalResourcesEnabled:
   type: bool
-  status: testable
+  status: preview
   category: css
   humanReadableName: "SVG external resources"
   humanReadableDescription: "Enable referencing SVG resources (paint servers, etc.) via external or data: URLs"
@@ -8394,6 +8505,21 @@ SpatialPortalEnabled:
       default: false
     WebCore:
       default: false
+  sharedPreferenceForWebProcess: true
+
+SpatialVideoRenderingEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "Spatial Video Rendering"
+  humanReadableDescription: "Render projected/spatial (APMP) video onto a draggable projection in the media controls"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
 SpeakerSelectionRequiresUserGesture:
@@ -9156,7 +9282,7 @@ UnifyDamagedRegions:
      WebKitLegacy:
        default: false
      WebKit:
-       "PLATFORM(GTK)": true
+       "PLATFORM(GTK) || PLATFORM(WPE)": true
        default: false
      WebCore:
        default: false
@@ -9204,7 +9330,7 @@ UseAVCaptureDeviceRotationCoordinatorAPI:
 
 UseAlternatePDFHUD:
   type: bool
-  status: internal
+  status: mature
   category: html
   humanReadableName: "Alternate PDF HUD"
   humanReadableDescription: "Use the alternate PDF HUD"
@@ -9213,7 +9339,7 @@ UseAlternatePDFHUD:
   condition: ENABLE(PDF_HUD)
   defaultValue:
     WebKit:
-      default: false
+      default: true
 
 UseAppKitGestures:
   type: bool
@@ -9227,6 +9353,20 @@ UseAppKitGestures:
       default: false
     WebKit:
       default: defaultUseAppKitGestures()
+    WebCore:
+      default: false
+
+UseAppKitGesturesForGestureEvents:
+  type: bool
+  status: internal
+  humanReadableName: "AppKit gestures for gesture events"
+  humanReadableDescription: "Use AppKit gestures to drive gesture event synthesis"
+  condition: PLATFORM(MAC)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
     WebCore:
       default: false
 
@@ -9269,6 +9409,7 @@ UseDamagingInformationForCompositing:
     WebKitLegacy:
       default: false
     WebKit:
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
       default: false
@@ -9797,7 +9938,7 @@ WasmMemory64Enabled:
   status: stable
   category: javascript
   humanReadableName: "WebAssembly Memory64"
-  humanReadableDescription: "Allow the Memory64 proposal for WebAssembly. This feature is currently only supported in the IPInt tier."
+  humanReadableDescription: "Allow the Memory64 proposal for WebAssembly."
   webcoreBinding: none
   jscOptionName: useWasmMemory64
   sharedPreferenceForWebProcess: true
@@ -10098,6 +10239,21 @@ WebCodecsHEVCEnabled:
       "PLATFORM(COCOA)": true
       default: false
 
+WebCodecsImageEnabled:
+  type: bool
+  status: stable
+  category: media
+  humanReadableName: "WebCodecs Image API"
+  humanReadableDescription: "Enable WebCodecs Image API"
+  condition: ENABLE(WEB_CODECS)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
 WebCodecsVideoEnabled:
   type: bool
   status: mature
@@ -10162,6 +10318,21 @@ WebExtensionBookmarksEnabled:
   humanReadableName: "WebExtension Bookmarks API"
   humanReadableDescription: "Enable support for WebExtensions using the Bookmarks API"
   condition: ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+WebExtensionOffscreenEnabled:
+  type: bool
+  status: testable
+  category: extensions
+  humanReadableName: "WebExtension Offscreen API"
+  humanReadableDescription: "Enable support for WebExtensions using the Offscreen API"
+  condition: ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
   defaultValue:
     WebKitLegacy:
       default: false

@@ -422,6 +422,15 @@ void PageClientImpl::updatePDFHUDLocation(PDFPluginIdentifier identifier, const 
     protect(m_impl)->updatePDFHUDLocation(identifier, rect);
 }
 
+#if ENABLE(AX_PDF_SUPPORT)
+
+void PageClientImpl::updatePDFHUDAccessibilityDisplayMode(PDFPluginIdentifier identifier, PDFAccessibilityDisplayModeState accessibilityDisplayModeState)
+{
+    protect(m_impl)->updatePDFHUDAccessibilityDisplayMode(identifier, accessibilityDisplayModeState);
+}
+
+#endif // ENABLE(AX_PDF_SUPPORT)
+
 void PageClientImpl::removePDFHUD(PDFPluginIdentifier identifier)
 {
     protect(m_impl)->removePDFHUD(identifier);
@@ -734,7 +743,7 @@ void PageClientImpl::wheelEventWasNotHandledByWebCore(const NativeWebWheelEvent&
 #if ENABLE(MAC_GESTURE_EVENTS)
 void PageClientImpl::gestureEventWasNotHandledByWebCore(const NativeWebGestureEvent& event)
 {
-    m_impl->gestureEventWasNotHandledByWebCore(event.nativeEvent());
+    m_impl->gestureEventWasNotHandledByWebCore(event);
 }
 #endif
 

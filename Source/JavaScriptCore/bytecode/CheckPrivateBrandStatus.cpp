@@ -56,9 +56,7 @@ CheckPrivateBrandStatus CheckPrivateBrandStatus::computeForBaseline(CodeBlock* b
     CheckPrivateBrandStatus result;
 
 #if ENABLE(DFG_JIT)
-    result = computeForPropertyInlineCacheWithoutExitSiteFeedback(
-        locker, baselineBlock, map.get(CodeOrigin(bytecodeIndex)).propertyCache);
-
+    result = computeForPropertyInlineCacheWithoutExitSiteFeedback(locker, baselineBlock, map.get(CodeOrigin(bytecodeIndex)).propertyCache);
     if (didExit)
         return result.slowVersion();
 #else
@@ -154,8 +152,7 @@ CheckPrivateBrandStatus CheckPrivateBrandStatus::computeFor(
             CheckPrivateBrandStatus result;
             {
                 ConcurrentJSLocker locker(context->optimizedCodeBlock->m_lock);
-                result = computeForPropertyInlineCacheWithoutExitSiteFeedback(
-                    locker, context->optimizedCodeBlock, status.propertyCache);
+                result = computeForPropertyInlineCacheWithoutExitSiteFeedback(locker, context->optimizedCodeBlock, status.propertyCache);
             }
             if (result.isSet())
                 return bless(result);
@@ -243,10 +240,10 @@ void CheckPrivateBrandStatus::markIfCheap(Visitor& visitor)
 template void CheckPrivateBrandStatus::markIfCheap(AbstractSlotVisitor&);
 template void CheckPrivateBrandStatus::markIfCheap(SlotVisitor&);
 
-bool CheckPrivateBrandStatus::finalize(VM& vm)
+bool CheckPrivateBrandStatus::isStillLive(VM& vm)
 {
     for (auto& variant : m_variants) {
-        if (!variant.finalize(vm))
+        if (!variant.isStillLive(vm))
             return false;
     }
     return true;

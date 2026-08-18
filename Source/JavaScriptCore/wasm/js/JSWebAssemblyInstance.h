@@ -124,7 +124,7 @@ public:
             m_cachedMemory0Size = m_memories[i]->memory().size();
             m_wasmMemory = value->memory();
         }
-        m_cachedIsMemory64 = moduleInformation().memory(0).isMemory64();
+        m_cachedMemory0IsMemory64 = moduleInformation().memory(0).isMemory64();
         m_memories[i]->memory().registerInstance(*this);
     }
 
@@ -138,6 +138,7 @@ public:
         // If there are zero memories then there will be space for a dummy memory (handled in constructor)
 
         m_memories[0].set(vm, this, value);
+        updateCachedMemoryBaseSizePair(0);
     }
 
     MemoryMode memory0Mode() const { return memory(0)->memory().mode(); }
@@ -168,7 +169,7 @@ public:
     const Wasm::ModuleInformation& moduleInformation() const { return m_moduleInformation.get(); }
 
     void clearJSCallICs(VM&);
-    void finalizeUnconditionally(VM&, CollectionScope);
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
 
     static constexpr ptrdiff_t offsetOfJSModule() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_jsModule); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_vm); }
@@ -214,13 +215,11 @@ public:
 
             // reload all of the cached base and size pointers
             for (unsigned i = 0; i < m_moduleInformation->memoryCount(); i++) {
+                if (!m_memories[i])
+                    continue;
                 cachedMemoryBaseSizePairs()[i] = {
                     m_memories[i]->basePointer(),
-#if CPU(ARM)
-                    m_memories[i]->size();
-#else
                     m_memories[i]->mappedCapacity()
-#endif
                 };
             }
             m_cachedMemory0Size = m_memories[0]->memory().size();
@@ -230,7 +229,7 @@ public:
     uint32_t cachedTable0Length() const { return m_cachedTable0Length; }
     Wasm::FuncRefTable::Function* cachedTable0Buffer() const { return m_cachedTable0Buffer; }
 
-    bool cachedIsMemory64() const { return m_cachedIsMemory64; }
+    bool cachedMemory0IsMemory64() const { return m_cachedMemory0IsMemory64; }
 
     void updateCachedTable0();
 
@@ -306,9 +305,8 @@ public:
 
     static constexpr ptrdiff_t offsetOfCachedTable0Buffer() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_cachedTable0Buffer); }
     static constexpr ptrdiff_t offsetOfCachedTable0Length() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_cachedTable0Length); }
-    static constexpr ptrdiff_t offsetOfTemporaryCallFrame() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_temporaryCallFrame); }
     static constexpr ptrdiff_t offsetOfBuiltinCalleeBits() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_builtinCalleeBits); }
-    static constexpr ptrdiff_t offsetOfCachedIsMemory64() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_cachedIsMemory64); }
+    static constexpr ptrdiff_t offsetOfCachedMemory0IsMemory64() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_cachedMemory0IsMemory64); }
     static constexpr ptrdiff_t offsetOfCachedMemory0Size() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_cachedMemory0Size); }
 
     // Tail accessors.
@@ -318,9 +316,17 @@ public:
         return roundUpToMultipleOf<alignof(WasmMemoryBaseAndSize)>(sizeof(JSWebAssemblyInstance)) + sizeof(WasmMemoryBaseAndSize) * index;
     }
 
+    // Every entry into wasm loads the pinned base and bounds-checking registers from pair 0
+    // without first asking whether the module declares a memory, so the slot has to exist even
+    // when it only ever holds the dummy memory.
+    static unsigned cachedMemoryBaseSizePairCount(const Wasm::ModuleInformation& info)
+    {
+        return std::max(1U, info.memoryCount());
+    }
+
     static ptrdiff_t offsetOfImportFunctionInfo(const Wasm::ModuleInformation& info, unsigned index)
     {
-        return WTF::roundUpToMultipleOf<alignof(WasmOrJSImportableFunctionCallLinkInfo)>(offsetOfCachedMemoryBaseSizePair(info.memoryCount())) + sizeof(WasmOrJSImportableFunctionCallLinkInfo) * index;
+        return WTF::roundUpToMultipleOf<alignof(WasmOrJSImportableFunctionCallLinkInfo)>(offsetOfCachedMemoryBaseSizePair(cachedMemoryBaseSizePairCount(info))) + sizeof(WasmOrJSImportableFunctionCallLinkInfo) * index;
     }
 
     static ptrdiff_t offsetOfTable(const Wasm::ModuleInformation& info, unsigned index)
@@ -357,7 +363,7 @@ public:
 
     std::span<WasmMemoryBaseAndSize> cachedMemoryBaseSizePairs()
     {
-        return std::span { std::bit_cast<WasmMemoryBaseAndSize*>(std::bit_cast<uint8_t*>(this) + offsetOfCachedMemoryBaseSizePair(0)), m_moduleInformation->memoryCount() };
+        return std::span { std::bit_cast<WasmMemoryBaseAndSize*>(std::bit_cast<uint8_t*>(this) + offsetOfCachedMemoryBaseSizePair(0)), cachedMemoryBaseSizePairCount(m_moduleInformation) };
     }
 
     std::span<WasmOrJSImportableFunctionCallLinkInfo> importFunctionInfos()
@@ -414,12 +420,6 @@ public:
     const Wasm::Tag& tag(unsigned i) const { return *m_tags[i]; }
     void setTag(unsigned, Ref<const Wasm::Tag>&&);
 
-    CallFrame* temporaryCallFrame() const { return m_temporaryCallFrame; }
-    void setTemporaryCallFrame(CallFrame* callFrame)
-    {
-        m_temporaryCallFrame = callFrame;
-    }
-
     void* softStackLimit() const LIFETIME_BOUND { return m_stackMirror.softStackLimit(); }
 
     void setFaultPC(Wasm::ExceptionType exception, void* pc)
@@ -456,11 +456,10 @@ private:
     const Ref<const Wasm::ModuleInformation> m_moduleInformation;
     RefPtr<Wasm::InstanceAnchor> m_anchor;
     RefPtr<SourceProvider> m_sourceProvider;
-    bool m_cachedIsMemory64 { false }; // FIXME(wasm-memory64): rename this to cachedMemory0IsMemory64 or something similar
-    uint64_t m_cachedMemory0Size; // memory.size for memory 0, handled specially to avoid performance regressions
+    bool m_cachedMemory0IsMemory64 { false };
+    uint64_t m_cachedMemory0Size { 0 }; // memory.size for memory 0, handled specially to avoid performance regressions
 
     RefPtr<Wasm::Memory> m_wasmMemory;
-    CallFrame* m_temporaryCallFrame { nullptr };
     Wasm::Global::Value* m_globals { nullptr };
     FunctionWrapperMap m_functionWrappers;
 

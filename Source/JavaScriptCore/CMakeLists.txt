@@ -849,6 +849,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/FullGCActivityCallback.h
     heap/GCActivityCallback.h
     heap/GCAssertions.h
+    heap/GCCompletionCallback.h
     heap/GCConductor.h
     heap/GCDeferralContext.h
     heap/GCDeferralContextInlines.h
@@ -865,17 +866,13 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/GCTypeMap.h
     heap/GigacageAlignedMemoryAllocator.h
     heap/Handle.h
-    heap/HandleBlock.h
-    heap/HandleBlockInlines.h
     heap/HandleForward.h
-    heap/HandleSet.h
     heap/HandleTypes.h
     heap/Heap.h
     heap/HeapAnalyzer.h
     heap/HeapCell.h
     heap/HeapCellInlines.h
     heap/HeapCellType.h
-    heap/HeapFinalizerCallback.h
     heap/HeapHelperPool.h
     heap/HeapInlines.h
     heap/HeapIterationScope.h
@@ -927,8 +924,10 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/StochasticSpaceTimeMutatorScheduler.h
     heap/StopIfNecessaryTimer.h
     heap/Strong.h
+    heap/StrongBlock.h
     heap/StrongForward.h
     heap/StrongInlines.h
+    heap/StrongSet.h
     heap/StructureAlignedMemoryAllocator.h
     heap/Subspace.h
     heap/SubspaceInlines.h

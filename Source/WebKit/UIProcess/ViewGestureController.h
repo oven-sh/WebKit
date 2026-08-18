@@ -83,7 +83,6 @@ class Navigation;
 
 #if PLATFORM(MAC)
 typedef WebKit::NativeWebWheelEvent PlatformScrollEvent;
-typedef NSEvent *PlatformMagnificationEvent;
 #elif PLATFORM(GTK)
 typedef struct {
     WebCore::FloatSize delta;
@@ -109,6 +108,8 @@ using WebBackForwardListWrapper = WebBackForwardList;
 class WebBackForwardListItem;
 class WebPageProxy;
 class WebProcessProxy;
+
+enum class WebEventPhase : uint8_t;
 
 class ViewGestureController final : public IPC::MessageReceiver, public RefCounted<ViewGestureController> {
     WTF_MAKE_TZONE_ALLOCATED(ViewGestureController);
@@ -164,10 +165,8 @@ public:
 #endif
 
 #if PLATFORM(MAC)
-    void handleMagnificationGestureEvent(PlatformMagnificationEvent, WebCore::FloatPoint origin);
+    void handleMagnificationGesture(double scale, WebEventPhase, WebCore::FloatPoint originInViewCoordinates);
     void handleSmartMagnificationGesture(WebCore::FloatPoint gestureLocationInViewCoordinates);
-
-    void gestureEventWasNotHandledByWebCore(PlatformMagnificationEvent, WebCore::FloatPoint origin);
 
     void setCustomSwipeViews(Vector<RetainPtr<NSView>> views) { m_customSwipeViews = WTF::move(views); }
     bool hasCustomSwipeViews() const { return !m_customSwipeViews.isEmpty(); }

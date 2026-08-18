@@ -68,7 +68,6 @@ void RemoteMediaSessionProxy::updateState(const RemoteMediaSessionState& remoteS
 {
     m_sessionState = remoteState;
     downcast<RemoteMediaSessionClientProxy>(protect(client())).updateState(remoteState);
-
 }
 
 void RemoteMediaSessionProxy::setState(WebCore::PlatformMediaSessionState state)

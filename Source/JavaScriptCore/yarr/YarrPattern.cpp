@@ -156,13 +156,13 @@ public:
         }
 
         if (m_setOp != CharacterClassSetOp::Default) {
-            Vector<char32_t> matches8;
-            Vector<CharacterRange> ranges8;
-            Vector<char32_t> matches32;
-            Vector<CharacterRange> ranges32;
-            addSortedInverted(0, 0xff, other->m_matches8, other->m_ranges8, matches8, ranges8);
-            addSortedInverted(0x100, UCHAR_MAX_VALUE, other->m_matches32, other->m_ranges32, matches32, ranges32);
-            performSetOpWithMatches(matches8, ranges8, matches32, ranges32);
+            // The complement has no strings, so the pending operation has to be applied to the accumulated
+            // strings as well (an intersection drops them all, a subtraction keeps them): materialize it and
+            // go through append(), which applies m_setOp to both the characters and the strings.
+            CharacterClass inverted;
+            addSortedInverted(0, 0xff, other->m_matches8, other->m_ranges8, inverted.m_matches8, inverted.m_ranges8);
+            addSortedInverted(0x100, UCHAR_MAX_VALUE, other->m_matches32, other->m_ranges32, inverted.m_matches32, inverted.m_ranges32);
+            append(&inverted);
             return;
         }
 

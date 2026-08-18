@@ -628,7 +628,7 @@ CodePtr<JSEntryPtrTag> RTT::jsToWasmICEntrypoint() const
                 scratchFPR = wasmCallInfo.params[i].location.fpr();
 
             jit.loadValue(jsParam, scratchJSR);
-            slowPath.append(jit.branchIfNotNumber(scratchJSR, InvalidGPRReg));
+            slowPath.append(jit.branchIfNotNumber(scratchJSR));
             auto isInt32 = jit.branchIfInt32(scratchJSR);
             jit.unboxDouble(scratchJSR.payloadGPR(), scratchJSR.payloadGPR(), scratchFPR);
             if (argumentType(i).isF32())
@@ -657,11 +657,9 @@ CodePtr<JSEntryPtrTag> RTT::jsToWasmICEntrypoint() const
     }
 
     // At this point, we're committed to doing a fast call.
-#if !CPU(ARM) // ARM has no pinned registers for Wasm Memory, so no need to set them up
     // We don't know what memory mode we're about to call into but it's always valid to fill both bounds checking and base memory.
     jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
     jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, stackLimitGPR, scratchJSR.payloadGPR());
-#endif
 
     // FIXME: We could load this much earlier on ARM64 since we have a ton of scratch registers and already have callee in a register. Maybe that's profitable?
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), stackLimitGPR);

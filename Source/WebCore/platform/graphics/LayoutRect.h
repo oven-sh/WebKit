@@ -50,7 +50,7 @@ public:
     LayoutRect(const LayoutPoint& location, const LayoutSize& size)
         : m_location(location), m_size(size) { }
     template<typename T1, typename T2, typename U1, typename U2>
-    LayoutRect(T1 x, T2 y, U1 width, U2 height)
+    constexpr LayoutRect(T1 x, T2 y, U1 width, U2 height)
         : m_location(LayoutPoint(x, y)), m_size(LayoutSize(width, height)) { }
     LayoutRect(const LayoutPoint& topLeft, const LayoutPoint& bottomRight)
         : m_location(topLeft), m_size(LayoutSize(bottomRight.x() - topLeft.x(), bottomRight.y() - topLeft.y())) { }
@@ -217,10 +217,16 @@ public:
     LayoutRect transposedRect() const { return LayoutRect(m_location.transposedPoint(), m_size.transposedSize()); }
     bool isInfinite() const;
 
-    static LayoutRect infiniteRect()
+    static constexpr LayoutRect infiniteRect()
     {
         // Return a rect that is slightly smaller than the true max rect to allow pixelSnapping to round up to the nearest IntRect without overflowing.
         return LayoutRect(LayoutUnit::nearlyMin() / 2, LayoutUnit::nearlyMin() / 2, LayoutUnit::nearlyMax(), LayoutUnit::nearlyMax());
+    }
+
+    static constexpr LayoutRect renderableInfiniteRect()
+    {
+        // Return a infinite-like rect whose values are such that, when converted to float pixel values, they can reasonably represent device pixels.
+        return LayoutRect(LayoutUnit::nearlyMin() / 32, LayoutUnit::nearlyMin() / 32, LayoutUnit::nearlyMax() / 16, LayoutUnit::nearlyMax() / 16);
     }
 
     operator FloatRect() const { return FloatRect(m_location, m_size); }
@@ -308,4 +314,3 @@ FloatRect encloseRectToDevicePixels(const LayoutRect&, float pixelSnappingFactor
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const LayoutRect&);
 
 } // namespace WebCore
-

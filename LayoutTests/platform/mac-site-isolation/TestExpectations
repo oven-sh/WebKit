@@ -13,6 +13,7 @@ http/tests/security/referrer-policy-header-same-origin.html [ Crash ]
 http/tests/security/referrer-policy-header-strict-origin-when-cross-origin.html [ Crash ]
 http/tests/security/referrer-policy-header-strict-origin.html [ Crash ]
 http/tests/security/referrer-policy-header-unsafe-url.html [ Crash ]
+imported/w3c/web-platform-tests/content-security-policy/inheritance/about-blank-from-javascript-url-inherits-csp-from-initiator.sub.html [ Crash ]
 
 #######################
 # Tests that time out #
@@ -27,7 +28,6 @@ fullscreen/exit-full-screen-video-crash.html [ Timeout ]
 http/tests/inspector/dom/cross-domain-inspected-node-access.html [ Timeout ]
 http/tests/local/blob/download-blob-from-iframe.html [ Timeout ]
 http/tests/media/media-stream/enumerate-devices-source-id.html [ Timeout ]
-http/tests/webrtc/audioSessionInFrames.html [ Timeout ]
 http/tests/workers/service/resultingClientId.https.html [ Timeout ]
 imported/w3c/web-platform-tests/content-security-policy/inheritance/history-iframe.sub.html [ Skip ]
 imported/w3c/web-platform-tests/navigation-api/navigate-event/navigate-anchor-cross-origin.html [ Timeout ]
@@ -66,7 +66,6 @@ http/tests/storageAccess/grant-storage-access-under-opener-at-popup-user-gesture
 http/wpt/webrtc/third-party-frame-ice-candidate-filtering.html [ Failure ]
 http/wpt/css/css-view-transitions/navigation/old_vt_promises_bfcache.html [ Failure ]
 imported/w3c/web-platform-tests/cookies/partitioned-cookies/partitioned-cookies.tentative.https.html [ Failure ]
-imported/w3c/web-platform-tests/dom/events/scrolling/scroll-cross-origin-iframes.html [ Failure ]
 imported/w3c/web-platform-tests/fetch/api/basic/keepalive.any.html
 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/history-traversal/pageswap/pageswap-replace-with-cross-origin-redirect.sub.html [ Failure ]
 imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Failure ]
@@ -197,7 +196,6 @@ imported/w3c/web-platform-tests/css/CSS2/tables/table-anonymous-objects-179.xht 
 imported/w3c/web-platform-tests/css/CSS2/tables/table-anonymous-objects-198.xht [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-scroll-to-sticky-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-backgrounds/box-shadow-body.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-box/margin-trim/flex-column-shrink.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-break/block-in-inline-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-break/flexbox/multi-line-column-flex-fragmentation-003.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-break/flexbox/single-line-row-flex-fragmentation-014.html [ ImageOnlyFailure ]

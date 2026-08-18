@@ -28,7 +28,6 @@ import struct Foundation.URL
 @_spi(WebKitAdditions_Testing) @_spi(Testing) import WebKit
 import SwiftUI
 import struct Swift.String
-import struct _Concurrency.Task
 private import struct TestWebKitAPILibrary.DOMRect
 import Testing
 private import TestWebKitAPILibrary
@@ -38,7 +37,7 @@ private import AppKit_Private.NSMenu_Private
 extension AppKitGesturesTests {
     @MainActor
     @Suite(.serialized, .timeLimit(.minutes(1)))
-    struct Basic: AppKitGestureTestSuite {
+    final class Basic: AppKitGestureTestSuite {
         static let text = "Here's to the crazy ones."
 
         let recap = Recap.shared
@@ -49,19 +48,15 @@ extension AppKitGesturesTests {
             return WebPage(configuration: configuration)
         }()
 
-        let window: NSWindow
+        let windowHost: TestWindowHost
 
         init() async throws {
             let contentSize = NSSize(width: 800, height: 600)
 
-            self.window = NSWindow(size: contentSize) { [page] in
+            self.windowHost = TestWindowHost(size: contentSize) { [page] in
                 WebView(page)
                     .webViewBackForwardNavigationGestures(.enabled)
             }
-
-            self.window.setFrameOrigin(.zero)
-            NSApp.activate(ignoringOtherApps: true)
-            self.window.makeKeyAndOrderFront(nil)
 
             await NSApp.waitForActivation()
         }
@@ -95,11 +90,29 @@ extension AppKitGesturesTests.Basic {
         await page.waitForPendingMouseEvents()
         await page.waitForNextPresentationUpdate()
 
-        let eventLog = try await page.callJavaScript(JavaScriptMessages.EventLog())
+        let actual = try await page.callJavaScript(JavaScriptMessages.EventLog())
+        #expect(actual.map(\.type) == expectedEvents)
+    }
 
-        for eventType in expectedEvents {
-            #expect(eventLog.contains { $0.type == eventType })
+    @Test
+    func singleClickFiresEventsForListenersOnTheDocument() async throws {
+        try await loadHTML()
+
+        let expectedEvents: [DOMEventType] = [.pointerdown, .mousedown, .pointerup, .mouseup, .click]
+
+        try await page.callJavaScript(JavaScriptMessages.InstallEventLog(in: .document, for: expectedEvents))
+
+        let toBounds = try await screenBoundsOfText("to")
+
+        await recap.play { composer in
+            composer._wk_click(at: toBounds.center, for: .seconds(0.05))
         }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let actual = try await page.callJavaScript(JavaScriptMessages.EventLog())
+        #expect(actual.map(\.type) == expectedEvents)
     }
 
     @Test(arguments: [true, false])
@@ -505,9 +518,12 @@ extension AppKitGesturesTests.Basic {
     }
 
     @Test(
-        .bug("https://webkit.org/b/314804", "Triple click does not generate a line selection on PDF")
+        .bug("https://webkit.org/b/314804", "Triple click does not generate a line selection on PDF"),
+        arguments: [true, false]
     )
-    func tripleClickingInPDFSelectsLine() async throws {
+    func tripleClickingInPDFSelectsLine(useAlternatePDFHUD: Bool) async throws {
+        page.setWebFeature("UseAlternatePDFHUD", enabled: useAlternatePDFHUD)
+
         let pdfURL = try #require(Bundle.testResources.url(forResource: "test", withExtension: "pdf"))
         try await page.load(pdfURL).wait()
         await page.waitForNextPresentationUpdate()
@@ -527,6 +543,68 @@ extension AppKitGesturesTests.Basic {
 
         let selectedText = await page.copySelection()
         #expect(selectedText == "Test PDF Content")
+    }
+
+    @Test(arguments: [true, false])
+    func clickingOnPDFHUDButtonPerformsAction(useAlternatePDFHUD: Bool) async throws {
+        page.setWebFeature("UseAlternatePDFHUD", enabled: useAlternatePDFHUD)
+
+        let pdfURL = try #require(Bundle.testResources.url(forResource: "test", withExtension: "pdf"))
+        try await page.load(pdfURL).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let hud = try #require(page.pdfHUDs.first?.subviews.first)
+        let hudCenterInWindow = hud.convert(CGPoint(x: hud.bounds.midX, y: hud.bounds.midY), to: nil)
+        let hudCenterInScreen = screenBounds(ofPointInWindowCoordinates: hudCenterInWindow)
+        let zoomInButton = NSPoint(x: hudCenterInScreen.x - 20, y: hudCenterInScreen.y)
+
+        let scaleBeforeZooming = page.pageZoom
+
+        await recap.play { composer in
+            composer._wk_click(at: zoomInButton, for: .seconds(0.1))
+            composer.advanceTime(0.1)
+        }
+
+        let scaleAfterZooming = page.pageZoom
+
+        #expect(scaleAfterZooming > scaleBeforeZooming)
+    }
+
+    @Test(arguments: [true, false])
+    func clickingOnPDFShowsHUD(useAlternatePDFHUD: Bool) async throws {
+        page.setWebFeature("UseAlternatePDFHUD", enabled: useAlternatePDFHUD)
+
+        let pdfURL = try #require(Bundle.testResources.url(forResource: "test", withExtension: "pdf"))
+        try await page.load(pdfURL).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let clickPoint = screenBounds(ofPointInWindowCoordinates: .init(x: 100, y: 350))
+
+        let hud = try #require(page.pdfHUDs.first)
+
+        unsafe hud.perform(Selector(("_hideForTesting")))
+
+        // Reach in to the view hierarchy and get the view whose opacity actually changes,
+        // which is dependent on the implementation.
+        // FIXME: Depending on implementation-specific details like this is very not great.
+
+        let visibleView =
+            if useAlternatePDFHUD {
+                try #require(hud.subviews.first?.subviews.first)
+            } else {
+                try #require(hud.subviews.first)
+            }
+
+        try await Task.sleep(for: .seconds(1))
+        #expect(visibleView.alphaValue == 0)
+
+        await recap.play { composer in
+            composer._wk_click(at: clickPoint, for: .seconds(0.1))
+            composer.advanceTime(0.1)
+        }
+
+        try await Task.sleep(for: .seconds(1))
+        #expect(visibleView.alphaValue == 1)
     }
 
     @Test(arguments: [0.1, 0.5, 0.9])
@@ -602,7 +680,7 @@ extension AppKitGesturesTests.Basic {
         #expect(selection == expected)
     }
 
-    @Test(.disabled(), arguments: [6, 8], [Duration.seconds(0.1), .seconds(0.5), .seconds(1.0)])
+    @Test(arguments: [6, 8], [Duration.seconds(0.1), .seconds(0.5), .seconds(1.0)])
     func scrollingOnScrollBarChangesScrollPosition(inset: Int, pressAndWait: Duration) async throws {
         let html = """
             <body style="width: 100%; height: 2000px; margin: 0; background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
@@ -1343,6 +1421,36 @@ extension AppKitGesturesTests.Basic {
 
         #expect(end.x - start.x > 20)
         #expect(abs(end.y - start.y) < 1)
+    }
+
+    @Test(
+        .bug("https://webkit.org/b/321650", "Certain diagonal scrolls should be able to bypass directional locking")
+    )
+    func diagonallySwipingBetweenSpacesScrollsBothAxes() async throws {
+        page.setWebFeature("UseAppKitGesturesForGestureEvents", enabled: true)
+
+        try await loadScrollableGrid()
+        await page.waitForNextPresentationUpdate()
+
+        try await page.callJavaScript { "window.scrollTo(2000, 8000);" }
+        await page.waitForNextPresentationUpdate()
+        let start = try await page.callJavaScript(JavaScriptMessages.ScrollPosition())
+
+        let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
+        await recap.play { composer in
+            composer._wk_scroll(
+                withStart: center,
+                end: CGPoint(x: center.x - 250, y: center.y - 80),
+                duration: .seconds(0.3),
+                multiFinger: true
+            )
+        }
+        await page.waitForNextPresentationUpdate()
+
+        let end = try await settledScrollPosition()
+
+        #expect(end.x - start.x > 20)
+        #expect(end.y - start.y > 20)
     }
 
     @Test

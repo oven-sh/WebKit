@@ -424,6 +424,7 @@ imported/w3c/web-platform-tests/css/css-text/white-space/text-wrap-balance-line-
 imported/w3c/web-platform-tests/css/css-text/white-space/text-wrap-balance-line-clamp-006.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-transforms/scale-transform-overlap.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-transforms/transform-box/svgbox-stroke-box-002.html [ Pass ]
+imported/w3c/web-platform-tests/css/css-transforms/transform3d-preserve3d-013.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-transforms/transforms-skewY.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-right-of-viewport-partially-onscreen-new.html [ Pass ]
 imported/w3c/web-platform-tests/css/selectors/selectors-4/lang-020.html [ Pass ]
@@ -932,10 +933,43 @@ imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-fill.h
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-square-notch-mixed.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-square-notch-superellipse.html [ Pass ]
 
+# Passing since 317560@main.
+imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-square.html [ Pass ]
+imported/w3c/web-platform-tests/css/css-borders/corner-shape/render-corner-shape.html [ Pass ]
+imported/w3c/web-platform-tests/css/css-borders/corner-shape/render-corner-shape.html?corner-shape=2.3&border-radius=40% [ Pass ]
+imported/w3c/web-platform-tests/css/css-borders/corner-shape/render-corner-shape.html?corner-shape=3&border-top-right-radius=33 [ Pass ]
+imported/w3c/web-platform-tests/css/css-borders/corner-shape/render-corner-shape.html?corner-shape=squircle&border-radius=50% [ Pass ]
+imported/w3c/web-platform-tests/css/css-borders/corner-shape/render-corner-shape.html?corner-top-left-shape=-4&border-radius=40 [ Pass ]
+
 imported/w3c/web-platform-tests/fs/ [ Pass ]
 storage/filesystemaccess/ [ Pass ]
 imported/w3c/web-platform-tests/storage/ [ Pass ]
 storage/storagemanager/ [ Pass ]
+
+# display-p3 canvas and ImageData enabled for WebKitGTK/WPEWebKit since 319168@main.
+fast/canvas/canvas-color-space-display-p3-ImageData.html
+fast/canvas/gradient-into-p3-canvas.html
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-canvas.html
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-ImageBitmap.html
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-ImageData.html
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-canvas.html
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-settings.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.fillText.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.fillText.shadow.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.strokeText.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toBlob.p3.canvas.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toBlob.with.putImageData.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.jpeg.p3.canvas.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.p3.canvas.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.with.putImageData.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.to.p3.html
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.to.srgb.html
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/wide-gamut-canvas/2d.color.space.p3.convertToBlobp3.canvas.html
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.html
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.worker.html
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.html
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.worker.html
+storage/indexeddb/structured-clone-image-data-display-p3.html
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of PASSING tests.
@@ -1308,6 +1342,7 @@ webkit.org/b/305740 [ Release ] compositing/backing/solid-color-with-paints-into
 imported/w3c/web-platform-tests/css/compositing/mix-blend-mode/mix-blend-mode-plus-lighter-svg.html [ ImageOnlyFailure Pass ]
 
 imported/w3c/web-platform-tests/css/compositing/mix-blend-mode/mix-blend-mode-rotated-clip.html [ Pass ]
+imported/w3c/web-platform-tests/css/compositing/mix-blend-mode/mix-blend-mode-parent-element-overflow-scroll-blended-position-fixed.html [ Pass ]
 
 webkit.org/b/314309 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-edge-behavior.html [ ImageOnlyFailure ]
 webkit.org/b/314310 imported/w3c/web-platform-tests/css/filter-effects/drop-shadow-currentcolor-dynamic-003.html [ ImageOnlyFailure ]
@@ -1354,6 +1389,10 @@ webkit.org/b/216853 css3/font-synthesis-small-caps.html [ ImageOnlyFailure ]
 
 fast/forms/vertical-writing-mode/meter.html [ ImageOnlyFailure ]
 webkit.org/b/264558 fast/forms/vertical-writing-mode/listbox-horizontal-scrollbar.html [ ImageOnlyFailure ]
+
+imported/w3c/web-platform-tests/css/CSS2/css1/c43-rpl-ibx-000.xht [ Pass ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5507-padn-r-000.xht [ Pass ]
+imported/w3c/web-platform-tests/css/CSS2/css1/c5510-padn-000.xht [ Pass ]
 
 imported/w3c/web-platform-tests/css/CSS2/floats/line-pushed-by-floats-crash.html [ Skip ]
 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens-vs-float-clearance-001.html [ ImageOnlyFailure ]
@@ -1505,9 +1544,13 @@ imported/w3c/web-platform-tests/css/css-transforms/transform3d-translate3d-001.h
 # Assertion failure in Release build with ASSERT_ENABLED
 webkit.org/b/279421 imported/w3c/web-platform-tests/css/css-multicol/crashtests/inline-float-parallel-flow.html [ Skip ]
 
+imported/w3c/web-platform-tests/css/css-multicol/multicol-scroll-content.html [ Pass ]
+
 webkit.org/b/306017 [ Release ] imported/w3c/web-platform-tests/css/css-view-transitions/content-smaller-than-box-size.html [ ImageOnlyFailure Pass ]
 
 webkit.org/b/318778 [ Release ] fast/body-propagation/background-color/009.html [ ImageOnlyFailure Pass ]
+
+webkit.org/b/319325 fast/body-propagation/background-color/010.html [ ImageOnlyFailure Pass ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of CSS-related bugs
@@ -1567,7 +1610,7 @@ webkit.org/b/239345 editing/execCommand/insert-ordered-list-and-delete.html [ Fa
 webkit.org/b/179605 editing/execCommand/underline-selection-containing-image.html [ Failure ]
 
 # Assertion failure if ASSERT_ENABLED
-webkit.org/b/286128 [ Release ] editing/inserting/insert-list-user-select-none-crash.html [ Crash Pass ]
+webkit.org/b/286128 [ Release ] editing/inserting/insert-list-user-select-none-crash.html [ Crash Pass Timeout ]
 
 webkit.org/b/179261 editing/selection/drag-to-contenteditable-iframe.html [ Timeout ]
 [ Debug ] editing/execCommand/delete-non-editable-range-crash.html [ Timeout Pass ]
@@ -1649,6 +1692,8 @@ imported/w3c/web-platform-tests/event-timing/TapToStopFling.html [ Skip ]
 imported/w3c/web-platform-tests/dom/events/scrolling/scrollIntoView-in-onscroll-to-sticky.html [ Skip ]
 imported/w3c/web-platform-tests/dom/events/scrolling/wheel-event-composed.html [ Skip ]
 imported/w3c/web-platform-tests/dom/events/scrolling/wheel-event-no-scroll-after-prevent-default.html [ Skip ]
+
+fast/forms/color/display-none-input-color-chooser-shown.html [ Skip ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Events-related bugs
@@ -2082,6 +2127,12 @@ http/tests/images/mp4-partial-load.html [ Failure ]
 #////////////////////////////////////////////////////////////////////////////////////////
 
 webkit.org/b/216298 imported/w3c/web-platform-tests/IndexedDB/blob-valid-after-deletion.any.html [ Pass Failure ]
+
+# Fails in Release but passes in Debug.
+[ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-large.any.html [ Pass ]
+[ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-large.any.serviceworker.html [ Pass ]
+[ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-large.any.sharedworker.html [ Pass ]
+[ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-large.any.worker.html [ Pass ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of IndexedDB-related bugs
@@ -2620,6 +2671,9 @@ webkit.org/b/210239 fast/canvas/webgl/out-of-bounds-simulated-vertexAttrib0-draw
 
 webkit.org/b/251195 webgl/1.0.x/conformance/extensions/ext-color-buffer-half-float.html [ Failure ]
 
+# Passing on GLib; failing generically after the 2026-07-18 WebGL conformance update.
+webkit.org/b/320901 webgl/2.0.y/conformance2/extensions/webgl-render-shared-exponent.html [ Pass ]
+
 # No colorspaces in non-Cocoa WebGL.
 
 # Not applicable.
@@ -2628,7 +2682,6 @@ webgl/webgl-backend-type.html [ Skip ]
 # Failing with ANGLE backend
 fast/canvas/webgl/oes-texture-float-linear.html [ Failure ]
 fast/canvas/webgl/webgl-compressed-texture-size-limit.html [ Failure ]
-fast/canvas/webgl/colorspaces-test.html [ Failure ]
 http/tests/webgl/1.0.x/conformance/textures/misc/origin-clean-conformance-offscreencanvas.html [ Failure ]
 
 webgl/webgl-draft-extensions-flag-default.html [ Skip ]
@@ -2778,7 +2831,7 @@ webrtc/video-maxBitrate.html [ Skip ] # Timeout
 
 # Flakies since migration to libwebrtc:
 fast/mediastream/RTCPeerConnection-icecandidate-event.html [ Timeout Pass ]
-imported/w3c/web-platform-tests/webrtc-extensions/RTCRtpSynchronizationSource-captureTimestamp.html [ Timeout Pass ]
+imported/w3c/web-platform-tests/webrtc-extensions/RTCRtpSynchronizationSource-captureTimestamp.html [ Crash Pass ]
 imported/w3c/web-platform-tests/webrtc-stats/hardware-capability-stats.https.html [ Pass Crash ]
 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-canTrickleIceCandidates.html [ Pass Crash ]
 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-createDataChannel.html?rest [ Pass Crash ]
@@ -2790,8 +2843,8 @@ imported/w3c/web-platform-tests/webrtc/legacy/RTCRtpTransceiver-with-OfferToRece
 imported/w3c/web-platform-tests/webrtc/simulcast/negotiation-encodings.https.html?interop-2026 [ Pass Failure ]
 imported/w3c/web-platform-tests/webrtc/transfer-datachannel.html [ Pass Failure ]
 webrtc/encrypted-rtp-header-extensions.html [ Pass Crash ]
-webrtc/h264-baseline.html [ Pass Crash ]
-webkit.org/b/311846 webrtc/h264-high.html [ Pass Crash ]
+webkit.org/b/311846 webrtc/h264-baseline.html [ Pass Crash Timeout ]
+webkit.org/b/311846 webrtc/h264-high.html [ Pass Crash Timeout ]
 webrtc/vp8-then-h264.html [ Pass Crash ]
 webkit.org/b/310095 imported/w3c/web-platform-tests/webrtc/simulcast/screenshare.https.html [ Crash Failure ]
 
@@ -2823,7 +2876,7 @@ fast/mediastream/video-rotation2.html [ Failure ]
 
 http/wpt/mediastream/webrtc-vp9-colorspace.html [ Failure ]
 
-webkit.org/b/314659 webrtc/getDisplayMedia-pc-resolution.html [ Pass Crash Failure ]
+webkit.org/b/314659 webrtc/getDisplayMedia-pc-resolution.html [ Pass Crash Failure Timeout ]
 
 # Regressions introduced by https://commits.webkit.org/263750@main
 fast/mediastream/apply-constraints-advanced.html [ Failure ]
@@ -2972,7 +3025,7 @@ imported/w3c/web-platform-tests/webrtc/simulcast/setParameters-active.https.html
 imported/w3c/web-platform-tests/webrtc/simulcast/getStats.https.html [ Failure ]
 
 # Legacy Offer options are enabled by default in WPE and GTK ports.
-imported/w3c/web-platform-tests/webrtc/legacy/RTCPeerConnection-createOffer-offerToReceive.optional.html [ Pass ]
+webkit.org/b/321284 [ x86_64 ] imported/w3c/web-platform-tests/webrtc/legacy/RTCPeerConnection-createOffer-offerToReceive.optional.html [ Pass Crash ]
 
 imported/w3c/web-platform-tests/webrtc/legacy/munge-dont.html [ Pass ]
 
@@ -3062,7 +3115,8 @@ imported/w3c/web-platform-tests/content-security-policy/reporting/report-origina
 
 webkit.org/b/231083 imported/w3c/web-platform-tests/content-security-policy/generic/policy-inherited-correctly-by-plznavigate.html [ Failure Pass ]
 
-webkit.org/b/307132 [ Release ] imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Failure Pass Crash ]
+# Started to fail more on interval [318765@main-318767@main]
+webkit.org/b/321358 [ Release ] imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Pass Crash Failure Timeout ]
 
 # Failing since deferred async loading enabled until document is loaded enabled.
 webkit.org/b/208104 [ Release ] imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/execution-timing/085.html [ Failure Pass ]
@@ -3362,6 +3416,7 @@ ipc/videoEncode.html [ Skip ]
 
 # WebAuthn not enabled
 ipc/web-authenticator-get-assertion.html [ Skip ]
+ipc/web-authenticator-signal-main-thread.html [ Skip ]
 
 # These tests require UseGPUProcessForMediaEnabled
 ipc/restrictedendpoints/allow-access-testOnlyIPC.html [ Skip ]
@@ -3766,10 +3821,6 @@ webkit.org/b/49179 animations/stop-animation-on-suspend.html [ Failure Pass ]
 
 webkit.org/b/133151 js/cached-window-properties.html [ Skip ] # Timeout.
 
-# Fails when built with GCC but passes with Clang
-webkit.org/b/218220 [ x86_64 ] editing/execCommand/switch-list-type-with-orphaned-li.html [ Failure ]
-webkit.org/b/218220 [ arm64 ] editing/execCommand/switch-list-type-with-orphaned-li.html [ Pass ]
-
 # ENABLE(DRAGGABLE_REGION) is disabled
 Bug(GLIB) fast/css/draggable-region-parser.html [ Failure ]
 
@@ -3811,6 +3862,8 @@ webkit.org/b/105954 http/tests/navigation/reload-subframe-object.html [ Failure 
 webkit.org/b/117582 fast/flexbox/clear-overflow-before-scroll-update.html [ Failure ]
 webkit.org/b/118220 http/tests/cache/partitioned-cache-iframe.html [ Failure ]
 webkit.org/b/120105 http/tests/navigation/post-frames-goback1-uncached.html [ Failure ]
+
+webkit.org/b/321360 http/tests/navigation/page-cache-shared-worker.html [ Timeout Pass ]
 
 # HighDPI support is not enabled.
 webkit.org/b/131347 fast/backgrounds/hidpi-bitmap-background-repeat-on-subpixel-position.html [ ImageOnlyFailure ]
@@ -4123,14 +4176,17 @@ fast/text/line-break-with-locale.html [ ImageOnlyFailure ]
 
 webkit.org/b/225423 fast/canvas/canvas-composite-text-alpha.html [ Failure ]
 
-# Non-sRGB color spaces are not currently supported by the glib ports.
-fast/canvas/canvas-color-space-display-p3.html [ Skip ]
-fast/canvas/canvas-color-space-display-p3-ImageData.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/ [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/ [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/ [ Skip ]
-
-storage/indexeddb/structured-clone-image-data-display-p3.html [ Skip ]
+# Decoded images/video frames are always tagged as sRGB regardless of their embedded ICC
+# profile: PNGImageDecoder/JPEGImageDecoder convert via LCMS straight to sRGB during decode,
+# and ImageBackingStoreSkia.cpp hardcodes SkColorSpace::MakeSRGB() on the result. Wide-gamut
+# sources (Display-P3, Adobe RGB) lose saturation before they ever reach a P3 canvas.
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-Blob.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-video.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-video.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-image.html [ Failure ]
 
 webkit.org/b/205159 fast/scrolling/overflow-scroll-past-max.html [ Skip ]
 
@@ -4138,9 +4194,6 @@ webkit.org/b/205159 fast/scrolling/overflow-scroll-past-max.html [ Skip ]
 webkit.org/b/212202 fast/scrolling/iframe-scrollable-after-back.html [ Skip ]
 webkit.org/b/212202 fast/scrolling/programmatic-scroll-to-zero-zero.html [ Skip ]
 webkit.org/b/212202 fast/scrolling/rtl-point-in-iframe.html [ Skip ]
-
-# Failing since r277091.
-webkit.org/b/225499 imported/w3c/web-platform-tests/css/css-fonts/font-feature-resolution-002.html [ ImageOnlyFailure ]
 
 webkit.org/b/227053 fast/canvas/canvas-imageSmoothingQuality.html [ Failure ]
 
@@ -4180,7 +4233,6 @@ fast/inline/overflowing-content-with-hypens.html [ ImageOnlyFailure ]
 fast/ruby/annotation-with-line-gap.html [ ImageOnlyFailure ]
 fast/scrolling/rtl-scrollbars-alternate-body-dir-attr-does-not-update-scrollbar-placement-2.html [ ImageOnlyFailure Pass ]
 imported/blink/fast/backgrounds/root-background-with-page-scaled-out.html [ ImageOnlyFailure Pass ]
-imported/w3c/web-platform-tests/content-security-policy/generic/image-document-ignores-csp.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens-vs-float-clearance-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-transforms/animation/transform-non-invertible-discrete-interpolation.html [ ImageOnlyFailure ]
 [ Release ] imported/w3c/web-platform-tests/css/css-view-transitions/content-with-transparent-background.html [ ImageOnlyFailure Pass ]
@@ -4210,14 +4262,20 @@ webkit.org/b/236298 fast/text/combining-character-sequence-vertical.html [ Image
 
 fast/webgpu [ Skip ]
 http/tests/webgpu/webgpu/api/operation/memory_sync/buffer/multiple_buffers.html [ Skip ]
+inspector/canvas/console-record-webgpu.html [ Skip ]
 inspector/canvas/create-context-webgpu.html [ Skip ]
-inspector/canvas/recording-webgpu.html [ Skip ]
+inspector/canvas/memory-webgpu.html [ Skip ]
+inspector/canvas/recording-webgpu-frameCount.html [ Skip ]
+inspector/canvas/recording-webgpu-full.html [ Skip ]
+inspector/canvas/recording-webgpu-memoryLimit.html [ Skip ]
 inspector/canvas/requestClientNodes-webgpu.html [ Skip ]
 inspector/canvas/requestContent-webgpu.html [ Skip ]
 inspector/canvas/requestShaderSource-webgpu.html [ Skip ]
 inspector/canvas/resolveContext-webgpu.html [ Skip ]
 inspector/canvas/setShaderProgramDisabled-webgpu.html [ Skip ]
+inspector/canvas/setShaderProgramHighlighted-webgpu.html [ Skip ]
 inspector/canvas/shaderProgram-add-remove-webgpu.html [ Skip ]
+inspector/canvas/updateShader-webgpu.html [ Skip ]
 inspector/canvas/worker-webgpu.html [ Skip ]
 
 # NetworkStorageSession::deleteCookies() doesn't obey partitioning for glib ports.
@@ -4266,7 +4324,6 @@ imported/w3c/web-platform-tests/html/canvas/offscreen/fill-and-stroke-styles/2d.
 imported/w3c/web-platform-tests/html/canvas/offscreen/fill-and-stroke-styles/2d.fillStyle.get.halftransparent.worker.html [ Failure ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/filters/2d.filter.canvasFilterObject.dropShadow.tentative.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/filters/2d.filter.canvasFilterObject.dropShadow.tentative.w.html [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/offscreen/manual/wide-gamut-canvas/2d.color.space.p3.convertToBlobp3.canvas.html [ Failure ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/path-objects/2d.path.isPointInStroke.scaleddashes.html [ Failure ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/path-objects/2d.path.isPointInStroke.scaleddashes.worker.html [ Failure ]
 
@@ -4427,6 +4484,8 @@ imported/w3c/web-platform-tests/css/css-view-transitions/navigation/mismatched-s
 imported/w3c/web-platform-tests/css/css-view-transitions/start-skip-start.html [ Pass Failure ]
 
 imported/w3c/web-platform-tests/css/css-view-transitions/input-touch-while-render-blocked.html [ Skip ]
+
+imported/w3c/web-platform-tests/css/css-view-transitions/navigation/skip-outbound-vt-before-reveal.html [ Failure Pass ]
 
 imported/w3c/web-platform-tests/svg/text/reftests/transform-dynamic-change.html [ ImageOnlyFailure ]
 
@@ -4592,7 +4651,7 @@ webkit.org/b/278719 fast/events/touch/send-oncancel-event.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/touch-constructor.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/touch-input-element-change-documents.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/touch-scaled-scrolled.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/zoomed-touch-event-pageXY.html [ Timeout ]
+webkit.org/b/278719 fast/events/touch/zoomed-touch-event-pageXY.html [ Failure ]
 webkit.org/b/278719 imported/w3c/web-platform-tests/touch-events/historical.html [ Failure ]
 webkit.org/b/278719 imported/w3c/web-platform-tests/touch-events/touch-retargeting.html [ Failure ]
 webkit.org/b/278719 imported/w3c/web-platform-tests/touch-events/touch-touchevent-constructor.html [ Failure ]
@@ -4600,11 +4659,10 @@ webkit.org/b/278719 imported/w3c/web-platform-tests/touch-events/touch-toucheven
 # EWS indicates this test is too slow on bots.
 security/decode-buffer-size.html [ Skip ]
 
-fast/canvas/webgl/context-lost-restored-p3.html [ Failure ]
-
 webkit.org/b/210374 http/tests/media/user-gesture-preserved-across-xmlhttprequest.html [ Timeout Failure ]
 
 webkit.org/b/213331 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/mediaElementAudioSourceToScriptProcessorTest.html [ Failure ]
+imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/mediaElementAudioSource_volumeChange.html [ Skip ] # timeout
 
 webkit.org/b/213783 webanimations/accelerated-animation-with-easing.html [ Pass ImageOnlyFailure ]
 
@@ -4986,6 +5044,8 @@ webkit.org/b/294295 fullscreen/full-screen-request-removed-with-raf.html [ Pass 
 
 webkit.org/b/307368 fast/repaint/iframe-from-display-none-repaint.html [ Pass ImageOnlyFailure ]
 
+imported/w3c/web-platform-tests/css/CSS2/normal-flow/canvas-paint-order.html [ ImageOnlyFailure ]
+
 # Note: this randomly crashes on the EWS (which runs Release+Asserts) but passes always on post-commit (Release)
 webkit.org/b/307597 imported/w3c/web-platform-tests/service-workers/service-worker/redirected-response.https.html [ Crash Pass ]
 
@@ -5161,6 +5221,7 @@ ipc/stream-sync-reply-shared-memory.html [ Skip ]
 ipc/convert-to-luminance-mask-float16.html [ Skip ]
 ipc/empty-svgfilterrenderer-expression-crash.html [ Skip ]
 webkit.org/b/297737 ipc/send-gradient.html [ Skip ]
+webkit.org/b/297737 ipc/send-filter.html [ Skip ]
 
 webkit.org/b/314373 media/media-source/media-source-real-webm-fastseek.html [ Failure ]
 webkit.org/b/314373 media/media-source/media-source-real-webm-remove.html [ Failure ]
@@ -5199,7 +5260,6 @@ webkit.org/b/292843 fast/dom/Window/open-window-min-size.html [ Failure ]
 webkit.org/b/316573 fast/parser/empty-text-resource.html [ Pass Timeout ]
 webkit.org/b/316575 [ x86_64 ] http/tests/IndexedDB/collect-IDB-objects.https.html [ Pass Crash ]
 
-webkit.org/b/317006 ipc/indexed-colorspace-null-inner-crash.html [ Crash ]
 webkit.org/b/317007 fast/replaced/replaced-percentage-size-in-aspect-ratio-shrink-to-fit.html [ ImageOnlyFailure ]
 webkit.org/b/317008 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/sizes/sizes-auto-resize-observer-removes-auto.html [ Pass Failure ]
 webkit.org/b/317011 imported/w3c/web-platform-tests/css/css-shapes/shape-outside/shape-image/shape-image-018.html [ Pass Timeout ]
@@ -5235,20 +5295,16 @@ webkit.org/b/319954 [ arm64 ] imported/w3c/web-platform-tests/css/css-text/white
 webkit.org/b/317966 http/tests/web-locks/web-lock-in-serviceworker.html [ Crash Failure Pass ]
 webkit.org/b/320245 [ x86_64 ] imported/w3c/web-platform-tests/web-locks/bfcache/abort.tentative.https.html [ Pass Failure ]
 webkit.org/b/317968 [ x86_64 ] imported/w3c/web-platform-tests/navigation-timing/nav2-test-redirect-server.html [ Pass Failure ]
-
-webkit.org/b/318434 ipc/send-gpu-GetShareableBitmap-RemoteRenderingBackend.html [ Crash Pass ]
-
-webkit.org/b/318634 ipc/loadping-firstpartyforcookies-message-check.html [ Failure ]
+webkit.org/b/321706 imported/w3c/web-platform-tests/web-locks/acquire.https.any.sharedworker.html [ Failure Pass ]
 
 webkit.org/b/319044 imported/w3c/web-platform-tests/html/rendering/widgets/shadow-dom.html [ Failure ]
 webkit.org/b/319045 [ Debug ] accessibility/button-in-deep-dom.html [ Timeout ]
 webkit.org/b/319046 [ Debug ] fast/mediastream/applyConstraints-with-takePhoto.html [ Crash Timeout ]
 webkit.org/b/319047 [ Debug ] imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-033.html [ Crash ]
-webkit.org/b/319048 [ Debug ] imported/w3c/web-platform-tests/css/css-anchor-position/long-anchor-chain-crash.html [ Timeout ]
-webkit.org/b/319049 [ Debug ] http/tests/cache/cancel-multiple-post-xhrs.html [ Failure ]
+webkit.org/b/319049 [ Debug ] http/tests/cache/cancel-multiple-post-xhrs.html [ Pass Failure ]
 webkit.org/b/319050 [ Debug ] imported/w3c/web-platform-tests/fetch/local-network-access/iframe.tentative.https.window.html [ Failure ]
 webkit.org/b/319051 [ Debug ] imported/w3c/web-platform-tests/uievents/mouse/mouse_boundary_events_after_removing_last_over_element.html [ Failure ]
-webkit.org/b/319052 [ Debug ] http/tests/websocket/tests/hybi/inspector/handshake-error.html [ Failure ]
+webkit.org/b/319052 [ Debug ] http/tests/websocket/tests/hybi/inspector/handshake-error.html [ Pass Failure ]
 webkit.org/b/319053 [ Debug ] media/video-playback-restriction-play-before-load.html [ Failure ]
 webkit.org/b/319310 [ Debug ] fast/repaint/iframe-avoid-redundant-repaint.html [ Failure Pass ]
 webkit.org/b/319311 [ Debug ] fast/repaint/missing-out-of-flow-repaint-on-destroy.html [ Pass ImageOnlyFailure ]
@@ -5316,6 +5372,21 @@ webkit.org/b/320646 [ Debug ] webrtc/canvas-to-peer-connection-2d.html [ Failure
 webkit.org/b/320647 [ Debug ] webrtc/canvas-to-peer-connection-vp8-2d.html [ Failure ]
 webkit.org/b/320648 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/computed-grid-column.html [ Timeout Pass ]
 webkit.org/b/320653 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-connectionState.https.html [ Crash Pass ]
+
+webkit.org/b/321170 imported/w3c/web-platform-tests/webrtc/RTCIceTransport.html?interop-2026 [ Pass Crash ]
+
+webkit.org/b/321285 [ x86_64 ] imported/w3c/web-platform-tests/webrtc-extensions/RTCRtpSynchronizationSource-senderCaptureTimeOffset.html [ Crash Pass ]
+
+webkit.org/b/321282 [ Debug ] imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioworklet-interface/audioworkletglobalscope-creation-time.https.html [ Failure Pass ]
+
+webkit.org/b/321482 imported/w3c/web-platform-tests/css/filter-effects/filtered-inline-is-container.html [ ImageOnlyFailure ]
+
+webkit.org/b/321708 webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count-on-src-change.html [ Crash Failure Timeout Pass ]
+webkit.org/b/321708 webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count.html [ Crash Failure Timeout Pass ]
+
+webkit.org/b/318029 [ Release ] media/media-source/media-source-seek-twice.html [ Pass Timeout ]
+
+webkit.org/b/321711 [ Release ] http/tests/multipart/multipart-async-image.html [ Failure Pass ]
 
 # End: Common failures between GTK and WPE.
 

@@ -64,8 +64,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPC/IPCConnectionTesterMessageReceiv
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPC/IPCConnectionTesterMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPC/IPCStreamTesterMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPC/IPCStreamTesterMessages.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPC/IPCStreamTesterProxyMessageReceiver.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPC/IPCStreamTesterProxyMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPC/IPCTesterMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPC/IPCTesterMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPC/IPCTesterReceiverMessageReceiver.cpp
@@ -559,9 +557,11 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPILocalization.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIMenus.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIMenus.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPINamespace.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPINamespace.mm
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPINamespace.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPINotifications.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPINotifications.mm
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIOffscreen.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIOffscreen.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIPermissions.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIPermissions.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIPort.h
@@ -589,7 +589,7 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebNavigation.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebNavigationEvent.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebNavigationEvent.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebPageNamespace.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebPageNamespace.mm
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebPageNamespace.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebPageRuntime.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebPageRuntime.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/JSWebExtensionAPIWebRequest.h

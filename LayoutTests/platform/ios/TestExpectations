@@ -1301,6 +1301,7 @@ imported/w3c/web-platform-tests/picture-in-picture/picture-in-picture-window.htm
 imported/w3c/web-platform-tests/picture-in-picture/request-picture-in-picture-exits-existing.html [ Skip ]
 imported/w3c/web-platform-tests/picture-in-picture/request-picture-in-picture-twice.html [ Skip ]
 imported/w3c/web-platform-tests/picture-in-picture/request-picture-in-picture.html [ Skip ]
+imported/w3c/web-platform-tests/picture-in-picture/request-picture-in-picture-consumes-user-activation.html [ Skip ]
 
 scrollbars/scrolling-backward-by-page-accounting-bottom-fixed-elements-on-keyboard-spacebar.html [ Skip ]
 scrollbars/scrolling-backward-by-page-on-keyboard-spacebar.html [ Skip ]
@@ -1504,10 +1505,10 @@ imported/w3c/web-platform-tests/css/css-view-transitions/table-caption.html [ Im
 imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-left-of-viewport-offscreen-old.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-on-top-of-viewport-partially-onscreen-new.html [ ImageOnlyFailure ]
 
-# webkit.org/b/316882 1px device-pixel rounding difference in snapRectToDevicePixels for the
+# webkit.org/b/321467 1px device-pixel rounding difference in snapRectToDevicePixels for the
 # overflow-visible ::view-transition-old/new object-view-box path.
-webkit.org/b/316882 imported/w3c/web-platform-tests/css/css-view-transitions/old-content-with-object-view-box.html [ Skip ]
-webkit.org/b/316882 imported/w3c/web-platform-tests/css/css-view-transitions/new-content-with-object-view-box.html [ Skip ]
+webkit.org/b/321467 imported/w3c/web-platform-tests/css/css-view-transitions/old-content-with-object-view-box.html [ ImageOnlyFailure ]
+webkit.org/b/321467 imported/w3c/web-platform-tests/css/css-view-transitions/new-content-with-object-view-box.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/new-content-inline-with-offset-from-containing-block-clipped.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/old-content-inline-with-offset-from-containing-block-clipped.html [ ImageOnlyFailure ]
 
@@ -2557,6 +2558,9 @@ accessibility/text-marker/text-marker-bidi-element-hebrew.html [ Skip ]
 
 # TextMarkerDebugDescription not implemented on iOS:
 accessibility/text-marker/text-marker-debug-description.html [ Skip ]
+
+# numberOfCharacters not implemented on iOS
+accessibility/text-marker/textarea-character-count-with-trailing-newline.html [ Skip ]
 
 # More flaky tests (Sept 18, 2015)
 
@@ -3747,6 +3751,15 @@ webkit.org/b/236904 imported/mozilla/svg/path-02.svg [ ImageOnlyFailure ]
 # Incorrect upstream, but seem to pass on the bots, possibly with a broken baseline.
 css2.1/20110323/replaced-intrinsic-001.htm [ Pass ]
 
+# New failure after import of css/css-ui (2026-07):
+webkit.org/b/320474 imported/w3c/web-platform-tests/css/css-ui/caret-eol-001.html [ ImageOnlyFailure ]
+webkit.org/b/320474 imported/w3c/web-platform-tests/css/css-ui/caret-eol-002.html [ ImageOnlyFailure ]
+webkit.org/b/320474 imported/w3c/web-platform-tests/css/css-ui/inert-attribute-overriding.html [ Failure ]
+webkit.org/b/320474 imported/w3c/web-platform-tests/css/css-ui/resize-iframe-3d-transform.tentative.html [ Failure ]
+webkit.org/b/320474 imported/w3c/web-platform-tests/css/css-ui/resize-textarea-rtl-001.tentative.html [ Failure ]
+webkit.org/b/320474 imported/w3c/web-platform-tests/css/css-ui/resize-textarea-rtl-002.tentative.html [ Failure ]
+webkit.org/b/320474 imported/w3c/web-platform-tests/css/css-ui/user-select-button.html [ Failure ]
+
 # Passing only on iOS
 imported/w3c/web-platform-tests/css/css-contain/contain-size-select-001.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-contain/contain-size-select-002.html [ Pass ]
@@ -4637,7 +4650,6 @@ webkit.org/b/254398 webgl/2.0.y/conformance/extensions/webgl-compressed-texture-
 imported/w3c/web-platform-tests/css/css-backgrounds/background-clip/clip-text-multi-line.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/semantics/disabled-elements/event-propagate-disabled.tentative.html [ Failure ]
 imported/w3c/web-platform-tests/css/css-color/parsing/color-valid-relative-color.html [ Failure ]
-imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioparam-interface/k-rate-audiobuffersource-connections.html [ Failure ]
 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioparam-interface/k-rate-dynamics-compressor-connections.html [ Failure ]
 webaudio/ScriptProcessor/scriptprocessor-offlineaudiocontext.html [ Failure ]
 
@@ -4982,14 +4994,7 @@ svg/animations/animate-color-rgba-calcMode-discrete.html
 svg/animations/animate-end-attribute.html
 svg/animations/animate-endElement-beginElement.html
 svg/animations/animate-mpath-insert.html
-svg/animations/animate-path-animation-Cc-Ss.html
-svg/animations/animate-path-animation-Ll-Vv-Hh.html
-svg/animations/animate-path-animation-Qq-Tt.html
-svg/animations/animate-path-animation-cC-sS-inverse.html
-svg/animations/animate-path-animation-lL-vV-hH-inverse.html
-svg/animations/animate-path-animation-qQ-tT-inverse.html
 svg/animations/animate-path-nested-transforms.html
-svg/animations/animate-path-to-animation.html
 svg/animations/animate-text-nested-transforms.html
 svg/animations/animateTransform-translate-attributetype-auto.html
 svg/animations/animateTransform-translate-invalid-attributetype.html
@@ -4997,7 +5002,6 @@ svg/animations/deferred-insertion.html
 svg/animations/svgPreserveAspectRatio-animation-1.html
 svg/animations/svglength-animation-px-to-exs.html
 svg/animations/svglength-animation-px-to-percentage.html
-svg/animations/svgpath-animation-1.html
 svg/animations/use-animate-transform-and-position.html
 svg/animations/use-animate-width-and-height.html [ Skip ]
 svg/custom/gradient-attr-update.svg
@@ -5734,7 +5738,6 @@ webkit.org/b/160368 http/tests/xmlhttprequest/workers/methods-async.html [ Pass 
 webkit.org/b/161323 media/track/media-element-enqueue-event-crash.html [ Skip ]
 webkit.org/b/161323 media/track/track-remove-crash.html [ Skip ]
 
-webkit.org/b/142152 media/track/track-in-band-cues-added-once.html [ Pass Failure ]
 webkit.org/b/161491 media/video-main-content-allow-then-scroll.html [ Failure ]
 
 webkit.org/b/153029 fast/css-generated-content/details-summary-before-after.html [ Failure ]
@@ -8533,7 +8536,6 @@ fast/forms/datalist/data-list-search-input-with-appearance-none.html [ Timeout ]
 fast/forms/datalist/datalist-textinput-dynamically-add-options-on-keydown.html [ Pass Timeout ]
 fast/forms/ios/select-option-update-1000.html [ Failure Timeout ] # rdar://178168662
 fast/images/imageDocument-title.html [ Pass Crash ] # rdar://178675308
-fast/mediastream/audio-session-category-capture-audio-context.html [ Pass Timeout ]
 fast/mediastream/media-stream-video-track-interrupted.html [ Pass Failure ] # rdar://178673961
 fast/mediastream/mediastreamtrack-clone-muted.html [ Pass Timeout ] # rdar://178215298
 fast/screen-orientation/orientation-in-resize-event.html [ Pass Failure Timeout ] # rdar://177741597
@@ -8686,3 +8688,27 @@ imported/w3c/web-platform-tests/css/CSS2/css1/c5525-fltwidth-003.xht [ ImageOnly
 imported/w3c/web-platform-tests/css/CSS2/css1/c5526-fltclr-000.xht [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/CSS2/css1/c562-white-sp-000.xht [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/CSS2/css1/c62-percent-000.xht [ ImageOnlyFailure ]
+
+
+# testdriver-vendor.js dispatches key actions through a UI script that references eventSender,
+# which does not exist in the UI-script context, and uiController has no leapForward equivalent,
+# so an action sequence with a key source resolves without dispatching anything on iOS.
+imported/w3c/web-platform-tests/infrastructure/testdriver/key-source-pause.html [ Skip ]
+
+# scheduleResizeEventIfNeeded() suppresses resize events on iOS while the document is still loading,
+# since Safari on iOS resizes the window while setting up its viewport.
+imported/w3c/web-platform-tests/css/css-values/dynamic-viewport-units-rule-cache.html [ Skip ]
+
+webkit.org/b/321191 imported/w3c/web-platform-tests/service-workers/service-worker/fetch-event.https.h2.html [ Pass Crash Failure ]
+
+webkit.org/b/321528 [ Release ] imported/w3c/web-platform-tests/background-fetch/match.https.window.html [ Pass Failure ]
+
+webkit.org/b/321312 imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-getSynchronizationSources.https.html [ Pass Failure ]
+
+webkit.org/b/321691 [ Release ] imported/w3c/web-platform-tests/web-locks/bfcache/abort.tentative.https.html [ Pass Crash ]
+
+webkit.org/b/321726 imported/w3c/web-platform-tests/largest-contentful-paint/observe-svg-data-uri-image.html [ Pass Failure ]
+
+webkit.org/b/321701 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/button-in-popover.html [ Failure ]
+
+webkit.org/b/321819 media/video-multiple-concurrent-playback.html [ Pass Failure ]

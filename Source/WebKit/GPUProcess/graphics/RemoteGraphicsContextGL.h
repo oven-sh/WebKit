@@ -31,6 +31,7 @@
 #include "GPUConnectionToWebProcess.h"
 #include "GPUProcess.h"
 #include "RemoteGraphicsContextGLIdentifier.h"
+#include "RemoteNativeImageIdentifier.h"
 #include "RemoteRenderingBackend.h"
 #include "RemoteSharedResourceCache.h"
 #include "ScopedWebGLRenderingResourcesRequest.h"
@@ -114,6 +115,7 @@ protected:
     // GraphicsContextGL::Client overrides.
     void forceContextLost() final;
     void addDebugMessage(GCGLenum, GCGLenum, GCGLenum, const CString&) final;
+    void didChangeMemoryCost() final;
 
     // Messages to be received.
     void ensureExtensionEnabled(WebCore::GCGLExtension);
@@ -128,7 +130,7 @@ protected:
     void prepareForDisplay(CompletionHandler<void()>&&);
 #endif
     void getErrors(CompletionHandler<void(GCGLErrorCodeSet)>&&);
-    void copyNativeImageYFlipped(WebCore::GraphicsContextGL::SurfaceBuffer, WebCore::RenderingResourceIdentifier);
+    void copyNativeImageYFlipped(WebCore::GraphicsContextGL::SurfaceBuffer, RemoteNativeImageReference);
 #if ENABLE(MEDIA_STREAM) || ENABLE(WEB_CODECS)
     void surfaceBufferToVideoFrame(WebCore::GraphicsContextGL::SurfaceBuffer, CompletionHandler<void(std::optional<WebKit::RemoteVideoFrameProxy::Properties>&&)>&&);
 #endif
@@ -168,6 +170,7 @@ protected:
 #include "RemoteGraphicsContextGLFunctionsGenerated.h" // NOLINT
 
 private:
+    void updateMemoryCost();
     bool webXREnabled() const;
     bool webXRPromptAccepted() const;
 
@@ -188,6 +191,8 @@ protected:
     ScopedWebGLRenderingResourcesRequest m_renderingResourcesRequest;
     SharedPreferencesForWebProcess m_sharedPreferencesForWebProcess;
     HashMap<uint32_t, PlatformGLObject, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_objectNames;
+    std::optional<uint64_t> m_estimatedMemoryCost WTF_GUARDED_BY_CAPABILITY(workQueue());
+    bool m_memoryCostUpdateScheduled WTF_GUARDED_BY_CAPABILITY(workQueue()) { false };
 };
 
 

@@ -146,7 +146,6 @@ GPRReg SpeculativeJIT::fillJSValue(Edge edge)
         return gpr;
     }
         
-    case DataFormatBoolean:
     case DataFormatStorage:
     case DataFormatDouble:
     case DataFormatInt52:
@@ -393,7 +392,7 @@ void SpeculativeJIT::compileNeitherDoubleNorHeapBigIntToNotDoubleStrictEquality(
     if (needsTypeCheck(leftNeitherDoubleNorHeapBigIntChild, ~SpecFullDouble)) {
         if (needsTypeCheck(leftNeitherDoubleNorHeapBigIntChild, ~SpecInt32Only))
             trueCase.append(branchIfInt32(leftRegs));
-        speculationCheck(BadType, leftRegs, leftNeitherDoubleNorHeapBigIntChild.node(), branchIfNumber(leftRegs, tempGPR));
+        speculationCheck(BadType, leftRegs, leftNeitherDoubleNorHeapBigIntChild.node(), branchIfNumber(leftRegs));
     }
     if (needsTypeCheck(leftNeitherDoubleNorHeapBigIntChild, ~SpecHeapBigInt)) {
         if (needsTypeCheck(leftNeitherDoubleNorHeapBigIntChild, SpecCell))
@@ -403,8 +402,8 @@ void SpeculativeJIT::compileNeitherDoubleNorHeapBigIntToNotDoubleStrictEquality(
     trueCase.append(jump());
     notEqual.link(this);
 
-    speculateNotDouble(rightNotDoubleChild, rightRegs, tempGPR);
-    speculateNotDouble(leftNeitherDoubleNorHeapBigIntChild, leftRegs, tempGPR);
+    speculateNotDouble(rightNotDoubleChild, rightRegs);
+    speculateNotDouble(leftNeitherDoubleNorHeapBigIntChild, leftRegs);
 
     if (needsTypeCheck(leftNeitherDoubleNorHeapBigIntChild, SpecCellCheck))
         falseCase.append(branchIfNotCell(leftRegs));
@@ -1266,7 +1265,6 @@ GPRReg SpeculativeJIT::fillSpeculateInt32Internal(Edge edge, DataFormat& returnF
         
     case DataFormatJSDouble:
     case DataFormatCell:
-    case DataFormatBoolean:
     case DataFormatJSCell:
     case DataFormatJSBoolean:
     case DataFormatDouble:
@@ -1508,7 +1506,6 @@ GPRReg SpeculativeJIT::fillSpeculateCell(Edge edge)
     case DataFormatInt32:
     case DataFormatJSDouble:
     case DataFormatJSBoolean:
-    case DataFormatBoolean:
     case DataFormatDouble:
     case DataFormatStorage:
     case DataFormatInt52:
@@ -1566,7 +1563,6 @@ GPRReg SpeculativeJIT::fillSpeculateBoolean(Edge edge)
         return gpr;
     }
 
-    case DataFormatBoolean:
     case DataFormatJSBoolean: {
         GPRReg gpr = info.gpr();
         m_gprs.lock(gpr);
@@ -1704,7 +1700,6 @@ GPRReg SpeculativeJIT::fillSpeculateBigInt32(Edge edge)
         return gpr;
     }
 
-    case DataFormatBoolean:
     case DataFormatJSBoolean:
     case DataFormatJSInt32:
     case DataFormatInt32:
@@ -3060,7 +3055,6 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
     } }
 }
 
-#if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
 void SpeculativeJIT::compileRegExpTestInline(Node* node)
 {
     RegExp* regExp = uncheckedDowncast<RegExp>(node->cellOperand2()->value());
@@ -3191,14 +3185,6 @@ void SpeculativeJIT::compileRegExpTestInline(Node* node)
     doneCases.link(this);
     unblessedBooleanResult(temp0GPR, node);
 }
-#else
-void SpeculativeJIT::compileRegExpTestInline(Node* node)
-{
-    UNUSED_PARAM(node);
-    ASSERT_NOT_REACHED();
-    compileRegExpTest(node);
-}
-#endif
 
 #if USE(LARGE_TYPED_ARRAYS)
 void SpeculativeJIT::compileNewTypedArrayWithInt52Size(Node* node)
@@ -5852,13 +5838,9 @@ void SpeculativeJIT::compile(Node* node)
         compileWeakMapSet(node);
         break;
 
-    case StringSlice: {
-        compileStringSlice(node);
-        break;
-    }
-
+    case StringSlice:
     case StringSubstring: {
-        compileStringSubstring(node);
+        compileStringSliceOrSubstring(node);
         break;
     }
 
@@ -10031,7 +10013,8 @@ void SpeculativeJIT::emitRegExpAnchoredFirstCharacterFilterGuards(const uint8_t*
 
 void SpeculativeJIT::emitRegExpStickyFirstCharacterFilterGuards(const uint8_t* bitmap, GPRReg baseGPR, GPRReg argumentGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR, JumpList& slowCases)
 {
-    ASSERT(noOverlap(baseGPR, argumentGPR, scratch1GPR, scratch2GPR, scratch3GPR));
+    ASSERT(noOverlap(baseGPR, scratch1GPR, scratch2GPR, scratch3GPR));
+    ASSERT(noOverlap(argumentGPR, scratch1GPR, scratch2GPR, scratch3GPR));
 
     // The string must be a resolved 8-bit string.
     loadPtr(Address(argumentGPR, JSString::offsetOfValue()), scratch1GPR);

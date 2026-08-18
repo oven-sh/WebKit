@@ -759,6 +759,9 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #if ENABLE(PDF_PLUGIN) && PLATFORM(MAC)
     ZoomPDFIn(WebKit::PDFPluginIdentifier identifier)
     ZoomPDFOut(WebKit::PDFPluginIdentifier identifier)
+#if ENABLE(AX_PDF_SUPPORT)
+    TogglePDFAccessibilityDisplayMode(WebKit::PDFPluginIdentifier identifier)
+#endif
     SavePDF(WebKit::PDFPluginIdentifier identifier) -> (String filename, URL url, std::span<const uint8_t> data)
     OpenPDFWithPreview(WebKit::PDFPluginIdentifier identifier) -> (String filename, struct std::optional<WebKit::FrameInfoData> frameInfo, std::span<const uint8_t> data)
 #endif
@@ -838,6 +841,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
     UpdateWithTextRecognitionResult(struct WebCore::TextRecognitionResult result, struct WebCore::ElementContext element, WebCore::FloatPoint location) -> (enum:uint8_t WebKit::TextRecognitionUpdateResult result)
     StartVisualTranslation(String sourceLanguageIdentifier, String targetLanguageIdentifier)
 #endif
+
+    SetDisplayedTranslationLocaleIdentifier(String localeIdentifier)
 
     ScrollToRect(WebCore::FloatRect targetRect, WebCore::FloatPoint origin)
     SetContentOffset(std::optional<int> x, std::optional<int> y, enum:bool WebCore::ScrollIsAnimated animated)

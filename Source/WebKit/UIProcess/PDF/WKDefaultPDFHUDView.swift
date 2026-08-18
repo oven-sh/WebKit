@@ -27,7 +27,7 @@ import AppKit
 public import Foundation
 internal import WebKit_Internal
 private import pal.spi.mac.NSImageSPI
-private import wtf.SPI.darwin.OSVariantSPI
+private import wtf.Core.cocoa.RuntimeApplicationChecksCocoa
 
 private let barVerticalOffset: CGFloat = 40
 private let barHorizontalPadding: CGFloat = 16
@@ -50,11 +50,6 @@ private let fadeOutDuration: TimeInterval = 0.5
 private let autoHideDelay: TimeInterval = 3.0
 private let hoverInset: CGFloat = -16.0
 
-// FIXME: (rdar://164559261) understand/document/remove unsafety
-func isInRecoveryOS() -> Bool {
-    unsafe os_variant_is_basesystem("WebKit")
-}
-
 @objc
 @implementation
 extension WKDefaultPDFHUDView {
@@ -68,6 +63,10 @@ extension WKDefaultPDFHUDView {
     final private var zoomOutButton: NSButton
     @nonobjc
     final private var zoomInButton: NSButton
+    #if ENABLE_AX_PDF_SUPPORT
+    @nonobjc
+    final private var accessibilityDisplayModeButton: NSButton
+    #endif
     @nonobjc
     final private var separatorView: NSView
     @nonobjc
@@ -96,17 +95,30 @@ extension WKDefaultPDFHUDView {
 
         self.zoomOutButton = Self.makeButton(symbolName: "minus.magnifyingglass", accessibilityLabel: "Zoom Out")
         self.zoomInButton = Self.makeButton(symbolName: "plus.magnifyingglass", accessibilityLabel: "Zoom In")
+        #if ENABLE_AX_PDF_SUPPORT
+        self.accessibilityDisplayModeButton = Self.makeButton(
+            symbolName: WKPDFHUDViewAccessibilityDisplayModeSymbolName(false),
+            accessibilityLabel: WKPDFHUDViewAccessibilityDisplayModeLabel(false),
+            isPrivateSymbol: true
+        )
+        #endif
         self.separatorView = Self.makeSeparator()
         self.openInPreviewButton = Self.makeButton(symbolName: "preview", accessibilityLabel: "Open in Preview", isPrivateSymbol: true)
         self.saveButton = Self.makeButton(symbolName: "arrow.down.circle", accessibilityLabel: "Save PDF")
 
-        let zoomGroup = NSStackView(views: [zoomOutButton, zoomInButton])
+        #if ENABLE_AX_PDF_SUPPORT
+        let zoomButtons = [zoomOutButton, zoomInButton, accessibilityDisplayModeButton]
+        #else
+        let zoomButtons = [zoomOutButton, zoomInButton]
+        #endif
+
+        let zoomGroup = NSStackView(views: zoomButtons)
         zoomGroup.orientation = .horizontal
         zoomGroup.spacing = groupSpacing
         zoomGroup.alignment = .centerY
 
         self.stackView = NSStackView(views: [zoomGroup])
-        if !isInRecoveryOS() {
+        if !WTF.isInBaseSystem() {
             stackView.addArrangedSubview(separatorView)
             let fileGroup = NSStackView(views: [openInPreviewButton, saveButton])
             fileGroup.orientation = .horizontal
@@ -134,6 +146,10 @@ extension WKDefaultPDFHUDView {
 
         super.init(frame: frame)
 
+        #if ENABLE_AX_PDF_SUPPORT
+        accessibilityDisplayModeButton.isHidden = true
+        #endif
+
         addSubview(barView)
         barView.centerXAnchor.constraint(equalTo: centerXAnchor).isActive = true
         barView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -barVerticalOffset).isActive = true
@@ -146,6 +162,10 @@ extension WKDefaultPDFHUDView {
         zoomOutButton.action = #selector(zoomOutAction)
         zoomInButton.target = self
         zoomInButton.action = #selector(zoomInAction)
+        #if ENABLE_AX_PDF_SUPPORT
+        accessibilityDisplayModeButton.target = self
+        accessibilityDisplayModeButton.action = #selector(toggleAccessibilityDisplayModeAction)
+        #endif
         openInPreviewButton.target = self
         openInPreviewButton.action = #selector(openInPreviewAction)
         saveButton.target = self
@@ -176,6 +196,31 @@ extension WKDefaultPDFHUDView {
         resetHideTimer()
     }
 
+    @objc
+    func setAccessibilityDisplayModeState(_ state: WKPDFHUDViewAccessibilityDisplayModeState) {
+        #if ENABLE_AX_PDF_SUPPORT
+        guard state != .unavailable else {
+            accessibilityDisplayModeButton.isHidden = true
+            return
+        }
+
+        let label = WKPDFHUDViewAccessibilityDisplayModeLabel(state == .active)
+        let symbolName = WKPDFHUDViewAccessibilityDisplayModeSymbolName(state == .active)
+        accessibilityDisplayModeButton.isHidden = false
+        if let image = NSImage(privateSystemSymbolName: symbolName, accessibilityDescription: label) {
+            let config = NSImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .medium, scale: .large)
+            accessibilityDisplayModeButton.image = image.withSymbolConfiguration(config) ?? image
+        }
+        #endif
+    }
+
+    // For testing only.
+    // swift-format-ignore: NoLeadingUnderscores
+    @objc
+    private func _hideForTesting() {
+        hideTimerFired()
+    }
+
     // For testing only.
     // swift-format-ignore: NoLeadingUnderscores
     @objc
@@ -185,6 +230,10 @@ extension WKDefaultPDFHUDView {
             zoomOutButton.performClick(nil)
         case "plus.magnifyingglass":
             zoomInButton.performClick(nil)
+        #if ENABLE_AX_PDF_SUPPORT
+        case WKPDFHUDViewAccessibilityDisplayModeSymbolName(true), WKPDFHUDViewAccessibilityDisplayModeSymbolName(false):
+            accessibilityDisplayModeButton.performClick(nil)
+        #endif
         case "preview":
             openInPreviewButton.performClick(nil)
         case "arrow.down.circle":
@@ -212,7 +261,13 @@ extension WKDefaultPDFHUDView {
         let pointInBar = barView.convert(pointInSelf, from: self)
         guard barView.bounds.contains(pointInBar) else { return nil }
 
-        for button in [zoomOutButton, zoomInButton, openInPreviewButton, saveButton] {
+        #if ENABLE_AX_PDF_SUPPORT
+        let buttons = [zoomOutButton, zoomInButton, accessibilityDisplayModeButton, openInPreviewButton, saveButton]
+        #else
+        let buttons = [zoomOutButton, zoomInButton, openInPreviewButton, saveButton]
+        #endif
+
+        for button in buttons {
             let pointInButton = button.convert(pointInSelf, from: self)
             if button.bounds.contains(pointInButton) && !button.isHidden {
                 return button
@@ -249,6 +304,15 @@ extension WKDefaultPDFHUDView {
         actionHandler(.zoomIn)
         resetHideTimer()
     }
+
+    #if ENABLE_AX_PDF_SUPPORT
+    @objc
+    private func toggleAccessibilityDisplayModeAction() {
+        guard isBarVisible else { return }
+        actionHandler(.toggleAccessibilityDisplayMode)
+        resetHideTimer()
+    }
+    #endif
 
     @objc
     private func openInPreviewAction() {

@@ -1070,11 +1070,6 @@ public:
         return isConstant() && constant()->value().isBoolean();
     }
      
-    bool asBoolean()
-    {
-        return constant()->value().asBoolean();
-    }
-
     bool isUndefinedOrNullConstant()
     {
         return isConstant() && constant()->value().isUndefinedOrNull();
@@ -3057,6 +3052,17 @@ public:
         return op() == CountExecution || op() == InvalidationPoint;
     }
 
+    // An InvalidationPoint emitted for op_check_traps under signal-based VM traps (!Options::usePollingTraps()).
+    // Besides being an invalidation point it is the only place in its loop where the VMTraps SignalSender can
+    // install a breakpoint to interrupt optimized code, so CSE must not fold it into a dominating one: an
+    // effect-free loop that follows another loop would otherwise compile to a bare backward jump that no
+    // termination request (worker terminate(), watchdog) can ever break into.
+    bool isVMTrapsBreakpointSite()
+    {
+        ASSERT(op() == InvalidationPoint);
+        return m_opInfo.as<bool>();
+    }
+
     unsigned refCount()
     {
         return m_refCount;
@@ -3239,12 +3245,12 @@ public:
         // However, we only emit such an add if both inputs can be Int52, and Int32
         // can trivially become Int52.
         //
-        return enableInt52() && isInt32OrInt52Speculation(prediction());
+        return isInt32OrInt52Speculation(prediction());
     }
 
     bool shouldSpeculateInt52OrOther()
     {
-        return enableInt52() && isInt32OrInt52OrOtherSpeculation(prediction());
+        return isInt32OrInt52OrOtherSpeculation(prediction());
     }
 
     bool shouldSpeculateDouble()
@@ -3548,7 +3554,7 @@ public:
     
     static bool shouldSpeculateInt52(Node* op1, Node* op2)
     {
-        return enableInt52() && op1->shouldSpeculateInt52() && op2->shouldSpeculateInt52();
+        return op1->shouldSpeculateInt52() && op2->shouldSpeculateInt52();
     }
     
     static bool shouldSpeculateNumber(Node* op1, Node* op2)

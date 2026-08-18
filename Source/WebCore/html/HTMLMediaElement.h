@@ -161,6 +161,10 @@ public:
 
     virtual void captionTracksChanged() { }
     virtual void captionsEnabledChanged() { }
+
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    virtual void hasObjectViewBoxChanged(bool) { }
+#endif
 };
 
 class HTMLMediaElement
@@ -239,7 +243,8 @@ public:
     using PlayPromiseVector = Vector<DOMPromiseDeferred<void>>;
     void rejectPendingPlayPromises(PlayPromiseVector&&, Ref<DOMException>&&);
     void resolvePendingPlayPromises(PlayPromiseVector&&);
-    void scheduleNotifyAboutPlaying(bool deferWhileSeeking = true);
+    enum class ShouldResolvePlayPromises : bool { No, Yes };
+    void scheduleNotifyAboutPlaying(bool deferWhileSeeking = true, ShouldResolvePlayPromises = ShouldResolvePlayPromises::Yes);
     void maybeFirePendingPlaying();
     void handlePlaybackPositionChanged();
     void notifyAboutPlaying(PlayPromiseVector&&);
@@ -536,6 +541,7 @@ public:
 
     using MediaPlayerEnums::VideoFullscreenMode;
     VideoFullscreenMode fullscreenMode() const { return m_videoFullscreenMode; }
+    bool isChangingVideoFullscreenMode() const { return m_changingVideoFullscreenMode; }
 
     WEBCORE_EXPORT void enterFullscreen(VideoFullscreenMode);
     WEBCORE_EXPORT void setPlayerIdentifierForVideoElement();
@@ -743,6 +749,10 @@ public:
 
     void audioSessionCategoryChanged(AudioSessionCategory, AudioSessionMode, RouteSharingPolicy);
 
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    void hasObjectViewBoxChanged(bool);
+#endif
+
     // CheckedPtr interface
     uint32_t checkedPtrCount() const { return CanMakeCheckedPtr<Node>::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const { return CanMakeCheckedPtr<Node>::checkedPtrCountWithoutThreadCheck(); }
@@ -799,7 +809,6 @@ protected:
     void setShowPosterFlag(bool);
 
     void setChangingVideoFullscreenMode(bool);
-    bool isChangingVideoFullscreenMode() const { return m_changingVideoFullscreenMode; }
 
     void mediaPlayerEngineUpdated() override;
     void visibilityStateChanged() final;
@@ -1108,7 +1117,6 @@ private:
     void hardwareMutedStateDidChange(const AudioSession&) final;
 #endif
     void routingContextUIDDidChange(const AudioSession&) final;
-    void categoryDidChange(const AudioSession&) final;
 #endif
 
     bool NODELETE hasMediaSource() const;
@@ -1237,7 +1245,7 @@ private:
     TaskCancellationGroup m_periodicTimeupdateCancellationGroup;
     TaskCancellationGroup m_volumeRevertTaskCancellationGroup;
 
-    const Ref<NativePromiseRequest> m_playRequest;
+    const Ref<NativePromiseRequest> m_beginPlaybackRequest;
     PlayPromiseVector m_pendingPlayPromises;
     bool m_playPromiseSettlementGuaranteed { false };
 

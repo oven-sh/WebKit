@@ -28,6 +28,7 @@
 
 #include "FloatPoint.h"
 #include "Path.h"
+#include <wtf/Vector.h>
 
 namespace WebCore {
 

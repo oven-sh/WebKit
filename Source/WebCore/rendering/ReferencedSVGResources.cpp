@@ -38,7 +38,6 @@
 #include "RenderObjectInlines.h"
 #include "RenderSVGPath.h"
 #include "RenderSVGResourceGradient.h"
-#include "RenderSVGResourcePaintServer.h"
 #include "RenderSVGResourcePattern.h"
 #include "SVGClipPathElement.h"
 #include "SVGDocument.h"
@@ -183,25 +182,6 @@ void ReferencedSVGResources::removeClientForTarget(const AtomString& targetID)
         targetElement->removeReferencingCSSClient(protect(*entry.client));
 }
 
-RenderSVGResourcePaintServer* ReferencedSVGResources::cachedFillPaintServer() const
-{
-    return m_cachedFillPaintServer.get();
-}
-
-RenderSVGResourcePaintServer* ReferencedSVGResources::cachedStrokePaintServer() const
-{
-    return m_cachedStrokePaintServer.get();
-}
-
-void ReferencedSVGResources::setCachedPaintServer(SVGPaintType paintType, RenderSVGResourcePaintServer& paintServer)
-{
-    ASSERT(paintType == SVGPaintType::Fill || paintType == SVGPaintType::Stroke);
-    if (paintType == SVGPaintType::Fill)
-        m_cachedFillPaintServer = paintServer;
-    else
-        m_cachedStrokePaintServer = paintServer;
-}
-
 ReferencedSVGResources::SVGElementIdentifierAndTagPairs ReferencedSVGResources::referencedSVGResourceIDs(const Style::ComputedStyle& style, const Document& document)
 {
     SVGElementIdentifierAndTagPairs referencedResources;
@@ -327,12 +307,31 @@ RefPtr<SVGClipPathElement> ReferencedSVGResources::referencedClipPathElement(Tre
     if (clipPath.fragment().isEmpty())
         return nullptr;
 
+    Ref document = treeScope.documentScope();
+    CheckedRef extensions = document->svgExtensions();
+    if (auto externalDocument = extensions->externalResourceDocument(clipPath.url().resolved)) {
+        RefPtr resolvedDocument = *externalDocument;
+        if (!resolvedDocument)
+            return nullptr;
+        return downcast<SVGClipPathElement>(elementForResourceID(*resolvedDocument, clipPath.fragment(), SVGNames::clipPathTag));
+    }
+
     return downcast<SVGClipPathElement>(elementForResourceID(treeScope, clipPath.fragment(), SVGNames::clipPathTag));
 }
 
 RefPtr<SVGMarkerElement> ReferencedSVGResources::referencedMarkerElement(TreeScope& treeScope, const Style::URL& markerResource)
 {
-    auto resourceID = SVGURIReference::fragmentIdentifierFromIRIString(markerResource, protect(treeScope.documentScope()));
+    Ref document = treeScope.documentScope();
+    CheckedRef extensions = document->svgExtensions();
+    if (auto externalDocument = extensions->externalResourceDocument(markerResource.resolved)) {
+        RefPtr resolvedDocument = *externalDocument;
+        auto resourceID = markerResource.resolved.fragmentIdentifier().toAtomString();
+        if (resourceID.isEmpty() || !resolvedDocument)
+            return nullptr;
+        return downcast<SVGMarkerElement>(elementForResourceID(*resolvedDocument, resourceID, SVGNames::markerTag));
+    }
+
+    auto resourceID = SVGURIReference::fragmentIdentifierFromIRIString(markerResource, protect(document));
     if (resourceID.isEmpty())
         return nullptr;
 
@@ -355,7 +354,17 @@ RefPtr<SVGMaskElement> ReferencedSVGResources::referencedMaskElement(TreeScope& 
 
 RefPtr<SVGElement> ReferencedSVGResources::referencedPaintServerElement(TreeScope& treeScope, const Style::URL& uri)
 {
-    auto resourceID = SVGURIReference::fragmentIdentifierFromIRIString(uri, protect(treeScope.documentScope()));
+    Ref document = treeScope.documentScope();
+    CheckedRef extensions = document->svgExtensions();
+    if (auto externalDocument = extensions->externalResourceDocument(uri.resolved)) {
+        RefPtr resolvedDocument = *externalDocument;
+        auto resourceID = uri.resolved.fragmentIdentifier().toAtomString();
+        if (resourceID.isEmpty() || !resolvedDocument)
+            return nullptr;
+        return elementForResourceIDs(*resolvedDocument, resourceID, { SVGNames::linearGradientTag, SVGNames::radialGradientTag, SVGNames::patternTag });
+    }
+
+    auto resourceID = SVGURIReference::fragmentIdentifierFromIRIString(uri, protect(document));
     if (resourceID.isEmpty())
         return nullptr;
 

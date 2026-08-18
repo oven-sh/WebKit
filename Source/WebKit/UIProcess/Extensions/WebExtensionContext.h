@@ -101,6 +101,11 @@
 #include "WebExtensionBookmarksParameters.h"
 #endif
 
+#if ENABLE(2022_GLIB_API)
+#include "WebKitWebExtensionContext.h"
+#include <wtf/glib/GWeakPtr.h>
+#endif
+
 OBJC_CLASS NSArray;
 OBJC_CLASS NSDate;
 OBJC_CLASS NSDictionary;
@@ -124,7 +129,12 @@ OBJC_PROTOCOL(WKWebExtensionWindow);
 #if PLATFORM(MAC)
 OBJC_CLASS NSEvent;
 OBJC_CLASS NSMenu;
+OBJC_CLASS NSWindow;
 OBJC_CLASS WKOpenPanelParameters;
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+OBJC_CLASS UIWindow;
 #endif
 
 namespace PAL {
@@ -179,7 +189,11 @@ public:
 
     static WebExtensionContext* NODELETE get(WebExtensionContextIdentifier);
 
+#if PLATFORM(COCOA)
     explicit WebExtensionContext(Ref<WebExtension>&&);
+#elif ENABLE(2022_GLIB_API)
+    explicit WebExtensionContext(WebKitWebExtensionContext*);
+#endif
 
     using PermissionsMap = HashMap<String, WallTime>;
     using PermissionMatchPatternsMap = HashMap<Ref<WebExtensionMatchPattern>, WallTime>;
@@ -320,6 +334,9 @@ public:
         Popup,
         Sidebar,
         Tab,
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+        Offscreen,
+#endif
     };
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
@@ -333,7 +350,7 @@ public:
 
     WebExtensionContextIdentifier NODELETE privilegedIdentifier() const;
 
-    WebExtensionContextParameters parameters(IncludePrivilegedIdentifier) const;
+    WebExtensionContextParameters parameters(IncludePrivilegedIdentifier, WebProcessProxy& destinationProcess) const;
 
     bool operator==(const WebExtensionContext& other) const { return (this == &other); }
 
@@ -532,9 +549,16 @@ public:
     std::optional<Ref<WebExtensionSidebar>> getSidebar(WebExtensionTab const&);
     std::optional<Ref<WebExtensionSidebar>> getOrCreateSidebar(WebExtensionWindow&);
     std::optional<Ref<WebExtensionSidebar>> getOrCreateSidebar(WebExtensionTab&);
-    RefPtr<WebExtensionSidebar> getOrCreateSidebar(RefPtr<WebExtensionTab>);
+
+    // The sidebar object which should be given to the browser for the specified tab. If the extension
+    // has specified tab-specific overrides for this tab, then the tab's sidebar; otherwise, the window's.
+    std::optional<Ref<WebExtensionSidebar>> sidebarForTab(WebExtensionTab&);
+    bool discardSidebarIfUnmodified(WebExtensionSidebar&);
+    void addSidebarPage(WebPageProxy&, WebExtensionSidebar&);
     void openSidebar(WebExtensionSidebar&);
     void closeSidebar(WebExtensionSidebar&);
+    void notifyDelegateOfSidebarUpdate(WebExtensionSidebar&);
+    void notifyDelegateOfSidebarInvalidation(WebExtensionSidebar&);
     bool canProgrammaticallyOpenSidebar();
     bool canProgrammaticallyCloseSidebar();
 #endif // ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
@@ -580,6 +604,12 @@ public:
     URL backgroundContentURL();
 #if PLATFORM(COCOA)
     WKWebView *backgroundWebView() const { return m_backgroundWebView.get(); }
+
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    WKWebView *offscreenWebView() const { return m_offscreenWebView.get(); }
+    bool isOffscreenWebView(WKWebView *webView) const { return webView == m_offscreenWebView; }
+#endif
+
 #endif
     bool safeToLoadBackgroundContent() const { return m_safeToLoadBackgroundContent; }
 
@@ -618,13 +648,16 @@ public:
 
     UserStyleSheetVector& dynamicallyInjectedUserStyleSheets() LIFETIME_BOUND { return m_dynamicallyInjectedUserStyleSheets; };
 
-    std::optional<WebCore::PageIdentifier> backgroundPageIdentifier() const;
+    // Maps page identifiers appropriately, even with site isolation enabled.
+    std::optional<WebCore::PageIdentifier> backgroundPageIdentifier(WebProcessProxy& destinationProcess) const;
+    std::optional<WebCore::PageIdentifier> backgroundPageIdentifierInOwnProcess() const;
+
 #if ENABLE(INSPECTOR_EXTENSIONS)
     Vector<PageIdentifierTuple> inspectorBackgroundPageIdentifiers() const;
     Vector<PageIdentifierTuple> inspectorPageIdentifiers() const;
 #endif
-    Vector<PageIdentifierTuple> popupPageIdentifiers() const;
-    Vector<PageIdentifierTuple> tabPageIdentifiers() const;
+    Vector<PageIdentifierTuple> popupPageIdentifiers(WebProcessProxy& destinationProcess) const;
+    Vector<PageIdentifierTuple> tabPageIdentifiers(WebProcessProxy& destinationProcess) const;
 
     void addExtensionTabPage(WebPageProxy&, WebExtensionTab&);
     void addPopupPage(WebPageProxy&, WebExtensionAction&);
@@ -689,9 +722,11 @@ private:
     NSDictionary *readStateFromStorage();
     void writeStateToStorage() const;
 
+    void loadStorageAccessLevelsFromStorage();
+    void saveStorageAccessLevelsToStorage();
+
     void determineInstallReasonDuringLoad();
     void moveLocalStorageIfNeeded(const URL& previousBaseURL, CompletionHandler<void()>&&);
-    void removeWebsiteDataForOrigin(const URL&, CompletionHandler<void()>&&);
     void removeStaleExtensionWebsiteData();
 
     void permissionsDidChange(PermissionNotification, const PermissionsSet&);
@@ -715,6 +750,11 @@ private:
     void unloadBackgroundWebView();
     void scheduleBackgroundContentToUnload();
     void unloadBackgroundContentIfPossible();
+
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    void unloadOffscreenWebView();
+    void performTasksAfterOffscreenContentLoads();
+#endif
 
     uint64_t loadBackgroundPageListenersVersionNumberFromStorage();
     void loadBackgroundPageListenersFromStorage();
@@ -797,8 +837,9 @@ private:
     Ref<WebExtensionRegisteredScriptsSQLiteStore> registeredContentScriptsStore();
 
     // Storage
-    void setSessionStorageAllowedInContentScripts(bool);
-    bool isSessionStorageAllowedInContentScripts() const { return m_isSessionStorageAllowedInContentScripts; }
+    void setStorageAccessLevel(WebExtensionDataType, WebExtensionStorageAccessLevel);
+    WebExtensionStorageAccessLevel storageAccessLevel(WebExtensionDataType dataType) const { return WebKit::storageAccessLevel(m_storageAccessLevels, dataType); }
+    bool isStorageAllowedInUntrustedContexts(WebExtensionDataType dataType) const { return isStorageTypeAllowedInUntrustedContexts(m_storageAccessLevels, dataType); }
     size_t quotaForStorageType(WebExtensionDataType);
 
     Ref<WebExtensionStorageSQLiteStore> localStorageStore();
@@ -823,11 +864,11 @@ private:
 
     // Alarms APIs
     bool isAlarmsMessageAllowed(IPC::Decoder&);
-    void alarmsCreate(const String& name, Seconds initialInterval, Seconds repeatInterval);
+    void alarmsCreate(const String& name, Seconds initialInterval, Seconds repeatInterval, CompletionHandler<void()>&&);
     void alarmsGet(const String& name, CompletionHandler<void(std::optional<WebExtensionAlarmParameters>&&)>&&);
-    void alarmsClear(const String& name, CompletionHandler<void()>&&);
+    void alarmsClear(const String& name, CompletionHandler<void(bool)>&&);
     void alarmsGetAll(CompletionHandler<void(Vector<WebExtensionAlarmParameters>&&)>&&);
-    void alarmsClearAll(CompletionHandler<void()>&&);
+    void alarmsClearAll(CompletionHandler<void(bool)>&&);
     void fireAlarmsEventIfNeeded(const WebExtensionAlarm&);
 
     // Bookmarks APIs
@@ -900,6 +941,15 @@ private:
     void menusRemove(const String& identifier, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
     void menusRemoveAll(CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
     void fireMenusClickedEventIfNeeded(const WebExtensionMenuItem&, bool wasChecked, const WebExtensionMenuItemContextParameters&);
+
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    // Offscreen APIs
+    bool isOffscreenMessageAllowed(IPC::Decoder&);
+
+    void offscreenCreateDocument(const WebExtensionOffscreenDocumentParameters&, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
+    void offscreenCloseDocument(CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
+    void offscreenHasDocument(CompletionHandler<void(Expected<bool, WebExtensionError>&&)>&&);
+#endif
 
     // Permissions APIs
     void permissionsGetAll(CompletionHandler<void(Vector<String>&& permissions, Vector<String>&& origins)>&&);
@@ -1028,8 +1078,10 @@ private:
     // webRequest support.
     bool hasPermissionToSendWebRequestEvent(WebExtensionTab*, const URL& resourceURL, const ResourceLoadInfo&);
 
+#if PLATFORM(COCOA)
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
+#endif
 
     bool isLoaded(IPC::Decoder&) const { return isLoaded(); }
     bool isLoadedAndPrivilegedMessage(IPC::Decoder& message) const { return isLoaded() && isPrivilegedMessage(message); }
@@ -1091,7 +1143,21 @@ private:
 #if PLATFORM(COCOA)
     RetainPtr<WKWebView> m_backgroundWebView;
     Variant<std::monostate, Ref<ProcessThrottlerActivity>, Ref<ProcessActivityGroup>> m_backgroundWebViewActivity;
+
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    RetainPtr<WKWebView> m_offscreenWebView;
+    Variant<std::monostate, Ref<ProcessThrottlerActivity>, Ref<ProcessActivityGroup>> m_offscreenWebViewActivity;
+    Vector<CompletionHandler<void(Expected<void, WebExtensionError>&&)>> m_offscreenDocumentLoadCompletionHandlers;
+#if PLATFORM(MAC)
+    RetainPtr<NSWindow> m_offscreenWebViewWindow;
+#elif PLATFORM(IOS_FAMILY)
+    RetainPtr<UIWindow> m_offscreenWebViewWindow;
+#endif
+#endif
+
     RetainPtr<_WKWebExtensionContextDelegate> m_delegate;
+#elif ENABLE(2022_GLIB_API)
+    GWeakPtr<WebKitWebExtensionContext> m_delegate;
 #endif
     RefPtr<API::Error> m_backgroundContentLoadError;
 
@@ -1125,6 +1191,7 @@ private:
 #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
     WeakHashMap<WebExtensionWindow, Ref<WebExtensionSidebar>> m_sidebarWindowMap;
     WeakHashMap<WebExtensionTab, Ref<WebExtensionSidebar>> m_sidebarTabMap;
+    WeakHashMap<WebPageProxy, WeakPtr<WebExtensionSidebar>> m_sidebarPageMap;
     RefPtr<WebExtensionSidebar> m_defaultSidebar;
     WebExtensionActionClickBehavior m_actionClickBehavior { WebExtensionActionClickBehavior::OpenPopup };
 #endif // ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
@@ -1160,7 +1227,7 @@ private:
     MenuItemMap m_menuItems;
     MenuItemVector m_mainMenuItems;
 
-    bool m_isSessionStorageAllowedInContentScripts { false };
+    WebExtensionStorageAccessLevelMap m_storageAccessLevels;
 
     RefPtr<WebExtensionStorageSQLiteStore> m_localStorageStore;
     RefPtr<WebExtensionStorageSQLiteStore> m_sessionStorageStore;

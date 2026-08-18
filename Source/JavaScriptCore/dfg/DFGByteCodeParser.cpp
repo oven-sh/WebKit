@@ -2191,6 +2191,16 @@ bool ByteCodeParser::handleVarargsInlining(Node* callTargetNode, Operand result,
         VERBOSE_LOG("Bailing inlining: too many arguments for varargs inlining.\n");
         return false;
     }
+
+    auto hasVarargsOverflowExit = [&] {
+        for (unsigned checkpoint = 0; checkpoint < BytecodeIndex::numberOfCheckpoints; ++checkpoint) {
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex.withCheckpoint(checkpoint), VarargsOverflow))
+                return true;
+        }
+        return false;
+    };
+    if (hasVarargsOverflowExit())
+        return false;
     if (callLinkStatus.couldTakeSlowPath() || callLinkStatus.size() != 1) {
         VERBOSE_LOG("Bailing inlining: polymorphic inlining is not yet supported for varargs.\n");
         return false;
@@ -4232,10 +4242,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
             insertChecks();
             VirtualRegister operand = virtualRegisterForArgumentIncludingThis(1, registerOffset);
-            if (enableInt52())
-                setResult(addToGraph(FiatInt52, get(operand)));
-            else
-                setResult(get(operand));
+            setResult(addToGraph(FiatInt52, get(operand)));
             return CallOptimizationResult::Inlined;
         }
 
@@ -5691,10 +5698,6 @@ bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DO
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& variant, Node* thisNode, Node* unwrapped, const ChecksFunctor& insertChecks)
 {
-#if USE(LARGE_TYPED_ARRAYS)
-    static_assert(enableInt52());
-#endif
-
     if (thisNode != unwrapped)
         return false;
 
@@ -7436,7 +7439,14 @@ void ByteCodeParser::handleGetScope(VirtualRegister destination)
 
 void ByteCodeParser::handleCheckTraps()
 {
-    addToGraph((Options::usePollingTraps() || m_graph.m_plan.isUnlinked()) ? CheckTraps : InvalidationPoint);
+    if (Options::usePollingTraps() || m_graph.m_plan.isUnlinked()) {
+        addToGraph(CheckTraps);
+        return;
+    }
+    // With signal-based traps this InvalidationPoint is also where VMTraps::tryInstallTrapBreakpoints()
+    // plants the breakpoint that stops optimized code, so one must survive in every loop even when an
+    // earlier one dominates it with no watchpoint fire in between (see Node::isVMTrapsBreakpointSite()).
+    addToGraph(InvalidationPoint, OpInfo(true));
 }
 
 void ByteCodeParser::emitPutById(
@@ -10198,7 +10208,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 // op_get_from_scope for a global property should walk the
                 // proto chain of the global object searching for the desired property
                 GetByStatus::LookupMode lookupMode = GetByStatus::LookupMode::Normal;
-                GetByStatus status = GetByStatus::computeFor(globalObject, structure, identifier, lookupMode);
+                GetByStatus status = GetByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, globalObject, structure, identifier, lookupMode);
 
                 if (status.state() != GetByStatus::Simple
                     || status.numVariants() != 1
@@ -10383,7 +10393,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
                 PutByStatus status;
                 if (uid)
-                    status = PutByStatus::computeFor(globalObject, structure, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), false, PrivateFieldPutKind::none());
+                    status = PutByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, globalObject, structure, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), false, PrivateFieldPutKind::none());
                 else
                     status = PutByStatus(PutByStatus::LikelyTakesSlowPath);
                 if (status.numVariants() != 1

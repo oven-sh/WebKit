@@ -59,12 +59,6 @@ public:
     // This function is only effective for newly created threads. In some platform, it returns a bogus value for the main thread.
     static StackBounds newThreadStackBounds(PlatformThreadHandle);
 #endif
-    static StackBounds currentThreadStackBounds()
-    {
-        auto result = currentThreadStackBoundsInternal();
-        result.checkConsistency();
-        return result;
-    }
 
     void* origin() const
     {
@@ -120,6 +114,12 @@ public:
         return StackBounds(origin, m_bound);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Bun computes the bounds once per thread (Bun__StackCheck__initialize) for threads that are not
+    // WTF threads, which is the once-per-thread use currentThreadStackBounds() is meant for.
+    static StackBounds currentThreadStackBoundsForEmbedder() { return currentThreadStackBounds(); }
+#endif
+
 private:
     StackBounds(void* origin, void* end)
         : m_origin(origin)
@@ -142,6 +142,15 @@ private:
 
     WTF_EXPORT_PRIVATE static StackBounds currentThreadStackBoundsInternal();
 
+    // Obtaining stack bounds from the OS may be slow; only Thread class should do it.
+    // Other callers should use the cached bounds via Thread::currentSingleton().stack()
+    static StackBounds currentThreadStackBounds()
+    {
+        auto result = currentThreadStackBoundsInternal();
+        result.checkConsistency();
+        return result;
+    }
+
     void checkConsistency() const
     {
 #if ASSERT_ENABLED
@@ -155,6 +164,7 @@ private:
     void* m_bound;
 
     friend class StackStats;
+    friend class Thread;
 };
 
 } // namespace WTF
