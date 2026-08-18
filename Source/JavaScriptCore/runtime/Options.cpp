@@ -1052,20 +1052,29 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
                 }
             };
 #if OS(WINDOWS)
-            // The CRT's narrow _environ is only materialized on first use; read
-            // the process environment block directly. Option names and values
-            // are ASCII, so a narrowing copy of matching entries is enough.
+            // Walk the process environment block rather than the CRT's narrow
+            // _environ, which a host with a wide entry point never materializes.
+            // Matching entries are converted with the ANSI code page, i.e. to the
+            // bytes getenv() would have returned, so values such as file paths
+            // keep working with the narrow CRT file APIs they are passed to.
             if (LPWCH block = GetEnvironmentStringsW()) {
-                for (const wchar_t* env = block; *env; env += wcslen(env) + 1) {
-                    if (env[0] != L'J' || env[1] != L'S' || env[2] != L'C' || env[3] != L'_')
-                        continue;
-                    Vector<char, 128> narrow;
-                    for (const wchar_t* p = env; ; ++p) {
-                        narrow.append(*p < 0x80 ? static_cast<char>(*p) : '?');
-                        if (!*p)
-                            break;
+                for (const wchar_t* env = block; *env; ) {
+                    int lengthWithTerminator = static_cast<int>(wcslen(env)) + 1;
+                    if (!wcsncmp(env, L"JSC_", 4)) {
+                        Vector<char, 256> narrow;
+                        narrow.grow(narrow.capacity());
+                        int converted = WideCharToMultiByte(CP_ACP, 0, env, lengthWithTerminator, narrow.mutableSpan().data(), static_cast<int>(narrow.size()), nullptr, nullptr);
+                        if (!converted && GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+                            int required = WideCharToMultiByte(CP_ACP, 0, env, lengthWithTerminator, nullptr, 0, nullptr, nullptr);
+                            if (required > static_cast<int>(narrow.size())) {
+                                narrow.grow(required);
+                                converted = WideCharToMultiByte(CP_ACP, 0, env, lengthWithTerminator, narrow.mutableSpan().data(), required, nullptr, nullptr);
+                            }
+                        }
+                        if (converted)
+                            applyEnvironmentOption(narrow.span().data());
                     }
-                    applyEnvironmentOption(narrow.span().data());
+                    env += lengthWithTerminator;
                 }
                 FreeEnvironmentStringsW(block);
             }
