@@ -45,6 +45,7 @@
 #include <wtf/NumberOfCores.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TranslatedProcess.h>
+#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/threads/Signals.h>
@@ -62,7 +63,9 @@
 #include <wtf/cocoa/Entitlements.h>
 #endif
 
-#if OS(LINUX)
+#if OS(WINDOWS)
+#include <windows.h>
+#elif !PLATFORM(COCOA)
 #include <unistd.h>
 extern "C" char **environ;
 #endif
@@ -389,49 +392,6 @@ bool Options::isAvailable(Options::ID id, Options::Availability availability)
     return false;
 }
 
-#if !PLATFORM(COCOA)
-
-template<typename T>
-bool overrideOptionWithHeuristic(T& variable, Options::ID id, const char* name, Options::Availability availability)
-{
-    bool available = (availability == Options::Availability::Normal)
-        || Options::isAvailable(id, availability);
-
-    const char* stringValue = getenv(name);
-    if (!stringValue)
-        return false;
-    
-    if (available) {
-        std::optional<T> value = parse<T>(stringValue);
-        if (value) {
-            variable = value.value();
-            return true;
-        }
-    }
-    
-    fprintf(stderr, "WARNING: failed to parse %s=%s\n", name, stringValue);
-    return false;
-}
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
-bool Options::overrideAliasedOptionWithHeuristic(const char* name)
-{
-    const char* stringValue = getenv(name);
-    if (!stringValue)
-        return false;
-
-    auto aliasedOption = makeString(unsafeSpan(&name[4]), '=', unsafeSpan(stringValue));
-    if (Options::setOption(aliasedOption.utf8().data()))
-        return true;
-
-    fprintf(stderr, "WARNING: failed to parse %s=%s\n", name, stringValue);
-    return false;
-}
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
-#endif // !PLATFORM(COCOA)
 
 unsigned Options::computeNumberOfWorkerThreads(int maxNumberOfWorkerThreads, int minimum)
 {
@@ -1079,39 +1039,47 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
             // Allow environment vars to override options if applicable.
             // The env var should be the name of the option prefixed with
             // "JSC_".
-#if PLATFORM(COCOA) || OS(LINUX)
+            // One pass over the environment block instead of a getenv() per
+            // option: getenv() is a linear scan (under the CRT environment lock
+            // on Windows) and there are several hundred options.
             bool hasBadOptions = false;
+            auto applyEnvironmentOption = [&](const char* env) {
+                if (!strncmp("JSC_", env, 4)) {
+                    if (!Options::setOption(&env[4])) {
+                        dataLog("ERROR: invalid option: ", env, "\n");
+                        hasBadOptions = true;
+                    }
+                }
+            };
+#if OS(WINDOWS)
+            // The CRT's narrow _environ is only materialized on first use; read
+            // the process environment block directly. Option names and values
+            // are ASCII, so a narrowing copy of matching entries is enough.
+            if (LPWCH block = GetEnvironmentStringsW()) {
+                for (const wchar_t* env = block; *env; env += wcslen(env) + 1) {
+                    if (env[0] != L'J' || env[1] != L'S' || env[2] != L'C' || env[3] != L'_')
+                        continue;
+                    Vector<char, 128> narrow;
+                    for (const wchar_t* p = env; ; ++p) {
+                        narrow.append(*p < 0x80 ? static_cast<char>(*p) : '?');
+                        if (!*p)
+                            break;
+                    }
+                    applyEnvironmentOption(narrow.span().data());
+                }
+                FreeEnvironmentStringsW(block);
+            }
+#else
 #if PLATFORM(COCOA)
             char** envp = *_NSGetEnviron();
 #else
             char** envp = environ;
 #endif
-
-            for (; *envp; envp++) {
-                const char* env = *envp;
-                if (!strncmp("JSC_", env, 4)) {
-                    if (!Options::setOption(&env[4])) {
-                        dataLog("ERROR: invalid option: ", *envp, "\n");
-                        hasBadOptions = true;
-                    }
-                }
-            }
+            for (; *envp; envp++)
+                applyEnvironmentOption(*envp);
+#endif
             if (hasBadOptions && Options::validateOptions())
                 CRASH();
-#endif // PLATFORM(COCOA) || OS(LINUX)
-
-#if !PLATFORM(COCOA)
-#define OVERRIDE_OPTION_WITH_HEURISTICS(type_, name_, defaultValue_, availability_, description_) \
-            overrideOptionWithHeuristic(name_(), name_##ID, "JSC_" #name_, Availability::availability_);
-            FOR_EACH_JSC_OPTION(OVERRIDE_OPTION_WITH_HEURISTICS)
-#undef OVERRIDE_OPTION_WITH_HEURISTICS
-
-#define OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS(aliasedName_, unaliasedName_, equivalence_) \
-            overrideAliasedOptionWithHeuristic("JSC_" #aliasedName_);
-            FOR_EACH_JSC_ALIASED_OPTION(OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS)
-#undef OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS
-
-#endif // !PLATFORM(COCOA)
 
 #if 0
                 ; // Deconfuse editors that do auto indentation
