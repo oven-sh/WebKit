@@ -37,7 +37,8 @@
 
 #if OS(WINDOWS)
 #include <windows.h>
-#include <wincrypt.h> // windows.h must be included before wincrypt.h.
+#include <bcrypt.h>
+#include <mutex>
 #endif
 
 #if OS(DARWIN)
@@ -106,14 +107,33 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
             amountRead += currentRead;
     }
 #elif OS(WINDOWS)
-    // FIXME: We cannot ensure that Cryptographic Service Provider context and CryptGenRandom are safe across threads.
-    // If it is safe, we can acquire context per RandomDevice.
-    HCRYPTPROV hCryptProv = 0;
-    if (!CryptAcquireContext(&hCryptProv, nullptr, MS_DEF_PROV, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
+    // ProcessPrng (bcryptprimitives.dll, Windows 10+) is the primitive that
+    // BCryptGenRandom and RtlGenRandom bottom out in; calling it directly
+    // avoids loading the CNG/CryptoAPI provider stacks. It has no import
+    // library, so resolve it once. Fall back to BCryptGenRandom with the
+    // system-preferred RNG where it is unavailable.
+    using ProcessPrngFunction = BOOL (WINAPI*)(PBYTE, SIZE_T);
+    using BCryptGenRandomFunction = NTSTATUS (WINAPI*)(BCRYPT_ALG_HANDLE, PUCHAR, ULONG, ULONG);
+    static ProcessPrngFunction processPrng;
+    static BCryptGenRandomFunction bcryptGenRandom;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        if (HMODULE module = LoadLibraryExW(L"bcryptprimitives.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
+            processPrng = reinterpret_cast<ProcessPrngFunction>(GetProcAddress(module, "ProcessPrng"));
+        if (!processPrng) {
+            if (HMODULE module = LoadLibraryExW(L"bcrypt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
+                bcryptGenRandom = reinterpret_cast<BCryptGenRandomFunction>(GetProcAddress(module, "BCryptGenRandom"));
+        }
+        if (!processPrng && !bcryptGenRandom)
+            CRASH();
+    });
+    if (processPrng) {
+        if (!processPrng(buffer.data(), buffer.size()))
+            CRASH();
+        return;
+    }
+    if (!BCRYPT_SUCCESS(bcryptGenRandom(nullptr, buffer.data(), static_cast<ULONG>(buffer.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG)))
         CRASH();
-    if (!CryptGenRandom(hCryptProv, buffer.size(), buffer.data()))
-        CRASH();
-    CryptReleaseContext(hCryptProv, 0);
 #else
 #error "This configuration doesn't have a strong source of randomness."
 // WARNING: When adding new sources of OS randomness, the randomness must
