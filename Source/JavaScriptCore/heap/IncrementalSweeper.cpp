@@ -128,7 +128,11 @@ bool IncrementalSweeper::sweepNextBlock(VM& vm, SweepTrigger trigger)
 
 void IncrementalSweeper::startSweeping(JSC::Heap& heap)
 {
-    scheduleTimer();
+    // Scheduling overwrites any deadline already pending (JSRunLoopTimer::Manager::scheduleTimer),
+    // and this runs at the end of every collection. A client that collects more often than the
+    // deadline would push it back forever and the sweeper would never run at all.
+    if (!timeUntilFire())
+        scheduleTimer();
     m_currentDirectory = heap.objectSpace().firstDirectory();
 }
 
