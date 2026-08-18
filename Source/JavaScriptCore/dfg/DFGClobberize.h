@@ -625,7 +625,10 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
 
     case InvalidationPoint:
         write(SideState);
-        def(HeapLocation(InvalidationPointLoc, Watchpoint_fire), LazyNode(node));
+        // A trap-check InvalidationPoint must stay where it is (see Node::isVMTrapsBreakpointSite()); every other
+        // one is redundant with a dominating InvalidationPoint that no watchpoint fire separates it from.
+        if (!node->isVMTrapsBreakpointSite())
+            def(HeapLocation(InvalidationPointLoc, Watchpoint_fire), LazyNode(node));
         return;
 
     case Flush:

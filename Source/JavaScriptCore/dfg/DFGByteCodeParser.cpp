@@ -7439,7 +7439,14 @@ void ByteCodeParser::handleGetScope(VirtualRegister destination)
 
 void ByteCodeParser::handleCheckTraps()
 {
-    addToGraph((Options::usePollingTraps() || m_graph.m_plan.isUnlinked()) ? CheckTraps : InvalidationPoint);
+    if (Options::usePollingTraps() || m_graph.m_plan.isUnlinked()) {
+        addToGraph(CheckTraps);
+        return;
+    }
+    // With signal-based traps this InvalidationPoint is also where VMTraps::tryInstallTrapBreakpoints()
+    // plants the breakpoint that stops optimized code, so one must survive in every loop even when an
+    // earlier one dominates it with no watchpoint fire in between (see Node::isVMTrapsBreakpointSite()).
+    addToGraph(InvalidationPoint, OpInfo(true));
 }
 
 void ByteCodeParser::emitPutById(
