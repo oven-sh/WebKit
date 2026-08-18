@@ -97,7 +97,8 @@ void JSFinalizationRegistry::destroy(JSCell* table)
     static_cast<JSFinalizationRegistry*>(table)->~JSFinalizationRegistry();
 }
 
-void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
+// Out of line like the Heap::isMarked calls it makes; see the note above MarkedBlock::isMarked in heap/MarkedBlock.cpp.
+NEVER_INLINE void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
     Locker locker { cellLock() };
 

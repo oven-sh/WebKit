@@ -99,107 +99,13 @@ inline bool MarkedBlock::Handle::isAllocated()
     return m_directory->isAllocated(this);
 }
 
-ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell* cell)
-{
-    m_directory->assertIsMutatorOrMutatorIsStopped();
-    if (m_directory->isAllocated(this))
-        return true;
-
-    // We need to do this while holding the lock because marks might be stale. In that case, newly
-    // allocated will not yet be valid. Consider this interleaving.
-    //
-    // One thread is doing this:
-    //
-    // 1) IsLiveChecksNewlyAllocated: We check if newly allocated is valid. If it is valid, and the bit is
-    //    set, we return true. Let's assume that this executes atomically. It doesn't have to in general,
-    //    but we can assume that for the purpose of seeing this bug.
-    //
-    // 2) IsLiveChecksMarks: Having failed that, we check the mark bits. This step implies the rest of
-    //    this function. It happens under a lock so it's atomic.
-    //
-    // Another thread is doing:
-    //
-    // 1) AboutToMarkSlow: This is the entire aboutToMarkSlow function, and let's say it's atomic. It
-    //    sorta is since it holds a lock, but that doesn't actually make it atomic with respect to
-    //    IsLiveChecksNewlyAllocated, since that does not hold a lock in our scenario.
-    //
-    // The harmful interleaving happens if we start out with a block that has stale mark bits that
-    // nonetheless convey liveness during marking (the off-by-one version trick). The interleaving is
-    // just:
-    //
-    // IsLiveChecksNewlyAllocated AboutToMarkSlow IsLiveChecksMarks
-    //
-    // We started with valid marks but invalid newly allocated. So, the first part doesn't think that
-    // anything is live, but dutifully drops down to the marks step. But in the meantime, we clear the
-    // mark bits and transfer their contents into newlyAllocated. So IsLiveChecksMarks also sees nothing
-    // live. Ooops!
-    //
-    // Fortunately, since this is just a read critical section, we can use a CountingLock.
-    //
-    // Probably many users of CountingLock could use its lambda-based and locker-based APIs. But here, we
-    // need to ensure that everything is ALWAYS_INLINE. It's hard to do that when using lambdas. It's
-    // more reliable to write it inline instead. Empirically, it seems like how inline this is has some
-    // impact on perf - around 2% on splay if you get it wrong.
-
-    MarkedBlock& block = this->block();
-    MarkedBlock::Header& header = block.header();
-
-    auto count = header.m_lock.tryOptimisticFencelessRead();
-    if (count.value) {
-        Dependency fenceBefore = Dependency::fence(count.input);
-        MarkedBlock& fencedBlock = *fenceBefore.consume(&block);
-        MarkedBlock::Header& fencedHeader = fencedBlock.header();
-        MarkedBlock::Handle* fencedThis = fenceBefore.consume(this);
-
-        ASSERT_UNUSED(fencedThis, !fencedThis->isFreeListed());
-
-        HeapVersion myNewlyAllocatedVersion = fencedHeader.m_newlyAllocatedVersion;
-        if (myNewlyAllocatedVersion == newlyAllocatedVersion) {
-            bool result = fencedBlock.isNewlyAllocated(cell);
-            if (header.m_lock.fencelessValidate(count.value, Dependency::fence(result)))
-                return result;
-        } else {
-            HeapVersion myMarkingVersion = fencedHeader.m_markingVersion;
-            if (myMarkingVersion != markingVersion
-                && (!isMarking || !fencedBlock.marksConveyLivenessDuringMarking(myMarkingVersion, markingVersion))) {
-                if (header.m_lock.fencelessValidate(count.value, Dependency::fence(myMarkingVersion)))
-                    return false;
-            } else {
-                bool result = fencedHeader.m_marks.get(block.atomNumber(cell));
-                if (header.m_lock.fencelessValidate(count.value, Dependency::fence(result)))
-                    return result;
-            }
-        }
-    }
-
-    Locker locker { header.m_lock };
-
-    ASSERT(!isFreeListed());
-
-    HeapVersion myNewlyAllocatedVersion = header.m_newlyAllocatedVersion;
-    if (myNewlyAllocatedVersion == newlyAllocatedVersion)
-        return block.isNewlyAllocated(cell);
-
-    if (block.areMarksStale(markingVersion)) {
-        if (!isMarking)
-            return false;
-        if (!block.marksConveyLivenessDuringMarking(markingVersion))
-            return false;
-    }
-
-    return header.m_marks.get(block.atomNumber(cell));
-}
+// Both MarkedBlock::Handle::isLive overloads are defined out of line in MarkedBlock.cpp; see the note above MarkedBlock::isMarked in heap/MarkedBlock.cpp.
 
 inline bool MarkedBlock::Handle::isLiveCell(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const void* p)
 {
     if (!m_block->isAtom(p))
         return false;
     return isLive(markingVersion, newlyAllocatedVersion, isMarking, static_cast<const HeapCell*>(p));
-}
-
-inline bool MarkedBlock::Handle::isLive(const HeapCell* cell)
-{
-    return isLive(space()->markingVersion(), space()->newlyAllocatedVersion(), space()->isMarking(), cell);
 }
 
 inline bool MarkedBlock::Handle::isLiveCell(const void* p)

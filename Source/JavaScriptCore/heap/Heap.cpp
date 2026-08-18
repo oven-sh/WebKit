@@ -135,6 +135,17 @@
 
 namespace JSC {
 
+// Out of line on purpose; see the note above MarkedBlock::isMarked in heap/MarkedBlock.cpp.
+NEVER_INLINE bool Heap::isMarked(const void* rawCell)
+{
+    ASSERT(!m_isMarkingForGCVerifier);
+    HeapCell* cell = std::bit_cast<HeapCell*>(rawCell);
+    if (cell->isPreciseAllocation())
+        return cell->preciseAllocation().isMarked();
+    MarkedBlock& block = cell->markedBlock();
+    return block.isMarked(m_objectSpace.markingVersion(), cell);
+}
+
 namespace HeapInternal {
 static constexpr bool verbose = false;
 static constexpr bool verboseStop = false;

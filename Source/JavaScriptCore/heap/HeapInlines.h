@@ -56,15 +56,7 @@ inline JSC::Heap* Heap::heap(const JSValue v)
     return heap(v.asCell());
 }
 
-ALWAYS_INLINE bool Heap::isMarked(const void* rawCell)
-{
-    ASSERT(!m_isMarkingForGCVerifier);
-    HeapCell* cell = std::bit_cast<HeapCell*>(rawCell);
-    if (cell->isPreciseAllocation())
-        return cell->preciseAllocation().isMarked();
-    MarkedBlock& block = cell->markedBlock();
-    return block.isMarked(m_objectSpace.markingVersion(), cell);
-}
+// Heap::isMarked(const void*) is defined out of line in Heap.cpp; see the note above MarkedBlock::isMarked in heap/MarkedBlock.cpp.
 
 ALWAYS_INLINE bool Heap::testAndSetMarked(HeapVersion markingVersion, const void* rawCell)
 {

@@ -291,10 +291,12 @@ inline void x86_cpuid()
         : "memory");
 }
 
-inline void loadLoadFence() { compilerFence(); }
-inline void loadStoreFence() { compilerFence(); }
+// Upstream uses compilerFence() for these three on x86_64. This tree uses std::atomic_thread_fence,
+// and keeps Dependency::fence / loadAndFence below out of line; see the note above MarkedBlock::isMarked in heap/MarkedBlock.cpp.
+inline void loadLoadFence() { std::atomic_thread_fence(std::memory_order_acquire); }
+inline void loadStoreFence() { std::atomic_thread_fence(std::memory_order_acquire); }
 inline void storeLoadFence() { x86_ortop(); }
-inline void storeStoreFence() { compilerFence(); }
+inline void storeStoreFence() { std::atomic_thread_fence(std::memory_order_release); }
 inline void crossModifyingCodeFence() { x86_cpuid(); }
 
 #else
@@ -369,7 +371,7 @@ public:
     // produces zero, but it's concealed from the compiler. The CPU understands this dummy op to be a
     // phantom dependency.
     template<typename... Arguments>
-    static Dependency fence(Arguments... arguments)
+    NEVER_INLINE static Dependency fence(Arguments... arguments)
     {
         InternalDependencyType input = opaqueMixture(arguments...);
         InternalDependencyType output;
@@ -435,7 +437,7 @@ public:
     // value, similar to above. The fix here is to obscure the pointer we're loading from from
     // the compiler.
     template<typename T>
-    static Dependency loadAndFence(const T* pointer, T& output)
+    NEVER_INLINE static Dependency loadAndFence(const T* pointer, T& output)
     {
 #if CPU(ARM64) || CPU(ARM)
         T value = *opaque(pointer);

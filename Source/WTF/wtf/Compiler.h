@@ -191,24 +191,17 @@
 
 /* ALWAYS_INLINE */
 
-/* In GCC functions marked with no_sanitize_address cannot call functions that are marked with always_inline and not marked with no_sanitize_address.
- * Therefore we need to give up on the enforcement of ALWAYS_INLINE when building with ASAN. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=67368 */
-#if !defined(ALWAYS_INLINE) && defined(NDEBUG) && !(COMPILER(GCC) && ASAN_ENABLED)
-#define ALWAYS_INLINE inline __attribute__((__always_inline__))
-#endif
-
+/* Upstream defines ALWAYS_INLINE as inline __attribute__((__always_inline__)) in NDEBUG builds. This tree
+ * leaves it as plain inline: it is part of the arrangement described above MarkedBlock::isMarked in
+ * JavaScriptCore/heap/MarkedBlock.cpp (GC liveness failures on the linux x64 musl LTO build), and it is
+ * not known which part of that arrangement is the one that matters. */
 #if !defined(ALWAYS_INLINE)
 #define ALWAYS_INLINE inline
 #endif
 
 /* ALWAYS_INLINE_LAMBDA */
 
-/* In GCC functions marked with no_sanitize_address cannot call functions that are marked with always_inline and not marked with no_sanitize_address.
- * Therefore we need to give up on the enforcement of ALWAYS_INLINE_LAMBDA when building with ASAN. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=67368 */
-#if !defined(ALWAYS_INLINE_LAMBDA) && defined(NDEBUG) && !(COMPILER(GCC) && ASAN_ENABLED)
-#define ALWAYS_INLINE_LAMBDA __attribute__((__always_inline__))
-#endif
-
+/* Same arrangement as ALWAYS_INLINE above. */
 #if !defined(ALWAYS_INLINE_LAMBDA)
 #define ALWAYS_INLINE_LAMBDA
 #endif
