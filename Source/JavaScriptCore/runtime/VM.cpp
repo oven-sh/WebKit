@@ -1239,16 +1239,18 @@ size_t VM::updateSoftReservedZoneSize(size_t softReservedZoneSize)
 #if OS(WINDOWS)
 // LLInt and JIT frames are not __chkstk-probed the way C++ frames are, so they may
 // touch the stack more than a guard region below the last access. Everything down
-// to VM::softStackLimit() therefore has to be committed before they run.
+// to VM::softStackLimit() therefore has to be committed before they run. Both of
+// these return the limit down to which the stack is actually usable afterwards.
 
-static void commitStackByTouching(char* limit)
+static void* commitStackByTouching(char* limit)
 {
     // Let the kernel's guard-page handler walk the guard region down a page at a time.
     for (volatile char* p = static_cast<char*>(currentStackPointer()); p >= limit; p -= pageSize())
         *p = *p;
+    return limit;
 }
 
-static void commitStack(void* stackLimit)
+static void* commitStack(void* stackLimit)
 {
     // NT_TIB::StackLimit is the lowest committed non-guard stack address; the guard
     // region sits immediately below it and the rest of the reservation is uncommitted.
@@ -1256,7 +1258,7 @@ static void commitStack(void* stackLimit)
     char* oldLimit = static_cast<char*>(tib->StackLimit);
     char* newLimit = roundDownToMultipleOf(pageSize(), static_cast<char*>(stackLimit));
     if (newLimit >= oldLimit)
-        return;
+        return stackLimit;
 
     // Touching costs a guard-page fault per page and leaves several MB of dirty stack
     // per thread. Instead, leave things exactly as the guard-page handler would have
@@ -1273,15 +1275,23 @@ static void commitStack(void* stackLimit)
     char* oldGuard = static_cast<char*>(guard.BaseAddress);
     char* newGuard = newLimit - guard.RegionSize;
     // The kernel never places the guard region on the last reserved page; neither do we.
-    if (!hasGuardBelowLimit || newGuard < reservationBase + pageSize()
-        || !VirtualAlloc(newGuard, oldGuard - newGuard, MEM_COMMIT, PAGE_READWRITE))
+    if (!hasGuardBelowLimit || newGuard < reservationBase + pageSize())
         return commitStackByTouching(newLimit);
+
+    // If the host is out of commit, growing the stack by touching would raise
+    // EXCEPTION_STACK_OVERFLOW right here. Run JS within what is already committed
+    // instead; the caller raises the soft stack limit to match, so the shortfall
+    // surfaces as an earlier RangeError rather than a crash, and is retried on the
+    // next VM entry.
+    if (!VirtualAlloc(newGuard, oldGuard - newGuard, MEM_COMMIT, PAGE_READWRITE))
+        return oldLimit;
 
     DWORD previous;
     RELEASE_ASSERT(VirtualProtect(oldGuard, guard.RegionSize, PAGE_READWRITE, &previous));
     RELEASE_ASSERT(VirtualProtect(newGuard, guard.RegionSize, PAGE_READWRITE | PAGE_GUARD, &previous));
     tib->StackLimit = newLimit;
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    return stackLimit;
 }
 #endif
 
@@ -1308,7 +1318,6 @@ void VM::updateStackLimits()
     }
 
     if (lastSoftStackLimit != newSoftStackLimit) {
-        traps().setStackSoftLimit(newSoftStackLimit);
 #if OS(WINDOWS)
         // We only need to precommit stack memory dictated by the VM::softStackLimit() limit.
         // This is because VM::softStackLimit() applies to stack usage by LLINT asm or JIT
@@ -1326,8 +1335,9 @@ void VM::updateStackLimits()
         // which raises EXCEPTION_STACK_OVERFLOW on commit-constrained hosts when the reserve
         // is large.
         if (m_stackPointerAtVMEntry)
-            commitStack(newSoftStackLimit);
+            newSoftStackLimit = std::max(newSoftStackLimit, commitStack(newSoftStackLimit));
 #endif
+        traps().setStackSoftLimit(newSoftStackLimit);
     }
 }
 
