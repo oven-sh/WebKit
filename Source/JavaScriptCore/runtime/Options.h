@@ -163,6 +163,9 @@ private:
 
     static bool setOptionWithoutAlias(const char* arg, bool verify = true);
     static bool setAliasedOption(const char* arg, bool verify = true);
+#if !PLATFORM(COCOA)
+    static bool overrideAliasedOptionWithHeuristic(const char* name);
+#endif
 
     static void setAllJITCodeValidations(bool);
 
