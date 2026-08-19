@@ -641,11 +641,13 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         auto iter = loadedModules.find(moduleMapKey);
 #if USE(BUN_JSC_ADDITIONS)
         // removeEntry() edits the registry underneath the realm-level cache, so the
-        // hit below cannot take what it asserts for granted there: the registry may
-        // by now hold a new entry for the key (whose loadPromise may still be null)
-        // or none at all. Forget such a record and load what the registry holds.
-        // A module's own [[LoadedModules]] is not affected: innerModuleLoading
-        // consults it before calling here.
+        // hit below cannot take what it asserts for granted there. removeEntry()
+        // takes a key and this cache is keyed by the request specifier, so when the
+        // host resolves the specifier to a different key the line outlives its entry:
+        // the registry may by now hold a new entry for the record's key (whose
+        // loadPromise may still be null) or none at all. Forget such a record and
+        // load what the registry holds. A module's own [[LoadedModules]] is not
+        // affected: innerModuleLoading consults it before calling here.
         if (!record && iter != loadedModules.end() && !isCacheableLoadedModule(iter->value.m_module.get(), type)) {
             Locker locker { cellLock() };
             loadedModules.remove(iter);
