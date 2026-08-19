@@ -166,6 +166,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case StringCharAt:
     case StringLocaleCompare:
     case CheckIsConstant:
+    case CheckNotCellOperand:
     case CheckBadValue:
     case CheckNotEmpty:
     case AssertNotEmpty:

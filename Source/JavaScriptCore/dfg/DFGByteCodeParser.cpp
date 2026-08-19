@@ -10255,6 +10255,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
                 Node* base = weakJSConstant(interceptor);
                 Node* result = load(prediction, base, base, identifierNumber, status[0]);
+                // The global's getOwnPropertySlot substitutes its globalThis for a property holding the interceptor
+                // itself; leave that to it.
+                addToGraph(CheckNotCellOperand, OpInfo(m_graph.freeze(interceptor)), result);
                 addToGraph(Phantom, get(bytecode.m_scope));
                 set(bytecode.m_dst, result);
                 break;

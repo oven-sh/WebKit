@@ -205,8 +205,8 @@ inline void tryCacheGetFromScopeGlobal(
         JSObject* interceptor = globalObject->globalScopeInterceptor();
         ASSERT(scope == globalObject && interceptor);
         // The global's getOwnPropertySlot() reports (in `slot`) where the value came from. Cache a plain data property
-        // of the interceptor itself, but not one holding the interceptor (the global substitutes its globalThis for
-        // that value, which a cached load would not).
+        // of the interceptor itself. (One currently holding the interceptor isn't worth caching: the fast paths hand
+        // that value back to getOwnPropertySlot, which may substitute another value for it, so they would always miss.)
         if (slot.isCacheableValue() && slot.slotBase() == interceptor && interceptor->structure()->propertyAccessesAreCacheable() && interceptor->getDirect(slot.cachedOffset()) != JSValue(interceptor)) {
             Structure* structure = interceptor->structure();
             {

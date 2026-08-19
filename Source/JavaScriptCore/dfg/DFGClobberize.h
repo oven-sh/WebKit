@@ -552,6 +552,10 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         def(PureValue(CheckIsConstant, AdjacencyList(AdjacencyList::Fixed, node->child1()), node->constant()));
         return;
 
+    case CheckNotCellOperand:
+        def(PureValue(CheckNotCellOperand, AdjacencyList(AdjacencyList::Fixed, node->child1()), node->cellOperand()));
+        return;
+
     case CheckNotEmpty:
         def(PureValue(CheckNotEmpty, AdjacencyList(AdjacencyList::Fixed, node->child1())));
         return;

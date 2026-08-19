@@ -254,6 +254,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetGlobalVar:
     case GetGlobalLexicalVariable:
     case CheckIsConstant:
+    case CheckNotCellOperand:
     case CheckNotEmpty:
     case AssertNotEmpty:
     case CheckIdent:

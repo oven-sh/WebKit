@@ -612,6 +612,7 @@ public:
         case CheckArrayOrEmpty:
         case CheckDetached:
         case CheckIsConstant:
+        case CheckNotCellOperand:
         case CheckNotEmpty:
         case CheckBadValue:
         case CheckInBounds:
@@ -2263,6 +2264,8 @@ public:
         switch (op()) {
         case CheckIsConstant:
             return isCell(child1().useKind());
+        case CheckNotCellOperand:
+            return true;
         case OverridesHasInstance:
         case NewFunction:
         case NewGeneratorFunction:

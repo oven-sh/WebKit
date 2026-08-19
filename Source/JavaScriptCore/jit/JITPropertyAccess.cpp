@@ -1264,6 +1264,8 @@ void JIT::emit_op_get_from_scope(const JSInstruction* currentInstruction)
             addSlowCase(branch32(NotEqual, Address(scopeGPR, JSCell::structureIDOffset()), scratch1GPR));
             loadPtr(operandAddress, scratch1GPR);
             loadProperty(scopeGPR, scratch1GPR, returnValueJSR);
+            // A property holding the interceptor itself is left to the global's getOwnPropertySlot.
+            addSlowCase(branch64(Equal, returnValueJSR.payloadGPR(), scopeGPR));
             break;
         }
 #endif
@@ -1423,6 +1425,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpGetFromScopeThunk(VM& vm)
             slowCase.append(jit.branch32(NotEqual, Address(scopeGPR, JSCell::structureIDOffset()), scratch1GPR));
             jit.loadPtr(Address(metadataGPR, Metadata::offsetOfOperand()), scratch1GPR);
             jit.loadProperty(scopeGPR, scratch1GPR, returnValueJSR);
+            // A property holding the interceptor itself is left to the global's getOwnPropertySlot.
+            slowCase.append(jit.branch64(Equal, returnValueJSR.payloadGPR(), scopeGPR));
             break;
         }
 #endif

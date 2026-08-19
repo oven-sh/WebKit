@@ -5124,6 +5124,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case CheckNotCellOperand: {
+        compileCheckNotCellOperand(node);
+        break;
+    }
+
     case CheckNotEmpty: {
         compileCheckNotEmpty(node);
         break;

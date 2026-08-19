@@ -10600,6 +10600,14 @@ void SpeculativeJIT::compileCheckIsConstant(Node* node)
     noResult(node);
 }
 
+void SpeculativeJIT::compileCheckNotCellOperand(Node* node)
+{
+    JSValueOperand operand(this, node->child1());
+    JSValueRegs regs = operand.jsValueRegs();
+    speculationCheck(BadCache, regs, node->child1(), branchLinkableConstant(Equal, regs.payloadGPR(), LinkableConstant(*this, node->cellOperand()->cell())));
+    noResult(node);
+}
+
 void SpeculativeJIT::compileCheckNotEmpty(Node* node)
 {
     JSValueOperand operand(this, node->child1());

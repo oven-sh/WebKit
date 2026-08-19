@@ -2987,7 +2987,14 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
 if BUN_JSC_ADDITIONS
     bineq t0, InterceptedGlobalProperty, .gDynamic
     loadInterceptorWithStructureCheck(OpGetFromScope, get, t5, t0, t1, .gDynamic)
-    getProperty()
+    move t0, t3
+    loadp OpGetFromScope::Metadata::m_operand[t5], t1
+    loadPropertyAtVariableOffset(t1, t0, t2)
+    # A property holding the interceptor itself is left to the global's getOwnPropertySlot (node:vm substitutes the
+    # context's globalThis for it).
+    bqeq t2, t3, .gDynamic
+    valueProfile(size, OpGetFromScope, m_valueProfile, t2, t5)
+    return(t2)
 end
 
 .gDynamic:

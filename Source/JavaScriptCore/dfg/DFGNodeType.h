@@ -307,6 +307,8 @@ namespace JSC { namespace DFG {
     macro(SetRegExpObjectLastIndex, NodeMustGenerate) \
     macro(RecordRegExpCachedResult, NodeMustGenerate | NodeHasVarArgs) \
     macro(CheckIsConstant, NodeMustGenerate) \
+    /* OSR exit if the (untyped) child is the cell operand. Used by Bun's InterceptedGlobalProperty. */\
+    macro(CheckNotCellOperand, NodeMustGenerate) \
     macro(CheckNotEmpty, NodeMustGenerate) \
     macro(AssertNotEmpty, NodeMustGenerate) \
     macro(CheckBadValue, NodeMustGenerate) \
