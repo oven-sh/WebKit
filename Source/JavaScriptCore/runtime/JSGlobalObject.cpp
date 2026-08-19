@@ -2488,11 +2488,13 @@ bool JSGlobalObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void JSGlobalObject::setInterceptsGlobalScope()
+void JSGlobalObject::setGlobalScopeInterceptor(VM& vm, JSObject* interceptor)
 {
-    // Otherwise get_from_scope / put_to_scope would cache a structure offset after their first trip through the overrides.
+    // The global's own structure must not be cacheable, or an access could still be cached against it (bypassing the
+    // interceptor) by the ordinary GlobalProperty machinery before this is set or by get_by_id on the global.
     ASSERT(structure()->typeInfo().prohibitsPropertyCaching());
-    m_interceptsGlobalScope = true;
+    ASSERT(interceptor && !m_globalScopeInterceptor);
+    m_globalScopeInterceptor.set(vm, this, interceptor);
 }
 #endif
 
@@ -3026,6 +3028,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContextData);
+    visitor.append(thisObject->m_globalScopeInterceptor);
     visitor.append(thisObject->m_internalFieldTupleStructure);
     thisObject->m_ffiFunctionStructure.visit(visitor);
     thisObject->m_ffiCallbackStructure.visit(visitor);

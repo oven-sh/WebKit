@@ -50,7 +50,11 @@ inline void tryCachePutToScopeGlobal(
     case UnresolvedProperty:
     case UnresolvedPropertyWithVarInjectionChecks: {
         if (scope->isGlobalObject()) {
+#if USE(BUN_JSC_ADDITIONS)
+            ResolveType newResolveType = JSScope::globalPropertyResolveType(uncheckedDowncast<JSGlobalObject>(scope), resolveType);
+#else
             ResolveType newResolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
+#endif
             resolveType = newResolveType; // Allow below caching mechanism to kick in.
             ConcurrentJSLocker locker(codeBlock->m_lock);
             metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
@@ -59,7 +63,11 @@ inline void tryCachePutToScopeGlobal(
         [[fallthrough]];
     }
     case GlobalProperty:
-    case GlobalPropertyWithVarInjectionChecks: {
+    case GlobalPropertyWithVarInjectionChecks:
+#if USE(BUN_JSC_ADDITIONS)
+    case InterceptedGlobalProperty:
+#endif
+    {
         // Global Lexical Binding Epoch is changed. Update op_get_from_scope from GlobalProperty to GlobalLexicalVar.
         if (scope->isGlobalLexicalEnvironment()) {
             JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(scope);
@@ -78,6 +86,45 @@ inline void tryCachePutToScopeGlobal(
         return;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (resolveType == InterceptedGlobalProperty) {
+        VM& vm = getVM(globalObject);
+        JSGlobalObject* globalObject = codeBlock->globalObject();
+        JSObject* interceptor = globalObject->globalScopeInterceptor();
+        ASSERT(scope == globalObject && interceptor);
+        // The global's put() reports (in `slot`) how the interceptor took the store. Cache a replace of an existing
+        // plain data property of the interceptor itself whose name is also a variable of the global (a `var` or
+        // function declared by code in it): the fast path stores to the interceptor and to the variable's slot, as the
+        // global's put() does. (For any other name the global's put() also maintains a copy in the global's own
+        // property storage, which a fast path could not keep up to date, so those stay on the slow path.)
+        if (!slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != interceptor || !interceptor->structure()->propertyAccessesAreCacheable())
+            return;
+        uintptr_t variableSlot;
+        WatchpointSet* variableWatchpointSet;
+        {
+            SymbolTable* symbolTable = globalObject->symbolTable();
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            auto iter = symbolTable->find(locker, ident.impl());
+            if (iter == symbolTable->end(locker) || iter->value.isReadOnly())
+                return;
+            variableWatchpointSet = iter->value.watchpointSet();
+            variableSlot = reinterpret_cast<uintptr_t>(globalObject->variableAt(iter->value.scopeOffset()).slot());
+        }
+        // The fast paths store to the variable without notifying its watchpoint.
+        if (variableWatchpointSet)
+            variableWatchpointSet->invalidate(vm, StringFireDetail("InterceptedGlobalProperty put cache"));
+        Structure* structure = interceptor->structure();
+        structure->didCachePropertyReplacement(vm, slot.cachedOffset());
+        {
+            ConcurrentJSLocker locker(codeBlock->m_lock);
+            metadata.m_structureID.setWithoutWriteBarrier(structure);
+            metadata.m_interceptorOffset = slot.cachedOffset();
+            metadata.m_operand = variableSlot;
+        }
+        vm.writeBarrier(codeBlock);
+        return;
+    }
+#endif
     if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks) {
         VM& vm = getVM(globalObject);
         JSGlobalObject* globalObject = codeBlock->globalObject();
@@ -116,7 +163,11 @@ inline void tryCacheGetFromScopeGlobal(
     case UnresolvedProperty:
     case UnresolvedPropertyWithVarInjectionChecks: {
         if (scope->isGlobalObject()) {
+#if USE(BUN_JSC_ADDITIONS)
+            ResolveType newResolveType = JSScope::globalPropertyResolveType(uncheckedDowncast<JSGlobalObject>(scope), resolveType);
+#else
             ResolveType newResolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
+#endif
             resolveType = newResolveType; // Allow below caching mechanism to kick in.
             ConcurrentJSLocker locker(codeBlock->m_lock);
             metadata.m_getPutInfo = GetPutInfo(metadata.m_getPutInfo.resolveMode(), newResolveType, metadata.m_getPutInfo.initializationMode(), metadata.m_getPutInfo.ecmaMode());
@@ -125,7 +176,11 @@ inline void tryCacheGetFromScopeGlobal(
         [[fallthrough]];
     }
     case GlobalProperty:
-    case GlobalPropertyWithVarInjectionChecks: {
+    case GlobalPropertyWithVarInjectionChecks:
+#if USE(BUN_JSC_ADDITIONS)
+    case InterceptedGlobalProperty:
+#endif
+    {
         // Global Lexical Binding Epoch is changed. Update op_get_from_scope from GlobalProperty to GlobalLexicalVar.
         if (scope->isGlobalLexicalEnvironment()) {
             JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(scope);
@@ -144,6 +199,27 @@ inline void tryCacheGetFromScopeGlobal(
         return;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (resolveType == InterceptedGlobalProperty) {
+        JSGlobalObject* globalObject = codeBlock->globalObject();
+        JSObject* interceptor = globalObject->globalScopeInterceptor();
+        ASSERT(scope == globalObject && interceptor);
+        // The global's getOwnPropertySlot() reports (in `slot`) where the value came from. Cache a plain data property
+        // of the interceptor itself, but not one holding the interceptor (the global substitutes its globalThis for
+        // that value, which a cached load would not).
+        if (slot.isCacheableValue() && slot.slotBase() == interceptor && interceptor->structure()->propertyAccessesAreCacheable() && interceptor->getDirect(slot.cachedOffset()) != JSValue(interceptor)) {
+            Structure* structure = interceptor->structure();
+            {
+                ConcurrentJSLocker locker(codeBlock->m_lock);
+                metadata.m_structureID.setWithoutWriteBarrier(structure);
+                metadata.m_operand = slot.cachedOffset();
+            }
+            vm.writeBarrier(codeBlock);
+            structure->startWatchingPropertyForReplacements(vm, slot.cachedOffset());
+        }
+        return;
+    }
+#endif
     // Covers implicit globals. Since they don't exist until they first execute, we didn't know how to cache them at compile time.
     if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks) {
         ASSERT(scope == globalObject || globalObject->varInjectionWatchpointSet().hasBeenInvalidated());

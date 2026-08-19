@@ -80,7 +80,15 @@ enum ResolveType : unsigned {
     UnresolvedPropertyWithVarInjectionChecks,
 
     // Lexical scope didn't prove anything -- probably because of a 'with' scope.
-    Dynamic
+    Dynamic,
+#if USE(BUN_JSC_ADDITIONS)
+    // GlobalProperty on a global object that put another object, its "interceptor", in front of its properties
+    // (JSGlobalObject::globalScopeInterceptor(); node:vm's contextified globals). Resolves and behaves like
+    // GlobalProperty, except that get_from_scope / put_to_scope cache against the interceptor's structure and load
+    // from / store to it (a cached put also stores to the global's own variable slot for the name), since that is where
+    // the global's getOwnPropertySlot / put find the property first. Never combined with var injection checks.
+    InterceptedGlobalProperty,
+#endif
 };
 
 enum class InitializationMode : unsigned {
@@ -114,7 +122,10 @@ ALWAYS_INLINE const char* resolveTypeName(ResolveType type)
         "ClosureVarWithVarInjectionChecks",
         "UnresolvedProperty",
         "UnresolvedPropertyWithVarInjectionChecks",
-        "Dynamic"
+        "Dynamic",
+#if USE(BUN_JSC_ADDITIONS)
+        "InterceptedGlobalProperty",
+#endif
     });
     return names[type];
 }
@@ -169,6 +180,10 @@ ALWAYS_INLINE ResolveType makeType(ResolveType type, bool needsVarInjectionCheck
     case UnresolvedPropertyWithVarInjectionChecks:
     case Dynamic:
         return type;
+#if USE(BUN_JSC_ADDITIONS)
+    case InterceptedGlobalProperty:
+        break;
+#endif
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -185,6 +200,9 @@ ALWAYS_INLINE bool needsVarInjectionChecks(ResolveType type)
     case ResolvedClosureVar:
     case ModuleVar:
     case UnresolvedProperty:
+#if USE(BUN_JSC_ADDITIONS)
+    case InterceptedGlobalProperty:
+#endif
         return false;
     case GlobalPropertyWithVarInjectionChecks:
     case GlobalVarWithVarInjectionChecks:
@@ -196,6 +214,22 @@ ALWAYS_INLINE bool needsVarInjectionChecks(ResolveType type)
     default:
         RELEASE_ASSERT_NOT_REACHED();
         return true;
+    }
+}
+
+// GlobalProperty and the types that resolve and are guarded (lexical binding epoch, shadowing by a global let/const)
+// exactly like it.
+ALWAYS_INLINE bool isGlobalPropertyResolveType(ResolveType type)
+{
+    switch (type) {
+    case GlobalProperty:
+    case GlobalPropertyWithVarInjectionChecks:
+#if USE(BUN_JSC_ADDITIONS)
+    case InterceptedGlobalProperty:
+#endif
+        return true;
+    default:
+        return false;
     }
 }
 

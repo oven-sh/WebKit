@@ -573,6 +573,7 @@ op :put_to_scope,
     },
     metadata: {
         getPutInfo: GetPutInfo,
+        interceptorOffset: unsigned, # InterceptedGlobalProperty: the property's offset in the interceptor (operand is then the global's own variable slot); fills the padding before the union
         _: {
             structureID: WriteBarrierStructureID,
             watchpointSet: WatchpointSet.*,

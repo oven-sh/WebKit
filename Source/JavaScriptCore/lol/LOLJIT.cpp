@@ -3299,6 +3299,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> LOLJIT::generateOpGetFromScopeThunk(VM& vm
             jit.loadPtr(Address(metadataGPR,  Metadata::offsetOfOperand()), scratch1GPR);
             jit.loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, JSLexicalEnvironment::offsetOfVariables()), returnValueJSR);
             break;
+#if USE(BUN_JSC_ADDITIONS)
+        case InterceptedGlobalProperty: // LOL takes the generic path; the LLInt / Baseline / DFG cache it.
+#endif
         case Dynamic:
             slowCase.append(jit.jump());
             break;
@@ -3486,6 +3489,9 @@ void LOLJIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
             emitWriteBarrier(m_fastAllocator, allocations, scopeRegs, valueRegs, s_scratch, ShouldFilterValue);
             break;
         case ModuleVar:
+#if USE(BUN_JSC_ADDITIONS)
+        case InterceptedGlobalProperty: // LOL takes the generic path; the LLInt / Baseline / DFG cache it.
+#endif
         case Dynamic:
             addSlowCase(jump());
             break;
@@ -3818,6 +3824,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> LOLJIT::generateOpResolveScopeThunk(VM& vm
         case ClosureVarWithVarInjectionChecks:
             emitResolveClosure(needsVarInjectionChecks(resolveType));
             break;
+#if USE(BUN_JSC_ADDITIONS)
+        case InterceptedGlobalProperty: // LOL takes the generic path; the LLInt / Baseline / DFG cache it.
+#endif
         case Dynamic:
             slowCase.append(jit.jump());
             break;

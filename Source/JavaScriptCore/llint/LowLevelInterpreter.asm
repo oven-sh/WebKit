@@ -684,6 +684,9 @@ const GlobalPropertyWithVarInjectionChecks = constexpr GlobalPropertyWithVarInje
 const GlobalVarWithVarInjectionChecks = constexpr GlobalVarWithVarInjectionChecks
 const GlobalLexicalVarWithVarInjectionChecks = constexpr GlobalLexicalVarWithVarInjectionChecks
 const ClosureVarWithVarInjectionChecks = constexpr ClosureVarWithVarInjectionChecks
+if BUN_JSC_ADDITIONS
+    const InterceptedGlobalProperty = constexpr InterceptedGlobalProperty
+end
 
 const ResolveTypeMask = constexpr GetPutInfo::typeBits
 const InitializationModeMask = constexpr GetPutInfo::initializationBits

@@ -925,6 +925,9 @@ void JIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
         // FIXME: This code is weird when caching fails because it goes to a slow path that will check the exact same condition before falling into the C++ slow path.
         // It's unclear if that makes a meaningful difference for perf but we should consider doing something smarter.
         switch (profiledResolveType) {
+#if USE(BUN_JSC_ADDITIONS)
+        case InterceptedGlobalProperty:
+#endif
         case GlobalProperty: {
             addSlowCase(branch32(NotEqual, resolveTypeAddress, TrustedImm32(profiledResolveType)));
             loadGlobalObject(returnValueGPR);
@@ -1066,6 +1069,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
 
     auto emitCode = [&] (ResolveType resolveType) {
         switch (resolveType) {
+#if USE(BUN_JSC_ADDITIONS)
+        case InterceptedGlobalProperty:
+#endif
         case GlobalProperty:
         case GlobalPropertyWithVarInjectionChecks: {
             // JSScope::constantScopeForCodeBlock() loads codeBlock->globalObject().
@@ -1141,6 +1147,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
         emitCase(GlobalVarWithVarInjectionChecks);
         emitCase(GlobalPropertyWithVarInjectionChecks);
         emitCase(GlobalLexicalVarWithVarInjectionChecks);
+#if USE(BUN_JSC_ADDITIONS)
+        emitCase(InterceptedGlobalProperty);
+#endif
         slowCase.append(jit.jump());
 
         skipToEnd.link(&jit);
@@ -1242,6 +1251,22 @@ void JIT::emit_op_get_from_scope(const JSInstruction* currentInstruction)
             loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)), returnValueJSR);
             break;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        case InterceptedGlobalProperty: {
+            addSlowCase(branch32(NotEqual, scratch1GPR, TrustedImm32(profiledResolveType)));
+            // The scope must still be this CodeBlock's global (else a global let/const now shadows the name), and the
+            // cache is against its interceptor's structure.
+            emitGetVirtualRegister(scope, scopeGPR);
+            loadGlobalObject(scratch1GPR);
+            addSlowCase(branchPtr(NotEqual, scopeGPR, scratch1GPR));
+            loadPtr(Address(scopeGPR, JSGlobalObject::offsetOfGlobalScopeInterceptor()), scopeGPR);
+            load32(structureIDAddress, scratch1GPR);
+            addSlowCase(branch32(NotEqual, Address(scopeGPR, JSCell::structureIDOffset()), scratch1GPR));
+            loadPtr(operandAddress, scratch1GPR);
+            loadProperty(scopeGPR, scratch1GPR, returnValueJSR);
+            break;
+        }
+#endif
         case GlobalVar: {
             addSlowCase(branch32(NotEqual, scratch1GPR, TrustedImm32(profiledResolveType)));
             loadPtr(operandAddress, scratch1GPR);
@@ -1389,6 +1414,18 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpGetFromScopeThunk(VM& vm)
             jit.loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, (firstOutOfLineOffset - 2) * sizeof(EncodedJSValue)), returnValueJSR);
             break;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        case InterceptedGlobalProperty: {
+            loadGlobalObject(jit, scratch1GPR);
+            slowCase.append(jit.branchPtr(NotEqual, scopeGPR, scratch1GPR));
+            jit.loadPtr(Address(scopeGPR, JSGlobalObject::offsetOfGlobalScopeInterceptor()), scopeGPR);
+            jit.load32(Address(metadataGPR, OpGetFromScope::Metadata::offsetOfStructureID()), scratch1GPR);
+            slowCase.append(jit.branch32(NotEqual, Address(scopeGPR, JSCell::structureIDOffset()), scratch1GPR));
+            jit.loadPtr(Address(metadataGPR, Metadata::offsetOfOperand()), scratch1GPR);
+            jit.loadProperty(scopeGPR, scratch1GPR, returnValueJSR);
+            break;
+        }
+#endif
         case GlobalVar:
         case GlobalVarWithVarInjectionChecks:
         case GlobalLexicalVar:
@@ -1452,6 +1489,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpGetFromScopeThunk(VM& vm)
         emitCase(GlobalVarWithVarInjectionChecks);
         emitCase(GlobalPropertyWithVarInjectionChecks);
         emitCase(GlobalLexicalVarWithVarInjectionChecks);
+#if USE(BUN_JSC_ADDITIONS)
+        emitCase(InterceptedGlobalProperty);
+#endif
 
         slowCase.append(jit.jump());
         skipToEnd.link(&jit);
@@ -1533,6 +1573,9 @@ void JIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
     auto structureIDAddress = metadataAddress.withOffset(Metadata::offsetOfStructureID());
     auto operandAddress = metadataAddress.withOffset(Metadata::offsetOfOperand());
     auto watchpointSetAddress = metadataAddress.withOffset(Metadata::offsetOfWatchpointSet());
+#if USE(BUN_JSC_ADDITIONS)
+    auto interceptorOffsetAddress = metadataAddress.withOffset(Metadata::offsetOfInterceptorOffset());
+#endif
 
     auto emitCode = [&] (ResolveType resolveType) {
         switch (resolveType) {
@@ -1563,6 +1606,34 @@ void JIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
             emitWriteBarrier(scope, value, ShouldFilterValue);
             break;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        case InterceptedGlobalProperty: {
+            constexpr JSValueRegs valueJSR = jsRegT10;
+            constexpr GPRReg interceptorGPR = regT2;
+            constexpr GPRReg scratch1GPR1 = regT3;
+            constexpr GPRReg scratch1GPR2 = regT4;
+            static_assert(noOverlap(valueJSR, interceptorGPR, scratch1GPR1, scratch1GPR2));
+            // The scope must still be this CodeBlock's global (else a global let/const now shadows the name), and the
+            // cache is against its interceptor's structure.
+            emitGetVirtualRegister(scope, interceptorGPR);
+            loadGlobalObject(scratch1GPR2);
+            addSlowCase(branchPtr(NotEqual, interceptorGPR, scratch1GPR2));
+            loadPtr(Address(interceptorGPR, JSGlobalObject::offsetOfGlobalScopeInterceptor()), interceptorGPR);
+            load32(structureIDAddress, scratch1GPR1);
+            addSlowCase(branch32(NotEqual, Address(interceptorGPR, JSCell::structureIDOffset()), scratch1GPR1));
+
+            // Store into the interceptor at the cached offset ...
+            emitGetVirtualRegister(value, valueJSR);
+            load32(interceptorOffsetAddress, scratch1GPR1);
+            storeProperty(valueJSR, interceptorGPR, scratch1GPR1, scratch1GPR2);
+            // ... and into the global's own variable for the name.
+            loadPtr(operandAddress, scratch1GPR1);
+            storeValue(valueJSR, Address(scratch1GPR1));
+            emitWriteBarrier(interceptorGPR);
+            emitWriteBarrier(scope, value, ShouldFilterValue);
+            break;
+        }
+#endif
         case GlobalVar:
         case GlobalVarWithVarInjectionChecks:
         case GlobalLexicalVar:
@@ -1657,6 +1728,9 @@ void JIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
         emitCase(GlobalVarWithVarInjectionChecks);
         emitCase(GlobalPropertyWithVarInjectionChecks);
         emitCase(GlobalLexicalVarWithVarInjectionChecks);
+#if USE(BUN_JSC_ADDITIONS)
+        emitCase(InterceptedGlobalProperty);
+#endif
 
         addSlowCase(jump());
         skipToEnd.link(this);

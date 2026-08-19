@@ -518,7 +518,7 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isAsyncContextTrackingEnabled { false };
-    bool m_interceptsGlobalScope { false };
+    WriteBarrier<JSObject> m_globalScopeInterceptor;
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
@@ -774,12 +774,16 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTrackingEnabled; }
     void setAsyncContextTrackingEnabled(bool isEnabled) { m_isAsyncContextTrackingEnabled = isEnabled; }
-    // A global object whose getOwnPropertySlot / put / defineOwnProperty overrides stand between global code and its
-    // variables (node:vm's contextified globals): global-scope identifier accesses are never linked to a symbol-table
-    // slot (they resolve as uncached global properties, so every read and write reaches the overrides), and var /
-    // function declaration checks and bindings see what the overrides report. Set before any code runs in it.
-    bool interceptsGlobalScope() const { return m_interceptsGlobalScope; }
-    JS_EXPORT_PRIVATE void setInterceptsGlobalScope();
+    // A global object whose getOwnPropertySlot / put / defineOwnProperty / deleteProperty overrides put another object,
+    // the interceptor, in front of its own properties (node:vm's contextified globals: the interceptor is the user's
+    // sandbox object). Global-scope identifier accesses are then never linked to a symbol-table slot: they resolve as
+    // InterceptedGlobalProperty, whose slow paths go through those overrides and whose inline caches load from / store to
+    // the interceptor directly when the property is a plain data property of the interceptor itself; and var / function
+    // declaration checks and bindings see what the overrides report. Set once, before any code runs in the global.
+    JSObject* globalScopeInterceptor() const { return m_globalScopeInterceptor.get(); }
+    bool interceptsGlobalScope() const { return !!m_globalScopeInterceptor; }
+    JS_EXPORT_PRIVATE void setGlobalScopeInterceptor(VM&, JSObject*);
+    static constexpr ptrdiff_t offsetOfGlobalScopeInterceptor() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalScopeInterceptor); }
     static constexpr ptrdiff_t offsetOfAsyncContextData() { return OBJECT_OFFSETOF(JSGlobalObject, m_asyncContextData); }
 #endif
 
