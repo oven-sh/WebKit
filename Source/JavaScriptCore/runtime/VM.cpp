@@ -167,6 +167,9 @@
 
 #if OS(WINDOWS)
 #include <windows.h>
+#include <wtf/MathExtras.h>
+#include <wtf/PageBlock.h>
+#include <wtf/StackPointer.h>
 #endif
 
 #if ENABLE(DFG_JIT) || ENABLE(WEBASSEMBLY)
@@ -1234,71 +1237,51 @@ size_t VM::updateSoftReservedZoneSize(size_t softReservedZoneSize)
 }
 
 #if OS(WINDOWS)
-// On Windows the reserved stack space consists of committed memory, a guard page, and uncommitted memory,
-// where the guard page is a barrier between committed and uncommitted memory.
-// When data from the guard page is read or written, the guard page is moved, and memory is committed.
-// This is how the system grows the stack.
-// When using the C stack on Windows we need to precommit the needed stack space.
-// Otherwise we might crash later if we access uncommitted stack memory.
-// This can happen if we allocate stack space larger than the page guard size (4K).
-// The system does not get the chance to move the guard page, and commit more memory,
-// and we crash if uncommitted memory is accessed.
-// The MSVC compiler fixes this by inserting a call to the _chkstk() function,
-// when needed, see http://support.microsoft.com/kb/100775.
-// By touching every page up to the stack limit with a dummy operation,
-// we force the system to move the guard page, and commit memory.
+// LLInt and JIT frames are not __chkstk-probed the way C++ frames are, so they may
+// touch the stack more than a guard region below the last access. Everything down
+// to VM::softStackLimit() therefore has to be committed before they run.
 
-static void preCommitStackMemoryByTouching(void* stackLimit)
+static void commitStackByTouching(char* limit)
 {
-    const int pageSize = 4096;
-    for (volatile char* p = reinterpret_cast<char*>(&stackLimit); p > stackLimit; p -= pageSize) {
-        char ch = *p;
-        *p = ch;
-    }
+    // Let the kernel's guard-page handler walk the guard region down a page at a time.
+    for (volatile char* p = static_cast<char*>(currentStackPointer()); p >= limit; p -= pageSize())
+        *p = *p;
 }
 
-// Touching costs one guard-page exception per page and leaves every page dirty
-// (several MB of private working set per thread for the default limits). Produce
-// the same end state directly instead: commit everything down to the limit in one
-// call, re-place the guard region just below it, and publish the new committed
-// limit in the TEB, exactly as the kernel's guard-page handler would have after
-// the last touch. Falls back to touching if the layout is not what we expect.
-static void preCommitStackMemory(void* stackLimit)
+static void commitStack(void* stackLimit)
 {
-    constexpr uintptr_t pageSize = 4096;
+    // NT_TIB::StackLimit is the lowest committed non-guard stack address; the guard
+    // region sits immediately below it and the rest of the reservation is uncommitted.
     auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
-    char* committedLimit = static_cast<char*>(tib->StackLimit);
-    char* target = reinterpret_cast<char*>(reinterpret_cast<uintptr_t>(stackLimit) & ~(pageSize - 1));
-    if (target >= committedLimit)
+    char* oldLimit = static_cast<char*>(tib->StackLimit);
+    char* newLimit = roundDownToMultipleOf(pageSize(), static_cast<char*>(stackLimit));
+    if (newLimit >= oldLimit)
         return;
 
+    // Touching costs a guard-page fault per page and leaves several MB of dirty stack
+    // per thread. Instead, leave things exactly as the guard-page handler would have
+    // after the last touch: pages committed down to newLimit, a guard region of the
+    // same size just below it, and StackLimit (which SEH dispatch validates the stack
+    // pointer against) lowered to match. Untouched pages then fault in on demand, in
+    // any order. If the stack does not look like that to begin with, just touch.
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    MEMORY_BASIC_INFORMATION guard;
-    if (VirtualQuery(committedLimit - 1, &guard, sizeof(guard)) != sizeof(guard)
-        || guard.State != MEM_COMMIT || !(guard.Protect & PAGE_GUARD)
-        || static_cast<char*>(guard.BaseAddress) + guard.RegionSize != committedLimit)
-        return preCommitStackMemoryByTouching(stackLimit);
+    MEMORY_BASIC_INFORMATION guard { };
+    bool hasGuardBelowLimit = VirtualQuery(oldLimit - 1, &guard, sizeof(guard)) == sizeof(guard)
+        && guard.State == MEM_COMMIT && (guard.Protect & PAGE_GUARD)
+        && static_cast<char*>(guard.BaseAddress) + guard.RegionSize == oldLimit;
+    char* reservationBase = static_cast<char*>(guard.AllocationBase);
+    char* oldGuard = static_cast<char*>(guard.BaseAddress);
+    char* newGuard = newLimit - guard.RegionSize;
+    // The kernel never places the guard region on the last reserved page; neither do we.
+    if (!hasGuardBelowLimit || newGuard < reservationBase + pageSize()
+        || !VirtualAlloc(newGuard, oldGuard - newGuard, MEM_COMMIT, PAGE_READWRITE))
+        return commitStackByTouching(newLimit);
 
-    char* guardBase = static_cast<char*>(guard.BaseAddress);
-    size_t guardSize = guard.RegionSize;
-    char* reserveBase = static_cast<char*>(guard.AllocationBase);
-    char* newGuardBase = target - guardSize;
-    ULONG_PTR reserveLow = 0;
-    ULONG_PTR reserveHigh = 0;
-    GetCurrentThreadStackLimits(&reserveLow, &reserveHigh);
-    // The kernel never moves the guard region onto the last reserved page; keep that margin.
-    if (reserveBase != reinterpret_cast<char*>(reserveLow) || newGuardBase < reserveBase + pageSize)
-        return preCommitStackMemoryByTouching(stackLimit);
+    DWORD previous;
+    RELEASE_ASSERT(VirtualProtect(oldGuard, guard.RegionSize, PAGE_READWRITE, &previous));
+    RELEASE_ASSERT(VirtualProtect(newGuard, guard.RegionSize, PAGE_READWRITE | PAGE_GUARD, &previous));
+    tib->StackLimit = newLimit;
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
-    if (!VirtualAlloc(newGuardBase, guardBase - newGuardBase, MEM_COMMIT, PAGE_READWRITE))
-        return preCommitStackMemoryByTouching(stackLimit);
-    DWORD oldProtection;
-    if (!VirtualProtect(newGuardBase, guardSize, PAGE_READWRITE | PAGE_GUARD, &oldProtection))
-        return preCommitStackMemoryByTouching(stackLimit);
-    if (!VirtualProtect(guardBase, guardSize, PAGE_READWRITE, &oldProtection))
-        return preCommitStackMemoryByTouching(stackLimit);
-    tib->StackLimit = target;
 }
 #endif
 
@@ -1343,7 +1326,7 @@ void VM::updateStackLimits()
         // which raises EXCEPTION_STACK_OVERFLOW on commit-constrained hosts when the reserve
         // is large.
         if (m_stackPointerAtVMEntry)
-            preCommitStackMemory(newSoftStackLimit);
+            commitStack(newSoftStackLimit);
 #endif
     }
 }
