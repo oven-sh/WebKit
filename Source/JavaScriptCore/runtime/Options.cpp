@@ -1038,7 +1038,8 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
 
             // Allow environment vars to override options if applicable.
             // The env var should be the name of the option prefixed with
-            // "JSC_".
+            // "JSC_". Embedders with their own configuration surface can opt
+            // out (Config::disableEnvironmentOptions()).
             // One pass over the environment block instead of a getenv() per
             // option: getenv() is a linear scan (under the CRT environment lock
             // on Windows) and there are several hundred options.
@@ -1051,42 +1052,44 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
                     }
                 }
             };
+            if (!g_jscConfig.environmentOptionsDisabled) {
 #if OS(WINDOWS)
-            // Walk the process environment block rather than the CRT's narrow
-            // _environ, which a host with a wide entry point never materializes.
-            // Matching entries are converted with the ANSI code page, i.e. to the
-            // bytes getenv() would have returned, so values such as file paths
-            // keep working with the narrow CRT file APIs they are passed to.
-            if (LPWCH block = GetEnvironmentStringsW()) {
-                for (const wchar_t* env = block; *env; ) {
-                    int lengthWithTerminator = static_cast<int>(wcslen(env)) + 1;
-                    if (!wcsncmp(env, L"JSC_", 4)) {
-                        Vector<char, 256> narrow;
-                        narrow.grow(narrow.capacity());
-                        int converted = WideCharToMultiByte(CP_ACP, 0, env, lengthWithTerminator, narrow.mutableSpan().data(), static_cast<int>(narrow.size()), nullptr, nullptr);
-                        if (!converted && GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
-                            int required = WideCharToMultiByte(CP_ACP, 0, env, lengthWithTerminator, nullptr, 0, nullptr, nullptr);
-                            if (required > static_cast<int>(narrow.size())) {
-                                narrow.grow(required);
-                                converted = WideCharToMultiByte(CP_ACP, 0, env, lengthWithTerminator, narrow.mutableSpan().data(), required, nullptr, nullptr);
+                // Walk the process environment block rather than the CRT's narrow
+                // _environ, which a host with a wide entry point never materializes.
+                // Matching entries are converted with the ANSI code page, i.e. to the
+                // bytes getenv() would have returned, so values such as file paths
+                // keep working with the narrow CRT file APIs they are passed to.
+                if (LPWCH block = GetEnvironmentStringsW()) {
+                    for (const wchar_t* env = block; *env; ) {
+                        int lengthWithTerminator = static_cast<int>(wcslen(env)) + 1;
+                        if (!wcsncmp(env, L"JSC_", 4)) {
+                            Vector<char, 256> narrow;
+                            narrow.grow(narrow.capacity());
+                            int converted = WideCharToMultiByte(CP_ACP, 0, env, lengthWithTerminator, narrow.mutableSpan().data(), static_cast<int>(narrow.size()), nullptr, nullptr);
+                            if (!converted && GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+                                int required = WideCharToMultiByte(CP_ACP, 0, env, lengthWithTerminator, nullptr, 0, nullptr, nullptr);
+                                if (required > static_cast<int>(narrow.size())) {
+                                    narrow.grow(required);
+                                    converted = WideCharToMultiByte(CP_ACP, 0, env, lengthWithTerminator, narrow.mutableSpan().data(), required, nullptr, nullptr);
+                                }
                             }
+                            if (converted)
+                                applyEnvironmentOption(narrow.span().data());
                         }
-                        if (converted)
-                            applyEnvironmentOption(narrow.span().data());
+                        env += lengthWithTerminator;
                     }
-                    env += lengthWithTerminator;
+                    FreeEnvironmentStringsW(block);
                 }
-                FreeEnvironmentStringsW(block);
-            }
 #else
 #if PLATFORM(COCOA)
-            char** envp = *_NSGetEnviron();
+                char** envp = *_NSGetEnviron();
 #else
-            char** envp = environ;
+                char** envp = environ;
 #endif
-            for (; *envp; envp++)
-                applyEnvironmentOption(*envp);
+                for (; *envp; envp++)
+                    applyEnvironmentOption(*envp);
 #endif
+            }
             if (hasBadOptions && Options::validateOptions())
                 CRASH();
 
