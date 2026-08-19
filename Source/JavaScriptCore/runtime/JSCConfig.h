@@ -50,6 +50,10 @@ struct Config {
 
     static void disableFreezingForTesting() { g_wtfConfig.disableFreezingForTesting(); }
     JS_EXPORT_PRIVATE static void NODELETE enableRestrictedOptions();
+    // Skip the JSC_<option> environment variable pass in Options::initialize(). For
+    // embedders that expose their own configuration surface; must be called before
+    // JSC::initialize().
+    JS_EXPORT_PRIVATE static void NODELETE disableEnvironmentOptions();
     static void finalize() { WTF::Config::finalize(); }
 
     static void configureForTesting()
@@ -67,6 +71,7 @@ struct Config {
     // FIXME: We should use a placement new constructor from JSC::initialize so we can use default initializers.
 
     bool restrictedOptionsEnabled;
+    bool environmentOptionsDisabled;
     bool jitDisabled;
     bool vmCreationDisallowed;
     bool vmEntryDisallowed;
