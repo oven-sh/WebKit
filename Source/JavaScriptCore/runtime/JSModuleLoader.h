@@ -197,6 +197,10 @@ public:
     {
         // Bun's registry is conceptually flat (one entry per specifier), so
         // delete every (specifier, type) variant — text/json/HostDefined etc.
+        //
+        // A load of the removed entry may still be in flight; it completes
+        // against the detached entry. isCacheableLoadedModule() keeps its
+        // record out of m_loadedModules from then on.
         auto* impl = key.impl();
         m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });
@@ -220,6 +224,15 @@ public:
 private:
     JSModuleLoader(VM&, Structure*);
     void finishCreation(JSGlobalObject*, VM&);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // hostLoadImportedModule() answers a hit in m_loadedModules with the registry
+    // entry of the cached record, so the cache may only hold records that the
+    // registry still holds, through an entry that has been loaded. removeEntry()
+    // can drop or replace an entry while a load of it is still in flight; both
+    // the hit and the insertion (finishLoadingImportedModule()) check this.
+    bool isCacheableLoadedModule(AbstractModuleRecord*, ScriptFetchParameters::Type);
+#endif
 
     void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
 

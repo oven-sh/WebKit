@@ -638,7 +638,21 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     // Consult it now so we can skip the host resolve() hook for repeat imports.
     {
         auto& loadedModules = record ? record->loadedModules() : m_loadedModules;
-        if (auto iter = loadedModules.find(moduleMapKey); iter != loadedModules.end()) {
+        auto iter = loadedModules.find(moduleMapKey);
+#if USE(BUN_JSC_ADDITIONS)
+        // removeEntry() edits the registry underneath the realm-level cache, so the
+        // hit below cannot take what it asserts for granted there: the registry may
+        // by now hold a new entry for the key (whose loadPromise may still be null)
+        // or none at all. Forget such a record and load what the registry holds.
+        // A module's own [[LoadedModules]] is not affected: innerModuleLoading
+        // consults it before calling here.
+        if (!record && iter != loadedModules.end() && !isCacheableLoadedModule(iter->value.m_module.get(), type)) {
+            Locker locker { cellLock() };
+            loadedModules.remove(iter);
+            iter = loadedModules.end();
+        }
+#endif
+        if (iter != loadedModules.end()) {
             AbstractModuleRecord* loaded = iter->value.m_module.get();
             ModuleRegistryEntry* loadedEntry = getRegisteredMayBeNull(loaded->moduleKey(), type);
             ASSERT(loadedEntry);
@@ -958,8 +972,27 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A top-level load whose registry entry removeEntry() dropped while it was in
+    // flight still completes here (its ModuleLoadingContext holds the detached
+    // entry) and must still continue its payload, but its record has to stay out
+    // of the realm-level cache: the next import of the specifier has to load the
+    // key again, and a replacement load may already have cached its own record
+    // under the specifier, which step 1.a would assert against. A module's own
+    // [[LoadedModules]] is always filled in: it links against the record it got.
+    bool cacheRecord = true;
+    if (referrer.isRealm()) {
+        if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result))
+            cacheRecord = isCacheableLoadedModule(*resultRecord, moduleRequest.type());
+    }
+#endif
+
     // 1. If result is a normal completion, then
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto* resultRecord = cacheRecord ? std::get_if<AbstractModuleRecord*>(&result) : nullptr) {
+#else
     if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result)) {
+#endif
         JSCell* owner = nullptr;
 
         auto& loadedModules = [&] -> ModuleMap<AbstractModuleRecord::LoadedModuleRequest> & {
@@ -1125,6 +1158,15 @@ ModuleRegistryEntry* JSModuleLoader::getRegisteredMayBeNull(const Identifier& ke
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+bool JSModuleLoader::isCacheableLoadedModule(AbstractModuleRecord* record, ScriptFetchParameters::Type type)
+{
+    // Mirrors what hostLoadImportedModule's cache hit asserts and returns: the
+    // entry's loadedPromise(), which exists for an entry that went through
+    // hostLoadImportedModule and for one the embedder markLoaded().
+    ModuleRegistryEntry* entry = getRegisteredMayBeNull(record->moduleKey(), type);
+    return entry && entry->record() == record && (entry->loadPromise() || entry->isLoaded());
+}
+
 int64_t JSModuleLoader::asyncEvaluationOrderForKey(const Identifier& key)
 {
     // For the deadlock-avoidance skip at innerModuleEvaluation step 12.b.v.
