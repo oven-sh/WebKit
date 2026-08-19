@@ -85,7 +85,7 @@ enum ResolveType : unsigned {
     // GlobalProperty on a global object that put another object, its "interceptor", in front of its properties
     // (JSGlobalObject::globalScopeInterceptor(); node:vm's contextified globals). Resolves and behaves like
     // GlobalProperty, except that get_from_scope / put_to_scope cache against the interceptor's structure and load
-    // from / store to it (a cached put also stores to the global's own variable slot for the name), since that is where
+    // from / store to it (a cached put also stores to the global's own variable slot for the name, if it is one), since that is where
     // the global's getOwnPropertySlot / put find the property first. Never combined with var injection checks.
     InterceptedGlobalProperty,
 #endif

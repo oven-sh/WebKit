@@ -3132,9 +3132,11 @@ if BUN_JSC_ADDITIONS
     loadConstantOrVariable(size, t1, t2)
     loadi OpPutToScope::Metadata::m_interceptorOffset[t5], t1
     storePropertyAtVariableOffset(t1, t0, t2)
-    # ... and into the global's own variable for the name.
+    # ... and into the global's own variable for the name, if it is one.
     loadp OpPutToScope::Metadata::m_operand[t5], t1
+    btpz t1, .pInterceptedGlobalPropertyBarriers
     storeq t2, [t1]
+.pInterceptedGlobalPropertyBarriers:
     loadp CodeBlock[cfr], t3
     loadp CodeBlock::m_globalObject[t3], t3
     loadp JSGlobalObject::m_globalScopeInterceptor[t3], t3

@@ -93,22 +93,31 @@ inline void tryCachePutToScopeGlobal(
         JSObject* interceptor = globalObject->globalScopeInterceptor();
         ASSERT(scope == globalObject && interceptor);
         // The global's put() reports (in `slot`) how the interceptor took the store. Cache a replace of an existing
-        // plain data property of the interceptor itself whose name is also a variable of the global (a `var` or
-        // function declared by code in it): the fast path stores to the interceptor and to the variable's slot, as the
-        // global's put() does. (For any other name the global's put() also maintains a copy in the global's own
-        // property storage, which a fast path could not keep up to date, so those stay on the slow path.)
+        // plain data property of the interceptor itself. If the name is also a variable of the global (a `var` or
+        // function declared by code in it), the global's put() stores to that too and so does the fast path; if the
+        // global has it as any other kind of own property (a builtin, say), what its put() does with that can't be
+        // reproduced, so those stay on the slow path.
         if (!slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != interceptor || !interceptor->structure()->propertyAccessesAreCacheable())
             return;
-        uintptr_t variableSlot;
-        WatchpointSet* variableWatchpointSet;
+        uintptr_t variableSlot = 0;
+        WatchpointSet* variableWatchpointSet = nullptr;
         {
             SymbolTable* symbolTable = globalObject->symbolTable();
             ConcurrentJSLocker locker(symbolTable->m_lock);
             auto iter = symbolTable->find(locker, ident.impl());
-            if (iter == symbolTable->end(locker) || iter->value.isReadOnly())
+            if (iter != symbolTable->end(locker)) {
+                if (iter->value.isReadOnly())
+                    return;
+                variableWatchpointSet = iter->value.watchpointSet();
+                variableSlot = reinterpret_cast<uintptr_t>(globalObject->variableAt(iter->value.scopeOffset()).slot());
+            }
+        }
+        if (!variableSlot) {
+            PropertySlot ownSlot(globalObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool isOwnPropertyOfGlobal = JSGlobalObject::getOwnPropertySlot(globalObject, globalObject, ident, ownSlot);
+            ownSlot.disallowVMEntry.reset();
+            if (isOwnPropertyOfGlobal)
                 return;
-            variableWatchpointSet = iter->value.watchpointSet();
-            variableSlot = reinterpret_cast<uintptr_t>(globalObject->variableAt(iter->value.scopeOffset()).slot());
         }
         // The fast paths store to the variable without notifying its watchpoint.
         if (variableWatchpointSet)

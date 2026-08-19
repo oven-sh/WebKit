@@ -10460,8 +10460,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 JSObject* interceptor = globalObject->globalScopeInterceptor();
 
                 // A baseline cache means: the name is a plain, writable own data property of the interceptor at
-                // `interceptorOffset` under `structure`, and `operand` is the global's own variable slot for it, which
-                // the global's put() also stores to. Anything else takes the generic path (the name may not exist at
+                // `interceptorOffset` under `structure`, and `operand`, if non-zero, is the global's own variable slot for
+                // it, which the global's put() also stores to. Anything else takes the generic path (the name may not exist at
                 // all, so one that can throw the strict-mode ReferenceError).
                 PutByStatus status = (uid && structure) ? PutByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, globalObject, structure, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), false, PrivateFieldPutKind::none()) : PutByStatus(PutByStatus::LikelyTakesSlowPath);
                 if (status.numVariants() != 1 || status[0].kind() != PutByVariant::Replace || status[0].structure().size() != 1 || status[0].offset() != static_cast<PropertyOffset>(interceptorOffset)) {
@@ -10470,11 +10470,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     break;
                 }
                 Node* base = weakJSConstant(interceptor);
-                ASSERT(operand);
-                Node* variableScope = weakJSConstant(globalObject); // ahead of replace(), after which exit is invalid
+                Node* variableScope = operand ? weakJSConstant(globalObject) : nullptr; // ahead of replace(), after which exit is invalid
                 Node* valueNode = get(bytecode.m_value);
                 replace(base, identifierNumber, status[0], valueNode);
-                addToGraph(PutGlobalVariable, OpInfo(operand), variableScope, valueNode);
+                if (variableScope)
+                    addToGraph(PutGlobalVariable, OpInfo(operand), variableScope, valueNode);
                 // Keep scope alive until after put.
                 addToGraph(Phantom, get(bytecode.m_scope));
                 break;

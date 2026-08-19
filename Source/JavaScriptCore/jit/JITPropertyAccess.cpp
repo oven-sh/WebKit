@@ -1630,9 +1630,11 @@ void JIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
             emitGetVirtualRegister(value, valueJSR);
             load32(interceptorOffsetAddress, scratch1GPR1);
             storeProperty(valueJSR, interceptorGPR, scratch1GPR1, scratch1GPR2);
-            // ... and into the global's own variable for the name.
+            // ... and into the global's own variable for the name, if it is one.
             loadPtr(operandAddress, scratch1GPR1);
+            Jump notAVariable = branchTestPtr(Zero, scratch1GPR1);
             storeValue(valueJSR, Address(scratch1GPR1));
+            notAVariable.link(this);
             emitWriteBarrier(interceptorGPR);
             emitWriteBarrier(scope, value, ShouldFilterValue);
             break;
