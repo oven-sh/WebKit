@@ -37,10 +37,6 @@
 
 #if OS(WINDOWS)
 #include <windows.h>
-#include <algorithm>
-#include <bcrypt.h>
-#include <limits>
-#include <mutex>
 #endif
 
 #if OS(DARWIN)
@@ -53,6 +49,27 @@
 #endif
 
 namespace WTF {
+
+#if OS(WINDOWS)
+// ProcessPrng (bcryptprimitives.dll) is the primitive that BCryptGenRandom and
+// RtlGenRandom bottom out in; calling it directly avoids loading the CNG/CryptoAPI
+// provider stacks on first use. It has no import library, so resolve it once.
+static void processPrng(std::span<uint8_t> buffer)
+{
+    using ProcessPrngFunction = BOOL (WINAPI*)(PBYTE, SIZE_T);
+    static const ProcessPrngFunction function = [] {
+        ProcessPrngFunction result = nullptr;
+        if (HMODULE module = LoadLibraryExW(L"bcryptprimitives.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
+            result = reinterpret_cast<ProcessPrngFunction>(GetProcAddress(module, "ProcessPrng"));
+        if (!result)
+            CRASH();
+        return result;
+    }();
+    // Documented to always return TRUE; checked to stay fail-closed regardless.
+    if (!function(buffer.data(), buffer.size()))
+        CRASH();
+}
+#endif
 
 #if !OS(DARWIN) && !OS(FUCHSIA) && OS(UNIX)
 NEVER_INLINE NO_RETURN_DUE_TO_CRASH static void crashUnableToOpenURandom()
@@ -109,38 +126,7 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
             amountRead += currentRead;
     }
 #elif OS(WINDOWS)
-    // ProcessPrng (bcryptprimitives.dll, Windows 8 / Server 2008 R2 and later)
-    // is the primitive that BCryptGenRandom and RtlGenRandom bottom out in;
-    // calling it directly avoids loading the CNG/CryptoAPI provider stacks. It
-    // has no import library, so resolve it once (it is documented to always
-    // return TRUE; the check keeps this fail-closed regardless). Fall back to
-    // BCryptGenRandom with the system-preferred RNG where it is unavailable.
-    using ProcessPrngFunction = BOOL (WINAPI*)(PBYTE, SIZE_T);
-    using BCryptGenRandomFunction = NTSTATUS (WINAPI*)(BCRYPT_ALG_HANDLE, PUCHAR, ULONG, ULONG);
-    static ProcessPrngFunction processPrng;
-    static BCryptGenRandomFunction bcryptGenRandom;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        if (HMODULE module = LoadLibraryExW(L"bcryptprimitives.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
-            processPrng = reinterpret_cast<ProcessPrngFunction>(GetProcAddress(module, "ProcessPrng"));
-        if (!processPrng) {
-            if (HMODULE module = LoadLibraryExW(L"bcrypt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
-                bcryptGenRandom = reinterpret_cast<BCryptGenRandomFunction>(GetProcAddress(module, "BCryptGenRandom"));
-        }
-        if (!processPrng && !bcryptGenRandom)
-            CRASH();
-    });
-    if (processPrng) {
-        if (!processPrng(buffer.data(), buffer.size()))
-            CRASH();
-        return;
-    }
-    for (auto remaining = buffer; !remaining.empty(); ) {
-        ULONG chunk = static_cast<ULONG>(std::min<size_t>(remaining.size(), std::numeric_limits<ULONG>::max()));
-        if (!BCRYPT_SUCCESS(bcryptGenRandom(nullptr, remaining.data(), chunk, BCRYPT_USE_SYSTEM_PREFERRED_RNG)))
-            CRASH();
-        remaining = remaining.subspan(chunk);
-    }
+    processPrng(buffer);
 #else
 #error "This configuration doesn't have a strong source of randomness."
 // WARNING: When adding new sources of OS randomness, the randomness must
