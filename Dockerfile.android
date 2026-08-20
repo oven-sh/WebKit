@@ -20,16 +20,18 @@ ARG LLVM_VERSION
 ARG NDK_VERSION
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget unzip xz-utils ca-certificates \
+    wget curl unzip xz-utils ca-certificates \
     cmake ninja-build make git \
     ruby ruby-getoptlong perl python3 rsync file cpio \
     lsb-release software-properties-common gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # Host clang (same version Bun uses) — we cross-compile via --target/--sysroot,
-# not via the NDK's bundled clang. apt.llvm.org installs version-suffixed names
-# only (ld.lld-21, not ld.lld), so add unversioned links for -fuse-ld=lld.
-RUN wget -qO- https://apt.llvm.org/llvm.sh | bash -s -- ${LLVM_VERSION} && \
+# not via the NDK's bundled clang. Installed through scripts/install-llvm.sh:
+# apt.llvm.org's llvm.sh with retries. apt.llvm.org installs version-suffixed
+# names only (ld.lld-21, not ld.lld), so add unversioned links for -fuse-ld=lld.
+RUN --mount=type=bind,source=scripts/install-llvm.sh,target=/install-llvm.sh \
+    bash /install-llvm.sh ${LLVM_VERSION} && \
     for t in clang clang++ ld.lld lld llvm-ar llvm-ranlib; do \
       ln -sf /usr/bin/${t}-${LLVM_VERSION} /usr/local/bin/${t}; \
     done

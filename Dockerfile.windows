@@ -66,7 +66,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lsb-release software-properties-common gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN wget -qO- https://apt.llvm.org/llvm.sh | bash -s -- ${LLVM_VERSION} && \
+# Host clang: scripts/install-llvm.sh runs apt.llvm.org's llvm.sh with retries.
+RUN --mount=type=bind,source=scripts/install-llvm.sh,target=/install-llvm.sh \
+    bash /install-llvm.sh ${LLVM_VERSION} && \
     for t in clang clang++ clang-cl lld-link ld.lld llvm-ar llvm-lib llvm-mt llvm-rc llvm-ranlib llvm-objcopy; do \
       ln -sf /usr/bin/${t}-${LLVM_VERSION} /usr/local/bin/${t}; \
     done

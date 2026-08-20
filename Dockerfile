@@ -32,15 +32,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Both archive.ubuntu.com and azure.archive.ubuntu.com have intermittently
 # timed out from inside the GitHub-hosted docker-buildx network at different
-# times. Prefer Azure (faster on Azure-hosted runners) but fall back to the
-# canonical mirror if `apt-get update` can't reach it. arm64 uses
-# ports.ubuntu.com which has been reachable, so leave it alone.
-RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+# times, sometimes halfway through a step. Give apt both through its mirror
+# method -- Azure first (faster on Azure-hosted runners), the canonical mirror
+# as fallback -- so every individual fetch that fails on one, in any later
+# `apt-get` too (llvm.sh, cmake, gcc), is retried on the other; and retry
+# transient errors. arm64 uses ports.ubuntu.com which has been reachable, so
+# its sources.list is left alone (the sed matches nothing there).
+RUN printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\n' > /etc/apt/mirrors.txt \
+    && sed -i 's|http://archive.ubuntu.com/ubuntu/\?|mirror+file:/etc/apt/mirrors.txt|g' /etc/apt/sources.list \
+    && printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
 
 # Install basic build dependencies
-RUN ( apt-get update || \
-      ( sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list && apt-get update ) \
-    ) && apt-get install -y \
+RUN apt-get update && apt-get install -y \
     wget \
     curl \
     git \
@@ -103,11 +106,9 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
     --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
     --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
 
-# Install LLVM 21
-RUN wget https://apt.llvm.org/llvm.sh \
-    && chmod +x llvm.sh \
-    && ./llvm.sh 21 all \
-    && rm llvm.sh \
+# Install LLVM: apt.llvm.org's llvm.sh with retries, see scripts/install-llvm.sh.
+RUN --mount=type=bind,source=scripts/install-llvm.sh,target=/install-llvm.sh \
+    bash /install-llvm.sh ${LLVM_VERSION} all \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure library paths
