@@ -17,7 +17,7 @@ const check = (l, got, want) => { if (!Object.is(got, want)) { print(`FAIL ${l}:
 
 // Warm the call site with a view so the optimizing tiers emit the inline view path.
 const view = new Uint8Array(16);
-for (let i = 0; i < 20000; ++i)
+for (let i = 0; i < testLoopCount; ++i)
     check(`warm#${i}`, hot(view), ref(view));
 
 const keep = [];
@@ -40,4 +40,3 @@ for (let round = 0; round < 40; ++round) {
     keep.push(buffers[0]);
 }
 if (failures) throw new Error(`${failures} failure(s)`);
-print("ffi ptr non-view cell arg: all checks passed");

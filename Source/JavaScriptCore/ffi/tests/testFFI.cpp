@@ -44,6 +44,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "ArrayBuffer.h"
 #include "CallData.h"
 #include "CallFrameInlines.h"
+#include "CodeBlock.h"
 #include "Completion.h"
 #include "ConstructData.h"
 #include "ErrorInstance.h"
@@ -54,6 +55,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "FFISignature.h"
 #include "FFIType.h"
 #include "FPRInfo.h"
+#include "FunctionCodeBlock.h"
+#include "FunctionExecutable.h"
 #include "GPRInfo.h"
 #include "JSArrayBuffer.h"
 #include "JSArrayBufferView.h"
@@ -2299,7 +2302,7 @@ static void testCallbackThunkEndToEnd()
 
 // The optimizing tiers convert pointer-family arguments inline only for typed array views; any
 // other cell (ArrayBuffer, BigInt, an object carrying `ptr`) has to reach the C++ conversion with
-// the same result the host path gives. Drives one call site into the FTL, then feeds it freshly
+// the same result the host path gives. Calls one site until its FTL code is installed, then feeds it freshly
 // allocated JSArrayBuffers -- some of which are the last cell of their MarkedBlock, where a
 // JSArrayBufferView-sized read of a JSArrayBuffer-sized cell would run off the end of the block --
 // and checks every result against the host-path semantics.
@@ -2325,46 +2328,43 @@ static void testOptimizingTierPointerArgumentWithNonViewCells()
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     SourceOrigin origin;
-    JSValue hot = evaluate(globalObject, makeSource(
-        "(function () {\n"
-        "    function hot(value) { return ffiPtrIdentity(value); }\n"
-        "    globalThis.ffiWarm = function (value, count) { let last; for (let i = 0; i < count; ++i) last = hot(value); return last; };\n"
-        "    return hot;\n"
-        "})()"_s, origin, SourceTaintedOrigin::Untainted));
+    JSValue hot = evaluate(globalObject, makeSource("(function hot(value) { return ffiPtrIdentity(value); })"_s, origin, SourceTaintedOrigin::Untainted));
     FFI_CHECK(!scope.exception());
     if (scope.exception()) {
         scope.clearException();
         return;
     }
-    FFI_CHECK(hot.isCallable());
-    if (!hot.isCallable())
+    JSFunction* hotFunction = dynamicDowncast<JSFunction>(hot);
+    FFI_CHECK(hotFunction);
+    if (!hotFunction)
         return;
-    gcProtect(hot.asCell());
-    JSValue warm = globalObject->get(globalObject, Identifier::fromString(vm, "ffiWarm"_s));
-    FFI_CHECK(warm.isCallable());
+    gcProtect(hotFunction);
+    auto installedInFTL = [&] {
+        FunctionCodeBlock* codeBlock = hotFunction->jsExecutable()->codeBlockForCall();
+        return codeBlock && codeBlock->jitType() == JITType::FTLJIT;
+    };
 
-    // Tier the call site up with a typed array view so the compiled code takes the inline view path.
+    // Call with a typed array view until the FTL code for `hot` is installed, so the compiled call
+    // site has the inline view path and the calls below run through it.
     JSUint8Array* view = makeUint8Array(16);
     gcProtect(view);
     JSValue viewAddress = jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(view->vector())));
-    uint64_t ftlBefore = FFI::g_ffiCompileCounts.ftlCallFFI.load();
-    for (unsigned chunk = 0; chunk < 400 && FFI::g_ffiCompileCounts.ftlCallFFI.load() == ftlBefore; ++chunk) {
+    uint64_t ftlLoweringsBefore = FFI::g_ffiCompileCounts.ftlCallFFI.load();
+    unsigned warmupMismatches = 0;
+    for (unsigned i = 0; i < 5000000 && !installedInFTL(); ++i) {
         MarkedArgumentBuffer arguments;
         arguments.append(view);
-        arguments.append(jsNumber(50000));
-        FFI_CHECK(callFunction(warm, arguments) == viewAddress);
+        if (callFunction(hot, arguments) != viewAddress)
+            ++warmupMismatches;
     }
-    FFI_CHECK(FFI::g_ffiCompileCounts.ftlCallFFI.load() > ftlBefore);
-    // The count is bumped during lowering; give the compiler thread time to install the code.
-    for (unsigned i = 0; i < 4; ++i) {
-        MarkedArgumentBuffer arguments;
-        arguments.append(view);
-        arguments.append(jsNumber(50000));
-        FFI_CHECK(callFunction(warm, arguments) == viewAddress);
-    }
+    FFI_CHECK(!warmupMismatches);
+    FFI_CHECK(installedInFTL());
+    FFI_CHECK(FFI::g_ffiCompileCounts.ftlCallFFI.load() > ftlLoweringsBefore);
+    if (!installedInFTL())
+        return;
 
     Structure* arrayBufferStructure = globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default);
-    for (unsigned round = 0; round < 30; ++round) {
+    for (unsigned round = 0; round < 60; ++round) {
         // Fill many MarkedBlocks with 32-byte JSArrayBuffer cells, keep one in eight, and collect so
         // the blocks around the survivors can be emptied and returned.
         MarkedArgumentBuffer survivors;
@@ -2393,6 +2393,8 @@ static void testOptimizingTierPointerArgumentWithNonViewCells()
         MarkedArgumentBuffer objectArgument;
         objectArgument.append(wrapper);
         FFI_CHECK(callFunction(hot, objectArgument) == jsNumber(65536));
+
+        FFI_CHECK(installedInFTL());
     }
 }
 
