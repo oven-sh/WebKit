@@ -30,6 +30,7 @@
 #include "Options.h"
 #include <wtf/Compiler.h>
 #include <wtf/DataLog.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/RawHex.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/StringCommon.h>
@@ -40,8 +41,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
 
+#include "ArrayBuffer.h"
 #include "CallData.h"
 #include "CallFrameInlines.h"
+#include "Completion.h"
 #include "ConstructData.h"
 #include "ErrorInstance.h"
 #include "FFICallingConvention.h"
@@ -52,6 +55,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "FFIType.h"
 #include "FPRInfo.h"
 #include "GPRInfo.h"
+#include "JSArrayBuffer.h"
 #include "JSArrayBufferView.h"
 #include "JSBigInt.h"
 #include "JSBigIntInlines.h"
@@ -69,6 +73,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "ObjectConstructor.h"
 #include "Protect.h"
 #include "PureNaN.h"
+#include "SourceCode.h"
 #include "Symbol.h"
 #include "TopExceptionScope.h"
 #include "TypedArrayInlines.h"
@@ -2292,6 +2297,105 @@ static void testCallbackThunkEndToEnd()
     }
 }
 
+// The optimizing tiers convert pointer-family arguments inline only for typed array views; any
+// other cell (ArrayBuffer, BigInt, an object carrying `ptr`) has to reach the C++ conversion with
+// the same result the host path gives. Drives one call site into the FTL, then feeds it freshly
+// allocated JSArrayBuffers -- some of which are the last cell of their MarkedBlock, where a
+// JSArrayBufferView-sized read of a JSArrayBuffer-sized cell would run off the end of the block --
+// and checks every result against the host-path semantics.
+static void testOptimizingTierPointerArgumentWithNonViewCells()
+{
+    VM& vm = *s_vm;
+    JSGlobalObject* globalObject = s_globalObject;
+    using T = FFI::Type;
+
+    if (!Options::useDFGJIT() || !Options::useFTLJIT()) {
+        dataLogLn("    (DFG/FTL disabled; skipping)");
+        return;
+    }
+
+    T argumentTypes[] = { T::Pointer };
+    RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(std::span<const T>(argumentTypes), T::Pointer);
+    FFI_CHECK(!!signature);
+    if (!signature)
+        return;
+    JSFFIFunction* identity = JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), reinterpret_cast<void*>(ffi_ptr_identity), "ffi_ptr_identity"_s);
+    gcProtect(identity);
+    globalObject->putDirect(vm, Identifier::fromString(vm, "ffiPtrIdentity"_s), identity);
+
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    SourceOrigin origin;
+    JSValue hot = evaluate(globalObject, makeSource(
+        "(function () {\n"
+        "    function hot(value) { return ffiPtrIdentity(value); }\n"
+        "    globalThis.ffiWarm = function (value, count) { let last; for (let i = 0; i < count; ++i) last = hot(value); return last; };\n"
+        "    return hot;\n"
+        "})()"_s, origin, SourceTaintedOrigin::Untainted));
+    FFI_CHECK(!scope.exception());
+    if (scope.exception()) {
+        scope.clearException();
+        return;
+    }
+    FFI_CHECK(hot.isCallable());
+    if (!hot.isCallable())
+        return;
+    gcProtect(hot.asCell());
+    JSValue warm = globalObject->get(globalObject, Identifier::fromString(vm, "ffiWarm"_s));
+    FFI_CHECK(warm.isCallable());
+
+    // Tier the call site up with a typed array view so the compiled code takes the inline view path.
+    JSUint8Array* view = makeUint8Array(16);
+    gcProtect(view);
+    JSValue viewAddress = jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(view->vector())));
+    uint64_t ftlBefore = FFI::g_ffiCompileCounts.ftlCallFFI.load();
+    for (unsigned chunk = 0; chunk < 400 && FFI::g_ffiCompileCounts.ftlCallFFI.load() == ftlBefore; ++chunk) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(view);
+        arguments.append(jsNumber(50000));
+        FFI_CHECK(callFunction(warm, arguments) == viewAddress);
+    }
+    FFI_CHECK(FFI::g_ffiCompileCounts.ftlCallFFI.load() > ftlBefore);
+    // The count is bumped during lowering; give the compiler thread time to install the code.
+    for (unsigned i = 0; i < 4; ++i) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(view);
+        arguments.append(jsNumber(50000));
+        FFI_CHECK(callFunction(warm, arguments) == viewAddress);
+    }
+
+    Structure* arrayBufferStructure = globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default);
+    for (unsigned round = 0; round < 30; ++round) {
+        // Fill many MarkedBlocks with 32-byte JSArrayBuffer cells, keep one in eight, and collect so
+        // the blocks around the survivors can be emptied and returned.
+        MarkedArgumentBuffer survivors;
+        for (unsigned i = 0; i < 200000; ++i) {
+            JSArrayBuffer* buffer = JSArrayBuffer::create(vm, arrayBufferStructure, ArrayBuffer::create(8, 1));
+            if (!(i % 8))
+                survivors.append(buffer);
+        }
+        vm.heap.collectNow(Sync, CollectionScope::Full);
+        WTF::releaseFastMallocFreeMemory();
+
+        for (unsigned i = 0; i < survivors.size(); ++i) {
+            JSArrayBuffer* buffer = uncheckedDowncast<JSArrayBuffer>(survivors.at(i).asCell());
+            MarkedArgumentBuffer arguments;
+            arguments.append(buffer);
+            FFI_CHECK(callFunction(hot, arguments) == jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(buffer->impl()->data()))));
+        }
+
+        MarkedArgumentBuffer bigIntArgument;
+        bigIntArgument.append(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(0x100000001)));
+        FFI_CHECK(!scope.exception());
+        FFI_CHECK(callFunction(hot, bigIntArgument) == jsNumber(4294967297.0));
+
+        JSObject* wrapper = constructEmptyObject(globalObject);
+        wrapper->putDirect(vm, Identifier::fromString(vm, "ptr"_s), jsNumber(65536));
+        MarkedArgumentBuffer objectArgument;
+        objectArgument.append(wrapper);
+        FFI_CHECK(callFunction(hot, objectArgument) == jsNumber(65536));
+    }
+}
+
 static void testFixtureTable()
 {
     auto fixtures = ffiTestFixtures();
@@ -2353,6 +2457,7 @@ static int runAll()
         RUN(testCanaries());
         RUN(testJSFFIFunctionEndToEnd());
         RUN(testCallbackThunkEndToEnd());
+        RUN(testOptimizingTierPointerArgumentWithNonViewCells());
     }
 
     dataLogLn(s_failureCount ? "FAILED: " : "OK: ", s_checkCount - s_failureCount, " checks passed, ", s_failureCount, " failed.");
