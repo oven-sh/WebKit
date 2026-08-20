@@ -185,14 +185,18 @@ namespace JSC {
 
         ~AssemblerDataImpl()
         {
-            if constexpr (type == AssemblerDataType::Code)
-                threadSpecificAssemblerData()->takeBufferIfLarger(*this);
+            // A one-off huge compile would otherwise pin its scratch buffer to this thread forever.
+            unsigned cacheLimit = Options::maximumCachedAssemblerBufferSize();
+            if (!cacheLimit || m_capacity <= cacheLimit) {
+                if constexpr (type == AssemblerDataType::Code)
+                    threadSpecificAssemblerData()->takeBufferIfLarger(*this);
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
-            if constexpr (type == AssemblerDataType::Hashes)
-                threadSpecificAssemblerHashes()->takeBufferIfLarger(*this);
+                if constexpr (type == AssemblerDataType::Hashes)
+                    threadSpecificAssemblerHashes()->takeBufferIfLarger(*this);
 #else
-            static_assert(type != AssemblerDataType::Hashes);
+                static_assert(type != AssemblerDataType::Hashes);
 #endif
+            }
             clear();
         }
 
