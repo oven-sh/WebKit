@@ -517,7 +517,16 @@ void MacroAssemblerX86_64::collectCPUFeatures()
             s_sse4_2CheckState = (cpuid[2] & (1 << 20)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
             s_popcntCheckState = (cpuid[2] & (1 << 23)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
 #if OS(DARWIN)
-            s_avxCheckState = CPUIDCheckState::Set;
+            // Every Mac Apple shipped with an x86_64 CPU newer than 2011 has AVX,
+            // but Westmere Mac Pros (5,1) run macOS 14 via OpenCore and do not.
+            // Ask the OS rather than assuming; the SSE fallbacks behind
+            // supportsAVX() already exist and are what those machines need.
+            {
+                uint32_t avxVal = 0;
+                size_t avxValSize = sizeof(avxVal);
+                int avxRc = sysctlbyname("hw.optional.avx1_0", &avxVal, &avxValSize, nullptr, 0);
+                s_avxCheckState = (avxRc >= 0 && avxVal) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+            }
 #else
             // Per the Intel SDM, AVX is usable only when:
             //   1. CPUID.1:ECX.AVX[bit 28] = 1      (CPU supports AVX)
