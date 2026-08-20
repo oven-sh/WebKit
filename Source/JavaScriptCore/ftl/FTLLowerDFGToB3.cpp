@@ -15362,6 +15362,7 @@ IGNORE_CLANG_WARNINGS_END
                 LBasicBlock doubleCase = m_out.newBlock();
                 LBasicBlock cellCase = m_out.newBlock();
                 LBasicBlock viewCase = m_out.newBlock();
+                LBasicBlock modeCase = m_out.newBlock();
                 LBasicBlock vectorCase = m_out.newBlock();
                 LBasicBlock slowCase = m_out.newBlock();
                 LBasicBlock done = m_out.newBlock();
@@ -15388,14 +15389,19 @@ IGNORE_CLANG_WARNINGS_END
                 else
                     m_out.branch(isNotCell(value, provenType(edge)), unsure(slowCase), unsure(viewCase));
 
-                m_out.appendTo(viewCase, vectorCase);
+                m_out.appendTo(viewCase, modeCase);
                 LValue jsType = m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoType);
                 LValue isView = m_out.belowOrEqual(
                     m_out.sub(jsType, m_out.constInt32(FirstTypedArrayType)),
                     m_out.constInt32(LastTypedArrayType - FirstTypedArrayType));
+                m_out.branch(isView, usually(modeCase), rarely(slowCase));
+
+                // Only a JSArrayBufferView has m_mode; loading it from a smaller cell (JSArrayBuffer,
+                // JSString, JSBigInt, ...) reads past the cell and can fault off the end of its MarkedBlock.
+                m_out.appendTo(modeCase, vectorCase);
                 LValue mode = m_out.load8ZeroExt32(value, m_heaps.JSArrayBufferView_mode);
                 LValue isPlainMode = m_out.isZero32(m_out.bitAnd(mode, m_out.constInt32(isResizableOrGrowableSharedMode)));
-                m_out.branch(m_out.bitAnd(isView, isPlainMode), usually(vectorCase), rarely(slowCase));
+                m_out.branch(isPlainMode, usually(vectorCase), rarely(slowCase));
 
                 m_out.appendTo(vectorCase, slowCase);
                 LValue vector = m_out.loadPtr(value, m_heaps.JSArrayBufferView_vector);
