@@ -107,9 +107,10 @@ DEFINE_VISIT_CHILDREN(JSSlimPromiseReaction);
 
 const ClassInfo JSFullPromiseReaction::s_info = { "FullPromiseReaction"_s, &JSPromiseReaction::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFullPromiseReaction) };
 
-JSFullPromiseReaction* JSFullPromiseReaction::create(VM& vm, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue context, JSPromiseReaction* next)
+JSFullPromiseReaction* JSFullPromiseReaction::create(VM& vm, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue context, JSPromiseReaction* next, InternalMicrotask task)
 {
-    JSFullPromiseReaction* result = new (NotNull, allocateCell<JSFullPromiseReaction>(vm)) JSFullPromiseReaction(vm, vm.fullPromiseReactionStructure.get(), promise, onFulfilled, onRejected, context, next);
+    ASSERT(task == InternalMicrotask::None || task == InternalMicrotask::PromiseReactionJobWithAsyncContext);
+    JSFullPromiseReaction* result = new (NotNull, allocateCell<JSFullPromiseReaction>(vm)) JSFullPromiseReaction(vm, vm.fullPromiseReactionStructure.get(), promise, onFulfilled, onRejected, context, next, task);
     result->finishCreation(vm);
     return result;
 }

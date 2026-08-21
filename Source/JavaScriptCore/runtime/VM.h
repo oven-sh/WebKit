@@ -1366,6 +1366,14 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
+
+    // Called when an async function first suspends and its synchronous prefix
+    // changed the async context (m_asyncContextData field 0) relative to what
+    // was current at the call. Returns the value the caller should observe from
+    // here on. Null = Node's AsyncLocalStorage.enterWith semantics (leave the
+    // changed value in place).
+    using AsyncContextLeaveAsyncFrameHook = JSValue (*)(JSGlobalObject*, JSValue atEntry, JSValue current);
+    AsyncContextLeaveAsyncFrameHook asyncContextLeaveAsyncFrameHook { nullptr };
 private:
 #endif
 

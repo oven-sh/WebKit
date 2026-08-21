@@ -15943,6 +15943,16 @@ void SpeculativeJIT::compileNewInternalFieldObjectImpl(Node* node, Operation ope
     static_assert(initialValues.size() == JSClass::numberOfInternalFields);
     for (unsigned index = 0; index < initialValues.size(); ++index)
         storeTrustedValue(initialValues[index], Address(resultGPR, JSInternalFieldObjectImpl<>::offsetOfInternalField(index)));
+#if USE(BUN_JSC_ADDITIONS)
+    if constexpr (std::is_same_v<JSClass, JSAsyncFunctionGenerator>) {
+        // See recordEntryAsyncContext() in JSAsyncFunctionGenerator.cpp. The
+        // tuple is allocated once per global object and never replaced.
+        if (auto* asyncContextData = m_graph.globalObjectFor(node->origin.semantic)->m_asyncContextData.get()) {
+            load64(std::bit_cast<char*>(asyncContextData) + JSInternalFieldObjectImpl<>::offsetOfInternalField(0), scratch1GPR);
+            store64(scratch1GPR, Address(resultGPR, JSInternalFieldObjectImpl<>::offsetOfInternalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::AsyncContext))));
+        }
+    }
+#endif
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operation, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure)));

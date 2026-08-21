@@ -31,9 +31,9 @@
 
 namespace JSC {
 
-class JSAsyncGenerator final : public JSInternalFieldObjectImpl<10> {
+class JSAsyncGenerator final : public JSInternalFieldObjectImpl<11> {
 public:
-    using Base = JSInternalFieldObjectImpl<10>;
+    using Base = JSInternalFieldObjectImpl<11>;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -86,8 +86,10 @@ public:
         ResumePromise,
         CachedDriverResult,
         CachedDriverResultTarget,
+        // Bun async context captured at the most recent await; see JSAsyncFunctionGenerator.
+        AsyncContext,
     };
-    static_assert(numberOfInternalFields == 10);
+    static_assert(numberOfInternalFields == 11);
     static std::array<JSValue, numberOfInternalFields> initialValues()
     {
         return { {
@@ -98,6 +100,7 @@ public:
             jsNull(),
             jsUndefined(),
             jsNumber(static_cast<int32_t>(AsyncGeneratorResumeMode::Empty)),
+            jsUndefined(),
             jsUndefined(),
             jsUndefined(),
             jsUndefined(),
@@ -195,6 +198,16 @@ public:
     void setCachedDriverResultTarget(VM& vm, JSValue value)
     {
         Base::internalField(static_cast<unsigned>(Field::CachedDriverResultTarget)).set(vm, this, value);
+    }
+
+    JSValue asyncContext() const
+    {
+        return Base::internalField(static_cast<unsigned>(Field::AsyncContext)).get();
+    }
+
+    void setAsyncContext(VM& vm, JSValue value)
+    {
+        Base::internalField(static_cast<unsigned>(Field::AsyncContext)).set(vm, this, value);
     }
 
     bool isQueueEmpty() const

@@ -52,6 +52,9 @@ enum class InternalMicrotask : uint8_t {
     PromiseFinallyAwaitJob,
 
     PromiseReactionJob,
+#if USE(BUN_JSC_ADDITIONS)
+    PromiseReactionJobWithAsyncContext, // PromiseReactionJob whose trailing argument is Bun's async context rather than a user context
+#endif
 
     AsyncFunctionResume,
     AsyncFromSyncIteratorContinue,

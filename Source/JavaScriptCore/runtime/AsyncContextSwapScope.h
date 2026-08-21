@@ -28,6 +28,8 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 #include "InternalFieldTuple.h"
+#include "JSAsyncFunctionGenerator.h"
+#include "JSAsyncGenerator.h"
 #include "JSCast.h"
 #include "JSGlobalObject.h"
 #include <wtf/ForbidHeapAllocation.h>
@@ -38,8 +40,8 @@ namespace JSC {
 // RAII helper for Bun's AsyncLocalStorage: swaps an async context value into
 // JSGlobalObject::m_asyncContextData field 0 for the lifetime of the scope and
 // restores the previous value on destruction. A no-op when the supplied context
-// is empty or undefined, so the common path (no async context active) costs a
-// single branch. Also provides helpers for the snapshot side (capturing the
+// is empty, or undefined while async context tracking has never been enabled on
+// the global, so the common path (no async context in use) costs a branch. Also provides helpers for the snapshot side (capturing the
 // current context and wrapping it into an InternalFieldTuple alongside a user
 // context) and for unwrapping such a tuple on the restore side.
 class AsyncContextSwapScope {
@@ -49,13 +51,21 @@ public:
     ALWAYS_INLINE AsyncContextSwapScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
         : m_vm(vm)
     {
-        if (asyncContext.isEmpty() || asyncContext.isUndefined())
+        if (asyncContext.isEmpty())
+            return;
+        // Once anything uses async context, every continuation installs the
+        // context it captured -- including "none" -- so a context entered inside
+        // one continuation (AsyncLocalStorage.enterWith, an activated span) is
+        // scoped to that continuation instead of leaking into whichever job
+        // happens to run next. Until then this stays a single branch.
+        if (asyncContext.isUndefined() && !globalObject->isAsyncContextTrackingEnabled())
             return;
         m_asyncContextData = globalObject->m_asyncContextData.get();
         if (!m_asyncContextData)
             return;
         m_restoreAsyncContext = m_asyncContextData->getInternalField(0);
-        m_asyncContextData->putInternalField(vm, 0, asyncContext);
+        if (m_restoreAsyncContext != asyncContext)
+            m_asyncContextData->putInternalField(vm, 0, asyncContext);
     }
 
     ALWAYS_INLINE ~AsyncContextSwapScope()
@@ -109,6 +119,52 @@ public:
         if (asyncContext.isUndefined())
             return userContext;
         return InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), userContext, asyncContext);
+    }
+
+    // Await-side capture. When the suspending object is an async (generator)
+    // function, record the current async context in its AsyncContext slot — a
+    // suspended async function has exactly one outstanding await, so this is a
+    // single barriered store instead of an InternalFieldTuple allocation per
+    // await — and return the object itself. Other drivers (AsyncFromSyncIterator,
+    // top-level-await module records) are rare and keep the tuple path.
+    static ALWAYS_INLINE JSValue captureForAwait(VM& vm, JSGlobalObject* globalObject, JSValue driver)
+    {
+        auto* asyncContextData = globalObject->m_asyncContextData.get();
+        if (!asyncContextData)
+            return driver;
+        JSValue asyncContext = asyncContextData->getInternalField(0);
+        if (driver.isCell()) {
+            JSCell* cell = driver.asCell();
+            if (cell->type() == JSAsyncFunctionGeneratorType) {
+                auto* generator = uncheckedDowncast<JSAsyncFunctionGenerator>(cell);
+                if (generator->asyncContext() != asyncContext)
+                    generator->setAsyncContext(vm, asyncContext);
+                return driver;
+            }
+            if (cell->type() == JSAsyncGeneratorType) {
+                auto* generator = uncheckedDowncast<JSAsyncGenerator>(cell);
+                if (generator->asyncContext() != asyncContext)
+                    generator->setAsyncContext(vm, asyncContext);
+                return driver;
+            }
+        }
+        if (asyncContext.isUndefined())
+            return driver;
+        return InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), driver, asyncContext);
+    }
+
+    // Resume-side counterpart of captureForAwait(): yields the async context to
+    // restore and leaves contextArg pointing at the unwrapped driver.
+    static ALWAYS_INLINE JSValue contextForResume(JSValue& contextArg)
+    {
+        if (contextArg.isCell()) {
+            JSCell* cell = contextArg.asCell();
+            if (cell->type() == JSAsyncFunctionGeneratorType)
+                return uncheckedDowncast<JSAsyncFunctionGenerator>(cell)->asyncContext();
+            if (cell->type() == JSAsyncGeneratorType)
+                return uncheckedDowncast<JSAsyncGenerator>(cell)->asyncContext();
+        }
+        return unwrapContextTuple(contextArg);
     }
 
 private:

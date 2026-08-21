@@ -30,9 +30,9 @@
 
 namespace JSC {
 
-class JSAsyncFunctionGenerator final : public JSInternalFieldObjectImpl<5> {
+class JSAsyncFunctionGenerator final : public JSInternalFieldObjectImpl<6> {
 public:
-    using Base = JSInternalFieldObjectImpl<5>;
+    using Base = JSInternalFieldObjectImpl<6>;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -52,8 +52,12 @@ public:
         This,
         Frame,
         Context,
+        // Bun async context (AsyncLocalStorage) captured at the most recent await and
+        // restored when the function resumes. A suspended async function has exactly one
+        // outstanding await, so one slot replaces a per-await InternalFieldTuple.
+        AsyncContext,
     };
-    static_assert(numberOfInternalFields == 5);
+    static_assert(numberOfInternalFields == 6);
     static_assert(static_cast<uint32_t>(Field::State) == static_cast<uint32_t>(JSGenerator::Field::State));
     static_assert(static_cast<uint32_t>(Field::Next) == static_cast<uint32_t>(JSGenerator::Field::Next));
     static_assert(static_cast<uint32_t>(Field::This) == static_cast<uint32_t>(JSGenerator::Field::This));
@@ -63,6 +67,7 @@ public:
     {
         return { {
             jsNumber(static_cast<int32_t>(State::Init)),
+            jsUndefined(),
             jsUndefined(),
             jsUndefined(),
             jsUndefined(),
@@ -106,6 +111,16 @@ public:
     JSValue context() const
     {
         return Base::internalField(static_cast<unsigned>(Field::Context)).get();
+    }
+
+    JSValue asyncContext() const
+    {
+        return Base::internalField(static_cast<unsigned>(Field::AsyncContext)).get();
+    }
+
+    void setAsyncContext(VM& vm, JSValue value)
+    {
+        Base::internalField(static_cast<unsigned>(Field::AsyncContext)).set(vm, this, value);
     }
 
     DECLARE_EXPORT_INFO;

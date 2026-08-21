@@ -182,6 +182,10 @@ struct JSTypeRange {
 };
 
 static constexpr uint8_t EmbedderArrayLikeType = 0b11101101;
+// Bun's telemetry span cell (a JSInternalFieldObjectImpl subclass defined by
+// the embedder). Named here so builtins get an @isTelemetrySpan brand check
+// that lowers to IsCellWithType.
+static constexpr uint8_t BunTelemetrySpanType = 0b11100001;
 
 static constexpr uint32_t LastValueCompareCellType = HeapBigIntType;
 

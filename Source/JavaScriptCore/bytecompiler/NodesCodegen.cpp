@@ -2049,6 +2049,7 @@ CREATE_INTRINSIC_FOR_BRAND_CHECK(isArrayIterator, IsArrayIterator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isUndefinedOrNull, IsUndefinedOrNull)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isWrapForValidIterator, IsWrapForValidIterator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isDisposableStack, IsDisposableStack)
+CREATE_INTRINSIC_FOR_BRAND_CHECK(isTelemetrySpan, IsTelemetrySpan)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isAsyncDisposableStack, IsAsyncDisposableStack)
 
 #undef CREATE_INTRINSIC_FOR_BRAND_CHECK
