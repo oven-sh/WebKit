@@ -103,12 +103,22 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
     --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
     --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
 
-# Install LLVM 21
-RUN wget https://apt.llvm.org/llvm.sh \
-    && chmod +x llvm.sh \
-    && ./llvm.sh 21 all \
-    && rm llvm.sh \
-    && rm -rf /var/lib/apt/lists/*
+# Install LLVM
+# The `llvm.sh <version> all` package set, mirrored from apt.llvm.org to a
+# GitHub release so the image doesn't depend on apt.llvm.org at build time.
+# Ubuntu-archive dependencies still come from apt. Regenerate via
+# scripts/mirror-llvm-debs.sh (or the mirror-llvm-debs workflow).
+ARG LLVM_DEBS_SHA256_amd64=759ea9d6d50de9b6062cf40161a24a3a9d70aaf11aa1a544074d126590eb55f7
+ARG LLVM_DEBS_SHA256_arm64=4d4923baa663cb2e1be67e8e7097220604489b0da8b7a4ab5911ac2baf1e0ba6
+RUN curl -fsSL --retry 5 --retry-connrefused \
+        "https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-focal-${TARGETARCH}.tar.gz" \
+        -o /tmp/llvm.tar.gz \
+    && eval "expected=\$LLVM_DEBS_SHA256_${TARGETARCH}" \
+    && echo "${expected}  /tmp/llvm.tar.gz" | sha256sum -c - \
+    && mkdir -p /tmp/llvm && tar xzf /tmp/llvm.tar.gz -C /tmp/llvm \
+    && apt-get update \
+    && apt-get install -y /tmp/llvm/*.deb \
+    && rm -rf /tmp/llvm /tmp/llvm.tar.gz /var/lib/apt/lists/*
 
 # Configure library paths
 RUN if [ "$TARGETARCH" = "arm64" ]; then \

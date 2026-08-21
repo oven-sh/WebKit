@@ -2,6 +2,7 @@ ARG MARCH_FLAG="-march=armv8-a+crc -mtune=cortex-a78"
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG LLVM_VERSION="21"
+ARG LLVM_DEBS_SHA256="4a79b0eae89af72b082997d361198f16aaefce3fa8ad3c56c8e97311ff31dd5f"
 ARG NDK_VERSION="r27c"
 ARG NDK_SHA256="59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc"
 ARG ANDROID_API="28"
@@ -17,6 +18,7 @@ FROM ubuntu:24.04 AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
+ARG LLVM_DEBS_SHA256
 ARG NDK_VERSION
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,7 +31,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Host clang (same version Bun uses) — we cross-compile via --target/--sysroot,
 # not via the NDK's bundled clang. apt.llvm.org installs version-suffixed names
 # only (ld.lld-21, not ld.lld), so add unversioned links for -fuse-ld=lld.
-RUN wget -qO- https://apt.llvm.org/llvm.sh | bash -s -- ${LLVM_VERSION} && \
+# The debs are mirrored from apt.llvm.org to a GitHub release (see
+# scripts/mirror-llvm-debs.sh) so the build doesn't depend on apt.llvm.org.
+ADD --checksum=sha256:${LLVM_DEBS_SHA256} \
+    https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-noble-amd64.tar.gz /tmp/llvm.tar.gz
+RUN mkdir -p /tmp/llvm && tar xzf /tmp/llvm.tar.gz -C /tmp/llvm && \
+    apt-get update && apt-get install -y /tmp/llvm/*.deb && \
+    rm -rf /tmp/llvm /tmp/llvm.tar.gz /var/lib/apt/lists/* && \
     for t in clang clang++ ld.lld lld llvm-ar llvm-ranlib; do \
       ln -sf /usr/bin/${t}-${LLVM_VERSION} /usr/local/bin/${t}; \
     done

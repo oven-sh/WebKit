@@ -35,6 +35,7 @@ ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 ARG LLVM_VERSION="21"
+ARG LLVM_DEBS_SHA256="4a79b0eae89af72b082997d361198f16aaefce3fa8ad3c56c8e97311ff31dd5f"
 ARG XWIN_VERSION="0.9.0"
 ARG XWIN_SHA256="31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4cd"
 # Pinned MSVC CRT + Windows SDK versions. Bump deliberately; the manifest on
@@ -53,6 +54,7 @@ FROM ubuntu:24.04 AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
+ARG LLVM_DEBS_SHA256
 ARG XWIN_VERSION
 ARG XWIN_SHA256
 ARG MSVC_CRT_VERSION
@@ -66,7 +68,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lsb-release software-properties-common gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN wget -qO- https://apt.llvm.org/llvm.sh | bash -s -- ${LLVM_VERSION} && \
+# Host clang. The debs are mirrored from apt.llvm.org to a GitHub release
+# (see scripts/mirror-llvm-debs.sh) so the build doesn't depend on it.
+ADD --checksum=sha256:${LLVM_DEBS_SHA256} \
+    https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-noble-amd64.tar.gz /tmp/llvm.tar.gz
+RUN mkdir -p /tmp/llvm && tar xzf /tmp/llvm.tar.gz -C /tmp/llvm && \
+    apt-get update && apt-get install -y /tmp/llvm/*.deb && \
+    rm -rf /tmp/llvm /tmp/llvm.tar.gz /var/lib/apt/lists/* && \
     for t in clang clang++ clang-cl lld-link ld.lld llvm-ar llvm-lib llvm-mt llvm-rc llvm-ranlib llvm-objcopy; do \
       ln -sf /usr/bin/${t}-${LLVM_VERSION} /usr/local/bin/${t}; \
     done
