@@ -2381,6 +2381,9 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
                 return false;
             }
             thisObject->reifyAllStaticProperties(globalObject);
+            // A PropertyCallback builder threw; don't mutate, the caller checks.
+            if (vm.exceptionForInspection()) [[unlikely]]
+                return false;
         }
     }
 
