@@ -290,6 +290,9 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
+            // A static-table PropertyCallback builder may have thrown while reifying.
+            if (TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags())) [[unlikely]]
+                RETURN_IF_EXCEPTION(scope, false);
         } else {
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);

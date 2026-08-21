@@ -2632,6 +2632,9 @@ bool JSObject::getOwnStaticPropertySlot(VM& vm, PropertyName propertyName, Prope
         if (auto* table = info->staticPropHashTable) {
             if (getStaticPropertySlotFromTable(vm, table->classForThis, *table, this, propertyName, slot))
                 return true;
+            // A PropertyCallback builder threw while reifying; don't consult parent tables.
+            if (vm.exceptionForInspection()) [[unlikely]]
+                return false;
         }
     }
     return false;
@@ -2974,8 +2977,8 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
             PropertyOffset offset = getDirectOffset(vm, key, attributes);
             if (!isValidOffset(offset)) {
                 reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
-                // Leave the rest lazy on throw; the caller propagates. reifyStaticProperty has
-                // already performed the builder's exception check, so inspecting is enough here.
+                // Leave the rest lazy on throw (already checked in reifyStaticProperty); the
+                // caller propagates.
                 if (vm.exceptionForInspection()) [[unlikely]]
                     return;
             }

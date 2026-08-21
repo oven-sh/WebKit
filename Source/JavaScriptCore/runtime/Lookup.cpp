@@ -65,12 +65,11 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             DeferTerminationForAWhile deferScope(vm);
             reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
         }
-        // The builder may still throw a non-termination exception (reifyStaticProperty has
-        // already performed its exception check); report the slot as not found so JSValue::get /
-        // getOwnPropertyDescriptor's EXCEPTION_ASSERT(!scope.exception() || !result) holds and the
-        // caller's RETURN_IF_EXCEPTION propagates it. No ThrowScope here: a ThrowScope would
-        // simulate a throw on every first static-table lookup, and callers of getOwnPropertySlot
-        // don't check for one.
+        // The builder may still throw a non-termination exception (already checked in
+        // reifyStaticProperty); report the slot as not found so JSValue::get /
+        // getOwnPropertyDescriptor's EXCEPTION_ASSERT(!scope.exception() || !result) holds.
+        // No ThrowScope here: a ThrowScope would simulate a throw on every first static-table
+        // lookup, and callers of getOwnPropertySlot don't check for one.
         if (vm.exceptionForInspection()) [[unlikely]]
             return false;
 

@@ -538,16 +538,15 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     }
     
     if (value.attributes() & PropertyAttribute::PropertyCallback) {
-        // A PropertyCallback builder may enter JS, so it is an ordinary ThrowScope function that
-        // returns empty with the exception pending. Its exception check happens here rather than in
-        // the two callers (setUpStaticFunctionSlot / reifyAllStaticProperties): those cannot declare
-        // a ThrowScope of their own (see setUpStaticFunctionSlot), so they observe the pending
-        // exception with vm.exceptionForInspection() and propagate it by reporting the slot as
-        // not found / stopping the reify loop. The exception itself is left pending.
+        // A PropertyCallback builder may enter JS and throw (returning empty with the exception
+        // pending). Its exception check happens here, not in the callers: they cannot carry a
+        // ThrowScope (see setUpStaticFunctionSlot), so this scope observes the exception without
+        // re-simulating a throw to them, leaves it pending, and they propagate it via
+        // vm.exceptionForInspection().
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue result = value.lazyPropertyCallback()(vm, &thisObj);
-        EXCEPTION_ASSERT(!catchScope.exception() || !result);
-        if (catchScope.exception() || !result) [[unlikely]]
+        EXCEPTION_ASSERT(!!catchScope.exception() == !result);
+        if (!result) [[unlikely]]
             return;
         thisObj.putDirect(vm, propertyName, result, attributesForStructure(value.attributes()));
         return;
@@ -581,6 +580,9 @@ inline void reifyStaticProperties(VM& vm, const ClassInfo* classInfo, const Arra
             continue;
         auto key = Identifier::fromString(vm, value.m_key);
         reifyStaticProperty(vm, classInfo, key, value, thisObj);
+        // A PropertyCallback builder threw; leave the rest unreified, the caller propagates.
+        if (vm.exceptionForInspection()) [[unlikely]]
+            return;
     }
 }
 
