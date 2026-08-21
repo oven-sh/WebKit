@@ -173,7 +173,11 @@ constexpr bool validateDFGDoesGC = ENABLE_DFG_DOES_GC_VALIDATION;
 
 #if USE(BUN_JSC_ADDITIONS)
 using StackTraceAppenderFunction = WTF::Function<void(VM&, JSCell* owner, Vector<StackFrame>& stackTrace, size_t maxToAppend)>;
-using ErrorInfoFunction = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, void* bunErrorData)>;
+// Called by ErrorInstance::computeErrorInfo. Its main caller is ErrorInstance::reconcileWeakReferencesAtGCEnd,
+// which runs inside Heap::runEndPhase when a frame of a not yet materialized stack trace died; the returned
+// string then becomes the error's final .stack. errorInstance is the error being formatted, so the embedder
+// can still put its name and message on the first line. The function must not allocate GC cells or run JS.
+using ErrorInfoFunction = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject* errorInstance, void* bunErrorData)>;
 using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*, void* bunErrorData)>;
 #endif
 

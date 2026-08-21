@@ -396,7 +396,7 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
             if (m_stackPropertyAlreadyMaterialized)
                 stackString = emptyString();
             else
-                stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this->bunErrorData());
+                stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this, this->bunErrorData());
         } else {
             getLineColumnAndSource(vm, m_stackTrace.get(), m_lineColumn, m_sourceURL);
             // If the stack property was already materialized by Error.captureStackString,
