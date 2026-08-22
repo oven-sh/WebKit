@@ -260,6 +260,7 @@ private:
             appended++;
         }
 
+        RELEASE_ASSERT(m_graph.varArgChild(m_node, m_node->storageChildIndex()));
         AdjacencyList adjacencyList = m_graph.copyVarargChildren(m_node);
         m_graph.m_varArgChildren.append(Edge(checkFirstByte, UntypedUse));
         if (checkLastByte)

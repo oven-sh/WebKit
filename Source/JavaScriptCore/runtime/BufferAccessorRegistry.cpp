@@ -56,8 +56,9 @@ static BufferAccessorRegistry& bufferAccessorRegistry()
 
 void registerBufferAccessor(TaggedNativeFunction function, BufferAccessorDescriptor descriptor)
 {
-    ASSERT(descriptor.byteLengthFromArgument ? !descriptor.data.byteSize : (descriptor.data.byteSize == 1 || descriptor.data.byteSize == 2 || descriptor.data.byteSize == 4 || descriptor.data.byteSize == 8));
-    ASSERT(descriptor.data.byteSize == 1 || descriptor.data.isLittleEndian != TriState::Indeterminate);
+    RELEASE_ASSERT(descriptor.byteLengthFromArgument ? !descriptor.data.byteSize : (descriptor.data.byteSize == 1 || descriptor.data.byteSize == 2 || descriptor.data.byteSize == 4 || descriptor.data.byteSize == 8));
+    RELEASE_ASSERT(descriptor.data.byteSize == 1 || descriptor.data.isLittleEndian != TriState::Indeterminate);
+    RELEASE_ASSERT(!descriptor.data.isFloatingPoint || descriptor.data.byteSize == 4 || descriptor.data.byteSize == 8 || descriptor.byteLengthFromArgument);
     auto& registry = bufferAccessorRegistry();
     Locker locker { registry.lock };
     registry.entries.set(function.untaggedPtr(), BufferAccessorRegistry::Entry { descriptor.data.asQuadWord, descriptor.isWrite, descriptor.byteLengthFromArgument });
