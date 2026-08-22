@@ -27,6 +27,7 @@
 #include "config.h"
 #include <wtf/RandomDevice.h>
 
+#include <atomic>
 #include <stdlib.h>
 
 #if !OS(DARWIN) && !OS(FUCHSIA) && OS(UNIX)
@@ -96,6 +97,19 @@ NEVER_INLINE NO_RETURN_DUE_TO_CRASH static void crashUnableToReadFromURandom()
 }
 #endif
 
+#if RANDOM_DEVICE_USE_GETRANDOM
+static std::atomic<bool> s_useGetrandom { true };
+#endif
+
+void RandomDevice::setUseGetrandom(bool use)
+{
+#if RANDOM_DEVICE_USE_GETRANDOM
+    s_useGetrandom.store(use, std::memory_order_relaxed);
+#else
+    UNUSED_PARAM(use);
+#endif
+}
+
 #if !OS(DARWIN) && !OS(FUCHSIA) && !OS(WINDOWS)
 RandomDevice::RandomDevice()
 {
@@ -105,14 +119,17 @@ RandomDevice::RandomDevice()
     // the pool is already initialized use getrandom from here on (it can never
     // become uninitialized again). Otherwise -- EAGAIN (pool not ready, where
     // /dev/urandom would return without blocking), ENOSYS (pre-3.17 kernel) or
-    // EPERM (seccomp) -- keep the historical /dev/urandom behaviour.
-    uint8_t probe;
-    long probeResult;
-    do {
-        probeResult = syscall(SYS_getrandom, &probe, sizeof(probe), GRND_NONBLOCK);
-    } while (probeResult == -1 && errno == EINTR);
-    if (probeResult == 1)
-        return; // m_fd stays -1: cryptographicallyRandomValues() uses getrandom.
+    // EPERM (seccomp) -- keep the historical /dev/urandom behaviour, which
+    // setUseGetrandom(false) (JSC's useGetrandom=false) also selects outright.
+    if (s_useGetrandom.load(std::memory_order_relaxed)) {
+        uint8_t probe;
+        long probeResult;
+        do {
+            probeResult = syscall(SYS_getrandom, &probe, sizeof(probe), GRND_NONBLOCK);
+        } while (probeResult == -1 && errno == EINTR);
+        if (probeResult == 1)
+            return; // m_fd stays -1: cryptographicallyRandomValues() uses getrandom.
+    }
 #endif
     int ret = 0;
     do {

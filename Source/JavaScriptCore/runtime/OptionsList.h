@@ -114,6 +114,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useV8DateParser, false, Normal, nullptr) \
     v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces."_s) \
     v(Bool, evalMode, false, Normal, "Set to true for less aggressive function call completion value discarding."_s) \
+    v(Bool, useGetrandom, true, Normal, "Linux: read OS randomness with getrandom(2) and open /dev/urandom only if the syscall is unavailable. false always opens /dev/urandom. Applied by JSC::initialize(); does nothing on other platforms."_s) \
     FOR_EACH_JSC_FFI_OPTION(v) \
     \
     v(Unsigned, maxPerThreadStackUsage, 5 * MB, Normal, "Max allowed stack usage by the VM"_s) \

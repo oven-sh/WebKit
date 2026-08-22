@@ -50,6 +50,7 @@
 #include <bmalloc/BPlatform.h>
 #include <mutex>
 #include <wtf/Condition.h>
+#include <wtf/RandomDevice.h>
 #include <wtf/Threading.h>
 #include <wtf/threads/Signals.h>
 
@@ -98,6 +99,9 @@ void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCusto
 #endif
         {
             Options::AllowUnfinalizedAccessScope scope;
+            // The random device picks its source when it is first used, and
+            // ExecutableAllocator::initialize() below can be that first use.
+            WTF::RandomDevice::setUseGetrandom(Options::useGetrandom());
             JITOperationList::initialize();
             ExecutableAllocator::initialize();
             VM::computeCanUseJIT();
