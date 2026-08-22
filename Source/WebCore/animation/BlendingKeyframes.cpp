@@ -382,14 +382,14 @@ void BlendingKeyframes::analyzeKeyframe(const BlendingKeyframe& keyframe)
 
         if (keyframe.animatesProperty(CSSPropertyTransform)) {
             auto [isWidthDependent, isHeightDependent] = style->transform().computeSizeDependencies();
-            m_hasWidthDependentTransform = isWidthDependent;
-            m_hasHeightDependentTransform = isHeightDependent;
+            m_hasWidthDependentTransform |= isWidthDependent;
+            m_hasHeightDependentTransform |= isHeightDependent;
         }
 
         if (keyframe.animatesProperty(CSSPropertyTranslate)) {
             auto [isWidthDependent, isHeightDependent] = style->translate().computeSizeDependencies();
-            m_hasWidthDependentTransform = isWidthDependent;
-            m_hasHeightDependentTransform = isHeightDependent;
+            m_hasWidthDependentTransform |= isWidthDependent;
+            m_hasHeightDependentTransform |= isHeightDependent;
         }
     };
 
@@ -440,7 +440,13 @@ void BlendingKeyframes::updatedComputedOffsets(NOESCAPE const Function<double(co
     for (auto& keyframe : m_keyframes)
         keyframe.setComputedOffset(callback(keyframe.specifiedOffset()));
 
-    std::ranges::stable_sort(m_keyframes, { }, &BlendingKeyframe::offset);
+    std::ranges::stable_sort(m_keyframes, [](double a, double b) {
+        if (std::isnan(a))
+            return false;
+        if (std::isnan(b))
+            return true;
+        return a < b;
+    }, &BlendingKeyframe::offset);
 }
 
 bool BlendingKeyframes::hasKeyframeWithUnresolvedComputedOffset() const
@@ -475,6 +481,7 @@ BlendingKeyframe::BlendingKeyframe(const BlendingKeyframe& source)
     , m_timingFunction(source.m_timingFunction)
     , m_compositeOperation(source.m_compositeOperation)
     , m_containsDirectionAwareProperty(source.m_containsDirectionAwareProperty)
+    , m_hasPropertiesWithRevertRuleOrLayer(source.m_hasPropertiesWithRevertRuleOrLayer)
 {
 }
 

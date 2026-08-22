@@ -40,6 +40,10 @@
 class GrDirectContext;
 #endif
 
+#if HAVE(IOSURFACE)
+typedef struct CF_BRIDGED_TYPE(id) __CVBuffer* CVPixelBufferRef;
+#endif
+
 namespace WebCore {
 
 class Color;
@@ -48,6 +52,7 @@ class FloatRect;
 class GraphicsContext;
 class IntSize;
 class NativeImageBackend;
+struct ImageOrientation;
 struct ImagePaintingOptions;
 
 class NativeImage : public ThreadSafeRefCounted<NativeImage>, public CanMakeThreadSafeCheckedPtr<NativeImage> {
@@ -66,6 +71,10 @@ public:
     static WEBCORE_EXPORT RefPtr<NativeImage> createTransient(PlatformImagePtr&&);
 #endif
 
+#if USE(CG)
+    WEBCORE_EXPORT static RefPtr<NativeImage> create(RetainPtr<CVPixelBufferRef>, CGImageAlphaInfo, RetainPtr<CGColorSpaceRef>);
+#endif
+
     WEBCORE_EXPORT virtual ~NativeImage();
 
     WEBCORE_EXPORT virtual PlatformImagePtr platformImage() const;
@@ -79,6 +88,8 @@ public:
     bool hasHDRGainMap() const { return m_gainMap.has_value(); }
     Headroom baseImageHeadroom() const { return m_baseImageHeadroom; }
     Headroom headroom() const { return m_headroom; }
+
+    RefPtr<NativeImage> rotatedImage(ImageOrientation);
 
     void clearSubimages();
 

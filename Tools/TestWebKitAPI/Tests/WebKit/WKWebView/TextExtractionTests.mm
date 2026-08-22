@@ -1108,6 +1108,66 @@ TEST(TextExtractionTests, ReplacementStringsDiacriticInsensitive)
     EXPECT_FALSE([debugText containsString:@"Zurich"]);
 }
 
+TEST(TextExtractionTests, ReplacementStringsWordBoundaries)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:^{
+        RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+        [[configuration preferences] _setTextExtractionEnabled:YES];
+        return configuration.autorelease();
+    }()]);
+
+    auto textAfterReplacing = [&](NSString *markup, NSDictionary<NSString *, NSString *> *replacementStrings) -> RetainPtr<NSString> {
+        [webView synchronouslyLoadHTMLString:markup];
+        RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+        [configuration setReplacementStrings:replacementStrings];
+        return [webView synchronouslyGetDebugText:configuration];
+    };
+
+    {
+        // A key matching only part of a longer word is not the user's data, and replacing it would both
+        // corrupt the surrounding text and reveal the key to anyone diffing against the unredacted page.
+        RetainPtr text = textAfterReplacing(@"<p>Two-factor authentication</p><p>Location customization</p><p>Cat pictures</p>", @{
+            @"Cat": @"Jane",
+        });
+        EXPECT_TRUE([text containsString:@"Two-factor authentication"]);
+        EXPECT_TRUE([text containsString:@"Location customization"]);
+        EXPECT_TRUE([text containsString:@"Jane pictures"]);
+        EXPECT_FALSE([text containsString:@"authentiJaneion"]);
+        EXPECT_FALSE([text containsString:@"LoJaneion"]);
+    }
+    {
+        RetainPtr text = textAfterReplacing(@"<p>At least 8 characters</p><button>Cancel</button><p>L is an initial</p>", @{
+            @"L": @"Marie",
+        });
+        EXPECT_TRUE([text containsString:@"At least 8 characters"]);
+        EXPECT_TRUE([text containsString:@"Cancel"]);
+        EXPECT_TRUE([text containsString:@"Marie is an initial"]);
+        EXPECT_FALSE([text containsString:@"Marieeast"]);
+        EXPECT_FALSE([text containsString:@"CanceMarie"]);
+    }
+    {
+        // Only alphanumeric characters are part of a word, so punctuation and symbols bound a match.
+        RetainPtr text = textAfterReplacing(@"<p>wenson@me.com</p><p>wenson.hsieh@me.com</p><p>wenson-hsieh</p><p>wensonhsieh</p>", @{
+            @"Wenson": @"jane",
+        });
+        EXPECT_TRUE([text containsString:@"jane@me.com"]);
+        EXPECT_TRUE([text containsString:@"jane.hsieh@me.com"]);
+        EXPECT_TRUE([text containsString:@"jane-hsieh"]);
+        EXPECT_TRUE([text containsString:@"wensonhsieh"]);
+        EXPECT_FALSE([text containsString:@"janehsieh"]);
+    }
+    {
+        // Scripts written without interword spacing have no boundary to anchor to, so requiring one
+        // would keep replacements from ever applying within them.
+        RetainPtr text = textAfterReplacing(@"<p>王謝李明</p><p>서울특별시</p>", @{
+            @"謝李": @"<redacted-name>",
+            @"울특": @"<redacted-place>",
+        });
+        EXPECT_TRUE([text containsString:@"王<redacted-name>明"]);
+        EXPECT_TRUE([text containsString:@"서<redacted-place>별시"]);
+    }
+}
+
 TEST(TextExtractionTests, ReplacementStringsAppliedToInteractionDescription)
 {
     RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
@@ -1138,6 +1198,33 @@ TEST(TextExtractionTests, ReplacementStringsAppliedToInteractionDescription)
     EXPECT_TRUE([description containsString:@"brown cat jumped over the lazy dog"]);
     EXPECT_FALSE([description containsString:@"Compose a new message"]);
     EXPECT_FALSE([description containsString:@"fox"]);
+
+    RetainPtr result = [webView synchronouslyPerformInteraction:interaction];
+    EXPECT_NULL([result error]);
+
+    RetainPtr summary = [result summary];
+    EXPECT_TRUE([summary containsString:@"[redacted subject]"]);
+    EXPECT_TRUE([summary containsString:@"brown cat jumped over the lazy dog"]);
+    EXPECT_FALSE([summary containsString:@"Compose a new message"]);
+    EXPECT_FALSE([summary containsString:@"fox"]);
+
+    [webView synchronouslyLoadHTMLString:@"<body style='margin:0; overflow:hidden; height:600px'>"
+        "<div aria-label='Secret Project Alpha' style='width:800px; height:600px; overflow-y:scroll'>"
+        "<div style='height:5000px'>lots of content</div></div></body>"];
+
+    [webView synchronouslyGetDebugText:^{
+        RetainPtr replacementConfiguration = adoptNS([_WKTextExtractionConfiguration new]);
+        [replacementConfiguration setReplacementStrings:@{ @"Secret Project Alpha": @"[redacted container]" }];
+        return replacementConfiguration.autorelease();
+    }()];
+
+    RetainPtr scroll = adoptNS([[_WKTextExtractionInteraction alloc] initWithAction:_WKTextExtractionActionScroll]);
+    RetainPtr scrollResult = [webView synchronouslyPerformInteraction:scroll];
+    EXPECT_NULL([scrollResult error]);
+
+    RetainPtr scrollSummary = [scrollResult summary];
+    EXPECT_TRUE([scrollSummary containsString:@"[redacted container]"]);
+    EXPECT_FALSE([scrollSummary containsString:@"Secret Project Alpha"]);
 }
 
 TEST(TextExtractionTests, VisibleTextOnly)
@@ -3082,5 +3169,101 @@ TEST(TextExtractionTests, ExtractFromPDFLink)
 }
 
 #endif // ENABLE(UNIFIED_PDF)
+
+#if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
+
+static RetainPtr<TestWKWebView> createWebViewForContentModeTesting(BOOL backgroundTextExtractionEnabled)
+{
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    [configuration _setBackgroundTextExtractionEnabled:backgroundTextExtractionEnabled];
+    return adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration]);
+}
+
+static void loadUsingContentMode(TestWKWebView *webView, WKContentMode contentMode)
+{
+    RetainPtr preferences = adoptNS([[WKWebpagePreferences alloc] init]);
+    [preferences setPreferredContentMode:contentMode];
+    [webView synchronouslyLoadHTMLString:@"<body>Hello world</body>" preferences:preferences];
+}
+
+static int intByEvaluatingJavaScript(TestWKWebView *webView, NSString *script)
+{
+    return [[webView objectByEvaluatingJavaScript:script] intValue];
+}
+
+#if ENABLE(TOUCH_EVENTS)
+
+static bool touchEventDOMAttributesAreExposed(TestWKWebView *webView)
+{
+    return [[webView objectByEvaluatingJavaScript:@"'ontouchstart' in window"] boolValue];
+}
+
+#endif
+
+static bool isSmallScreenDevice()
+{
+    return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
+}
+
+static void expectDesktopClassHardwareEmulation(TestWKWebView *webView)
+{
+#if ENABLE(IOS_TOUCH_EVENTS)
+    EXPECT_EQ(0, intByEvaluatingJavaScript(webView, @"navigator.maxTouchPoints"));
+#endif
+#if ENABLE(TOUCH_EVENTS)
+    EXPECT_FALSE(touchEventDOMAttributesAreExposed(webView));
+#endif
+
+    if (!isSmallScreenDevice())
+        return;
+
+    int innerWidth = intByEvaluatingJavaScript(webView, @"innerWidth");
+    int innerHeight = intByEvaluatingJavaScript(webView, @"innerHeight");
+    EXPECT_EQ(innerWidth, intByEvaluatingJavaScript(webView, @"screen.width"));
+    EXPECT_EQ(innerHeight, intByEvaluatingJavaScript(webView, @"screen.height"));
+    EXPECT_EQ(innerWidth, intByEvaluatingJavaScript(webView, @"screen.availWidth"));
+    EXPECT_EQ(innerHeight, intByEvaluatingJavaScript(webView, @"screen.availHeight"));
+}
+
+static void expectNoDesktopClassHardwareEmulation(TestWKWebView *webView)
+{
+#if ENABLE(IOS_TOUCH_EVENTS)
+    EXPECT_EQ(5, intByEvaluatingJavaScript(webView, @"navigator.maxTouchPoints"));
+#endif
+#if ENABLE(TOUCH_EVENTS)
+    EXPECT_TRUE(touchEventDOMAttributesAreExposed(webView));
+#endif
+
+    if (!isSmallScreenDevice())
+        return;
+
+    int innerWidth = intByEvaluatingJavaScript(webView, @"innerWidth");
+    EXPECT_NE(innerWidth, intByEvaluatingJavaScript(webView, @"screen.width"));
+}
+
+TEST(TextExtractionTests, DesktopClassHardwareEmulationInDesktopContentMode)
+{
+    RetainPtr webView = createWebViewForContentModeTesting(YES);
+    {
+        loadUsingContentMode(webView, WKContentModeDesktop);
+        expectDesktopClassHardwareEmulation(webView);
+    }
+    {
+        loadUsingContentMode(webView, WKContentModeMobile);
+        expectNoDesktopClassHardwareEmulation(webView);
+    }
+    {
+        RetainPtr mobileWebView = createWebViewForContentModeTesting(YES);
+        loadUsingContentMode(mobileWebView, WKContentModeMobile);
+        expectNoDesktopClassHardwareEmulation(mobileWebView);
+    }
+    {
+        RetainPtr webViewWithoutTextExtraction = createWebViewForContentModeTesting(NO);
+        loadUsingContentMode(webViewWithoutTextExtraction, WKContentModeDesktop);
+        expectNoDesktopClassHardwareEmulation(webViewWithoutTextExtraction);
+    }
+}
+
+#endif // PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
 
 } // namespace TestWebKitAPI

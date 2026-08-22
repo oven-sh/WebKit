@@ -4839,9 +4839,6 @@
             "initial": "auto",
             "values": [
                 "auto",
-                "use-script",
-                "no-change",
-                "reset-size",
                 "ideographic",
                 "alphabetic",
                 "hanging",
@@ -4860,7 +4857,7 @@
             },
             "specification": {
                 "category": "svg",
-                "url": "https://www.w3.org/TR/SVG11/text.html#DominantBaselineProperty"
+                "url": "https://w3c.github.io/svgwg/svg2-draft/text.html#DominantBaselineProperty"
             }
         },
         "dynamic-range-limit": {
@@ -5951,18 +5948,15 @@
             "values": [
                 "none",
                 "block",
-                "inline",
                 "block-start",
-                "inline-start",
-                "block-end",
-                "inline-end"
+                "block-end"
             ],
             "codegen-properties": {
                 "computed-style-storage-path": ["m_nonInheritedData", "rareData"],
                 "computed-style-storage-kind": "raw",
                 "computed-style-type": "Style::MarginTrim",
                 "parser-function": "consumeMarginTrim",
-                "parser-grammar-unused": "none | [ block || inline ] | [ block-start || inline-start || block-end || inline-end ]",
+                "parser-grammar-unused": "none | block | [ block-start || block-end ]",
                 "parser-grammar-unused-reason": "Needs support for transforming parsed input to minimal form."
             },
             "specification": {
@@ -12567,13 +12561,13 @@
             ],
             "codegen-properties": {
                 "computed-style-has-explicitly-set-policy": "value-only",
-                "computed-style-has-explicitly-set-storage-path": ["m_inheritedRareData"],
+                "computed-style-has-explicitly-set-storage-path": ["m_nonInheritedData", "miscData"],
                 "computed-style-name-for-methods": "WebkitUserSelect",
                 "computed-style-storage-path": ["m_inheritedRareData"],
                 "computed-style-storage-kind": "enum",
                 "computed-style-type": "UserSelect",
                 "parser-grammar": "<<values>>",
-                "comment": "Not an alias of 'user-select': this property is inherited, it overrides 'user-select' whenever it has been specified (hence the has-explicitly-set flag)."
+                "comment": "Not an alias of 'user-select': this property is inherited, and it only applies when it has been specified and 'user-select' has not (hence the has-explicitly-set flags on both)."
             },
             "status": "non-standard"
         },
@@ -12593,6 +12587,8 @@
                 "all"
             ],
             "codegen-properties": {
+                "computed-style-has-explicitly-set-policy": "value-only",
+                "computed-style-has-explicitly-set-storage-path": ["m_nonInheritedData", "miscData"],
                 "computed-style-storage-path": ["m_nonInheritedData", "miscData"],
                 "computed-style-storage-kind": "enum",
                 "computed-style-type": "UserSelect",

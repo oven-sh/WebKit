@@ -49,7 +49,6 @@ UnlinkedCodeBlock::UnlinkedCodeBlock(VM& vm, Structure* structure, CodeType code
     , m_numCalleeLocals(0)
     , m_isConstructor(info.isConstructor())
     , m_numParameters(0)
-    , m_hasCapturedVariables(false)
     , m_isBuiltinFunction(info.isBuiltinFunction())
     , m_isBuiltinDefaultClassConstructor(info.isBuiltinDefaultClassConstructor())
     , m_superBinding(static_cast<unsigned>(info.superBinding()))
@@ -114,7 +113,6 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         extraMemory += thisObject->m_rareData->sizeInBytes(locker);
     if (thisObject->m_expressionInfo)
         extraMemory += thisObject->m_expressionInfo->byteSize();
-    extraMemory += thisObject->m_jumpTargets.byteSize();
     extraMemory += thisObject->m_identifiers.byteSize();
     extraMemory += thisObject->m_constantRegisters.byteSize();
     extraMemory += thisObject->m_constantsSourceCodeRepresentation.byteSize();

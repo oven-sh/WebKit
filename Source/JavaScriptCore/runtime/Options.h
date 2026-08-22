@@ -28,6 +28,7 @@
 #include "CPU.h"
 #include "JSCConfig.h"
 #include "JSExportMacros.h"
+#include "OSCheck.h"
 #include <stdint.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>

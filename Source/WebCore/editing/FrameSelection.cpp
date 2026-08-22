@@ -68,6 +68,7 @@
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
 #include "LocalFrameView.h"
+#include "LocalFrameViewInlines.h"
 #include "Logging.h"
 #include "MutableStyleProperties.h"
 #include "OpacityCaretAnimator.h"
@@ -525,7 +526,7 @@ void FrameSelection::setSelection(const VisibleSelection& selection, OptionSet<S
 void FrameSelection::updateSelectionAppearanceNow()
 {
     RefPtr document = m_document.get();
-    if (!document || !document->hasLivingRenderTree())
+    if (!document || document->renderTreeState() != Document::RenderTreeState::Built)
         return;
 
 #if ENABLE(TEXT_CARET)

@@ -145,14 +145,13 @@ bool RenderLayerModelObject::hasSelfPaintingLayer() const
 
 bool RenderLayerModelObject::requiresLayerForSVGIntrinsicReasons() const
 {
+    if (RefPtr svgElement = dynamicDowncast<SVGElement>(element()); svgElement && svgElement->isReferencedByFEImage())
+        return true;
+
     // Plain 2D transforms need no layer, paintRendererByApplyingTransformForSVG() handles them.
     // 3D transforms require compositing, hence a layer, as do grouping effects, z-index, etc.
-    //
-    // clip-path also needs no layer. It is applied at paint and hit-test time via
-    // ClipPathPaintScope and pointInSVGClippingArea(). So use the group check without the clip-path
-    // branch, letting a bare clip-path stay non-layered.
     auto& style = this->style();
-    return createsGroupForStyleExcludingClipPath(style)
+    return createsGroupForStyleExcludingClipPathAndMask(style)
         || style.transform().has3DOperation()
         || style.translate().is3DOperation()
         || style.scale().is3DOperation()

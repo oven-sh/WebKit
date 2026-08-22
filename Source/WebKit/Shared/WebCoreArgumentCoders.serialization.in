@@ -1328,7 +1328,12 @@ class WebCore::LayoutRect {
 using WebCore::ScrollPosition = WebCore::IntPoint;
 
 [RefCounted] class WebCore::RemoteFrameLayoutInfo {
+    WebCore::LayoutRect windowClipRectInParent();
     std::optional<WebCore::LayoutRect> visibleRectInParent();
+#if PLATFORM(IOS_FAMILY)
+    std::optional<WebCore::LayoutRect> exposedContentRectInParent();
+#endif
+    bool ownerHasRenderer();
     WebCore::TransformationMatrix childFrameOwnerToRootContentTransform();
     WebCore::TransformationMatrix absoluteToChildFrameOwnerLocalTransform();
     float usedZoom();
@@ -2161,7 +2166,8 @@ enum class WebCore::FetchOptionsDestination : uint8_t {
     Video,
     Worker,
     Xslt,
-    Text
+    Text,
+    CompressionDictionary
 };
 
 enum class WebCore::FetchOptionsMode : uint8_t {
@@ -5613,6 +5619,16 @@ struct WebCore::NowPlayingInfo {
 #if ENABLE(VIDEO)
     WebCore::MediaPlayer::VideoFullscreenMode fullscreenMode;
 #endif
+}
+
+header: <WebCore/NowPlayingInfo.h>
+[CustomHeader] struct WebCore::NowPlayingCandidateState {
+    std::optional<WebCore::PageIdentifier> pageIdentifier;
+    std::optional<WallTime> mostRecentUserInteractionTime;
+    WebCore::MediaSessionIdentifier sessionIdentifier;
+    WebCore::PlatformMediaSessionMediaType presentationType;
+    bool isLargeEnoughForMainContent;
+    bool isPlaying;
 }
 
 struct WebCore::PlatformMediaCapabilitiesVideoConfiguration {

@@ -299,19 +299,29 @@ const WebM = (function() {
     }
 
     // ========================================================================
-    // Media Segment Builders (Cluster + BlockGroup)
+    // Media Segment Builders (Cluster + SimpleBlock/BlockGroup)
     // ========================================================================
 
-    function blockGroup(trackNumber, relativeTimecode, isKeyframe, duration, frameData) {
-        // Block payload: trackNumber(VINT) + timecode(int16 BE) + flags(byte) + frame
+    // Block/SimpleBlock payload: trackNumber(VINT) + timecode(int16 BE) + flags(byte) + frame
+    function blockPayload(trackNumber, relativeTimecode, flagBits, frameData) {
         const trackVint = new Uint8Array([0x80 | trackNumber]);
         const tc = new Uint8Array(2);
         new DataView(tc.buffer).setInt16(0, relativeTimecode, false);
-        const flags = new Uint8Array([0x00]); // Block flags (no lacing)
-        const blockPayload = concat(trackVint, tc, flags, frameData);
+        return concat(trackVint, tc, new Uint8Array([flagBits]), frameData);
+    }
+
+    // A bare SimpleBlock. Unlike Block, the keyframe bit lives in the block's own
+    // flags byte, and there is nowhere to carry an explicit BlockDuration.
+    function simpleBlock(trackNumber, relativeTimecode, isKeyframe, frameData) {
+        return ebmlElement(ID.SimpleBlock,
+            blockPayload(trackNumber, relativeTimecode, isKeyframe ? 0x80 : 0x00, frameData));
+    }
+
+    function blockGroup(trackNumber, relativeTimecode, isKeyframe, duration, frameData) {
+        const payload = blockPayload(trackNumber, relativeTimecode, 0x00, frameData); // no lacing
 
         const children = [
-            ebmlElement(ID.Block, blockPayload),
+            ebmlElement(ID.Block, payload),
             ebmlUint(ID.BlockDuration, duration),
         ];
 
@@ -359,6 +369,8 @@ const WebM = (function() {
         // Each frame gets an explicit BlockDuration so parsers don't need
         // to infer duration from timecode gaps.
         //
+        // options.simpleBlock - Emit bare SimpleBlock elements instead of
+        //                       BlockGroup(Block + BlockDuration) (optional).
         // options.tracks[] - Array of track data:
         //   .id              - Track number (must match init segment)
         //   .type            - 'video' or 'audio'
@@ -367,9 +379,15 @@ const WebM = (function() {
         //     .duration    - Sample duration in milliseconds
         //     .isSync      - true for keyframe
         //     .data        - Override frame data (Uint8Array, optional)
+        //     .relativeTime - Override the block's timecode relative to the cluster's,
+        //                     in milliseconds (optional, may be negative). Only affects
+        //                     this block; the running timecode keeps accumulating durations.
         mediaSegment(options) {
             const tracks = options.tracks;
             const clusterTimecode = (tracks[0] && tracks[0].baseDecodeTime) || 0;
+            const encodeBlock = options.simpleBlock
+                ? (b => simpleBlock(b.trackId, b.relativeTime, b.isSync, b.data))
+                : (b => blockGroup(b.trackId, b.relativeTime, b.isSync, b.duration, b.data));
 
             // Block relative timecodes are int16 (max 32767). If cumulative
             // durations exceed this, we must split into multiple clusters.
@@ -387,8 +405,7 @@ const WebM = (function() {
                     if (relativeTime > MAX_RELATIVE_TC && currentBlocks.length > 0) {
                         clusters.push(ebmlMasterUnknownSize(ID.Cluster,
                             ebmlUint(ID.Timecode, currentClusterBase),
-                            ...currentBlocks.map(b =>
-                                blockGroup(b.trackId, b.relativeTime, b.isSync, b.duration, b.data))
+                            ...currentBlocks.map(encodeBlock)
                         ));
                         currentClusterBase += relativeTime;
                         relativeTime = 0;
@@ -401,7 +418,7 @@ const WebM = (function() {
                             : OPUS_SILENCE);
                     currentBlocks.push({
                         trackId: track.id,
-                        relativeTime,
+                        relativeTime: sample.relativeTime !== undefined ? sample.relativeTime : relativeTime,
                         isSync: sample.isSync,
                         duration: sample.duration,
                         data: frameData,
@@ -414,8 +431,7 @@ const WebM = (function() {
             if (currentBlocks.length > 0) {
                 clusters.push(ebmlMasterUnknownSize(ID.Cluster,
                     ebmlUint(ID.Timecode, currentClusterBase),
-                    ...currentBlocks.map(b =>
-                        blockGroup(b.trackId, b.relativeTime, b.isSync, b.duration, b.data))
+                    ...currentBlocks.map(encodeBlock)
                 ));
             }
 
