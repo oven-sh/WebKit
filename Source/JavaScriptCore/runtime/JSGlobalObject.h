@@ -447,6 +447,9 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_customSetterFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_nativeStdFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_remoteFunctionStructure;
+#if USE(BUN_JSC_ADDITIONS)
+    LazyProperty<JSGlobalObject, Structure> m_tracedFunctionStructure;
+#endif
     WriteBarrier<AsyncFunctionPrototype> m_asyncFunctionPrototype;
     WriteBarrier<AsyncGeneratorFunctionPrototype> m_asyncGeneratorFunctionPrototype;
     LazyProperty<JSGlobalObject, Structure> m_iteratorResultObjectStructure;
@@ -1058,6 +1061,9 @@ public:
     Structure* regExpMatchesIndicesArrayStructure() const { return m_regExpMatchesIndicesArrayStructure.get(); }
     Structure* regExpStringIteratorStructure() const { return m_regExpStringIteratorStructure.get(); }
     Structure* remoteFunctionStructure() const { return m_remoteFunctionStructure.get(this); }
+#if USE(BUN_JSC_ADDITIONS)
+    Structure* tracedFunctionStructure() const { return m_tracedFunctionStructure.get(this); }
+#endif
     Structure* moduleRecordStructure() const { return m_moduleRecordStructure.get(this); }
     Structure* syntheticModuleRecordStructure() const { return m_syntheticModuleRecordStructure.get(this); }
     Structure* moduleNamespaceObjectStructure() const { return m_moduleNamespaceObjectStructure.get(this); }

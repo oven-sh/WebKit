@@ -61,6 +61,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSAsyncFunctionGenerator.h"
 #include "JSAsyncGeneratorFunction.h"
 #include "JSBoundFunction.h"
+#include "JSTracedFunction.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSGeneratorFunction.h"
@@ -11248,6 +11249,10 @@ void SpeculativeJIT::compileFunctionToString(Node* node)
 
     static_assert(std::is_final_v<JSRemoteFunction>, "We don't handle subclasses when comparing classInfo below");
     slowCases.append(branchPtr(Equal, result.gpr(), TrustedImmPtr(JSRemoteFunction::info())));
+#if USE(BUN_JSC_ADDITIONS)
+    static_assert(std::is_final_v<JSTracedFunction>, "We don't handle subclasses when comparing classInfo below");
+    slowCases.append(branchPtr(Equal, result.gpr(), TrustedImmPtr(JSTracedFunction::info())));
+#endif
 
     getExecutable(*this, function.gpr(), executable.gpr());
     Jump isNativeExecutable = branch8(Equal, Address(executable.gpr(), JSCell::typeInfoTypeOffset()), TrustedImm32(NativeExecutableType));

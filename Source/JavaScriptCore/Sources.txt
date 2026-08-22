@@ -962,6 +962,7 @@ runtime/JSPropertyNameEnumerator.cpp
 runtime/JSRawJSONObject.cpp
 runtime/JSRegExpStringIterator.cpp
 runtime/JSRemoteFunction.cpp
+runtime/JSTracedFunction.cpp
 runtime/JSRunLoopTimer.cpp
 runtime/JSScope.cpp
 runtime/JSSegmentedVariableObject.cpp

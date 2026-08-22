@@ -68,6 +68,7 @@
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseReaction.h"
 #include "JSRemoteFunction.h"
+#include "JSTracedFunction.h"
 #include "JSString.h"
 #include "JSWebAssemblyException.h"
 #include "LLIntThunks.h"
@@ -902,6 +903,16 @@ public:
             // translate the exception before jumping to the handler.
             m_seenRemoteFunction = uncheckedDowncast<JSRemoteFunction>(m_callFrame->jsCallee());
         }
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
+        if (!m_callFrame->isNativeCalleeFrame() && !m_callFrame->codeBlock()) {
+            if (auto* traced = dynamicDowncast<JSTracedFunction>(m_callFrame->jsCallee()); traced && m_callFrame->callSiteIndex().bits() == JSTracedFunction::spanLocalValidCallSiteIndex) {
+                // A tracedFunctionCallGenerator frame past its enter hook: the local holds the hook's value.
+                JSValue span = m_callFrame->registers()[virtualRegisterForLocal(JSTracedFunction::spanLocal).offset()].jsValue();
+                if (span)
+                    m_vm.m_unwoundTracedFrames.append({ traced, span });
+            }
+        }
+#endif
 
         JSGlobalObject* globalObject = m_callFrame->lexicalGlobalObject(m_vm);
         notifyDebuggerOfUnwinding(globalObject, m_callFrame);
@@ -1008,6 +1019,16 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
         sanitizeRemoteFunctionException(vm, seenRemoteFunction, exception);
         exception = scope.exception(); // clear m_needExceptionCheck
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (!vm.m_unwoundTracedFrames.isEmpty()) {
+        auto frames = std::exchange(vm.m_unwoundTracedFrames, { });
+        if (auto unwindHook = vm.tracedFunctionHooks().unwind) {
+            for (auto& [traced, span] : frames)
+                unwindHook(traced->globalObject(), traced, span, exception);
+        }
+        exception = scope.exception();
+    }
+#endif
 
     if (vm.hasCheckpointOSRSideState())
         vm.popAllCheckpointOSRSideStateUntil(callFrame);

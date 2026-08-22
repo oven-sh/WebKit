@@ -130,6 +130,7 @@ class JSLock;
 class JSObject;
 struct JSPIContext;
 class JSPromise;
+class JSTracedFunction;
 class JSPropertyNameEnumerator;
 class JITSizeStatistics;
 class JITThunks;
@@ -203,6 +204,16 @@ struct DebugState;
 #endif
 
 struct EntryFrame;
+
+#if USE(BUN_JSC_ADDITIONS)
+// The embedder's side of JSTracedFunction (see JSTracedFunction.h). All null = plain calls.
+struct TracedFunctionHooks {
+    EncodedJSValue (*enter)(JSGlobalObject*, CallFrame*, JSTracedFunction*) { nullptr };
+    EncodedJSValue (*leave)(JSGlobalObject*, JSTracedFunction*, EncodedJSValue span, EncodedJSValue result) { nullptr };
+    void (*unwind)(JSGlobalObject*, JSTracedFunction*, JSValue span, Exception*) { nullptr };
+    void (*settled)(JSGlobalObject*, JSValue context, bool fulfilled, JSValue result) { nullptr };
+};
+#endif
 
 typedef uint8_t IndexingType;
 
@@ -622,6 +633,13 @@ public:
 
     Weak<NativeExecutable> m_fastRemoteFunctionExecutable;
     Weak<NativeExecutable> m_slowRemoteFunctionExecutable;
+#if USE(BUN_JSC_ADDITIONS)
+    Weak<NativeExecutable> m_fastTracedFunctionExecutable;
+    Weak<NativeExecutable> m_slowTracedFunctionExecutable;
+    TracedFunctionHooks m_tracedFunctionHooks { };
+    // Traced frames the current unwind passed through (innermost first); consumed by Interpreter::unwind.
+    Vector<std::pair<JSTracedFunction*, JSValue>, 2> m_unwoundTracedFrames;
+#endif
 
     const Ref<DeferredWorkTimer> deferredWorkTimer;
 
@@ -775,6 +793,10 @@ public:
 
     NativeExecutable* getBoundFunction(bool isJSFunction, SourceTaintedOrigin taintedness);
     NativeExecutable* getRemoteFunction(bool isJSFunction);
+#if USE(BUN_JSC_ADDITIONS)
+    NativeExecutable* getTracedFunction(bool isJSFunction);
+    TracedFunctionHooks& tracedFunctionHooks() { return m_tracedFunctionHooks; }
+#endif
 
     CodePtr<JSEntryPtrTag> getCTIInternalFunctionTrampolineFor(CodeSpecializationKind);
     MacroAssemblerCodeRef<JSEntryPtrTag> getCTIThrowExceptionFromCallSlowPath();

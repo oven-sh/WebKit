@@ -99,6 +99,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> numberConstructorCallThunkGenerator(VM&);
 MacroAssemblerCodeRef<JITThunkPtrTag> stringConstructorCallThunkGenerator(VM&);
 MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM&);
 MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM&);
+#if USE(BUN_JSC_ADDITIONS)
+MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM&);
+#endif
 MacroAssemblerCodeRef<JITThunkPtrTag> toIntegerOrInfinityThunkGenerator(VM&);
 MacroAssemblerCodeRef<JITThunkPtrTag> toLengthThunkGenerator(VM&);
 #if CPU(ARM64)

@@ -1518,6 +1518,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSRegExpStringIterator.h
     runtime/JSRegExpStringIteratorInlines.h
     runtime/JSRemoteFunction.h
+    runtime/JSTracedFunction.h
+    runtime/JSTracedFunctionInlines.h
     runtime/JSRemoteFunctionInlines.h
     runtime/JSRunLoopTimer.h
     runtime/JSScope.h

@@ -50,6 +50,7 @@
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
+#include "JSTracedFunction.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseConstructor.h"
 #include "JSPromisePrototype.h"
@@ -1925,6 +1926,13 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
 #if USE(BUN_JSC_ADDITIONS)
+    case InternalMicrotask::TracedSettlementObserved: {
+        // (cell, resolution, context) from JSPromise::addSettlementObserver.
+        if (auto settled = vm.tracedFunctionHooks().settled)
+            settled(globalObject, arguments[2], static_cast<JSPromise::Status>(payload) == JSPromise::Status::Fulfilled, arguments[1]);
+        return;
+    }
+
     case InternalMicrotask::PromiseReactionJobWithAsyncContext:
 #endif
     case InternalMicrotask::PromiseReactionJob: {

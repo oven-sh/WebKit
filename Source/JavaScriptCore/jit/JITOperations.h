@@ -62,6 +62,7 @@ class JSGlobalObject;
 class JSLexicalEnvironment;
 class JSObject;
 class JSRemoteFunction;
+class JSTracedFunction;
 class JSScope;
 class JSString;
 class JSValue;
@@ -168,6 +169,11 @@ JSC_DECLARE_JIT_OPERATION(operationThrowIteratorResultIsNotObject, void, (JSGlob
 JSC_DECLARE_JIT_OPERATION(operationGetWrappedValueForCaller, EncodedJSValue, (JSRemoteFunction*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationGetWrappedValueForTarget, EncodedJSValue, (JSRemoteFunction*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationMaterializeRemoteFunctionTargetCode, UGPRPair, (JSRemoteFunction*));
+#if USE(BUN_JSC_ADDITIONS)
+JSC_DECLARE_JIT_OPERATION(operationTracedFunctionEnter, EncodedJSValue, (JSTracedFunction*));
+JSC_DECLARE_JIT_OPERATION(operationTracedFunctionLeave, EncodedJSValue, (JSTracedFunction*, EncodedJSValue span, EncodedJSValue result));
+JSC_DECLARE_JIT_OPERATION(operationMaterializeTracedFunctionTargetCode, void*, (JSTracedFunction*, JSFunction* target));
+#endif
 JSC_DECLARE_JIT_OPERATION(operationMaterializeBoundFunctionTargetCode, UGPRPair, (JSBoundFunction*));
 JSC_DECLARE_JIT_OPERATION(operationThrowRemoteFunctionException, EncodedJSValue, (JSRemoteFunction*));
 

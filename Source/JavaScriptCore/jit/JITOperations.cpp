@@ -68,6 +68,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSMicrotask.h"
 #include "JSPromise.h"
 #include "JSRemoteFunction.h"
+#include "JSTracedFunction.h"
 #include "JSSentinel.h"
 #include "JSSetIterator.h"
 #include "JSStringIteratorInlines.h"
@@ -241,6 +242,53 @@ JSC_DEFINE_JIT_OPERATION(operationMaterializeRemoteFunctionTargetCode, UGPRPair,
     auto* targetFunction = uncheckedDowncast<JSFunction>(callee->targetFunction()); // We call this function only when JSRemoteFunction's target is JSFunction.
     OPERATION_RETURN(scope, materializeTargetCode(vm, targetFunction));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+JSC_DEFINE_JIT_OPERATION(operationTracedFunctionEnter, EncodedJSValue, (JSTracedFunction* callee))
+{
+    JSGlobalObject* globalObject = callee->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto enter = vm.tracedFunctionHooks().enter;
+    if (!enter)
+        OPERATION_RETURN(scope, encodedJSValue());
+    OPERATION_RETURN(scope, enter(globalObject, callFrame, callee));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationTracedFunctionLeave, EncodedJSValue, (JSTracedFunction* callee, EncodedJSValue span, EncodedJSValue result))
+{
+    JSGlobalObject* globalObject = callee->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto leave = vm.tracedFunctionHooks().leave;
+    if (!leave)
+        OPERATION_RETURN(scope, result);
+    OPERATION_RETURN(scope, leave(globalObject, callee, span, result));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationMaterializeTracedFunctionTargetCode, void*, (JSTracedFunction* callee, JSFunction* targetFunction))
+{
+    JSGlobalObject* globalObject = callee->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // materializeTargetCode, returning only the entry point: the thunk reloads
+    // the CodeBlock from the executable (keeps this off UGPRPair for Windows).
+    ExecutableBase* executable = targetFunction->executable();
+    DeferTraps deferTraps(vm);
+    CodeBlock* codeBlockSlot = nullptr;
+    if (!executable->isHostFunction()) {
+        static_cast<FunctionExecutable*>(executable)->prepareForExecution<FunctionExecutable>(vm, targetFunction, targetFunction->scopeUnchecked(), CodeSpecializationKind::CodeForCall, codeBlockSlot);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    OPERATION_RETURN(scope, executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr());
+}
+#endif
 
 JSC_DEFINE_JIT_OPERATION(operationThrowRemoteFunctionException, EncodedJSValue, (JSRemoteFunction* callee))
 {

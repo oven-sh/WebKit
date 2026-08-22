@@ -192,6 +192,7 @@
 #include "JSRawJSONObject.h"
 #include "JSRegExpStringIteratorInlines.h"
 #include "JSRemoteFunctionInlines.h"
+#include "JSTracedFunctionInlines.h"
 #include "JSSetInlines.h"
 #include "JSSetIteratorInlines.h"
 #include "JSStringIteratorInlines.h"
@@ -1150,6 +1151,12 @@ void JSGlobalObject::init(VM& vm)
         [] (const Initializer<Structure>& init) {
             init.set(JSRemoteFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
         });
+#if USE(BUN_JSC_ADDITIONS)
+    m_tracedFunctionStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            init.set(JSTracedFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
+        });
+#endif
     JSFunction* callFunction = nullptr;
     JSFunction* applyFunction = nullptr;
     JSFunction* hasInstanceSymbolFunction = nullptr;
@@ -3167,6 +3174,9 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_customSetterFunctionStructure.visit(visitor);
     thisObject->m_nativeStdFunctionStructure.visit(visitor);
     thisObject->m_remoteFunctionStructure.visit(visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    thisObject->m_tracedFunctionStructure.visit(visitor);
+#endif
     visitor.append(thisObject->m_shadowRealmObjectStructure);
     visitor.append(thisObject->m_regExpStructure);
     visitor.append(thisObject->m_generatorFunctionStructure);

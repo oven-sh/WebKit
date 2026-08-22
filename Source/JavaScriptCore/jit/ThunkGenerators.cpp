@@ -30,6 +30,7 @@
 #include "JITThunks.h"
 #include "JSBoundFunction.h"
 #include "JSRemoteFunction.h"
+#include "JSTracedFunction.h"
 #include "LLIntThunks.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "SpecializedThunkJIT.h"
@@ -1445,6 +1446,231 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
     return FINALIZE_THUNK(linkBuffer, JITThunkPtrTag, "bound"_s, "Specialized thunk for bound function calls with no arguments");
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// JSTracedFunction: operationTracedFunctionEnter, then the target called
+// directly with the caller's `this` and arguments (Shape::Wrap) or with the
+// enter hook's value as the only argument (Shape::CallLast), then
+// operationTracedFunctionLeave on the result. An exception unwinds through this
+// frame; Interpreter::unwind reads the span back from our frame local.
+// Layout and slow paths follow boundFunctionCallGenerator / remoteFunctionCallGenerator.
+MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
+{
+    CCallHelpers jit;
+    jit.emitFunctionPrologue();
+
+    // Set up our call frame.
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::addressFor(CallFrameSlot::codeBlock));
+    jit.store32(CCallHelpers::TrustedImm32(0), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+
+    constexpr unsigned stackMisalignment = sizeof(CallerFrameAndPC) % stackAlignmentBytes();
+    constexpr unsigned extraStackNeeded = stackMisalignment ? stackAlignmentBytes() - stackMisalignment : 0;
+    static constexpr int numFrameLocals = JSTracedFunction::numberOfFrameLocals;
+    VirtualRegister spanLocal = virtualRegisterForLocal(JSTracedFunction::spanLocal);
+
+    jit.loadCell(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
+    jit.load32(CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), GPRInfo::regT1);
+
+    // Callee frame for max(argumentCountIncludingThis, 2) arguments plus our locals:
+    //     stackAlign((numParams + numFrameLocals + (CallFrameHeaderSize - CallerFrameAndPCSize)) * sizeof(Register))
+    jit.move(GPRInfo::regT1, GPRInfo::regT2);
+    auto atLeastTwo = jit.branch32(CCallHelpers::AboveOrEqual, GPRInfo::regT2, CCallHelpers::TrustedImm32(2));
+    jit.move(CCallHelpers::TrustedImm32(2), GPRInfo::regT2);
+    atLeastTwo.link(&jit);
+    jit.add32(CCallHelpers::TrustedImm32(CallFrame::headerSizeInRegisters - CallerFrameAndPC::sizeInRegisters + numFrameLocals), GPRInfo::regT2, GPRInfo::regT2);
+    jit.lshift32(CCallHelpers::TrustedImm32(3), GPRInfo::regT2);
+    jit.add32(CCallHelpers::TrustedImm32(stackAlignmentBytes() - 1), GPRInfo::regT2);
+    jit.and32(CCallHelpers::TrustedImm32(-stackAlignmentBytes()), GPRInfo::regT2);
+    if (extraStackNeeded)
+        jit.add32(CCallHelpers::TrustedImm32(extraStackNeeded), GPRInfo::regT2);
+
+    jit.negPtr(GPRInfo::regT2);
+    jit.addPtr(CCallHelpers::stackPointerRegister, GPRInfo::regT2);
+    CCallHelpers::Jump haveStackSpace = jit.branchPtr(CCallHelpers::LessThanOrEqual, CCallHelpers::AbsoluteAddress(vm.addressOfSoftStackLimit()), GPRInfo::regT2);
+
+    // Throw Stack Overflow exception
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::regT3);
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, JSCallee::offsetOfScopeChain()), GPRInfo::regT3);
+    jit.setupArguments<decltype(operationThrowStackOverflowErrorFromThunk)>(GPRInfo::regT3);
+    jit.prepareCallOperation(vm);
+    jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationThrowStackOverflowErrorFromThunk)), GPRInfo::nonArgGPR0);
+    emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.jumpToExceptionHandler(vm);
+
+    haveStackSpace.link(&jit);
+    jit.move(GPRInfo::regT2, CCallHelpers::stackPointerRegister);
+
+    JSValueRegs valueRegs { GPRInfo::regT4 };
+
+    // Resolve the target into regT2: the wrapped function, or the last argument.
+    // Anything the fast path cannot call directly (not a JSFunction, or no
+    // JIT entry point yet) goes to tracedFunctionCallGeneric before any hook ran.
+    // Shape::CallLast without a function argument (`using span = span(name)`):
+    // just the enter hook, whose value is the result.
+    CCallHelpers::JumpList noCallee;
+    auto loadTarget = [&](GPRReg calleeGPR, GPRReg argumentCountGPR, GPRReg targetGPR, CCallHelpers::JumpList& slow) {
+        jit.loadPtr(CCallHelpers::Address(calleeGPR, JSTracedFunction::offsetOfTargetFunction()), targetGPR);
+        auto isWrap = jit.branchTestPtr(CCallHelpers::NonZero, targetGPR);
+        // Shape::CallLast: target = arguments[argumentCount - 1], if any and if a JSFunction.
+        noCallee.append(jit.branch32(CCallHelpers::Below, argumentCountGPR, CCallHelpers::TrustedImm32(2)));
+        jit.loadValue(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(0)).indexedBy(argumentCountGPR, CCallHelpers::TimesEight).withOffset(-static_cast<int>(sizeof(Register))), JSValueRegs { targetGPR });
+        noCallee.append(jit.branchIfNotCell(JSValueRegs { targetGPR }, DoNotHaveTagRegisters));
+        // A non-function cell: objects that are callable (or an attributes
+        // object with no callback) take the generic path; other cells are "no callee".
+        auto isFunction = jit.branchIfType(targetGPR, JSFunctionType);
+        slow.append(jit.branchIfObject(targetGPR));
+        noCallee.append(jit.jump());
+        isFunction.link(&jit);
+        isWrap.link(&jit);
+    };
+    auto loadCodePointer = [&](GPRReg targetGPR, GPRReg executableGPR, GPRReg codeGPR) {
+        jit.loadPtr(CCallHelpers::Address(targetGPR, JSFunction::offsetOfExecutableOrRareData()), executableGPR);
+        auto hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, executableGPR, CCallHelpers::TrustedImm32(JSFunction::rareDataTag));
+        jit.loadPtr(CCallHelpers::Address(executableGPR, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), executableGPR);
+        hasExecutable.link(&jit);
+        jit.loadPtr(CCallHelpers::Address(executableGPR, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), codeGPR);
+    };
+
+    {
+        CCallHelpers::JumpList slow;
+        loadTarget(GPRInfo::regT0, GPRInfo::regT1, GPRInfo::regT2, slow);
+        loadCodePointer(GPRInfo::regT2, GPRInfo::regT3, GPRInfo::regT2);
+        slow.append(jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT2));
+        auto fast = jit.jump();
+        slow.linkThunk(CodeLocationLabel<JITThunkPtrTag> { vm.jitStubs->ctiNativeTailCallWithoutSavedTags(vm) }, &jit);
+        fast.link(&jit);
+    }
+
+    CCallHelpers::JumpList exceptionChecks;
+
+    // span = operationTracedFunctionEnter(callee)
+    jit.setupArguments<decltype(operationTracedFunctionEnter)>(GPRInfo::regT0);
+    jit.prepareCallOperation(vm);
+    jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationTracedFunctionEnter)), GPRInfo::nonArgGPR0);
+    emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    exceptionChecks.append(jit.emitJumpIfException(vm));
+    jit.setupResults(valueRegs);
+    jit.storeValue(valueRegs, jit.addressFor(spanLocal));
+    // Tell Interpreter::unwind the span local is now meaningful (a native
+    // frame's CallSiteIndex is otherwise 0).
+    jit.store32(CCallHelpers::TrustedImm32(JSTracedFunction::spanLocalValidCallSiteIndex), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+
+    jit.loadCell(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
+    jit.load32(CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), GPRInfo::regT1);
+
+    // Build the callee frame.
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, JSTracedFunction::offsetOfTargetFunction()), GPRInfo::regT2);
+    auto wrapShape = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::regT2);
+    {
+        // Shape::CallLast: fn(span) with this = undefined.
+        jit.store32(CCallHelpers::TrustedImm32(2), CCallHelpers::calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis));
+        jit.storeTrustedValue(jsUndefined(), CCallHelpers::calleeArgumentSlot(0));
+        auto haveSpan = jit.branchIfNotEmpty(valueRegs);
+        jit.moveTrustedValue(jsUndefined(), valueRegs);
+        haveSpan.link(&jit);
+        jit.storeValue(valueRegs, CCallHelpers::calleeArgumentSlot(1));
+        jit.loadValue(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(0)).indexedBy(GPRInfo::regT1, CCallHelpers::TimesEight).withOffset(-static_cast<int>(sizeof(Register))), JSValueRegs { GPRInfo::regT2 });
+    }
+    auto frameBuilt = jit.jump();
+    wrapShape.link(&jit);
+    {
+        // Shape::Wrap: forward this and every argument.
+        jit.store32(GPRInfo::regT1, CCallHelpers::calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis));
+        jit.move(GPRInfo::regT1, GPRInfo::regT3);
+        CCallHelpers::Label loop = jit.label();
+        jit.sub32(CCallHelpers::TrustedImm32(1), GPRInfo::regT3);
+        jit.loadValue(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(0)).indexedBy(GPRInfo::regT3, CCallHelpers::TimesEight), valueRegs);
+        jit.storeValue(valueRegs, CCallHelpers::calleeArgumentSlot(0).indexedBy(GPRInfo::regT3, CCallHelpers::TimesEight));
+        jit.branchTest32(CCallHelpers::NonZero, GPRInfo::regT3).linkTo(loop, &jit);
+    }
+    frameBuilt.link(&jit);
+
+    // regT2 = target JSFunction (checked before the hook ran).
+    jit.storeCell(GPRInfo::regT2, CCallHelpers::calleeFrameSlot(CallFrameSlot::callee));
+    loadCodePointer(GPRInfo::regT2, GPRInfo::regT1, GPRInfo::regT3);
+    auto codeExists = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::regT3);
+
+    // The enter hook may have allocated and jettisoned the target's code: re-materialize it.
+    jit.setupArguments<decltype(operationMaterializeTracedFunctionTargetCode)>(GPRInfo::regT0, GPRInfo::regT2);
+    jit.prepareCallOperation(vm);
+    jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeTracedFunctionTargetCode)), GPRInfo::nonArgGPR0);
+    emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    exceptionChecks.append(jit.emitJumpIfException(vm));
+    jit.move(GPRInfo::returnValueGPR, GPRInfo::regT3);
+    jit.loadCell(CCallHelpers::calleeFrameSlot(CallFrameSlot::callee), GPRInfo::regT2);
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::regT2, JSFunction::offsetOfExecutableOrRareData()), GPRInfo::regT1);
+    {
+        auto hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT1, CCallHelpers::TrustedImm32(JSFunction::rareDataTag));
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT1, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), GPRInfo::regT1);
+        hasExecutable.link(&jit);
+    }
+
+    codeExists.link(&jit);
+    // regT1 = executable, regT3 = code pointer.
+    auto isNative = jit.branchIfNotType(GPRInfo::regT1, FunctionExecutableType);
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::regT1, FunctionExecutable::offsetOfCodeBlockForCall()), GPRInfo::regT2);
+    jit.storePtr(GPRInfo::regT2, CCallHelpers::calleeFrameCodeBlockBeforeCall());
+    isNative.link(&jit);
+
+#if ASSERT_ENABLED && !CPU(ARM64E)
+    {
+        CCallHelpers::Jump checkNotNull = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::regT3);
+        jit.abortWithReason(TGInvalidPointer);
+        checkNotNull.link(&jit);
+    }
+#endif
+    emitPointerValidation(jit, GPRInfo::regT3, JSEntryPtrTag);
+    jit.call(GPRInfo::regT3, JSEntryPtrTag);
+
+    // result = operationTracedFunctionLeave(callee, span, result), unless untraced.
+    constexpr JSValueRegs resultRegs = JSRInfo::returnValueJSR;
+    jit.loadValue(jit.addressFor(spanLocal), valueRegs);
+    auto untraced = jit.branchIfEmpty(valueRegs);
+    jit.loadCell(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT2);
+    jit.setupArguments<decltype(operationTracedFunctionLeave)>(GPRInfo::regT2, valueRegs, resultRegs);
+    jit.prepareCallOperation(vm);
+    jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationTracedFunctionLeave)), GPRInfo::nonArgGPR0);
+    emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    exceptionChecks.append(jit.emitJumpIfException(vm));
+
+    untraced.link(&jit);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+
+    // `span(name, attributes?)`: no call, the enter hook's value is the result.
+    noCallee.link(&jit);
+    jit.setupArguments<decltype(operationTracedFunctionEnter)>(GPRInfo::regT0);
+    jit.prepareCallOperation(vm);
+    jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationTracedFunctionEnter)), GPRInfo::nonArgGPR0);
+    emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    exceptionChecks.append(jit.emitJumpIfException(vm));
+    {
+        constexpr JSValueRegs enterResultRegs = JSRInfo::returnValueJSR;
+        auto haveResult = jit.branchIfNotEmpty(enterResultRegs);
+        jit.moveTrustedValue(jsUndefined(), enterResultRegs);
+        haveResult.link(&jit);
+    }
+    jit.emitFunctionEpilogue();
+    jit.ret();
+
+    exceptionChecks.link(&jit);
+    jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, GPRInfo::argumentGPR0);
+    jit.setupArguments<decltype(operationLookupExceptionHandler)>(CCallHelpers::TrustedImmPtr(&vm));
+    jit.prepareCallOperation(vm);
+    jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationLookupExceptionHandler)), GPRInfo::nonArgGPR0);
+    emitPointerValidation(jit, GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+    jit.jumpToExceptionHandler(vm);
+
+    LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
+    return FINALIZE_THUNK(linkBuffer, JITThunkPtrTag, "traced"_s, "Specialized thunk for traced function calls");
+}
+#endif
 
 MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
 {

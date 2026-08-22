@@ -30,6 +30,7 @@
 #include "JSBoundFunction.h"
 #include "JSFunction.h"
 #include "JSRemoteFunction.h"
+#include "JSTracedFunction.h"
 #include "NativeExecutable.h"
 #include "WebAssemblyFunction.h"
 #include <JavaScriptCore/ExceptionHelpers.h>
@@ -163,6 +164,10 @@ inline double JSFunction::originalLength(VM& vm)
         return uncheckedDowncast<JSBoundFunction>(this)->length(vm);
     if (inherits<JSRemoteFunction>())
         return uncheckedDowncast<JSRemoteFunction>(this)->length(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    if (inherits<JSTracedFunction>())
+        return uncheckedDowncast<JSTracedFunction>(this)->length(vm);
+#endif
     if (isHostFunction()) {
         // The original length is captured in NativeExecutable at creation time.
         return uncheckedDowncast<NativeExecutable>(executable())->length();
@@ -199,6 +204,14 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
             return nameMayBeNull;
         return jsEmptyString(vm);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (this->inherits<JSTracedFunction>()) {
+        JSString* nameMayBeNull = uncheckedDowncast<JSTracedFunction>(this)->nameMayBeNull();
+        if (nameMayBeNull)
+            return nameMayBeNull;
+        return jsEmptyString(vm);
+    }
+#endif
 
     if (isHostFunction()) {
         // Mirror the JS path below: build a fresh JSString from the original name stored on
@@ -289,6 +302,10 @@ inline JSString* JSFunction::asStringConcurrently() const
 {
     if (inherits<JSBoundFunction>() || inherits<JSRemoteFunction>())
         return nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+    if (inherits<JSTracedFunction>())
+        return nullptr;
+#endif
     if (isHostFunction())
         return static_cast<NativeExecutable*>(executable())->asStringConcurrently();
     return jsExecutable()->asStringConcurrently();

@@ -54,6 +54,7 @@ enum class InternalMicrotask : uint8_t {
     PromiseReactionJob,
 #if USE(BUN_JSC_ADDITIONS)
     PromiseReactionJobWithAsyncContext, // PromiseReactionJob whose trailing argument is Bun's async context rather than a user context
+    TracedSettlementObserved, // JSPromise::addSettlementObserver: VM::tracedFunctionHooks().settled(context, fulfilled, result)
 #endif
 
     AsyncFunctionResume,
