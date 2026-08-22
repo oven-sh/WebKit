@@ -2875,6 +2875,7 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
                     resultReg, LinkableConstant::globalObject(*this, node), baseReg, propertyReg));
         }
 
+
         jsValueResult(resultReg, node);
         break;
     }
@@ -2987,6 +2988,7 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
             GPRReg resultGPR = resultRegs.gpr();
 
             speculationCheck(OutOfBounds, JSValueRegs(), nullptr, branch32(AboveOrEqual, propertyReg, Address(storageReg, ArrayStorage::vectorLengthOffset())));
+
 
             load64(BaseIndex(storageReg, propertyReg, TimesEight, ArrayStorage::vectorOffset()), resultGPR);
             speculationCheck(LoadFromHole, JSValueRegs(), nullptr, branchIfEmpty(resultGPR));
@@ -7155,6 +7157,7 @@ void SpeculativeJIT::compileArithRandom(Node* node)
     doubleResult(result.fpr(), node);
 }
 
+
 void SpeculativeJIT::compileDateGet(Node* node)
 {
     SpeculateCellOperand base(this, node->child1());
@@ -10071,6 +10074,7 @@ void SpeculativeJIT::compileBufferRead(Node* node)
             load64(address, t2);
             if (isBigEndian)
                 byteSwap64(t2);
+#if USE(BIGINT32)
             flushRegisters();
             GPRFlushedCallResult result(this);
             GPRReg resultGPR = result.gpr();
@@ -10080,6 +10084,20 @@ void SpeculativeJIT::compileBufferRead(Node* node)
                 callOperation(operationUInt64ToBigInt, resultGPR, LinkableConstant::globalObject(*this, node), t2);
             exceptionCheck();
             jsValueResult(resultGPR, node);
+#else
+            GPRTemporary result(this);
+            GPRTemporary scratch(this);
+            GPRReg resultGPR = result.gpr();
+            GPRReg scratchGPR = scratch.gpr();
+
+            JumpList slowCases;
+            emitAllocateJSBigInt64(vm(), resultGPR, t2, scratchGPR, t1, TrustedImmPtr(m_graph.registerStructure(vm().bigIntStructure.get())), data.isSigned, slowCases);
+            if (data.isSigned)
+                addSlowPathGenerator(slowPathCall(slowCases, this, operationInt64ToBigInt, resultGPR, LinkableConstant::globalObject(*this, node), t2));
+            else
+                addSlowPathGenerator(slowPathCall(slowCases, this, operationUInt64ToBigInt, resultGPR, LinkableConstant::globalObject(*this, node), t2));
+            jsValueResult(resultGPR, node);
+#endif
             break;
         }
         default:

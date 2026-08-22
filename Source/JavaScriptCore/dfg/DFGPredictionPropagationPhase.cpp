@@ -398,6 +398,7 @@ private:
             break;
         }
 
+
         case ToNumber:
         case ToNumeric: {
             SpeculatedType prediction = node->child1()->prediction();
@@ -1975,3 +1976,4 @@ bool performPredictionPropagation(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
+

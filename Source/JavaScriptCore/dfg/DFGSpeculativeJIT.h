@@ -2009,6 +2009,7 @@ public:
     std::optional<unsigned> m_outOfLineStreamIndex;
 };
 
+
 // === Operand types ===
 //
 // These classes are used to lock the operands to a node into machine
@@ -2142,6 +2143,7 @@ private:
     Edge m_edge;
     GPRReg m_gprOrInvalid { InvalidGPRReg };
 };
+
 
 // === Temporaries ===
 //
@@ -2281,6 +2283,7 @@ private:
     FPRReg m_fpr;
 };
 
+
 // === Results ===
 //
 // These classes lock the result of a call to a C++ helper function.
@@ -2332,6 +2335,7 @@ public:
 private:
     GPRFlushedCallResult m_gpr;
 };
+
 
 // === Speculative Operand types ===
 //

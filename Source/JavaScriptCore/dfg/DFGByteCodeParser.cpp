@@ -972,6 +972,7 @@ private:
             op = TailCallInlinedCaller;
         }
 
+
         Node* call = addCallWithoutSettingResult(op, opInfo, callee, argCount, registerOffset, OpInfo(prediction), thisValueForEval, scopeForEval);
         if (result.isValid())
             set(result, call);
@@ -1706,6 +1707,7 @@ bool ByteCodeParser::handleRecursiveTailCall(Node* callTargetNode, CallVariant c
         else if (stackEntry->m_inlineCallFrame->isClosureCall)
             setDirect(remapOperand(stackEntry->m_inlineCallFrame, CallFrameSlot::callee), callTargetNode, NormalSet);
 
+
         // We must set the arguments to the right values
         if (!stackEntry->m_inlineCallFrame)
             addToGraph(SetArgumentCountIncludingThis, OpInfo(argumentCountIncludingThis));
@@ -2318,6 +2320,7 @@ bool ByteCodeParser::handleVarargsInlining(Node* callTargetNode, Operand result,
     // exit to: LoadVarargs is effectful and it's part of the op_call_varargs, so we can't exit without
     // calling LoadVarargs twice.
     inlineCall(callTargetNode, result, callVariant, registerOffset, maxArgumentCountIncludingThis, kind, nullptr, insertChecks);
+
 
     VERBOSE_LOG("Successful inlining (varargs, monomorphic).\nStack: ", currentCodeOrigin(), "\n");
     return true;
@@ -5099,7 +5102,8 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType)
                 || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIndexingType)
                 || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, OutOfBounds)
-                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow))
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow)
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Int52Overflow))
                 return CallOptimizationResult::DidNothing;
 
             NativeExecutable* nativeExecutable = variant.nativeExecutable();
@@ -5764,6 +5768,7 @@ bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DO
     addCall(result, Call, OpInfo(signature), callTarget, argumentCountIncludingThis, registerOffset, prediction);
     return true;
 }
+
 
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& variant, Node* thisNode, Node* unwrapped, const ChecksFunctor& insertChecks)
@@ -9172,6 +9177,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     ASSERT(identifier.isSymbol());
                     FrozenValue* frozen = m_graph.freezeStrong(identifier.cell());
                     addToGraph(CheckIsConstant, OpInfo(frozen), brand);
+
 
                     // FIXME: We should include a MultiSetPrivateBrand to handle polymorphic cases
                     // https://bugs.webkit.org/show_bug.cgi?id=221570

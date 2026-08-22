@@ -687,6 +687,7 @@ namespace JSC { namespace DFG {
     macro(PerformPromiseThen, NodeMustGenerate | NodeHasVarArgs) \
     macro(PerformPromiseThenOneHandler, NodeMustGenerate) \
 
+
 // This enum generates a monotonically increasing id for all Node types,
 // and is used by the subsequent enum to fill out the id (as accessed via the NodeIdMask).
 enum NodeType : uint16_t {

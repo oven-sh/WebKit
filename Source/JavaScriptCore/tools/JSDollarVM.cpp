@@ -1107,6 +1107,7 @@ private:
     int32_t m_value { 42 };
 };
 
+
 static JSC_DECLARE_CUSTOM_GETTER(domJITGetterCustomGetter);
 JSC_DECLARE_JIT_OPERATION(domJITGetterSlowCall, EncodedJSValue, (JSGlobalObject*, void*));
 
@@ -1211,6 +1212,7 @@ JSC_DEFINE_JIT_OPERATION(domJITGetterSlowCall, EncodedJSValue, (JSGlobalObject* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(static_cast<DOMJITGetter*>(pointer)->value())));
 }
+
 
 static JSC_DECLARE_CUSTOM_GETTER(domJITGetterNoEffectCustomGetter);
 JSC_DECLARE_JIT_OPERATION(domJITGetterNoEffectSlowCall, EncodedJSValue, (JSGlobalObject*, void*));
@@ -1730,6 +1732,7 @@ public:
 
     DECLARE_INFO;
 };
+
 
 static JSC_DECLARE_CUSTOM_GETTER(customGetAccessor);
 static JSC_DECLARE_CUSTOM_GETTER(customGetValue);
@@ -4546,6 +4549,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEnsureArrayStorage, (JSGlobalObject* globalObje
         object->ensureArrayStorage(vm);
     return JSValue::encode(jsUndefined());
 }
+
 
 #if PLATFORM(COCOA)
 JSC_DEFINE_HOST_FUNCTION(functionSetCrashLogMessage, (JSGlobalObject* globalObject, CallFrame* callFrame))

@@ -699,3 +699,4 @@ CapabilityLevel canCompile(Graph& graph)
 } } // namespace JSC::FTL
 
 #endif // ENABLE(FTL_JIT)
+

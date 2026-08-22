@@ -1284,6 +1284,7 @@ private:
                 }
             }
             
+            
             node->setArrayMode(
                 node->arrayMode().refine(
                     m_graph, node,
@@ -1304,6 +1305,7 @@ private:
                 if (!CCallHelpers::supportsFloat16())
                     node->setArrayMode(ArrayMode(Array::Generic, node->arrayMode().action()));
                 break;
+
 
             case Array::ForceExit: {
                 // Don't force OSR because we have only seen OwnStructureMode.
@@ -5724,6 +5726,7 @@ private:
                 return;
         }
 
+
         if (Node::shouldSpeculateBoolean(node->child1().node(), node->child2().node())) {
             fixEdge<BooleanUse>(node->child1());
             fixEdge<BooleanUse>(node->child2());
@@ -5840,6 +5843,7 @@ private:
             node->setOpAndDefaultFlags(CompareStrictEq);
             return;
         }
+
 
         if (node->child1()->shouldSpeculateMisc() && node->child2()->shouldSpeculateMisc()) {
             fixEdge<MiscUse>(node->child1());
