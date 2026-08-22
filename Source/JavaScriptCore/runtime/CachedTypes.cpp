@@ -480,6 +480,37 @@ public:
     }
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+class CachedVariableEnvironmentRareData;
+class CachedScopedArgumentsTable;
+class CachedSymbolTableRareData;
+class CachedInstructionStream;
+class CachedExpressionInfo;
+class CachedFunctionExecutableRareData;
+class CachedFunctionExecutable;
+class CachedCodeBlockRareData;
+class CachedProgramCodeBlock;
+class CachedModuleCodeBlock;
+class CachedEvalCodeBlock;
+class CachedFunctionCodeBlock;
+
+// Objects the Encoder only ever references from a single CachedPtr. Decoding them
+// through Decoder::m_offsetToPtrMap records an entry that is never looked up again.
+template<typename T> inline constexpr bool isSingleOwnerCachedType = false;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedVariableEnvironmentRareData> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedScopedArgumentsTable> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedSymbolTableRareData> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedInstructionStream> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedExpressionInfo> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedFunctionExecutableRareData> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedFunctionExecutable> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedCodeBlockRareData> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedProgramCodeBlock> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedModuleCodeBlock> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedEvalCodeBlock> = true;
+template<> inline constexpr bool isSingleOwnerCachedType<CachedFunctionCodeBlock> = true;
+#endif
+
 template<typename T, typename Source = SourceType<T>>
 class CachedPtr : public VariableLengthObject<Source*> {
     template<typename, typename, typename>
@@ -510,6 +541,15 @@ public:
             isNewAllocation = false;
             return nullptr;
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        if constexpr (isSingleOwnerCachedType<T>) {
+            if (Options::useLeanBytecodeCacheDecoder()) {
+                isNewAllocation = true;
+                return get()->decode(decoder, std::forward<Args>(args)...);
+            }
+        }
+#endif
 
         ptrdiff_t bufferOffset = decoder.offsetOf(this->buffer());
         if (std::optional<void*> ptr = decoder.cachedPtrForOffset(bufferOffset)) {
