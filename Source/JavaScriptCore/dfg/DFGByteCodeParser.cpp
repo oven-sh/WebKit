@@ -5099,12 +5099,10 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
 #if USE(BUN_JSC_ADDITIONS)
         case BufferAccessorIntrinsic: {
-            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType)
-                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIndexingType)
-                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, OutOfBounds)
-                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow)
-                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Int52Overflow))
-                return CallOptimizationResult::DidNothing;
+            for (ExitKind kind : { BadType, BadIndexingType, OutOfBounds, Overflow, Int52Overflow, Uncountable }) {
+                if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, kind))
+                    return CallOptimizationResult::DidNothing;
+            }
 
             NativeExecutable* nativeExecutable = variant.nativeExecutable();
             if (!nativeExecutable)

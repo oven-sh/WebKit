@@ -13,7 +13,8 @@ const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 
 // A fractional double is a valid value for the integer writers (it truncates). The unsigned
 // 32-bit writers take the value as an Int52, and an Int52Rep of a non-integral DoubleRep exits with
-// Int52Overflow rather than BadType; that exit has to stop the call site from being inlined again,
+// Int52Overflow rather than BadType, and a value the DFG has proven to be a non-integral double exits
+// with Uncountable; those exits have to stop the call site from being inlined again,
 // or the function recompiles forever.
 function writeUInt32LE(b, v, o) {
   return b.writeUInt32LE(v * 0.5, o);
