@@ -758,7 +758,9 @@ private:
     void handleNeedCollectionEpilogue();
     
     bool relinquishConn(unsigned);
-    void finishRelinquishingConn();
+    bool finishRelinquishingConn();
+    void takeConnBecauseCollectorThreadCouldNotStart(const AbstractLocker&);
+    void collectAsTheCollectorBecauseCollectorThreadCouldNotStart();
     
     void setNeedCollectionEpilogue();
     void waitWhileNeedCollectionEpilogue();

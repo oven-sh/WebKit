@@ -360,7 +360,10 @@ Heap::Heap(VM& vm, HeapType heapType)
     , m_sharedMutatorMarkStack(makeUnique<MarkStackArray>())
     , m_helperClient(&heapHelperPool())
     , m_threadLock(Box<Lock>::create())
-    , m_threadCondition(AutomaticThreadCondition::create())
+    // If the OS refuses to create the collector thread (pthread_create EAGAIN under a thread or pid
+    // limit), the mutator finishes the collection itself. See takeConnBecauseCollectorThreadCouldNotStart()
+    // and collectAsTheCollectorBecauseCollectorThreadCouldNotStart().
+    , m_threadCondition(AutomaticThreadCondition::create(AutomaticThreadCondition::StartFailure::Retry))
 
     // HeapCellTypes
     , auxiliaryHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::Auxiliary))
@@ -2153,6 +2156,7 @@ NEVER_INLINE void Heap::collectInMutatorThread()
 template<typename Func>
 void Heap::waitForCollector(const Func& func)
 {
+    bool collectorThreadCouldNotStart = false;
     for (;;) {
         bool done;
         {
@@ -2176,11 +2180,21 @@ void Heap::waitForCollector(const Func& func)
         m_mutatorDidRun = true;
         // FIXME: We wouldn't need this if stopIfNecessarySlow() had a mode where it knew to just
         // do the collection.
-        relinquishConn();
+        if (!collectorThreadCouldNotStart)
+            relinquishConn();
 
         if (done) {
             clearMutatorWaiting(); // Clean up just in case.
             return;
+        }
+
+        // We still have the conn if the collector thread could not be created. Nobody else can finish
+        // this collection, so this thread plays the collector too (see the function). It stops
+        // offering the conn for the rest of this wait: each offer retries the thread.
+        if (collectorThreadCouldNotStart || (m_worldState.load() & mutatorHasConnBit)) {
+            collectorThreadCouldNotStart = true;
+            collectAsTheCollectorBecauseCollectorThreadCouldNotStart();
+            continue;
         }
         
         // If mutatorWaitingBit is still set then we want to wait.
@@ -2264,20 +2278,71 @@ bool Heap::relinquishConn(unsigned oldState)
     if (!m_worldState.compareExchangeWeak(oldState, oldState & ~mutatorHasConnBit))
         return true; // Loop around.
     
-    finishRelinquishingConn();
-    return true;
+    // If the conn came back because the collector thread could not be created, we are done: looping
+    // around would relinquish it again and retry the thread on every iteration.
+    return finishRelinquishingConn();
 }
 
-void Heap::finishRelinquishingConn()
+// Returns false if the conn had to be taken back because no collector thread could be created.
+bool Heap::finishRelinquishingConn()
 {
     dataLogLnIf(HeapInternal::verbose, "Relinquished the conn.");
     
     sanitizeStackForVM(vm());
     
     Locker locker { *m_threadLock };
-    if (!m_requests.isEmpty())
-        m_threadCondition->notifyOne(locker);
+    bool handedOff = true;
+    if (!m_requests.isEmpty() && !m_threadCondition->notifyOne(locker)) {
+        takeConnBecauseCollectorThreadCouldNotStart(locker);
+        handedOff = false;
+    }
     ParkingLot::unparkAll(&m_worldState);
+    return handedOff;
+}
+
+// The OS refused to create the collector thread (pthread_create EAGAIN: RLIMIT_NPROC, a cgroup pids
+// limit). Nothing else can serve the pending requests, so the mutator keeps the conn and runs the
+// collection itself at its stopIfNecessary() polls, the same way it does after stealing the conn in
+// requestCollection(). A stop request that releaseAccessSlow() left for the collector is withdrawn
+// for the same reason: the collector that would have resumed the mutator does not exist.
+void Heap::takeConnBecauseCollectorThreadCouldNotStart(const AbstractLocker&)
+{
+    dataLogLnIf(HeapInternal::verbose, "Taking the conn: the collector thread could not start.");
+    for (;;) {
+        unsigned oldState = m_worldState.load();
+        unsigned newState = (oldState | mutatorHasConnBit) & ~stoppedBit;
+        if (m_worldState.compareExchangeWeak(oldState, newState))
+            return;
+    }
+}
+
+// Called by a mutator that waits for a collection while no collector thread can be created. With the
+// conn, the mutator runs only the phases that stop the world; the concurrent phase is the collector's,
+// and with the stochastic scheduler it lasts until marking terminates or the mutator allocates its
+// headroom. A waiting mutator allocates nothing, so without a collector the collection would never
+// end. So this thread hands the conn to the collector side and runs the collector's phases itself.
+// The collector side hands the conn straight back when it needs the world stopped (stopTheMutator()
+// sees that the mutator has heap access), and the caller's loop continues as the mutator. No real
+// collector thread can appear in the meantime: only this thread's notifies start one.
+void Heap::collectAsTheCollectorBecauseCollectorThreadCouldNotStart()
+{
+    dataLogLnIf(HeapInternal::verbose, "Running the collector's phases on the mutator thread: the collector thread could not start.");
+    for (;;) {
+        unsigned oldState = m_worldState.load();
+        RELEASE_ASSERT(oldState & hasAccessBit);
+        if (!(oldState & mutatorHasConnBit))
+            break;
+        if (m_worldState.compareExchangeWeak(oldState, oldState & ~mutatorHasConnBit))
+            break;
+    }
+    sanitizeStackForVM(vm());
+    // The collector side waits for the mutator to run a pending epilogue before it stops the world.
+    // Here both sides are this thread, so run it first.
+    handleNeedCollectionEpilogue();
+    CollectingScope collectingScope(*this);
+    collectInCollectorThread();
+    // Either stopTheMutator() gave the conn back, or the collection finished with the conn on the
+    // collector side, which is the idle state requestCollection() steals from.
 }
 
 void Heap::relinquishConn()
@@ -2411,8 +2476,8 @@ Heap::Ticket Heap::requestCollection(GCRequest request)
     
     m_requests.append(request);
     m_lastGrantedTicket++;
-    if (!(m_worldState.load() & mutatorHasConnBit))
-        m_threadCondition->notifyOne(locker);
+    if (!(m_worldState.load() & mutatorHasConnBit) && !m_threadCondition->notifyOne(locker))
+        takeConnBecauseCollectorThreadCouldNotStart(locker);
     return m_lastGrantedTicket;
 }
 

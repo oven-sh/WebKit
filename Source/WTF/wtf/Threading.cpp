@@ -313,6 +313,13 @@ void Thread::entryPoint(NewThreadContext* newThreadContext)
 
 Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
 {
+    RefPtr thread = tryCreate(name, WTF::move(entryPoint), threadType, qos, schedulingPolicy, stackSpec);
+    RELEASE_ASSERT(thread);
+    return thread.releaseNonNull();
+}
+
+RefPtr<Thread> Thread::tryCreate(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
+{
     WTF::initialize();
 
     Ref thread = adoptRef(*new Thread(schedulingPolicy, Thread::IsMain::No));
@@ -326,8 +333,11 @@ Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, Thr
             if (maybeSize)
                 stackSpec = StackAllocationSpecification::RequestSize(maybeSize.value());
         }
-        bool success = thread->establishHandle(context.get(), stackSpec, qos, schedulingPolicy);
-        RELEASE_ASSERT(success);
+        if (!thread->establishHandle(context.get(), stackSpec, qos, schedulingPolicy)) {
+            // Thread::entryPoint never runs, so take back the ref it would have adopted.
+            context->deref();
+            return nullptr;
+        }
 
 #if HAVE(STACK_BOUNDS_FOR_NEW_THREAD)
         thread->m_stack = StackBounds::newThreadStackBounds(thread->m_handle);
