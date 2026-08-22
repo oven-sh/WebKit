@@ -481,6 +481,8 @@ public:
 };
 
 #if USE(BUN_JSC_ADDITIONS)
+class CachedUniquedStringImpl;
+class CachedStringImpl;
 class CachedVariableEnvironmentRareData;
 class CachedScopedArgumentsTable;
 class CachedSymbolTableRareData;
@@ -509,6 +511,13 @@ template<> inline constexpr bool isSingleOwnerCachedType<CachedProgramCodeBlock>
 template<> inline constexpr bool isSingleOwnerCachedType<CachedModuleCodeBlock> = true;
 template<> inline constexpr bool isSingleOwnerCachedType<CachedEvalCodeBlock> = true;
 template<> inline constexpr bool isSingleOwnerCachedType<CachedFunctionCodeBlock> = true;
+
+// Strings decode to canonical atoms / registered symbols, so re-decoding a shared
+// reference yields the same pointer without the map, and each RefPtr can own its
+// own ref instead of a Decoder-lifetime finalizer.
+template<typename T> inline constexpr bool isCachedStringType = false;
+template<> inline constexpr bool isCachedStringType<CachedUniquedStringImpl> = true;
+template<> inline constexpr bool isCachedStringType<CachedStringImpl> = true;
 #endif
 
 template<typename T, typename Source = SourceType<T>>
@@ -543,7 +552,7 @@ public:
         }
 
 #if USE(BUN_JSC_ADDITIONS)
-        if constexpr (isSingleOwnerCachedType<T>) {
+        if constexpr (isSingleOwnerCachedType<T> || isCachedStringType<T>) {
             if (Options::useLeanBytecodeCacheDecoder()) {
                 isNewAllocation = true;
                 return get()->decode(decoder, std::forward<Args>(args)...);
@@ -604,6 +613,13 @@ public:
         Source* decodedPtr = m_ptr.decode(decoder, isNewAllocation);
         if (!decodedPtr)
             return nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+        if constexpr (isCachedStringType<T>) {
+            // The string decoders hand back a +1 reference; own it directly.
+            if (Options::useLeanBytecodeCacheDecoder())
+                return adoptRef<Source, PtrTraits>(decodedPtr);
+        }
+#endif
         if (isNewAllocation) {
             decoder.addFinalizer([=] {
                 WTF::DefaultRefDerefTraits<Source>::derefIfNotNull(decodedPtr);
