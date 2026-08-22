@@ -276,7 +276,7 @@ UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModulePro
 #if USE(BUN_JSC_ADDITIONS)
 // What a CodeCache hit does besides returning the block: the executable learns the parse results
 // (newCodeBlockFor() requires them) and the provider the //# sourceURL / sourceMappingURL directives.
-void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedCodeBlock*);
+void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedGlobalCodeBlock*);
 #endif
 
 void writeCodeBlock(const SourceCodeKey&, const SourceCodeValue&);

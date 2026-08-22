@@ -156,7 +156,7 @@ UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModulePro
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const SourceCode& source, UnlinkedCodeBlock* unlinkedCodeBlock)
+void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const SourceCode& source, UnlinkedGlobalCodeBlock* unlinkedCodeBlock)
 {
     unsigned lineCount = unlinkedCodeBlock->lineCount();
     unsigned startColumn = unlinkedCodeBlock->startColumn() + source.startColumn().oneBasedInt();
