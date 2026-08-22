@@ -57,6 +57,12 @@ public:
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     static JSObject* createPrototype(VM&, JSGlobalObject*);
 
+    // The entrypoint is a C function pointer backed by this cell: its thunk, signature and state are freed
+    // with the cell. Calling it after close(), or after the owning global object / VM has been destroyed
+    // (a terminated worker), is use-after-free by the native caller and is expected to crash -- the same
+    // contract as any C callback. `threadsafe` only means the call may originate on another thread while
+    // the callback is alive; it does not extend the callback's lifetime. Native code must be told to stop
+    // calling before the callback is closed or its VM torn down.
     JS_EXPORT_PRIVATE void* nativeEntrypoint() const;
 
     JS_EXPORT_PRIVATE void close();

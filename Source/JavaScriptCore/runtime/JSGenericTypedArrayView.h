@@ -118,7 +118,7 @@ public:
     inline JSValue getIndexQuickly(size_t) const;
     inline void setIndexQuicklyToNativeValue(size_t, typename Adaptor::Type);
     inline void setIndexQuickly(size_t, JSValue);
-    inline bool setIndex(JSGlobalObject*, size_t, JSValue);
+    inline bool setIndex(JSGlobalObject*, uint64_t, JSValue);
 
     static inline ElementType toAdaptorNativeFromValue(JSGlobalObject*, JSValue);
     static inline std::optional<ElementType> toAdaptorNativeFromValueWithoutCoercion(JSValue);
@@ -215,6 +215,9 @@ protected:
     // are 1 and only the MSB of the mantissa is 1. So, NaN is recognized as the largest integral numbers.
 
     template<typename IntegralType> inline void sortFloat(ElementType* begin, ElementType* end);
+
+    inline void countingSort(std::span<ElementType>);
+    template<typename CounterType> inline void countingSortWithCounters(std::span<ElementType>);
 };
 
 template<typename PassedAdaptor>

@@ -225,6 +225,11 @@ void WebFrameProxy::webProcessWillShutDown()
         m_activeListener = nullptr;
     }
 
+    // Download checks survive navigation, but not the frame itself.
+    auto activeDownloadListeners = std::exchange(m_activeDownloadListeners, { });
+    for (Ref downloadListener : activeDownloadListeners.values())
+        downloadListener->ignore();
+
     if (m_navigateCallback)
         m_navigateCallback({ }, { });
 }
@@ -396,17 +401,40 @@ void WebFrameProxy::didChangeTitle(String&& title)
     m_title = WTF::move(title);
 }
 
-WebFramePolicyListenerProxy& WebFrameProxy::setUpPolicyListenerProxy(CompletionHandler<void(PolicyAction, API::WebsitePolicies*, ProcessSwapRequestedByClient, std::optional<NavigatingToAppBoundDomain>, WasNavigationIntercepted)>&& completionHandler, ShouldExpectSafeBrowsingResult expectSafeBrowsingResult, ShouldExpectAppBoundDomainResult expectAppBoundDomainResult, ShouldWaitForInitialLinkDecorationFilteringData shouldWaitForInitialLinkDecorationFilteringData, ShouldWaitForSiteHasStorageCheck shouldWaitForSiteHasStorageCheck, ShouldWaitForEnhancedSecurityLinkCheck shouldWaitForEnhancedSecurityLinkCheck)
+WebFramePolicyListenerProxy& WebFrameProxy::setUpPolicyListenerProxy(CompletionHandler<void(PolicyAction, API::WebsitePolicies*, ProcessSwapRequestedByClient, std::optional<NavigatingToAppBoundDomain>, WasNavigationIntercepted)>&& completionHandler, ShouldExpectSafeBrowsingResult expectSafeBrowsingResult, ShouldExpectAppBoundDomainResult expectAppBoundDomainResult, ShouldWaitForInitialLinkDecorationFilteringData shouldWaitForInitialLinkDecorationFilteringData, ShouldWaitForSiteHasStorageCheck shouldWaitForSiteHasStorageCheck, ShouldWaitForEnhancedSecurityLinkCheck shouldWaitForEnhancedSecurityLinkCheck, IsDownloadPolicyCheck isDownloadPolicyCheck)
 {
-    if (RefPtr previousListener = m_activeListener)
-        previousListener->ignore();
-    m_activeListener = WebFramePolicyListenerProxy::create([this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] (PolicyAction action, API::WebsitePolicies* policies, ProcessSwapRequestedByClient processSwapRequestedByClient, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, WasNavigationIntercepted wasNavigationIntercepted) mutable {
+    bool isDownload = isDownloadPolicyCheck == IsDownloadPolicyCheck::Yes;
+    auto downloadListenerID = isDownload ? ++m_nextDownloadListenerID : 0;
+
+    if (!isDownload) {
+        if (RefPtr previousListener = m_activeListener)
+            previousListener->ignore();
+    }
+
+    auto reply = [
+        this,
+        protectedThis = Ref { *this },
+        completionHandler = WTF::move(completionHandler),
+        isDownload,
+        downloadListenerID
+    ] (PolicyAction action, API::WebsitePolicies* policies, ProcessSwapRequestedByClient processSwapRequestedByClient, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, WasNavigationIntercepted wasNavigationIntercepted) mutable {
         if (action != PolicyAction::Use && m_navigateCallback)
             m_navigateCallback(pageIdentifier(), frameID());
 
         completionHandler(action, policies, processSwapRequestedByClient, isNavigatingToAppBoundDomain, wasNavigationIntercepted);
-        m_activeListener = nullptr;
-    }, expectSafeBrowsingResult, expectAppBoundDomainResult, shouldWaitForInitialLinkDecorationFilteringData, shouldWaitForSiteHasStorageCheck, shouldWaitForEnhancedSecurityLinkCheck);
+
+        if (isDownload)
+            m_activeDownloadListeners.remove(downloadListenerID);
+        else
+            m_activeListener = nullptr;
+    };
+
+    if (isDownload) {
+        m_activeDownloadListeners.add(downloadListenerID, WebFramePolicyListenerProxy::create(WTF::move(reply), expectSafeBrowsingResult, expectAppBoundDomainResult, shouldWaitForInitialLinkDecorationFilteringData, shouldWaitForSiteHasStorageCheck, shouldWaitForEnhancedSecurityLinkCheck));
+        return *m_activeDownloadListeners.get(downloadListenerID);
+    }
+
+    m_activeListener = WebFramePolicyListenerProxy::create(WTF::move(reply), expectSafeBrowsingResult, expectAppBoundDomainResult, shouldWaitForInitialLinkDecorationFilteringData, shouldWaitForSiteHasStorageCheck, shouldWaitForEnhancedSecurityLinkCheck);
     return *m_activeListener;
 }
 
@@ -621,7 +649,7 @@ void WebFrameProxy::prepareForProvisionalLoadInProcess(WebProcessProxy& process,
         continuation();
 }
 
-void WebFrameProxy::commitProvisionalFrame(IPC::Connection& connection, FrameIdentifier frameID, FrameInfoData&& frameInfo, ResourceRequest&& request, std::optional<WebCore::NavigationIdentifier> navigationID, String&& mimeType, bool frameHasCustomContentProvider, FrameLoadType frameLoadType, bool usedLegacyTLS, bool privateRelayed, String&& proxyName, WebCore::ResourceResponseSource source, bool containsPluginDocument, HasInsecureContent hasInsecureContent, MouseEventPolicy mouseEventPolicy, DocumentSecurityPolicy&& documentSecurityPolicy, HashSet<WebCore::SecurityOriginData>&& cspOriginsThatUpgradeInsecureNavigations, const UserData& userData, RestoredFromBackForwardCache restoredFromBackForwardCache, RefPtr<FrameState>&& redirectReplaceFrameState)
+void WebFrameProxy::commitProvisionalFrame(IPC::Connection& connection, FrameIdentifier frameID, FrameInfoData&& frameInfo, ResourceRequest&& request, std::optional<WebCore::NavigationIdentifier> navigationID, String&& mimeType, bool frameHasCustomContentProvider, FrameLoadType frameLoadType, bool hasCertificateInfo, bool usedLegacyTLS, bool privateRelayed, String&& proxyName, WebCore::ResourceResponseSource source, bool containsPluginDocument, HasInsecureContent hasInsecureContent, MouseEventPolicy mouseEventPolicy, DocumentSecurityPolicy&& documentSecurityPolicy, HashSet<WebCore::SecurityOriginData>&& cspOriginsThatUpgradeInsecureNavigations, const UserData& userData, RestoredFromBackForwardCache restoredFromBackForwardCache, RefPtr<FrameState>&& redirectReplaceFrameState)
 {
     ASSERT(m_page);
     if (m_provisionalFrame) {
@@ -638,7 +666,7 @@ void WebFrameProxy::commitProvisionalFrame(IPC::Connection& connection, FrameIde
             page->inspectorController().didCommitProvisionalFrame(*this, oldProcessID, oldPageID, newProcessID);
     }
 
-    protect(page())->didCommitLoadForFrame(connection, frameID, WTF::move(frameInfo), WTF::move(request), navigationID, WTF::move(mimeType), frameHasCustomContentProvider, frameLoadType, usedLegacyTLS, privateRelayed, WTF::move(proxyName), source, containsPluginDocument, hasInsecureContent, mouseEventPolicy, WTF::move(documentSecurityPolicy), WTF::move(cspOriginsThatUpgradeInsecureNavigations), userData, restoredFromBackForwardCache, WTF::move(redirectReplaceFrameState));
+    protect(page())->didCommitLoadForFrame(connection, frameID, WTF::move(frameInfo), WTF::move(request), navigationID, WTF::move(mimeType), frameHasCustomContentProvider, frameLoadType, hasCertificateInfo, usedLegacyTLS, privateRelayed, WTF::move(proxyName), source, containsPluginDocument, hasInsecureContent, mouseEventPolicy, WTF::move(documentSecurityPolicy), WTF::move(cspOriginsThatUpgradeInsecureNavigations), userData, restoredFromBackForwardCache, WTF::move(redirectReplaceFrameState));
 }
 
 void WebFrameProxy::getFrameInfo(CompletionHandler<void(std::optional<FrameInfoData>&&)>&& completionHandler)
@@ -1182,6 +1210,14 @@ void WebFrameProxy::requestContainerJSHandleForSearchTexts(Vector<String>&& sear
     sendWithAsyncReply(Messages::WebFrame::RequestContainerJSHandleForSearchTexts(WTF::move(searchTexts), WTF::move(targetNodeIdentifier)), WTF::move(completion));
 }
 
+void WebFrameProxy::requestContentFrameIdentifierForNode(NodeIdentifier nodeIdentifier, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>&&)>&& completion)
+{
+    if (RefPtr page = m_page.get(); !page || !page->hasRunningProcess())
+        return completion({ });
+
+    sendWithAsyncReply(Messages::WebFrame::RequestContentFrameIdentifierForNode(nodeIdentifier), WTF::move(completion));
+}
+
 void WebFrameProxy::getSelectorPathsForNode(JSHandleInfo&& handle, CompletionHandler<void(Vector<HashSet<String>>&&)>&& completion)
 {
     if (RefPtr page = m_page.get(); !page || !page->hasRunningProcess())
@@ -1230,50 +1266,39 @@ void WebFrameProxy::updateDocumentSecurityOrigin(WebFrameProxy* creator, ForInit
     m_documentSecurityOrigin = SecurityOrigin::create(url());
 }
 
-void WebFrameProxy::waitForCertificateInfoFromNetworkProcess(const String& hostAndPort)
+WebCore::CertificateInfo WebFrameProxy::certificateInfoFromNetworkProcess(const URL& url) const
 {
+    String hostAndPort = url.hostAndPort();
+    if (!decltype(m_hostAndPortToCertificateInfo)::isValidKey(hostAndPort))
+        return { };
+
+    if (!url.protocolIsSecure())
+        return { };
+
+    if (CertificateInfo certificateInfo = m_hostAndPortToCertificateInfo.get(hostAndPort); !certificateInfo.isEmpty())
+        return certificateInfo;
+
     RefPtr page = m_page.get();
     if (!page)
-        return;
+        return { };
     RefPtr networkProcess = page->websiteDataStore().networkProcessIfExists();
     if (!networkProcess)
-        return;
+        return { };
     RefPtr connection = networkProcess->connection();
     if (!connection)
-        return;
+        return { };
 
-    // waitForAndDispatchImmediately dispatches messages besides the one being waited for.
-    // If another Messages::WebPageProxy::DidCommitLoadForFrame is received, we can get Error::MultipleWaitingClients.
-    // To prevent this, only be in one waitForAndDispatchImmediately call at a time per connection for this.
-    // If the next frame commit is also missing certificate info after this, then it will wait too.
-    if (networkProcess->isWaitingForCertificateInfo())
-        return;
-    networkProcess->setIsWaitingForCertificateInfo(true);
-    if (connection->waitForAndDispatchImmediately<Messages::WebFrameProxyFromNetworkProcess::ReceivedMainResourceResponseWithCertificateInfo>(frameID(), 0_s) != IPC::Error::NoError) {
-        RELEASE_LOG_ERROR(Network, "Unexpectedly missing certificate info from IPC");
-    }
-    networkProcess->setIsWaitingForCertificateInfo(false);
+    connection->waitForAndDispatchImmediately<Messages::WebFrameProxyFromNetworkProcess::ReceivedMainResourceResponseWithCertificateInfo>(frameID(), 0_s);
+
+    CertificateInfo certificateInfo = m_hostAndPortToCertificateInfo.get(hostAndPort);
+    if (certificateInfo.isEmpty())
+        RELEASE_LOG_ERROR(Network, "Unexpectedly missing certificate info");
+    return certificateInfo;
 }
 
-void WebFrameProxy::commitCertificateInfo(const URL& url)
+void WebFrameProxy::commitCertificateInfo(const URL& url, bool hasCertificateInfo)
 {
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    String hostAndPort = url.hostAndPort();
-    CertificateInfo certificateInfo;
-    if (decltype(m_hostAndPortToCertificateInfo)::isValidKey(hostAndPort)) {
-        certificateInfo = m_hostAndPortToCertificateInfo.get(hostAndPort);
-        if (certificateInfo.isEmpty() && url.protocolIsSecure()) {
-            waitForCertificateInfoFromNetworkProcess(hostAndPort);
-            certificateInfo = m_hostAndPortToCertificateInfo.get(hostAndPort);
-            if (certificateInfo.isEmpty())
-                RELEASE_LOG_ERROR(Network, "Unexpectedly missing certificate info");
-        }
-    }
-
-    m_certificateInfo = WTF::move(certificateInfo);
+    m_certificateInfo = hasCertificateInfo ? certificateInfoFromNetworkProcess(url) : CertificateInfo();
 }
 
 void WebFrameProxy::receivedMainResourceResponseWithCertificateInfo(String&& hostAndPort, WebCore::CertificateInfo&& certificateInfo)
@@ -1283,6 +1308,15 @@ void WebFrameProxy::receivedMainResourceResponseWithCertificateInfo(String&& hos
     // multiple hosts, this would only affect iframes that navigate to many hosts.
     if (decltype(m_hostAndPortToCertificateInfo)::isValidKey(hostAndPort))
         m_hostAndPortToCertificateInfo.set(WTF::move(hostAndPort), WTF::move(certificateInfo));
+}
+
+void WebFrameProxy::copyCertificateInfoForProcessSwapOnNavigationResponse(const URL& url, const WebFrameProxy& oldMainFrame)
+{
+    ASSERT(isMainFrame());
+    ASSERT(oldMainFrame.isMainFrame());
+    ASSERT(m_hostAndPortToCertificateInfo.isEmpty());
+
+    m_hostAndPortToCertificateInfo.set(url.hostAndPort(), oldMainFrame.certificateInfoFromNetworkProcess(url));
 }
 
 } // namespace WebKit

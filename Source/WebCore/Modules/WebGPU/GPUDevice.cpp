@@ -78,6 +78,7 @@
 #include "SecurityOrigin.h"
 #include "WebGPUXRBinding.h"
 #include "XRGPUBinding.h"
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -179,14 +180,61 @@ void GPUDevice::removeBufferToUnmap(GPUBuffer& buffer)
     m_buffersToUnmap.remove(buffer);
 }
 
+size_t GPUDevice::memoryCost() const
+{
+    if (m_isDestroyed)
+        return 0;
+
+    CheckedSize result;
+    for (auto& buffer : m_buffers)
+        result += static_cast<size_t>(buffer.size());
+    for (auto& texture : m_textures)
+        result += texture.memoryCost();
+    return result.hasOverflowed() ? 0 : result.value();
+}
+
+void GPUDevice::notifyMemoryCostChanged()
+{
+    InspectorInstrumentation::didChangeWebGPUMemory(*this);
+}
+
+void GPUDevice::didChangeBufferMemoryCost(GPUBuffer& buffer)
+{
+    if (!m_isDestroyed && m_buffers.contains(buffer))
+        notifyMemoryCostChanged();
+}
+
+void GPUDevice::didChangeTextureMemoryCost(GPUTexture& texture)
+{
+    if (!m_isDestroyed && m_textures.contains(texture))
+        notifyMemoryCostChanged();
+}
+
+void GPUDevice::willDestroyBuffer(GPUBuffer& buffer)
+{
+    if (m_buffers.remove(buffer) && !m_isDestroyed)
+        notifyMemoryCostChanged();
+}
+
+void GPUDevice::willDestroyTexture(GPUTexture& texture)
+{
+    if (m_textures.remove(texture) && !m_isDestroyed)
+        notifyMemoryCostChanged();
+}
+
 void GPUDevice::destroy(ScriptExecutionContext& scriptExecutionContext)
 {
+    if (m_isDestroyed)
+        return;
+
+    m_isDestroyed = true;
     for (Ref buffer : m_buffersToUnmap)
         buffer->destroy(scriptExecutionContext);
 
     m_buffersToUnmap.clear();
 
     m_backing->destroy();
+    notifyMemoryCostChanged();
 }
 
 GPUDevice::LostPromise& GPUDevice::lost()
@@ -227,7 +275,10 @@ ExceptionOr<Ref<GPUBuffer>> GPUDevice::createBuffer(GPUBufferDescriptor&& buffer
     if (!buffer)
         return Exception { ExceptionCode::InvalidStateError, "GPUDevice.createBuffer: Unable to create buffer."_s };
 
-    return GPUBuffer::create(buffer.releaseNonNull(), bufferSize, usage, mappedAtCreation, *this);
+    Ref result = GPUBuffer::create(buffer.releaseNonNull(), bufferSize, usage, mappedAtCreation, *this);
+    m_buffers.add(result);
+    didChangeBufferMemoryCost(result);
+    return result;
 }
 
 static std::optional<String> validateFeature(const auto& featureContainer, const String& featureName, String&& error)
@@ -331,7 +382,10 @@ ExceptionOr<Ref<GPUTexture>> GPUDevice::createTexture(GPUTextureDescriptor&& tex
     if (!texture)
         return Exception { ExceptionCode::InvalidStateError, "GPUDevice.createTexture: Unable to create texture."_s };
 
-    return GPUTexture::create(texture.releaseNonNull(), textureDescriptor, *this);
+    Ref result = GPUTexture::create(texture.releaseNonNull(), textureDescriptor, *this);
+    m_textures.add(result);
+    didChangeTextureMemoryCost(result);
+    return result;
 }
 
 static WebGPU::SamplerDescriptor NODELETE convertToBacking(const std::optional<GPUSamplerDescriptor>& samplerDescriptor)
@@ -572,32 +626,34 @@ ExceptionOr<Ref<GPUShaderModule>> GPUDevice::createShaderModule(GPUShaderModuleD
 {
     if (!m_autoPipelineLayout)
         return Exception { ExceptionCode::InvalidStateError, "GPUDevice.createShaderModule: Unable to make shader module."_s };
-    String source = shaderModuleDescriptor.code;
-    RefPtr<WebCore::WebGPU::ShaderModule> shaderModule;
 
+    auto descriptor = shaderModuleDescriptor.convertToBacking(*m_autoPipelineLayout);
+    auto backingDescriptor = descriptor;
 #if PLATFORM(VISION)
     // FIXME: Remove once https://bugs.webkit.org/show_bug.cgi?id=297538 is addressed
-    if (auto context = scriptExecutionContext(); context && context->url().string().contains("toji.github.io/webgpu-metaballs"_s)) {
-        GPUShaderModuleDescriptor clonedShaderModuleDescriptor = shaderModuleDescriptor;
-        clonedShaderModuleDescriptor.code = makeStringByReplacingAll(shaderModuleDescriptor.code, "fma(depthSample"_s, "fma(min(depthSample, 0.95)"_s);
-        shaderModule = m_backing->createShaderModule(clonedShaderModuleDescriptor.convertToBacking(*m_autoPipelineLayout));
-    } else
+    if (auto context = scriptExecutionContext(); context && context->url().string().contains("toji.github.io/webgpu-metaballs"_s))
+        backingDescriptor.code = makeStringByReplacingAll(descriptor.code, "fma(depthSample"_s, "fma(min(depthSample, 0.95)"_s);
 #endif
-    shaderModule = m_backing->createShaderModule(shaderModuleDescriptor.convertToBacking(*m_autoPipelineLayout));
+    RefPtr shaderModule = m_backing->createShaderModule(backingDescriptor);
     if (!shaderModule)
         return Exception { ExceptionCode::InvalidStateError, "GPUDevice.createShaderModule: Unable to make shader module."_s };
-    return GPUShaderModule::create(shaderModule.releaseNonNull(), WTF::move(source), *this);
+
+    // The compilation hints contain weak pipeline layout references that may expire before Inspector recompiles this descriptor.
+    descriptor.hints.clear();
+    return GPUShaderModule::create(shaderModule.releaseNonNull(), WTF::move(descriptor), *this);
 }
 
 ExceptionOr<Ref<GPUComputePipeline>> GPUDevice::createComputePipeline(UniquelyAnnotatedDescriptor<GPUComputePipelineDescriptor>&& computePipelineDescriptor)
 {
     if (!m_autoPipelineLayout)
         return Exception { ExceptionCode::InvalidStateError, "GPUDevice.createComputePipeline: Unable to make pipeline."_s };
-    RefPtr pipeline = m_backing->createComputePipeline(computePipelineDescriptor->convertToBacking(*m_autoPipelineLayout));
+    auto descriptor = computePipelineDescriptor->convertToBacking(*m_autoPipelineLayout);
+    RefPtr pipeline = m_backing->createComputePipeline(descriptor);
     if (!pipeline)
         return Exception { ExceptionCode::InvalidStateError, "GPUDevice.createComputePipeline: Unable to make pipeline."_s };
 
-    return GPUComputePipeline::create(pipeline.releaseNonNull(), computePipelineDescriptor.uniqueAutogeneratedId(), this, computePipelineDescriptor->compute.module->source());
+    auto shaderModuleDescriptor = computePipelineDescriptor->compute.module->descriptor();
+    return GPUComputePipeline::create(pipeline.releaseNonNull(), computePipelineDescriptor.uniqueAutogeneratedId(), this, WTF::move(descriptor), shaderModuleDescriptor);
 }
 
 ExceptionOr<Ref<GPURenderPipeline>> GPUDevice::createRenderPipeline(UniquelyAnnotatedDescriptor<GPURenderPipelineDescriptor>&& renderPipelineDescriptor)
@@ -617,18 +673,20 @@ ExceptionOr<Ref<GPURenderPipeline>> GPUDevice::createRenderPipeline(UniquelyAnno
 
     if (!m_autoPipelineLayout)
         return Exception { ExceptionCode::InvalidStateError, "GPUDevice.createRenderPipeline: Unable to make pipeline."_s };
-    RefPtr renderPipeline = m_backing->createRenderPipeline(renderPipelineDescriptor->convertToBacking(*m_autoPipelineLayout));
+    auto descriptor = renderPipelineDescriptor->convertToBacking(*m_autoPipelineLayout);
+    RefPtr renderPipeline = m_backing->createRenderPipeline(descriptor);
     if (!renderPipeline)
         return Exception { ExceptionCode::InvalidStateError, "GPUDevice.createRenderPipeline: Unable to make pipeline."_s };
 
-    String fragmentShaderSource;
+    auto vertexShaderModuleDescriptor = renderPipelineDescriptor->vertex.module->descriptor();
+    std::optional<WebGPU::ShaderModuleDescriptor> fragmentShaderModuleDescriptor;
     bool sharesVertexFragmentShader = false;
     if (auto& fragment = renderPipelineDescriptor->fragment) {
-        fragmentShaderSource = fragment->module->source();
+        fragmentShaderModuleDescriptor = fragment->module->descriptor();
         sharesVertexFragmentShader = renderPipelineDescriptor->vertex.module.ptr() == fragment->module.ptr();
     }
 
-    return GPURenderPipeline::create(renderPipeline.releaseNonNull(), renderPipelineDescriptor.uniqueAutogeneratedId(), this, renderPipelineDescriptor->vertex.module->source(), fragmentShaderSource, sharesVertexFragmentShader);
+    return GPURenderPipeline::create(renderPipeline.releaseNonNull(), renderPipelineDescriptor.uniqueAutogeneratedId(), this, WTF::move(descriptor), vertexShaderModuleDescriptor, WTF::move(fragmentShaderModuleDescriptor), sharesVertexFragmentShader);
 }
 
 void GPUDevice::createComputePipelineAsync(UniquelyAnnotatedDescriptor<GPUComputePipelineDescriptor>&& computePipelineDescriptor, CreateComputePipelineAsyncPromise&& promise)
@@ -637,11 +695,12 @@ void GPUDevice::createComputePipelineAsync(UniquelyAnnotatedDescriptor<GPUComput
         promise.rejectType<IDLInterface<GPUPipelineError>>(GPUPipelineError::create(""_s, { GPUPipelineErrorReason::Internal }));
         return;
     }
-    String shaderSource = computePipelineDescriptor->compute.module->source();
-    m_backing->createComputePipelineAsync(computePipelineDescriptor->convertToBacking(*m_autoPipelineLayout), [promise = WTF::move(promise), weakThis = WeakPtr { *this }, shaderSource = WTF::move(shaderSource), autogeneratedId = computePipelineDescriptor.uniqueAutogeneratedId()](RefPtr<WebGPU::ComputePipeline>&& computePipeline, String&& error) mutable {
+    auto descriptor = computePipelineDescriptor->convertToBacking(*m_autoPipelineLayout);
+    auto shaderModuleDescriptor = computePipelineDescriptor->compute.module->descriptor();
+    m_backing->createComputePipelineAsync(descriptor, [promise = WTF::move(promise), weakThis = WeakPtr { *this }, descriptor, shaderModuleDescriptor = WTF::move(shaderModuleDescriptor), autogeneratedId = computePipelineDescriptor.uniqueAutogeneratedId()](RefPtr<WebGPU::ComputePipeline>&& computePipeline, String&& error) mutable {
         if (computePipeline) {
             RefPtr device { weakThis };
-            Ref result = GPUComputePipeline::create(computePipeline.releaseNonNull(), autogeneratedId, device.get(), shaderSource);
+            Ref result = GPUComputePipeline::create(computePipeline.releaseNonNull(), autogeneratedId, device.get(), WTF::move(descriptor), shaderModuleDescriptor);
             promise.resolve(WTF::move(result));
         } else
             promise.rejectType<IDLInterface<GPUPipelineError>>(GPUPipelineError::create(WTF::move(error), { GPUPipelineErrorReason::Validation }));
@@ -666,18 +725,19 @@ ExceptionOr<void> GPUDevice::createRenderPipelineAsync(UniquelyAnnotatedDescript
     if (!m_autoPipelineLayout)
         return Exception { ExceptionCode::InvalidStateError, "GPUDevice.createRenderBundleEncoder: Unable to make encoder."_s };
 
-    String vertexShaderSource = renderPipelineDescriptor->vertex.module->source();
-    String fragmentShaderSource;
+    auto descriptor = renderPipelineDescriptor->convertToBacking(*m_autoPipelineLayout);
+    auto vertexShaderModuleDescriptor = renderPipelineDescriptor->vertex.module->descriptor();
+    std::optional<WebGPU::ShaderModuleDescriptor> fragmentShaderModuleDescriptor;
     bool sharesVertexFragmentShader = false;
     if (auto& fragment = renderPipelineDescriptor->fragment) {
-        fragmentShaderSource = fragment->module->source();
+        fragmentShaderModuleDescriptor = fragment->module->descriptor();
         sharesVertexFragmentShader = renderPipelineDescriptor->vertex.module.ptr() == fragment->module.ptr();
     }
 
-    m_backing->createRenderPipelineAsync(renderPipelineDescriptor->convertToBacking(*m_autoPipelineLayout), [promise = WTF::move(promise), weakThis = WeakPtr { *this }, vertexShaderSource = WTF::move(vertexShaderSource), fragmentShaderSource = WTF::move(fragmentShaderSource), sharesVertexFragmentShader, autogeneratedId = renderPipelineDescriptor.uniqueAutogeneratedId()](RefPtr<WebGPU::RenderPipeline>&& renderPipeline, String&& error) mutable {
+    m_backing->createRenderPipelineAsync(descriptor, [promise = WTF::move(promise), weakThis = WeakPtr { *this }, descriptor, vertexShaderModuleDescriptor = WTF::move(vertexShaderModuleDescriptor), fragmentShaderModuleDescriptor = WTF::move(fragmentShaderModuleDescriptor), sharesVertexFragmentShader, autogeneratedId = renderPipelineDescriptor.uniqueAutogeneratedId()](RefPtr<WebGPU::RenderPipeline>&& renderPipeline, String&& error) mutable {
         if (renderPipeline) {
             RefPtr device { weakThis };
-            Ref result = GPURenderPipeline::create(renderPipeline.releaseNonNull(), autogeneratedId, device.get(), vertexShaderSource, fragmentShaderSource, sharesVertexFragmentShader);
+            Ref result = GPURenderPipeline::create(renderPipeline.releaseNonNull(), autogeneratedId, device.get(), WTF::move(descriptor), vertexShaderModuleDescriptor, WTF::move(fragmentShaderModuleDescriptor), sharesVertexFragmentShader);
             promise.resolve(WTF::move(result));
         } else
             promise.rejectType<IDLInterface<GPUPipelineError>>(GPUPipelineError::create(WTF::move(error), { GPUPipelineErrorReason::Validation }));

@@ -33,9 +33,18 @@ namespace WebCore {
 struct WebTransportConnectionInfo {
     String protocol;
     WebTransportReliabilityMode reliabilityMode;
+    Vector<KeyValuePair<String, String>> responseHeaders;
 
-    WebTransportConnectionInfo isolatedCopy() const & { return { protocol.isolatedCopy(), reliabilityMode }; }
-    WebTransportConnectionInfo isolatedCopy() && { return { WTF::move(protocol).isolatedCopy(), reliabilityMode }; }
+    WebTransportConnectionInfo isolatedCopy() const & {
+        return { protocol.isolatedCopy(), reliabilityMode, WTF::map(responseHeaders, [](auto& header) {
+            return KeyValuePair<String, String> { header.key.isolatedCopy(), header.value.isolatedCopy() };
+        }) };
+    }
+    WebTransportConnectionInfo isolatedCopy() && {
+        return { WTF::move(protocol).isolatedCopy(), reliabilityMode, WTF::map(WTF::move(responseHeaders), [](KeyValuePair<String, String>&& header) {
+            return KeyValuePair<String, String> { WTF::move(header.key).isolatedCopy(), WTF::move(header.value).isolatedCopy() };
+        }) };
+    }
 };
 
 }

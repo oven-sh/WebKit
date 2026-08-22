@@ -31,15 +31,12 @@
 #include "CSSUnevaluatedCalc.h"
 #include "FloatConversion.h"
 #include "StyleBuilderState.h"
+#include "StyleLengthResolution.h"
 #include "StylePrimitiveNumericTypes.h"
 #include "StylePrimitiveNumericTypes+Rounding.h"
 
 namespace WebCore {
 namespace Style {
-
-// Out of line to avoid additional includes.
-double canonicalizeLength(double, CSS::LengthUnit, NoConversionDataRequiredToken);
-double canonicalizeLength(double, CSS::LengthUnit, const CSSToLengthConversionData&);
 
 // MARK: Conversion Data Access
 
@@ -115,7 +112,7 @@ template<auto R, typename V, typename... Rest> constexpr Flex<R, V> canonicalize
 
 template<auto R, typename V, typename... Rest> Length<R, V> canonicalize(const CSS::LengthRaw<R, V>& raw, Rest&&... rest)
 {
-    return { CSS::clampToRangeOf<Length<R, V>>(canonicalizeLength(raw.value, raw.unit, std::forward<Rest>(rest)...)) };
+    return { CSS::clampToRangeOf<Length<R, V>>(resolveLength(raw.value, raw.unit, std::forward<Rest>(rest)...)) };
 }
 
 template<auto R, typename V, typename... Rest> AnglePercentage<R, V> canonicalize(const CSS::AnglePercentageRaw<R, V>& raw, Rest&&... rest)
@@ -297,11 +294,11 @@ template<auto R, typename V> struct ToStyle<CSS::UnevaluatedCalc<CSS::AnglePerce
 
         auto simplifiedPrimitiveType = simplifiedCalc.primitiveType();
 
-        if (simplifiedPrimitiveType == CSSUnitType::CSS_DEG) {
+        if (simplifiedPrimitiveType == CSSUnitType::Deg) {
             auto doubleValue = simplifiedCalc.evaluate(rest...);
             return canonicalize(CSS::AngleRaw<R, V> { To::Dimension::unit, doubleValue }, std::forward<Rest>(rest)...);
         }
-        if (simplifiedPrimitiveType == CSSUnitType::CSS_PERCENTAGE) {
+        if (simplifiedPrimitiveType == CSSUnitType::Percentage) {
             auto doubleValue = simplifiedCalc.evaluate(rest...);
             return canonicalize(CSS::PercentageRaw<R, V> { doubleValue }, std::forward<Rest>(rest)...);
         }
@@ -347,11 +344,11 @@ template<auto R, typename V> struct ToStyle<CSS::UnevaluatedCalc<CSS::LengthPerc
 
         auto simplifiedPrimitiveType = simplifiedCalc.primitiveType();
 
-        if (simplifiedPrimitiveType == CSSUnitType::CSS_PX) {
+        if (simplifiedPrimitiveType == CSSUnitType::Px) {
             auto doubleValue = simplifiedCalc.evaluate(rest...);
             return canonicalize(CSS::LengthRaw<R, V> { To::Dimension::unit, doubleValue }, std::forward<Rest>(rest)...);
         }
-        if (simplifiedPrimitiveType == CSSUnitType::CSS_PERCENTAGE) {
+        if (simplifiedPrimitiveType == CSSUnitType::Percentage) {
             auto doubleValue = simplifiedCalc.evaluate(rest...);
             return canonicalize(CSS::PercentageRaw<R, V> { doubleValue }, std::forward<Rest>(rest)...);
         }

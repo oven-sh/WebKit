@@ -1045,7 +1045,11 @@ void Interpreter::notifyDebuggerOfExceptionToBeThrown(VM& vm, JSGlobalObject* gl
     exception->setDidNotifyInspectorOfThrow();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled)
+#else
 JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj)
+#endif
 {
     VM& vm = this->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -1223,7 +1227,11 @@ failedJSONP:
     // object.
 
     // Compile source to bytecode if necessary:
+#if USE(BUN_JSC_ADDITIONS)
+    JSObject* error = program->initializeGlobalProperties(vm, globalObject, scope, precompiled);
+#else
     JSObject* error = program->initializeGlobalProperties(vm, globalObject, scope);
+#endif
     EXCEPTION_ASSERT(!throwScope.exception() || !error || vm.hasPendingTerminationException());
     RETURN_IF_EXCEPTION(throwScope, throwScope.exception());
     if (error) [[unlikely]]

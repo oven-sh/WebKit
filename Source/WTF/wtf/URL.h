@@ -51,10 +51,6 @@ protected:
     virtual ~URLTextEncoding() = default;
 };
 
-// Maximum length (in code units) of a URL that may be passed across an IPC boundary.
-// Matches Chromium's url::kMaxURLChars; URLs longer than this are rejected when decoded.
-constexpr unsigned maxURLLength = 2 * 1024 * 1024;
-
 class URL {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(URL);
 public:
@@ -262,7 +258,7 @@ public:
 private:
     friend class URLParser;
 
-    WTF_EXPORT_PRIVATE void NODELETE invalidate();
+    void invalidate();
     unsigned NODELETE hostStart() const;
     unsigned NODELETE credentialsEnd() const;
     void remove(unsigned start, unsigned length);
@@ -361,6 +357,22 @@ inline bool operator==(const URL& a, const String& b)
 inline URL::URL(HashTableDeletedValueType)
     : m_string(HashTableDeletedValue)
 {
+}
+
+inline void URL::invalidate()
+{
+    m_isValid = false;
+    m_protocolIsInHTTPFamily = false;
+    m_hasOpaquePath = false;
+    m_portLength = 0;
+    m_schemeEnd = 0;
+    m_userStart = 0;
+    m_userEnd = 0;
+    m_passwordEnd = 0;
+    m_hostEnd = 0;
+    m_pathAfterLastSlash = 0;
+    m_pathEnd = 0;
+    m_queryEnd = 0;
 }
 
 inline bool URL::isNull() const

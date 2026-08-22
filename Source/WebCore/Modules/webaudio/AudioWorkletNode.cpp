@@ -48,6 +48,7 @@
 #include "ContextDestructionObserverInlines.h"
 #include "ErrorEvent.h"
 #include "EventNames.h"
+#include "ExceptionDetails.h"
 #include "JSAudioWorkletNodeOptions.h"
 #include "JSDOMGlobalObject.h"
 #include "MessageChannel.h"
@@ -162,6 +163,9 @@ AudioWorkletNode::~AudioWorkletNode()
             }
         }
     }
+    // The node is destroyed on the main thread, so release the rendering-thread assertion to avoid
+    // tripping its destructor check.
+    m_renderingThread = anyThreadLike;
     uninitialize();
 }
 
@@ -195,6 +199,7 @@ void AudioWorkletNode::setProcessor(RefPtr<AudioWorkletProcessor>&& processor)
         Locker locker { m_processLock };
         m_processor = WTF::move(processor);
         m_workletThread = Thread::currentSingleton();
+        m_renderingThread.reset();
     } else
         fireProcessorErrorOnMainThread(ProcessorError::ConstructorError);
 }
@@ -218,12 +223,28 @@ void AudioWorkletNode::process(size_t framesToProcess)
         zeroOutput();
         return;
     }
+    assertIsCurrent(m_renderingThread);
 
-    // If the input is not connected, pass nullptr to the processor.
+    // If the input is not connected, pass nullptr to the processor. An input is considered active
+    // as long as it is connected to a node that is still producing audio (i.e. its bus is not
+    // silent); once a source finishes playback it outputs silence.
+    bool hasActiveInputs = false;
     for (unsigned i = 0; i < numberOfInputs(); ++i) {
         CheckedPtr currentInput = input(i);
-        m_inputs[i] = currentInput->isConnected() ? &currentInput->bus() : nullptr;
+        bool connected = currentInput->isConnected();
+        m_inputs[i] = connected ? &currentInput->bus() : nullptr;
+        if (connected && !hasActiveInputs && !currentInput->bus().isSilent())
+            hasActiveInputs = true;
     }
+
+    // Once process() has returned false and the node no longer has any active inputs, the processor
+    // is done and we stop calling process().
+    if (!m_isActiveSource && !hasActiveInputs) {
+        didFinishProcessingOnRenderingThread(std::nullopt);
+        zeroOutput();
+        return;
+    }
+
     for (unsigned i = 0; i < numberOfOutputs(); ++i)
         m_outputs[i] = output(i)->bus();
 
@@ -248,15 +269,16 @@ void AudioWorkletNode::process(size_t framesToProcess)
             std::ranges::fill(paramValues->span().first(framesToProcess), audioParam->finalValue());
     }
 
-    bool threwException = false;
-    if (!m_processor->process(m_inputs, m_outputs, m_paramValuesMap, threwException))
-        didFinishProcessingOnRenderingThread(threwException);
+    std::optional<ExceptionDetails> exceptionDetails;
+    m_isActiveSource = m_processor->process(m_inputs, m_outputs, m_paramValuesMap, exceptionDetails);
+    if ((!m_isActiveSource && !hasActiveInputs) || exceptionDetails)
+        didFinishProcessingOnRenderingThread(WTF::move(exceptionDetails));
 }
 
-void AudioWorkletNode::didFinishProcessingOnRenderingThread(bool threwException)
+void AudioWorkletNode::didFinishProcessingOnRenderingThread(std::optional<ExceptionDetails>&& exceptionDetails)
 {
-    if (threwException)
-        fireProcessorErrorOnMainThread(ProcessorError::ProcessError);
+    if (exceptionDetails)
+        fireProcessorErrorOnMainThread(ProcessorError::ProcessError, WTF::move(exceptionDetails));
 
     m_processor = nullptr;
     m_tailTime = 0;
@@ -305,14 +327,17 @@ void AudioWorkletNode::checkNumberOfChannelsForInput(AudioNodeInput* input)
     updatePullStatus();
 }
 
-void AudioWorkletNode::fireProcessorErrorOnMainThread(ProcessorError error)
+void AudioWorkletNode::fireProcessorErrorOnMainThread(ProcessorError error, std::optional<ExceptionDetails>&& exceptionDetails)
 {
     ASSERT(!isMainThread());
 
     // Heap allocations are forbidden on the audio thread for performance reasons so we need to
     // explicitly allow the following allocation(s).
     DisableMallocRestrictionsForCurrentThreadScope disableMallocRestrictions;
-    callOnMainThread([this, protectedThis = Ref { *this }, error]() mutable {
+    String sourceURL = exceptionDetails ? exceptionDetails->sourceURL.isolatedCopy() : String { };
+    unsigned lineNumber = exceptionDetails ? exceptionDetails->lineNumber : 0;
+    unsigned columnNumber = exceptionDetails ? exceptionDetails->columnNumber : 0;
+    callOnMainThread([this, protectedThis = Ref { *this }, error, sourceURL = WTF::move(sourceURL), lineNumber, columnNumber]() mutable {
         String errorMessage;
         switch (error) {
         case ProcessorError::ConstructorError:
@@ -322,7 +347,7 @@ void AudioWorkletNode::fireProcessorErrorOnMainThread(ProcessorError error)
             errorMessage = "An error was thrown from AudioWorkletProcessor::process() method"_s;
             break;
         }
-        queueTaskToDispatchEvent(*this, TaskSource::MediaElement, ErrorEvent::create(eventNames().processorerrorEvent, errorMessage, { }, 0, 0));
+        queueTaskToDispatchEvent(*this, TaskSource::MediaElement, ErrorEvent::create(eventNames().processorerrorEvent, errorMessage, sourceURL, lineNumber, columnNumber));
     });
 }
 

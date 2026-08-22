@@ -381,15 +381,6 @@ static void decode(Decoder& decoder, const T& src, SourceType<T>& dst, Args... a
         src.decode(decoder, dst, args...);
 }
 
-template<typename T>
-static T decode(Decoder& decoder, T src)
-{
-    if constexpr (std::is_same_v<T, SourceType<T>>)
-        return src;
-    else
-        return src.decode(decoder);
-}
-
 template<typename Source>
 class CachedObject {
     WTF_MAKE_NONCOPYABLE(CachedObject);
@@ -1643,7 +1634,14 @@ class CachedStringSourceProvider : public CachedSourceProviderShape<StringSource
     using Base = CachedSourceProviderShape<StringSourceProvider, CachedStringSourceProvider>;
 
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    // Takes the base type for the same reason decode() returns it: Bun's runtime
+    // provider is a SourceProvider sibling of StringSourceProvider, and only
+    // base-class API is used below.
+    void encode(Encoder& encoder, const SourceProvider& sourceProvider)
+#else
     void encode(Encoder& encoder, const StringSourceProvider& sourceProvider)
+#endif
     {
         Base::encode(encoder, sourceProvider);
 #if USE(BUN_JSC_ADDITIONS)
@@ -1744,7 +1742,12 @@ public:
         switch (m_sourceType) {
         case SourceProviderSourceType::Program:
         case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule:
+            this->allocate<CachedStringSourceProvider>(encoder)->encode(encoder, sourceProvider);
+#else
             this->allocate<CachedStringSourceProvider>(encoder)->encode(encoder, reinterpret_cast<const StringSourceProvider&>(sourceProvider));
+#endif
             break;
 #if ENABLE(WEBASSEMBLY)
         case SourceProviderSourceType::WebAssembly:
@@ -1761,6 +1764,9 @@ public:
         switch (m_sourceType) {
         case SourceProviderSourceType::Program:
         case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule:
+#endif
             return this->buffer<CachedStringSourceProvider>()->decode(decoder, m_sourceType);
 #if ENABLE(WEBASSEMBLY)
         case SourceProviderSourceType::WebAssembly:
@@ -1923,7 +1929,6 @@ public:
     void encode(Encoder& encoder, const UnlinkedFunctionExecutable::RareData& rareData)
     {
         m_classSource.encode(encoder, rareData.m_classSource);
-        m_parentScopeTDZVariables.encode(encoder, rareData.m_parentScopeTDZVariables);
         m_generatorOrAsyncWrapperFunctionParameterNames.encode(encoder, rareData.m_generatorOrAsyncWrapperFunctionParameterNames);
         m_classElementDefinitions.encode(encoder, rareData.m_classElementDefinitions);
         m_parentPrivateNameEnvironment.encode(encoder, rareData.m_parentPrivateNameEnvironment);
@@ -1933,7 +1938,6 @@ public:
     {
         UnlinkedFunctionExecutable::RareData* rareData = new UnlinkedFunctionExecutable::RareData { };
         m_classSource.decode(decoder, rareData->m_classSource);
-        m_parentScopeTDZVariables.decode(decoder, rareData->m_parentScopeTDZVariables);
         m_generatorOrAsyncWrapperFunctionParameterNames.decode(decoder, rareData->m_generatorOrAsyncWrapperFunctionParameterNames);
         m_classElementDefinitions.decode(decoder, rareData->m_classElementDefinitions);
         m_parentPrivateNameEnvironment.decode(decoder, rareData->m_parentPrivateNameEnvironment);
@@ -1942,7 +1946,6 @@ public:
 
 private:
     CachedSourceCodeWithoutProvider m_classSource;
-    CachedRefPtr<CachedTDZEnvironmentLink> m_parentScopeTDZVariables;
     CachedVector<CachedIdentifier> m_generatorOrAsyncWrapperFunctionParameterNames;
     CachedVector<CachedClassElementDefinition> m_classElementDefinitions;
     CachedPrivateNameEnvironment m_parentPrivateNameEnvironment;
@@ -1984,9 +1987,10 @@ public:
     unsigned NODELETE inlineAttribute() const { return m_inlineAttribute; }
     unsigned NODELETE needsClassFieldInitializer() const { return m_needsClassFieldInitializer; }
     unsigned NODELETE privateBrandRequirement() const { return m_privateBrandRequirement; }
+    unsigned NODELETE hasName() const { return m_hasName; }
 
-    Identifier name(Decoder& decoder) const { return m_name.decode(decoder); }
     Identifier ecmaName(Decoder& decoder) const { return m_ecmaName.decode(decoder); }
+    RefPtr<TDZEnvironmentLink> parentScopeTDZVariables(Decoder& decoder) const { return m_parentScopeTDZVariables.decode(decoder); }
 
     UnlinkedFunctionExecutable::RareData* rareData(Decoder& decoder) const { return m_rareData.decode(decoder); }
 
@@ -2020,11 +2024,12 @@ private:
     unsigned m_inlineAttribute : 1;
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_implementationVisibility : bitWidthOfImplementationVisibility;
+    unsigned m_hasName : 1;
 
     CachedPtr<CachedFunctionExecutableRareData> m_rareData;
 
-    CachedIdentifier m_name;
     CachedIdentifier m_ecmaName;
+    CachedRefPtr<CachedTDZEnvironmentLink> m_parentScopeTDZVariables;
 
     CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;
     CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForConstruct;
@@ -2405,11 +2410,12 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
     m_needsClassFieldInitializer = executable.m_needsClassFieldInitializer;
     m_implementationVisibility = executable.m_implementationVisibility;
     m_privateBrandRequirement = executable.m_privateBrandRequirement;
+    m_hasName = executable.m_hasName;
 
     m_rareData.encode(encoder, executable.m_rareData.get());
 
-    m_name.encode(encoder, executable.name());
     m_ecmaName.encode(encoder, executable.ecmaName());
+    m_parentScopeTDZVariables.encode(encoder, executable.m_parentScopeTDZVariables);
 
     m_unlinkedCodeBlockForCall.encode(encoder, executable.m_unlinkedCodeBlockForCall);
     m_unlinkedCodeBlockForConstruct.encode(encoder, executable.m_unlinkedCodeBlockForConstruct);
@@ -2457,11 +2463,12 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_derivedContextType(cachedExecutable.derivedContextType())
     , m_inlineAttribute(cachedExecutable.inlineAttribute())
     , m_evalContextType(cachedExecutable.evalContextType())
+    , m_hasName(cachedExecutable.hasName())
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
 
-    , m_name(cachedExecutable.name(decoder))
     , m_ecmaName(cachedExecutable.ecmaName(decoder))
+    , m_parentScopeTDZVariables(cachedExecutable.parentScopeTDZVariables(decoder))
 
     , m_rareData(cachedExecutable.rareData(decoder))
 {

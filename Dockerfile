@@ -4,6 +4,7 @@ ARG CPU=native
 ARG LTO_FLAG="-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables "
 ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
 ARG LLVM_VERSION="21"
+# The -lto variants append -g1 (line tables only) after this, see $G below; every other variant keeps full -g.
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
@@ -102,12 +103,22 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
     --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
     --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
 
-# Install LLVM 21
-RUN wget https://apt.llvm.org/llvm.sh \
-    && chmod +x llvm.sh \
-    && ./llvm.sh 21 all \
-    && rm llvm.sh \
-    && rm -rf /var/lib/apt/lists/*
+# Install LLVM
+# The `llvm.sh <version> all` package set, mirrored from apt.llvm.org to a
+# GitHub release so the image doesn't depend on apt.llvm.org at build time.
+# Ubuntu-archive dependencies still come from apt. Regenerate via
+# scripts/mirror-llvm-debs.sh (or the mirror-llvm-debs workflow).
+ARG LLVM_DEBS_SHA256_amd64=759ea9d6d50de9b6062cf40161a24a3a9d70aaf11aa1a544074d126590eb55f7
+ARG LLVM_DEBS_SHA256_arm64=4d4923baa663cb2e1be67e8e7097220604489b0da8b7a4ab5911ac2baf1e0ba6
+RUN curl -fsSL --retry 5 --retry-connrefused \
+        "https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-focal-${TARGETARCH}.tar.gz" \
+        -o /tmp/llvm.tar.gz \
+    && eval "expected=\$LLVM_DEBS_SHA256_${TARGETARCH}" \
+    && echo "${expected}  /tmp/llvm.tar.gz" | sha256sum -c - \
+    && mkdir -p /tmp/llvm && tar xzf /tmp/llvm.tar.gz -C /tmp/llvm \
+    && apt-get update \
+    && apt-get install -y /tmp/llvm/*.deb \
+    && rm -rf /tmp/llvm /tmp/llvm.tar.gz /var/lib/apt/lists/*
 
 # Configure library paths
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
@@ -200,7 +211,7 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 # After tar, patch udata.cpp with a per-item decompression hook (a weak extern
 # Bun defines; null in ICU's own tools).
 #
-# After the first `make` (which produces bin/icupkg), filter data/in/icudt75l.dat
+# After the first `make` (which produces bin/icupkg), filter data/in/icudt78l.dat
 # to drop converters/translit/stringprep/confusables/unames — Bun has zero
 # ucnv_/utrans_/usprep_/uspoof_ consumers — then rebuild.
 #
@@ -223,10 +234,11 @@ RUN echo "#include <iostream>\n#include <numbers>\nint main() { std::cout << std
 # Items matching icu/keep-raw.txt stay uncompressed (too expensive to decode lazily).
 # The repacked libicudata.a also embeds the trained zstd dictionary.
 COPY icu/ /icu-bun/
-ADD https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz /icu.tgz
+ADD --checksum=sha256:3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0 https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz /icu.tgz
 RUN --mount=type=tmpfs,target=/icu \
-    export CFLAGS="$CFLAGS -Os -std=c17 $LTO_FLAG" && \
-    export CXXFLAGS="$CXXFLAGS -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
+    export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
+    export CFLAGS="$CFLAGS $G -Os -std=c17 $LTO_FLAG" && \
+    export CXXFLAGS="$CXXFLAGS $G -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
     cd /icu && \
     tar -xf /icu.tgz --strip-components=1 && \
@@ -235,15 +247,15 @@ RUN --mount=type=tmpfs,target=/icu \
     cd source && \
     ./configure --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
     make -j$(nproc) && \
-    mkdir -p /tmp/ns && bin/icupkg -x numberingSystems.res data/in/icudt75l.dat -d /tmp/ns && \
+    mkdir -p /tmp/ns && bin/icupkg -x numberingSystems.res data/in/icudt78l.dat -d /tmp/ns && \
     stale=$(strings -el /tmp/ns/numberingSystems.res | sed -n 's|^\([A-Za-z_][A-Za-z_]*\)/.*|\1|p' | sort -u | grep -vxE 'ja|zh|zh_Hant' | tr '\n' ' ') && \
     { [ -z "$stale" ] || { echo "rbnf keep-list is stale, also reachable: $stale" >&2; exit 1; }; } && \
-    bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
-    bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
-    mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
+    bin/icupkg -l data/in/icudt78l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
+    bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
+    mv -f data/in/icudt78l_filtered.dat data/in/icudt78l.dat && \
     rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
-    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt75l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg
+    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt78l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg bin/icupkg
 
 # Copy WebKit source and build
 COPY . /webkit
@@ -258,8 +270,9 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     unset C_INCLUDE_PATH && \
-    export CFLAGS="$CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
-    export CXXFLAGS="$CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
+    export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
+    export CFLAGS="$CFLAGS $G $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
+    export CXXFLAGS="$CXXFLAGS $G $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
     export ENABLE_ASSERTS="AUTO" && \
     export LDFLAGS="-fuse-ld=lld $LDFLAGS " && \
     if [ -n "$ENABLE_SANITIZERS" ]; then \

@@ -133,7 +133,6 @@ struct QuirksData {
         NeedsSeekingSupportDisabledQuirk,
         NeedsSuppressPostLayoutBoundaryEventsQuirk,
         NeedsTikTokOverflowingContentQuirk,
-        NeedsVP9FullRangeFlagQuirk,
         NeedsVideoShouldMaintainAspectRatioQuirk,
         NeedsWebKitMediaTextTrackDisplayQuirk,
 #if PLATFORM(COCOA)
@@ -278,7 +277,6 @@ struct QuirksData {
         ShouldAllowNotificationPermissionWithoutUserGesture,
         NeedsInstagramResizingReelsQuirk,
         NeedsYahooVolumeSliderQuirk,
-        NeedsZillowFloorplanMarginQuirk,
 #if PLATFORM(IOS_FAMILY)
         NeedsChromeOSNavigatorUserAgentQuirk,
         ShouldSendFakeTouchForceChangeEvent,

@@ -33,6 +33,7 @@
 #include "LayoutIntegrationUtils.h"
 #include "RenderBlock.h"
 #include "RenderBlockFlowInlines.h"
+#include "RenderStyleConstants.h"
 #include "RenderBoxInlines.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectInlines.h"
@@ -159,30 +160,51 @@ static inline void populateIFCWithNewlyPlacedFloats(auto& blockRenderer, auto& p
     }
 }
 
-static inline void NODELETE updateRenderTreeLegacyLineClamp(auto& inlineLayoutState, auto& renderTreeLayoutState)
+static inline void NODELETE updateRenderTreeLineClampBeforeLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
 {
     auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
 
-    if (!parentBlockLayoutState.lineClamp())
+    auto lineClamp = parentBlockLayoutState.lineClamp();
+    if (!lineClamp)
         return;
-    auto legacyLineClamp = renderTreeLayoutState.legacyLineClamp();
-    if (!legacyLineClamp)
+
+    auto currentLineCount = inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
+
+    if (auto legacyLineClamp = renderTreeLayoutState.legacyLineClamp()) {
+        legacyLineClamp->currentLineCount += currentLineCount;
+        renderTreeLayoutState.setLegacyLineClamp(legacyLineClamp);
         return;
-    legacyLineClamp->currentLineCount += inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
-    renderTreeLayoutState.setLegacyLineClamp(legacyLineClamp);
+    }
+
+    // The lines we have already put on the parent's own lines are part of the clamp's budget, and the nested block
+    // has to lay out within what is left of it. A block level sibling gets this from LineClampUpdater, which drops
+    // each preceding sibling's line count from the budget as it goes.
+    if (auto renderTreeLineClamp = renderTreeLayoutState.lineClamp()) {
+        auto maximumLines = renderTreeLineClamp->maximumLines;
+        renderTreeLayoutState.setLineClamp(RenderLayoutState::LineClamp { maximumLines - std::min(maximumLines, currentLineCount), renderTreeLineClamp->shouldDiscardOverflow });
+    }
 }
 
-static inline void NODELETE updateIFCLineClamp(auto& inlineLayoutState, auto& renderTreeLayoutState)
+static inline void NODELETE updateIFCLineClampAfterLayout(auto& inlineLayoutState, auto& renderTreeLayoutState, const RenderBox& blockRenderer)
 {
     auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
 
     if (!parentBlockLayoutState.lineClamp())
         return;
-    auto legacyLineClamp = renderTreeLayoutState.legacyLineClamp();
-    if (!legacyLineClamp)
+
+    auto currentLineCount = inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
+
+    if (auto legacyLineClamp = renderTreeLayoutState.legacyLineClamp()) {
+        auto newlyConstructedLineCount = legacyLineClamp->currentLineCount - currentLineCount;
+        inlineLayoutState.setLineCountWithInlineContentIncludingNestedBlocks(currentLineCount + newlyConstructedLineCount);
         return;
-    auto newlyConstructedLineCount = legacyLineClamp->currentLineCount - inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
-    inlineLayoutState.setLineCountWithInlineContentIncludingNestedBlocks(inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks() + newlyConstructedLineCount);
+    }
+
+    // The lines the nested block just produced count towards the clamp for the lines that follow it, the way a block
+    // level sibling's do.
+    CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(blockRenderer);
+    if (blockFlow && blockFlow->childrenInline())
+        inlineLayoutState.setLineCountWithInlineContentIncludingNestedBlocks(currentLineCount + blockFlow->lineCount());
 }
 
 void layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block, LayoutPoint blockLineLogicalTopLeft, Layout::InlineLayoutState& inlineLayoutState, Layout::LayoutState& layoutState)
@@ -195,7 +217,7 @@ void layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block
 
     auto updateRenderTreeBeforeLayout = [&] {
         populateRootRendererWithFloatsFromIFC(rootBlockContainer.get(), placedFloats);
-        updateRenderTreeLegacyLineClamp(inlineLayoutState, renderTreeLayoutState);
+        updateRenderTreeLineClampBeforeLayout(inlineLayoutState, renderTreeLayoutState);
     };
     updateRenderTreeBeforeLayout();
 
@@ -218,7 +240,7 @@ void layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block
         auto& blockGeometry = layoutState.ensureGeometryForBox(block);
         auto borderBoxTop = LayoutUnit { };
 
-        auto contentOffsetAfterSelfCollapsingBlock = blockRenderer->isSelfCollapsingBlock() ? positionAndMargin.childLogicalTop - positionAndMargin.containerLogicalBottom : 0_lu;
+        auto contentOffsetAfterSelfCollapsingBlock = blockRenderer->isSelfCollapsingBlock() ? std::max(0_lu, positionAndMargin.childLogicalTop - positionAndMargin.containerLogicalBottom) : 0_lu;
         if (contentOffsetAfterSelfCollapsingBlock) {
             // This is where "next line top position" diverges from "current line's bottom".
             // See the last paragraph at https://www.w3.org/TR/CSS22/box.html#collapsing-margins
@@ -228,20 +250,32 @@ void layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block
             blockGeometry.setVerticalMargin({ { }, { } });
         } else {
             borderBoxTop = positionAndMargin.childLogicalTop - blockLineLogicalTopLeft.y();
-            blockGeometry.setVerticalMargin({ borderBoxTop, { } });
+            auto advanceAfter = LayoutUnit { };
+            if (alwaysPageBreak(blockRenderer->style().breakAfter()) || blockRenderer->isSelfCollapsingBlock())
+                advanceAfter = std::max(0_lu, positionAndMargin.containerLogicalBottom - positionAndMargin.childLogicalTop - blockRenderer->logicalHeight());
+            blockGeometry.setVerticalMargin({ borderBoxTop, advanceAfter });
         }
         blockGeometry.setTopLeft(LayoutPoint { blockGeometry.marginStart(), borderBoxTop });
 
-        updateIFCLineClamp(inlineLayoutState, renderTreeLayoutState);
-        populateIFCWithNewlyPlacedFloats(blockRenderer.get(), placedFloats, blockLineLogicalTopLeft);
-        parentBlockLayoutState.marginState() = Layout::IntegrationUtils::toMarginState(positionAndMargin.marginInfo);
+        updateIFCLineClampAfterLayout(inlineLayoutState, renderTreeLayoutState, blockRenderer.get());
+        // Floats are positioned relative to their containing block's border box, which sits at borderBoxTop within the line (see setTopLeft above) and not at the line's top left.
+        populateIFCWithNewlyPlacedFloats(blockRenderer.get(), placedFloats, blockLineLogicalTopLeft + LayoutSize { blockGeometry.marginStart(), borderBoxTop });
+        auto marginState = Layout::IntegrationUtils::toMarginState(positionAndMargin.marginInfo);
+        // This box's clearance sits above its margin before, so that margin is behind the position the content after
+        // the box starts at, even though the box keeps it for that content (CSS 2.2 8.3.1, 9.5.2). A negative margin
+        // before is not above the border box at all, which is why this is the positive part only.
+        if (auto marginBeforeWithClearance = rootBlockContainer->selfCollapsingMarginBeforeWithClear(blockRenderer.ptr()))
+            marginState.marginBeforeWithClearance = *marginBeforeWithClearance;
+        parentBlockLayoutState.marginState() = marginState;
     };
     updateIFCAfterLayout();
 }
 
 LayoutUnit formattingContextRootLogicalWidthForType(const Layout::ElementBox& box, LogicalWidthType logicalWidthType)
 {
-    ASSERT(box.establishesFormattingContext());
+    // Either a box inline layout treats as atomic, or a block level box on a line: the render tree lays both of them
+    // out, so it is the render tree that knows what they cost (see LineBuilder::handleBlockContent).
+    ASSERT(box.establishesFormattingContext() || box.isBlockLevelBox());
 
     CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
     switch (logicalWidthType) {

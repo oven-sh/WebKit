@@ -9,7 +9,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 endif ()
 
-make_directory("${CMAKE_BINARY_DIR}/WebCore/Modules")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/WebCore/Modules")
 configure_file(${WEBCORE_DIR}/WebCore.modulemap ${CMAKE_BINARY_DIR}/WebCore/Modules/module.modulemap COPYONLY)
 configure_file(${WEBCORE_DIR}/WebCore_Private.modulemap ${CMAKE_BINARY_DIR}/WebCore/Modules/module.private.modulemap COPYONLY)
 
@@ -1672,8 +1672,8 @@ add_dependencies(WebCore WebCore_CopyBundleResources)
 
 # Stage the in-tree WebCore_Private module map into the framework bundle so the
 # Swift Clang importer finds it as a real module via -F (as JavaScriptCore does,
-# and as iOS does in PlatformIOS.cmake).
-if (ENABLE_BACK_FORWARD_LIST_SWIFT)
+# and as iOS does below).
+if (SWIFT_REQUIRED)
     set(_webcore_modules_dir "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework/Versions/A/Modules")
     add_custom_command(
         OUTPUT "${_webcore_modules_dir}/module.private.modulemap"

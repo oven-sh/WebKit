@@ -30,6 +30,7 @@ ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG MARCH_FLAG="-mcpu=apple-m1"
 ARG LLVM_VERSION="21"
+ARG LLVM_DEBS_SHA256="4a79b0eae89af72b082997d361198f16aaefce3fa8ad3c56c8e97311ff31dd5f"
 ARG BOOTSTRAP_CMDS_TAG="bootstrap_cmds-138"
 # Matches the native macOS lane's CMAKE_C_FLAGS (build-reusable.yml) plus -g
 # from mac-release.bash. Cross-only additions live in the build stage.
@@ -54,6 +55,7 @@ FROM ubuntu:24.04 AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
+ARG LLVM_DEBS_SHA256
 ARG MACOS_ARCH
 ARG MACOS_SDK_VERSION
 ARG MACOS_SDK_CLT_RELEASE
@@ -71,8 +73,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Host clang (same version Bun uses) — we cross-compile via --target/-isysroot
-# and link with ld64.lld (lld's Mach-O port).
-RUN wget -qO- https://apt.llvm.org/llvm.sh | bash -s -- ${LLVM_VERSION} && \
+# and link with ld64.lld (lld's Mach-O port). The debs are mirrored from
+# apt.llvm.org to a GitHub release (see scripts/mirror-llvm-debs.sh) so the
+# build doesn't depend on it.
+ADD --checksum=sha256:${LLVM_DEBS_SHA256} \
+    https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-noble-amd64.tar.gz /tmp/llvm.tar.gz
+RUN mkdir -p /tmp/llvm && tar xzf /tmp/llvm.tar.gz -C /tmp/llvm && \
+    apt-get update && apt-get install -y /tmp/llvm/*.deb && \
+    rm -rf /tmp/llvm /tmp/llvm.tar.gz /var/lib/apt/lists/* && \
     for t in clang clang++ ld64.lld lld llvm-ar llvm-ranlib llvm-nm llvm-cxxfilt; do \
       ln -sf /usr/bin/${t}-${LLVM_VERSION} /usr/local/bin/${t}; \
     done
@@ -186,8 +194,9 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     export MIGCOM="$(which migcom)" && \
     export ENABLE_ASSERTS="AUTO" && \
     if [ -n "${ENABLE_SANITIZERS}" ]; then export ENABLE_ASSERTS="ON"; fi && \
-    export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
-    export CXXFLAGS="${CROSS} -nostdinc++ -isystem ${MACOS_SDK}/usr/include/c++/v1 ${DEFAULT_CFLAGS} ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
+    export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
+    export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} $G ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
+    export CXXFLAGS="${CROSS} -nostdinc++ -isystem ${MACOS_SDK}/usr/include/c++/v1 ${DEFAULT_CFLAGS} $G ${CPP_FLAGS} ${MARCH_FLAG} ${LTO_FLAG} -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
     cd /webkitbuild && \
     cmake \
     -DCMAKE_SYSTEM_NAME=Darwin \

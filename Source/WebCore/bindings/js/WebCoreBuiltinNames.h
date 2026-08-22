@@ -196,6 +196,7 @@ namespace WebCore {
     macro(DigitalCredential) \
     macro(DocumentTimeline) \
     macro(DynamicsCompressorNode) \
+    macro(ElementImage) \
     macro(ElementInternals) \
     macro(EncodedAudioChunk) \
     macro(EncodedVideoChunk) \
@@ -293,6 +294,9 @@ namespace WebCore {
     macro(ImageBitmap) \
     macro(ImageBitmapRenderingContext) \
     macro(ImageCapture) \
+    macro(ImageDecoder) \
+    macro(ImageTrack) \
+    macro(ImageTrackList) \
     macro(IdleDeadline) \
     macro(InputDeviceInfo) \
     macro(InputEvent) \
@@ -338,6 +342,7 @@ namespace WebCore {
     macro(NavigationCurrentEntryChangeEvent) \
     macro(NavigationDestination) \
     macro(NavigationHistoryEntry) \
+    macro(NavigationPrecommitController) \
     macro(NavigationPreloadManager) \
     macro(NavigationTransition) \
     macro(NavigatorCredentials) \
@@ -355,6 +360,7 @@ namespace WebCore {
     macro(OffscreenCanvasRenderingContext2D) \
     macro(Origin) \
     macro(OscillatorNode) \
+    macro(PaintEvent) \
     macro(PaintRenderingContext2D) \
     macro(PannerNode) \
     macro(PaymentAddress) \

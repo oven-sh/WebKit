@@ -124,10 +124,6 @@ public:
     void cancelGetDisplayMediaPrompt();
 #endif
 
-#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    Ref<GenericPromise> tryToSetAudioSessionActiveForProcess(WebCore::ProcessIdentifier, bool);
-#endif
-
     void removeSession(PAL::SessionID);
 
 #if PLATFORM(MAC)
@@ -218,7 +214,7 @@ private:
     // ResponsivenessTimer::Client
     void didBecomeUnresponsive() final;
 
-    void terminateWebProcess(WebCore::ProcessIdentifier);
+    void terminateWebProcess(WebCore::ProcessIdentifier, IPC::MessageName);
     void processIsReadyToExit();
 
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)

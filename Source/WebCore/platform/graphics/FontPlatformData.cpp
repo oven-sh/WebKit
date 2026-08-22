@@ -43,8 +43,8 @@ FontPlatformData::FontPlatformData(WTF::HashTableDeletedValueType)
 
 FontPlatformData::FontPlatformData() = default;
 
-FontPlatformData::FontPlatformData(float size, bool syntheticBold, bool syntheticOblique, FontOrientation orientation, FontWidthVariant widthVariant, TextRenderingMode textRenderingMode, const FontCustomPlatformData* customPlatformData)
-: m_metadata { size, orientation, widthVariant, textRenderingMode, syntheticBold, syntheticOblique }
+FontPlatformData::FontPlatformData(float size, bool syntheticBold, bool syntheticOblique, FontOrientation orientation, FontWidthVariant widthVariant, TextRenderingMode textRenderingMode, const FontMetricsOverrides& metricsOverrides, const FontCustomPlatformData* customPlatformData)
+: m_metadata { size, orientation, widthVariant, textRenderingMode, syntheticBold, syntheticOblique, metricsOverrides }
 , m_customPlatformData(customPlatformData)
 {
 }
@@ -55,7 +55,10 @@ FontPlatformData::FontPlatformData(const FontMetadata& metadata, const FontCusto
 {
 }
 
+#if !USE(SKIA)
 FontPlatformData::~FontPlatformData() = default;
+#endif
+
 FontPlatformData::FontPlatformData(const FontPlatformData&) = default;
 FontPlatformData& FontPlatformData::operator=(const FontPlatformData&) = default;
 

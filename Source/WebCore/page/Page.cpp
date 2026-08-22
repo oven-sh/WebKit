@@ -43,12 +43,12 @@
 #include "BroadcastChannelRegistry.h"
 #include "CacheStorageProvider.h"
 #include "CachedImage.h"
+#include "CanvasRenderingContext.h"
 #include "CaptionDisplaySettingsClient.h"
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "CommonAtomStrings.h"
 #include "CommonVM.h"
-#include "ConstantPropertyMap.h"
 #include "ContainerNodeInlines.h"
 #include "ContextMenuClient.h"
 #include "ContextMenuController.h"
@@ -119,6 +119,7 @@
 #include "LayoutDisallowedScope.h"
 #include "LegacySchemeRegistry.h"
 #include "LoaderStrategy.h"
+#include "LocalDOMWindow.h"
 #include "LocalFrameLoaderClient.h"
 #include "LocalFrameViewInlines.h"
 #include "LogInitialization.h"
@@ -131,6 +132,7 @@
 #include "ModelPlayerProvider.h"
 #include "NavigationScheduler.h"
 #include "Navigator.h"
+#include "NavigatorAudioSession.h"
 #include "NavigatorGamepad.h"
 #include "NavigatorMediaSession.h"
 #include "OpportunisticTaskScheduler.h"
@@ -192,6 +194,7 @@
 #include "StringCallback.h"
 #include "StyleAdjuster.h"
 #include "StyleDocumentScope.h"
+#include "StyleEnvironmentVariables.h"
 #include "StyleResolver.h"
 #include "SubframeLoader.h"
 #include "SubresourceLoader.h"
@@ -553,6 +556,8 @@ Page::Page(PageConfiguration&& pageConfiguration)
     if (pageConfiguration.imageTranslationLanguageIdentifiers)
         protect(imageAnalysisQueue())->setTranslationLanguageIdentifiers(WTF::move(*pageConfiguration.imageTranslationLanguageIdentifiers));
 #endif
+
+    m_displayedTranslationLocaleIdentifier = WTF::move(pageConfiguration.displayedTranslationLocaleIdentifier);
 }
 
 Page::~Page()
@@ -920,6 +925,21 @@ DOMAudioSessionType Page::audioSessionType() const
 {
     return m_topDocumentSyncData->audioSessionType;
 }
+
+void Page::setAudioSessionState(DOMAudioSessionState audioSessionState)
+{
+    if (m_topDocumentSyncData->audioSessionState == audioSessionState)
+        return;
+
+    m_topDocumentSyncData->audioSessionState = audioSessionState;
+    if (settings().siteIsolationEnabled())
+        documentSyncClient().broadcastAudioSessionStateToOtherProcesses(audioSessionState);
+}
+
+DOMAudioSessionState Page::audioSessionState() const
+{
+    return m_topDocumentSyncData->audioSessionState;
+}
 #endif
 
 void Page::setUserDidInteractWithPage(bool didInteract)
@@ -984,17 +1004,39 @@ void Page::updateTopDocumentSyncData(const DocumentSyncSerializationData& data)
     case DocumentSyncDataType::IsAutofocusProcessed:
     case DocumentSyncDataType::IsClosing:
     case DocumentSyncDataType::UserDidInteractWithPage:
-#if ENABLE(DOM_AUDIO_SESSION)
-    case DocumentSyncDataType::AudioSessionType:
-#endif
         protect(m_topDocumentSyncData)->update(data);
         break;
+#if ENABLE(DOM_AUDIO_SESSION)
+    case DocumentSyncDataType::AudioSessionType:
+        protect(m_topDocumentSyncData)->update(data);
+        // The type was set by a document in another process. Each process computes its own audio
+        // session category, so apply the override the type implies here too.
+        DOMAudioSession::applyTypeToAudioSessionCategoryOverride(m_topDocumentSyncData->audioSessionType);
+        break;
+    case DocumentSyncDataType::AudioSessionState:
+        protect(m_topDocumentSyncData)->update(data);
+        forEachDocument([](Document& document) {
+            RefPtr window = document.window();
+            RefPtr navigator = window ? window->optionalNavigator() : nullptr;
+            if (!navigator)
+                return;
+            if (RefPtr audioSession = NavigatorAudioSession::audioSessionIfExists(*navigator))
+                audioSession->topDocumentAudioSessionStateChanged();
+        });
+        break;
+#endif
     }
 }
 
 void Page::updateTopDocumentSyncData(Ref<DocumentSyncData>&& data)
 {
     m_topDocumentSyncData = WTF::move(data);
+
+#if ENABLE(DOM_AUDIO_SESSION)
+    // This path carries the whole state at once, when a remote page is set up in this process. Apply
+    // the override the type implies, as the per-field path does for later changes.
+    DOMAudioSession::applyTypeToAudioSessionCategoryOverride(m_topDocumentSyncData->audioSessionType);
+#endif
 }
 
 void Page::setMainFrameURLFragment(String&& fragment)
@@ -1006,6 +1048,11 @@ void Page::setMainFrameURLFragment(String&& fragment)
 const URL& Page::mainFrameURL() const
 {
     return m_topDocumentSyncData->documentURL;
+}
+
+void Page::didObserveFirstPartyUserGesture()
+{
+    chrome().client().didObserveFirstPartyUserGesture();
 }
 
 SecurityOrigin& Page::mainFrameOrigin() const
@@ -2814,12 +2861,29 @@ std::optional<FramesPerSecond> Page::preferredRenderingUpdateFramesPerSecond(Opt
         }
     });
 
+    for (Ref canvasContext : m_gpuCanvasesRequestingPacing) {
+        if (auto canvasPreferredFrameRate = canvasContext->preferredRenderingUpdateFramesPerSecond()) {
+            if (!frameRate || *canvasPreferredFrameRate < *frameRate)
+                frameRate = *canvasPreferredFrameRate;
+        }
+    }
+
     return frameRate;
 }
 
 Seconds Page::preferredRenderingUpdateInterval() const
 {
     return preferredFrameInterval(m_throttlingReasons, m_displayNominalFramesPerSecond, settings().preferPageRenderingUpdatesNear60FPSEnabled());
+}
+
+void Page::addGPUCanvasRequestingRenderingUpdatePacing(CanvasRenderingContext& context)
+{
+    m_gpuCanvasesRequestingPacing.add(context);
+}
+
+void Page::removeGPUCanvasRequestingRenderingUpdatePacing(CanvasRenderingContext& context)
+{
+    m_gpuCanvasesRequestingPacing.remove(context);
 }
 
 void Page::setIsVisuallyIdleInternal(bool isVisuallyIdle)
@@ -4345,7 +4409,7 @@ void Page::setUnobscuredSafeAreaInsets(const FloatBoxExtent& insets)
     m_unobscuredSafeAreaInsets = insets;
 
     forEachDocument([&] (Document& document) {
-        document.constantProperties().didChangeSafeAreaInsets();
+        document.styleScope().environmentVariables().didChangeSafeAreaInsets();
     });
 }
 
@@ -4400,19 +4464,19 @@ bool Page::useDarkAppearance() const
     if (m_useDarkAppearanceOverride)
         return m_useDarkAppearanceOverride.value();
 
+    if (mainFrame().isPrinting())
+        return false;
+
     if (RefPtr localMainFrame = this->localMainFrame()) {
-        // Printed page should always use light appearance (i.e return false)
-        // FIXME: implement this logic for remote main frames.
+        // Media type can be non-screen without printing (Inspector emulation, client override).
         RefPtr view = localMainFrame->view();
         if (!view || view->mediaType() != screenAtom())
             return false;
-
-        if (auto* documentLoader = localMainFrame->loader().documentLoader()) {
-            auto colorSchemePreference = documentLoader->colorSchemePreference();
-            if (colorSchemePreference != ColorSchemePreference::NoPreference)
-                return colorSchemePreference == ColorSchemePreference::Dark;
-        }
     }
+
+    auto colorSchemePreference = protect(mainFrame())->colorSchemePreference();
+    if (colorSchemePreference != ColorSchemePreference::NoPreference)
+        return colorSchemePreference == ColorSchemePreference::Dark;
 
     return m_useDarkAppearance;
 #else
@@ -4438,7 +4502,7 @@ void Page::setFullscreenInsets(const FloatBoxExtent& insets)
     m_fullscreenInsets = insets;
 
     forEachDocument([] (Document& document) {
-        document.constantProperties().didChangeFullscreenInsets();
+        document.styleScope().environmentVariables().didChangeFullscreenInsets();
     });
 }
 
@@ -4450,7 +4514,7 @@ void Page::setFullscreenAutoHideDuration(Seconds duration)
     m_fullscreenAutoHideDuration = duration;
 
     forEachDocument([&] (Document& document) {
-        document.constantProperties().setFullscreenAutoHideDuration(duration);
+        document.styleScope().environmentVariables().setFullscreenAutoHideDuration(duration);
     });
 }
 
@@ -4500,6 +4564,21 @@ void Page::enableICECandidateFiltering()
 LocalFrame* Page::localMainFrame() const
 {
     return dynamicDowncast<LocalFrame>(mainFrame());
+}
+
+LocalFrame* Page::localMainOrRootFrame() const
+{
+    if (auto* localMainFrame = this->localMainFrame())
+        return localMainFrame;
+
+    // Under Site Isolation the main frame can be remote in this process; fall back to the first
+    // live local root frame (normally exactly one per WebContent process for a given page).
+    for (auto& rootFrame : m_rootFrames) {
+        if (rootFrame->view())
+            return rootFrame.ptr();
+    }
+
+    return nullptr;
 }
 
 Document* Page::localTopDocument() const
@@ -5600,6 +5679,11 @@ void Page::setDefaultSpatialTrackingLabel(const String& label)
     });
 }
 #endif
+
+void Page::setDisplayedTranslationLocaleIdentifier(String&& localeIdentifier)
+{
+    m_displayedTranslationLocaleIdentifier = WTF::move(localeIdentifier);
+}
 
 #if ENABLE(GAMEPAD)
 void Page::gamepadsRecentlyAccessed()

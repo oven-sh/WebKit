@@ -36,6 +36,8 @@
 
 namespace JSC {
 
+JS_EXPORT_PRIVATE std::optional<TimeZone> timeZoneFromRecord(const ISO8601::ISOStringTimeZoneParseRecord&);
+
 class TemporalZonedDateTime final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -49,7 +51,6 @@ public:
     }
 
     static TemporalZonedDateTime* create(VM&, Structure*, ISO8601::ExactTime, TimeZone, CalendarID);
-    static TemporalZonedDateTime* tryCreate(JSGlobalObject*, Structure*, ISO8601::ExactTime, TimeZone, CalendarID);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     static TemporalZonedDateTime* from(JSGlobalObject*, JSValue item);
@@ -75,8 +76,6 @@ public:
 
     static std::optional<ISO8601::ExactTime> getEpochNanosecondsFor(JSGlobalObject*, const TimeZone&, const ISO8601::PlainDate&, const ISO8601::PlainTime&, TemporalDisambiguation);
 
-    TemporalZonedDateTime* withExactTime(JSGlobalObject*, ISO8601::ExactTime epochNs) const;
-
 private:
     TemporalZonedDateTime(VM&, Structure*, ISO8601::ExactTime, TimeZone, CalendarID);
     DECLARE_DEFAULT_FINISH_CREATION;
@@ -85,5 +84,8 @@ private:
     TimeZone m_timeZone;
     CalendarID m_calendarID { 0 };
 };
+
+TemporalZonedDateTime* createTemporalZonedDateTime(JSGlobalObject*, ISO8601::ExactTime, TimeZone, CalendarID);
+TemporalZonedDateTime* createTemporalZonedDateTime(JSGlobalObject*, ISO8601::ExactTime, TimeZone, CalendarID, TemporalNewTarget);
 
 } // namespace JSC

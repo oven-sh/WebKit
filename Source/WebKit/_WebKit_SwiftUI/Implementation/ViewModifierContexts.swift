@@ -27,7 +27,7 @@ import SwiftUI
 @_spi(Private) import WebKit
 
 struct ContextMenuContext {
-    #if os(macOS)
+    #if WTF_PLATFORM_MAC
     let menu: @MainActor (WebView.ActivatedElementInfo) -> NSMenu
     #endif
 }
@@ -58,5 +58,9 @@ struct ImmersiveEnvironmentRequestContext {
     let dismiss: @MainActor (_ environment: WebPage.ImmersiveEnvironment) async -> Void
 }
 #endif
+
+struct OnAttachmentActivityPhaseContext {
+    let action: @MainActor (_ phase: WebView.AttachmentActivityPhase) -> Void
+}
 
 #endif

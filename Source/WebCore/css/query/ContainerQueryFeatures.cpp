@@ -49,6 +49,7 @@
 #include "StyleBuilder.h"
 #include "StyleCustomProperty.h"
 #include "StyleCustomPropertyRegistry.h"
+#include "StyleLocalPropertyRegistry.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StyleZoomPrimitivesInlines.h"
@@ -270,16 +271,25 @@ struct StyleFeatureSchema : public FeatureSchema {
     {
     }
 
+    // The compared value needs the same registrations as the queried property, or a shadowed
+    // registration compares a token stream against a typed value.
+    // https://drafts.csswg.org/css-mixins/#resolve-function-styles
+    static const Style::LocalPropertyRegistry* localPropertyRegistry(const FeatureEvaluationContext& context)
+    {
+        CheckedPtr builderState = context.conversionData.styleBuilderState();
+        return builderState ? builderState->localPropertyRegistry() : nullptr;
+    }
+
     // FeatureSchema conformance
 
     EvaluationResult evaluate(const MQ::Feature& feature, const FeatureEvaluationContext& context) const override
     {
-        CheckedPtr style = context.conversionData.style();
-        if (!style || !context.conversionData.parentStyle())
+        if (!context.conversionData.parentStyle())
             return EvaluationResult::False;
 
+        CheckedRef style = context.conversionData.style();
         if (feature.syntax == Syntax::Range)
-            return evaluateRange(feature, context, *style);
+            return evaluateRange(feature, context, style);
 
         RefPtr customPropertyValue = style->customPropertyValue(feature.name);
         if (!feature.rightComparison)
@@ -291,13 +301,14 @@ struct StyleFeatureSchema : public FeatureSchema {
 
             // Resolve the queried custom property value for var() references, css-wide keywords and registered properties.
             auto builderContext = Style::BuilderContext {
-                context.document.get(),
-                context.conversionData.parentStyle(),
-                context.conversionData.rootStyle(),
-                context.conversionData.elementForContainerUnitResolution()
+                .document = context.document.get(),
+                .parentStyle = context.conversionData.parentStyle(),
+                .rootElementStyle = context.conversionData.rootStyle(),
+                .element = context.conversionData.elementForContainerUnitResolution(),
+                .localPropertyRegistry = localPropertyRegistry(context)
             };
 
-            auto dummyStyle = Style::ComputedStyle::clone(*style);
+            auto dummyStyle = Style::ComputedStyle::clone(style);
             auto dummyMatchResult = Style::MatchResult::create();
 
             auto styleBuilder = Style::Builder { dummyStyle, WTF::move(builderContext), dummyMatchResult };
@@ -326,10 +337,11 @@ struct StyleFeatureSchema : public FeatureSchema {
         auto ensureBuilder = [&]() -> Style::Builder& {
             if (!styleBuilder) {
                 auto builderContext = Style::BuilderContext {
-                    context.document.get(),
-                    context.conversionData.parentStyle(),
-                    context.conversionData.rootStyle(),
-                    context.conversionData.elementForContainerUnitResolution()
+                    .document = context.document.get(),
+                    .parentStyle = context.conversionData.parentStyle(),
+                    .rootElementStyle = context.conversionData.rootStyle(),
+                    .element = context.conversionData.elementForContainerUnitResolution(),
+                    .localPropertyRegistry = localPropertyRegistry(context)
                 };
                 dummyStyle = Style::ComputedStyle::clonePtr(style);
                 dummyMatchResult = Style::MatchResult::create();

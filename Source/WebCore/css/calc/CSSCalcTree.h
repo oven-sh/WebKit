@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <WebCore/CSSCalcRandomSharingOptions.h>
+#include <WebCore/CSSCalcRandomSharing.h>
 #include <WebCore/CSSCalcType.h>
 #include <WebCore/CSSCustomIdent.h>
 #include <WebCore/CSSPrimitiveNumeric.h>
@@ -765,16 +765,19 @@ struct Random {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Random);
     static constexpr auto id = CSSValueRandom;
 
-    // <random-value-sharing> = [ [ auto | <dashed-ident> ] || element-scoped ] | fixed <number [0,1]>
-    using SharingOptions = RandomSharingOptions;
+    // <random-key> = auto | <random-cache-key> | fixed <number [0,1]>
+    // <random-cache-key> = <dashed-ident> || element-scoped || [ property-scoped | property-index-scoped ]
+    // NOTE: <random-ua-ident> is intentionally not yet supported (follow-up).
+    using SharingAuto = RandomSharingAuto;
+    using Key = RandomSharingKey;
     struct SharingFixed {
         CSS::Number<CSS::ClosedUnitRange> value;
 
         bool operator==(const SharingFixed&) const = default;
     };
-    using Sharing = Variant<SharingOptions, SharingFixed>;
+    using Sharing = Variant<SharingAuto, Key, SharingFixed>;
 
-    // <random()> = random( <random-value-sharing>? , <calc-sum>, <calc-sum>, <calc-sum>? )
+    // <random()> = random( <random-key>? , <calc-sum>, <calc-sum>, <calc-sum>? )
     //     - INPUT: "same" <number>, <dimension>, or <percentage>
     //     - OUTPUT: same type
     static constexpr auto input = AllowedTypes::Any;
@@ -989,21 +992,21 @@ std::optional<Type> toType(const CalcMix&);
 constexpr CSSUnitType toCSSUnit(const CanonicalDimension::Dimension& dimension)
 {
     switch (dimension) {
-    case CanonicalDimension::Dimension::Length:         return CSSUnitType::CSS_PX;
-    case CanonicalDimension::Dimension::Angle:          return CSSUnitType::CSS_DEG;
-    case CanonicalDimension::Dimension::Time:           return CSSUnitType::CSS_S;
-    case CanonicalDimension::Dimension::Frequency:      return CSSUnitType::CSS_HZ;
-    case CanonicalDimension::Dimension::Resolution:     return CSSUnitType::CSS_DPPX;
-    case CanonicalDimension::Dimension::Flex:           return CSSUnitType::CSS_FR;
+    case CanonicalDimension::Dimension::Length:         return CSSUnitType::Px;
+    case CanonicalDimension::Dimension::Angle:          return CSSUnitType::Deg;
+    case CanonicalDimension::Dimension::Time:           return CSSUnitType::S;
+    case CanonicalDimension::Dimension::Frequency:      return CSSUnitType::Hz;
+    case CanonicalDimension::Dimension::Resolution:     return CSSUnitType::Dppx;
+    case CanonicalDimension::Dimension::Flex:           return CSSUnitType::Fr;
     }
 
     ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-    return CSSUnitType::CSS_PX;
+    return CSSUnitType::Px;
 }
 
 // Maps Numeric type to its CSSUnitType counterpart.
-constexpr CSSUnitType toCSSUnit(const Number&) { return CSSUnitType::CSS_NUMBER; }
-constexpr CSSUnitType toCSSUnit(const Percentage&) { return CSSUnitType::CSS_PERCENTAGE; }
+constexpr CSSUnitType toCSSUnit(const Number&) { return CSSUnitType::Number; }
+constexpr CSSUnitType toCSSUnit(const Percentage&) { return CSSUnitType::Percentage; }
 constexpr CSSUnitType toCSSUnit(const CanonicalDimension& dimension) { return toCSSUnit(dimension.dimension); }
 constexpr CSSUnitType toCSSUnit(const NonCanonicalDimension& dimension) { return dimension.unit; }
 

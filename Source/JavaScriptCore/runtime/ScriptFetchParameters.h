@@ -42,6 +42,7 @@ public:
         JavaScript,
         WebAssembly,
         JSON,
+        Text,
 #if USE(BUN_JSC_ADDITIONS)
         HostDefined,
 #endif
@@ -94,6 +95,11 @@ public:
     {
         if (string == "json"_s)
             return Type::JSON;
+#if !USE(BUN_JSC_ADDITIONS)
+        // Bun loads `with { type: "text" }` itself, so there it stays a HostDefined type below.
+        if (string == "text"_s)
+            return Type::Text;
+#endif
         if (string == "webassembly"_s)
             return Type::WebAssembly;
 #if USE(BUN_JSC_ADDITIONS)

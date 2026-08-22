@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2024-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,43 +27,81 @@
 #include "config.h"
 #include "TimelineRangeValue.h"
 
-#include "CSSNumericFactory.h"
 #include "CSSPropertyParserConsumer+Timeline.h"
-#include "CSSValuePair.h"
-#include "CSSValuePool.h"
 #include "Document.h"
-#include "Element.h"
-#include "NodeDocument.h"
+#include "StylePrimitiveNumericTypes+TypedCSSOMConversions.h"
 #include "StyleSingleAnimationRange.h"
+#include "TimelineRangeOffset.h"
 
 namespace WebCore {
 
-RefPtr<CSSValue> convertToCSSValue(TimelineRangeValue&& value, RefPtr<Element> element, Style::SingleAnimationRangeType type)
+static std::optional<Style::SingleAnimationRangeEdgeOffset> convertToOffset(Ref<CSSNumericValue>&& numericValue)
 {
-    if (!element)
-        return { };
+    return Style::toAbsoluteStyleFromCSSNumericValue<Style::SingleAnimationRangeEdgeOffset>(WTF::move(numericValue));
+}
 
-    Ref document = element->document();
+template<typename RangeEdge>
+static std::optional<RangeEdge> convertToRangeEdge(TimelineRangeOffset&& rangeOffset)
+{
+    if (!rangeOffset.rangeName.isNull()) {
+        auto rangeName = CSSPropertyParserHelpers::parseTimelineRangeNameRaw(rangeOffset.rangeName);
+        if (!rangeName)
+            return std::nullopt;
+        if (RefPtr offset = WTF::move(rangeOffset.offset)) {
+            auto rangeOffset = convertToOffset(offset.releaseNonNull());
+            if (!rangeOffset)
+                return std::nullopt;
+            return RangeEdge { *rangeName, WTF::move(*rangeOffset) };
+        }
+        return RangeEdge { *rangeName };
+    }
+    if (RefPtr offset = WTF::move(rangeOffset.offset)) {
+        auto rangeOffset = convertToOffset(offset.releaseNonNull());
+        if (!rangeOffset)
+            return std::nullopt;
+        return RangeEdge { WTF::move(*rangeOffset) };
+    }
+    return std::nullopt;
+}
 
-    return WTF::switchOn(value,
-        [&](String& rangeString) -> RefPtr<CSSValue> {
-            return CSSPropertyParserHelpers::parseSingleAnimationRange(rangeString, document->cssParserContext(), type);
+template<typename RangeEdge>
+static std::optional<RangeEdge> convertToRangeEdge(Ref<CSSOMKeywordValue>&& rangeKeyword)
+{
+    auto rangeName = CSSPropertyParserHelpers::parseTimelineRangeNameOrNormalRaw(rangeKeyword->value());
+    if (!rangeName)
+        return std::nullopt;
+    return RangeEdge { *rangeName };
+}
+
+template<typename RangeEdge>
+static std::optional<RangeEdge> convertToRangeEdge(Ref<CSSNumericValue>&& rangeValue)
+{
+    auto rangeOffset = convertToOffset(WTF::move(rangeValue));
+    if (!rangeOffset)
+        return std::nullopt;
+    return RangeEdge { WTF::move(*rangeOffset) };
+}
+
+std::optional<Style::SingleAnimationRangeStart> validateTimelineRangeStart(TimelineRangeValue&& value, const Document& document)
+{
+    return WTF::switchOn(WTF::move(value),
+        [&](String&& rangeString) -> std::optional<Style::SingleAnimationRangeStart> {
+            return CSSPropertyParserHelpers::parseAbsoluteSingleAnimationRangeStartRaw(rangeString, document.cssParserContext(), document);
         },
-        [&](TimelineRangeOffset& rangeOffset) -> RefPtr<CSSValue> {
-            if (auto consumedRangeName = CSSPropertyParserHelpers::parseSingleAnimationRange(rangeOffset.rangeName, document->cssParserContext(), type)) {
-                if (RefPtr offset = rangeOffset.offset)
-                    return CSSValuePair::createNoncoalescing(*consumedRangeName, *offset->toCSSValue());
-                return consumedRangeName;
-            }
-            if (RefPtr offset = rangeOffset.offset)
-                return offset->toCSSValue();
-            return nullptr;
+        [](auto&& value) -> std::optional<Style::SingleAnimationRangeStart> {
+            return convertToRangeEdge<Style::SingleAnimationRangeStart>(WTF::move(value));
+        }
+    );
+}
+
+std::optional<Style::SingleAnimationRangeEnd> validateTimelineRangeEnd(TimelineRangeValue&& value, const Document& document)
+{
+    return WTF::switchOn(WTF::move(value),
+        [&](String&& rangeString) -> std::optional<Style::SingleAnimationRangeEnd> {
+            return CSSPropertyParserHelpers::parseAbsoluteSingleAnimationRangeEndRaw(rangeString, document.cssParserContext(), document);
         },
-        [&](Ref<CSSOMKeywordValue> rangeKeyword) {
-            return rangeKeyword->toCSSValue();
-        },
-        [&](Ref<CSSNumericValue> rangeValue) {
-            return rangeValue->toCSSValue();
+        [](auto&& value) -> std::optional<Style::SingleAnimationRangeEnd> {
+            return convertToRangeEdge<Style::SingleAnimationRangeEnd>(WTF::move(value));
         }
     );
 }

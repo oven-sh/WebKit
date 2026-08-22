@@ -39,4 +39,11 @@ void Config::enableRestrictedOptions()
     g_jscConfig.restrictedOptionsEnabled = true;
 }
 
+void Config::disableEnvironmentOptions()
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    RELEASE_ASSERT(!g_jscConfig.initializeHasBeenCalled);
+    g_jscConfig.environmentOptionsDisabled = true;
+}
+
 } // namespace JSC

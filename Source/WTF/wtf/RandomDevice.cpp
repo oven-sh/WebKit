@@ -50,7 +50,6 @@
 
 #if OS(WINDOWS)
 #include <windows.h>
-#include <wincrypt.h> // windows.h must be included before wincrypt.h.
 #endif
 
 #if OS(DARWIN)
@@ -63,6 +62,27 @@
 #endif
 
 namespace WTF {
+
+#if OS(WINDOWS)
+// ProcessPrng (bcryptprimitives.dll) is the primitive that BCryptGenRandom and
+// RtlGenRandom bottom out in; calling it directly avoids loading the CNG/CryptoAPI
+// provider stacks on first use. It has no import library, so resolve it once.
+static void processPrng(std::span<uint8_t> buffer)
+{
+    using ProcessPrngFunction = BOOL (WINAPI*)(PBYTE, SIZE_T);
+    static const ProcessPrngFunction function = [] {
+        ProcessPrngFunction result = nullptr;
+        if (HMODULE module = LoadLibraryExW(L"bcryptprimitives.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
+            result = reinterpret_cast<ProcessPrngFunction>(GetProcAddress(module, "ProcessPrng"));
+        if (!result)
+            CRASH();
+        return result;
+    }();
+    // Documented to always return TRUE; checked to stay fail-closed regardless.
+    if (!function(buffer.data(), buffer.size()))
+        CRASH();
+}
+#endif
 
 #if !OS(DARWIN) && !OS(FUCHSIA) && OS(UNIX)
 NEVER_INLINE NO_RETURN_DUE_TO_CRASH static void crashUnableToOpenURandom()
@@ -141,14 +161,7 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
             amountRead += currentRead;
     }
 #elif OS(WINDOWS)
-    // FIXME: We cannot ensure that Cryptographic Service Provider context and CryptGenRandom are safe across threads.
-    // If it is safe, we can acquire context per RandomDevice.
-    HCRYPTPROV hCryptProv = 0;
-    if (!CryptAcquireContext(&hCryptProv, nullptr, MS_DEF_PROV, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
-        CRASH();
-    if (!CryptGenRandom(hCryptProv, buffer.size(), buffer.data()))
-        CRASH();
-    CryptReleaseContext(hCryptProv, 0);
+    processPrng(buffer);
 #else
 #error "This configuration doesn't have a strong source of randomness."
 // WARNING: When adding new sources of OS randomness, the randomness must

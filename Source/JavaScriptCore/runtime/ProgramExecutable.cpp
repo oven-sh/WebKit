@@ -82,7 +82,11 @@ static ALWAYS_INLINE bool requiresCanDeclareGlobalFunctionQuirk()
 #endif
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* globalObject, JSScope* scope, UnlinkedProgramCodeBlock* precompiled)
+#else
 JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* globalObject, JSScope* scope)
+#endif
 {
     DeferTermination deferScope(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -93,8 +97,18 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
 
     ParserError error;
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
+#if USE(BUN_JSC_ADDITIONS)
+    UnlinkedProgramCodeBlock* unlinkedCodeBlock = nullptr;
+    if (precompiled && precompiled->codeGenerationMode() == codeGenerationMode) {
+        unlinkedCodeBlock = precompiled;
+        recordParseFromUnlinkedCodeBlock(this, source(), unlinkedCodeBlock);
+    } else {
+        unlinkedCodeBlock = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, this, source(), codeGenerationMode, error);
+    }
+#else
     UnlinkedProgramCodeBlock* unlinkedCodeBlock = vm.codeCache()->getUnlinkedProgramCodeBlock(
         vm, this, source(), codeGenerationMode, error);
+#endif
 
     if (globalObject->hasDebugger())
         globalObject->debugger()->sourceParsed(globalObject, source().provider(), error.line(), error.message());

@@ -140,6 +140,12 @@ MediaSessionManagerGLib::MediaSessionManagerGLib(GRefPtr<GDBusNodeInfo>&& mprisI
 
 MediaSessionManagerGLib::~MediaSessionManagerGLib() = default;
 
+void MediaSessionManagerGLib::resetToConsistentStateForTesting()
+{
+    PlatformMediaSessionManager::resetToConsistentStateForTesting();
+    setDBusNotificationsEnabled(false);
+}
+
 void MediaSessionManagerGLib::beginInterruption(PlatformMediaSession::InterruptionType type)
 {
     if (type == PlatformMediaSession::InterruptionType::SystemInterruption) {
@@ -349,7 +355,7 @@ void MediaSessionManagerGLib::updateNowPlayingInfo()
     m_lastUpdatedNowPlayingInfoUniqueIdentifier = nowPlayingInfo->uniqueIdentifier;
 
     double currentTime = nowPlayingInfo->currentTime;
-    if (std::isfinite(currentTime) && currentTime != MediaPlayer::invalidTime() && nowPlayingInfo->supportsSeeking)
+    if (std::isfinite(currentTime) && currentTime != MediaPlayer::invalidTime())
         m_lastUpdatedNowPlayingElapsedTime = currentTime;
 
     m_nowPlayingActive = nowPlayingInfo->allowsNowPlayingControlsVisibility;

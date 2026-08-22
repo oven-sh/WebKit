@@ -53,20 +53,46 @@ public:
     }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static SyntheticModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier& moduleKey);
+    static SyntheticModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier& moduleKey, SourceProviderSourceType);
+
     static SyntheticModuleRecord* parseJSONModule(JSGlobalObject*, const Identifier& moduleKey, SourceCode&&);
+    static SyntheticModuleRecord* createTextModule(JSGlobalObject*, const Identifier& moduleKey, SourceCode&&);
 
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
     JS_EXPORT_PRIVATE JSValue NODELETE evaluate(JSGlobalObject*);
 
-    JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues);
+#if USE(BUN_JSC_ADDITIONS)
+    // Creates a record (reported as a JavaScript module, SourceProviderSourceType::Module) exporting exportValues
+    // under exportNames. An empty JSValue in exportValues declares a lazy export: its binding is left uninitialized
+    // and is filled in by materializeLazyExport(), which reads the property of the same name off lazyExportsSource.
+    // That happens the first time something binds to the export, i.e. when an importing module links a named import
+    // of it or when it is read off a module namespace object.
+    JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues, JSObject* lazyExportsSource);
+
+    bool hasLazyExports() const { return !!m_lazyExportsSource; }
+
+    // No-op unless this record has lazy exports and localName is one of them that nobody has materialized (or
+    // overridden through JSModuleNamespaceObject::overrideExportValue) yet. May run arbitrary JS and throw.
+    JS_EXPORT_PRIVATE void materializeLazyExport(JSGlobalObject*, PropertyName localName);
+
+    // Convenience for code holding a Resolution: materializes the binding if it points into a lazy synthetic module.
+    static void materializeLazyExport(JSGlobalObject*, AbstractModuleRecord*, PropertyName localName);
+#endif
 
 private:
-    SyntheticModuleRecord(VM&, Structure*, const Identifier& moduleKey);
+    SyntheticModuleRecord(VM&, Structure*, const Identifier& moduleKey, SourceProviderSourceType);
 
-    static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, const Identifier& moduleKey, JSValue);
+    static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, const Identifier& moduleKey, JSValue, SourceProviderSourceType);
+    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues, SourceProviderSourceType);
+#if USE(BUN_JSC_ADDITIONS)
+    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues, SourceProviderSourceType, JSObject* lazyExportsSource);
+#endif
 
     void finishCreation(JSGlobalObject*, VM&);
+
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<JSObject> m_lazyExportsSource;
+#endif
 };
 
 } // namespace JSC

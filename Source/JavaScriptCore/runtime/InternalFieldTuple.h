@@ -10,8 +10,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // It is used in
 // - On the global object to store a read/write ref to Bun's AsyncLocalStorage context
 // - Within PromiseOperations.js for AsyncLocalStorage related stuff
-class InternalFieldTuple : public JSInternalFieldObjectImpl<2> {
-protected:
+//
+// InternalFieldTupleType belongs to this class alone (JSCast.h casts to it by JSType), so it must
+// stay final and nothing else may create a Structure with that type.
+class InternalFieldTuple final : public JSInternalFieldObjectImpl<2> {
+private:
     JS_EXPORT_PRIVATE InternalFieldTuple(VM&, Structure*);
     DECLARE_DEFAULT_FINISH_CREATION;
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
@@ -46,21 +49,18 @@ public:
         } };
     }
 
-    static InternalFieldTuple* create(VM& vm, Structure* structure)
+    static InternalFieldTuple* create(VM& vm, Structure* structure, JSValue a, JSValue b)
     {
         InternalFieldTuple* fields = new (NotNull, allocateCell<InternalFieldTuple>(vm)) InternalFieldTuple(vm, structure);
         fields->finishCreation(vm);
-        fields->putInternalField(vm, 0, jsUndefined());
-        fields->putInternalField(vm, 1, jsUndefined());
-        return fields;
-    }
-
-    static inline InternalFieldTuple* create(VM& vm, Structure* structure, JSValue a, JSValue b)
-    {
-        InternalFieldTuple* fields = create(vm, structure);
         fields->putInternalField(vm, 0, a);
         fields->putInternalField(vm, 1, b);
         return fields;
+    }
+
+    static InternalFieldTuple* create(VM& vm, Structure* structure)
+    {
+        return create(vm, structure, jsUndefined(), jsUndefined());
     }
 
     static Structure* createStructure(VM&, JSGlobalObject*);

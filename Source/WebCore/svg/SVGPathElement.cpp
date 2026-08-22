@@ -36,6 +36,7 @@
 #include "SVGPoint.h"
 #include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "StylePropertiesInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
@@ -43,17 +44,17 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGPathElement);
 
-class PathSegListCache {
+class PathCache {
 public:
-    static PathSegListCache& NODELETE singleton();
+    static PathCache& NODELETE singleton();
 
     std::optional<DataRef<SVGPathByteStream::Data>> get(const AtomString& attributeValue) const;
     void add(const AtomString& attributeValue, DataRef<SVGPathByteStream::Data>);
     void clear();
 
 private:
-    friend class NeverDestroyed<PathSegListCache, MainThreadAccessTraits>;
-    PathSegListCache() = default;
+    friend class NeverDestroyed<PathCache, MainThreadAccessTraits>;
+    PathCache() = default;
 
     HashMap<AtomString, DataRef<SVGPathByteStream::Data>> m_cache;
     uint64_t m_sizeInBytes { 0 };
@@ -61,18 +62,18 @@ private:
     static constexpr uint64_t maxCacheSizeInBytes = 150 * 1024; // 150 Kb.
 };
 
-PathSegListCache& PathSegListCache::singleton()
+PathCache& PathCache::singleton()
 {
-    static MainThreadNeverDestroyed<PathSegListCache> cache;
+    static MainThreadNeverDestroyed<PathCache> cache;
     return cache;
 }
 
-std::optional<DataRef<SVGPathByteStream::Data>> PathSegListCache::get(const AtomString& attributeValue) const
+std::optional<DataRef<SVGPathByteStream::Data>> PathCache::get(const AtomString& attributeValue) const
 {
     return m_cache.getOptional(attributeValue);
 }
 
-void PathSegListCache::add(const AtomString& attributeValue, DataRef<SVGPathByteStream::Data> data)
+void PathCache::add(const AtomString& attributeValue, DataRef<SVGPathByteStream::Data> data)
 {
     size_t newDataSize = data->size();
     if (newDataSize > maxItemSizeInBytes) [[unlikely]]
@@ -90,7 +91,7 @@ void PathSegListCache::add(const AtomString& attributeValue, DataRef<SVGPathByte
     m_cache.add(attributeValue, WTF::move(data));
 }
 
-void PathSegListCache::clear()
+void PathCache::clear()
 {
     m_cache.clear();
     m_sizeInBytes = 0;
@@ -104,7 +105,7 @@ inline SVGPathElement::SVGPathElement(const QualifiedName& tagName, Document& do
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
         didRegistration = true;
-        PropertyRegistry::registerProperty<SVGNames::dAttr, &SVGPathElement::m_pathSegList>();
+        PropertyRegistry::registerProperty<SVGNames::dAttr, &SVGPathElement::m_path>();
     }
 }
 
@@ -116,13 +117,13 @@ Ref<SVGPathElement> SVGPathElement::create(const QualifiedName& tagName, Documen
 void SVGPathElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     if (name == SVGNames::dAttr) {
-        auto& cache = PathSegListCache::singleton();
+        auto& cache = PathCache::singleton();
         if (newValue.isEmpty())
-            protect(m_pathSegList)->baseVal()->clearByteStreamData();
+            protect(m_path)->baseVal()->clearByteStreamData();
         else if (auto data = cache.get(newValue))
-            protect(m_pathSegList)->baseVal()->updateByteStreamData(WTF::move(data.value()));
-        else if (protect(m_pathSegList)->baseVal()->parse(newValue))
-            cache.add(newValue, protect(m_pathSegList)->baseVal()->existingPathByteStream().data());
+            protect(m_path)->baseVal()->updateByteStreamData(WTF::move(data.value()));
+        else if (protect(m_path)->baseVal()->parse(newValue))
+            cache.add(newValue, protect(m_path)->baseVal()->existingPathByteStream().data());
         else
             protect(protect(document())->svgExtensions())->reportError(makeString("Problem parsing d=\""_s, newValue, "\""_s));
     }
@@ -132,7 +133,7 @@ void SVGPathElement::attributeChanged(const QualifiedName& name, const AtomStrin
 
 void SVGPathElement::clearCache()
 {
-    PathSegListCache::singleton().clear();
+    PathCache::singleton().clear();
 }
 
 void SVGPathElement::svgAttributeChanged(const QualifiedName& attrName)
@@ -251,7 +252,7 @@ const SVGPathByteStream& SVGPathElement::pathByteStream() const
         }
     }
 
-    return Ref { m_pathSegList }->currentPathByteStream();
+    return Ref { m_path }->currentPathByteStream();
 }
 
 Path SVGPathElement::path() const
@@ -265,7 +266,7 @@ Path SVGPathElement::path() const
         }
     }
 
-    return Ref { m_pathSegList }->currentPath();
+    return Ref { m_path }->currentPath();
 }
 
 void SVGPathElement::collectPresentationalHintsForAttribute(const QualifiedName& name, const AtomString& value, MutableStyleProperties& style)
@@ -280,7 +281,7 @@ void SVGPathElement::collectExtraStyleForPresentationalHints(MutableStylePropert
 {
     if (!document().settings().cssDPropertyEnabled())
         return;
-    if (style.findPropertyIndex(CSSPropertyD) == -1)
+    if (!style.hasProperty(CSSPropertyD))
         collectDPresentationalHint(style);
 }
 
@@ -291,7 +292,7 @@ void SVGPathElement::collectDPresentationalHint(MutableStyleProperties& style)
     // the path data to be parsed again and path data can be unwieldy.
     auto property = cssPropertyIdForSVGAttributeName(SVGNames::dAttr);
     // The fill rule value passed here is not relevant for the `d` property.
-    auto cssPathValue = CSSPathValue::create(CSS::PathFunction { CSS::Keyword::Nonzero { }, CSS::Path::Data { Ref { m_pathSegList }->currentPathByteStream() } });
+    auto cssPathValue = CSSPathValue::create(CSS::PathFunction { CSS::Keyword::Nonzero { }, CSS::Path::Data { Ref { m_path }->currentPathByteStream() } });
     addPropertyToPresentationalHintStyle(style, property, WTF::move(cssPathValue));
 }
 

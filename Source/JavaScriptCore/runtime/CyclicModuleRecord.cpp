@@ -40,6 +40,9 @@
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
 #include "SymbolTableInlines.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "SyntheticModuleRecord.h"
+#endif
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WebAssemblyModuleRecord.h"
 #include <wtf/Scope.h>
@@ -49,8 +52,8 @@ namespace JSC {
 
 const ClassInfo CyclicModuleRecord::s_info = { "CyclicModuleRecord"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CyclicModuleRecord) };
 
-CyclicModuleRecord::CyclicModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey)
-    : Base(vm, structure, moduleKey)
+CyclicModuleRecord::CyclicModuleRecord(VM& vm, Structure* structure, const Identifier& moduleKey, SourceProviderSourceType sourceType)
+    : Base(vm, structure, moduleKey, sourceType)
 {
 }
 
@@ -258,6 +261,12 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                     } else {
                         // 7.c.iv.1. Perform CreateImportBinding(env, in.[[LocalName]], resolution.[[Module]], resolution.[[BindingName]]).
                         // (Already handled through lazy resolution.)
+#if USE(BUN_JSC_ADDITIONS)
+                        // Reads of the import binding go straight to the exporting environment's slot, so a lazy export of a
+                        // SyntheticModuleRecord has to be given its value now, while this module is being linked to it.
+                        SyntheticModuleRecord::materializeLazyExport(globalObject, resolution.moduleRecord, resolution.localName);
+                        RETURN_IF_EXCEPTION(scope, void());
+#endif
                     }
                     break;
                 }

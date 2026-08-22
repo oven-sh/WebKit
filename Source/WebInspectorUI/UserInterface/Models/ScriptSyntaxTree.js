@@ -44,6 +44,13 @@ WI.ScriptSyntaxTree = class ScriptSyntaxTree
         }
     }
 
+    // Static
+
+    static isIdentifierName(string)
+    {
+        return /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u.test(string);
+    }
+
     // Public
 
     get parsedSuccessfully()
@@ -557,7 +564,7 @@ WI.ScriptSyntaxTree = class ScriptSyntaxTree
         if (!node)
             return null;
 
-        var result = null;
+        let result;
         switch (node.type) {
         case "ArrayExpression":
             result = {

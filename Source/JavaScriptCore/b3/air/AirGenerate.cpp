@@ -135,16 +135,16 @@ void prepareForGeneration(Code& code)
     // phase.
     simplifyCFG(code);
 
-    // This is needed to satisfy a requirement of B3::StackmapValue. This also removes dead
-    // code. We can avoid running this when certain optimizations are disabled.
+    // Not worth a whole-graph liveness scan just for the dead assignments it also kills, so this runs
+    // only for the used-register set that B3::StackmapValue reports to a patchpoint's generator.
     bool cfgMayHaveChanged = false;
-    if (code.optLevel() >= 2 || code.needsUsedRegisters())
+    if (code.needsUsedRegisters())
         cfgMayHaveChanged |= reportUsedRegisters(code);
 
     // Attempt to remove false dependencies between instructions created by partial register changes.
     // This must be executed as late as possible as it depends on the instructions order and register
-    // use. We _must_ run this after reportUsedRegisters(), since that kills variable assignments
-    // that seem dead. Luckily, this phase does not change register liveness, so that's OK.
+    // use, and it must follow reportUsedRegisters() when that runs, since that kills variable
+    // assignments that seem dead. Luckily, this phase does not change register liveness, so that's OK.
     fixPartialRegisterStalls(code);
 
     // Actually create entrypoints.
@@ -180,9 +180,7 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 {
     CompilerTimingScope timingScope("Air"_s, "generateWithAlreadyAllocatedRegisters"_s);
 
-#if !CPU(ARM)
     DisallowMacroScratchRegisterUsage disallowScratch(jit);
-#endif
 
     // And now, we generate code.
     GenerationContext context;
@@ -202,8 +200,9 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     };
 
     PCToOriginMap& pcToOriginMap = code.proc().pcToOriginMap();
+    bool shouldPreserveB3Origins = code.shouldPreserveB3Origins();
     auto addItem = [&] (Inst& inst) {
-        if (!code.shouldPreserveB3Origins())
+        if (!shouldPreserveB3Origins)
             return;
         if (inst.origin)
             pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), inst.origin->origin());
@@ -241,12 +240,11 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             context.indexInBlock = i;
             Inst& inst = block->at(i);
             addItem(inst);
-            auto start = jit.labelIgnoringWatchpoints();
+            auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
             CCallHelpers::Jump jump = inst.generate(jit, context);
             ASSERT_UNUSED(jump, !jump.isSet());
-            auto end = jit.labelIgnoringWatchpoints();
             if (disassembler)
-                disassembler->addInst(&inst, start, end);
+                disassembler->addInst(&inst, start, jit.labelIgnoringWatchpoints());
         }
 
         context.indexInBlock = block->size() - 1;
@@ -259,20 +257,18 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             // We currently don't represent the full prologue/epilogue in Air, so we need to
             // have this override.
             addItem(block->last());
-            auto start = jit.labelIgnoringWatchpoints();
+            auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
             code.emitEpilogue(jit);
-            auto end = jit.labelIgnoringWatchpoints();
             if (disassembler)
-                disassembler->addInst(&block->last(), start, end);
+                disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
             continue;
         }
 
         addItem(block->last());
-        auto start = jit.labelIgnoringWatchpoints();
+        auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
         CCallHelpers::Jump jump = block->last().generate(jit, context);
-        auto end = jit.labelIgnoringWatchpoints();
         if (disassembler)
-            disassembler->addInst(&block->last(), start, end);
+            disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
 
         // The jump won't be set for patchpoints. It won't be set for Oops because then it won't have
         // any successors.

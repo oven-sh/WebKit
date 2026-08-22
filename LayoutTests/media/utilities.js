@@ -110,3 +110,89 @@ function timeRangesToString(timeRanges) {
     }
     return ranges.toString();
 }
+
+// Play a media element inside a user gesture, ignoring the AbortError that play() rejects with when
+// a still-pending play() is interrupted by a later pause() or by teardown (spec behavior, not a
+// failure). Any other rejection is rethrown so a genuine play() failure still surfaces. Requires the
+// Internals API.
+function playIgnoringAbort(mediaElement) {
+    internals.withUserGesture(() => {
+        mediaElement.play().catch(error => {
+            if (error.name !== "AbortError")
+                throw error;
+        });
+    });
+}
+
+// Create a near-silent AudioContext under a user gesture and wait until it is actually running before
+// returning it, so a caller polling internals.audioSessionActive() is timing the audio-session
+// activation and not WebAudio context startup. The tone renders (activating the audio session) but is
+// routed through a 0.001 gain so it is inaudible at a desk. Requires the Internals API. The caller owns
+// the returned context and should close() it when done.
+async function startNearSilentAudioContext() {
+    let context;
+    let resumePromise;
+    internals.withUserGesture(() => {
+        context = new AudioContext();
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        gain.gain.value = 0.001;
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start();
+        resumePromise = context.resume();
+    });
+    await resumePromise;
+    return context;
+}
+
+function waitForAudioSessionActiveState(active) {
+    return new Promise((resolve, reject) => {
+        if (!window.internals) {
+            reject(new Error("waitForAudioSessionActiveState requires window.internals"));
+            return;
+        }
+        let tries = 0;
+        const check = () => {
+            if (internals.audioSessionActive() === active)
+                resolve();
+            else if (++tries >= 200)
+                reject(new Error(`audio session did not reach active=${active}`));
+            else
+                setTimeout(check, 10);
+        };
+        check();
+    });
+}
+
+// Waits for the category applied to the real audio session, which the process owning it derives from
+// what every web process reported, so it can lag this process asking for its own category.
+async function waitForSystemAudioSessionCategory(category) {
+    if (!window.internals)
+        throw new Error("waitForSystemAudioSessionCategory requires window.internals");
+
+    let observed;
+    for (let tries = 0; tries < 200; ++tries) {
+        observed = await internals.systemAudioSessionCategory();
+        if (observed === category)
+            return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error(`system audio session category is "${observed}", expected "${category}"`);
+}
+
+// Waits for the category this process computed for its own sessions. The category is applied from a
+// task, so a caller that has just changed what a session reports has to wait for it.
+async function waitForAudioSessionCategory(category, description) {
+    if (!window.internals)
+        throw new Error("waitForAudioSessionCategory requires window.internals");
+
+    let observed;
+    for (let tries = 0; tries < 200; ++tries) {
+        observed = internals.audioSessionCategory();
+        if (observed === category)
+            return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error(`audio session category is "${observed}", expected "${category}"${description ? ` (${description})` : ""}`);
+}

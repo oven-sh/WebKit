@@ -1334,7 +1334,7 @@ ALWAYS_INLINE bool CodeBlock::shouldJettisonDueToOldAge(const ConcurrentJSLocker
         // existing pure-TTL policy.
         //
         // The snapshot lives in m_previousCounter, which updateActivity() in
-        // finalizeUnconditionally also writes for UnlinkedCodeBlock aging when
+        // reconcileWeakReferencesAtGCEnd also writes for UnlinkedCodeBlock aging when
         // VM::useUnlinkedCodeBlockJettisoning() is enabled. Both sites store the
         // same current count for the same tier, so they agree; outside that mode
         // updateActivity() never touches the field.
@@ -1556,7 +1556,7 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, AbstractSlotVisitor&);
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, SlotVisitor&);
 
-void CodeBlock::finalizeLLIntInlineCaches()
+void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
 {
     VM& vm = *m_vm;
 
@@ -1811,59 +1811,59 @@ void CodeBlock::finalizeLLIntInlineCaches()
 }
 
 #if ENABLE(JIT)
-void CodeBlock::finalizeJITInlineCaches()
+void CodeBlock::reconcileJITInlineCachesAtGCEnd()
 {
 #if ENABLE(DFG_JIT)
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
         for (auto* callLinkInfo : m_jitCode->dfgCommon()->m_callLinkInfos)
-            callLinkInfo->visitWeak(vm());
+            callLinkInfo->reconcileWeakReferencesAtGCEnd(vm());
         for (auto* callLinkInfo : m_jitCode->dfgCommon()->m_directCallLinkInfos)
-            callLinkInfo->visitWeak(vm());
+            callLinkInfo->reconcileWeakReferencesAtGCEnd(vm());
         if (auto* jitData = dfgJITData()) {
             for (auto& callLinkInfo : jitData->callLinkInfos())
-                callLinkInfo.visitWeak(vm());
+                callLinkInfo.reconcileWeakReferencesAtGCEnd(vm());
         }
     }
 #endif
 
     forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
         ConcurrentJSLockerBase locker(NoLockingNecessary);
-        propertyCache.visitWeak(locker, this);
+        propertyCache.reconcileWeakReferencesAtGCEnd(locker, this);
         return IterationStatus::Continue;
     });
 }
 #endif
 
-void CodeBlock::finalizeUnconditionally(VM& vm, CollectionScope)
+void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
     UNUSED_PARAM(vm);
 
-    // CodeBlock::finalizeUnconditionally is called for all live CodeBlocks.
+    // Called for all live CodeBlocks.
     // We do not need to call updateAllPredictions for DFG / FTL since the same thing happens in LLInt / Baseline CodeBlock for them.
     if (JITCode::isBaselineCode(jitType()))
         updateAllPredictions();
 
     if (JITCode::couldBeInterpreted(jitType())) {
-        finalizeLLIntInlineCaches();
+        reconcileLLIntInlineCachesAtGCEnd();
         // If the CodeBlock is DFG or FTL, CallLinkInfo in metadata is not related.
         forEachLLIntOrBaselineCallLinkInfo([&](DataOnlyCallLinkInfo& callLinkInfo) {
-            callLinkInfo.visitWeak(vm);
+            callLinkInfo.reconcileWeakReferencesAtGCEnd(vm);
         });
     }
 
 #if ENABLE(JIT)
     if (!!jitCode())
-        finalizeJITInlineCaches();
+        reconcileJITInlineCachesAtGCEnd();
 #endif
 
 #if ENABLE(DFG_JIT)
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
         DFG::CommonData* dfgCommon = m_jitCode->dfgCommon();
         if (auto* statuses = dfgCommon->recordedStatuses.get())
-            statuses->finalize(vm);
+            statuses->reconcileWeakReferences(vm);
 
         if (auto* jitData = dfgJITData())
-            jitData->finalizeUnconditionally();
+            jitData->reconcileWeakReferencesAtGCEnd();
     }
 #endif // ENABLE(DFG_JIT)
 
@@ -2047,6 +2047,10 @@ void CodeBlock::stronglyVisitStrongReferences(const ConcurrentJSLocker& locker, 
 #endif
 }
 
+// Runs from visitChildren, so the CodeBlock is already known live. It is live either
+// because something marked it directly, for instance a conservative stack scan finding
+// it running, or because all of its code dependencies are still live. In the former case
+// we need to ensure those dependencies stay alive, and that is what happens here.
 template<typename Visitor>
 void CodeBlock::stronglyVisitWeakReferences(const ConcurrentJSLocker&, Visitor& visitor)
 {
@@ -3162,6 +3166,9 @@ void CodeBlock::updateAllArrayAllocationProfilePredictions()
     });
 }
 
+// Folds each profile's sampled value into a pointer-free SpeculatedType and clears the sample.
+// The samples are untraced JSValues and StructureIDs, so this only runs while they are still
+// readable: after marking, before sweep.
 void CodeBlock::updateAllPredictions()
 {
     {

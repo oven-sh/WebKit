@@ -1201,9 +1201,12 @@ inline void StringImpl::deref()
         return;
 #endif
 
-    auto oldRefCount = m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed);
-    if (oldRefCount != s_refCountIncrement)
-        return;
+    // When this is the only reference nobody else can be racing to add one, so skip the atomic read-modify-write.
+    auto refCount = m_refCount.load(std::memory_order_relaxed);
+    if (refCount != s_refCountIncrement) {
+        if (m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed) != s_refCountIncrement) [[likely]]
+            return;
+    }
 
     StringImpl::destroy(this);
 }

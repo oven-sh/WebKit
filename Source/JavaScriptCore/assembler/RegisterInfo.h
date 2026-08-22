@@ -51,6 +51,4 @@
 #include "X86_64Registers.h"
 #elif CPU(ARM64)
 #include "ARM64Registers.h"
-#else
-    UNREACHABLE_FOR_PLATFORM();
 #endif

@@ -163,6 +163,8 @@ class TypedArrayController;
 class VMEntryScope;
 class TypeProfiler;
 class TypeProfilerLog;
+class TerminationDeadline;
+class TerminationDeadlineSet;
 class Watchdog;
 class WatchpointSet;
 class Waiter;
@@ -1107,6 +1109,22 @@ public:
     CONCURRENT_SAFE void notifyNeedTermination() { traps().fireTrap(VMTraps::NeedTermination); }
     CONCURRENT_SAFE void notifyNeedWatchdogCheck() { traps().fireTrap(VMTraps::NeedWatchdogCheck); }
 
+    // An embedder's wall-clock time limit on one bounded call: notifyNeedTermination() is called from a timer
+    // thread once `deadline` passes unless the returned TerminationDeadline is cancelled first (dropping it does
+    // not cancel it). See TerminationDeadline.h. API lock held; not for VMs that forbidExecutionOnTermination().
+    [[nodiscard]] JS_EXPORT_PRIVATE Ref<TerminationDeadline> addTerminationDeadline(MonotonicTime deadline);
+
+    // A termination has been requested and not yet withdrawn, in whichever form it has reached: the unhandled
+    // NeedTermination trap, the termination-request flag, or the TerminationException as the pending exception.
+    bool hasPendingTermination() const { return traps().needHandling(VMTraps::NeedTermination) || hasTerminationRequest() || hasPendingTerminationException(); }
+
+    // Withdraws whatever termination is pending on this VM (see hasPendingTermination()) — the counterpart of
+    // notifyNeedTermination() for a time-limited scope that has ended: what ran under the request stays cut short,
+    // what runs next is unaffected. It cannot tell requests apart: if another party's request may be pending too
+    // (a worker being stopped), the caller checks that first or requests again. Does not undo executionForbidden().
+    // API lock held, not inside a DeferTermination scope. Returns whether anything was pending.
+    JS_EXPORT_PRIVATE bool cancelTermination();
+
     CONCURRENT_SAFE void requestStop()
     {
         requestEntryScopeService(ConcurrentEntryScopeService::NeedStopTheWorld); // FIXME rdar://161576886
@@ -1154,7 +1172,7 @@ public:
 #endif
 
     void beginMarking();
-    void finalizeUnconditionally();
+    void reconcileWeakReferencesAtGCEnd();
     DECLARE_VISIT_AGGREGATE;
 
     void NODELETE addDebugger(Debugger&);
@@ -1291,6 +1309,7 @@ private:
     unsigned m_controlFlowProfilerEnabledCount { 0 };
     MallocPtr<EncodedJSValue, VMMalloc> m_exceptionFuzzBuffer;
     LazyRef<VM, Watchdog> m_watchdog;
+    RefPtr<TerminationDeadlineSet> m_terminationDeadlines;
     LazyUniqueRef<VM, HeapProfiler> m_heapProfiler;
     LazyUniqueRef<VM, AdaptiveStringSearcherTables> m_stringSearcherTables;
 #if ENABLE(SAMPLING_PROFILER)
@@ -1375,6 +1394,7 @@ private:
     friend class ThrowScope; // Friend for exception checking purpose only.
     friend class JSDollarVMHelper;
     friend class LLIntOffsetsExtractor;
+    friend class TerminationDeadline;
     friend class SuspendExceptionScope;
 #if USE(BUN_JSC_ADDITIONS)
     friend class FFI::CallbackEntryScope;

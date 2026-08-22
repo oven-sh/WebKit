@@ -55,6 +55,7 @@ enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
     Module,
     WebAssembly,
     JSON,
+    Text,
     Synthetic,
     ImportMap,
 #if USE(BUN_JSC_ADDITIONS)
@@ -97,6 +98,20 @@ public:
 
     JS_EXPORT_PRIVATE TextPosition startPosition() const { return m_startPosition; }
     JS_EXPORT_PRIVATE SourceProviderSourceType sourceType() const { return m_sourceType; }
+    bool isModuleType() const
+    {
+        switch (m_sourceType) {
+        case SourceProviderSourceType::Module:
+        case SourceProviderSourceType::JSON:
+        case SourceProviderSourceType::Text:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule:
+#endif
+            return true;
+        default:
+            return false;
+        }
+    }
 
     SourceID asID()
     {
@@ -176,10 +191,20 @@ private:
     class SyntheticSourceProvider final : public SourceProvider {
     public:
         using SyntheticSourceGenerator = WTF::Function<void(JSGlobalObject*, Identifier, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)>;
+        // Same contract as SyntheticSourceGenerator, except that an export may be declared without a value (an empty
+        // JSValue appended to exportValues). Such exports are read from the returned object the first time something
+        // binds to them; see SyntheticModuleRecord::tryCreateWithExportNamesAndValues(..., JSObject* lazyExportsSource).
+        // The generator returns nullptr when it provided every value.
+        using LazySyntheticSourceGenerator = WTF::Function<JSObject*(JSGlobalObject*, Identifier, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)>;
 
         static Ref<SyntheticSourceProvider> create(SyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
         {
-            return adoptRef(*new SyntheticSourceProvider(WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
+            return adoptRef(*new SyntheticSourceProvider(WTF::move(generator), nullptr, sourceOrigin, WTF::move(sourceURL)));
+        }
+
+        static Ref<SyntheticSourceProvider> createWithLazyExports(LazySyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
+        {
+            return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
         }
 
         unsigned hash() const final
@@ -192,21 +217,28 @@ private:
             return m_source;
         }
 
-        void generate(JSGlobalObject* globalObject, Identifier moduleKey, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues) {
+        // Returns the object that exports declared without a value are read from, or nullptr if there are none.
+        JSObject* generate(JSGlobalObject* globalObject, Identifier moduleKey, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)
+        {
+            if (m_lazyGenerator)
+                return m_lazyGenerator(globalObject, moduleKey, exportNames, exportValues);
             m_generator(globalObject, moduleKey, exportNames, exportValues);
+            return nullptr;
         }
 
     
     private:
-        JS_EXPORT_PRIVATE SyntheticSourceProvider(SyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL = String())
+        JS_EXPORT_PRIVATE SyntheticSourceProvider(SyntheticSourceGenerator&& generator, LazySyntheticSourceGenerator&& lazyGenerator, const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL = String())
             : SourceProvider(sourceOrigin, WTF::move(sourceURL), WTF::move(preRedirectURL), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Synthetic)
             , m_source("[native code]"_s)
             , m_generator(WTF::move(generator))
+            , m_lazyGenerator(WTF::move(lazyGenerator))
         {
         }
 
         String m_source;
         SyntheticSourceGenerator m_generator;
+        LazySyntheticSourceGenerator m_lazyGenerator;
     };
 
 #if ENABLE(WEBASSEMBLY)

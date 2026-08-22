@@ -30,6 +30,7 @@
 #include "Options.h"
 #include <wtf/Compiler.h>
 #include <wtf/DataLog.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/RawHex.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/StringCommon.h>
@@ -40,8 +41,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
 
+#include "ArrayBuffer.h"
 #include "CallData.h"
 #include "CallFrameInlines.h"
+#include "CodeBlock.h"
+#include "Completion.h"
 #include "ConstructData.h"
 #include "ErrorInstance.h"
 #include "FFICallingConvention.h"
@@ -51,7 +55,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "FFISignature.h"
 #include "FFIType.h"
 #include "FPRInfo.h"
+#include "FunctionCodeBlock.h"
+#include "FunctionExecutable.h"
 #include "GPRInfo.h"
+#include "JSArrayBuffer.h"
 #include "JSArrayBufferView.h"
 #include "JSBigInt.h"
 #include "JSBigIntInlines.h"
@@ -69,6 +76,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "ObjectConstructor.h"
 #include "Protect.h"
 #include "PureNaN.h"
+#include "SourceCode.h"
 #include "Symbol.h"
 #include "TopExceptionScope.h"
 #include "TypedArrayInlines.h"
@@ -918,10 +926,6 @@ static void testDoubleToInt64()
     FFI_CHECK_EQ(FFI::doubleToInt64(twoTo64), std::numeric_limits<int64_t>::max());
     FFI_CHECK_EQ(FFI::doubleToInt64(-twoTo64), std::numeric_limits<int64_t>::min());
 #endif
-
-    static const double corpus[] = { 0.0, -0.0, 1.0, -1.0, -1.5, 1.5, 255.75, -255.75, twoTo63, -twoTo63, twoTo64, nan, inf, -inf, 4294967295.5, -4294967295.5, 1e300, -1e300, 4.9e-324 };
-    for (double value : corpus)
-        FFI_CHECK_EQ_HEX(FFI::doubleToUInt64(value), std::bit_cast<uint64_t>(FFI::doubleToInt64(value)));
 }
 
 enum class ExpectThrow : bool { No, Yes };
@@ -1103,20 +1107,56 @@ static void testConversions()
     expectSlot(T::Int64, jsNumber(-2147483647 - 1), 0xffffffff80000000ull);
     expectSlot(T::Int64, jsNumber(4294967296.0), 4294967296ull);
     expectSlot(T::Int64, jsNumber(1e18), 1000000000000000000ull);
-    expectSlot(T::Int64, jsNumber(-1.5), std::bit_cast<uint64_t>(FFI::doubleToInt64(-1.5)));
-    expectSlot(T::Int64, jsNumber(9223372036854775808.0), std::bit_cast<uint64_t>(FFI::doubleToInt64(9223372036854775808.0)));
-    expectSlot(T::Int64, jsNumber(nan), std::bit_cast<uint64_t>(FFI::doubleToInt64(nan)));
+    expectSlot(T::Int64, jsNumber(-1.5), allOnes);
+    expectSlot(T::Int64, JSValue(JSValue::EncodeAsDouble, -1.0), allOnes); // the same number as jsNumber(-1), boxed as a double
+    expectSlot(T::Int64, jsNumber(-4294967297.0), 0xfffffffeffffffffull);
+    expectSlot(T::Int64, jsNumber(-9007199254740992.0), 0xffe0000000000000ull); // -2^53
+    expectSlot(T::Int64, jsNumber(9223372036854774784.0), 0x7ffffffffffffc00ull); // largest double below 2^63
+    expectSlot(T::Int64, jsNumber(-9223372036854775808.0), 0x8000000000000000ull); // INT64_MIN exactly
+    // Out of range: the low 64 bits of the truncated value, like Int32 above, on every CPU.
+    expectSlot(T::Int64, jsNumber(9223372036854775808.0), 0x8000000000000000ull); // 2^63 wraps to INT64_MIN
+    expectSlot(T::Int64, jsNumber(13835058055282163712.0), 0xc000000000000000ull); // 2^63 + 2^62
+    expectSlot(T::Int64, jsNumber(18446744073709551616.0), 0); // 2^64
+    expectSlot(T::Int64, jsNumber(18446744073709555712.0), 4096); // 2^64 + 2^12 (the next double after 2^64)
+    expectSlot(T::Int64, jsNumber(-18446744073709555712.0), static_cast<uint64_t>(-4096));
+    expectSlot(T::Int64, jsNumber(1e300), 0); // no mantissa bit lands in the low 64 bits
+    expectSlot(T::Int64, jsNumber(nan), 0);
+    expectSlot(T::Int64, jsNumber(inf), 0);
+    expectSlot(T::Int64, jsNumber(-inf), 0);
+    expectSlot(T::Int64, jsNumber(-0.0), 0);
+    expectSlot(T::Int64, jsNumber(4.9e-324), 0);
     expectSlot(T::Int64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(std::numeric_limits<int64_t>::max())), 0x7fffffffffffffffull);
     expectSlot(T::Int64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(std::numeric_limits<int64_t>::min())), 0x8000000000000000ull);
     expectSlot(T::Int64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(-1)), allOnes);
     expectSlot(T::Int64, JSBigInt::createFrom(globalObject, static_cast<uint64_t>(0xffffffffffffffffull)), allOnes); // 2^64-1 mod 2^64
     expectSlot(T::Uint64, jsNumber(-1), allOnes);
-    expectSlot(T::Uint64, jsNumber(2.5), std::bit_cast<uint64_t>(FFI::doubleToInt64(2.5)));
+    expectSlot(T::Uint64, jsNumber(2.5), 2);
+    // A Number reaches a u64 with the same bits however it is boxed (int32 / double) and as the BigInt of the same value.
+    expectSlot(T::Uint64, JSValue(JSValue::EncodeAsDouble, -1.0), allOnes);
+    expectSlot(T::Uint64, jsNumber(-1.5), allOnes);
+    expectSlot(T::Uint64, jsNumber(-7.5), allOnes - 6);
+    expectSlot(T::Uint64, jsNumber(-4294967297.0), 0xfffffffeffffffffull);
+    expectSlot(T::Uint64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(-4294967297ll)), 0xfffffffeffffffffull);
+    expectSlot(T::Uint64, jsNumber(9223372036854775808.0), 0x8000000000000000ull); // 2^63 is a plain in-range u64
+    expectSlot(T::Uint64, jsNumber(13835058055282163712.0), 0xc000000000000000ull); // 2^63 + 2^62
+    expectSlot(T::Uint64, jsNumber(18446744073709549568.0), 0xfffffffffffff800ull); // largest double below 2^64
+    expectSlot(T::Uint64, jsNumber(18446744073709551616.0), 0); // 2^64 wraps like Uint32(2^32) above
+    expectSlot(T::Uint64, jsNumber(18446744073709555712.0), 4096); // 2^64 + 2^12
+    expectSlot(T::Uint64, jsNumber(nan), 0);
+    expectSlot(T::Uint64, jsNumber(inf), 0);
+    expectSlot(T::Uint64, jsNumber(-inf), 0);
+    expectSlot(T::Uint64, jsNumber(-0.5), 0);
     expectSlot(T::Uint64, JSBigInt::createFrom(globalObject, static_cast<uint64_t>(0xdeadbeefcafebabeull)), 0xdeadbeefcafebabeull);
     expectSlot(T::Uint64, JSBigInt::createFrom(globalObject, static_cast<int64_t>(-2)), allOnes - 1); // BigInt(-2) mod 2^64
     expectSlot(T::Int64Fast, jsNumber(-42), std::bit_cast<uint64_t>(static_cast<int64_t>(-42)));
+    expectSlot(T::Int64Fast, jsNumber(-1.5), allOnes);
+    expectSlot(T::Int64Fast, jsNumber(9223372036854775808.0), 0x8000000000000000ull);
+    expectSlot(T::Int64Fast, jsNumber(nan), 0);
     expectSlot(T::Int64Fast, JSBigInt::createFrom(globalObject, static_cast<int64_t>(1) << 60), static_cast<uint64_t>(1) << 60);
     expectSlot(T::Uint64Fast, jsNumber(9007199254740992.0), 9007199254740992ull);
+    expectSlot(T::Uint64Fast, jsNumber(-1.5), allOnes);
+    expectSlot(T::Uint64Fast, jsNumber(13835058055282163712.0), 0xc000000000000000ull);
+    expectSlot(T::Uint64Fast, jsNumber(nan), 0);
     expectSlot(T::Uint64Fast, JSBigInt::createFrom(globalObject, static_cast<uint64_t>(1) << 63), static_cast<uint64_t>(1) << 63);
 
     expectSlot(T::Double, jsNumber(1.5), std::bit_cast<uint64_t>(1.5));
@@ -2260,6 +2300,104 @@ static void testCallbackThunkEndToEnd()
     }
 }
 
+// The optimizing tiers convert pointer-family arguments inline only for typed array views; any
+// other cell (ArrayBuffer, BigInt, an object carrying `ptr`) has to reach the C++ conversion with
+// the same result the host path gives. Calls one site until its FTL code is installed, then feeds it freshly
+// allocated JSArrayBuffers -- some of which are the last cell of their MarkedBlock, where a
+// JSArrayBufferView-sized read of a JSArrayBuffer-sized cell would run off the end of the block --
+// and checks every result against the host-path semantics.
+static void testOptimizingTierPointerArgumentWithNonViewCells()
+{
+    VM& vm = *s_vm;
+    JSGlobalObject* globalObject = s_globalObject;
+    using T = FFI::Type;
+
+    if (!Options::useDFGJIT() || !Options::useFTLJIT()) {
+        dataLogLn("    (DFG/FTL disabled; skipping)");
+        return;
+    }
+
+    T argumentTypes[] = { T::Pointer };
+    RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(std::span<const T>(argumentTypes), T::Pointer);
+    FFI_CHECK(!!signature);
+    if (!signature)
+        return;
+    JSFFIFunction* identity = JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), reinterpret_cast<void*>(ffi_ptr_identity), "ffi_ptr_identity"_s);
+    gcProtect(identity);
+    globalObject->putDirect(vm, Identifier::fromString(vm, "ffiPtrIdentity"_s), identity);
+
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    SourceOrigin origin;
+    JSValue hot = evaluate(globalObject, makeSource("(function hot(value) { return ffiPtrIdentity(value); })"_s, origin, SourceTaintedOrigin::Untainted));
+    FFI_CHECK(!scope.exception());
+    if (scope.exception()) {
+        scope.clearException();
+        return;
+    }
+    JSFunction* hotFunction = dynamicDowncast<JSFunction>(hot);
+    FFI_CHECK(hotFunction);
+    if (!hotFunction)
+        return;
+    gcProtect(hotFunction);
+    auto installedInFTL = [&] {
+        FunctionCodeBlock* codeBlock = hotFunction->jsExecutable()->codeBlockForCall();
+        return codeBlock && codeBlock->jitType() == JITType::FTLJIT;
+    };
+
+    // Call with a typed array view until the FTL code for `hot` is installed, so the compiled call
+    // site has the inline view path and the calls below run through it.
+    JSUint8Array* view = makeUint8Array(16);
+    gcProtect(view);
+    JSValue viewAddress = jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(view->vector())));
+    uint64_t ftlLoweringsBefore = FFI::g_ffiCompileCounts.ftlCallFFI.load();
+    unsigned warmupMismatches = 0;
+    for (unsigned i = 0; i < 5000000 && !installedInFTL(); ++i) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(view);
+        if (callFunction(hot, arguments) != viewAddress)
+            ++warmupMismatches;
+    }
+    FFI_CHECK(!warmupMismatches);
+    FFI_CHECK(installedInFTL());
+    FFI_CHECK(FFI::g_ffiCompileCounts.ftlCallFFI.load() > ftlLoweringsBefore);
+    if (!installedInFTL())
+        return;
+
+    Structure* arrayBufferStructure = globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default);
+    for (unsigned round = 0; round < 60; ++round) {
+        // Fill many MarkedBlocks with 32-byte JSArrayBuffer cells, keep one in eight, and collect so
+        // the blocks around the survivors can be emptied and returned.
+        MarkedArgumentBuffer survivors;
+        for (unsigned i = 0; i < 200000; ++i) {
+            JSArrayBuffer* buffer = JSArrayBuffer::create(vm, arrayBufferStructure, ArrayBuffer::create(8, 1));
+            if (!(i % 8))
+                survivors.append(buffer);
+        }
+        vm.heap.collectNow(Sync, CollectionScope::Full);
+        WTF::releaseFastMallocFreeMemory();
+
+        for (unsigned i = 0; i < survivors.size(); ++i) {
+            JSArrayBuffer* buffer = uncheckedDowncast<JSArrayBuffer>(survivors.at(i).asCell());
+            MarkedArgumentBuffer arguments;
+            arguments.append(buffer);
+            FFI_CHECK(callFunction(hot, arguments) == jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(buffer->impl()->data()))));
+        }
+
+        MarkedArgumentBuffer bigIntArgument;
+        bigIntArgument.append(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(0x100000001)));
+        FFI_CHECK(!scope.exception());
+        FFI_CHECK(callFunction(hot, bigIntArgument) == jsNumber(4294967297.0));
+
+        JSObject* wrapper = constructEmptyObject(globalObject);
+        wrapper->putDirect(vm, Identifier::fromString(vm, "ptr"_s), jsNumber(65536));
+        MarkedArgumentBuffer objectArgument;
+        objectArgument.append(wrapper);
+        FFI_CHECK(callFunction(hot, objectArgument) == jsNumber(65536));
+
+        FFI_CHECK(installedInFTL());
+    }
+}
+
 static void testFixtureTable()
 {
     auto fixtures = ffiTestFixtures();
@@ -2321,6 +2459,7 @@ static int runAll()
         RUN(testCanaries());
         RUN(testJSFFIFunctionEndToEnd());
         RUN(testCallbackThunkEndToEnd());
+        RUN(testOptimizingTierPointerArgumentWithNonViewCells());
     }
 
     dataLogLn(s_failureCount ? "FAILED: " : "OK: ", s_checkCount - s_failureCount, " checks passed, ", s_failureCount, " failed.");

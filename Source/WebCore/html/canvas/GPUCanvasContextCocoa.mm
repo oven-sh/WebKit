@@ -26,7 +26,11 @@
 #include "config.h"
 #include "GPUCanvasContextCocoa.h"
 
+#include "Chrome.h"
+#include "ChromeClient.h"
 #include "DestinationColorSpace.h"
+#include "Document.h"
+#include "DocumentPage.h"
 #include "GPUAdapter.h"
 #include "GPUCanvasConfiguration.h"
 #include "GPUDevice.h"
@@ -38,9 +42,11 @@
 #include "GraphicsLayerEnums.h"
 #include "ImageBitmap.h"
 #include "InspectorInstrumentation.h"
+#include "Page.h"
 #include "PlatformCALayerDelegatedContents.h"
 #include "PlatformScreen.h"
 #include "RenderBox.h"
+#include "RenderingUpdateScheduler.h"
 #include "ScreenProperties.h"
 #include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -345,8 +351,6 @@ void GPUCanvasContextCocoa::didUpdateCanvasSizeProperties(bool)
 
     auto configuration = WTF::move(m_configuration);
     m_configuration.reset();
-    if (configuration)
-        InspectorInstrumentation::didChangeGPUDeviceClientNodes(configuration->device);
     unconfigure();
     if (configuration) {
         GPUCanvasConfiguration canvasConfiguration {
@@ -358,8 +362,21 @@ void GPUCanvasContextCocoa::didUpdateCanvasSizeProperties(bool)
             configuration->toneMapping,
             configuration->compositingAlphaMode,
         };
-        configure(WTF::move(canvasConfiguration), true);
+        if (configure(WTF::move(canvasConfiguration), true).hasException())
+            InspectorInstrumentation::didChangeGPUDeviceClientNodes(configuration->device);
     }
+}
+
+static PixelFormat readbackPixelFormat(PixelFormat format)
+{
+    // ImageBufferCGBitmapBackend only supports BGRA8 and RGBA16F.
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    if (format == PixelFormat::RGBA16F)
+        return format;
+#else
+    UNUSED_PARAM(format);
+#endif
+    return PixelFormat::BGRA8;
 }
 
 RefPtr<ImageBuffer> GPUCanvasContextCocoa::surfaceBufferToImageBuffer(SurfaceBuffer sourceBuffer)
@@ -371,7 +388,7 @@ RefPtr<ImageBuffer> GPUCanvasContextCocoa::surfaceBufferToImageBuffer(SurfaceBuf
     if (size.isEmpty())
         return nullptr;
     if (!m_readDisplayBuffer) {
-        m_readDisplayBuffer = ImageBuffer::create(size, RenderingMode::Accelerated, RenderingPurpose::Canvas, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8, scriptExecutionContext->graphicsClient());
+        m_readDisplayBuffer = ImageBuffer::create(size, RenderingMode::Accelerated, RenderingPurpose::Canvas, 1, colorSpace(), readbackPixelFormat(pixelFormat()), scriptExecutionContext->graphicsClient());
         updateMemoryCost();
     }
     RefPtr<ImageBuffer> buffer = m_readDisplayBuffer;
@@ -384,7 +401,7 @@ RefPtr<ImageBuffer> GPUCanvasContextCocoa::surfaceBufferToImageBuffer(SurfaceBuf
     updateScreenHeadroomFromScreenPropertiesIfNeeded();
 #endif
 
-    if (sourceBuffer == SurfaceBuffer::DisplayBufferForInspector && m_configuration->lastPresentedFrameIndex) {
+    if (m_configuration->lastPresentedFrameIndex && (sourceBuffer == SurfaceBuffer::DisplayBufferForInspector || !m_compositingResultsNeedsUpdating)) {
         if (buffer) {
             buffer->flushDrawingContext();
             m_compositorIntegration->paintCompositedResultsToCanvas(*buffer, *m_configuration->lastPresentedFrameIndex);
@@ -403,7 +420,6 @@ RefPtr<ImageBuffer> GPUCanvasContextCocoa::surfaceBufferToImageBuffer(SurfaceBuf
         if (buffer && protectedThis->m_configuration) {
             buffer->flushDrawingContext();
             protectedThis->m_compositorIntegration->paintCompositedResultsToCanvas(*buffer, frameCount);
-            protectedThis->present(frameCount);
         }
     });
     return buffer;
@@ -417,7 +433,7 @@ RefPtr<ImageBuffer> GPUCanvasContextCocoa::transferToImageBuffer()
     const auto size = canvasBase().size();
     if (size.isEmpty())
         return nullptr;
-    RefPtr buffer = ImageBuffer::create(size, RenderingMode::Accelerated, RenderingPurpose::Canvas, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8, scriptExecutionContext->graphicsClient());
+    RefPtr buffer = ImageBuffer::create(size, RenderingMode::Accelerated, RenderingPurpose::Canvas, 1, colorSpace(), readbackPixelFormat(pixelFormat()), scriptExecutionContext->graphicsClient());
     if (!buffer)
         return nullptr;
     Ref<ImageBuffer> bufferRef = buffer.releaseNonNull();
@@ -542,7 +558,8 @@ ExceptionOr<void> GPUCanvasContextCocoa::configure(GPUCanvasConfiguration&& conf
         0,
         std::nullopt,
     };
-    InspectorInstrumentation::didChangeGPUDeviceClientNodes(m_configuration->device);
+    if (!dueToReshape)
+        InspectorInstrumentation::didChangeGPUDeviceClientNodes(m_configuration->device);
     return { };
 }
 
@@ -553,6 +570,13 @@ ExceptionOr<void> GPUCanvasContextCocoa::configure(GPUCanvasConfiguration&& conf
 
 void GPUCanvasContextCocoa::unconfigure()
 {
+    if (m_isRegisteredForPacing) {
+        if (RefPtr page = this->page())
+            page->removeGPUCanvasRequestingRenderingUpdatePacing(*this);
+        m_isRegisteredForPacing = false;
+    }
+    m_framePacer.reset();
+    m_lastPreferredFrameRate = std::nullopt;
     m_presentationContext->unconfigure();
     auto configuration = std::exchange(m_configuration, std::nullopt);
     m_currentTexture = nullptr;
@@ -657,7 +681,45 @@ void GPUCanvasContextCocoa::prepareForDisplay()
             return;
         protectedThis->m_layerContentsDisplayDelegate->setDisplayBuffer(protectedThis->m_configuration->renderBuffers[frameIndex]);
         protectedThis->present(frameIndex);
+        protectedThis->updateFramePacing();
     });
+}
+
+Page* GPUCanvasContextCocoa::page() const
+{
+    RefPtr document = dynamicDowncast<Document>(protect(canvasBase())->scriptExecutionContext());
+    return document ? document->page() : nullptr;
+}
+
+void GPUCanvasContextCocoa::updateFramePacing()
+{
+    RefPtr page = this->page();
+    if (!page)
+        return;
+
+    if (auto nominal = page->displayNominalFramesPerSecond())
+        m_framePacer.setDisplayNominalFramesPerSecond(*nominal);
+
+    auto now = MonotonicTime::now();
+    auto gpuCost = m_compositorIntegration->lastFrameGPUCost();
+    m_framePacer.recordFrame(gpuCost, now);
+
+    if (!m_isRegisteredForPacing) {
+        page->addGPUCanvasRequestingRenderingUpdatePacing(*this);
+        m_isRegisteredForPacing = true;
+    }
+
+    auto preferred = m_framePacer.preferredFramesPerSecond(now);
+    if (preferred != m_lastPreferredFrameRate) {
+        m_lastPreferredFrameRate = preferred;
+        protect(page->renderingUpdateScheduler())->adjustRenderingUpdateFrequency();
+        page->chrome().client().renderingUpdateFramesPerSecondChanged();
+    }
+}
+
+std::optional<FramesPerSecond> GPUCanvasContextCocoa::preferredRenderingUpdateFramesPerSecond() const
+{
+    return m_framePacer.preferredFramesPerSecond(MonotonicTime::now());
 }
 
 void GPUCanvasContextCocoa::markContextChangedAndNotifyCanvasObservers()
@@ -677,7 +739,7 @@ void GPUCanvasContextCocoa::updateMemoryCost() const
     if (m_readDisplayBuffer)
         newMemoryCost += m_readDisplayBuffer->memoryCost();
     if (m_currentTexture)
-        newMemoryCost += m_width * m_height * 4;
+        newMemoryCost += m_currentTexture->memoryCost();
     CanvasRenderingContext::updateMemoryCost(newMemoryCost);
 }
 

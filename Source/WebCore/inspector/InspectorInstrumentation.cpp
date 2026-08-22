@@ -45,6 +45,7 @@
 #include "FrameDebuggerAgent.h"
 #include "FrameInspectorController.h"
 #include "FrameRuntimeAgent.h"
+#include "GPUCanvasContext.h"
 #include "InspectorAnimationAgent.h"
 #include "InspectorCSSAgent.h"
 #include "InspectorCanvasAgent.h"
@@ -672,6 +673,11 @@ void InspectorInstrumentation::didPaintImpl(InstrumentingAgents& instrumentingAg
 
     if (CheckedPtr pageAgent = instrumentingAgents.enabledPageAgent())
         pageAgent->didPaint(renderer, rect);
+
+    // Under Site Isolation a cross-origin subframe process has no enabled InspectorPageAgent; its
+    // per-frame PageAgentProxy draws paint rects instead.
+    if (CheckedPtr pageProxy = instrumentingAgents.enabledPageProxy())
+        pageProxy->didPaint(renderer, rect);
 }
 
 void InspectorInstrumentation::willRecalculateStyleImpl(InstrumentingAgents& instrumentingAgents)
@@ -1253,7 +1259,22 @@ void InspectorInstrumentation::didSendWebSocketFrameImpl(InstrumentingAgents& in
 
 void InspectorInstrumentation::didChangeCSSCanvasClientNodesImpl(InstrumentingAgents& instrumentingAgents, CanvasBase& canvasBase)
 {
-    if (CheckedPtr pageCanvasAgent = instrumentingAgents.enabledPageCanvasAgent())
+    CheckedPtr<PageCanvasAgent> pageCanvasAgent;
+
+    if (RefPtr gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(canvasBase.renderingContext())) {
+        RefPtr device = gpuCanvasContext->device();
+        if (!device)
+            return;
+
+        RefPtr agents = InspectorInstrumentation::instrumentingAgents(protect(device->scriptExecutionContext()));
+        if (!agents)
+            return;
+
+        pageCanvasAgent = agents->enabledPageCanvasAgent();
+    } else
+        pageCanvasAgent = instrumentingAgents.enabledPageCanvasAgent();
+
+    if (pageCanvasAgent)
         pageCanvasAgent->didChangeCSSCanvasClientNodes(canvasBase);
 }
 
@@ -1265,7 +1286,22 @@ void InspectorInstrumentation::didCreateCanvasRenderingContextImpl(Instrumenting
 
 void InspectorInstrumentation::didChangeCanvasSizeImpl(InstrumentingAgents& instrumentingAgents, CanvasRenderingContext& context)
 {
-    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+    CheckedPtr<InspectorCanvasAgent> canvasAgent;
+
+    if (RefPtr gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(context)) {
+        RefPtr device = gpuCanvasContext->device();
+        if (!device)
+            return;
+
+        RefPtr agents = InspectorInstrumentation::instrumentingAgents(protect(device->scriptExecutionContext()));
+        if (!agents)
+            return;
+
+        canvasAgent = agents->enabledCanvasAgent();
+    } else
+        canvasAgent = instrumentingAgents.enabledCanvasAgent();
+
+    if (canvasAgent)
         canvasAgent->didChangeCanvasSize(context);
 }
 
@@ -1336,8 +1372,14 @@ void InspectorInstrumentation::willDestroyWebGPUDeviceImpl(InstrumentingAgents& 
 
 void InspectorInstrumentation::didChangeGPUDeviceClientNodesImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device)
 {
-    if (CheckedPtr pageCanvasAgent = instrumentingAgents.enabledPageCanvasAgent())
-        pageCanvasAgent->didChangeGPUDeviceClientNodes(device);
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->didChangeGPUDeviceClientNodes(device);
+}
+
+void InspectorInstrumentation::didChangeWebGPUMemoryImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->didChangeWebGPUMemory(device);
 }
 
 void InspectorInstrumentation::didCreateWebGPUComputePipelineImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device, GPUComputePipeline& pipeline)
@@ -1369,6 +1411,13 @@ bool InspectorInstrumentation::isWebGPURenderPipelineDisabledImpl(InstrumentingA
     if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
         return canvasAgent->isWebGPURenderPipelineDisabled(pipeline);
     return false;
+}
+
+RefPtr<WebGPU::RenderPipeline> InspectorInstrumentation::renderPipelineForWebGPUHighlightingImpl(InstrumentingAgents& instrumentingAgents, GPURenderPipeline& pipeline, unsigned canvasColorAttachmentMask)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        return canvasAgent->renderPipelineForWebGPUHighlighting(pipeline, canvasColorAttachmentMask);
+    return nullptr;
 }
 
 void InspectorInstrumentation::willApplyKeyframeEffectImpl(InstrumentingAgents& instrumentingAgents, const Styleable& target, KeyframeEffect& effect, const ComputedEffectTiming& computedTiming)

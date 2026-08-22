@@ -46,6 +46,7 @@
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/CornerRadii.h>
 #include <WebCore/DestinationColorSpace.h>
+#include <WebCore/DocumentSyncData.h>
 #include <WebCore/FloatSize.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/HighlightVisibility.h>
@@ -108,6 +109,7 @@ struct RemotePageParameters {
     URL initialMainDocumentURL;
     FrameTreeCreationParameters frameTreeParameters;
     std::optional<WebsitePoliciesData> websitePoliciesData;
+    Ref<WebCore::DocumentSyncData> topDocumentSyncData;
 };
 
 struct WebPageCreationParameters {
@@ -387,6 +389,8 @@ struct WebPageCreationParameters {
 #if ENABLE(IMAGE_ANALYSIS)
     std::optional<WebCore::ImageTranslationLanguageIdentifiers> imageTranslationLanguageIdentifiers { std::nullopt };
 #endif
+
+    String displayedTranslationLocaleIdentifier { };
 
     std::optional<TextManipulationParameters> textManipulationParameters { std::nullopt };
 

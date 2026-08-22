@@ -172,6 +172,21 @@ UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModulePro
     return recursivelyGenerateUnlinkedCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const SourceCode& source, UnlinkedCodeBlock* unlinkedCodeBlock)
+{
+    unsigned lineCount = unlinkedCodeBlock->lineCount();
+    unsigned startColumn = unlinkedCodeBlock->startColumn() + source.startColumn().oneBasedInt();
+    bool endColumnIsOnStartLine = !lineCount;
+    unsigned endColumn = unlinkedCodeBlock->endColumn() + (endColumnIsOnStartLine ? startColumn : 1);
+    executable->recordParse(unlinkedCodeBlock->codeFeatures(), unlinkedCodeBlock->lexicallyScopedFeatures(), unlinkedCodeBlock->hasCapturedVariables(), source.firstLine().oneBasedInt() + lineCount, endColumn);
+    if (unlinkedCodeBlock->sourceURLDirective())
+        source.provider()->setSourceURLDirective(unlinkedCodeBlock->sourceURLDirective());
+    if (unlinkedCodeBlock->sourceMappingURLDirective())
+        source.provider()->setSourceMappingURLDirective(unlinkedCodeBlock->sourceMappingURLDirective());
+}
+#endif
+
 template<class UnlinkedCodeBlockType, class ExecutableType>
 UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableType* executable, const SourceCode& source, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType)
 {
@@ -183,6 +198,9 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
         std::nullopt);
     UnlinkedCodeBlockType* unlinkedCodeBlock = m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
     if (unlinkedCodeBlock && Options::useCodeCache()) {
+#if USE(BUN_JSC_ADDITIONS)
+        recordParseFromUnlinkedCodeBlock(executable, source, unlinkedCodeBlock);
+#else
         unsigned lineCount = unlinkedCodeBlock->lineCount();
         unsigned startColumn = unlinkedCodeBlock->startColumn() + source.startColumn().oneBasedInt();
         bool endColumnIsOnStartLine = !lineCount;
@@ -192,6 +210,7 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
             source.provider()->setSourceURLDirective(unlinkedCodeBlock->sourceURLDirective());
         if (unlinkedCodeBlock->sourceMappingURLDirective())
             source.provider()->setSourceMappingURLDirective(unlinkedCodeBlock->sourceMappingURLDirective());
+#endif
         return unlinkedCodeBlock;
     }
 

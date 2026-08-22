@@ -35,6 +35,7 @@
 #include "RegExpGlobalData.h"
 #include "RegExpGlobalDataInlines.h"
 #include "RegExpObject.h"
+#include "RegExpObjectInlines.h"
 #include <wtf/Range.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringSearch.h>
@@ -780,9 +781,10 @@ static ALWAYS_INLINE JSString* removeAllUsingRegExpSearch(VM& vm, JSGlobalObject
         lastIndex = result.end;
         startPosition = lastIndex;
 
-        // special case of empty match
+        // special case of empty match: step to the next match start (a whole
+        // surrogate pair for /u, /v, where a match never starts mid-pair).
         if (result.empty()) {
-            startPosition++;
+            startPosition = advanceStringIndex(source, sourceLen, result.end, regExp->eitherUnicode());
             if (startPosition > sourceLen)
                 break;
         }
@@ -1516,6 +1518,11 @@ ALWAYS_INLINE JSString* replaceAllWithStringUsingRegExpSearch(VM& vm, JSGlobalOb
 ALWAYS_INLINE JSString* replaceOneWithStringUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, const String& replacementString)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (replacementString.isEmpty()) {
+        if (auto* result = tryTrimSpaces(vm, globalObject, source, string, regExp))
+            return result;
+    }
 
     int* ovector;
     MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, source, 0, &ovector);

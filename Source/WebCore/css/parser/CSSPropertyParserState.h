@@ -28,6 +28,7 @@
 #include "CSSPropertyNames.h"
 #include "CSSValuePool.h"
 #include "StyleRuleType.h"
+#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
@@ -41,10 +42,16 @@ struct PropertyParserState {
 
     StyleRuleType currentRule { StyleRuleType::Style };
     CSSPropertyID currentProperty { CSSPropertyInvalid };
+    // Set when currentProperty is CSSPropertyCustom, which every custom property shares.
+    AtomString currentCustomPropertyName { };
     IsImportant important { IsImportant::No };
 
     // Count of CSS random() functions seen so far for the current property.
     unsigned cssRandomFunctionCount { 0 };
+
+    // Set where there is no element to key a random draw to: a @container style() query value or an @property initial value.
+    // FIXME: Should cover every function needing an element context, like the tree counting ones, not just random(). https://github.com/w3c/csswg-drafts/issues/10982
+    bool randomFunctionsDisallowed { false };
 
     // Used by non-CSS users of the CSS parsers like `DOMMatrix` to limit <length> and <length-percentage> parsing to only absolute units.
     bool absoluteLengthUnitsOnly { false };

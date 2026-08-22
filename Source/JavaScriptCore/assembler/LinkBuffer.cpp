@@ -235,8 +235,11 @@ public:
         if (m_bufferProvided)
             return;
 
-        auto& threadSpecific = threadSpecificBranchCompactionLinkBuffer();
-        threadSpecific->takeBufferIfLarger(*this);
+        size_t cacheLimit = Options::maximumCachedAssemblerBufferSize();
+        if (!cacheLimit || m_size <= cacheLimit) {
+            auto& threadSpecific = threadSpecificBranchCompactionLinkBuffer();
+            threadSpecific->takeBufferIfLarger(*this);
+        }
 
         if (m_data)
             BranchCompactionLinkBufferMalloc::free(m_data);

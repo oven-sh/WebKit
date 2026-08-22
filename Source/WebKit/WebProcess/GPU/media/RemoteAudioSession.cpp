@@ -105,19 +105,12 @@ void RemoteAudioSession::setCategory(CategoryType type, Mode mode, RouteSharingP
     if (type == m_category && mode == m_mode && policy == m_routeSharingPolicy && !m_isPlayingToBluetoothOverrideChanged)
         return;
 
-    bool categoryOrModeChanged = type != m_category || mode != m_mode;
     m_category = type;
     m_mode = mode;
     m_routeSharingPolicy = policy;
     m_isPlayingToBluetoothOverrideChanged = false;
 
     protect(ensureConnection())->send(Messages::RemoteAudioSessionProxy::SetCategory(type, mode, policy), { });
-
-    if (categoryOrModeChanged) {
-        m_configurationChangeObservers.forEach([this](auto& observer) {
-            observer.categoryDidChange(*this);
-        });
-    }
 #else
     UNUSED_PARAM(type);
     UNUSED_PARAM(policy);
@@ -239,10 +232,9 @@ void RemoteAudioSession::configurationChanged(RemoteAudioSessionConfiguration&& 
 
     m_configuration = WTF::move(configuration);
 
-    // The GPU process is the source of truth for whether the audio session is active. Mirror it
-    // here so AudioSession::isActive() and its observers behave the same with and without site
-    // isolation, even with the site isolation activation is decided in the UI process which
-    // talks to the RemoteAudioSessionProxy in the GPU directly.
+    // The GPU process is the source of truth for whether the audio session is active. Mirror it here so
+    // AudioSession::isActive() and its observers see an active-state change the GPU process decided on its
+    // own, such as this process losing the session to another one.
     if (activeChanged) {
         setActive(m_configuration->isActive);
         activeStateChanged();
@@ -297,6 +289,16 @@ void RemoteAudioSession::beginAudioSessionInterruption()
 void RemoteAudioSession::endAudioSessionInterruption(MayResume mayResume)
 {
     protect(ensureConnection())->send(Messages::RemoteAudioSessionProxy::EndInterruptionRemote(mayResume), { });
+}
+
+Ref<AudioSession::CategoryPromise> RemoteAudioSession::systemCategoryForTesting()
+{
+    return protect(ensureConnection())->sendWithPromisedReply(Messages::RemoteAudioSessionProxy::SystemCategoryForTesting())->whenSettled(RunLoop::mainSingleton(),
+        [](auto&& result) -> Ref<CategoryPromise> {
+            if (!result)
+                return CategoryPromise::createAndReject();
+            return CategoryPromise::createAndResolve(*result);
+        });
 }
 
 void RemoteAudioSession::beginInterruptionForTesting()

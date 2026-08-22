@@ -113,6 +113,7 @@ struct TextExtractionOptions {
 
 struct TextExtractionLineContent {
     String contentWithoutIdentifier;
+    String cachedRepresentation;
     std::optional<String> nodeIdentifier;
 };
 
@@ -125,8 +126,6 @@ struct TextExtractionResult {
 };
 
 void convertToText(WebCore::TextExtraction::Item&&, TextExtractionOptions&&, CompletionHandler<void(TextExtractionResult&&)>&&);
-
-String formatPDFMarkdownForOutput(const String& pdfText, TextExtractionOutputFormat);
 
 std::optional<ExtractedNodeInfo> parseExtractedNodeInfo(StringView);
 

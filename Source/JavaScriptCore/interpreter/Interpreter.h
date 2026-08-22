@@ -86,6 +86,9 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class SourceCode;
     class StackFrame;
     class StackVisitor;
+#if USE(BUN_JSC_ADDITIONS)
+    class UnlinkedProgramCodeBlock;
+#endif
     enum class HandlerType : uint8_t;
     struct HandlerInfo;
     struct ProtoCallFrame;
@@ -151,7 +154,12 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         static bool isOpcode(Opcode);
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+        // precompiled: see ProgramExecutable::initializeGlobalProperties().
+        JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled = nullptr);
+#else
         JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObj);
+#endif
         JSValue executeModuleProgram(JSModuleRecord*, ModuleProgramExecutable*, JSGlobalObject*, JSModuleEnvironment*, JSValue sentValue, JSValue resumeMode);
         JSValue executeCall(JSObject* function, const CallData&, JSValue thisValue, JSCell* context, const ArgList&);
         JSObject* executeConstruct(JSObject* function, const CallData&, const ArgList&, JSValue newTarget);

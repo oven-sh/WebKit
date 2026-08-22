@@ -40,7 +40,8 @@ WI.CanvasContentView = class CanvasContentView extends WI.ContentView
         this._memoryCostElement = null;
         this._pendingContent = null;
         this._pixelSizeElement = null;
-        this._canvasNode = null;
+        this._canvasNodes = [];
+        this._requestNodesPromise = null;
 
         this._refreshButtonNavigationItem = new WI.ButtonNavigationItem("refresh", WI.UIString("Refresh"), "Images/ReloadFull.svg", 13, 13);
         this._refreshButtonNavigationItem.visibilityPriority = WI.NavigationItem.VisibilityPriority.Low;
@@ -205,22 +206,16 @@ WI.CanvasContentView = class CanvasContentView extends WI.ContentView
 
         this.representedObject.addEventListener(WI.Canvas.Event.SizeChanged, this._updateSize, this);
         this.representedObject.addEventListener(WI.Canvas.Event.MemoryChanged, this._updateMemoryCost, this);
+        this.representedObject.addEventListener(WI.Canvas.Event.NodesChanged, this._updateCanvasNode, this);
         this.representedObject.addEventListener(WI.Canvas.Event.RecordingStarted, this.needsLayout, this);
         this.representedObject.addEventListener(WI.Canvas.Event.RecordingProgress, this.needsLayout, this);
         this.representedObject.addEventListener(WI.Canvas.Event.RecordingStopped, this.needsLayout, this);
+        this.representedObject.recordingCollection.addEventListener(WI.Collection.Event.ItemAdded, this.needsLayout, this);
+        this.representedObject.recordingCollection.addEventListener(WI.Collection.Event.ItemRemoved, this.needsLayout, this);
         this.representedObject.shaderProgramCollection.addEventListener(WI.Collection.Event.ItemAdded, this.needsLayout, this);
         this.representedObject.shaderProgramCollection.addEventListener(WI.Collection.Event.ItemRemoved, this.needsLayout, this);
 
-        this.representedObject.requestNode().then((node) => {
-            if (!node)
-                return;
-
-            console.assert(!this._canvasNode || this._canvasNode === node);
-            if (this._canvasNode === node)
-                return;
-
-            this._canvasNode = node;
-        });
+        this._updateCanvasNode();
 
         WI.settings.showImageGrid.addEventListener(WI.Setting.Event.Changed, this._updateImageGrid, this);
 
@@ -231,13 +226,17 @@ WI.CanvasContentView = class CanvasContentView extends WI.ContentView
     {
         this.representedObject.removeEventListener(WI.Canvas.Event.SizeChanged, this._updateSize, this);
         this.representedObject.removeEventListener(WI.Canvas.Event.MemoryChanged, this._updateMemoryCost, this);
+        this.representedObject.removeEventListener(WI.Canvas.Event.NodesChanged, this._updateCanvasNode, this);
         this.representedObject.removeEventListener(WI.Canvas.Event.RecordingStarted, this.needsLayout, this);
         this.representedObject.removeEventListener(WI.Canvas.Event.RecordingProgress, this.needsLayout, this);
         this.representedObject.removeEventListener(WI.Canvas.Event.RecordingStopped, this.needsLayout, this);
+        this.representedObject.recordingCollection.removeEventListener(WI.Collection.Event.ItemAdded, this.needsLayout, this);
+        this.representedObject.recordingCollection.removeEventListener(WI.Collection.Event.ItemRemoved, this.needsLayout, this);
         this.representedObject.shaderProgramCollection.removeEventListener(WI.Collection.Event.ItemAdded, this.needsLayout, this);
         this.representedObject.shaderProgramCollection.removeEventListener(WI.Collection.Event.ItemRemoved, this.needsLayout, this);
 
-        this._canvasNode = null;
+        this._canvasNodes = [];
+        this._requestNodesPromise = null;
 
         WI.settings.showImageGrid.removeEventListener(WI.Setting.Event.Changed, this._updateImageGrid, this);
 
@@ -284,8 +283,8 @@ WI.CanvasContentView = class CanvasContentView extends WI.ContentView
 
         contextMenu.appendSeparator();
 
-        if (this._canvasNode)
-            WI.appendContextMenuItemsForDOMNode(contextMenu, this._canvasNode);
+        if (this._canvasNodes.length === 1)
+            WI.appendContextMenuItemsForDOMNode(contextMenu, this._canvasNodes[0]);
     }
 
     _showGridButtonClicked()
@@ -305,7 +304,7 @@ WI.CanvasContentView = class CanvasContentView extends WI.ContentView
     _updateSize()
     {
         if (this._pixelSizeElement) {
-            let size = this.representedObject.size;
+            let size = this.representedObject.sizes.length === 1 ? this.representedObject.sizes[0] : null;
             if (size)
                 this._pixelSizeElement.textContent = `${size.width} ${multiplicationSign} ${size.height}`;
             else
@@ -313,6 +312,19 @@ WI.CanvasContentView = class CanvasContentView extends WI.ContentView
         }
 
         this.refreshPreview();
+    }
+
+    _updateCanvasNode()
+    {
+        this._canvasNodes = [];
+
+        let requestNodesPromise = this.representedObject.requestNodes();
+        this._requestNodesPromise = requestNodesPromise;
+        requestNodesPromise.then((nodes) => {
+            if (this._requestNodesPromise !== requestNodesPromise)
+                return;
+            this._canvasNodes = nodes;
+        });
     }
 
     _updateMemoryCost()
@@ -360,7 +372,7 @@ WI.CanvasContentView = class CanvasContentView extends WI.ContentView
             this.addSubview(this._progressView);
         }
 
-        let title = null;
+        let title;
         if (this.representedObject.recordingFrameCount) {
             let formatString = this.representedObject.recordingFrameCount === 1 ? WI.UIString("%d Frame") : WI.UIString("%d Frames");
             title = formatString.format(this.representedObject.recordingFrameCount);
@@ -421,5 +433,11 @@ WI.CanvasContentView = class CanvasContentView extends WI.ContentView
                 WI.showRepresentedObject(recording);
             });
         }
+
+        contextMenu.appendSeparator();
+
+        contextMenu.appendItem(WI.UIString("Clear Recordings"), () => {
+            this.representedObject.recordingCollection.clear();
+        });
     }
 };

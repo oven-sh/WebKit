@@ -48,7 +48,6 @@ enum class ReasonCollectionMode : bool {
 enum class GridAvoidanceReason : uint8_t {
     GridHasUnsupportedWritingMode,
     GridHasRTLDirection, // http://webkit.org/b/317334
-    GridHasMarginTrim,
     GridNeedsBaseline,
     GridHasOutOfFlowChild,
     GridHasNonVisibleOverflow,
@@ -70,8 +69,8 @@ enum class GridAvoidanceReason : uint8_t {
     GridHasUnsupportedMinHeight,
     GridHasUnsupportedMaxHeight,
     GridHasPercentageRowsWithIndefiniteHeight,
-    GridItemHasNonInitialMaxWidth,
-    GridItemHasNonInitialMaxHeight,
+    GridItemHasUnsupportedMaxWidth,
+    GridItemHasUnsupportedMaxHeight,
     GridItemHasMargin,
     GridItemHasBorderBoxSizing,
     GridItemHasUnsupportedWritingMode,
@@ -317,9 +316,6 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
     if (renderGridStyle->writingMode().bidiDirection() == TextDirection::RTL)
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasRTLDirection, reasons, reasonCollectionMode);
 
-    if (!renderGridStyle->marginTrim().isNone())
-        ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasMarginTrim, reasons, reasonCollectionMode);
-
     if (!renderGridStyle->isOverflowVisible())
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasNonVisibleOverflow, reasons, reasonCollectionMode);
 
@@ -513,15 +509,17 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
         if (!minWidth.isFixed() && !minWidth.isAuto())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedMinWidth, reasons, reasonCollectionMode);
 
-        if (!gridItemStyle->maxWidth().isNone())
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasNonInitialMaxWidth, reasons, reasonCollectionMode);
+        auto& maxWidth = gridItemStyle->maxWidth();
+        if (!maxWidth.isFixed() && !maxWidth.isNone())
+            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedMaxWidth, reasons, reasonCollectionMode);
 
         auto& minHeight = gridItemStyle->minHeight();
         if (!minHeight.isFixed() && !minHeight.isAuto())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedMinHeight, reasons, reasonCollectionMode);
 
-        if (!gridItemStyle->maxHeight().isNone())
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasNonInitialMaxHeight, reasons, reasonCollectionMode);
+        auto& maxHeight = gridItemStyle->maxHeight();
+        if (!maxHeight.isFixed() && !maxHeight.isNone())
+            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedMaxHeight, reasons, reasonCollectionMode);
 
         auto gridItemHasMargins = [&] {
             return gridItemStyle->marginBox().anyOf([](const Style::MarginEdge& marginEdge) {
@@ -589,7 +587,6 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
                 if (!hasValidRowEnd(explicitPosition, rowEnd, linesFromGridTemplateRowsCount))
                     return GridAvoidanceReason::GridItemHasUnsupportedRowEnd;
 
-                ASSERT(rowEnd.isExplicit());
                 size_t rowIndex = rowStartLineNumber + 1;
                 auto rowsCount = explicitlyPlacedItemsInRowCount.size();
                 if (rowIndex > rowsCount)
@@ -718,9 +715,6 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
     case GridAvoidanceReason::GridHasRTLDirection:
         stream << "grid has RTL direction";
         break;
-    case GridAvoidanceReason::GridHasMarginTrim:
-        stream << "grid has margin-trim";
-        break;
     case GridAvoidanceReason::GridNeedsBaseline:
         stream << "inline grid needs baseline";
         break;
@@ -781,11 +775,11 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
     case GridAvoidanceReason::GridItemHasUnsupportedAutomaticBlockSizing:
         stream << "grid item has unsupported automatic block sizing";
         break;
-    case GridAvoidanceReason::GridItemHasNonInitialMaxWidth:
-        stream << "grid item has non-initial max-width";
+    case GridAvoidanceReason::GridItemHasUnsupportedMaxWidth:
+        stream << "grid item has unsupported max-width";
         break;
-    case GridAvoidanceReason::GridItemHasNonInitialMaxHeight:
-        stream << "grid item has non-initial max-height";
+    case GridAvoidanceReason::GridItemHasUnsupportedMaxHeight:
+        stream << "grid item has unsupported max-height";
         break;
     case GridAvoidanceReason::GridItemHasMargin:
         stream << "grid item has margin";

@@ -86,7 +86,7 @@ public:
 
     DECLARE_VISIT_AGGREGATE;
     template<typename Visitor> void markIfCheap(Visitor&);
-    bool finalize(VM&);
+    bool isStillLive(VM&);
 
     bool appendVariant(const SetPrivateBrandVariant&);
     void shrinkToFit();
@@ -99,8 +99,7 @@ private:
 
     static SetPrivateBrandStatus computeForBaseline(CodeBlock*, ICStatusMap&, BytecodeIndex, ExitFlag);
 #if ENABLE(JIT)
-    static SetPrivateBrandStatus computeForPropertyInlineCacheWithoutExitSiteFeedback(
-        const ConcurrentJSLocker&, CodeBlock* profiledBlock, PropertyInlineCache*);
+    static SetPrivateBrandStatus computeForPropertyInlineCacheWithoutExitSiteFeedback(const ConcurrentJSLocker&, CodeBlock* profiledBlock, PropertyInlineCache*);
 #endif
 
     Vector<SetPrivateBrandVariant, 1> m_variants;

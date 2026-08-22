@@ -99,6 +99,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/WebGPU/GPUComputePassTimestampWrites.idl \
     $(WebCore)/Modules/WebGPU/GPUComputePipeline.idl \
     $(WebCore)/Modules/WebGPU/GPUComputePipelineDescriptor.idl \
+	$(WebCore)/Modules/WebGPU/GPUCopyElementImageDestination.idl \
+	$(WebCore)/Modules/WebGPU/GPUCopyElementImageSource.idl \
     $(WebCore)/Modules/WebGPU/GPUCullMode.idl \
     $(WebCore)/Modules/WebGPU/GPUDebugCommandsMixin.idl \
     $(WebCore)/Modules/WebGPU/GPUDepthStencilState.idl \
@@ -378,6 +380,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/geolocation/PositionOptions.idl \
     $(WebCore)/Modules/highlight/HighlightRegistry.idl \
     $(WebCore)/Modules/highlight/Highlight.idl \
+    $(WebCore)/Modules/highlight/HighlightHitResult.idl \
+    $(WebCore)/Modules/highlight/HighlightsFromPointOptions.idl \
     $(WebCore)/Modules/identity/DigitalCredential.idl \
     $(WebCore)/Modules/identity/DigitalCredentialGetRequest.idl \
     $(WebCore)/Modules/identity/DigitalCredentialRequestOptions.idl \
@@ -814,6 +818,10 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webcodecs/WebCodecsEncodedVideoChunkOutputCallback.idl \
     $(WebCore)/Modules/webcodecs/WebCodecsEncodedVideoChunkType.idl \
     $(WebCore)/Modules/webcodecs/WebCodecsErrorCallback.idl \
+	$(WebCore)/Modules/webcodecs/WebCodecsImageDecodeResult.idl \
+	$(WebCore)/Modules/webcodecs/WebCodecsImageDecoder.idl \
+	$(WebCore)/Modules/webcodecs/WebCodecsImageTrack.idl \
+	$(WebCore)/Modules/webcodecs/WebCodecsImageTrackList.idl \
     $(WebCore)/Modules/webcodecs/WebCodecsSvcOutputMetadata.idl \
     $(WebCore)/Modules/webcodecs/WebCodecsVideoDecoder.idl \
     $(WebCore)/Modules/webcodecs/WebCodecsVideoDecoderConfig.idl \
@@ -1416,8 +1424,10 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/ANGLEInstancedArrays.idl \
     $(WebCore)/html/canvas/CanvasCompositing.idl \
     $(WebCore)/html/canvas/CanvasDirection.idl \
+	$(WebCore)/html/canvas/CanvasDrawElementImage.idl \
     $(WebCore)/html/canvas/CanvasDrawImage.idl \
     $(WebCore)/html/canvas/CanvasDrawPath.idl \
+	$(WebCore)/html/canvas/CanvasElementImage.idl \
     $(WebCore)/html/canvas/CanvasFillRule.idl \
     $(WebCore)/html/canvas/CanvasFillStrokeStyles.idl \
     $(WebCore)/html/canvas/CanvasFilters.idl \
@@ -1427,6 +1437,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/CanvasLayers.idl \
     $(WebCore)/html/canvas/CanvasLineCap.idl \
     $(WebCore)/html/canvas/CanvasLineJoin.idl \
+	$(WebCore)/html/canvas/CanvasPaintEvent.idl \
     $(WebCore)/html/canvas/CanvasPath.idl \
     $(WebCore)/html/canvas/CanvasPathDrawingStyles.idl \
     $(WebCore)/html/canvas/CanvasPattern.idl \
@@ -1495,6 +1506,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/WebGLCompressedTextureS3TCsRGB.idl \
     $(WebCore)/html/canvas/WebGLContextAttributes.idl \
     $(WebCore)/html/canvas/WebGLContextEvent.idl \
+	$(WebCore)/html/canvas/WebGLCopyElementImageConfig.idl \
     $(WebCore)/html/canvas/WebGLDebugRendererInfo.idl \
     $(WebCore)/html/canvas/WebGLDebugShaders.idl \
     $(WebCore)/html/canvas/WebGLDepthTexture.idl \
@@ -1578,9 +1590,15 @@ JS_BINDING_IDLS := \
     $(WebCore)/page/NavigationActivation.idl \
     $(WebCore)/page/NavigationCurrentEntryChangeEvent.idl \
     $(WebCore)/page/NavigationDestination.idl \
+    $(WebCore)/page/NavigationHistoryBehavior.idl \
     $(WebCore)/page/NavigationHistoryEntry.idl \
     $(WebCore)/page/NavigationInterceptHandler.idl \
+    $(WebCore)/page/NavigationNavigateOptions.idl \
     $(WebCore)/page/NavigationNavigationType.idl \
+    $(WebCore)/page/NavigationOptions.idl \
+    $(WebCore)/page/NavigationPrecommitController.idl \
+    $(WebCore)/page/NavigationPrecommitHandler.idl \
+    $(WebCore)/page/NavigationReloadOptions.idl \
     $(WebCore)/page/NavigationTransition.idl \
     $(WebCore)/page/Navigator.idl \
     $(WebCore)/page/NavigatorUA.idl \
@@ -1735,27 +1753,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/svg/SVGNumber.idl \
     $(WebCore)/svg/SVGNumberList.idl \
     $(WebCore)/svg/SVGPathElement.idl \
-    $(WebCore)/svg/SVGPathSeg.idl \
-    $(WebCore)/svg/SVGPathSegArcAbs.idl \
-    $(WebCore)/svg/SVGPathSegArcRel.idl \
-    $(WebCore)/svg/SVGPathSegClosePath.idl \
-    $(WebCore)/svg/SVGPathSegCurvetoCubicAbs.idl \
-    $(WebCore)/svg/SVGPathSegCurvetoCubicRel.idl \
-    $(WebCore)/svg/SVGPathSegCurvetoCubicSmoothAbs.idl \
-    $(WebCore)/svg/SVGPathSegCurvetoCubicSmoothRel.idl \
-    $(WebCore)/svg/SVGPathSegCurvetoQuadraticAbs.idl \
-    $(WebCore)/svg/SVGPathSegCurvetoQuadraticRel.idl \
-    $(WebCore)/svg/SVGPathSegCurvetoQuadraticSmoothAbs.idl \
-    $(WebCore)/svg/SVGPathSegCurvetoQuadraticSmoothRel.idl \
-    $(WebCore)/svg/SVGPathSegLinetoAbs.idl \
-    $(WebCore)/svg/SVGPathSegLinetoHorizontalAbs.idl \
-    $(WebCore)/svg/SVGPathSegLinetoHorizontalRel.idl \
-    $(WebCore)/svg/SVGPathSegLinetoRel.idl \
-    $(WebCore)/svg/SVGPathSegLinetoVerticalAbs.idl \
-    $(WebCore)/svg/SVGPathSegLinetoVerticalRel.idl \
-    $(WebCore)/svg/SVGPathSegList.idl \
-    $(WebCore)/svg/SVGPathSegMovetoAbs.idl \
-    $(WebCore)/svg/SVGPathSegMovetoRel.idl \
     $(WebCore)/svg/SVGPatternElement.idl \
     $(WebCore)/svg/SVGPoint.idl \
     $(WebCore)/svg/SVGPointList.idl \
@@ -2325,6 +2322,7 @@ MODERN_MEDIA_CONTROLS_SCRIPTS = \
     $(WebCore)/Modules/modern-media-controls/media/seek-forward-support.js \
     $(WebCore)/Modules/modern-media-controls/media/skip-back-support.js \
     $(WebCore)/Modules/modern-media-controls/media/skip-forward-support.js \
+    $(WebCore)/Modules/modern-media-controls/media/spatial-video-support.js \
     $(WebCore)/Modules/modern-media-controls/media/start-support.js \
     $(WebCore)/Modules/modern-media-controls/media/status-support.js \
     $(WebCore)/Modules/modern-media-controls/media/time-control-support.js \

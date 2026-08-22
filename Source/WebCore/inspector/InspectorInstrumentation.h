@@ -339,11 +339,13 @@ public:
     static void didCreateWebGPUDevice(GPUDevice&);
     static void willDestroyWebGPUDevice(GPUDevice&);
     static void didChangeGPUDeviceClientNodes(GPUDevice&);
+    static void didChangeWebGPUMemory(GPUDevice&);
     static void didCreateWebGPUComputePipeline(GPUDevice&, GPUComputePipeline&);
     static void willDestroyWebGPUComputePipeline(GPUComputePipeline&);
     static void didCreateWebGPURenderPipeline(GPUDevice&, GPURenderPipeline&);
     static void willDestroyWebGPURenderPipeline(GPURenderPipeline&);
     static bool isWebGPURenderPipelineDisabled(GPURenderPipeline&);
+    static RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlighting(GPURenderPipeline&, unsigned canvasColorAttachmentMask);
 
     static void willApplyKeyframeEffect(const Styleable&, KeyframeEffect&, const ComputedEffectTiming&);
     static void didChangeWebAnimationName(WebAnimation&);
@@ -556,11 +558,13 @@ private:
     static void didCreateWebGPUDeviceImpl(InstrumentingAgents&, GPUDevice&);
     static void willDestroyWebGPUDeviceImpl(InstrumentingAgents&, GPUDevice&);
     static void didChangeGPUDeviceClientNodesImpl(InstrumentingAgents&, GPUDevice&);
+    static void didChangeWebGPUMemoryImpl(InstrumentingAgents&, GPUDevice&);
     static void didCreateWebGPUComputePipelineImpl(InstrumentingAgents&, GPUDevice&, GPUComputePipeline&);
     static void willDestroyWebGPUComputePipelineImpl(InstrumentingAgents&, GPUComputePipeline&);
     static void didCreateWebGPURenderPipelineImpl(InstrumentingAgents&, GPUDevice&, GPURenderPipeline&);
     static void willDestroyWebGPURenderPipelineImpl(InstrumentingAgents&, GPURenderPipeline&);
     static bool isWebGPURenderPipelineDisabledImpl(InstrumentingAgents&, GPURenderPipeline&);
+    static RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlightingImpl(InstrumentingAgents&, GPURenderPipeline&, unsigned canvasColorAttachmentMask);
 
     static void willApplyKeyframeEffectImpl(InstrumentingAgents&, const Styleable&, KeyframeEffect&, const ComputedEffectTiming&);
     static void didChangeWebAnimationNameImpl(InstrumentingAgents&, WebAnimation&);
@@ -1555,6 +1559,13 @@ inline void InspectorInstrumentation::didChangeGPUDeviceClientNodes(GPUDevice& d
         didChangeGPUDeviceClientNodesImpl(*agents, device);
 }
 
+inline void InspectorInstrumentation::didChangeWebGPUMemory(GPUDevice& device)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    if (RefPtr agents = instrumentingAgents(protect(device.scriptExecutionContext())))
+        didChangeWebGPUMemoryImpl(*agents, device);
+}
+
 inline void InspectorInstrumentation::didCreateWebGPUComputePipeline(GPUDevice& device, GPUComputePipeline& pipeline)
 {
     FAST_RETURN_IF_NO_FRONTENDS(void());
@@ -1595,6 +1606,16 @@ inline bool InspectorInstrumentation::isWebGPURenderPipelineDisabled(GPURenderPi
             return isWebGPURenderPipelineDisabledImpl(*agents, pipeline);
     }
     return false;
+}
+
+inline RefPtr<WebGPU::RenderPipeline> InspectorInstrumentation::renderPipelineForWebGPUHighlighting(GPURenderPipeline& pipeline, unsigned canvasColorAttachmentMask)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(nullptr);
+    if (RefPtr device = pipeline.device()) {
+        if (RefPtr agents = instrumentingAgents(protect(device->scriptExecutionContext())))
+            return renderPipelineForWebGPUHighlightingImpl(*agents, pipeline, canvasColorAttachmentMask);
+    }
+    return nullptr;
 }
 
 inline void InspectorInstrumentation::willApplyKeyframeEffect(const Styleable& target, KeyframeEffect& effect, const ComputedEffectTiming& computedTiming)

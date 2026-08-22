@@ -1,5 +1,5 @@
-layer at (0,0) size 785x1122
-  RenderView at (0,0) size 785x600
+layer at (0,0) size 797x1122
+  RenderView at (0,0) size 785x585
 layer at (0,0) size 785x1122
   RenderBlock {HTML} at (0,0) size 785x1122
     RenderBody {BODY} at (8,8) size 769x1101 [bgcolor=#EEEEEE]
@@ -92,7 +92,7 @@ layer at (0,0) size 785x1122
                       RenderText {#text} at (1,37) size 416x18
                         text run at (1,37) width 416: "Comments: -** TICKETLESS CONF CODE IS WHGNSO**"
             RenderText {#text} at (0,0) size 0x0
-            RenderInline {SPAN} at (0,389) size 769x217
+            RenderInline {SPAN} at (0,389) size 769x197
               RenderText {#text} at (0,0) size 0x0
               RenderTable {TABLE} at (0,389) size 714x197
                 RenderTableSection {TBODY} at (0,0) size 714x196
@@ -170,7 +170,7 @@ layer at (0,0) size 785x1122
                                     text run at (2,2) width 4: " "
                           RenderBR {BR} at (1,173) size 0x18
             RenderText {#text} at (0,0) size 0x0
-            RenderInline {SPAN} at (0,600) size 769x217
+            RenderInline {SPAN} at (0,600) size 769x197
               RenderText {#text} at (0,0) size 0x0
               RenderTable {TABLE} at (0,600) size 603x197
                 RenderTableSection {TBODY} at (0,0) size 603x196
@@ -248,7 +248,7 @@ layer at (0,0) size 785x1122
                                     text run at (2,2) width 4: " "
                           RenderBR {BR} at (1,173) size 0x18
             RenderText {#text} at (0,0) size 0x0
-            RenderInline {SPAN} at (0,812) size 769x135
+            RenderInline {SPAN} at (0,812) size 769x115
               RenderText {#text} at (0,0) size 0x0
               RenderTable {TABLE} at (0,812) size 617x115
                 RenderTableSection {TBODY} at (0,0) size 617x114
@@ -319,7 +319,7 @@ layer at (0,0) size 785x1122
             RenderInline {SPAN} at (0,1028) size 0x0
           RenderText {#text} at (0,0) size 0x0
         RenderText {#text} at (0,0) size 0x0
-        RenderInline {SPAN} at (0,1045) size 769x69
+        RenderInline {SPAN} at (0,1045) size 769x56
           RenderText {#text} at (0,0) size 0x0
           RenderInline {SPAN} at (0,1043) size 277x18
             RenderText {#text} at (0,0) size 0x0
@@ -391,7 +391,7 @@ layer at (23,8) size 600x39
       text run at (73,146) width 106: "DEBI STANGEL, "
       text run at (178,146) width 119: "119 GLEN COURT, "
       text run at (296,146) width 139: "DANVILLE CA Z/94526"
-layer at (23,8) size 769x73 backgroundClip at (0,0) size 785x1122 clip at (0,0) size 785x1122
+layer at (23,8) size 769x73
   RenderInline (relative positioned) {SPAN} at (0,205) size 769x73
     RenderText {#text} at (0,0) size 0x0
     RenderImage {IMG} at (0,197) size 20x21

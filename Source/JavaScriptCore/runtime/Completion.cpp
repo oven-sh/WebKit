@@ -35,6 +35,7 @@
 #include "JSPromise.h"
 #include "JSWithScope.h"
 #include "ModuleAnalyzer.h"
+#include "Options.h"
 #include "Parser.h"
 #include "ScriptProfilingScope.h"
 #include "TopExceptionScope.h"
@@ -131,7 +132,16 @@ RefPtr<CachedBytecode> generateModuleBytecode(VM& vm, const SourceCode& source, 
     return serializeBytecode(vm, unlinkedCodeBlock, source, SourceCodeType::ModuleType, lexicallyScopedFeatures, scriptMode, fileHandle, error, { });
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue thisValue, NakedPtr<Exception>& returnedException)
+{
+    return evaluate(globalObject, source, nullptr, thisValue, returnedException);
+}
+
+JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, UnlinkedProgramCodeBlock* precompiled, JSValue thisValue, NakedPtr<Exception>& returnedException)
+#else
+JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue thisValue, NakedPtr<Exception>& returnedException)
+#endif
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
@@ -142,7 +152,11 @@ JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue
     if (!thisValue || thisValue.isUndefinedOrNull())
         thisValue = globalObject;
     JSObject* thisObj = uncheckedDowncast<JSObject>(thisValue.toThis(globalObject, ECMAMode::sloppy()));
+#if USE(BUN_JSC_ADDITIONS)
+    JSValue result = vm.interpreter.executeProgram(source, globalObject, thisObj, precompiled);
+#else
     JSValue result = vm.interpreter.executeProgram(source, globalObject, thisObj);
+#endif
 
     if (scope.exception()) [[unlikely]] {
         returnedException = scope.exception();
@@ -203,9 +217,14 @@ static ScriptFetchParameters::Type getSourceType(const SourceCode& source)
     switch (source.provider()->sourceType()) {
     case SourceProviderSourceType::JSON:
         return ScriptFetchParameters::Type::JSON;
+    case SourceProviderSourceType::Text:
+        return ScriptFetchParameters::Type::Text;
     case SourceProviderSourceType::WebAssembly:
         return ScriptFetchParameters::Type::WebAssembly;
     case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+    case SourceProviderSourceType::BunTranspiledModule:
+#endif
         return ScriptFetchParameters::Type::JavaScript;
     default:
         return ScriptFetchParameters::Type::None;
@@ -366,7 +385,10 @@ std::optional<ScriptFetchParameters::Type> retrieveTypeImportAttribute(JSGlobalO
         return { };
 
     String value = iterator->value;
-    if (auto result = ScriptFetchParameters::parseType(value))
+    auto result = ScriptFetchParameters::parseType(value);
+    if (result == ScriptFetchParameters::Type::Text && !Options::useImportText())
+        result = std::nullopt;
+    if (result)
         return result;
 
     throwTypeError(globalObject, scope, makeString("Import attribute type \""_s, value, "\" is not valid"_s));

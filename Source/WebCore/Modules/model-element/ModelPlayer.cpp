@@ -189,6 +189,18 @@ void ModelPlayer::setHasPortal(bool)
 
 #endif
 
+#if ENABLE(SPATIAL_PORTAL)
+
+void ModelPlayer::setPortalTransform(PortalTransformKind)
+{
+}
+
+void ModelPlayer::setPortalAction(PortalActionKind)
+{
+}
+
+#endif
+
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE)
 
 void ModelPlayer::setStageMode(StageModeOperation)

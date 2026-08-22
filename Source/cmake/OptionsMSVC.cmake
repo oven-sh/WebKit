@@ -95,7 +95,12 @@ if(NOT ${CMAKE_GENERATOR} MATCHES "Ninja")
 endif()
 
 if(${CMAKE_BUILD_TYPE} MATCHES "Release")
-        add_compile_options(/Oy- /Gw /Gy /GF)
+        if (COMPILER_IS_CLANG_CL)
+                # clang-cl drops /Oy- on x64 and keeps only non-leaf frames on arm64
+                add_compile_options(/clang:-fno-omit-frame-pointer /clang:-mno-omit-leaf-frame-pointer /Gw /Gy /GF)
+        else ()
+                add_compile_options(/Oy- /Gw /Gy /GF)
+        endif ()
 endif()
 
 WEBKIT_APPEND_GLOBAL_COMPILER_FLAGS(/Wmicrosoft-include)

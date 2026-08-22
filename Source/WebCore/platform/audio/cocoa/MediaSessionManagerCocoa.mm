@@ -321,6 +321,8 @@ void MediaSessionManagerCocoa::removeSession(PlatformMediaSessionInterface& sess
         if (m_nowPlayingManager)
             m_nowPlayingManager->removeClient(*this);
         m_audioHardwareListener = nullptr;
+        m_delayCategoryChangeTimer.stop();
+        m_previousCategory = AudioSession::CategoryType::None;
     }
 
     scheduleSessionStatusUpdate();
@@ -467,7 +469,7 @@ void MediaSessionManagerCocoa::setNowPlayingInfo(bool setAsNowPlayingApplication
     auto cfIdentifier = adoptCF(CFNumberCreate(kCFAllocatorDefault, kCFNumberLongLongType, &lastUpdatedNowPlayingInfoUniqueIdentifier));
     CFDictionarySetValue(info.get(), kMRMediaRemoteNowPlayingInfoUniqueIdentifier, cfIdentifier.get());
 
-    if (std::isfinite(nowPlayingInfo.currentTime) && !std::isnan(nowPlayingInfo.currentTime) && nowPlayingInfo.supportsSeeking) {
+    if (std::isfinite(nowPlayingInfo.currentTime) && !std::isnan(nowPlayingInfo.currentTime)) {
         auto cfCurrentTime = adoptCF(CFNumberCreate(kCFAllocatorDefault, kCFNumberDoubleType, &nowPlayingInfo.currentTime));
         CFDictionarySetValue(info.get(), kMRMediaRemoteNowPlayingInfoElapsedTime, cfCurrentTime.get());
     }
@@ -598,8 +600,10 @@ bool MediaSessionManagerCocoa::shouldUpdateNowPlaying(const NowPlayingInfo& nowP
 
     auto currentTime = nowPlayingInfo.currentTime;
 
-    // Always update when currentTime changes while paused.
-    if (nowPlayingInfo.supportsSeeking && !nowPlayingInfo.isPlaying) {
+    // Always update when currentTime changes while paused. This is not gated on
+    // seekability: position is reported even for non-seekable sessions, so a seek
+    // performed through the page's own controls must still refresh the elapsed time.
+    if (!nowPlayingInfo.isPlaying) {
         bool didChange = m_nowPlayingInfo->currentTime != currentTime;
         INFO_LOG_IF(didChange, LOGIDENTIFIER, "paused and current time changed");
         return didChange;
@@ -730,7 +734,7 @@ void MediaSessionManagerCocoa::updateNowPlayingInfo()
 
     m_lastUpdatedNowPlayingInfoUniqueIdentifier = nowPlayingInfo->uniqueIdentifier;
 
-    if (std::isfinite(currentTime) && !std::isnan(currentTime) && nowPlayingInfo->supportsSeeking)
+    if (std::isfinite(currentTime) && !std::isnan(currentTime))
         m_lastUpdatedNowPlayingElapsedTime = currentTime;
 
     m_nowPlayingActive = nowPlayingInfo->allowsNowPlayingControlsVisibility;

@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <wtf/HashTraits.h>
+
 namespace WebCore {
 
 // Keep this in sync with WI.Recording.Swizzle.
@@ -33,7 +35,7 @@ enum class RecordingSwizzleType : int {
     Number = 1,
     Boolean = 2,
     String = 3,
-    Array = 4,
+    JSON = 4,
     TypedArray = 5,
     Image = 6,
     ImageData = 7,
@@ -54,7 +56,7 @@ enum class RecordingSwizzleType : int {
     WebGLSync = 22,
     WebGLTransformFeedback = 23,
     WebGLVertexArrayObject = 24,
-    DOMPointInit = 25,
+    ArrayOf = 25,
     Canvas = 26,
     GPUBindGroup = 27,
     GPUBindGroupLayout = 28,
@@ -75,6 +77,83 @@ enum class RecordingSwizzleType : int {
     GPUShaderModule = 43,
     GPUTexture = 44,
     GPUTextureView = 45,
+    WebGLBlendFuncExtended = 46,
+    WebGLClipCullDistance = 47,
+    WebGLColorBufferFloat = 48,
+    WebGLCompressedTextureASTC = 49,
+    WebGLCompressedTextureETC = 50,
+    WebGLCompressedTextureETC1 = 51,
+    WebGLCompressedTexturePVRTC = 52,
+    WebGLCompressedTextureS3TC = 53,
+    WebGLCompressedTextureS3TCsRGB = 54,
+    WebGLDebugRendererInfo = 55,
+    WebGLDebugShaders = 56,
+    WebGLDepthTexture = 57,
+    WebGLDrawBuffers = 58,
+    WebGLDrawInstancedBaseVertexBaseInstance = 59,
+    WebGLLoseContext = 60,
+    WebGLMultiDraw = 61,
+    WebGLMultiDrawInstancedBaseVertexBaseInstance = 62,
+    WebGLPolygonMode = 63,
+    WebGLProvokingVertex = 64,
+    WebGLRenderSharedExponent = 65,
+    WebGLStencilTexturing = 66,
+    WebGLTimerQueryEXT = 67,
+    WebGLVertexArrayObjectOES = 68,
+    ANGLEInstancedArrays = 69,
+    EXTBlendMinMax = 70,
+    EXTClipControl = 71,
+    EXTColorBufferFloat = 72,
+    EXTColorBufferHalfFloat = 73,
+    EXTConservativeDepth = 74,
+    EXTDepthClamp = 75,
+    EXTDisjointTimerQuery = 76,
+    EXTDisjointTimerQueryWebGL2 = 77,
+    EXTFloatBlend = 78,
+    EXTFragDepth = 79,
+    EXTPolygonOffsetClamp = 80,
+    EXTRenderSnorm = 81,
+    EXTShaderTextureLOD = 82,
+    EXTTextureCompressionBPTC = 83,
+    EXTTextureCompressionRGTC = 84,
+    EXTTextureFilterAnisotropic = 85,
+    EXTTextureMirrorClampToEdge = 86,
+    EXTTextureNorm16 = 87,
+    EXTsRGB = 88,
+    KHRParallelShaderCompile = 89,
+    NVShaderNoperspectiveInterpolation = 90,
+    OESDrawBuffersIndexed = 91,
+    OESElementIndexUint = 92,
+    OESFBORenderMipmap = 93,
+    OESSampleVariables = 94,
+    OESShaderMultisampleInterpolation = 95,
+    OESStandardDerivatives = 96,
+    OESTextureFloat = 97,
+    OESTextureFloatLinear = 98,
+    OESTextureHalfFloat = 99,
+    OESTextureHalfFloatLinear = 100,
+    OESVertexArrayObject = 101,
+    GPUBindGroupDescriptor = 102,
+    GPURenderPipelineDescriptor = 103,
+    GPUComputePassDescriptor = 104,
+    GPUComputePipelineDescriptor = 105,
+    GPUCopyElementImageDestination = 106,
+    GPUCopyElementImageSource = 107,
+    GPUExternalTextureDescriptor = 108,
+    GPUImageCopyBuffer = 109,
+    GPUImageCopyExternalImage = 110,
+    GPUImageCopyTexture = 111,
+    GPUImageCopyTextureTagged = 112,
+    GPUPipelineLayoutDescriptor = 113,
+    GPURenderPassDescriptor = 114,
+    GPUShaderModuleDescriptor = 115,
 };
 
 } // namespace WebCore
+
+namespace WTF {
+
+template<> struct DefaultHash<WebCore::RecordingSwizzleType> : IntHash<WebCore::RecordingSwizzleType> { };
+template<> struct HashTraits<WebCore::RecordingSwizzleType> : StrongEnumHashTraits<WebCore::RecordingSwizzleType> { };
+
+} // namespace WTF

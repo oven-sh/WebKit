@@ -2,6 +2,7 @@ ARG MARCH_FLAG="-march=armv8-a+crc -mtune=cortex-a78"
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG LLVM_VERSION="21"
+ARG LLVM_DEBS_SHA256="4a79b0eae89af72b082997d361198f16aaefce3fa8ad3c56c8e97311ff31dd5f"
 ARG NDK_VERSION="r27c"
 ARG NDK_SHA256="59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc"
 ARG ANDROID_API="28"
@@ -9,14 +10,15 @@ ARG ANDROID_ARCH="aarch64"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
-ARG ICU_VERSION="75_1"
-ARG ICU_RELEASE_TAG="release-75-1"
-ARG ICU_SHA256="cb968df3e4d2e87e8b11c49a5d01c787bd13b9545280fc6642f826527618caef"
+ARG ICU_VERSION="78.3"
+ARG ICU_RELEASE_TAG="release-78.3"
+ARG ICU_SHA256="3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0"
 
 FROM ubuntu:24.04 AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
+ARG LLVM_DEBS_SHA256
 ARG NDK_VERSION
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,7 +31,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Host clang (same version Bun uses) — we cross-compile via --target/--sysroot,
 # not via the NDK's bundled clang. apt.llvm.org installs version-suffixed names
 # only (ld.lld-21, not ld.lld), so add unversioned links for -fuse-ld=lld.
-RUN wget -qO- https://apt.llvm.org/llvm.sh | bash -s -- ${LLVM_VERSION} && \
+# The debs are mirrored from apt.llvm.org to a GitHub release (see
+# scripts/mirror-llvm-debs.sh) so the build doesn't depend on apt.llvm.org.
+ADD --checksum=sha256:${LLVM_DEBS_SHA256} \
+    https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-noble-amd64.tar.gz /tmp/llvm.tar.gz
+RUN mkdir -p /tmp/llvm && tar xzf /tmp/llvm.tar.gz -C /tmp/llvm && \
+    apt-get update && apt-get install -y /tmp/llvm/*.deb && \
+    rm -rf /tmp/llvm /tmp/llvm.tar.gz /var/lib/apt/lists/* && \
     for t in clang clang++ ld.lld lld llvm-ar llvm-ranlib; do \
       ln -sf /usr/bin/${t}-${LLVM_VERSION} /usr/local/bin/${t}; \
     done
@@ -89,7 +97,7 @@ ARG ANDROID_ARCH
 ARG ICU_VERSION
 ARG ICU_RELEASE_TAG
 ARG ICU_SHA256
-ADD --checksum=sha256:${ICU_SHA256} https://github.com/unicode-org/icu/releases/download/${ICU_RELEASE_TAG}/icu4c-${ICU_VERSION}-src.tgz /icu.tgz
+ADD --checksum=sha256:${ICU_SHA256} https://github.com/unicode-org/icu/releases/download/${ICU_RELEASE_TAG}/icu4c-${ICU_VERSION}-sources.tgz /icu.tgz
 
 # Host build (tools only — no LTO, fast).
 RUN mkdir -p /icu-host && cd /icu-host \
@@ -101,7 +109,7 @@ RUN mkdir -p /icu-host && cd /icu-host \
 
 # Target build.
 #
-# Before configure, filter data/in/icudt75l.dat (using the host icupkg) to drop
+# Before configure, filter data/in/icudt78l.dat (using the host icupkg) to drop
 # converters/translit/stringprep/confusables/unames. Bun has zero
 # ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU is removed in
 # src/bun.js/bindings/TextEncodingRegistry.cpp). Cuts libicudata.a by ~7.4 MB.
@@ -117,9 +125,9 @@ RUN --mount=type=tmpfs,target=/icu \
     export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
     export LDFLAGS="${CROSS_FLAGS} --rtlib=compiler-rt -fuse-ld=lld" && \
     cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && cd source && \
-    /icu-host/source/bin/icupkg -l data/in/icudt75l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
-    /icu-host/source/bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt75l.dat data/in/icudt75l_filtered.dat && \
-    mv -f data/in/icudt75l_filtered.dat data/in/icudt75l.dat && \
+    /icu-host/source/bin/icupkg -l data/in/icudt78l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
+    /icu-host/source/bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt78l.dat data/in/icudt78l_filtered.dat && \
+    mv -f data/in/icudt78l_filtered.dat data/in/icudt78l.dat && \
     { ./configure --host=${ANDROID_ARCH}-linux-android \
         --with-cross-build=/icu-host/source \
         --enable-static --disable-shared --with-data-packaging=static \
@@ -160,8 +168,9 @@ ENV WEBKIT_OUT_DIR=/webkitbuild
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export TARGET_TRIPLE="${ANDROID_ARCH}-unknown-linux-android${ANDROID_API}" && \
     export CROSS="--target=${TARGET_TRIPLE} --sysroot=${NDK_SYSROOT}" && \
-    export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} ${LTO_FLAG} -isystem /icu/include -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
-    export CXXFLAGS="${CROSS} -isystem ${NDK_SYSROOT}/usr/include/c++/v1 ${DEFAULT_CFLAGS} ${MARCH_FLAG} ${LTO_FLAG} -isystem /icu/include -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
+    export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
+    export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} $G ${MARCH_FLAG} ${LTO_FLAG} -isystem /icu/include -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
+    export CXXFLAGS="${CROSS} -isystem ${NDK_SYSROOT}/usr/include/c++/v1 ${DEFAULT_CFLAGS} $G ${MARCH_FLAG} ${LTO_FLAG} -isystem /icu/include -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
     cd /webkitbuild && \
     cmake \
     -DCMAKE_SYSTEM_NAME=Linux \

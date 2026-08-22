@@ -1,0 +1,31 @@
+name: Mirror LLVM debs
+
+# Rebuilds the llvm-<version>-debs release that the Dockerfiles install LLVM
+# from. Run it when the LLVM version changes or apt.llvm.org ships a build
+# worth picking up, then pin the printed SHA-256s in the Dockerfiles.
+on:
+  workflow_dispatch:
+    inputs:
+      llvm_version:
+        description: 'LLVM major version to mirror'
+        type: string
+        default: '21'
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          sparse-checkout: scripts
+      - name: Mirror
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          LLVM_VERSION: ${{ inputs.llvm_version }}
+          OUT: ${{ runner.temp }}/llvm-debs
+        run: bash scripts/mirror-llvm-debs.sh

@@ -652,6 +652,11 @@ struct YarrPattern {
         }
         return anycharCached;
     }
+    // The DotStarEnclosure's two frame slots (YarrStackSpaceForDotStarEnclosure): the offset the
+    // match started from, and the end of the newline-free span known to follow it.
+    unsigned initialStartFrameLocation() const { return m_initialStartValueFrameLocation; }
+    unsigned noNewlineBeforeFrameLocation() const { return m_initialStartValueFrameLocation + 1; }
+
     CharacterClass* newlineCharacterClass()
     {
         if (!newlineCached) {
@@ -857,10 +862,15 @@ private:
         uintptr_t begin; // Not really needed for greedy quantifiers.
         uintptr_t matchAmount; // Not really needed for fixed quantifiers.
         uintptr_t backReferenceSize; // Used by greedy quantifiers to backtrack.
+        // A backward (lookbehind) backreference's span lies left of the cursor;
+        // this holds that span's left edge across the compare walk (the JIT's
+        // forward form gets the equivalent from the moving frontier for free).
+        uintptr_t backwardSpanEdge;
 
         static unsigned beginIndex() { return offsetof(BackTrackInfoBackReference, begin) / sizeof(uintptr_t); }
         static unsigned matchAmountIndex() { return offsetof(BackTrackInfoBackReference, matchAmount) / sizeof(uintptr_t); }
         static unsigned backReferenceSizeIndex() { return offsetof(BackTrackInfoBackReference, backReferenceSize) / sizeof(uintptr_t); }
+        static unsigned backwardSpanEdgeIndex() { return offsetof(BackTrackInfoBackReference, backwardSpanEdge) / sizeof(uintptr_t); }
     };
 
     struct BackTrackInfoAlternative {
@@ -878,9 +888,14 @@ private:
     struct BackTrackInfoParenthesesOnce {
         uintptr_t begin;
         uintptr_t returnAddress;
+        // Address of the code that continues a first-character dispatch chain
+        // when the alternative just entered fails (see the dispatched-alternatives
+        // path in YarrJIT).
+        uintptr_t chainResume;
 
         static unsigned beginIndex() { return offsetof(BackTrackInfoParenthesesOnce, begin) / sizeof(uintptr_t); }
         static unsigned returnAddressIndex() { return offsetof(BackTrackInfoParenthesesOnce, returnAddress) / sizeof(uintptr_t); }
+        static unsigned chainResumeIndex() { return offsetof(BackTrackInfoParenthesesOnce, chainResume) / sizeof(uintptr_t); }
     };
 
     struct BackTrackInfoParenthesesTerminal {

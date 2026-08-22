@@ -628,8 +628,11 @@ void FrameLoader::stopLoading(UnloadEventPolicy unloadEventPolicy)
         DatabaseManager::singleton().stopDatabases(*document, nullptr);
 
         if (document->settings().navigationAPIEnabled() && !m_doNotAbortNavigationAPI && unloadEventPolicy != UnloadEventPolicy::UnloadAndPageHide) {
-            RefPtr window = frame->document()->window();
-            protect(window->navigation())->abortOngoingNavigationIfNeeded();
+            if (RefPtr window = document->window()) {
+                Ref navigation = window->navigation();
+                if (document->backForwardCacheState() == Document::NotInBackForwardCache || navigation->hasInterceptedOngoingNavigateEvent())
+                    navigation->abortOngoingNavigationIfNeeded();
+            }
         }
     }
 
@@ -2024,7 +2027,22 @@ void FrameLoader::loadWithDocumentLoader(DocumentLoader* loader, FrameLoadType t
 
     auto policyDecisionMode = loader->triggeringAction().isFromNavigationAPI() ? PolicyDecisionMode::Synchronous : PolicyDecisionMode::Asynchronous;
     RELEASE_ASSERT(!isBackForwardLoadType(policyChecker().loadType()) || history().provisionalItem());
-    policyChecker().checkNavigationPolicy(ResourceRequest(loader->request()), ResourceResponse { } /* redirectResponse */, loader, WTF::move(formSubmission), [this, protectedThis = Ref { *this }, allowNavigationToInvalidURL, shouldRestoreFromBackForwardCache, completionHandler = completionHandlerCaller.release()] (const ResourceRequest& request, WeakPtr<const FormSubmission>&& weakFormSubmission, NavigationPolicyDecision navigationPolicyDecision) mutable {
+    policyChecker().checkNavigationPolicy(ResourceRequest(loader->request()), ResourceResponse { } /* redirectResponse */, loader, WTF::move(formSubmission), [
+        this,
+        protectedThis = Ref { *this },
+        allowNavigationToInvalidURL,
+        shouldRestoreFromBackForwardCache,
+        expectedPolicyDocumentLoader = RefPtr { loader },
+        completionHandler = completionHandlerCaller.release()
+    ] (const ResourceRequest& request, WeakPtr<const FormSubmission>&& weakFormSubmission, NavigationPolicyDecision navigationPolicyDecision) mutable {
+        // A download attribute check is not cancelled by the navigation that follows it, so it can be
+        // answered once a newer navigation owns m_policyDocumentLoader. Continuing would tear that
+        // newer navigation down; the download, if any, has already started.
+        if (m_policyDocumentLoader != expectedPolicyDocumentLoader) {
+            FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadWithDocumentLoader: not continuing because a newer navigation owns the policy document loader");
+            completionHandler();
+            return;
+        }
         continueLoadAfterNavigationPolicy(request, RefPtr { weakFormSubmission.get() }.get(), navigationPolicyDecision, allowNavigationToInvalidURL, shouldRestoreFromBackForwardCache);
         completionHandler();
     }, IsSameDocumentNavigation::No, policyDecisionMode, determineNavigationType(type, NavigationHistoryBehavior::Auto));
@@ -2553,16 +2571,6 @@ void FrameLoader::commitProvisionalLoad()
         // FIXME: This API should be turned around so that we ground CachedPage into the Page.
         RefPtr page = frame->page();
         cachedPage->restore(*page);
-
-        // Dispatch any pending navigate event after BFCache restoration is complete.
-        if (RefPtr item = std::exchange(m_pendingNavigationAPIItem, nullptr)) {
-            // Ensure we use the restored document context, not the previous one
-            if (m_frame->document() && m_frame->document()->window()) {
-                RefPtr navigation = protect(m_frame->document()->window())->navigation();
-                if (navigation && navigation->frame())
-                    navigation->dispatchTraversalNavigateEvent(*item);
-            }
-        }
 
 #if PLATFORM(IOS_FAMILY)
         page->chrome().setDispatchViewportDataDidChangeSuppressed(false);
@@ -3419,6 +3427,13 @@ void FrameLoader::frameDetached()
     // Calling stopAllLoadersAndCheckCompleteness() can cause the frame to be deallocated, including the frame loader.
     Ref frame = m_frame.get();
 
+    // https://html.spec.whatwg.org/multipage/document-sequences.html#destroy-a-child-navigable
+    // Step 4: Inform the navigation API about child navigable destruction
+    if (RefPtr document = frame->document(); document && document->settings().navigationAPIEnabled()) {
+        if (RefPtr window = document->window())
+            protect(window->navigation())->informAboutChildNavigableDestruction();
+    }
+
     if (m_checkTimer.isActive()) {
         m_checkTimer.stop();
         checkCompletenessNow();
@@ -4198,25 +4213,18 @@ void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& reque
     bool navigateEventAborted = false;
     bool shouldCloseResult = true;
 
-    if (m_pendingNavigationAPIItem) {
-        // Check if this will be a BFCache load - if so, defer navigate event until after restoration
-        bool willLoadFromBFCache = false;
-        if (RefPtr provisionalItem = history().provisionalItem(); provisionalItem && provisionalItem->isInBackForwardCache())
-            willLoadFromBFCache = true;
-
+    if (RefPtr pendingItem = std::exchange(m_pendingNavigationAPIItem, nullptr)) {
         // Only call shouldClose() early for Navigation API traversals
         shouldCloseResult = shouldClose();
 
-        if (shouldCloseResult && !willLoadFromBFCache) {
-            // For non-BFCache traversals, dispatch navigate event now
-            if (RefPtr window = frame->document()->window()) {
-                if (RefPtr navigation = window->navigation(); navigation->frame()) {
-                    if (navigation->dispatchTraversalNavigateEvent(Ref { *m_pendingNavigationAPIItem }) == Navigation::DispatchResult::Aborted)
+        if (shouldCloseResult) {
+            RefPtr document = frame->document();
+            if (RefPtr window = document ? document->window() : nullptr) {
+                if (Ref navigation = window->navigation(); navigation->frame()) {
+                    if (navigation->dispatchTraversalNavigateEvent(*pendingItem) == Navigation::DispatchResult::Aborted)
                         navigateEventAborted = true;
                 }
             }
-
-            m_pendingNavigationAPIItem = nullptr;
         }
     } else {
         // For non-Navigation API traversals, use original behavior with short-circuit evaluation
@@ -4584,7 +4592,9 @@ bool FrameLoader::dispatchNavigateEvent(FrameLoadType loadType, const FrameLoadR
     if (navigationType == NavigationNavigationType::Traverse)
         return true;
 
-    RefPtr sourceElement = event ? dynamicDowncast<Element>(event->target()) : nullptr;
+    RefPtr sourceElement = request.sourceElement();
+    if (!sourceElement && event)
+        sourceElement = dynamicDowncast<Element>(event->target());
 
     return protect(window->navigation())->dispatchPushReplaceReloadNavigateEvent(newURL, navigationType, isSameDocument, formState, classicHistoryAPIState, sourceElement.get());
 }
@@ -4610,6 +4620,21 @@ void FrameLoader::loadSameDocumentItem(HistoryItem& item)
     // Restore user view state from the current history item here since we don't do a normal load.
     if (!scrollingSuppressedByNavigationAPI(protect(frame->document()).get()))
         history->restoreScrollPositionAndViewState();
+}
+
+void FrameLoader::clearDeferredTraversal()
+{
+    m_deferredTraversalItem = nullptr;
+}
+
+void FrameLoader::resumeDeferredTraversal()
+{
+    RefPtr item = std::exchange(m_deferredTraversalItem, nullptr);
+    if (!item)
+        return;
+
+    m_loadType = m_deferredTraversalLoadType;
+    loadSameDocumentItem(*item);
 }
 
 // FIXME: This function should really be split into a couple pieces, some of
@@ -4765,8 +4790,17 @@ void FrameLoader::loadItem(HistoryItem& item, HistoryItem* fromItem, FrameLoadTy
             // https://html.spec.whatwg.org/multipage/nav-history-apis.html#fire-a-traverse-navigate-event
             if (RefPtr window = frame().document()->window()) {
                 if (RefPtr navigation = window->navigation(); navigation->frame()) {
-                    if (navigation->dispatchTraversalNavigateEvent(item) == Navigation::DispatchResult::Aborted)
+                    auto dispatchResult = navigation->dispatchTraversalNavigateEvent(item);
+                    if (dispatchResult == Navigation::DispatchResult::Aborted)
                         return;
+                    if (dispatchResult == Navigation::DispatchResult::DeferredCommit) {
+                        // A precommit handler is still pending, so the traverse history step must
+                        // not be applied yet. Navigation resumes it once the precommit handler
+                        // promises fulfill, and discards it if the navigation is aborted before.
+                        m_deferredTraversalItem = &item;
+                        m_deferredTraversalLoadType = loadType;
+                        return;
+                    }
                     // In case the event detached the frame.
                     if (!navigation->frame())
                         return;
