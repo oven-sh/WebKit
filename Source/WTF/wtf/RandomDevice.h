@@ -50,9 +50,9 @@ public:
 
     // Linux only, a no-op elsewhere. true (the default) reads getrandom(2) and
     // opens /dev/urandom only if the syscall is unavailable; false always opens
-    // /dev/urandom. The process-wide device decides when it is constructed, on
-    // the first request for randomness, so call this before that point.
-    // JSC::initialize() calls it with Options::useGetrandom().
+    // /dev/urandom. Also forwarded to bmalloc's generator. This device decides
+    // when it is constructed, on the first request for randomness, so call this
+    // before then. JSC::initialize() calls it with Options::useGetrandom().
     WTF_EXPORT_PRIVATE static void setUseGetrandom(bool);
 
 private:

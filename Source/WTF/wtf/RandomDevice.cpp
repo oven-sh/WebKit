@@ -28,6 +28,7 @@
 #include <wtf/RandomDevice.h>
 
 #include <atomic>
+#include <bmalloc/CryptoRandom.h>
 #include <stdlib.h>
 
 #if !OS(DARWIN) && !OS(FUCHSIA) && OS(UNIX)
@@ -105,9 +106,8 @@ void RandomDevice::setUseGetrandom(bool use)
 {
 #if RANDOM_DEVICE_USE_GETRANDOM
     s_useGetrandom.store(use, std::memory_order_relaxed);
-#else
-    UNUSED_PARAM(use);
 #endif
+    bmalloc::setCryptoRandomUsesGetrandom(use);
 }
 
 #if !OS(DARWIN) && !OS(FUCHSIA) && !OS(WINDOWS)

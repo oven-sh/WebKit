@@ -35,7 +35,6 @@
 #include "Mutex.h"
 #include "StaticPerProcess.h"
 #include "VMAllocate.h"
-#include <mutex>
 
 #if !BOS(DARWIN) && !BOS(WINDOWS)
 #include <errno.h>
@@ -78,15 +77,27 @@ public:
 
     uint32_t randomNumber();
     void randomValues(void* buffer, size_t length);
+    void setUsesGetrandom(bool);
 
 private:
     inline void addRandomData(unsigned char *data, int length);
     void stir();
     void stirIfNeeded();
     inline uint8_t getByte();
+#if !BOS(DARWIN) && !BOS(WINDOWS)
+    void chooseSource();
+#endif
 
     ARC4Stream m_stream;
     int m_count;
+#if !BOS(DARWIN) && !BOS(WINDOWS)
+    // /dev/urandom, or -1 while getrandom(2) is the source (or before chooseSource() ran).
+    int m_fd { -1 };
+    bool m_sourceChosen { false };
+#if CRYPTO_RANDOM_USE_GETRANDOM
+    bool m_usesGetrandom { true };
+#endif
+#endif
 };
 BALLOW_DEPRECATED_DECLARATIONS_BEGIN
 DECLARE_STATIC_PER_PROCESS_STORAGE_WITH_LINKAGE(ARC4RandomNumberGenerator, BNOEXPORT);
@@ -119,6 +130,45 @@ void ARC4RandomNumberGenerator::addRandomData(unsigned char* data, int length)
     m_stream.j = m_stream.i;
 }
 
+#if !BOS(DARWIN) && !BOS(WINDOWS)
+// The caller holds mutex(). Runs before the first stir() and again from
+// setUsesGetrandom(), so it has to be able to switch in both directions.
+void ARC4RandomNumberGenerator::chooseSource()
+{
+    m_sourceChosen = true;
+#if CRYPTO_RANDOM_USE_GETRANDOM
+    if (m_usesGetrandom) {
+        // Prefer getrandom(2): same kernel pool as /dev/urandom, but needs no
+        // filesystem access and keeps no fd open. Probe once with GRND_NONBLOCK;
+        // if the pool is already initialized use getrandom from here on (it can
+        // never become uninitialized again). Otherwise -- EAGAIN (pool not ready,
+        // where /dev/urandom would return without blocking), ENOSYS (pre-3.17
+        // kernel) or EPERM (seccomp) -- keep the historical /dev/urandom behaviour.
+        uint8_t probe;
+        long probeResult;
+        do {
+            probeResult = syscall(SYS_getrandom, &probe, sizeof(probe), GRND_NONBLOCK);
+        } while (probeResult == -1 && errno == EINTR);
+        if (probeResult == 1) {
+            if (m_fd >= 0) {
+                close(m_fd);
+                m_fd = -1;
+            }
+            return;
+        }
+    }
+#endif
+    if (m_fd >= 0)
+        return;
+    int ret = 0;
+    do {
+        ret = open("/dev/urandom", O_RDONLY | O_CLOEXEC, 0);
+    } while (ret == -1 && errno == EINTR);
+    RELEASE_BASSERT(ret >= 0);
+    m_fd = ret;
+}
+#endif
+
 void ARC4RandomNumberGenerator::stir()
 {
     unsigned char randomness[128];
@@ -130,42 +180,17 @@ void ARC4RandomNumberGenerator::stir()
     // TODO Generate random bytes - this appears to be unused when running libpas
     BCRASH();
 #else
-    static std::once_flag onceFlag;
-    static int fd = -1;
-    std::call_once(
-        onceFlag,
-        [] {
-#if CRYPTO_RANDOM_USE_GETRANDOM
-            // Prefer getrandom(2): same kernel pool as /dev/urandom, but needs no
-            // filesystem access and keeps no fd open. Probe once with GRND_NONBLOCK;
-            // if the pool is already initialized use getrandom from here on (it can
-            // never become uninitialized again). Otherwise -- EAGAIN (pool not ready,
-            // where /dev/urandom would return without blocking), ENOSYS (pre-3.17
-            // kernel) or EPERM (seccomp) -- keep the historical /dev/urandom behaviour.
-            uint8_t probe;
-            long probeResult;
-            do {
-                probeResult = syscall(SYS_getrandom, &probe, sizeof(probe), GRND_NONBLOCK);
-            } while (probeResult == -1 && errno == EINTR);
-            if (probeResult == 1)
-                return; // fd stays -1: use getrandom below.
-#endif
-            int ret = 0;
-            do {
-                ret = open("/dev/urandom", O_RDONLY | O_CLOEXEC, 0);
-            } while (ret == -1 && errno == EINTR);
-            RELEASE_BASSERT(ret >= 0);
-            fd = ret;
-        });
+    if (!m_sourceChosen)
+        chooseSource();
     ssize_t amountRead = 0;
     while (static_cast<size_t>(amountRead) < length) {
         ssize_t currentRead;
 #if CRYPTO_RANDOM_USE_GETRANDOM
-        if (fd < 0)
+        if (m_fd < 0)
             currentRead = syscall(SYS_getrandom, randomness + amountRead, length - amountRead, 0);
         else
 #endif
-            currentRead = read(fd, randomness + amountRead, length - amountRead);
+            currentRead = read(m_fd, randomness + amountRead, length - amountRead);
         // We need to check for both EAGAIN and EINTR since on some systems /dev/urandom
         // is blocking and on others it is non-blocking.
         if (currentRead == -1)
@@ -214,9 +239,30 @@ void ARC4RandomNumberGenerator::randomValues(void* buffer, size_t length)
     }
 }
 
+void ARC4RandomNumberGenerator::setUsesGetrandom(bool usesGetrandom)
+{
+#if CRYPTO_RANDOM_USE_GETRANDOM
+    LockHolder lock(mutex());
+    if (m_usesGetrandom == usesGetrandom)
+        return;
+    m_usesGetrandom = usesGetrandom;
+    // Switch now rather than at the next stir(), so that a /dev/urandom that
+    // cannot be opened fails at the call that asked for it.
+    if (m_sourceChosen)
+        chooseSource();
+#else
+    BUNUSED_PARAM(usesGetrandom);
+#endif
+}
+
 void cryptoRandom(void* buffer, size_t length)
 {
     ARC4RandomNumberGenerator::get()->randomValues(buffer, length);
+}
+
+void setCryptoRandomUsesGetrandom(bool usesGetrandom)
+{
+    ARC4RandomNumberGenerator::get()->setUsesGetrandom(usesGetrandom);
 }
 
 } // namespace bmalloc
