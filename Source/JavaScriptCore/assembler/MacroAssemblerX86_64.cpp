@@ -40,10 +40,8 @@ namespace JSC {
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(ctiMasmProbeTrampoline, void, ());
 JSC_ANNOTATE_JIT_OPERATION_PROBE(ctiMasmProbeTrampoline);
-#if !OS(DARWIN)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(ctiMasmProbeTrampolineAVX, void, ());
 JSC_ANNOTATE_JIT_OPERATION_PROBE(ctiMasmProbeTrampolineAVX);
-#endif
 
 // The following are offsets for Probe::State fields accessed by the ctiMasmProbeTrampoline stub.
 
@@ -193,7 +191,6 @@ static_assert(sizeof(Probe::State) == PROBE_SIZE, "Probe::State::size's matches 
     "vmovaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM14_VECTOR_OFFSET) "(%rbp), %xmm14" "\n" \
     "vmovaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM15_VECTOR_OFFSET) "(%rbp), %xmm15" "\n"
 
-#if !OS(DARWIN)
 #define PROBE_XMM_SAVE_MOVAPS \
     "movaps %xmm0,  " STRINGIZE_VALUE_OF(PROBE_CPU_XMM0_VECTOR_OFFSET) "(%rsp)" "\n" \
     "movaps %xmm1,  " STRINGIZE_VALUE_OF(PROBE_CPU_XMM1_VECTOR_OFFSET) "(%rsp)" "\n" \
@@ -229,7 +226,6 @@ static_assert(sizeof(Probe::State) == PROBE_SIZE, "Probe::State::size's matches 
     "movaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM13_VECTOR_OFFSET) "(%rbp), %xmm13" "\n" \
     "movaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM14_VECTOR_OFFSET) "(%rbp), %xmm14" "\n" \
     "movaps " STRINGIZE_VALUE_OF(PROBE_CPU_XMM15_VECTOR_OFFSET) "(%rbp), %xmm15" "\n"
-#endif // !OS(DARWIN)
 
 #if COMPILER(MSVC)
 #define ASM_PREVIOUS_SECTION
@@ -404,19 +400,13 @@ __asm__( \
     ASM_PREVIOUS_SECTION \
 );
 
-#if OS(DARWIN)
-// On macOS, all x86_64 CPUs support AVX. Use vmovaps unconditionally.
-DEFINE_PROBE_TRAMPOLINE(ctiMasmProbeTrampoline, PROBE_XMM_SAVE_VMOVAPS, PROBE_XMM_RESTORE_VMOVAPS,
-    ctiMasmProbeTrampolineCopyLoop, ctiMasmProbeTrampolineProbeStateIsSafe, ctiMasmProbeTrampolineRestoreRegisters)
-#else
-// On Linux/Windows, AVX may not be available. Provide two trampolines:
+// AVX may not be available. Provide two trampolines:
 // - ctiMasmProbeTrampoline: uses movaps (SSE, always available on x86_64)
 // - ctiMasmProbeTrampolineAVX: uses vmovaps (requires AVX)
 DEFINE_PROBE_TRAMPOLINE(ctiMasmProbeTrampoline, PROBE_XMM_SAVE_MOVAPS, PROBE_XMM_RESTORE_MOVAPS,
     ctiMasmProbeTrampolineCopyLoop, ctiMasmProbeTrampolineProbeStateIsSafe, ctiMasmProbeTrampolineRestoreRegisters)
 DEFINE_PROBE_TRAMPOLINE(ctiMasmProbeTrampolineAVX, PROBE_XMM_SAVE_VMOVAPS, PROBE_XMM_RESTORE_VMOVAPS,
     ctiMasmProbeTrampolineAVXCopyLoop, ctiMasmProbeTrampolineAVXProbeStateIsSafe, ctiMasmProbeTrampolineAVXRestoreRegisters)
-#endif
 
 // What code is emitted for the probe?
 // ==================================
@@ -464,14 +454,10 @@ void MacroAssembler::probe(Probe::Function function, void* arg)
     push(RegisterID::eax);
     push(RegisterID::eax);
 
-#if OS(DARWIN)
-    move(TrustedImmPtr(reinterpret_cast<void*>(ctiMasmProbeTrampoline)), RegisterID::eax);
-#else
     if (supportsAVX())
         move(TrustedImmPtr(reinterpret_cast<void*>(ctiMasmProbeTrampolineAVX)), RegisterID::eax);
     else
         move(TrustedImmPtr(reinterpret_cast<void*>(ctiMasmProbeTrampoline)), RegisterID::eax);
-#endif
 
     push(RegisterID::edx);
     move(TrustedImmPtr(reinterpret_cast<void*>(function)), RegisterID::edx);
