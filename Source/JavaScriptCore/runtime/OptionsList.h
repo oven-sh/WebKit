@@ -338,6 +338,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, breakOnThrow, false, Normal, nullptr) \
     \
     v(Unsigned, maximumOptimizationCandidateBytecodeCost, 100000, Normal, nullptr) \
+    v(Unsigned, maximumCachedAssemblerBufferSize, 1 * MB, Normal, "Assembler scratch buffers larger than this are freed after compilation instead of being cached per thread (0 = cache any size)"_s) \
     \
     v(Unsigned, maximumFunctionForCallInlineCandidateBytecodeCostForDFG, 80, Normal, nullptr) \
     v(Unsigned, maximumFunctionForClosureCallInlineCandidateBytecodeCostForDFG, 80, Normal, nullptr) \
