@@ -124,8 +124,8 @@ elseif (APPLE)
 elseif (ANDROID)
     list(APPEND WTF_SOURCES
         linux/CurrentProcessMemoryStatus.cpp
+        linux/HighPriorityThreads.cpp
         linux/MemoryFootprintLinux.cpp
-        linux/RealTimeThreads.cpp
 
         generic/MemoryPressureHandlerGeneric.cpp
     )
