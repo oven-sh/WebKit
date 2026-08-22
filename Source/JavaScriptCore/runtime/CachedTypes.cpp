@@ -349,6 +349,11 @@ void Decoder::setHandleForTDZEnvironment(CompactTDZEnvironment* environment, con
 
 void Decoder::addLeafExecutable(const UnlinkedFunctionExecutable* executable, ptrdiff_t offset)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // Only CachedBytecode::addFunctionUpdate reads this map, and Bun never calls it.
+    if (Options::useLeanBytecodeCacheDecoder())
+        return;
+#endif
     m_cachedBytecode->leafExecutables().add(executable, offset);
 }
 
