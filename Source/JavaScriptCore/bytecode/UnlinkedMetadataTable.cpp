@@ -63,7 +63,6 @@ void MetadataStatistics::reportMetadataStatistics()
     dataLogLn("\nMetadata statistics\n");
 
     totalMemory += unlinkedMetadataCount * sizeof(UnlinkedMetadataTable::LinkingData);
-    totalMemory += size32MetadataCount * (UnlinkedMetadataTable::s_offset32TableSize);
     totalMemory += linkingCopyMemory;
     dataLogLn("total memory: ", totalMemory);
     if (verbose)

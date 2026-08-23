@@ -118,7 +118,7 @@ private:
     // build's sizeof/alignof of every Op::Metadata, so entry counts -- never offsets -- are what the bytecode cache stores.
     struct Layout {
         bool is32Bit;
-        unsigned end; // one past the last entry, from the start of the offset table
+        unsigned end; // the table's last entry: one past the last metadata entry, counted from the start of the offset table
     };
     template<typename CountForOpcode> static Layout layOut(const CountForOpcode&, Offset32* offsets); // offsets: null, or s_offsetTableEntries long
 

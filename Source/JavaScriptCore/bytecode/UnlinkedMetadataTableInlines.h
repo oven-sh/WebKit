@@ -65,14 +65,15 @@ ALWAYS_INLINE auto UnlinkedMetadataTable::layOut(const CountForOpcode& countForO
     }
     if (offsets)
         offsets[s_offsetTableEntries - 1] = offset;
-    Layout layout { offset > UINT16_MAX, offset };
+    if (offset <= UINT16_MAX)
+        return { false, offset };
     // The 32-bit table sits after the (then unused) 16-bit one; s_offset32TableSize is a multiple of s_maxMetadataAlignment
     // so displacing every offset by it keeps their alignment.
-    if (layout.is32Bit && offsets) {
+    if (offsets) {
         for (unsigned i = 0; i < s_offsetTableEntries; i++)
             offsets[i] += s_offset32TableSize;
     }
-    return layout;
+    return { true, offset + s_offset32TableSize };
 }
 
 ALWAYS_INLINE auto UnlinkedMetadataTable::layOutEntryCounts(std::span<const uint32_t> entryCounts, Offset32* offsets) -> Layout
