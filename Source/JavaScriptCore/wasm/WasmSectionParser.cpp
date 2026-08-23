@@ -70,29 +70,29 @@ auto SectionParser::parseType() -> PartialResult
         // When GC is enabled, recursive references can show up in any of these cases.
         SetForScope<RecursionGroupInformation> recursionGroupInfo(m_typeSection.recursionGroupInformation, RecursionGroupInformation { true, m_info->typeCount(), m_info->typeCount() + 1 });
 
-        switch (static_cast<TypeKind>(typeKind)) {
-        case TypeKind::Func: {
+        switch (static_cast<DefinedTypeKind>(typeKind)) {
+        case DefinedTypeKind::Func: {
             WASM_FAIL_IF_HELPER_FAILS(parseFunctionType(i, signature));
             break;
         }
-        case TypeKind::Struct: {
+        case DefinedTypeKind::Struct: {
             WASM_FAIL_IF_HELPER_FAILS(parseStructType(i, signature));
             break;
         }
-        case TypeKind::Array: {
+        case DefinedTypeKind::Array: {
             WASM_FAIL_IF_HELPER_FAILS(parseArrayType(i, signature));
             break;
         }
-        case TypeKind::Rec: {
+        case DefinedTypeKind::Rec: {
             WASM_FAIL_IF_HELPER_FAILS(parseRecursionGroup(i));
             ++recursionGroupCount;
             WASM_PARSER_FAIL_IF(recursionGroupCount > maxNumberOfRecursionGroups, "number of recursion groups exceeded the limit of "_s, maxNumberOfRecursionGroups);
             continue; // RecursionGroup parsing is done inside parseRecursionGroup.
         }
-        case TypeKind::Sub:
-        case TypeKind::Subfinal: {
+        case DefinedTypeKind::Sub:
+        case DefinedTypeKind::Subfinal: {
             Vector<TypeIndex> noRecursionGroup;
-            WASM_FAIL_IF_HELPER_FAILS(parseSubtype(i, signature, noRecursionGroup, static_cast<TypeKind>(typeKind) == TypeKind::Subfinal));
+            WASM_FAIL_IF_HELPER_FAILS(parseSubtype(i, signature, noRecursionGroup, static_cast<DefinedTypeKind>(typeKind) == DefinedTypeKind::Subfinal));
             break;
         }
         default:
@@ -411,11 +411,6 @@ auto SectionParser::parseMemoryHelper(bool isImport) -> PartialResult
 
         const uint64_t maxDeclarablePageCount = maxDeclarablePages(AddressType { isMemory64 });
         WASM_PARSER_FAIL_IF(initial > maxDeclarablePageCount, "Memory's initial page count of "_s, initial, " is invalid"_s);
-
-        // FIXME(wasm-memory64): for now IPInt checks m_cachedMemory0IsMemory64 (flag if memory 0 is 64-bit)
-        // no matter which memory is being accessed
-        if (m_info->memoryCount())
-            WASM_PARSER_FAIL_IF(isMemory64 || m_info->memory(0).isMemory64(), "if using memory64 then multiple memories are illegal for now"_s);
 
         initialPageCount = PageCount(initial);
 
@@ -1043,22 +1038,22 @@ auto SectionParser::parseRecursionGroup(uint32_t position) -> PartialResult
         int8_t typeKind;
         WASM_PARSER_FAIL_IF(!parseInt7(typeKind), "can't get recursion group's "_s, i, "th Type's type"_s);
         ParsedDef signature;
-        switch (static_cast<TypeKind>(typeKind)) {
-        case TypeKind::Func: {
+        switch (static_cast<DefinedTypeKind>(typeKind)) {
+        case DefinedTypeKind::Func: {
             WASM_FAIL_IF_HELPER_FAILS(parseFunctionType(i, signature));
             break;
         }
-        case TypeKind::Struct: {
+        case DefinedTypeKind::Struct: {
             WASM_FAIL_IF_HELPER_FAILS(parseStructType(i, signature));
             break;
         }
-        case TypeKind::Array: {
+        case DefinedTypeKind::Array: {
             WASM_FAIL_IF_HELPER_FAILS(parseArrayType(i, signature));
             break;
         }
-        case TypeKind::Sub:
-        case TypeKind::Subfinal: {
-            WASM_FAIL_IF_HELPER_FAILS(parseSubtype(i, signature, types, static_cast<TypeKind>(typeKind) == TypeKind::Subfinal));
+        case DefinedTypeKind::Sub:
+        case DefinedTypeKind::Subfinal: {
+            WASM_FAIL_IF_HELPER_FAILS(parseSubtype(i, signature, types, static_cast<DefinedTypeKind>(typeKind) == DefinedTypeKind::Subfinal));
             break;
         }
         default:
@@ -1213,16 +1208,16 @@ auto SectionParser::parseSubtype(uint32_t position, ParsedDef& subtype, Vector<T
     int8_t typeKind;
     WASM_PARSER_FAIL_IF(!parseInt7(typeKind), "can't get subtype's underlying Type's type"_s);
     ParsedDef underlyingType;
-    switch (static_cast<TypeKind>(typeKind)) {
-    case TypeKind::Func: {
+    switch (static_cast<DefinedTypeKind>(typeKind)) {
+    case DefinedTypeKind::Func: {
         WASM_FAIL_IF_HELPER_FAILS(parseFunctionType(position, underlyingType));
         break;
     }
-    case TypeKind::Struct: {
+    case DefinedTypeKind::Struct: {
         WASM_FAIL_IF_HELPER_FAILS(parseStructType(position, underlyingType));
         break;
     }
-    case TypeKind::Array: {
+    case DefinedTypeKind::Array: {
         WASM_FAIL_IF_HELPER_FAILS(parseArrayType(position, underlyingType));
         break;
     }

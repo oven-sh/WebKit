@@ -349,6 +349,7 @@ public:
     }
 
     void throwTerminationException();
+    void throwTerminationExceptionIfNeeded();
 
     enum class EntryScopeService : uint8_t {
         // Sticky services i.e. if set, these will never be cleared.
@@ -950,6 +951,7 @@ public:
 
     const UniqueRef<MicrotaskCallCache> m_syncResumeCallCache;
     MicrotaskCallCache& syncResumeCallCache() { return m_syncResumeCallCache.get(); }
+    void clearMicrotaskCallCaches();
 
     enum class StructureChainIntegrityEvent : uint8_t {
         Add,

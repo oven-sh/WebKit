@@ -4391,10 +4391,10 @@ JSC_DEFINE_JIT_OPERATION(operationStringSplitRegExp, EncodedJSValue, (JSGlobalOb
             throwTypeError(globalObject, scope, "@@split method is not callable"_s);
             OPERATION_RETURN(scope, encodedJSValue());
         }
-        std::array<EncodedJSValue, 2> args { {
+        auto args = WTF::toArray<EncodedJSValue>({
             JSValue::encode(thisString),
             JSValue::encode(limitValue),
-        } };
+        });
         JSValue result = call(globalObject, splitter, callData, separator, ArgList { args.data(), args.size() });
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         OPERATION_RETURN(scope, JSValue::encode(result));
@@ -4438,9 +4438,9 @@ JSC_DEFINE_JIT_OPERATION(operationStringMatchRegExp, EncodedJSValue, (JSGlobalOb
             throwTypeError(globalObject, scope, "@@match method is not callable"_s);
             OPERATION_RETURN(scope, encodedJSValue());
         }
-        std::array<EncodedJSValue, 1> args { {
+        auto args = WTF::toArray<EncodedJSValue>({
             JSValue::encode(thisString),
-        } };
+        });
         JSValue result = call(globalObject, matcher, callData, regexp, ArgList { args.data(), args.size() });
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         OPERATION_RETURN(scope, JSValue::encode(result));
@@ -4476,9 +4476,9 @@ JSC_DEFINE_JIT_OPERATION(operationStringSearchRegExp, EncodedJSValue, (JSGlobalO
             throwTypeError(globalObject, scope, "@@search method is not callable"_s);
             OPERATION_RETURN(scope, encodedJSValue());
         }
-        std::array<EncodedJSValue, 1> args { {
+        auto args = WTF::toArray<EncodedJSValue>({
             JSValue::encode(thisString),
-        } };
+        });
         JSValue result = call(globalObject, searcher, callData, regexp, ArgList { args.data(), args.size() });
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         OPERATION_RETURN(scope, JSValue::encode(result));
@@ -5821,10 +5821,10 @@ JSC_DEFINE_JIT_OPERATION(operationSpreadGeneric, JSCell*, (JSGlobalObject* globa
         auto callData = JSC::getCallData(iterationFunction);
         ASSERT(callData.type != CallData::Type::None);
 
-        MarkedArgumentBuffer arguments;
-        arguments.append(iterable);
-        ASSERT(!arguments.hasOverflowed());
-        JSValue arrayResult = call(globalObject, iterationFunction, callData, jsNull(), arguments);
+        auto arguments = WTF::toArray<EncodedJSValue>({
+            JSValue::encode(iterable),
+        });
+        JSValue arrayResult = call(globalObject, iterationFunction, callData, jsNull(), ArgList { arguments.data(), arguments.size() });
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
         array = uncheckedDowncast<JSArray>(arrayResult);
     }
@@ -5846,10 +5846,10 @@ JSC_DEFINE_JIT_OPERATION(operationSpreadSet, JSCell*, (JSGlobalObject* globalObj
         JSFunction* iterationFunction = globalObject->iteratorProtocolFunction();
         auto callData = JSC::getCallData(iterationFunction);
         ASSERT(callData.type != CallData::Type::None);
-        MarkedArgumentBuffer arguments;
-        arguments.append(set);
-        ASSERT(!arguments.hasOverflowed());
-        JSValue arrayResult = call(globalObject, iterationFunction, callData, jsNull(), arguments);
+        auto arguments = WTF::toArray<EncodedJSValue>({
+            JSValue::encode(set),
+        });
+        JSValue arrayResult = call(globalObject, iterationFunction, callData, jsNull(), ArgList { arguments.data(), arguments.size() });
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
         JSArray* array = uncheckedDowncast<JSArray>(arrayResult);
         OPERATION_RETURN(scope, JSCellButterfly::createFromArray(globalObject, vm, array));
@@ -6093,85 +6093,26 @@ JSC_DEFINE_JIT_OPERATION(operationSetGet, JSValue*, (JSGlobalObject* globalObjec
     OPERATION_RETURN(scope, keySlot);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationMapIterationNext, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* cell, int32_t index))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMapIterationNext, EncodedJSValue, (VM* vmPointer, JSCell* cell, int32_t index))
 {
-    VM& vm = globalObject->vm();
+    VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (cell == vm.orderedHashTableSentinel())
-        OPERATION_RETURN(scope, JSValue::encode(vm.orderedHashTableSentinel()));
-
-    JSMap::Storage& storage = *uncheckedDowncast<JSMap::Storage>(cell);
-    OPERATION_RETURN(scope, JSValue::encode(JSMap::Helper::nextAndUpdateIterationEntry(vm, storage, index)));
-}
-JSC_DEFINE_JIT_OPERATION(operationMapIterationEntry, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* cell))
-{
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(cell != vm.orderedHashTableSentinel());
     JSMap::Storage& storage = *uncheckedDowncast<JSMap::Storage>(cell);
-    OPERATION_RETURN(scope, JSValue::encode(JSMap::Helper::getIterationEntry(storage)));
-}
-JSC_DEFINE_JIT_OPERATION(operationMapIterationEntryKey, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* cell))
-{
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    ASSERT(cell != vm.orderedHashTableSentinel());
-    JSMap::Storage& storage = *uncheckedDowncast<JSMap::Storage>(cell);
-    OPERATION_RETURN(scope, JSValue::encode(JSMap::Helper::getIterationEntryKey(storage)));
-}
-JSC_DEFINE_JIT_OPERATION(operationMapIterationEntryValue, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* cell))
-{
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    ASSERT(cell != vm.orderedHashTableSentinel());
-    JSMap::Storage& storage = *uncheckedDowncast<JSMap::Storage>(cell);
-    OPERATION_RETURN(scope, JSValue::encode(JSMap::Helper::getIterationEntryValue(storage)));
+    return JSValue::encode(JSMap::Helper::nextAndUpdateIterationEntry(vm, storage, index));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationSetIterationNext, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* cell, int32_t index))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSetIterationNext, EncodedJSValue, (VM* vmPointer, JSCell* cell, int32_t index))
 {
-    VM& vm = globalObject->vm();
+    VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (cell == vm.orderedHashTableSentinel())
-        OPERATION_RETURN(scope, JSValue::encode(vm.orderedHashTableSentinel()));
-
-    JSSet::Storage& storage = *uncheckedDowncast<JSSet::Storage>(cell);
-    OPERATION_RETURN(scope, JSValue::encode(JSSet::Helper::nextAndUpdateIterationEntry(vm, storage, index)));
-}
-JSC_DEFINE_JIT_OPERATION(operationSetIterationEntry, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* cell))
-{
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(cell != vm.orderedHashTableSentinel());
     JSSet::Storage& storage = *uncheckedDowncast<JSSet::Storage>(cell);
-    OPERATION_RETURN(scope, JSValue::encode(JSSet::Helper::getIterationEntry(storage)));
-}
-JSC_DEFINE_JIT_OPERATION(operationSetIterationEntryKey, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* cell))
-{
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    ASSERT(cell != vm.orderedHashTableSentinel());
-    JSSet::Storage& storage = *uncheckedDowncast<JSSet::Storage>(cell);
-    OPERATION_RETURN(scope, JSValue::encode(JSSet::Helper::getIterationEntryKey(storage)));
+    return JSValue::encode(JSSet::Helper::nextAndUpdateIterationEntry(vm, storage, index));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationStringIteratorNext, UGPRPair, (JSGlobalObject* globalObject, JSString* string, int32_t position))

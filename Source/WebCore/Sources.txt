@@ -208,6 +208,7 @@ Modules/highlight/HighlightRegistry.cpp @cost:3
 Modules/identity/CredentialRequestCoordinator.cpp @cost:3
 Modules/identity/DigitalCredential.cpp @cost:3
 Modules/identity/DigitalCredentialsRequestDataBuilder.cpp
+Modules/identity/DigitalCredentialsSession.cpp
 Modules/identity/dummy/DummyCredentialRequestCoordinatorClient.cpp
 Modules/indexeddb/IDBCursor.cpp @cost:3
 Modules/indexeddb/IDBCursorWithValue.cpp
@@ -3013,7 +3014,7 @@ rendering/Grid.cpp @header:RenderStyleGetters @cost:5
 rendering/GridBaselineAlignment.cpp @header:RenderStyleGetters @cost:5
 rendering/GridLayoutFunctions.cpp @header:RenderStyleGetters @cost:5
 rendering/RenderGridLayoutState.cpp
-rendering/GridMasonryLayout.cpp @header:RenderStyleGetters @cost:5
+rendering/GridLanesLayout.cpp @header:RenderStyleGetters @cost:5
 rendering/GridTrackSizingAlgorithm.cpp @header:RenderStyleGetters @cost:6
 rendering/HitTestLocation.cpp
 rendering/HitTestRequest.cpp @header:RenderStyleGetters @cost:4

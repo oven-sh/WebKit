@@ -40,7 +40,6 @@ set(TestWTF_SOURCES
     Tests/WTF/BitVector.cpp
     Tests/WTF/BloomFilter.cpp
     Tests/WTF/Borrow.cpp
-    Tests/WTF/BorrowedBytes.cpp
     Tests/WTF/BoxPtr.cpp
     Tests/WTF/BumpPointerAllocator.cpp
     Tests/WTF/CString.cpp
@@ -64,6 +63,7 @@ set(TestWTF_SOURCES
     Tests/WTF/DragonBoxTest.cpp
     Tests/WTF/EmbeddedFixedVector.cpp
     Tests/WTF/EnumTraits.cpp
+    Tests/WTF/EscapableByteSpan.cpp
     Tests/WTF/Expected.cpp
     Tests/WTF/FileSystem.cpp
     Tests/WTF/FormattedLogging.cpp
@@ -122,6 +122,7 @@ set(TestWTF_SOURCES
     Tests/WTF/RobinHoodHashSet.cpp
     Tests/WTF/RunLoop.cpp
     Tests/WTF/SHA1.cpp
+    Tests/WTF/SIMDHelpers.cpp
     Tests/WTF/SafeStrerror.cpp
     Tests/WTF/SaturatingArithmeticOperations.cpp
     Tests/WTF/Scope.cpp
@@ -229,6 +230,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/ComplexTextController.cpp
         Tests/WebCore/ContextMenuAction.cpp
         Tests/WebCore/CookieJar.cpp
+        Tests/WebCore/CryptoDigest.cpp
         Tests/WebCore/Decimal.cpp
         Tests/WebCore/FileMonitor.cpp
         Tests/WebCore/FloatPointTests.cpp
@@ -263,6 +265,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/PlatformDynamicRangeLimitTests.cpp
         Tests/WebCore/PlatformMediaSessionManagerTests.cpp
         Tests/WebCore/PublicSuffix.cpp
+        Tests/WebCore/PushMessageCrypto.cpp
         Tests/WebCore/RegionTests.cpp
         Tests/WebCore/RenderStyleChange.cpp
         Tests/WebCore/SecurityOrigin.cpp
@@ -345,6 +348,9 @@ endif ()
 if (ENABLE_WEBKIT)
     set(TestWebKit_SOURCES
         Helpers/Utilities.cpp
+
+        Tests/WebCore/QuirkMatch.cpp
+        Tests/WebCore/Quirks.cpp
 
         Tests/WebKit/WKPage/AboutBlankLoad.cpp
         Tests/WebKit/WKPage/CanHandleRequest.cpp
@@ -513,7 +519,6 @@ if (ENABLE_WEBKIT)
             Tests/IPC/EventTests.cpp
             Tests/IPC/IPCEventTests.cpp
             Tests/IPC/IPCTestUtilities.cpp
-            Tests/IPC/MachMessageTests.cpp
             Tests/IPC/MessageLogEndToEndTests.cpp
             Tests/IPC/MessageLogTests.cpp
             Tests/IPC/MessageSenderTests.cpp
@@ -535,7 +540,6 @@ if (ENABLE_WEBKIT)
             ${WebKit_FRAMEWORK_HEADERS_DIR}
             ${WEBKIT_DIR}/Platform
             ${WEBKIT_DIR}/Platform/IPC
-            ${WEBKIT_DIR}/Platform/IPC/cocoa
             ${WEBKIT_DIR}/Shared
             ${WEBKIT_DIR}/Shared/API/c
             ${WebKit_DERIVED_SOURCES_DIR}

@@ -2692,24 +2692,20 @@ struct CachedCodeBlockExtras {
     void encode(Encoder& encoder, const UnlinkedCodeBlock& codeBlock)
     {
         rareData.encode(encoder, codeBlock.m_rareData.get());
-        sourceURLDirective.encode(encoder, codeBlock.m_sourceURLDirective.get());
-        sourceMappingURLDirective.encode(encoder, codeBlock.m_sourceMappingURLDirective.get());
         outOfLineJumpTargets.encode(encoder, codeBlock.m_outOfLineJumpTargets);
     }
     static bool isNeeded(const UnlinkedCodeBlock& codeBlock)
     {
-        return codeBlock.m_rareData || codeBlock.m_sourceURLDirective || codeBlock.m_sourceMappingURLDirective || !codeBlock.m_outOfLineJumpTargets.isEmpty();
+        return codeBlock.m_rareData || !codeBlock.m_outOfLineJumpTargets.isEmpty();
     }
 
     CachedPtr<CachedCodeBlockRareData> rareData;
-    CachedRefPtr<CachedStringImpl> sourceURLDirective;
-    CachedRefPtr<CachedStringImpl> sourceMappingURLDirective;
     CachedHashMap<JSInstructionStream::Offset, int> outOfLineJumpTargets;
 };
 
-// A code block is written as one region: its arrays (metadata steps, instructions, constants, identifiers, jump targets,
-// child slots, extras), then a 16-byte record followed by a varint tail that says where in the region each array is and
-// holds every count/register/flag, then whatever the derived record adds, then the children's executable records.
+// A code block is written as one region: its arrays (metadata steps, instructions, constants, identifiers, child slots,
+// extras), then a 16-byte record followed by a varint tail that says where in the region each array is and holds every
+// count/register/flag, then whatever the derived record adds, then the children's executable records.
 // Offsets in the tail are relative to the start of the region, so they are 1-2 bytes for nearly every function.
 template<typename CodeBlockType>
 class CachedCodeBlock : public CachedObject<CodeBlockType> {
@@ -2724,7 +2720,6 @@ public:
         VirtualRegister scopeRegister;
         unsigned isConstructor : 1;
         unsigned isBuiltinDefaultClassConstructor : 1;
-        unsigned hasCapturedVariables : 1;
         unsigned isBuiltinFunction : 1;
         unsigned superBinding : 1;
         unsigned scriptMode : 1;
@@ -2736,12 +2731,8 @@ public:
         unsigned hasTailCalls : 1;
         unsigned codeType : 2;
         unsigned hasCheckpoints : 1;
-        CodeFeatures features;
-        LexicallyScopedFeatures lexicallyScopedFeatures;
         SourceParseMode parseMode;
         OptionSet<CodeGenerationMode> codeGenerationMode;
-        unsigned lineCount;
-        unsigned endColumn;
         int numVars;
         int numCalleeLocals;
         int numParameters;
@@ -2768,7 +2759,6 @@ public:
         Array constants;
         Array constantsSourceCodeRepresentation;
         Array identifiers;
-        Array jumpTargets;
         Array functionDecls;
         Array functionExprs;
         int32_t extrasAt { 0 };
@@ -2812,16 +2802,6 @@ public:
         return CachedMetadataSteps::build(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
     }
 
-    RefPtr<StringImpl> sourceURLDirective(Decoder& decoder) const
-    {
-        auto* e = extras(readTail().layout);
-        return e ? e->sourceURLDirective.decode(decoder) : nullptr;
-    }
-    RefPtr<StringImpl> sourceMappingURLDirective(Decoder& decoder) const
-    {
-        auto* e = extras(readTail().layout);
-        return e ? e->sourceMappingURLDirective.decode(decoder) : nullptr;
-    }
     UnlinkedCodeBlock::RareData* rareData(Decoder& decoder) const
     {
         auto* e = extras(readTail().layout);
@@ -2844,9 +2824,9 @@ public:
             return false;
         const Layout& layout = tail.layout;
 
-        // Every array must lie inside the region, except the four the encoder may have shared from an earlier block,
+        // Every array must lie inside the region, except the three the encoder may have shared from an earlier block,
         // which are folded into the checksum instead (in encoder order).
-        std::array<std::span<const uint8_t>, 4> external;
+        std::array<std::span<const uint8_t>, 3> external;
         unsigned externalCount = 0;
         auto covered = [&](const Array& array, size_t elementSize, bool shareable) {
             if (!array.count)
@@ -2863,7 +2843,6 @@ public:
         if (!covered(layout.steps, sizeof(uint32_t), true)
             || !covered(layout.instructions, 1, true)
             || !covered(layout.constantsSourceCodeRepresentation, sizeof(SourceCodeRepresentation), true)
-            || !covered(layout.jumpTargets, sizeof(JSInstructionStream::Offset), true)
             || !covered(layout.constants, sizeof(CachedJSValue), false)
             || !covered(layout.identifiers, sizeof(CachedIdentifier), false)
             || !covered(layout.functionDecls, sizeof(CachedWriteBarrier<CachedFunctionExecutable>), false)
@@ -2902,9 +2881,46 @@ private:
     CachedPtr<CachedExpressionInfo> m_expressionInfo; // written by the deferred cold pass, so it stays a fixed slot
 };
 
-class CachedProgramCodeBlock : public CachedCodeBlock<UnlinkedProgramCodeBlock> {
-    using Base = CachedCodeBlock<UnlinkedProgramCodeBlock>;
-    friend Base;
+// The members only Program/Eval/Module code has (UnlinkedGlobalCodeBlock); a function record does not pay for them.
+template<typename CodeBlockType>
+class CachedGlobalCodeBlock : public CachedCodeBlock<CodeBlockType> {
+    using Base = CachedCodeBlock<CodeBlockType>;
+
+protected:
+    void encodeOwnMembers(Encoder& encoder, const UnlinkedGlobalCodeBlock& codeBlock)
+    {
+        m_features = codeBlock.m_features;
+        m_lexicallyScopedFeatures = codeBlock.m_lexicallyScopedFeatures;
+        m_hasCapturedVariables = codeBlock.m_hasCapturedVariables;
+        m_lineCount = codeBlock.m_lineCount;
+        m_endColumn = codeBlock.m_endColumn;
+        m_sourceURLDirective.encode(encoder, codeBlock.m_sourceURLDirective.get());
+        m_sourceMappingURLDirective.encode(encoder, codeBlock.m_sourceMappingURLDirective.get());
+    }
+    void decodeOwnMembers(Decoder& decoder, UnlinkedGlobalCodeBlock& codeBlock) const
+    {
+        codeBlock.m_features = m_features;
+        codeBlock.m_lexicallyScopedFeatures = m_lexicallyScopedFeatures;
+        codeBlock.m_hasCapturedVariables = m_hasCapturedVariables;
+        codeBlock.m_lineCount = m_lineCount;
+        codeBlock.m_endColumn = m_endColumn;
+        codeBlock.m_sourceURLDirective = m_sourceURLDirective.decode(decoder);
+        codeBlock.m_sourceMappingURLDirective = m_sourceMappingURLDirective.decode(decoder);
+    }
+
+private:
+    CodeFeatures m_features;
+    LexicallyScopedFeatures m_lexicallyScopedFeatures;
+    bool m_hasCapturedVariables;
+    unsigned m_lineCount;
+    unsigned m_endColumn;
+    CachedRefPtr<CachedStringImpl> m_sourceURLDirective;
+    CachedRefPtr<CachedStringImpl> m_sourceMappingURLDirective;
+};
+
+class CachedProgramCodeBlock : public CachedGlobalCodeBlock<UnlinkedProgramCodeBlock> {
+    using Base = CachedGlobalCodeBlock<UnlinkedProgramCodeBlock>;
+    friend CachedCodeBlock<UnlinkedProgramCodeBlock>;
 
 public:
     UnlinkedProgramCodeBlock* decode(Decoder&) const;
@@ -2912,11 +2928,13 @@ public:
 private:
     void encodeOwnMembers(Encoder& encoder, const UnlinkedProgramCodeBlock& codeBlock)
     {
+        Base::encodeOwnMembers(encoder, codeBlock);
         m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
         m_lexicalDeclarations.encode(encoder, codeBlock.m_lexicalDeclarations);
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedProgramCodeBlock& codeBlock) const
     {
+        Base::decodeOwnMembers(decoder, codeBlock);
         m_varDeclarations.decode(decoder, codeBlock.m_varDeclarations);
         m_lexicalDeclarations.decode(decoder, codeBlock.m_lexicalDeclarations);
     }
@@ -2925,9 +2943,9 @@ private:
     CachedVariableEnvironment m_lexicalDeclarations;
 };
 
-class CachedModuleCodeBlock : public CachedCodeBlock<UnlinkedModuleProgramCodeBlock> {
-    using Base = CachedCodeBlock<UnlinkedModuleProgramCodeBlock>;
-    friend Base;
+class CachedModuleCodeBlock : public CachedGlobalCodeBlock<UnlinkedModuleProgramCodeBlock> {
+    using Base = CachedGlobalCodeBlock<UnlinkedModuleProgramCodeBlock>;
+    friend CachedCodeBlock<UnlinkedModuleProgramCodeBlock>;
 
 public:
     UnlinkedModuleProgramCodeBlock* decode(Decoder&) const;
@@ -2935,11 +2953,13 @@ public:
 private:
     void encodeOwnMembers(Encoder& encoder, const UnlinkedModuleProgramCodeBlock& codeBlock)
     {
+        Base::encodeOwnMembers(encoder, codeBlock);
         m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
         m_moduleEnvironmentSymbolTableConstantRegisterOffset = codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset;
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedModuleProgramCodeBlock& codeBlock) const
     {
+        Base::decodeOwnMembers(decoder, codeBlock);
         m_varDeclarations.decode(decoder, codeBlock.m_varDeclarations);
         codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset = m_moduleEnvironmentSymbolTableConstantRegisterOffset;
     }
@@ -2948,9 +2968,9 @@ private:
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset;
 };
 
-class CachedEvalCodeBlock : public CachedCodeBlock<UnlinkedEvalCodeBlock> {
-    using Base = CachedCodeBlock<UnlinkedEvalCodeBlock>;
-    friend Base;
+class CachedEvalCodeBlock : public CachedGlobalCodeBlock<UnlinkedEvalCodeBlock> {
+    using Base = CachedGlobalCodeBlock<UnlinkedEvalCodeBlock>;
+    friend CachedCodeBlock<UnlinkedEvalCodeBlock>;
 
 public:
     UnlinkedEvalCodeBlock* decode(Decoder&) const;
@@ -2958,11 +2978,13 @@ public:
 private:
     void encodeOwnMembers(Encoder& encoder, const UnlinkedEvalCodeBlock& codeBlock)
     {
+        Base::encodeOwnMembers(encoder, codeBlock);
         m_variables.encode(encoder, codeBlock.m_variables);
         m_functionHoistingCandidates.encode(encoder, codeBlock.m_functionHoistingCandidates);
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedEvalCodeBlock& codeBlock) const
     {
+        Base::decodeOwnMembers(decoder, codeBlock);
         m_variables.decode(decoder, codeBlock.m_variables);
         m_functionHoistingCandidates.decode(decoder, codeBlock.m_functionHoistingCandidates);
     }
@@ -3035,8 +3057,6 @@ template<typename CodeBlockType>
 ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* structure, const CachedCodeBlock<CodeBlockType>& cachedCodeBlock)
     : Base(decoder.vm(), structure)
     , m_age(0)
-    , m_sourceURLDirective(cachedCodeBlock.sourceURLDirective(decoder))
-    , m_sourceMappingURLDirective(cachedCodeBlock.sourceMappingURLDirective(decoder))
     , m_metadata(cachedCodeBlock.metadata(decoder))
     , m_instructions(cachedCodeBlock.instructions(decoder))
     , m_rareData(cachedCodeBlock.rareData(decoder))
@@ -3048,7 +3068,6 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_numCalleeLocals = scalars.numCalleeLocals;
     m_isConstructor = scalars.isConstructor;
     m_numParameters = scalars.numParameters;
-    m_hasCapturedVariables = scalars.hasCapturedVariables;
     m_isBuiltinFunction = scalars.isBuiltinFunction;
     m_isBuiltinDefaultClassConstructor = scalars.isBuiltinDefaultClassConstructor;
     m_superBinding = scalars.superBinding;
@@ -3061,12 +3080,8 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_evalContextType = scalars.evalContextType;
     m_codeType = scalars.codeType;
     m_hasCheckpoints = scalars.hasCheckpoints;
-    m_lexicallyScopedFeatures = scalars.lexicallyScopedFeatures;
-    m_features = scalars.features;
     m_parseMode = scalars.parseMode;
     m_codeGenerationMode = scalars.codeGenerationMode;
-    m_lineCount = scalars.lineCount;
-    m_endColumn = scalars.endColumn;
     m_valueProfiles = FixedVector<UnlinkedValueProfile>(scalars.numValueProfiles);
     m_arrayProfiles = FixedVector<UnlinkedArrayProfile>(scalars.numArrayProfiles);
     m_binaryArithProfiles = FixedVector<BinaryArithProfile>(scalars.numBinaryArithProfiles);
@@ -3083,7 +3098,6 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
     if (auto* e = extras(layout))
         e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
-    decodeArrayFromTail<JSInstructionStream::Offset>(decoder, at<JSInstructionStream::Offset>(layout.jumpTargets), layout.jumpTargets.count, codeBlock.m_jumpTargets);
     decodeArrayFromTail<CachedIdentifier>(decoder, at<CachedIdentifier>(layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
     decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
     decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
@@ -3348,26 +3362,24 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
 
 enum CachedCodeBlockFlag : uint32_t {
     CodeBlockIsConstructorShift = 0,
-    CodeBlockHasCapturedVariablesShift = 1,
-    CodeBlockSuperBindingShift = 2,
-    CodeBlockScriptModeShift = 3,
-    CodeBlockIsArrowFunctionContextShift = 4,
-    CodeBlockIsClassContextShift = 5,
-    CodeBlockHasTailCallsShift = 6,
-    CodeBlockHasCheckpointsShift = 7,
-    CodeBlockConstructorKindShift = 8, // 2 bits
-    CodeBlockDerivedContextTypeShift = 10, // 2
-    CodeBlockEvalContextTypeShift = 12, // 2
-    CodeBlockCodeTypeShift = 14, // 2
-    CodeBlockIsBuiltinFunctionShift = 16,
-    CodeBlockIsBuiltinDefaultClassConstructorShift = 17,
+    CodeBlockSuperBindingShift = 1,
+    CodeBlockScriptModeShift = 2,
+    CodeBlockIsArrowFunctionContextShift = 3,
+    CodeBlockIsClassContextShift = 4,
+    CodeBlockHasTailCallsShift = 5,
+    CodeBlockHasCheckpointsShift = 6,
+    CodeBlockConstructorKindShift = 7, // 2 bits
+    CodeBlockDerivedContextTypeShift = 9, // 2
+    CodeBlockEvalContextTypeShift = 11, // 2
+    CodeBlockCodeTypeShift = 13, // 2
+    CodeBlockIsBuiltinFunctionShift = 15,
+    CodeBlockIsBuiltinDefaultClassConstructorShift = 16,
 };
 
 template<typename CodeBlockType>
 void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBlock, VarintWriter& writer)
 {
     uint32_t flags = static_cast<uint32_t>(codeBlock.m_isConstructor) << CodeBlockIsConstructorShift
-        | static_cast<uint32_t>(codeBlock.m_hasCapturedVariables) << CodeBlockHasCapturedVariablesShift
         | static_cast<uint32_t>(codeBlock.m_superBinding) << CodeBlockSuperBindingShift
         | static_cast<uint32_t>(codeBlock.m_scriptMode) << CodeBlockScriptModeShift
         | static_cast<uint32_t>(codeBlock.m_isArrowFunctionContext) << CodeBlockIsArrowFunctionContextShift
@@ -3381,8 +3393,6 @@ void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBl
         | static_cast<uint32_t>(codeBlock.m_isBuiltinFunction) << CodeBlockIsBuiltinFunctionShift
         | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift;
     writer.u32(flags);
-    writer.u32(codeBlock.m_features);
-    writer.u8(static_cast<uint8_t>(codeBlock.m_lexicallyScopedFeatures));
     writer.u8(static_cast<uint8_t>(codeBlock.m_parseMode));
     writer.u8(codeBlock.m_codeGenerationMode.toRaw());
     writer.i32(codeBlock.m_thisRegister.offset());
@@ -3390,8 +3400,6 @@ void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBl
     writer.i32(codeBlock.m_numVars);
     writer.i32(codeBlock.m_numCalleeLocals);
     writer.i32(codeBlock.m_numParameters);
-    writer.u32(codeBlock.m_lineCount);
-    writer.u32(codeBlock.m_endColumn);
     writer.u32(codeBlock.m_valueProfiles.size());
     writer.u32(codeBlock.m_arrayProfiles.size());
     writer.u32(codeBlock.m_binaryArithProfiles.size());
@@ -3414,7 +3422,6 @@ void CachedCodeBlock<CodeBlockType>::packLayout(const Layout& layout, VarintWrit
     array(layout.constants);
     array(layout.constantsSourceCodeRepresentation);
     array(layout.identifiers);
-    array(layout.jumpTargets);
     array(layout.functionDecls);
     array(layout.functionExprs);
     if (layout.flags & LayoutHasExtras)
@@ -3440,7 +3447,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     array(layout.constants);
     array(layout.constantsSourceCodeRepresentation);
     array(layout.identifiers);
-    array(layout.jumpTargets);
     array(layout.functionDecls);
     array(layout.functionExprs);
     if (layout.flags & LayoutHasExtras)
@@ -3450,7 +3456,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     uint32_t flags = reader.u32();
     auto bits = [&](unsigned shift, unsigned width = 1) -> unsigned { return (flags >> shift) & ((1u << width) - 1); };
     s.isConstructor = bits(CodeBlockIsConstructorShift);
-    s.hasCapturedVariables = bits(CodeBlockHasCapturedVariablesShift);
     s.superBinding = bits(CodeBlockSuperBindingShift);
     s.scriptMode = bits(CodeBlockScriptModeShift);
     s.isArrowFunctionContext = bits(CodeBlockIsArrowFunctionContextShift);
@@ -3463,8 +3468,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     s.codeType = bits(CodeBlockCodeTypeShift, 2);
     s.isBuiltinFunction = bits(CodeBlockIsBuiltinFunctionShift);
     s.isBuiltinDefaultClassConstructor = bits(CodeBlockIsBuiltinDefaultClassConstructorShift);
-    s.features = static_cast<CodeFeatures>(reader.u32());
-    s.lexicallyScopedFeatures = static_cast<LexicallyScopedFeatures>(reader.u8());
     s.parseMode = static_cast<SourceParseMode>(reader.u8());
     s.codeGenerationMode = OptionSet<CodeGenerationMode>::fromRaw(reader.u8());
     s.thisRegister = VirtualRegister(reader.i32());
@@ -3472,8 +3475,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     s.numVars = reader.i32();
     s.numCalleeLocals = reader.i32();
     s.numParameters = reader.i32();
-    s.lineCount = reader.u32();
-    s.endColumn = reader.u32();
     s.numValueProfiles = reader.u32();
     s.numArrayProfiles = reader.u32();
     s.numBinaryArithProfiles = reader.u32();
@@ -3494,7 +3495,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
             array.at = safeCast<int32_t>(write() - regionStart);
     };
 
-    // These four may be shared with an identical array written earlier; regionIsIntact() follows them in this order.
+    // These three may be shared with an identical array written earlier; regionIsIntact() follows them in this order.
     {
         Encoder::ShareableArrayScope shareable(encoder);
         const UnlinkedMetadataTable& metadata = codeBlock.m_metadata.get();
@@ -3508,7 +3509,6 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
         place(layout.instructions, instructions.m_instructions.size(), [&] { return encodeArrayForTail<uint8_t>(encoder, instructions.m_instructions); });
         place(layout.constantsSourceCodeRepresentation, codeBlock.m_constantsSourceCodeRepresentation.size(), [&] { return encodeArrayForTail<SourceCodeRepresentation>(encoder, codeBlock.m_constantsSourceCodeRepresentation); });
-        place(layout.jumpTargets, codeBlock.m_jumpTargets.size(), [&] { return encodeArrayForTail<JSInstructionStream::Offset>(encoder, codeBlock.m_jumpTargets); });
     }
     place(layout.constants, codeBlock.m_constantRegisters.size(), [&] { return encodeArrayForTail<CachedJSValue>(encoder, codeBlock.m_constantRegisters); });
     place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });

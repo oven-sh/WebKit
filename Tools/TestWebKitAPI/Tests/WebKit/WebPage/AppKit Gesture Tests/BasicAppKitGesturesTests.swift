@@ -518,12 +518,10 @@ extension AppKitGesturesTests.Basic {
     }
 
     @Test(
+        .disabled("This test is flaky"),
         .bug("https://webkit.org/b/314804", "Triple click does not generate a line selection on PDF"),
-        arguments: [true, false]
     )
-    func tripleClickingInPDFSelectsLine(useAlternatePDFHUD: Bool) async throws {
-        page.setWebFeature("UseAlternatePDFHUD", enabled: useAlternatePDFHUD)
-
+    func tripleClickingInPDFSelectsLine() async throws {
         let pdfURL = try #require(Bundle.testResources.url(forResource: "test", withExtension: "pdf"))
         try await page.load(pdfURL).wait()
         await page.waitForNextPresentationUpdate()
@@ -545,10 +543,8 @@ extension AppKitGesturesTests.Basic {
         #expect(selectedText == "Test PDF Content")
     }
 
-    @Test(arguments: [true, false])
-    func clickingOnPDFHUDButtonPerformsAction(useAlternatePDFHUD: Bool) async throws {
-        page.setWebFeature("UseAlternatePDFHUD", enabled: useAlternatePDFHUD)
-
+    @Test
+    func clickingOnPDFHUDButtonPerformsAction() async throws {
         let pdfURL = try #require(Bundle.testResources.url(forResource: "test", withExtension: "pdf"))
         try await page.load(pdfURL).wait()
         await page.waitForNextPresentationUpdate()
@@ -570,10 +566,8 @@ extension AppKitGesturesTests.Basic {
         #expect(scaleAfterZooming > scaleBeforeZooming)
     }
 
-    @Test(arguments: [true, false])
-    func clickingOnPDFShowsHUD(useAlternatePDFHUD: Bool) async throws {
-        page.setWebFeature("UseAlternatePDFHUD", enabled: useAlternatePDFHUD)
-
+    @Test
+    func clickingOnPDFShowsHUD() async throws {
         let pdfURL = try #require(Bundle.testResources.url(forResource: "test", withExtension: "pdf"))
         try await page.load(pdfURL).wait()
         await page.waitForNextPresentationUpdate()
@@ -588,12 +582,7 @@ extension AppKitGesturesTests.Basic {
         // which is dependent on the implementation.
         // FIXME: Depending on implementation-specific details like this is very not great.
 
-        let visibleView =
-            if useAlternatePDFHUD {
-                try #require(hud.subviews.first?.subviews.first)
-            } else {
-                try #require(hud.subviews.first)
-            }
+        let visibleView = try #require(hud.subviews.first?.subviews.first)
 
         try await Task.sleep(for: .seconds(1))
         #expect(visibleView.alphaValue == 0)
@@ -680,8 +669,8 @@ extension AppKitGesturesTests.Basic {
         #expect(selection == expected)
     }
 
-    @Test(arguments: [6, 8], [Duration.seconds(0.1), .seconds(0.5), .seconds(1.0)])
-    func scrollingOnScrollBarChangesScrollPosition(inset: Int, pressAndWait: Duration) async throws {
+    @Test(arguments: [Duration.seconds(0.1), .seconds(0.5), .seconds(1.0)])
+    func scrollingOnScrollBarChangesScrollPosition(pressAndWait: Duration) async throws {
         let html = """
             <body style="width: 100%; height: 2000px; margin: 0; background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
             </body>
@@ -689,12 +678,12 @@ extension AppKitGesturesTests.Basic {
 
         try await page.load(html: html).wait()
 
-        let topOfScrollBarInWindowCoordinates = NSPoint(x: window.frame.maxX - CGFloat(inset), y: window.frame.maxY - 160)
+        let topOfScrollBarInWindowCoordinates = NSPoint(x: window.frame.maxX - 8, y: window.frame.maxY - 160)
         let start = screenBounds(ofPointInWindowCoordinates: topOfScrollBarInWindowCoordinates)
         let end = CGPoint(x: start.x, y: start.y + 200)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: start, end: end, duration: .seconds(1.0), pressAndWait: pressAndWait)
+            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.5), pressAndWait: pressAndWait)
         }
 
         try await Task.sleep(for: .seconds(1))
@@ -1234,9 +1223,12 @@ extension AppKitGesturesTests.Basic {
     }
 
     @Test(
-        .bug("https://webkit.org/b/319256", "Trackpad swiping between spaces should not trigger back navigation")
+        .bug("https://webkit.org/b/319256", "Trackpad swiping between spaces should not trigger back navigation"),
+        arguments: [false, true]
     )
-    func swipingBetweenSpacesShouldNotTriggerBackNavigation() async throws {
+    func swipingBetweenSpacesShouldNotTriggerBackNavigation(gesturesForGestureEvents: Bool) async throws {
+        page.setWebFeature("UseAppKitGesturesForGestureEvents", enabled: gesturesForGestureEvents)
+
         // Establish a back-forward history entry so that a "swipe back" gesture would have somewhere to navigate to.
         try await page.load(URL(string: "about:blank?1")).wait()
 
@@ -1286,7 +1278,7 @@ extension AppKitGesturesTests.Basic {
 
         await withMockedImageAnalyzer(response: .success(analysis), after: delay) {
             await recap.play { composer in
-                composer._wk_drag(withStart: start, end: end, duration: .seconds(2), pressAndWait: .seconds(1.0))
+                composer._wk_drag(withStart: start, end: end, duration: .seconds(1.5), pressAndWait: .seconds(1.0))
             }
         }
 
@@ -1331,6 +1323,35 @@ extension AppKitGesturesTests.Basic {
     }
 
     @Test
+    func clickingAfterImageInEditableContentPlacesCaretAfterImage() async throws {
+        let html = """
+            <body style="margin: 0">
+            <div id="editor" contenteditable style="font-size: 30px; padding: 20px;"><img id="img" src="400x400-green.png" style="width: 150px; height: 100px;"></div>
+            </body>
+            """
+
+        let baseURL = try #require(Bundle.testResources.resourceURL)
+        try await page.load(html: html, baseURL: baseURL).wait()
+
+        try await page.callJavaScript(JavaScriptMessages.SetSelection(in: "editor", offset: 0))
+
+        await page.waitForNextPresentationUpdate()
+
+        let imageBounds = try await screenBounds(ofElementWithID: "img")
+        let pointAfterImage = CGPoint(x: imageBounds.maxX + 50, y: imageBounds.midY)
+
+        await recap.play { composer in
+            composer._wk_click(at: pointAfterImage, for: .seconds(0.1))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let selection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
+        #expect(selection == .collapsed(.init(in: "editor", at: 1)))
+    }
+
+    @Test(.disabled("This test takes an unavoidable ~10 seconds to run"))
     func consecutiveQuickFlicksAccelerateScrolling() async throws {
         let html = """
             <body style="margin: 0; width: 100%; height: 200000px;

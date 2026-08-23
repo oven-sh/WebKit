@@ -59,37 +59,20 @@ void CodeCacheMap::pruneSlowCase()
 
 static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error)
 {
-    auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable, CodeSpecializationKind constructorKind) {
-        if (constructorKind == CodeSpecializationKind::CodeForConstruct && SourceParseModeSet(SourceParseMode::AsyncArrowFunctionMode, SourceParseMode::AsyncMethodMode, SourceParseMode::AsyncFunctionMode).contains(unlinkedExecutable->parseMode()))
-            return;
-
+    auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable) {
+        // FIXME: We should also generate CodeBlocks for CodeForConstruct of ordinary functions.
+        // https://bugs.webkit.org/show_bug.cgi?id=193823
+        CodeSpecializationKind kind = unlinkedExecutable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
         SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
-        UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, constructorKind, codeGenerationMode, error, unlinkedExecutable->parseMode());
+        UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, kind, codeGenerationMode, error, unlinkedExecutable->parseMode());
         if (unlinkedFunctionCodeBlock)
             generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error);
     };
 
-    // FIXME: We should also generate CodeBlocks for CodeForConstruct
-    // https://bugs.webkit.org/show_bug.cgi?id=193823
-    //
-    // NOTE: We changed this in Bun. We check if the function is a constructor
-    // and if it is, we generate a CodeForConstruct block.
-    for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++) {
-        auto* functionDecl = unlinkedCodeBlock->functionDecl(i);
-        if (functionDecl->isConstructor()) {
-            generate(functionDecl, CodeSpecializationKind::CodeForConstruct);
-        } else {
-            generate(functionDecl, CodeSpecializationKind::CodeForCall);
-        }
-    }
-    for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++) {
-        auto* functionExpr = unlinkedCodeBlock->functionExpr(i);
-        if (functionExpr->isConstructor()) {
-            generate(functionExpr, CodeSpecializationKind::CodeForConstruct);
-        } else {
-            generate(functionExpr, CodeSpecializationKind::CodeForCall);
-        }
-    }
+    for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++)
+        generate(unlinkedCodeBlock->functionDecl(i));
+    for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++)
+        generate(unlinkedCodeBlock->functionExpr(i));
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType = ScriptExecutable>
@@ -173,7 +156,7 @@ UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModulePro
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const SourceCode& source, UnlinkedCodeBlock* unlinkedCodeBlock)
+void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const SourceCode& source, UnlinkedGlobalCodeBlock* unlinkedCodeBlock)
 {
     unsigned lineCount = unlinkedCodeBlock->lineCount();
     unsigned startColumn = unlinkedCodeBlock->startColumn() + source.startColumn().oneBasedInt();
@@ -292,7 +275,7 @@ UnlinkedFunctionExecutable* CodeCache::getUnlinkedGlobalFunctionExecutable(VM& v
     // The Function constructor only has access to global variables, so no variables will be under TDZ unless they're
     // in the global lexical environment, which we always TDZ check accesses from.
     ConstructAbility constructAbility = constructAbilityForParseMode(metadata->parseMode());
-    UnlinkedFunctionExecutable* functionExecutable = UnlinkedFunctionExecutable::create(vm, source, metadata, UnlinkedNormalFunction, constructAbility, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, std::nullopt, std::nullopt, DerivedContextType::None, EvalContextType::FunctionEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
+    UnlinkedFunctionExecutable* functionExecutable = UnlinkedFunctionExecutable::create(vm, source, metadata, UnlinkedNormalFunction, constructAbility, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::FunctionEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
 
     if (!source.provider()->sourceURLDirective().isNull())
         functionExecutable->setSourceURLDirective(source.provider()->sourceURLDirective());

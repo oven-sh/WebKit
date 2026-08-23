@@ -361,13 +361,17 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 #endif
 
     if (ModuleRegistryEntry* entry = getRegisteredMayBeNull(specifier, type)) {
-        JSValue error = entry->error(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (error)
-            return JSPromise::rejectedPromise(globalObject, error);
+        if (entry->fetchError())
+            removeFailedFetchEntry(entry);
+        else {
+            JSValue error = entry->error(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (error)
+                return JSPromise::rejectedPromise(globalObject, error);
 
-        if (entry->status() != ModuleRegistryEntry::Status::New)
-            promise = entry->ensureFetchPromise(globalObject);
+            if (entry->status() != ModuleRegistryEntry::Status::New)
+                promise = entry->ensureFetchPromise(globalObject);
+        }
     }
 
     if (!promise) {
@@ -1119,6 +1123,18 @@ int64_t JSModuleLoader::asyncEvaluationOrderForKey(const Identifier& key)
     return order.hasOrder() ? order.order() : -1;
 }
 #endif
+
+void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
+{
+    // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
+    ASSERT(entry->status() == ModuleRegistryEntry::Status::FetchFailed);
+    ModuleMapKey moduleMapKey { entry->key().impl(), entry->moduleType() };
+    auto iter = m_moduleMap.find(moduleMapKey);
+    if (iter == m_moduleMap.end() || iter->value.get() != entry)
+        return;
+    Locker locker { cellLock() };
+    m_moduleMap.remove(iter);
+}
 
 void JSModuleLoader::addResolutionFailure(VM& vm, const ResolutionMapKey& key, JSValue error)
 {

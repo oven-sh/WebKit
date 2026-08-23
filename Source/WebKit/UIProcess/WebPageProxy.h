@@ -58,6 +58,19 @@
 #include "InputMethodState.h"
 #endif
 
+#if defined(__swift__) && OS(WINDOWS)
+// The Swift C++ importer eagerly instantiates class-template members
+// (including Vector<T>::span()), and MSVC's STL rejects std::span<T> when T
+// is incomplete.
+#include "WebFoundTextRange.h"
+#include "WebPopupItem.h"
+#include <WebCore/MarkupExclusionRule.h>
+#include <WebCore/SearchPopupMenu.h>
+#include <WebCore/TextExtractionTypes.h>
+#include <WebCore/TextManipulationControllerManipulationFailure.h>
+#include <WebCore/TextManipulationItem.h>
+#endif
+
 namespace API {
 class Attachment;
 class ContentWorld;
@@ -1870,6 +1883,9 @@ public:
 
     WebProcessProxy& ensureRunningProcess();
     WebProcessProxy& siteIsolatedProcess() const { return m_legacyMainFrameProcess; }
+
+    static RefPtr<WebPageProxy> leastRecentlyVisiblePageToUnload();
+
     // rdar://168057355
     WebProcessProxy* WTF_NONNULL legacyMainFrameProcessPtrForSwift() const SWIFT_NAME(legacyMainFrameProcess()) { return &legacyMainFrameProcess(); }
     WebProcessProxy& legacyMainFrameProcess() const SWIFT_NAME(__legacyMainFrameProcessUnsafe()) { return m_legacyMainFrameProcess; }
@@ -2693,6 +2709,7 @@ public:
 
     void didNotifyUserActivation(IPC::Connection&, WebCore::FrameIdentifier, MonotonicTime);
     void didConsumeUserActivation(IPC::Connection&, WebCore::FrameIdentifier);
+    void didHandleFirstUserGesture(IPC::Connection&, WebCore::FrameIdentifier, MonotonicTime);
 
     void addOpenedPage(WebPageProxy&);
     bool NODELETE hasOpenedPage() const;
@@ -2914,7 +2931,7 @@ public:
     void convertRectsToMainFrameCoordinates(Vector<WebCore::FloatRect>, std::optional<WebCore::FrameIdentifier>, CompletionHandler<void(std::optional<Vector<WebCore::FloatRect>>)>&&);
     Awaitable<std::optional<WebCore::FloatRect>> convertRectToMainFrameCoordinates(WebCore::FloatRect, std::optional<WebCore::FrameIdentifier>);
     Awaitable<std::optional<WebCore::FloatPoint>> convertPointToMainFrameCoordinates(WebCore::FloatPoint, std::optional<WebCore::FrameIdentifier>);
-    void hitTestAtPoint(WebCore::FrameIdentifier, WebCore::FloatPoint, CompletionHandler<void(std::optional<JSHandleInfo>&&)>&&);
+    void hitTestAtPoint(WebCore::FrameIdentifier, WebCore::FloatPoint, API::ContentWorld&, CompletionHandler<void(std::optional<JSHandleInfo>&&)>&&);
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
     void setDefaultSpatialTrackingLabel(const String&);
@@ -2947,6 +2964,8 @@ public:
     void dispatchActivityStateChange();
 
     void closeCurrentTypingCommand();
+
+    void receivedQualifiedServerTrust(WebCore::CertificateInfo&&, WebCore::CertificateInfo&&);
 
     void simulateClickOverFirstMatchingTextInViewportWithUserInteraction(String&& targetText, CompletionHandler<void(bool)>&&);
 
@@ -3493,6 +3512,9 @@ private:
 #endif
     void updateWheelEventActivityAfterProcessSwap();
 
+#if ENABLE(COORDINATED_TOUCH_EVENTS)
+    void processNextQueuedTouchEvent();
+#endif
 #if ENABLE(TOUCH_EVENTS)
     void touchEventHandlingCompleted(IPC::Connection*, std::optional<WebEventType>, bool handled);
     void updateTouchEventTracking(const WebTouchEvent&);
@@ -3579,6 +3601,7 @@ private:
 
     void continueNavigationInNewProcess(API::Navigation&, WebFrameProxy&, RefPtr<SuspendedPageProxy>&&, BrowsingContextGroup&, Ref<WebProcessProxy>&&, ProcessSwapRequestedByClient, WebCore::ShouldTreatAsContinuingLoad, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, LoadedWebArchive, WebCore::NavigationUpgradeToHTTPSBehavior, WebCore::ProcessSwapDisposition, WebsiteDataStore* replacedDataStoreForWebArchiveLoad, MonotonicTime originalNavigationStartTime);
     void performProcessSwapForNavigationResponse(API::Navigation&, Ref<BrowsingContextGroup>&&, Ref<WebProcessProxy>&&, WebCore::ProcessSwapDisposition, NetworkResourceLoadIdentifier, MonotonicTime originalNavigationStartTime, CompletionHandler<void(bool)>&&);
+    void removeSuspendedPagesBeforeNavigation(WebProcessProxy&);
 
     void setNeedsFontAttributes(bool);
     void updateFontAttributesAfterEditorStateChange();
@@ -4011,13 +4034,14 @@ private:
     double m_pageLength { 0 };
     double m_gapBetweenPages { 0 };
 
+    std::optional<WebCore::FrameIdentifier> m_printingFrameID;
+
     // Whether WebPageProxy::close() has been called on this page.
     bool m_isClosed { false };
 
     // Whether it can run modal child web pages.
     bool m_canRunModal { false };
 
-    bool m_isInPrintingMode { false };
     bool m_isPerformingDOMPrintOperation { false };
 
     bool m_hasUpdatedRenderingAfterDidCommitLoad { true };

@@ -32,6 +32,7 @@
 #include "JSObjectInlines.h"
 #include "ObjectConstructor.h"
 #include "VMManager.h"
+#include "VMTrapsInlines.h"
 #include <wtf/DataLog.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RawPointer.h>

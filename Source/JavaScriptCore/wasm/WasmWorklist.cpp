@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2017-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -62,7 +63,7 @@ public:
 
 private:
     Thread(const AbstractLocker& locker, Worklist& work)
-        : Base(locker, work.m_lock, work.m_planEnqueued.copyRef(), ThreadType::Compiler)
+        : Base(locker, work.m_lock, work.m_planEnqueued.copyRef(), ThreadType::Compiler, compilerThreadQOS())
         , worklist(work)
     {
 
@@ -174,7 +175,7 @@ void Worklist::completePlanSynchronously(Plan& plan)
 {
     {
         Locker locker { *m_lock };
-        m_queue.decreaseKey([&] (QueueElement& element) {
+        m_queue.increaseKey([&] (QueueElement& element) {
             if (element.plan == &plan) {
                 element.priority = Priority::Synchronous;
                 return true;

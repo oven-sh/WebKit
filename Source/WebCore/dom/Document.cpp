@@ -185,6 +185,7 @@
 #include "LayoutDisallowedScope.h"
 #include "LazyLoadImageObserver.h"
 #include "LegacySchemeRegistry.h"
+#include "LinkLoader.h"
 #include "LoadableSpeculationRules.h"
 #include "LoaderStrategy.h"
 #include "LocalDOMWindow.h"
@@ -926,7 +927,7 @@ void Document::removedLastRef()
 
     // FIXME: This condition is usually true, and can probably be unconditional.
     if (m_referencingNodeCount) {
-        RELEASE_ASSERT(!hasLivingRenderTree());
+        RELEASE_ASSERT(renderTreeState() != RenderTreeState::Built);
         // We must make sure not to be retaining any of our children through
         // these extra pointers or we will create a reference cycle.
         m_focusedElement = nullptr;
@@ -2284,7 +2285,7 @@ RefPtr<Range> Document::caretRangeFromPoint(int x, int y, HitTestSource source)
 
 std::optional<BoundaryPoint> Document::caretPositionFromPoint(const LayoutPoint& clientPoint, HitTestSource source)
 {
-    if (!hasLivingRenderTree())
+    if (renderTreeState() != RenderTreeState::Built)
         return std::nullopt;
 
     LayoutPoint localPoint;
@@ -2315,7 +2316,7 @@ std::optional<BoundaryPoint> Document::caretPositionFromPoint(const LayoutPoint&
 
 RefPtr<CaretPosition> Document::caretPositionFromPoint(double x, double y, CaretPositionFromPointOptions options)
 {
-    if (!hasLivingRenderTree())
+    if (renderTreeState() != RenderTreeState::Built)
         return nullptr;
 
     LayoutPoint localPoint;
@@ -2929,7 +2930,7 @@ void Document::resolveStyle(ResolveStyleType type)
 
 void Document::updateTextRenderer(Text& text, unsigned offsetOfReplacedText, unsigned lengthOfReplacedText)
 {
-    if (!hasLivingRenderTree())
+    if (renderTreeState() != RenderTreeState::Built)
         return;
 
     ensurePendingRenderTreeUpdate().addText(text, { offsetOfReplacedText, lengthOfReplacedText, std::nullopt });
@@ -2937,7 +2938,7 @@ void Document::updateTextRenderer(Text& text, unsigned offsetOfReplacedText, uns
 
 void Document::updateSVGRenderer(SVGElement& element, Style::SVGRendererUpdateType kind)
 {
-    if (!hasLivingRenderTree())
+    if (renderTreeState() != RenderTreeState::Built)
         return;
 
     // TransformAttributeOnly bypasses Style::Update so it does not flip needsStyleRecalc()
@@ -2962,7 +2963,7 @@ void Document::updateSVGRenderer(SVGElement& element, Style::SVGRendererUpdateTy
 
 Style::Update& Document::ensurePendingRenderTreeUpdate()
 {
-    ASSERT(hasLivingRenderTree());
+    ASSERT(renderTreeState() == RenderTreeState::Built);
 
     if (!m_pendingRenderTreeUpdate)
         m_pendingRenderTreeUpdate = makeUnique<Style::Update>(*this);
@@ -3192,7 +3193,7 @@ std::unique_ptr<Style::ComputedStyle> Document::styleForElementIgnoringPendingSt
 
     std::optional<Style::ComputedStyle> updatedDocumentStyle;
     CheckedPtr parentStyle = parentStyleArg;
-    if (!parentStyle && m_needsFullStyleRebuild && hasLivingRenderTree()) {
+    if (!parentStyle && m_needsFullStyleRebuild && renderTreeState() == RenderTreeState::Built) {
         updatedDocumentStyle.emplace(Style::resolveForDocument(*this));
         parentStyle = &*updatedDocumentStyle;
     }
@@ -3465,6 +3466,7 @@ void Document::createRenderTree()
 
     // FIXME: It would be better if we could pass the resolved document style directly here.
     m_renderView = createRenderer<RenderView>(*this, Style::ComputedStyle::create());
+    m_renderTreeState = RenderTreeState::Built;
     auto* renderView = m_renderView.get();
     Node::setRenderer(renderView);
 
@@ -3486,7 +3488,7 @@ void Document::didBecomeCurrentDocumentInFrame()
     if (!m_frame)
         return;
 
-    if (!hasLivingRenderTree())
+    if (renderTreeState() != RenderTreeState::Built)
         createRenderTree();
     if (!m_frame)
         return;
@@ -3569,7 +3571,7 @@ void Document::detachFromCachedFrame(CachedFrameBase& cachedFrame)
 
 void Document::destroyRenderTree()
 {
-    ASSERT(hasLivingRenderTree());
+    ASSERT(renderTreeState() == RenderTreeState::Built);
     ASSERT(frame());
     ASSERT(frame()->document() == this);
     ASSERT(page());
@@ -3577,7 +3579,7 @@ void Document::destroyRenderTree()
     // Prevent Widget tree changes from committing until the RenderView is dead and gone.
     WidgetHierarchyUpdatesSuspensionScope suspendWidgetHierarchyUpdates;
 
-    SetForScope change(m_renderTreeBeingDestroyed, true);
+    auto scope = SetForScope { m_renderTreeState, RenderTreeState::BeingDestroyed, RenderTreeState::NotBuilt };
 
     if (isTopDocument())
         clearAXObjectCache();
@@ -3664,7 +3666,7 @@ void Document::willBeRemovedFromFrame()
 
     styleScope().clearResolver();
 
-    if (hasLivingRenderTree())
+    if (renderTreeState() == RenderTreeState::Built)
         destroyRenderTree();
 
     if (auto* pluginDocument = dynamicDowncast<PluginDocument>(*this))
@@ -4405,7 +4407,7 @@ void Document::implicitClose()
     }
 
 #if PLATFORM(COCOA) || PLATFORM(WIN) || PLATFORM(GTK)
-    if (frame && hasLivingRenderTree() && AXObjectCache::accessibilityEnabled()) {
+    if (frame && renderTreeState() == RenderTreeState::Built && AXObjectCache::accessibilityEnabled()) {
         // The AX cache may have been cleared at this point, but we need to make sure it contains an
         // AX object to send the notification to. getOrCreate will make sure that an valid AX object
         // exists in the cache (we ignore the return value because we don't need it here). This is
@@ -5634,7 +5636,7 @@ void Document::processApplicationManifest(const ApplicationManifest& application
 
 MouseEventWithHitTestResults Document::prepareMouseEvent(const HitTestRequest& request, const DoublePoint& documentPoint, const PlatformMouseEvent& event)
 {
-    if (!hasLivingRenderTree())
+    if (renderTreeState() != RenderTreeState::Built)
         return MouseEventWithHitTestResults(event, HitTestResult(DoublePoint()));
 
     HitTestResult result(documentPoint);
@@ -7122,6 +7124,8 @@ void Document::dispatchWindowLoadEvent()
     protect(window())->dispatchLoadEvent();
     m_loadEventFinished = true;
 
+    flushPendingCompressionDictionaryLoads();
+
     // A subframe that finished loading without ever being laid out was hidden (e.g. parent had
     // display:none); note that so the first layout can fire resize for the 0x0 to actual size change.
     if (RefPtr frameView = view()) {
@@ -8062,7 +8066,7 @@ Document* Document::mainFrameDocument() const
 
     // FIXME: This special-casing avoids incorrectly determined top documents during the process
     // of AXObjectCache teardown or notification posting for cached or being-destroyed documents.
-    if (backForwardCacheState() == NotInBackForwardCache && !m_renderTreeBeingDestroyed) {
+    if (backForwardCacheState() == NotInBackForwardCache && renderTreeState() != RenderTreeState::BeingDestroyed) {
         Document* localMainDocument = nullptr;
         if (RefPtr localMainFrame = this->localMainFrame())
             localMainDocument = localMainFrame->document();
@@ -8244,6 +8248,38 @@ Ref<HTMLCollection> Document::documentNamedItems(const AtomString& name)
 Ref<NodeList> Document::getElementsByName(const AtomString& elementName)
 {
     return ensureRareData().ensureNodeLists().addCacheWithAtomName<NameNodeList>(*this, elementName);
+}
+
+void Document::queueCompressionDictionaryLoad(Function<void()>&& load)
+{
+    if (!m_loadEventFinished) {
+        m_pendingCompressionDictionaryLoads.append(WTF::move(load));
+        return;
+    }
+    eventLoop().queueTask(TaskSource::Networking, WTF::move(load));
+}
+
+// Dictionary fetches must not compete with the page's critical-path loads, so they are held back
+// until the load event has been dispatched: those from <link> elements, and those named by this
+// document's own Link headers, which are only looked at for dictionaries here.
+void Document::flushPendingCompressionDictionaryLoads()
+{
+    ASSERT(m_loadEventFinished);
+
+    if (!settings().compressionDictionaryEnabled())
+        return;
+
+    if (RefPtr documentLoader = loader()) {
+        auto linkHeader = documentLoader->response().httpHeaderField(HTTPHeaderName::Link);
+        if (!linkHeader.isEmpty()) {
+            m_pendingCompressionDictionaryLoads.append([document = Ref { *this }, linkHeader = WTF::move(linkHeader)] {
+                LinkLoader::loadCompressionDictionariesFromHeader(linkHeader, document->url(), document);
+            });
+        }
+    }
+
+    for (auto& load : std::exchange(m_pendingCompressionDictionaryLoads, { }))
+        eventLoop().queueTask(TaskSource::Networking, WTF::move(load));
 }
 
 void Document::finishedParsing()
@@ -9642,7 +9678,7 @@ bool Document::hasTouchEventHandlers() const
 {
     auto touchEventHandlerCountsIsEmpty = true;
 
-#if ENABLE(TOUCH_EVENTS) && ENABLE(TOUCH_EVENT_REGIONS)
+#if ENABLE(IOS_TOUCH_EVENTS) && ENABLE(TOUCH_EVENT_REGIONS)
     touchEventHandlerCountsIsEmpty = !shouldUseTouchEventRegions() || m_touchEventHandlerCounts.isEmptyIgnoringNullReferences();
 #endif
 

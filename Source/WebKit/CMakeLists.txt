@@ -623,6 +623,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/Extensions/WebExtensionMenuItem.serialization.in
     Shared/Extensions/WebExtensionMessageSenderParameters.serialization.in
     Shared/Extensions/WebExtensionMessageTargetParameters.serialization.in
+    Shared/Extensions/WebExtensionOffscreenDocumentParameters.serialization.in
     Shared/Extensions/WebExtensionSidebarParameters.serialization.in
     Shared/Extensions/WebExtensionStorage.serialization.in
     Shared/Extensions/WebExtensionTab.serialization.in
@@ -956,7 +957,6 @@ if (SWIFT_REQUIRED)
     set(WebKit_SWIFT_INTEROP_SOURCES
         UIProcess/ProvisionalPageProxy.cpp
         UIProcess/RemotePageProxy.cpp
-        UIProcess/ViewGestureController.cpp
         UIProcess/WebBackForwardList.cpp
         UIProcess/WebPageProxy.cpp
         UIProcess/Automation/WebAutomationSession.cpp
@@ -964,6 +964,9 @@ if (SWIFT_REQUIRED)
         ${WebKit_DERIVED_SOURCES_DIR}/UIProcess/WebBackForwardListMessageReceiver.cpp
         ${WebKit_DERIVED_SOURCES_DIR}/Shared/IPCTesterReceiverMessageReceiver.cpp
     )
+    if (NOT WIN32)
+        list(APPEND WebKit_SWIFT_INTEROP_SOURCES UIProcess/ViewGestureController.cpp)
+    endif ()
     if (APPLE)
         list(APPEND WebKit_SWIFT_INTEROP_SOURCES
             UIProcess/API/ios/WKWebViewIOS.mm
@@ -977,7 +980,7 @@ if (SWIFT_REQUIRED)
     endif ()
     foreach (_f IN LISTS WebKit_SWIFT_INTEROP_SOURCES)
         cmake_path(GET _f FILENAME _fn)
-        list(APPEND WebKit_UNIFIED_SOURCE_EXCLUDES "(^|/)${_fn}( |$)")
+        list(APPEND WebKit_UNIFIED_SOURCE_EXCLUDES "(^|[/\\\\])${_fn}( |$)")
     endforeach ()
 
     # FIXME(rdar://177840132): swiftc -emit-dependencies records imported
@@ -1164,6 +1167,7 @@ foreach (in_file ${WebCore_SERIALIZATION_IN_FILES})
     list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebCore_PRIVATE_HEADERS_DIR}/${in_file}")
 endforeach ()
 list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebKit_DERIVED_SOURCES_DIR}/SharedPreferencesForWebProcess.serialization.in")
+list(APPEND WebKit_SERIALIZATION_DEPENDENCIES "${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.serialization.in")
 
 list(APPEND WebKit_DERIVED_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.h
@@ -1391,6 +1395,33 @@ list(APPEND WebKit_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesGetterSetters.cpp
     ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesKeys.cpp
     ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesStoreDefaultsMap.cpp
+)
+
+set(WebKit_SECURITY_FLAGS_TEMPLATES
+    ${WEBKIT_DIR}/Scripts/SecurityFlagsTemplates/SecurityFlags.h.erb
+    ${WEBKIT_DIR}/Scripts/SecurityFlagsTemplates/SecurityFlags.cpp.erb
+    ${WEBKIT_DIR}/Scripts/SecurityFlagsTemplates/SecurityFlags.serialization.in.erb
+)
+
+set(WebKit_SECURITY_FLAGS
+    ${WTF_SCRIPTS_DIR}/Preferences/SecurityFlags.yaml
+)
+
+set_source_files_properties(${WebKit_SECURITY_FLAGS} PROPERTIES GENERATED TRUE)
+
+add_custom_command(
+    OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.h ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.cpp ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.serialization.in
+    DEPENDS ${WebKit_SECURITY_FLAGS_TEMPLATES} ${WebKit_SECURITY_FLAGS} WTF_CopyPreferences
+    COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GenerateSecurityFlags.rb --outputDir "${WebKit_DERIVED_SOURCES_DIR}" --template "$<JOIN:${WebKit_SECURITY_FLAGS_TEMPLATES},;--template;>" ${WebKit_SECURITY_FLAGS}
+    COMMAND_EXPAND_LISTS
+    VERBATIM)
+
+list(APPEND WebKit_HEADERS
+    ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.h
+)
+
+list(APPEND WebKit_SOURCES
+    ${WebKit_DERIVED_SOURCES_DIR}/SecurityFlags.cpp
 )
 
 if (ENABLE_SWIFT_DEMO_URI_SCHEME)

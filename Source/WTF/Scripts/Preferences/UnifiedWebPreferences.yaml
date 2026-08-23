@@ -540,6 +540,7 @@ AlwaysUseTouchEventRegions:
     WebKitLegacy:
       default: false
     WebKit:
+      "ENABLE(COORDINATED_TOUCH_EVENTS)" : true
       default: false
     WebCore:
       default: false
@@ -1845,17 +1846,17 @@ CSSUnprefixedBackdropFilterEnabled:
 
 CSSUserSelectEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "CSS Unprefixed User Select"
   humanReadableDescription: "Enable the unprefixed user-select CSS property"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSWhiteSpaceTrimEnabled:
   type: bool
@@ -2192,6 +2193,21 @@ CompositingRepaintCountersVisible:
       default: false
     WebCore:
       default: false
+
+CompressionDictionaryEnabled:
+  type: bool
+  status: testable
+  category: networking
+  humanReadableName: "Compression Dictionary Transport"
+  humanReadableDescription: "Enable compression dictionary transport"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+  sharedPreferenceForWebProcess: true
 
 CompressionStreamEnabled:
   type: bool
@@ -3311,18 +3327,18 @@ FasterClicksEnabled:
 
 FetchUploadStreamsEnabled:
   type: bool
-  status: testable
+  status: stable
   category: networking
   humanReadableName: "Fetch upload streams"
   humanReadableDescription: "Enable ReadableStream request bodies for fetch(). HTTP/2 (or later) required."
   exposed: [ WebKit ]
   defaultValue:
     WebCore:
-      default: false
+      default: true
     WebKitLegacy:
       default: false
     WebKit:
-      default: false
+      default: true
 
 FileReaderAPIEnabled:
   type: bool
@@ -7491,17 +7507,17 @@ SKAttributionEnabled:
 
 SVGExternalResourcesEnabled:
   type: bool
-  status: preview
+  status: stable
   category: css
   humanReadableName: "SVG external resources"
   humanReadableDescription: "Enable referencing SVG resources (paint servers, etc.) via external or data: URLs"
   defaultValue:
     WebCore:
-      default: false
+      default: true
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
 
 SWVPDecodersAlwaysEnabled:
   type: bool
@@ -8232,6 +8248,25 @@ ShouldPrintBackgrounds:
     WebCore:
       default: false
 
+ShouldReportViewportSizeAsScreenSize:
+  type: bool
+  status: embedder
+  humanReadableName: "Report Viewport Size As Screen Size"
+  humanReadableDescription: "Report the viewport size instead of the real screen size"
+  defaultValue:
+    WebCore:
+      default: false
+
+ShouldReportZeroMaxTouchPoints:
+  type: bool
+  status: embedder
+  humanReadableName: "Report Zero Max Touch Points"
+  humanReadableDescription: "Report navigator.maxTouchPoints as 0"
+  condition: ENABLE(IOS_TOUCH_EVENTS)
+  defaultValue:
+    WebCore:
+      default: false
+
 ShouldRespectImageOrientation:
   type: bool
   status: embedder
@@ -8392,9 +8427,24 @@ SiteIsolationEnabled:
       default: false
   sharedPreferenceForWebProcess: true
 
-SiteIsolationSharedProcessEnabled:
+SiteIsolationHighValueFraudTargetDomainsEnabled:
   type: bool
   status: unstable
+  category: security
+  humanReadableName: "High-value fraud target domains for Site Isolation"
+  humanReadableDescription: "Exclude sites on the high-value fraud target domains list from the shared web process"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+SiteIsolationSharedProcessEnabled:
+  type: bool
+  status: internal
+  defaultsOverridable: true
   category: security
   humanReadableName: "Shared process for Site Isolation"
   humanReadableDescription: "Put cross-site frames in a shared Web process"
@@ -9330,7 +9380,7 @@ UseAVCaptureDeviceRotationCoordinatorAPI:
 
 UseAlternatePDFHUD:
   type: bool
-  status: mature
+  status: internal
   category: html
   humanReadableName: "Alternate PDF HUD"
   humanReadableDescription: "Use the alternate PDF HUD"
@@ -9339,7 +9389,7 @@ UseAlternatePDFHUD:
   condition: ENABLE(PDF_HUD)
   defaultValue:
     WebKit:
-      default: true
+      default: false
 
 UseAppKitGestures:
   type: bool
@@ -9925,7 +9975,7 @@ WasmJSTypesEnabled:
   status: testable
   category: javascript
   humanReadableName: "WebAssembly JS Types"
-  humanReadableDescription: "Enable the js-types proposal type() methods on WebAssembly.Memory/Table/Global/Tag prototypes."
+  humanReadableDescription: "Enable the js-types proposal: type() on WebAssembly.Memory/Table/Global/Tag, and the type field on WebAssembly.Module.imports/exports descriptors."
   webcoreBinding: none
   jscOptionName: useWasmJSTypes
   sharedPreferenceForWebProcess: true
