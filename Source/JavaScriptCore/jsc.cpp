@@ -31,9 +31,6 @@
 #include "CodeCache.h"
 #include "CompilerTimingScope.h"
 #include "Completion.h"
-#include "CodeCache.h"
-#include <sys/mman.h>
-#include <fcntl.h>
 #include "ConfigFile.h"
 #include "DeferTermination.h"
 #include "DeferredWorkTimer.h"
@@ -194,6 +191,11 @@ struct MemoryFootprint {
     {
     }
 };
+#endif
+
+#if OS(LINUX)
+#include <fcntl.h>
+#include <sys/mman.h>
 #endif
 
 #if !defined(PATH_MAX)
@@ -1775,11 +1777,15 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateBytecodeCacheFile, (JSGlobalObject* glo
 
 // bytecodeCachePageTouch(sourcePath, cachePath, "module"|"program", depth) — map the cache cold, decode the top-level block
 // (depth 0), then the bodies of its direct children (depth 1), grandchildren (2)..., and report how many pages of the
-// mapping became resident. Returns [residentPages, totalPages, decodedCodeBlocks, decodeMilliseconds].
+// mapping became resident. Returns [residentPages, totalPages, decodedCodeBlocks, decodeMilliseconds, residentBefore]. Linux only (mincore/posix_fadvise).
 JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if !OS(LINUX)
+    UNUSED_PARAM(callFrame);
+    return throwVMError(globalObject, scope, "bytecodeCachePageTouch is only implemented on Linux"_s);
+#else
     String sourcePath = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     String cachePath = callFrame->argument(1).toWTFString(globalObject);
@@ -1819,8 +1825,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     };
     size_t residentBefore = countResident();
 
-    Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span<uint8_t> { static_cast<uint8_t*>(base), size }, [](const void*) { }, { });
-    cachedBytecode->setPayloadIsPersistent(); // mapped for the rest of the process, like an embedder's executable section
+    // Decoded blocks alias the mapping (it is marked persistent, like an embedder's executable section) and live on the
+    // GC heap past this call, so the CachedBytecode is kept for the rest of the process, as diskCachePayloadIsPersistentForTesting does.
+    Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span<uint8_t> { static_cast<uint8_t*>(base), size }, [size](const void* p) { munmap(const_cast<void*>(p), size); }, { });
+    cachedBytecode->setPayloadIsPersistent();
+    cachedBytecode->ref();
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
 
     MonotonicTime start = MonotonicTime::now();
@@ -1856,6 +1865,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     result->putDirectIndex(globalObject, 3, jsNumber(ms));
     result->putDirectIndex(globalObject, 4, jsNumber(residentBefore));
     return JSValue::encode(result);
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionDebug, (JSGlobalObject* globalObject, CallFrame* callFrame))

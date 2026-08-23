@@ -918,13 +918,14 @@ public:
         if (!src)
             return;
 
-#if USE(BUN_JSC_ADDITIONS)
         if constexpr (requires (Encoder& e, const Source& s) { T::create(e, s); }) {
             // Code blocks write their arrays first and their record after, so they place themselves.
             T* record = T::create(encoder, *src);
             this->m_offset = safeCast<VariableLengthObjectBase::Offset>(encoder.offsetOf(record) - encoder.offsetOf(&this->m_offset));
             return;
-        } else if constexpr (isSingleOwnerCachedType<T>) {
+        } else
+#if USE(BUN_JSC_ADDITIONS)
+        if constexpr (isSingleOwnerCachedType<T>) {
             ASSERT(!encoder.cachedOffsetForPtr(src));
             this->template allocateFor<T>(encoder, *src)->encode(encoder, *src);
             return;
