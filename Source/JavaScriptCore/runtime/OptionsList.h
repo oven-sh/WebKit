@@ -87,9 +87,12 @@ bool hasCapacityToUseLargeGigacage();
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
     v(Bool, useExecutionCountForCodeBlockAging, false, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
     v(Double, codeBlockAgingLeaseMultiplier, 3.0, Normal, "When useExecutionCountForCodeBlockAging proves a CodeBlock is still active, renew its old-age TTL to this many multiples of timeToLive for its tier."_s)
+#define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
+    v(Bool, useLeanBytecodeCacheDecoder, true, Normal, "If true, the bytecode cache Decoder skips bookkeeping that is only needed for decoded objects shared by multiple references."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
+#define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v)
 #endif
 
 #define FOR_EACH_JSC_OPTION(v)                                          \
@@ -467,6 +470,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceCodeBlockToJettisonDueToOldAge, false, Normal, "If true, this means that anytime we can jettison a CodeBlock due to old age, we do."_s) \
     v(Bool, useEagerCodeBlockJettisonTiming, false, Normal, "If true, the time slices for jettisoning a CodeBlock due to old age are shrunk significantly."_s) \
     FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
+    FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
     \
     v(Bool, useTypeProfiler, false, Normal, nullptr) \
     v(Bool, useControlFlowProfiler, false, Normal, nullptr) \

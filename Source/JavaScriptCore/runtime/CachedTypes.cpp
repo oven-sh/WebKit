@@ -349,6 +349,11 @@ void Decoder::setHandleForTDZEnvironment(CompactTDZEnvironment* environment, con
 
 void Decoder::addLeafExecutable(const UnlinkedFunctionExecutable* executable, ptrdiff_t offset)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // Only CachedBytecode::addFunctionUpdate reads this map, and Bun never calls it.
+    if (Options::useLeanBytecodeCacheDecoder())
+        return;
+#endif
     m_cachedBytecode->leafExecutables().add(executable, offset);
 }
 
@@ -480,6 +485,18 @@ public:
     }
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// A cached type declares `static constexpr bool isSingleOwner = true` when the Encoder
+// only ever reaches it through one CachedPtr, so there is nothing for the
+// ptr <-> offset maps to deduplicate on either side.
+template<typename T> inline constexpr bool isSingleOwnerCachedType = requires { T::isSingleOwner; };
+
+// A cached type declares `static constexpr bool decodesToCanonicalObject = true` when its
+// decode() returns a +1 reference to an object that is already unique for its content
+// (atoms, registry symbols), so shared references can be re-decoded instead of mapped.
+template<typename T> inline constexpr bool isCanonicalCachedType = requires { T::decodesToCanonicalObject; };
+#endif
+
 template<typename T, typename Source = SourceType<T>>
 class CachedPtr : public VariableLengthObject<Source*> {
     template<typename, typename, typename>
@@ -492,6 +509,14 @@ public:
     {
         if (!src)
             return;
+
+#if USE(BUN_JSC_ADDITIONS)
+        if constexpr (isSingleOwnerCachedType<T>) {
+            ASSERT(!encoder.cachedOffsetForPtr(src));
+            this->template allocate<T>(encoder)->encode(encoder, *src);
+            return;
+        }
+#endif
 
         if (std::optional<ptrdiff_t> offset = encoder.cachedOffsetForPtr(src)) {
             this->m_offset = *offset - encoder.offsetOf(&this->m_offset);
@@ -510,6 +535,15 @@ public:
             isNewAllocation = false;
             return nullptr;
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        if constexpr (isSingleOwnerCachedType<T>) {
+            if (Options::useLeanBytecodeCacheDecoder()) {
+                isNewAllocation = true;
+                return get()->decode(decoder, std::forward<Args>(args)...);
+            }
+        }
+#endif
 
         ptrdiff_t bufferOffset = decoder.offsetOf(this->buffer());
         if (std::optional<void*> ptr = decoder.cachedPtrForOffset(bufferOffset)) {
@@ -560,6 +594,15 @@ public:
 
     RefPtr<Source, PtrTraits> decode(Decoder& decoder) const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if constexpr (isCanonicalCachedType<T>) {
+            if (Options::useLeanBytecodeCacheDecoder()) {
+                if (m_ptr.isEmpty())
+                    return nullptr;
+                return adoptRef<Source, PtrTraits>(m_ptr.get()->decode(decoder));
+            }
+        }
+#endif
         bool isNewAllocation;
         Source* decodedPtr = m_ptr.decode(decoder, isNewAllocation);
         if (!decodedPtr)
@@ -724,6 +767,10 @@ private:
 template<typename T>
 class CachedUniquedStringImplBase : public VariableLengthObject<T> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool decodesToCanonicalObject = true;
+#endif
+
     void encode(Encoder& encoder, const StringImpl& string)
     {
         m_isAtomic = string.isAtom();
@@ -1005,6 +1052,10 @@ private:
 
 class CachedCodeBlockRareData : public CachedObject<UnlinkedCodeBlock::RareData> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
     void encode(Encoder& encoder, const UnlinkedCodeBlock::RareData& rareData)
     {
         m_exceptionHandlers.encode(encoder, rareData.m_exceptionHandlers);
@@ -1047,6 +1098,10 @@ private:
 
 class CachedExpressionInfo : public CachedObject<ExpressionInfo> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
     void encode(Encoder& encoder, const ExpressionInfo& info)
     {
         m_numberOfChapters = info.m_numberOfChapters;
@@ -1073,6 +1128,10 @@ typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, W
 
 class CachedVariableEnvironmentRareData : public CachedObject<VariableEnvironment::RareData> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
     void encode(Encoder& encoder, const VariableEnvironment::RareData& rareData)
     {
         m_privateNames.encode(encoder, rareData.m_privateNames);
@@ -1193,6 +1252,10 @@ private:
 
 class CachedScopedArgumentsTable : public CachedObject<ScopedArgumentsTable> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
     void encode(Encoder& encoder, const ScopedArgumentsTable& scopedArgumentsTable)
     {
         m_length = scopedArgumentsTable.m_arguments.size();
@@ -1230,6 +1293,10 @@ private:
 
 class CachedSymbolTableRareData : public CachedObject<SymbolTable::SymbolTableRareData> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
     void encode(Encoder& encoder, const SymbolTable::SymbolTableRareData& rareData)
     {
         m_privateNames.encode(encoder, rareData.m_privateNames);
@@ -1503,6 +1570,10 @@ private:
 
 class CachedInstructionStream : public CachedObject<JSInstructionStream> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
     void encode(Encoder& encoder, const JSInstructionStream& stream)
     {
         m_instructions.encode(encoder, stream.m_instructions);
@@ -1926,6 +1997,10 @@ private:
 
 class CachedFunctionExecutableRareData : public CachedObject<UnlinkedFunctionExecutable::RareData> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
     void encode(Encoder& encoder, const UnlinkedFunctionExecutable::RareData& rareData)
     {
         m_classSource.encode(encoder, rareData.m_classSource);
@@ -1955,6 +2030,10 @@ class CachedFunctionExecutable : public CachedObject<UnlinkedFunctionExecutable>
     friend struct CachedFunctionExecutableOffsets;
 
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
     void encode(Encoder&, const UnlinkedFunctionExecutable&);
     UnlinkedFunctionExecutable* decode(Decoder&) const;
 
@@ -2053,6 +2132,10 @@ ptrdiff_t CachedFunctionExecutableOffsets::metadataOffset()
 template<typename CodeBlockType>
 class CachedCodeBlock : public CachedObject<CodeBlockType> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
     void encode(Encoder&, const UnlinkedCodeBlock&);
     void decode(Decoder&, UnlinkedCodeBlock&) const;
 
