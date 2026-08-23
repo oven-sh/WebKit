@@ -1416,6 +1416,13 @@ private:
             return;
 
         m_cachedBytecode = CachedBytecode::create(WTF::move(*mappedFileData));
+#if USE(BUN_JSC_ADDITIONS)
+        if (Options::diskCachePayloadIsPersistentForTesting()) {
+            // Keep the mapping for the rest of the process so the promise is true, then let decoded code alias it.
+            m_cachedBytecode->setPayloadIsPersistent();
+            m_cachedBytecode->ref();
+        }
+#endif
     }
 
     ShellSourceProvider(const String& source, const SourceOrigin& sourceOrigin, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType)

@@ -109,7 +109,7 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendValues(thisObject->m_constantRegisters.span());
     size_t extraMemory = thisObject->metadataSizeInBytes();
     if (thisObject->m_instructions)
-        extraMemory += thisObject->m_instructions->sizeInBytes();
+        extraMemory += thisObject->m_instructions->ownedSizeInBytes();
     if (thisObject->hasRareData())
         extraMemory += thisObject->m_rareData->sizeInBytes(locker);
     if (thisObject->m_expressionInfo)
@@ -131,7 +131,7 @@ size_t UnlinkedCodeBlock::estimatedSize(JSCell* cell, VM& vm)
     UnlinkedCodeBlock* thisObject = uncheckedDowncast<UnlinkedCodeBlock>(cell);
     size_t extraSize = thisObject->metadataSizeInBytes();
     if (thisObject->m_instructions)
-        extraSize += thisObject->m_instructions->sizeInBytes();
+        extraSize += thisObject->m_instructions->ownedSizeInBytes();
     return Base::estimatedSize(cell, vm) + extraSize;
 }
 

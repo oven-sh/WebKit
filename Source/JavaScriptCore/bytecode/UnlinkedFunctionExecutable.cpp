@@ -292,13 +292,13 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
 
     DeferGC deferGC(vm);
 
-    // No need to clear m_unlinkedCodeBlockForCall here, since we moved the decoder out of the same slot
+    // m_unlinkedCodeBlockForCall shares its slot with the decoder we just moved out, so it is already null; the construct
+    // slot still holds the two offsets, and a decode that rejects a damaged block leaves its slot untouched.
+    m_unlinkedCodeBlockForConstruct.clear();
     if (cachedCodeBlockForCallOffset)
         decodeFunctionCodeBlock(*decoder, cachedCodeBlockForCallOffset, m_unlinkedCodeBlockForCall, this);
     if (cachedCodeBlockForConstructOffset)
         decodeFunctionCodeBlock(*decoder, cachedCodeBlockForConstructOffset, m_unlinkedCodeBlockForConstruct, this);
-    else
-        m_unlinkedCodeBlockForConstruct.clear();
 
     WTF::storeStoreFence();
     m_isCached = false;
