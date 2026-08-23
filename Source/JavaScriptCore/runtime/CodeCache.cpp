@@ -222,6 +222,9 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
         key.source().provider().cacheBytecode([&] {
             return encodeCodeBlock(vm, key, unlinkedCodeBlock);
         });
+#if USE(BUN_JSC_ADDITIONS)
+        key.source().provider().didGenerateUnlinkedCodeBlock(vm, key, unlinkedCodeBlock);
+#endif
     }
 
     return unlinkedCodeBlock;
