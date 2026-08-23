@@ -32,7 +32,7 @@ noInline(writeAt);
 
 const small = new Uint8Array(64);
 const top = 2 ** 31 - 4;
-for (let i = 0; i < 5e5; ++i) {
+for (let i = 0; i < testLoopCount * 50; ++i) {
   shouldBe(writeAt(big, i, 100), 104, "write low");
   shouldBe(readAt(big, 100), i, "read low");
   shouldBe(writeAt(big, ~i, top), top + 4, "write at the int32 offset ceiling");

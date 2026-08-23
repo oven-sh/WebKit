@@ -68,6 +68,6 @@ function warm(b) {
 {
   const b = new Buffer(64); warm(b);
   const u = new Uint8Array(16); transferArrayBuffer(u.buffer);
-  for (let i = 0; i < 1000; i++) { expectThrow(() => rd(u, 0), "plain detached"); rd(b, i & 31); }
+  for (let i = 0; i < testLoopCount / 10; i++) { expectThrow(() => rd(u, 0), "plain detached"); rd(b, i & 31); }
 }
 

@@ -74,7 +74,7 @@ const sint = (o, l, le) => {
   return value >= 2 ** (8 * l - 1) ? value - 2 ** (8 * l) : value;
 };
 
-for (let i = 0; i < 1e4; ++i) {
+for (let i = 0; i < testLoopCount; ++i) {
   const o = i & 15;
   for (const l of [1, 2, 3, 4, 5, 6]) {
     shouldBe(readIntLE(buf, o, l), sint(o, l, true), "readIntLE " + l);
@@ -89,7 +89,7 @@ for (let i = 0; i < 1e4; ++i) {
 
 const scratch = new Buffer(64);
 const scratchDV = new DataView(scratch.buffer);
-for (let i = 0; i < 1e4; ++i) {
+for (let i = 0; i < testLoopCount; ++i) {
   const o = i & 15;
   shouldBe(writeIntLE(scratch, -(i & 0x7fff), o, 4), o + 4, "writeIntLE 4 result");
   shouldBe(scratchDV.getInt32(o, true), -(i & 0x7fff), "writeIntLE 4 store");
@@ -99,7 +99,7 @@ for (let i = 0; i < 1e4; ++i) {
   shouldBe(scratchDV.getInt8(o), (i & 0xff) - 128, "writeIntLE const 1 store");
 }
 
-for (let i = 0; i < 3e3; ++i) {
+for (let i = 0; i < testLoopCount / 4; ++i) {
   shouldThrow(() => readIntLE(buf, 0, 7), RangeError, "byteLength 7");
   shouldThrow(() => readIntLE(buf, 0, 0), RangeError, "byteLength 0");
   shouldThrow(() => readInt32ConstLE(buf, undefined), TypeError, "undefined offset");

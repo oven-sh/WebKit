@@ -279,8 +279,8 @@ for (let round = 0; round < rounds && !mismatch; ++round) {
         } catch {}
       } else if (rand() < 0.15) {
         try {
-          structuredClone(jb, { transfer: [jb] });
-          structuredClone(rb, { transfer: [rb] });
+          transferArrayBuffer(jb);
+          transferArrayBuffer(rb);
         } catch {}
       }
     }

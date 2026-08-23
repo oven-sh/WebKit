@@ -29,7 +29,7 @@ function readUInt8(b, o) {
   return b.readUInt8(o);
 }
 noInline(readUInt8);
-for (let i = 0; i < 1e4; ++i) {
+for (let i = 0; i < testLoopCount; ++i) {
   dv.setInt32(12, i, true);
   shouldBe(readInt32LE(buf, 12), i, "last valid offset");
   shouldThrow(() => readInt32LE(buf, 13), RangeError, "one past the last valid offset");
@@ -56,7 +56,7 @@ function writeUInt32LE(b, v, o) {
   return b.writeUInt32LE(v, o);
 }
 noInline(writeUInt32LE);
-for (let i = 0; i < 1e4; ++i) {
+for (let i = 0; i < testLoopCount; ++i) {
   shouldBe(writeInt8(buf, 127, 3), 4, "writeInt8 max");
   shouldBe(dv.getInt8(3), 127, "writeInt8 max store");
   shouldBe(writeInt8(buf, -128, 3), 4, "writeInt8 min");
@@ -83,7 +83,7 @@ for (let i = 0; i < 1e4; ++i) {
     return accessors.readInt32LE.call(b, o);
   }
   noInline(readOnAnything);
-  for (let i = 0; i < 1e4; ++i) {
+  for (let i = 0; i < testLoopCount; ++i) {
     floats[0] = i;
     shouldBe(readOnAnything(buf, 0), dv.getInt32(0, true), "Buffer receiver");
     shouldBe(readOnAnything(floats, 0), new DataView(floats.buffer).getInt32(0, true), "Float64Array receiver");
@@ -100,9 +100,9 @@ for (let i = 0; i < 1e4; ++i) {
     return b.readUInt16LE(0);
   }
   noInline(readDetached);
-  for (let i = 0; i < 1e3; ++i) shouldBe(readDetached(detached), 0, "before detach");
+  for (let i = 0; i < testLoopCount / 10; ++i) shouldBe(readDetached(detached), 0, "before detach");
   transferArrayBuffer(detached.buffer);
-  for (let i = 0; i < 1e3; ++i) shouldThrow(() => readDetached(detached), RangeError, "after detach");
+  for (let i = 0; i < testLoopCount / 10; ++i) shouldThrow(() => readDetached(detached), RangeError, "after detach");
 }
 
 {
@@ -117,9 +117,11 @@ for (let i = 0; i < 1e4; ++i) {
     return b.writeInt32LE(value, o);
   }
   noInline(writeWithBadOffset);
-  for (let i = 0; i < 1e3; ++i) {
+  let expectedCalls = 0;
+  for (let i = 0; i < testLoopCount / 10; ++i) {
     shouldBe(writeWithBadOffset(buf, 0), 4, "good offset");
     shouldThrow(() => writeWithBadOffset(buf, 100), RangeError, "bad offset");
+    expectedCalls += 2;
   }
-  shouldBe(calls, 2000, "valueOf calls");
+  shouldBe(calls, expectedCalls, "valueOf calls");
 }

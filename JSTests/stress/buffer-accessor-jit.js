@@ -39,7 +39,7 @@ let readers = [
 for (let [name, reference] of readers) {
   let read = new Function("b", "o", `return b.${name}(o);`);
   noInline(read);
-  for (let i = 0; i < 1e4; ++i) {
+  for (let i = 0; i < testLoopCount; ++i) {
     let o = i & 31;
     shouldBe(read(buf, o), reference(o), name + " @" + o);
   }
@@ -51,7 +51,7 @@ for (let [name, reference] of readers) {
   };
   noInline(readPlain);
   let plain = new Uint8Array(buf);
-  for (let i = 0; i < 1e4; ++i) {
+  for (let i = 0; i < testLoopCount; ++i) {
     shouldBe(readDefault(buf), reference(0), name + " default offset");
     shouldBe(readPlain(plain), reference(0), name + " on a plain Uint8Array");
   }
@@ -77,7 +77,7 @@ for (let [name, reference, value] of writers) {
   let byteSize = name.match(/8/) ? 1 : name.match(/16/) ? 2 : name.match(/Float/) ? 4 : name.match(/32/) ? 4 : 8;
   let write = new Function("b", "v", "o", `return b.${name}(v, o);`);
   noInline(write);
-  for (let i = 0; i < 1e4; ++i) {
+  for (let i = 0; i < testLoopCount; ++i) {
     let o = i & 31;
     let v = value(i);
     shouldBe(write(buf, v, o), o + byteSize, name + " result @" + o);
@@ -85,7 +85,7 @@ for (let [name, reference, value] of writers) {
   }
   let writeDefault = new Function("b", "v", `return b.${name}(v);`);
   noInline(writeDefault);
-  for (let i = 0; i < 1e4; ++i) {
+  for (let i = 0; i < testLoopCount; ++i) {
     shouldBe(writeDefault(buf, value(i)), byteSize, name + " default offset");
     shouldBe(reference(0), value(i), name + " default offset store");
   }
@@ -99,7 +99,7 @@ function writeUInt32LEValue(b, v) {
   return b.writeUInt32LE(v, 16);
 }
 noInline(writeUInt32LEValue);
-for (let i = 0; i < 1e4; ++i) {
+for (let i = 0; i < testLoopCount; ++i) {
   shouldBe(writeInt32LEValue(buf, i + 0.75), 16, "writeInt32LE fractional result");
   shouldBe(dv.getInt32(12, true), i, "writeInt32LE fractional store");
   shouldBe(writeInt32LEValue(buf, NaN), 16, "writeInt32LE NaN result");
@@ -128,7 +128,7 @@ for (let i = 0; i < 1e4; ++i) {
   const readDouble = new Function("b", "o", "return b.readDoubleLE(o);");
   noInline(readFloat);
   noInline(readDouble);
-  for (let i = 0; i < 1e4; ++i) {
+  for (let i = 0; i < testLoopCount; ++i) {
     const f = readFloat(impure, 0);
     const d = readDouble(impure, 8);
     shouldBe(f, dvImpure.getFloat32(0, true), "impure NaN float matches the DataView reference");

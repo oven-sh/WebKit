@@ -38,7 +38,7 @@ function writeBigUInt64BE(b, v, o) {
 noInline(writeBigUInt64BE);
 
 const values = [0n, 1n, -1n, 42n, -42n, 2n ** 31n, -(2n ** 31n), 2n ** 32n + 7n, 2n ** 63n - 1n, -(2n ** 63n)];
-for (let i = 0; i < 2e4; ++i) {
+for (let i = 0; i < testLoopCount * 2; ++i) {
   const o = (i & 7) * 8;
   const v = values[i % values.length];
   shouldBe(writeBigInt64LE(buf, v, o), o + 8, "writeBigInt64LE result");
@@ -53,7 +53,7 @@ for (let i = 0; i < 2e4; ++i) {
   }
 }
 
-for (let i = 0; i < 2e4; ++i) {
+for (let i = 0; i < testLoopCount * 2; ++i) {
   shouldBe(writeBigUInt64LE(buf, 2n ** 64n - 1n, 0), 8, "unsigned max");
   shouldBe(dv.getBigUint64(0, true), 2n ** 64n - 1n, "unsigned max store");
   shouldThrow(() => writeBigUInt64LE(buf, -1n, 0), RangeError, "unsigned negative");
