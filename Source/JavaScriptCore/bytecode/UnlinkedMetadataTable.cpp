@@ -169,7 +169,7 @@ void UnlinkedMetadataTable::finalize()
 UnlinkedMetadataTable::~UnlinkedMetadataTable()
 {
     ASSERT(!m_isLinked);
-    if (m_hasMetadata)
+    if (m_hasMetadata && m_rawBuffer)
         MetadataTableMalloc::free(m_rawBuffer);
 }
 

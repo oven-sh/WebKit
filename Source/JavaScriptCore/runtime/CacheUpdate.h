@@ -42,6 +42,7 @@ public:
         CodeSpecializationKind m_kind;
         CachedFunctionExecutableMetadata m_metadata;
         CachePayload m_payload;
+        size_t m_rootOffset;
     };
 
 

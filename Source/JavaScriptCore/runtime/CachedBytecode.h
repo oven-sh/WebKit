@@ -72,6 +72,9 @@ public:
     std::span<const uint8_t> span() const LIFETIME_BOUND { return m_payload.span(); }
     size_t size() const { return m_payload.size(); }
     bool payloadIsPersistent() const { return m_payload.isPersistent(); }
+    // Where the root record starts within the payload (a function code block is written after its own arrays).
+    size_t rootOffset() const { return m_rootOffset; }
+    void setRootOffset(size_t offset) { m_rootOffset = offset; }
     void setPayloadIsPersistent() { m_payload.setIsPersistent(); }
     bool hasUpdates() const { return !m_updates.isEmpty(); }
     size_t sizeForUpdate() const { return m_size; }
@@ -88,6 +91,7 @@ private:
 
     size_t m_size { 0 };
     CachePayload m_payload;
+    size_t m_rootOffset { 0 };
     LeafExecutableMap m_leafExecutables;
     Vector<CacheUpdate> m_updates;
 };

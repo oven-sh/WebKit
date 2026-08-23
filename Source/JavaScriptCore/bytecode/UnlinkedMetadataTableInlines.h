@@ -54,6 +54,34 @@ ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(bool is32Bit, unsigne
 {
 }
 
+ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(bool is32Bit, unsigned numValueProfiles, std::span<const uint32_t> persistentSteps)
+    : m_hasMetadata(true)
+    , m_isFinalized(true)
+    , m_isLinked(false)
+    , m_is32Bit(is32Bit)
+    , m_numValueProfiles(numValueProfiles)
+    , m_stepsCount(persistentSteps.size())
+    , m_steps(persistentSteps.data())
+    , m_rawBuffer(nullptr)
+{
+}
+
+template<typename OffsetType>
+void UnlinkedMetadataTable::expandSteps(std::span<const uint32_t> steps, OffsetType* table)
+{
+    uint32_t value = 0;
+    unsigned i = 0;
+    for (uint32_t step : steps) {
+        unsigned end = step >> stepIndexShift;
+        RELEASE_ASSERT(end >= i && end < s_offsetTableEntries); // as the encoder wrote them; a malformed payload stops here rather than past the table
+        for (; i < end; ++i)
+            table[i] = value;
+        value += step & stepDeltaMask;
+    }
+    for (; i < s_offsetTableEntries; ++i)
+        table[i] = value;
+}
+
 ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(EmptyTag)
     : m_hasMetadata(false)
     , m_isFinalized(true)
@@ -89,6 +117,8 @@ ALWAYS_INLINE unsigned UnlinkedMetadataTable::numEntries()
 ALWAYS_INLINE size_t UnlinkedMetadataTable::sizeInBytesForGC()
 {
     if (m_isFinalized && !m_hasMetadata)
+        return 0;
+    if (m_steps && !m_isLinked)
         return 0;
 
     if (m_is32Bit)
@@ -126,9 +156,17 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
     unsigned offsetTableSize = this->offsetTableSize();
     unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
     uint8_t* buffer = static_cast<uint8_t*>(MetadataTableMalloc::zeroedMalloc(sizeof(LinkingData) + totalSize));
-    memcpy(buffer + valueProfileSize + sizeof(LinkingData), this->buffer(), offsetTableSize);
+    uint8_t* table = buffer + valueProfileSize + sizeof(LinkingData);
+    if (m_steps && !m_isLinked) {
+        if (m_is32Bit)
+            expandSteps(std::span { m_steps, m_stepsCount }, std::bit_cast<Offset32*>(table + s_offset16TableSize));
+        else
+            expandSteps(std::span { m_steps, m_stepsCount }, std::bit_cast<Offset16*>(table));
+    } else
+        memcpy(table, this->buffer(), offsetTableSize);
     if (!m_isLinked) {
-        MetadataTableMalloc::free(m_rawBuffer);
+        if (m_rawBuffer)
+            MetadataTableMalloc::free(m_rawBuffer);
         m_rawBuffer = buffer;
         m_isLinked = true;
     } else {
@@ -148,6 +186,12 @@ ALWAYS_INLINE void UnlinkedMetadataTable::unlink(MetadataTable& metadataTable)
 
     if (metadataTable.buffer() == buffer()) {
         ASSERT(m_isLinked);
+        if (m_steps) {
+            MetadataTableMalloc::free(m_rawBuffer);
+            m_rawBuffer = nullptr;
+            m_isLinked = false;
+            return;
+        }
         unsigned offsetTableSize = this->offsetTableSize();
         uint8_t* compact = static_cast<uint8_t*>(MetadataTableMalloc::malloc(offsetTableSize));
         memcpy(compact, buffer(), offsetTableSize);

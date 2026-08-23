@@ -51,7 +51,7 @@ void CachedBytecode::addFunctionUpdate(const UnlinkedFunctionExecutable* executa
     ptrdiff_t offset = it->value.base();
     ASSERT(offset);
     copyLeafExecutables(bytecode.get());
-    m_updates.append(CacheUpdate::FunctionUpdate { offset, kind, { executable->features(), executable->lexicallyScopedFeatures(), executable->hasCapturedVariables() }, WTF::move(bytecode->m_payload) });
+    m_updates.append(CacheUpdate::FunctionUpdate { offset, kind, { executable->features(), executable->lexicallyScopedFeatures(), executable->hasCapturedVariables() }, WTF::move(bytecode->m_payload), bytecode->rootOffset() });
 }
 
 void CachedBytecode::copyLeafExecutables(const CachedBytecode& bytecode)
@@ -109,7 +109,7 @@ void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
             {
                 ptrdiff_t kindOffset = functionUpdate.m_kind == CodeSpecializationKind::CodeForCall ? CachedFunctionExecutableOffsets::codeBlockForCallOffset() : CachedFunctionExecutableOffsets::codeBlockForConstructOffset();
                 ptrdiff_t fieldOffset = kindOffset + CachedWriteBarrierOffsets::ptrOffset() + CachedPtrOffsets::offsetOffset();
-                VariableLengthObjectBase::Offset offsetPayload = safeCast<VariableLengthObjectBase::Offset>(static_cast<ptrdiff_t>(offset) - (functionUpdate.m_base + fieldOffset));
+                VariableLengthObjectBase::Offset offsetPayload = safeCast<VariableLengthObjectBase::Offset>(static_cast<ptrdiff_t>(offset + functionUpdate.m_rootOffset) - (functionUpdate.m_base + fieldOffset));
                 static_assert(std::is_same<decltype(VariableLengthObjectBase::m_offset), VariableLengthObjectBase::Offset>::value);
                 patch(functionUpdate.m_base, fieldOffset, { reinterpret_cast<const uint8_t*>(&offsetPayload), sizeof(offsetPayload) });
             }

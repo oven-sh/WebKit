@@ -47,7 +47,7 @@ class InstructionStream {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(InstructionStream);
 
     template<typename> friend class InstructionStreamWriter;
-    friend class CachedInstructionStream;
+    template<typename> friend class CachedCodeBlock;
 public:
     using InstructionBuffer = Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamBufferMalloc>;
 
