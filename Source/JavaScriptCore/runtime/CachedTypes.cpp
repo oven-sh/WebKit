@@ -1699,7 +1699,9 @@ private:
         uint32_t value = 0;
         unsigned i = 0;
         for (uint32_t step : steps) {
-            for (unsigned end = step >> indexShift; i < end; ++i)
+            unsigned end = step >> indexShift;
+            RELEASE_ASSERT(end >= i && end < UnlinkedMetadataTable::s_offsetTableEntries); // as the encoder wrote them; a malformed payload stops here rather than past the table
+            for (; i < end; ++i)
                 table[i] = value;
             value += step & deltaMask;
         }
