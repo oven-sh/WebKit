@@ -47,8 +47,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 namespace JSC {
 
 class SourceCode;
+class SourceCodeKey;
+class UnlinkedCodeBlock;
 class UnlinkedFunctionExecutable;
 class UnlinkedFunctionCodeBlock;
+class VM;
 
 enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
     Program,
@@ -80,6 +83,7 @@ public:
     JS_EXPORT_PRIVATE virtual void commitCachedBytecode() const { }
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
+    JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
