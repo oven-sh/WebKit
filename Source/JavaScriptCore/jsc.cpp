@@ -1820,6 +1820,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     size_t residentBefore = countResident();
 
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span<uint8_t> { static_cast<uint8_t*>(base), size }, [](const void*) { }, { });
+    cachedBytecode->setPayloadIsPersistent(); // mapped for the rest of the process, like an embedder's executable section
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
 
     MonotonicTime start = MonotonicTime::now();

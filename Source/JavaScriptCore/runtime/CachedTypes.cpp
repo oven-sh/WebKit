@@ -2080,14 +2080,18 @@ private:
 // block stores only the entries where the running offset changes: (index << 24 | delta). A typical function has a handful
 // instead of 51.
 struct CachedMetadataSteps {
-    static constexpr unsigned indexShift = 24;
-    static constexpr uint32_t deltaMask = (1u << indexShift) - 1;
+    static constexpr unsigned indexShift = UnlinkedMetadataTable::stepIndexShift;
+    static constexpr uint32_t deltaMask = UnlinkedMetadataTable::stepDeltaMask;
     static_assert(UnlinkedMetadataTable::s_offsetTableEntries < (1u << (32 - indexShift)));
 
     static Vector<uint32_t, 16> compute(const UnlinkedMetadataTable& metadataTable)
     {
         ASSERT(metadataTable.m_isFinalized && metadataTable.m_hasMetadata);
         Vector<uint32_t, 16> steps;
+        if (metadataTable.m_steps && !metadataTable.m_isLinked) {
+            steps.append(std::span { metadataTable.m_steps, metadataTable.m_stepsCount });
+            return steps;
+        }
         uint32_t previous = 0;
         for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i) {
             uint32_t value = metadataTable.m_is32Bit ? metadataTable.offsetTable32()[i] : metadataTable.offsetTable16()[i];
@@ -2108,26 +2112,10 @@ struct CachedMetadataSteps {
         metadataTable->m_hasMetadata = true;
         metadataTable->m_numValueProfiles = numValueProfiles;
         if (is32Bit)
-            expand(steps, metadataTable->offsetTable32());
+            UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable32());
         else
-            expand(steps, metadataTable->offsetTable16());
+            UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable16());
         return metadataTable;
-    }
-
-    template<typename OffsetType>
-    static void expand(std::span<const uint32_t> steps, OffsetType* table)
-    {
-        uint32_t value = 0;
-        unsigned i = 0;
-        for (uint32_t step : steps) {
-            unsigned end = step >> indexShift;
-            RELEASE_ASSERT(end >= i && end < UnlinkedMetadataTable::s_offsetTableEntries); // as the encoder wrote them; a malformed payload stops here rather than past the table
-            for (; i < end; ++i)
-                table[i] = value;
-            value += step & deltaMask;
-        }
-        for (; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i)
-            table[i] = value;
     }
 };
 
@@ -2812,12 +2800,15 @@ public:
         return new JSInstructionStream(WTF::move(copy));
     }
 
-    Ref<UnlinkedMetadataTable> metadata(Decoder&) const
+    Ref<UnlinkedMetadataTable> metadata(Decoder& decoder) const
     {
         Layout layout = readTail().layout;
         if (!(layout.flags & LayoutHasMetadata))
             return UnlinkedMetadataTable::empty();
-        return CachedMetadataSteps::build(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, std::span { at<uint32_t>(layout.steps), layout.steps.count });
+        std::span<const uint32_t> steps { at<uint32_t>(layout.steps), layout.steps.count };
+        if (decoder.canBorrowPayload())
+            return UnlinkedMetadataTable::createFromPersistentSteps(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
+        return CachedMetadataSteps::build(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
     }
 
     RefPtr<StringImpl> sourceURLDirective(Decoder& decoder) const
