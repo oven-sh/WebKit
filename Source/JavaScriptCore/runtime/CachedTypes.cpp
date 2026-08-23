@@ -1614,7 +1614,7 @@ public:
         if (!m_hasMetadata)
             return UnlinkedMetadataTable::empty();
 
-        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(m_is32Bit, m_numValueProfiles, m_metadata[UnlinkedMetadataTable::s_offsetTableEntries - 1]);
+        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(m_is32Bit, m_numValueProfiles);
         metadataTable->m_isFinalized = true;
         metadataTable->m_isLinked = false;
         metadataTable->m_hasMetadata = m_hasMetadata;
