@@ -193,6 +193,17 @@ public:
         return new (malloc(sizeof(T) + tail, alignof(T)).buffer()) T();
     }
 
+    std::span<const uint8_t> bytesAt(ptrdiff_t offset, size_t size)
+    {
+        ptrdiff_t baseOffset = 0;
+        for (const auto& page : m_pages) {
+            if (offset - baseOffset < static_cast<ptrdiff_t>(page.size()))
+                return page.span().subspan(offset - baseOffset, size);
+            baseOffset += page.size();
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
     ptrdiff_t offsetOf(const void* address)
     {
         ptrdiff_t offset;
@@ -209,6 +220,24 @@ public:
     void cachePtr(const void* ptr, ptrdiff_t offset)
     {
         m_ptrToOffsetMap.add(ptr, offset);
+    }
+
+    // Byte-identical immutable arrays (instruction streams, expression info, jump tables of small functions repeat a lot)
+    // are stored once; later occurrences point at the first. Decoded objects are per code block either way.
+    std::optional<ptrdiff_t> existingIdenticalArray(std::span<const uint8_t> bytes, unsigned hash)
+    {
+        auto it = m_arraysByHash.find(hash);
+        if (it == m_arraysByHash.end())
+            return std::nullopt;
+        for (auto [candidate, size] : it->value) {
+            if (size == bytes.size() && equalSpans(bytesAt(candidate, size), bytes))
+                return candidate;
+        }
+        return std::nullopt;
+    }
+    void registerArray(unsigned hash, ptrdiff_t offset, size_t size)
+    {
+        m_arraysByHash.add(hash, Vector<std::pair<ptrdiff_t, size_t>, 1> { }).iterator->value.append({ offset, size });
     }
 
     std::optional<ptrdiff_t> cachedOffsetForPtr(const void* ptr)
@@ -368,6 +397,7 @@ private:
     LeafExecutableMap m_leafExecutables;
     Deque<Function<void()>> m_bodies;
     Deque<Function<void()>> m_cold;
+    UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
 };
 
 Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider)
@@ -546,6 +576,21 @@ protected:
         return new (result) T[size];
     }
 
+    // For arrays whose encoding is a plain copy of the source bytes: share an earlier identical array if there is one.
+    void allocateOrShareBytes(Encoder& encoder, std::span<const uint8_t> bytes, size_t alignment)
+    {
+        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size());
+        if (auto existing = encoder.existingIdenticalArray(bytes, hash)) {
+            m_offset = safeCast<Offset>(*existing - encoder.offsetOf(&m_offset));
+            return;
+        }
+        ptrdiff_t offsetOffset = encoder.offsetOf(&m_offset);
+        auto result = encoder.malloc(bytes.size(), alignment);
+        m_offset = safeCast<Offset>(result.offset() - offsetOffset);
+        memcpySpan(std::span { result.buffer(), bytes.size() }, bytes);
+        encoder.registerArray(hash, result.offset(), bytes.size());
+    }
+
     // One T followed, in the same allocation, by the variable-length tail T asks for (see VarintWriter).
     template<typename T, typename SourceArg>
     T* allocateFor(Encoder& encoder, const SourceArg& source)
@@ -568,6 +613,10 @@ public:
     {
         if (!size)
             return;
+        if constexpr (std::is_same_v<T, Source> && std::is_trivially_copyable_v<T>) {
+            this->allocateOrShareBytes(encoder, std::span { std::bit_cast<const uint8_t*>(array), sizeof(T) * size }, alignof(T));
+            return;
+        }
         T* dst = this->template allocate<T>(encoder, size);
         for (unsigned i = 0; i < size; ++i)
             ::JSC::encode(encoder, dst[i], array[i]);
@@ -769,6 +818,10 @@ public:
         m_size = vector.size();
         if (!m_size)
             return;
+        if constexpr (std::is_same_v<T, SourceType<T>> && std::is_trivially_copyable_v<T>) {
+            this->allocateOrShareBytes(encoder, std::span { std::bit_cast<const uint8_t*>(vector.span().data()), sizeof(T) * m_size }, alignof(T));
+            return;
+        }
         T* buffer = this->template allocate<T>(encoder, m_size);
         for (unsigned i = 0; i < m_size; ++i)
             ::JSC::encode(encoder, buffer[i], vector[i]);
@@ -1038,7 +1091,7 @@ public:
         if (!source)
             return;
 
-        this->template allocate<T>(encoder)->encode(encoder, *source);
+        this->template allocateFor<T>(encoder, *source)->encode(encoder, *source);
     }
 
     std::optional<SourceType<T>> decode(Decoder& decoder) const
