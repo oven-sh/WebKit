@@ -185,10 +185,10 @@ bool Decoder::recordAndArrayChecksumMatches(const void* record, size_t recordSiz
     if (!Options::verifyBytecodeCacheChecksums())
         return true;
 #endif
-    if (!payloadContains(record, recordSize) || (arraySize && !payloadContains(array, arraySize)))
-        return false;
     auto* begin = static_cast<const uint8_t*>(record);
     auto* hole = reinterpret_cast<const uint8_t*>(storedChecksum);
+    if (!payloadContains(record, recordSize) || (arraySize && !payloadContains(array, arraySize)) || hole < begin || hole + 4 > begin + recordSize)
+        return false;
     static const uint8_t zeros[4] = { };
     uint32_t crc = ~0u;
     crc = crc32c(crc, std::span { begin, hole });
@@ -209,9 +209,9 @@ bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint
         return true;
 #endif
     auto* begin = static_cast<const uint8_t*>(start);
-    if (!payloadContains(start, size))
-        return false;
     auto* hole = reinterpret_cast<const uint8_t*>(storedChecksum);
+    if (!payloadContains(start, size) || hole < begin || hole + 4 > begin + size)
+        return false; // includes a stored size too small to cover the record that holds the checksum
     static const uint8_t zeros[4] = { };
     uint32_t crc = ~0u;
     crc = crc32c(crc, std::span { begin, hole });

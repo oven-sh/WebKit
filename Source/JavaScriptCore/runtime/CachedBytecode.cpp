@@ -78,6 +78,7 @@ void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
                 RELEASE_ASSERT(record.size() >= fixedSize);
                 uint16_t tailSize;
                 memcpySpan(std::span { reinterpret_cast<uint8_t*>(&tailSize), sizeof(tailSize) }, record.subspan(CachedFunctionExecutableOffsets::tailSizeOffset(), sizeof(tailSize)));
+                RELEASE_ASSERT(fixedSize + tailSize <= record.size()); // our own encoder wrote this record moments ago
                 return record.first(fixedSize + tailSize);
             };
             auto found = findIn(m_payload.span(), 0);
