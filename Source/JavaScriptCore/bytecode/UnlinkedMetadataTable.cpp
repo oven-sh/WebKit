@@ -27,6 +27,7 @@
 #include "UnlinkedMetadataTable.h"
 
 #include "BytecodeStructs.h"
+#include "UnlinkedMetadataTableInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -108,40 +109,17 @@ void UnlinkedMetadataTable::finalize()
         return;
     }
 
-    unsigned offset = s_offset16TableSize;
-    {
-        Offset32* buffer = preprocessBuffer();
-        for (unsigned i = 0; i < s_offsetTableEntries - 1; i++) {
-            unsigned numberOfEntries = buffer[i];
-            if (!numberOfEntries) {
-                buffer[i] = offset;
-                continue;
-            }
-            buffer[i] = offset; // We align when we access this.
-            unsigned alignment = metadataAlignment(static_cast<OpcodeID>(i));
-            ASSERT(alignment <= s_maxMetadataAlignment);
-
-#if CPU(ADDRESS64)
-            // This is only necessary for the first metadata entry, if the buffer
-            // is 4-byte aligned and the entry has an alignment requirement of 8
-            ASSERT(offset == roundUpToMultipleOf(alignment, offset) || offset == s_offset16TableSize);
-#endif
-            offset = roundUpToMultipleOf(alignment, offset);
-
-            offset += numberOfEntries * metadataSize(static_cast<OpcodeID>(i));
-#if ENABLE(METADATA_STATISTICS)
-            MetadataStatistics::perOpcodeCount[i] += numberOfEntries;
-#endif
-        }
-        buffer[s_offsetTableEntries - 1] = offset;
-        m_is32Bit = offset > UINT16_MAX;
-    }
+    std::array<Offset32, s_offsetTableEntries> offsets;
+    Layout layout = layOut([&](unsigned opcode) { return preprocessBuffer()[opcode]; }, offsets.data());
+    m_is32Bit = layout.is32Bit;
 
 #if ENABLE(METADATA_STATISTICS)
+    for (unsigned i = 0; i < s_offsetTableEntries - 1; i++)
+        MetadataStatistics::perOpcodeCount[i] += preprocessBuffer()[i];
     MetadataStatistics::unlinkedMetadataCount++;
     if (m_is32Bit)
         MetadataStatistics::size32MetadataCount++;
-    MetadataStatistics::totalMemory += offset;
+    MetadataStatistics::totalMemory += layout.end;
     static std::once_flag once;
     std::call_once(once, [] {
         std::atexit(MetadataStatistics::reportMetadataStatistics);
@@ -149,21 +127,43 @@ void UnlinkedMetadataTable::finalize()
 #endif
 
     ASSERT(!m_isLinked);
+    MetadataTableMalloc::free(m_rawBuffer);
     if (m_is32Bit) {
-        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::zeroedMalloc(s_offset16TableSize + s_offset32TableSize));
-        Offset32* buffer = std::bit_cast<Offset32*>(newBuffer + s_offset16TableSize);
-        for (unsigned i = 0; i < s_offsetTableEntries; ++i)
-            buffer[i] = preprocessBuffer()[i] + s_offset32TableSize;
-        MetadataTableMalloc::free(m_rawBuffer);
-        m_rawBuffer = newBuffer;
+        m_rawBuffer = static_cast<uint8_t*>(MetadataTableMalloc::zeroedMalloc(s_offset16TableSize + s_offset32TableSize));
+        std::copy(offsets.begin(), offsets.end(), offsetTable32());
     } else {
-        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::zeroedMalloc(s_offset16TableSize));
-        Offset16* buffer = std::bit_cast<Offset16*>(newBuffer);
-        for (unsigned i = 0; i < s_offsetTableEntries; ++i)
-            buffer[i] = preprocessBuffer()[i];
-        MetadataTableMalloc::free(m_rawBuffer);
-        m_rawBuffer = newBuffer;
+        m_rawBuffer = static_cast<uint8_t*>(MetadataTableMalloc::zeroedMalloc(s_offset16TableSize));
+        std::copy(offsets.begin(), offsets.end(), offsetTable16());
     }
+}
+
+Vector<uint32_t, 16> UnlinkedMetadataTable::entryCounts() const
+{
+    ASSERT(m_isFinalized && m_hasMetadata);
+    Vector<uint32_t, 16> result;
+    if (m_isBackedByEntryCounts && !m_isLinked) {
+        result.append(entryCountsBacking());
+        return result;
+    }
+    // The range computation MetadataTable::forEach() does, divided by the entry size.
+    auto offset = [&](unsigned i) -> unsigned { return m_is32Bit ? offsetTable32()[i] : offsetTable16()[i]; };
+    for (unsigned i = 0; i < s_offsetTableEntries - 1; i++) {
+        unsigned start = roundUpToMultipleOf(metadataAlignment(static_cast<OpcodeID>(i)), offset(i));
+        unsigned end = offset(i + 1);
+        if (start >= end)
+            continue;
+        unsigned count = (end - start) / metadataSize(static_cast<OpcodeID>(i));
+        ASSERT(count && start + count * metadataSize(static_cast<OpcodeID>(i)) == end);
+        RELEASE_ASSERT(count < 1u << entryCountBits);
+        result.append(i << entryCountBits | count);
+    }
+#if ASSERT_ENABLED
+    std::array<Offset32, s_offsetTableEntries> roundTrip;
+    ASSERT(layOutEntryCounts(result.span(), roundTrip.data()).is32Bit == m_is32Bit);
+    for (unsigned i = 0; i < s_offsetTableEntries; i++)
+        ASSERT(roundTrip[i] == offset(i));
+#endif
+    return result;
 }
 
 UnlinkedMetadataTable::~UnlinkedMetadataTable()

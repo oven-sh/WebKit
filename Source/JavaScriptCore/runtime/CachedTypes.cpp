@@ -49,6 +49,8 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "UnlinkedProgramCodeBlock.h"
 #include "VariableEnvironmentInlines.h"
+#include <array>
+#include <bit>
 #include <wtf/FileHandle.h>
 #include <wtf/InlineMap.h>
 #include <wtf/MallocSpan.h>
@@ -269,6 +271,39 @@ struct SourceTypeImpl<T, std::enable_if_t<!std::is_fundamental<T>::value && !std
 template<typename T>
 using SourceType = typename SourceTypeImpl<T>::type;
 
+// The payload is decoded by a different build of this code than encoded it -- Bun cross-compiles executables that embed
+// it, so encoder and decoder differ in OS, CPU and C++ ABI (Itanium vs. MSVC) -- and the format is the object
+// representation of whatever the Encoder places in its pages. So what is placed there is restricted to types whose
+// representation the language pins down on every 64-bit little-endian target: records of fixed-width scalars with no
+// padding bytes and no bit-field slack (any byte the ABI is free to place is a byte two ABIs can place differently:
+// Itanium reuses a base's tail padding and MSVC does not, MSVC starts a new unit when adjacent bit-fields change type,
+// MSVC does not overlay a second empty base), no pointers, nothing derived from this process's sizeof, addresses,
+// hash seeds or page size. isPortableRecord() is checked wherever a type enters a page; a type that fails it gets its
+// fields reordered or widened, or explicit m_padding, until every byte is a named field.
+#if USE(BUN_JSC_ADDITIONS)
+static_assert(std::endian::native == std::endian::little && sizeof(void*) == 8);
+static_assert(sizeof(bool) == 1 && sizeof(int) == 4 && sizeof(long long) == 8 && sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
+#if USE(BIGINT32)
+#error "CachedJSValue stores EncodedJSValue verbatim; BigInt32 immediates would not decode on a build without them"
+#endif
+#endif
+
+static constexpr size_t encoderMaxAlignment = 8; // not alignof(std::max_align_t): 16 on x86-64 Linux/macOS, 8 elsewhere
+static constexpr size_t encoderMinPageSize = 4 * KB; // not pageSize() (4, 16 or 64 KB): where a page ends decides where the next allocation lands
+
+template<typename T>
+static consteval bool isPortableRecord()
+{
+    using U = std::remove_cv_t<T>;
+    static_assert(alignof(U) <= encoderMaxAlignment);
+    static_assert(std::is_trivially_destructible_v<U>, "decoded in place and never destroyed; MSVC would also prepend an array cookie to new T[]");
+    static_assert(!std::is_pointer_v<U> && !std::is_same_v<U, wchar_t> && !std::is_same_v<U, long double>);
+    static_assert(sizeof(long) == sizeof(long long) || (!std::is_same_v<U, long> && !std::is_same_v<U, unsigned long>), "long is 4 bytes here and 8 on LP64");
+    static_assert(std::has_unique_object_representations_v<U> || std::is_floating_point_v<U>,
+        "this type has padding bytes or bit-field slack, so its layout is up to the C++ ABI; reorder or widen its fields or add explicit m_padding");
+    return true;
+}
+
 class Encoder {
     WTF_MAKE_NONCOPYABLE(Encoder);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -303,29 +338,32 @@ public:
 
     VM& vm() { return m_vm; }
 
-    Allocation malloc(unsigned size, size_t alignment)
-    {
-        RELEASE_ASSERT(size);
-        ptrdiff_t offset;
-        if (m_currentPage->malloc(size, alignment, offset))
-            return Allocation { m_currentPage->buffer() + offset, m_baseOffset + offset };
-        allocateNewPage(size);
-        return malloc(size, alignment);
-    }
-
+    // Everything that enters a page comes through malloc<T>, mallocArray<T> or mallocCopy<T>, which is where
+    // isPortableRecord() sees it; bytes appended after a record (varint tails, string characters) are the caller's.
     template<typename T, typename... Args>
     T* malloc(Args&&... args)
     {
+        static_assert(isPortableRecord<T>());
         return new (malloc(sizeof(T), alignof(T)).buffer()) T(std::forward<Args>(args)...);
     }
 
-    template<typename T, typename SourceArg>
-    T* mallocFor(const SourceArg& source)
+    // `count` default-constructed T, optionally followed in the same allocation by `tailBytes` the caller fills.
+    template<typename T>
+    std::pair<T*, Allocation> mallocArray(unsigned count, size_t tailBytes = 0)
     {
-        size_t tail = 0;
-        if constexpr (requires { T::tailSize(source); })
-            tail = T::tailSize(source);
-        return new (malloc(sizeof(T) + tail, alignof(T)).buffer()) T();
+        static_assert(isPortableRecord<T>());
+        Allocation allocation = malloc(sizeof(T) * count + tailBytes, alignof(T));
+        return { new (allocation.buffer()) T[count], allocation };
+    }
+
+    // A copy of `elements`, for element types whose encoding is the identity.
+    template<typename T>
+    Allocation mallocCopy(std::span<const T> elements)
+    {
+        static_assert(isPortableRecord<T>() && std::is_trivially_copyable_v<T>);
+        Allocation allocation = malloc(elements.size_bytes(), alignof(T));
+        memcpySpan(std::span { allocation.buffer(), elements.size_bytes() }, asBytes(elements));
+        return allocation;
     }
 
     ptrdiff_t currentOffset() const { return m_baseOffset + m_currentPage->size(); }
@@ -394,6 +432,21 @@ public:
 
     // Byte-identical immutable arrays (instruction streams, expression info, jump tables of small functions repeat a lot)
     // are stored once; later occurrences point at the first. Decoded objects are per code block either way.
+    template<typename T>
+    ptrdiff_t mallocCopyOrShare(std::span<const T> elements)
+    {
+        auto bytes = asBytes(elements);
+        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size());
+        if (arraySharingEnabled()) {
+            if (auto existing = existingIdenticalArray(bytes, hash, alignof(T))) {
+                noteSharedArray(*existing, bytes.size());
+                return *existing;
+            }
+        }
+        ptrdiff_t offset = mallocCopy(elements).offset();
+        registerArray(hash, offset, bytes.size());
+        return offset;
+    }
     std::optional<ptrdiff_t> existingIdenticalArray(std::span<const uint8_t> bytes, unsigned hash, size_t alignment)
     {
         auto it = m_arraysByHash.find(hash);
@@ -521,6 +574,16 @@ public:
     }
 
 private:
+    Allocation malloc(unsigned size, size_t alignment)
+    {
+        RELEASE_ASSERT(size);
+        ptrdiff_t offset;
+        if (m_currentPage->malloc(size, alignment, offset))
+            return Allocation { m_currentPage->buffer() + offset, m_baseOffset + offset };
+        allocateNewPage(size);
+        return malloc(size, alignment);
+    }
+
     RefPtr<CachedBytecode> releaseMapped(BytecodeCacheError& error)
     {
         size_t size = m_baseOffset + m_currentPage->size();
@@ -560,7 +623,7 @@ private:
 
         bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
         {
-            ASSERT(alignment && alignment <= alignof(std::max_align_t) && isPowerOfTwo(alignment));
+            ASSERT(alignment && alignment <= encoderMaxAlignment && isPowerOfTwo(alignment));
             ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
             if (static_cast<size_t>(offset + size) > capacity())
                 return false;
@@ -591,7 +654,7 @@ private:
 
         void NODELETE alignEnd()
         {
-            ptrdiff_t size = roundUpToMultipleOf(alignof(std::max_align_t), m_offset);
+            ptrdiff_t size = roundUpToMultipleOf(encoderMaxAlignment, m_offset);
             if (size == m_offset)
                 return;
             RELEASE_ASSERT(static_cast<size_t>(size) <= capacity());
@@ -607,7 +670,7 @@ private:
 
     void allocateNewPage(size_t size = 0)
     {
-        static size_t minPageSize = pageSize();
+        static constexpr size_t minPageSize = encoderMinPageSize;
         if (m_currentPage) {
             m_currentPage->alignEnd();
             m_baseOffset += m_currentPage->size();
@@ -828,43 +891,21 @@ protected:
         return std::bit_cast<const T*>(buffer());
     }
 
-    uint8_t* allocate(Encoder& encoder, size_t size, size_t alignment)
-    {
-        ptrdiff_t offsetOffset = encoder.offsetOf(&m_offset);
-        auto result = encoder.malloc(size, alignment);
-        m_offset = safeCast<Offset>(result.offset() - offsetOffset);
-        return result.buffer();
-    }
+    void pointAt(Encoder& encoder, const Encoder::Allocation& allocation) { pointAtPayloadOffset(encoder, allocation.offset()); }
 
     template<typename T>
-#if CPU(ARM64) && CPU(ADDRESS32)
-    // FIXME: Remove this once it's no longer needed and LLVM doesn't miscompile us:
-    // <rdar://problem/49792205>
-    __attribute__((optnone))
-#endif
     T* allocate(Encoder& encoder, unsigned size = 1)
     {
-        uint8_t* result = allocate(encoder, sizeof(T) * size, alignof(T));
-        ASSERT(!(std::bit_cast<uintptr_t>(result) % alignof(T)));
-        return new (result) T[size];
+        auto [result, allocation] = encoder.mallocArray<T>(size);
+        pointAt(encoder, allocation);
+        return result;
     }
 
-    // For arrays whose encoding is a plain copy of the source bytes: share an earlier identical array if there is one.
-    void allocateOrShareBytes(Encoder& encoder, std::span<const uint8_t> bytes, size_t alignment)
+    // For arrays whose encoding is a plain copy of the source: share an earlier identical array if there is one.
+    template<typename T>
+    void allocateCopyOrShare(Encoder& encoder, std::span<const T> elements)
     {
-        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size());
-        if (encoder.arraySharingEnabled()) {
-            if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignment)) {
-                m_offset = safeCast<Offset>(*existing - encoder.offsetOf(&m_offset));
-                encoder.noteSharedArray(*existing, bytes.size());
-                return;
-            }
-        }
-        ptrdiff_t offsetOffset = encoder.offsetOf(&m_offset);
-        auto result = encoder.malloc(bytes.size(), alignment);
-        m_offset = safeCast<Offset>(result.offset() - offsetOffset);
-        memcpySpan(std::span { result.buffer(), bytes.size() }, bytes);
-        encoder.registerArray(hash, result.offset(), bytes.size());
+        pointAtPayloadOffset(encoder, encoder.mallocCopyOrShare(elements));
     }
 
     // One T followed, in the same allocation, by the variable-length tail T asks for (see VarintWriter).
@@ -874,8 +915,9 @@ protected:
         size_t tail = 0;
         if constexpr (requires { T::tailSize(source); })
             tail = T::tailSize(source);
-        uint8_t* result = allocate(encoder, sizeof(T) + tail, alignof(T));
-        return new (result) T();
+        auto [result, allocation] = encoder.mallocArray<T>(1, tail);
+        pointAt(encoder, allocation);
+        return result;
     }
 
 private:
@@ -890,7 +932,7 @@ public:
         if (!size)
             return;
         if constexpr (std::is_same_v<T, Source> && std::is_trivially_copyable_v<T>) {
-            this->allocateOrShareBytes(encoder, std::span { std::bit_cast<const uint8_t*>(array), sizeof(T) * size }, alignof(T));
+            this->allocateCopyOrShare(encoder, std::span { array, size });
             return;
         }
         T* dst = this->template allocate<T>(encoder, size);
@@ -1146,7 +1188,7 @@ public:
         if (!m_size)
             return;
         if constexpr (std::is_same_v<T, SourceType<T>> && std::is_trivially_copyable_v<T>) {
-            this->allocateOrShareBytes(encoder, std::span { std::bit_cast<const uint8_t*>(vector.span().data()), sizeof(T) * m_size }, alignof(T));
+            this->allocateCopyOrShare(encoder, std::span<const T> { vector.span() });
             return;
         }
         T* buffer = this->template allocate<T>(encoder, m_size);
@@ -1218,6 +1260,29 @@ private:
     unsigned m_size;
 };
 
+// Hash tables iterate in an order that depends on where their keys hashed to -- for SymbolImpl keys a per-process
+// counter, for robin-hood tables the table's own address -- so their entries are encoded in key order to keep the
+// payload a function of the source alone. Equal-comparing distinct keys (two symbols with one description) keep
+// their table order.
+struct EncodingOrder {
+    static std::strong_ordering compare(unsigned a, unsigned b) { return a <=> b; }
+    static std::strong_ordering compare(const StringImpl* a, const StringImpl* b)
+    {
+        if (auto order = codePointCompare(StringView(*a), StringView(*b)); order != 0)
+            return order;
+        return a->isSymbol() <=> b->isSymbol();
+    }
+    template<typename T, typename Traits> static std::strong_ordering compare(const RefPtr<T, Traits>& a, const RefPtr<T, Traits>& b) { return compare(a.get(), b.get()); }
+
+    template<typename Entries, typename KeyOf>
+    static void sort(Entries& entries, const KeyOf& keyOf)
+    {
+        std::stable_sort(entries.begin(), entries.end(), [&](const auto& a, const auto& b) {
+            return compare(keyOf(a), keyOf(b)) < 0;
+        });
+    }
+};
+
 template<typename First, typename Second>
 class CachedPair : public CachedObject<std::pair<SourceType<First>, SourceType<Second>>> {
 public:
@@ -1251,6 +1316,7 @@ public:
         unsigned i = 0;
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
+        EncodingOrder::sort(entriesVector, [](const auto& entry) -> const auto& { return entry.first; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1283,6 +1349,7 @@ public:
         unsigned i = 0;
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
+        EncodingOrder::sort(entriesVector, [](const auto& entry) -> const auto& { return entry.first; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1345,19 +1412,16 @@ public:
                     symbol = static_cast<SymbolImpl*>(&protect(vm.privateSymbolRegistry())->symbolForKey(str).leakRef());
                 else
                     symbol = static_cast<SymbolImpl*>(&protect(vm.symbolRegistry())->symbolForKey(str).leakRef());
-            } else if (m_isWellKnownSymbol)
-                symbol = vm.propertyNames->builtinNames().lookUpWellKnownSymbol(buffer);
-            else
-                symbol = vm.propertyNames->builtinNames().lookUpPrivateName(buffer);
-            RELEASE_ASSERT(symbol);
-            String str = symbol;
-            StringImpl* impl = str.releaseImpl().unsafeGet();
-            ASSERT(impl->isSymbol());
-            if (m_isWellKnownSymbol)
-                ASSERT(!static_cast<SymbolImpl*>(impl)->isPrivate());
-            else
-                ASSERT(static_cast<SymbolImpl*>(impl)->isPrivate());
-            return static_cast<UniquedStringImpl*>(impl);
+            } else {
+                if (m_isWellKnownSymbol)
+                    symbol = vm.propertyNames->builtinNames().lookUpWellKnownSymbol(buffer);
+                else
+                    symbol = vm.propertyNames->builtinNames().lookUpPrivateName(buffer);
+                RELEASE_ASSERT(symbol);
+                symbol->ref();
+            }
+            ASSERT(m_isWellKnownSymbol != symbol->isPrivate());
+            return symbol;
         };
 
         if (!m_length) {
@@ -1548,12 +1612,10 @@ class CachedBitVector : public VariableLengthObject<BitVector> {
 public:
     void encode(Encoder& encoder, const BitVector& bitVector)
     {
-        m_numBits = bitVector.size();
+        m_numBits = safeCast<uint32_t>(bitVector.size());
         if (!m_numBits)
             return;
-        size_t sizeInBytes = BitVector::byteCount(m_numBits);
-        uint8_t* buffer = this->allocate(encoder, sizeInBytes, alignof(uintptr_t));
-        memcpy(buffer, bitVector.words().data(), sizeInBytes);
+        this->pointAt(encoder, encoder.mallocCopy(bitVector.byteSpan()));
     }
 
     void decode(Decoder&, BitVector& bitVector) const
@@ -1561,12 +1623,11 @@ public:
         if (!m_numBits)
             return;
         bitVector.ensureSize(m_numBits);
-        size_t sizeInBytes = BitVector::byteCount(m_numBits);
-        memcpy(bitVector.words().data(), this->buffer(), sizeInBytes);
+        memcpySpan(bitVector.byteSpan(), std::span { this->buffer(), BitVector::byteCount(m_numBits) });
     }
 
 private:
-    size_t m_numBits;
+    uint32_t m_numBits;
 };
 
 template<typename T, typename HashArg = DefaultHash<T>>
@@ -1578,6 +1639,7 @@ public:
         unsigned i = 0;
         for (const auto& item : set)
             entriesVector[i++] = item;
+        EncodingOrder::sort(entriesVector, [](const auto& item) -> const auto& { return item; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1591,6 +1653,29 @@ public:
 
 private:
     CachedVector<T> m_entries;
+};
+
+// UnlinkedHandlerInfo keeps its HandlerType in a 2-bit bit-field; the other 30 bits would be whatever the heap held.
+class CachedHandlerInfo : public CachedObject<UnlinkedHandlerInfo> {
+public:
+    void encode(Encoder&, const UnlinkedHandlerInfo& handlerInfo)
+    {
+        m_start = handlerInfo.start;
+        m_end = handlerInfo.end;
+        m_target = handlerInfo.target;
+        m_type = static_cast<uint32_t>(handlerInfo.type());
+    }
+
+    void decode(Decoder&, UnlinkedHandlerInfo& handlerInfo) const
+    {
+        handlerInfo = UnlinkedHandlerInfo(m_start, m_end, m_target, static_cast<HandlerType>(m_type));
+    }
+
+private:
+    uint32_t m_start;
+    uint32_t m_end;
+    uint32_t m_target;
+    uint32_t m_type;
 };
 
 class CachedCodeBlockRareData : public CachedObject<UnlinkedCodeBlock::RareData> {
@@ -1628,15 +1713,16 @@ public:
     }
 
 private:
-    CachedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
+    CachedVector<CachedHandlerInfo> m_exceptionHandlers;
     CachedVector<CachedSimpleJumpTable> m_unlinkedSwitchJumpTables;
     CachedVector<CachedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
     CachedVector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
     CachedVector<CachedBitVector> m_bitVectors;
     CachedVector<CachedHashSet<CachedRefPtr<CachedUniquedStringImpl>, IdentifierRepHash>> m_constantIdentifierSets;
-    unsigned m_needsClassFieldInitializer : 1;
-    unsigned m_privateBrandRequirement : 1;
+    bool m_needsClassFieldInitializer;
+    uint8_t m_privateBrandRequirement;
+    uint8_t m_padding[2] { };
 };
 
 class CachedExpressionInfo : public CachedObject<ExpressionInfo> {
@@ -1678,7 +1764,27 @@ private:
     CachedArray<unsigned> m_storage;
 };
 
-typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, PrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
+// VariableEnvironmentEntry and PrivateNameEntry are 16 bits, which would leave a 2-byte hole after them in a CachedPair
+// with their 4-byte key.
+class CachedVariableEnvironmentEntry : public CachedObject<VariableEnvironmentEntry> {
+public:
+    void encode(Encoder&, const VariableEnvironmentEntry& entry) { m_bits = entry.m_bits; }
+    void decode(Decoder&, VariableEnvironmentEntry& entry) const { entry.m_bits = m_bits; }
+
+private:
+    uint32_t m_bits;
+};
+
+class CachedPrivateNameEntry : public CachedObject<PrivateNameEntry> {
+public:
+    void encode(Encoder&, const PrivateNameEntry& entry) { m_bits = entry.bits(); }
+    void decode(Decoder&, PrivateNameEntry& entry) const { entry = PrivateNameEntry(m_bits); }
+
+private:
+    uint32_t m_bits;
+};
+
+typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedPrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
 
 class CachedVariableEnvironmentRareData : public CachedObject<VariableEnvironment::RareData> {
 public:
@@ -1722,25 +1828,28 @@ public:
     }
 
 private:
+    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedVariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
+    CachedPtr<CachedVariableEnvironmentRareData> m_rareData;
     bool m_isEverythingCaptured;
     bool m_hasAwaitUsingDeclaration;
-    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
-    CachedPtr<CachedVariableEnvironmentRareData> m_rareData;
+    uint8_t m_padding[2] { };
 };
 
 class CachedCompactTDZEnvironment : public CachedObject<CompactTDZEnvironment> {
 public:
     void encode(Encoder& encoder, const CompactTDZEnvironment& env)
     {
+        // A Compact is sorted by StringImpl address; decode() sorts again.
+        CompactTDZEnvironment::Compact compact;
         if (std::holds_alternative<CompactTDZEnvironment::Compact>(env.m_variables))
-            m_variables.encode(encoder, std::get<CompactTDZEnvironment::Compact>(env.m_variables));
+            compact = std::get<CompactTDZEnvironment::Compact>(env.m_variables);
         else {
-            CompactTDZEnvironment::Compact compact;
             for (auto& key : std::get<CompactTDZEnvironment::Inflated>(env.m_variables))
                 compact.append(key);
-            m_variables.encode(encoder, compact);
         }
-        m_hash = env.m_hash;
+        EncodingOrder::sort(compact, [](const auto& key) -> const auto& { return key; });
+        m_variables.encode(encoder, compact);
+        m_hash = env.m_hash; // of the contents, not the addresses
     }
 
     void decode(Decoder& decoder, CompactTDZEnvironment& env) const
@@ -1833,16 +1942,16 @@ class CachedSymbolTableEntry : public CachedObject<SymbolTableEntry> {
 public:
     void encode(Encoder&, const SymbolTableEntry& symbolTableEntry)
     {
-        m_bits = symbolTableEntry.m_bits | SymbolTableEntry::SlimFlag;
+        m_bits = std::bit_cast<decltype(m_bits)>(static_cast<int64_t>(symbolTableEntry.m_bits | SymbolTableEntry::SlimFlag));
     }
 
     void decode(Decoder&, SymbolTableEntry& symbolTableEntry) const
     {
-        symbolTableEntry.m_bits = m_bits;
+        symbolTableEntry.m_bits = std::bit_cast<int64_t>(m_bits);
     }
 
 private:
-    intptr_t m_bits;
+    std::array<uint32_t, 2> m_bits; // 4-byte aligned, so that a CachedPair of a 4-byte key and this has no hole
 };
 
 class CachedSymbolTableRareData : public CachedObject<SymbolTable::SymbolTableRareData> {
@@ -1900,9 +2009,10 @@ public:
 private:
     CachedHashMap<CachedRefPtr<CachedUniquedStringImpl>, CachedSymbolTableEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, SymbolTableIndexHashTraits> m_map;
     ScopeOffset m_maxScopeOffset;
-    unsigned m_usesSloppyEval : 1;
-    unsigned m_nestedLexicalScope : 1;
-    unsigned m_scopeType : 3;
+    bool m_usesSloppyEval;
+    bool m_nestedLexicalScope;
+    uint8_t m_scopeType;
+    uint8_t m_padding { };
     CachedPtr<CachedScopedArgumentsTable> m_arguments;
     CachedPtr<CachedSymbolTableRareData> m_rareData;
 };
@@ -1936,12 +2046,13 @@ public:
     }
 
 private:
-    IndexingType m_indexingType;
     unsigned m_length;
     union {
         CachedArray<double> m_cachedDoubles;
         CachedArray<CachedJSValue, WriteBarrier<Unknown>> m_cachedValues;
     };
+    IndexingType m_indexingType;
+    uint8_t m_padding[3] { };
 };
 
 class CachedRegExp : public CachedObject<RegExp> {
@@ -1961,6 +2072,7 @@ public:
 private:
     CachedString m_patternString;
     OptionSet<Yarr::Flags> m_flags;
+    uint16_t m_padding { };
 };
 
 class CachedTemplateObjectDescriptor : public CachedObject<TemplateObjectDescriptor> {
@@ -1997,9 +2109,7 @@ public:
         if (!m_length)
             return;
 
-        unsigned size = sizeof(JSBigInt::Digit) * m_length;
-        uint8_t* buffer = this->allocate(encoder, size, alignof(JSBigInt::Digit));
-        memcpy(buffer, bigInt.dataStorage(), size);
+        this->pointAt(encoder, encoder.mallocCopy(std::span<const JSBigInt::Digit> { bigInt.dataStorage(), m_length }));
     }
 
     JSBigInt* decode(Decoder& decoder) const
@@ -2018,6 +2128,7 @@ public:
 private:
     unsigned m_length;
     bool m_sign;
+    uint8_t m_padding[3] { };
 };
 
 class CachedJSValue : public VariableLengthObject<WriteBarrier<Unknown>> {
@@ -2133,51 +2244,9 @@ private:
     };
 
     EncodedType m_type;
+    uint8_t m_padding[3] { };
 };
 
-
-// UnlinkedMetadataTable's offset table is cumulative and most opcodes have no metadata in a given function, so a code
-// block stores only the entries where the running offset changes: (index << 24 | delta). A typical function has a handful
-// instead of 51.
-struct CachedMetadataSteps {
-    static constexpr unsigned indexShift = UnlinkedMetadataTable::stepIndexShift;
-    static constexpr uint32_t deltaMask = UnlinkedMetadataTable::stepDeltaMask;
-    static_assert(UnlinkedMetadataTable::s_offsetTableEntries < (1u << (32 - indexShift)));
-
-    static Vector<uint32_t, 16> compute(const UnlinkedMetadataTable& metadataTable)
-    {
-        ASSERT(metadataTable.m_isFinalized && metadataTable.m_hasMetadata);
-        Vector<uint32_t, 16> steps;
-        if (metadataTable.m_steps && !metadataTable.m_isLinked) {
-            steps.append(std::span { metadataTable.m_steps, metadataTable.m_stepsCount });
-            return steps;
-        }
-        uint32_t previous = 0;
-        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i) {
-            uint32_t value = metadataTable.m_is32Bit ? metadataTable.offsetTable32()[i] : metadataTable.offsetTable16()[i];
-            if (value == previous)
-                continue;
-            RELEASE_ASSERT(value > previous && value - previous <= deltaMask);
-            steps.append(i << indexShift | (value - previous));
-            previous = value;
-        }
-        return steps;
-    }
-
-    static Ref<UnlinkedMetadataTable> build(bool is32Bit, unsigned numValueProfiles, std::span<const uint32_t> steps)
-    {
-        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(is32Bit, numValueProfiles);
-        metadataTable->m_isFinalized = true;
-        metadataTable->m_isLinked = false;
-        metadataTable->m_hasMetadata = true;
-        metadataTable->m_numValueProfiles = numValueProfiles;
-        if (is32Bit)
-            UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable32());
-        else
-            UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable16());
-        return metadataTable;
-    }
-};
 
 // Arrays a code block refers to from its varint tail by (count, offset) instead of through an 8-byte CachedVector member.
 // Plain arrays may be shared with an identical one written earlier (see Encoder::ShareableArrayScope).
@@ -2186,25 +2255,13 @@ static ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container
 {
     unsigned size = container.size();
     ASSERT(size);
-    if constexpr (std::is_same_v<T, SourceType<T>> && std::is_trivially_copyable_v<T>) {
-        auto bytes = std::span { std::bit_cast<const uint8_t*>(container.span().data()), sizeof(T) * size };
-        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size());
-        if (encoder.arraySharingEnabled()) {
-            if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignof(T))) {
-                encoder.noteSharedArray(*existing, bytes.size());
-                return *existing;
-            }
-        }
-        auto result = encoder.malloc(bytes.size(), alignof(T));
-        memcpySpan(std::span { result.buffer(), bytes.size() }, bytes);
-        encoder.registerArray(hash, result.offset(), bytes.size());
-        return result.offset();
-    } else {
-        auto result = encoder.malloc(sizeof(T) * size, alignof(T));
-        T* buffer = new (result.buffer()) T[size];
+    if constexpr (std::is_same_v<T, SourceType<T>> && std::is_trivially_copyable_v<T>)
+        return encoder.mallocCopyOrShare(std::span<const T> { container.span() });
+    else {
+        auto [buffer, allocation] = encoder.mallocArray<T>(size);
         for (unsigned i = 0; i < size; ++i)
             ::JSC::encode(encoder, buffer[i], container[i]);
-        return result.offset();
+        return allocation.offset();
     }
 }
 
@@ -2282,6 +2339,7 @@ protected:
     CachedString m_sourceMappingURLDirective;
     CachedTextPosition m_startPosition;
     SourceTaintedOrigin m_sourceTaintedOrigin;
+    uint8_t m_padding[3] { };
 };
 
 class CachedStringSourceProvider : public CachedSourceProviderShape<StringSourceProvider, CachedStringSourceProvider> {
@@ -2298,47 +2356,23 @@ public:
 #endif
     {
         Base::encode(encoder, sourceProvider);
-#if USE(BUN_JSC_ADDITIONS)
-        // SourceCodeKey::operator== under BUN_JSC_ADDITIONS does not compare source
-        // text, so encoding it here only wastes ~source_size bytes of bytecode and
-        // forces a ~source_size heap allocation at decode time. Store length only —
-        // the comparison still validates length() and host().
-        m_sourceLength = sourceProvider.source().length();
-#else
+#if !USE(BUN_JSC_ADDITIONS)
         m_source.encode(encoder, sourceProvider.source().toString());
 #endif
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // The caller (CachedSourceProvider::decode) returns SourceProvider*, so the
-    // BUN reuse path can return the runtime provider as its base type without
-    // any reinterpret_cast through the StringSourceProvider sibling.
+    // Source text is not serialized: SourceCodeKey::operator== compares the source hash and length instead, and the
+    // provider is only decoded to build that key. So the provider the Decoder is decoding for stands in for it, and
+    // callers without one (isCachedBytecodeStillValid) get a StringSourceProvider with a null source.
     SourceProvider* decode(Decoder& decoder, SourceProviderSourceType sourceType) const
-#else
-    StringSourceProvider* decode(Decoder& decoder, SourceProviderSourceType sourceType) const
-#endif
     {
-#if USE(BUN_JSC_ADDITIONS)
-        // Reuse the runtime SourceProvider the Decoder was constructed with rather
-        // than allocating a fresh StringSourceProvider holding a heap copy of the
-        // source. The decoded key is only used for SourceCodeKey equality, which
-        // under BUN_JSC_ADDITIONS does not look at source bytes.
-        //
-        // Base::decode is intentionally skipped: the runtime provider already has
-        // its sourceURLDirective / sourceMappingURLDirective / sourceTaintedOrigin
-        // set, and the decoded key only needs sourceOrigin().url().host() and
-        // length() for equality. CachedSourceProviderShape fields are offset-based
-        // (not stream-based), so leaving them undecoded does not affect later reads.
-        if (RefPtr<SourceProvider> provider = decoder.provider()) {
-            if (provider->sourceType() == sourceType && provider->source().length() == m_sourceLength)
-                return provider.leakRef();
-        }
-        // Fallback for callers that did not supply a provider: decode without source
-        // bytes. SourceCodeKey::operator== ignores string(), but length() is compared,
-        // so synthesize a provider whose source() is empty — length() will mismatch
-        // and the cache entry will be rejected, which is the conservative behaviour.
+        if (RefPtr<SourceProvider> provider = decoder.provider(); provider && provider->sourceType() == sourceType)
+            return provider.leakRef();
         String decodedSource;
 #else
+    StringSourceProvider* decode(Decoder& decoder, SourceProviderSourceType sourceType) const
+    {
         String decodedSource = m_source.decode(decoder);
 #endif
         SourceOrigin decodedSourceOrigin = m_sourceOrigin.decode(decoder);
@@ -2350,10 +2384,8 @@ public:
         return &sourceProvider.leakRef();
     }
 
+#if !USE(BUN_JSC_ADDITIONS)
 private:
-#if USE(BUN_JSC_ADDITIONS)
-    unsigned m_sourceLength;
-#else
     CachedString m_source;
 #endif
 };
@@ -2433,6 +2465,7 @@ public:
 
 private:
     SourceProviderSourceType m_sourceType;
+    uint8_t m_padding[3] { };
 };
 
 template<typename Source>
@@ -2506,11 +2539,12 @@ public:
     }
 
 private:
-    bool m_hasProvider;
     int m_startOffset;
     int m_endOffset;
     int m_firstLine;
     int m_startColumn;
+    bool m_hasProvider;
+    uint8_t m_padding[3] { };
 };
 
 class CachedTDZEnvironmentLink : public CachedObject<TDZEnvironmentLink> {
@@ -2576,6 +2610,7 @@ private:
     CachedJSTextPosition m_position;
     CachedOptional<CachedJSTextPosition> m_initializerPosition;
     uint8_t m_kind;
+    uint8_t m_padding[3] { };
 };
 
 class CachedFunctionExecutableRareData : public CachedObject<UnlinkedFunctionExecutable::RareData> {
@@ -2766,7 +2801,7 @@ struct CachedCodeBlockExtras {
     CachedHashMap<JSInstructionStream::Offset, int> outOfLineJumpTargets;
 };
 
-// A code block is written as one region: its arrays (metadata steps, instructions, constants, identifiers, jump targets,
+// A code block is written as one region: its arrays (metadata entry counts, instructions, constants, identifiers, jump targets,
 // child slots, extras), then a 16-byte record followed by a varint tail that says where in the region each array is and
 // holds every count/register/flag, then whatever the derived record adds, then the children's executable records.
 // Offsets in the tail are relative to the start of the region, so they are 1-2 bytes for nearly every function.
@@ -2812,8 +2847,7 @@ public:
 
     enum LayoutFlag : uint8_t {
         LayoutHasMetadata = 1 << 0,
-        LayoutMetadataIs32Bit = 1 << 1,
-        LayoutHasExtras = 1 << 2,
+        LayoutHasExtras = 1 << 1,
     };
     struct Array {
         unsigned count { 0 };
@@ -2822,7 +2856,7 @@ public:
     struct Layout {
         uint8_t flags { 0 };
         unsigned metadataValueProfiles { 0 };
-        Array steps;
+        Array metadataEntryCounts; // UnlinkedMetadataTable::entryCounts(): counts, not offsets, because sizeof(Op::Metadata) is the decoder's business
         Array instructions; // count is in bytes
         Array constants;
         Array constantsSourceCodeRepresentation;
@@ -2865,10 +2899,10 @@ public:
         Layout layout = readTail().layout;
         if (!(layout.flags & LayoutHasMetadata))
             return UnlinkedMetadataTable::empty();
-        std::span<const uint32_t> steps { at<uint32_t>(layout.steps), layout.steps.count };
+        std::span<const uint32_t> entryCounts { at<uint32_t>(layout.metadataEntryCounts), layout.metadataEntryCounts.count };
         if (decoder.canBorrowPayload())
-            return UnlinkedMetadataTable::createFromPersistentSteps(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
-        return CachedMetadataSteps::build(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
+            return UnlinkedMetadataTable::createFromPersistentEntryCounts(layout.metadataValueProfiles, entryCounts);
+        return UnlinkedMetadataTable::createFromEntryCounts(layout.metadataValueProfiles, entryCounts);
     }
 
     RefPtr<StringImpl> sourceURLDirective(Decoder& decoder) const
@@ -2919,7 +2953,7 @@ public:
             external[externalCount++] = { p, bytes };
             return true;
         };
-        if (!covered(layout.steps, sizeof(uint32_t), true)
+        if (!covered(layout.metadataEntryCounts, sizeof(uint32_t), true)
             || !covered(layout.instructions, 1, true)
             || !covered(layout.constantsSourceCodeRepresentation, sizeof(SourceCodeRepresentation), true)
             || !covered(layout.jumpTargets, sizeof(JSInstructionStream::Offset), true)
@@ -3047,7 +3081,7 @@ ALWAYS_INLINE UnlinkedFunctionCodeBlock::UnlinkedFunctionCodeBlock(Decoder& deco
 template<typename T>
 struct CachedCodeBlockTypeImpl;
 
-enum class CachedCodeBlockTag {
+enum class CachedCodeBlockTag : uint32_t {
     CachedProgramCodeBlockTag,
     CachedModuleCodeBlockTag,
     CachedEvalCodeBlockTag,
@@ -3468,7 +3502,7 @@ void CachedCodeBlock<CodeBlockType>::packLayout(const Layout& layout, VarintWrit
         if (a.count)
             writer.i32(a.at);
     };
-    array(layout.steps);
+    array(layout.metadataEntryCounts);
     array(layout.instructions);
     array(layout.constants);
     array(layout.constantsSourceCodeRepresentation);
@@ -3494,7 +3528,7 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
         if (a.count)
             a.at = reader.i32();
     };
-    array(layout.steps);
+    array(layout.metadataEntryCounts);
     array(layout.instructions);
     array(layout.constants);
     array(layout.constantsSourceCodeRepresentation);
@@ -3558,10 +3592,10 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         Encoder::ShareableArrayScope shareable(encoder);
         const UnlinkedMetadataTable& metadata = codeBlock.m_metadata.get();
         if (metadata.m_hasMetadata) {
-            layout.flags |= LayoutHasMetadata | (metadata.m_is32Bit ? LayoutMetadataIs32Bit : 0);
+            layout.flags |= LayoutHasMetadata;
             layout.metadataValueProfiles = metadata.m_numValueProfiles;
-            auto steps = CachedMetadataSteps::compute(metadata);
-            place(layout.steps, steps.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, steps); });
+            auto entryCounts = metadata.entryCounts();
+            place(layout.metadataEntryCounts, entryCounts.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, entryCounts); });
         }
         const JSInstructionStream& instructions = *codeBlock.m_instructions;
         RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
@@ -3573,25 +3607,22 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });
     // The children's slots are part of this block's bytes; the records they point at are written after the region.
     auto allocateSlots = [&](unsigned count) {
-        auto result = encoder.malloc(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * count, alignof(CachedWriteBarrier<CachedFunctionExecutable>));
-        new (result.buffer()) CachedWriteBarrier<CachedFunctionExecutable>[count];
-        return result.offset();
+        return encoder.mallocArray<CachedWriteBarrier<CachedFunctionExecutable>>(count).second.offset();
     };
     place(layout.functionDecls, codeBlock.m_functionDecls.size(), [&] { return allocateSlots(codeBlock.m_functionDecls.size()); });
     place(layout.functionExprs, codeBlock.m_functionExprs.size(), [&] { return allocateSlots(codeBlock.m_functionExprs.size()); });
     if (CachedCodeBlockExtras::isNeeded(codeBlock)) {
         layout.flags |= LayoutHasExtras;
-        auto result = encoder.malloc(sizeof(CachedCodeBlockExtras), alignof(CachedCodeBlockExtras));
-        layout.extrasAt = safeCast<int32_t>(result.offset() - regionStart);
-        (new (result.buffer()) CachedCodeBlockExtras())->encode(encoder, codeBlock);
+        auto [extras, allocation] = encoder.mallocArray<CachedCodeBlockExtras>(1);
+        layout.extrasAt = safeCast<int32_t>(allocation.offset() - regionStart);
+        extras->encode(encoder, codeBlock);
     }
 
     VarintWriter writer;
     packLayout(layout, writer);
     packScalars(codeBlock, writer);
-    auto result = encoder.malloc(sizeof(Record) + writer.size(), alignof(Record));
-    Record* record = new (result.buffer()) Record();
-    record->m_recordOffsetInRegion = safeCast<uint32_t>(result.offset() - regionStart);
+    auto [record, allocation] = encoder.mallocArray<Record>(1, writer.size());
+    record->m_recordOffsetInRegion = safeCast<uint32_t>(allocation.offset() - regionStart);
     writer.copyTo(record->tailBytes());
     encoder.deferCold([record, &encoder, expressionInfo = codeBlock.m_expressionInfo.get()] {
         Encoder::ShareableArrayScope shareable(encoder); // self-checksummed over its actual storage, so sharing is safe
@@ -3685,7 +3716,7 @@ private:
     CachedCodeBlockTag m_tag;
 };
 
-static_assert(alignof(GenericCacheEntry) <= alignof(std::max_align_t));
+static_assert(alignof(GenericCacheEntry) <= encoderMaxAlignment);
 
 template<typename UnlinkedCodeBlockType>
 class CacheEntry : public GenericCacheEntry {
@@ -3731,8 +3762,7 @@ private:
     CachedPtr<CachedCodeBlockType<UnlinkedCodeBlockType>> m_codeBlock;
 };
 
-static_assert(alignof(CacheEntry<UnlinkedProgramCodeBlock>) <= alignof(std::max_align_t));
-static_assert(alignof(CacheEntry<UnlinkedModuleProgramCodeBlock>) <= alignof(std::max_align_t));
+
 
 bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, UnlinkedCodeBlock*>& result) const
 {
