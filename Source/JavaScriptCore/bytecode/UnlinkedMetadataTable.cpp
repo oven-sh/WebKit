@@ -157,7 +157,7 @@ void UnlinkedMetadataTable::finalize()
         MetadataTableMalloc::free(m_rawBuffer);
         m_rawBuffer = newBuffer;
     } else {
-        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::malloc(s_offset16TableSize));
+        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::zeroedMalloc(s_offset16TableSize));
         Offset16* buffer = std::bit_cast<Offset16*>(newBuffer);
         for (unsigned i = 0; i < s_offsetTableEntries; ++i)
             buffer[i] = preprocessBuffer()[i];
