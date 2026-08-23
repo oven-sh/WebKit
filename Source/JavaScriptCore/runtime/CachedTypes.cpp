@@ -1329,8 +1329,13 @@ public:
     UniquedStringImpl* decode(Decoder& decoder) const
     {
         auto create = [&](auto buffer) -> UniquedStringImpl* {
-            if (!m_isSymbol)
+            if (!m_isSymbol) {
+                // Long strings out of a persistent payload keep their characters in the mapping (clean, shared pages) and
+                // only allocate the StringImpl header; AtomStringImpl::add adopts it in place unless the atom already exists.
+                if (buffer.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
+                    return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(buffer) }).leakRef();
                 return AtomStringImpl::add(buffer).leakRef();
+            }
 
             SymbolImpl* symbol;
             VM& vm = decoder.vm();
@@ -1364,6 +1369,7 @@ public:
         return m_is8Bit ? create(span8()) : create(span16());
     }
 
+    static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
     std::span<const Latin1Character> NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
     std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
