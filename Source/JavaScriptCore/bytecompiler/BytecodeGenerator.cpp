@@ -297,8 +297,6 @@ ParserError BytecodeGenerator::generate(unsigned& size)
                 : CompletionType::Normal;
             emitLoad(&completionTypeRegister, completionType);
         }
-        m_codeBlock->addJumpTarget(m_lastInstruction.offset());
-
 
         emitJump(tryData->target.get());
         tryData->target = WTF::move(realCatchTarget);
@@ -799,7 +797,7 @@ IGNORE_GCC_WARNINGS_END
             continue;
         if (shouldCreateArgumentsVariableInParameterScope && entry.key.get() == propertyNames().arguments.impl())
             continue;
-        if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode) && generatorOrAsyncWrapperFunctionParameterNames->contains(entry.key.get()))
+        if (generatorOrAsyncWrapperFunctionParameterNames && generatorOrAsyncWrapperFunctionParameterNames->contains(entry.key.get()))
             continue;
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), varKind(entry.key.get()), functionSymbolTable, IgnoreExisting);
     }
@@ -1463,7 +1461,6 @@ void BytecodeGenerator::emitEnter()
     if (Options::optimizeRecursiveTailCalls()) [[likely]] {
         // We must add the end of op_enter as a potential jump target, because the bytecode parser may decide to split its basic block
         // to have somewhere to jump to if there is a recursive tail-call that points to this function.
-        m_codeBlock->addJumpTarget(instructions().size());
         // This disables peephole optimizations when an instruction is a jump target
         disablePeepholeOptimization();
     }
@@ -2355,11 +2352,8 @@ void BytecodeGenerator::hoistSloppyModeFunctionIfNecessary(FunctionMetadataNode*
     if (metadata->isSloppyModeHoistedFunction()) {
         const Identifier& functionName = metadata->ident();
 
-        if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode())) {
-            RELEASE_ASSERT(m_generatorOrAsyncWrapperFunctionParameterNames);
-            if (m_generatorOrAsyncWrapperFunctionParameterNames->contains(functionName))
-                return;
-        }
+        if (m_generatorOrAsyncWrapperFunctionParameterNames && m_generatorOrAsyncWrapperFunctionParameterNames->contains(functionName))
+            return;
 
         Variable currentFunctionVariable = variable(functionName);
         RefPtr<RegisterID> currentValue;

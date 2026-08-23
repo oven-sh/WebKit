@@ -154,7 +154,8 @@ template<> struct EnumTraitsForPersistence<WebCore::FetchOptions::Destination> {
         WebCore::FetchOptions::Destination::Video,
         WebCore::FetchOptions::Destination::Worker,
         WebCore::FetchOptions::Destination::Xslt,
-        WebCore::FetchOptions::Destination::Text
+        WebCore::FetchOptions::Destination::Text,
+        WebCore::FetchOptions::Destination::CompressionDictionary
     >;
 };
 

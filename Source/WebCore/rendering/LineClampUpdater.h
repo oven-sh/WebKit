@@ -27,6 +27,7 @@
 
 #include "RenderLayoutState.h"
 #include <WebCore/LocalFrameView.h>
+#include <WebCore/LocalFrameViewInlines.h>
 #include <WebCore/RenderView.h>
 #include <WebCore/StyleMaximumLines.h>
 #include <wtf/CheckedPtr.h>
@@ -52,8 +53,7 @@ inline LineClampUpdater::LineClampUpdater(const RenderBlock& blockContainer)
         return;
 
     m_previousLineClamp = layoutState->lineClamp();
-    if (blockContainer.isFieldset() || blockContainer.isNonReplacedAtomicInlineLevelBox()) {
-        // Line clamp does not cross into the interior of an atomic inline-level box.
+    if (blockContainer.isFieldset() || blockContainer.isNonReplacedAtomicInlineLevelBox() || blockContainer.isFloatingOrOutOfFlowPositioned()) {
         layoutState->setLineClamp({ });
 
         m_skippedLegacyLineClampToRestore = layoutState->legacyLineClamp();

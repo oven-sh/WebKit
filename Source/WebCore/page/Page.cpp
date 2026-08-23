@@ -655,7 +655,7 @@ void Page::destroyRenderTrees()
         if (!localFrame->document())
             continue;
         Ref document = *localFrame->document();
-        if (document->hasLivingRenderTree())
+        if (document->renderTreeState() == Document::RenderTreeState::Built)
             document->destroyRenderTree();
     }
 }
@@ -2268,25 +2268,43 @@ void Page::syncLocalFrameInfoToRemote()
         RefPtr<LocalFrameView> frameView = frame.view();
 
         frameView->updateLayoutViewportRect();
+        frameView->updateContentsSizeForRemoteFrames();
 
         HashMap<FrameIdentifier, Ref<RemoteFrameLayoutInfo>> childrenFrameLayoutInfo;
-        for (RefPtr child = frame.tree().firstChild(); child; child = child->tree().nextSibling()) {
-            auto childVisibleRect = frameView->visibleRectOfChild(*child.get());
+        auto windowClipRectInContentCoordinates = [&frameView, rect = std::optional<LayoutRect> { }]() mutable {
+            if (!rect)
+                rect = LayoutRect { frameView->windowToContents(frameView->windowClipRect()) };
+            return *rect;
+        };
+#if PLATFORM(IOS_FAMILY)
+        auto exposedContentRect = [&frameView, rect = std::optional<LayoutRect> { }]() mutable {
+            if (!rect)
+                rect = LayoutRect { frameView->exposedContentRect() };
+            return *rect;
+        };
+#endif
 
+        for (RefPtr child = frame.tree().firstChild(); child; child = child->tree().nextSibling()) {
+            auto visibleRectInParent = frameView->visibleRectOfChild(*child.get());
+
+#if PLATFORM(IOS_FAMILY)
             // Clamp the child's visible rect to the portion of the page actually on-screen, so an offscreen
             // iframe commits ~0 tiles — matching the single-tiled-backing coverage decision the page makes
             // with site isolation off. visibleRectOfChild() clips through the compositor tree but not the
             // top-level viewport, so a fully-below-fold iframe can still return a non-empty box; intersect
             // it here with the parent's exposed viewport.
-#if PLATFORM(IOS_FAMILY)
-            if (childVisibleRect && frame.settings().siteIsolationEnabled()) {
-                auto viewport = LayoutRect { frameView->exposedContentRect() };
-                childVisibleRect->intersect(viewport);
-            }
+            auto exposedContentRectInParent = visibleRectInParent;
+            if (exposedContentRectInParent)
+                exposedContentRectInParent->intersect(exposedContentRect());
 #endif
 
             childrenFrameLayoutInfo.add(child->frameID(), RemoteFrameLayoutInfo::create(
-                childVisibleRect,
+                windowClipRectInContentCoordinates(),
+                visibleRectInParent,
+#if PLATFORM(IOS_FAMILY)
+                exposedContentRectInParent,
+#endif
+                !!child->ownerRenderer(),
                 frameView->childFrameOwnerToRootContentTransform(*child),
                 frameView->absoluteToChildFrameOwnerLocalTransform(*child),
                 frame.usedZoomForChild(*child),
@@ -3476,9 +3494,9 @@ void Page::resumeAnimatingImages()
 {
     // Drawing models which cache painted content while out-of-window (WebKit2's composited drawing areas, etc.)
     // require that we repaint animated images to kickstart the animation loop.
-    RefPtr localMainFrame = this->localMainFrame();
-    if (RefPtr view = localMainFrame ? localMainFrame->view() : nullptr)
-        view->resumeVisibleImageAnimationsIncludingSubframes();
+    forEachRootFrameView([] (LocalFrameView& view) {
+        view.resumeVisibleImageAnimationsIncludingSubframes();
+    });
 }
 
 void Page::setActivityState(OptionSet<ActivityState> activityState)
@@ -3592,9 +3610,9 @@ void Page::setIsVisibleInternal(bool isVisible)
         });
 #endif
 
-        RefPtr localMainFrame = this->localMainFrame();
-        if (RefPtr view = localMainFrame ? localMainFrame->view() : nullptr)
-            view->show();
+        forEachRootFrameView([] (LocalFrameView& view) {
+            view.show();
+        });
 
         if (m_settings->hiddenPageCSSAnimationSuspensionEnabled()) {
             forEachDocument([] (Document& document) {
@@ -3636,9 +3654,9 @@ void Page::setIsVisibleInternal(bool isVisible)
 #endif
 
         suspendScriptedAnimations();
-        RefPtr localMainFrame = this->localMainFrame();
-        if (RefPtr view = localMainFrame ? localMainFrame->view() : nullptr)
-            view->hide();
+        forEachRootFrameView([] (LocalFrameView& view) {
+            view.hide();
+        });
     }
 
     forEachDocument([] (Document& document) {
@@ -4728,6 +4746,17 @@ void Page::forEachLocalFrame(NOESCAPE const Function<void(LocalFrame&)>& functor
 
     for (auto& frame : frames)
         functor(frame);
+}
+
+void Page::forEachRootFrameView(NOESCAPE const Function<void(LocalFrameView&)>& functor)
+{
+    auto views = WTF::compactMap<1>(m_rootFrames, [](auto& rootFrame) -> RefPtr<LocalFrameView> {
+        ASSERT(rootFrame->isRootFrame());
+        return rootFrame->view();
+    });
+
+    for (auto& view : views)
+        functor(view);
 }
 
 void Page::forEachWindowEventLoop(NOESCAPE const Function<void(WindowEventLoop&)>& functor)

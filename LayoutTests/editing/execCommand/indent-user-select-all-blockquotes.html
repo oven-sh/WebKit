@@ -9,9 +9,9 @@
 </head>
 <body>
 <p id="object"></p>
-<script src="../../resources/js-test-pre.js"></script>
+<script src="../../resources/js-test.js"></script>
 <script>
-description('This tests indenting into a new blockquote when blockquotes are styled as -webkit-user-select: all. -webkit-user-select: all causes the new blockquote element to be uneditable so we should bail out and not indent.');
+description('This tests indenting into a new blockquote when blockquotes are styled as -webkit-user-select: all. Editability now overrides user-select: all, so the new blockquote is editable and the indent goes through. See indent-user-select-all-blockquotes-legacy.html for the legacy behavior, where user-select: all made the blockquote uneditable and we bailed out instead of indenting.');
 
 if (window.testRunner)
     window.testRunner.dumpAsText();
@@ -26,11 +26,10 @@ document.designMode = 'on'
 document.execCommand('Indent');
 
 if (document.getElementsByTagName("blockquote").length)
-    testFailed("Should not have blockquote");
+    testPassed("Blockquote created");
 else
-    testPassed("No blockquote created");
+    testFailed("Should have blockquote");
 
 </script>
-<script src="../../resources/js-test-post.js"></script>
 </body>
 </html>

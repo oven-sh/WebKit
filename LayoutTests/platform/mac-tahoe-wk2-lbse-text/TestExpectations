@@ -42,10 +42,6 @@ svg/filters/big-sized-filter.svg                                                
 svg/filters/css-filter-specified-on-svg-root.html                                      [ ImageOnlyFailure ]
 svg/filters/css-repaint-reference-filter-on-root.html                                  [ Failure ]
 svg/filters/feDropShadow.svg                                                           [ ImageOnlyFailure ]
-svg/filters/feImage-animated-transform-on-target-rect.svg                              [ ImageOnlyFailure ]
-svg/filters/feImage-element-primitive-subregion.svg                                    [ ImageOnlyFailure ]
-svg/filters/feImage-filterUnits-objectBoundingBox-primitiveUnits-objectBoundingBox.svg [ ImageOnlyFailure ]
-svg/filters/feImage-filterUnits-userSpaceOnUse-primitiveUnits-objectBoundingBox.svg    [ ImageOnlyFailure ]
 svg/filters/feImage-filterUnits-userSpaceOnUse-primitiveUnits-userSpaceOnUse.svg       [ ImageOnlyFailure ]
 svg/filters/feImage-late-indirect-update.svg                                           [ ImageOnlyFailure ]
 svg/filters/feImage-reference-svg-primitive.svg                                        [ ImageOnlyFailure ]
@@ -53,11 +49,6 @@ svg/filters/filter-on-root-tile-boundary.html                                   
 svg/filters/filter-on-tspan.svg                                                        [ ImageOnlyFailure ]
 svg/filters/filter-placement-issue.svg                                                 [ ImageOnlyFailure ]
 svg/filters/filter-source-position.svg                                                 [ ImageOnlyFailure ]
-
-# Regressed by conditional layer creation (bugs.webkit.org/b/308565). Filter and resource-buffer
-# painting for non-layered SVG renderers is corrected by a follow-up PR, which restores these.
-svg/filters/feImage-target-attribute-change-with-use-indirection-2.svg                 [ ImageOnlyFailure ]
-svg/filters/feImage-target-attribute-change-with-use-indirection.svg                   [ ImageOnlyFailure ]
 
 # Precision differences
 svg/zoom/page/zoom-zoom-coords.xhtml [ Failure ]
@@ -102,20 +93,9 @@ svg/css/mix-blend-mode-opacity-root.svg    [ ImageOnlyFailure ]
 
 # Non-scaling stroke issues
 svg/repaint/non-scaling-stroke-transform-animation.html               [ ImageOnlyFailure ]
-svg/zoom/page/non-scaling-stroke-textRendering-default.svg            [ ImageOnlyFailure ]
-svg/zoom/page/non-scaling-stroke-textRendering-geometricPrecision.svg [ ImageOnlyFailure ]
 
 # SMIL animation issues
 svg/stroke/animated-non-scaling-stroke.html [ ImageOnlyFailure ]
-
-# Empty/zero viewBox doesn't disable rendering under LBSE (see bug 320095).
-# DRAFT: these WPT tests replace svg/custom/viewBox-empty.html (removed). Confirm
-# against an LBSE-text run and delete any line that actually PASSES before landing
-# (a passing test marked ImageOnlyFailure reports as an unexpected pass).
-imported/w3c/web-platform-tests/svg/coordinate-systems/viewBox-zero-disables-rendering-contexts.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/coordinate-systems/viewBox-zero-disables-rendering-001.svg [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/coordinate-systems/viewBox-zero-disables-rendering-002.svg [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/coordinate-systems/viewBox-zero-disables-rendering-003.svg [ ImageOnlyFailure ]
 
 # SVG <image> (buffered-rendering) issues
 svg/repaint/buffered-rendering-static-image.html [ ImageOnlyFailure ]

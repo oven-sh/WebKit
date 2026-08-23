@@ -237,7 +237,7 @@
 #endif
 
 #if OS(LINUX)
-#include <wtf/linux/RealTimeThreads.h>
+#include <wtf/linux/HighPriorityThreads.h>
 #endif
 
 #if ENABLE(CONTENT_FILTERING)
@@ -689,6 +689,8 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
 
     setMemoryCacheDisabled(parameters.memoryCacheDisabled);
 
+    setHiddenPageDOMTimerThrottlingIncreaseLimit(parameters.hiddenPageDOMTimerThrottlingIncreaseLimit);
+
     WebCore::DeprecatedGlobalSettings::setAttrStyleEnabled(parameters.attrStyleEnabled);
 
     // Push the launching page's feature-flag options into the process-global JSC::Options
@@ -1060,6 +1062,8 @@ void WebProcess::createWebPage(PageIdentifier pageID, WebPageCreationParameters&
     // It is necessary to check for page existence here since during a window.open() (or targeted
     // link) the WebPage gets created both in the synchronous handler and through the normal way.
     if (addResult.isNewEntry) {
+        page->setHiddenPageDOMTimerThrottlingIncreaseLimit(m_hiddenPageDOMTimerThrottlingIncreaseLimit);
+
 #if ENABLE(GPU_PROCESS)
         if (RefPtr gpuProcessConnection = m_gpuProcessConnection)
             page->gpuProcessConnectionDidBecomeAvailable(*gpuProcessConnection);
@@ -1071,7 +1075,7 @@ void WebProcess::createWebPage(PageIdentifier pageID, WebPageCreationParameters&
         updateIsBroadcastChannelEnabled();
 
 #if OS(LINUX)
-        RealTimeThreads::singleton().setEnabled(hasVisibleWebPage());
+        HighPriorityThreads::singleton().setEnabled(hasVisibleWebPage());
 #endif
     } else
         page->reinitializeWebPage(WTF::move(parameters));
@@ -1101,7 +1105,7 @@ void WebProcess::removeWebPage(PageIdentifier pageID)
     updateIsBroadcastChannelEnabled();
 
 #if OS(LINUX)
-    RealTimeThreads::singleton().setEnabled(hasVisibleWebPage());
+    HighPriorityThreads::singleton().setEnabled(hasVisibleWebPage());
 #endif
 }
 
@@ -1726,6 +1730,7 @@ void WebProcess::deleteWebsiteDataForOrigins(OptionSet<WebsiteDataType> websiteD
 
 void WebProcess::setHiddenPageDOMTimerThrottlingIncreaseLimit(Seconds seconds)
 {
+    m_hiddenPageDOMTimerThrottlingIncreaseLimit = seconds;
     for (auto& page : m_pageMap.values())
         page->setHiddenPageDOMTimerThrottlingIncreaseLimit(seconds);
 }
@@ -1767,7 +1772,7 @@ void WebProcess::pageActivityStateDidChange(PageIdentifier, OptionSet<WebCore::A
     if (changed & WebCore::ActivityState::IsVisible) {
         updateCPUMonitorState(CPUMonitorUpdateReason::VisibilityHasChanged);
 #if OS(LINUX)
-        RealTimeThreads::singleton().setEnabled(hasVisibleWebPage());
+        HighPriorityThreads::singleton().setEnabled(hasVisibleWebPage());
 #endif
     }
 }

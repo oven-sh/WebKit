@@ -3082,6 +3082,14 @@ void HTMLMediaElement::cancelPendingEventsAndCallbacks()
     for (auto& source : childrenOfType<HTMLSourceElement>(*this))
         source.cancelPendingErrorEvent();
 
+    // A new load racing an in-flight play() admission must not preempt a settlement that the
+    // admission's own callback is already guaranteed to deliver (see m_playPromiseSettlementGuaranteed).
+    if (m_beginPlaybackRequest->hasCallback()) {
+        if (m_playPromiseSettlementGuaranteed)
+            return;
+        m_beginPlaybackRequest->disconnect();
+    }
+
     rejectPendingPlayPromises(WTF::move(m_pendingPlayPromises), DOMException::create(ExceptionCode::AbortError));
 }
 
@@ -4733,16 +4741,7 @@ void HTMLMediaElement::playInternal()
         return;
     }
 
-    GenericPromise::Producer producer;
-    Ref promise = producer.promise();
-    mediaSession->clientWillBeginPlayback([producer = WTF::move(producer)](bool canBegin) mutable {
-        if (canBegin)
-            producer.resolve();
-        else
-            producer.reject();
-    });
-
-    promise->whenSettled(RunLoop::mainSingleton(), [weakThis = WeakPtr { *this }, onAdmissionSettled = WTF::move(onAdmissionSettled)](auto&& result) {
+    mediaSession->clientWillBeginPlayback()->whenSettled(RunLoop::mainSingleton(), [weakThis = WeakPtr { *this }, onAdmissionSettled = WTF::move(onAdmissionSettled)](auto&& result) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -6887,7 +6886,11 @@ void HTMLMediaElement::updatePlayState()
         invalidateOfficialPlaybackPosition();
 
         if (playerPaused) {
-            mediaSession->clientWillBeginPlayback([](bool) { });
+            // Only re-request admission if none is already in flight for this session — otherwise this
+            // would append a second, fully serialized admission (setCurrentSession, restriction
+            // enforcement) behind the current one, whose result nothing here consumes.
+            if (!mediaSession->preparingToPlay())
+                mediaSession->clientWillBeginPlayback();
 
             // Set rate, muted and volume before calling play in case they were set before the media engine was set up.
             // The media engine should just stash the rate, muted and volume values since it isn't already playing.
@@ -7055,16 +7058,17 @@ void HTMLMediaElement::cancelPendingTasks()
         m_volumeRevertTaskCancellationGroup.cancel();
 }
 
-void HTMLMediaElement::userCancelledLoad()
+void HTMLMediaElement::userCancelledLoad(ShouldDestroyMediaPlayer shouldDestroyMediaPlayer)
 {
     INFO_LOG(LOGIDENTIFIER);
 
     // FIXME: We should look to reconcile the iOS and non-iOS code (below).
 #if PLATFORM(IOS_FAMILY)
+    UNUSED_PARAM(shouldDestroyMediaPlayer);
     if (m_networkState == NETWORK_EMPTY || m_readyState >= HAVE_METADATA)
         return;
 #else
-    if (m_networkState == NETWORK_EMPTY || m_completelyLoaded)
+    if (m_networkState == NETWORK_EMPTY || m_completelyLoaded || shouldDestroyMediaPlayer == ShouldDestroyMediaPlayer::No)
         return;
 #endif
 
@@ -7199,7 +7203,7 @@ void HTMLMediaElement::stopWithoutDestroyingMediaPlayer()
 
     setAutoplayEventPlaybackState(AutoplayEventPlaybackState::None);
 
-    userCancelledLoad();
+    userCancelledLoad(ShouldDestroyMediaPlayer::No);
 
     updateRenderer();
 
@@ -7252,8 +7256,10 @@ void HTMLMediaElement::suspend(ReasonForSuspension reason)
     case ReasonForSuspension::BackForwardCache:
         stopWithoutDestroyingMediaPlayer();
         setBufferingPolicy(BufferingPolicy::MakeResourcesPurgeable);
-        if (RefPtr mediaSession = m_mediaSession)
+        if (RefPtr mediaSession = m_mediaSession) {
             mediaSession->addBehaviorRestriction(MediaElementSession::RequirePageConsentToResumeMedia);
+            mediaSession->mediaUsageManagerSessionWillBeSuspended();
+        }
         break;
     case ReasonForSuspension::PageWillBeSuspended:
     case ReasonForSuspension::JavaScriptDebuggerPaused:
@@ -9477,7 +9483,7 @@ PlatformMediaSession::DisplayType HTMLMediaElement::displayType() const
         return PlatformMediaSession::DisplayType::Fullscreen;
     if (m_videoFullscreenMode & VideoFullscreenModePictureInPicture)
         return PlatformMediaSession::DisplayType::Optimized;
-    if (m_videoFullscreenMode == VideoFullscreenModeNone)
+    if (m_videoFullscreenMode == VideoFullscreenModeNone || m_videoFullscreenMode == VideoFullscreenModeInWindow)
         return PlatformMediaSession::DisplayType::Normal;
 
     ASSERT_NOT_REACHED();
@@ -9549,8 +9555,16 @@ void HTMLMediaElement::resumeAutoplaying()
 void HTMLMediaElement::mayResumePlayback(bool shouldResume)
 {
     ALWAYS_LOG(LOGIDENTIFIER, "paused = ", paused());
-    if (!ended() && paused() && shouldResume)
-        play();
+    if (ended())
+        return;
+
+    if (paused()) {
+        if (shouldResume)
+            play();
+        return;
+    }
+
+    updatePlayState();
 }
 
 String HTMLMediaElement::mediaSessionTitle() const
@@ -10105,7 +10119,9 @@ void HTMLMediaElement::updateShouldAutoplay()
 void HTMLMediaElement::updateShouldPlay()
 {
     if (!paused() && !protect(mediaSession())->playbackStateChangePermitted(MediaPlaybackState::Playing)) {
-        scheduleRejectPendingPlayPromises(DOMException::create(ExceptionCode::NotAllowedError));
+        // pauseInternal() rejects m_pendingPlayPromises itself, guarded by
+        // m_playPromiseSettlementGuaranteed — an in-flight play() admission that is
+        // guaranteed to settle this same promise must not be preempted here.
         pauseInternal();
         setAutoplayEventPlaybackState(AutoplayEventPlaybackState::PreventedAutoplay);
         return;

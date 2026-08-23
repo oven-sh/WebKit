@@ -88,7 +88,7 @@ protected:
     void addSession(PlatformMediaSessionInterface&) override;
     void setCurrentSession(PlatformMediaSessionInterface&) override;
 
-    void sessionWillBeginPlayback(PlatformMediaSessionInterface&, CompletionHandler<void(bool)>&&) override;
+    void sessionDidCompleteAdmission(PlatformMediaSessionInterface&) override;
     void sessionWillEndPlayback(PlatformMediaSessionInterface&, DelayCallingUpdateNowPlaying) override;
     void sessionDidEndRemoteScrubbing(PlatformMediaSessionInterface&) final;
     void clientCharacteristicsChanged(PlatformMediaSessionInterface&, bool) final;
@@ -137,6 +137,7 @@ private:
     Markable<MediaUniqueIdentifier> m_lastUpdatedNowPlayingInfoUniqueIdentifier;
 
     std::optional<NowPlayingInfo> m_nowPlayingInfo;
+    std::optional<NowPlayingCandidateState> m_lastSentNowPlayingCandidateState;
     const std::unique_ptr<NowPlayingManager> m_nowPlayingManager;
     RunLoop::Timer m_nowPlayingUpdateTimer;
     Seconds m_nowPlayingUpdateInterval { 5_s };

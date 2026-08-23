@@ -393,12 +393,13 @@ ScopeExit<Function<void()>> WebFrame::makeInvalidator()
     });
 }
 
-uint64_t WebFrame::setUpPolicyListener(WebCore::FramePolicyFunction&& policyFunction, ForNavigationAction forNavigationAction, Markable<WebCore::ScriptExecutionContextIdentifier> downloadAttributeInitiatingDocument)
+uint64_t WebFrame::setUpPolicyListener(WebCore::FramePolicyFunction&& policyFunction, ForNavigationAction forNavigationAction, Markable<WebCore::ScriptExecutionContextIdentifier> downloadAttributeInitiatingDocument, SingleThreadWeakPtr<WebCore::DocumentLoader>&& downloadAttributePolicyDocumentLoader)
 {
     auto policyListenerID = generateListenerID();
     m_pendingPolicyChecks.add(policyListenerID, PolicyCheck {
         forNavigationAction,
         downloadAttributeInitiatingDocument,
+        WTF::move(downloadAttributePolicyDocumentLoader),
         WTF::move(policyFunction)
     });
 
@@ -417,6 +418,16 @@ bool WebFrame::shouldHonorDownloadAttributePolicyCheck(const PolicyCheck& policy
         return false;
     RefPtr document = localFrame->document();
     return document && document->identifier() == policyCheck.downloadAttributeInitiatingDocument;
+}
+
+// A download check outliving the navigation that started it also means its decision can arrive once a newer
+// navigation owns the load: FrameLoader::loadWithDocumentLoader() will not continue the load the check was
+// made for then, so all that is left of the decision is the download itself. Everything else in it - the
+// website policies, the navigation identifier - would be applied to the newer navigation instead.
+bool WebFrame::newerNavigationOwnsDownloadAttributePolicyCheckLoad(const PolicyCheck& policyCheck) const
+{
+    RefPtr localFrame = dynamicDowncast<LocalFrame>(m_coreFrame.get());
+    return !localFrame || localFrame->loader().policyDocumentLoader() != policyCheck.downloadAttributePolicyDocumentLoader.get();
 }
 
 void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier)
@@ -693,7 +704,16 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& po
     if (policyCheck.downloadAttributeInitiatingDocument && !shouldHonorDownloadAttributePolicyCheck(policyCheck))
         return function(PolicyAction::Ignore);
 
-    if (forNavigationAction && localFrameLoaderClient() && policyDecision.websitePoliciesData) {
+    // Nothing below is the download's to apply once a newer navigation owns the load this check was made for.
+    // The website policies are the clearest of these: they would disable content JavaScript in a document the
+    // client allowed it for. Only a download is still meaningful, so answer anything else Ignore, which
+    // FrameLoader::loadWithDocumentLoader() drops rather than continue with, since it no longer owns the
+    // policy document loader.
+    bool newerNavigationOwnsTheLoad = policyCheck.downloadAttributeInitiatingDocument && newerNavigationOwnsDownloadAttributePolicyCheckLoad(policyCheck);
+    if (newerNavigationOwnsTheLoad && policyDecision.policyAction != PolicyAction::Download)
+        return function(PolicyAction::Ignore);
+
+    if (forNavigationAction && !newerNavigationOwnsTheLoad && localFrameLoaderClient() && policyDecision.websitePoliciesData) {
         ASSERT(page());
         if (page())
             page()->setAllowsContentJavaScriptFromMostRecentNavigation(policyDecision.websitePoliciesData->allowsContentJavaScript);
@@ -1362,14 +1382,11 @@ void WebFrame::updateLocalFrameRect(WebCore::LocalFrame& localFrame, WebCore::In
     }
 
 #if PLATFORM(IOS_FAMILY)
-    // The iframe root's unobscured content size is its natural frame size: it drives the scrolling
-    // tree's scrollable-area size and CSS viewport units, so it must never be clamped to the visible
-    // region (doing so collapses an off-screen frame's scrolling node to 0x0).
+    // Only the main frame has obscured insets, so the unobscured size here is just the frame size.
     frameView->setUnobscuredContentSize(frameView->size());
-    // Tile coverage (exposedContentRect) is normally driven by the embedder-visible rect in
-    // WebPage::updateExposedRectFromParent, so a below-fold frame commits ~0 tiles. Until that
-    // path has supplied a rect at least once, back the whole frame so nothing blanks if the first
-    // compositor flush precedes the first childrenFrameLayoutInfo sync (see rdar://122429810 history).
+
+    // Default to covering the entire view until the parent frame process sends an
+    // exposedContentRect to us at least once to minimize blanking issues (see rdar://122429810).
     if (!frameView->hasEverSetExposedContentRectFromEmbedder())
         frameView->setExposedContentRect(FloatRect { { }, frameView->size() });
 #endif
@@ -1663,27 +1680,34 @@ String WebFrame::frameTextForTesting(bool includeSubframes)
     return builder.toString();
 }
 
-static RefPtr<WebKitJSHandle> createJSHandle(Node& node)
+static RefPtr<WebKitJSHandle> createJSHandle(Node& node, DOMWrapperWorld& world)
 {
     Ref document = node.document();
-    auto* lexicalGlobalObject = document->globalObject();
-    if (!lexicalGlobalObject)
+    RefPtr frame = document->frame();
+    if (!frame)
         return { };
 
-    RELEASE_ASSERT(lexicalGlobalObject->template inherits<JSDOMGlobalObject>());
-    auto* domGlobalObject = downcast<JSDOMGlobalObject>(lexicalGlobalObject);
-    JSC::JSLockHolder locker { lexicalGlobalObject };
-    return WebKitJSHandle::create(toJS(lexicalGlobalObject, domGlobalObject, node).toObject(lexicalGlobalObject));
+    auto* domGlobalObject = protect(frame->script())->globalObject(world);
+    if (!domGlobalObject)
+        return { };
+
+    JSC::JSLockHolder locker { domGlobalObject };
+    return WebKitJSHandle::create(toJS(domGlobalObject, domGlobalObject, node).toObject(domGlobalObject));
 }
 
 std::optional<std::pair<Ref<WebKitJSHandle>, JSHandleInfo>> WebFrame::createAndPrepareToSendJSHandle(Node& node) const
 {
-    RefPtr handle = createJSHandle(node);
+    return createAndPrepareToSendJSHandle(node, InjectedBundleScriptWorld::normalWorldSingleton());
+}
+
+std::optional<std::pair<Ref<WebKitJSHandle>, JSHandleInfo>> WebFrame::createAndPrepareToSendJSHandle(Node& node, InjectedBundleScriptWorld& world) const
+{
+    RefPtr handle = createJSHandle(node, protect(world.coreWorld()));
     if (!handle)
         return std::nullopt;
 
     WebKitJSHandle::jsHandleSentToAnotherProcess(handle->identifier());
-    JSHandleInfo handleInfo { handle->identifier(), pageContentWorldIdentifier(), info(), handle->windowFrameIdentifier() };
+    JSHandleInfo handleInfo { handle->identifier(), world.identifier(), info(), handle->windowFrameIdentifier() };
     return { { handle.releaseNonNull(), WTF::move(handleInfo) } };
 }
 
@@ -1981,18 +2005,19 @@ void WebFrame::describeTextExtractionInteraction(TextExtraction::Interaction&& i
     completion(TextExtraction::interactionDescription(resolvedInteraction, *frame));
 }
 
-void WebFrame::handleTextExtractionInteraction(TextExtraction::Interaction&& interaction, CompletionHandler<void(bool, String&&, FloatRect)>&& completion)
+void WebFrame::handleTextExtractionInteraction(TextExtraction::Interaction&& interaction, CompletionHandler<void(bool, String&&, Vector<String>&&, FloatRect)>&& completion)
 {
     RefPtr frame = coreLocalFrame();
     if (!frame)
-        return completion(false, "Browsing context is unavailable"_s, { });
+        return completion(false, "Browsing context is unavailable"_s, { }, { });
 
     auto resolvedInteraction = interactionWithResolvedTargetNode(WTF::move(interaction));
-    auto summary = TextExtraction::interactionDescription(resolvedInteraction, *frame, TextExtraction::Tense::Past).description;
-    TextExtraction::handleInteraction(WTF::move(resolvedInteraction), *frame, [completion = WTF::move(completion), summary = WTF::move(summary)](bool success, String&& message, FloatRect interactedElementBounds) mutable {
+    auto description = TextExtraction::interactionDescription(resolvedInteraction, *frame, TextExtraction::Tense::Past);
+    TextExtraction::handleInteraction(WTF::move(resolvedInteraction), *frame, [completion = WTF::move(completion), summary = WTF::move(description.description), stringsToValidate = WTF::move(description.stringsToValidate)](bool success, String&& message, Vector<String>&& additionalStringsToValidate, FloatRect interactedElementBounds) mutable {
         if (success && message.isEmpty())
             message = WTF::move(summary);
-        completion(success, WTF::move(message), interactedElementBounds);
+        stringsToValidate.appendVector(WTF::move(additionalStringsToValidate));
+        completion(success, WTF::move(message), WTF::move(stringsToValidate), interactedElementBounds);
     });
 }
 

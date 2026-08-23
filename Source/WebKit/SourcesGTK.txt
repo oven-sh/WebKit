@@ -83,6 +83,10 @@ Shared/API/glib/WebKitUserMessage.cpp @no-unify
 Shared/Extensions/gtk/WebExtensionUtilitiesGtk.cpp
 
 Shared/glib/ArgumentCodersGLib.cpp
+Shared/glib/CoreIPCGByteArray.cpp
+Shared/glib/CoreIPCGTlsCertificate.cpp
+Shared/glib/CoreIPCGUnixFDList.cpp
+Shared/glib/CoreIPCGVariant.cpp
 Shared/glib/InputMethodState.cpp
 Shared/glib/JavaScriptEvaluationResultGLib.cpp
 Shared/glib/ProcessExecutablePathGLib.cpp
@@ -90,7 +94,7 @@ Shared/glib/UserMessage.cpp
 Shared/glib/WebContextMenuItemGlib.cpp
 Shared/glib/WebKitContextMenuGAction.cpp @no-unify
 
-Shared/gtk/ArgumentCodersGtk.cpp
+Shared/gtk/CoreIPCGtkPrint.cpp
 Shared/gtk/NativeWebKeyboardEventGtk.cpp
 Shared/gtk/NativeWebMouseEventGtk.cpp
 Shared/gtk/NativeWebTouchEventGtk.cpp

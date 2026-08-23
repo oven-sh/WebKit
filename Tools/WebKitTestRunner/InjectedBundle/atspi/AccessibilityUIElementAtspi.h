@@ -74,6 +74,7 @@ public:
     void decrement() override;
     void showMenu() override;
     void press() override;
+    bool dismiss() override;
 
     JSRetainPtr<JSStringRef> stringDescriptionOfAttributeValue(JSStringRef attribute) override;
     JSRetainPtr<JSStringRef> stringAttributeValue(JSStringRef attribute) override;
@@ -266,6 +267,10 @@ public:
     JSRetainPtr<JSStringRef> wordAtOffset(int offset) override;
     JSRetainPtr<JSStringRef> lineAtOffset(int offset) override;
     JSRetainPtr<JSStringRef> sentenceAtOffset(int offset) override;
+
+    RefPtr<AccessibilityUIElement> focusableAncestor() override;
+    RefPtr<AccessibilityUIElement> editableAncestor() override;
+    RefPtr<AccessibilityUIElement> highestEditableAncestor() override;
 
 private:
     AccessibilityUIElementAtspi(PlatformUIElement);
