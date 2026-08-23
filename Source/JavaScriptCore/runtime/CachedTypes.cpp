@@ -25,6 +25,8 @@
 
 #include "config.h"
 #include "CachedTypes.h"
+#include <wtf/Deque.h>
+#include <wtf/Function.h>
 
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
@@ -164,6 +166,22 @@ public:
         m_leafExecutables.add(executable, offset);
     }
 
+    // Layout: a code block's own arrays and its children's executable records are written contiguously; the children's
+    // bodies follow breadth-first, and data that is only read on rare paths (expression info) goes after every body.
+    // Decoding one block then reads one contiguous run of the payload rather than records scattered through every
+    // descendant's subtree, so a mapped payload pages in only what is decoded.
+    void deferBody(Function<void()>&& encodeBody) { m_bodies.append(WTF::move(encodeBody)); }
+    void deferCold(Function<void()>&& encodeCold) { m_cold.append(WTF::move(encodeCold)); }
+    void encodeDeferred()
+    {
+        while (!m_bodies.isEmpty())
+            m_bodies.takeFirst()();
+        while (!m_cold.isEmpty()) {
+            m_cold.takeFirst()();
+            RELEASE_ASSERT(m_bodies.isEmpty());
+        }
+    }
+
     RefPtr<CachedBytecode> release(BytecodeCacheError& error)
     {
         if (!m_currentPage)
@@ -291,6 +309,8 @@ private:
     Vector<Page> m_pages;
     UncheckedKeyHashMap<const void*, ptrdiff_t> m_ptrToOffsetMap;
     LeafExecutableMap m_leafExecutables;
+    Deque<Function<void()>> m_bodies;
+    Deque<Function<void()>> m_cold;
 };
 
 Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider)
@@ -2530,11 +2550,13 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
     m_ecmaName.encode(encoder, executable.ecmaName());
     m_parentScopeTDZVariables.encode(encoder, executable.m_parentScopeTDZVariables);
 
-    m_unlinkedCodeBlockForCall.encode(encoder, executable.m_unlinkedCodeBlockForCall);
-    m_unlinkedCodeBlockForConstruct.encode(encoder, executable.m_unlinkedCodeBlockForConstruct);
-
     if (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct)
         encoder.addLeafExecutable(&executable, encoder.offsetOf(this));
+
+    encoder.deferBody([this, &encoder, forCall = executable.m_unlinkedCodeBlockForCall, forConstruct = executable.m_unlinkedCodeBlockForConstruct] {
+        m_unlinkedCodeBlockForCall.encode(encoder, forCall);
+        m_unlinkedCodeBlockForConstruct.encode(encoder, forConstruct);
+    });
 }
 
 ALWAYS_INLINE UnlinkedFunctionExecutable* CachedFunctionExecutable::decode(Decoder& decoder) const
@@ -2656,7 +2678,9 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::encode(Encoder& encoder, cons
     m_instructions.encode(encoder, codeBlock.m_instructions.get());
     m_constantRegisters.encode(encoder, codeBlock.m_constantRegisters);
     m_constantsSourceCodeRepresentation.encode(encoder, codeBlock.m_constantsSourceCodeRepresentation);
-    m_expressionInfo.encode(encoder, codeBlock.m_expressionInfo.get());
+    encoder.deferCold([this, &encoder, expressionInfo = codeBlock.m_expressionInfo.get()] {
+        m_expressionInfo.encode(encoder, expressionInfo);
+    });
     m_jumpTargets.encode(encoder, codeBlock.m_jumpTargets);
     m_outOfLineJumpTargets.encode(encoder, codeBlock.m_outOfLineJumpTargets);
 
@@ -2844,6 +2868,7 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
         encodeCodeBlock<UnlinkedModuleProgramCodeBlock>(encoder, key, codeBlock);
     else
         ASSERT(classInfo == UnlinkedEvalCodeBlock::info());
+    encoder.encodeDeferred();
 
     return encoder.release(error);
 }
@@ -2860,6 +2885,7 @@ RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCod
     FileSystem::FileHandle invalidFileHandle;
     Encoder encoder(vm, invalidFileHandle);
     encoder.malloc<CachedFunctionCodeBlock>()->encode(encoder, *codeBlock);
+    encoder.encodeDeferred();
     return encoder.release(error);
 }
 
