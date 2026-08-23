@@ -99,7 +99,8 @@ JS_EXPORT_PRIVATE void* NODELETE endOfFixedExecutableMemoryPoolImpl();
 
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 // Set the language-specific SEH handler invoked when exception dispatch
-// reaches a JIT frame. See registerJITUnwindInfo in ExecutableAllocator.cpp.
+// reaches a JIT frame or an LLInt / vmEntry* frame. See registerJITUnwindInfo
+// in ExecutableAllocator.cpp and the .pdata record in LowLevelInterpreter.cpp.
 // Signature: EXCEPTION_DISPOSITION(PEXCEPTION_RECORD, PVOID establisherFrame,
 // PCONTEXT, PDISPATCHER_CONTEXT).
 using JITExceptionHandlerWin = long(__cdecl*)(void*, void*, void*, void*);

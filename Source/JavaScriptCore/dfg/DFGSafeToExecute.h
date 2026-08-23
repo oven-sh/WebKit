@@ -45,8 +45,14 @@ public:
     {
     }
     
-    void operator()(Node*, Edge edge)
+    void operator()(Node* node, Edge edge)
     {
+        if (edge->isTuple()) {
+            ASSERT(node->op() == ExtractFromTuple && edge.useKind() == UntypedUse);
+            m_maySeeEmptyChild |= !!(m_state.forTupleNode(edge, node->extractOffset()).m_type & SpecEmpty);
+            return;
+        }
+
         m_maySeeEmptyChild |= !!(m_state.forNode(edge).m_type & SpecEmpty);
 
         switch (edge.useKind()) {
@@ -429,6 +435,8 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case StringCharAt:
     case StringCharCodeAt:
     case StringCodePointAt:
+    case BufferReadInt:
+    case BufferReadFloat:
         return node->arrayMode().alreadyChecked(graph, node, state.forNode(graph.child(node, 0)));
 
     // We can make them non conservative by checking the condition safely.
@@ -813,6 +821,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetInternalField:
     case PutInternalField:
     case DataViewSet:
+    case BufferWrite:
     case ResolvePromiseFirstResolving:
     case RejectPromiseFirstResolving:
     case FulfillPromiseFirstResolving:

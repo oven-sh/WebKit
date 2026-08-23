@@ -30,10 +30,13 @@
 #include <JavaScriptCore/JSCTimeZone.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/TemporalEnums.h>
+#include <JavaScriptCore/TemporalObject.h>
 #include <optional>
 #include <wtf/Packed.h>
 
 namespace JSC {
+
+JS_EXPORT_PRIVATE std::optional<TimeZone> timeZoneFromRecord(const ISO8601::ISOStringTimeZoneParseRecord&);
 
 class TemporalZonedDateTime final : public JSNonFinalObject {
 public:
@@ -48,7 +51,6 @@ public:
     }
 
     static TemporalZonedDateTime* create(VM&, Structure*, ISO8601::ExactTime, TimeZone, CalendarID);
-    static TemporalZonedDateTime* tryCreate(JSGlobalObject*, Structure*, ISO8601::ExactTime, TimeZone, CalendarID);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     static TemporalZonedDateTime* from(JSGlobalObject*, JSValue item);
@@ -64,11 +66,15 @@ public:
 
     std::optional<int64_t> getOffsetNanoseconds(JSGlobalObject*) const;
 
+    // https://tc39.es/proposal-temporal/#sec-temporal-temporalzoneddatetimetostring
+    // showOffset: ~auto~ | ~never~; showTimeZone: ~auto~ | ~never~ | ~critical~; showCalendar: ~auto~ | ~always~ | ~never~ | ~critical~.
+    String toString(JSGlobalObject*, const PrecisionData&, RoundingMode, StringView showOffset, StringView showTimeZone, StringView showCalendar) const;
+    // Every option ~auto~ (what toJSON and default-argument toString produce).
+    JS_EXPORT_PRIVATE String toString(JSGlobalObject*) const;
+
     ISO8601::PlainDateTime getLocalDateTime(JSGlobalObject*) const;
 
     static std::optional<ISO8601::ExactTime> getEpochNanosecondsFor(JSGlobalObject*, const TimeZone&, const ISO8601::PlainDate&, const ISO8601::PlainTime&, TemporalDisambiguation);
-
-    TemporalZonedDateTime* withExactTime(JSGlobalObject*, ISO8601::ExactTime epochNs) const;
 
 private:
     TemporalZonedDateTime(VM&, Structure*, ISO8601::ExactTime, TimeZone, CalendarID);
@@ -78,5 +84,8 @@ private:
     TimeZone m_timeZone;
     CalendarID m_calendarID { 0 };
 };
+
+TemporalZonedDateTime* createTemporalZonedDateTime(JSGlobalObject*, ISO8601::ExactTime, TimeZone, CalendarID);
+TemporalZonedDateTime* createTemporalZonedDateTime(JSGlobalObject*, ISO8601::ExactTime, TimeZone, CalendarID, TemporalNewTarget);
 
 } // namespace JSC

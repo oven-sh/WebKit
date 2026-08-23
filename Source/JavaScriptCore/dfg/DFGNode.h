@@ -35,6 +35,7 @@
 #include "DFGArithMode.h"
 #include "DFGArrayMode.h"
 #include "DFGCommon.h"
+#include "DFGDataViewData.h"
 #include "DFGEpoch.h"
 #include "DFGLazyJSValue.h"
 #include "DFGMultiGetByOffsetData.h"
@@ -161,20 +162,6 @@ struct NewArrayWithSpeciesData {
 static_assert(sizeof(IndexingType) <= sizeof(uint8_t));
 static_assert(sizeof(ArrayMode) <= sizeof(unsigned));
 static_assert(sizeof(NewArrayWithSpeciesData) == sizeof(uint64_t));
-
-struct DataViewData {
-    union {
-        struct {
-            uint8_t byteSize;
-            bool isSigned;
-            bool isResizable;
-            bool isFloatingPoint; // Used for the DataViewSet node.
-            TriState isLittleEndian;
-        };
-        uint64_t asQuadWord;
-    };
-};
-static_assert(sizeof(DataViewData) == sizeof(uint64_t));
 
 struct BranchTarget {
     BranchTarget() = default;
@@ -1070,11 +1057,6 @@ public:
         return isConstant() && constant()->value().isBoolean();
     }
      
-    bool asBoolean()
-    {
-        return constant()->value().asBoolean();
-    }
-
     bool isUndefinedOrNullConstant()
     {
         return isConstant() && constant()->value().isUndefinedOrNull();
@@ -2387,6 +2369,9 @@ public:
         case ArrayIncludes:
         case ArrayIndexOf:
         case ArrayJoin:
+        case BufferReadInt:
+        case BufferReadFloat:
+        case BufferWrite:
             return true;
         default:
             break;
@@ -2401,12 +2386,15 @@ public:
         case EnumeratorGetByVal:
         case GetByVal:
         case GetByValMegamorphic:
+        case BufferReadInt:
+        case BufferReadFloat:
             return 2;
         case EnumeratorPutByVal:
         case PutByValDirect:
         case PutByVal:
         case PutByValDirectResolved:
         case PutByValMegamorphic:
+        case BufferWrite:
             return 3;
         case AtomicsAdd:
         case AtomicsAnd:
@@ -2818,6 +2806,9 @@ public:
         case ArraySortCompact:
         case ArraySortCommit:
         case GetCellButterflySlot:
+        case BufferReadInt:
+        case BufferReadFloat:
+        case BufferWrite:
             return true;
         default:
             return false;
@@ -3045,6 +3036,12 @@ public:
         return std::bit_cast<DataViewData>(m_opInfo.as<uint64_t>());
     }
 
+    DataViewData bufferAccessData()
+    {
+        ASSERT(op() == BufferReadInt || op() == BufferReadFloat || op() == BufferWrite);
+        return std::bit_cast<DataViewData>(m_opInfo2.as<uint64_t>());
+    }
+
     bool shouldGenerate()
     {
         return m_refCount;
@@ -3055,6 +3052,17 @@ public:
     bool isSemanticallySkippable()
     {
         return op() == CountExecution || op() == InvalidationPoint;
+    }
+
+    // An InvalidationPoint emitted for op_check_traps under signal-based VM traps (!Options::usePollingTraps()).
+    // Besides being an invalidation point it is the only place in its loop where the VMTraps SignalSender can
+    // install a breakpoint to interrupt optimized code, so CSE must not fold it into a dominating one: an
+    // effect-free loop that follows another loop would otherwise compile to a bare backward jump that no
+    // termination request (worker terminate(), watchdog) can ever break into.
+    bool isVMTrapsBreakpointSite()
+    {
+        ASSERT(op() == InvalidationPoint);
+        return m_opInfo.as<bool>();
     }
 
     unsigned refCount()
@@ -3239,12 +3247,12 @@ public:
         // However, we only emit such an add if both inputs can be Int52, and Int32
         // can trivially become Int52.
         //
-        return enableInt52() && isInt32OrInt52Speculation(prediction());
+        return isInt32OrInt52Speculation(prediction());
     }
 
     bool shouldSpeculateInt52OrOther()
     {
-        return enableInt52() && isInt32OrInt52OrOtherSpeculation(prediction());
+        return isInt32OrInt52OrOtherSpeculation(prediction());
     }
 
     bool shouldSpeculateDouble()
@@ -3548,7 +3556,7 @@ public:
     
     static bool shouldSpeculateInt52(Node* op1, Node* op2)
     {
-        return enableInt52() && op1->shouldSpeculateInt52() && op2->shouldSpeculateInt52();
+        return op1->shouldSpeculateInt52() && op2->shouldSpeculateInt52();
     }
     
     static bool shouldSpeculateNumber(Node* op1, Node* op2)

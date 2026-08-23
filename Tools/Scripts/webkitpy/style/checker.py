@@ -122,7 +122,6 @@ _BASE_FILTER_RULES = [
     # WebKit's importer drops some files (e.g. manual tests), causing these rules to trip
     # when such missing files are the only match for entries in a WEB_FEATURES.yml file:
     '-wpt/lint/missing_web_features_file',
-    '-wpt/lint/unnecessary_exclusion_in_web_features_file',
 
     # List Python pep8 categories last.
     #
@@ -155,6 +154,11 @@ _PATH_RULES_SPECIFIER = [
     # Files in these directories are consumers of the WebKit
     # API and therefore do not follow the same header including
     # discipline as WebCore.
+
+    ([
+        # SwiftBrowser does not generate the platform args response file.
+        os.path.join('Tools', 'SwiftBrowser')],
+     ["-webkit/wtf_platform"]),
 
     ([  # Ignore use of RetainPtr<NSObject *> for tests that ensure its compatibility with ReteainPtr<NSObject>.
       os.path.join('Tools', 'TestWebKitAPI', 'Tests', 'WTF', 'ns', 'RetainPtr.mm')],
@@ -693,6 +697,7 @@ def _all_categories():
     categories = categories.union(FeatureDefinesChecker.categories)
     categories = categories.union(BaseXcconfigChecker.categories)
     categories = categories.union(XcodeSchemeChecker.categories)
+    categories = categories.union(SwiftChecker.categories)
     categories = categories.union(SwiftAssociationChecker.categories)
 
     # FIXME: Consider adding all of the pep8 categories.  Since they

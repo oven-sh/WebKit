@@ -87,9 +87,15 @@ bool hasCapacityToUseLargeGigacage();
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
     v(Bool, useExecutionCountForCodeBlockAging, false, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
     v(Double, codeBlockAgingLeaseMultiplier, 3.0, Normal, "When useExecutionCountForCodeBlockAging proves a CodeBlock is still active, renew its old-age TTL to this many multiples of timeToLive for its tier."_s)
+#define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
+    v(Bool, useLeanBytecodeCacheDecoder, true, Normal, "If true, the bytecode cache Decoder skips bookkeeping that is only needed for decoded objects shared by multiple references."_s) \
+    v(Bool, useBorrowedBytecodeFromCache, true, Normal, "If true, instruction streams and expression info decoded from a persistent (mmap'd/embedded) bytecode cache alias the cache instead of copying it."_s) \
+    v(Bool, diskCachePayloadIsPersistentForTesting, false, Normal, "jsc shell: keep files mapped from diskCachePath for the life of the process and mark them persistent, so useBorrowedBytecodeFromCache applies to them."_s) \
+    v(Bool, verifyBytecodeCacheChecksums, true, Normal, "check each code block's CRC when it is decoded from a bytecode cache and fall back to generating it from source on a mismatch"_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
+#define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v)
 #endif
 
 #define FOR_EACH_JSC_OPTION(v)                                          \
@@ -104,6 +110,10 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useDFGJIT, jitEnabledByDefault(), Normal, "allows the DFG JIT to be used if true"_s) \
     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
     v(Bool, useDOMJIT, jitEnabledByDefault(), Normal, "allows the DOMJIT to be used if true"_s) \
+    v(Bool, useRegExpLookbehindJIT, true, Normal, "allows patterns containing lookbehind assertions to use the RegExp JIT"_s) \
+    v(Bool, useRegExpAlternationFactoring, true, Normal, "factors shared prefixes out of wide alternations and folds wide top-level alternations into a group"_s) \
+    v(Bool, useRegExpAlternationDispatch, true, Normal, "lets the RegExp JIT dispatch a group's alternatives on their first character and compare short literal alternatives inline"_s) \
+    v(Unsigned, regExpDispatchMaxInlineLiteralLength, 32, Normal, "longest literal alternative (up to the JIT's ceiling of 32) the RegExp JIT compares inline inside a first-character dispatch chain; 0 disables inline literals"_s) \
     \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \
     /* Bun Features */\
@@ -160,6 +170,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpCSSJITDisassembly, false, Normal, "dumps disassembly of CSS Selector JIT upon compilation"_s) \
     v(Bool, dumpRegExpDisassembly, false, Normal, "dumps disassembly of RegExp upon compilation"_s) \
     v(Bool, traceRegExpJITExecution, false, Normal, "traces RegExp JIT execution at reentry points"_s) \
+    v(Bool, verifyRegExpJITReads, false, Normal, "checks, before every load the RegExp JIT makes from the subject string, that the address lies within the subject (crashes otherwise); a fuzzing aid"_s) \
     v(Bool, dumpWasmDisassembly, false, Normal, "dumps disassembly of all wasm code upon compilation"_s) \
     v(OptionString, dumpWasmSourceFileName, nullptr, Normal, "log every wasm module validation, and dump source bytes to <filename>.0.wasm, <filename>.1.wasm, etc..."_s) \
     v(OptionString, wasmOMGFunctionsToDump, nullptr, Normal, "file with newline separated list of function indices to dump IR/disassembly for, if no such file exists, the function index itself"_s) \
@@ -330,6 +341,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, breakOnThrow, false, Normal, nullptr) \
     \
     v(Unsigned, maximumOptimizationCandidateBytecodeCost, 100000, Normal, nullptr) \
+    v(Unsigned, maximumCachedAssemblerBufferSize, 1 * MB, Normal, "Assembler scratch buffers larger than this are freed after compilation instead of being cached per thread (0 = cache any size)"_s) \
     \
     v(Unsigned, maximumFunctionForCallInlineCandidateBytecodeCostForDFG, 80, Normal, nullptr) \
     v(Unsigned, maximumFunctionForClosureCallInlineCandidateBytecodeCostForDFG, 80, Normal, nullptr) \
@@ -354,6 +366,7 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Unsigned, maximumBinaryStringSwitchCaseLength, 50, Normal, nullptr) \
     v(Unsigned, maximumBinaryStringSwitchTotalLength, 2000, Normal, nullptr) \
+    v(Unsigned, maximumInlineStringSwitchCaseCount, 64, Normal, "Maximum number of cases for which the baseline JIT dispatches op_switch_string inline instead of calling out."_s) \
     v(Unsigned, maximumRegExpTestInlineCodesize, 500, Normal, "Maximum code size in bytes for inlined RegExp.test JIT code."_s) \
     v(Unsigned, maximumRegExpJITCodeSize, 16 * MB, Normal, "Maximum generated code size in bytes for RegExp JIT compilation before falling back to the interpreter."_s) \
     \
@@ -428,7 +441,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, minMarkedBlockUtilization, 0.9, Normal, nullptr) \
     v(Unsigned, slowPathAllocsBetweenGCs, 0, Normal, "force a GC on every Nth slow path alloc, where N is specified by this option"_s) \
     /* WARNING: this option is important for compatibility be *VERY* careful when lowering it. See: rdar://145585141 and https://bugs.webkit.org/show_bug.cgi?id=289330 */ \
-    v(Unsigned, maxRegExpStackSize, 128 * MB, Normal, nullptr) \
+    /* Cap on the bytecode RegExp interpreter's backtracking-context pool (allocated a page at a time, only while a match runs, and released after it). Each quantified-group iteration takes a context sized by the pattern's call frame, which grew with the ParenthesesOnce/BackReference slots and the alternation folding; 192MB keeps the reach interpreter-only patterns had at 128MB (prism/highlight.js tokenizers over ~600KB inputs). */ \
+    v(Unsigned, maxRegExpStackSize, 192 * MB, Normal, nullptr) \
     \
     v(Double, percentCPUPerMBForFullTimer, 0.0003125, Normal, nullptr) \
     v(Double, percentCPUPerMBForEdenTimer, 0.0025, Normal, nullptr) \
@@ -459,6 +473,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceCodeBlockToJettisonDueToOldAge, false, Normal, "If true, this means that anytime we can jettison a CodeBlock due to old age, we do."_s) \
     v(Bool, useEagerCodeBlockJettisonTiming, false, Normal, "If true, the time slices for jettisoning a CodeBlock due to old age are shrunk significantly."_s) \
     FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
+    FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
     \
     v(Bool, useTypeProfiler, false, Normal, nullptr) \
     v(Bool, useControlFlowProfiler, false, Normal, nullptr) \
@@ -586,6 +601,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Size, wasmSmallPartialCompileLimit, 5000, Normal, "Limit on the number of bytes a Wasm::Plan::compile should attempt for small wasm binary before checking for other work."_s) \
     v(Size, wasmLargePartialCompileLimit, 20000, Normal, "Limit on the number of bytes a Wasm::Plan::compile should attempt for large wasm binary before checking for other work."_s) \
     v(Unsigned, wasmOMGOptimizationLevel, Options::defaultB3OptLevel(), Normal, "B3 Optimization level for OMG Web Assembly module compilations."_s) \
+    v(Bool, useWasmByteLoopReplacement, true, Normal, "If true, OMG replaces a loop that copies or fills linear memory one byte per iteration with the equivalent bulk memory operation."_s) \
     \
     v(Bool, useBBQTierUpChecks, true, Normal, "Enables tier up checks for our BBQ code."_s) \
     v(Bool, useWasmOSR, true, Normal, nullptr) \

@@ -147,6 +147,10 @@
 #include <WebCore/LegacyWebArchive.h>
 #endif
 
+#if ENABLE(PDF_PLUGIN)
+#include "PDFPluginBase.h"
+#endif
+
 namespace WebKit {
 using namespace WebCore;
 
@@ -371,6 +375,12 @@ FrameTreeNodeData WebFrame::frameTreeData() const
 void WebFrame::invalidate()
 {
     ASSERT(!WebProcess::singleton().webFrame(m_frameID) || WebProcess::singleton().webFrame(m_frameID) == this);
+
+    // A download check survives navigation, including the navigation that tears this frame down.
+    auto pendingPolicyChecks = std::exchange(m_pendingPolicyChecks, { });
+    for (auto& policyCheck : pendingPolicyChecks.values())
+        policyCheck.policyFunction(PolicyAction::Ignore);
+
     RefPtr page = m_page.get();
     WebProcess::singleton().removeWebFrame(frameID(), page.get());
     m_coreFrame = nullptr;
@@ -383,15 +393,30 @@ ScopeExit<Function<void()>> WebFrame::makeInvalidator()
     });
 }
 
-uint64_t WebFrame::setUpPolicyListener(WebCore::FramePolicyFunction&& policyFunction, ForNavigationAction forNavigationAction)
+uint64_t WebFrame::setUpPolicyListener(WebCore::FramePolicyFunction&& policyFunction, ForNavigationAction forNavigationAction, Markable<WebCore::ScriptExecutionContextIdentifier> downloadAttributeInitiatingDocument)
 {
     auto policyListenerID = generateListenerID();
     m_pendingPolicyChecks.add(policyListenerID, PolicyCheck {
         forNavigationAction,
+        downloadAttributeInitiatingDocument,
         WTF::move(policyFunction)
     });
 
     return policyListenerID;
+}
+
+// Unlike a navigation check, a download check is not cancelled by what this frame does next, so it can be
+// answered once the frame is no longer in a page - which startDownload() requires - or once another
+// document has committed. The document matters because PolicyChecker::checkNavigationPolicy() decides
+// against live frame state, including the sandbox allow-downloads flag that
+// LocalFrame::effectiveSandboxFlags() takes from the current document.
+bool WebFrame::shouldHonorDownloadAttributePolicyCheck(const PolicyCheck& policyCheck) const
+{
+    RefPtr localFrame = dynamicDowncast<LocalFrame>(m_coreFrame.get());
+    if (!localFrame || !localFrame->page())
+        return false;
+    RefPtr document = localFrame->document();
+    return document && document->identifier() == policyCheck.downloadAttributeInitiatingDocument;
 }
 
 void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier)
@@ -444,6 +469,8 @@ void WebFrame::loadDidCommitInAnotherProcess(WebCore::ProcessIdentifier hostingP
     else {
         localFrame->loader().detachFromParent();
         corePage->setMainFrame(newFrame.copyRef());
+        if (RefPtr page = m_page.get())
+            page->updateRemoteMainFrameViewDelegatedScrolling();
     }
 
     if (ownerElement) {
@@ -598,6 +625,14 @@ void WebFrame::removeFromTree()
     if (RefPtr client = localFrameLoaderClient())
         client->removeStorageAccess();
 
+    // Instrumentation is added in createSubframe()/createProvisionalFrame() and normally removed in
+    // detachedFromParent2(). This removal path (a remote parent removing the frame ->
+    // frameWasRemovedInAnotherProcess -> removeFromTree) skips detachedFromParent2(), so tear the
+    // instrumentation (incl. the paint-rect overlay) down here too; removeInstrumentationForFrame() is
+    // idempotent, so the two removal paths never double-free.
+    if (RefPtr backend = webPage->inspector(WebPage::LazyCreationPolicy::UseExistingOnly))
+        backend->removeInstrumentationForFrame(frameID());
+
     if (RefPtr parent = coreFrame->tree().parent())
         parent->tree().removeChild(*coreFrame);
     coreFrame->disconnectView();
@@ -613,10 +648,20 @@ void WebFrame::invalidatePolicyListeners()
 {
     Ref protectedThis { *this };
 
+    // "Download the hyperlink" runs in parallel with the navigable, so a later navigation must not cancel a
+    // download: https://html.spec.whatwg.org/multipage/links.html#downloading-hyperlinks
     m_policyDownloadID = { };
 
-    auto pendingPolicyChecks = std::exchange(m_pendingPolicyChecks, { });
-    for (auto& policyCheck : pendingPolicyChecks.values())
+    HashMap<uint64_t, PolicyCheck> policyChecksToCancel;
+    for (auto& [listenerID, policyCheck] : std::exchange(m_pendingPolicyChecks, { })) {
+        if (policyCheck.downloadAttributeInitiatingDocument && shouldHonorDownloadAttributePolicyCheck(policyCheck))
+            m_pendingPolicyChecks.add(listenerID, WTF::move(policyCheck));
+        else
+            policyChecksToCancel.add(listenerID, WTF::move(policyCheck));
+    }
+
+    // Survivors go back before this point because cancelling can start a load, adding new checks.
+    for (auto& policyCheck : policyChecksToCancel.values())
         policyCheck.policyFunction(PolicyAction::Ignore);
 }
 
@@ -630,8 +675,12 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& po
             page->addConsoleMessage(m_frameID, message->messageSource, message->messageLevel, message->message);
     }
 
-    if (!m_coreFrame)
+    if (!m_coreFrame) {
+        // Answer rather than drop the check: FramePolicyFunction is a CompletionHandler.
+        if (auto policyCheck = m_pendingPolicyChecks.take(listenerID); policyCheck.policyFunction)
+            policyCheck.policyFunction(PolicyAction::Ignore);
         return;
+    }
     setIsSafeBrowsingCheckOngoing(policyDecision.isSafeBrowsingCheckOngoing);
 
     auto policyCheck = m_pendingPolicyChecks.take(listenerID);
@@ -641,6 +690,9 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& po
     FramePolicyFunction function = WTF::move(policyCheck.policyFunction);
     bool forNavigationAction = policyCheck.forNavigationAction == ForNavigationAction::Yes;
 
+    if (policyCheck.downloadAttributeInitiatingDocument && !shouldHonorDownloadAttributePolicyCheck(policyCheck))
+        return function(PolicyAction::Ignore);
+
     if (forNavigationAction && localFrameLoaderClient() && policyDecision.websitePoliciesData) {
         ASSERT(page());
         if (page())
@@ -649,14 +701,18 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& po
     }
 
     m_policyDownloadID = policyDecision.downloadID;
-    if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_coreFrame.get())) {
-        auto& loader = localFrame->loader();
-        if (RefPtr policyDocumentLoader = loader.policyDocumentLoader()) {
-            if (policyDecision.navigationID)
-                policyDocumentLoader->setNavigationID(*policyDecision.navigationID);
-            policyDocumentLoader->setIsOriginKeyedFromUIProcess(policyDecision.isOriginKeyed);
-        } else if (RefPtr provisionalDocumentLoader = loader.provisionalDocumentLoader())
-            provisionalDocumentLoader->setIsOriginKeyedFromUIProcess(policyDecision.isOriginKeyed);
+    // Only a download skips this: a download attribute link the client answered Use for is a
+    // navigation like any other, and m_policyDocumentLoader is its own.
+    if (policyDecision.policyAction != PolicyAction::Download) {
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_coreFrame.get())) {
+            auto& loader = localFrame->loader();
+            if (RefPtr policyDocumentLoader = loader.policyDocumentLoader()) {
+                if (policyDecision.navigationID)
+                    policyDocumentLoader->setNavigationID(*policyDecision.navigationID);
+                policyDocumentLoader->setIsOriginKeyedFromUIProcess(policyDecision.isOriginKeyed);
+            } else if (RefPtr provisionalDocumentLoader = loader.provisionalDocumentLoader())
+                provisionalDocumentLoader->setIsOriginKeyedFromUIProcess(policyDecision.isOriginKeyed);
+        }
     }
 
     if (policyDecision.backForwardFrameState) {
@@ -1807,6 +1863,52 @@ void WebFrame::sendMessageToInspectorTarget(const String& message)
     ensureInspectorTarget()->sendMessageToTargetBackend(message);
 }
 
+#if ENABLE(PDF_PLUGIN)
+
+static Vector<TextExtraction::Item> itemsForPDFTextAndLinks(String&& text, Vector<PDFPluginTextExtractionLink>&& links)
+{
+    std::ranges::sort(links, [](auto& a, auto& b) {
+        return a.rangeInText.location < b.rangeInText.location;
+    });
+
+    Vector<TextExtraction::Item> items;
+    unsigned cursor = 0;
+    for (auto& link : links) {
+        auto linkLocation = static_cast<unsigned>(link.rangeInText.location);
+        auto linkLength = static_cast<unsigned>(link.rangeInText.length);
+        if (linkLocation < cursor)
+            continue;
+
+        if (linkLocation > cursor) {
+            TextExtraction::Item textItem;
+            textItem.data = TextExtraction::TextItemData { { }, { }, text.substring(cursor, linkLocation - cursor), { } };
+            items.append(WTF::move(textItem));
+        }
+
+        TextExtraction::Item linkTextItem;
+        linkTextItem.data = TextExtraction::TextItemData { { }, { }, text.substring(linkLocation, linkLength), { } };
+
+        TextExtraction::Item linkItem;
+        linkItem.data = TextExtraction::LinkItemData { { }, link.url, TextExtraction::shortenedURLString(link.url), false, { } };
+        linkItem.rectInRootView = link.rectInRootView;
+        linkItem.nodeName = "a"_s;
+        linkItem.children = { WTF::move(linkTextItem) };
+        items.append(WTF::move(linkItem));
+
+        cursor = linkLocation + linkLength;
+    }
+
+    if (cursor < text.length()) {
+        TextExtraction::Item textItem;
+        textItem.data = TextExtraction::TextItemData { { }, { }, text.substring(cursor), { } };
+        items.append(WTF::move(textItem));
+    }
+
+    return items;
+}
+
+#endif // ENABLE(PDF_PLUGIN)
+
 void WebFrame::requestTextExtraction(TextExtraction::Request&& request, CompletionHandler<void(TextExtraction::Result&&)>&& completion)
 {
     RefPtr frame = coreLocalFrame();
@@ -1815,7 +1917,7 @@ void WebFrame::requestTextExtraction(TextExtraction::Request&& request, Completi
 
 #if ENABLE(PDF_PLUGIN)
     if (RefPtr pluginView = WebPage::pluginViewForFrame(frame.get())) {
-        if (auto pdfText = pluginView->fullDocumentString(); !pdfText.isEmpty()) {
+        if (auto pdfContent = pluginView->textExtractionContent(); !pdfContent.text.isEmpty()) {
             TextExtraction::Result result;
             TextExtraction::ScrollableItemData scrollableData;
             if (RefPtr view = frame->view()) {
@@ -1825,8 +1927,8 @@ void WebFrame::requestTextExtraction(TextExtraction::Request&& request, Completi
             scrollableData.isRoot = true;
             result.rootItem.data = WTF::move(scrollableData);
             result.rootItem.frameIdentifier = frame->frameID();
-            result.visibleTextLength = pdfText.length();
-            result.pdfMarkdownContent = WTF::move(pdfText);
+            result.visibleTextLength = pdfContent.text.length();
+            result.rootItem.children = itemsForPDFTextAndLinks(WTF::move(pdfContent.text), WTF::move(pdfContent.links));
             return completion(WTF::move(result));
         }
     }
@@ -1943,6 +2045,11 @@ void WebFrame::requestContainerJSHandleForSearchTexts(Vector<String>&& searchTex
         return completion({ });
 
     completion({ WTF::move(handleAndInfo->second) });
+}
+
+void WebFrame::requestContentFrameIdentifierForNode(NodeIdentifier nodeIdentifier, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>&&)>&& completion)
+{
+    completion(TextExtraction::contentFrameIdentifierForNode(nodeIdentifier));
 }
 
 void WebFrame::getSelectorPathsForNode(JSHandleInfo&& handle, CompletionHandler<void(Vector<HashSet<String>>&&)>&& completion)

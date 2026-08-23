@@ -38,6 +38,7 @@
 
 namespace WebCore {
 
+class FloatRect;
 class FragmentedSharedBuffer;
 
 class ImageSource : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ImageSource> {
@@ -62,7 +63,7 @@ public:
     // Decoding
     virtual DecodingDestination preferredDecodingDestination(GraphicsContext&, ImagePaintingOptions) const { return DecodingDestination::Base; }
     virtual bool isLargeForDecoding() const { return false; }
-    virtual void stopDecodingWorkQueue() { RELEASE_ASSERT_NOT_REACHED(); }
+    virtual void stopDecoderWorkQueue() { RELEASE_ASSERT_NOT_REACHED(); }
     virtual void decode(Function<void(DecodingStatus)>&&)  { RELEASE_ASSERT_NOT_REACHED(); }
 
     // ImageFrame
@@ -80,6 +81,10 @@ public:
 
     virtual Expected<Ref<NativeImage>, DecodingStatus> primaryNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
     virtual Expected<Ref<NativeImage>, DecodingStatus> currentNativeImageForDrawing(SubsamplingLevel, const DecodingOptions&);
+
+    // Overridden by BitmapImageSource to keep decoded-size accounting in step with the
+    // platform-image replacement the GPU process performs while the image is drawn.
+    virtual void drawNativeImage(GraphicsContext&, NativeImage&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions);
 
     // Image Metadata
     virtual IntSize size(ImageOrientation = ImageOrientation::Orientation::FromImage) const = 0;

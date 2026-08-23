@@ -40,7 +40,10 @@
 #include "WebContextMenuProxyWPE.h"
 #include "WebDataListSuggestionsDropdown.h"
 #include "WebDateTimePicker.h"
+#include "WebKitClipboardPermissionRequestPrivate.h"
+#include "WebKitColorChooser.h"
 #include "WebKitPopupMenu.h"
+#include "WebKitWebViewClient.h"
 #include <WebCore/ActivityState.h>
 #include <WebCore/Cursor.h>
 #include <WebCore/DOMPasteAccess.h>
@@ -325,9 +328,11 @@ Ref<WebContextMenuProxy> PageClientImpl::createContextMenuProxy(WebPageProxy& pa
 }
 #endif
 
-RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy&, const WebCore::Color& intialColor, const WebCore::IntRect&, ColorControlSupportsAlpha supportsAlpha, Vector<WebCore::Color>&&, std::optional<WebCore::FrameIdentifier>)
+RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy& page, const WebCore::Color&, const WebCore::IntRect&, ColorControlSupportsAlpha, Vector<WebCore::Color>&&, std::optional<WebCore::FrameIdentifier> frameID)
 {
-    return nullptr;
+    if (!m_view.client().isGLibBasedAPI())
+        return nullptr;
+    return WebKitColorChooser::create(m_view, page, frameID);
 }
 
 RefPtr<WebDataListSuggestionsDropdown> PageClientImpl::createDataListSuggestionsDropdown(WebPageProxy&)
@@ -540,7 +545,12 @@ void PageClientImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebC
                 }
             }
         }
-        // FIXME: add WebKitClipboardPermissionRequest support.
+
+        if (m_view.client().isGLibBasedAPI()) {
+            GRefPtr<WebKitClipboardPermissionRequest> request = adoptGRef(webkitClipboardPermissionRequestCreate(WTF::move(completionHandler)));
+            static_cast<WebKitWebViewClient&>(m_view.client()).requestClipboardPermission(request.get());
+            return;
+        }
     }
 #endif
     completionHandler(WebCore::DOMPasteAccessResponse::DeniedForGesture);

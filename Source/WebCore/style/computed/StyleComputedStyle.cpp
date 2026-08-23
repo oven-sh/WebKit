@@ -528,11 +528,7 @@ UserSelect ComputedStyle::usedUserSelect() const
     if (effectiveInert())
         return UserSelect::None;
 
-    auto value = userSelect();
-    if (userModify() != UserModify::ReadOnly && userDrag() != UserDrag::Element)
-        return value == UserSelect::None ? UserSelect::Text : value;
-
-    return value;
+    return static_cast<UserSelect>(m_inheritedRareData->usedUserSelect);
 }
 
 WebCore::Color ComputedStyle::usedScrollbarThumbColor() const
@@ -595,7 +591,7 @@ Style::LineWidth ComputedStyle::usedColumnRuleWidth() const
     return columnRuleWidth();
 }
 
-Style::Length<> ComputedStyle::usedOutlineOffset() const
+Style::UsedOutlineOffset ComputedStyle::usedOutlineOffset() const
 {
     auto& outline = this->outline();
     if (outline.outlineOffset.isInset())
@@ -615,7 +611,7 @@ Style::LineWidth ComputedStyle::usedOutlineWidth() const
 
 float ComputedStyle::usedOutlineSize(Style::ZoomFactor zoom, float deviceScaleFactor) const
 {
-    return std::max(0.0f, Style::evaluate<float>(usedOutlineWidth(), zoom, deviceScaleFactor) + Style::evaluate<float>(usedOutlineOffset(), zoom));
+    return std::max(0.0f, Style::evaluate<float>(usedOutlineWidth(), zoom, deviceScaleFactor) + Style::evaluate<float>(usedOutlineOffset(), zoom, deviceScaleFactor));
 }
 
 // MARK: - Derived Values
@@ -709,51 +705,6 @@ const BorderValue& ComputedStyle::borderEnd(const WritingMode writingMode) const
     if (writingMode.isHorizontal())
         return writingMode.isInlineLeftToRight() ? borderRight() : borderLeft();
     return writingMode.isInlineTopToBottom() ? borderBottom() : borderTop();
-}
-
-TextAlign textAlign(const ComputedStyle& style)
-{
-    return style.textAlign();
-}
-
-FontWeight fontWeight(const ComputedStyle& style)
-{
-    return style.fontWeight();
-}
-
-FontStyle fontStyle(const ComputedStyle& style)
-{
-    return style.fontStyle();
-}
-
-TextDecorationLine textDecorationLineInEffect(const ComputedStyle& style)
-{
-    return style.textDecorationLineInEffect();
-}
-
-const FontCascade& fontCascade(const ComputedStyle& style)
-{
-    return style.fontCascade();
-}
-
-SpeakAs speakAs(const ComputedStyle& style)
-{
-    return style.speakAs();
-}
-
-const VerticalAlign& verticalAlign(const ComputedStyle& style)
-{
-    return style.verticalAlign();
-}
-
-const TextShadows& textShadow(const ComputedStyle& style)
-{
-    return style.textShadow();
-}
-
-bool effectiveInert(const ComputedStyle& style)
-{
-    return style.effectiveInert();
 }
 
 } // namespace Style

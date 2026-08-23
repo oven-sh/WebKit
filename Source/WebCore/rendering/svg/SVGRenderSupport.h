@@ -31,6 +31,7 @@ namespace WebCore {
 
 class FloatPoint;
 class FloatRect;
+class FloatSize;
 class ImageBuffer;
 class LayoutRect;
 class RenderBoxModelObject;
@@ -86,8 +87,8 @@ public:
     static bool paintInfoIntersectsRepaintRect(const FloatRect& localRepaintRect, const AffineTransform& localTransform, const PaintInfo&);
 
     // Important functions used by nearly all SVG renderers centralizing coordinate transformations / repaint rect calculations
-    static LayoutRect clippedOverflowRectForRepaint(const RenderElement&, const RenderLayerModelObject* container, VisibleRectContext);
-    static std::optional<FloatRect> computeFloatVisibleRectInContainer(const RenderElement&, const FloatRect&, const RenderLayerModelObject* container, VisibleRectContext);
+    static LayoutRect clippedOverflowRectForRepaint(const RenderElement&, const RenderLayerModelObject* container, const VisibleRectContext&);
+    static std::optional<FloatRect> computeFloatVisibleRectInContainer(const RenderElement&, const FloatRect&, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState);
     static const RenderElement& localToParentTransform(const RenderElement&, AffineTransform&);
     static void mapLocalToContainer(const RenderElement&, const RenderLayerModelObject* ancestorContainer, TransformState&, bool* wasFixed);
     static const RenderElement* pushMappingToContainer(const RenderElement&, const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&);
@@ -109,6 +110,9 @@ public:
     static bool transformToRootChanged(RenderElement*);
 
     static void clipContextToCSSClippingArea(GraphicsContext&, const RenderElement& renderer);
+
+    // Offset from a renderer's origin-relative bounding box to where it actually paints its content.
+    static FloatSize svgContentLocationOffset(const RenderObject&);
 
     static void styleChanged(RenderElement&, const Style::ComputedStyle*);
 

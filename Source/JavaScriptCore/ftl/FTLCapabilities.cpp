@@ -523,6 +523,9 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case DataViewGetInt:
     case DataViewGetFloat:
     case DataViewSet:
+    case BufferReadInt:
+    case BufferReadFloat:
+    case BufferWrite:
     case DateNow:
     case DateGetInt32OrNaN:
     case DateGetTime:

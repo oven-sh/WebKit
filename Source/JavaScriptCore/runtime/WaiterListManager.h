@@ -37,12 +37,21 @@ namespace JSC {
 enum class AtomicsWaitType : uint8_t { Sync, Async };
 enum class AtomicsWaitValidation : uint8_t { Pass, Fail };
 
+class WaiterList;
+
 class Waiter final : public WTF::BasicRawSentinelNode<Waiter>, public ThreadSafeRefCounted<Waiter> {
     WTF_MAKE_TZONE_ALLOCATED(Waiter);
 
 public:
     Waiter(VM*);
     Waiter(JSPromise*);
+    ~Waiter();
+
+    // Sync waiter only; any thread. Wake the VM's thread if it is parked in Atomics.wait /
+    // memory.atomic.wait so that it sees the termination request that was just fired.
+    void notifyOfTerminationRequest();
+    // Sync waiter only; its own thread, holding the lock of the list it is (un)parking on.
+    void setParkedList(RefPtr<WaiterList>&&);
 
     bool isAsync() const
     {
@@ -117,6 +126,9 @@ private:
     ThreadSafeWeakPtr<DeferredWorkTimer::Ticket> m_ticket { nullptr };
     RefPtr<RunLoop::DispatchTimer> m_timer { nullptr };
     Condition m_condition;
+    // Sync waiter only: the list it is parked on, for notifyOfTerminationRequest() to lock.
+    Lock m_parkedListLock;
+    RefPtr<WaiterList> m_parkedList WTF_GUARDED_BY_LOCK(m_parkedListLock);
     bool m_isAsync { false };
 };
 

@@ -35,13 +35,23 @@ namespace JSC { namespace Yarr {
 
 #define YarrStackSpaceForBackTrackInfoPatternCharacter 2 // Only for !fixed quantifiers.
 #define YarrStackSpaceForBackTrackInfoCharacterClass 2 // Greedy/NonGreedy, or FixedCount with unicode/unicodeSets flag.
-#define YarrStackSpaceForBackTrackInfoBackReference 3
+#define YarrStackSpaceForBackTrackInfoBackReference 4
 #define YarrStackSpaceForBackTrackInfoAlternative 1 // One per alternative.
 #define YarrStackSpaceForBackTrackInfoParentheticalAssertion 1
-#define YarrStackSpaceForBackTrackInfoParenthesesOnce 2
+#define YarrStackSpaceForBackTrackInfoParenthesesOnce 3
 #define YarrStackSpaceForBackTrackInfoParenthesesTerminal 2
 #define YarrStackSpaceForBackTrackInfoParentheses 4
-#define YarrStackSpaceForDotStarEnclosure 1
+#define YarrStackSpaceForDotStarEnclosure 2 // The start offset, and the end of the newline-free span known to follow it.
+
+// First-character dispatch (YarrJIT) pays for its extra read only from a handful of alternatives
+// and characters up; it emits one entry stub per (chain, alternative) pair (a store and a jump each)
+// and gives up past the upper bounds. YarrPattern shapes groups it wants dispatched to fit these.
+// The upper bounds are sized to take the flat expansion of \p{RGI_Emoji} (~2,800 alternatives,
+// ~1,400 distinct first code points).
+static constexpr unsigned alternationDispatchMinAlternatives = 4;
+static constexpr unsigned alternationDispatchMinTotalSize = 12;
+static constexpr unsigned alternationDispatchMaxChains = 2048;
+static constexpr unsigned alternationDispatchMaxStubs = 4096;
 
 static constexpr unsigned quantifyInfinite = UINT_MAX;
 static constexpr uint64_t quantifyInfinite64 = std::numeric_limits<uint64_t>::max();

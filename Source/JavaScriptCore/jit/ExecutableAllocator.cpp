@@ -119,11 +119,7 @@ static constexpr size_t islandSizeInBytes = 4;
 static_assert(fixedExecutableMemoryPoolSize <= MacroAssembler::nearJumpRange, "Executable pool size is too large for near jump/call without JUMP_ISLANDS");
 #endif
 
-#if CPU(ARM)
-static constexpr double executablePoolReservationFraction = 0.15;
-#else
 static constexpr double executablePoolReservationFraction = 0.25;
-#endif
 
 #if ENABLE(LIBPAS_JIT_HEAP)
 // This size is derived from jit_config's medium table size.
@@ -369,11 +365,20 @@ struct JITReservation {
 // RegisterExecutableMemory (js/src/jit/ProcessExecutableMemory.cpp).
 // RtlAddGrowableFunctionTable rather than RtlAddFunctionTable so that
 // out-of-process stack walkers (ETW, WPA, WinDbg) see the entry too.
+//
+// The offlineasm code linked into the image (LLInt, vmEntryToJavaScript and
+// the other vmEntry* trampolines) has the same frame shape but cannot be
+// covered by a dynamic table: for a PC inside a loaded module the unwinder
+// consults only that module's static .pdata. LowLevelInterpreter.cpp therefore
+// assembles a static .pdata/.xdata record with the same unwind codes over
+// jsc_llint_begin..jsc_llint_end (as V8 does for its embedded builtins in
+// platform-embedded-file-writer-win.cc). Being in the image, that record can
+// name jscJITSEHHandler directly, which is why the handler has a C name.
 
 static Atomic<void*> g_jitSEHFunctionTable { nullptr };
 static Atomic<JITExceptionHandlerWin> g_jitSEHCallback { nullptr };
 
-static EXCEPTION_DISPOSITION jscJITSEHHandler(PEXCEPTION_RECORD exceptionRecord, PVOID establisherFrame, PCONTEXT contextRecord, PDISPATCHER_CONTEXT dispatcherContext)
+extern "C" EXCEPTION_DISPOSITION jscJITSEHHandler(PEXCEPTION_RECORD exceptionRecord, PVOID establisherFrame, PCONTEXT contextRecord, PDISPATCHER_CONTEXT dispatcherContext)
 {
     if (auto callback = g_jitSEHCallback.loadRelaxed())
         return static_cast<EXCEPTION_DISPOSITION>(callback(exceptionRecord, establisherFrame, contextRecord, dispatcherContext));
@@ -560,14 +565,6 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
 }
 
 #endif
-
-// LLInt / vmEntryToJavaScript live in image .text with no .pdata of their own
-// (offlineasm emits no .seh_* directives). A dynamic function table cannot
-// cover those: RtlLookupFunctionEntry for a PC inside a loaded module consults
-// only that module's static .pdata. V8 solves this at build time by emitting
-// .pdata/.xdata for its embedded builtins (platform-embedded-file-writer-
-// win.cc); the JSC equivalent is offlineasm emitting .seh_* directives, which
-// is a separate change.
 
 #endif // OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 

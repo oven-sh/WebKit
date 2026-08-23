@@ -82,6 +82,8 @@ LineBox LineBoxBuilder::build(size_t lineIndex)
         }
         if (m_lineHasNonLineSpanningRubyContent)
             RubyFormattingContext::applyAnnotationContributionToLayoutBounds(lineBox, formattingContext());
+        if (isFirstFormattedLine())
+            stretchRootInlineBoxForExcludedMarkers(lineBox);
         computeLineBoxGeometry(lineBox);
         adjustOutsideListMarkersPosition(lineBox);
 
@@ -100,6 +102,8 @@ LineBox LineBoxBuilder::buildForRootInlineBoxOnly(size_t lineIndex)
     auto lineBox = LineBox { rootBox(), lineLayoutResult.contentGeometry.logicalLeft, lineLayoutResult.contentGeometry.logicalWidth - lineLayoutResult.hangingContent.logicalWidth, lineIndex, isFirstFormattedLine(), lineLayoutResult.nonSpanningInlineLevelBoxCount };
     auto& rootInlineBox = lineBox.rootInlineBox();
     setVerticalPropertiesForInlineLevelBox(lineBox, rootInlineBox);
+    if (isFirstFormattedLine())
+        stretchRootInlineBoxForExcludedMarkers(lineBox);
     rootInlineBox.setLogicalTop(rootInlineBox.layoutBounds().ascent - rootInlineBox.ascent());
     auto lineBoxLogicalHeight = applyTextBoxTrimOnLineBoxIfNeeded(rootInlineBox.layoutBounds().height(), lineBox);
     lineBox.setLogicalRect({ lineLayoutResult.lineGeometry.logicalTopLeft, lineLayoutResult.lineGeometry.logicalWidth, lineBoxLogicalHeight });
@@ -556,7 +560,9 @@ void LineBoxBuilder::constructBlockContent(LineBox& lineBox)
             auto inlineBoxWidth = blockRun.logicalWidth() ? lineLayoutResult.lineGeometry.logicalWidth : 0.f;
             auto lineSpanningInlineBox = InlineLevelBox::createInlineBox(run.layoutBox(), run.layoutBox().style(), lineLayoutResult.contentGeometry.logicalLeft, inlineBoxWidth, InlineLevelBox::LineSpanningInlineBox::Yes);
             setVerticalPropertiesForInlineLevelBox(lineBox, lineSpanningInlineBox);
-            lineSpanningInlineBox.setLogicalTop(blockGeometry.marginBefore());
+            // An inline level box's logical top is relative to its parent inline box (see LineBox::inlineLevelBoxAbsoluteTop), so only the outermost spanning box may carry the block's offset within the line.
+            auto isOutermostInlineBox = &run.layoutBox().parent() == &rootBox();
+            lineSpanningInlineBox.setLogicalTop(isOutermostInlineBox ? InlineLayoutUnit(blockGeometry.marginBefore()) : 0.f);
             lineSpanningInlineBox.setLogicalHeight(InlineLayoutUnit(blockGeometry.borderBoxHeight()));
             lineBox.addInlineLevelBox(WTF::move(lineSpanningInlineBox));
             continue;
@@ -829,6 +835,28 @@ InlineLayoutUnit LineBoxBuilder::applyTextBoxTrimOnLineBoxIfNeeded(InlineLayoutU
         m_lineLayoutResult.firstLineStartTrim = needToTrimThisMuch;
     }
     return lineBoxLogicalHeight;
+}
+
+void LineBoxBuilder::stretchRootInlineBoxForExcludedMarkers(LineBox& lineBox) const
+{
+    // An excluded list marker belonging to an ancestor list item is aligned with this line but is no part of its content.
+    // Make the room a baseline aligned marker box would have taken by growing the root inline box's layout bounds.
+    auto& excludedMarkerLayoutBounds = layoutState().excludedMarkerLayoutBounds();
+    if (excludedMarkerLayoutBounds.isEmpty())
+        return;
+
+    // On an ideographic baseline a marker takes the parent inline box's metrics instead of its own layout bounds
+    // (see the list marker branch of setVerticalPropertiesForInlineLevelBox), so there is nothing extra to make room for.
+    if (lineBox.baselineType() == FontBaseline::Ideographic)
+        return;
+
+    auto& rootInlineBox = lineBox.rootInlineBox();
+    auto layoutBounds = rootInlineBox.layoutBounds();
+    for (auto [markerAscent, markerDescent] : excludedMarkerLayoutBounds) {
+        layoutBounds.ascent = std::max(layoutBounds.ascent, markerAscent);
+        layoutBounds.descent = std::max(layoutBounds.descent, markerDescent);
+    }
+    rootInlineBox.setLayoutBounds(layoutBounds);
 }
 
 void LineBoxBuilder::computeLineBoxGeometry(LineBox& lineBox) const

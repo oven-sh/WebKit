@@ -39,20 +39,16 @@
 
 namespace JSC { namespace Wasm { namespace BBQJITImpl {
 
-ALWAYS_INLINE bool BBQJIT::typeNeedsGPR2(TypeKind)
-{
-    return false;
-}
-
 template<typename Functor>
 auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64_t uoffset, uint32_t sizeOfOperation, uint8_t memoryIndex, Functor&& functor) -> decltype(auto)
 {
-    if (WTF::sumOverflows<uint64_t>(static_cast<uint64_t>(sizeOfOperation), uoffset)) {
+    if (m_info.memory(memoryIndex).doesAccessOverflow(uoffset, sizeOfOperation)) {
         recordJumpToThrowException(ExceptionType::OutOfBoundsMemoryAccess, m_jit.jump());
         return functor(CCallHelpers::Address(wasmBaseMemoryPointer, 0));
     }
 
     uint64_t boundary = static_cast<uint64_t>(sizeOfOperation) + uoffset - 1;
+    Width accessWidth = widthForBytes(sizeOfOperation);
 
     ScratchScope<1, 0> scratches(*this);
     Location pointerLocation;
@@ -80,14 +76,15 @@ auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64
             recordJumpToThrowException(ExceptionType::OutOfBoundsMemoryAccess, m_jit.jump());
         else {
             uint64_t finalOffset = constantPointer + uoffset;
-            if (finalOffset <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) && B3::Air::Arg::isValidAddrForm(B3::Air::Move, static_cast<int32_t>(finalOffset), Width::Width128)) {
-                switch (memoryIndex ? MemoryMode::BoundsChecking : m_mode) {
+            if (finalOffset <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) && B3::Air::Arg::isValidAddrForm(B3::Air::Move, static_cast<int32_t>(finalOffset), accessWidth)) {
+                switch (m_info.memoryModeForAccess(memoryIndex, m_mode)) {
                 case MemoryMode::BoundsChecking: {
                     m_jit.move(TrustedImmPtr(constantPointer + boundary), wasmScratchGPR);
                     recordJumpToThrowException(ExceptionType::OutOfBoundsMemoryAccess, m_jit.branchPtr(RelationalCondition::AboveOrEqual, wasmScratchGPR, boundsCheckingSizeRegister));
                     break;
                 }
                 case MemoryMode::Signaling: {
+                    RELEASE_ASSERT(!m_info.memory(memoryIndex).isMemory64());
                     // FIXME: it seems like this check is covered by the constantPointer + boundary >= maximum check below?
                     if (uoffset >= Memory::fastMappedRedzoneBytes()) {
                         uint64_t maximum = m_info.memory(memoryIndex).maximum() ? m_info.memory(memoryIndex).maximum().bytes() : std::numeric_limits<uint32_t>::max();
@@ -107,8 +104,7 @@ auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64
     ASSERT(pointerLocation.isGPR());
 
     // FIXME: for clarity we should probably rename m_mode to m_memory0Mode or something similar
-    // conservatively force bounds checking for nonzero memories
-    switch (memoryIndex ? MemoryMode::BoundsChecking : m_mode) {
+    switch (m_info.memoryModeForAccess(memoryIndex, m_mode)) {
     case MemoryMode::BoundsChecking: {
         // We're not using signal handling only when the memory is not shared.
         // Regardless of signaling, we must check that no memory access exceeds the current memory size.
@@ -129,7 +125,7 @@ auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64
         break;
     }
     case MemoryMode::Signaling: {
-        RELEASE_ASSERT(!m_info.memory(memoryIndex).isMemory64());
+        RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!m_info.memory(memoryIndex).isMemory64());
         // We've virtually mapped 4GiB+redzone for this memory. Only the user-allocated pages are addressable, contiguously in range [0, current],
         // and everything above is mapped PROT_NONE. We don't need to perform any explicit bounds check in the 4GiB range because WebAssembly register
         // memory accesses are 32-bit. However WebAssembly register + offset accesses perform the addition in 64-bit which can push an access above
@@ -141,7 +137,7 @@ auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64
         // than the declared 'maximum' will trap, so we can compare against that number. If there was no declared 'maximum' then we still know that
         // any access equal to or greater than 4GiB will trap, no need to add the redzone.
         if (uoffset >= Memory::fastMappedRedzoneBytes()) {
-            RELEASE_ASSERT(!m_info.memory(memoryIndex).isMemory64());
+            RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!m_info.memory(memoryIndex).isMemory64());
             uint64_t maximum = m_info.memory(memoryIndex).maximum() ? m_info.memory(memoryIndex).maximum().bytes() : std::numeric_limits<uint32_t>::max();
             m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
             if (boundary)
@@ -152,7 +148,7 @@ auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64
     }
     }
 
-    bool canUseOffsetForm = uoffset <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) && B3::Air::Arg::isValidAddrForm(B3::Air::Move, static_cast<int32_t>(uoffset), Width::Width128);
+    bool canUseOffsetForm = uoffset <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) && B3::Air::Arg::isValidAddrForm(B3::Air::Move, static_cast<int32_t>(uoffset), accessWidth);
 #if CPU(ARM64)
     if (canUseOffsetForm) {
         if (m_info.memory(memoryIndex).isMemory64())

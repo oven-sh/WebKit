@@ -172,25 +172,32 @@ void WebFullScreenManagerProxy::setFullscreenAutoHideDuration(Seconds duration)
     sendToWebProcess(Messages::WebFullScreenManager::SetFullscreenAutoHideDuration(duration));
 }
 
+void WebFullScreenManagerProxy::closeFullScreen(IPC::Connection& connection)
+{
+    MESSAGE_CHECK_BASE(isFullScreenInSendingProcess(connection), connection);
+    close();
+}
+
 void WebFullScreenManagerProxy::close()
 {
     if (CheckedPtr client = m_client)
         client->closeFullScreenManager();
+
+    if (m_fullscreenState == FullscreenState::NotInFullscreen)
+        return;
+
+    m_fullscreenState = FullscreenState::NotInFullscreen;
+
+    if (auto frameID = std::exchange(m_fullScreenFrameID, { }))
+        exitFullScreenInOtherProcesses(*frameID, [] { });
+
+    if (RefPtr page = m_page.get())
+        page->fullscreenClient().didExitFullscreen(page.get());
 }
 
 void WebFullScreenManagerProxy::detachFromClient()
 {
     close();
-
-    // If we were in fullscreen, notify the client that fullscreen has exited,
-    // since the normal IPC round-trip through the web process won't complete
-    // after the page is closed.
-    if (m_fullscreenState != FullscreenState::NotInFullscreen) {
-        m_fullscreenState = FullscreenState::NotInFullscreen;
-        if (RefPtr page = m_page.get())
-            page->fullscreenClient().didExitFullscreen(page.get());
-    }
-
     m_client = nullptr;
 }
 
@@ -211,8 +218,30 @@ bool WebFullScreenManagerProxy::blocksReturnToFullscreenFromPictureInPicture() c
     return m_blocksReturnToFullscreenFromPictureInPicture;
 }
 
+// A missing frame or page is a race, not an invalid message; callers already return early.
+bool WebFullScreenManagerProxy::isFrameInSendingProcess(FrameIdentifier frameID, IPC::Connection& connection) const
+{
+    RefPtr page = m_page.get();
+    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    if (!page || !frame)
+        return true;
+    return frame->page() == page.get() && &frame->process() == WebProcessProxy::fromConnection(connection).ptr();
+}
+
+bool WebFullScreenManagerProxy::isFullScreenInSendingProcess(IPC::Connection& connection) const
+{
+    if (m_fullScreenFrameID)
+        return isFrameInSendingProcess(*m_fullScreenFrameID, connection);
+    RefPtr fullScreenProcess = m_fullScreenProcess.get();
+    if (!fullScreenProcess)
+        return true;
+    return fullScreenProcess.get() == WebProcessProxy::fromConnection(connection).ptr();
+}
+
 Awaitable<bool> WebFullScreenManagerProxy::enterFullScreen(IPC::Connection& connection, FrameIdentifier frameID, bool blocksReturnToFullscreenFromPictureInPicture, FullScreenMediaDetails mediaDetails)
 {
+    MESSAGE_CHECK_BASE_COROUTINE(isFrameInSendingProcess(frameID, connection), connection);
+
     m_fullScreenProcess = dynamicDowncast<WebProcessProxy>(AuxiliaryProcessProxy::fromConnection(connection));
     m_blocksReturnToFullscreenFromPictureInPicture = blocksReturnToFullscreenFromPictureInPicture;
 #if PLATFORM(IOS_FAMILY)
@@ -409,8 +438,11 @@ std::optional<std::pair<IntRect, IntRect>> WebFullScreenManagerProxy::convertFro
     } };
 }
 
-Awaitable<bool> WebFullScreenManagerProxy::beganEnterFullScreen(FrameIdentifier frameID, IntRect initialFrameInRootViewCoordinates, IntRect finalFrameInRootViewCoordinates)
+Awaitable<bool> WebFullScreenManagerProxy::beganEnterFullScreen(IPC::Connection& connection, FrameIdentifier frameID, IntRect initialFrameInRootViewCoordinates, IntRect finalFrameInRootViewCoordinates)
 {
+    MESSAGE_CHECK_BASE_COROUTINE(isFrameInSendingProcess(frameID, connection), connection);
+    m_fullScreenFrameID = frameID;
+
     RefPtr page = m_page.get();
     if (!page)
         co_return false;
@@ -438,7 +470,7 @@ Awaitable<bool> WebFullScreenManagerProxy::beganEnterFullScreen(FrameIdentifier 
     } };
 }
 
-Awaitable<void> WebFullScreenManagerProxy::beganExitFullScreen(FrameIdentifier frameID, IntRect initialFrameInRootViewCoordinates, IntRect finalFrameInRootViewCoordinates)
+Awaitable<void> WebFullScreenManagerProxy::beganExitFullScreen(IntRect initialFrameInRootViewCoordinates, IntRect finalFrameInRootViewCoordinates)
 {
     auto rectsInScreenCoordinates = convertFromRootViewToScreenCoordinates({ finalFrameInRootViewCoordinates, initialFrameInRootViewCoordinates });
     if (!rectsInScreenCoordinates)
@@ -462,8 +494,11 @@ Awaitable<void> WebFullScreenManagerProxy::beganExitFullScreen(FrameIdentifier f
     ALWAYS_LOG(LOGIDENTIFIER);
     page->fullscreenClient().didExitFullscreen(page.get());
 
-    co_await AwaitableFromCompletionHandler<void> { [this, protectedThis = Ref { *this }, frameID] (auto completionHandler) {
-        exitFullScreenInOtherProcesses(frameID, WTF::move(completionHandler));
+    co_await AwaitableFromCompletionHandler<void> { [this, protectedThis = Ref { *this }, frameID = std::exchange(m_fullScreenFrameID, { })] (auto completionHandler) {
+        // BeganExitFullScreen can arrive without a preceding BeganEnterFullScreen.
+        if (!frameID)
+            return completionHandler();
+        exitFullScreenInOtherProcesses(*frameID, WTF::move(completionHandler));
     } };
 
     if (page->isControlledByAutomation()) {

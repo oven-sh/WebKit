@@ -96,6 +96,7 @@
 #include "RegExpGlobalDataInlines.h"
 #include "RegExpMatchesArray.h"
 #include "RegExpObjectInlines.h"
+#include "RegExpPrototype.h"
 #include "Repatch.h"
 #include "ResourceExhaustion.h"
 #include "ScopedArguments.h"
@@ -1738,7 +1739,7 @@ static ALWAYS_INLINE JSString* arrayJoinWithStringSeparator(JSGlobalObject* glob
     if (!separator->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32)) {
         auto* butterfly = array->butterfly();
         JSOnlyStringsAndInt32sJoiner joiner(StringView { });
-        auto* joined = joiner.tryJoin(globalObject, butterfly->contiguous().data(), length);
+        auto* joined = joiner.tryJoin<ContiguousShape>(globalObject, butterfly->contiguous().data(), length);
         RETURN_IF_EXCEPTION(scope, { });
         if (joined)
             return joined;
@@ -4528,6 +4529,13 @@ JSC_DEFINE_JIT_OPERATION(operationStringProtoFuncReplaceRegExpEmptyStr, JSCell*,
         searchValue->setLastIndex(globalObject, 0);
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
         OPERATION_RETURN(scope, removeAllUsingRegExpSearch(vm, globalObject, thisValue, source, regExp));
+    }
+
+    if (regExp->sticky()) {
+        // Matches at exactly lastIndex and updates it; see replaceUsingRegExpSearch.
+        JSValue result = regExpReplaceGeneric(globalObject, searchValue, thisValue, jsEmptyString(vm));
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        OPERATION_RETURN(scope, result.toString(globalObject));
     }
 
     CallData callData;

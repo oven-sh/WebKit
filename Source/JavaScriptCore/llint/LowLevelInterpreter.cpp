@@ -561,8 +561,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #define OFFLINE_ASM_ALIGN_TRAP(align) OFFLINE_ASM_BEGIN_SPACER "\n .balignl " #align ", 0xd4388e20\n" // pad with brk instructions
 #elif CPU(X86_64)
 #define OFFLINE_ASM_ALIGN_TRAP(align) OFFLINE_ASM_BEGIN_SPACER "\n .balign " #align ", 0xcc\n" // pad with int 3 instructions
-#elif CPU(ARM)
-#define OFFLINE_ASM_ALIGN_TRAP(align) OFFLINE_ASM_BEGIN_SPACER "\n .balignw " #align ", 0xde00\n" // pad with udf instructions
 #elif CPU(RISCV64)
 #define OFFLINE_ASM_ALIGN_TRAP(align) OFFLINE_ASM_BEGIN_SPACER "\n .balignw " #align ", 0x9002\n" // pad with c.ebreak instructions
 #endif
@@ -647,6 +645,92 @@ __asm__(
 );
 #endif
 #endif
+
+#if OS(WINDOWS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
+// The Windows unwinder (RtlLookupFunctionEntry, and through it RtlVirtualUnwind,
+// RtlCaptureStackBackTrace, SEH dispatch, ETW and debuggers) only knows code that has
+// a RUNTIME_FUNCTION in the image's .pdata: the DWARF CFI emitted above on ARM64 means
+// nothing to it, and the dynamic function table that registerJITUnwindInfo
+// (ExecutableAllocator.cpp) registers for the JIT pool cannot cover code inside the
+// image. offlineasm emits no .seh_* directives, so without the record below every
+// walk stops or derails at the first LLInt or vmEntry* frame.
+//
+// Everything between jsc_llint_begin and jsc_llint_end keeps the frame pointer on a
+// CallFrame whose first two slots are the caller's frame pointer and the return
+// address (functionPrologue), the frame shape registerJITUnwindInfo describes for the
+// JIT pool. So one RUNTIME_FUNCTION over the whole range, carrying the unwind info
+// registerJITUnwindInfo hand-encodes, unwinds all of it, and its language-specific
+// handler gives a fault under these frames the same catch point a fault under a JIT
+// frame has (hence ENABLE(JIT): the handler is defined in ExecutableAllocator.cpp).
+// The range starts with the jsc_llint_begin and llintPCRangeStart trap instructions,
+// so no real PC falls inside the prologue the record describes.
+//
+// The record is written out by hand rather than with .seh_* directives: on ARM64 LLVM
+// needs the function length when it reaches .seh_endproc and cannot compute it across
+// the alignment directives in the offlineasm output ("Failed to evaluate function
+// length in SEH unwind info", llvm/llvm-project#47432, the bug the -fno-unwind-tables
+// in CMakeLists.txt works around), whereas the data fixups below are resolved after
+// layout. The RVAs are spelled ".long symbol@IMGREL" rather than ".rva symbol" (the
+// two assemble to the same IMAGE_REL_*_ADDR32NB relocation) because LTO's scan of the
+// module asm for the symbols it references does not see .rva operands: with .rva, a
+// -flto build internalizes jscJITSEHHandler and the link fails with an undefined
+// symbol referenced from .xdata.
+#if CPU(X86_64)
+__asm__(
+    ".section .xdata,\"dr\"\n"
+    ".p2align 2\n"
+    LOCAL_LABEL_STRING(jsc_llint_unwind_info) ":\n"
+    // UNWIND_INFO (https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64):
+    // the bytes of JITUnwindRecord::unwindInfo in ExecutableAllocator.cpp, except that
+    // the handler is addressed directly instead of through a thunk in the pool.
+    ".byte 0x09\n" // Version 1, UNW_FLAG_EHANDLER
+    ".byte 4\n" // SizeOfProlog: push rbp (1 byte); mov rbp, rsp (3 bytes)
+    ".byte 2\n" // CountOfCodes
+    ".byte 0x05\n" // FrameRegister rbp, FrameOffset 0
+    ".byte 4, 0x03\n" // offset 4: UWOP_SET_FPREG
+    ".byte 1, 0x50\n" // offset 1: UWOP_PUSH_NONVOL rbp
+    ".long " SYMBOL_STRING(jscJITSEHHandler) "@IMGREL\n"
+
+    ".section .pdata,\"dr\"\n"
+    ".p2align 2\n"
+    ".long " SYMBOL_STRING(jsc_llint_begin) "@IMGREL\n"
+    ".long " SYMBOL_STRING(jsc_llint_end) "@IMGREL\n"
+    ".long " LOCAL_LABEL_STRING(jsc_llint_unwind_info) "@IMGREL\n"
+
+    ".text\n"
+);
+#elif CPU(ARM64)
+__asm__(
+    // The .xdata header holds the function length as 18 bits of instructions, and the
+    // .long below would silently overflow into the flag bits once the range outgrows
+    // that. ADR reaches exactly 2^18 instructions back, so this instruction, which
+    // nothing executes (it sits after the trap that precedes jsc_llint_end), assembled
+    // right after jsc_llint_end and aimed one instruction before jsc_llint_begin, fails
+    // to assemble ("fixup value out of range") as soon as the range no longer fits.
+    ".text\n"
+    "adr xzr, " SYMBOL_STRING(jsc_llint_begin) " - 4\n"
+
+    ".section .xdata,\"dr\"\n"
+    ".p2align 2\n"
+    LOCAL_LABEL_STRING(jsc_llint_unwind_info) ":\n"
+    // .xdata record (https://learn.microsoft.com/en-us/cpp/build/arm64-exception-handling):
+    // the layout and codes of JITUnwindHeader::unwindInfoFull in ExecutableAllocator.cpp
+    // (arm64XdataHeader / arm64JITUnwindCodes), with the real length and the handler
+    // addressed directly instead of through a thunk in the pool. Header fields:
+    // FunctionLength:18 | Version:2 = 0 | X:1 = 1 (handler present) | E:1 = 0 | EpilogCount:5 = 0 | CodeWords:5 = 1
+    ".long ((" SYMBOL_STRING(jsc_llint_end) " - " SYMBOL_STRING(jsc_llint_begin) ") >> 2) | (1 << 20) | (1 << 27)\n"
+    ".byte 0xE1, 0x81, 0xE4, 0xE3\n" // set_fp; save_fplr_x 16; end; nop (padding)
+    ".long " SYMBOL_STRING(jscJITSEHHandler) "@IMGREL\n"
+
+    ".section .pdata,\"dr\"\n"
+    ".p2align 2\n"
+    ".long " SYMBOL_STRING(jsc_llint_begin) "@IMGREL\n"
+    ".long " LOCAL_LABEL_STRING(jsc_llint_unwind_info) "@IMGREL\n"
+
+    ".text\n"
+);
+#endif
+#endif // OS(WINDOWS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
 
 DEBUGGER_ANNOTATION_MARKER(after_llint_asm)
 

@@ -53,6 +53,7 @@
 #include "PlatformMediaSessionManager.h"
 #include "RTCController.h"
 #include "RealtimeMediaSourceCenter.h"
+#include "ScriptExecutionContextInlines.h"
 #include "Settings.h"
 #include "UserMediaController.h"
 #include "WindowEventLoop.h"
@@ -204,11 +205,12 @@ void UserMediaRequest::allow(CaptureDevice&& audioDevice, CaptureDevice&& videoD
                 return;
             }
 
+            RefPtr<GenericPromise> sessionActivated;
             if (RefPtr audioTrack = stream->getFirstAudioTrack()) {
 #if USE(AUDIO_SESSION)
                 if (RefPtr page = document.page()) {
                     if (RefPtr manager = page->mediaSessionManager())
-                        manager->audioCaptureSourceStateChanged(MediaSessionManagerInterface::IsCaptureStarting::Yes);
+                        sessionActivated = manager->audioCaptureSourceStateChanged(MediaSessionManagerInterface::IsCaptureStarting::Yes);
                 }
 #endif
                 if (std::holds_alternative<MediaTrackConstraints>(protectedThis->m_audioConstraints))
@@ -221,7 +223,18 @@ void UserMediaRequest::allow(CaptureDevice&& audioDevice, CaptureDevice&& videoD
 
             ASSERT(document.isCapturing());
             document.setHasCaptureMediaStreamTrack();
-            protectedThis->m_promise->resolve(WTF::move(stream));
+
+            if (!sessionActivated) {
+                protectedThis->m_promise->resolve(WTF::move(stream));
+                return;
+            }
+
+            // Audio session activation completes asynchronously. Delay resolving the getUserMedia
+            // promise until it has, so callers observe an active session.
+            RefPtr context = protectedThis->scriptExecutionContext();
+            context->enqueueTaskWhenSettled(sessionActivated.releaseNonNull(), TaskSource::UserInteraction, [protectedThis, stream = WTF::move(stream)](auto&&) mutable {
+                protectedThis->m_promise->resolve(WTF::move(stream));
+            });
         };
 
         auto& document = downcast<Document>(*request.scriptExecutionContext());

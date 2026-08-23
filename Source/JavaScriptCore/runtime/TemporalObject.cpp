@@ -24,6 +24,7 @@
 
 #include "FractionToDouble.h"
 #include "FunctionPrototype.h"
+#include "ISO8601.h"
 #include "IntlObjectInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
@@ -31,8 +32,10 @@
 #include "ObjectPrototype.h"
 #include "Rounding.h"
 #include "TemporalCalendar.h"
+#include "TemporalDuration.h"
 #include "TemporalDurationConstructor.h"
 #include "TemporalDurationPrototype.h"
+#include "TemporalInstant.h"
 #include "TemporalInstantConstructor.h"
 #include "TemporalInstantPrototype.h"
 #include "TemporalNow.h"
@@ -712,6 +715,19 @@ bool isPartialTemporalObject(JSGlobalObject* globalObject, JSValue value)
     return true;
 }
 
+std::optional<TimeZone> timeZoneFromIdentifierParseRecord(const ISO8601::TimeZoneIdentifierParseRecord& parseRecord)
+{
+    // If [[OffsetMinutes]] is not ~empty~, FormatOffsetTimeZoneIdentifier(offsetMinutes).
+    if (parseRecord.offsetMinutes)
+        return TimeZone::fromUTCOffset(*parseRecord.offsetMinutes * static_cast<int64_t>(ISO8601::ExactTime::nsPerMinute));
+
+    // Otherwise GetAvailableNamedTimeZoneIdentifier([[Name]]); ~empty~ is the caller's RangeError.
+    auto identifierRecord = ISO8601::parseTimeZoneName(parseRecord.name.span());
+    if (!identifierRecord) [[unlikely]]
+        return std::nullopt;
+    return TimeZone::fromID(*identifierRecord);
+}
+
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporaltimezoneidentifier
 std::optional<TimeZone> toTemporalTimeZoneIdentifier(JSGlobalObject* globalObject, JSValue item)
 {
@@ -730,20 +746,52 @@ std::optional<TimeZone> toTemporalTimeZoneIdentifier(JSGlobalObject* globalObjec
     String tzString = asString(item)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    // Steps 3-5: ParseTimeZoneIdentifier; the resulting TimeZone already carries the
-    // case-normalized, alias-preserving identifier (named) or canonical offset.
-    auto parsed = ISO8601::parseTemporalTimeZoneIdentifier(tzString);
-    if (!parsed) [[unlikely]] {
+    auto throwInvalidTimeZoneIdentifier = [&] {
         throwRangeError(globalObject, scope, makeString("'"_s, ellipsizeAt(100, tzString), "' is not a valid time zone identifier"_s));
         return std::nullopt;
-    }
+    };
 
-    return *parsed;
+    // Step 3: Let parseResult be ? ParseTemporalTimeZoneString(temporalTimeZoneLike).
+    auto parseResult = ISO8601::parseTemporalTimeZoneString(tzString);
+    if (!parseResult) [[unlikely]]
+        return throwInvalidTimeZoneIdentifier();
+
+    // Steps 4-9: offsetMinutes → FormatOffsetTimeZoneIdentifier; otherwise resolve [[Name]], with
+    //   step 8's RangeError for an unavailable one.
+    auto timeZone = timeZoneFromIdentifierParseRecord(*parseResult);
+    if (!timeZone) [[unlikely]]
+        return throwInvalidTimeZoneIdentifier();
+    return timeZone;
 }
 
 void throwTemporalError(JSGlobalObject* globalObject, ThrowScope& scope, const TemporalError& error)
 {
     throwError(globalObject, scope, error.kind == TemporalErrorKind::RangeError ? ErrorType::RangeError : ErrorType::TypeError, error.message);
+}
+
+TemporalType temporalType(JSValue value)
+{
+    // Every Temporal class uses a plain ObjectType structure, so anything else short-circuits.
+    if (!value.isCell() || value.asCell()->type() != ObjectType)
+        return TemporalType::None;
+    JSCell* cell = value.asCell();
+    if (cell->inherits<TemporalInstant>())
+        return TemporalType::Instant;
+    if (cell->inherits<TemporalPlainDateTime>())
+        return TemporalType::PlainDateTime;
+    if (cell->inherits<TemporalPlainDate>())
+        return TemporalType::PlainDate;
+    if (cell->inherits<TemporalPlainTime>())
+        return TemporalType::PlainTime;
+    if (cell->inherits<TemporalZonedDateTime>())
+        return TemporalType::ZonedDateTime;
+    if (cell->inherits<TemporalPlainYearMonth>())
+        return TemporalType::PlainYearMonth;
+    if (cell->inherits<TemporalPlainMonthDay>())
+        return TemporalType::PlainMonthDay;
+    if (cell->inherits<TemporalDuration>())
+        return TemporalType::Duration;
+    return TemporalType::None;
 }
 
 } // namespace JSC

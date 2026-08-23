@@ -31,6 +31,14 @@
 
 namespace JSC {
 
+#if USE(BUN_JSC_ADDITIONS)
+#define JSC_FOR_EACH_BUN_JSC_INTRINSIC(macro) \
+    macro(BufferAccessorIntrinsic) \
+
+#else
+#define JSC_FOR_EACH_BUN_JSC_INTRINSIC(macro)
+#endif
+
 #define JSC_FOR_EACH_INTRINSIC(macro) \
     /* Call intrinsics. */ \
     macro(NoIntrinsic) \
@@ -291,6 +299,8 @@ namespace JSC {
     macro(DataViewSetFloat64) \
     macro(DataViewSetBigInt64) \
     macro(DataViewSetBigUint64) \
+    \
+    JSC_FOR_EACH_BUN_JSC_INTRINSIC(macro) \
     \
     macro(WasmFunctionIntrinsic) \
 

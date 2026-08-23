@@ -146,6 +146,7 @@ using JSResizableOrGrowableSharedBigUint64Array = JSGenericResizableOrGrowableSh
     macro(JSAsyncFunctionGenerator, JSType::JSAsyncFunctionGeneratorType, JSType::JSAsyncFunctionGeneratorType) \
     macro(JSAsyncGenerator, JSType::JSAsyncGeneratorType, JSType::JSAsyncGeneratorType) \
     macro(WebAssemblyGCObjectBase, JSType::WebAssemblyGCObjectType, JSType::WebAssemblyGCObjectType) \
+    macro(InternalFieldTuple, JSType::InternalFieldTupleType, JSType::InternalFieldTupleType) \
 
 #define FOR_EACH_JS_DYNAMIC_CAST_JS_TYPE_OVERLOAD(macro) \
     FOR_EACH_JS_DYNAMIC_CAST_JS_TYPE_OVERLOAD_FORWARD_DECLARED(macro) \

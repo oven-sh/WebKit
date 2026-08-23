@@ -265,6 +265,9 @@ inline void* tryVMAllocate(size_t vmSize, VMTag usage)
         return nullptr;
 #if BOS(LINUX)
     prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, result, vmSize, vmTagName(usage));
+    // bmalloc-owned memory opts out of THP per VMA (not PR_SET_THP_DISABLE, which exec'd
+    // children inherit): under `enabled=always` a 4K touch would otherwise fault 2MB.
+    SYSCALL(madvise(result, vmSize, MADV_NOHUGEPAGE));
 #endif
     return result;
 }

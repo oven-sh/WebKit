@@ -18,7 +18,7 @@
 # Differences from the native Windows build:
 #   - ICU is cross-compiled from source with clang's GNU driver + llvm-ar
 #     instead of MSBuild + the ICU Visual Studio solution. Same version
-#     (73.2), same /MT static CRT, same U_STATIC_IMPLEMENTATION, same
+#     (78.3), same /MT static CRT, same U_STATIC_IMPLEMENTATION, same
 #     statically-embedded 32 MB data table.
 #   - The "patch the cmake .bat files" workaround is not needed: cmake on a
 #     Linux host generates POSIX shell commands for custom commands.
@@ -35,6 +35,7 @@ ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 ARG LLVM_VERSION="21"
+ARG LLVM_DEBS_SHA256="4a79b0eae89af72b082997d361198f16aaefce3fa8ad3c56c8e97311ff31dd5f"
 ARG XWIN_VERSION="0.9.0"
 ARG XWIN_SHA256="31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4cd"
 # Pinned MSVC CRT + Windows SDK versions. Bump deliberately; the manifest on
@@ -42,10 +43,9 @@ ARG XWIN_SHA256="31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4c
 # eventually retired.
 ARG MSVC_CRT_VERSION="14.44.17.14"
 ARG WIN_SDK_VERSION="10.0.26100"
-ARG ICU_VERSION="73-2"
-ARG ICU_VERSION_UNDERSCORE="73_2"
-ARG ICU_MAJOR="73"
-ARG ICU_SHA256="818a80712ed3caacd9b652305e01afc7fa167e6f2e94996da44b90c2ab604ce1"
+ARG ICU_VERSION="78.3"
+ARG ICU_MAJOR="78"
+ARG ICU_SHA256="3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0"
 
 # ───────────────────────────────────────────────────────────────────────────
 # base — LLVM + the xwin-splatted MSVC CRT and Windows SDK
@@ -54,6 +54,7 @@ FROM ubuntu:24.04 AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
+ARG LLVM_DEBS_SHA256
 ARG XWIN_VERSION
 ARG XWIN_SHA256
 ARG MSVC_CRT_VERSION
@@ -67,7 +68,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lsb-release software-properties-common gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN wget -qO- https://apt.llvm.org/llvm.sh | bash -s -- ${LLVM_VERSION} && \
+# Host clang. The debs are mirrored from apt.llvm.org to a GitHub release
+# (see scripts/mirror-llvm-debs.sh) so the build doesn't depend on it.
+ADD --checksum=sha256:${LLVM_DEBS_SHA256} \
+    https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-noble-amd64.tar.gz /tmp/llvm.tar.gz
+RUN mkdir -p /tmp/llvm && tar xzf /tmp/llvm.tar.gz -C /tmp/llvm && \
+    apt-get update && apt-get install -y /tmp/llvm/*.deb && \
+    rm -rf /tmp/llvm /tmp/llvm.tar.gz /var/lib/apt/lists/* && \
     for t in clang clang++ clang-cl lld-link ld.lld llvm-ar llvm-lib llvm-mt llvm-rc llvm-ranlib llvm-objcopy; do \
       ln -sf /usr/bin/${t}-${LLVM_VERSION} /usr/local/bin/${t}; \
     done
@@ -193,7 +200,6 @@ ARG WIN_TRIPLE_ARCH
 ARG WEBKIT_RELEASE_TYPE
 ARG ICU_MARCH_FLAG
 ARG ICU_VERSION
-ARG ICU_VERSION_UNDERSCORE
 ARG ICU_MAJOR
 ARG ICU_SHA256
 ARG LLVM_VERSION
@@ -216,7 +222,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf
 COPY icu/ /icu-bun/
 
 ADD --checksum=sha256:${ICU_SHA256} \
-    https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION_UNDERSCORE}-src.tgz /icu-src.tgz
+    https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz /icu-src.tgz
 # The udata.cpp patch adds the weak per-item decompression hook (see the
 # stage comment above); it lands in the cross-built sicuuc.lib.
 RUN mkdir -p /icu-src && tar -xzf /icu-src.tgz -C /icu-src --strip-components=1 && rm /icu-src.tgz && \

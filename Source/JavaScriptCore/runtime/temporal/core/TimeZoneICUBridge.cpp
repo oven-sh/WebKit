@@ -61,7 +61,7 @@ struct TimeZoneLRUCachePolicy {
 static RefPtr<TimeZoneCacheEntry> timeZoneCacheEntry(const TimeZone& timeZone)
 {
     static Lock cacheLock;
-    static LazyNeverDestroyed<TinyLRUCache<TimeZone, RefPtr<TimeZoneCacheEntry>, 8, TimeZoneLRUCachePolicy>> cache;
+    static LazyNeverDestroyed<TinyLRUCache<TimeZone, RefPtr<TimeZoneCacheEntry>, 16, TimeZoneLRUCachePolicy>> cache;
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
         cache.construct();
@@ -274,8 +274,8 @@ static TemporalResult<PossibleEpochNanoseconds> getNamedTimeZoneEpochNanoseconds
             return PossibleEpochNanoseconds { makeExactTime(localMs - static_cast<double>(*before)) };
 
         // Offset jumped up (spring-forward) → the local time is skipped (gap): no instant maps here.
-        // Hand the bracket offsets to the disambiguator, preserving the prior GapOffsets contract
-        // (disambiguate: earlier = naiveNs − afterNs; later/compatible = naiveNs − beforeNs).
+        // The probes above are also Disambiguate steps 6-13's offsetBefore/offsetAfter, which ICU
+        // gives directly; those steps cannot throw, so skipping them loses nothing observable.
         if (*after > *before)
             return PossibleEpochNanoseconds { GapOffsets { *before * nsPerMs, *after * nsPerMs } };
 
@@ -371,16 +371,16 @@ TemporalResult<std::optional<ISO8601::ExactTime>> getTimeZoneTransition(const Ti
 
             // Check if offset actually changed at this transition by querying before/after on cal directly.
             double beforeMs = transitionMs - 1.0;
-            double afterMs = transitionMs;
-            ucal_setMillis(cal, beforeMs, &status);
-            int32_t offsetBefore = ucal_get(cal, UCAL_ZONE_OFFSET, &status) + ucal_get(cal, UCAL_DST_OFFSET, &status);
-            ucal_setMillis(cal, afterMs, &status);
-            int32_t offsetAfter = ucal_get(cal, UCAL_ZONE_OFFSET, &status) + ucal_get(cal, UCAL_DST_OFFSET, &status);
-            if (U_FAILURE(status)) [[unlikely]]
-                return std::optional<ISO8601::ExactTime> { transition };
-            if (offsetBefore != offsetAfter)
+            auto offsetBefore = getOffsetMsAtEpoch(cal, beforeMs);
+            if (!offsetBefore) [[unlikely]]
+                return makeUnexpected(rangeError(icuTransitionFailed));
+            auto offsetAfter = getOffsetMsAtEpoch(cal, transitionMs);
+            if (!offsetAfter) [[unlikely]]
+                return makeUnexpected(rangeError(icuTransitionFailed));
+            if (*offsetBefore != *offsetAfter)
                 return std::optional<ISO8601::ExactTime> { transition };
 
+            status = U_ZERO_ERROR;
             ucal_setMillis(cal, direction == TransitionDirection::Previous ? beforeMs : transitionMs + 1.0, &status);
             if (U_FAILURE(status)) [[unlikely]]
                 return makeUnexpected(rangeError(icuTransitionFailed));
@@ -391,13 +391,10 @@ TemporalResult<std::optional<ISO8601::ExactTime>> getTimeZoneTransition(const Ti
 
 // disambiguatePossibleEpochNanoseconds — temporal_rs: TimeZone::disambiguate_possible_epoch_nanos (src/builtins/core/time_zone.rs)
 // https://tc39.es/proposal-temporal/#sec-temporal-disambiguatepossibleepochnanoseconds
-// NOTE: For the gap case (n=0), bracket offsets are precomputed in GapOffsets { beforeNs, afterNs } to avoid extra ICU calls.
-static TemporalResult<ISO8601::ExactTime> disambiguatePossibleEpochNanoseconds(const PossibleEpochNanoseconds& possible, const ISO8601::PlainDate& date, const ISO8601::PlainTime& time, TemporalDisambiguation disambiguation)
+// NOTE: steps 6-13 are done during gap detection in getNamedTimeZoneEpochNanoseconds and arrive as
+// GapOffsets, so the gap branch here starts at step 14.
+static TemporalResult<ISO8601::ExactTime> disambiguatePossibleEpochNanoseconds(const PossibleEpochNanoseconds& possible, const TimeZone& timeZone, const ISO8601::PlainDate& date, const ISO8601::PlainTime& time, TemporalDisambiguation disambiguation)
 {
-    double localMs = isoDateTimeToLocalMs(date, time);
-    Int128 subMs = static_cast<Int128>(time.microsecond()) * 1000 + static_cast<Int128>(time.nanosecond());
-    Int128 naiveNs = static_cast<Int128>(localMs) * ISO8601::ExactTime::nsPerMillisecond + subMs;
-
     return WTF::switchOn(possible,
         // 1. n = elements in possibleEpochNs (encoded in Variant type).
         // 2. If n = 1, return the sole element.
@@ -417,14 +414,36 @@ static TemporalResult<ISO8601::ExactTime> disambiguatePossibleEpochNanoseconds(c
             return fold[1];
         },
         // 4. Assert: n = 0 (DST gap — local time does not exist).
-        // 5. If disambiguation is ~reject~, throw a RangeError.
-        // 6-20. Bracket offsets from GapOffsets; step 16 (~earlier~): naiveNs - offsetAfter; step 17-20 (~later~/~compatible~): naiveNs - offsetBefore.
         [&](const GapOffsets& gap) -> TemporalResult<ISO8601::ExactTime> {
+            // 5. If disambiguation is ~reject~, throw a RangeError.
             if (disambiguation == TemporalDisambiguation::Reject)
                 return makeUnexpected(rangeError("nonexistent instant: local time does not exist in this time zone (DST gap)"_s));
-            if (disambiguation == TemporalDisambiguation::Earlier)
-                return ISO8601::ExactTime(naiveNs - Int128(gap.afterNs));
-            return ISO8601::ExactTime(naiveNs - Int128(gap.beforeNs));
+
+            // 14. nanoseconds = offsetAfter - offsetBefore.
+            int64_t nanoseconds = gap.afterNs - gap.beforeNs;
+            // 15. Assert: abs(nanoseconds) ≤ nsPerDay.
+            ASSERT(Int128(nanoseconds < 0 ? -nanoseconds : nanoseconds) <= ISO8601::ExactTime::nsPerDay);
+
+            bool isEarlier = disambiguation == TemporalDisambiguation::Earlier;
+            // 16.a-16.d / 18-21. Shift the local time by ∓nanoseconds: AddTime, AddDaysToISODate, CombineISODateAndTimeRecord.
+            auto [dayShift, shiftedTime] = balanceIsoTime(time.hour(), time.minute(), time.second(),
+                time.millisecond(), time.microsecond(),
+                static_cast<int64_t>(time.nanosecond()) + (isEarlier ? -nanoseconds : nanoseconds));
+            auto shiftedDate = balanceIsoDate(date.year(), date.month(), static_cast<int64_t>(date.day()) + dayShift);
+
+            // 16.e / 22. Re-entering, rather than computing naiveNs - offset, is what carries GetPossibleEpochNanoseconds step 5's IsValidEpochNanoseconds throw.
+            auto shiftedPossible = getPossibleEpochNanosecondsFor(timeZone, shiftedDate, shiftedTime);
+            if (!shiftedPossible)
+                return makeUnexpected(shiftedPossible.error());
+            auto candidates = epochCandidates(*shiftedPossible);
+
+            // 16.f / 23-24. Assert: n ≠ 0 — the shifted time is past the transition, so it exists.
+            ASSERT(!candidates.empty());
+            if (candidates.empty()) [[unlikely]]
+                return makeUnexpected(rangeError("nonexistent instant: local time does not exist in this time zone (DST gap)"_s));
+
+            // 16.g / 25. Return possibleEpochNs[0] / possibleEpochNs[n - 1].
+            return isEarlier ? candidates.front() : candidates.back();
         });
 }
 
@@ -436,8 +455,8 @@ TemporalResult<ISO8601::ExactTime> getEpochNanosecondsFor(const TimeZone& timeZo
     auto possible = getPossibleEpochNanosecondsFor(timeZone, date, time);
     if (!possible)
         return makeUnexpected(possible.error());
-    // 2. Return ? DisambiguatePossibleInstants(possibleEpochNs, timeZone, date, time, disambiguation).
-    return disambiguatePossibleEpochNanoseconds(*possible, date, time, disambiguation);
+    // 2. Return ? DisambiguatePossibleEpochNanoseconds(possibleEpochNs, timeZone, isoDateTime, disambiguation).
+    return disambiguatePossibleEpochNanoseconds(*possible, timeZone, date, time, disambiguation);
 }
 
 // addZonedDateTime — temporal_rs: ZonedDateTime::add_zoned_date_time (src/builtins/core/zoned_date_time.rs)
@@ -499,32 +518,21 @@ TemporalResult<ISO8601::ExactTime> addZonedDateTime(ISO8601::ExactTime startEpoc
 }
 
 // timeZoneEquals — temporal_rs: TimeZone::time_zone_equals_with_provider (src/builtins/core/time_zone.rs)
-// https://tc39.es/proposal-canonical-tz/#sec-temporal-timezoneequals
-// Spec operates on Time Zone Identifier records. Step 1 (Object identity) and steps 2-4
-// (canonicalization + SameValue on the canonical strings) are subsumed by JSC's TimeZone
-// representation: identical TimeZone values mean both sides resolved to the same record.
-// Step 7 (both named) reduces to primary-identifier comparison via intlPrimaryTimeZoneID.
-// Step 8 (both offset) reduces to numeric offset comparison — already covered by
-// TimeZone::operator== since offset records share m_id == offsetTimeZoneID.
-// Mixed kinds fall through to step 9 (false).
+// https://tc39.es/proposal-temporal/#sec-temporal-timezoneequals
 bool timeZoneEquals(const TimeZone& a, const TimeZone& b)
 {
+    // 1. If one is two, return true.
     if (a == b)
         return true;
-    if (a.isUTCOffset() || b.isUTCOffset())
-        return false;
-    return intlPrimaryTimeZoneID(a.id()) == intlPrimaryTimeZoneID(b.id());
-}
 
-bool timeZoneEquals(StringView id1, StringView id2)
-{
-    if (id1 == id2)
-        return true;
-    auto a = ISO8601::parseTemporalTimeZoneIdentifier(id1);
-    auto b = ISO8601::parseTemporalTimeZoneIdentifier(id2);
-    if (!a || !b)
-        return false;
-    return timeZoneEquals(*a, *b);
+    // 2. If neither one nor two is an offset time zone identifier, then
+    if (a.isUTCOffset() || b.isUTCOffset())
+        return false; // 4. Return false.
+
+    // 2.a-2.d. recordOne/recordTwo = GetAvailableNamedTimeZoneIdentifier(...); both are non-empty.
+    // 2.e. If recordOne.[[PrimaryIdentifier]] is recordTwo.[[PrimaryIdentifier]], return true.
+    // 4. Return false.
+    return intlPrimaryTimeZoneID(a.id()) == intlPrimaryTimeZoneID(b.id());
 }
 
 } // namespace TemporalCore

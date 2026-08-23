@@ -898,6 +898,14 @@ std::unique_ptr<ExpressionInfo> ExpressionInfo::createUninitialized(unsigned num
     return std::unique_ptr<ExpressionInfo>(new (allocation) ExpressionInfo(numberOfChapters, numberOfEncodedInfo, numberOfEncodedInfoExtensions));
 }
 
+std::unique_ptr<ExpressionInfo> ExpressionInfo::createBorrowed(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions, const unsigned* payload)
+{
+    void* allocation = FastMalloc::malloc(sizeof(ExpressionInfo));
+    auto info = std::unique_ptr<ExpressionInfo>(new (allocation) ExpressionInfo(numberOfChapters, numberOfEncodedInfo, numberOfEncodedInfoExtensions));
+    info->m_borrowedPayload = const_cast<unsigned*>(payload);
+    return info;
+}
+
 ExpressionInfo::ExpressionInfo(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions)
     : m_numberOfChapters(numberOfChapters)
     , m_numberOfEncodedInfo(numberOfEncodedInfo)
@@ -914,6 +922,8 @@ ExpressionInfo::ExpressionInfo(Vector<Chapter>&& chapters, Vector<EncodedInfo>&&
 
 size_t ExpressionInfo::byteSize() const
 {
+    if (m_borrowedPayload) [[unlikely]]
+        return sizeof(ExpressionInfo); // the payload belongs to the cache mapping, not to this object
     return totalSizeInBytes(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
 }
 

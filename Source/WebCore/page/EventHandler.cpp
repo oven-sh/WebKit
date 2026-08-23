@@ -742,8 +742,11 @@ bool EventHandler::handleMousePressEventDoubleClick(const MouseEventWithHitTestR
 #if ENABLE(DRAG_SUPPORT)
         m_dragStartSelection = getWeakSimpleRangeFromSelection(m_frame->selection().selection());
 #endif
-    } else if (mouseDownMayStartSelect())
+    } else if (mouseDownMayStartSelect() && event.event().inputSource() != MouseEventInputSource::Automation) {
+        // If the event is an Automation event, avoid interfering with the platform text interaction,
+        // which handles selection itself.
         selectClosestWordFromHitTestResult(event.hitTestResult(), shouldAppendTrailingWhitespace(event, protect(m_frame)));
+    }
 
     return true;
 }
@@ -3409,8 +3412,9 @@ bool EventHandler::dispatchMouseEvent(const AtomString& eventType, Node* targetN
     // Form control elements are not mouse focusable on some platforms (see HTMLFormControlElement::isMouseFocusable())
     // which makes us behave differently than other browsers when a button is clicked,
     // because the button is not actually focused so we don't set the latest FocusTrigger.
-    if (!element && m_elementUnderMouse) {
-        for (RefPtr ancestor = m_elementUnderMouse.get(); ancestor; ancestor = ancestor->parentElementInComposedTree()) {
+    if (m_elementUnderMouse) {
+        // Stop at element: setFocusedElement records the trigger for it, unless it is already focused.
+        for (RefPtr ancestor = m_elementUnderMouse.get(); ancestor && ancestor != element; ancestor = ancestor->parentElementInComposedTree()) {
             if (is<HTMLFormControlElement>(*ancestor) && !ancestor->isMouseFocusable()) {
                 frame->document()->setLatestFocusTrigger(FocusTrigger::Click);
                 break;
@@ -4186,8 +4190,11 @@ bool EventHandler::keyEvent(const PlatformKeyboardEvent& keyEvent)
             if (page)
                 page->setUserDidInteractWithPage(savedUserDidInteractWithPage);
             document->updateLastHandledUserGestureTimestamp(savedLastHandledUserGestureTimestamp);
-        } else
+        } else {
             ResourceLoadObserver::singleton().logUserInteractionWithReducedTimeResolution(*document);
+            if (page)
+                page->didObserveFirstPartyUserGesture();
+        }
     }
 
     return wasHandled;

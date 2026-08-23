@@ -167,7 +167,10 @@ public:
         // cell liveness data. To restore accurate cell liveness data, call one
         // of these functions:
         void didConsumeFreeList(); // Call this once you've allocated all the items in the free list.
-        void stopAllocating(const FreeList&);
+        // ForGood is the heap-teardown path, where the caller sweeps every block immediately
+        // afterwards and so has no use for the newly-allocated bitmap this would otherwise compute.
+        enum class StopAllocatingMode : bool { Resumable, ForGood };
+        void stopAllocating(const FreeList&, StopAllocatingMode = StopAllocatingMode::Resumable);
         void resumeAllocating(FreeList&); // Call this if you canonicalized a block for some non-collection related purpose.
             
         size_t cellSize();
@@ -606,15 +609,14 @@ inline bool MarkedBlock::isMarkedRaw(const void* p)
     return header().m_marks.get(atomNumber(p));
 }
 
-// Defined in MarkedBlock.cpp with NEVER_INLINE to prevent LTO from breaking compiler barriers
-// inline bool MarkedBlock::isMarked(HeapVersion markingVersion, const void* p)
-// {
-//     HeapVersion version;
-//     Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
-//     if (version != markingVersion) [[unlikely]]
-//         return false;
-//     return header().m_marks.concurrentGet(atomNumber(p), dependency);
-// }
+inline bool MarkedBlock::isMarked(HeapVersion markingVersion, const void* p)
+{
+    HeapVersion version;
+    Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
+    if (version != markingVersion) [[unlikely]]
+        return false;
+    return header().m_marks.concurrentGet(atomNumber(p), dependency);
+}
 
 inline bool MarkedBlock::isMarked(const void* p, Dependency dependency)
 {

@@ -632,15 +632,6 @@ static void overrideDefaults()
     }
 #endif
 
-#if OS(LINUX) && CPU(ARM)
-    Options::maximumFunctionForCallInlineCandidateBytecodeCostForDFG() = 77;
-    Options::maximumOptimizationCandidateBytecodeCost() = 42403;
-    Options::maximumFunctionForClosureCallInlineCandidateBytecodeCostForDFG() = 68;
-    Options::maximumInliningCallerBytecodeCost() = 9912;
-    Options::maximumInliningDepth() = 8;
-    Options::maximumInliningRecursion() = 3;
-#endif
-
 #if USE(MEMORY_FOOTPRINT_API)
     // On iOS and conditionally Linux, we control heap growth using process memory footprint. Therefore these values can be agressive.
     Options::smallHeapRAMFraction() = 0.8;
@@ -1087,40 +1078,43 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
 
             // Allow environment vars to override options if applicable.
             // The env var should be the name of the option prefixed with
-            // "JSC_".
+            // "JSC_". An embedder with its own configuration surface can opt
+            // out with Config::disableEnvironmentOptions().
+            if (!g_jscConfig.environmentOptionsDisabled) {
 #if PLATFORM(COCOA) || OS(LINUX)
-            bool hasBadOptions = false;
+                bool hasBadOptions = false;
 #if PLATFORM(COCOA)
-            char** envp = *_NSGetEnviron();
+                char** envp = *_NSGetEnviron();
 #else
-            char** envp = environ;
+                char** envp = environ;
 #endif
 
-            for (; *envp; envp++) {
-                const char* env = *envp;
-                if (!strncmp("JSC_", env, 4)) {
-                    if (!Options::setOption(&env[4])) {
-                        dataLog("ERROR: invalid option: ", *envp, "\n");
-                        hasBadOptions = true;
+                for (; *envp; envp++) {
+                    const char* env = *envp;
+                    if (!strncmp("JSC_", env, 4)) {
+                        if (!Options::setOption(&env[4])) {
+                            dataLog("ERROR: invalid option: ", *envp, "\n");
+                            hasBadOptions = true;
+                        }
                     }
                 }
-            }
-            if (hasBadOptions && Options::validateOptions())
-                CRASH();
+                if (hasBadOptions && Options::validateOptions())
+                    CRASH();
 #endif // PLATFORM(COCOA) || OS(LINUX)
 
 #if !PLATFORM(COCOA)
 #define OVERRIDE_OPTION_WITH_HEURISTICS(type_, name_, defaultValue_, availability_, description_) \
-            overrideOptionWithHeuristic(name_(), name_##ID, "JSC_" #name_, Availability::availability_);
-            FOR_EACH_JSC_OPTION(OVERRIDE_OPTION_WITH_HEURISTICS)
+                overrideOptionWithHeuristic(name_(), name_##ID, "JSC_" #name_, Availability::availability_);
+                FOR_EACH_JSC_OPTION(OVERRIDE_OPTION_WITH_HEURISTICS)
 #undef OVERRIDE_OPTION_WITH_HEURISTICS
 
 #define OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS(aliasedName_, unaliasedName_, equivalence_) \
-            overrideAliasedOptionWithHeuristic("JSC_" #aliasedName_);
-            FOR_EACH_JSC_ALIASED_OPTION(OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS)
+                overrideAliasedOptionWithHeuristic("JSC_" #aliasedName_);
+                FOR_EACH_JSC_ALIASED_OPTION(OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS)
 #undef OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS
 
 #endif // !PLATFORM(COCOA)
+            }
 
 #if 0
                 ; // Deconfuse editors that do auto indentation

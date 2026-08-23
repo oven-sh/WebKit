@@ -180,6 +180,17 @@ WebExtension::StringResources WebExtension::toStringResources(const WebExtension
     return result;
 }
 
+WebExtension::WebExtension(const JSON::Value& manifest, Resources&& resources)
+    : m_manifestJSON(manifest)
+    , m_dataResources(toDataResources(resources))
+    , m_stringResources(toStringResources(resources))
+{
+    auto manifestString = manifest.toJSONString();
+    RELEASE_ASSERT(manifestString);
+
+    m_stringResources.set("manifest.json"_s, manifestString);
+}
+
 WebExtension::WebExtension(Resources&& resources)
     : m_manifestJSON(JSON::Value::null())
     , m_dataResources(toDataResources(resources))
@@ -1636,6 +1647,9 @@ const WebExtension::PermissionsSet& WebExtension::supportedPermissions()
 #endif
 #if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
         WebExtensionPermission::bookmarks(),
+#endif
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+        WebExtensionPermission::offscreen(),
 #endif
     };
     return permissions;

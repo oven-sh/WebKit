@@ -27,6 +27,7 @@
 #include "FontCache.h"
 
 #include "Font.h"
+#include "FontCustomPlatformData.h"
 #include "FontDescription.h"
 #include "StyleFontSizeFunctions.h"
 #include <wtf/Assertions.h>
@@ -277,15 +278,18 @@ Vector<hb_feature_t> FontCache::computeFeatures(const FontDescription& fontDescr
         featuresToBeApplied.set(fontFeatureTag("clig"), 0);
     }
 
-    // dlig is off by default in HarfBuzz.
-    auto discretionaryLigatures = fontDescription.variantDiscretionaryLigatures();
-    if (!shouldDisableLigaturesForSpacing && discretionaryLigatures == FontVariantLigatures::Yes)
-        featuresToBeApplied.set(fontFeatureTag("dlig"), 1);
+    if (shouldDisableLigaturesForSpacing) {
+        featuresToBeApplied.set(fontFeatureTag("dlig"), 0);
+        featuresToBeApplied.set(fontFeatureTag("hlig"), 0);
+    } else {
+        auto discretionaryLigatures = fontDescription.variantDiscretionaryLigatures();
+        if (discretionaryLigatures == FontVariantLigatures::Yes)
+            featuresToBeApplied.set(fontFeatureTag("dlig"), 1);
 
-    // hlig is off by default in HarfBuzz.
-    auto historicalLigatures = fontDescription.variantHistoricalLigatures();
-    if (!shouldDisableLigaturesForSpacing && historicalLigatures == FontVariantLigatures::Yes)
-        featuresToBeApplied.set(fontFeatureTag("hlig"), 1);
+        auto historicalLigatures = fontDescription.variantHistoricalLigatures();
+        if (historicalLigatures == FontVariantLigatures::Yes)
+            featuresToBeApplied.set(fontFeatureTag("hlig"), 1);
+    }
 
     // calt is on by default in HarfBuzz.
     auto contextualAlternates = fontDescription.variantContextualAlternates();
@@ -420,7 +424,7 @@ std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDe
     auto size = fontDescription.adjustedSizeForFontFace(fontCreationContext.sizeAdjust());
     auto features = computeFeatures(fontDescription, fontCreationContext);
     auto [syntheticBold, syntheticOblique] = computeSynthesisProperties(*typeface, fontDescription, options);
-    FontPlatformData platformData(WTF::move(typeface), size, syntheticBold, syntheticOblique, fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), WTF::move(features));
+    FontPlatformData platformData(WTF::move(typeface), size, syntheticBold, syntheticOblique, fontDescription.orientation(), fontDescription.widthVariant(), fontDescription.textRenderingMode(), WTF::move(features), fontCreationContext.metricsOverrides());
 
     platformData.updateSizeWithFontSizeAdjust(fontDescription.fontSizeAdjust(), fontDescription.computedSize());
     auto platformDataUniquePtr = makeUnique<FontPlatformData>(platformData);
@@ -431,6 +435,16 @@ std::unique_ptr<FontPlatformData> FontCache::createFontPlatformData(const FontDe
 ASCIILiteral FontCache::platformAlternateFamilyName(const String&)
 {
     return { };
+}
+
+void FontCache::platformReleaseNoncriticalMemory()
+{
+    for (auto& entry : m_fontCascadeCache.m_entries.values()) {
+        entry->fonts->forEachRealizedFont([](const Font& font) {
+            if (const auto* customPlatformData = font.platformData().customPlatformData())
+                customPlatformData->clearVariationTypefacesCache();
+        });
+    }
 }
 
 void FontCache::platformInvalidate()

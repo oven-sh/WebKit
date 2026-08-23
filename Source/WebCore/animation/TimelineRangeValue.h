@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,14 +35,16 @@
 namespace WebCore {
 
 namespace Style {
-enum class SingleAnimationRangeType : bool;
+struct SingleAnimationRangeEnd;
+struct SingleAnimationRangeStart;
 }
 
-class Element;
+class Document;
 
 using TimelineRangeValue = Variant<TimelineRangeOffset, Ref<CSSNumericValue>, Ref<CSSOMKeywordValue>, String>;
 
-RefPtr<CSSValue> convertToCSSValue(TimelineRangeValue&&, RefPtr<Element>, Style::SingleAnimationRangeType);
+std::optional<Style::SingleAnimationRangeStart> validateTimelineRangeStart(TimelineRangeValue&&, const Document&);
+std::optional<Style::SingleAnimationRangeEnd> validateTimelineRangeEnd(TimelineRangeValue&&, const Document&);
 
 } // namespace WebCore
 

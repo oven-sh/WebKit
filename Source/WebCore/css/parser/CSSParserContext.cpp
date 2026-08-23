@@ -60,7 +60,6 @@ static void NODELETE applyUASheetBehaviorsToContext(CSSParserContext& context)
 #if HAVE(CORE_MATERIAL)
     context.propertySettings.useSystemAppearance = true;
 #endif
-    context.propertySettings.cssAnchorPositioningEnabled = true;
     context.cssInternalAutoBaseParsingEnabled = true;
     context.htmlEnhancedSelectEnabled = true;
 }
@@ -132,6 +131,7 @@ CSSParserContext::CSSParserContext(const Settings& settings)
     , cssCalcMixEnabled { settings.cssCalcMixEnabled() }
     , cssIdentFunctionEnabled { settings.cssIdentFunctionEnabled() }
     , cssIfFunctionEnabled { settings.cssIfFunctionEnabled() }
+    , cssInheritFunctionEnabled { settings.cssInheritFunctionEnabled() }
     , propertySettings { CSSPropertySettings { settings } }
 {
 }
@@ -183,6 +183,7 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssCalcMixEnabled,
         context.cssIdentFunctionEnabled,
         context.cssIfFunctionEnabled,
+        context.cssInheritFunctionEnabled,
         context.legacyFontFaceAttributeMode
     );
     add(hasher, context.baseURL, context.charset, context.propertySettings, context.mode, context.enclosingRuleType, bits);

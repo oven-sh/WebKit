@@ -70,6 +70,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #if USE(BUN_JSC_ADDITIONS)
+#include "BufferAccessorRegistry.h"
 #include "FFISignature.h"
 #include "JSFFIFunction.h"
 #endif
@@ -2191,6 +2192,16 @@ bool ByteCodeParser::handleVarargsInlining(Node* callTargetNode, Operand result,
         VERBOSE_LOG("Bailing inlining: too many arguments for varargs inlining.\n");
         return false;
     }
+
+    auto hasVarargsOverflowExit = [&] {
+        for (unsigned checkpoint = 0; checkpoint < BytecodeIndex::numberOfCheckpoints; ++checkpoint) {
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex.withCheckpoint(checkpoint), VarargsOverflow))
+                return true;
+        }
+        return false;
+    };
+    if (hasVarargsOverflowExit())
+        return false;
     if (callLinkStatus.couldTakeSlowPath() || callLinkStatus.size() != 1) {
         VERBOSE_LOG("Bailing inlining: polymorphic inlining is not yet supported for varargs.\n");
         return false;
@@ -4232,10 +4243,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
             insertChecks();
             VirtualRegister operand = virtualRegisterForArgumentIncludingThis(1, registerOffset);
-            if (enableInt52())
-                setResult(addToGraph(FiatInt52, get(operand)));
-            else
-                setResult(get(operand));
+            setResult(addToGraph(FiatInt52, get(operand)));
             return CallOptimizationResult::Inlined;
         }
 
@@ -5089,6 +5097,81 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        case BufferAccessorIntrinsic: {
+            for (ExitKind kind : { BadType, BadIndexingType, OutOfBounds, Int52Overflow, Uncountable }) {
+                if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, kind))
+                    return CallOptimizationResult::DidNothing;
+            }
+
+            NativeExecutable* nativeExecutable = variant.nativeExecutable();
+            if (!nativeExecutable)
+                return CallOptimizationResult::DidNothing;
+            std::optional<BufferAccessorDescriptor> descriptor = bufferAccessorDescriptor(nativeExecutable->function());
+            if (!descriptor)
+                return CallOptimizationResult::DidNothing;
+
+            DataViewData data = descriptor->data;
+            Array::Action action = descriptor->isWrite ? Array::Write : Array::Read;
+            ArrayMode profiledMode = getArrayMode(action);
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, UnexpectedResizableArrayBufferView))
+                data.isResizable = true;
+            else
+                data.isResizable = profiledMode.mayBeResizableOrGrowableSharedTypedArray();
+            bool mayBeLargeTypedArray = profiledMode.mayBeLargeTypedArray() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow);
+            ArrayMode arrayMode = ArrayMode(Array::SelectUsingPredictions, Array::NonArray, Array::InBounds, Array::AsIs, action, mayBeLargeTypedArray, data.isResizable);
+
+            if (descriptor->byteLengthFromArgument) {
+                int byteLengthArgument = descriptor->isWrite ? 3 : 2;
+                if (argumentCountIncludingThis <= byteLengthArgument)
+                    return CallOptimizationResult::DidNothing;
+                Node* byteLength = get(virtualRegisterForArgumentIncludingThis(byteLengthArgument, registerOffset));
+                if (!byteLength->isNumberConstant())
+                    return CallOptimizationResult::DidNothing;
+                double width = byteLength->asNumber();
+                if (width != 1 && width != 2 && width != 4)
+                    return CallOptimizationResult::DidNothing;
+                data.byteSize = static_cast<uint8_t>(width);
+            }
+
+            auto offsetArgument = [&](int argumentIndex) -> Node* {
+                if (argumentCountIncludingThis <= argumentIndex)
+                    return jsConstant(jsNumber(0));
+                Node* offset = get(virtualRegisterForArgumentIncludingThis(argumentIndex, registerOffset));
+                if (!descriptor->byteLengthFromArgument && offset->isUndefinedOrNullConstant() && !offset->asJSValue().isNull())
+                    return jsConstant(jsNumber(0));
+                return offset;
+            };
+
+            if (descriptor->isWrite) {
+                if (argumentCountIncludingThis < 2)
+                    return CallOptimizationResult::DidNothing;
+
+                insertChecks();
+
+                Node* offset = offsetArgument(2);
+                Node* returnValue = makeSafe(addToGraph(ArithAdd, offset, jsConstant(jsNumber(data.byteSize))));
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset)));
+                addVarArgChild(offset);
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
+                addVarArgChild(nullptr);
+                addToGraph(Node::VarArg, BufferWrite, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord));
+                setResult(returnValue);
+                return CallOptimizationResult::Inlined;
+            }
+
+            insertChecks();
+
+            Node* offset = offsetArgument(1);
+
+            addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset)));
+            addVarArgChild(offset);
+            addVarArgChild(nullptr);
+            setResult(addToGraph(Node::VarArg, data.isFloatingPoint ? BufferReadFloat : BufferReadInt, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord)));
+            return CallOptimizationResult::Inlined;
+        }
+#endif // USE(BUN_JSC_ADDITIONS)
+
         case ObjectHasOwnIntrinsic:
         case HasOwnPropertyIntrinsic: {
             bool isObjectHasOwn = intrinsic == ObjectHasOwnIntrinsic;
@@ -5691,10 +5774,6 @@ bool ByteCodeParser::handleDOMJITCall(Node* callTarget, Operand result, const DO
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& variant, Node* thisNode, Node* unwrapped, const ChecksFunctor& insertChecks)
 {
-#if USE(LARGE_TYPED_ARRAYS)
-    static_assert(enableInt52());
-#endif
-
     if (thisNode != unwrapped)
         return false;
 
@@ -7436,7 +7515,14 @@ void ByteCodeParser::handleGetScope(VirtualRegister destination)
 
 void ByteCodeParser::handleCheckTraps()
 {
-    addToGraph((Options::usePollingTraps() || m_graph.m_plan.isUnlinked()) ? CheckTraps : InvalidationPoint);
+    if (Options::usePollingTraps() || m_graph.m_plan.isUnlinked()) {
+        addToGraph(CheckTraps);
+        return;
+    }
+    // With signal-based traps this InvalidationPoint is also where VMTraps::tryInstallTrapBreakpoints()
+    // plants the breakpoint that stops optimized code, so one must survive in every loop even when an
+    // earlier one dominates it with no watchpoint fire in between (see Node::isVMTrapsBreakpointSite()).
+    addToGraph(InvalidationPoint, OpInfo(true));
 }
 
 void ByteCodeParser::emitPutById(
@@ -10198,7 +10284,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 // op_get_from_scope for a global property should walk the
                 // proto chain of the global object searching for the desired property
                 GetByStatus::LookupMode lookupMode = GetByStatus::LookupMode::Normal;
-                GetByStatus status = GetByStatus::computeFor(globalObject, structure, identifier, lookupMode);
+                GetByStatus status = GetByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, globalObject, structure, identifier, lookupMode);
 
                 if (status.state() != GetByStatus::Simple
                     || status.numVariants() != 1
@@ -10383,7 +10469,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
                 PutByStatus status;
                 if (uid)
-                    status = PutByStatus::computeFor(globalObject, structure, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), false, PrivateFieldPutKind::none());
+                    status = PutByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, globalObject, structure, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), false, PrivateFieldPutKind::none());
                 else
                     status = PutByStatus(PutByStatus::LikelyTakesSlowPath);
                 if (status.numVariants() != 1

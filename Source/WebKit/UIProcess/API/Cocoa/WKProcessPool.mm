@@ -559,11 +559,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     IPC::Connection::setShouldCrashOnMessageCheckFailure(true);
 }
 
-+ (void)_forceUseSharedMemoryForSendingForTesting:(BOOL)force
-{
-    IPC::Connection::setForceUseSharedMemoryForSendingForTesting(force);
-}
-
 + (void)_setLinkedOnOrAfterEverything
 {
     enableAllSDKAlignedBehaviors();
@@ -721,7 +716,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     return result.autorelease();
 }
 
-+ (NSArray<_WKProcessInfo *> *)_webContentProcessInfo
+static NSArray<_WKProcessInfo *> *allWebContentProcessInfo()
 {
     RetainPtr result = adoptNS([NSMutableArray new]);
 
@@ -733,6 +728,16 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     }
 
     return result.autorelease();
+}
+
++ (NSArray<_WKProcessInfo *> *)_webContentProcessInfo
+{
+    return allWebContentProcessInfo();
+}
+
++ (NSArray<_WKProcessInfo *> *)_webContentProcessInfoForTesting
+{
+    return allWebContentProcessInfo();
 }
 
 #if PLATFORM(MAC)

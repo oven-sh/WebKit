@@ -179,7 +179,7 @@ public:
     void registerFonts(Vector<SandboxExtension::Handle>&&);
 #endif
 
-    void terminateWebProcess(WebCore::ProcessIdentifier);
+    void terminateWebProcess(WebCore::ProcessIdentifier, IPC::MessageName);
 
 private:
     GPUProcess();
@@ -230,9 +230,6 @@ private:
 #if HAVE(SCREEN_CAPTURE_KIT)
     void promptForGetDisplayMedia(WebCore::DisplayCapturePromptType, CompletionHandler<void(std::optional<WebCore::CaptureDevice>)>&&);
     void cancelGetDisplayMediaPrompt();
-#endif
-#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    void tryToSetAudioSessionActiveForProcess(WebCore::ProcessIdentifier, bool, CompletionHandler<void(GenericPromise::Result&&)>&&);
 #endif
 #if PLATFORM(MAC)
     void NODELETE setScreenProperties(const WebCore::ScreenProperties&);

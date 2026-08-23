@@ -36,7 +36,6 @@ plurals.res
 pluralRanges.res
 dayPeriods.res
 genderList.res
-likelySubtags.res
 metadata.res
 units.res
 langInfo.res

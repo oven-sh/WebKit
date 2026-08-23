@@ -117,11 +117,13 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_derivedContextType(static_cast<unsigned>(derivedContextType))
     , m_inlineAttribute(static_cast<unsigned>(inlineAttribute))
     , m_evalContextType(static_cast<unsigned>(evalContextType))
+    , m_hasName(!node->ident().isNull())
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
-    , m_name(node->ident())
     , m_ecmaName(node->ecmaName())
+    , m_parentScopeTDZVariables(WTF::move(parentScopeTDZVariables))
 {
+    ASSERT(node->ident().isNull() || node->ident() == node->ecmaName());
     // Make sure these bitfields are adequately wide.
     ASSERT(m_implementationVisibility == static_cast<unsigned>(node->implementationVisibility()));
     ASSERT(m_constructAbility == static_cast<unsigned>(constructAbility));
@@ -137,12 +139,17 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     ASSERT(!m_needsClassFieldInitializer || (isClassConstructorFunction() || derivedContextType == DerivedContextType::DerivedConstructorContext));
     if (!node->classSource().isNull())
         setClassSource(node->classSource());
-    if (parentScopeTDZVariables)
-        ensureRareData().m_parentScopeTDZVariables = WTF::move(parentScopeTDZVariables);
     if (generatorOrAsyncWrapperFunctionParameterNames)
         ensureRareData().m_generatorOrAsyncWrapperFunctionParameterNames = FixedVector<Identifier>(WTF::move(generatorOrAsyncWrapperFunctionParameterNames.value()));
     if (parentPrivateNameEnvironment)
         ensureRareData().m_parentPrivateNameEnvironment = WTF::move(*parentPrivateNameEnvironment);
+}
+
+const Identifier& UnlinkedFunctionExecutable::name() const
+{
+    if (m_hasName)
+        return m_ecmaName;
+    return vm().propertyNames->nullIdentifier;
 }
 
 UnlinkedFunctionExecutable::~UnlinkedFunctionExecutable()
@@ -285,13 +292,13 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
 
     DeferGC deferGC(vm);
 
-    // No need to clear m_unlinkedCodeBlockForCall here, since we moved the decoder out of the same slot
+    // m_unlinkedCodeBlockForCall shares its slot with the decoder we just moved out, so it is already null; the construct
+    // slot still holds the two offsets, and a decode that rejects a damaged block leaves its slot untouched.
+    m_unlinkedCodeBlockForConstruct.clear();
     if (cachedCodeBlockForCallOffset)
         decodeFunctionCodeBlock(*decoder, cachedCodeBlockForCallOffset, m_unlinkedCodeBlockForCall, this);
     if (cachedCodeBlockForConstructOffset)
         decodeFunctionCodeBlock(*decoder, cachedCodeBlockForConstructOffset, m_unlinkedCodeBlockForConstruct, this);
-    else
-        m_unlinkedCodeBlockForConstruct.clear();
 
     WTF::storeStoreFence();
     m_isCached = false;
@@ -305,7 +312,7 @@ UnlinkedFunctionExecutable::RareData& UnlinkedFunctionExecutable::ensureRareData
     return *m_rareData;
 }
 
-void UnlinkedFunctionExecutable::finalizeUnconditionally(VM& vm, CollectionScope)
+void UnlinkedFunctionExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
     if (codeBlockEdgeMayBeWeak()) {
         bool isCleared = false;

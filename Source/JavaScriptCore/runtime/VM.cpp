@@ -132,6 +132,7 @@
 #include "SubspaceInlines.h"
 #include "SymbolInlines.h"
 #include "SymbolTableInlines.h"
+#include "TerminationDeadline.h"
 #include "TestRunnerUtils.h"
 #include "ThunkGenerators.h"
 #include "TypeProfiler.h"
@@ -324,6 +325,16 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 
     // Need to be careful to keep everything consistent here
     JSLockHolder lock(this);
+
+    // A VM interns on the order of two thousand identifiers while starting up: CommonIdentifiers,
+    // BuiltinNames, SmallStrings, and whatever the embedder adds on top. On a fresh thread the table
+    // starts empty and rehashes its way up to that size, so size it once up front instead. Only when
+    // it is still empty, so a thread that already has atoms keeps whatever it has grown to.
+    if (m_atomStringTable->table().isEmpty()) {
+        m_atomStringTable->table().clear();
+        m_atomStringTable->table().reserveInitialCapacity(2048);
+    }
+
     AtomStringTable* existingEntryAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(m_atomStringTable);
     structureStructure.setWithoutWriteBarrier(Structure::createStructure(*this));
     structureRareDataStructure.setWithoutWriteBarrier(StructureRareData::createStructure(*this, nullptr, jsNull()));
@@ -615,6 +626,8 @@ VM::~VM()
 #endif
     if (RefPtr watchdog = this->watchdog(); watchdog) [[unlikely]]
         watchdog->willDestroyVM(this);
+    if (RefPtr deadlines = std::exchange(m_terminationDeadlines, nullptr)) [[unlikely]]
+        deadlines->willDestroyVM();
     traps().willDestroyVM();
     m_isInService = false;
     WTF::storeStoreFence();
@@ -866,7 +879,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> VM::getCTIStub(ThunkGenerator generator)
 
 MacroAssemblerCodeRef<JITThunkPtrTag> VM::getCTIStub(CommonJITThunkID thunkID)
 {
-    return jitStubs->ctiStub(thunkID);
+    return jitStubs->ctiStub(*this, thunkID);
 }
 
 #endif // ENABLE(JIT)
@@ -1044,6 +1057,13 @@ void VM::deleteAllCode(DeleteAllCodeEffort effort)
         m_codeCache->clear();
         m_builtinExecutables->clear();
         m_regExpCache->deleteAllCode();
+        {
+            // The RegExp interpreter's backtracking pools past its first page are only a cache
+            // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
+            // compiler threads that interpret take this lock.
+            Locker locker { m_regExpAllocatorLock };
+            m_regExpAllocator.releaseRetainedPools();
+        }
         heap.deleteAllCodeBlocks(effort);
         heap.deleteAllUnlinkedCodeBlocks(effort);
         heap.reportAbandonedObjectGraph();
@@ -1086,6 +1106,35 @@ void VM::setHasTerminationRequest()
 {
     m_hasTerminationRequest = true;
     requestEntryScopeService(ConcurrentEntryScopeService::ResetTerminationRequest);
+}
+
+Ref<TerminationDeadline> VM::addTerminationDeadline(MonotonicTime deadline)
+{
+    ASSERT(currentThreadIsHoldingAPILock());
+    ASSERT(!m_executionForbiddenOnTermination);
+    RELEASE_ASSERT(deadline == deadline); // not NaN
+    // throwTerminationException() will need it, on a request made from another thread by then.
+    ensureTerminationException();
+    if (!m_terminationDeadlines)
+        m_terminationDeadlines = TerminationDeadlineSet::create(*this);
+    return m_terminationDeadlines->add(deadline);
+}
+
+bool VM::cancelTermination()
+{
+    ASSERT(currentThreadIsHoldingAPILock());
+    ASSERT(!traps().isDeferringTermination());
+    ASSERT(!m_executionForbiddenOnTermination);
+    bool wasPending = traps().clearTrap(VMTraps::NeedTermination);
+    if (hasPendingTerminationException()) {
+        clearException();
+        wasPending = true;
+    }
+    if (hasTerminationRequest()) {
+        clearHasTerminationRequest();
+        wasPending = true;
+    }
+    return wasPending;
 }
 
 void VM::setException(Exception* exception)
@@ -1288,7 +1337,8 @@ void VM::pushCheckpointOSRSideState(std::unique_ptr<CheckpointOSRExitSideState>&
     m_checkpointSideState.append(WTF::move(payload));
 
 #if ASSERT_ENABLED
-    auto bounds = StackBounds::currentThreadStackBounds();
+    const auto& bounds = Thread::currentSingleton().stack();
+    ASSERT(bounds.contains(currentStackPointer()));
     void* previousCallFrame = bounds.end();
     for (size_t i = m_checkpointSideState.size(); i--;) {
         auto* callFrame = m_checkpointSideState[i]->associatedCallFrame;
@@ -1311,7 +1361,7 @@ std::unique_ptr<CheckpointOSRExitSideState> VM::popCheckpointOSRSideState(CallFr
 void VM::popAllCheckpointOSRSideStateUntil(CallFrame* target)
 {
     ASSERT(currentThreadIsHoldingAPILock());
-    auto bounds = StackBounds::currentThreadStackBounds().withSoftOrigin(target);
+    auto bounds = Thread::currentSingleton().stack().withSoftOrigin(target);
     ASSERT(bounds.contains(target));
 
     // We have to worry about migrating from another thread since there may be no checkpoints in our thread but one in the other threads.
@@ -1909,9 +1959,9 @@ void VM::beginMarking()
     });
 }
 
-void VM::finalizeUnconditionally()
+void VM::reconcileWeakReferencesAtGCEnd()
 {
-    m_syncResumeCallCache->finalizeUnconditionally(*this);
+    m_syncResumeCallCache->reconcileWeakReferencesAtGCEnd(*this);
 }
 
 template<typename Visitor>

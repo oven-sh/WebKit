@@ -36,8 +36,6 @@ public:
     static Ref<WebKitColorChooser> create(WebPageProxy&, const WebCore::Color&, const WebCore::IntRect&, std::optional<WebCore::FrameIdentifier> = std::nullopt);
     virtual ~WebKitColorChooser();
 
-    const WebCore::IntRect& elementRect() const LIFETIME_BOUND { return m_elementRect; }
-
 private:
     WebKitColorChooser(WebPageProxy&, const WebCore::Color&, const WebCore::IntRect&, std::optional<WebCore::FrameIdentifier>);
 
@@ -45,7 +43,6 @@ private:
     void showColorPicker(const WebCore::Color&, const WebCore::IntRect&) override;
 
     static void colorChooserRequestFinished(WebKitColorChooserRequest*, WebKitColorChooser*);
-    static void colorChooserRequestRGBAChanged(WebKitColorChooserRequest*, GParamSpec*, WebKitColorChooser*);
 
     GRefPtr<WebKitColorChooserRequest> m_request;
     WebCore::IntRect m_elementRect;

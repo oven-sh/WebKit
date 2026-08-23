@@ -140,6 +140,16 @@ WI.CanvasManager = class CanvasManager extends WI.Object
         WI.settings.canvasRecordingAutoCaptureFrameCount.value = count;
     }
 
+    removeSavedRecording(recording)
+    {
+        console.assert(recording instanceof WI.Recording, recording);
+
+        let removed = this._savedRecordings.delete(recording);
+        console.assert(removed, recording);
+
+        this.dispatchEventToListeners(WI.CanvasManager.Event.RecordingRemoved, {recording});
+    }
+
     // CanvasObserver
 
     canvasAdded(target, canvasPayload)
@@ -178,13 +188,13 @@ WI.CanvasManager = class CanvasManager extends WI.Object
         canvas.shaderProgramCollection.clear();
     }
 
-    canvasSizeChanged(target, canvasIdentifier, width, height)
+    canvasSizeChanged(target, canvasIdentifier, sizes)
     {
         let canvas = this._canvasForIdentifier(target, canvasIdentifier);
         if (!canvas)
             return;
 
-        canvas.sizeChanged(new WI.Size(width, height));
+        canvas.sizeChanged(sizes.map(WI.Size.fromJSON));
     }
 
     canvasMemoryChanged(target, canvasIdentifier, memoryCost)
@@ -196,13 +206,31 @@ WI.CanvasManager = class CanvasManager extends WI.Object
         canvas.memoryChanged(memoryCost);
     }
 
-    clientNodesChanged(target, canvasIdentifier)
+    nodesChanged(target, canvasIdentifier)
     {
         let canvas = this._canvasForIdentifier(target, canvasIdentifier);
         if (!canvas)
             return;
 
-        canvas.clientNodesChanged();
+        canvas.nodesChanged();
+    }
+
+    cssCanvasClientNodesChanged(target, canvasIdentifier)
+    {
+        let canvas = this._canvasForIdentifier(target, canvasIdentifier);
+        if (!canvas)
+            return;
+
+        canvas.cssCanvasClientNodesChanged();
+    }
+
+    cssCanvasNamesChanged(target, canvasIdentifier, cssCanvasNames)
+    {
+        let canvas = this._canvasForIdentifier(target, canvasIdentifier);
+        if (!canvas)
+            return;
+
+        canvas.cssCanvasNamesChanged(cssCanvasNames);
     }
 
     recordingStarted(target, canvasIdentifier, initiator)
@@ -252,13 +280,10 @@ WI.CanvasManager = class CanvasManager extends WI.Object
         if (!programType)
             programType = WI.ShaderProgram.ProgramType.Render;
 
-        let options = {};
-
-        // COMPATIBILITY (iOS 13.0): `Canvas.ShaderProgram.sharesVertexFragmentShader` did not exist yet.
-        if (shaderProgramPayload.sharesVertexFragmentShader)
-            options.sharesVertexFragmentShader = true;
-
-        let program = new WI.ShaderProgram(target, shaderProgramPayload.programId, programType, canvas, options);
+        let program = new WI.ShaderProgram(target, shaderProgramPayload.programId, programType, canvas, {
+            sharesVertexFragmentShader: shaderProgramPayload.sharesVertexFragmentShader,
+            displayName: shaderProgramPayload.name,
+        });
 
         let shaderProgramForIdentifierMap = this._shaderProgramForIdentifierForTargetMap.getOrInsert(target, new Map);
         console.assert(!shaderProgramForIdentifierMap.has(program.identifier), `ShaderProgram already exists with id ${program.identifier}.`);
@@ -352,5 +377,6 @@ WI.CanvasManager = class CanvasManager extends WI.Object
 };
 
 WI.CanvasManager.Event = {
+    RecordingRemoved: "canvas-manager-recording-removed",
     RecordingSaved: "canvas-manager-recording-saved",
 };

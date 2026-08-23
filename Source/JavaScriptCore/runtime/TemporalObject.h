@@ -29,6 +29,10 @@
 
 namespace JSC {
 
+namespace ISO8601 {
+struct TimeZoneIdentifierParseRecord;
+}
+
 class TemporalObject final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -122,19 +126,33 @@ CalendarID toTemporalCalendarIdentifier(JSGlobalObject*, JSValue);
 TemporalDisambiguation toTemporalDisambiguation(JSGlobalObject*, JSObject*);
 TemporalOffsetDisambiguation toTemporalOffset(JSGlobalObject*, JSObject*, TemporalOffsetDisambiguation fallback);
 
-enum class TemporalDateFormat : uint8_t {
-    Date,
-    YearMonth,
-    MonthDay
-};
-
-enum class TemporalAnyProperties : bool {
-    None,
-    Some,
-};
-
 void throwTemporalError(JSGlobalObject*, ThrowScope&, const TemporalError&);
 
 std::optional<TimeZone> toTemporalTimeZoneIdentifier(JSGlobalObject*, JSValue);
+
+std::optional<TimeZone> timeZoneFromIdentifierParseRecord(const ISO8601::TimeZoneIdentifierParseRecord&);
+
+enum class TemporalConstructTarget : bool { Intrinsic, NewTarget };
+
+struct TemporalNewTarget {
+    JSObject* newTarget { nullptr };
+    JSObject* constructor { nullptr };
+};
+
+// Which [[InitializedTemporal*]] internal slot a value carries. Embedders mirror
+// these discriminants, so keep them stable.
+enum class TemporalType : uint8_t {
+    None = 0,
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
+};
+
+JS_EXPORT_PRIVATE TemporalType temporalType(JSValue);
 
 } // namespace JSC

@@ -41,9 +41,11 @@
 #include "RenderBoxInlines.h"
 #include "RenderLayer.h"
 #include "RenderListItem.h"
+#include "RenderMenuList.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSpannerPlaceholder.h"
 #include "RenderObjectInlines.h"
+#include "RenderTable.h"
 #include "RenderView.h"
 #include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
@@ -558,8 +560,23 @@ void RenderListMarker::updateInlineMargins()
     auto [marginStart, marginEnd] = isInside() ? marginsForInsideMarker() : marginsForOutsideMarker();
     auto zoom = style().usedZoomForLength().value;
 
-    mutableStyle().setMarginStart(Style::MarginEdge::Fixed { marginStart / zoom });
-    mutableStyle().setMarginEnd(Style::MarginEdge::Fixed { marginEnd / zoom });
+    // Which side of the list item these hang the marker off follows the list item's directionality
+    // rather than the marker's own: with marker-side: match-self (its initial value) css-lists-3
+    // positions the marker box using the directionality of the ::marker's originating element.
+    // Write the edges of the parent's inline axis, which is where
+    // BoxGeometryUpdater::horizontalLogicalMargin reads them back from.
+    auto listItemWritingMode = m_listItem->writingMode();
+    auto startEdge = Style::MarginEdge::Fixed { marginStart / zoom };
+    auto endEdge = Style::MarginEdge::Fixed { marginEnd / zoom };
+    if (listItemWritingMode.isHorizontal()) {
+        auto startIsLeft = listItemWritingMode.isInlineLeftToRight();
+        mutableStyle().setMarginLeft(startIsLeft ? startEdge : endEdge);
+        mutableStyle().setMarginRight(startIsLeft ? endEdge : startEdge);
+        return;
+    }
+    auto startIsTop = listItemWritingMode.isInlineTopToBottom();
+    mutableStyle().setMarginTop(startIsTop ? startEdge : endEdge);
+    mutableStyle().setMarginBottom(startIsTop ? endEdge : startEdge);
 }
 
 bool RenderListMarker::isInside() const
@@ -577,9 +594,31 @@ bool RenderListMarker::isDisclosureMarker() const
         || system == CSSCounterStyleDescriptors::System::DisclosureOpen;
 }
 
-const RenderListItem* RenderListMarker::listItem() const
+RenderListItem* RenderListMarker::listItem() const
 {
     return m_listItem.get();
+}
+
+void RenderListMarker::setExcludedPosition(ExcludedPosition excludedPosition)
+{
+    ASSERT(excludedPosition.firstFormattedLineRoot);
+
+    m_excludedPosition = excludedPosition;
+}
+
+void RenderListMarker::invalidateExcludedMarkerContainer()
+{
+    ASSERT(m_excludedPosition);
+
+    if (!m_excludedPosition || !m_excludedPosition->firstFormattedLineRoot) {
+        m_excludedPosition = { };
+        return;
+    }
+
+    if (m_excludedPosition->firstFormattedLineRoot->isDescendantOf(m_listItem.get()))
+        return m_excludedPosition->firstFormattedLineRoot->setNeedsLayout();
+
+    m_excludedPosition = { };
 }
 
 Node* RenderListMarker::nodeForHitTest() const

@@ -33,6 +33,7 @@
 #import "GestureTypes.h"
 #import "Logging.h"
 #import "MessageSenderInlines.h"
+#import "PDFAccessibilityDisplayModeState.h"
 #import "PDFIncrementalLoader.h"
 #import "PDFKitSPI.h"
 #import "PDFPluginAnnotation.h"
@@ -620,7 +621,7 @@ void PDFPluginBase::startByteRangeRequest(NetscapePlugInStreamLoaderClient& stre
     resourceRequest.setHTTPHeaderField(HTTPHeaderName::Range, makeString("bytes="_s, position, '-', position + count - 1));
     resourceRequest.setCachePolicy(ResourceRequestCachePolicy::DoNotUseAnyCache);
 
-    protect(WebProcess::singleton().webLoaderStrategy())->schedulePluginStreamLoad(*coreFrame, streamLoaderClient, WTF::move(resourceRequest), [incrementalLoader = Ref { *m_incrementalLoader }, requestIdentifier] (RefPtr<NetscapePlugInStreamLoader>&& streamLoader) {
+    protect(WebProcess::singleton().webLoaderStrategy())->schedulePluginStreamLoad(*coreFrame, streamLoaderClient, WTF::move(resourceRequest), protect(m_view)->fetchDestination(), [incrementalLoader = Ref { *m_incrementalLoader }, requestIdentifier] (RefPtr<NetscapePlugInStreamLoader>&& streamLoader) {
         incrementalLoader->streamLoaderDidStart(requestIdentifier, WTF::move(streamLoader));
     });
 }
@@ -1256,6 +1257,11 @@ void PDFPluginBase::writeStringToFindPasteboard(const String& string) const
     platformStrategies()->pasteboardStrategy()->setStringForType(string, NSPasteboardTypeString, NSPasteboardNameFind, context.get());
 }
 #endif
+
+PDFAccessibilityDisplayModeState PDFPluginBase::accessibilityDisplayModeState() const
+{
+    return PDFAccessibilityDisplayModeState::Ineligible;
+}
 
 #if ENABLE(PDF_HUD)
 

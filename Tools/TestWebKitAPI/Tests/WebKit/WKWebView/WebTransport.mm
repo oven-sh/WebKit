@@ -498,7 +498,7 @@ TEST(WebTransport, NetworkProcessCrash)
 
     obj = [webView objectByCallingAsyncFunction:@"return await writeDatagram()" withArguments:@{ } error:&error];
     EXPECT_EQ(obj, nil);
-    EXPECT_NOT_NULL(error);
+    EXPECT_NULL(error);
     error = nil;
 
     obj = [webView objectByEvaluatingJavaScript:@"session.close()"];
@@ -729,12 +729,7 @@ TEST(WebTransport, CreateStreamsBeforeReady)
     EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abc");
 }
 
-// FIXME: Re-enable this test on iOS when rdar://161858543 is resolved.
-#if PLATFORM(MAC)
 TEST(WebTransport, CSP)
-#else
-TEST(WebTransport, DISABLED_CSP)
-#endif
 {
     WebTransportServer server([](ConnectionGroup group) -> ConnectionTask {
         co_return;

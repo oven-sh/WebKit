@@ -331,12 +331,12 @@ void NetworkProcess::initializeNetworkProcess(NetworkProcessCreationParameters&&
 
     m_suppressMemoryPressureHandler = parameters.shouldSuppressMemoryPressureHandler;
     if (!m_suppressMemoryPressureHandler) {
-        Ref memoryPressureHandler = MemoryPressureHandler::singleton();
-        memoryPressureHandler->setLowMemoryHandler([weakThis = WeakPtr { *this }] (Critical critical, Synchronous) {
+        auto& memoryPressureHandler = MemoryPressureHandler::singleton();
+        memoryPressureHandler.setLowMemoryHandler([weakThis = WeakPtr { *this }] (Critical critical, Synchronous) {
             if (RefPtr process = weakThis.get())
                 process->lowMemoryHandler(critical);
         });
-        memoryPressureHandler->install();
+        memoryPressureHandler.install();
     }
 
     setCacheModel(parameters.cacheModel);
@@ -542,7 +542,9 @@ static void addPathsBlockedForSandboxExtensions(const WebsiteDataStoreParameters
     String cacheDirectory = FileSystem::parentPath(parameters.networkSessionParameters.networkCacheDirectory);
     String websiteDataDirectory = FileSystem::parentPath(parameters.networkSessionParameters.indexedDBDirectory);
 #if PLATFORM(MAC)
-    String homeDirectory = AuxiliaryProcess::getHomeDirectory();
+    std::optional<String> optionalHomeDirectory = AuxiliaryProcess::getHomeDirectory();
+    RELEASE_ASSERT(optionalHomeDirectory);
+    String homeDirectory = *optionalHomeDirectory;
     String homeRelativeHTTPStoragesDirectory = makeString(homeDirectory, "/Library/HTTPStorages"_s);
     String homeRelativeKeychainDirectory = makeString(homeDirectory, "/Library/Keychains"_s);
 #else
@@ -583,11 +585,18 @@ static void addPathsBlockedForSandboxExtensions(const WebsiteDataStoreParameters
 void NetworkProcess::addStorageSession(PAL::SessionID sessionID, const WebsiteDataStoreParameters& parameters)
 {
     auto addResult = m_networkStorageSessions.add(sessionID, nullptr);
-    if (!addResult.isNewEntry)
+    auto applyCookiesVersion = [&] {
+        CheckedPtr { addResult.iterator->value.get() }->setCookiesVersion(parameters.networkSessionParameters.cookiesVersion);
+    };
+
+    if (!addResult.isNewEntry) {
+        applyCookiesVersion();
         return;
+    }
 
     if (parameters.networkSessionParameters.shouldUseTestingNetworkSession) {
         addResult.iterator->value = newTestingSession(sessionID);
+        applyCookiesVersion();
         return;
     }
 
@@ -625,7 +634,7 @@ void NetworkProcess::addStorageSession(PAL::SessionID sessionID, const WebsiteDa
     addResult.iterator->value = makeUnique<NetworkStorageSession>(sessionID);
 #endif
 
-    CheckedPtr { addResult.iterator->value.get() }->setCookiesVersion(parameters.networkSessionParameters.cookiesVersion);
+    applyCookiesVersion();
 }
 
 void NetworkProcess::addWebsiteDataStore(WebsiteDataStoreParameters&& parameters)
@@ -1762,16 +1771,16 @@ void NetworkProcess::setSessionIsControlledByAutomation(PAL::SessionID sessionID
         m_sessionsControlledByAutomation.remove(sessionID);
 }
 
-void NetworkProcess::fetchWebsitesWithUserInteractions(PAL::SessionID sessionID, CompletionHandler<void(HashSet<RegistrableDomain>&&)>&& completionHandler)
+void NetworkProcess::fetchWebsitesWithUserInteractions(PAL::SessionID sessionID, CompletionHandler<void(std::optional<HashMap<RegistrableDomain, WallTime>>&&)>&& completionHandler)
 {
     CheckedPtr session = networkSession(sessionID);
     ASSERT(session);
     if (!session)
-        return completionHandler({ });
+        return completionHandler(std::nullopt);
 
     RefPtr resourceLoadStatistics = session->resourceLoadStatistics();
     if (!resourceLoadStatistics)
-        return completionHandler({ });
+        return completionHandler(std::nullopt);
 
     resourceLoadStatistics->loadWebsitesWithUserInteraction(WTF::move(completionHandler));
 }
@@ -2021,11 +2030,17 @@ void NetworkProcess::deleteWebsiteDataForOrigin(PAL::SessionID sessionID, Option
             RegistrableDomain topDomain = RegistrableDomain::uncheckedCreateFromHost(origin.topOrigin.host());
             String cachePartition = origin.clientOrigin == origin.topOrigin ? emptyString() : (topDomain.isEmpty() ? emptyString() : topDomain.string());
             bool shouldClearAllEntriesInPartition = origin.clientOrigin == origin.topOrigin;
-            cache->traverse(cachePartition, [cache, clearTasksHandler, shouldClearAllEntriesInPartition, origin = origin.clientOrigin, cachePartition, cacheKeysToDelete = WTF::move(cacheKeysToDelete)](auto* traversalEntry) mutable {
-                if (traversalEntry) {
-                    ASSERT_UNUSED(cachePartition, equalIgnoringNullity(traversalEntry->entry.key().partition(), cachePartition));
-                    if (shouldClearAllEntriesInPartition || SecurityOriginData::fromURLWithoutStrictOpaqueness(traversalEntry->entry.response().url()) == origin)
-                        cacheKeysToDelete.append(traversalEntry->entry.key());
+            cache->traverseRecords(cachePartition, [cache, clearTasksHandler, shouldClearAllEntriesInPartition, origin = origin.clientOrigin, cachePartition, cacheKeysToDelete = WTF::move(cacheKeysToDelete)](auto* traversalRecord) mutable {
+                if (traversalRecord) {
+                    ASSERT_UNUSED(cachePartition, equalIgnoringNullity(traversalRecord->record.key.partition(), cachePartition));
+                    if (shouldClearAllEntriesInPartition) {
+                        cacheKeysToDelete.append(traversalRecord->record.key);
+                        return;
+                    }
+
+                    auto url = NetworkCache::Entry::decodeStorageRecordResponseURL(traversalRecord->record);
+                    if (url && SecurityOriginData::fromURLWithoutStrictOpaqueness(*url) == origin)
+                        cacheKeysToDelete.append(traversalRecord->record.key);
                     return;
                 }
 

@@ -43,81 +43,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-// NEVER_INLINE to prevent LTO from inlining this function, which can break
-// compiler barriers (loadLoadFence/compilerFence) on x86_64.
-NEVER_INLINE bool MarkedBlock::isMarked(HeapVersion markingVersion, const void* p)
-{
-    HeapVersion version;
-    Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
-    if (version != markingVersion) [[unlikely]]
-        return false;
-    return header().m_marks.concurrentGet(atomNumber(p), dependency);
-}
-
-// NEVER_INLINE to prevent LTO from inlining this function, which can break
-// compiler barriers (Dependency::fence/loadLoadFence/compilerFence) on x86_64.
-NEVER_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell* cell)
-{
-    m_directory->assertIsMutatorOrMutatorIsStopped();
-    if (m_directory->isAllocated(this))
-        return true;
-
-    MarkedBlock& block = this->block();
-    MarkedBlock::Header& header = block.header();
-
-    auto count = header.m_lock.tryOptimisticFencelessRead();
-    if (count.value) {
-        Dependency fenceBefore = Dependency::fence(count.input);
-        MarkedBlock& fencedBlock = *fenceBefore.consume(&block);
-        MarkedBlock::Header& fencedHeader = fencedBlock.header();
-        MarkedBlock::Handle* fencedThis = fenceBefore.consume(this);
-
-        ASSERT_UNUSED(fencedThis, !fencedThis->isFreeListed());
-
-        HeapVersion myNewlyAllocatedVersion = fencedHeader.m_newlyAllocatedVersion;
-        if (myNewlyAllocatedVersion == newlyAllocatedVersion) {
-            bool result = fencedBlock.isNewlyAllocated(cell);
-            if (header.m_lock.fencelessValidate(count.value, Dependency::fence(result)))
-                return result;
-        } else {
-            HeapVersion myMarkingVersion = fencedHeader.m_markingVersion;
-            if (myMarkingVersion != markingVersion
-                && (!isMarking || !fencedBlock.marksConveyLivenessDuringMarking(myMarkingVersion, markingVersion))) {
-                if (header.m_lock.fencelessValidate(count.value, Dependency::fence(myMarkingVersion)))
-                    return false;
-            } else {
-                bool result = fencedHeader.m_marks.get(block.atomNumber(cell));
-                if (header.m_lock.fencelessValidate(count.value, Dependency::fence(result)))
-                    return result;
-            }
-        }
-    }
-
-    Locker locker { header.m_lock };
-
-    ASSERT(!isFreeListed());
-
-    HeapVersion myNewlyAllocatedVersion = header.m_newlyAllocatedVersion;
-    if (myNewlyAllocatedVersion == newlyAllocatedVersion)
-        return block.isNewlyAllocated(cell);
-
-    if (block.areMarksStale(markingVersion)) {
-        if (!isMarking)
-            return false;
-        if (!block.marksConveyLivenessDuringMarking(markingVersion))
-            return false;
-    }
-
-    return header.m_marks.get(block.atomNumber(cell));
-}
-
-// NEVER_INLINE to prevent LTO from inlining this function, which can break
-// compiler barriers on x86_64.
-NEVER_INLINE bool MarkedBlock::Handle::isLive(const HeapCell* cell)
-{
-    return isLive(space()->markingVersion(), space()->newlyAllocatedVersion(), space()->isMarking(), cell);
-}
-
 namespace MarkedBlockInternal {
 static constexpr bool verbose = false;
 }
@@ -194,7 +119,7 @@ void MarkedBlock::Handle::unsweepWithNoNewlyAllocated()
     m_directory->didFinishUsingBlock(this);
 }
 
-void MarkedBlock::Handle::stopAllocating(const FreeList& freeList)
+void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatingMode mode)
 {
     Locker locker { blockHeader().m_lock };
     
@@ -215,6 +140,21 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList)
     if (MarkedBlockInternal::verbose)
         dataLog("Free list: ", freeList, "\n");
     
+    if (mode == StopAllocatingMode::ForGood) {
+        // MarkedSpace::lastChanceToFinalize() runs next and clears the newly-allocated bitmap before
+        // sweeping, so computing it here would be wasted work. The free list still has to be zapped:
+        // the sweep runs a destructor for every cell that is not zapped.
+        if (m_attributes.destruction != DoesNotNeedDestruction) {
+            freeList.forEach(
+                [&] (HeapCell* cell) {
+                    cell->zap(HeapCell::StopAllocating);
+                });
+        }
+        m_isFreeListed = false;
+        directory()->didFinishUsingBlock(this);
+        return;
+    }
+
     // Roll back to a coherent state for Heap introspection. Cells newly
     // allocated from our free list are not currently marked, so we need another
     // way to tell what's live vs dead. 

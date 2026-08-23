@@ -190,6 +190,9 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case ArraySortCompact:
         case ArraySortCommit:
         case GetCellButterflySlot:
+        case BufferReadInt:
+        case BufferReadFloat:
+        case BufferWrite:
             return clobberTop();
         default:
             DFG_CRASH(graph, node, "Unhandled ArrayMode opcode.");
@@ -625,7 +628,10 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
 
     case InvalidationPoint:
         write(SideState);
-        def(HeapLocation(InvalidationPointLoc, Watchpoint_fire), LazyNode(node));
+        // A trap-check InvalidationPoint must stay where it is (see Node::isVMTrapsBreakpointSite()); every other
+        // one is redundant with a dominating InvalidationPoint that no watchpoint fire separates it from.
+        if (!node->isVMTrapsBreakpointSite())
+            def(HeapLocation(InvalidationPointLoc, Watchpoint_fire), LazyNode(node));
         return;
 
     case Flush:
@@ -2702,6 +2708,37 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         read(TypedArrayProperties);
         if (node->dataViewData().isResizable)
             write(MiscFields);
+        write(TypedArrayProperties);
+        return;
+    }
+
+    case BufferReadInt:
+    case BufferReadFloat: {
+        if (node->arrayMode().type() == Array::ForceExit) {
+            write(SideState);
+            return;
+        }
+        DataViewData data = node->bufferAccessData();
+        read(MiscFields);
+        read(TypedArrayProperties);
+        if (node->arrayMode().mayBeResizableOrGrowableSharedTypedArray()) {
+            write(MiscFields);
+            write(TypedArrayProperties);
+        } else
+            def(HeapLocation(indexedPropertyLocForResultType(node->result()), AbstractHeap(TypedArrayProperties, data.asQuadWord), graph.varArgChild(node, 0), graph.varArgChild(node, 1)), LazyNode(node));
+        return;
+    }
+
+    case BufferWrite: {
+        if (node->arrayMode().type() == Array::ForceExit) {
+            write(SideState);
+            return;
+        }
+        read(MiscFields);
+        if (node->arrayMode().mayBeResizableOrGrowableSharedTypedArray()) {
+            read(TypedArrayProperties);
+            write(MiscFields);
+        }
         write(TypedArrayProperties);
         return;
     }

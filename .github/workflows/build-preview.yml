@@ -13,6 +13,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: read
 
 concurrency:
   group: preview-build-pr-${{ github.event.pull_request.number || inputs.pr_number }}
@@ -75,6 +76,7 @@ jobs:
     needs: trigger
     permissions:
       contents: write
+      actions: read
     uses: ./.github/workflows/build-reusable.yml
     with:
       build_ref: ${{ needs.trigger.outputs.sha }}

@@ -55,7 +55,14 @@ struct CachedFunctionExecutableOffsets {
     static ptrdiff_t NODELETE codeBlockForCallOffset();
     static ptrdiff_t NODELETE codeBlockForConstructOffset();
     static ptrdiff_t NODELETE metadataOffset();
+    // For re-sealing a record after it is patched in place: the checksum covers [0, extent).
+    static ptrdiff_t NODELETE checksumOffset();
+    static ptrdiff_t NODELETE extentOffset(); // uint32_t: bytes covered by the record's checksum
+    static size_t NODELETE fixedSize();
 };
+
+// CRC-32C of `record` with the 4 bytes at `checksumOffset` read as zero (how every checksummed record is sealed).
+JS_EXPORT_PRIVATE uint32_t bytecodeCacheRecordChecksum(std::span<const uint8_t> record, size_t checksumOffset);
 
 struct CachedWriteBarrierOffsets {
     static ptrdiff_t NODELETE ptrOffset();
@@ -68,13 +75,17 @@ struct CachedPtrOffsets {
 class VariableLengthObjectBase {
     friend class CachedBytecode;
 
+public:
+    // Relative offset from this field to the object's payload. A payload is one code block tree, far below 2 GB.
+    using Offset = int32_t;
+
 protected:
-    VariableLengthObjectBase(ptrdiff_t offset)
+    VariableLengthObjectBase(Offset offset)
         : m_offset(offset)
     {
     }
 
-    ptrdiff_t m_offset;
+    Offset m_offset;
 };
 
 class Decoder : public RefCounted<Decoder> {
@@ -82,6 +93,10 @@ class Decoder : public RefCounted<Decoder> {
 
 public:
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
+    bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
+    bool regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays = { }) const;
+    bool payloadContains(const void* start, size_t size) const;
+    bool recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const;
 
     ~Decoder();
 

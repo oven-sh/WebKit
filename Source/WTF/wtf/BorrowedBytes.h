@@ -63,7 +63,7 @@ using VectorUInt8 = Vector<uint8_t>;
 // This is, in effect, the Swift-crossable form of Borrow. It composes two
 // protections against two distinct failure modes:
 //
-//   - "buffer mutated/destroyed *during* the borrow": this is exactly what
+//   - "vector interior buffer destroyed *during* the borrow": this is exactly what
 //     Borrow guards, and BorrowedVectorScope gets it by holding a Borrow on the
 //     underlying Vector (engaging its CanBorrow protocol). BorrowedSpanScope
 //     has no owning container, so it cannot offer this.
@@ -77,10 +77,24 @@ using VectorUInt8 = Vector<uint8_t>;
 // of the refcount/revocation overhead. BorrowedBytes exists to carry a borrow across
 // the C++/Swift boundary.
 //
+// On the Swift side, this type confirms to various useful protocols such as
+// ContiguousBytes, DataProtocol - so this type can be passed directly to
+// various Swift APIs as a valid set of bytes.
+//
 // A ~Copyable/~Escapable C++ type (a compile-time borrow-checked alternative to this
 // reference-counted design) was tried and rejected: a non-escapable type can't be
 // usefully used in some Swift contexts (specifically CryptoKit which is the first
 // intended use of this type)
+//
+// This type aims to address lifetime safety only (including lifetime safety
+// of interior storage buffers e.g. within a vector). It does not address the
+// differences in aliasing norms between Swift and C++. In future, we may aim to
+// reflect the Swift side of this into AliasedSpans as proposed in
+// https://github.com/DougGregor/swift-evolution/blob/aliased-spans/proposals/nnnn-aliased-spans.md
+// (although that would run into the same limitations that it might not work with
+// the majority of Swift APIs.)
+// Meanwhile, users need to ensure that the actual data in the span or vector
+// does not change during a period when Swift has access.
 class BorrowedBytes : public ThreadSafeRefCounted<BorrowedBytes> {
 public:
     // Returns the borrowed data pointer, crashing cleanly if the borrow has
@@ -121,6 +135,7 @@ private:
 } SWIFT_SHARED_REFERENCE(.ref, .deref);
 
 #if !defined(__swift__)
+
 class BorrowedBytesScopeBase {
     WTF_MAKE_NONCOPYABLE(BorrowedBytesScopeBase);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -128,22 +143,19 @@ public:
     BorrowedBytes& bytes() LIFETIME_BOUND { return m_bytes.get(); }
 
 protected:
-    explicit BorrowedBytesScopeBase(std::span<const uint8_t> bytes)
+    explicit BorrowedBytesScopeBase(std::span<const uint8_t> bytes LIFETIME_BOUND)
         : m_bytes(BorrowedBytes::create(bytes))
     {
+        assertIsOnStack(this);
     }
 
     ~BorrowedBytesScopeBase()
     {
         // The borrow ends here. If anything on the Swift side stashed the view
         // beyond the synchronous call, the control block still carries an
-        // external reference at this point. Assert now, at the site that ends
-        // the borrow, so a stash bug crashes with a stack pointing at the
-        // premature end of the borrow rather than at some later, innocent
-        // reader. This is a debug-only ASSERT — in release the backstop is
-        // data()'s RELEASE_ASSERT(m_valid), which catches the same mistake at
-        // access time (once revoke() below has run) rather than here.
-        ASSERT(m_bytes->hasOneRef());
+        // external reference at this point. Crash here rather than relying on
+        // data()'s assertion, both for debuggability and thread safety.
+        RELEASE_ASSERT(m_bytes->hasOneRef());
         m_bytes->revoke();
     }
 

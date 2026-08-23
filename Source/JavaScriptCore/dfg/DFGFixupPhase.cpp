@@ -489,7 +489,7 @@ private:
                 node->setArithMode(Arith::CheckOverflow);
             else {
                 node->setArithMode(Arith::DoOverflow);
-                node->setResult(enableInt52() ? NodeResultInt52 : NodeResultDouble);
+                node->setResult(NodeResultInt52);
             }
             break;
         }
@@ -2716,7 +2716,6 @@ private:
             fixEdge<CellUse>(node->child1());
             fixEdge<CellUse>(node->child2());
             break;
-            break;
         }
 
         case InstanceOfCustom:
@@ -2818,7 +2817,6 @@ private:
         }
 
         case FiatInt52: {
-            RELEASE_ASSERT(enableInt52());
             node->convertToIdentity();
             fixEdge<Int52RepUse>(node->child1());
             node->setResult(NodeResultInt52);
@@ -3115,13 +3113,9 @@ private:
                     break;
                 }
 
-                if (enableInt52()) {
-                    fixEdge<AnyIntUse>(node->child1());
-                    node->remove(m_graph);
-                    break;
-                }
-
-                // Must not perform fixEdge<NumberUse> here since the type set only includes TypeAnyInt. Double values should be logged.
+                fixEdge<AnyIntUse>(node->child1());
+                node->remove(m_graph);
+                break;
             }
 
             if (typeSet->doesTypeConformTo(TypeNumber | TypeAnyInt)) {
@@ -3737,6 +3731,91 @@ private:
                     break;
                 }
             }
+            break;
+        }
+
+        case BufferReadInt:
+        case BufferReadFloat:
+        case BufferWrite: {
+#if USE(BUN_JSC_ADDITIONS)
+            Edge& base = m_graph.varArgChild(node, 0);
+            Edge& offset = m_graph.varArgChild(node, 1);
+            DataViewData data = node->bufferAccessData();
+
+            bool forceExit = !base->prediction() || !offset->prediction();
+            if (forceExit) {
+                node->setArrayMode(ArrayMode(Array::ForceExit, node->arrayMode().action()));
+                blessArrayOperation(base, offset, m_graph.varArgChild(node, node->storageChildIndex()));
+            } else {
+                bool mayBeLargeTypedArray = node->arrayMode().mayBeLargeTypedArray() || m_graph.hasExitSite(node->origin.semantic, Overflow);
+                if (!isInt32Speculation(offset->prediction()) && isFullNumberSpeculation(offset->prediction()) && !mayBeLargeTypedArray) {
+                    Node* newOffset = m_insertionSet.insertNode(
+                        m_indexInBlock, SpecInt32Only, DoubleAsInt32, node->origin,
+                        Edge(offset.node(), DoubleRepUse));
+                    newOffset->setArithMode(Arith::CheckOverflow);
+                    offset.setNode(newOffset);
+                }
+
+                bool mayBeResizable = data.isResizable || m_graph.hasExitSite(node->origin.semantic, UnexpectedResizableArrayBufferView);
+                node->setArrayMode(ArrayMode(Array::Uint8Array, Array::NonArray, Array::InBounds, Array::AsIs, node->arrayMode().action(), mayBeLargeTypedArray, mayBeResizable));
+                blessArrayOperation(base, offset, m_graph.varArgChild(node, node->storageChildIndex()));
+                fixEdge<KnownCellUse>(base);
+                fixEdge<Int32Use>(offset);
+            }
+
+            switch (node->op()) {
+            case BufferReadInt:
+                switch (data.byteSize) {
+                case 1:
+                case 2:
+                    node->setResult(NodeResultInt32);
+                    break;
+                case 4:
+                    if (data.isSigned)
+                        node->setResult(NodeResultInt32);
+                    else
+                        node->setResult(NodeResultInt52);
+                    break;
+                case 8:
+                    node->setResult(NodeResultJS);
+                    break;
+                default:
+                    RELEASE_ASSERT_NOT_REACHED();
+                }
+                break;
+            case BufferReadFloat:
+                break;
+            case BufferWrite: {
+                Edge& value = m_graph.varArgChild(node, 2);
+                if (data.isFloatingPoint)
+                    fixEdge<DoubleRepUse>(value);
+                else {
+                    switch (data.byteSize) {
+                    case 1:
+                    case 2:
+                        fixEdge<Int32Use>(value);
+                        break;
+                    case 4:
+                        if (data.isSigned)
+                            fixEdge<Int32Use>(value);
+                        else
+                            fixEdge<Int52RepUse>(value);
+                        break;
+                    case 8:
+                        fixEdge<HeapBigIntUse>(value);
+                        break;
+                    default:
+                        RELEASE_ASSERT_NOT_REACHED();
+                    }
+                }
+                break;
+            }
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+#else
+            DFG_CRASH(m_graph, node, "Unexpected node type");
+#endif
             break;
         }
 

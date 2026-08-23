@@ -33,6 +33,7 @@
 #include "WebFoundTextRange.h"
 #include "WebMouseEvent.h"
 #include <WebCore/AffineTransform.h>
+#include <WebCore/CharacterRange.h>
 #include <WebCore/EventTarget.h>
 #include <WebCore/FindOptions.h>
 #include <WebCore/FloatRect.h>
@@ -53,6 +54,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TypeTraits.h>
+#include <wtf/URL.h>
 #include <wtf/WeakPtr.h>
 
 OBJC_CLASS NSData;
@@ -91,6 +93,7 @@ class WebMouseEvent;
 class WebWheelEvent;
 enum class SelectionEndpoint : bool;
 enum class SelectionWasFlipped : bool;
+enum class PDFAccessibilityDisplayModeState : uint8_t;
 enum class PDFPluginDisplayMode : uint8_t;
 struct DocumentEditingContextRequest;
 struct DocumentEditingContext;
@@ -111,6 +114,17 @@ concept CanMakeFloatRect = requires(T t)
 struct PDFPluginPasteboardItem {
     RetainPtr<NSData> data;
     RetainPtr<NSString> type;
+};
+
+struct PDFPluginTextExtractionLink {
+    URL url;
+    WebCore::CharacterRange rangeInText;
+    WebCore::FloatRect rectInRootView;
+};
+
+struct PDFPluginTextExtractionContent {
+    String text;
+    Vector<PDFPluginTextExtractionLink> links;
 };
 
 class PDFPluginBase : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<PDFPluginBase, WTF::DestructionThread::Main>, public CanMakeThreadSafeCheckedPtr<PDFPluginBase>, public WebCore::ScrollableArea, public Identified<PDFPluginIdentifier> {
@@ -189,6 +203,7 @@ public:
     virtual bool isEditingCommandEnabled(const String& commandName) = 0;
 
     virtual String fullDocumentString() const { return { }; }
+    virtual PDFPluginTextExtractionContent textExtractionContent() const { return { }; }
     virtual String selectionString() const = 0;
     virtual std::pair<String, String> stringsBeforeAndAfterSelection(int /* characterCount */) const { return { }; }
     virtual bool existingSelectionContainsPoint(const WebCore::FloatPoint&) const = 0;
@@ -260,10 +275,15 @@ public:
     virtual void didAttachScrollingNode() { }
     virtual void didChangeSettings() { }
 
+    virtual PDFAccessibilityDisplayModeState accessibilityDisplayModeState() const;
+
     // HUD Actions.
 #if ENABLE(PDF_HUD)
     virtual void zoomIn() = 0;
     virtual void zoomOut() = 0;
+
+    virtual void toggleAccessibilityDisplayMode() { }
+
     void save(CompletionHandler<void(const String&, const URL&, std::span<const uint8_t>)>&&);
     void updateHUDLocation();
 #endif
@@ -477,7 +497,7 @@ protected:
 
     std::optional<WebCore::PageIdentifier> NODELETE pageIdentifier() const;
 
-    WebCore::Color pluginBackgroundColor() const;
+    virtual WebCore::Color pluginBackgroundColor() const;
     void updateFullFramePluginBackgroundColor();
 
     SingleThreadWeakPtr<PluginView> m_view;

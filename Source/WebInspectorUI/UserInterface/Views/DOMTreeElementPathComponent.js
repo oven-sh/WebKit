@@ -29,7 +29,7 @@ WI.DOMTreeElementPathComponent = class DOMTreeElementPathComponent extends WI.Hi
     {
         var node = domTreeElement.representedObject;
 
-        var title = null;
+        let title;
 
         switch (node.nodeType()) {
         case Node.ELEMENT_NODE:
@@ -57,7 +57,7 @@ WI.DOMTreeElementPathComponent = class DOMTreeElementPathComponent extends WI.Hi
             break;
 
         case Node.CDATA_SECTION_NODE:
-            title = "<![CDATA[" + node.truncateEnd(32) + "]]>";
+            title = "<![CDATA[" + node.nodeValue().truncateEnd(32) + "]]>";
             break;
 
         case Node.DOCUMENT_FRAGMENT_NODE:

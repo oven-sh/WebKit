@@ -181,8 +181,6 @@ constexpr bool typeExposedByDefault = true;
     macro(JSPromise, promise, promise, JSPromise, Promise, object, typeExposedByDefault) \
     macro(BigInt, bigInt, bigIntObject, BigIntObject, BigInt, object, typeExposedByDefault) \
     macro(Symbol, symbol, symbolObject, SymbolObject, Symbol, object, typeExposedByDefault) \
-    macro(WeakObjectRef, weakObjectRef, weakObjectRef, JSWeakObjectRef, WeakRef, object, typeExposedByDefault) \
-    macro(FinalizationRegistry, finalizationRegistry, finalizationRegistry, JSFinalizationRegistry, FinalizationRegistry, object, typeExposedByDefault) \
 
 
 #define FOR_EACH_BUILTIN_DERIVED_ITERATOR_TYPE(macro) \
@@ -200,6 +198,8 @@ constexpr bool typeExposedByDefault = true;
     macro(Set, set, set, JSSet, Set, object, typeExposedByDefault) \
     DEFINE_STANDARD_BUILTIN(macro, WeakMap, weakMap) \
     DEFINE_STANDARD_BUILTIN(macro, WeakSet, weakSet) \
+    macro(WeakObjectRef, weakObjectRef, weakObjectRef, JSWeakObjectRef, WeakRef, object, typeExposedByDefault) \
+    macro(FinalizationRegistry, finalizationRegistry, finalizationRegistry, JSFinalizationRegistry, FinalizationRegistry, object, typeExposedByDefault) \
 
 #define FOR_EACH_LAZY_BUILTIN_TYPE(macro) \
     FOR_EACH_LAZY_BUILTIN_TYPE_WITH_DECLARATION(macro) \
@@ -307,6 +307,11 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_intlPartObjectWithUnitAndSourceStructure;
     LazyClassStructure m_dateTimeFormatStructure;
     LazyClassStructure m_numberFormatStructure;
+
+    // Cached collator object for String#localeCompare
+    WriteBarrier<IntlCollator> m_cachedLocaleCompareCollator;
+    String m_cachedLocaleCompareCollatorLocale;
+    uint64_t m_cachedLocaleCompareCollatorLanguagesEpoch { 0 };
 
     LazyClassStructure m_durationStructure;
     LazyClassStructure m_instantStructure;
@@ -700,7 +705,10 @@ public:
 
     // Every reader of the current JS time, in every tier, must go through
     // this helper: Date.now() (dateNow / operationDateNow), new Date()
-    // (constructDate), Date() (callDate), and Intl (dateNowImpl).
+    // (constructDate), Date() (callDate), and Intl (dateNowImpl). The one
+    // exception is Temporal.Now (systemUTCEpochNanoseconds in TemporalNow.cpp),
+    // which needs the unoverridden clock at nanosecond resolution and so
+    // checks overridenDateNow itself.
     double jsDateNow() const
     {
         double ms = overridenDateNow;
@@ -833,6 +841,7 @@ public:
     JSIteratorConstructor* iteratorConstructor() const LIFETIME_BOUND { return m_iteratorConstructor.get(); }
 
     IntlCollator* defaultCollator() const LIFETIME_BOUND { return m_defaultCollator.get(this); }
+    IntlCollator* cachedLocaleCompareCollator(JSString* locale);
     bool canDoASCIIUCADUCETLocaleCompare() const { return m_canDoASCIIUCADUCETLocaleCompare; }
     IntlDateTimeFormat* defaultDateTimeFormat() const LIFETIME_BOUND { return m_defaultDateTimeFormat.get(this); }
     IntlDateTimeFormat* defaultDateFormat() const LIFETIME_BOUND { return m_defaultDateFormat.get(this); }

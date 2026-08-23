@@ -69,6 +69,7 @@
 #include "RenderLayerCompositor.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderLineBreak.h"
+#include "RenderListMarker.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSet.h"
 #include "RenderMultiColumnSpannerPlaceholder.h"
@@ -1131,7 +1132,7 @@ auto RenderObject::rectsForRepaintingAfterLayout(const RenderLayerModelObject* r
     return result;
 }
 
-LayoutRect RenderObject::clippedOverflowRect(const RenderLayerModelObject* repaintContainer, VisibleRectContext context) const
+LayoutRect RenderObject::clippedOverflowRect(const RenderLayerModelObject* repaintContainer, const VisibleRectContext& context) const
 {
     auto repaintRects = localRectsForRepaint(RepaintOutlineBounds::No);
     if (repaintRects.clippedOverflowRect.isEmpty())
@@ -1140,21 +1141,21 @@ LayoutRect RenderObject::clippedOverflowRect(const RenderLayerModelObject* repai
     return computeRects(repaintRects, repaintContainer, context).clippedOverflowRect;
 }
 
-auto RenderObject::computeRects(const RepaintRects& rects, const RenderLayerModelObject* repaintContainer, VisibleRectContext context) const -> RepaintRects
+auto RenderObject::computeRects(const RepaintRects& rects, const RenderLayerModelObject* repaintContainer, const VisibleRectContext& context) const -> RepaintRects
 {
-    auto result = computeVisibleRectsInContainer(rects, repaintContainer, context);
+    auto result = computeVisibleRectsInContainer(rects, repaintContainer, context, { });
     RELEASE_ASSERT(result);
     return *result;
 }
 
 FloatRect RenderObject::computeFloatRectForRepaint(const FloatRect& rect, const RenderLayerModelObject* repaintContainer) const
 {
-    auto result = computeFloatVisibleRectInContainer(rect, repaintContainer, visibleRectContextForRepaint());
+    auto result = computeFloatVisibleRectInContainer(rect, repaintContainer, visibleRectContextForRepaint(), { });
     RELEASE_ASSERT(result);
     return *result;
 }
 
-auto RenderObject::computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject* container, VisibleRectContext context) const -> std::optional<RepaintRects>
+auto RenderObject::computeVisibleRectsInContainer(const RepaintRects& rects, const RenderLayerModelObject* container, const VisibleRectContext& context, VisibleRectState state) const -> std::optional<RepaintRects>
 {
     if (container == this)
         return rects;
@@ -1172,10 +1173,10 @@ auto RenderObject::computeVisibleRectsInContainer(const RepaintRects& rects, con
             return adjustedRects;
         }
     }
-    return parent->computeVisibleRectsInContainer(adjustedRects, container, context);
+    return parent->computeVisibleRectsInContainer(adjustedRects, container, context, state);
 }
 
-std::optional<FloatRect> RenderObject::computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject*, VisibleRectContext) const
+std::optional<FloatRect> RenderObject::computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject*, const VisibleRectContext&, VisibleRectState) const
 {
     ASSERT_NOT_REACHED();
     return FloatRect();
@@ -2164,14 +2165,11 @@ bool RenderObject::hasEmptyVisibleRectRespectingParentFrames() const
 
     auto hasEmptyVisibleRect = [] (const RenderObject& renderer) {
         VisibleRectContext context {
-            .hasPositionFixedDescendant = false,
-            .dirtyRectIsFlipped = false,
-            .descendantNeedsEnclosingIntRect = false,
             .options = { VisibleRectContext::Option::UseEdgeInclusiveIntersection, VisibleRectContext::Option::ApplyCompositedClips },
             .scrollMargin = { }
         };
         CheckedRef box = renderer.enclosingBoxModelObject();
-        auto clippedBounds = box->computeVisibleRectsInContainer({ box->borderBoundingBox() }, &box->view(), context);
+        auto clippedBounds = box->computeVisibleRectsInContainer({ box->borderBoundingBox() }, &box->view(), context, { });
         return !clippedBounds || clippedBounds->clippedOverflowRect.isEmpty();
     };
 
@@ -2285,7 +2283,9 @@ static RefPtr<Node> nodeAfter(const BoundaryPoint& point)
 
 enum class CoordinateSpace { Client, Absolute };
 
-static Vector<FloatRect> borderAndTextRects(const SimpleRange& range, CoordinateSpace space, OptionSet<RenderObject::BoundingRectBehavior> behavior)
+enum class TextOnly : bool { No, Yes };
+
+static Vector<FloatRect> borderAndTextRects(const SimpleRange& range, CoordinateSpace space, OptionSet<RenderObject::BoundingRectBehavior> behavior, TextOnly textOnly = TextOnly::No)
 {
     Vector<FloatRect> rects;
 
@@ -2308,7 +2308,7 @@ static Vector<FloatRect> borderAndTextRects(const SimpleRange& range, Coordinate
 
     for (Ref node : intersectingNodesWithDeprecatedZeroOffsetStartQuirk(range)) {
         auto* element = dynamicDowncast<Element>(node.get());
-        if (element && selectedElementsSet.contains(element) && (useVisibleBounds || !node->parentElement() || !selectedElementsSet.contains(node->parentElement()))) {
+        if (textOnly == TextOnly::No && element && selectedElementsSet.contains(element) && (useVisibleBounds || !node->parentElement() || !selectedElementsSet.contains(node->parentElement()))) {
             if (CheckedPtr renderer = element->renderBoxModelObject()) {
                 if (useVisibleBounds) {
                     auto localBounds = renderer->borderBoundingBox();
@@ -2316,16 +2316,14 @@ static Vector<FloatRect> borderAndTextRects(const SimpleRange& range, Coordinate
                         { localBounds },
                         protect(renderer->view()).ptr(),
                         {
-                            .hasPositionFixedDescendant = false,
-                            .dirtyRectIsFlipped = false,
-                            .descendantNeedsEnclosingIntRect = false,
                             .options = {
                                 VisibleRectContext::Option::UseEdgeInclusiveIntersection,
                                 VisibleRectContext::Option::ApplyCompositedClips,
                                 VisibleRectContext::Option::ApplyCompositedContainerScrolls
                             },
                             .scrollMargin = { }
-                        }
+                        },
+                        { }
                     );
                     if (!rootClippedBounds)
                         continue;
@@ -2369,6 +2367,11 @@ Vector<FloatRect> RenderObject::absoluteBorderAndTextRects(const SimpleRange& ra
 Vector<FloatRect> RenderObject::clientBorderAndTextRects(const SimpleRange& range)
 {
     return borderAndTextRects(range, CoordinateSpace::Client, { });
+}
+
+Vector<FloatRect> RenderObject::clientTextRects(const SimpleRange& range)
+{
+    return borderAndTextRects(range, CoordinateSpace::Client, { }, TextOnly::Yes);
 }
 
 ScrollAnchoringController* RenderObject::searchParentChainForScrollAnchoringController(const RenderObject& renderer)
@@ -3135,6 +3138,18 @@ VisibleInViewportState RenderObject::imageFrameAvailable(CachedImage& image, Ima
 {
     imageChanged(static_cast<WrappedImagePtr>(&image), changeRect);
     return VisibleInViewportState::No;
+}
+
+bool RenderObject::isExcludedMarker() const
+{
+    // An excluded list marker is the direct child of its list item, never wrapped in an anonymous block, and no part of in-flow layout.
+    // Only markers whose first formatted line lives in a descendant block qualify (see childrenInline)
+    auto* marker = dynamicDowncast<RenderListMarker>(*this);
+    if (!marker)
+        return false;
+    if (marker->isInside() || !document().settings().listMarkerPositionedPostLayoutEnabled())
+        return false;
+    return parent() && !parent()->childrenInline();
 }
 
 #if ENABLE(TREE_DEBUGGING)

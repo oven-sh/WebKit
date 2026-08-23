@@ -39,12 +39,16 @@ shouldBeMatch(/\u{1F600}ab|c/u, "\u{1F600}xc", [3, ["c"]]);
 shouldBeMatch(/\u{1F600}\u{1F600}xy|\u{1F600}z|q/u, "\u{1F600}\u{1F600}q", [4, ["q"]]);
 shouldBeMatch(/[a\u{10000}]{3}Z|b/u, "a\u{10000}Xb", [4, ["b"]]);
 
-// A zero minimum-size alternative can match in the middle of a surrogate pair, so the start position
-// must then advance one code unit at a time.
-shouldBeMatch(/aa|\B/u, "X\u{1F600}Z", [2, [""]]);
-shouldBeMatch(/a?\B|q/u, "X\u{1F600}Z", [2, [""]]);
-shouldBeMatch(/[\u{1F600}]X|\B/u, "X\u{1F600}Z", [2, [""]]);
-shouldBeMatch(/\B|[\u{1F600}]X/u, "X\u{1F600}Z", [2, [""]]);
+// Under /u the search advances by code point (RegExpBuiltinExec's AdvanceStringIndex with
+// fullUnicode set), so the mid-surrogate-pair index 2 is never a match position and no /u match
+// can report it. Every code-point boundary of "X\u{1F600}Z" (X, the emoji, Z, and the end) is a word
+// boundary, so \B matches nowhere: the spec-conforming result is null. V8 and WebKit trunk report
+// [2, [""]] here by falling back to code-unit advancement when an alternative can match zero-width;
+// that is a deliberate divergence, kept spec-conforming here.
+shouldBeMatch(/aa|\B/u, "X\u{1F600}Z", null);
+shouldBeMatch(/a?\B|q/u, "X\u{1F600}Z", null);
+shouldBeMatch(/[\u{1F600}]X|\B/u, "X\u{1F600}Z", null);
+shouldBeMatch(/\B|[\u{1F600}]X/u, "X\u{1F600}Z", null);
 shouldBeMatch(/aa|(?=Z)/u, "X\u{1F600}Z", [3, [""]]);
 shouldBeMatch(/x+|q/u, "\u{1F600}\u{1F600}q", [4, ["q"]]);
 
@@ -69,7 +73,10 @@ shouldBeMatch(/[\u{1F600}-\u{1F64F}]{2}Z|q/u, "\u{1F600}\u{1F601}Wq", [5, ["q"]]
         indices.push(m.index);
         re.lastIndex++;
     }
-    shouldBe(JSON.stringify(indices), JSON.stringify([2]), "global \\B");
+    // Even manual code-unit lastIndex stepping cannot produce a match at the mid-pair index 2:
+    // RegExpBuiltinExec maps lastIndex to the code point it belongs to, and every code-point
+    // boundary here is a word boundary, so \\B never matches (V8/WebKit trunk report [2]).
+    shouldBe(JSON.stringify(indices), JSON.stringify([]), "global \\B");
 }
 
 // /v (unicodeSets) shares the /u semantics.

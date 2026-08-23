@@ -77,7 +77,7 @@ void SpaceTimeMutatorScheduler::beginCollection()
     m_bytesAllocatedThisCycleAtTheBeginning = bytesAllocatedThisCycleImpl();
     m_bytesAllocatedThisCycleAtTheEnd = 
         Options::concurrentGCMaxHeadroom() *
-        std::max<double>(m_bytesAllocatedThisCycleAtTheBeginning, m_heap.m_maxEdenSize);
+        std::max<double>(m_bytesAllocatedThisCycleAtTheBeginning, m_heap.effectiveMaxEdenSize());
 }
 
 void SpaceTimeMutatorScheduler::didStop()

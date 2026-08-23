@@ -260,7 +260,7 @@ WebCore::FloatRect WebPageProxy::computeLayoutViewportRect(const FloatRect& unob
         constrainedUnobscuredRect.setHeight(adjustedUnexposedMaxEdge(documentRect.maxY(), constrainedUnobscuredRect.maxY(), factor) - constrainedUnobscuredRect.y());
     }
 
-    bool resizesContent = pageClient->viewportMetaTagInteractiveWidget() == WebCore::InteractiveWidget::ResizesContent;
+    bool resizesContent = pageClient->viewportMetaTagInteractiveWidget() == WebCore::InteractiveWidgetValue::ResizesContent;
     FloatRect sizeSourceRect = resizesContent ? unobscuredContentRectRespectingInputViewBounds : unobscuredContentRect;
     FloatSize constrainedSize = isBelowMinimumScale ? constrainedUnobscuredRect.size() : sizeSourceRect.size();
     FloatRect unobscuredContentRectForViewport = isBelowMinimumScale ? constrainedUnobscuredRect : unobscuredContentRectRespectingInputViewBounds;
@@ -398,7 +398,8 @@ void WebPageProxy::updateSelectionWithTouches(IntPoint point, SelectionTouch tou
     if (!hasRunningProcess())
         return callback(WebCore::IntPoint(), SelectionTouch::Started, { });
 
-    protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::UpdateSelectionWithTouches(point, touches, baseIsStart), WTF::move(callback), webPageIDInMainFrameProcess());
+    RefPtr focusedFrame = focusedOrMainFrame();
+    sendWithAsyncReplyToProcessContainingFrame(focusedFrame ? std::optional(focusedFrame->frameID()) : std::nullopt, Messages::WebPage::UpdateSelectionWithTouches(point, touches, baseIsStart), Messages::WebPage::UpdateSelectionWithTouches::Reply { WTF::move(callback) });
 }
 
 void WebPageProxy::willInsertFinalDictationResult()
@@ -912,6 +913,7 @@ void WebPageProxy::didProgrammaticallyClearFocusedElement(WebCore::ElementContex
 void WebPageProxy::elementDidFocus(IPC::Connection& connection, const FocusedElementInformation& information, bool userIsInteracting, bool blurPreviousNode, OptionSet<WebCore::ActivityState> activityStateChanges, const UserData& userData)
 {
     m_pendingInputModeChange = std::nullopt;
+    m_focusedElementProcessID = WebProcessProxy::fromConnection(connection)->coreProcessIdentifier();
 
     RefPtr pageClient = this->pageClient();
     if (!pageClient)
@@ -934,8 +936,12 @@ void WebPageProxy::elementDidFocus(IPC::Connection& connection, const FocusedEle
         });
 }
 
-void WebPageProxy::elementDidBlur()
+void WebPageProxy::elementDidBlur(IPC::Connection& connection)
 {
+    if (m_focusedElementProcessID && *m_focusedElementProcessID != WebProcessProxy::fromConnection(connection)->coreProcessIdentifier())
+        return;
+
+    m_focusedElementProcessID = std::nullopt;
     m_pendingInputModeChange = std::nullopt;
     if (RefPtr pageClient = this->pageClient())
         pageClient->elementDidBlur();

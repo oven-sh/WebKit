@@ -370,9 +370,6 @@ public:
 
     void flushNetworkProcessIPC(CompletionHandler<void()>&&);
 
-    bool isWaitingForCertificateInfo() const { return m_isWaitingForCertificateInfo; }
-    void setIsWaitingForCertificateInfo(bool waiting) { m_isWaitingForCertificateInfo = waiting; }
-
 private:
     explicit NetworkProcessProxy();
 
@@ -386,7 +383,7 @@ private:
     void getLaunchOptions(ProcessLauncher::LaunchOptions&) override;
     void connectionWillOpen(IPC::Connection&) override;
     void processWillShutDown(IPC::Connection&) override;
-    void terminate() final;
+    void terminate(std::optional<IPC::MessageName> invalidMessageName = std::nullopt) final;
 
     // IPC::Connection::Client
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -429,7 +426,7 @@ private:
     void unregisterRemoteWorkerClientProcess(RemoteWorkerType, WebCore::ProcessIdentifier clientProcessIdentifier, WebCore::ProcessIdentifier remoteWorkerProcessIdentifier);
     void reportConsoleMessage(PAL::SessionID, const URL&, const WebCore::SecurityOriginData&, MessageSource, MessageLevel, const String& message, uint64_t requestIdentifier);
 
-    void terminateWebProcess(WebCore::ProcessIdentifier);
+    void terminateWebProcess(WebCore::ProcessIdentifier, IPC::MessageName);
 
     void considerProcessSwapForNavigationResponse(WebPageProxyIdentifier, WebCore::NavigationIdentifier, WebCore::BrowsingContextGroupSwitchDecision, WebCore::NavigationResponseProcessSwapReason, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(bool success)>&&);
 
@@ -507,7 +504,6 @@ private:
     RetainPtr<id> m_backgroundObserver;
     RetainPtr<id> m_foregroundObserver;
 #endif
-    bool m_isWaitingForCertificateInfo { false };
 };
 
 } // namespace WebKit

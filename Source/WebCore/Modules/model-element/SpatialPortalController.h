@@ -27,8 +27,11 @@
 
 #if ENABLE(SPATIAL_PORTAL)
 
-#include "LayoutSize.h"
+#include <WebCore/LayoutSize.h>
 #include <WebCore/NodeIdentifier.h>
+#include <WebCore/PortalAction.h>
+#include <WebCore/PortalTransform.h>
+#include <WebCore/TransformationMatrix.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefPtr.h>
@@ -46,8 +49,12 @@ class IntersectionObserver;
 class Model;
 class ModelPlayer;
 class ModelPlayerProvider;
+class Page;
+class PlaceholderModelPlayer;
 class PortalModelPlayerClient;
+class PortalVisibilityChangeClient;
 class ResourceError;
+class SpatialPortalEventListener;
 class WeakPtrImplWithEventTargetData;
 
 // Manages the portal / ModelPlayer for an element with `spatial: portal`.
@@ -56,53 +63,92 @@ class SpatialPortalController : public CanMakeWeakPtr<SpatialPortalController>, 
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SpatialPortalController);
     friend class PortalModelPlayerClient;
     friend class PortalIntersectionObserverCallback;
+    friend class PortalVisibilityChangeClient;
 public:
     explicit SpatialPortalController(Element&);
     ~SpatialPortalController();
 
+    void prepareForRemoval();
+
     void unregisterChildModel(HTMLModelElement&);
     void registerChildModel(HTMLModelElement&);
     void childModelDidChange(HTMLModelElement&);
+    void childVisibilityStateChanged(HTMLModelElement&);
+    void childWasSuspended(HTMLModelElement&);
 
-    ModelPlayer* modelPlayer() const { return m_modelPlayer.get(); }
+    Element* portalElement() const { return m_portalElement.get(); }
     unsigned numberOfHostedModels() const { return m_hostedModels.size(); }
-    WEBCORE_EXPORT unsigned numberOfLoadedModels() const;
+    bool childIsLoaded(NodeIdentifier) const;
+    ModelPlayer* playerForChild(NodeIdentifier) const;
     void configureGraphicsLayer(GraphicsLayer&, const Color& backgroundColor);
     void sizeMayHaveChanged();
+
+    void setPortalTransform(PortalTransformKind);
+    const std::optional<TransformationMatrix>& resolvedPortalTransform() const { return m_resolvedPortalTransform; }
+
+    void setPortalAction(PortalActionKind);
+
+#if ENABLE(MODEL_ELEMENT_STAGE_MODE_INTERACTION)
+    WEBCORE_EXPORT static CheckedPtr<SpatialPortalController> interactiveControllerForHitTestedElement(Element*);
+    WEBCORE_EXPORT bool supportsInteraction() const;
+    WEBCORE_EXPORT void beginStageModeTransform(const TransformationMatrix&);
+    WEBCORE_EXPORT void updateStageModeTransform(const TransformationMatrix&);
+    WEBCORE_EXPORT void endStageModeInteraction();
+#endif
 
     bool isPortalVisible() const;
 
 private:
+    struct HostedModel {
+        WeakPtr<HTMLModelElement, WeakPtrImplWithEventTargetData> element;
+        RefPtr<Model> loadedModel;
+        RefPtr<PlaceholderModelPlayer> placeholder;
+    };
+
     void modelDidFinishLoading(ModelPlayer&, NodeIdentifier);
     void modelDidFailLoading(ModelPlayer&, NodeIdentifier, const ResourceError&);
     void modelDidUnload(ModelPlayer&);
     void modelDidUpdate(ModelPlayer&);
+    void modelDidUpdatePortalTransform(ModelPlayer&, const TransformationMatrix&);
     void logWarning(ModelPlayer&, const String&);
     RefPtr<GraphicsLayer> portalGraphicsLayer() const;
     void viewportIntersectionChanged(bool isIntersecting);
+    void documentVisibilityChanged();
 
     ModelPlayer* ensureModelPlayer();
     void loadChildModelsIfReady();
     void loadChildModelIfReady(HTMLModelElement&);
     void deleteModelPlayer();
     void unloadChildModel(NodeIdentifier);
+    void unloadAllChildModels();
+    void saveChildState(NodeIdentifier, HostedModel&, bool onSuspend);
     HTMLModelElement* hostedModelElement(NodeIdentifier) const;
     void reconfigurePortalLayer();
     void observePortalVisibility();
+    void stopObservingPortalVisibility();
     LayoutSize portalContentSize() const;
+    void updateGestureHandling();
 
     const WeakPtr<Element, WeakPtrImplWithEventTargetData> m_portalElement;
 
-    struct HostedModel {
-        WeakPtr<HTMLModelElement, WeakPtrImplWithEventTargetData> element;
-        RefPtr<Model> loadedModel;
-    };
     HashMap<NodeIdentifier, HostedModel> m_hostedModels;
 
     WeakPtr<ModelPlayerProvider> m_modelPlayerProvider;
+#if ENABLE(MODEL_PROCESS)
+    WeakPtr<Page> m_page;
+#endif
     RefPtr<ModelPlayer> m_modelPlayer;
     const RefPtr<PortalModelPlayerClient> m_playerClient;
     RefPtr<IntersectionObserver> m_intersectionObserver;
+    RefPtr<PortalVisibilityChangeClient> m_visibilityChangeClient;
+#if ENABLE(TOUCH_EVENTS)
+    RefPtr<SpatialPortalEventListener> m_eventListener;
+#endif
+    std::optional<LayoutSize> m_lastPushedContentSize;
+    std::optional<TransformationMatrix> m_resolvedPortalTransform;
+    PortalTransformKind m_portalTransform { PortalTransformKind::Auto };
+    PortalActionKind m_portalAction { PortalActionKind::None };
+    bool m_handlesGesture { false };
     bool m_isIntersectingViewport { false };
 };
 

@@ -266,7 +266,7 @@ static ALWAYS_INLINE void typedArrayViewForEachImpl(JSGlobalObject* globalObject
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSet(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSet(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -311,7 +311,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSet(VM& vm, JSGlobalO
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncCopyWithin(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncCopyWithin(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -487,7 +487,7 @@ static ALWAYS_INLINE size_t typedArrayLastIndexOfImpl(typename ViewClass::Elemen
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIncludes(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncIncludes(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -552,7 +552,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIncludes(VM& vm, JSGl
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIndexOf(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncIndexOf(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -597,7 +597,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIndexOf(VM& vm, JSGlo
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncJoin(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncJoin(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -656,7 +656,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncJoin(VM& vm, JSGlobal
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.fill
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -718,7 +718,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobal
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncLastIndexOf(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncLastIndexOf(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -776,7 +776,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncLastIndexOf(VM& vm, J
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoGetterFuncBuffer(VM&, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoGetterFuncBuffer(VM&, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // 22.2.3.3
     ViewClass* thisObject = uncheckedDowncast<ViewClass>(callFrame->thisValue());
@@ -785,7 +785,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoGetterFuncBuffer(VM&, JSG
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoGetterFuncLength(VM&, JSGlobalObject*, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoGetterFuncLength(VM&, JSGlobalObject*, CallFrame* callFrame)
 {
     // 22.2.3.17
     ViewClass* thisObject = uncheckedDowncast<ViewClass>(callFrame->thisValue());
@@ -794,7 +794,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoGetterFuncLength(VM&, JSG
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoGetterFuncByteLength(VM&, JSGlobalObject*, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoGetterFuncByteLength(VM&, JSGlobalObject*, CallFrame* callFrame)
 {
     // 22.2.3.2
     ViewClass* thisObject = uncheckedDowncast<ViewClass>(callFrame->thisValue());
@@ -803,7 +803,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoGetterFuncByteLength(VM&,
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoGetterFuncByteOffset(VM&, JSGlobalObject*, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoGetterFuncByteOffset(VM&, JSGlobalObject*, CallFrame* callFrame)
 {
     // 22.2.3.3
     ViewClass* thisObject = uncheckedDowncast<ViewClass>(callFrame->thisValue());
@@ -812,7 +812,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoGetterFuncByteOffset(VM&,
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncForEach(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncForEach(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.foreach
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -872,7 +872,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncForEach(VM& vm, JSGlo
     }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncMap(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncMap(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.map
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -979,7 +979,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncMap(VM& vm, JSGlobalO
     }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.filter
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1072,7 +1072,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlob
 #undef JSC_DISPATCH_TYPED_ARRAY
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.find
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1145,7 +1145,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobal
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.findindex
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1218,7 +1218,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSG
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.findlast
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1291,7 +1291,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGl
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.findlastindex
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1364,7 +1364,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm,
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.every
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1437,7 +1437,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGloba
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.some
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1510,7 +1510,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobal
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.reduce
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1585,7 +1585,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGlob
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.reduceright
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1661,7 +1661,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, J
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReverse(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncReverse(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1677,7 +1677,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReverse(VM& vm, JSGlo
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncToReversed(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncToReversed(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/proposal-change-array-by-copy/#sec-%typedarray%.prototype.toReversed
 
@@ -1706,7 +1706,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncToReversed(VM& vm, JS
 }
 
 template<typename ViewClass>
-static ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGlobalObject* globalObject, ViewClass* thisObject, JSValue comparatorValue)
+static inline EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGlobalObject* globalObject, ViewClass* thisObject, JSValue comparatorValue)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1802,7 +1802,7 @@ static ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& v
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSort(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSort(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1819,7 +1819,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSort(VM& vm, JSGlobal
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncToSorted(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncToSorted(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/proposal-change-array-by-copy/#sec-%typedarray%.prototype.toSorted
 
@@ -1850,7 +1850,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncToSorted(VM& vm, JSGl
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewPrivateFuncFromFast(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewPrivateFuncFromFast(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1913,7 +1913,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewPrivateFuncFromFast(VM& vm, JS
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSlice(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSlice(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -2037,7 +2037,7 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSlice(VM& vm, JSGloba
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSubarray(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSubarray(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.subarray
 
@@ -2124,7 +2124,7 @@ static inline void validateIntegerIndex(JSGlobalObject* globalObject, ViewClass*
 }
 
 template<typename ViewClass>
-ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncWith(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncWith(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/proposal-change-array-by-copy/#sec-%typedarray%.prototype.with
 

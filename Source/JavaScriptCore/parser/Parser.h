@@ -650,6 +650,13 @@ public:
     void useVariable(UniquedStringImpl* impl, bool isEval)
     {
         m_usesEval |= isEval;
+        if (impl == m_lastAddedUsedVariable) {
+            // A failure indicates that m_usedVariables was changed (a set added or removed)
+            // without clearing m_lastAddedUsedVariable.
+            ASSERT(m_usedVariables.last().contains(impl));
+            return;
+        }
+        m_lastAddedUsedVariable = impl;
         m_usedVariables.last().add(impl);
     }
     void usePrivateName(const Identifier& ident)
@@ -659,9 +666,17 @@ public:
 
     void setUsesImportMeta() { m_usesImportMeta = true; }
 
-    void pushUsedVariableSet() { m_usedVariables.append(UniquedStringImplPtrSet()); }
+    void pushUsedVariableSet()
+    {
+        m_usedVariables.append(UniquedStringImplPtrSet());
+        m_lastAddedUsedVariable = nullptr;
+    }
     size_t currentUsedVariablesSize() { return m_usedVariables.size(); }
-    void revertToPreviousUsedVariables(size_t size) { m_usedVariables.resize(size); }
+    void revertToPreviousUsedVariables(size_t size)
+    {
+        m_usedVariables.resize(size);
+        m_lastAddedUsedVariable = nullptr;
+    }
 
     void setNeedsFullActivation() { m_needsFullActivation = true; }
     bool needsFullActivation() const { return m_needsFullActivation; }
@@ -877,8 +892,8 @@ public:
         m_needsFullActivation = info->needsFullActivation;
         m_needsSuperBinding = info->needsSuperBinding;
         UniquedStringImplPtrSet& destSet = m_usedVariables.last();
-        for (unsigned i = 0; i < info->usedVariablesCount; ++i)
-            destSet.add(info->usedVariables()[i].get());
+        for (auto& variable : info->usedVariables())
+            destSet.add(variable.get());
     }
 
     class MaybeParseAsGeneratorFunctionForScope;
@@ -1031,6 +1046,7 @@ private:
     EvalContextType m_evalContextType { EvalContextType::None };
     DerivedContextType m_derivedContextType { DerivedContextType::None };
 
+    UniquedStringImpl* m_lastAddedUsedVariable { nullptr };
     Vector<UniquedStringImplPtrSet, 6> m_usedVariables;
 
     static void verifyLayout();
@@ -1554,13 +1570,6 @@ private:
         m_token.m_type = m_lexer->lexWithoutClearingLineTerminator(&m_token, lexerFlags, strictMode());
     }
 
-    ALWAYS_INLINE void nextExpectIdentifier(OptionSet<LexerFlags> lexerFlags = { })
-    {
-        m_lastTokenLocation = m_token.location();
-        m_lastTokenType = m_token.m_type;
-        m_token.m_type = m_lexer->lexExpectIdentifier(&m_token, lexerFlags, strictMode());
-    }
-
     template <class TreeBuilder>
     ALWAYS_INLINE void lexCurrentTokenAgainUnderCurrentContext(TreeBuilder& context)
     {
@@ -1787,6 +1796,8 @@ private:
     template <class TreeBuilder> TreeStatement parseBlockStatement(TreeBuilder&, BlockType = BlockType::Normal);
     template <class TreeBuilder> TreeExpression parseExpression(TreeBuilder&);
     template <class TreeBuilder> TreeExpression parseAssignmentExpression(TreeBuilder&);
+    template <typename TreeBuilder> NEVER_INLINE TreeExpression parseArrowFunctionCandidate(TreeBuilder&, SavePoint&, const JSTokenLocation&, bool isArrowFunctionToken, bool wasOpenParen, size_t usedVariablesSize, bool& shouldReturnResult);
+    template <typename TreeBuilder> NEVER_INLINE TreeExpression parseDestructuringAssignment(TreeBuilder&, SavePoint&, const JSTokenLocation&, bool isPossiblePattern);
     template <class TreeBuilder> TreeExpression parseYieldExpression(TreeBuilder&);
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression parseConditionalExpression(TreeBuilder&);
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression parseBinaryExpression(TreeBuilder&);

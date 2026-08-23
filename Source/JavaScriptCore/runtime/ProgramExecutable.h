@@ -51,7 +51,17 @@ public:
         return executable;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A precompiled block, generated from source() earlier (by any global object; like the CodeCache, this only
+    // cares about the CodeGenerationMode), stands in for the CodeCache lookup of source(). If it was generated
+    // under a different mode than globalObject compiles with now (a debugger attached since), it is ignored and
+    // the lookup happens as usual. The global declaration instantiation is done for globalObject either way, so
+    // one block can initialize any number of realms; each realm still needs its own ProgramExecutable, which
+    // links exactly once.
+    JSObject* initializeGlobalProperties(VM&, JSGlobalObject*, JSScope*, UnlinkedProgramCodeBlock* precompiled = nullptr);
+#else
     JSObject* initializeGlobalProperties(VM&, JSGlobalObject*, JSScope*);
+#endif
 
     static void destroy(JSCell*);
 

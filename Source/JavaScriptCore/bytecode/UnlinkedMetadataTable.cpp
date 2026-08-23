@@ -27,7 +27,6 @@
 #include "UnlinkedMetadataTable.h"
 
 #include "BytecodeStructs.h"
-#include "UnlinkedMetadataTableInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -149,23 +148,17 @@ void UnlinkedMetadataTable::finalize()
     });
 #endif
 
-    unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
+    ASSERT(!m_isLinked);
     if (m_is32Bit) {
-        // offset already accounts for s_offset16TableSize
-        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::malloc(valueProfileSize + sizeof(LinkingData) + s_offset32TableSize + offset));
-        memset(newBuffer, 0, valueProfileSize + sizeof(LinkingData) + s_offset16TableSize);
-        memset(newBuffer + valueProfileSize + sizeof(LinkingData) + s_offset16TableSize + s_offset32TableSize, 0, offset - s_offset16TableSize);
-        Offset32* buffer = std::bit_cast<Offset32*>(newBuffer + valueProfileSize + sizeof(LinkingData) + s_offset16TableSize);
+        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::zeroedMalloc(s_offset16TableSize + s_offset32TableSize));
+        Offset32* buffer = std::bit_cast<Offset32*>(newBuffer + s_offset16TableSize);
         for (unsigned i = 0; i < s_offsetTableEntries; ++i)
             buffer[i] = preprocessBuffer()[i] + s_offset32TableSize;
         MetadataTableMalloc::free(m_rawBuffer);
         m_rawBuffer = newBuffer;
     } else {
-        // offset already accounts for s_offset16TableSize
-        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::malloc(valueProfileSize + sizeof(LinkingData) + offset));
-        memset(newBuffer, 0, valueProfileSize + sizeof(LinkingData));
-        memset(newBuffer + valueProfileSize + sizeof(LinkingData) + s_offset16TableSize, 0, offset - s_offset16TableSize);
-        Offset16* buffer = std::bit_cast<Offset16*>(newBuffer + valueProfileSize + sizeof(LinkingData));
+        uint8_t* newBuffer = reinterpret_cast_ptr<uint8_t*>(MetadataTableMalloc::zeroedMalloc(s_offset16TableSize));
+        Offset16* buffer = std::bit_cast<Offset16*>(newBuffer);
         for (unsigned i = 0; i < s_offsetTableEntries; ++i)
             buffer[i] = preprocessBuffer()[i];
         MetadataTableMalloc::free(m_rawBuffer);
@@ -176,36 +169,9 @@ void UnlinkedMetadataTable::finalize()
 UnlinkedMetadataTable::~UnlinkedMetadataTable()
 {
     ASSERT(!m_isLinked);
-    if (m_hasMetadata)
+    if (m_hasMetadata && m_rawBuffer)
         MetadataTableMalloc::free(m_rawBuffer);
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-Ref<UnlinkedMetadataTable> UnlinkedMetadataTable::createFromEntryCounts(unsigned numValueProfiles, std::span<const unsigned, s_numOpcodesWithMetadata> entryCounts)
-{
-    Ref table = adoptRef(*new UnlinkedMetadataTable);
-    table->m_hasMetadata = true;
-    table->m_numValueProfiles = numValueProfiles;
-    for (unsigned i = 0; i < s_numOpcodesWithMetadata; ++i)
-        table->preprocessBuffer()[i] = entryCounts[i];
-    table->finalize();
-    return table;
-}
-
-// Inverse of finalize(); the same range computation MetadataTable::forEach() performs.
-unsigned UnlinkedMetadataTable::entryCount(OpcodeID opcodeID) const
-{
-    ASSERT(m_isFinalized && m_hasMetadata);
-    ASSERT(static_cast<unsigned>(opcodeID) < s_numOpcodesWithMetadata);
-    unsigned start = m_is32Bit ? offsetTable32()[opcodeID] : offsetTable16()[opcodeID];
-    unsigned end = m_is32Bit ? offsetTable32()[opcodeID + 1] : offsetTable16()[opcodeID + 1];
-    unsigned alignedStart = roundUpToMultipleOf(metadataAlignment(opcodeID), start);
-    if (alignedStart >= end)
-        return 0;
-    ASSERT(!((end - alignedStart) % metadataSize(opcodeID)));
-    return (end - alignedStart) / metadataSize(opcodeID);
-}
-#endif
 
 } // namespace JSC
 
