@@ -1829,6 +1829,9 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     // GC heap past this call, so the CachedBytecode is kept for the rest of the process, as diskCachePayloadIsPersistentForTesting does.
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span<uint8_t> { static_cast<uint8_t*>(base), size }, [size](const void* p) { munmap(const_cast<void*>(p), size); }, { });
     cachedBytecode->setPayloadIsPersistent();
+    // Kept for the rest of the process even if the decode below is rejected: decodeCodeBlock materializes the block (which
+    // aliases the mapping) before it compares source keys, so the mapping may already have borrowers on the GC heap.
+    cachedBytecode->ref();
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
 
     MonotonicTime start = MonotonicTime::now();
@@ -1836,7 +1839,6 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     UnlinkedCodeBlock* top = isModule ? static_cast<UnlinkedCodeBlock*>(decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, cachedBytecode.copyRef())) : static_cast<UnlinkedCodeBlock*>(decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, cachedBytecode.copyRef()));
     if (!top)
         return throwVMError(globalObject, scope, "decode failed (key mismatch?)"_s);
-    cachedBytecode->ref(); // decoded blocks alias the mapping; keep it for the rest of the process
     decoded++;
     MarkedArgumentBuffer keepAlive;
     Vector<UnlinkedCodeBlock*> frontier { top };
