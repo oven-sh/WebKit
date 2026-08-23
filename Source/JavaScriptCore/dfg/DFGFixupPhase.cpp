@@ -3747,7 +3747,8 @@ private:
                 node->setArrayMode(ArrayMode(Array::ForceExit, node->arrayMode().action()));
                 blessArrayOperation(base, offset, m_graph.varArgChild(node, node->storageChildIndex()));
             } else {
-                if (!isInt32Speculation(offset->prediction()) && isFullNumberSpeculation(offset->prediction())) {
+                bool mayBeLargeTypedArray = node->arrayMode().mayBeLargeTypedArray() || m_graph.hasExitSite(node->origin.semantic, Overflow);
+                if (!isInt32Speculation(offset->prediction()) && isFullNumberSpeculation(offset->prediction()) && !mayBeLargeTypedArray) {
                     Node* newOffset = m_insertionSet.insertNode(
                         m_indexInBlock, SpecInt32Only, DoubleAsInt32, node->origin,
                         Edge(offset.node(), DoubleRepUse));
@@ -3756,7 +3757,7 @@ private:
                 }
 
                 bool mayBeResizable = data.isResizable || m_graph.hasExitSite(node->origin.semantic, UnexpectedResizableArrayBufferView);
-                node->setArrayMode(ArrayMode(Array::Uint8Array, Array::NonArray, Array::InBounds, Array::AsIs, node->arrayMode().action(), false, mayBeResizable));
+                node->setArrayMode(ArrayMode(Array::Uint8Array, Array::NonArray, Array::InBounds, Array::AsIs, node->arrayMode().action(), mayBeLargeTypedArray, mayBeResizable));
                 blessArrayOperation(base, offset, m_graph.varArgChild(node, node->storageChildIndex()));
                 fixEdge<KnownCellUse>(base);
                 fixEdge<Int32Use>(offset);

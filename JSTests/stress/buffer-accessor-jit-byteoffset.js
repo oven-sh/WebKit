@@ -44,4 +44,4 @@ shouldBe(raw.getInt32(tailOffset + 8, true), iterations - 1, "the store landed a
 shouldBe(raw.getInt32(2 ** 31 + wide.length - 4, true), ~(iterations - 1), "the store landed at the 2GB byteOffset");
 shouldThrow(() => readAt(tail, 61), RangeError, "straddling the end of the small view");
 shouldThrow(() => writeAt(wide, 0, wide.length - 3), RangeError, "straddling the end of the wide view");
-shouldBe(numberOfDFGCompiles(readAt) <= 3, true, "the huge byteOffset does not cause recompiles");
+shouldBe(numberOfDFGCompiles(readAt) <= 4, true, "the huge byteOffset does not cause recompiles");

@@ -5099,7 +5099,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
 #if USE(BUN_JSC_ADDITIONS)
         case BufferAccessorIntrinsic: {
-            for (ExitKind kind : { BadType, BadIndexingType, OutOfBounds, Overflow, Int52Overflow, Uncountable }) {
+            for (ExitKind kind : { BadType, BadIndexingType, OutOfBounds, Int52Overflow, Uncountable }) {
                 if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, kind))
                     return CallOptimizationResult::DidNothing;
             }
@@ -5112,11 +5112,14 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             DataViewData data = descriptor->data;
+            Array::Action action = descriptor->isWrite ? Array::Write : Array::Read;
+            ArrayMode profiledMode = getArrayMode(action);
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, UnexpectedResizableArrayBufferView))
                 data.isResizable = true;
             else
-                data.isResizable = getArrayMode(descriptor->isWrite ? Array::Write : Array::Read).mayBeResizableOrGrowableSharedTypedArray();
-            ArrayMode arrayMode = ArrayMode(Array::SelectUsingPredictions, descriptor->isWrite ? Array::Write : Array::Read);
+                data.isResizable = profiledMode.mayBeResizableOrGrowableSharedTypedArray();
+            bool mayBeLargeTypedArray = profiledMode.mayBeLargeTypedArray() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow);
+            ArrayMode arrayMode = ArrayMode(Array::SelectUsingPredictions, Array::NonArray, Array::InBounds, Array::AsIs, action, mayBeLargeTypedArray, data.isResizable);
 
             if (descriptor->byteLengthFromArgument) {
                 int byteLengthArgument = descriptor->isWrite ? 3 : 2;

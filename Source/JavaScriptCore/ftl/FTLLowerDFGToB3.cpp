@@ -22674,14 +22674,14 @@ IGNORE_CLANG_WARNINGS_END
 
         if (bigInt) {
             RELEASE_ASSERT(data.byteSize == 8);
-            speculate(Overflow, noValue(), nullptr, m_out.above(m_out.load32NonNegative(bigInt, m_heaps.JSBigInt_length), m_out.constInt32(1)));
+            speculate(OutOfBounds, noValue(), nullptr, m_out.above(m_out.load32NonNegative(bigInt, m_heaps.JSBigInt_length), m_out.constInt32(1)));
             LValue isNegative = m_out.testNonZero32(m_out.load8ZeroExt32(bigInt, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(TypeInfoPerCellBit));
             if (!data.isSigned)
-                speculate(Overflow, noValue(), nullptr, isNegative);
+                speculate(OutOfBounds, noValue(), nullptr, isNegative);
             valueToStore = toBigInt64(bigInt);
             if (data.isSigned) {
                 LValue signMismatch = m_out.notEqual(isNegative, m_out.lessThan(valueToStore, m_out.int64Zero));
-                speculate(Overflow, noValue(), nullptr, m_out.bitAnd(m_out.notZero64(valueToStore), signMismatch));
+                speculate(OutOfBounds, noValue(), nullptr, m_out.bitAnd(m_out.notZero64(valueToStore), signMismatch));
             }
         } else if (!data.isFloatingPoint) {
             switch (data.byteSize) {
@@ -22694,7 +22694,7 @@ IGNORE_CLANG_WARNINGS_END
                     RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
                 else {
                     RELEASE_ASSERT(valueEdge.useKind() == Int52RepUse);
-                    speculate(Overflow, noValue(), nullptr, m_out.above(valueToStore, m_out.constInt64(0xffffffffLL)));
+                    speculate(OutOfBounds, noValue(), nullptr, m_out.above(valueToStore, m_out.constInt64(0xffffffffLL)));
                     valueToStore = m_out.castToInt32(valueToStore);
                 }
                 break;

@@ -10212,25 +10212,25 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
         switch (data.byteSize) {
         case 1:
             RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
-            speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(LessThan, valueGPR, TrustedImm32(data.isSigned ? -0x80 : 0)));
-            speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(GreaterThan, valueGPR, TrustedImm32(data.isSigned ? 0x7f : 0xff)));
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(LessThan, valueGPR, TrustedImm32(data.isSigned ? -0x80 : 0)));
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(GreaterThan, valueGPR, TrustedImm32(data.isSigned ? 0x7f : 0xff)));
             break;
         case 2:
             RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
-            speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(LessThan, valueGPR, TrustedImm32(data.isSigned ? -0x8000 : 0)));
-            speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(GreaterThan, valueGPR, TrustedImm32(data.isSigned ? 0x7fff : 0xffff)));
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(LessThan, valueGPR, TrustedImm32(data.isSigned ? -0x8000 : 0)));
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(GreaterThan, valueGPR, TrustedImm32(data.isSigned ? 0x7fff : 0xffff)));
             break;
         case 4:
             if (data.isSigned)
                 RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
             else {
                 RELEASE_ASSERT(valueEdge.useKind() == Int52RepUse);
-                speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch64(Above, valueGPR, TrustedImm64(0xffffffffLL)));
+                speculationCheck(OutOfBounds, JSValueRegs(), node, branch64(Above, valueGPR, TrustedImm64(0xffffffffLL)));
             }
             break;
         case 8: {
             RELEASE_ASSERT(valueEdge.useKind() == HeapBigIntUse);
-            speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(Above, Address(valueGPR, JSBigInt::offsetOfLength()), TrustedImm32(1)));
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(Above, Address(valueGPR, JSBigInt::offsetOfLength()), TrustedImm32(1)));
             load8(Address(valueGPR, JSCell::typeInfoFlagsOffset()), t1);
             and32(TrustedImm32(TypeInfoPerCellBit), t1);
             if (data.isSigned) {
@@ -10238,10 +10238,10 @@ void SpeculativeJIT::compileBufferWrite(Node* node)
                 auto isZero = branchTest64(Zero, t2);
                 compare32(NotEqual, t1, TrustedImm32(0), t1);
                 compare64(LessThan, t2, TrustedImm32(0), t3);
-                speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branch32(NotEqual, t1, t3));
+                speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(NotEqual, t1, t3));
                 isZero.link(this);
             } else {
-                speculationCheck(ExitKind::Overflow, JSValueRegs(), node, branchTest32(NonZero, t1));
+                speculationCheck(OutOfBounds, JSValueRegs(), node, branchTest32(NonZero, t1));
                 toBigInt64(valueGPR, t2);
             }
             break;

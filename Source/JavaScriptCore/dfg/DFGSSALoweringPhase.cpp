@@ -217,11 +217,17 @@ private:
         Edge offset = m_graph.varArgChild(m_node, 1);
         RELEASE_ASSERT(offset.useKind() == Int32Use);
 
+        // Like lowerBoundsCheck(): an Int32 length and CheckInBounds, which integer range analysis can eliminate,
+        // unless the site may see a view longer than INT32_MAX (GetArrayLength checks that on every execution and
+        // exits Overflow). Once an Overflow exit was seen, the int32 adds below stop checking: whatever they would
+        // catch, the unsigned bounds / range compares that consume them catch too.
+        bool sawOverflow = m_graph.hasExitSite(m_node->origin.semantic, Overflow);
 #if USE(LARGE_TYPED_ARRAYS)
-        constexpr bool lengthAsInt52 = true;
+        bool lengthAsInt52 = arrayMode.mayBeLargeTypedArray() || sawOverflow;
 #else
         constexpr bool lengthAsInt52 = false;
 #endif
+        Arith::Mode addMode = sawOverflow ? Arith::Unchecked : Arith::CheckOverflow;
         Node* length = m_insertionSet.insertNode(
             m_nodeIndex, lengthAsInt52 ? SpecInt52Any : SpecInt32Only, lengthAsInt52 ? GetTypedArrayLengthAsInt52 : GetArrayLength, m_node->origin,
             OpInfo(arrayMode.asWord()), Edge(base.node(), KnownCellUse), Edge());
@@ -235,7 +241,7 @@ private:
         Node* checkLastByte = nullptr;
         if (data.byteSize > 1) {
             Node* lastByteOffset = m_insertionSet.insertNode(
-                m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(Arith::CheckOverflow),
+                m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(addMode),
                 Edge(offset.node(), Int32Use),
                 m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(data.byteSize - 1), Int32Use));
             checkLastByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, checkInBounds, m_node->origin, Edge(lastByteOffset, Int32Use), lengthEdge);
@@ -250,7 +256,7 @@ private:
             Node* checked = value.node();
             if (data.isSigned) {
                 checked = m_insertionSet.insertNode(
-                    m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(Arith::CheckOverflow),
+                    m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(addMode),
                     Edge(value.node(), Int32Use),
                     m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(range / 2), Int32Use));
             }
