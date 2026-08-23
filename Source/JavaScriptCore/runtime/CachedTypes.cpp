@@ -100,7 +100,6 @@ public:
     Encoder(VM& vm, FileSystem::FileHandle& fileHandle)
         : m_vm(vm)
         , m_fileHandle(fileHandle)
-        , m_baseOffset(0)
         , m_currentPage(nullptr)
     {
         allocateNewPage();
@@ -113,7 +112,7 @@ public:
         RELEASE_ASSERT(size);
         ptrdiff_t offset;
         if (m_currentPage->malloc(size, offset))
-            return Allocation { m_currentPage->buffer() + offset, m_baseOffset + offset };
+            return Allocation { m_currentPage->buffer() + offset, m_currentPage->baseOffset() + offset };
         allocateNewPage(size);
         return malloc(size);
     }
@@ -126,12 +125,11 @@ public:
 
     ptrdiff_t offsetOf(const void* address)
     {
-        ptrdiff_t offset;
-        ptrdiff_t baseOffset = 0;
-        for (const auto& page : m_pages) {
-            if (page.getOffset(address, offset))
-                return baseOffset + offset;
-            baseOffset += page.size();
+        // Encoding is depth-first, so the address is almost always in the most recently allocated pages.
+        for (unsigned i = m_pages.size(); i--;) {
+            ptrdiff_t offset;
+            if (m_pages[i].getOffset(address, offset))
+                return m_pages[i].baseOffset() + offset;
         }
         RELEASE_ASSERT_NOT_REACHED();
         return 0;
@@ -165,7 +163,7 @@ public:
             return releaseMapped(error);
         }
 
-        size_t size = m_baseOffset + m_currentPage->size();
+        size_t size = m_currentPage->baseOffset() + m_currentPage->size();
         auto buffer = MallocSpan<uint8_t, VMMalloc>::malloc(size);
         auto bufferSpan = buffer.mutableSpan();
         for (const auto& page : m_pages)
@@ -177,7 +175,7 @@ public:
 private:
     RefPtr<CachedBytecode> releaseMapped(BytecodeCacheError& error)
     {
-        size_t size = m_baseOffset + m_currentPage->size();
+        size_t size = m_currentPage->baseOffset() + m_currentPage->size();
         if (!m_fileHandle.truncate(size)) {
             error = BytecodeCacheError::StandardError(errno);
             return nullptr;
@@ -207,8 +205,9 @@ private:
 
     class Page {
     public:
-        Page(size_t size)
+        Page(size_t size, ptrdiff_t baseOffset)
             : m_buffer(MallocSpan<uint8_t, VMMalloc>::malloc(size))
+            , m_baseOffset(baseOffset)
         {
         }
 
@@ -220,6 +219,9 @@ private:
             if (static_cast<size_t>(offset + size) > capacity())
                 return false;
 
+            // The cached objects placed here are default-initialized and have padding, and the alignment gap
+            // before them is never written; zero it all so the serialized bytes depend only on what is encoded.
+            zeroSpan(m_buffer.mutableSpan().subspan(m_offset, offset + size - m_offset));
             result = offset;
             m_offset = offset + size;
             return true;
@@ -229,6 +231,7 @@ private:
         const uint8_t* NODELETE buffer() const { return m_buffer.span().data(); }
         uint8_t* NODELETE buffer() { return m_buffer.mutableSpan().data(); }
         size_t size() const { return static_cast<size_t>(m_offset); }
+        ptrdiff_t baseOffset() const { return m_baseOffset; }
 
         std::span<uint8_t> mutableSpan() LIFETIME_BOUND { return m_buffer.mutableSpan().first(size()); }
         std::span<const uint8_t> span() const LIFETIME_BOUND { return m_buffer.span().first(size()); }
@@ -250,6 +253,7 @@ private:
             if (size == m_offset)
                 return;
             RELEASE_ASSERT(static_cast<size_t>(size) <= capacity());
+            zeroSpan(m_buffer.mutableSpan().subspan(m_offset, size - m_offset));
             m_offset = size;
         }
 
@@ -258,26 +262,26 @@ private:
 
         MallocSpan<uint8_t, VMMalloc> m_buffer;
         ptrdiff_t m_offset { 0 };
+        ptrdiff_t m_baseOffset;
     };
 
     void allocateNewPage(size_t size = 0)
     {
         static size_t minPageSize = pageSize();
+        ptrdiff_t baseOffset = 0;
         if (m_currentPage) {
             m_currentPage->alignEnd();
-            m_baseOffset += m_currentPage->size();
+            baseOffset = m_currentPage->baseOffset() + m_currentPage->size();
         }
-        if (size < minPageSize)
-            size = minPageSize;
-        else
-            size = roundUpToMultipleOf(minPageSize, size);
-        m_pages.append(Page { size });
+        // Make each new page at least as large as everything encoded so far, so the number of pages
+        // (which offsetOf() walks for every pointer encoded) is logarithmic rather than linear in the size of the cache.
+        size = roundUpToMultipleOf(minPageSize, std::max({ size, minPageSize, static_cast<size_t>(baseOffset) }));
+        m_pages.append(Page { size, baseOffset });
         m_currentPage = &m_pages.last();
     }
 
     VM& m_vm;
     FileSystem::FileHandle& m_fileHandle;
-    ptrdiff_t m_baseOffset;
     Page* m_currentPage;
     Vector<Page> m_pages;
     UncheckedKeyHashMap<const void*, ptrdiff_t> m_ptrToOffsetMap;
@@ -689,9 +693,6 @@ private:
     CachedVector<CachedPair<Key, Value>> m_entries;
 };
 
-template<typename Key, typename Value, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>>
-using CachedMemoryCompactLookupOnlyRobinHoodHashMap = CachedHashMap<Key, Value, HashArg, KeyTraitsArg, MappedTraitsArg, WTF::MemoryCompactLookupOnlyRobinHoodHashTableTraits>;
-
 template<typename Key, typename Value, unsigned Capacity, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>>
 class CachedInlineMap : public VariableLengthObject<InlineMap<SourceType<Key>, SourceType<Value>, Capacity, HashArg, KeyTraitsArg, MappedTraitsArg>> {
 
@@ -933,7 +934,12 @@ class CachedStringJumpTable : public CachedObject<UnlinkedStringJumpTable> {
 public:
     void encode(Encoder& encoder, const UnlinkedStringJumpTable& jumpTable)
     {
-        m_offsetTable.encode(encoder, jumpTable.m_offsetTable);
+        // The table's iteration order depends on its address (RobinHoodHashTable seeds its hash with it),
+        // so serialize the entries in m_indexInTable order to keep the encoding deterministic.
+        OffsetTableEntries entries(jumpTable.m_offsetTable.size());
+        for (const auto& entry : jumpTable.m_offsetTable)
+            entries[entry.value.m_indexInTable] = { entry.key, entry.value };
+        m_offsetTable.encode(encoder, entries);
         m_minLength = jumpTable.m_minLength;
         m_maxLength = jumpTable.m_maxLength;
         m_defaultOffset = jumpTable.m_defaultOffset;
@@ -941,14 +947,19 @@ public:
 
     void decode(Decoder& decoder, UnlinkedStringJumpTable& jumpTable) const
     {
-        m_offsetTable.decode(decoder, jumpTable.m_offsetTable);
+        OffsetTableEntries entries;
+        m_offsetTable.decode(decoder, entries);
+        for (auto& entry : entries)
+            jumpTable.m_offsetTable.add(WTF::move(entry.first), entry.second);
         jumpTable.m_minLength = m_minLength;
         jumpTable.m_maxLength = m_maxLength;
         jumpTable.m_defaultOffset = m_defaultOffset;
     }
 
 private:
-    CachedMemoryCompactLookupOnlyRobinHoodHashMap<CachedRefPtr<CachedStringImpl>, UnlinkedStringJumpTable::OffsetLocation> m_offsetTable;
+    using OffsetTableEntries = Vector<std::pair<RefPtr<StringImpl>, UnlinkedStringJumpTable::OffsetLocation>>;
+
+    CachedVector<CachedPair<CachedRefPtr<CachedStringImpl>, UnlinkedStringJumpTable::OffsetLocation>> m_offsetTable;
     unsigned m_minLength { 0 };
     unsigned m_maxLength { 0 };
     int32_t m_defaultOffset { 0 };
@@ -1119,14 +1130,22 @@ class CachedCompactTDZEnvironment : public CachedObject<CompactTDZEnvironment> {
 public:
     void encode(Encoder& encoder, const CompactTDZEnvironment& env)
     {
+        CompactTDZEnvironment::Compact compact;
         if (std::holds_alternative<CompactTDZEnvironment::Compact>(env.m_variables))
-            m_variables.encode(encoder, std::get<CompactTDZEnvironment::Compact>(env.m_variables));
+            compact = std::get<CompactTDZEnvironment::Compact>(env.m_variables);
         else {
-            CompactTDZEnvironment::Compact compact;
             for (auto& key : std::get<CompactTDZEnvironment::Inflated>(env.m_variables))
                 compact.append(key);
-            m_variables.encode(encoder, compact);
         }
+        // In memory the names are ordered by address (sortCompact(), which decode() reapplies) or by hash table slot,
+        // so serialize them in an order that depends only on their contents.
+        std::ranges::sort(compact, [](auto& a, auto& b) {
+            auto result = codePointCompare(StringView(a.get()), StringView(b.get()));
+            if (is_neq(result))
+                return is_lt(result);
+            return a->isSymbol() < b->isSymbol();
+        });
+        m_variables.encode(encoder, compact);
         m_hash = env.m_hash;
     }
 
