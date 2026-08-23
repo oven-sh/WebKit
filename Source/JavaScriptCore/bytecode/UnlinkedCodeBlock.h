@@ -406,6 +406,7 @@ private:
 
     template<typename CodeBlockType>
     friend class CachedCodeBlock;
+    friend struct CachedCodeBlockExtras;
 
     void createRareDataIfNecessary(const AbstractLocker&)
     {

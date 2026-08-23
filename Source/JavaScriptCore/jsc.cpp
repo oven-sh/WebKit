@@ -31,6 +31,9 @@
 #include "CodeCache.h"
 #include "CompilerTimingScope.h"
 #include "Completion.h"
+#include "CodeCache.h"
+#include <sys/mman.h>
+#include <fcntl.h>
 #include "ConfigFile.h"
 #include "DeferTermination.h"
 #include "DeferredWorkTimer.h"
@@ -320,6 +323,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionIs8BitString);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateNonRopeNonAtomString);
 
 static JSC_DECLARE_HOST_FUNCTION(functionPrintStdOut);
+static JSC_DECLARE_HOST_FUNCTION(functionGenerateBytecodeCacheFile);
+static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCachePageTouch);
 static JSC_DECLARE_HOST_FUNCTION(functionPrintStdErr);
 static JSC_DECLARE_HOST_FUNCTION(functionPrettyPrint);
 static JSC_DECLARE_HOST_FUNCTION(functionDebug);
@@ -678,6 +683,8 @@ private:
         addFunction(vm, "btoa"_s, functionBtoa, 1);
         addFunction(vm, "disassembleBase64"_s, functionDisassembleBase64, 1);
         addFunction(vm, "debug"_s, functionDebug, 1);
+        addFunction(vm, "generateBytecodeCacheFile"_s, functionGenerateBytecodeCacheFile, 3);
+        addFunction(vm, "bytecodeCachePageTouch"_s, functionBytecodeCachePageTouch, 4);
         addFunction(vm, "describe"_s, functionDescribe, 1);
         addFunction(vm, "describeArray"_s, functionDescribeArray, 1);
         addFunction(vm, "print"_s, functionPrintStdOut, 1);
@@ -1734,6 +1741,120 @@ JSC_DEFINE_HOST_FUNCTION(functionDisassembleBase64, (JSGlobalObject* globalObjec
         return JSValue::encode(jsString(vm, out.toString()));
 
     return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Couldn't disassemble."_s)));
+}
+
+// generateBytecodeCacheFile(sourcePath, outPath, "module" | "program") — what an embedder's ahead-of-time cache build does:
+// eagerly generate every nested function and serialize the whole tree. Returns the payload size.
+JSC_DEFINE_HOST_FUNCTION(functionGenerateBytecodeCacheFile, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String sourcePath = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    String outPath = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    String kind = callFrame->argument(2).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto contents = FileSystem::readEntireFile(sourcePath);
+    if (!contents)
+        return throwVMError(globalObject, scope, "cannot read source"_s);
+    String text = String::fromUTF8(contents->span());
+    if (text.isNull())
+        text = String(contents->span());
+    SourceCode source = makeSource(text, SourceOrigin { URL::fileURLWithFileSystemPath(sourcePath) }, SourceTaintedOrigin::Untainted, sourcePath, TextPosition(), kind == "module"_s ? SourceProviderSourceType::Module : SourceProviderSourceType::Program);
+    FileSystem::deleteFile(outPath);
+    auto handle = FileSystem::openFile(outPath, FileSystem::FileOpenMode::ReadWrite);
+    if (!handle)
+        return throwVMError(globalObject, scope, "cannot open output"_s);
+    BytecodeCacheError error;
+    RefPtr<CachedBytecode> result = kind == "module"_s ? generateModuleBytecode(vm, source, handle, error) : generateProgramBytecode(vm, source, handle, error);
+    if (error.isValid())
+        return throwVMError(globalObject, scope, error.message());
+    return JSValue::encode(jsNumber(result ? result->size() : 0));
+}
+
+// bytecodeCachePageTouch(sourcePath, cachePath, "module"|"program", depth) — map the cache cold, decode the top-level block
+// (depth 0), then the bodies of its direct children (depth 1), grandchildren (2)..., and report how many pages of the
+// mapping became resident. Returns [residentPages, totalPages, decodedCodeBlocks, decodeMilliseconds].
+JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String sourcePath = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    String cachePath = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    String kind = callFrame->argument(2).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    int depth = callFrame->argument(3).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    auto contents = FileSystem::readEntireFile(sourcePath);
+    if (!contents)
+        return throwVMError(globalObject, scope, "cannot read source"_s);
+    String text = String::fromUTF8(contents->span());
+    if (text.isNull())
+        text = String(contents->span());
+    bool isModule = kind == "module"_s;
+    SourceCode source = makeSource(text, SourceOrigin { URL::fileURLWithFileSystemPath(sourcePath) }, SourceTaintedOrigin::Untainted, sourcePath, TextPosition(), isModule ? SourceProviderSourceType::Module : SourceProviderSourceType::Program);
+
+    auto handle = FileSystem::openFile(cachePath, FileSystem::FileOpenMode::Read);
+    if (!handle)
+        return throwVMError(globalObject, scope, "cannot open cache"_s);
+    size_t size = handle.size().value_or(0);
+    fsync(handle.platformHandle());
+    posix_fadvise(handle.platformHandle(), 0, 0, POSIX_FADV_DONTNEED);
+    void* base = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, handle.platformHandle(), 0);
+    if (base == MAP_FAILED)
+        return throwVMError(globalObject, scope, "mmap failed"_s);
+    size_t pageSize = WTF::pageSize();
+    size_t pages = (size + pageSize - 1) / pageSize;
+    auto countResident = [&]() -> size_t {
+        Vector<unsigned char> vec(pages);
+        if (mincore(base, size, vec.mutableSpan().data()))
+            return 0;
+        size_t n = 0;
+        for (auto b : vec) n += b & 1;
+        return n;
+    };
+    size_t residentBefore = countResident();
+
+    Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span<uint8_t> { static_cast<uint8_t*>(base), size }, [](const void*) { }, { });
+    SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
+
+    MonotonicTime start = MonotonicTime::now();
+    size_t decoded = 0;
+    UnlinkedCodeBlock* top = isModule ? static_cast<UnlinkedCodeBlock*>(decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, cachedBytecode.copyRef())) : static_cast<UnlinkedCodeBlock*>(decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, cachedBytecode.copyRef()));
+    if (!top)
+        return throwVMError(globalObject, scope, "decode failed (key mismatch?)"_s);
+    decoded++;
+    MarkedArgumentBuffer keepAlive;
+    Vector<UnlinkedCodeBlock*> frontier { top };
+    keepAlive.append(top);
+    for (int d = 0; d < depth; ++d) {
+        Vector<UnlinkedCodeBlock*> next;
+        for (UnlinkedCodeBlock* block : frontier) {
+            auto visit = [&](UnlinkedFunctionExecutable* executable) {
+                ParserError error;
+                UnlinkedFunctionCodeBlock* body = executable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
+                if (body) { decoded++; next.append(body); keepAlive.append(body); }
+            };
+            for (unsigned i = 0; i < block->numberOfFunctionDecls(); ++i) visit(block->functionDecl(i));
+            for (unsigned i = 0; i < block->numberOfFunctionExprs(); ++i) visit(block->functionExpr(i));
+        }
+        frontier = WTF::move(next);
+    }
+    double ms = (MonotonicTime::now() - start).milliseconds();
+    size_t residentAfter = countResident();
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr, 5);
+    RETURN_IF_EXCEPTION(scope, { });
+    result->putDirectIndex(globalObject, 0, jsNumber(residentAfter - residentBefore));
+    result->putDirectIndex(globalObject, 1, jsNumber(pages));
+    result->putDirectIndex(globalObject, 2, jsNumber(decoded));
+    result->putDirectIndex(globalObject, 3, jsNumber(ms));
+    result->putDirectIndex(globalObject, 4, jsNumber(residentBefore));
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionDebug, (JSGlobalObject* globalObject, CallFrame* callFrame))

@@ -62,7 +62,8 @@ class UnlinkedMetadataTable : public ThreadSafeRefCounted<UnlinkedMetadataTable>
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(UnlinkedMetadataTable, UnlinkedMetadataTable);
     friend class LLIntOffsetsExtractor;
     friend class MetadataTable;
-    friend class CachedMetadataTable;
+    friend struct CachedMetadataSteps;
+    template<typename> friend class CachedCodeBlock;
 #if ENABLE(METADATA_STATISTICS)
     friend struct MetadataStatistics;
 #endif
