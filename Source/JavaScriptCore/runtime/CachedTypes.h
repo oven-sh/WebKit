@@ -82,6 +82,7 @@ class Decoder : public RefCounted<Decoder> {
 
 public:
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
+    bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
 
     ~Decoder();
 

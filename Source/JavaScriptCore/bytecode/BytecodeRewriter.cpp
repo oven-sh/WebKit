@@ -49,6 +49,7 @@ void BytecodeRewriter::applyModification()
             m_writer.m_instructions.insertVector(insertion.index.bytecodeOffset, insertion.instructions.m_instructions);
         }
     }
+    m_writer.didMutateBuffer();
     m_insertions.clear();
 }
 

@@ -71,6 +71,8 @@ public:
 
     std::span<const uint8_t> span() const LIFETIME_BOUND { return m_payload.span(); }
     size_t size() const { return m_payload.size(); }
+    bool payloadIsPersistent() const { return m_payload.isPersistent(); }
+    void setPayloadIsPersistent() { m_payload.setIsPersistent(); }
     bool hasUpdates() const { return !m_updates.isEmpty(); }
     size_t sizeForUpdate() const { return m_size; }
 

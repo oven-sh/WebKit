@@ -56,6 +56,15 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+bool Decoder::canBorrowPayload() const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    return Options::useBorrowedBytecodeFromCache() && m_cachedBytecode->payloadIsPersistent();
+#else
+    return false;
+#endif
+}
+
 namespace Yarr {
 enum class Flags : uint16_t;
 }
@@ -483,6 +492,13 @@ public:
         for (unsigned i = 0; i < size; ++i)
             ::JSC::decode(decoder, buffer[i], array[i], args...);
     }
+
+    // Raw view of the encoded elements, for element types whose encoding is the identity.
+    const T* borrow() const
+    {
+        static_assert(std::is_same_v<T, Source> && std::is_trivially_copyable_v<T>);
+        return this->isEmpty() ? nullptr : this->template buffer<T>();
+    }
 };
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -677,6 +693,15 @@ public:
         const T* buffer = this->template buffer<T>();
         for (unsigned i = 0; i < m_size; ++i)
             ::JSC::decode(decoder, buffer[i], vector[i], args...);
+    }
+
+    // Raw view of the encoded elements, for element types whose encoding is the identity.
+    std::span<const T> borrow() const
+    {
+        static_assert(std::is_same_v<T, SourceType<T>> && std::is_trivially_copyable_v<T>);
+        if (!m_size)
+            return { };
+        return { this->template buffer<T>(), m_size };
     }
 
 private:
@@ -1112,6 +1137,8 @@ public:
 
     std::unique_ptr<ExpressionInfo> decode(Decoder& decoder) const
     {
+        if (decoder.canBorrowPayload() && !m_storage.isEmpty())
+            return ExpressionInfo::createBorrowed(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions, m_storage.borrow());
         auto info = ExpressionInfo::createUninitialized(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
         m_storage.decode(decoder, info->payload(), info->payloadSize());
         return info;
@@ -1576,11 +1603,14 @@ public:
 
     void encode(Encoder& encoder, const JSInstructionStream& stream)
     {
+        RELEASE_ASSERT(!stream.isBorrowed()); // a borrowed stream's bytes live in the payload being read, not in m_instructions
         m_instructions.encode(encoder, stream.m_instructions);
     }
 
     JSInstructionStream* decode(Decoder& decoder) const
     {
+        if (decoder.canBorrowPayload())
+            return new JSInstructionStream(m_instructions.borrow(), JSInstructionStream::Borrow);
         Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamBufferMalloc> instructionsVector;
         m_instructions.decode(decoder, instructionsVector);
         return new JSInstructionStream(WTF::move(instructionsVector));
