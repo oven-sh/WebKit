@@ -68,13 +68,17 @@ struct CachedPtrOffsets {
 class VariableLengthObjectBase {
     friend class CachedBytecode;
 
+public:
+    // Relative offset from this field to the object's payload. A payload is one code block tree, far below 2 GB.
+    using Offset = int32_t;
+
 protected:
-    VariableLengthObjectBase(ptrdiff_t offset)
+    VariableLengthObjectBase(Offset offset)
         : m_offset(offset)
     {
     }
 
-    ptrdiff_t m_offset;
+    Offset m_offset;
 };
 
 class Decoder : public RefCounted<Decoder> {

@@ -119,20 +119,20 @@ public:
 
     VM& vm() { return m_vm; }
 
-    Allocation malloc(unsigned size)
+    Allocation malloc(unsigned size, size_t alignment)
     {
         RELEASE_ASSERT(size);
         ptrdiff_t offset;
-        if (m_currentPage->malloc(size, offset))
+        if (m_currentPage->malloc(size, alignment, offset))
             return Allocation { m_currentPage->buffer() + offset, m_baseOffset + offset };
         allocateNewPage(size);
-        return malloc(size);
+        return malloc(size, alignment);
     }
 
     template<typename T, typename... Args>
     T* malloc(Args&&... args)
     {
-        return new (malloc(sizeof(T)).buffer()) T(std::forward<Args>(args)...);
+        return new (malloc(sizeof(T), alignof(T)).buffer()) T(std::forward<Args>(args)...);
     }
 
     ptrdiff_t offsetOf(const void* address)
@@ -239,11 +239,10 @@ private:
         {
         }
 
-        bool malloc(size_t size, ptrdiff_t& result)
+        bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
         {
-            size_t alignment = std::min(alignof(std::max_align_t), static_cast<size_t>(roundUpToPowerOfTwo(size)));
+            ASSERT(alignment && alignment <= alignof(std::max_align_t) && isPowerOfTwo(alignment));
             ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
-            size = roundUpToMultipleOf(alignment, size);
             if (static_cast<size_t>(offset + size) > capacity())
                 return false;
 
@@ -442,6 +441,8 @@ class VariableLengthObject : public CachedObject<Source>, VariableLengthObjectBa
     friend struct CachedPtrOffsets;
 
 public:
+    using typename VariableLengthObjectBase::Offset;
+
     VariableLengthObject()
         : VariableLengthObjectBase(s_invalidOffset)
     {
@@ -466,11 +467,11 @@ protected:
         return std::bit_cast<const T*>(buffer());
     }
 
-    uint8_t* allocate(Encoder& encoder, size_t size)
+    uint8_t* allocate(Encoder& encoder, size_t size, size_t alignment)
     {
         ptrdiff_t offsetOffset = encoder.offsetOf(&m_offset);
-        auto result = encoder.malloc(size);
-        m_offset = result.offset() - offsetOffset;
+        auto result = encoder.malloc(size, alignment);
+        m_offset = safeCast<Offset>(result.offset() - offsetOffset);
         return result.buffer();
     }
 
@@ -482,13 +483,13 @@ protected:
 #endif
     T* allocate(Encoder& encoder, unsigned size = 1)
     {
-        uint8_t* result = allocate(encoder, sizeof(T) * size);
+        uint8_t* result = allocate(encoder, sizeof(T) * size, alignof(T));
         ASSERT(!(std::bit_cast<uintptr_t>(result) % alignof(T)));
         return new (result) T[size];
     }
 
 private:
-    constexpr static ptrdiff_t s_invalidOffset = std::numeric_limits<ptrdiff_t>::max();
+    constexpr static Offset s_invalidOffset = std::numeric_limits<Offset>::max();
 };
 
 template<typename T, typename Source = SourceType<T>>
@@ -555,7 +556,7 @@ public:
 #endif
 
         if (std::optional<ptrdiff_t> offset = encoder.cachedOffsetForPtr(src)) {
-            this->m_offset = *offset - encoder.offsetOf(&this->m_offset);
+            this->m_offset = safeCast<VariableLengthObjectBase::Offset>(*offset - encoder.offsetOf(&this->m_offset));
             return;
         }
 
@@ -853,7 +854,7 @@ public:
             size *= 2;
         }
 
-        uint8_t* buffer = this->allocate(encoder, size);
+        uint8_t* buffer = this->allocate(encoder, size, m_is8Bit ? alignof(Latin1Character) : alignof(char16_t));
         memcpy(buffer, payload, size);
     }
 
@@ -1054,7 +1055,7 @@ public:
         if (!m_numBits)
             return;
         size_t sizeInBytes = BitVector::byteCount(m_numBits);
-        uint8_t* buffer = this->allocate(encoder, sizeInBytes);
+        uint8_t* buffer = this->allocate(encoder, sizeInBytes, alignof(uintptr_t));
         memcpy(buffer, bitVector.words().data(), sizeInBytes);
     }
 
@@ -1491,7 +1492,7 @@ public:
             return;
 
         unsigned size = sizeof(JSBigInt::Digit) * m_length;
-        uint8_t* buffer = this->allocate(encoder, size);
+        uint8_t* buffer = this->allocate(encoder, size, alignof(JSBigInt::Digit));
         memcpy(buffer, bigInt.dataStorage(), size);
     }
 
@@ -1641,8 +1642,14 @@ private:
 };
 
 class CachedMetadataTable : public CachedObject<UnlinkedMetadataTable> {
+    // The offset table is cumulative and most opcodes have no metadata in a given function, so only the entries where the
+    // running offset changes are stored: (index << 24 | delta). A typical function has a handful instead of 51.
+    static constexpr unsigned indexShift = 24;
+    static constexpr uint32_t deltaMask = (1u << indexShift) - 1;
+    static_assert(UnlinkedMetadataTable::s_offsetTableEntries < (1u << (32 - indexShift)));
+
 public:
-    void encode(Encoder&, const UnlinkedMetadataTable& metadataTable)
+    void encode(Encoder& encoder, const UnlinkedMetadataTable& metadataTable)
     {
         ASSERT(metadataTable.m_isFinalized);
         m_hasMetadata = metadataTable.m_hasMetadata;
@@ -1650,40 +1657,61 @@ public:
             return;
         m_is32Bit = metadataTable.m_is32Bit;
         m_numValueProfiles = metadataTable.m_numValueProfiles;
-        if (m_is32Bit) {
-            for (unsigned i = UnlinkedMetadataTable::s_offsetTableEntries; i--;)
-                m_metadata[i] = metadataTable.offsetTable32()[i];
-        } else {
-            for (unsigned i = UnlinkedMetadataTable::s_offsetTableEntries; i--;)
-                m_metadata[i] = metadataTable.offsetTable16()[i];
+        Vector<uint32_t, 16> steps;
+        uint32_t previous = 0;
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i) {
+            uint32_t value = m_is32Bit ? metadataTable.offsetTable32()[i] : metadataTable.offsetTable16()[i];
+            if (value == previous)
+                continue;
+            RELEASE_ASSERT(value > previous && value - previous <= deltaMask);
+            steps.append(i << indexShift | (value - previous));
+            previous = value;
         }
+        m_steps.encode(encoder, steps);
     }
 
-    Ref<UnlinkedMetadataTable> decode(Decoder&) const
+    Ref<UnlinkedMetadataTable> decode(Decoder& decoder) const
     {
         if (!m_hasMetadata)
             return UnlinkedMetadataTable::empty();
 
-        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(m_is32Bit, m_numValueProfiles, m_metadata[UnlinkedMetadataTable::s_offsetTableEntries - 1]);
+        Vector<uint32_t, 16> steps;
+        m_steps.decode(decoder, steps);
+        uint32_t lastOffset = 0;
+        for (uint32_t step : steps)
+            lastOffset += step & deltaMask;
+        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(m_is32Bit, m_numValueProfiles, lastOffset);
         metadataTable->m_isFinalized = true;
         metadataTable->m_isLinked = false;
         metadataTable->m_hasMetadata = m_hasMetadata;
         metadataTable->m_numValueProfiles = m_numValueProfiles;
-        if (m_is32Bit) {
-            for (unsigned i = UnlinkedMetadataTable::s_offsetTableEntries; i--;)
-                metadataTable->offsetTable32()[i] = m_metadata[i];
-        } else {
-            for (unsigned i = UnlinkedMetadataTable::s_offsetTableEntries; i--;)
-                metadataTable->offsetTable16()[i] = m_metadata[i];
-        }
+        if (m_is32Bit)
+            expand(steps, metadataTable->offsetTable32());
+        else
+            expand(steps, metadataTable->offsetTable16());
         return metadataTable;
+    }
+
+private:
+    template<typename OffsetType>
+    static void expand(const Vector<uint32_t, 16>& steps, OffsetType* table)
+    {
+        uint32_t value = 0;
+        unsigned i = 0;
+        for (uint32_t step : steps) {
+            for (unsigned end = step >> indexShift; i < end; ++i)
+                table[i] = value;
+            value += step & deltaMask;
+        }
+        for (; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i)
+            table[i] = value;
     }
 
 private:
     bool m_hasMetadata;
     bool m_is32Bit;
     unsigned m_numValueProfiles;
-    std::array<unsigned, UnlinkedMetadataTable::s_offsetTableEntries> m_metadata;
+    CachedVector<uint32_t, 16> m_steps;
 };
 
 class CachedSourceOrigin : public CachedObject<SourceOrigin> {
