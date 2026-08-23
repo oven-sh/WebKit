@@ -366,13 +366,14 @@ public:
 
     // Byte-identical immutable arrays (instruction streams, expression info, jump tables of small functions repeat a lot)
     // are stored once; later occurrences point at the first. Decoded objects are per code block either way.
-    std::optional<ptrdiff_t> existingIdenticalArray(std::span<const uint8_t> bytes, unsigned hash)
+    std::optional<ptrdiff_t> existingIdenticalArray(std::span<const uint8_t> bytes, unsigned hash, size_t alignment)
     {
         auto it = m_arraysByHash.find(hash);
         if (it == m_arraysByHash.end())
             return std::nullopt;
         for (auto [candidate, size] : it->value) {
-            if (size == bytes.size() && equalSpans(bytesAt(candidate, size), bytes))
+            // An earlier copy made for a less-aligned element type may sit at an offset this one cannot use.
+            if (size == bytes.size() && !(candidate % alignment) && equalSpans(bytesAt(candidate, size), bytes))
                 return candidate;
         }
         return std::nullopt;
@@ -743,7 +744,7 @@ protected:
     void allocateOrShareBytes(Encoder& encoder, std::span<const uint8_t> bytes, size_t alignment)
     {
         unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size());
-        if (auto existing = encoder.existingIdenticalArray(bytes, hash)) {
+        if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignment)) {
             m_offset = safeCast<Offset>(*existing - encoder.offsetOf(&m_offset));
             return;
         }
