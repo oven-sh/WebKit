@@ -1262,15 +1262,22 @@ private:
 
 // Hash tables iterate in an order that depends on where their keys hashed to -- for SymbolImpl keys a per-process
 // counter, for robin-hood tables the table's own address -- so their entries are encoded in key order to keep the
-// payload a function of the source alone. Equal-comparing distinct keys (two symbols with one description) keep
-// their table order.
+// payload a function of the source alone. Keys are ordered by contents, then by what kind of StringImpl they decode to;
+// two keys equal in both would decode to the same StringImpl and cannot share a table.
 struct EncodingOrder {
     static std::strong_ordering compare(unsigned a, unsigned b) { return a <=> b; }
+    static unsigned kind(const StringImpl* string)
+    {
+        if (!string->isSymbol())
+            return 0;
+        auto& symbol = *static_cast<const SymbolImpl*>(string);
+        return 1 + symbol.isRegistered() * 2 + symbol.isPrivate();
+    }
     static std::strong_ordering compare(const StringImpl* a, const StringImpl* b)
     {
         if (auto order = codePointCompare(StringView(*a), StringView(*b)); order != 0)
             return order;
-        return a->isSymbol() <=> b->isSymbol();
+        return kind(a) <=> kind(b);
     }
     template<typename T, typename Traits> static std::strong_ordering compare(const RefPtr<T, Traits>& a, const RefPtr<T, Traits>& b) { return compare(a.get(), b.get()); }
 

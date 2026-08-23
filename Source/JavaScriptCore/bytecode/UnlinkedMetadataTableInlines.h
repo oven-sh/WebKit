@@ -46,7 +46,8 @@ ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable()
 template<typename CountForOpcode>
 ALWAYS_INLINE auto UnlinkedMetadataTable::layOut(const CountForOpcode& countForOpcode, Offset32* offsets) -> Layout
 {
-    unsigned offset = s_offset16TableSize;
+    // 64-bit so that counts out of a payload cannot wrap it; a table anywhere near 4 GB is not one anybody generated.
+    uint64_t offset = s_offset16TableSize;
     for (unsigned i = 0; i < s_offsetTableEntries - 1; i++) {
         if (offsets)
             offsets[i] = offset; // aligned by whoever indexes the table, so an opcode without entries costs nothing
@@ -61,19 +62,20 @@ ALWAYS_INLINE auto UnlinkedMetadataTable::layOut(const CountForOpcode& countForO
         ASSERT(offset == roundUpToMultipleOf(alignment, offset) || offset == s_offset16TableSize);
 #endif
         offset = roundUpToMultipleOf(alignment, offset);
-        offset += numberOfEntries * metadataSize(static_cast<OpcodeID>(i));
+        offset += static_cast<uint64_t>(numberOfEntries) * metadataSize(static_cast<OpcodeID>(i));
+        RELEASE_ASSERT(offset + s_offset32TableSize <= std::numeric_limits<Offset32>::max());
     }
     if (offsets)
         offsets[s_offsetTableEntries - 1] = offset;
     if (offset <= UINT16_MAX)
-        return { false, offset };
+        return { false, static_cast<unsigned>(offset) };
     // The 32-bit table sits after the (then unused) 16-bit one; s_offset32TableSize is a multiple of s_maxMetadataAlignment
     // so displacing every offset by it keeps their alignment.
     if (offsets) {
         for (unsigned i = 0; i < s_offsetTableEntries; i++)
             offsets[i] += s_offset32TableSize;
     }
-    return { true, offset + s_offset32TableSize };
+    return { true, static_cast<unsigned>(offset + s_offset32TableSize) };
 }
 
 ALWAYS_INLINE auto UnlinkedMetadataTable::layOutEntryCounts(std::span<const uint32_t> entryCounts, Offset32* offsets) -> Layout
