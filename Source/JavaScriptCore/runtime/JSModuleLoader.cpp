@@ -297,10 +297,10 @@ JSArray* JSModuleLoader::dependencyKeysIfEvaluated(JSGlobalObject* globalObject,
 
     Identifier ident = Identifier::fromString(vm, key);
 
-    auto iter = m_moduleMap.find({ ident.impl(), ScriptFetchParameters::Type::JavaScript });
+    auto iter = m_moduleMap.find(makeModuleMapKey(ident.impl(), ScriptFetchParameters::Type::JavaScript, nullptr));
 
     if (iter == m_moduleMap.end())
-        iter = m_moduleMap.find({ ident.impl(), ScriptFetchParameters::Type::WebAssembly });
+        iter = m_moduleMap.find(makeModuleMapKey(ident.impl(), ScriptFetchParameters::Type::WebAssembly, nullptr));
 
     if (iter == m_moduleMap.end())
         RELEASE_AND_RETURN(scope, nullptr);
@@ -334,14 +334,24 @@ JSArray* JSModuleLoader::dependencyKeysIfEvaluated(JSGlobalObject* globalObject,
 
 void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, SourceCode&& sourceCode)
 {
-    ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type);
-    if (entry->status() == ModuleRegistryEntry::Status::New)
-        entry->provideFetch(globalObject, WTF::move(sourceCode)); // can throw
+    provideFetch(globalObject, key, type, nullptr, WTF::move(sourceCode));
 }
 
 void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, JSSourceCode* jsSourceCode)
 {
-    ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type);
+    provideFetch(globalObject, key, type, nullptr, jsSourceCode);
+}
+
+void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, const ScriptFetchParameters* parameters, SourceCode&& sourceCode)
+{
+    ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type, parameters);
+    if (entry->status() == ModuleRegistryEntry::Status::New)
+        entry->provideFetch(globalObject, WTF::move(sourceCode)); // can throw
+}
+
+void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, const ScriptFetchParameters* parameters, JSSourceCode* jsSourceCode)
+{
+    ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type, parameters);
     if (entry->status() == ModuleRegistryEntry::Status::New)
         entry->provideFetch(globalObject, jsSourceCode); // can throw
 }
@@ -360,7 +370,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
     RefPtr<ScriptFetchParameters> contextParameters = parameters ? parameters : ScriptFetchParameters::create(type);
 #endif
 
-    if (ModuleRegistryEntry* entry = getRegisteredMayBeNull(specifier, type)) {
+    if (ModuleRegistryEntry* entry = getRegisteredMayBeNull(specifier, type, parameters.get())) {
         JSValue error = entry->error(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (error)
@@ -399,7 +409,7 @@ JSPromise* JSModuleLoader::linkAndEvaluateModule(JSGlobalObject* globalObject, c
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ScriptFetchParameters::Type type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript;
-    ModuleRegistryEntry* entry = ensureRegistered(globalObject, moduleKey, type);
+    ModuleRegistryEntry* entry = ensureRegistered(globalObject, moduleKey, type, parameters.get());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     AbstractModuleRecord* record = entry->record();
@@ -586,7 +596,7 @@ AbstractModuleRecord* JSModuleLoader::getImportedModule(AbstractModuleRecord* re
     // https://tc39.es/ecma262/#sec-GetImportedModule
 
     // 1. Let records be a List consisting of each LoadedModuleRequest Record r of referrer.[[LoadedModules]] such that ModuleRequestsEqual(r, request) is true.
-    auto iter = referrer->loadedModules().find(ModuleMapKey { request.m_specifier.impl(), request.type() });
+    auto iter = referrer->loadedModules().find(request.moduleMapKey());
     // 2. Assert: records has exactly one element, since LoadRequestedModules has completed successfully on referrer prior to invoking this abstract operation.
     ASSERT(iter != referrer->loadedModules().end());
     // 3. Let record be the sole element of records.
@@ -614,7 +624,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     const Identifier& specifier = moduleRequest.m_specifier;
     auto type = moduleRequest.type();
 
-    ModuleMapKey moduleMapKey { specifier.impl(), type };
+    ModuleMapKey moduleMapKey = moduleRequest.moduleMapKey();
 
     // HostLoadImportedModule is required to be idempotent for the same
     // (referrer, moduleRequest) pair. referrer.[[LoadedModules]] is that cache;
@@ -625,7 +635,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         auto& loadedModules = record ? record->loadedModules() : m_loadedModules;
         if (auto iter = loadedModules.find(moduleMapKey); iter != loadedModules.end()) {
             AbstractModuleRecord* loaded = iter->value.m_module.get();
-            ModuleRegistryEntry* loadedEntry = getRegisteredMayBeNull(loaded->moduleKey(), type);
+            ModuleRegistryEntry* loadedEntry = getRegisteredMayBeNull(loaded->moduleKey(), type, moduleRequest.m_attributes.get());
             ASSERT(loadedEntry);
             ASSERT(loadedEntry->record() == loaded);
             ASSERT(loadedEntry->loadPromise());
@@ -636,7 +646,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     }
 
     if (specifier.isSymbol())
-        mapEntry = getRegisteredMayBeNull(specifier, type);
+        mapEntry = getRegisteredMayBeNull(specifier, type, moduleRequest.m_attributes.get());
 
     ResolutionMapKey resolutionKey { referrerKey.impl(), specifier.impl() };
 
@@ -680,7 +690,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             RELEASE_AND_RETURN(scope, promise);
         }
 
-        moduleMapKey.first = resolved.impl();
+        std::get<0>(moduleMapKey) = resolved.impl();
 
         if (auto iter = m_moduleMap.find(moduleMapKey); iter != m_moduleMap.end())
             mapEntry = iter->value.get();
@@ -860,7 +870,7 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     // 2.d.i.2. Perform ContinueModuleLoading(state, error).
                     // (Not possible.)
                     // 2.d.ii. Else if module.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsEqual(record, request) is true, then
-                    if (auto iter = module->loadedModules().find(ModuleMapKey { request.m_specifier.impl(), request.type() }); iter != module->loadedModules().end()) {
+                    if (auto iter = module->loadedModules().find(request.moduleMapKey()); iter != module->loadedModules().end()) {
                         // 2.d.ii.1. Perform InnerModuleLoading(state, record.[[Module]]).
                         AbstractModuleRecord* loaded = iter->value.m_module.get();
                         if (state->containsVisited(loaded))
@@ -886,7 +896,7 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     // there is no need to attach a ModuleGraphLoadingError reaction, so we skip it.
                     bool needsErrorReaction = module->loadedModules().size() == loadedModulesCountBefore;
                     ASSERT(module->loadedModules().size() <= loadedModulesCountBefore + 1);
-                    ASSERT(needsErrorReaction != module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() }));
+                    ASSERT(needsErrorReaction != module->loadedModules().contains(request.moduleMapKey()));
                     if (needsErrorReaction)
                         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, state);
                     // 2.d.iv. If state.[[IsLoading]] is false, return UNUSED.
@@ -950,13 +960,13 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
         ASSERT(owner);
 
         // 1.a. If referrer.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsEqual(record, moduleRequest) is true, then
-        if (auto iter = loadedModules.find(ModuleMapKey { moduleRequest.m_specifier.impl(), moduleRequest.type() }); iter != loadedModules.end()) {
+        if (auto iter = loadedModules.find(moduleRequest.moduleMapKey()); iter != loadedModules.end()) {
             // 1.a.i. Assert: record.[[Module]] and result.[[Value]] are the same Module Record.
             ASSERT(iter->value.m_module.get() == *resultRecord);
         // 1.b. Else,
         } else {
             // 1.b.i. Append the LoadedModuleRequest Record { [[Specifier]]: moduleRequest.[[Specifier]], [[Attributes]]: moduleRequest.[[Attributes]], [[Module]]: result.[[Value]] } to referrer.[[LoadedModules]].
-            ModuleMapKey key { moduleRequest.m_specifier.impl(), moduleRequest.type() };
+            ModuleMapKey key = moduleRequest.moduleMapKey();
             Locker locker { owner->cellLock() };
             AbstractModuleRecord::LoadedModuleRequest value { vm, moduleRequest, *resultRecord, owner };
             loadedModules.add(WTF::move(key), WTF::move(value));
@@ -1075,11 +1085,11 @@ JSPromise* JSModuleLoader::loadRequestedModules(JSGlobalObject* globalObject, Ab
     return pc;
 }
 
-ModuleRegistryEntry* JSModuleLoader::ensureRegistered(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type)
+ModuleRegistryEntry* JSModuleLoader::ensureRegistered(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, const ScriptFetchParameters* parameters)
 {
     VM& vm = globalObject->vm();
 
-    ModuleMapKey moduleMapKey { key.impl(), type };
+    ModuleMapKey moduleMapKey = makeModuleMapKey(key.impl(), type, parameters);
 
     if (auto iter = m_moduleMap.find(moduleMapKey); iter != m_moduleMap.end())
         return iter->value.get();
@@ -1092,9 +1102,9 @@ ModuleRegistryEntry* JSModuleLoader::ensureRegistered(JSGlobalObject* globalObje
     return entry;
 }
 
-ModuleRegistryEntry* JSModuleLoader::getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type type)
+ModuleRegistryEntry* JSModuleLoader::getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type type, const ScriptFetchParameters* parameters)
 {
-    if (auto iter = m_moduleMap.find({ key.impl(), type }); iter != m_moduleMap.end())
+    if (auto iter = m_moduleMap.find(makeModuleMapKey(key.impl(), type, parameters)); iter != m_moduleMap.end())
         return iter->value.get();
     return nullptr;
 }
@@ -1109,7 +1119,7 @@ int64_t JSModuleLoader::asyncEvaluationOrderForKey(const Identifier& key)
     // EvaluatingAsync); once the module finishes it is cleared to DONE.
     if (key.isNull() || key.isEmpty())
         return -1;
-    auto* entry = getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript);
+    auto* entry = getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript, nullptr);
     if (!entry)
         return -1;
     auto* cyclic = dynamicDowncast<CyclicModuleRecord>(entry->record());

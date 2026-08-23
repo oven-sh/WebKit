@@ -90,8 +90,14 @@ public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     // APIs to control the module loader.
+    // The Type-only overloads are for sources that were not requested through an
+    // import attribute (entry points, `evaluate`d source). A HostDefined entry is
+    // keyed on its attribute string as well, so it must go through the
+    // ScriptFetchParameters overloads; makeModuleMapKey() asserts this.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSSourceCode*);
+    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, const ScriptFetchParameters*, SourceCode&&);
+    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, const ScriptFetchParameters*, JSSourceCode*);
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
@@ -175,7 +181,7 @@ public:
     static bool attachErrorInfo(JSGlobalObject*, ThrowScope&, AbstractModuleRecord* source, const Identifier& key, ScriptFetchParameters::Type, ModuleFailure::Kind);
     static void attachErrorInfo(JSGlobalObject*, ErrorInstance*, AbstractModuleRecord* source, const Identifier& key, ScriptFetchParameters::Type, ModuleFailure::Kind);
 
-    ModuleRegistryEntry* ensureRegistered(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type);
+    ModuleRegistryEntry* ensureRegistered(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, const ScriptFetchParameters*);
 
 #if USE(BUN_JSC_ADDITIONS)
     ModuleRegistryEntry* registryEntry(const Identifier& key)
@@ -184,10 +190,10 @@ public:
         // every entry uses the JavaScript type, so try that O(1) bucket first
         // before falling back to a full scan for json/HostDefined variants.
         auto* impl = key.impl();
-        if (auto entry = m_moduleMap.get({ impl, ScriptFetchParameters::Type::JavaScript }))
+        if (auto entry = m_moduleMap.get(makeModuleMapKey(impl, ScriptFetchParameters::Type::JavaScript, nullptr)))
             return entry.get();
         for (auto& [k, entry] : m_moduleMap) {
-            if (k.first == impl)
+            if (std::get<0>(k) == impl)
                 return entry.get();
         }
         return nullptr;
@@ -196,11 +202,11 @@ public:
     bool removeEntry(const Identifier& key)
     {
         // Bun's registry is conceptually flat (one entry per specifier), so
-        // delete every (specifier, type) variant — text/json/HostDefined etc.
+        // delete every (specifier, type, attribute) variant: text/json/etc.
         auto* impl = key.impl();
-        m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
+        m_loadedModules.removeIf([&](auto& entry) { return std::get<0>(entry.key) == impl; });
         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });
-        return m_moduleMap.removeIf([&](auto& entry) { return entry.key.first == impl; });
+        return m_moduleMap.removeIf([&](auto& entry) { return std::get<0>(entry.key) == impl; });
     }
     void clearAll()
     {
@@ -216,7 +222,7 @@ private:
     JSModuleLoader(VM&, Structure*);
     void finishCreation(JSGlobalObject*, VM&);
 
-    ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
+    ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type, const ScriptFetchParameters*);
 
     void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
 

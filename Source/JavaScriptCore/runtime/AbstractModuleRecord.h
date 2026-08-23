@@ -145,6 +145,11 @@ public:
         ModulePhase m_phase { ModulePhase::Evaluation };
 
         ScriptFetchParameters::Type type(ScriptFetchParameters::Type fallback = ScriptFetchParameters::Type::JavaScript) const;
+        // The (specifier, type, host-defined attribute string) key this request
+        // resolves to in a ModuleMap. Always use this instead of hand-building a
+        // ModuleMapKey from m_specifier + type() so the HostDefined attribute
+        // string is never dropped.
+        ModuleMapKey moduleMapKey() const;
         bool operator==(const ModuleRequest&) const;
     };
 
