@@ -105,12 +105,12 @@ private:
     enum EmptyTag { Empty };
 
     UnlinkedMetadataTable();
-    UnlinkedMetadataTable(bool is32Bit, unsigned numValueProfiles, unsigned lastOffset);
+    UnlinkedMetadataTable(bool is32Bit, unsigned numValueProfiles);
     UnlinkedMetadataTable(EmptyTag);
 
-    static Ref<UnlinkedMetadataTable> create(bool is32Bit, unsigned numValueProfiles, unsigned lastOffset)
+    static Ref<UnlinkedMetadataTable> create(bool is32Bit, unsigned numValueProfiles)
     {
-        return adoptRef(*new UnlinkedMetadataTable(is32Bit, numValueProfiles, lastOffset));
+        return adoptRef(*new UnlinkedMetadataTable(is32Bit, numValueProfiles));
     }
 
     static Ref<UnlinkedMetadataTable> empty()
@@ -151,18 +151,20 @@ private:
     // Then, s_offset16TableSize and s_offset16TableSize + s_offset32TableSize offer the same alignment characteristics for subsequent Metadata.
     static constexpr unsigned s_offset32TableSize = roundUpToMultipleOf<s_maxMetadataAlignment>(s_offsetTableEntries * sizeof(Offset32));
 
-    void* buffer() const { return m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData); }
+    // While no MetadataTable shares m_rawBuffer (!m_isLinked), the buffer holds only the offset table.
+    unsigned prefixSize() const { return m_isLinked ? m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData) : 0; }
+    void* buffer() const { return m_rawBuffer + prefixSize(); }
     Offset32* preprocessBuffer() const { return std::bit_cast<Offset32*>(m_rawBuffer); }
 
     Offset16* offsetTable16() const
     {
         ASSERT(!m_is32Bit);
-        return std::bit_cast<Offset16*>(m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData));
+        return std::bit_cast<Offset16*>(m_rawBuffer + prefixSize());
     }
     Offset32* offsetTable32() const
     {
         ASSERT(m_is32Bit);
-        return std::bit_cast<Offset32*>(m_rawBuffer + m_numValueProfiles * sizeof(ValueProfile) + sizeof(LinkingData) + s_offset16TableSize);
+        return std::bit_cast<Offset32*>(m_rawBuffer + prefixSize() + s_offset16TableSize);
     }
 
     bool m_hasMetadata : 1;

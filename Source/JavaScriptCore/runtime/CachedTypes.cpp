@@ -1802,10 +1802,7 @@ public:
 
         Vector<uint32_t, 16> steps;
         m_steps.decode(decoder, steps);
-        uint32_t lastOffset = 0;
-        for (uint32_t step : steps)
-            lastOffset += step & deltaMask;
-        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(m_is32Bit, m_numValueProfiles, lastOffset);
+        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(m_is32Bit, m_numValueProfiles);
         metadataTable->m_isFinalized = true;
         metadataTable->m_isLinked = false;
         metadataTable->m_hasMetadata = m_hasMetadata;
