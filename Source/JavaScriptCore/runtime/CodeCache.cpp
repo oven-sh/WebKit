@@ -347,6 +347,31 @@ SourceCodeKey sourceCodeKeyForSerializedModule(VM& vm, const SourceCode& sourceC
     return sourceCodeKeyForSerializedBytecode(vm, sourceCode, SourceCodeType::ModuleType, StrictModeLexicallyScopedFeature, scriptMode, {});
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+SourceCodeKey sourceCodeKeyForSerializedFunctionExecutable(VM&, const SourceCode& sourceCode, const String& name)
+{
+    return SourceCodeKey(
+        sourceCode, name, SourceCodeType::FunctionType, NoLexicallyScopedFeatures, JSParserScriptMode::Classic,
+        DerivedContextType::None, EvalContextType::None, false, { },
+        std::nullopt);
+}
+
+UnlinkedFunctionCodeBlock* recursivelyGenerateUnlinkedCodeBlockForFunctionExecutable(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error)
+{
+    OptionSet<CodeGenerationMode> codeGenerationMode = { };
+    SourceCode source = executable->linkedSourceCode(parentSource);
+    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForCall, codeGenerationMode, error, executable->parseMode());
+    if (!unlinkedCodeBlock || error.isValid())
+        return nullptr;
+
+    generateUnlinkedCodeBlockForFunctions(vm, unlinkedCodeBlock, source, codeGenerationMode, error);
+    if (error.isValid())
+        return nullptr;
+
+    return unlinkedCodeBlock;
+}
+#endif
+
 RefPtr<CachedBytecode> serializeBytecode(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, SourceCodeType codeType, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, OptionSet<CodeGenerationMode> codeGenerationMode)
 {
     return encodeCodeBlock(vm, sourceCodeKeyForSerializedBytecode(vm, source, codeType, lexicallyScopedFeatures, scriptMode, codeGenerationMode), codeBlock, fileHandle, error);
