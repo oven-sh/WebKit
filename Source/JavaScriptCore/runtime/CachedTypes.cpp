@@ -67,6 +67,55 @@ bool Decoder::canBorrowPayload() const
 #endif
 }
 
+// Scalars of the per-function records are written as a LEB128 tail right after the fixed part of the record: most of them
+// are small or zero in almost every function, and they are read exactly once, into the object being constructed.
+class VarintWriter {
+public:
+    void u32(uint32_t v)
+    {
+        while (v >= 0x80) {
+            m_bytes.append(static_cast<uint8_t>(v) | 0x80);
+            v >>= 7;
+        }
+        m_bytes.append(static_cast<uint8_t>(v));
+    }
+    void i32(int32_t v) { u32((static_cast<uint32_t>(v) << 1) ^ static_cast<uint32_t>(v >> 31)); }
+    void u8(uint8_t v) { m_bytes.append(v); }
+    size_t size() const { return m_bytes.size(); }
+    void copyTo(uint8_t* out) const { memcpy(out, m_bytes.span().data(), m_bytes.size()); }
+
+private:
+    Vector<uint8_t, 128> m_bytes;
+};
+
+class VarintReader {
+public:
+    explicit VarintReader(const uint8_t* p)
+        : m_p(p)
+    {
+    }
+    uint32_t u32()
+    {
+        uint32_t v = 0;
+        for (unsigned shift = 0;; shift += 7) {
+            uint8_t b = *m_p++;
+            v |= static_cast<uint32_t>(b & 0x7f) << shift;
+            if (!(b & 0x80))
+                return v;
+            RELEASE_ASSERT(shift < 28);
+        }
+    }
+    int32_t i32()
+    {
+        uint32_t v = u32();
+        return static_cast<int32_t>((v >> 1) ^ -(v & 1));
+    }
+    uint8_t u8() { return *m_p++; }
+
+private:
+    const uint8_t* m_p;
+};
+
 namespace Yarr {
 enum class Flags : uint16_t;
 }
@@ -133,6 +182,15 @@ public:
     T* malloc(Args&&... args)
     {
         return new (malloc(sizeof(T), alignof(T)).buffer()) T(std::forward<Args>(args)...);
+    }
+
+    template<typename T, typename SourceArg>
+    T* mallocFor(const SourceArg& source)
+    {
+        size_t tail = 0;
+        if constexpr (requires { T::tailSize(source); })
+            tail = T::tailSize(source);
+        return new (malloc(sizeof(T) + tail, alignof(T)).buffer()) T();
     }
 
     ptrdiff_t offsetOf(const void* address)
@@ -488,6 +546,17 @@ protected:
         return new (result) T[size];
     }
 
+    // One T followed, in the same allocation, by the variable-length tail T asks for (see VarintWriter).
+    template<typename T, typename SourceArg>
+    T* allocateFor(Encoder& encoder, const SourceArg& source)
+    {
+        size_t tail = 0;
+        if constexpr (requires { T::tailSize(source); })
+            tail = T::tailSize(source);
+        uint8_t* result = allocate(encoder, sizeof(T) + tail, alignof(T));
+        return new (result) T();
+    }
+
 private:
     constexpr static Offset s_invalidOffset = std::numeric_limits<Offset>::max();
 };
@@ -550,7 +619,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
         if constexpr (isSingleOwnerCachedType<T>) {
             ASSERT(!encoder.cachedOffsetForPtr(src));
-            this->template allocate<T>(encoder)->encode(encoder, *src);
+            this->template allocateFor<T>(encoder, *src)->encode(encoder, *src);
             return;
         }
 #endif
@@ -560,7 +629,7 @@ public:
             return;
         }
 
-        T* cachedObject = this->template allocate<T>(encoder);
+        T* cachedObject = this->template allocateFor<T>(encoder, *src);
         cachedObject->encode(encoder, *src);
         encoder.cachePtr(src, encoder.offsetOf(cachedObject));
     }
@@ -750,7 +819,7 @@ private:
 };
 
 template<typename Key, typename Value, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>, typename TableTraits = WTF::HashTableTraits>
-class CachedHashMap : public VariableLengthObject<HashMap<SourceType<Key>, SourceType<Value>, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits>> {
+class CachedHashMap : public CachedObject<HashMap<SourceType<Key>, SourceType<Value>, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits>> {
     template<typename K, typename V, WTF::ShouldValidateKey shouldValidateKey>
     using Map = HashMap<K, V, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits, shouldValidateKey>;
 
@@ -782,7 +851,7 @@ template<typename Key, typename Value, typename HashArg = DefaultHash<SourceType
 using CachedMemoryCompactLookupOnlyRobinHoodHashMap = CachedHashMap<Key, Value, HashArg, KeyTraitsArg, MappedTraitsArg, WTF::MemoryCompactLookupOnlyRobinHoodHashTableTraits>;
 
 template<typename Key, typename Value, unsigned Capacity, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>>
-class CachedInlineMap : public VariableLengthObject<InlineMap<SourceType<Key>, SourceType<Value>, Capacity, HashArg, KeyTraitsArg, MappedTraitsArg>> {
+class CachedInlineMap : public CachedObject<InlineMap<SourceType<Key>, SourceType<Value>, Capacity, HashArg, KeyTraitsArg, MappedTraitsArg>> {
 
     using Map = InlineMap<SourceType<Key>, SourceType<Value>, Capacity, HashArg, KeyTraitsArg, MappedTraitsArg>;
 
@@ -811,51 +880,30 @@ private:
 };
 
 template<typename T>
-class CachedUniquedStringImplBase : public VariableLengthObject<T> {
+class CachedUniquedStringImplBase : public CachedObject<T> {
 public:
 #if USE(BUN_JSC_ADDITIONS)
     static constexpr bool decodesToCanonicalObject = true;
 #endif
 
-    void encode(Encoder& encoder, const StringImpl& string)
+    // The characters follow this 4-byte header directly (see tailSize), instead of a separately aligned allocation
+    // reached through an offset.
+    static size_t tailSize(const StringImpl& string) { return Shape(string).byteLength(); }
+
+    void encode(Encoder&, const StringImpl& string)
     {
-        m_isAtomic = string.isAtom();
-        m_isSymbol = string.isSymbol();
-        m_isRegistered = false;
-        m_isWellKnownSymbol = false;
-        m_isPrivate = false;
-        RefPtr<StringImpl> impl = const_cast<StringImpl*>(&string);
-
-        if (m_isSymbol) {
-            SymbolImpl* symbol = static_cast<SymbolImpl*>(impl.get());
-            m_isRegistered = symbol->isRegistered();
-            m_isPrivate = symbol->isPrivate();
-            if (!symbol->isNullSymbol()) {
-                // We have special handling for well-known symbols.
-                if (!m_isPrivate) {
-                    m_isWellKnownSymbol = true;
-                    impl = symbol->substring(strlen("Symbol."));
-                }
-            }
-        }
-
-        m_is8Bit = impl->is8Bit();
-        m_length = impl->length();
-
-        if (!m_length)
-            return;
-
-        unsigned size = m_length;
-        const void* payload;
+        Shape shape(string);
+        m_isSymbol = shape.isSymbol;
+        m_isRegistered = shape.isRegistered;
+        m_isWellKnownSymbol = shape.isWellKnownSymbol;
+        m_isPrivate = shape.isPrivate;
+        m_is8Bit = shape.characters->is8Bit();
+        m_length = shape.characters->length();
+        RELEASE_ASSERT(m_length == shape.characters->length()); // fits the bitfield
         if (m_is8Bit)
-            payload = impl->span8().data();
-        else {
-            payload = impl->span16().data();
-            size *= 2;
-        }
-
-        uint8_t* buffer = this->allocate(encoder, size, m_is8Bit ? alignof(Latin1Character) : alignof(char16_t));
-        memcpy(buffer, payload, size);
+            memcpy(tail(), shape.characters->span8().data(), shape.byteLength());
+        else
+            memcpy(tail(), shape.characters->span16().data(), shape.byteLength());
     }
 
     UniquedStringImpl* decode(Decoder& decoder) const
@@ -896,23 +944,47 @@ public:
         return m_is8Bit ? create(span8()) : create(span16());
     }
 
-    std::span<const Latin1Character> NODELETE span8() const LIFETIME_BOUND { return { this->template buffer<Latin1Character>(), m_length }; }
-    std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { this->template buffer<char16_t>(), m_length }; }
+    std::span<const Latin1Character> NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
+    std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
 private:
-    bool m_is8Bit : 1;
-    bool m_isSymbol : 1;
-    bool m_isWellKnownSymbol : 1;
-    bool m_isAtomic : 1;
-    bool m_isRegistered : 1;
-    bool m_isPrivate : 1;
-    unsigned m_length;
-};
+    // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.".
+    struct Shape {
+        explicit Shape(const StringImpl& string)
+            : characters(const_cast<StringImpl*>(&string))
+            , isSymbol(string.isSymbol())
+        {
+            if (isSymbol) {
+                SymbolImpl& symbol = static_cast<SymbolImpl&>(*characters);
+                isRegistered = symbol.isRegistered();
+                isPrivate = symbol.isPrivate();
+                if (!symbol.isNullSymbol() && !isPrivate) {
+                    isWellKnownSymbol = true;
+                    characters = symbol.substring(strlen("Symbol."));
+                }
+            }
+        }
+        size_t byteLength() const { return characters->length() * (characters->is8Bit() ? 1 : 2); }
+        RefPtr<StringImpl> characters;
+        bool isSymbol { false };
+        bool isRegistered { false };
+        bool isWellKnownSymbol { false };
+        bool isPrivate { false };
+    };
+    const uint8_t* tail() const { return std::bit_cast<const uint8_t*>(this + 1); }
+    uint8_t* tail() { return std::bit_cast<uint8_t*>(this + 1); }
 
+    uint32_t m_length : 27;
+    uint32_t m_is8Bit : 1;
+    uint32_t m_isSymbol : 1;
+    uint32_t m_isWellKnownSymbol : 1;
+    uint32_t m_isRegistered : 1;
+    uint32_t m_isPrivate : 1;
+};
 class CachedUniquedStringImpl : public CachedUniquedStringImplBase<UniquedStringImpl> { };
 class CachedStringImpl : public CachedUniquedStringImplBase<StringImpl> { };
 
-class CachedString : public VariableLengthObject<String> {
+class CachedString : public CachedObject<String> {
 public:
     void encode(Encoder& encoder, const String& string)
     {
@@ -933,7 +1005,7 @@ private:
     CachedRefPtr<CachedUniquedStringImpl> m_impl;
 };
 
-class CachedIdentifier : public VariableLengthObject<Identifier> {
+class CachedIdentifier : public CachedObject<Identifier> {
 public:
     void encode(Encoder& encoder, const Identifier& identifier)
     {
@@ -1538,7 +1610,7 @@ public:
             m_type = EncodedType::String;
             // TODO: This seems wrong? What if this fails.
             auto str = string->tryGetValue();
-            this->allocate<CachedUniquedStringImpl>(encoder)->encode(encoder, *str.data.impl());
+            this->allocateFor<CachedUniquedStringImpl>(encoder, *str.data.impl())->encode(encoder, *str.data.impl());
             return;
         }
 
@@ -2114,39 +2186,51 @@ public:
     static constexpr bool isSingleOwner = true;
 #endif
 
+    // The fixed part: what CachedBytecode::commitUpdates patches in place and what other records point at. Everything
+    // else is a varint tail (see Scalars); a typical record is ~45 bytes instead of 104.
+    struct Scalars {
+        unsigned firstLineOffset;
+        unsigned lineCount;
+        unsigned unlinkedFunctionStart;
+        unsigned unlinkedBodyStartColumn;
+        unsigned unlinkedBodyEndColumn;
+        unsigned startOffset;
+        unsigned sourceLength;
+        unsigned parametersStartOffset;
+        unsigned unlinkedFunctionEnd;
+        unsigned parameterCount;
+        SourceParseMode sourceParseMode;
+        ImplementationVisibility implementationVisibility;
+        bool isBuiltinFunction;
+        bool isBuiltinDefaultClassConstructor;
+        unsigned constructAbility;
+        unsigned constructorKind;
+        unsigned functionMode;
+        unsigned scriptMode;
+        unsigned superBinding;
+        unsigned derivedContextType;
+        unsigned evalContextType;
+        bool inlineAttribute;
+        bool needsClassFieldInitializer;
+        unsigned privateBrandRequirement;
+        bool hasName;
+    };
+
+    static size_t tailSize(const UnlinkedFunctionExecutable& executable)
+    {
+        VarintWriter writer;
+        packScalars(executable, writer);
+        return writer.size();
+    }
+
     void encode(Encoder&, const UnlinkedFunctionExecutable&);
     UnlinkedFunctionExecutable* decode(Decoder&) const;
 
-    unsigned NODELETE firstLineOffset() const { return m_firstLineOffset; }
-    unsigned NODELETE lineCount() const { return m_lineCount; }
-    unsigned NODELETE unlinkedFunctionStart() const { return m_unlinkedFunctionStart; }
-    unsigned NODELETE unlinkedBodyStartColumn() const { return m_unlinkedBodyStartColumn; }
-    unsigned NODELETE unlinkedBodyEndColumn() const { return m_unlinkedBodyEndColumn; }
-    unsigned NODELETE startOffset() const { return m_startOffset; }
-    unsigned NODELETE sourceLength() const { return m_sourceLength; }
-    unsigned NODELETE parametersStartOffset() const { return m_parametersStartOffset; }
-    unsigned NODELETE unlinkedFunctionEnd() const { return m_unlinkedFunctionEnd; }
-    unsigned NODELETE parameterCount() const { return m_parameterCount; }
+    Scalars scalars() const;
 
     CodeFeatures NODELETE features() const { return m_mutableMetadata.m_features; }
     LexicallyScopedFeatures NODELETE lexicallyScopedFeatures() const { return m_mutableMetadata.m_lexicallyScopedFeatures; }
-    SourceParseMode NODELETE sourceParseMode() const { return static_cast<SourceParseMode>(m_sourceParseMode); }
-
     unsigned NODELETE hasCapturedVariables() const { return m_mutableMetadata.m_hasCapturedVariables; }
-    ImplementationVisibility NODELETE implementationVisibility() const { return static_cast<ImplementationVisibility>(m_implementationVisibility); }
-    unsigned NODELETE isBuiltinFunction() const { return m_isBuiltinFunction; }
-    unsigned NODELETE isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
-    unsigned NODELETE constructAbility() const { return m_constructAbility; }
-    unsigned NODELETE constructorKind() const { return m_constructorKind; }
-    unsigned NODELETE functionMode() const { return m_functionMode; }
-    unsigned NODELETE scriptMode() const { return m_scriptMode; }
-    unsigned NODELETE superBinding() const { return m_superBinding; }
-    unsigned NODELETE derivedContextType() const { return m_derivedContextType; }
-    unsigned NODELETE evalContextType() const { return m_evalContextType; }
-    unsigned NODELETE inlineAttribute() const { return m_inlineAttribute; }
-    unsigned NODELETE needsClassFieldInitializer() const { return m_needsClassFieldInitializer; }
-    unsigned NODELETE privateBrandRequirement() const { return m_privateBrandRequirement; }
-    unsigned NODELETE hasName() const { return m_hasName; }
 
     Identifier ecmaName(Decoder& decoder) const { return m_ecmaName.decode(decoder); }
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables(Decoder& decoder) const { return m_parentScopeTDZVariables.decode(decoder); }
@@ -2157,33 +2241,11 @@ public:
     const CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock>& NODELETE unlinkedCodeBlockForConstruct() const { return m_unlinkedCodeBlockForConstruct; }
 
 private:
-    CachedFunctionExecutableMetadata m_mutableMetadata;
+    static void packScalars(const UnlinkedFunctionExecutable&, VarintWriter&);
+    const uint8_t* tail() const { return std::bit_cast<const uint8_t*>(this + 1); }
+    uint8_t* tail() { return std::bit_cast<uint8_t*>(this + 1); }
 
-    unsigned m_firstLineOffset : 31;
-    unsigned m_lineCount : 31;
-    unsigned m_isBuiltinFunction : 1;
-    unsigned m_unlinkedFunctionStart : 31;
-    unsigned m_isBuiltinDefaultClassConstructor : 1;
-    unsigned m_unlinkedBodyStartColumn : 31;
-    unsigned m_constructAbility: 1;
-    unsigned m_unlinkedBodyEndColumn : 31;
-    unsigned m_startOffset : 31;
-    unsigned m_scriptMode: 1; // JSParserScriptMode
-    unsigned m_sourceLength : 31;
-    unsigned m_superBinding : 1;
-    unsigned m_parametersStartOffset : 31;
-    unsigned m_unlinkedFunctionEnd;
-    unsigned m_parameterCount : 31;
-    unsigned m_privateBrandRequirement : 1;
-    unsigned m_sourceParseMode : 8; // SourceParseMode
-    unsigned m_constructorKind : 2;
-    unsigned m_functionMode : 2; // FunctionMode
-    unsigned m_derivedContextType: 2;
-    unsigned m_evalContextType : 2;
-    unsigned m_inlineAttribute : 1;
-    unsigned m_needsClassFieldInitializer : 1;
-    unsigned m_implementationVisibility : bitWidthOfImplementationVisibility;
-    unsigned m_hasName : 1;
+    CachedFunctionExecutableMetadata m_mutableMetadata;
 
     CachedPtr<CachedFunctionExecutableRareData> m_rareData;
 
@@ -2209,6 +2271,8 @@ ptrdiff_t CachedFunctionExecutableOffsets::metadataOffset()
     return OBJECT_OFFSETOF(CachedFunctionExecutable, m_mutableMetadata);
 }
 
+template<typename CodeBlockType> struct CachedCodeBlockRecordFor;
+
 template<typename CodeBlockType>
 class CachedCodeBlock : public CachedObject<CodeBlockType> {
 public:
@@ -2216,87 +2280,66 @@ public:
     static constexpr bool isSingleOwner = true;
 #endif
 
+    // Everything that is a count, register, or flag lives in a varint tail after the most-derived record (see
+    // Scalars); the record itself keeps only pointers/vectors and the metadata table header. ~60 bytes -> ~15.
+    struct Scalars {
+        VirtualRegister thisRegister;
+        VirtualRegister scopeRegister;
+        unsigned isConstructor : 1;
+        unsigned isBuiltinDefaultClassConstructor : 1;
+        unsigned hasCapturedVariables : 1;
+        unsigned isBuiltinFunction : 1;
+        unsigned superBinding : 1;
+        unsigned scriptMode : 1;
+        unsigned isArrowFunctionContext : 1;
+        unsigned isClassContext : 1;
+        unsigned constructorKind : 2;
+        unsigned derivedContextType : 2;
+        unsigned evalContextType : 2;
+        unsigned hasTailCalls : 1;
+        unsigned codeType : 2;
+        unsigned hasCheckpoints : 1;
+        CodeFeatures features;
+        LexicallyScopedFeatures lexicallyScopedFeatures;
+        SourceParseMode parseMode;
+        OptionSet<CodeGenerationMode> codeGenerationMode;
+        unsigned lineCount;
+        unsigned endColumn;
+        int numVars;
+        int numCalleeLocals;
+        int numParameters;
+        unsigned numValueProfiles;
+        unsigned numArrayProfiles;
+        unsigned numBinaryArithProfiles;
+        unsigned numUnaryArithProfiles;
+    };
+
+    static size_t tailSize(const UnlinkedCodeBlock& codeBlock)
+    {
+        VarintWriter writer;
+        packScalars(codeBlock, writer);
+        return writer.size();
+    }
+
     void encode(Encoder&, const UnlinkedCodeBlock&);
     void decode(Decoder&, UnlinkedCodeBlock&) const;
 
-    JSInstructionStream* instructions(Decoder& decoder) const { return m_instructions.decode(decoder); }
+    Scalars scalars() const;
 
-    VirtualRegister NODELETE thisRegister() const { return m_thisRegister; }
-    VirtualRegister NODELETE scopeRegister() const { return m_scopeRegister; }
+    JSInstructionStream* instructions(Decoder& decoder) const { return m_instructions.decode(decoder); }
 
     RefPtr<StringImpl> sourceURLDirective(Decoder& decoder) const { return m_sourceURLDirective.decode(decoder); }
     RefPtr<StringImpl> sourceMappingURLDirective(Decoder& decoder) const { return m_sourceMappingURLDirective.decode(decoder); }
 
     Ref<UnlinkedMetadataTable> metadata(Decoder& decoder) const { return m_metadata.decode(decoder); }
 
-    unsigned NODELETE isConstructor() const { return m_isConstructor; }
-    unsigned NODELETE isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
-    unsigned NODELETE hasCapturedVariables() const { return m_hasCapturedVariables; }
-    unsigned NODELETE isBuiltinFunction() const { return m_isBuiltinFunction; }
-    unsigned NODELETE superBinding() const { return m_superBinding; }
-    unsigned NODELETE scriptMode() const { return m_scriptMode; }
-    unsigned NODELETE isArrowFunctionContext() const { return m_isArrowFunctionContext; }
-    unsigned NODELETE isClassContext() const { return m_isClassContext; }
-    unsigned NODELETE constructorKind() const { return m_constructorKind; }
-    unsigned NODELETE derivedContextType() const { return m_derivedContextType; }
-    unsigned NODELETE evalContextType() const { return m_evalContextType; }
-    unsigned NODELETE hasTailCalls() const { return m_hasTailCalls; }
-    unsigned NODELETE hasCheckpoints() const { return m_hasCheckpoints; }
-    unsigned NODELETE lineCount() const { return m_lineCount; }
-    unsigned NODELETE endColumn() const { return m_endColumn; }
-
-    int NODELETE numVars() const { return m_numVars; }
-    int NODELETE numCalleeLocals() const { return m_numCalleeLocals; }
-    int NODELETE numParameters() const { return m_numParameters; }
-
-    CodeFeatures NODELETE features() const { return m_features; }
-    LexicallyScopedFeatures NODELETE lexicallyScopedFeatures() const { return m_lexicallyScopedFeatures; }
-    SourceParseMode NODELETE parseMode() const { return static_cast<SourceParseMode>(m_parseMode); }
-    OptionSet<CodeGenerationMode> NODELETE codeGenerationMode() const { return OptionSet<CodeGenerationMode>::fromRaw(m_codeGenerationMode); }
-    unsigned NODELETE codeType() const { return m_codeType; }
-
     UnlinkedCodeBlock::RareData* rareData(Decoder& decoder) const { return m_rareData.decode(decoder); }
 
-    unsigned NODELETE numValueProfiles() const { return m_numValueProfiles; }
-    unsigned NODELETE numArrayProfiles() const { return m_numArrayProfiles; }
-    unsigned NODELETE numBinaryArithProfiles() const { return m_numBinaryArithProfiles; }
-    unsigned NODELETE numUnaryArithProfiles() const { return m_numUnaryArithProfiles; }
-
 private:
-    VirtualRegister m_thisRegister;
-    VirtualRegister m_scopeRegister;
-
-    unsigned m_isConstructor : 1;
-    unsigned m_isBuiltinDefaultClassConstructor : 1;
-    unsigned m_hasCapturedVariables : 1;
-    unsigned m_isBuiltinFunction : 1;
-    unsigned m_superBinding : 1;
-    unsigned m_scriptMode: 1;
-    unsigned m_isArrowFunctionContext : 1;
-    unsigned m_isClassContext : 1;
-    unsigned m_constructorKind : 2;
-    unsigned m_derivedContextType : 2;
-    unsigned m_evalContextType : 2;
-    unsigned m_hasTailCalls : 1;
-    unsigned m_codeType : 2;
-    unsigned m_hasCheckpoints : 1;
-
-    unsigned m_features : bitWidthOfCodeFeatures; // CodeFeatures
-    unsigned m_lexicallyScopedFeatures : bitWidthOfLexicallyScopedFeatures; // LexicallyScopedFeatures
-    unsigned m_parseMode : 8; // SourceParseMode
-    unsigned m_codeGenerationMode : 8; // OptionSet<CodeGenerationMode>
-
-    unsigned m_lineCount;
-    unsigned m_endColumn;
-
-    int m_numVars;
-    int m_numCalleeLocals;
-    int m_numParameters;
-
-    unsigned m_numValueProfiles;
-    unsigned m_numArrayProfiles;
-    unsigned m_numBinaryArithProfiles;
-    unsigned m_numUnaryArithProfiles;
+    static void packScalars(const UnlinkedCodeBlock&, VarintWriter&);
+    // The tail follows the most-derived record (CachedProgramCodeBlock etc. add members after this base).
+    const uint8_t* tail() const { return std::bit_cast<const uint8_t*>(this) + sizeof(typename CachedCodeBlockRecordFor<CodeBlockType>::type); }
+    uint8_t* tail() { return std::bit_cast<uint8_t*>(this) + sizeof(typename CachedCodeBlockRecordFor<CodeBlockType>::type); }
 
     CachedMetadataTable m_metadata;
 
@@ -2413,6 +2456,11 @@ public:
     }
 };
 
+template<> struct CachedCodeBlockRecordFor<UnlinkedProgramCodeBlock> { using type = CachedProgramCodeBlock; };
+template<> struct CachedCodeBlockRecordFor<UnlinkedModuleProgramCodeBlock> { using type = CachedModuleCodeBlock; };
+template<> struct CachedCodeBlockRecordFor<UnlinkedEvalCodeBlock> { using type = CachedEvalCodeBlock; };
+template<> struct CachedCodeBlockRecordFor<UnlinkedFunctionCodeBlock> { using type = CachedFunctionCodeBlock; };
+
 ALWAYS_INLINE UnlinkedFunctionCodeBlock::UnlinkedFunctionCodeBlock(Decoder& decoder, const CachedFunctionCodeBlock& cachedCodeBlock)
     : Base(decoder, decoder.vm().unlinkedFunctionCodeBlockStructure.get(), cachedCodeBlock)
 {
@@ -2467,49 +2515,43 @@ using CachedCodeBlockType = typename CachedCodeBlockTypeImpl<T>::type;
 template<typename CodeBlockType>
 ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* structure, const CachedCodeBlock<CodeBlockType>& cachedCodeBlock)
     : Base(decoder.vm(), structure)
-    , m_thisRegister(cachedCodeBlock.thisRegister())
-    , m_scopeRegister(cachedCodeBlock.scopeRegister())
-
-    , m_numVars(cachedCodeBlock.numVars())
-    , m_numCalleeLocals(cachedCodeBlock.numCalleeLocals())
-    , m_isConstructor(cachedCodeBlock.isConstructor())
-    , m_numParameters(cachedCodeBlock.numParameters())
-    , m_hasCapturedVariables(cachedCodeBlock.hasCapturedVariables())
-
-    , m_isBuiltinFunction(cachedCodeBlock.isBuiltinFunction())
-    , m_isBuiltinDefaultClassConstructor(cachedCodeBlock.isBuiltinDefaultClassConstructor())
-    , m_superBinding(cachedCodeBlock.superBinding())
-    , m_scriptMode(cachedCodeBlock.scriptMode())
-    , m_isArrowFunctionContext(cachedCodeBlock.isArrowFunctionContext())
-    , m_isClassContext(cachedCodeBlock.isClassContext())
-    , m_hasTailCalls(cachedCodeBlock.hasTailCalls())
-    , m_constructorKind(cachedCodeBlock.constructorKind())
-    , m_derivedContextType(cachedCodeBlock.derivedContextType())
-    , m_evalContextType(cachedCodeBlock.evalContextType())
-    , m_codeType(cachedCodeBlock.codeType())
-
     , m_age(0)
-    , m_hasCheckpoints(cachedCodeBlock.hasCheckpoints())
-
-    , m_lexicallyScopedFeatures(cachedCodeBlock.lexicallyScopedFeatures())
-    , m_features(cachedCodeBlock.features())
-    , m_parseMode(cachedCodeBlock.parseMode())
-    , m_codeGenerationMode(cachedCodeBlock.codeGenerationMode())
-
-    , m_lineCount(cachedCodeBlock.lineCount())
-    , m_endColumn(cachedCodeBlock.endColumn())
-
     , m_sourceURLDirective(cachedCodeBlock.sourceURLDirective(decoder))
     , m_sourceMappingURLDirective(cachedCodeBlock.sourceMappingURLDirective(decoder))
-
     , m_metadata(cachedCodeBlock.metadata(decoder))
     , m_instructions(cachedCodeBlock.instructions(decoder))
     , m_rareData(cachedCodeBlock.rareData(decoder))
-    , m_valueProfiles(cachedCodeBlock.numValueProfiles())
-    , m_arrayProfiles(cachedCodeBlock.numArrayProfiles())
-    , m_binaryArithProfiles(cachedCodeBlock.numBinaryArithProfiles())
-    , m_unaryArithProfiles(cachedCodeBlock.numUnaryArithProfiles())
 {
+    auto scalars = cachedCodeBlock.scalars();
+    m_thisRegister = scalars.thisRegister;
+    m_scopeRegister = scalars.scopeRegister;
+    m_numVars = scalars.numVars;
+    m_numCalleeLocals = scalars.numCalleeLocals;
+    m_isConstructor = scalars.isConstructor;
+    m_numParameters = scalars.numParameters;
+    m_hasCapturedVariables = scalars.hasCapturedVariables;
+    m_isBuiltinFunction = scalars.isBuiltinFunction;
+    m_isBuiltinDefaultClassConstructor = scalars.isBuiltinDefaultClassConstructor;
+    m_superBinding = scalars.superBinding;
+    m_scriptMode = scalars.scriptMode;
+    m_isArrowFunctionContext = scalars.isArrowFunctionContext;
+    m_isClassContext = scalars.isClassContext;
+    m_hasTailCalls = scalars.hasTailCalls;
+    m_constructorKind = scalars.constructorKind;
+    m_derivedContextType = scalars.derivedContextType;
+    m_evalContextType = scalars.evalContextType;
+    m_codeType = scalars.codeType;
+    m_hasCheckpoints = scalars.hasCheckpoints;
+    m_lexicallyScopedFeatures = scalars.lexicallyScopedFeatures;
+    m_features = scalars.features;
+    m_parseMode = scalars.parseMode;
+    m_codeGenerationMode = scalars.codeGenerationMode;
+    m_lineCount = scalars.lineCount;
+    m_endColumn = scalars.endColumn;
+    m_valueProfiles = FixedVector<UnlinkedValueProfile>(scalars.numValueProfiles);
+    m_arrayProfiles = FixedVector<UnlinkedArrayProfile>(scalars.numArrayProfiles);
+    m_binaryArithProfiles = FixedVector<BinaryArithProfile>(scalars.numBinaryArithProfiles);
+    m_unaryArithProfiles = FixedVector<UnaryArithProfile>(scalars.numUnaryArithProfiles);
     m_llintExecuteCounter.setNewThreshold(thresholdForJIT(Options::thresholdForJITAfterWarmUp()));
 }
 
@@ -2541,39 +2583,102 @@ ALWAYS_INLINE UnlinkedEvalCodeBlock::UnlinkedEvalCodeBlock(Decoder& decoder, con
 {
 }
 
+enum CachedFunctionExecutableFlag : uint32_t {
+    // one word of 1- and 2-bit fields, written as a varint (the high bits are the rarely-set ones)
+    ExecutableScriptModeShift = 0,
+    ExecutableSuperBindingShift = 1,
+    ExecutableConstructAbilityShift = 2,
+    ExecutableHasNameShift = 3,
+    ExecutableConstructorKindShift = 4, // 2 bits
+    ExecutableFunctionModeShift = 6, // 2
+    ExecutableImplementationVisibilityShift = 8, // 2
+    ExecutableDerivedContextTypeShift = 10, // 2
+    ExecutableEvalContextTypeShift = 12, // 2
+    ExecutablePrivateBrandRequirementShift = 14,
+    ExecutableInlineAttributeShift = 15,
+    ExecutableNeedsClassFieldInitializerShift = 16,
+    ExecutableIsBuiltinFunctionShift = 17,
+    ExecutableIsBuiltinDefaultClassConstructorShift = 18,
+};
+static_assert(bitWidthOfImplementationVisibility <= 2);
+
+void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& executable, VarintWriter& writer)
+{
+    uint32_t flags = static_cast<uint32_t>(executable.m_scriptMode) << ExecutableScriptModeShift
+        | static_cast<uint32_t>(executable.m_superBinding) << ExecutableSuperBindingShift
+        | static_cast<uint32_t>(executable.m_constructAbility) << ExecutableConstructAbilityShift
+        | static_cast<uint32_t>(executable.m_hasName) << ExecutableHasNameShift
+        | static_cast<uint32_t>(executable.m_constructorKind) << ExecutableConstructorKindShift
+        | static_cast<uint32_t>(executable.m_functionMode) << ExecutableFunctionModeShift
+        | static_cast<uint32_t>(executable.m_implementationVisibility) << ExecutableImplementationVisibilityShift
+        | static_cast<uint32_t>(executable.m_derivedContextType) << ExecutableDerivedContextTypeShift
+        | static_cast<uint32_t>(executable.m_evalContextType) << ExecutableEvalContextTypeShift
+        | static_cast<uint32_t>(executable.m_privateBrandRequirement) << ExecutablePrivateBrandRequirementShift
+        | static_cast<uint32_t>(executable.m_inlineAttribute) << ExecutableInlineAttributeShift
+        | static_cast<uint32_t>(executable.m_needsClassFieldInitializer) << ExecutableNeedsClassFieldInitializerShift
+        | static_cast<uint32_t>(executable.m_isBuiltinFunction) << ExecutableIsBuiltinFunctionShift
+        | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift;
+    writer.u32(flags);
+    writer.u8(static_cast<uint8_t>(executable.m_sourceParseMode));
+    // Source positions cluster around the function's start, so all but the first are deltas.
+    unsigned start = executable.m_startOffset;
+    writer.u32(start);
+    writer.i32(static_cast<int32_t>(executable.m_unlinkedFunctionStart - start));
+    writer.i32(static_cast<int32_t>(executable.m_parametersStartOffset - start));
+    writer.u32(executable.m_sourceLength);
+    writer.i32(static_cast<int32_t>(executable.m_unlinkedFunctionEnd - (start + executable.m_sourceLength)));
+    writer.u32(executable.m_firstLineOffset);
+    writer.u32(executable.m_lineCount);
+    writer.i32(static_cast<int32_t>(executable.m_unlinkedBodyStartColumn - executable.m_unlinkedFunctionStart));
+    writer.i32(static_cast<int32_t>(executable.m_unlinkedBodyEndColumn - executable.m_unlinkedFunctionEnd));
+    writer.u32(executable.m_parameterCount);
+}
+
+auto CachedFunctionExecutable::scalars() const -> Scalars
+{
+    VarintReader reader(tail());
+    Scalars s;
+    uint32_t flags = reader.u32();
+    auto bits = [&](unsigned shift, unsigned width = 1) { return (flags >> shift) & ((1u << width) - 1); };
+    s.scriptMode = bits(ExecutableScriptModeShift);
+    s.superBinding = bits(ExecutableSuperBindingShift);
+    s.constructAbility = bits(ExecutableConstructAbilityShift);
+    s.hasName = bits(ExecutableHasNameShift);
+    s.constructorKind = bits(ExecutableConstructorKindShift, 2);
+    s.functionMode = bits(ExecutableFunctionModeShift, 2);
+    s.implementationVisibility = static_cast<ImplementationVisibility>(bits(ExecutableImplementationVisibilityShift, 2));
+    s.derivedContextType = bits(ExecutableDerivedContextTypeShift, 2);
+    s.evalContextType = bits(ExecutableEvalContextTypeShift, 2);
+    s.privateBrandRequirement = bits(ExecutablePrivateBrandRequirementShift);
+    s.inlineAttribute = bits(ExecutableInlineAttributeShift);
+    s.needsClassFieldInitializer = bits(ExecutableNeedsClassFieldInitializerShift);
+    s.isBuiltinFunction = bits(ExecutableIsBuiltinFunctionShift);
+    s.isBuiltinDefaultClassConstructor = bits(ExecutableIsBuiltinDefaultClassConstructorShift);
+    s.sourceParseMode = static_cast<SourceParseMode>(reader.u8());
+    s.startOffset = reader.u32();
+    s.unlinkedFunctionStart = s.startOffset + reader.i32();
+    s.parametersStartOffset = s.startOffset + reader.i32();
+    s.sourceLength = reader.u32();
+    s.unlinkedFunctionEnd = s.startOffset + s.sourceLength + reader.i32();
+    s.firstLineOffset = reader.u32();
+    s.lineCount = reader.u32();
+    s.unlinkedBodyStartColumn = s.unlinkedFunctionStart + reader.i32();
+    s.unlinkedBodyEndColumn = s.unlinkedFunctionEnd + reader.i32();
+    s.parameterCount = reader.u32();
+    return s;
+}
+
 ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable)
 {
     m_mutableMetadata.m_features = executable.m_features;
     m_mutableMetadata.m_lexicallyScopedFeatures = executable.m_lexicallyScopedFeatures;
     m_mutableMetadata.m_hasCapturedVariables = executable.m_hasCapturedVariables;
 
-    m_firstLineOffset = executable.m_firstLineOffset;
-    m_lineCount = executable.m_lineCount;
-    m_unlinkedFunctionStart = executable.m_unlinkedFunctionStart;
-    m_unlinkedBodyStartColumn = executable.m_unlinkedBodyStartColumn;
-    m_unlinkedBodyEndColumn = executable.m_unlinkedBodyEndColumn;
-    m_startOffset = executable.m_startOffset;
-    m_sourceLength = executable.m_sourceLength;
-    m_parametersStartOffset = executable.m_parametersStartOffset;
-    m_unlinkedFunctionEnd = executable.m_unlinkedFunctionEnd;
-    m_parameterCount = executable.m_parameterCount;
-
-    m_sourceParseMode = static_cast<uint8_t>(executable.m_sourceParseMode);
-
-    m_isBuiltinFunction = executable.m_isBuiltinFunction;
-    m_isBuiltinDefaultClassConstructor = executable.m_isBuiltinDefaultClassConstructor;
-    m_constructAbility = executable.m_constructAbility;
-    m_constructorKind = executable.m_constructorKind;
-    m_functionMode = executable.m_functionMode;
-    m_scriptMode = executable.m_scriptMode;
-    m_superBinding = executable.m_superBinding;
-    m_derivedContextType = executable.m_derivedContextType;
-    m_evalContextType = executable.m_evalContextType;
-    m_inlineAttribute = executable.m_inlineAttribute;
-    m_needsClassFieldInitializer = executable.m_needsClassFieldInitializer;
-    m_implementationVisibility = executable.m_implementationVisibility;
-    m_privateBrandRequirement = executable.m_privateBrandRequirement;
-    m_hasName = executable.m_hasName;
+    {
+        VarintWriter writer;
+        packScalars(executable, writer);
+        writer.copyTo(tail());
+    }
 
     m_rareData.encode(encoder, executable.m_rareData.get());
 
@@ -2598,37 +2703,12 @@ ALWAYS_INLINE UnlinkedFunctionExecutable* CachedFunctionExecutable::decode(Decod
 
 ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& decoder, const CachedFunctionExecutable& cachedExecutable)
     : Base(decoder.vm(), decoder.vm().unlinkedFunctionExecutableStructure.get())
-    , m_firstLineOffset(cachedExecutable.firstLineOffset())
     , m_isGeneratedFromCache(true)
-    , m_lineCount(cachedExecutable.lineCount())
     , m_hasCapturedVariables(cachedExecutable.hasCapturedVariables())
-    , m_unlinkedFunctionStart(cachedExecutable.unlinkedFunctionStart())
-    , m_isBuiltinFunction(cachedExecutable.isBuiltinFunction())
-    , m_unlinkedBodyStartColumn(cachedExecutable.unlinkedBodyStartColumn())
-    , m_isBuiltinDefaultClassConstructor(cachedExecutable.isBuiltinDefaultClassConstructor())
-    , m_unlinkedBodyEndColumn(cachedExecutable.unlinkedBodyEndColumn())
-    , m_constructAbility(cachedExecutable.constructAbility())
-    , m_startOffset(cachedExecutable.startOffset())
-    , m_scriptMode(cachedExecutable.scriptMode())
-    , m_sourceLength(cachedExecutable.sourceLength())
-    , m_superBinding(cachedExecutable.superBinding())
-    , m_parametersStartOffset(cachedExecutable.parametersStartOffset())
     , m_isCached(false)
-    , m_unlinkedFunctionEnd(cachedExecutable.unlinkedFunctionEnd())
-    , m_needsClassFieldInitializer(cachedExecutable.needsClassFieldInitializer())
-    , m_parameterCount(cachedExecutable.parameterCount())
     , m_singletonHasBeenInvalidated(false)
-    , m_privateBrandRequirement(cachedExecutable.privateBrandRequirement())
     , m_features(cachedExecutable.features())
-    , m_constructorKind(cachedExecutable.constructorKind())
-    , m_sourceParseMode(cachedExecutable.sourceParseMode())
-    , m_implementationVisibility(static_cast<unsigned>(cachedExecutable.implementationVisibility()))
     , m_lexicallyScopedFeatures(cachedExecutable.lexicallyScopedFeatures())
-    , m_functionMode(cachedExecutable.functionMode())
-    , m_derivedContextType(cachedExecutable.derivedContextType())
-    , m_inlineAttribute(cachedExecutable.inlineAttribute())
-    , m_evalContextType(cachedExecutable.evalContextType())
-    , m_hasName(cachedExecutable.hasName())
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
 
@@ -2637,6 +2717,32 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
 
     , m_rareData(cachedExecutable.rareData(decoder))
 {
+    auto scalars = cachedExecutable.scalars();
+    m_firstLineOffset = scalars.firstLineOffset;
+    m_lineCount = scalars.lineCount;
+    m_unlinkedFunctionStart = scalars.unlinkedFunctionStart;
+    m_isBuiltinFunction = scalars.isBuiltinFunction;
+    m_unlinkedBodyStartColumn = scalars.unlinkedBodyStartColumn;
+    m_isBuiltinDefaultClassConstructor = scalars.isBuiltinDefaultClassConstructor;
+    m_unlinkedBodyEndColumn = scalars.unlinkedBodyEndColumn;
+    m_constructAbility = scalars.constructAbility;
+    m_startOffset = scalars.startOffset;
+    m_scriptMode = scalars.scriptMode;
+    m_sourceLength = scalars.sourceLength;
+    m_superBinding = scalars.superBinding;
+    m_parametersStartOffset = scalars.parametersStartOffset;
+    m_unlinkedFunctionEnd = scalars.unlinkedFunctionEnd;
+    m_needsClassFieldInitializer = scalars.needsClassFieldInitializer;
+    m_parameterCount = scalars.parameterCount;
+    m_privateBrandRequirement = scalars.privateBrandRequirement;
+    m_constructorKind = scalars.constructorKind;
+    m_sourceParseMode = scalars.sourceParseMode;
+    m_implementationVisibility = static_cast<unsigned>(scalars.implementationVisibility);
+    m_functionMode = scalars.functionMode;
+    m_derivedContextType = scalars.derivedContextType;
+    m_inlineAttribute = scalars.inlineAttribute;
+    m_evalContextType = scalars.evalContextType;
+    m_hasName = scalars.hasName;
 
     uint32_t leafExecutables = 2;
     auto checkBounds = [&](int32_t& codeBlockOffset, auto& cachedPtr) {
@@ -2666,38 +2772,105 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         decoder.addLeafExecutable(this, decoder.offsetOf(&cachedExecutable));
 }
 
+enum CachedCodeBlockFlag : uint32_t {
+    CodeBlockIsConstructorShift = 0,
+    CodeBlockHasCapturedVariablesShift = 1,
+    CodeBlockSuperBindingShift = 2,
+    CodeBlockScriptModeShift = 3,
+    CodeBlockIsArrowFunctionContextShift = 4,
+    CodeBlockIsClassContextShift = 5,
+    CodeBlockHasTailCallsShift = 6,
+    CodeBlockHasCheckpointsShift = 7,
+    CodeBlockConstructorKindShift = 8, // 2 bits
+    CodeBlockDerivedContextTypeShift = 10, // 2
+    CodeBlockEvalContextTypeShift = 12, // 2
+    CodeBlockCodeTypeShift = 14, // 2
+    CodeBlockIsBuiltinFunctionShift = 16,
+    CodeBlockIsBuiltinDefaultClassConstructorShift = 17,
+};
+
+template<typename CodeBlockType>
+void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBlock, VarintWriter& writer)
+{
+    uint32_t flags = static_cast<uint32_t>(codeBlock.m_isConstructor) << CodeBlockIsConstructorShift
+        | static_cast<uint32_t>(codeBlock.m_hasCapturedVariables) << CodeBlockHasCapturedVariablesShift
+        | static_cast<uint32_t>(codeBlock.m_superBinding) << CodeBlockSuperBindingShift
+        | static_cast<uint32_t>(codeBlock.m_scriptMode) << CodeBlockScriptModeShift
+        | static_cast<uint32_t>(codeBlock.m_isArrowFunctionContext) << CodeBlockIsArrowFunctionContextShift
+        | static_cast<uint32_t>(codeBlock.m_isClassContext) << CodeBlockIsClassContextShift
+        | static_cast<uint32_t>(codeBlock.m_hasTailCalls) << CodeBlockHasTailCallsShift
+        | static_cast<uint32_t>(codeBlock.m_hasCheckpoints) << CodeBlockHasCheckpointsShift
+        | static_cast<uint32_t>(codeBlock.m_constructorKind) << CodeBlockConstructorKindShift
+        | static_cast<uint32_t>(codeBlock.m_derivedContextType) << CodeBlockDerivedContextTypeShift
+        | static_cast<uint32_t>(codeBlock.m_evalContextType) << CodeBlockEvalContextTypeShift
+        | static_cast<uint32_t>(codeBlock.m_codeType) << CodeBlockCodeTypeShift
+        | static_cast<uint32_t>(codeBlock.m_isBuiltinFunction) << CodeBlockIsBuiltinFunctionShift
+        | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift;
+    writer.u32(flags);
+    writer.u32(codeBlock.m_features);
+    writer.u8(static_cast<uint8_t>(codeBlock.m_lexicallyScopedFeatures));
+    writer.u8(static_cast<uint8_t>(codeBlock.m_parseMode));
+    writer.u8(codeBlock.m_codeGenerationMode.toRaw());
+    writer.i32(codeBlock.m_thisRegister.offset());
+    writer.i32(codeBlock.m_scopeRegister.offset());
+    writer.i32(codeBlock.m_numVars);
+    writer.i32(codeBlock.m_numCalleeLocals);
+    writer.i32(codeBlock.m_numParameters);
+    writer.u32(codeBlock.m_lineCount);
+    writer.u32(codeBlock.m_endColumn);
+    writer.u32(codeBlock.m_valueProfiles.size());
+    writer.u32(codeBlock.m_arrayProfiles.size());
+    writer.u32(codeBlock.m_binaryArithProfiles.size());
+    writer.u32(codeBlock.m_unaryArithProfiles.size());
+}
+
+template<typename CodeBlockType>
+auto CachedCodeBlock<CodeBlockType>::scalars() const -> Scalars
+{
+    VarintReader reader(tail());
+    Scalars s;
+    uint32_t flags = reader.u32();
+    auto bits = [&](unsigned shift, unsigned width = 1) -> unsigned { return (flags >> shift) & ((1u << width) - 1); };
+    s.isConstructor = bits(CodeBlockIsConstructorShift);
+    s.hasCapturedVariables = bits(CodeBlockHasCapturedVariablesShift);
+    s.superBinding = bits(CodeBlockSuperBindingShift);
+    s.scriptMode = bits(CodeBlockScriptModeShift);
+    s.isArrowFunctionContext = bits(CodeBlockIsArrowFunctionContextShift);
+    s.isClassContext = bits(CodeBlockIsClassContextShift);
+    s.hasTailCalls = bits(CodeBlockHasTailCallsShift);
+    s.hasCheckpoints = bits(CodeBlockHasCheckpointsShift);
+    s.constructorKind = bits(CodeBlockConstructorKindShift, 2);
+    s.derivedContextType = bits(CodeBlockDerivedContextTypeShift, 2);
+    s.evalContextType = bits(CodeBlockEvalContextTypeShift, 2);
+    s.codeType = bits(CodeBlockCodeTypeShift, 2);
+    s.isBuiltinFunction = bits(CodeBlockIsBuiltinFunctionShift);
+    s.isBuiltinDefaultClassConstructor = bits(CodeBlockIsBuiltinDefaultClassConstructorShift);
+    s.features = static_cast<CodeFeatures>(reader.u32());
+    s.lexicallyScopedFeatures = static_cast<LexicallyScopedFeatures>(reader.u8());
+    s.parseMode = static_cast<SourceParseMode>(reader.u8());
+    s.codeGenerationMode = OptionSet<CodeGenerationMode>::fromRaw(reader.u8());
+    s.thisRegister = VirtualRegister(reader.i32());
+    s.scopeRegister = VirtualRegister(reader.i32());
+    s.numVars = reader.i32();
+    s.numCalleeLocals = reader.i32();
+    s.numParameters = reader.i32();
+    s.lineCount = reader.u32();
+    s.endColumn = reader.u32();
+    s.numValueProfiles = reader.u32();
+    s.numArrayProfiles = reader.u32();
+    s.numBinaryArithProfiles = reader.u32();
+    s.numUnaryArithProfiles = reader.u32();
+    return s;
+}
+
 template<typename CodeBlockType>
 ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::encode(Encoder& encoder, const UnlinkedCodeBlock& codeBlock)
 {
-    m_thisRegister = codeBlock.m_thisRegister;
-    m_scopeRegister = codeBlock.m_scopeRegister;
-    m_isConstructor = codeBlock.m_isConstructor;
-    m_hasCapturedVariables = codeBlock.m_hasCapturedVariables;
-    m_isBuiltinFunction = codeBlock.m_isBuiltinFunction;
-    m_isBuiltinDefaultClassConstructor = codeBlock.m_isBuiltinDefaultClassConstructor;
-    m_superBinding = codeBlock.m_superBinding;
-    m_scriptMode = codeBlock.m_scriptMode;
-    m_isArrowFunctionContext = codeBlock.m_isArrowFunctionContext;
-    m_isClassContext = codeBlock.m_isClassContext;
-    m_hasTailCalls = codeBlock.m_hasTailCalls;
-    m_constructorKind = codeBlock.m_constructorKind;
-    m_derivedContextType = codeBlock.m_derivedContextType;
-    m_evalContextType = codeBlock.m_evalContextType;
-    m_lineCount = codeBlock.m_lineCount;
-    m_endColumn = codeBlock.m_endColumn;
-    m_numVars = codeBlock.m_numVars;
-    m_numCalleeLocals = codeBlock.m_numCalleeLocals;
-    m_numParameters = codeBlock.m_numParameters;
-    m_features = codeBlock.m_features;
-    m_lexicallyScopedFeatures = codeBlock.m_lexicallyScopedFeatures;
-    m_parseMode = static_cast<uint8_t>(codeBlock.m_parseMode);
-    m_codeGenerationMode = codeBlock.m_codeGenerationMode.toRaw();
-    m_codeType = codeBlock.m_codeType;
-    m_hasCheckpoints = codeBlock.m_hasCheckpoints;
-    m_numValueProfiles = codeBlock.m_valueProfiles.size();
-    m_numArrayProfiles = codeBlock.m_arrayProfiles.size();
-    m_numBinaryArithProfiles = codeBlock.m_binaryArithProfiles.size();
-    m_numUnaryArithProfiles = codeBlock.m_unaryArithProfiles.size();
+    {
+        VarintWriter writer;
+        packScalars(codeBlock, writer);
+        writer.copyTo(tail());
+    }
 
     m_metadata.encode(encoder, codeBlock.m_metadata.get());
     m_rareData.encode(encoder, codeBlock.m_rareData.get());
@@ -2914,7 +3087,7 @@ RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCod
 {
     FileSystem::FileHandle invalidFileHandle;
     Encoder encoder(vm, invalidFileHandle);
-    encoder.malloc<CachedFunctionCodeBlock>()->encode(encoder, *codeBlock);
+    encoder.mallocFor<CachedFunctionCodeBlock>(*codeBlock)->encode(encoder, *codeBlock);
     encoder.encodeDeferred();
     return encoder.release(error);
 }
