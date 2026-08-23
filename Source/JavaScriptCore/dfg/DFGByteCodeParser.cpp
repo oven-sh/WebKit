@@ -71,6 +71,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #if USE(BUN_JSC_ADDITIONS)
+#include "BufferAccessorRegistry.h"
 #include "FFISignature.h"
 #include "JSFFIFunction.h"
 #endif
@@ -5384,6 +5385,81 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             setResult(addToGraph(JSConstant, OpInfo(m_constantUndefined)));
             return CallOptimizationResult::Inlined;
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        case BufferAccessorIntrinsic: {
+            for (ExitKind kind : { BadType, BadIndexingType, OutOfBounds, Int52Overflow, Uncountable }) {
+                if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, kind))
+                    return CallOptimizationResult::DidNothing;
+            }
+
+            NativeExecutable* nativeExecutable = variant.nativeExecutable();
+            if (!nativeExecutable)
+                return CallOptimizationResult::DidNothing;
+            std::optional<BufferAccessorDescriptor> descriptor = bufferAccessorDescriptor(nativeExecutable->function());
+            if (!descriptor)
+                return CallOptimizationResult::DidNothing;
+
+            DataViewData data = descriptor->data;
+            Array::Action action = descriptor->isWrite ? Array::Write : Array::Read;
+            ArrayMode profiledMode = getArrayMode(action);
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, UnexpectedResizableArrayBufferView))
+                data.isResizable = true;
+            else
+                data.isResizable = profiledMode.mayBeResizableOrGrowableSharedTypedArray();
+            bool mayBeLargeTypedArray = profiledMode.mayBeLargeTypedArray() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow);
+            ArrayMode arrayMode = ArrayMode(Array::SelectUsingPredictions, Array::NonArray, Array::InBounds, Array::AsIs, action, mayBeLargeTypedArray, data.isResizable);
+
+            if (descriptor->byteLengthFromArgument) {
+                int byteLengthArgument = descriptor->isWrite ? 3 : 2;
+                if (argumentCountIncludingThis <= byteLengthArgument)
+                    return CallOptimizationResult::DidNothing;
+                Node* byteLength = get(virtualRegisterForArgumentIncludingThis(byteLengthArgument, registerOffset));
+                if (!byteLength->isNumberConstant())
+                    return CallOptimizationResult::DidNothing;
+                double width = byteLength->asNumber();
+                if (width != 1 && width != 2 && width != 4)
+                    return CallOptimizationResult::DidNothing;
+                data.byteSize = static_cast<uint8_t>(width);
+            }
+
+            auto offsetArgument = [&](int argumentIndex) -> Node* {
+                if (argumentCountIncludingThis <= argumentIndex)
+                    return jsConstant(jsNumber(0));
+                Node* offset = get(virtualRegisterForArgumentIncludingThis(argumentIndex, registerOffset));
+                if (!descriptor->byteLengthFromArgument && offset->isUndefinedOrNullConstant() && !offset->asJSValue().isNull())
+                    return jsConstant(jsNumber(0));
+                return offset;
+            };
+
+            if (descriptor->isWrite) {
+                if (argumentCountIncludingThis < 2)
+                    return CallOptimizationResult::DidNothing;
+
+                insertChecks();
+
+                Node* offset = offsetArgument(2);
+                Node* returnValue = makeSafe(addToGraph(ArithAdd, offset, jsConstant(jsNumber(data.byteSize))));
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset)));
+                addVarArgChild(offset);
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
+                addVarArgChild(nullptr);
+                addToGraph(Node::VarArg, BufferWrite, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord));
+                setResult(returnValue);
+                return CallOptimizationResult::Inlined;
+            }
+
+            insertChecks();
+
+            Node* offset = offsetArgument(1);
+
+            addVarArgChild(get(virtualRegisterForArgumentIncludingThis(0, registerOffset)));
+            addVarArgChild(offset);
+            addVarArgChild(nullptr);
+            setResult(addToGraph(Node::VarArg, data.isFloatingPoint ? BufferReadFloat : BufferReadInt, OpInfo(arrayMode.asWord()), OpInfo(data.asQuadWord)));
+            return CallOptimizationResult::Inlined;
+        }
+#endif // USE(BUN_JSC_ADDITIONS)
 
         case ObjectHasOwnIntrinsic:
         case HasOwnPropertyIntrinsic: {

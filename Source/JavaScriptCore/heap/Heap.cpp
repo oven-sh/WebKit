@@ -722,6 +722,13 @@ bool Heap::overCriticalMemoryThreshold(MemoryThresholdCallType memoryThresholdCa
 #endif
 }
 
+size_t Heap::effectiveMaxEdenSize()
+{
+    if (overCriticalMemoryThreshold())
+        return std::min(m_maxEdenSize, m_maxEdenSizeWhenCritical);
+    return m_maxEdenSize;
+}
+
 void Heap::reportAbandonedObjectGraph()
 {
     // Our clients don't know exactly how much memory they

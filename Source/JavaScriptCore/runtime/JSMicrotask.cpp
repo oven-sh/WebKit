@@ -2147,8 +2147,15 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             // Restore async context before error reporting
             asyncContextScope.restoreEarly();
 
-            if (auto* exception = catchScope.exception()) {
-                catchScope.clearException();
+            if (auto* exception = catchScope.exception()) [[unlikely]] {
+                // A TerminationException is not an error to report. It stays pending so that
+                // runMicrotask() stops the checkpoint, as it does for every other job kind. Clearing
+                // it here would consume the one exception the NeedTermination trap produced, and a
+                // microtask-only loop would keep the drain running after terminate().
+                if (!catchScope.clearExceptionExceptTermination()) [[unlikely]] {
+                    scope.release();
+                    return;
+                }
                 if (Bun__reportUnhandledError)
                     Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
             }

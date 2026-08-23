@@ -435,6 +435,8 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case StringCharAt:
     case StringCharCodeAt:
     case StringCodePointAt:
+    case BufferReadInt:
+    case BufferReadFloat:
         return node->arrayMode().alreadyChecked(graph, node, state.forNode(graph.child(node, 0)));
 
     // We can make them non conservative by checking the condition safely.
@@ -819,6 +821,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetInternalField:
     case PutInternalField:
     case DataViewSet:
+    case BufferWrite:
     case ResolvePromiseFirstResolving:
     case RejectPromiseFirstResolving:
     case FulfillPromiseFirstResolving:

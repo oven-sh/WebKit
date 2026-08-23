@@ -76,7 +76,7 @@ void StochasticSpaceTimeMutatorScheduler::beginCollection()
     m_bytesAllocatedThisCycleAtTheBeginning = bytesAllocatedThisCycleImpl();
     m_bytesAllocatedThisCycleAtTheEnd = 
         Options::concurrentGCMaxHeadroom() *
-        std::max<double>(m_bytesAllocatedThisCycleAtTheBeginning, m_heap.m_maxEdenSize);
+        std::max<double>(m_bytesAllocatedThisCycleAtTheBeginning, m_heap.effectiveMaxEdenSize());
     
     dataLogIf(Options::logGC(), "ca=", m_bytesAllocatedThisCycleAtTheBeginning / 1024, "kb h=", (m_bytesAllocatedThisCycleAtTheEnd - m_bytesAllocatedThisCycleAtTheBeginning) / 1024, "kb ");
     

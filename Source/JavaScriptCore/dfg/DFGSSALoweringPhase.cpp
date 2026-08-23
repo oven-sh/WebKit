@@ -91,6 +91,17 @@ private:
             break;
         }
 
+        case BufferReadInt:
+        case BufferReadFloat:
+        case BufferWrite: {
+#if USE(BUN_JSC_ADDITIONS)
+            lowerBufferAccessBoundsChecks();
+#else
+            DFG_CRASH(m_graph, m_node, "Unexpected node type");
+#endif
+            break;
+        }
+
         case StringCharCodeAt: {
             lowerStringBoundsCheck(m_graph.child(m_node, 0), m_graph.child(m_node, 1), m_graph.child(m_node, 2));
             break;
@@ -193,6 +204,79 @@ private:
         m_node->children = adjacencyList;
         return true;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    void lowerBufferAccessBoundsChecks()
+    {
+        ArrayMode arrayMode = m_node->arrayMode();
+        if (arrayMode.type() == Array::ForceExit)
+            return;
+        RELEASE_ASSERT(arrayMode.type() == Array::Uint8Array && arrayMode.isInBounds() && !arrayMode.lengthNeedsStorage());
+        DataViewData data = m_node->bufferAccessData();
+        Edge base = m_graph.varArgChild(m_node, 0);
+        Edge offset = m_graph.varArgChild(m_node, 1);
+        RELEASE_ASSERT(offset.useKind() == Int32Use);
+
+        // Like lowerBoundsCheck(): an Int32 length and CheckInBounds, which integer range analysis can eliminate,
+        // unless the site may see a view longer than INT32_MAX (GetArrayLength checks that on every execution and
+        // exits Overflow). Once an Overflow exit was seen, the int32 adds below stop checking: whatever they would
+        // catch, the unsigned bounds / range compares that consume them catch too.
+        bool sawOverflow = m_graph.hasExitSite(m_node->origin.semantic, Overflow);
+#if USE(LARGE_TYPED_ARRAYS)
+        bool lengthAsInt52 = arrayMode.mayBeLargeTypedArray() || sawOverflow;
+#else
+        constexpr bool lengthAsInt52 = false;
+#endif
+        Arith::Mode addMode = sawOverflow ? Arith::Unchecked : Arith::CheckOverflow;
+        Node* length = m_insertionSet.insertNode(
+            m_nodeIndex, lengthAsInt52 ? SpecInt52Any : SpecInt32Only, lengthAsInt52 ? GetTypedArrayLengthAsInt52 : GetArrayLength, m_node->origin,
+            OpInfo(arrayMode.asWord()), Edge(base.node(), KnownCellUse), Edge());
+        if (arrayMode.mayBeResizableOrGrowableSharedTypedArray())
+            m_insertionSet.insertNode(m_nodeIndex, SpecNone, ExitOK, m_node->origin.withExitOK(true));
+        Edge lengthEdge = lengthAsInt52 ? Edge(length, Int52RepUse) : Edge(length, KnownInt32Use);
+        NodeType checkInBounds = lengthAsInt52 ? CheckInBoundsInt52 : CheckInBounds;
+
+        unsigned appended = 1;
+        Node* checkFirstByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, checkInBounds, m_node->origin, offset, lengthEdge);
+        Node* checkLastByte = nullptr;
+        if (data.byteSize > 1) {
+            Node* lastByteOffset = m_insertionSet.insertNode(
+                m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(addMode),
+                Edge(offset.node(), Int32Use),
+                m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(data.byteSize - 1), Int32Use));
+            checkLastByte = m_insertionSet.insertNode(m_nodeIndex, SpecInt32Only, checkInBounds, m_node->origin, Edge(lastByteOffset, Int32Use), lengthEdge);
+            appended = 2;
+        }
+
+        Node* checkValueRange = nullptr;
+        if (m_node->op() == BufferWrite && !data.isFloatingPoint && data.byteSize <= 2) {
+            Edge value = m_graph.varArgChild(m_node, 2);
+            RELEASE_ASSERT(value.useKind() == Int32Use);
+            int32_t range = 1 << (8 * data.byteSize);
+            Node* checked = value.node();
+            if (data.isSigned) {
+                checked = m_insertionSet.insertNode(
+                    m_nodeIndex, SpecInt32Only, NodeResultInt32, ArithAdd, m_node->origin, OpInfo(addMode),
+                    Edge(value.node(), Int32Use),
+                    m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(range / 2), Int32Use));
+            }
+            checkValueRange = m_insertionSet.insertNode(
+                m_nodeIndex, SpecInt32Only, CheckInBounds, m_node->origin, Edge(checked, Int32Use),
+                m_insertionSet.insertConstantForUse(m_nodeIndex, m_node->origin, jsNumber(range), Int32Use));
+            appended++;
+        }
+
+        RELEASE_ASSERT(m_graph.varArgChild(m_node, m_node->storageChildIndex()));
+        AdjacencyList adjacencyList = m_graph.copyVarargChildren(m_node);
+        m_graph.m_varArgChildren.append(Edge(checkFirstByte, UntypedUse));
+        if (checkLastByte)
+            m_graph.m_varArgChildren.append(Edge(checkLastByte, UntypedUse));
+        if (checkValueRange)
+            m_graph.m_varArgChildren.append(Edge(checkValueRange, UntypedUse));
+        adjacencyList.setNumChildren(adjacencyList.numChildren() + appended);
+        m_node->children = adjacencyList;
+    }
+#endif // USE(BUN_JSC_ADDITIONS)
 
     bool lowerStringBoundsCheck(Edge base, Edge index, Edge& checkInBoundsEdge)
     {

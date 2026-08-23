@@ -6351,6 +6351,23 @@ void SpeculativeJIT::compile(Node* node)
         compileClearCatchLocals(node);
         break;
 
+    case BufferReadInt:
+    case BufferReadFloat:
+#if USE(BUN_JSC_ADDITIONS)
+        compileBufferRead(node);
+#else
+        DFG_CRASH(m_graph, node, "Unexpected node");
+#endif
+        break;
+
+    case BufferWrite:
+#if USE(BUN_JSC_ADDITIONS)
+        compileBufferWrite(node);
+#else
+        DFG_CRASH(m_graph, node, "Unexpected node");
+#endif
+        break;
+
     case DataViewGetFloat:
     case DataViewGetInt: {
         SpeculateCellOperand dataView(this, node->child1());
@@ -9978,6 +9995,323 @@ void SpeculativeJIT::compileMultiPutByVal(Node* node)
 
     noResult(node);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+
+void SpeculativeJIT::compileBufferRead(Node* node)
+{
+    Edge& baseEdge = m_graph.varArgChild(node, 0);
+    Edge& offsetEdge = m_graph.varArgChild(node, 1);
+    Edge& storageEdge = m_graph.varArgChild(node, 2);
+    DataViewData data = node->bufferAccessData();
+    ASSERT(data.byteSize == 1 || data.isLittleEndian != TriState::Indeterminate);
+
+    SpeculateCellOperand base(this, baseEdge);
+    SpeculateStrictInt32Operand offset(this, offsetEdge);
+    StorageOperand storage(this, storageEdge);
+    GPRReg baseGPR = base.gpr();
+    GPRReg offsetGPR = offset.gpr();
+    GPRReg storageGPR = storage.gpr();
+
+    GPRTemporary temp1(this);
+    GPRTemporary temp2(this);
+    GPRReg t1 = temp1.gpr();
+    GPRReg t2 = temp2.gpr();
+
+    if (node->arrayMode().mayBeResizableOrGrowableSharedTypedArray())
+        loadTypedArrayLength(baseGPR, t1, t2, t1, TypeUint8);
+    else {
+        if (!m_graph.isNeverResizableOrGrowableSharedTypedArrayIncludingDataView(m_state.forNode(baseEdge)))
+            speculationCheck(UnexpectedResizableArrayBufferView, JSValueSource::unboxedCell(baseGPR), node, branchTest8(NonZero, Address(baseGPR, JSArrayBufferView::offsetOfMode()), TrustedImm32(isResizableOrGrowableSharedMode)));
+#if USE(LARGE_TYPED_ARRAYS)
+        load64(Address(baseGPR, JSArrayBufferView::offsetOfLength()), t1);
+#else
+        load32(Address(baseGPR, JSArrayBufferView::offsetOfLength()), t1);
+#endif
+    }
+
+    speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(LessThan, offsetGPR, TrustedImm32(0)));
+    zeroExtend32ToWord(offsetGPR, t2);
+    if (data.byteSize > 1)
+        add64(TrustedImm32(data.byteSize - 1), t2);
+    speculationCheck(OutOfBounds, JSValueRegs(), node, branch64(AboveOrEqual, t2, t1));
+
+    zeroExtend32ToWord(offsetGPR, t1);
+    auto address = BaseIndex(storageGPR, t1, TimesOne);
+    bool isBigEndian = data.isLittleEndian == TriState::False;
+
+    if (node->op() == BufferReadInt) {
+        switch (data.byteSize) {
+        case 1:
+            if (data.isSigned)
+                load8SignedExtendTo32(address, t2);
+            else
+                load8(address, t2);
+            strictInt32Result(t2, node);
+            break;
+        case 2:
+            if (isBigEndian) {
+                load16(address, t2);
+                byteSwap16(t2);
+                if (data.isSigned)
+                    signExtend16To32(t2, t2);
+            } else if (data.isSigned)
+                load16SignedExtendTo32(address, t2);
+            else
+                load16(address, t2);
+            strictInt32Result(t2, node);
+            break;
+        case 4:
+            load32(address, t2);
+            if (isBigEndian)
+                byteSwap32(t2);
+            if (data.isSigned)
+                strictInt32Result(t2, node);
+            else
+                strictInt52Result(t2, node);
+            break;
+        case 8: {
+            load64(address, t2);
+            if (isBigEndian)
+                byteSwap64(t2);
+#if USE(BIGINT32)
+            flushRegisters();
+            GPRFlushedCallResult result(this);
+            GPRReg resultGPR = result.gpr();
+            if (data.isSigned)
+                callOperation(operationInt64ToBigInt, resultGPR, LinkableConstant::globalObject(*this, node), t2);
+            else
+                callOperation(operationUInt64ToBigInt, resultGPR, LinkableConstant::globalObject(*this, node), t2);
+            exceptionCheck();
+            jsValueResult(resultGPR, node);
+#else
+            GPRTemporary result(this);
+            GPRTemporary scratch(this);
+            GPRReg resultGPR = result.gpr();
+            GPRReg scratchGPR = scratch.gpr();
+
+            JumpList slowCases;
+            emitAllocateJSBigInt64(vm(), resultGPR, t2, scratchGPR, t1, TrustedImmPtr(m_graph.registerStructure(vm().bigIntStructure.get())), data.isSigned, slowCases);
+            if (data.isSigned)
+                addSlowPathGenerator(slowPathCall(slowCases, this, operationInt64ToBigInt, resultGPR, LinkableConstant::globalObject(*this, node), t2));
+            else
+                addSlowPathGenerator(slowPathCall(slowCases, this, operationUInt64ToBigInt, resultGPR, LinkableConstant::globalObject(*this, node), t2));
+            jsValueResult(resultGPR, node);
+#endif
+            break;
+        }
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        return;
+    }
+
+    ASSERT(node->op() == BufferReadFloat);
+    FPRTemporary result(this);
+    FPRReg resultFPR = result.fpr();
+    switch (data.byteSize) {
+    case 4:
+        if (isBigEndian) {
+            load32(address, t2);
+            byteSwap32(t2);
+            move32ToFloat(t2, resultFPR);
+        } else
+            loadFloat(address, resultFPR);
+        convertFloatToDouble(resultFPR, resultFPR);
+        break;
+    case 8:
+        if (isBigEndian) {
+            load64(address, t2);
+            byteSwap64(t2);
+            move64ToDouble(t2, resultFPR);
+        } else
+            loadDouble(address, resultFPR);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    doubleResult(resultFPR, node);
+}
+
+void SpeculativeJIT::compileBufferWrite(Node* node)
+{
+    Edge& baseEdge = m_graph.varArgChild(node, 0);
+    Edge& offsetEdge = m_graph.varArgChild(node, 1);
+    Edge& valueEdge = m_graph.varArgChild(node, 2);
+    Edge& storageEdge = m_graph.varArgChild(node, 3);
+    DataViewData data = node->bufferAccessData();
+    ASSERT(data.byteSize == 1 || data.isLittleEndian != TriState::Indeterminate);
+
+    SpeculateCellOperand base(this, baseEdge);
+    SpeculateStrictInt32Operand offset(this, offsetEdge);
+    StorageOperand storage(this, storageEdge);
+    GPRReg baseGPR = base.gpr();
+    GPRReg offsetGPR = offset.gpr();
+    GPRReg storageGPR = storage.gpr();
+
+    std::optional<SpeculateInt32Operand> int32Value;
+    std::optional<SpeculateStrictInt52Operand> int52Value;
+    std::optional<SpeculateDoubleOperand> doubleValue;
+    std::optional<SpeculateCellOperand> bigIntValue;
+    std::optional<FPRTemporary> fprTemporary;
+    GPRReg valueGPR = InvalidGPRReg;
+    FPRReg valueFPR = InvalidFPRReg;
+    FPRReg tempFPR = InvalidFPRReg;
+    switch (valueEdge.useKind()) {
+    case Int32Use:
+        int32Value.emplace(this, valueEdge);
+        valueGPR = int32Value->gpr();
+        break;
+    case Int52RepUse:
+        int52Value.emplace(this, valueEdge);
+        valueGPR = int52Value->gpr();
+        break;
+    case DoubleRepUse:
+        doubleValue.emplace(this, valueEdge);
+        valueFPR = doubleValue->fpr();
+        if (data.byteSize == 4) {
+            fprTemporary.emplace(this);
+            tempFPR = fprTemporary->fpr();
+        }
+        break;
+    case HeapBigIntUse:
+        bigIntValue.emplace(this, valueEdge);
+        valueGPR = bigIntValue->gpr();
+        speculateHeapBigInt(valueEdge, valueGPR);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    GPRTemporary temp1(this);
+    GPRTemporary temp2(this);
+    GPRTemporary temp3(this);
+    GPRReg t1 = temp1.gpr();
+    GPRReg t2 = temp2.gpr();
+    GPRReg t3 = temp3.gpr();
+
+    if (node->arrayMode().mayBeResizableOrGrowableSharedTypedArray())
+        loadTypedArrayLength(baseGPR, t1, t2, t1, TypeUint8);
+    else {
+        if (!m_graph.isNeverResizableOrGrowableSharedTypedArrayIncludingDataView(m_state.forNode(baseEdge)))
+            speculationCheck(UnexpectedResizableArrayBufferView, JSValueSource::unboxedCell(baseGPR), node, branchTest8(NonZero, Address(baseGPR, JSArrayBufferView::offsetOfMode()), TrustedImm32(isResizableOrGrowableSharedMode)));
+#if USE(LARGE_TYPED_ARRAYS)
+        load64(Address(baseGPR, JSArrayBufferView::offsetOfLength()), t1);
+#else
+        load32(Address(baseGPR, JSArrayBufferView::offsetOfLength()), t1);
+#endif
+    }
+
+    speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(LessThan, offsetGPR, TrustedImm32(0)));
+    zeroExtend32ToWord(offsetGPR, t2);
+    if (data.byteSize > 1)
+        add64(TrustedImm32(data.byteSize - 1), t2);
+    speculationCheck(OutOfBounds, JSValueRegs(), node, branch64(AboveOrEqual, t2, t1));
+
+    if (!data.isFloatingPoint) {
+        switch (data.byteSize) {
+        case 1:
+            RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(LessThan, valueGPR, TrustedImm32(data.isSigned ? -0x80 : 0)));
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(GreaterThan, valueGPR, TrustedImm32(data.isSigned ? 0x7f : 0xff)));
+            break;
+        case 2:
+            RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(LessThan, valueGPR, TrustedImm32(data.isSigned ? -0x8000 : 0)));
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(GreaterThan, valueGPR, TrustedImm32(data.isSigned ? 0x7fff : 0xffff)));
+            break;
+        case 4:
+            if (data.isSigned)
+                RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
+            else {
+                RELEASE_ASSERT(valueEdge.useKind() == Int52RepUse);
+                speculationCheck(OutOfBounds, JSValueRegs(), node, branch64(Above, valueGPR, TrustedImm64(0xffffffffLL)));
+            }
+            break;
+        case 8: {
+            RELEASE_ASSERT(valueEdge.useKind() == HeapBigIntUse);
+            speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(Above, Address(valueGPR, JSBigInt::offsetOfLength()), TrustedImm32(1)));
+            load8(Address(valueGPR, JSCell::typeInfoFlagsOffset()), t1);
+            and32(TrustedImm32(TypeInfoPerCellBit), t1);
+            if (data.isSigned) {
+                toBigInt64(valueGPR, t2);
+                auto isZero = branchTest64(Zero, t2);
+                compare32(NotEqual, t1, TrustedImm32(0), t1);
+                compare64(LessThan, t2, TrustedImm32(0), t3);
+                speculationCheck(OutOfBounds, JSValueRegs(), node, branch32(NotEqual, t1, t3));
+                isZero.link(this);
+            } else {
+                speculationCheck(OutOfBounds, JSValueRegs(), node, branchTest32(NonZero, t1));
+                toBigInt64(valueGPR, t2);
+            }
+            break;
+        }
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    zeroExtend32ToWord(offsetGPR, t1);
+    auto address = BaseIndex(storageGPR, t1, TimesOne);
+    bool isBigEndian = data.isLittleEndian == TriState::False;
+
+    if (data.isFloatingPoint) {
+        RELEASE_ASSERT(valueEdge.useKind() == DoubleRepUse);
+        RELEASE_ASSERT(valueFPR != InvalidFPRReg);
+        if (data.byteSize == 4) {
+            RELEASE_ASSERT(tempFPR != InvalidFPRReg);
+            convertDoubleToFloat(valueFPR, tempFPR);
+            if (isBigEndian) {
+                moveFloatTo32(tempFPR, t2);
+                byteSwap32(t2);
+                store32(t2, address);
+            } else
+                storeFloat(tempFPR, address);
+        } else {
+            RELEASE_ASSERT(data.byteSize == 8);
+            if (isBigEndian) {
+                moveDoubleTo64(valueFPR, t2);
+                byteSwap64(t2);
+                store64(t2, address);
+            } else
+                storeDouble(valueFPR, address);
+        }
+    } else {
+        RELEASE_ASSERT(valueGPR != InvalidGPRReg);
+        switch (data.byteSize) {
+        case 1:
+            store8(valueGPR, address);
+            break;
+        case 2:
+            if (isBigEndian) {
+                move(valueGPR, t2);
+                byteSwap16(t2);
+                store16(t2, address);
+            } else
+                store16(valueGPR, address);
+            break;
+        case 4:
+            if (isBigEndian) {
+                zeroExtend32ToWord(valueGPR, t2);
+                byteSwap32(t2);
+                store32(t2, address);
+            } else
+                store32(valueGPR, address);
+            break;
+        case 8:
+            if (isBigEndian)
+                byteSwap64(t2);
+            store64(t2, address);
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    noResult(node);
+}
+
+#endif // USE(BUN_JSC_ADDITIONS)
 
 void SpeculativeJIT::emitFirstCharacterBitmapMatch(const uint8_t* bitmap, GPRReg characterGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, JumpList& matchMaybeCases)
 {

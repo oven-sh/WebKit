@@ -939,6 +939,13 @@ private:
             break;
         }
 
+        case BufferWrite: {
+            DataViewData data = node->bufferAccessData();
+            if (data.isFloatingPoint)
+                m_graph.voteNode(m_graph.varArgChild(node, 2), VoteValue, weight);
+            break;
+        }
+
         case MovHint:
             // Ignore these since they have no effect on in-DFG execution.
             break;
@@ -1098,6 +1105,30 @@ private:
         case DataViewGetFloat:
         case DateGetInt32OrNaN: {
             setPrediction(m_currentNode->getHeapPrediction());
+            break;
+        }
+
+        case BufferReadInt: {
+            DataViewData data = m_currentNode->bufferAccessData();
+            switch (data.byteSize) {
+            case 1:
+            case 2:
+                setPrediction(SpecInt32Only);
+                break;
+            case 4:
+                setPrediction(data.isSigned ? SpecInt32Only : SpecInt52Any);
+                break;
+            case 8:
+                setPrediction(SpecHeapBigInt);
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+            break;
+        }
+
+        case BufferReadFloat: {
+            setPrediction(SpecFullDouble);
             break;
         }
 
@@ -1851,6 +1882,7 @@ private:
         case FilterSetPrivateBrandStatus:
         case ClearCatchLocals:
         case DataViewSet:
+        case BufferWrite:
         case InvalidationPoint:
         case ObjectAssign:
         case ResolvePromiseFirstResolving:

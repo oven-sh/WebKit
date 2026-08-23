@@ -1999,6 +1999,21 @@ private:
         case DataViewSet:
             compileDataViewSet();
             break;
+        case BufferReadInt:
+        case BufferReadFloat:
+#if USE(BUN_JSC_ADDITIONS)
+            compileBufferRead();
+#else
+            DFG_CRASH(m_graph, m_node, "Unexpected node");
+#endif
+            break;
+        case BufferWrite:
+#if USE(BUN_JSC_ADDITIONS)
+            compileBufferWrite();
+#else
+            DFG_CRASH(m_graph, m_node, "Unexpected node");
+#endif
+            break;
 
         case ResolvePromiseFirstResolving:
             compileResolvePromiseFirstResolving();
@@ -22583,6 +22598,223 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    void compileBufferRead()
+    {
+        DataViewData data = m_node->bufferAccessData();
+        ASSERT(data.byteSize == 1 || data.isLittleEndian != TriState::Indeterminate);
+        Edge baseEdge = m_graph.varArgChild(m_node, 0);
+        LValue base = lowCell(baseEdge);
+        LValue offset = lowInt32(m_graph.varArgChild(m_node, 1));
+        LValue storage = lowStorage(m_graph.varArgChild(m_node, 2));
+
+        TypedPointer pointer(m_heaps.TypedArrayProperties, m_out.add(storage, m_out.zeroExtPtr(offset)));
+        bool isBigEndian = data.isLittleEndian == TriState::False;
+
+        auto keepBaseAlive = [&] {
+            ensureStillAliveHere(base);
+        };
+
+        if (m_node->op() == BufferReadInt) {
+            switch (data.byteSize) {
+            case 1:
+                setInt32(data.isSigned ? m_out.load8SignExt32(pointer) : m_out.load8ZeroExt32(pointer));
+                break;
+            case 2: {
+                if (!isBigEndian)
+                    setInt32(data.isSigned ? m_out.load16SignExt32(pointer) : m_out.load16ZeroExt32(pointer));
+                else {
+                    LValue loadedValue = m_out.load16ZeroExt32(pointer);
+                    PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+                    patchpoint->appendSomeRegister(loadedValue);
+                    patchpoint->setGenerator([=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
+                        jit.move(params[1].gpr(), params[0].gpr());
+                        jit.byteSwap16(params[0].gpr());
+                        if (data.isSigned)
+                            jit.signExtend16To32(params[0].gpr(), params[0].gpr());
+                    });
+                    patchpoint->effects = Effects::none();
+                    setInt32(patchpoint);
+                }
+                break;
+            }
+            case 4: {
+                LValue loadedValue = m_out.load32(pointer);
+                if (isBigEndian)
+                    loadedValue = byteSwap32(loadedValue);
+                if (data.isSigned)
+                    setInt32(loadedValue);
+                else
+                    setStrictInt52(m_out.zeroExt(loadedValue, Int64));
+                break;
+            }
+            case 8: {
+                LValue loadedValue = m_out.load64(pointer);
+                if (isBigEndian)
+                    loadedValue = byteSwap64(loadedValue);
+                setJSValue(allocateHeapBigInt64(loadedValue, data.isSigned));
+                break;
+            }
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+            keepBaseAlive();
+            return;
+        }
+
+        ASSERT(m_node->op() == BufferReadFloat);
+        switch (data.byteSize) {
+        case 4:
+            if (!isBigEndian)
+                setDouble(m_out.floatToDouble(m_out.loadFloat(pointer)));
+            else {
+                LValue loadedValue = m_out.load32(pointer);
+                PatchpointValue* patchpoint = m_out.patchpoint(Double);
+                patchpoint->appendSomeRegister(loadedValue);
+                patchpoint->numGPScratchRegisters = 1;
+                patchpoint->setGenerator([=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
+                    jit.move(params[1].gpr(), params.gpScratch(0));
+                    jit.byteSwap32(params.gpScratch(0));
+                    jit.move32ToFloat(params.gpScratch(0), params[0].fpr());
+                    jit.convertFloatToDouble(params[0].fpr(), params[0].fpr());
+                });
+                patchpoint->effects = Effects::none();
+                setDouble(patchpoint);
+            }
+            break;
+        case 8:
+            if (!isBigEndian)
+                setDouble(m_out.loadDouble(pointer));
+            else
+                setDouble(m_out.bitCast(byteSwap64(m_out.load64(pointer)), Double));
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        keepBaseAlive();
+    }
+
+    void compileBufferWrite()
+    {
+        DataViewData data = m_node->bufferAccessData();
+        ASSERT(data.byteSize == 1 || data.isLittleEndian != TriState::Indeterminate);
+        LValue base = lowCell(m_graph.varArgChild(m_node, 0));
+        LValue offset = lowInt32(m_graph.varArgChild(m_node, 1));
+        Edge valueEdge = m_graph.varArgChild(m_node, 2);
+        LValue storage = lowStorage(m_graph.varArgChild(m_node, 3));
+
+        LValue valueToStore;
+        LValue bigInt = nullptr;
+        switch (valueEdge.useKind()) {
+        case Int32Use:
+            valueToStore = lowInt32(valueEdge);
+            break;
+        case Int52RepUse:
+            valueToStore = lowStrictInt52(valueEdge);
+            break;
+        case DoubleRepUse:
+            valueToStore = lowDouble(valueEdge);
+            break;
+        case HeapBigIntUse:
+            bigInt = lowHeapBigInt(valueEdge);
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+
+        if (bigInt) {
+            RELEASE_ASSERT(data.byteSize == 8);
+            speculate(OutOfBounds, noValue(), nullptr, m_out.above(m_out.load32NonNegative(bigInt, m_heaps.JSBigInt_length), m_out.constInt32(1)));
+            LValue isNegative = m_out.testNonZero32(m_out.load8ZeroExt32(bigInt, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(TypeInfoPerCellBit));
+            if (!data.isSigned)
+                speculate(OutOfBounds, noValue(), nullptr, isNegative);
+            valueToStore = toBigInt64(bigInt);
+            if (data.isSigned) {
+                LValue signMismatch = m_out.notEqual(isNegative, m_out.lessThan(valueToStore, m_out.int64Zero));
+                speculate(OutOfBounds, noValue(), nullptr, m_out.bitAnd(m_out.notZero64(valueToStore), signMismatch));
+            }
+        } else if (!data.isFloatingPoint) {
+            switch (data.byteSize) {
+            case 1:
+            case 2:
+                RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
+                break;
+            case 4:
+                if (data.isSigned)
+                    RELEASE_ASSERT(valueEdge.useKind() == Int32Use);
+                else {
+                    RELEASE_ASSERT(valueEdge.useKind() == Int52RepUse);
+                    speculate(OutOfBounds, noValue(), nullptr, m_out.above(valueToStore, m_out.constInt64(0xffffffffLL)));
+                    valueToStore = m_out.castToInt32(valueToStore);
+                }
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+
+        TypedPointer pointer(m_heaps.TypedArrayProperties, m_out.add(storage, m_out.zeroExtPtr(offset)));
+        bool isBigEndian = data.isLittleEndian == TriState::False;
+
+        if (data.isFloatingPoint) {
+            RELEASE_ASSERT(valueEdge.useKind() == DoubleRepUse);
+            if (data.byteSize == 4) {
+                LValue floatValue = m_out.doubleToFloat(valueToStore);
+                if (!isBigEndian)
+                    m_out.storeFloat(floatValue, pointer);
+                else {
+                    PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+                    patchpoint->appendSomeRegister(floatValue);
+                    patchpoint->setGenerator([=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
+                        jit.moveFloatTo32(params[1].fpr(), params[0].gpr());
+                        jit.byteSwap32(params[0].gpr());
+                    });
+                    patchpoint->effects = Effects::none();
+                    m_out.store32(patchpoint, pointer);
+                }
+            } else {
+                RELEASE_ASSERT(data.byteSize == 8);
+                if (!isBigEndian)
+                    m_out.storeDouble(valueToStore, pointer);
+                else
+                    m_out.store64(byteSwap64(m_out.bitCast(valueToStore, Int64)), pointer);
+            }
+        } else {
+            switch (data.byteSize) {
+            case 1:
+                m_out.store32As8(valueToStore, pointer);
+                break;
+            case 2: {
+                if (!isBigEndian)
+                    m_out.store32As16(valueToStore, pointer);
+                else {
+                    PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+                    patchpoint->appendSomeRegister(valueToStore);
+                    patchpoint->setGenerator([=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
+                        jit.move(params[1].gpr(), params[0].gpr());
+                        jit.byteSwap16(params[0].gpr());
+                    });
+                    patchpoint->effects = Effects::none();
+                    m_out.store32As16(patchpoint, pointer);
+                }
+                break;
+            }
+            case 4:
+                m_out.store32(isBigEndian ? byteSwap32(valueToStore) : valueToStore, pointer);
+                break;
+            case 8:
+                RELEASE_ASSERT(bigInt);
+                m_out.store64(isBigEndian ? byteSwap64(valueToStore) : valueToStore, pointer);
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+
+        ensureStillAliveHere(base);
+    }
+#endif // USE(BUN_JSC_ADDITIONS)
 
     void compileDateNow()
     {
