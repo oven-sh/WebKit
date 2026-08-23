@@ -3051,6 +3051,7 @@ enum class CachedCodeBlockTag {
     CachedProgramCodeBlockTag,
     CachedModuleCodeBlockTag,
     CachedEvalCodeBlockTag,
+    CachedBuiltinFunctionTag, // a root UnlinkedFunctionExecutable created by BuiltinExecutables (an embedder's JS builtins)
 };
 
 static CachedCodeBlockTag NODELETE tagFromSourceCodeType(SourceCodeType type)
@@ -3744,6 +3745,7 @@ bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, Unlink
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedProgramCodeBlock*>&>(result));
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedModuleProgramCodeBlock*>&>(result));
+    case CachedCodeBlockTag::CachedBuiltinFunctionTag:
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
@@ -3762,6 +3764,7 @@ bool GenericCacheEntry::decode(Decoder& decoder, SourceCodeKey& key) const
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, key);
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, key);
+    case CachedCodeBlockTag::CachedBuiltinFunctionTag:
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         return false;
@@ -3780,6 +3783,7 @@ bool GenericCacheEntry::isStillValid(Decoder& decoder, const SourceCodeKey& key,
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->isStillValid(decoder, key);
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->isStillValid(decoder, key);
+    case CachedCodeBlockTag::CachedBuiltinFunctionTag:
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
@@ -3793,6 +3797,62 @@ void encodeCodeBlock(Encoder& encoder, const SourceCodeKey& key, const UnlinkedC
 {
     auto* entry = encoder.template malloc<CacheEntry<UnlinkedCodeBlockType>>(encoder);
     entry->encode(encoder, { key, uncheckedDowncast<UnlinkedCodeBlockType>(codeBlock) });
+}
+
+// A builtin function (BuiltinExecutables::createExecutable) and, lazily, its body and nested functions. The embedder
+// supplies the source it was created from and a stamp identifying that source's contents; nothing is hashed at load.
+class BuiltinFunctionCacheEntry : public GenericCacheEntry {
+public:
+    BuiltinFunctionCacheEntry(Encoder& encoder)
+        : GenericCacheEntry(encoder, CachedCodeBlockTag::CachedBuiltinFunctionTag)
+    {
+    }
+
+    void encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable, unsigned sourceLength, unsigned embedderStamp)
+    {
+        m_sourceLength = sourceLength;
+        m_embedderStamp = embedderStamp;
+        sealHeader(encoder);
+        m_executable.encode(encoder, &executable);
+    }
+
+    UnlinkedFunctionExecutable* decode(Decoder& decoder, unsigned sourceLength, unsigned embedderStamp) const
+    {
+        if (tag() != CachedCodeBlockTag::CachedBuiltinFunctionTag || !isUpToDate(decoder))
+            return nullptr;
+        if (m_sourceLength != sourceLength || m_embedderStamp != embedderStamp)
+            return nullptr;
+        auto* record = m_executable.getIfInPayload(decoder);
+        if (!record || !record->isIntact(decoder))
+            return nullptr;
+        return m_executable.decode(decoder);
+    }
+
+private:
+    unsigned m_sourceLength { 0 };
+    unsigned m_embedderStamp { 0 };
+    CachedPtr<CachedFunctionExecutable> m_executable;
+};
+
+RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp)
+{
+    BytecodeCacheError error;
+    FileSystem::FileHandle invalidFileHandle;
+    Encoder encoder(vm, invalidFileHandle);
+    encoder.template malloc<BuiltinFunctionCacheEntry>(encoder)->encode(encoder, *executable, sourceLength, embedderStamp);
+    encoder.encodeDeferred();
+    return encoder.release(error);
+}
+
+UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp)
+{
+    if (cachedBytecode->span().size() < sizeof(BuiltinFunctionCacheEntry))
+        return nullptr;
+    unsigned sourceLength = provider.source().length();
+    auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(cachedBytecode->span().data());
+    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider);
+    DeferGC deferGC(vm);
+    return entry->decode(decoder.get(), sourceLength, embedderStamp);
 }
 
 RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error)
