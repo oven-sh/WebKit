@@ -2356,18 +2356,21 @@ public:
 #endif
     {
         Base::encode(encoder, sourceProvider);
-#if !USE(BUN_JSC_ADDITIONS)
+#if USE(BUN_JSC_ADDITIONS)
+        m_sourceLength = sourceProvider.source().length();
+#else
         m_source.encode(encoder, sourceProvider.source().toString());
 #endif
     }
 
 #if USE(BUN_JSC_ADDITIONS)
     // Source text is not serialized: SourceCodeKey::operator== compares the source hash and length instead, and the
-    // provider is only decoded to build that key. So the provider the Decoder is decoding for stands in for it, and
-    // callers without one (isCachedBytecodeStillValid) get a StringSourceProvider with a null source.
+    // provider is only decoded to build that key. So the provider the Decoder is decoding for stands in for it when its
+    // length matches, and otherwise (or for callers without one, isCachedBytecodeStillValid) the key gets a
+    // StringSourceProvider with a null source, whose length matches no real source.
     SourceProvider* decode(Decoder& decoder, SourceProviderSourceType sourceType) const
     {
-        if (RefPtr<SourceProvider> provider = decoder.provider(); provider && provider->sourceType() == sourceType)
+        if (RefPtr<SourceProvider> provider = decoder.provider(); provider && provider->sourceType() == sourceType && provider->source().length() == m_sourceLength)
             return provider.leakRef();
         String decodedSource;
 #else
@@ -2384,8 +2387,10 @@ public:
         return &sourceProvider.leakRef();
     }
 
-#if !USE(BUN_JSC_ADDITIONS)
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t m_sourceLength;
+#else
     CachedString m_source;
 #endif
 };
