@@ -1329,3 +1329,5 @@ ffi/FFISignature.cpp
 ffi/JSFFICallback.cpp
 ffi/JSFFIFunction.cpp
 ffi/tests/FFITestFixtures.cpp
+
+runtime/BufferAccessorRegistry.cpp

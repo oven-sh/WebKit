@@ -1448,6 +1448,10 @@ public:
 #if USE(LARGE_TYPED_ARRAYS)
     void compileDataViewGetByteLengthAsInt52(Node*);
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+    void compileBufferRead(Node*);
+    void compileBufferWrite(Node*);
+#endif
 
     void compileCheckTypeInfoFlags(Node*);
     void compileCheckIdent(Node*);

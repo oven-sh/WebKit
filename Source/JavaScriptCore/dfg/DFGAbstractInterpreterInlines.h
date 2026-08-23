@@ -5878,6 +5878,41 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case BufferReadInt: {
+        if (node->arrayMode().type() == Array::ForceExit) {
+            m_state.setIsValid(false);
+            break;
+        }
+        DataViewData data = node->bufferAccessData();
+        if (data.byteSize < 4)
+            setNonCellTypeForNode(node, SpecInt32Only);
+        else if (data.byteSize == 4) {
+            if (data.isSigned)
+                setNonCellTypeForNode(node, SpecInt32Only);
+            else
+                setNonCellTypeForNode(node, SpecInt52Any);
+        } else {
+            ASSERT(data.byteSize == 8);
+            setTypeForNode(node, SpecHeapBigInt);
+        }
+        break;
+    }
+
+    case BufferReadFloat: {
+        if (node->arrayMode().type() == Array::ForceExit) {
+            m_state.setIsValid(false);
+            break;
+        }
+        setNonCellTypeForNode(node, SpecFullDouble);
+        break;
+    }
+
+    case BufferWrite: {
+        if (node->arrayMode().type() == Array::ForceExit)
+            m_state.setIsValid(false);
+        break;
+    }
+
     case DataViewGetInt: {
         DataViewData data = node->dataViewData();
         if (data.byteSize < 4)

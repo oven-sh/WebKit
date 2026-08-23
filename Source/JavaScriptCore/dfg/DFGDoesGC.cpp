@@ -539,6 +539,13 @@ bool doesGC(Graph& graph, Node* node)
     case DataViewGetInt:
         return node->dataViewData().byteSize == 8;
 
+    case BufferReadInt:
+        return node->bufferAccessData().byteSize == 8;
+
+    case BufferReadFloat:
+    case BufferWrite:
+        return false;
+
     case CallNumberConstructor:
         switch (node->child1().useKind()) {
         case BigInt32Use:
