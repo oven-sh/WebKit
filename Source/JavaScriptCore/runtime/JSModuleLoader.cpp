@@ -1185,7 +1185,11 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
     while (i < tasks.size()) {
         auto t = tasks[i++];
         std::array<const JSValue, maxMicrotaskArguments> args { { t.arg0, t.arg1, t.arg2, jsUndefined() } };
-        runInternalMicrotask(globalObject, vm, t.task, t.payload, args);
+        // The reaction may belong to a different realm than the drain's caller
+        // (e.g. a ShadowRealm module load that started while this queue was
+        // active). Run it against the realm it was diverted from so its module
+        // loader sees its own registry, matching what queueMicrotask would do.
+        runInternalMicrotask(t.globalObject, vm, t.task, t.payload, args);
         if (scope.exception()) [[unlikely]] {
             // The remaining entries are reactions that performPromiseThen…/
             // triggerPromiseReactions diverted off the global microtask queue.
@@ -1195,7 +1199,7 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
             // the exception. They run on the next normal microtask drain.
             while (i < tasks.size()) {
                 auto rest = tasks[i++];
-                globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2);
+                rest.globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2);
             }
             tasks.shrink(0);
             return;

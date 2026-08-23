@@ -491,7 +491,7 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
 #if USE(BUN_JSC_ADDITIONS)
         if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
             markAsHandled();
-            vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Rejected), cellValue, settled, context });
+            vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Rejected), globalObject, cellValue, settled, context });
             break;
         }
 #endif
@@ -504,7 +504,7 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
         JSValue settled = settlementValue();
 #if USE(BUN_JSC_ADDITIONS)
         if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-            vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Fulfilled), cellValue, settled, context });
+            vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Fulfilled), globalObject, cellValue, settled, context });
             break;
         }
 #endif
@@ -576,7 +576,7 @@ ALWAYS_INLINE void JSPromise::settleInlineInternalMicrotask(VM& vm, JSGlobalObje
     setPackedCell(vm, settledFlags, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
     if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-        vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(newStatus), cellValue, argument, context });
+        vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(newStatus), globalObject, cellValue, argument, context });
         return;
     }
 #endif
@@ -892,7 +892,7 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
                 arg = slimReaction->handlerOrContext();
 #if USE(BUN_JSC_ADDITIONS)
                 if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
-                    vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(status), promise, handler, arg });
+                    vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(status), globalObject, promise, handler, arg });
                     return;
                 }
 #endif
