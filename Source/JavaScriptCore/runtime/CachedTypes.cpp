@@ -1345,19 +1345,16 @@ public:
                     symbol = static_cast<SymbolImpl*>(&protect(vm.privateSymbolRegistry())->symbolForKey(str).leakRef());
                 else
                     symbol = static_cast<SymbolImpl*>(&protect(vm.symbolRegistry())->symbolForKey(str).leakRef());
-            } else if (m_isWellKnownSymbol)
-                symbol = vm.propertyNames->builtinNames().lookUpWellKnownSymbol(buffer);
-            else
-                symbol = vm.propertyNames->builtinNames().lookUpPrivateName(buffer);
-            RELEASE_ASSERT(symbol);
-            String str = symbol;
-            StringImpl* impl = str.releaseImpl().unsafeGet();
-            ASSERT(impl->isSymbol());
-            if (m_isWellKnownSymbol)
-                ASSERT(!static_cast<SymbolImpl*>(impl)->isPrivate());
-            else
-                ASSERT(static_cast<SymbolImpl*>(impl)->isPrivate());
-            return static_cast<UniquedStringImpl*>(impl);
+            } else {
+                if (m_isWellKnownSymbol)
+                    symbol = vm.propertyNames->builtinNames().lookUpWellKnownSymbol(buffer);
+                else
+                    symbol = vm.propertyNames->builtinNames().lookUpPrivateName(buffer);
+                RELEASE_ASSERT(symbol);
+                symbol->ref();
+            }
+            ASSERT(m_isWellKnownSymbol != symbol->isPrivate());
+            return symbol;
         };
 
         if (!m_length) {
