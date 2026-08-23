@@ -74,11 +74,11 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
     // FIXME: We should also generate CodeBlocks for CodeForConstruct
     // https://bugs.webkit.org/show_bug.cgi?id=193823
     //
-    // NOTE: We changed this in Bun. We check if the function is a constructor
-    // and if it is, we generate a CodeForConstruct block.
+    // NOTE: We changed this in Bun. A class constructor can only be `new`ed, so it gets a CodeForConstruct block;
+    // everything else gets CodeForCall.
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++) {
         auto* functionDecl = unlinkedCodeBlock->functionDecl(i);
-        if (functionDecl->isConstructor()) {
+        if (functionDecl->isClassConstructorFunction()) {
             generate(functionDecl, CodeSpecializationKind::CodeForConstruct);
         } else {
             generate(functionDecl, CodeSpecializationKind::CodeForCall);
@@ -86,7 +86,7 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
     }
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++) {
         auto* functionExpr = unlinkedCodeBlock->functionExpr(i);
-        if (functionExpr->isConstructor()) {
+        if (functionExpr->isClassConstructorFunction()) {
             generate(functionExpr, CodeSpecializationKind::CodeForConstruct);
         } else {
             generate(functionExpr, CodeSpecializationKind::CodeForCall);
@@ -167,7 +167,7 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
 void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error, unsigned depth)
 {
     SourceCode source = executable->linkedSourceCode(parentSource);
-    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isConstructor() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
+    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
     if (codeBlock)
         generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, { }, error, depth);
 }
