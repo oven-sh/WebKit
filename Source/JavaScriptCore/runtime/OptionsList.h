@@ -90,7 +90,8 @@ bool hasCapacityToUseLargeGigacage();
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
     v(Bool, useLeanBytecodeCacheDecoder, true, Normal, "If true, the bytecode cache Decoder skips bookkeeping that is only needed for decoded objects shared by multiple references."_s) \
     v(Bool, useBorrowedBytecodeFromCache, true, Normal, "If true, instruction streams and expression info decoded from a persistent (mmap'd/embedded) bytecode cache alias the cache instead of copying it."_s) \
-    v(Bool, diskCachePayloadIsPersistentForTesting, false, Normal, "jsc shell: keep files mapped from diskCachePath for the life of the process and mark them persistent, so useBorrowedBytecodeFromCache applies to them."_s)
+    v(Bool, diskCachePayloadIsPersistentForTesting, false, Normal, "jsc shell: keep files mapped from diskCachePath for the life of the process and mark them persistent, so useBorrowedBytecodeFromCache applies to them."_s) \
+    v(Bool, verifyBytecodeCacheChecksums, true, Normal, "check each code block's CRC when it is decoded from a bytecode cache and fall back to generating it from source on a mismatch"_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)

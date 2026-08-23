@@ -116,6 +116,113 @@ private:
     const uint8_t* m_p;
 };
 
+// CRC-32C of the bytes one code-block decode reads, so a truncated or corrupted payload falls back to generating that
+// function from source instead of being trusted. Hardware where the ISA guarantees it, a table elsewhere.
+static uint32_t crc32cSoftware(uint32_t crc, std::span<const uint8_t> bytes)
+{
+    static const std::array<uint32_t, 256> table = [] {
+        std::array<uint32_t, 256> t { };
+        for (uint32_t i = 0; i < 256; ++i) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; ++k)
+                c = c & 1 ? 0x82F63B78u ^ (c >> 1) : c >> 1;
+            t[i] = c;
+        }
+        return t;
+    }();
+    for (uint8_t byte : bytes)
+        crc = table[(crc ^ byte) & 0xff] ^ (crc >> 8);
+    return crc;
+}
+
+#if CPU(X86_64)
+__attribute__((target("sse4.2"))) static uint32_t crc32cHardware(uint32_t crc, std::span<const uint8_t> bytes)
+{
+    const uint8_t* p = bytes.data();
+    size_t n = bytes.size();
+    uint64_t c = crc;
+    for (; n >= 8; n -= 8, p += 8)
+        c = __builtin_ia32_crc32di(c, WTF::unalignedLoad<uint64_t>(p));
+    for (; n; --n, ++p)
+        c = __builtin_ia32_crc32qi(static_cast<uint32_t>(c), *p);
+    return static_cast<uint32_t>(c);
+}
+#elif CPU(ARM64) && defined(__ARM_FEATURE_CRC32)
+static uint32_t crc32cHardware(uint32_t crc, std::span<const uint8_t> bytes)
+{
+    const uint8_t* p = bytes.data();
+    size_t n = bytes.size();
+    for (; n >= 8; n -= 8, p += 8)
+        crc = __builtin_arm_crc32cd(crc, WTF::unalignedLoad<uint64_t>(p));
+    for (; n; --n, ++p)
+        crc = __builtin_arm_crc32cb(crc, *p);
+    return crc;
+}
+#endif
+
+static uint32_t crc32c(uint32_t crc, std::span<const uint8_t> bytes)
+{
+#if CPU(X86_64)
+    static const bool hardware = __builtin_cpu_supports("sse4.2");
+    if (hardware)
+        return crc32cHardware(crc, bytes);
+#elif CPU(ARM64) && defined(__ARM_FEATURE_CRC32)
+    return crc32cHardware(crc, bytes);
+#endif
+    return crc32cSoftware(crc, bytes);
+}
+
+bool Decoder::payloadContains(const void* start, size_t size) const
+{
+    auto payload = m_cachedBytecode->span();
+    auto* begin = static_cast<const uint8_t*>(start);
+    return begin >= payload.data() && size <= payload.size() && begin + size <= payload.data() + payload.size();
+}
+
+bool Decoder::recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (!Options::verifyBytecodeCacheChecksums())
+        return true;
+#endif
+    if (!payloadContains(record, recordSize) || (arraySize && !payloadContains(array, arraySize)))
+        return false;
+    auto* begin = static_cast<const uint8_t*>(record);
+    auto* hole = reinterpret_cast<const uint8_t*>(storedChecksum);
+    static const uint8_t zeros[4] = { };
+    uint32_t crc = ~0u;
+    crc = crc32c(crc, std::span { begin, hole });
+    crc = crc32c(crc, std::span { zeros, 4 });
+    crc = crc32c(crc, std::span { hole + 4, begin + recordSize });
+    if (arraySize)
+        crc = crc32c(crc, std::span { static_cast<const uint8_t*>(array), arraySize });
+    if (~crc == *storedChecksum)
+        return true;
+    dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] expression info checksum mismatch; dropping it");
+    return false;
+}
+
+bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum) const
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (!Options::verifyBytecodeCacheChecksums())
+        return true;
+#endif
+    auto* begin = static_cast<const uint8_t*>(start);
+    if (!payloadContains(start, size))
+        return false;
+    auto* hole = reinterpret_cast<const uint8_t*>(storedChecksum);
+    static const uint8_t zeros[4] = { };
+    uint32_t crc = ~0u;
+    crc = crc32c(crc, std::span { begin, hole });
+    crc = crc32c(crc, std::span { zeros, 4 });
+    crc = crc32c(crc, std::span { hole + 4, begin + size });
+    if (~crc == *storedChecksum)
+        return true;
+    dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] code block checksum mismatch; regenerating from source");
+    return false;
+}
+
 namespace Yarr {
 enum class Flags : uint16_t;
 }
@@ -193,12 +300,47 @@ public:
         return new (malloc(sizeof(T) + tail, alignof(T)).buffer()) T();
     }
 
-    std::span<const uint8_t> bytesAt(ptrdiff_t offset, size_t size)
+    ptrdiff_t currentOffset() const { return m_baseOffset + m_currentPage->size(); }
+
+    // CRC-32C of [offset, offset + size) as it will appear in the payload, with the 4 bytes at `hole` read as zero
+    // (that is where the checksum itself is stored).
+    uint32_t checksumOfRange(ptrdiff_t offset, size_t size, ptrdiff_t hole)
+    {
+        uint32_t crc = ~0u;
+        ptrdiff_t baseOffset = 0;
+        ptrdiff_t end = offset + size;
+        for (const auto& page : m_pages) {
+            ptrdiff_t pageEnd = baseOffset + page.size();
+            ptrdiff_t from = std::max(offset, baseOffset);
+            ptrdiff_t to = std::min(end, pageEnd);
+            for (ptrdiff_t cursor = from; cursor < to;) {
+                ptrdiff_t stop = to;
+                if (cursor < hole)
+                    stop = std::min(stop, hole);
+                else if (cursor < hole + 4) {
+                    static const uint8_t zeros[4] = { };
+                    ptrdiff_t skip = std::min<ptrdiff_t>(hole + 4, to) - cursor;
+                    crc = crc32c(crc, std::span { zeros, static_cast<size_t>(skip) });
+                    cursor += skip;
+                    continue;
+                }
+                crc = crc32c(crc, page.span().subspan(cursor - baseOffset, stop - cursor));
+                cursor = stop;
+            }
+            baseOffset = pageEnd;
+            if (baseOffset >= end)
+                break;
+        }
+        return ~crc;
+    }
+
+    std::span<const uint8_t> bytesAt(ptrdiff_t offset, size_t size) { return mutableBytesAt(offset, size); }
+    std::span<uint8_t> mutableBytesAt(ptrdiff_t offset, size_t size)
     {
         ptrdiff_t baseOffset = 0;
-        for (const auto& page : m_pages) {
+        for (auto& page : m_pages) {
             if (offset - baseOffset < static_cast<ptrdiff_t>(page.size()))
-                return page.span().subspan(offset - baseOffset, size);
+                return page.mutableSpan().subspan(offset - baseOffset, size);
             baseOffset += page.size();
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -267,6 +409,21 @@ public:
             m_cold.takeFirst()();
             RELEASE_ASSERT(m_bodies.isEmpty());
         }
+        // Slots inside a checksummed region (a block's ExpressionInfo, its children's records) are filled by the deferred
+        // work above, so the checksums are computed only now that every byte is final.
+        for (auto& pending : m_pendingChecksums) {
+            uint32_t checksum = checksumOfRange(pending.start, pending.size, pending.checksumOffset);
+            memcpySpan(mutableBytesAt(pending.checksumOffset, sizeof(checksum)), std::span { reinterpret_cast<const uint8_t*>(&checksum), sizeof(checksum) });
+        }
+        m_pendingChecksums.clear();
+    }
+    void addChecksum(ptrdiff_t start, size_t size, ptrdiff_t checksumOffset) { m_pendingChecksums.append({ start, size, checksumOffset }); }
+    uint32_t checksumOfRecordAndArray(ptrdiff_t record, size_t recordSize, ptrdiff_t checksumOffset, ptrdiff_t array, size_t arraySize)
+    {
+        uint32_t crc = ~checksumOfRange(record, recordSize, checksumOffset); // un-finalize to keep accumulating
+        if (arraySize)
+            crc = crc32c(crc, bytesAt(array, arraySize));
+        return ~crc;
     }
 
     RefPtr<CachedBytecode> release(BytecodeCacheError& error)
@@ -322,7 +479,7 @@ private:
     class Page {
     public:
         Page(size_t size)
-            : m_buffer(MallocSpan<uint8_t, VMMalloc>::malloc(size))
+            : m_buffer(MallocSpan<uint8_t, VMMalloc>::zeroedMalloc(size)) // alignment gaps end up in the file: keep them deterministic
         {
         }
 
@@ -397,6 +554,8 @@ private:
     LeafExecutableMap m_leafExecutables;
     Deque<Function<void()>> m_bodies;
     Deque<Function<void()>> m_cold;
+    struct PendingChecksum { ptrdiff_t start; size_t size; ptrdiff_t checksumOffset; };
+    Vector<PendingChecksum> m_pendingChecksums;
     UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
 };
 
@@ -541,6 +700,10 @@ public:
         return m_offset == s_invalidOffset;
     }
 
+    // Encoder side: where this object's payload landed, as a payload offset (encoder pages are not contiguous in memory,
+    // so `this + m_offset` is only meaningful once decoded).
+    ptrdiff_t payloadOffsetInEncoder(Encoder& encoder) const { return encoder.offsetOf(&this->m_offset) + this->m_offset; }
+
 protected:
     const uint8_t* NODELETE buffer() const
     {
@@ -638,6 +801,7 @@ public:
         static_assert(std::is_same_v<T, Source> && std::is_trivially_copyable_v<T>);
         return this->isEmpty() ? nullptr : this->template buffer<T>();
     }
+    const void* rawElements() const { return this->isEmpty() ? nullptr : this->buffer(); } // decoded side only
 };
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -721,6 +885,15 @@ public:
 
     const T* NODELETE operator->() const { return get(); }
 
+    // For integrity checks before anything is decoded: the target if it lies inside the payload, else null.
+    const T* getIfInPayload(Decoder& decoder) const
+    {
+        if (this->isEmpty())
+            return nullptr;
+        const T* target = this->template buffer<T>();
+        return decoder.payloadContains(target, sizeof(T)) ? target : nullptr;
+    }
+
 private:
     const T* NODELETE get() const
     {
@@ -787,6 +960,7 @@ class CachedWriteBarrier : public CachedObject<WriteBarrier<Source>> {
 
 public:
     bool NODELETE isEmpty() const { return m_ptr.isEmpty(); }
+    const CachedPtr<T, Source>& ptr() const { return m_ptr; }
 
     void encode(Encoder& encoder, const WriteBarrier<Source> src)
     {
@@ -846,6 +1020,38 @@ public:
             return { };
         return { this->template buffer<T>(), m_size };
     }
+
+    // Allocate the element slots now and let the caller encode into them later (used to keep a code block's own bytes
+    // ahead of its children's records).
+    template<typename VectorContainer>
+    std::span<T> allocateElements(Encoder& encoder, const VectorContainer& vector)
+    {
+        m_size = vector.size();
+        if (!m_size)
+            return { };
+        return { this->template allocate<T>(encoder, m_size), m_size };
+    }
+
+    // Encoder side: the slots allocateElements() made.
+    std::span<T> mutableElements(Encoder& encoder)
+    {
+        if (!m_size)
+            return { };
+        auto bytes = encoder.mutableBytesAt(this->payloadOffsetInEncoder(encoder), sizeof(T) * m_size);
+        return { reinterpret_cast<T*>(bytes.data()), m_size };
+    }
+
+    // The encoded elements themselves, bounds-checked, for integrity checks before decoding.
+    std::span<const T> elementsIfInPayload(Decoder& decoder) const
+    {
+        if (!m_size)
+            return { };
+        const T* elements = this->template buffer<T>();
+        if (!decoder.payloadContains(elements, sizeof(T) * m_size))
+            return { };
+        return { elements, m_size };
+    }
+    unsigned size() const { return m_size; }
 
 private:
     unsigned m_size;
@@ -1279,10 +1485,16 @@ public:
         m_numberOfEncodedInfo = info.m_numberOfEncodedInfo;
         m_numberOfEncodedInfoExtensions = info.m_numberOfEncodedInfoExtensions;
         m_storage.encode(encoder, info.payload(), info.payloadSize());
+        ptrdiff_t self = encoder.offsetOf(this);
+        m_checksum = encoder.checksumOfRecordAndArray(self, sizeof(*this), encoder.offsetOf(&m_checksum), info.payloadSize() ? m_storage.payloadOffsetInEncoder(encoder) : 0, payloadBytes());
     }
 
+    // Lives in the cold tail, outside its code block's checksummed region, so it carries its own; a damaged one decodes as
+    // "no expression info" (stack traces lose line/column for that function) rather than failing the function.
     std::unique_ptr<ExpressionInfo> decode(Decoder& decoder) const
     {
+        if (!decoder.recordAndArrayChecksumMatches(this, sizeof(*this), &m_checksum, m_storage.rawElements(), payloadBytes()))
+            return ExpressionInfo::createUninitialized(0, 0, 0);
         if (decoder.canBorrowPayload() && !m_storage.isEmpty())
             return ExpressionInfo::createBorrowed(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions, m_storage.borrow());
         auto info = ExpressionInfo::createUninitialized(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
@@ -1291,6 +1503,9 @@ public:
     }
 
 private:
+    size_t payloadBytes() const { return ExpressionInfo::payloadSizeInBytes(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions); }
+
+    uint32_t m_checksum { 0 };
     unsigned m_numberOfChapters;
     unsigned m_numberOfEncodedInfo;
     unsigned m_numberOfEncodedInfoExtensions;
@@ -2278,6 +2493,13 @@ public:
 
     Scalars scalars() const;
 
+    // Covers the whole record and its tail (CachedBytecode::commitUpdates re-seals a record it patches); checked by the owning
+    // code block before it decodes anything.
+    bool isIntact(Decoder& decoder) const
+    {
+        return decoder.regionChecksumMatches(this, sizeof(CachedFunctionExecutable) + m_tailSize, &m_checksum);
+    }
+
     CodeFeatures NODELETE features() const { return m_mutableMetadata.m_features; }
     LexicallyScopedFeatures NODELETE lexicallyScopedFeatures() const { return m_mutableMetadata.m_lexicallyScopedFeatures; }
     unsigned NODELETE hasCapturedVariables() const { return m_mutableMetadata.m_hasCapturedVariables; }
@@ -2295,15 +2517,16 @@ private:
     const uint8_t* tail() const { return std::bit_cast<const uint8_t*>(this + 1); }
     uint8_t* tail() { return std::bit_cast<uint8_t*>(this + 1); }
 
+    // Rewritable in place by CachedBytecode::commitUpdates (jsc shell cache updates), which then re-seals m_checksum.
     CachedFunctionExecutableMetadata m_mutableMetadata;
-
-    CachedPtr<CachedFunctionExecutableRareData> m_rareData;
-
-    CachedIdentifier m_ecmaName;
-    CachedRefPtr<CachedTDZEnvironmentLink> m_parentScopeTDZVariables;
-
     CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;
     CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForConstruct;
+
+    uint32_t m_checksum { 0 };
+    uint16_t m_tailSize { 0 };
+    CachedPtr<CachedFunctionExecutableRareData> m_rareData;
+    CachedIdentifier m_ecmaName;
+    CachedRefPtr<CachedTDZEnvironmentLink> m_parentScopeTDZVariables;
 };
 
 ptrdiff_t CachedFunctionExecutableOffsets::codeBlockForCallOffset()
@@ -2319,6 +2542,31 @@ ptrdiff_t CachedFunctionExecutableOffsets::codeBlockForConstructOffset()
 ptrdiff_t CachedFunctionExecutableOffsets::metadataOffset()
 {
     return OBJECT_OFFSETOF(CachedFunctionExecutable, m_mutableMetadata);
+}
+
+ptrdiff_t CachedFunctionExecutableOffsets::checksumOffset()
+{
+    return OBJECT_OFFSETOF(CachedFunctionExecutable, m_checksum);
+}
+
+ptrdiff_t CachedFunctionExecutableOffsets::tailSizeOffset()
+{
+    return OBJECT_OFFSETOF(CachedFunctionExecutable, m_tailSize);
+}
+
+size_t CachedFunctionExecutableOffsets::fixedSize()
+{
+    return sizeof(CachedFunctionExecutable);
+}
+
+uint32_t bytecodeCacheRecordChecksum(std::span<const uint8_t> record, size_t checksumOffset)
+{
+    static const uint8_t zeros[4] = { };
+    uint32_t crc = ~0u;
+    crc = crc32c(crc, record.first(checksumOffset));
+    crc = crc32c(crc, std::span { zeros, 4 });
+    crc = crc32c(crc, record.subspan(checksumOffset + 4));
+    return ~crc;
 }
 
 template<typename CodeBlockType> struct CachedCodeBlockRecordFor;
@@ -2371,7 +2619,10 @@ public:
         return writer.size();
     }
 
+    // encode() writes the block's own bytes; encodeChildren() then writes its nested functions' executable records. The
+    // derived record calls finishRegion() in between, so the checksummed region is exactly this block's own bytes.
     void encode(Encoder&, const UnlinkedCodeBlock&);
+    void encodeChildren(Encoder&, const UnlinkedCodeBlock&);
     void decode(Decoder&, UnlinkedCodeBlock&) const;
 
     Scalars scalars() const;
@@ -2385,11 +2636,42 @@ public:
 
     UnlinkedCodeBlock::RareData* rareData(Decoder& decoder) const { return m_rareData.decode(decoder); }
 
+    // The contiguous run this block's encode() produced (record, tail, its arrays, its children's executable records) is
+    // checksummed; a mismatch on decode means the payload is damaged and the block is generated from source instead.
+    void finishRegion(Encoder& encoder)
+    {
+        ptrdiff_t start = encoder.offsetOf(this);
+        m_regionSize = safeCast<uint32_t>(encoder.currentOffset() - start);
+        encoder.addChecksum(start, m_regionSize, encoder.offsetOf(&m_regionChecksum));
+    }
+    bool regionIsIntact(Decoder& decoder) const
+    {
+        // `this` came from a slot that CachedBytecode::commitUpdates may rewrite and is therefore not itself checksummed.
+        if (!decoder.payloadContains(this, sizeof(typename CachedCodeBlockRecordFor<CodeBlockType>::type)))
+            return false;
+        if (!decoder.regionChecksumMatches(this, m_regionSize, &m_regionChecksum))
+            return false;
+        for (auto* children : { &m_functionDecls, &m_functionExprs }) {
+            auto slots = children->elementsIfInPayload(decoder);
+            if (slots.size() != children->size())
+                return false;
+            for (auto& slot : slots) {
+                auto* record = slot.ptr().getIfInPayload(decoder);
+                if (!record || !record->isIntact(decoder))
+                    return false;
+            }
+        }
+        return true;
+    }
+
 private:
     static void packScalars(const UnlinkedCodeBlock&, VarintWriter&);
     // The tail follows the most-derived record (CachedProgramCodeBlock etc. add members after this base).
     const uint8_t* tail() const { return std::bit_cast<const uint8_t*>(this) + sizeof(typename CachedCodeBlockRecordFor<CodeBlockType>::type); }
     uint8_t* tail() { return std::bit_cast<uint8_t*>(this) + sizeof(typename CachedCodeBlockRecordFor<CodeBlockType>::type); }
+
+    uint32_t m_regionSize { 0 };
+    uint32_t m_regionChecksum { 0 };
 
     CachedMetadataTable m_metadata;
 
@@ -2419,10 +2701,14 @@ public:
         Base::encode(encoder, codeBlock);
         m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
         m_lexicalDeclarations.encode(encoder, codeBlock.m_lexicalDeclarations);
+        Base::finishRegion(encoder);
+        Base::encodeChildren(encoder, codeBlock);
     }
 
     UnlinkedProgramCodeBlock* decode(Decoder& decoder) const
     {
+        if (!Base::regionIsIntact(decoder))
+            return nullptr;
         UnlinkedProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedProgramCodeBlock>(decoder.vm())) UnlinkedProgramCodeBlock(decoder, *this);
         codeBlock->finishCreation(decoder.vm());
         Base::decode(decoder, *codeBlock);
@@ -2445,10 +2731,14 @@ public:
         Base::encode(encoder, codeBlock);
         m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
         m_moduleEnvironmentSymbolTableConstantRegisterOffset = codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset;
+        Base::finishRegion(encoder);
+        Base::encodeChildren(encoder, codeBlock);
     }
 
     UnlinkedModuleProgramCodeBlock* decode(Decoder& decoder) const
     {
+        if (!Base::regionIsIntact(decoder))
+            return nullptr;
         UnlinkedModuleProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedModuleProgramCodeBlock>(decoder.vm())) UnlinkedModuleProgramCodeBlock(decoder, *this);
         codeBlock->finishCreation(decoder.vm());
         Base::decode(decoder, *codeBlock);
@@ -2471,10 +2761,14 @@ public:
         Base::encode(encoder, codeBlock);
         m_variables.encode(encoder, codeBlock.m_variables);
         m_functionHoistingCandidates.encode(encoder, codeBlock.m_functionHoistingCandidates);
+        Base::finishRegion(encoder);
+        Base::encodeChildren(encoder, codeBlock);
     }
 
     UnlinkedEvalCodeBlock* decode(Decoder& decoder) const
     {
+        if (!Base::regionIsIntact(decoder))
+            return nullptr;
         UnlinkedEvalCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedEvalCodeBlock>(decoder.vm())) UnlinkedEvalCodeBlock(decoder, *this);
         codeBlock->finishCreation(decoder.vm());
         Base::decode(decoder, *codeBlock);
@@ -2495,10 +2789,14 @@ public:
     void encode(Encoder& encoder, const UnlinkedFunctionCodeBlock& codeBlock)
     {
         Base::encode(encoder, codeBlock);
+        Base::finishRegion(encoder);
+        Base::encodeChildren(encoder, codeBlock);
     }
 
     UnlinkedFunctionCodeBlock* decode(Decoder& decoder) const
     {
+        if (!Base::regionIsIntact(decoder))
+            return nullptr;
         UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
         codeBlock->finishCreation(decoder.vm());
         Base::decode(decoder, *codeBlock);
@@ -2728,6 +3026,7 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
         VarintWriter writer;
         packScalars(executable, writer);
         writer.copyTo(tail());
+        m_tailSize = safeCast<uint16_t>(writer.size());
     }
 
     m_rareData.encode(encoder, executable.m_rareData.get());
@@ -2737,6 +3036,8 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
 
     if (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct)
         encoder.addLeafExecutable(&executable, encoder.offsetOf(this));
+
+    encoder.addChecksum(encoder.offsetOf(this), sizeof(CachedFunctionExecutable) + m_tailSize, encoder.offsetOf(&m_checksum));
 
     encoder.deferBody([this, &encoder, forCall = executable.m_unlinkedCodeBlockForCall, forConstruct = executable.m_unlinkedCodeBlockForConstruct] {
         m_unlinkedCodeBlockForCall.encode(encoder, forCall);
@@ -2938,8 +3239,21 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::encode(Encoder& encoder, cons
     m_outOfLineJumpTargets.encode(encoder, codeBlock.m_outOfLineJumpTargets);
 
     m_identifiers.encode(encoder, codeBlock.m_identifiers);
-    m_functionDecls.encode(encoder, codeBlock.m_functionDecls);
-    m_functionExprs.encode(encoder, codeBlock.m_functionExprs);
+    // The slots for the children are part of this block's bytes; the records they point at are written by encodeChildren().
+    m_functionDecls.allocateElements(encoder, codeBlock.m_functionDecls);
+    m_functionExprs.allocateElements(encoder, codeBlock.m_functionExprs);
+}
+
+template<typename CodeBlockType>
+ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::encodeChildren(Encoder& encoder, const UnlinkedCodeBlock& codeBlock)
+{
+    auto encodeRecords = [&](auto& slots, const auto& executables) {
+        auto span = slots.mutableElements(encoder);
+        for (unsigned i = 0; i < span.size(); ++i)
+            span[i].encode(encoder, executables[i]);
+    };
+    encodeRecords(m_functionDecls, codeBlock.m_functionDecls);
+    encodeRecords(m_functionExprs, codeBlock.m_functionExprs);
 }
 
 class CachedSourceCodeKey : public CachedObject<SourceCodeKey> {
