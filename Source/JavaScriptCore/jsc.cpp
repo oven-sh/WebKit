@@ -688,7 +688,7 @@ private:
         addFunction(vm, "disassembleBase64"_s, functionDisassembleBase64, 1);
         addFunction(vm, "debug"_s, functionDebug, 1);
         addFunction(vm, "generateBytecodeCacheFile"_s, functionGenerateBytecodeCacheFile, 3);
-        addFunction(vm, "builtinFromBytecodeCache"_s, functionBuiltinFromBytecodeCache, 2);
+        addFunction(vm, "builtinFromBytecodeCache"_s, functionBuiltinFromBytecodeCache, 3);
         addFunction(vm, "bytecodeCachePageTouch"_s, functionBytecodeCachePageTouch, 4);
         addFunction(vm, "describe"_s, functionDescribe, 1);
         addFunction(vm, "describeArray"_s, functionDescribeArray, 1);
@@ -1778,7 +1778,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateBytecodeCacheFile, (JSGlobalObject* glo
     return JSValue::encode(jsNumber(result ? result->size() : 0));
 }
 
-// builtinFromBytecodeCache(source, roundTrip) — what an embedder does with its JS builtins: create a builtin executable from
+// builtinFromBytecodeCache(source, roundTrip[, depth]) — what an embedder does with its JS builtins: create a builtin executable from
 // "(function (...) { ... })" source (private @names allowed); if roundTrip, generate all its code blocks, serialize it with
 // encodeBuiltinFunction, drop it, and decode it back from the bytes. Returns the resulting function.
 JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1788,6 +1788,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* glob
     String text = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     bool roundTrip = callFrame->argument(1).toBoolean(globalObject);
+    unsigned depth = callFrame->argument(2).isUndefined() ? std::numeric_limits<unsigned>::max() : callFrame->argument(2).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     constexpr unsigned stamp = 0x5107;
 
     SourceCode source = makeSource(text, SourceOrigin { URL({ }, "builtin://test"_s) }, SourceTaintedOrigin::Untainted, "test-builtin"_s);
@@ -1800,7 +1802,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* glob
         {
             UnlinkedFunctionExecutable* original = createBuiltinExecutable(vm, source, name, ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
             ParserError error;
-            recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, original, source, error);
+            recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, original, source, error, depth);
             if (error.isValid())
                 return throwVMError(globalObject, scope, error.toErrorObject(globalObject, source));
             bytes = encodeBuiltinFunction(vm, original, source.length(), stamp);
