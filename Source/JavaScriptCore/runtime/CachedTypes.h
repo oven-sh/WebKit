@@ -55,9 +55,9 @@ struct CachedFunctionExecutableOffsets {
     static ptrdiff_t NODELETE codeBlockForCallOffset();
     static ptrdiff_t NODELETE codeBlockForConstructOffset();
     static ptrdiff_t NODELETE metadataOffset();
-    // For re-sealing a record after it is patched in place: the checksum covers [0, fixedSize() + tail size).
+    // For re-sealing a record after it is patched in place: the checksum covers [0, extent).
     static ptrdiff_t NODELETE checksumOffset();
-    static ptrdiff_t NODELETE tailSizeOffset(); // uint16_t
+    static ptrdiff_t NODELETE extentOffset(); // uint32_t: bytes covered by the record's checksum
     static size_t NODELETE fixedSize();
 };
 
@@ -94,7 +94,7 @@ class Decoder : public RefCounted<Decoder> {
 public:
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
     bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
-    bool regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum) const;
+    bool regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays = { }) const;
     bool payloadContains(const void* start, size_t size) const;
     bool recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const;
 

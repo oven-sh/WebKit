@@ -74,12 +74,11 @@ void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
                 if (base < start || base >= start + static_cast<ptrdiff_t>(bytes.size()))
                     return { };
                 auto record = bytes.subspan(base - start);
-                size_t fixedSize = CachedFunctionExecutableOffsets::fixedSize();
-                RELEASE_ASSERT(record.size() >= fixedSize);
-                uint16_t tailSize;
-                memcpySpan(std::span { reinterpret_cast<uint8_t*>(&tailSize), sizeof(tailSize) }, record.subspan(CachedFunctionExecutableOffsets::tailSizeOffset(), sizeof(tailSize)));
-                RELEASE_ASSERT(fixedSize + tailSize <= record.size()); // our own encoder wrote this record moments ago
-                return record.first(fixedSize + tailSize);
+                RELEASE_ASSERT(record.size() >= CachedFunctionExecutableOffsets::fixedSize());
+                uint32_t extent;
+                memcpySpan(std::span { reinterpret_cast<uint8_t*>(&extent), sizeof(extent) }, record.subspan(CachedFunctionExecutableOffsets::extentOffset(), sizeof(extent)));
+                RELEASE_ASSERT(extent <= record.size()); // our own encoder wrote this record moments ago
+                return record.first(extent);
             };
             auto found = findIn(m_payload.span(), 0);
             ptrdiff_t start = m_payload.size();

@@ -209,7 +209,7 @@ bool Decoder::recordAndArrayChecksumMatches(const void* record, size_t recordSiz
     return false;
 }
 
-bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum) const
+bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays) const
 {
 #if USE(BUN_JSC_ADDITIONS)
     if (!Options::verifyBytecodeCacheChecksums())
@@ -224,6 +224,11 @@ bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint
     crc = crc32c(crc, std::span { begin, hole });
     crc = crc32c(crc, std::span { zeros, 4 });
     crc = crc32c(crc, std::span { hole + 4, begin + size });
+    for (auto external : externalArrays) {
+        if (!payloadContains(external.data(), external.size()))
+            return false;
+        crc = crc32c(crc, external);
+    }
     if (~crc == *storedChecksum)
         return true;
     dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] code block checksum mismatch; regenerating from source");
@@ -420,12 +425,40 @@ public:
         // Slots inside a checksummed region (a block's ExpressionInfo, its children's records) are filled by the deferred
         // work above, so the checksums are computed only now that every byte is final.
         for (auto& pending : m_pendingChecksums) {
-            uint32_t checksum = checksumOfRange(pending.start, pending.size, pending.checksumOffset);
+            uint32_t crc = ~checksumOfRange(pending.start, pending.size, pending.checksumOffset);
+            for (auto [offset, size] : pending.externalArrays)
+                crc = crc32c(crc, bytesAt(offset, size));
+            uint32_t checksum = ~crc;
             memcpySpan(mutableBytesAt(pending.checksumOffset, sizeof(checksum)), std::span { reinterpret_cast<const uint8_t*>(&checksum), sizeof(checksum) });
         }
         m_pendingChecksums.clear();
     }
-    void addChecksum(ptrdiff_t start, size_t size, ptrdiff_t checksumOffset) { m_pendingChecksums.append({ start, size, checksumOffset }); }
+    void addChecksum(ptrdiff_t start, size_t size, ptrdiff_t checksumOffset, Vector<std::pair<ptrdiff_t, size_t>>&& externalArrays = { }) { m_pendingChecksums.append({ start, size, checksumOffset, WTF::move(externalArrays) }); }
+
+    // Content-sharing of arrays is only on while a code block encodes the few arrays its checksum knows how to follow
+    // (decoder side: CachedCodeBlock::regionIsIntact); an array shared from outside the block's own bytes is folded into
+    // the block's checksum so it is verified by whoever reads it, not only by whoever wrote it first.
+    class ShareableArrayScope {
+    public:
+        ShareableArrayScope(Encoder& encoder)
+            : m_encoder(encoder)
+            , m_previous(std::exchange(encoder.m_arraySharingEnabled, true))
+        {
+        }
+        ~ShareableArrayScope() { m_encoder.m_arraySharingEnabled = m_previous; }
+
+    private:
+        Encoder& m_encoder;
+        bool m_previous;
+    };
+    bool arraySharingEnabled() const { return m_arraySharingEnabled; }
+    void beginBlockRegion(ptrdiff_t start) { m_blockRegionStart = start; m_blockExternalArrays.clear(); }
+    void noteSharedArray(ptrdiff_t offset, size_t size)
+    {
+        if (offset < m_blockRegionStart)
+            m_blockExternalArrays.append({ offset, size });
+    }
+    Vector<std::pair<ptrdiff_t, size_t>> takeBlockExternalArrays() { return std::exchange(m_blockExternalArrays, { }); }
     uint32_t checksumOfRecordAndArray(ptrdiff_t record, size_t recordSize, ptrdiff_t checksumOffset, ptrdiff_t array, size_t arraySize)
     {
         uint32_t crc = ~checksumOfRange(record, recordSize, checksumOffset); // un-finalize to keep accumulating
@@ -562,8 +595,11 @@ private:
     LeafExecutableMap m_leafExecutables;
     Deque<Function<void()>> m_bodies;
     Deque<Function<void()>> m_cold;
-    struct PendingChecksum { ptrdiff_t start; size_t size; ptrdiff_t checksumOffset; };
+    struct PendingChecksum { ptrdiff_t start; size_t size; ptrdiff_t checksumOffset; Vector<std::pair<ptrdiff_t, size_t>> externalArrays; };
     Vector<PendingChecksum> m_pendingChecksums;
+    bool m_arraySharingEnabled { false };
+    ptrdiff_t m_blockRegionStart { 0 };
+    Vector<std::pair<ptrdiff_t, size_t>> m_blockExternalArrays;
     UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
 };
 
@@ -751,9 +787,12 @@ protected:
     void allocateOrShareBytes(Encoder& encoder, std::span<const uint8_t> bytes, size_t alignment)
     {
         unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size());
-        if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignment)) {
-            m_offset = safeCast<Offset>(*existing - encoder.offsetOf(&m_offset));
-            return;
+        if (encoder.arraySharingEnabled()) {
+            if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignment)) {
+                m_offset = safeCast<Offset>(*existing - encoder.offsetOf(&m_offset));
+                encoder.noteSharedArray(*existing, bytes.size());
+                return;
+            }
         }
         ptrdiff_t offsetOffset = encoder.offsetOf(&m_offset);
         auto result = encoder.malloc(bytes.size(), alignment);
@@ -1049,6 +1088,14 @@ public:
         return { reinterpret_cast<T*>(bytes.data()), m_size };
     }
 
+    // Where the encoded elements are (decoded side), whether or not they are inside the payload; empty if none.
+    std::span<const uint8_t> rawBytes() const
+    {
+        if (!m_size)
+            return { };
+        return { this->buffer(), sizeof(T) * m_size };
+    }
+
     // The encoded elements themselves, bounds-checked, for integrity checks before decoding.
     std::span<const T> elementsIfInPayload(Decoder& decoder) const
     {
@@ -1240,7 +1287,6 @@ private:
     };
     const uint8_t* tail() const { return std::bit_cast<const uint8_t*>(this + 1); }
     uint8_t* tail() { return std::bit_cast<uint8_t*>(this + 1); }
-
     uint32_t m_length : 27;
     uint32_t m_is8Bit : 1;
     uint32_t m_isSymbol : 1;
@@ -1985,11 +2031,17 @@ public:
         return new JSInstructionStream(WTF::move(instructionsVector));
     }
 
+    std::span<const uint8_t> rawBytes() const { return m_instructions.rawBytes(); }
+
 private:
     CachedVector<uint8_t, 0, UnsafeVectorOverflow, InstructionStreamBufferMalloc> m_instructions;
 };
 
 class CachedMetadataTable : public CachedObject<UnlinkedMetadataTable> {
+public:
+    std::span<const uint8_t> rawBytes() const { return m_hasMetadata ? m_steps.rawBytes() : std::span<const uint8_t> { }; }
+
+private:
     // The offset table is cumulative and most opcodes have no metadata in a given function, so only the entries where the
     // running offset changes are stored: (index << 24 | delta). A typical function has a handful instead of 51.
     static constexpr unsigned indexShift = 24;
@@ -2505,7 +2557,7 @@ public:
     // code block before it decodes anything.
     bool isIntact(Decoder& decoder) const
     {
-        return decoder.regionChecksumMatches(this, sizeof(CachedFunctionExecutable) + m_tailSize, &m_checksum);
+        return decoder.regionChecksumMatches(this, m_extent, &m_checksum);
     }
 
     CodeFeatures NODELETE features() const { return m_mutableMetadata.m_features; }
@@ -2531,7 +2583,7 @@ private:
     CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForConstruct;
 
     uint32_t m_checksum { 0 };
-    uint16_t m_tailSize { 0 };
+    uint32_t m_extent { 0 }; // record + tail + whatever rare data / name / TDZ environment this record was the first to write
     CachedPtr<CachedFunctionExecutableRareData> m_rareData;
     CachedIdentifier m_ecmaName;
     CachedRefPtr<CachedTDZEnvironmentLink> m_parentScopeTDZVariables;
@@ -2557,9 +2609,9 @@ ptrdiff_t CachedFunctionExecutableOffsets::checksumOffset()
     return OBJECT_OFFSETOF(CachedFunctionExecutable, m_checksum);
 }
 
-ptrdiff_t CachedFunctionExecutableOffsets::tailSizeOffset()
+ptrdiff_t CachedFunctionExecutableOffsets::extentOffset()
 {
-    return OBJECT_OFFSETOF(CachedFunctionExecutable, m_tailSize);
+    return OBJECT_OFFSETOF(CachedFunctionExecutable, m_extent);
 }
 
 size_t CachedFunctionExecutableOffsets::fixedSize()
@@ -2650,14 +2702,26 @@ public:
     {
         ptrdiff_t start = encoder.offsetOf(this);
         m_regionSize = safeCast<uint32_t>(encoder.currentOffset() - start);
-        encoder.addChecksum(start, m_regionSize, encoder.offsetOf(&m_regionChecksum));
+        encoder.addChecksum(start, m_regionSize, encoder.offsetOf(&m_regionChecksum), encoder.takeBlockExternalArrays());
     }
     bool regionIsIntact(Decoder& decoder) const
     {
         // `this` came from a slot that CachedBytecode::commitUpdates may rewrite and is therefore not itself checksummed.
         if (!decoder.payloadContains(this, sizeof(typename CachedCodeBlockRecordFor<CodeBlockType>::type)))
             return false;
-        if (!decoder.regionChecksumMatches(this, m_regionSize, &m_regionChecksum))
+        // Arrays the encoder shared from an earlier block lie outside this region and are folded in (encoder order).
+        auto* regionBegin = std::bit_cast<const uint8_t*>(this);
+        auto* regionEnd = regionBegin + m_regionSize;
+        std::array<std::span<const uint8_t>, 4> external;
+        unsigned externalCount = 0;
+        auto* instructions = m_instructions.getIfInPayload(decoder);
+        if (!m_instructions.isEmpty() && !instructions)
+            return false;
+        for (auto bytes : { m_metadata.rawBytes(), instructions ? instructions->rawBytes() : std::span<const uint8_t> { }, m_constantsSourceCodeRepresentation.rawBytes(), m_jumpTargets.rawBytes() }) {
+            if (!bytes.empty() && (bytes.data() < regionBegin || bytes.data() >= regionEnd))
+                external[externalCount++] = bytes;
+        }
+        if (!decoder.regionChecksumMatches(this, m_regionSize, &m_regionChecksum, std::span { external.data(), externalCount }))
             return false;
         for (auto* children : { &m_functionDecls, &m_functionExprs }) {
             auto slots = children->elementsIfInPayload(decoder);
@@ -3034,7 +3098,6 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
         VarintWriter writer;
         packScalars(executable, writer);
         writer.copyTo(tail());
-        m_tailSize = safeCast<uint16_t>(writer.size());
     }
 
     m_rareData.encode(encoder, executable.m_rareData.get());
@@ -3045,7 +3108,9 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
     if (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct)
         encoder.addLeafExecutable(&executable, encoder.offsetOf(this));
 
-    encoder.addChecksum(encoder.offsetOf(this), sizeof(CachedFunctionExecutable) + m_tailSize, encoder.offsetOf(&m_checksum));
+    ptrdiff_t start = encoder.offsetOf(this);
+    m_extent = safeCast<uint32_t>(encoder.currentOffset() - start);
+    encoder.addChecksum(start, m_extent, encoder.offsetOf(&m_checksum));
 
     encoder.deferBody([this, &encoder, forCall = executable.m_unlinkedCodeBlockForCall, forConstruct = executable.m_unlinkedCodeBlockForConstruct] {
         m_unlinkedCodeBlockForCall.encode(encoder, forCall);
@@ -3225,25 +3290,31 @@ auto CachedCodeBlock<CodeBlockType>::scalars() const -> Scalars
 template<typename CodeBlockType>
 ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::encode(Encoder& encoder, const UnlinkedCodeBlock& codeBlock)
 {
+    encoder.beginBlockRegion(encoder.offsetOf(this));
     {
         VarintWriter writer;
         packScalars(codeBlock, writer);
         writer.copyTo(tail());
     }
 
-    m_metadata.encode(encoder, codeBlock.m_metadata.get());
+    // These four may be shared with an identical array written earlier; regionIsIntact() follows them in this order.
+    {
+        Encoder::ShareableArrayScope shareable(encoder);
+        m_metadata.encode(encoder, codeBlock.m_metadata.get());
+        m_instructions.encode(encoder, codeBlock.m_instructions.get());
+        m_constantsSourceCodeRepresentation.encode(encoder, codeBlock.m_constantsSourceCodeRepresentation);
+        m_jumpTargets.encode(encoder, codeBlock.m_jumpTargets);
+    }
     m_rareData.encode(encoder, codeBlock.m_rareData.get());
 
     m_sourceURLDirective.encode(encoder, codeBlock.m_sourceURLDirective.get());
     m_sourceMappingURLDirective.encode(encoder, codeBlock.m_sourceMappingURLDirective.get());
 
-    m_instructions.encode(encoder, codeBlock.m_instructions.get());
     m_constantRegisters.encode(encoder, codeBlock.m_constantRegisters);
-    m_constantsSourceCodeRepresentation.encode(encoder, codeBlock.m_constantsSourceCodeRepresentation);
     encoder.deferCold([this, &encoder, expressionInfo = codeBlock.m_expressionInfo.get()] {
+        Encoder::ShareableArrayScope shareable(encoder); // self-checksummed over its actual storage, so sharing is safe
         m_expressionInfo.encode(encoder, expressionInfo);
     });
-    m_jumpTargets.encode(encoder, codeBlock.m_jumpTargets);
     m_outOfLineJumpTargets.encode(encoder, codeBlock.m_outOfLineJumpTargets);
 
     m_identifiers.encode(encoder, codeBlock.m_identifiers);
@@ -3312,13 +3383,24 @@ protected:
     {
         if (m_cacheVersion != computeJSCBytecodeCacheVersion())
             return false;
+        // The entry, its boot session string and its source code key, up to where the code block starts.
+        if (!decoder.regionChecksumMatches(this, m_headerSize, &m_headerChecksum))
+            return false;
         if (m_bootSessionUUID.decode(decoder) != bootSessionUUIDString())
             return false;
         return true;
     }
 
+    void sealHeader(Encoder& encoder)
+    {
+        m_headerSize = safeCast<uint32_t>(encoder.currentOffset()); // the entry is at offset 0
+        encoder.addChecksum(0, m_headerSize, encoder.offsetOf(&m_headerChecksum));
+    }
+
 private:
     uint32_t m_cacheVersion;
+    uint32_t m_headerSize { 0 };
+    uint32_t m_headerChecksum { 0 };
     CachedString m_bootSessionUUID;
     CachedCodeBlockTag m_tag;
 };
@@ -3336,6 +3418,7 @@ public:
     void encode(Encoder& encoder, std::pair<SourceCodeKey, const UnlinkedCodeBlockType*> pair)
     {
         m_key.encode(encoder, pair.first);
+        sealHeader(encoder);
         m_codeBlock.encode(encoder, pair.second);
     }
 
