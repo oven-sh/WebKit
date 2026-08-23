@@ -1989,8 +1989,8 @@ public:
 
         if (auto* string = dynamicDowncast<JSString>(cell)) {
             m_type = EncodedType::String;
-            // TODO: This seems wrong? What if this fails.
             auto str = string->tryGetValue();
+            RELEASE_ASSERT(str.data.impl()); // constants are never unresolved ropes; a failed resolution must not be encoded as garbage
             StringImpl& impl = *str.data.impl();
             if (auto existing = encoder.cachedOffsetForStringContents(impl)) {
                 this->pointAtPayloadOffset(encoder, *existing);
