@@ -72,23 +72,28 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
     // FIXME: We should also generate CodeBlocks for CodeForConstruct
     // https://bugs.webkit.org/show_bug.cgi?id=193823
     //
-    // NOTE: We changed this in Bun. We check if the function is a constructor
-    // and if it is, we generate a CodeForConstruct block.
+    // NOTE: We changed this in Bun. Class constructors get CodeForConstruct
+    // (they cannot be [[Call]]ed, so the CodeForCall block for them is a
+    // two-instruction "cannot call a class constructor without |new|" throw
+    // stub). Everything else gets CodeForCall as before.
+    //
+    // The previous version of this checked `unlinkedExecutable->isConstructor()`,
+    // which resolves to JSCell::isConstructor(). UnlinkedFunctionExecutable is
+    // not a JSObject, so that always returned false and no CodeForConstruct
+    // block was ever cached.
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++) {
         auto* functionDecl = unlinkedCodeBlock->functionDecl(i);
-        if (functionDecl->isConstructor()) {
+        if (functionDecl->isClassConstructorFunction())
             generate(functionDecl, CodeSpecializationKind::CodeForConstruct);
-        } else {
+        else
             generate(functionDecl, CodeSpecializationKind::CodeForCall);
-        }
     }
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++) {
         auto* functionExpr = unlinkedCodeBlock->functionExpr(i);
-        if (functionExpr->isConstructor()) {
+        if (functionExpr->isClassConstructorFunction())
             generate(functionExpr, CodeSpecializationKind::CodeForConstruct);
-        } else {
+        else
             generate(functionExpr, CodeSpecializationKind::CodeForCall);
-        }
     }
 }
 
