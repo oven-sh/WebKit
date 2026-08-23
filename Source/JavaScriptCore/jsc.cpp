@@ -1829,6 +1829,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     // GC heap past this call, so the CachedBytecode is kept for the rest of the process, as diskCachePayloadIsPersistentForTesting does.
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span<uint8_t> { static_cast<uint8_t*>(base), size }, [size](const void* p) { munmap(const_cast<void*>(p), size); }, { });
     cachedBytecode->setPayloadIsPersistent();
+    // Kept for the rest of the process even if the decode below is rejected: decodeCodeBlock materializes the block (which
+    // aliases the mapping) before it compares source keys, so the mapping may already have borrowers on the GC heap.
     cachedBytecode->ref();
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
 
@@ -1841,7 +1843,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     MarkedArgumentBuffer keepAlive;
     Vector<UnlinkedCodeBlock*> frontier { top };
     keepAlive.append(top);
-    for (int d = 0; d < depth; ++d) {
+    for (int d = 0; d < depth && !frontier.isEmpty(); ++d) {
         Vector<UnlinkedCodeBlock*> next;
         for (UnlinkedCodeBlock* block : frontier) {
             auto visit = [&](UnlinkedFunctionExecutable* executable) {
@@ -1859,7 +1861,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
 
     JSArray* result = constructEmptyArray(globalObject, nullptr, 5);
     RETURN_IF_EXCEPTION(scope, { });
-    result->putDirectIndex(globalObject, 0, jsNumber(residentAfter - residentBefore));
+    result->putDirectIndex(globalObject, 0, jsNumber(residentAfter > residentBefore ? residentAfter - residentBefore : 0));
     result->putDirectIndex(globalObject, 1, jsNumber(pages));
     result->putDirectIndex(globalObject, 2, jsNumber(decoded));
     result->putDirectIndex(globalObject, 3, jsNumber(ms));

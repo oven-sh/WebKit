@@ -787,6 +787,33 @@ public:
     // Encoder side: point at something already written instead of allocating.
     void pointAtPayloadOffset(Encoder& encoder, ptrdiff_t offset) { this->m_offset = safeCast<Offset>(offset - encoder.offsetOf(&this->m_offset)); }
 
+    // A 1-3 character Latin-1 string that decodes to an atom fits in the 4-byte slot that would otherwise hold the offset
+    // of its record: low two bits 01 (record offsets are multiples of 4 and the empty sentinel ends in 11), then the
+    // length, then the characters. Minified code is mostly such names.
+    static constexpr uint32_t inlineStringTag = 1;
+    static constexpr uint32_t inlineStringTagMask = 3;
+    static constexpr unsigned inlineStringMaxLength = 3;
+    bool tryEncodeInlineString(const StringImpl& string)
+    {
+        if (string.isSymbol() || !string.is8Bit() || !string.length() || string.length() > inlineStringMaxLength)
+            return false;
+        uint32_t packed = inlineStringTag | string.length() << 2;
+        for (unsigned i = 0; i < string.length(); ++i)
+            packed |= static_cast<uint32_t>(string.span8()[i]) << (8 * (i + 1));
+        m_offset = std::bit_cast<Offset>(packed);
+        return true;
+    }
+    bool NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
+    Ref<AtomStringImpl> inlineString() const
+    {
+        uint32_t packed = std::bit_cast<uint32_t>(m_offset);
+        unsigned length = (packed >> 2) & 3;
+        std::array<Latin1Character, inlineStringMaxLength> characters;
+        for (unsigned i = 0; i < length; ++i)
+            characters[i] = static_cast<Latin1Character>(packed >> (8 * (i + 1)));
+        return AtomStringImpl::add(std::span<const Latin1Character> { characters.data(), length }).releaseNonNull();
+    }
+
 protected:
     const uint8_t* NODELETE buffer() const
     {
@@ -913,10 +940,16 @@ class CachedPtr : public VariableLengthObject<Source*> {
     friend struct CachedPtrOffsets;
 
 public:
+    static constexpr bool holdsString = std::is_same_v<T, CachedUniquedStringImpl> || std::is_same_v<T, CachedStringImpl>;
+
     void encode(Encoder& encoder, const Source* src)
     {
         if (!src)
             return;
+        if constexpr (holdsString) {
+            if (this->tryEncodeInlineString(*src))
+                return;
+        }
 
         if constexpr (requires (Encoder& e, const Source& s) { T::create(e, s); }) {
             // Code blocks write their arrays first and their record after, so they place themselves.
@@ -937,7 +970,7 @@ public:
             this->m_offset = safeCast<VariableLengthObjectBase::Offset>(*offset - encoder.offsetOf(&this->m_offset));
             return;
         }
-        if constexpr (std::is_same_v<T, CachedUniquedStringImpl> || std::is_same_v<T, CachedStringImpl>) {
+        if constexpr (holdsString) {
             if (std::optional<ptrdiff_t> offset = encoder.cachedOffsetForStringContents(*src)) {
                 this->m_offset = safeCast<VariableLengthObjectBase::Offset>(*offset - encoder.offsetOf(&this->m_offset));
                 encoder.cachePtr(src, *offset);
@@ -948,7 +981,7 @@ public:
         T* cachedObject = this->template allocateFor<T>(encoder, *src);
         cachedObject->encode(encoder, *src);
         encoder.cachePtr(src, encoder.offsetOf(cachedObject));
-        if constexpr (std::is_same_v<T, CachedUniquedStringImpl> || std::is_same_v<T, CachedStringImpl>)
+        if constexpr (holdsString)
             encoder.cacheStringContents(*src, encoder.offsetOf(cachedObject));
         }
     }
@@ -959,6 +992,12 @@ public:
         if (this->isEmpty()) {
             isNewAllocation = false;
             return nullptr;
+        }
+        if constexpr (holdsString) {
+            if (this->hasInlineString()) {
+                isNewAllocation = true;
+                return static_cast<Source*>(&this->inlineString().leakRef());
+            }
         }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -996,6 +1035,10 @@ public:
     {
         if (this->isEmpty())
             return nullptr;
+        if constexpr (holdsString) {
+            if (this->hasInlineString())
+                return nullptr;
+        }
         const T* target = this->template buffer<T>();
         return decoder.payloadContains(target, sizeof(T)) ? target : nullptr;
     }
@@ -1033,6 +1076,10 @@ public:
             if (Options::useLeanBytecodeCacheDecoder()) {
                 if (m_ptr.isEmpty())
                     return nullptr;
+                if constexpr (CachedPtr<T, Source>::holdsString) {
+                    if (m_ptr.hasInlineString())
+                        return adoptRef<Source, PtrTraits>(static_cast<Source*>(&m_ptr.inlineString().leakRef()));
+                }
                 return adoptRef<Source, PtrTraits>(m_ptr.get()->decode(decoder));
             }
         }
@@ -1282,8 +1329,13 @@ public:
     UniquedStringImpl* decode(Decoder& decoder) const
     {
         auto create = [&](auto buffer) -> UniquedStringImpl* {
-            if (!m_isSymbol)
+            if (!m_isSymbol) {
+                // Long strings out of a persistent payload keep their characters in the mapping (clean, shared pages) and
+                // only allocate the StringImpl header; AtomStringImpl::add adopts it in place unless the atom already exists.
+                if (buffer.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
+                    return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(buffer) }).leakRef();
                 return AtomStringImpl::add(buffer).leakRef();
+            }
 
             SymbolImpl* symbol;
             VM& vm = decoder.vm();
@@ -1317,6 +1369,7 @@ public:
         return m_is8Bit ? create(span8()) : create(span16());
     }
 
+    static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
     std::span<const Latin1Character> NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
     std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
@@ -1989,9 +2042,11 @@ public:
 
         if (auto* string = dynamicDowncast<JSString>(cell)) {
             m_type = EncodedType::String;
-            // TODO: This seems wrong? What if this fails.
             auto str = string->tryGetValue();
+            RELEASE_ASSERT(str.data.impl()); // constants are never unresolved ropes; a failed resolution must not be encoded as garbage
             StringImpl& impl = *str.data.impl();
+            if (this->tryEncodeInlineString(impl))
+                return;
             if (auto existing = encoder.cachedOffsetForStringContents(impl)) {
                 this->pointAtPayloadOffset(encoder, *existing);
                 return;
@@ -2040,6 +2095,10 @@ public:
             v = this->buffer<CachedSymbolTable>()->decode(decoder);
             break;
         case EncodedType::String: {
+            if (this->hasInlineString()) {
+                v = jsString(decoder.vm(), String { this->inlineString() });
+                break;
+            }
             StringImpl* impl = this->buffer<CachedUniquedStringImpl>()->decode(decoder);
             v = jsString(decoder.vm(), adoptRef(*impl));
             break;
