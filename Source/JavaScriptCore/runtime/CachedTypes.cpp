@@ -2843,7 +2843,24 @@ public:
 
     // `limit` bounds the parse for the integrity check; once the region is verified it is read unbounded.
     Tail readTail(const uint8_t* limit = nullptr) const;
-    Scalars scalars() const { return readTail().scalars; }
+    // The tail the decode in progress already parsed (see ActiveTailScope), else a fresh parse.
+    const Tail& tail(Decoder& decoder, Tail& storage) const
+    {
+        if (auto* active = static_cast<const Tail*>(decoder.activeCodeBlockTail(this)))
+            return *active;
+        storage = readTail();
+        return storage;
+    }
+    struct ActiveTailScope {
+        ActiveTailScope(Decoder& decoder, const void* record, const Tail& tail)
+            : m_decoder(decoder)
+        {
+            decoder.setActiveCodeBlockTail(record, &tail);
+        }
+        ~ActiveTailScope() { m_decoder.setActiveCodeBlockTail(nullptr, nullptr); }
+        Decoder& m_decoder;
+    };
+    Scalars scalars(Decoder& decoder) const { Tail storage; return tail(decoder, storage).scalars; }
 
     const uint8_t* regionBegin() const { return std::bit_cast<const uint8_t*>(this) - m_recordOffsetInRegion; }
     template<typename T> const T* at(const Array& array) const { return array.count ? reinterpret_cast<const T*>(regionBegin() + array.at) : nullptr; }
@@ -2851,7 +2868,8 @@ public:
 
     JSInstructionStream* instructions(Decoder& decoder) const
     {
-        Layout layout = readTail().layout;
+        Tail storage;
+        const Layout& layout = tail(decoder, storage).layout;
         std::span<const uint8_t> bytes { at<uint8_t>(layout.instructions), layout.instructions.count };
         if (decoder.canBorrowPayload())
             return new JSInstructionStream(bytes, JSInstructionStream::Borrow);
@@ -2862,7 +2880,8 @@ public:
 
     Ref<UnlinkedMetadataTable> metadata(Decoder& decoder) const
     {
-        Layout layout = readTail().layout;
+        Tail storage;
+        const Layout& layout = tail(decoder, storage).layout;
         if (!(layout.flags & LayoutHasMetadata))
             return UnlinkedMetadataTable::empty();
         std::span<const uint32_t> steps { at<uint32_t>(layout.steps), layout.steps.count };
@@ -2873,17 +2892,20 @@ public:
 
     RefPtr<StringImpl> sourceURLDirective(Decoder& decoder) const
     {
-        auto* e = extras(readTail().layout);
+        Tail storage;
+        auto* e = extras(tail(decoder, storage).layout);
         return e ? e->sourceURLDirective.decode(decoder) : nullptr;
     }
     RefPtr<StringImpl> sourceMappingURLDirective(Decoder& decoder) const
     {
-        auto* e = extras(readTail().layout);
+        Tail storage;
+        auto* e = extras(tail(decoder, storage).layout);
         return e ? e->sourceMappingURLDirective.decode(decoder) : nullptr;
     }
     UnlinkedCodeBlock::RareData* rareData(Decoder& decoder) const
     {
-        auto* e = extras(readTail().layout);
+        Tail storage;
+        auto* e = extras(tail(decoder, storage).layout);
         return e ? e->rareData.decode(decoder) : nullptr;
     }
 
@@ -3101,7 +3123,7 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     , m_instructions(cachedCodeBlock.instructions(decoder))
     , m_rareData(cachedCodeBlock.rareData(decoder))
 {
-    auto scalars = cachedCodeBlock.scalars();
+    auto scalars = cachedCodeBlock.scalars(decoder);
     m_thisRegister = scalars.thisRegister;
     m_scopeRegister = scalars.scopeRegister;
     m_numVars = scalars.numVars;
@@ -3154,6 +3176,7 @@ UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
     Tail tail;
     if (!regionIsIntact(decoder, tail))
         return nullptr;
+    ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedProgramCodeBlock>(decoder.vm())) UnlinkedProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
@@ -3166,6 +3189,7 @@ UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) 
     Tail tail;
     if (!regionIsIntact(decoder, tail))
         return nullptr;
+    ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedModuleProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedModuleProgramCodeBlock>(decoder.vm())) UnlinkedModuleProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
@@ -3178,6 +3202,7 @@ UnlinkedEvalCodeBlock* CachedEvalCodeBlock::decode(Decoder& decoder) const
     Tail tail;
     if (!regionIsIntact(decoder, tail))
         return nullptr;
+    ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedEvalCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedEvalCodeBlock>(decoder.vm())) UnlinkedEvalCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
@@ -3190,6 +3215,7 @@ UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) con
     Tail tail;
     if (!regionIsIntact(decoder, tail))
         return nullptr;
+    ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);

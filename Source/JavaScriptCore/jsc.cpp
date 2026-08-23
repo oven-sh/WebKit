@@ -328,6 +328,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCreateNonRopeNonAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionPrintStdOut);
 static JSC_DECLARE_HOST_FUNCTION(functionGenerateBytecodeCacheFile);
 static JSC_DECLARE_HOST_FUNCTION(functionBuiltinFromBytecodeCache);
+static JSC_DECLARE_HOST_FUNCTION(functionBuiltinBytecodeSize);
 static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCachePageTouch);
 static JSC_DECLARE_HOST_FUNCTION(functionPrintStdErr);
 static JSC_DECLARE_HOST_FUNCTION(functionPrettyPrint);
@@ -689,6 +690,7 @@ private:
         addFunction(vm, "debug"_s, functionDebug, 1);
         addFunction(vm, "generateBytecodeCacheFile"_s, functionGenerateBytecodeCacheFile, 3);
         addFunction(vm, "builtinFromBytecodeCache"_s, functionBuiltinFromBytecodeCache, 3);
+        addFunction(vm, "builtinBytecodeSize"_s, functionBuiltinBytecodeSize, 2);
         addFunction(vm, "bytecodeCachePageTouch"_s, functionBytecodeCachePageTouch, 4);
         addFunction(vm, "describe"_s, functionDescribe, 1);
         addFunction(vm, "describeArray"_s, functionDescribeArray, 1);
@@ -1819,6 +1821,25 @@ JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* glob
             return throwVMError(globalObject, scope, "decodeBuiltinFunction rejected the payload"_s);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), globalObject)));
+}
+
+// builtinBytecodeSize(source, depth) — bytes encodeBuiltinFunction produces for a builtin created from `source`.
+JSC_DEFINE_HOST_FUNCTION(functionBuiltinBytecodeSize, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned depth = callFrame->argument(1).isUndefined() ? std::numeric_limits<unsigned>::max() : callFrame->argument(1).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    SourceCode source = makeSource(text, SourceOrigin { URL({ }, "builtin://size"_s) }, SourceTaintedOrigin::Untainted, "size-builtin"_s);
+    UnlinkedFunctionExecutable* executable = createBuiltinExecutable(vm, source, Identifier::fromString(vm, "sizeBuiltin"_s), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
+    ParserError error;
+    recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
+    if (error.isValid())
+        return throwVMError(globalObject, scope, error.toErrorObject(globalObject, source));
+    RefPtr<CachedBytecode> bytes = encodeBuiltinFunction(vm, executable, source.length(), 1);
+    return JSValue::encode(jsNumber(bytes ? bytes->size() : 0));
 }
 
 // bytecodeCachePageTouch(sourcePath, cachePath, "module"|"program", depth) — map the cache cold, decode the top-level block
