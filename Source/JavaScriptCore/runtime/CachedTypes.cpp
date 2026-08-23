@@ -27,6 +27,9 @@
 #include "CachedTypes.h"
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
+#if CPU(X86_64)
+#include <cpuid.h>
+#endif
 
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
@@ -163,7 +166,11 @@ static uint32_t crc32cHardware(uint32_t crc, std::span<const uint8_t> bytes)
 static uint32_t crc32c(uint32_t crc, std::span<const uint8_t> bytes)
 {
 #if CPU(X86_64)
-    static const bool hardware = __builtin_cpu_supports("sse4.2");
+    static const bool hardware = [] {
+        // cpuid directly: __builtin_cpu_supports needs compiler-rt's __cpu_model, which not every link provides.
+        unsigned eax, ebx, ecx = 0, edx;
+        return __get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & bit_SSE4_2);
+    }();
     if (hardware)
         return crc32cHardware(crc, bytes);
 #elif CPU(ARM64) && defined(__ARM_FEATURE_CRC32)
