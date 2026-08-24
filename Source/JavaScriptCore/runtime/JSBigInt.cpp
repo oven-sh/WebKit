@@ -1439,6 +1439,1172 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyKaratsuba(std::span<const Digit> x,
     return z;
 }
 
+// Toom-Cook (Toom-3) multiplication, ported from V8 [1].
+// Reference: https://en.wikipedia.org/wiki/Toom%E2%80%93Cook_multiplication
+//
+// [1]: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/bigint/mul-toom.cc
+//
+// Measured against the Karatsuba above (V8's crossover from its schoolbook-based Karatsuba is
+// 210): Toom-3 wins from 480 digits of the smaller operand, and below that Karatsuba's
+// size-rounding heuristics keep it ahead or level on every shape.
+static constexpr size_t toomThreshold = 480;
+
+// Z := X + Y, zero-padding Z. Z may alias either operand.
+static void addZeroPadded(std::span<JSBigInt::Digit> z, std::span<const JSBigInt::Digit> x, std::span<const JSBigInt::Digit> y)
+{
+    using Digit = JSBigInt::Digit;
+    if (x.size() < y.size())
+        std::swap(x, y);
+    ASSERT(z.size() >= x.size());
+    Digit carry = 0;
+    size_t i = 0;
+    for (; i < y.size(); i++) {
+        Digit newCarry = 0;
+        z[i] = JSBigInt::digitAdd3(x[i], y[i], carry, newCarry);
+        carry = newCarry;
+    }
+    for (; i < x.size(); i++) {
+        Digit newCarry = 0;
+        z[i] = JSBigInt::digitAdd(x[i], carry, newCarry);
+        carry = newCarry;
+    }
+    for (; i < z.size(); i++) {
+        z[i] = carry;
+        carry = 0;
+    }
+}
+
+// Z := X - Y for normalized X >= Y, zero-padding Z. Z may alias either operand.
+static void subZeroPadded(std::span<JSBigInt::Digit> z, std::span<const JSBigInt::Digit> x, std::span<const JSBigInt::Digit> y)
+{
+    using Digit = JSBigInt::Digit;
+    ASSERT(z.size() >= x.size() && x.size() >= y.size());
+    Digit borrow = 0;
+    size_t i = 0;
+    for (; i < y.size(); i++) {
+        Digit newBorrow = 0;
+        z[i] = JSBigInt::digitSub2(x[i], y[i], borrow, newBorrow);
+        borrow = newBorrow;
+    }
+    for (; i < x.size(); i++) {
+        Digit newBorrow = 0;
+        z[i] = JSBigInt::digitSub(x[i], borrow, newBorrow);
+        borrow = newBorrow;
+    }
+    ASSERT(!borrow);
+    for (; i < z.size(); i++)
+        z[i] = 0;
+}
+
+static bool lessThanNormalized(std::span<const JSBigInt::Digit> x, std::span<const JSBigInt::Digit> y)
+{
+    if (x.size() != y.size())
+        return x.size() < y.size();
+    for (size_t i = x.size(); i-- > 0;) {
+        if (x[i] != y[i])
+            return x[i] < y[i];
+    }
+    return false;
+}
+
+// Z := X + Y on sign-magnitude values, returning the sign of Z. Z may alias either operand.
+static bool addSigned(std::span<JSBigInt::Digit> z, std::span<const JSBigInt::Digit> x, bool xNegative, std::span<const JSBigInt::Digit> y, bool yNegative)
+{
+    if (xNegative == yNegative) {
+        addZeroPadded(z, x, y);
+        return xNegative;
+    }
+    x = normalize(x);
+    y = normalize(y);
+    if (!lessThanNormalized(x, y)) {
+        subZeroPadded(z, x, y);
+        return xNegative;
+    }
+    subZeroPadded(z, y, x);
+    return !xNegative;
+}
+
+// Z := X - Y on sign-magnitude values, returning the sign of Z. Z may alias either operand.
+static bool subtractSigned(std::span<JSBigInt::Digit> z, std::span<const JSBigInt::Digit> x, bool xNegative, std::span<const JSBigInt::Digit> y, bool yNegative)
+{
+    if (xNegative != yNegative) {
+        addZeroPadded(z, x, y);
+        return xNegative;
+    }
+    x = normalize(x);
+    y = normalize(y);
+    if (!lessThanNormalized(x, y)) {
+        subZeroPadded(z, x, y);
+        return xNegative;
+    }
+    subZeroPadded(z, y, x);
+    return !xNegative;
+}
+
+static void timesTwo(std::span<JSBigInt::Digit> x)
+{
+    JSBigInt::Digit carry = 0;
+    for (auto& digit : x) {
+        JSBigInt::Digit d = digit;
+        digit = (d << 1) | carry;
+        carry = d >> (JSBigInt::digitBits - 1);
+    }
+}
+
+static void divideByTwo(std::span<JSBigInt::Digit> x)
+{
+    JSBigInt::Digit carry = 0;
+    for (size_t i = x.size(); i-- > 0;) {
+        JSBigInt::Digit d = x[i];
+        x[i] = (d >> 1) | carry;
+        carry = d << (JSBigInt::digitBits - 1);
+    }
+}
+
+static void divideByThree(std::span<JSBigInt::Digit> x)
+{
+    using Digit = JSBigInt::Digit;
+    constexpr unsigned halfDigitBits = JSBigInt::halfDigitBits;
+    constexpr Digit halfDigitMask = JSBigInt::halfDigitMask;
+    Digit remainder = 0;
+    for (size_t i = x.size(); i-- > 0;) {
+        Digit d = x[i];
+        Digit upper = (remainder << halfDigitBits) | (d >> halfDigitBits);
+        Digit upperResult = upper / 3;
+        remainder = upper - 3 * upperResult;
+        Digit lower = (remainder << halfDigitBits) | (d & halfDigitMask);
+        Digit lowerResult = lower / 3;
+        remainder = lower - 3 * lowerResult;
+        x[i] = (upperResult << halfDigitBits) | lowerResult;
+    }
+}
+
+void JSBigInt::toom3Main(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y)
+{
+    ASSERT(z.size() >= x.size() + y.size());
+    // Phase 1: Splitting.
+    size_t i = (std::max(x.size(), y.size()) + 2) / 3;
+    auto x0 = clampedSubspan(x, 0, i);
+    auto x1 = clampedSubspan(x, i, i);
+    auto x2 = clampedSubspan(x, 2 * i, i);
+    auto y0 = clampedSubspan(y, 0, i);
+    auto y1 = clampedSubspan(y, i, i);
+    auto y2 = clampedSubspan(y, 2 * i, i);
+
+    // Temporary storage.
+    size_t pLength = i + 1; // For all px, qx below.
+    size_t rLength = 2 * pLength; // For all r_x, Rx below.
+    Vector<Digit> tempStorage(4 * rLength);
+    // We will use the same variable names as the Wikipedia article, as much as C++ lets us: our
+    // "pm1" is their "p(-1)" etc. For consistency with other algorithms, we use X and Y where
+    // Wikipedia uses m and n.
+    // We will use and reuse the temporary storage as follows:
+    //
+    //   chunk                  | -------- time ----------->
+    //   [0 .. i]               |( po )( pm1 ) ( rm2  )
+    //   [i+1 .. rLength-1]     |( qo )( qm1 ) ( rm2  )
+    //   [rLength .. rLength+i] | (p1 ) ( pm2 ) (rinf)
+    //   [rLength+i+1 .. 2*rLength-1] | (q1 ) ( qm2 ) (rinf)
+    //   [2*rLength .. 3*rLength-1]   |      (   r1          )
+    //   [3*rLength .. 4*rLength-1]   |             (  rm1   )
+    //
+    // This requires interleaving phases 2 and 3 a bit: after computing r1 = p1 * q1, we can reuse
+    // p1's storage for pm2, and so on.
+    auto t = tempStorage.mutableSpan();
+    auto po = t.subspan(0, pLength);
+    auto qo = t.subspan(pLength, pLength);
+    auto p1 = t.subspan(rLength, pLength);
+    auto q1 = t.subspan(rLength + pLength, pLength);
+    auto r1 = t.subspan(2 * rLength, rLength);
+    auto rm1 = t.subspan(3 * rLength, rLength);
+
+    // We can also share the backing stores of Z, r0, R0.
+    auto r0 = z.first(rLength);
+
+    // Phase 2a: Evaluation, steps 0, 1, m1.
+    // po = X0 + X2
+    addZeroPadded(po, x0, x2);
+    // p0 = X0
+    // p1 = po + X1
+    addZeroPadded(p1, po, x1);
+    // pm1 = po - X1
+    auto pm1 = po;
+    bool pm1Sign = subtractSigned(pm1, po, false, x1, false);
+
+    // qo = Y0 + Y2
+    addZeroPadded(qo, y0, y2);
+    // q0 = Y0
+    // q1 = qo + Y1
+    addZeroPadded(q1, qo, y1);
+    // qm1 = qo - Y1
+    auto qm1 = qo;
+    bool qm1Sign = subtractSigned(qm1, qo, false, y1, false);
+
+    // Phase 3a: Pointwise multiplication, steps 0, 1, m1.
+    multiplyZeroPadded(r0, x0, y0);
+    multiplyZeroPadded(r1, p1, q1);
+    multiplyZeroPadded(rm1, pm1, qm1);
+    bool rm1Sign = pm1Sign != qm1Sign;
+
+    // Phase 2b: Evaluation, steps m2 and inf.
+    // pm2 = (pm1 + X2) * 2 - X0
+    auto pm2 = p1;
+    bool pm2Sign = addSigned(pm2, pm1, pm1Sign, x2, false);
+    timesTwo(pm2);
+    pm2Sign = subtractSigned(pm2, pm2, pm2Sign, x0, false);
+    // pinf = X2
+
+    // qm2 = (qm1 + Y2) * 2 - Y0
+    auto qm2 = q1;
+    bool qm2Sign = addSigned(qm2, qm1, qm1Sign, y2, false);
+    timesTwo(qm2);
+    qm2Sign = subtractSigned(qm2, qm2, qm2Sign, y0, false);
+    // qinf = Y2
+
+    // Phase 3b: Pointwise multiplication, steps m2 and inf.
+    auto rm2 = t.first(rLength);
+    multiplyZeroPadded(rm2, pm2, qm2);
+    bool rm2Sign = pm2Sign != qm2Sign;
+
+    auto rinf = t.subspan(rLength, rLength);
+    multiplyZeroPadded(rinf, x2, y2);
+
+    // Phase 4: Interpolation.
+    auto R0 = r0;
+    auto R4 = rinf;
+    // R3 <- (rm2 - r1) / 3
+    auto R3 = rm2;
+    bool R3Sign = subtractSigned(R3, rm2, rm2Sign, r1, false);
+    divideByThree(R3);
+    // R1 <- (r1 - rm1) / 2
+    auto R1 = r1;
+    bool R1Sign = subtractSigned(R1, r1, false, rm1, rm1Sign);
+    divideByTwo(R1);
+    // R2 <- rm1 - r0
+    auto R2 = rm1;
+    bool R2Sign = subtractSigned(R2, rm1, rm1Sign, R0, false);
+    // R3 <- (R2 - R3) / 2 + 2 * rinf
+    R3Sign = subtractSigned(R3, R2, R2Sign, R3, R3Sign);
+    divideByTwo(R3);
+    R3Sign = addSigned(R3, R3, R3Sign, rinf, false);
+    R3Sign = addSigned(R3, R3, R3Sign, rinf, false);
+    // R2 <- R2 + R1 - R4
+    R2Sign = addSigned(R2, R2, R2Sign, R1, R1Sign);
+    R2Sign = subtractSigned(R2, R2, R2Sign, R4, false);
+    // R1 <- R1 - R3
+    R1Sign = subtractSigned(R1, R1, R1Sign, R3, R3Sign);
+
+    ASSERT(!R1Sign || normalize(R1).empty());
+    ASSERT(!R2Sign || normalize(R2).empty());
+    ASSERT(!R3Sign || normalize(R3).empty());
+
+    // Phase 5: Recomposition. R0 is already in place. Overflow can't happen.
+    std::ranges::fill(z.subspan(R0.size()), 0);
+    inplaceAddAndPropagate(z.subspan(i), R1);
+    inplaceAddAndPropagate(z.subspan(2 * i), R2);
+    inplaceAddAndPropagate(z.subspan(3 * i), R3);
+    inplaceAddAndPropagate(z.subspan(4 * i), R4);
+}
+
+std::span<JSBigInt::Digit> JSBigInt::multiplyToomCook(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+{
+    ASSERT(x.size() >= y.size());
+    ASSERT(y.size() >= toomThreshold);
+    RELEASE_ASSERT(result.size() >= x.size() + y.size());
+    auto z = result.first(x.size() + y.size());
+    // toom3Main splits both operands into thirds of the larger one, so a moderately longer x costs
+    // the same five products as a balanced pair and beats chunking x into y-sized pieces. Beyond
+    // that ratio the padding wastes more than the chunking does.
+    if (x.size() * 3 <= y.size() * 5) {
+        toom3Main(z, x, y);
+        return z;
+    }
+    size_t k = y.size();
+    toom3Main(z, x.first(k), y);
+    Vector<Digit> chunkProduct(2 * k);
+    auto product = chunkProduct.mutableSpan();
+    for (size_t i = k; i < x.size(); i += k) {
+        auto xi = clampedSubspan(x, i, k);
+        if (xi.size() < k) {
+            // The last chunk is shorter, so let the size dispatch pick its algorithm.
+            multiplyZeroPadded(product, xi, y);
+        } else
+            toom3Main(product, xi, y);
+        inplaceAddAndPropagate(z.subspan(i), product);
+    }
+    return z;
+}
+
+// FFT-based multiplication, due to Schönhage and Strassen, ported from V8 [1]. The implementation
+// mostly follows the description given in Christoph Lüders: Fast Multiplication of Large Integers,
+// http://arxiv.org/abs/1503.04955
+//
+// [1]: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/bigint/mul-fft.cc
+namespace FFT {
+
+using Digit = JSBigInt::Digit;
+using SignedDigit = std::make_signed_t<Digit>;
+static constexpr unsigned digitBits = JSBigInt::digitBits;
+static constexpr unsigned log2DigitBits = std::countr_zero(digitBits);
+static_assert((1u << log2DigitBits) == digitBits);
+
+// See shouldUseFFT for what the thresholds mean. The 64-bit values are measured against the Toom-3
+// above; the 32-bit ones reduce to V8's single threshold on the smaller operand.
+#if CPU(REGISTER64)
+static constexpr size_t fftThreshold = 2300;
+static constexpr size_t fftMinSmallerSize = 600;
+static constexpr size_t fftChunkThreshold = 1150;
+static constexpr size_t fftInnerThreshold = 200;
+#else
+static constexpr size_t fftThreshold = 2200;
+static constexpr size_t fftMinSmallerSize = 1100;
+static constexpr size_t fftChunkThreshold = 1100;
+static constexpr size_t fftInnerThreshold = 200;
+#endif
+// Above this ratio of the operand sizes, one transform sized for both is mostly padding, so x is
+// multiplied in y-sized chunks instead.
+static constexpr size_t asymmetricChunkingThreshold = 100;
+
+// Part 1: Functions for "mod F_n" arithmetic.
+// F_n is of the shape 2^K + 1, and for convenience we use K to count the number of digits rather
+// than the number of bits, so F_n (or K) are implicit and deduced from the length {length} of the
+// digits array.
+
+// Helper function for {modFn} below.
+static void modFnHelper(Digit* x, size_t length, SignedDigit high)
+{
+    if (high > 0) {
+        Digit borrow = high;
+        x[length - 1] = 0;
+        for (size_t i = 0; i < length; i++) {
+            Digit newBorrow = 0;
+            x[i] = JSBigInt::digitSub(x[i], borrow, newBorrow);
+            borrow = newBorrow;
+            if (!borrow)
+                break;
+        }
+    } else {
+        Digit carry = -high;
+        x[length - 1] = 0;
+        for (size_t i = 0; i < length; i++) {
+            Digit newCarry = 0;
+            x[i] = JSBigInt::digitAdd(x[i], carry, newCarry);
+            carry = newCarry;
+            if (!carry)
+                break;
+        }
+    }
+}
+
+// {x} := {x} mod F_n, assuming that {x} is "slightly" larger than F_n (e.g. after addition of two
+// numbers that were mod-F_n-normalized before).
+static void modFn(Digit* x, size_t length)
+{
+    size_t K = length - 1;
+    SignedDigit high = x[K];
+    if (!high)
+        return;
+    modFnHelper(x, length, high);
+    high = x[K];
+    if (!high)
+        return;
+    ASSERT(high == 1 || high == -1);
+    modFnHelper(x, length, high);
+    high = x[K];
+    if (high == -1)
+        modFnHelper(x, length, high);
+}
+
+// {dest} := {src} mod F_n, assuming that {src} is about twice as long as F_n (e.g. after
+// multiplication of two numbers that were mod-F_n-normalized before).
+// {length} is length of {dest}; {src} is twice as long.
+static void modFnDoubleWidth(Digit* dest, const Digit* src, size_t length)
+{
+    size_t K = length - 1;
+    Digit borrow = 0;
+    for (size_t i = 0; i < K; i++) {
+        Digit newBorrow = 0;
+        dest[i] = JSBigInt::digitSub2(src[i], src[i + K], borrow, newBorrow);
+        borrow = newBorrow;
+    }
+    Digit newBorrow = 0;
+    dest[K] = JSBigInt::digitSub2(0, src[2 * K], borrow, newBorrow);
+    // {borrow} may be non-zero here, that's OK as {modFn} will take care of it.
+    modFn(dest, length);
+}
+
+// Sets {sum} := {a} + {b} and {diff} := {a} - {b}, which is more efficient than computing sum and
+// difference separately. Applies "mod F_n" normalization to both results.
+static void sumDiff(Digit* sum, Digit* diff, const Digit* a, const Digit* b, size_t length)
+{
+    Digit carry = 0;
+    Digit borrow = 0;
+    for (size_t i = 0; i < length; i++) {
+        // Read both values first, because inputs and outputs can overlap.
+        Digit ai = a[i];
+        Digit bi = b[i];
+        Digit newCarry = 0;
+        sum[i] = JSBigInt::digitAdd3(ai, bi, carry, newCarry);
+        carry = newCarry;
+        Digit newBorrow = 0;
+        diff[i] = JSBigInt::digitSub2(ai, bi, borrow, newBorrow);
+        borrow = newBorrow;
+    }
+    modFn(sum, length);
+    modFn(diff, length);
+}
+
+// {result} := ({input} << shift) mod F_n, where shift >= K.
+static void shiftModFnLarge(Digit* result, const Digit* input, size_t digitShift, unsigned bitsShift, size_t K)
+{
+    // If {digitShift} is greater than K, we use the following transformation (where, since
+    // everything is mod 2^K + 1, we are allowed to add or subtract any multiple of 2^K + 1 at any
+    // time):
+    //      x * 2^{K+m}   mod 2^K + 1
+    //   == x * 2^K * 2^m - (2^K + 1)*(x * 2^m)   mod 2^K + 1
+    //   == x * 2^K * 2^m - x * 2^K * 2^m - x * 2^m   mod 2^K + 1
+    //   == -x * 2^m   mod 2^K + 1
+    // So the flow is the same as for m < K, but we invert the subtraction's operands. In order to
+    // avoid underflow, we virtually initialize the result to 2^K + 1:
+    //   input  =  [ iK ][iK-1] ....  .... [ i1 ][ i0 ]
+    //   result =  [   1][0000] ....  .... [0000][0001]
+    //            +                  [ iK ] .... [ iX ]
+    //            -      [iX-1] .... [ i0 ]
+    ASSERT(digitShift >= K);
+    digitShift -= K;
+    Digit borrow = 0;
+    if (!bitsShift) {
+        Digit carry = 1;
+        for (size_t i = 0; i < digitShift; i++) {
+            Digit newCarry = 0;
+            result[i] = JSBigInt::digitAdd(input[i + K - digitShift], carry, newCarry);
+            carry = newCarry;
+        }
+        result[digitShift] = JSBigInt::digitSub(input[K] + carry, input[0], borrow);
+        for (size_t i = digitShift + 1; i < K; i++) {
+            Digit d = input[i - digitShift];
+            Digit newBorrow = 0;
+            result[i] = JSBigInt::digitSub2(0, d, borrow, newBorrow);
+            borrow = newBorrow;
+        }
+    } else {
+        Digit addCarry = 1;
+        Digit inputCarry = input[K - digitShift - 1] >> (digitBits - bitsShift);
+        for (size_t i = 0; i < digitShift; i++) {
+            Digit d = input[i + K - digitShift];
+            Digit summand = (d << bitsShift) | inputCarry;
+            Digit newCarry = 0;
+            result[i] = JSBigInt::digitAdd(summand, addCarry, newCarry);
+            addCarry = newCarry;
+            inputCarry = d >> (digitBits - bitsShift);
+        }
+        {
+            // result[digitShift] = (addCarry + iKPart) - i0Part
+            Digit d = input[K];
+            Digit iKPart = (d << bitsShift) | inputCarry;
+            Digit iKCarry = d >> (digitBits - bitsShift);
+            Digit newCarry = 0;
+            Digit sum = JSBigInt::digitAdd(addCarry, iKPart, newCarry);
+            addCarry = newCarry;
+            // {iKCarry} is less than a full digit, so we can merge {addCarry} into it without
+            // overflow.
+            iKCarry += addCarry;
+            d = input[0];
+            Digit i0Part = d << bitsShift;
+            result[digitShift] = JSBigInt::digitSub(sum, i0Part, borrow);
+            inputCarry = d >> (digitBits - bitsShift);
+            if (digitShift + 1 < K) {
+                d = input[1];
+                Digit subtrahend = (d << bitsShift) | inputCarry;
+                Digit newBorrow = 0;
+                result[digitShift + 1] = JSBigInt::digitSub2(iKCarry, subtrahend, borrow, newBorrow);
+                borrow = newBorrow;
+                inputCarry = d >> (digitBits - bitsShift);
+            }
+        }
+        for (size_t i = digitShift + 2; i < K; i++) {
+            Digit d = input[i - digitShift];
+            Digit subtrahend = (d << bitsShift) | inputCarry;
+            Digit newBorrow = 0;
+            result[i] = JSBigInt::digitSub2(0, subtrahend, borrow, newBorrow);
+            borrow = newBorrow;
+            inputCarry = d >> (digitBits - bitsShift);
+        }
+    }
+    // The virtual 1 in result[K] should be eliminated by {borrow}. If there is no borrow, then
+    // the virtual initialization was too much. Subtract 2^K + 1.
+    result[K] = 0;
+    if (borrow != 1) {
+        borrow = 1;
+        for (size_t i = 0; i < K; i++) {
+            Digit newBorrow = 0;
+            result[i] = JSBigInt::digitSub(result[i], borrow, newBorrow);
+            borrow = newBorrow;
+            if (!borrow)
+                break;
+        }
+        if (borrow) {
+            // The result must be 2^K.
+            for (size_t i = 0; i < K; i++)
+                result[i] = 0;
+            result[K] = 1;
+        }
+    }
+}
+
+// Sets {result} := {input} * 2^{powerOfTwo} mod 2^{K} + 1.
+// This function is highly relevant for overall performance.
+static void shiftModFn(Digit* result, const Digit* input, size_t powerOfTwo, size_t K, size_t zeroAbove = std::numeric_limits<size_t>::max())
+{
+    // The modulo-reduction amounts to a subtraction, which we combine with the shift as follows:
+    //   input  =  [ iK ][iK-1] ....  .... [ i1 ][ i0 ]
+    //   result =        [iX-1] .... [ i0 ] <---------- shift by {powerOfTwo}
+    //            -                  [ iK ] .... [ iX ]
+    // where "X" is the index "K - digitShift".
+    size_t digitShift = powerOfTwo / digitBits;
+    unsigned bitsShift = powerOfTwo % digitBits;
+    // By an analogous construction to the "digitShift >= K" case, it turns out that:
+    //    x * 2^{2K+m} == x * 2^m   mod 2^K + 1.
+    while (digitShift >= 2 * K)
+        digitShift -= 2 * K; // Faster than '%'!
+    if (digitShift >= K)
+        return shiftModFnLarge(result, input, digitShift, bitsShift, K);
+    Digit borrow = 0;
+    if (!bitsShift) {
+        // We do a single pass over {input}, starting by copying digits [i1] to [iX-1] to result
+        // indices digitShift+1 to K-1.
+        size_t i = 1;
+        // Read input digits unless we know they are zero.
+        size_t cap = std::min(K - digitShift, zeroAbove);
+        for (; i < cap; i++)
+            result[i + digitShift] = input[i];
+        // Any remaining work can hard-code the knowledge that input[i] == 0.
+        for (; i < K - digitShift; i++) {
+            ASSERT(!input[i]);
+            result[i + digitShift] = 0;
+        }
+        // Second phase: subtract input digits [iX] to [iK] from (virtually) zero-initialized
+        // result indices 0 to digitShift-1.
+        cap = std::min(K, zeroAbove);
+        for (; i < cap; i++) {
+            Digit d = input[i];
+            Digit newBorrow = 0;
+            result[i - K + digitShift] = JSBigInt::digitSub2(0, d, borrow, newBorrow);
+            borrow = newBorrow;
+        }
+        // Any remaining work can hard-code the knowledge that input[i] == 0.
+        for (; i < K; i++) {
+            ASSERT(!input[i]);
+            Digit newBorrow = 0;
+            result[i - K + digitShift] = JSBigInt::digitSub(0, borrow, newBorrow);
+            borrow = newBorrow;
+        }
+        // Last step: subtract [iK] from [i0] and store at result index digitShift.
+        Digit newBorrow = 0;
+        result[digitShift] = JSBigInt::digitSub2(input[0], input[K], borrow, newBorrow);
+        borrow = newBorrow;
+    } else {
+        // Same flow as before, but taking bitsShift != 0 into account.
+        // First phase: result indices digitShift+1 to K.
+        Digit carry = 0;
+        size_t i = 0;
+        // Read input digits unless we know they are zero.
+        size_t cap = std::min(K - digitShift, zeroAbove);
+        for (; i < cap; i++) {
+            Digit d = input[i];
+            result[i + digitShift] = (d << bitsShift) | carry;
+            carry = d >> (digitBits - bitsShift);
+        }
+        // Any remaining work can hard-code the knowledge that input[i] == 0.
+        for (; i < K - digitShift; i++) {
+            ASSERT(!input[i]);
+            result[i + digitShift] = carry;
+            carry = 0;
+        }
+        // Second phase: result indices 0 to digitShift - 1.
+        cap = std::min(K, zeroAbove);
+        for (; i < cap; i++) {
+            Digit d = input[i];
+            Digit newBorrow = 0;
+            result[i - K + digitShift] = JSBigInt::digitSub2(0, (d << bitsShift) | carry, borrow, newBorrow);
+            borrow = newBorrow;
+            carry = d >> (digitBits - bitsShift);
+        }
+        // Any remaining work can hard-code the knowledge that input[i] == 0.
+        if (i < K) {
+            ASSERT(!input[i]);
+            Digit newBorrow = 0;
+            result[i - K + digitShift] = JSBigInt::digitSub2(0, carry, borrow, newBorrow);
+            borrow = newBorrow;
+            carry = 0;
+            i++;
+        }
+        for (; i < K; i++) {
+            ASSERT(!input[i]);
+            Digit newBorrow = 0;
+            result[i - K + digitShift] = JSBigInt::digitSub(0, borrow, newBorrow);
+            borrow = newBorrow;
+        }
+        // Last step: compute result[digitShift].
+        Digit d = input[K];
+        Digit newBorrow = 0;
+        result[digitShift] = JSBigInt::digitSub2(result[digitShift], (d << bitsShift) | carry, borrow, newBorrow);
+        borrow = newBorrow;
+        // No carry left.
+        ASSERT(!(d >> (digitBits - bitsShift)));
+    }
+    result[K] = 0;
+    for (size_t i = digitShift + 1; i <= K && borrow; i++) {
+        Digit newBorrow = 0;
+        result[i] = JSBigInt::digitSub(result[i], borrow, newBorrow);
+        borrow = newBorrow;
+    }
+    if (borrow) {
+        // Underflow means we subtracted too much. Add 2^K + 1.
+        Digit carry = 1;
+        for (size_t i = 0; i <= K; i++) {
+            Digit newCarry = 0;
+            result[i] = JSBigInt::digitAdd(result[i], carry, newCarry);
+            carry = newCarry;
+            if (!carry)
+                break;
+        }
+        Digit newCarry = 0;
+        result[K] = JSBigInt::digitAdd(result[K], 1, newCarry);
+    }
+}
+
+// Part 2: FFT-based multiplication is very sensitive to appropriate choice of parameters. The
+// following functions choose the parameters that the subsequent actual computation will use. This
+// is partially based on formal constraints and partially on experimentally-determined heuristics.
+
+struct Parameters {
+    unsigned m { 0 };
+    size_t K { 0 };
+    size_t n { 0 };
+    size_t s { 0 };
+    size_t r { 0 };
+};
+
+// Computes parameters for the main calculation, given a bit length {N} and an {m}. See the paper
+// for details.
+static void computeParameters(size_t N, unsigned m, Parameters& params)
+{
+    N *= digitBits;
+    size_t n = static_cast<size_t>(1) << m; // 2^m
+    size_t nhalf = n >> 1;
+    size_t s = (N + n - 1) >> m; // ceil(N/n)
+    s = roundUpToMultipleOf(digitBits, s);
+    size_t K = m + 2 * s + 1; // K must be at least this big...
+    K = roundUpToMultipleOf(nhalf, K); // ...and a multiple of n/2.
+    size_t r = K >> (m - 1); // Which multiple?
+
+    // We want recursive calls to make progress, so force K to be a multiple of 8 if it's above
+    // the recursion threshold. Otherwise, K must be a multiple of digitBits.
+    const unsigned threshold = (K + 1 >= fftInnerThreshold * digitBits) ? 3 + log2DigitBits : log2DigitBits;
+    unsigned trailingZeros = std::countr_zero(K);
+    while (trailingZeros < threshold) {
+        K += (static_cast<size_t>(1) << trailingZeros);
+        r = K >> (m - 1);
+        trailingZeros = std::countr_zero(K);
+    }
+
+    ASSERT(!(K % digitBits));
+    ASSERT(!(s % digitBits));
+    params.K = K / digitBits;
+    params.s = s / digitBits;
+    params.n = n;
+    params.r = r;
+}
+
+// Computes parameters for recursive invocations ("inner layer").
+static void computeParametersInner(size_t N, Parameters& params)
+{
+    unsigned maxM = std::countr_zero(N);
+    unsigned NBits = std::bit_width(N);
+    unsigned m = NBits - 4; // Don't let s get too small.
+    m = std::min(maxM, m);
+    N *= digitBits;
+    size_t n = static_cast<size_t>(1) << m; // 2^m
+    // We can't round up s in the inner layer, because N = n*s is fixed.
+    size_t s = N >> m;
+    ASSERT(N == s * n);
+    size_t K = m + 2 * s + 1; // K must be at least this big...
+    K = roundUpToMultipleOf(n, K); // ...and a multiple of n and digitBits.
+    K = roundUpToMultipleOf(digitBits, K);
+    params.r = K >> m; // Which multiple?
+    ASSERT(!(K % digitBits));
+    ASSERT(!(s % digitBits));
+    params.K = K / digitBits;
+    params.s = s / digitBits;
+    params.n = n;
+    params.m = m;
+}
+
+static size_t predictInnerK(size_t N)
+{
+    Parameters params;
+    computeParametersInner(N, params);
+    return params.K;
+}
+
+// Applies heuristics to decide whether {m} should be decremented, by looking at what would happen
+// to {K} and {s} if {m} was decremented.
+static bool shouldDecrementM(const Parameters& current, const Parameters& next, const Parameters& afterNext)
+{
+    // K == 64 seems to work particularly well.
+    if (current.K == 64 && next.K >= 112)
+        return false;
+    // Small values for s are never efficient.
+    if (current.s < 6)
+        return true;
+    // The time is roughly determined by K * n. When we decrement m, then n always halves, and K
+    // usually gets bigger, by up to 2x.
+    // For not-quite-so-small s, look at how much bigger K would get: if the K increase is small
+    // enough, making n smaller is worth it.
+    // Empirically, it's most meaningful to look at the K *after* next.
+    // The specific threshold values have been chosen by running many benchmarks on inputs of many
+    // sizes, and manually selecting thresholds that seemed to produce good results.
+    double factor = static_cast<double>(afterNext.K) / current.K;
+    if ((current.s == 6 && factor < 3.85)
+        || (current.s == 7 && factor < 3.73)
+        || (current.s == 8 && factor < 3.55)
+        || (current.s == 9 && factor < 3.50)
+        || factor < 3.4)
+        return true;
+    // If K is just below the recursion threshold, make sure we do recurse, unless doing so would
+    // be particularly inefficient (large inner K).
+    // If K is just above the recursion threshold, doubling it often makes the inner call more
+    // efficient.
+    if (current.K >= 160 && current.K < 250 && predictInnerK(next.K) < 28)
+        return true;
+    // If we found no reason to decrement, keep m as large as possible.
+    return false;
+}
+
+// Decides what parameters to use for a given input bit length {N}.
+// Returns the chosen m.
+static unsigned getParameters(size_t N, Parameters& params)
+{
+    unsigned NBits = std::bit_width(N);
+    unsigned maxM = NBits - 3; // Larger m make s too small.
+    maxM = std::max(log2DigitBits, maxM); // Smaller m break the logic below.
+    unsigned m = maxM;
+    Parameters current;
+    computeParameters(N, m, current);
+    Parameters next;
+    computeParameters(N, m - 1, next);
+    while (m > 2) {
+        Parameters afterNext;
+        computeParameters(N, m - 2, afterNext);
+        if (shouldDecrementM(current, next, afterNext)) {
+            m--;
+            current = next;
+            next = afterNext;
+        } else
+            break;
+    }
+    params = current;
+    return m;
+}
+
+} // namespace FFT
+
+// Part 3: Fast Fourier Transformation.
+
+class JSBigInt::FFTContainer {
+    WTF_MAKE_NONCOPYABLE(FFTContainer);
+    using Digit = JSBigInt::Digit;
+public:
+    // {n} is the number of chunks, whose length is {K}+1.
+    // {K} determines F_n = 2^(K * digitBits) + 1.
+    FFTContainer(size_t n, size_t K)
+        : m_n(n)
+        , m_K(K)
+        , m_length(K + 1)
+        , m_storage(m_length * n)
+        , m_parts(n)
+        , m_temp(m_length * 2)
+    {
+        Digit* pointer = m_storage.mutableSpan().data();
+        for (size_t i = 0; i < n; i++, pointer += m_length)
+            m_parts[i] = pointer;
+    }
+
+    void startDefault(std::span<const Digit> x, size_t chunkSize, size_t theta, size_t omega);
+    void start(std::span<const Digit> x, size_t chunkSize, size_t theta, size_t omega);
+
+    void normalizeAndRecombine(size_t omega, unsigned m, std::span<Digit> z, size_t chunkSize);
+    void counterWeightAndRecombine(size_t theta, unsigned m, std::span<Digit> z, size_t chunkSize);
+
+    void fftReturnShuffled(size_t start, size_t length, size_t omega, Digit* temp);
+    void fftRecurse(size_t start, size_t half, size_t omega, Digit* temp);
+
+    void backwardFFT(size_t start, size_t length, size_t omega);
+
+    void pointwiseMultiply(const FFTContainer& other);
+
+    static void multiplyInner(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, const FFT::Parameters&);
+
+private:
+    Digit* temp() { return m_temp.mutableSpan().data(); }
+    std::span<Digit> tempSpan() { return m_temp.mutableSpan().first(m_length); }
+    std::span<Digit> part(size_t i) { return { m_parts[i], m_length }; }
+
+    const size_t m_n; // Number of parts.
+    const size_t m_K; // Always m_length - 1.
+    const size_t m_length; // Length of each part, in digits.
+    Vector<Digit> m_storage; // Combined storage of all parts.
+    Vector<Digit*> m_parts; // Pointers to each part.
+    Vector<Digit> m_temp; // Temporary storage with size 2 * m_length.
+};
+
+static inline void copyAndZeroExtend(std::span<JSBigInt::Digit> destination, const JSBigInt::Digit* source, size_t digitsToCopy)
+{
+    memcpySpan(destination.first(digitsToCopy), std::span { source, digitsToCopy });
+    zeroSpan(destination.subspan(digitsToCopy));
+}
+
+// Reads {x} into the FFTContainer's internal storage, dividing it into chunks while doing so;
+// then performs the forward FFT.
+void JSBigInt::FFTContainer::startDefault(std::span<const Digit> x, size_t chunkSize, size_t theta, size_t omega)
+{
+    size_t length = x.size();
+    const Digit* pointer = x.data();
+    size_t currentTheta = 0;
+    size_t i = 0;
+    for (; i < m_n && length > 0; i++, currentTheta += theta) {
+        chunkSize = std::min(chunkSize, length);
+        // For invocations via multiplyInner, x.size() == m_n * chunkSize + 1, because the outer
+        // layer's "K" is passed as the inner layer's "N". Since x is (mod Fn)-normalized on the
+        // outer layer, there is the rare corner case where x[m_n * chunkSize] == 1. Detect that
+        // case, and handle the extra bit as part of the last chunk; we always have the space.
+        if (i == m_n - 1 && length == chunkSize + 1) {
+            ASSERT(x[m_n * chunkSize] <= 1);
+            ASSERT(m_length >= chunkSize + 1);
+            chunkSize++;
+        }
+        if (currentTheta) {
+            // Multiply with theta^i, and reduce modulo 2^K + 1.
+            // We pass theta as a shift amount; it really means 2^theta.
+            copyAndZeroExtend(tempSpan(), pointer, chunkSize);
+            FFT::shiftModFn(m_parts[i], temp(), currentTheta, m_K, chunkSize);
+        } else
+            copyAndZeroExtend(part(i), pointer, chunkSize);
+        pointer += chunkSize;
+        length -= chunkSize;
+    }
+    ASSERT(!length);
+    for (; i < m_n; i++)
+        zeroSpan(part(i));
+    fftReturnShuffled(0, m_n, omega, temp());
+}
+
+// This version of start is optimized for the case where ~half of the container will be filled
+// with padding zeros.
+void JSBigInt::FFTContainer::start(std::span<const Digit> x, size_t chunkSize, size_t theta, size_t omega)
+{
+    size_t length = x.size();
+    if (length > m_n * chunkSize / 2)
+        return startDefault(x, chunkSize, theta, omega);
+    ASSERT_UNUSED(theta, !theta);
+    const Digit* pointer = x.data();
+    size_t nhalf = m_n / 2;
+    // Unrolled first iteration.
+    chunkSize = std::min(chunkSize, length);
+    copyAndZeroExtend(part(0), pointer, chunkSize);
+    copyAndZeroExtend(part(nhalf), pointer, chunkSize);
+    pointer += chunkSize;
+    length -= chunkSize;
+    size_t i = 1;
+    for (; i < nhalf && length > 0; i++) {
+        chunkSize = std::min(chunkSize, length);
+        copyAndZeroExtend(part(i), pointer, chunkSize);
+        size_t w = omega * i;
+        FFT::shiftModFn(m_parts[i + nhalf], m_parts[i], w, m_K, chunkSize);
+        pointer += chunkSize;
+        length -= chunkSize;
+    }
+    for (; i < nhalf; i++) {
+        zeroSpan(part(i));
+        zeroSpan(part(i + nhalf));
+    }
+    fftRecurse(0, nhalf, omega, temp());
+}
+
+// Forward transformation.
+// We use the "DIF" aka "decimation in frequency" transform, because it leaves the result in "bit
+// reversed" order, which is precisely what we need as input for the "DIT" aka "decimation in
+// time" backwards transform.
+void JSBigInt::FFTContainer::fftReturnShuffled(size_t start, size_t length, size_t omega, Digit* temp)
+{
+    ASSERT(!(length & 1)); // {length} must be even.
+    size_t half = length / 2;
+    FFT::sumDiff(m_parts[start], m_parts[start + half], m_parts[start], m_parts[start + half], m_length);
+    for (size_t k = 1; k < half; k++) {
+        FFT::sumDiff(m_parts[start + k], temp, m_parts[start + k], m_parts[start + half + k], m_length);
+        size_t w = omega * k;
+        FFT::shiftModFn(m_parts[start + half + k], temp, w, m_K);
+    }
+    fftRecurse(start, half, omega, temp);
+}
+
+// Recursive step of the above, factored out for additional callers.
+void JSBigInt::FFTContainer::fftRecurse(size_t start, size_t half, size_t omega, Digit* temp)
+{
+    if (half > 1) {
+        fftReturnShuffled(start, half, 2 * omega, temp);
+        fftReturnShuffled(start + half, half, 2 * omega, temp);
+    }
+}
+
+// Backward transformation.
+// We use the "DIT" aka "decimation in time" transform here, because it turns bit-reversed input
+// into normally sorted output.
+void JSBigInt::FFTContainer::backwardFFT(size_t start, size_t length, size_t omega)
+{
+    ASSERT(!(length & 1)); // {length} must be even.
+    size_t half = length / 2;
+    // Don't recurse for half == 2, as pointwiseMultiply already performed the first level of the
+    // backwards FFT.
+    if (half > 2) {
+        backwardFFT(start, half, 2 * omega);
+        backwardFFT(start + half, half, 2 * omega);
+    }
+    FFT::sumDiff(m_parts[start], m_parts[start + half], m_parts[start], m_parts[start + half], m_length);
+    for (size_t k = 1; k < half; k++) {
+        size_t w = omega * (length - k);
+        FFT::shiftModFn(temp(), m_parts[start + half + k], w, m_K);
+        FFT::sumDiff(m_parts[start + k], m_parts[start + half + k], m_parts[start + k], temp(), m_length);
+    }
+}
+
+// Recombines the result's parts into {z}, after backwards FFT.
+void JSBigInt::FFTContainer::normalizeAndRecombine(size_t omega, unsigned m, std::span<Digit> z, size_t chunkSize)
+{
+    std::ranges::fill(z, 0);
+    size_t zIndex = 0;
+    const size_t shift = m_n * omega - m;
+    for (size_t i = 0; i < m_n; i++, zIndex += chunkSize) {
+        Digit* part = m_parts[i];
+        FFT::shiftModFn(temp(), part, shift, m_K);
+        Digit carry = 0;
+        size_t zi = zIndex;
+        size_t j = 0;
+        for (; j < m_length && zi < z.size(); j++, zi++) {
+            Digit newCarry = 0;
+            z[zi] = digitAdd3(z[zi], m_temp[j], carry, newCarry);
+            carry = newCarry;
+        }
+        for (; j < m_length; j++)
+            ASSERT(!m_temp[j]);
+        if (carry)
+            z[zi] = carry;
+    }
+}
+
+// Helper function for {counterWeightAndRecombine} below.
+static bool fftShouldBeNegative(const JSBigInt::Digit* x, size_t xLength, JSBigInt::Digit threshold, size_t s)
+{
+    if (x[2 * s] >= threshold)
+        return true;
+    for (size_t i = 2 * s + 1; i < xLength; i++) {
+        if (x[i] > 0)
+            return true;
+    }
+    return false;
+}
+
+// Same as {normalizeAndRecombine} above, but for the needs of the recursive invocation ("inner
+// layer") of FFT multiplication, where an additional counter-weighting step is required.
+void JSBigInt::FFTContainer::counterWeightAndRecombine(size_t theta, unsigned m, std::span<Digit> z, size_t s)
+{
+    std::ranges::fill(z, 0);
+    size_t zIndex = 0;
+    for (size_t k = 0; k < m_n; k++, zIndex += s) {
+        // shift = -theta * k - m, taken modulo 2 * m_n * theta (the order of 2^theta).
+        size_t shift = theta * k + m;
+        ASSERT(shift <= 2 * m_n * theta);
+        if (shift)
+            shift = 2 * m_n * theta - shift;
+        Digit* input = m_parts[k];
+        FFT::shiftModFn(temp(), input, shift, m_K);
+        size_t remainingZ = z.size() - zIndex;
+        if (fftShouldBeNegative(temp(), m_length, k + 1, s)) {
+            // Subtract F_n from input before adding to result. We use the following transformation
+            // (knowing that X < F_n):
+            // Z + (X - F_n) == Z - (F_n - X)
+            Digit borrowZ = 0;
+            Digit borrowFn = 0;
+            {
+                // i == 0:
+                Digit d = digitSub(1, m_temp[0], borrowFn);
+                z[zIndex] = digitSub(z[zIndex], d, borrowZ);
+            }
+            size_t i = 1;
+            for (; i < m_K && i < remainingZ; i++) {
+                Digit newBorrowFn = 0;
+                Digit d = digitSub2(0, m_temp[i], borrowFn, newBorrowFn);
+                borrowFn = newBorrowFn;
+                Digit newBorrowZ = 0;
+                z[zIndex + i] = digitSub2(z[zIndex + i], d, borrowZ, newBorrowZ);
+                borrowZ = newBorrowZ;
+            }
+            ASSERT(i == m_K && m_K == m_length - 1);
+            for (; i < m_length && i < remainingZ; i++) {
+                Digit newBorrowFn = 0;
+                Digit d = digitSub2(1, m_temp[i], borrowFn, newBorrowFn);
+                borrowFn = newBorrowFn;
+                Digit newBorrowZ = 0;
+                z[zIndex + i] = digitSub2(z[zIndex + i], d, borrowZ, newBorrowZ);
+                borrowZ = newBorrowZ;
+            }
+            ASSERT(!borrowFn);
+            for (; borrowZ > 0 && i < remainingZ; i++) {
+                Digit newBorrowZ = 0;
+                z[zIndex + i] = digitSub(z[zIndex + i], borrowZ, newBorrowZ);
+                borrowZ = newBorrowZ;
+            }
+        } else {
+            Digit carry = 0;
+            size_t i = 0;
+            for (; i < m_length && i < remainingZ; i++) {
+                Digit newCarry = 0;
+                z[zIndex + i] = digitAdd3(z[zIndex + i], m_temp[i], carry, newCarry);
+                carry = newCarry;
+            }
+            for (; i < m_length; i++)
+                ASSERT(!m_temp[i]);
+            for (; carry > 0 && i < remainingZ; i++) {
+                Digit newCarry = 0;
+                z[zIndex + i] = digitAdd(z[zIndex + i], carry, newCarry);
+                carry = newCarry;
+            }
+            // {carry} might be != 0 here if z was negative before. That's fine.
+        }
+    }
+}
+
+// Main FFT function for recursive invocations ("inner layer").
+void JSBigInt::FFTContainer::multiplyInner(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, const FFT::Parameters& params)
+{
+    size_t omega = 2 * params.r; // really: 2^(2r)
+    size_t theta = params.r; // really: 2^r
+
+    FFTContainer a(params.n, params.K);
+    a.startDefault(x, params.s, theta, omega);
+    FFTContainer b(params.n, params.K);
+    b.startDefault(y, params.s, theta, omega);
+
+    a.pointwiseMultiply(b);
+
+    FFTContainer& c = a;
+    c.backwardFFT(0, params.n, omega);
+
+    c.counterWeightAndRecombine(theta, params.m, z, params.s);
+}
+
+// Pointwise multiplication of the parts.
+void JSBigInt::FFTContainer::pointwiseMultiply(const FFTContainer& other)
+{
+    ASSERT(m_n == other.m_n);
+    // The (m_K & 3) != 0 condition makes sure that the inner FFT gets to split the work into at
+    // least 4 chunks.
+    bool useFFT = m_length >= FFT::fftInnerThreshold && !(m_K & 3);
+    FFT::Parameters params;
+    if (useFFT)
+        FFT::computeParametersInner(m_K, params);
+    std::span<Digit> result { temp(), 2 * m_length };
+    for (size_t i = 0; i < m_n; i++) {
+        std::span<const Digit> a { m_parts[i], m_length };
+        std::span<const Digit> b { other.m_parts[i], m_length };
+        if (useFFT)
+            multiplyInner(result, a, b, params);
+        else
+            multiplyZeroPadded(result, a, b);
+        FFT::modFnDoubleWidth(m_parts[i], result.data(), m_length);
+        // To improve cache friendliness, we perform the first level of the backwards FFT here.
+        if (i & 1)
+            FFT::sumDiff(m_parts[i - 1], m_parts[i], m_parts[i - 1], m_parts[i], m_length);
+    }
+}
+
+// One transform covers x.size() + y.size() digits, so that sum sets the crossover against Toom-3,
+// whose cost for a longer x grows with x / y chunks of y-sized products. The smaller operand still
+// has to be wide enough for the transform's overhead to pay off, and once x is so long that it is
+// chunked, each chunk's transform only covers 2 * y.size(), so that needs the larger minimum.
+static bool shouldUseFFT(size_t largerSize, size_t smallerSize)
+{
+    using namespace FFT;
+    if (smallerSize < fftMinSmallerSize || largerSize + smallerSize < fftThreshold)
+        return false;
+    if (largerSize > asymmetricChunkingThreshold * smallerSize)
+        return smallerSize >= fftChunkThreshold;
+    return true;
+}
+
+// Part 4: Tying everything together into a multiplication algorithm.
+std::span<JSBigInt::Digit> JSBigInt::multiplyFFT(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+{
+    using namespace FFT;
+    ASSERT(x.size() >= y.size());
+    ASSERT(shouldUseFFT(x.size(), y.size()));
+    RELEASE_ASSERT(result.size() >= x.size() + y.size());
+    auto z = result.first(x.size() + y.size());
+
+    Parameters params;
+    if (x.data() == y.data() && x.size() == y.size()) {
+        // Squaring.
+        unsigned m = getParameters(x.size() * 2, params);
+        size_t omega = params.r; // really: 2^r
+        FFTContainer a(params.n, params.K);
+        a.start(x, params.s, 0, omega);
+        a.pointwiseMultiply(a);
+        a.backwardFFT(0, params.n, omega);
+        a.normalizeAndRecombine(omega, m, z, params.s);
+    } else if (x.size() > y.size() * asymmetricChunkingThreshold) {
+        // Asymmetric input sizes. Proceed in chunks. See multiplyToomCook.
+        size_t k = y.size();
+        unsigned m = getParameters(k * 2, params);
+        size_t omega = params.r; // really: 2^r
+        // The container {b} only needs to be initialized once, whereas {a} will be reused for
+        // each chunk.
+        FFTContainer b(params.n, params.K);
+        b.start(y, params.s, 0, omega);
+        FFTContainer a(params.n, params.K);
+        // Unroll the first iteration to initialize {z}.
+        auto x0 = clampedSubspan(x, 0, k);
+        a.start(x0, params.s, 0, omega);
+        a.pointwiseMultiply(b);
+        a.backwardFFT(0, params.n, omega);
+        a.normalizeAndRecombine(omega, m, z, params.s);
+        // Then loop for the remaining chunks.
+        Vector<Digit> chunkProduct(2 * k);
+        auto product = chunkProduct.mutableSpan();
+        for (size_t i = k; i < x.size(); i += k) {
+            auto xi = clampedSubspan(x, i, k);
+            a.start(xi, params.s, 0, omega);
+            a.pointwiseMultiply(b);
+            a.backwardFFT(0, params.n, omega);
+            a.normalizeAndRecombine(omega, m, product, params.s);
+            inplaceAddAndPropagate(z.subspan(i), product);
+        }
+    } else {
+        // Similar-ish sized inputs. Handle them in one go.
+        unsigned m = getParameters(x.size() + y.size(), params);
+        size_t omega = params.r; // really: 2^r
+
+        FFTContainer a(params.n, params.K);
+        a.start(x, params.s, 0, omega);
+        FFTContainer b(params.n, params.K);
+        b.start(y, params.s, 0, omega);
+        a.pointwiseMultiply(b);
+        a.backwardFFT(0, params.n, omega);
+        a.normalizeAndRecombine(omega, m, z, params.s);
+    }
+    return z;
+}
+
 ALWAYS_INLINE std::span<JSBigInt::Digit> JSBigInt::multiplyDigitsInto(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
     ASSERT(!y.empty());
@@ -1473,8 +2639,13 @@ ALWAYS_INLINE std::span<JSBigInt::Digit> JSBigInt::multiplyDigitsInto(std::span<
     }
     if (y.size() == 1)
         return multiplySingle(x, y[0], result);
-    if (y.size() >= karatsubaThreshold)
-        return multiplyKaratsuba(x, y, result);
+    if (y.size() >= karatsubaThreshold) {
+        if (y.size() < toomThreshold)
+            return multiplyKaratsuba(x, y, result);
+        if (shouldUseFFT(x.size(), y.size()))
+            return multiplyFFT(x, y, result);
+        return multiplyToomCook(x, y, result);
+    }
     if (shouldUseComba(x.size(), y.size()))
         return multiplyComba(x, y, result);
     return multiplySchoolbook(x, y, result);
