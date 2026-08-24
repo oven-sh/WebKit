@@ -192,7 +192,7 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedByte
 // An embedder's JS builtin (a root UnlinkedFunctionExecutable from BuiltinExecutables::createExecutable), with its code
 // blocks generated recursively beforehand (see recursivelyGenerateUnlinkedCodeBlocksForFunction). `embedderStamp`
 // identifies the builtin source's contents; decode checks it and the source length instead of hashing the source.
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const UnlinkedFunctionExecutable*, unsigned sourceLength, unsigned embedderStamp);
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const UnlinkedFunctionExecutable*, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* = nullptr);
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunction(VM&, Ref<CachedBytecode>, SourceProvider&, unsigned embedderStamp);
 
 template<typename UnlinkedCodeBlockType>

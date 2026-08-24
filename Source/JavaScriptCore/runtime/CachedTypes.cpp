@@ -4137,11 +4137,11 @@ private:
     CachedPtr<CachedFunctionExecutable> m_executable;
 };
 
-RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp)
+RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* externalStrings)
 {
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
-    Encoder encoder(vm, invalidFileHandle);
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, externalStrings);
     encoder.template malloc<BuiltinFunctionCacheEntry>(encoder)->encode(encoder, *executable, sourceLength, embedderStamp);
     encoder.encodeDeferred();
     return encoder.release(error);
