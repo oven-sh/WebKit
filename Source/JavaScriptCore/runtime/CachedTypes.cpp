@@ -1467,6 +1467,27 @@ public:
         return m_is8Bit ? create(span8()) : create(span16());
     }
 
+    // For uses that only need the characters (a string constant's JSString), not an atom: no atom table involved.
+    String decodePlainString(Decoder& decoder) const
+    {
+        if (m_isSymbol)
+            return String { adoptRef(*static_cast<StringImpl*>(decode(decoder))) };
+        if (!m_length)
+            return emptyString();
+        if (m_ordinal != noOrdinal) {
+            if (AtomStringImpl* known = decoder.atomForOrdinal(m_ordinal))
+                return String { known };
+        }
+        if (m_is8Bit) {
+            if (m_length >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
+                return StringImpl::createWithoutCopying(span8());
+            return StringImpl::create(span8());
+        }
+        if (m_length >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
+            return StringImpl::createWithoutCopying(span16());
+        return StringImpl::create(span16());
+    }
+
     static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
     std::span<const Latin1Character> NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
     std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
@@ -2202,8 +2223,8 @@ public:
                 v = jsString(decoder.vm(), String { this->inlineString(decoder) });
                 break;
             }
-            StringImpl* impl = this->buffer<CachedUniquedStringImpl>()->decode(decoder);
-            v = jsString(decoder.vm(), adoptRef(*impl));
+            // A constant becomes a JSString; it does not have to be an atom, so skip the atom table.
+            v = jsString(decoder.vm(), this->buffer<CachedUniquedStringImpl>()->decodePlainString(decoder));
             break;
         }
         case EncodedType::ImmutableButterfly:
