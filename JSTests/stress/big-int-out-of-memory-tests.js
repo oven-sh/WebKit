@@ -5,7 +5,8 @@ function assert(a, message) {
         throw new Error(message);
 }
 
-let a = (1n << 1048575n) - 1n;
+// maxLengthBits is 1 << 30; build an all-ones value of exactly that many bits.
+let a = (1n << 1073741823n) - 1n;
 a = (a << 1n) | 1n;
 
 try {

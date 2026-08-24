@@ -521,10 +521,10 @@ private:
     static constexpr uint64_t doubleMantissaHiddenBit = 1ULL << doublePhysicalMantissaSize;
     
     // The maximum length that the current implementation supports would be
-    // maxInt / digitBits. However, we use a lower limit for now, because
-    // raising it later is easier than lowering it.
-    // Support up to 1 million bits.
-    static constexpr unsigned maxLengthBits = 1024 * 1024;
+    // maxInt / digitBits. However, we use a lower limit, because raising it
+    // later is easier than lowering it.
+    // Support up to 1 << 30 bits (128MB of digits), the same cap as V8.
+    static constexpr unsigned maxLengthBits = 1 << 30;
     static constexpr unsigned maxLength = maxLengthBits / digitBits;
     static_assert(maxLengthBits % digitBits == 0);
     
