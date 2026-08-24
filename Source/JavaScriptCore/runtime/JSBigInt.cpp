@@ -1246,6 +1246,50 @@ ALWAYS_INLINE void JSBigInt::multiplySpecialLowFixed(std::span<const Digit, XSiz
     }
 }
 
+// The sub-quadratic algorithms below can run for seconds on the largest inputs, so they service a
+// termination request every few million digit multiplications, the way a JIT'ed loop does at its
+// back edge. Each unit of work is roughly one CPU multiply; the count only has to be accurate
+// enough to check often enough not to appear stuck and rarely enough not to cost anything. Once a
+// check has thrown, the algorithms unwind without finishing their buffers, and the caller returns
+// the exception. Callers without a global object, which cannot throw, never interrupt.
+class JSBigInt::InterruptCheck {
+    WTF_MAKE_NONCOPYABLE(InterruptCheck);
+public:
+    explicit InterruptCheck(VM* vm)
+        : m_vm(vm)
+    {
+    }
+
+    ALWAYS_INLINE void addWork(size_t units)
+    {
+        m_work += units;
+        if (m_work >= workThreshold) [[unlikely]]
+            checkSlow();
+    }
+
+    ALWAYS_INLINE bool interrupted() const { return m_interrupted; }
+
+private:
+    void checkSlow();
+
+    static constexpr size_t workThreshold = 5000000;
+
+    VM* m_vm;
+    size_t m_work { 0 };
+    bool m_interrupted { false };
+};
+
+void JSBigInt::InterruptCheck::checkSlow()
+{
+    m_work = 0;
+    if (!m_vm)
+        return;
+    // This handles every asynchronous trap the way a RETURN_IF_EXCEPTION does, so a termination
+    // request leaves the TerminationException pending.
+    if (m_vm->hasExceptionsAfterHandlingTraps()) [[unlikely]]
+        m_interrupted = true;
+}
+
 // Karatsuba multiplication, ported from V8 [1], which is in turn based on Go's math/big [2].
 //
 // [1]: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/bigint/mul-karatsuba.cc
@@ -1327,7 +1371,7 @@ void JSBigInt::karatsubaAbsoluteDifference(std::span<Digit> result, std::span<co
     std::ranges::fill(result.subspan(difference.size()), 0);
 }
 
-void JSBigInt::multiplyZeroPadded(std::span<Digit> result, std::span<const Digit> x, std::span<const Digit> y)
+void JSBigInt::multiplyZeroPadded(InterruptCheck& interrupt, std::span<Digit> result, std::span<const Digit> x, std::span<const Digit> y)
 {
     x = normalize(x);
     y = normalize(y);
@@ -1337,14 +1381,18 @@ void JSBigInt::multiplyZeroPadded(std::span<Digit> result, std::span<const Digit
         std::ranges::fill(result, 0);
         return;
     }
-    auto product = multiplyDigitsInto(x, y, result);
+    auto product = multiplyDigitsInto(interrupt, x, y, result);
     std::ranges::fill(result.subspan(product.size()), 0);
+    // The sub-quadratic algorithms count their work in the base cases they dispatch here, since
+    // their own passes over the digits are linear in comparison.
+    if (y.size() < karatsubaThreshold)
+        interrupt.addWork(x.size() * y.size());
 }
 
-void JSBigInt::karatsubaMain(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t n)
+void JSBigInt::karatsubaMain(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t n)
 {
     if (n < karatsubaThreshold) {
-        multiplyZeroPadded(z.first(std::min(z.size(), 2 * n)), x, y);
+        multiplyZeroPadded(interrupt, z.first(std::min(z.size(), 2 * n)), x, y);
         return;
     }
     ASSERT(scratch.size() >= 4 * n);
@@ -1357,11 +1405,15 @@ void JSBigInt::karatsubaMain(std::span<Digit> z, std::span<const Digit> x, std::
     auto scratchForRecursion = scratch.subspan(2 * n, 2 * n);
 
     auto p0 = scratch.first(n);
-    karatsubaMain(p0, x0, y0, scratchForRecursion, n2);
+    karatsubaMain(interrupt, p0, x0, y0, scratchForRecursion, n2);
+    if (interrupt.interrupted())
+        return;
     std::ranges::copy(p0, z.begin());
 
     auto p2 = scratch.subspan(n, n);
-    karatsubaMain(p2, x1, y1, scratchForRecursion, n2);
+    karatsubaMain(interrupt, p2, x1, y1, scratchForRecursion, n2);
+    if (interrupt.interrupted())
+        return;
     auto z2 = z.subspan(n);
     size_t end = std::min(z2.size(), p2.size());
     std::ranges::copy(p2.first(end), z2.begin());
@@ -1376,7 +1428,9 @@ void JSBigInt::karatsubaMain(std::span<Digit> z, std::span<const Digit> x, std::
     karatsubaAbsoluteDifference(xDifference, x1, x0, negative);
     karatsubaAbsoluteDifference(yDifference, y0, y1, negative);
     auto p1 = scratch.subspan(n, n);
-    karatsubaMain(p1, xDifference, yDifference, scratchForRecursion, n2);
+    karatsubaMain(interrupt, p1, xDifference, yDifference, scratchForRecursion, n2);
+    if (interrupt.interrupted())
+        return;
     if (negative)
         overflow -= inplaceSubAndPropagate(z.subspan(n2), p1);
     else
@@ -1384,24 +1438,26 @@ void JSBigInt::karatsubaMain(std::span<Digit> z, std::span<const Digit> x, std::
     ASSERT_UNUSED(overflow, !overflow);
 }
 
-void JSBigInt::karatsubaChunk(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch)
+void JSBigInt::karatsubaChunk(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch)
 {
     x = normalize(x);
     y = normalize(y);
     if (x.size() < y.size())
         std::swap(x, y);
     if (y.size() < karatsubaThreshold) {
-        multiplyZeroPadded(z, x, y);
+        multiplyZeroPadded(interrupt, z, x, y);
         return;
     }
     size_t k = karatsubaLength(y.size());
     ASSERT(scratch.size() >= 4 * k);
-    karatsubaStart(z, x, y, scratch, k);
+    karatsubaStart(interrupt, z, x, y, scratch, k);
 }
 
-void JSBigInt::karatsubaStart(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t k)
+void JSBigInt::karatsubaStart(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t k)
 {
-    karatsubaMain(z, x, y, scratch, k);
+    karatsubaMain(interrupt, z, x, y, scratch, k);
+    if (interrupt.interrupted())
+        return;
     if (z.size() > 2 * k)
         std::ranges::fill(z.subspan(2 * k), 0);
     if (k >= y.size() && x.size() == y.size())
@@ -1413,21 +1469,27 @@ void JSBigInt::karatsubaStart(std::span<Digit> z, std::span<const Digit> x, std:
     auto y0 = clampedSubspan(y, 0, k);
     auto y1 = clampedSubspan(y, k, y.size());
     if (!y1.empty()) {
-        karatsubaChunk(product, x0, y1, scratch);
+        karatsubaChunk(interrupt, product, x0, y1, scratch);
+        if (interrupt.interrupted())
+            return;
         inplaceAddAndPropagate(z.subspan(k), product);
     }
     for (size_t i = k; i < x.size(); i += k) {
         auto xi = clampedSubspan(x, i, k);
-        karatsubaChunk(product, xi, y0, scratch);
+        karatsubaChunk(interrupt, product, xi, y0, scratch);
+        if (interrupt.interrupted())
+            return;
         inplaceAddAndPropagate(z.subspan(i), product);
         if (!y1.empty()) {
-            karatsubaChunk(product, xi, y1, scratch);
+            karatsubaChunk(interrupt, product, xi, y1, scratch);
+            if (interrupt.interrupted())
+                return;
             inplaceAddAndPropagate(z.subspan(i + k), product);
         }
     }
 }
 
-std::span<JSBigInt::Digit> JSBigInt::multiplyKaratsuba(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+std::span<JSBigInt::Digit> JSBigInt::multiplyKaratsuba(InterruptCheck& interrupt, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
     ASSERT(x.size() >= y.size());
     ASSERT(y.size() >= karatsubaThreshold);
@@ -1435,7 +1497,7 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyKaratsuba(std::span<const Digit> x,
     size_t k = karatsubaLength(y.size());
     Vector<Digit> scratch(4 * k);
     auto z = result.first(x.size() + y.size());
-    karatsubaStart(z, x, y, scratch.mutableSpan(), k);
+    karatsubaStart(interrupt, z, x, y, scratch.mutableSpan(), k);
     return z;
 }
 
@@ -1579,7 +1641,7 @@ static void divideByThree(std::span<JSBigInt::Digit> x)
     }
 }
 
-void JSBigInt::toom3Main(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y)
+void JSBigInt::toom3Main(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y)
 {
     ASSERT(z.size() >= x.size() + y.size());
     // Phase 1: Splitting.
@@ -1641,9 +1703,9 @@ void JSBigInt::toom3Main(std::span<Digit> z, std::span<const Digit> x, std::span
     bool qm1Sign = subtractSigned(qm1, qo, false, y1, false);
 
     // Phase 3a: Pointwise multiplication, steps 0, 1, m1.
-    multiplyZeroPadded(r0, x0, y0);
-    multiplyZeroPadded(r1, p1, q1);
-    multiplyZeroPadded(rm1, pm1, qm1);
+    multiplyZeroPadded(interrupt, r0, x0, y0);
+    multiplyZeroPadded(interrupt, r1, p1, q1);
+    multiplyZeroPadded(interrupt, rm1, pm1, qm1);
     bool rm1Sign = pm1Sign != qm1Sign;
 
     // Phase 2b: Evaluation, steps m2 and inf.
@@ -1663,11 +1725,13 @@ void JSBigInt::toom3Main(std::span<Digit> z, std::span<const Digit> x, std::span
 
     // Phase 3b: Pointwise multiplication, steps m2 and inf.
     auto rm2 = t.first(rLength);
-    multiplyZeroPadded(rm2, pm2, qm2);
+    multiplyZeroPadded(interrupt, rm2, pm2, qm2);
     bool rm2Sign = pm2Sign != qm2Sign;
 
     auto rinf = t.subspan(rLength, rLength);
-    multiplyZeroPadded(rinf, x2, y2);
+    multiplyZeroPadded(interrupt, rinf, x2, y2);
+    if (interrupt.interrupted())
+        return;
 
     // Phase 4: Interpolation.
     auto R0 = r0;
@@ -1706,7 +1770,7 @@ void JSBigInt::toom3Main(std::span<Digit> z, std::span<const Digit> x, std::span
     inplaceAddAndPropagate(z.subspan(4 * i), R4);
 }
 
-std::span<JSBigInt::Digit> JSBigInt::multiplyToomCook(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+std::span<JSBigInt::Digit> JSBigInt::multiplyToomCook(InterruptCheck& interrupt, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
     ASSERT(x.size() >= y.size());
     ASSERT(y.size() >= toomThreshold);
@@ -1716,20 +1780,20 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyToomCook(std::span<const Digit> x, 
     // the same five products as a balanced pair and beats chunking x into y-sized pieces. Beyond
     // that ratio the padding wastes more than the chunking does.
     if (x.size() * 3 <= y.size() * 5) {
-        toom3Main(z, x, y);
+        toom3Main(interrupt, z, x, y);
         return z;
     }
     size_t k = y.size();
-    toom3Main(z, x.first(k), y);
+    toom3Main(interrupt, z, x.first(k), y);
     Vector<Digit> chunkProduct(2 * k);
     auto product = chunkProduct.mutableSpan();
-    for (size_t i = k; i < x.size(); i += k) {
+    for (size_t i = k; i < x.size() && !interrupt.interrupted(); i += k) {
         auto xi = clampedSubspan(x, i, k);
         if (xi.size() < k) {
             // The last chunk is shorter, so let the size dispatch pick its algorithm.
-            multiplyZeroPadded(product, xi, y);
+            multiplyZeroPadded(interrupt, product, xi, y);
         } else
-            toom3Main(product, xi, y);
+            toom3Main(interrupt, product, xi, y);
         inplaceAddAndPropagate(z.subspan(i), product);
     }
     return z;
@@ -2218,8 +2282,9 @@ class JSBigInt::FFTContainer {
 public:
     // {n} is the number of chunks, whose length is {K}+1.
     // {K} determines F_n = 2^(K * digitBits) + 1.
-    FFTContainer(size_t n, size_t K)
-        : m_n(n)
+    FFTContainer(InterruptCheck& interrupt, size_t n, size_t K)
+        : m_interrupt(interrupt)
+        , m_n(n)
         , m_K(K)
         , m_length(K + 1)
         , m_storage(m_length * n)
@@ -2244,13 +2309,14 @@ public:
 
     void pointwiseMultiply(const FFTContainer& other);
 
-    static void multiplyInner(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, const FFT::Parameters&);
+    static void multiplyInner(InterruptCheck&, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, const FFT::Parameters&);
 
 private:
     Digit* temp() { return m_temp.mutableSpan().data(); }
     std::span<Digit> tempSpan() { return m_temp.mutableSpan().first(m_length); }
     std::span<Digit> part(size_t i) { return { m_parts[i], m_length }; }
 
+    InterruptCheck& m_interrupt;
     const size_t m_n; // Number of parts.
     const size_t m_K; // Always m_length - 1.
     const size_t m_length; // Length of each part, in digits.
@@ -2274,6 +2340,7 @@ void JSBigInt::FFTContainer::startDefault(std::span<const Digit> x, size_t chunk
     size_t currentTheta = 0;
     size_t i = 0;
     for (; i < m_n && length > 0; i++, currentTheta += theta) {
+        m_interrupt.addWork(m_length);
         chunkSize = std::min(chunkSize, length);
         // For invocations via multiplyInner, x.size() == m_n * chunkSize + 1, because the outer
         // layer's "K" is passed as the inner layer's "N". Since x is (mod Fn)-normalized on the
@@ -2318,6 +2385,7 @@ void JSBigInt::FFTContainer::start(std::span<const Digit> x, size_t chunkSize, s
     length -= chunkSize;
     size_t i = 1;
     for (; i < nhalf && length > 0; i++) {
+        m_interrupt.addWork(m_length);
         chunkSize = std::min(chunkSize, length);
         copyAndZeroExtend(part(i), pointer, chunkSize);
         size_t w = omega * i;
@@ -2339,9 +2407,12 @@ void JSBigInt::FFTContainer::start(std::span<const Digit> x, size_t chunkSize, s
 void JSBigInt::FFTContainer::fftReturnShuffled(size_t start, size_t length, size_t omega, Digit* temp)
 {
     ASSERT(!(length & 1)); // {length} must be even.
+    if (m_interrupt.interrupted())
+        return;
     size_t half = length / 2;
     FFT::sumDiff(m_parts[start], m_parts[start + half], m_parts[start], m_parts[start + half], m_length);
     for (size_t k = 1; k < half; k++) {
+        m_interrupt.addWork(m_length);
         FFT::sumDiff(m_parts[start + k], temp, m_parts[start + k], m_parts[start + half + k], m_length);
         size_t w = omega * k;
         FFT::shiftModFn(m_parts[start + half + k], temp, w, m_K);
@@ -2371,8 +2442,11 @@ void JSBigInt::FFTContainer::backwardFFT(size_t start, size_t length, size_t ome
         backwardFFT(start, half, 2 * omega);
         backwardFFT(start + half, half, 2 * omega);
     }
+    if (m_interrupt.interrupted())
+        return;
     FFT::sumDiff(m_parts[start], m_parts[start + half], m_parts[start], m_parts[start + half], m_length);
     for (size_t k = 1; k < half; k++) {
+        m_interrupt.addWork(m_length);
         size_t w = omega * (length - k);
         FFT::shiftModFn(temp(), m_parts[start + half + k], w, m_K);
         FFT::sumDiff(m_parts[start + k], m_parts[start + half + k], m_parts[start + k], temp(), m_length);
@@ -2385,7 +2459,8 @@ void JSBigInt::FFTContainer::normalizeAndRecombine(size_t omega, unsigned m, std
     std::ranges::fill(z, 0);
     size_t zIndex = 0;
     const size_t shift = m_n * omega - m;
-    for (size_t i = 0; i < m_n; i++, zIndex += chunkSize) {
+    for (size_t i = 0; i < m_n && !m_interrupt.interrupted(); i++, zIndex += chunkSize) {
+        m_interrupt.addWork(m_length);
         Digit* part = m_parts[i];
         FFT::shiftModFn(temp(), part, shift, m_K);
         Digit carry = 0;
@@ -2421,7 +2496,8 @@ void JSBigInt::FFTContainer::counterWeightAndRecombine(size_t theta, unsigned m,
 {
     std::ranges::fill(z, 0);
     size_t zIndex = 0;
-    for (size_t k = 0; k < m_n; k++, zIndex += s) {
+    for (size_t k = 0; k < m_n && !m_interrupt.interrupted(); k++, zIndex += s) {
+        m_interrupt.addWork(m_length);
         // shift = -theta * k - m, taken modulo 2 * m_n * theta (the order of 2^theta).
         size_t shift = theta * k + m;
         ASSERT(shift <= 2 * m_n * theta);
@@ -2486,14 +2562,14 @@ void JSBigInt::FFTContainer::counterWeightAndRecombine(size_t theta, unsigned m,
 }
 
 // Main FFT function for recursive invocations ("inner layer").
-void JSBigInt::FFTContainer::multiplyInner(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, const FFT::Parameters& params)
+void JSBigInt::FFTContainer::multiplyInner(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, const FFT::Parameters& params)
 {
     size_t omega = 2 * params.r; // really: 2^(2r)
     size_t theta = params.r; // really: 2^r
 
-    FFTContainer a(params.n, params.K);
+    FFTContainer a(interrupt, params.n, params.K);
     a.startDefault(x, params.s, theta, omega);
-    FFTContainer b(params.n, params.K);
+    FFTContainer b(interrupt, params.n, params.K);
     b.startDefault(y, params.s, theta, omega);
 
     a.pointwiseMultiply(b);
@@ -2515,13 +2591,15 @@ void JSBigInt::FFTContainer::pointwiseMultiply(const FFTContainer& other)
     if (useFFT)
         FFT::computeParametersInner(m_K, params);
     std::span<Digit> result { temp(), 2 * m_length };
-    for (size_t i = 0; i < m_n; i++) {
+    for (size_t i = 0; i < m_n && !m_interrupt.interrupted(); i++) {
         std::span<const Digit> a { m_parts[i], m_length };
         std::span<const Digit> b { other.m_parts[i], m_length };
         if (useFFT)
-            multiplyInner(result, a, b, params);
+            multiplyInner(m_interrupt, result, a, b, params);
         else
-            multiplyZeroPadded(result, a, b);
+            multiplyZeroPadded(m_interrupt, result, a, b);
+        if (m_interrupt.interrupted())
+            return;
         FFT::modFnDoubleWidth(m_parts[i], result.data(), m_length);
         // To improve cache friendliness, we perform the first level of the backwards FFT here.
         if (i & 1)
@@ -2544,7 +2622,7 @@ static bool shouldUseFFT(size_t largerSize, size_t smallerSize)
 }
 
 // Part 4: Tying everything together into a multiplication algorithm.
-std::span<JSBigInt::Digit> JSBigInt::multiplyFFT(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+std::span<JSBigInt::Digit> JSBigInt::multiplyFFT(InterruptCheck& interrupt, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
     using namespace FFT;
     ASSERT(x.size() >= y.size());
@@ -2557,7 +2635,7 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyFFT(std::span<const Digit> x, std::
         // Squaring.
         unsigned m = getParameters(x.size() * 2, params);
         size_t omega = params.r; // really: 2^r
-        FFTContainer a(params.n, params.K);
+        FFTContainer a(interrupt, params.n, params.K);
         a.start(x, params.s, 0, omega);
         a.pointwiseMultiply(a);
         a.backwardFFT(0, params.n, omega);
@@ -2569,9 +2647,9 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyFFT(std::span<const Digit> x, std::
         size_t omega = params.r; // really: 2^r
         // The container {b} only needs to be initialized once, whereas {a} will be reused for
         // each chunk.
-        FFTContainer b(params.n, params.K);
+        FFTContainer b(interrupt, params.n, params.K);
         b.start(y, params.s, 0, omega);
-        FFTContainer a(params.n, params.K);
+        FFTContainer a(interrupt, params.n, params.K);
         // Unroll the first iteration to initialize {z}.
         auto x0 = clampedSubspan(x, 0, k);
         a.start(x0, params.s, 0, omega);
@@ -2581,7 +2659,7 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyFFT(std::span<const Digit> x, std::
         // Then loop for the remaining chunks.
         Vector<Digit> chunkProduct(2 * k);
         auto product = chunkProduct.mutableSpan();
-        for (size_t i = k; i < x.size(); i += k) {
+        for (size_t i = k; i < x.size() && !interrupt.interrupted(); i += k) {
             auto xi = clampedSubspan(x, i, k);
             a.start(xi, params.s, 0, omega);
             a.pointwiseMultiply(b);
@@ -2594,9 +2672,9 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyFFT(std::span<const Digit> x, std::
         unsigned m = getParameters(x.size() + y.size(), params);
         size_t omega = params.r; // really: 2^r
 
-        FFTContainer a(params.n, params.K);
+        FFTContainer a(interrupt, params.n, params.K);
         a.start(x, params.s, 0, omega);
-        FFTContainer b(params.n, params.K);
+        FFTContainer b(interrupt, params.n, params.K);
         b.start(y, params.s, 0, omega);
         a.pointwiseMultiply(b);
         a.backwardFFT(0, params.n, omega);
@@ -2605,7 +2683,7 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyFFT(std::span<const Digit> x, std::
     return z;
 }
 
-ALWAYS_INLINE std::span<JSBigInt::Digit> JSBigInt::multiplyDigitsInto(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+ALWAYS_INLINE std::span<JSBigInt::Digit> JSBigInt::multiplyDigitsInto(InterruptCheck& interrupt, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
     ASSERT(!y.empty());
     ASSERT(x.size() >= y.size());
@@ -2641,10 +2719,10 @@ ALWAYS_INLINE std::span<JSBigInt::Digit> JSBigInt::multiplyDigitsInto(std::span<
         return multiplySingle(x, y[0], result);
     if (y.size() >= karatsubaThreshold) {
         if (y.size() < toomThreshold)
-            return multiplyKaratsuba(x, y, result);
+            return multiplyKaratsuba(interrupt, x, y, result);
         if (shouldUseFFT(x.size(), y.size()))
-            return multiplyFFT(x, y, result);
-        return multiplyToomCook(x, y, result);
+            return multiplyFFT(interrupt, x, y, result);
+        return multiplyToomCook(interrupt, x, y, result);
     }
     if (shouldUseComba(x.size(), y.size()))
         return multiplyComba(x, y, result);
@@ -2701,7 +2779,15 @@ JSBigInt::ImplResult JSBigInt::multiplyImpl(JSGlobalObject* globalObject, BigInt
     bigInt->finishCreation(vm);
     bigInt->setSign(resultSign);
 
-    std::span<Digit> result = multiplyDigitsInto(xSpan, ySpan, bigInt->digits());
+    InterruptCheck interrupt(&vm);
+    std::span<Digit> result = multiplyDigitsInto(interrupt, xSpan, ySpan, bigInt->digits());
+    if (interrupt.interrupted()) [[unlikely]] {
+        // The digits were never finished, so leave the cell as a zero rather than a value.
+        bigInt->setLength(0);
+        bigInt->setSign(false);
+        RELEASE_ASSERT(scope.exception());
+        return nullptr;
+    }
     ASSERT(!result.empty());
     if (!result.back())
         result = result.first(result.size() - 1);
@@ -2941,7 +3027,7 @@ std::span<JSBigInt::Digit> JSBigInt::rightShift(std::span<Digit> z, std::span<co
 // If Q is present, its length must be at least A.len - B.len + 1.
 // If R is present, its length must be at least B.len.
 // See Knuth, Volume 2, section 4.3.1, Algorithm D.
-std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideSchoolbook(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideSchoolbook(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b, InterruptCheck* interrupt)
 {
     RELEASE_ASSERT(b.size() >= 2); // Use divideSingle otherwise.
     RELEASE_ASSERT(a.size() >= b.size()); // No-op otherwise.
@@ -3003,6 +3089,12 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
     Digit vn2 = normalizedDivisor[n - 2];
     DigitDiv digitDiv(vn1);
     for (size_t j = m + 1; j-- > 0;) {
+        // A long divisor makes each quotient digit a long row, so the termination check is per row.
+        if (interrupt) {
+            interrupt->addWork(n);
+            if (interrupt->interrupted())
+                break;
+        }
         // D3.
         // Estimate the current iteration's quotient digit (see Knuth for details).
         // {qhat} is the current quotient digit.
@@ -3143,8 +3235,9 @@ static int compareWithHighDigit(JSBigInt::Digit aHigh, std::span<const JSBigInt:
 class JSBigInt::BurnikelZiegler {
     WTF_MAKE_NONCOPYABLE(BurnikelZiegler);
 public:
-    explicit BurnikelZiegler(size_t scratchSpace)
-        : m_scratch(scratchSpace >= burnikelThreshold ? scratchSpace : 0)
+    BurnikelZiegler(InterruptCheck& interrupt, size_t scratchSpace)
+        : m_interrupt(interrupt)
+        , m_scratch(scratchSpace >= burnikelThreshold ? scratchSpace : 0)
     {
     }
 
@@ -3153,6 +3246,7 @@ public:
     void d2n1n(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
 
 private:
+    InterruptCheck& m_interrupt;
     Vector<Digit> m_scratch;
 };
 
@@ -3180,9 +3274,10 @@ void JSBigInt::BurnikelZiegler::divideBasecase(std::span<Digit> q, std::span<Dig
         std::ranges::fill(q.subspan(quotient.size()), 0);
         r[0] = remainder;
         std::ranges::fill(r.subspan(1), 0);
+        m_interrupt.addWork(a.size());
         return;
     }
-    auto [quotient, remainder] = divideSchoolbook(q, r, a, b);
+    auto [quotient, remainder] = divideSchoolbook(q, r, a, b, &m_interrupt);
     std::ranges::fill(q.subspan(quotient.size()), 0);
     std::ranges::fill(r.subspan(remainder.size()), 0);
 }
@@ -3212,6 +3307,8 @@ void JSBigInt::BurnikelZiegler::d3n2n(std::span<Digit> q, std::span<Digit> r, st
         // 3a. If A1 < B1, compute Qhat = floor([A1, A2] / B1) with remainder R1 using algorithm
         //     D2n1n.
         d2n1n(qhat, r1, a1a2, b1);
+        if (m_interrupt.interrupted())
+            return;
     } else {
         // 3b. If A1 >= B1, set Qhat = 2^(digitBits * n) - 1 and set R1 = [A1, A2] - [B1, 0] + [0, B1]
         std::ranges::fill(qhat, ~static_cast<Digit>(0));
@@ -3230,7 +3327,9 @@ void JSBigInt::BurnikelZiegler::d3n2n(std::span<Digit> q, std::span<Digit> r, st
     }
     // 4. Compute D = Qhat * B2 using (Karatsuba) multiplication.
     auto d = m_scratch.mutableSpan().first(2 * n);
-    multiplyZeroPadded(d, qhat, b2);
+    multiplyZeroPadded(m_interrupt, d, qhat, b2);
+    if (m_interrupt.interrupted())
+        return;
 
     // 5. Compute Rhat = R1*2^(digitBits * n) + A3 - D = [R1, A3] - D.
     copyZeroPadded(r.first(n), a3);
@@ -3272,6 +3371,8 @@ void JSBigInt::BurnikelZiegler::d2n1n(std::span<Digit> q, std::span<Digit> r, st
     auto q1 = q.subspan(n / 2, n / 2);
     Vector<Digit> r1(n);
     d3n2n(q1, r1.mutableSpan(), a1a2, a3, b);
+    if (m_interrupt.interrupted())
+        return;
     // 4. Compute the low part Q2 of floor(A/B) as Q2 = floor([R11, R12, A4] / [B1, B2]) with
     //    remainder R, using algorithm D3n2n.
     auto q2 = q.first(n / 2);
@@ -3282,7 +3383,7 @@ void JSBigInt::BurnikelZiegler::d2n1n(std::span<Digit> q, std::span<Digit> r, st
 // Algorithm 3 from the paper. Variables names same as there.
 // Returns Q(uotient) and R(emainder) for A/B (no size restrictions). R is optional, Q is not. Every
 // digit of Q and of R is written.
-std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideBurnikelZiegler(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideBurnikelZiegler(InterruptCheck& interrupt, std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
 {
     RELEASE_ASSERT(a.size() >= b.size());
     RELEASE_ASSERT(r.empty() || r.size() >= b.size());
@@ -3330,13 +3431,15 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
     auto z = temp.mutableSpan().subspan(n, zLength);
     copyZeroPadded(z, clampedSubspan(a, n * (t - 2), zLength));
     // 8. For i from t-2 downto 0 do:
-    BurnikelZiegler bz(n);
+    BurnikelZiegler bz(interrupt, n);
     auto ri = temp.mutableSpan().subspan(3 * n, n);
     {
         // First iteration unrolled and specialized.
         // We might not have n digits at the top of Q, so use temporary storage for Qi...
         auto qi = temp.mutableSpan().subspan(4 * n, n);
         bz.d2n1n(qi, ri, z, b);
+        if (interrupt.interrupted())
+            return { q, r };
         // ...but there *will* be enough space for any non-zero result digits!
         auto quotientChunk = normalize(std::span<const Digit>(qi));
         auto target = q.subspan(n * (t - 2));
@@ -3352,6 +3455,8 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
         // 8a. Using algorithm D2n1n compute Qi, Ri such that Zi = B*Qi + Ri.
         auto qi = q.subspan(i * n, n);
         bz.d2n1n(qi, ri, z, b);
+        if (interrupt.interrupted())
+            return { q, r };
     }
     // 9. Return Q = [Q_(t-2), ..., Q_0] and R = R_0 * 2^(-sigma).
 #if ASSERT_ENABLED
@@ -3403,7 +3508,7 @@ static void assertIntegerPartRange(std::span<const JSBigInt::Digit>, JSBigInt::D
 
 // Z := (the fractional part of) 1/V, via naive division.
 // See comments at {invert} and {invertNewton} below for details.
-void JSBigInt::invertBasecase(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch)
+void JSBigInt::invertBasecase(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch)
 {
     ASSERT(z.size() > v.size());
     ASSERT(!v.empty());
@@ -3423,9 +3528,9 @@ void JSBigInt::invertBasecase(std::span<Digit> z, std::span<const Digit> v, std:
     // We don't need the remainder.
     std::span<Digit> quotient;
     if (n < burnikelThreshold)
-        quotient = std::get<0>(divideSchoolbook(z, { }, x, v));
+        quotient = std::get<0>(divideSchoolbook(z, { }, x, v, &interrupt));
     else
-        quotient = std::get<0>(divideBurnikelZiegler(z, { }, x, v));
+        quotient = std::get<0>(divideBurnikelZiegler(interrupt, z, { }, x, v));
     std::ranges::fill(z.subspan(quotient.size()), 0);
 }
 
@@ -3438,7 +3543,7 @@ void JSBigInt::invertBasecase(std::span<Digit> z, std::span<const Digit> v, std:
 // is one too much, and in the corner case where V is minimal and the implicit top digit would
 // have to be 2 it is one too little). Barrett's division algorithm can handle that, so we don't
 // care.
-void JSBigInt::invertNewton(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch)
+void JSBigInt::invertNewton(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch)
 {
     const size_t vn = v.size();
     ASSERT(z.size() >= vn);
@@ -3471,7 +3576,7 @@ void JSBigInt::invertNewton(std::span<Digit> z, std::span<const Digit> v, std::s
     // Step (2): Initial approximation.
     size_t initialDigits = (k + 1 + digitBits - 1) / digitBits;
     auto topPartOfV = v.subspan(vn - initialDigits, initialDigits);
-    invertBasecase(z, topPartOfV, scratch);
+    invertBasecase(interrupt, z, topPartOfV, scratch);
     z[initialDigits] = z[initialDigits] + 1; // Implicit top digit.
     // From now on, we'll keep zLength updated to the part that's already computed.
     size_t zLength = initialDigits + 1;
@@ -3482,7 +3587,9 @@ void JSBigInt::invertNewton(std::span<Digit> z, std::span<const Digit> v, std::s
 
         // (3b): S = Z^2
         auto s = scratch.subspan(sOffset, 2 * zLength);
-        multiplyZeroPadded(s, z.first(zLength), z.first(zLength));
+        multiplyZeroPadded(interrupt, s, z.first(zLength), z.first(zLength));
+        if (interrupt.interrupted())
+            return;
         ASSERT(!s.back());
         s = s.first(s.size() - 1); // Top digit of S is unused.
         assertIntegerPartRange(s, 1, 4);
@@ -3497,7 +3604,9 @@ void JSBigInt::invertNewton(std::span<Digit> z, std::span<const Digit> v, std::s
         fractionDigits = (2 * k + 1 + digitBits - 1) / digitBits;
         auto u = scratch.subspan(uOffset, s.size() + t.size());
         ASSERT(u.size() > fractionDigits);
-        multiplyZeroPadded(u, s, t);
+        multiplyZeroPadded(interrupt, u, s, t);
+        if (interrupt.interrupted())
+            return;
         u = u.subspan(u.size() - (1 + fractionDigits));
         assertIntegerPartRange(u, 0, 3);
 
@@ -3552,7 +3661,7 @@ void JSBigInt::invertNewton(std::span<Digit> z, std::span<const Digit> v, std::s
 // (Corner case: if V is minimal, the implicit digit should be 2; in that case we return one less
 // than the correct answer. divideBarrett can handle that.)
 // Needs invertScratchSpace(V.size()) digits of scratch space.
-void JSBigInt::invert(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch)
+void JSBigInt::invert(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch)
 {
     ASSERT(z.size() > v.size());
     ASSERT(!v.empty());
@@ -3561,14 +3670,14 @@ void JSBigInt::invert(std::span<Digit> z, std::span<const Digit> v, std::span<Di
 
     size_t vn = v.size();
     if (vn >= newtonInversionThreshold)
-        return invertNewton(z, v, scratch);
+        return invertNewton(interrupt, z, v, scratch);
     if (vn == 1) {
         Digit d = v[0];
         Digit dummyRemainder = 0;
         z[0] = digitDiv(~d, ~static_cast<Digit>(0), d, dummyRemainder);
         z[1] = 0;
     } else {
-        invertBasecase(z, v, scratch);
+        invertBasecase(interrupt, z, v, scratch);
         if (z[vn] == 1) {
             std::ranges::fill(z.first(vn), ~static_cast<Digit>(0));
             z[vn] = 0;
@@ -3580,7 +3689,7 @@ void JSBigInt::invert(std::span<Digit> z, std::span<const Digit> v, std::span<Di
 // Computes Q(uotient) and R(emainder) for A/B using I, which is a precomputed approximation of
 // 1/B (e.g. with invert() above).
 // Needs divideBarrettScratchSpace(A.size()) scratch space.
-void JSBigInt::divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b, std::span<const Digit> inverse, std::span<Digit> scratch)
+void JSBigInt::divideBarrett(InterruptCheck& interrupt, std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b, std::span<const Digit> inverse, std::span<Digit> scratch)
 {
     ASSERT(q.size() > a.size() - b.size());
     ASSERT(r.size() >= b.size());
@@ -3602,14 +3711,18 @@ void JSBigInt::divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<c
     // {inverse} has an implicit high digit with value 1, so we add {A1} to the high part of the
     // multiplication result.
     auto k = scratch.first(2 * inverse.size());
-    multiplyZeroPadded(k, a1, inverse);
+    multiplyZeroPadded(interrupt, k, a1, inverse);
+    if (interrupt.interrupted())
+        return;
     q = q.first(inverse.size() + 1);
     addZeroPadded(q, k.subspan(inverse.size()), a1);
     // K is no longer used, can reuse {scratch} for P.
 
     // (3): R = A - B*Q (approximate remainder).
     auto p = scratch.first(a.size() + 1);
-    multiplyZeroPadded(p, b, q);
+    multiplyZeroPadded(interrupt, p, b, q);
+    if (interrupt.interrupted())
+        return;
     auto remainder = r.first(n);
     Digit borrow = subtractAndReturnBorrow(remainder, a, p.first(n));
     // R may be allocated wider than B, zero out any extra digits if so.
@@ -3644,7 +3757,7 @@ void JSBigInt::divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<c
 
 // Computes Q(uotient) and R(emainder) for A/B, using Barrett division. Every digit of Q and of R
 // is written.
-std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideBarrett(InterruptCheck& interrupt, std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
 {
     RELEASE_ASSERT(q.size() > a.size() - b.size() + 1);
     RELEASE_ASSERT(r.size() >= b.size());
@@ -3680,7 +3793,9 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
     size_t scratchLength = std::max(invertScratchSpace(inverseLength), divideBarrettScratchSpace(barrettDividendLength));
     Vector<Digit> scratchStorage(scratchLength);
     auto scratch = scratchStorage.mutableSpan();
-    invert(inverseStorage.mutableSpan(), b.subspan(b.size() - inverseLength, inverseLength), scratch);
+    invert(interrupt, inverseStorage.mutableSpan(), b.subspan(b.size() - inverseLength, inverseLength), scratch);
+    if (interrupt.interrupted())
+        return { q, r };
     ASSERT(!inverseStorage[inverseLength]);
     auto inverse = inverseStorage.span().first(inverseLength);
     if (a.size() > 2 * b.size()) {
@@ -3704,7 +3819,9 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
         // First iteration unrolled and specialized.
         {
             size_t i = t - 2;
-            divideBarrett(qi, ri, z, b, inverse, scratch);
+            divideBarrett(interrupt, qi, ri, z, b, inverse, scratch);
+            if (interrupt.interrupted())
+                return { q, r };
             auto target = q.subspan(n * i);
             // In the first iteration, all qiLength = n + 1 digits may be used.
             copyZeroPadded(target, qi);
@@ -3720,7 +3837,9 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
             copyZeroPadded(z.subspan(n), ri);
             copyZeroPadded(z.first(n), clampedSubspan(a, n * i, n));
             // (8a): Compute Qi, Ri such that Zi = B*Qi + Ri.
-            divideBarrett(qi, ri, z, b, inverse, scratch);
+            divideBarrett(interrupt, qi, ri, z, b, inverse, scratch);
+            if (interrupt.interrupted())
+                return { q, r };
             ASSERT(!qi[qiLength - 1]);
             // (9): Return Q = [Q_(t-2), ..., Q_0]...
             copyZeroPadded(q.subspan(n * i, n), qi);
@@ -3730,7 +3849,9 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
         // (9): ...and R = R_0 * 2^(-leading_zeros).
         rightShiftZeroPadded(r, remainder, shift);
     } else {
-        divideBarrett(q, r, a, b, inverse, scratch);
+        divideBarrett(interrupt, q, r, a, b, inverse, scratch);
+        if (interrupt.interrupted())
+            return { q, r };
         rightShiftZeroPadded(r, r, shift);
     }
     return { q.first(quotientLength), r.first(remainderLength) };
@@ -3760,32 +3881,32 @@ static bool shouldUseSchoolbookDivision(size_t dividendSize, size_t divisorSize)
     return divisorSize < burnikelThreshold || dividendSize - divisorSize < burnikelThreshold;
 }
 
-std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideDigitsInto(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideDigitsInto(InterruptCheck& interrupt, std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
 {
     ASSERT(b.size() >= 2);
     ASSERT(a.size() >= b.size());
     ASSERT(q.empty() || q.size() >= quotientLength(a, b));
     ASSERT(r.empty() || r.size() >= b.size());
     if (shouldUseSchoolbookDivision(a.size(), b.size()))
-        return divideSchoolbook(q, r, a, b);
+        return divideSchoolbook(q, r, a, b, &interrupt);
     if (b.size() < barrettThreshold) {
         if (!q.empty())
-            return divideBurnikelZiegler(q, r, a, b);
+            return divideBurnikelZiegler(interrupt, q, r, a, b);
         Vector<Digit> quotientStorage(quotientLength(a, b));
-        auto [quotient, remainder] = divideBurnikelZiegler(quotientStorage.mutableSpan(), r, a, b);
+        auto [quotient, remainder] = divideBurnikelZiegler(interrupt, quotientStorage.mutableSpan(), r, a, b);
         return { { }, remainder };
     }
     if (q.empty()) {
         Vector<Digit> quotientStorage(quotientLength(a, b));
-        auto [quotient, remainder] = divideBarrett(quotientStorage.mutableSpan(), r, a, b);
+        auto [quotient, remainder] = divideBarrett(interrupt, quotientStorage.mutableSpan(), r, a, b);
         return { { }, remainder };
     }
     if (r.empty()) {
         Vector<Digit> remainderStorage(b.size());
-        auto [quotient, remainder] = divideBarrett(q, remainderStorage.mutableSpan(), a, b);
+        auto [quotient, remainder] = divideBarrett(interrupt, q, remainderStorage.mutableSpan(), a, b);
         return { quotient, { } };
     }
-    return divideBarrett(q, r, a, b);
+    return divideBarrett(interrupt, q, r, a, b);
 }
 
 static ALWAYS_INLINE JSBigInt::Digit estimateQhat(std::span<const JSBigInt::Digit> a, std::span<const JSBigInt::Digit> b)
@@ -3988,7 +4109,12 @@ JSBigInt::ImplResult JSBigInt::divideImpl(JSGlobalObject* globalObject, BigIntIm
     }
 
     Vector<Digit, 16> q(quotientLength(xSpan, ySpan));
-    auto [qSpan, rSpan] = divideDigitsInto(q.mutableSpan(), { }, xSpan, ySpan);
+    InterruptCheck interrupt(&vm);
+    auto [qSpan, rSpan] = divideDigitsInto(interrupt, q.mutableSpan(), { }, xSpan, ySpan);
+    if (interrupt.interrupted()) [[unlikely]] {
+        RELEASE_ASSERT(scope.exception());
+        return nullptr;
+    }
     RELEASE_AND_RETURN(scope, tryCreateFromImpl(globalObject, vm, resultSign, qSpan));
 }
 
@@ -4066,7 +4192,7 @@ std::span<JSBigInt::Digit> JSBigInt::addDigits(std::span<const Digit> x, std::sp
     return normalize(addDigitsInto(x, y, result));
 }
 
-std::span<JSBigInt::Digit> JSBigInt::multiplyDigits(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
+std::span<JSBigInt::Digit> JSBigInt::multiplyDigits(InterruptCheck& interrupt, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
     x = normalize(x);
     y = normalize(y);
@@ -4075,10 +4201,10 @@ std::span<JSBigInt::Digit> JSBigInt::multiplyDigits(std::span<const Digit> x, st
     if (x.size() < y.size())
         std::swap(x, y);
     RELEASE_ASSERT(result.size() >= x.size() + y.size());
-    return normalize(multiplyDigitsInto(x, y, result));
+    return normalize(multiplyDigitsInto(interrupt, x, y, result));
 }
 
-std::span<JSBigInt::Digit> JSBigInt::divideDigits(std::span<Digit> quotient, std::span<const Digit> x, std::span<const Digit> y)
+std::span<JSBigInt::Digit> JSBigInt::divideDigits(InterruptCheck& interrupt, std::span<Digit> quotient, std::span<const Digit> x, std::span<const Digit> y)
 {
     x = normalize(x);
     y = normalize(y);
@@ -4108,7 +4234,7 @@ std::span<JSBigInt::Digit> JSBigInt::divideDigits(std::span<Digit> quotient, std
         return quotient.first(1);
     }
 
-    auto [quotientSpan, remainderSpan] = divideDigitsInto(quotient, { }, x, y);
+    auto [quotientSpan, remainderSpan] = divideDigitsInto(interrupt, quotient, { }, x, y);
     return normalize(quotientSpan);
 }
 
@@ -4141,9 +4267,11 @@ JSValue JSBigInt::sqrt(JSGlobalObject* globalObject, JSBigInt* bigInt)
 
     // 2^floor(floor(log2(value)) / 2)
     auto result = oneShiftedLeft(resultStorage.mutableSpan(), (bigInt->bitLength() - 1) >> 1);
+    InterruptCheck interrupt(&vm);
     for (size_t iteration = 0; ; ++iteration) {
         // result = ((value / result) + result) >> 1
-        auto quotient = divideDigits(quotientStorage.mutableSpan(), value, result);
+        auto quotient = divideDigits(interrupt, quotientStorage.mutableSpan(), value, result);
+        RETURN_IF_EXCEPTION(scope, { });
         auto sum = addDigits(quotient, result, sumStorage.mutableSpan());
         auto next = normalize(rightShift(nextStorage.mutableSpan(), sum, 1));
         if (iteration) {
@@ -4180,13 +4308,16 @@ JSValue JSBigInt::cbrt(JSGlobalObject* globalObject, JSBigInt* bigInt)
 
     // 2^floor(floor(log2(value)) / 3)
     auto result = oneShiftedLeft(resultStorage.mutableSpan(), (bigInt->bitLength() - 1) / 3);
+    InterruptCheck interrupt(&vm);
     for (size_t iteration = 0; ; ++iteration) {
         // result = ((2 * result) + (value / (result * result))) / 3
-        auto resultSquared = multiplyDigits(result, result, squaredStorage.mutableSpan());
-        auto quotient = divideDigits(quotientStorage.mutableSpan(), value, resultSquared);
+        auto resultSquared = multiplyDigits(interrupt, result, result, squaredStorage.mutableSpan());
+        RETURN_IF_EXCEPTION(scope, { });
+        auto quotient = divideDigits(interrupt, quotientStorage.mutableSpan(), value, resultSquared);
+        RETURN_IF_EXCEPTION(scope, { });
         auto doubledResult = normalize(leftShift(doubledStorage.mutableSpan(), result, 1));
         auto sum = addDigits(doubledResult, quotient, sumStorage.mutableSpan());
-        auto next = divideDigits(nextStorage.mutableSpan(), sum, three);
+        auto next = divideDigits(interrupt, nextStorage.mutableSpan(), sum, three);
         if (iteration) {
             auto comparisonResult = compareDigits(next, result);
             if (comparisonResult == ComparisonResult::Equal || comparisonResult == ComparisonResult::GreaterThan)
@@ -4756,8 +4887,14 @@ JSBigInt::ImplResult JSBigInt::remainderImpl(JSGlobalObject* globalObject, BigIn
     std::span<const Digit> rSpan;
     if (xSpan.size() == ySpan.size())
         rSpan = remainderSameSize(r.mutableSpan(), xSpan, ySpan);
-    else
-        rSpan = std::get<1>(divideDigitsInto({ }, r.mutableSpan(), xSpan, ySpan));
+    else {
+        InterruptCheck interrupt(&vm);
+        rSpan = std::get<1>(divideDigitsInto(interrupt, { }, r.mutableSpan(), xSpan, ySpan));
+        if (interrupt.interrupted()) [[unlikely]] {
+            RELEASE_ASSERT(scope.exception());
+            return nullptr;
+        }
+    }
     RELEASE_AND_RETURN(scope, tryCreateFromImpl(globalObject, vm, x.sign(), rSpan));
 }
 
@@ -6141,8 +6278,9 @@ static constexpr size_t toStringFastThreshold = 38;
 class JSBigInt::ToStringFormatter {
     WTF_MAKE_NONCOPYABLE(ToStringFormatter);
 public:
-    ToStringFormatter(std::span<const Digit> digits, unsigned radix, std::span<Latin1Character> out)
-        : m_digits(digits)
+    ToStringFormatter(InterruptCheck& interrupt, std::span<const Digit> digits, unsigned radix, std::span<Latin1Character> out)
+        : m_interrupt(interrupt)
+        , m_digits(digits)
         , m_radix(radix)
         , m_outStart(out.data())
         , m_outEnd(out.data() + out.size())
@@ -6177,6 +6315,7 @@ private:
     Latin1Character* fillWithZeros(size_t levelIndex, Latin1Character* rightBoundary, Latin1Character* out, bool isLastOnLevel);
     Latin1Character* basecaseLast(Digit, Latin1Character* out);
 
+    InterruptCheck& m_interrupt;
     std::span<const Digit> m_digits;
     unsigned m_radix;
     unsigned m_chunkChars { 0 };
@@ -6212,13 +6351,17 @@ void JSBigInt::ToStringFormatter::createLevels(size_t targetBitLength)
         next.charCount = previous.charCount * 2;
         RELEASE_ASSERT(next.charCount < std::numeric_limits<size_t>::max() / 2);
         next.divisor = Vector<Digit>(previous.divisor.size() * 2);
-        multiplyZeroPadded(next.divisor.mutableSpan(), previous.divisor.span(), previous.divisor.span());
+        multiplyZeroPadded(m_interrupt, next.divisor.mutableSpan(), previous.divisor.span(), previous.divisor.span());
+        if (m_interrupt.interrupted())
+            return;
         next.divisor.shrink(normalize(next.divisor.span()).size());
         // Left-shifting the divisor must only happen after it's been used to compute the next
         // divisor.
         previous.leadingZeroShift = clz(previous.divisor.last());
         leftShift(previous.divisor.mutableSpan(), previous.divisor.span(), previous.leadingZeroShift);
         computeInverse(previous, 0);
+        if (m_interrupt.interrupted())
+            return;
         m_levels.append(WTF::move(next));
     }
     auto& top = m_levels.last();
@@ -6240,7 +6383,9 @@ void JSBigInt::ToStringFormatter::computeInverse(Level& level, size_t dividendLe
     Vector<Digit> scratch(invertScratchSpace(inverseLength));
     level.inverse = Vector<Digit>(inverseLength + 1);
     auto input = level.divisor.span().subspan(level.divisor.size() - inverseLength, inverseLength);
-    invert(level.inverse.mutableSpan(), input, scratch.mutableSpan());
+    invert(m_interrupt, level.inverse.mutableSpan(), input, scratch.mutableSpan());
+    if (m_interrupt.interrupted())
+        return;
     ASSERT(!level.inverse.last());
     level.inverse.shrink(inverseLength);
 }
@@ -6256,6 +6401,8 @@ std::span<const JSBigInt::Digit> JSBigInt::ToStringFormatter::inverse(const Leve
 void JSBigInt::ToStringFormatter::run()
 {
     createLevels(m_digits.size() * digitBits - clz(m_digits.back()));
+    if (m_interrupt.interrupted())
+        return;
     // The input is read-only, so the top level works on a copy it may shift in place.
     Vector<Digit> input(m_digits.size());
     memcpySpan(input.mutableSpan(), m_digits);
@@ -6366,7 +6513,7 @@ Latin1Character* JSBigInt::ToStringFormatter::processLevel(size_t levelIndex, st
     // Step 4: Divide to split {dividend} into {left} and {right}.
     size_t inverseLength = dividend.size() - divisor.size();
     if (!inverseLength) {
-        auto [quotient, remainder] = divideSchoolbook(left.mutableSpan(), right.mutableSpan(), dividend, divisor);
+        auto [quotient, remainder] = divideSchoolbook(left.mutableSpan(), right.mutableSpan(), dividend, divisor, &m_interrupt);
         std::ranges::fill(left.mutableSpan().subspan(quotient.size()), 0);
         std::ranges::fill(right.mutableSpan().subspan(remainder.size()), 0);
     } else if (divisor.size() == 1) {
@@ -6375,19 +6522,26 @@ Latin1Character* JSBigInt::ToStringFormatter::processLevel(size_t levelIndex, st
         std::ranges::fill(left.mutableSpan().subspan(quotient.size()), 0);
         right[0] = remainder;
         std::ranges::fill(right.mutableSpan().subspan(1), 0);
+        m_interrupt.addWork(dividend.size());
     } else {
         Vector<Digit> scratch(divideBarrettScratchSpace(dividend.size()));
         // The top level only computes its inverse when the dividend's length is known. Other
         // levels have precomputed theirs.
         if (level.inverse.isEmpty())
             computeInverse(level, dividend.size());
-        divideBarrett(left.mutableSpan(), right.mutableSpan(), dividend, divisor, inverse(level, dividend.size()), scratch.mutableSpan());
+        if (m_interrupt.interrupted())
+            return out;
+        divideBarrett(m_interrupt, left.mutableSpan(), right.mutableSpan(), dividend, divisor, inverse(level, dividend.size()), scratch.mutableSpan());
     }
+    if (m_interrupt.interrupted())
+        return out;
     rightShiftZeroPadded(right.mutableSpan(), right.span(), shift);
     ASSERT(normalize(left.span()).size() <= divisor.size());
 
     // Step 5: Recurse.
     Latin1Character* endOfRightPart = processLevel(nextLevelIndex, right.mutableSpan(), out, false, true);
+    if (m_interrupt.interrupted())
+        return out;
     // The recursive calls are required and hence designed to write exactly as many characters as
     // their level is responsible for.
     ASSERT_UNUSED(endOfRightPart, endOfRightPart == out - level.charCount);
@@ -6419,8 +6573,11 @@ String JSBigInt::toStringGeneric(VM& vm, JSGlobalObject* nullOrGlobalObjectForOO
 
     if (length >= toStringFastThreshold) {
         Vector<Latin1Character> buffer(maximumCharactersRequired);
-        ToStringFormatter formatter(x->digits(), radix, buffer.mutableSpan());
+        InterruptCheck interrupt(nullOrGlobalObjectForOOM ? &vm : nullptr);
+        ToStringFormatter formatter(interrupt, x->digits(), radix, buffer.mutableSpan());
         formatter.run();
+        if (interrupt.interrupted()) [[unlikely]]
+            return String();
         auto characters = formatter.result();
         ASSERT(!characters.empty());
         // Remove leading zeroes.
@@ -6610,7 +6767,7 @@ static constexpr auto charactersPerDigitTable = [] {
 // And then there's an obvious last iteration.
 //
 // [1]: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/bigint/fromstring.cc
-void JSBigInt::fromStringLarge(std::span<Digit> z, std::span<Digit> parts, Digit maxMultiplier, Digit lastMultiplier)
+void JSBigInt::fromStringLarge(InterruptCheck& interrupt, std::span<Digit> z, std::span<Digit> parts, Digit maxMultiplier, Digit lastMultiplier)
 {
     size_t numParts = parts.size();
     // The first round below never writes to z, and the loop after it only runs once there are at
@@ -6678,7 +6835,9 @@ void JSBigInt::fromStringLarge(std::span<Digit> z, std::span<Digit> parts, Digit
             auto pOut = clampedSubspan(newParts, start, newPartLength);
             auto mOut = clampedSubspan(newMultipliers, start, newPartLength);
             // p[j] = p[i] * m[i+1] + p[i+1]
-            multiplyZeroPadded(pOut, pIn, mIn2);
+            multiplyZeroPadded(interrupt, pOut, pIn, mIn2);
+            if (interrupt.interrupted())
+                return;
             Digit overflow = inplaceAddAndPropagate(pOut, pIn2);
             ASSERT_UNUSED(overflow, !overflow);
             // m[j] = m[i] * m[i+1]
@@ -6695,7 +6854,9 @@ void JSBigInt::fromStringLarge(std::span<Digit> z, std::span<Digit> parts, Digit
                     }
                 }
                 if (!copied) {
-                    multiplyZeroPadded(mOut, mIn, mIn2);
+                    multiplyZeroPadded(interrupt, mOut, mIn, mIn2);
+                    if (interrupt.interrupted())
+                        return;
                 }
             }
         }
@@ -6724,7 +6885,7 @@ void JSBigInt::fromStringLarge(std::span<Digit> z, std::span<Digit> parts, Digit
 // characters that fit one digit. Combines them with fromStringLarge above, and returns false on
 // an invalid character.
 template<typename CharType>
-bool JSBigInt::parseDigitsLarge(std::span<Digit> result, std::span<const CharType> characters, unsigned radix, unsigned charsPerPart, Digit maxMultiplier)
+bool JSBigInt::parseDigitsLarge(InterruptCheck& interrupt, std::span<Digit> result, std::span<const CharType> characters, unsigned radix, unsigned charsPerPart, Digit maxMultiplier)
 {
     size_t numParts = (characters.size() + charsPerPart - 1) / charsPerPart;
     ASSERT(result.size() >= numParts);
@@ -6748,7 +6909,7 @@ bool JSBigInt::parseDigitsLarge(std::span<Digit> result, std::span<const CharTyp
         lastMultiplier = multiplier;
         position += count;
     }
-    fromStringLarge(result, parts, maxMultiplier, lastMultiplier);
+    fromStringLarge(interrupt, result, parts, maxMultiplier, lastMultiplier);
     return true;
 }
 
@@ -6970,9 +7131,12 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
             // The parts can outnumber the digits of the result by one: the last part is short,
             // and the bit estimate above is tighter than a digit per part.
             Vector<Digit> resultVector(std::max<size_t>(resultLength.value(), numParts));
+            InterruptCheck interrupt(nullOrGlobalObjectForOOM ? &vm : nullptr);
             bool valid = isPowerOfTwoRadix
                 ? parseDigitsPowerOfTwo(resultVector.mutableSpan(), characters, radix)
-                : parseDigitsLarge(resultVector.mutableSpan(), characters, radix, charsPerPart, maxMultiplier);
+                : parseDigitsLarge(interrupt, resultVector.mutableSpan(), characters, radix, charsPerPart, maxMultiplier);
+            if (interrupt.interrupted()) [[unlikely]]
+                return JSValue();
             if (!valid) {
                 if (errorParseMode == ErrorParseMode::ThrowExceptions) {
                     auto scope = DECLARE_THROW_SCOPE(vm);

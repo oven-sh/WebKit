@@ -549,31 +549,32 @@ private:
     static std::span<Digit, N * 2> multiplyCombaFixed(std::span<const Digit, N> x, std::span<const Digit, N> y, std::span<Digit, N * 2> result);
     template<size_t N>
     static std::span<Digit, N * 2> squareCombaFixed(std::span<const Digit, N> x, std::span<Digit, N * 2> result);
-    static std::span<Digit> multiplyDigitsInto(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
-    static void multiplyZeroPadded(std::span<Digit> result, std::span<const Digit> x, std::span<const Digit> y);
-    static std::span<Digit> multiplyKaratsuba(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
-    static void karatsubaStart(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t k);
-    static void karatsubaChunk(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch);
-    static void karatsubaMain(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t n);
+    class InterruptCheck;
+    static std::span<Digit> multiplyDigitsInto(InterruptCheck&, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
+    static void multiplyZeroPadded(InterruptCheck&, std::span<Digit> result, std::span<const Digit> x, std::span<const Digit> y);
+    static std::span<Digit> multiplyKaratsuba(InterruptCheck&, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
+    static void karatsubaStart(InterruptCheck&, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t k);
+    static void karatsubaChunk(InterruptCheck&, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch);
+    static void karatsubaMain(InterruptCheck&, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t n);
     static void karatsubaAbsoluteDifference(std::span<Digit> result, std::span<const Digit> x, std::span<const Digit> y, bool& negative);
     static Digit NODELETE inplaceAddAndPropagate(std::span<Digit> z, std::span<const Digit> x);
     static Digit NODELETE inplaceSubAndPropagate(std::span<Digit> z, std::span<const Digit> x);
-    static std::span<Digit> multiplyToomCook(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
-    static void toom3Main(std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y);
+    static std::span<Digit> multiplyToomCook(InterruptCheck&, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
+    static void toom3Main(InterruptCheck&, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y);
     class FFTContainer;
-    static std::span<Digit> multiplyFFT(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
+    static std::span<Digit> multiplyFFT(InterruptCheck&, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
 
     static std::span<Digit> NODELETE divideSingle(std::span<Digit> q, Digit& remainder, std::span<const Digit>, Digit);
-    static std::tuple<std::span<Digit>, std::span<Digit>> divideSchoolbook(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
+    static std::tuple<std::span<Digit>, std::span<Digit>> divideSchoolbook(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>, InterruptCheck* = nullptr);
     class BurnikelZiegler;
-    static std::tuple<std::span<Digit>, std::span<Digit>> divideBurnikelZiegler(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
-    static void invertBasecase(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch);
-    static void invertNewton(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch);
-    static void invert(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch);
-    static void divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>, std::span<const Digit> inverse, std::span<Digit> scratch);
-    static std::tuple<std::span<Digit>, std::span<Digit>> divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
+    static std::tuple<std::span<Digit>, std::span<Digit>> divideBurnikelZiegler(InterruptCheck&, std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
+    static void invertBasecase(InterruptCheck&, std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch);
+    static void invertNewton(InterruptCheck&, std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch);
+    static void invert(InterruptCheck&, std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch);
+    static void divideBarrett(InterruptCheck&, std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>, std::span<const Digit> inverse, std::span<Digit> scratch);
+    static std::tuple<std::span<Digit>, std::span<Digit>> divideBarrett(InterruptCheck&, std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
     static size_t NODELETE quotientLength(std::span<const Digit>, std::span<const Digit>);
-    static std::tuple<std::span<Digit>, std::span<Digit>> divideDigitsInto(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
+    static std::tuple<std::span<Digit>, std::span<Digit>> divideDigitsInto(InterruptCheck&, std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
     static Digit divideSameSize(std::span<const Digit>, std::span<const Digit>);
     static std::span<Digit> remainderSameSize(std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
 
@@ -588,8 +589,8 @@ private:
 
     static ComparisonResult NODELETE compareDigits(std::span<const Digit> x, std::span<const Digit> y);
     static std::span<Digit> NODELETE addDigits(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
-    static std::span<Digit> multiplyDigits(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
-    static std::span<Digit> divideDigits(std::span<Digit> quotient, std::span<const Digit> x, std::span<const Digit> y);
+    static std::span<Digit> multiplyDigits(InterruptCheck&, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result);
+    static std::span<Digit> divideDigits(InterruptCheck&, std::span<Digit> quotient, std::span<const Digit> x, std::span<const Digit> y);
     static std::span<Digit> oneShiftedLeft(std::span<Digit> result, unsigned bitIndex);
 
     enum class RoundingResult {
@@ -662,9 +663,9 @@ private:
 
     template <typename CharType>
     static JSValue parseInt(JSGlobalObject*, VM&, std::span<const CharType> data, unsigned startIndex, unsigned radix, ErrorParseMode, ParseIntSign = ParseIntSign::Signed, ParseIntMode = ParseIntMode::AllowEmptyString);
-    static void fromStringLarge(std::span<Digit> z, std::span<Digit> parts, Digit maxMultiplier, Digit lastMultiplier);
+    static void fromStringLarge(InterruptCheck&, std::span<Digit> z, std::span<Digit> parts, Digit maxMultiplier, Digit lastMultiplier);
     template<typename CharType>
-    static bool parseDigitsLarge(std::span<Digit> result, std::span<const CharType>, unsigned radix, unsigned charsPerPart, Digit maxMultiplier);
+    static bool parseDigitsLarge(InterruptCheck&, std::span<Digit> result, std::span<const CharType>, unsigned radix, unsigned charsPerPart, Digit maxMultiplier);
     template<typename CharType>
     static bool parseDigitsPowerOfTwo(std::span<Digit> result, std::span<const CharType>, unsigned radix);
 
