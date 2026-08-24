@@ -108,6 +108,7 @@ enum class CommonJITThunkID : uint8_t;
 struct CheckpointOSRExitSideState;
 class CodeBlock;
 class CodeCache;
+class DecoderStringTable;
 enum class CodeSpecializationKind : uint8_t;
 class CommonIdentifiers;
 class CompactTDZEnvironmentMap;
@@ -264,6 +265,7 @@ public:
         JS_EXPORT_PRIVATE virtual String overrideSourceURL(const StackFrame&, const String& originalSourceURL) const = 0;
 
         virtual bool isWebCoreJSClientData() const { return false; }
+        virtual DecoderStringTable* decoderStringTable() { return nullptr; }
     };
 
     bool usingAPI() { return vmType != VMType::Default; }

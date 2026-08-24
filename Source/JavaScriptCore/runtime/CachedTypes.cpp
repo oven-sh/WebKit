@@ -236,6 +236,165 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(uint32_t packed)
     return AtomStringImpl::add(std::span<const Latin1Character>(characters.data(), length)).releaseNonNull();
 }
 
+ALWAYS_INLINE DecoderStringTable& Decoder::externalStrings()
+{
+    if (!m_externalStrings) [[unlikely]] {
+        m_externalStrings = m_vm.clientData ? m_vm.clientData->decoderStringTable() : nullptr;
+        RELEASE_ASSERT_WITH_MESSAGE(m_externalStrings, "bytecode payload uses an external string table but the embedder did not provide one");
+    }
+    return *m_externalStrings;
+}
+
+Ref<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
+{
+    return externalStrings().atomFor(ordinal);
+}
+
+String Decoder::plainStringForExternalString(uint32_t ordinal)
+{
+    return externalStrings().plainStringFor(ordinal);
+}
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EncoderStringTable);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DecoderStringTable);
+
+EncoderStringTable::~EncoderStringTable() = default;
+
+uint32_t EncoderStringTable::ordinalFor(const StringImpl& string)
+{
+    ASSERT(!string.isSymbol() && string.length());
+    auto result = m_ordinals.add(String { const_cast<StringImpl*>(&string) }, static_cast<uint32_t>(m_strings.size()));
+    if (result.isNewEntry)
+        m_strings.append(const_cast<StringImpl&>(string));
+    return result.iterator->value;
+}
+
+// [u32 count][u32 offsets[count]][records: {u32 length|is8Bit<<31, u32 hash, chars, pad-to-4}...]; offsets are from the start of the blob.
+Vector<uint8_t> EncoderStringTable::serialize() const
+{
+    Vector<uint8_t> out;
+    uint32_t count = static_cast<uint32_t>(m_strings.size());
+    size_t header = sizeof(uint32_t) * (1 + static_cast<size_t>(count));
+    size_t body = 0;
+    for (auto& s : m_strings)
+        body += roundUpToMultipleOf<4>(2 * sizeof(uint32_t) + s->length() * (s->is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
+    out.grow(header + body);
+    std::memset(out.mutableSpan().data(), 0, out.size());
+    uint32_t* words = std::bit_cast<uint32_t*>(out.mutableSpan().data());
+    words[0] = count;
+    size_t offset = header;
+    for (uint32_t i = 0; i < count; ++i) {
+        words[1 + i] = static_cast<uint32_t>(offset);
+        const StringImpl& s = m_strings[i].get();
+        uint32_t* record = std::bit_cast<uint32_t*>(out.mutableSpan().data() + offset);
+        record[0] = s.length() | (s.is8Bit() ? 1u << 31 : 0);
+        record[1] = s.hash();
+        if (s.is8Bit())
+            std::memcpy(record + 2, s.span8().data(), s.length());
+        else
+            std::memcpy(record + 2, s.span16().data(), s.length() * sizeof(char16_t));
+        offset += roundUpToMultipleOf<4>(2 * sizeof(uint32_t) + s.length() * (s.is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
+    }
+    ASSERT(offset == out.size());
+    return out;
+}
+
+DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes)
+    : m_bytes(bytes)
+{
+    RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t) && !(std::bit_cast<uintptr_t>(bytes.data()) % alignof(uint32_t)));
+    m_count = *std::bit_cast<const uint32_t*>(bytes.data());
+    RELEASE_ASSERT(m_count <= (bytes.size() - sizeof(uint32_t)) / sizeof(uint32_t), m_count, bytes.size());
+    if (m_count) {
+        m_stringsReservation = roundUpToMultipleOf(WTF::pageSize(), static_cast<size_t>(m_count) * sizeof(StringImpl*));
+        m_strings = static_cast<StringImpl**>(OSAllocator::reserveAndCommit(m_stringsReservation, OSAllocator::FastMallocPages));
+    }
+}
+
+DecoderStringTable::~DecoderStringTable()
+{
+    // One per VM: a Worker that exits must give back the references it took on its thread's atoms.
+    for (uint32_t i = 0; i < m_count; ++i) {
+        if (m_strings[i])
+            m_strings[i]->deref();
+    }
+    if (m_strings)
+        OSAllocator::decommitAndRelease(m_strings, m_stringsReservation);
+}
+
+// The blob comes from an executable users sometimes edit; never read outside it.
+DecoderStringTable::Record DecoderStringTable::record(uint32_t ordinal) const
+{
+    RELEASE_ASSERT(ordinal < m_count);
+    const uint32_t* offsets = std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t));
+    size_t offset = offsets[ordinal];
+    RELEASE_ASSERT(!(offset % 4) && offset <= m_bytes.size() && m_bytes.size() - offset >= 2 * sizeof(uint32_t), offset, m_bytes.size());
+    const uint32_t* header = std::bit_cast<const uint32_t*>(m_bytes.data() + offset);
+    Record result;
+    result.length = header[0] & 0x7fffffffu;
+    result.is8Bit = header[0] >> 31;
+    result.hash = header[1];
+    result.characters = std::bit_cast<const uint8_t*>(header + 2);
+    size_t byteLength = static_cast<size_t>(result.length) * (result.is8Bit ? sizeof(Latin1Character) : sizeof(char16_t));
+    RELEASE_ASSERT(byteLength <= m_bytes.size() - offset - 2 * sizeof(uint32_t), ordinal, result.length, m_bytes.size());
+    return result;
+}
+
+template<typename CharacterType>
+static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, uint32_t hash)
+{
+    // Same threshold as CachedUniquedStringImplBase::minimumLengthToAliasPayload: long strings alias the (persistent) blob.
+    if (characters.size() >= 48)
+        return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(characters) }).releaseNonNull();
+    WTF::HashTranslatorCharBuffer<CharacterType> hashed { characters, hash };
+    return AtomStringImpl::add(hashed).releaseNonNull();
+}
+
+// A slot holds the one StringImpl this VM uses for that string: an atom once an identifier has asked for it, or the
+// plain StringImpl a string constant made first (which atomFor then promotes or replaces).
+Ref<AtomStringImpl> DecoderStringTable::atomFor(uint32_t ordinal)
+{
+    RELEASE_ASSERT(ordinal < m_count);
+    StringImpl*& slot = m_strings[ordinal];
+    if (slot) [[likely]] {
+        if (slot->isAtom()) [[likely]]
+            return *static_cast<AtomStringImpl*>(slot);
+        Ref<AtomStringImpl> atom = AtomStringImpl::add(slot).releaseNonNull(); // makes `slot` the atom unless one already exists
+        if (atom.ptr() != slot) {
+            atom->ref();
+            std::exchange(slot, atom.ptr())->deref();
+        }
+        return atom;
+    }
+    Record r = record(ordinal);
+    Ref<AtomStringImpl> atom = r.is8Bit
+        ? atomize(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length }, r.hash)
+        : atomize(std::span { std::bit_cast<const char16_t*>(r.characters), r.length }, r.hash);
+    atom->ref();
+    slot = atom.ptr();
+    return atom;
+}
+
+String DecoderStringTable::plainStringFor(uint32_t ordinal)
+{
+    RELEASE_ASSERT(ordinal < m_count);
+    StringImpl*& slot = m_strings[ordinal];
+    if (slot)
+        return String { slot };
+    Record r = record(ordinal);
+    RefPtr<StringImpl> string;
+    if (r.is8Bit) {
+        std::span<const Latin1Character> chars { std::bit_cast<const Latin1Character*>(r.characters), r.length };
+        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    } else {
+        std::span<const char16_t> chars { std::bit_cast<const char16_t*>(r.characters), r.length };
+        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    }
+    string->ref();
+    slot = string.get();
+    return String { WTF::move(string) };
+}
+
 bool Decoder::payloadContains(const void* start, size_t size) const
 {
     auto payload = m_cachedBytecode->span();
@@ -246,7 +405,7 @@ bool Decoder::payloadContains(const void* start, size_t size) const
 bool Decoder::recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const
 {
 #if USE(BUN_JSC_ADDITIONS)
-    if (!Options::verifyBytecodeCacheChecksums())
+    if (m_cachedBytecode->payloadIsPersistent() || !Options::verifyBytecodeCacheChecksums())
         return true;
 #endif
     auto* begin = static_cast<const uint8_t*>(record);
@@ -269,7 +428,8 @@ bool Decoder::recordAndArrayChecksumMatches(const void* record, size_t recordSiz
 bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays) const
 {
 #if USE(BUN_JSC_ADDITIONS)
-    if (!Options::verifyBytecodeCacheChecksums())
+    // A persistent payload is a section of the executable itself: corruption there means the program is already broken, and code signing already covers it. Checksums guard separate on-disk cache files.
+    if (m_cachedBytecode->payloadIsPersistent() || !Options::verifyBytecodeCacheChecksums())
         return true;
 #endif
     auto* begin = static_cast<const uint8_t*>(start);
@@ -336,15 +496,18 @@ public:
     // A payload that gets appended to another one (CachedBytecode::addFunctionUpdate) is read by the same Decoder as its
     // base, so it leaves its strings unnumbered rather than collide with numbers the base already handed out.
     enum class NumberStrings : bool { No, Yes };
-    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes)
+    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes, EncoderStringTable* externalStrings = nullptr)
         : m_vm(vm)
         , m_fileHandle(fileHandle)
         , m_baseOffset(0)
         , m_currentPage(nullptr)
+        , m_externalStrings(externalStrings)
         , m_numberStrings(numberStrings == NumberStrings::Yes)
     {
         allocateNewPage();
     }
+
+    EncoderStringTable* NODELETE externalStrings() { return m_externalStrings; }
 
     VM& vm() { return m_vm; }
 
@@ -681,6 +844,7 @@ private:
     struct PendingChecksum { ptrdiff_t start; size_t size; ptrdiff_t checksumOffset; Vector<std::pair<ptrdiff_t, size_t>> externalArrays; };
     Vector<PendingChecksum> m_pendingChecksums;
     uint32_t m_nextStringOrdinal { 0 };
+    EncoderStringTable* m_externalStrings;
     bool m_numberStrings;
     bool m_arraySharingEnabled { false };
     ptrdiff_t m_blockRegionStart { 0 };
@@ -858,6 +1022,21 @@ public:
     bool NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
     Ref<AtomStringImpl> inlineString(Decoder& decoder) const { return decoder.atomForInlineString(std::bit_cast<uint32_t>(m_offset)); }
 
+    // A ≥4-char non-symbol string held in the embedder's shared EncoderStringTable/DecoderStringTable: the slot is an ordinal into that one process-wide table, so every chunk's payload carries 4 bytes instead of a full record. Tag 10 is the value low-two-bits neither a 4-aligned record offset (00), an inline string (01), nor the empty sentinel (11) can produce.
+    static constexpr uint32_t externalStringTag = 2;
+    bool NODELETE hasExternalString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == externalStringTag; }
+    uint32_t NODELETE externalStringOrdinal() const { return static_cast<uint32_t>(std::bit_cast<uint32_t>(m_offset)) >> 2; }
+    bool tryEncodeExternalString(Encoder& encoder, const StringImpl& string)
+    {
+        if (!encoder.externalStrings() || string.isSymbol() || !string.length())
+            return false;
+        uint32_t ordinal = encoder.externalStrings()->ordinalFor(string);
+        if (ordinal > EncoderStringTable::maxOrdinal) [[unlikely]]
+            return false;
+        m_offset = std::bit_cast<Offset>(externalStringTag | ordinal << 2);
+        return true;
+    }
+
 protected:
     const uint8_t* NODELETE buffer() const
     {
@@ -993,6 +1172,8 @@ public:
         if constexpr (holdsString) {
             if (this->tryEncodeInlineString(*src))
                 return;
+            if (this->tryEncodeExternalString(encoder, *src))
+                return;
         }
 
         if constexpr (requires (Encoder& e, const Source& s) { T::create(e, s); }) {
@@ -1042,6 +1223,10 @@ public:
                 isNewAllocation = true;
                 return static_cast<Source*>(&this->inlineString(decoder).leakRef());
             }
+            if (this->hasExternalString()) {
+                isNewAllocation = true;
+                return static_cast<Source*>(&decoder.atomForExternalString(this->externalStringOrdinal()).leakRef());
+            }
         }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -1080,7 +1265,7 @@ public:
         if (this->isEmpty())
             return nullptr;
         if constexpr (holdsString) {
-            if (this->hasInlineString())
+            if (this->hasInlineString() || this->hasExternalString())
                 return nullptr;
         }
         const T* target = this->template buffer<T>();
@@ -1123,6 +1308,8 @@ public:
                 if constexpr (CachedPtr<T, Source>::holdsString) {
                     if (m_ptr.hasInlineString())
                         return adoptRef<Source, PtrTraits>(static_cast<Source*>(&m_ptr.inlineString(decoder).leakRef()));
+                    if (m_ptr.hasExternalString())
+                        return adoptRef<Source, PtrTraits>(static_cast<Source*>(&decoder.atomForExternalString(m_ptr.externalStringOrdinal()).leakRef()));
                 }
                 return adoptRef<Source, PtrTraits>(m_ptr.get()->decode(decoder));
             }
@@ -2129,6 +2316,8 @@ public:
             StringImpl& impl = *str.data.impl();
             if (this->tryEncodeInlineString(impl))
                 return;
+            if (this->tryEncodeExternalString(encoder, impl))
+                return;
             if (auto existing = encoder.cachedOffsetForStringContents(impl)) {
                 this->pointAtPayloadOffset(encoder, *existing);
                 return;
@@ -2179,6 +2368,10 @@ public:
         case EncodedType::String: {
             if (this->hasInlineString()) {
                 v = jsString(decoder.vm(), String { this->inlineString(decoder) });
+                break;
+            }
+            if (this->hasExternalString()) {
+                v = jsString(decoder.vm(), decoder.plainStringForExternalString(this->externalStringOrdinal()));
                 break;
             }
             // A constant becomes a JSString; it does not have to be an atom, so skip the atom table.
@@ -3945,11 +4138,11 @@ private:
     CachedPtr<CachedFunctionExecutable> m_executable;
 };
 
-RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp)
+RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* externalStrings)
 {
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
-    Encoder encoder(vm, invalidFileHandle);
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, externalStrings);
     encoder.template malloc<BuiltinFunctionCacheEntry>(encoder)->encode(encoder, *executable, sourceLength, embedderStamp);
     encoder.encodeDeferred();
     return encoder.release(error);
@@ -3966,11 +4159,11 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     return entry->decode(decoder.get(), sourceLength, embedderStamp);
 }
 
-RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error)
+RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings)
 {
     const ClassInfo* classInfo = codeBlock->classInfo();
 
-    Encoder encoder(vm, fileHandle);
+    Encoder encoder(vm, fileHandle, Encoder::NumberStrings::Yes, externalStrings);
     if (classInfo == UnlinkedProgramCodeBlock::info())
         encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, key, codeBlock);
     else if (classInfo == UnlinkedModuleProgramCodeBlock::info())
@@ -3982,11 +4175,11 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
     return encoder.release(error);
 }
 
-RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock)
+RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, EncoderStringTable* externalStrings)
 {
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
-    return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error);
+    return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error, externalStrings);
 }
 
 RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
