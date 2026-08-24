@@ -1783,7 +1783,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateBytecodeCacheFile, (JSGlobalObject* glo
 }
 
 // bytecodeCacheFor(sourceText, "module" | "program") — the cache payload for sourceText as a Uint8Array, for tests that
-// compare what two runs (or two platforms) encode for the same source.
+// compare what two runs (or two platforms, or two parser configurations) encode for the same source.
 JSC_DEFINE_HOST_FUNCTION(functionBytecodeCacheFor, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();

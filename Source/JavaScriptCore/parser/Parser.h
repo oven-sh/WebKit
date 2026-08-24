@@ -1559,6 +1559,7 @@ private:
     ALWAYS_INLINE void next(OptionSet<LexerFlags> lexerFlags = { })
     {
         m_lastTokenLocation = m_token.location();
+        m_lastTokenEndPosition = m_token.m_endPosition;
         m_lastTokenType = m_token.m_type;
         m_token.m_type = m_lexer->lex(&m_token, lexerFlags, strictMode());
     }
@@ -1566,6 +1567,7 @@ private:
     ALWAYS_INLINE void nextWithoutClearingLineTerminator(OptionSet<LexerFlags> lexerFlags = { })
     {
         m_lastTokenLocation = m_token.location();
+        m_lastTokenEndPosition = m_token.m_endPosition;
         m_lastTokenType = m_token.m_type;
         m_token.m_type = m_lexer->lexWithoutClearingLineTerminator(&m_token, lexerFlags, strictMode());
     }
@@ -2106,6 +2108,7 @@ private:
     // offset 128
     std::unique_ptr<LexerType> m_lexer;
     JSTokenLocation m_lastTokenLocation;
+    JSTextPosition m_lastTokenEndPosition; // a token that spans lines (a template literal) ends on a later line than m_lastTokenLocation.line
     Scope* m_currentScope { nullptr };
     String m_errorMessage;
     DebuggerParseData* m_debuggerParseData;
