@@ -405,7 +405,7 @@ bool Decoder::payloadContains(const void* start, size_t size) const
 bool Decoder::recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const
 {
 #if USE(BUN_JSC_ADDITIONS)
-    if (!Options::verifyBytecodeCacheChecksums())
+    if (m_cachedBytecode->payloadIsPersistent() || !Options::verifyBytecodeCacheChecksums())
         return true;
 #endif
     auto* begin = static_cast<const uint8_t*>(record);
@@ -428,7 +428,8 @@ bool Decoder::recordAndArrayChecksumMatches(const void* record, size_t recordSiz
 bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays) const
 {
 #if USE(BUN_JSC_ADDITIONS)
-    if (!Options::verifyBytecodeCacheChecksums())
+    // A persistent payload is a section of the executable itself: corruption there means the program is already broken, and code signing already covers it. Checksums guard separate on-disk cache files.
+    if (m_cachedBytecode->payloadIsPersistent() || !Options::verifyBytecodeCacheChecksums())
         return true;
 #endif
     auto* begin = static_cast<const uint8_t*>(start);
