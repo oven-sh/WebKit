@@ -40,7 +40,6 @@ void CachedBytecode::addGlobalUpdate(Ref<CachedBytecode> bytecode)
     ASSERT(m_updates.isEmpty());
     m_leafExecutables.clear();
     copyLeafExecutables(bytecode.get());
-    setStringOrdinalEnd(bytecode->stringOrdinalEnd());
     m_updates.append(CacheUpdate::GlobalUpdate { WTF::move(bytecode->m_payload) });
 }
 
@@ -52,7 +51,6 @@ void CachedBytecode::addFunctionUpdate(const UnlinkedFunctionExecutable* executa
     ptrdiff_t offset = it->value.base();
     ASSERT(offset);
     copyLeafExecutables(bytecode.get());
-    setStringOrdinalEnd(bytecode->stringOrdinalEnd());
     m_updates.append(CacheUpdate::FunctionUpdate { offset, kind, { executable->features(), executable->lexicallyScopedFeatures(), executable->hasCapturedVariables() }, WTF::move(bytecode->m_payload), bytecode->rootOffset() });
 }
 

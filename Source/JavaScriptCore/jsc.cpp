@@ -1351,7 +1351,7 @@ public:
         if (!cacheEnabled() || !m_cachedBytecode)
             return;
         BytecodeCacheError error;
-        RefPtr<CachedBytecode> cachedBytecode = encodeFunctionCodeBlock(executable->vm(), codeBlock, error, m_cachedBytecode->stringOrdinalEnd());
+        RefPtr<CachedBytecode> cachedBytecode = encodeFunctionCodeBlock(executable->vm(), codeBlock, error);
         if (cachedBytecode && !error.isValid())
             m_cachedBytecode->addFunctionUpdate(executable, kind, *cachedBytecode);
     }

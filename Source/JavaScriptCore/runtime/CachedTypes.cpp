@@ -345,14 +345,15 @@ public:
         ptrdiff_t m_offset;
     };
 
-    // `firstStringOrdinal`: a payload appended to another (CachedBytecode::addFunctionUpdate) numbers its strings after the
-    // ones already there, since one Decoder reads both.
-    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, uint32_t firstStringOrdinal = 0)
+    // A payload that gets appended to another one (CachedBytecode::addFunctionUpdate) is read by the same Decoder as its
+    // base, so it leaves its strings unnumbered rather than collide with numbers the base already handed out.
+    enum class NumberStrings : bool { No, Yes };
+    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes)
         : m_vm(vm)
         , m_fileHandle(fileHandle)
         , m_baseOffset(0)
         , m_currentPage(nullptr)
-        , m_nextStringOrdinal(firstStringOrdinal)
+        , m_numberStrings(numberStrings == NumberStrings::Yes)
     {
         allocateNewPage();
     }
@@ -524,7 +525,7 @@ public:
         m_pendingChecksums.clear();
     }
     void addChecksum(ptrdiff_t start, size_t size, ptrdiff_t checksumOffset, Vector<std::pair<ptrdiff_t, size_t>>&& externalArrays = { }) { m_pendingChecksums.append({ start, size, checksumOffset, WTF::move(externalArrays) }); }
-    uint32_t nextStringOrdinal() { return m_nextStringOrdinal++; }
+    uint32_t nextStringOrdinal() { return m_numberStrings ? m_nextStringOrdinal++ : std::numeric_limits<uint32_t>::max(); }
 
     // Content-sharing of arrays is only on while a code block encodes the few arrays its checksum knows how to follow
     // (decoder side: CachedCodeBlock::regionIsIntact); an array shared from outside the block's own bytes is folded into
@@ -559,14 +560,6 @@ public:
     }
 
     RefPtr<CachedBytecode> release(BytecodeCacheError& error)
-    {
-        RefPtr<CachedBytecode> result = releaseBuffer(error);
-        if (result)
-            result->setStringOrdinalEnd(m_nextStringOrdinal);
-        return result;
-    }
-
-    RefPtr<CachedBytecode> releaseBuffer(BytecodeCacheError& error)
     {
         if (!m_currentPage)
             return nullptr;
@@ -699,7 +692,8 @@ private:
     Deque<Function<void()>> m_cold;
     struct PendingChecksum { ptrdiff_t start; size_t size; ptrdiff_t checksumOffset; Vector<std::pair<ptrdiff_t, size_t>> externalArrays; };
     Vector<PendingChecksum> m_pendingChecksums;
-    uint32_t m_nextStringOrdinal;
+    uint32_t m_nextStringOrdinal { 0 };
+    bool m_numberStrings;
     bool m_arraySharingEnabled { false };
     ptrdiff_t m_blockRegionStart { 0 };
     Vector<std::pair<ptrdiff_t, size_t>> m_blockExternalArrays;
@@ -4031,10 +4025,10 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
     return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error);
 }
 
-RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error, uint32_t firstStringOrdinal)
+RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
 {
     FileSystem::FileHandle invalidFileHandle;
-    Encoder encoder(vm, invalidFileHandle, firstStringOrdinal);
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::No);
     ptrdiff_t rootOffset = encoder.offsetOf(CachedFunctionCodeBlock::create(encoder, *codeBlock));
     encoder.encodeDeferred();
     RefPtr<CachedBytecode> result = encoder.release(error);
