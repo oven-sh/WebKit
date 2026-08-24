@@ -927,6 +927,11 @@ size_t ExpressionInfo::byteSize() const
     return totalSizeInBytes(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
 }
 
+size_t ExpressionInfo::byteSizeForGCPacing() const
+{
+    return totalSizeInBytes(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
+}
+
 auto ExpressionInfo::lineColumnForInstPC(InstPC instPC) -> LineColumn
 {
     auto iter = m_cachedLineColumns.find(instPC);

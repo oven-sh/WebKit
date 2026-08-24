@@ -107,13 +107,15 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     for (auto& barrier : thisObject->m_functionExprs)
         visitor.append(barrier);
     visitor.appendValues(thisObject->m_constantRegisters.span());
+    // Borrowed (cache-backed) instruction streams and expression info count here as if generated, so the collector
+    // paces a program the same whether or not its bytecode came from a cache; estimatedSize() below reports what is owned.
     size_t extraMemory = thisObject->metadataSizeInBytes();
     if (thisObject->m_instructions)
-        extraMemory += thisObject->m_instructions->ownedSizeInBytes();
+        extraMemory += thisObject->m_instructions->sizeInBytes();
     if (thisObject->hasRareData())
         extraMemory += thisObject->m_rareData->sizeInBytes(locker);
     if (thisObject->m_expressionInfo)
-        extraMemory += thisObject->m_expressionInfo->byteSize();
+        extraMemory += thisObject->m_expressionInfo->byteSizeForGCPacing();
     extraMemory += thisObject->m_jumpTargets.byteSize();
     extraMemory += thisObject->m_identifiers.byteSize();
     extraMemory += thisObject->m_constantRegisters.byteSize();

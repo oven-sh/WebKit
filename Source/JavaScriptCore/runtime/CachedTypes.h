@@ -30,6 +30,8 @@
 #include "VariableEnvironment.h"
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
+#include <wtf/UniqueArray.h>
+#include <wtf/text/AtomStringImpl.h>
 
 namespace JSC {
 
@@ -99,6 +101,11 @@ public:
     const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
     bool regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays = { }) const;
     bool payloadContains(const void* start, size_t size) const;
+    // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
+    AtomStringImpl* atomForOrdinal(uint32_t) const;
+    void setAtomForOrdinal(uint32_t, AtomStringImpl&);
+    // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
+    Ref<AtomStringImpl> atomForInlineString(uint32_t packed);
     bool recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const;
 
     ~Decoder();
@@ -123,6 +130,8 @@ private:
 
     VM& m_vm;
     const Ref<CachedBytecode> m_cachedBytecode;
+    Vector<AtomStringImpl*> m_atomsByOrdinal;
+    AtomStringImpl** m_twoCharacterAtoms { nullptr };
     const void* m_activeRecord { nullptr };
     const void* m_activeTail { nullptr };
     UncheckedKeyHashMap<ptrdiff_t, void*> m_offsetToPtrMap;
