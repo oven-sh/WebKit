@@ -2303,6 +2303,56 @@ private:
 };
 
 
+// The metadata table travels as (opcode << 24 | entry count) steps -- see UnlinkedMetadataTable::createFromPersistentSteps().
+struct CachedMetadataSteps {
+    static constexpr unsigned indexShift = UnlinkedMetadataTable::stepIndexShift;
+    static constexpr uint32_t countMask = UnlinkedMetadataTable::stepCountMask;
+    static_assert(UnlinkedMetadataTable::s_offsetTableEntries < (1u << (32 - indexShift)));
+
+    // The inverse of UnlinkedMetadataTable::finalize(): entry counts back out of the offset table.
+    static Vector<uint32_t, 16> compute(const UnlinkedMetadataTable& metadataTable)
+    {
+        ASSERT(metadataTable.m_isFinalized && metadataTable.m_hasMetadata);
+        Vector<uint32_t, 16> steps;
+        if (metadataTable.m_steps && !metadataTable.m_isLinked) {
+            steps.append(std::span { metadataTable.m_steps, metadataTable.m_stepsCount });
+            return steps;
+        }
+        auto offsetAt = [&](unsigned i) -> uint32_t { return metadataTable.m_is32Bit ? metadataTable.offsetTable32()[i] : metadataTable.offsetTable16()[i]; };
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries - 1; ++i) {
+            auto opcode = static_cast<OpcodeID>(i);
+            uint32_t start = roundUpToMultipleOf(metadataAlignment(opcode), offsetAt(i));
+            uint32_t end = offsetAt(i + 1);
+            if (end <= start)
+                continue;
+            uint32_t count = (end - start) / metadataSize(opcode);
+            ASSERT(count && start + count * metadataSize(opcode) == end && count <= countMask);
+            steps.append(i << indexShift | count);
+        }
+#if ASSERT_ENABLED
+        std::array<UnlinkedMetadataTable::Offset32, UnlinkedMetadataTable::s_offsetTableEntries> check;
+        UnlinkedMetadataTable::expandSteps(steps.span(), check.data());
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i)
+            ASSERT(check[i] == offsetAt(i));
+#endif
+        return steps;
+    }
+
+    static Ref<UnlinkedMetadataTable> build(unsigned numValueProfiles, std::span<const uint32_t> steps)
+    {
+        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(UnlinkedMetadataTable::stepsNeed32BitOffsets(steps), numValueProfiles);
+        metadataTable->m_isFinalized = true;
+        metadataTable->m_isLinked = false;
+        metadataTable->m_hasMetadata = true;
+        metadataTable->m_numValueProfiles = numValueProfiles;
+        if (metadataTable->m_is32Bit)
+            UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable32());
+        else
+            UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable16());
+        return metadataTable;
+    }
+};
+
 // Arrays a code block refers to from its varint tail by (count, offset) instead of through an 8-byte CachedVector member.
 // Plain arrays may be shared with an identical one written earlier (see Encoder::ShareableArrayScope).
 template<typename T, typename Container>
@@ -2861,7 +2911,7 @@ struct CachedCodeBlockExtras {
     CachedHashMap<JSInstructionStream::Offset, int> outOfLineJumpTargets;
 };
 
-// A code block is written as one region: its arrays (metadata entry counts, instructions, constants, identifiers, jump targets,
+// A code block is written as one region: its arrays (metadata steps, instructions, constants, identifiers, jump targets,
 // child slots, extras), then a 16-byte record followed by a varint tail that says where in the region each array is and
 // holds every count/register/flag, then whatever the derived record adds, then the children's executable records.
 // Offsets in the tail are relative to the start of the region, so they are 1-2 bytes for nearly every function.
@@ -2907,7 +2957,7 @@ public:
 
     enum LayoutFlag : uint8_t {
         LayoutHasMetadata = 1 << 0,
-        LayoutHasExtras = 1 << 1,
+        LayoutHasExtras = 1 << 2,
     };
     struct Array {
         unsigned count { 0 };
@@ -2916,7 +2966,7 @@ public:
     struct Layout {
         uint8_t flags { 0 };
         unsigned metadataValueProfiles { 0 };
-        Array metadataEntryCounts; // UnlinkedMetadataTable::entryCounts(): counts, not offsets, because sizeof(Op::Metadata) is the decoder's business
+        Array steps;
         Array instructions; // count is in bytes
         Array constants;
         Array constantsSourceCodeRepresentation;
@@ -2978,10 +3028,10 @@ public:
         const Layout& layout = tail(decoder, storage).layout;
         if (!(layout.flags & LayoutHasMetadata))
             return UnlinkedMetadataTable::empty();
-        std::span<const uint32_t> entryCounts { at<uint32_t>(layout.metadataEntryCounts), layout.metadataEntryCounts.count };
+        std::span<const uint32_t> steps { at<uint32_t>(layout.steps), layout.steps.count };
         if (decoder.canBorrowPayload())
-            return UnlinkedMetadataTable::createFromPersistentEntryCounts(layout.metadataValueProfiles, entryCounts);
-        return UnlinkedMetadataTable::createFromEntryCounts(layout.metadataValueProfiles, entryCounts);
+            return UnlinkedMetadataTable::createFromPersistentSteps(layout.metadataValueProfiles, steps);
+        return CachedMetadataSteps::build(layout.metadataValueProfiles, steps);
     }
 
     RefPtr<StringImpl> sourceURLDirective(Decoder& decoder) const
@@ -3035,7 +3085,7 @@ public:
             external[externalCount++] = { p, bytes };
             return true;
         };
-        if (!covered(layout.metadataEntryCounts, sizeof(uint32_t), true)
+        if (!covered(layout.steps, sizeof(uint32_t), true)
             || !covered(layout.instructions, 1, true)
             || !covered(layout.constantsSourceCodeRepresentation, sizeof(SourceCodeRepresentation), true)
             || !covered(layout.jumpTargets, sizeof(JSInstructionStream::Offset), true)
@@ -3592,7 +3642,7 @@ void CachedCodeBlock<CodeBlockType>::packLayout(const Layout& layout, VarintWrit
         if (a.count)
             writer.i32(a.at);
     };
-    array(layout.metadataEntryCounts);
+    array(layout.steps);
     array(layout.instructions);
     array(layout.constants);
     array(layout.constantsSourceCodeRepresentation);
@@ -3618,7 +3668,7 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
         if (a.count)
             a.at = reader.i32();
     };
-    array(layout.metadataEntryCounts);
+    array(layout.steps);
     array(layout.instructions);
     array(layout.constants);
     array(layout.constantsSourceCodeRepresentation);
@@ -3684,8 +3734,8 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         if (metadata.m_hasMetadata) {
             layout.flags |= LayoutHasMetadata;
             layout.metadataValueProfiles = metadata.m_numValueProfiles;
-            auto entryCounts = metadata.entryCounts();
-            place(layout.metadataEntryCounts, entryCounts.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, entryCounts); });
+            auto steps = CachedMetadataSteps::compute(metadata);
+            place(layout.steps, steps.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, steps); });
         }
         const JSInstructionStream& instructions = *codeBlock.m_instructions;
         RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read

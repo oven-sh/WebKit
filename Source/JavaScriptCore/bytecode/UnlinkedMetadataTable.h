@@ -29,7 +29,6 @@
 #include "ValueProfile.h"
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
-#include <wtf/Vector.h>
 
 #include <wtf/SystemMalloc.h>
 
@@ -63,6 +62,7 @@ class UnlinkedMetadataTable : public ThreadSafeRefCounted<UnlinkedMetadataTable>
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(UnlinkedMetadataTable, UnlinkedMetadataTable);
     friend class LLIntOffsetsExtractor;
     friend class MetadataTable;
+    friend struct CachedMetadataSteps;
     template<typename> friend class CachedCodeBlock;
 #if ENABLE(METADATA_STATISTICS)
     friend struct MetadataStatistics;
@@ -106,38 +106,30 @@ private:
     enum EmptyTag { Empty };
 
     UnlinkedMetadataTable();
-    UnlinkedMetadataTable(unsigned numValueProfiles, std::span<const uint32_t> entryCounts);
-    enum PersistentTag { Persistent };
-    UnlinkedMetadataTable(PersistentTag, unsigned numValueProfiles, std::span<const uint32_t> entryCounts);
+    UnlinkedMetadataTable(bool is32Bit, unsigned numValueProfiles);
+    UnlinkedMetadataTable(unsigned numValueProfiles, std::span<const uint32_t> persistentSteps);
     UnlinkedMetadataTable(EmptyTag);
 
-    using Offset32 = uint32_t;
-    using Offset16 = uint16_t;
-
-    // The one place the table's layout is derived from how many entries each opcode has. The result depends on this
-    // build's sizeof/alignof of every Op::Metadata, so entry counts -- never offsets -- are what the bytecode cache stores.
-    struct Layout {
-        bool is32Bit;
-        unsigned end; // the table's last entry: one past the last metadata entry, counted from the start of the offset table
-    };
-    template<typename CountForOpcode> static Layout layOut(const CountForOpcode&, Offset32* offsets); // offsets: null, or s_offsetTableEntries long
-
-    // How the bytecode cache stores a table: (opcode << entryCountBits | count) for each opcode that has entries; a typical
-    // function has a handful. A table decoded from a persistent payload keeps only a pointer to these and owns no buffer
-    // until link() lays the offsets out into the linked buffer.
-    static constexpr unsigned entryCountBits = 24;
-    static Ref<UnlinkedMetadataTable> createFromEntryCounts(unsigned numValueProfiles, std::span<const uint32_t> entryCounts)
+    static Ref<UnlinkedMetadataTable> create(bool is32Bit, unsigned numValueProfiles)
     {
-        return adoptRef(*new UnlinkedMetadataTable(numValueProfiles, entryCounts));
+        return adoptRef(*new UnlinkedMetadataTable(is32Bit, numValueProfiles));
     }
-    static Ref<UnlinkedMetadataTable> createFromPersistentEntryCounts(unsigned numValueProfiles, std::span<const uint32_t> entryCounts)
+
+    // The table as the bytecode cache stores it: (opcode << 24 | entry count) for each opcode that has entries, in memory
+    // that outlives the VM. Counts rather than offsets, because offsets are sums of sizeof(Op::Metadata) and the payload
+    // may have been written by a build (another C++ ABI) where those differ; expandSteps() lays them out with this
+    // build's sizes exactly as finalize() does. While no CodeBlock is linked the table owns no buffer at all and expands
+    // the steps straight into the linked buffer at link().
+    static constexpr unsigned stepIndexShift = 24;
+    static constexpr uint32_t stepCountMask = (1u << stepIndexShift) - 1;
+    static Ref<UnlinkedMetadataTable> createFromPersistentSteps(unsigned numValueProfiles, std::span<const uint32_t> steps)
     {
-        return adoptRef(*new UnlinkedMetadataTable(Persistent, numValueProfiles, entryCounts));
+        return adoptRef(*new UnlinkedMetadataTable(numValueProfiles, steps));
     }
-    static Layout layOutEntryCounts(std::span<const uint32_t> entryCounts, Offset32* offsets);
-    template<typename OffsetType> static void writeOffsets(std::span<const uint32_t> entryCounts, OffsetType* table);
-    Vector<uint32_t, 16> entryCounts() const; // inverse of layOut(), for the bytecode cache encoder
-    std::span<const uint32_t> entryCountsBacking() const { ASSERT(m_isBackedByEntryCounts); return { m_entryCounts, m_entryCountsSize }; }
+    // Offset of the end of the metadata (the table's last entry); with table null, computes only that.
+    template<typename OffsetType> static unsigned expandSteps(std::span<const uint32_t>, OffsetType* table);
+    static bool stepsNeed32BitOffsets(std::span<const uint32_t> steps) { return expandSteps<Offset32>(steps, nullptr) > UINT16_MAX; }
+    bool isBackedBySteps() const { return !!m_steps; }
 
     static Ref<UnlinkedMetadataTable> empty()
     {
@@ -152,8 +144,8 @@ private:
     {
         ASSERT(m_isFinalized);
         unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
-        if (m_isBackedByEntryCounts && !m_isLinked)
-            return valueProfileSize + layOutEntryCounts(entryCountsBacking(), nullptr).end;
+        if (m_steps && !m_isLinked)
+            return valueProfileSize + expandSteps<Offset32>(std::span { m_steps, m_stepsCount }, nullptr);
         if (m_is32Bit)
             return valueProfileSize + offsetTable32()[s_offsetTableEntries - 1];
         return valueProfileSize + offsetTable16()[s_offsetTableEntries - 1];
@@ -166,6 +158,10 @@ private:
             return s_offset16TableSize + s_offset32TableSize;
         return s_offset16TableSize;
     }
+
+
+    using Offset32 = uint32_t;
+    using Offset16 = uint16_t;
 
     static constexpr unsigned s_offsetTableEntries = NUMBER_OF_BYTECODE_WITH_METADATA + 1; // one extra entry for the "end" offset;
 
@@ -182,12 +178,12 @@ private:
 
     Offset16* offsetTable16() const
     {
-        ASSERT(!m_is32Bit && (m_isLinked || !m_isBackedByEntryCounts));
+        ASSERT(!m_is32Bit && (m_isLinked || !m_steps));
         return std::bit_cast<Offset16*>(m_rawBuffer + prefixSize());
     }
     Offset32* offsetTable32() const
     {
-        ASSERT(m_is32Bit && (m_isLinked || !m_isBackedByEntryCounts));
+        ASSERT(m_is32Bit && (m_isLinked || !m_steps));
         return std::bit_cast<Offset32*>(m_rawBuffer + prefixSize() + s_offset16TableSize);
     }
 
@@ -195,12 +191,11 @@ private:
     bool m_isFinalized : 1;
     bool m_isLinked : 1;
     bool m_is32Bit : 1;
-    bool m_isBackedByEntryCounts : 1 { false }; // finalized from entry counts that outlive the VM; owns no offset table while unlinked
     TriState m_didOptimize : 2 { TriState::Indeterminate };
     unsigned m_numValueProfiles { 0 };
-    unsigned m_entryCountsSize { 0 };
-    const uint32_t* m_entryCounts { nullptr };
-    uint8_t* m_rawBuffer; // null while m_isBackedByEntryCounts and no CodeBlock is linked
+    unsigned m_stepsCount { 0 };
+    const uint32_t* m_steps { nullptr };
+    uint8_t* m_rawBuffer; // null while a steps-backed table has no CodeBlock linked
 };
 
 } // namespace JSC

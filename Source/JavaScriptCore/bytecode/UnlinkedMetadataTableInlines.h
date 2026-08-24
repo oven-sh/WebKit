@@ -27,7 +27,6 @@
 
 #include "MetadataTable.h"
 #include "UnlinkedMetadataTable.h"
-#include <array>
 #include <wtf/FastMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -43,88 +42,65 @@ ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable()
 {
 }
 
-template<typename CountForOpcode>
-ALWAYS_INLINE auto UnlinkedMetadataTable::layOut(const CountForOpcode& countForOpcode, Offset32* offsets) -> Layout
+// A finalized table as it comes out of the bytecode cache: the caller fills in the offset table; the value-profile /
+// metadata buffer is allocated at link().
+ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(bool is32Bit, unsigned numValueProfiles)
+    : m_hasMetadata(true)
+    , m_isFinalized(false)
+    , m_isLinked(false)
+    , m_is32Bit(is32Bit)
+    , m_numValueProfiles(numValueProfiles)
+    , m_rawBuffer(static_cast<uint8_t*>(MetadataTableMalloc::zeroedMalloc(is32Bit ? s_offset16TableSize + s_offset32TableSize : s_offset16TableSize)))
 {
-    // 64-bit so that counts out of a payload cannot wrap it; a table anywhere near 4 GB is not one anybody generated.
-    uint64_t offset = s_offset16TableSize;
-    for (unsigned i = 0; i < s_offsetTableEntries - 1; i++) {
-        if (offsets)
-            offsets[i] = offset; // aligned by whoever indexes the table, so an opcode without entries costs nothing
-        unsigned numberOfEntries = countForOpcode(i);
-        if (!numberOfEntries)
-            continue;
-        unsigned alignment = metadataAlignment(static_cast<OpcodeID>(i));
-        ASSERT(alignment <= s_maxMetadataAlignment);
-#if CPU(ADDRESS64)
-        // This is only necessary for the first metadata entry, if the buffer
-        // is 4-byte aligned and the entry has an alignment requirement of 8
-        ASSERT(offset == roundUpToMultipleOf(alignment, offset) || offset == s_offset16TableSize);
-#endif
-        offset = roundUpToMultipleOf(alignment, offset);
-        offset += static_cast<uint64_t>(numberOfEntries) * metadataSize(static_cast<OpcodeID>(i));
-        RELEASE_ASSERT(offset + s_offset32TableSize <= std::numeric_limits<Offset32>::max());
-    }
-    if (offsets)
-        offsets[s_offsetTableEntries - 1] = offset;
-    if (offset <= UINT16_MAX)
-        return { false, static_cast<unsigned>(offset) };
-    // The 32-bit table sits after the (then unused) 16-bit one; s_offset32TableSize is a multiple of s_maxMetadataAlignment
-    // so displacing every offset by it keeps their alignment.
-    if (offsets) {
-        for (unsigned i = 0; i < s_offsetTableEntries; i++)
-            offsets[i] += s_offset32TableSize;
-    }
-    return { true, static_cast<unsigned>(offset + s_offset32TableSize) };
 }
 
-ALWAYS_INLINE auto UnlinkedMetadataTable::layOutEntryCounts(std::span<const uint32_t> entryCounts, Offset32* offsets) -> Layout
+ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(unsigned numValueProfiles, std::span<const uint32_t> persistentSteps)
+    : m_hasMetadata(true)
+    , m_isFinalized(true)
+    , m_isLinked(false)
+    , m_is32Bit(stepsNeed32BitOffsets(persistentSteps))
+    , m_numValueProfiles(numValueProfiles)
+    , m_stepsCount(persistentSteps.size())
+    , m_steps(persistentSteps.data())
+    , m_rawBuffer(nullptr)
 {
-    std::array<unsigned, s_offsetTableEntries - 1> counts { };
-    for (uint32_t entry : entryCounts) {
-        unsigned opcode = entry >> entryCountBits;
-        RELEASE_ASSERT(opcode < s_offsetTableEntries - 1); // as the encoder wrote them; a malformed payload stops here rather than past the table
-        counts[opcode] = entry & ((1u << entryCountBits) - 1);
-    }
-    return layOut([&](unsigned opcode) { return counts[opcode]; }, offsets);
+    // A table with value profiles but no metadata entries has no steps; it is still steps-backed (owns no buffer).
+    static constexpr uint32_t noSteps = 0;
+    if (!m_steps)
+        m_steps = &noSteps;
 }
 
 template<typename OffsetType>
-ALWAYS_INLINE void UnlinkedMetadataTable::writeOffsets(std::span<const uint32_t> entryCounts, OffsetType* table)
+unsigned UnlinkedMetadataTable::expandSteps(std::span<const uint32_t> steps, OffsetType* table)
 {
-    std::array<Offset32, s_offsetTableEntries> offsets;
-    Layout layout = layOutEntryCounts(entryCounts, offsets.data());
-    ASSERT_UNUSED(layout, layout.is32Bit == (sizeof(OffsetType) == sizeof(Offset32)));
-    for (unsigned i = 0; i < s_offsetTableEntries; i++)
-        table[i] = offsets[i];
-}
-
-// A finalized table as it comes out of the bytecode cache; the value-profile / metadata buffer is allocated at link().
-ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(unsigned numValueProfiles, std::span<const uint32_t> entryCounts)
-    : m_hasMetadata(true)
-    , m_isFinalized(true)
-    , m_isLinked(false)
-    , m_is32Bit(layOutEntryCounts(entryCounts, nullptr).is32Bit)
-    , m_numValueProfiles(numValueProfiles)
-    , m_rawBuffer(static_cast<uint8_t*>(MetadataTableMalloc::zeroedMalloc(m_is32Bit ? s_offset16TableSize + s_offset32TableSize : s_offset16TableSize)))
-{
-    if (m_is32Bit)
-        writeOffsets(entryCounts, offsetTable32());
-    else
-        writeOffsets(entryCounts, offsetTable16());
-}
-
-ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(PersistentTag, unsigned numValueProfiles, std::span<const uint32_t> entryCounts)
-    : m_hasMetadata(true)
-    , m_isFinalized(true)
-    , m_isLinked(false)
-    , m_is32Bit(layOutEntryCounts(entryCounts, nullptr).is32Bit)
-    , m_isBackedByEntryCounts(true)
-    , m_numValueProfiles(numValueProfiles)
-    , m_entryCountsSize(entryCounts.size())
-    , m_entryCounts(entryCounts.data())
-    , m_rawBuffer(nullptr)
-{
+    // finalize()'s layout, from (opcode, count) pairs instead of the preprocess buffer. 64-bit so that counts out of a
+    // payload cannot wrap the offset; a table too big for 32-bit offsets is refused rather than truncated.
+    uint64_t offset = s_offset16TableSize;
+    unsigned i = 0;
+    for (uint32_t step : steps) {
+        unsigned opcode = step >> stepIndexShift;
+        RELEASE_ASSERT(opcode >= i && opcode < s_offsetTableEntries - 1); // ascending, as the encoder wrote them
+        for (; i <= opcode; ++i) {
+            if (table)
+                table[i] = offset; // aligned when accessed, as in finalize()
+        }
+        offset = roundUpToMultipleOf(metadataAlignment(static_cast<OpcodeID>(opcode)), offset);
+        offset += static_cast<uint64_t>(step & stepCountMask) * metadataSize(static_cast<OpcodeID>(opcode));
+        RELEASE_ASSERT(offset + s_offset32TableSize <= std::numeric_limits<Offset32>::max());
+    }
+    for (; i < s_offsetTableEntries; ++i) {
+        if (table)
+            table[i] = offset;
+    }
+    if (offset > UINT16_MAX) {
+        ASSERT(!table || sizeof(OffsetType) == sizeof(Offset32));
+        if (table) {
+            for (i = 0; i < s_offsetTableEntries; ++i)
+                table[i] += s_offset32TableSize;
+        }
+        return offset + s_offset32TableSize;
+    }
+    return offset;
 }
 
 ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(EmptyTag)
@@ -200,11 +176,11 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
     unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
     uint8_t* buffer = static_cast<uint8_t*>(MetadataTableMalloc::zeroedMalloc(sizeof(LinkingData) + totalSize));
     uint8_t* table = buffer + valueProfileSize + sizeof(LinkingData);
-    if (m_isBackedByEntryCounts && !m_isLinked) {
+    if (m_steps && !m_isLinked) {
         if (m_is32Bit)
-            writeOffsets(entryCountsBacking(), std::bit_cast<Offset32*>(table + s_offset16TableSize));
+            expandSteps(std::span { m_steps, m_stepsCount }, std::bit_cast<Offset32*>(table + s_offset16TableSize));
         else
-            writeOffsets(entryCountsBacking(), std::bit_cast<Offset16*>(table));
+            expandSteps(std::span { m_steps, m_stepsCount }, std::bit_cast<Offset16*>(table));
     } else
         memcpy(table, this->buffer(), offsetTableSize);
     if (!m_isLinked) {
@@ -229,7 +205,7 @@ ALWAYS_INLINE void UnlinkedMetadataTable::unlink(MetadataTable& metadataTable)
 
     if (metadataTable.buffer() == buffer()) {
         ASSERT(m_isLinked);
-        if (m_isBackedByEntryCounts) {
+        if (m_steps) {
             MetadataTableMalloc::free(m_rawBuffer);
             m_rawBuffer = nullptr;
             m_isLinked = false;
