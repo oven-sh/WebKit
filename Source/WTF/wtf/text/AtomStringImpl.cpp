@@ -446,6 +446,13 @@ Ref<AtomStringImpl> AtomStringImpl::addSlowCase(AtomStringTable& stringTable, St
     return *uncheckedDowncast<AtomStringImpl>(addResult.iterator->get());
 }
 
+void AtomStringImpl::reserveCapacityForCurrentThread(unsigned additionalCount)
+{
+    AtomStringTableLocker locker;
+    auto& table = stringTable();
+    table.reserveCapacity(table.size() + additionalCount);
+}
+
 // When removing a string from the table, we know it's already the one in the table, so no need for a string equality check.
 struct AtomStringTableRemovalHashTranslator {
     static unsigned hash(const AtomStringImpl* string) { return string->hash(); }

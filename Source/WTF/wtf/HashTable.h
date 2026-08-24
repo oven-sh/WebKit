@@ -470,6 +470,20 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
         size_t byteSize() const { return metadataSize + tableSize() * sizeof(ValueType); }
         bool isEmpty() const { return !keyCount(); }
 
+        // Grow now, once, if holding `keyCount` keys in total would otherwise rehash along the way.
+        void reserveCapacity(unsigned keyCount)
+        {
+            if (!m_table) {
+                reserveInitialCapacity(keyCount);
+                return;
+            }
+            if (keyCount <= this->keyCount() || !HashTableSizePolicy::shouldExpand(keyCount + deletedCount(), tableSize()))
+                return;
+            unsigned newTableSize = computeBestTableSize(keyCount);
+            if (newTableSize > tableSize())
+                rehash(newTableSize, nullptr);
+        }
+
         void reserveInitialCapacity(unsigned keyCount)
         {
             ASSERT(!m_table);

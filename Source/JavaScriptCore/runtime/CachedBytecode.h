@@ -75,6 +75,9 @@ public:
     // Where the root record starts within the payload (a function code block is written after its own arrays).
     size_t rootOffset() const { return m_rootOffset; }
     void setRootOffset(size_t offset) { m_rootOffset = offset; }
+    // One past the highest string number in this payload and every update appended to it (see CachedUniquedStringImplBase::m_ordinal).
+    uint32_t stringOrdinalEnd() const { return m_stringOrdinalEnd; }
+    void setStringOrdinalEnd(uint32_t end) { m_stringOrdinalEnd = std::max(m_stringOrdinalEnd, end); }
     void setPayloadIsPersistent() { m_payload.setIsPersistent(); }
     bool hasUpdates() const { return !m_updates.isEmpty(); }
     size_t sizeForUpdate() const { return m_size; }
@@ -92,6 +95,7 @@ private:
     size_t m_size { 0 };
     CachePayload m_payload;
     size_t m_rootOffset { 0 };
+    uint32_t m_stringOrdinalEnd { 0 };
     LeafExecutableMap m_leafExecutables;
     Vector<CacheUpdate> m_updates;
 };

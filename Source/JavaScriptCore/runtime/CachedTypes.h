@@ -30,6 +30,8 @@
 #include "VariableEnvironment.h"
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
+#include <wtf/UniqueArray.h>
+#include <wtf/text/AtomStringImpl.h>
 
 namespace JSC {
 
@@ -99,6 +101,12 @@ public:
     const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
     bool regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays = { }) const;
     bool payloadContains(const void* start, size_t size) const;
+    // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
+    AtomStringImpl* atomForOrdinal(uint32_t) const;
+    void setAtomForOrdinal(uint32_t, AtomStringImpl&);
+    // Same for 1-3 character strings stored in their slot (keyed by the packed slot value).
+    AtomStringImpl* atomForInlineString(uint32_t packed) const;
+    void setAtomForInlineString(uint32_t packed, AtomStringImpl&);
     bool recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const;
 
     ~Decoder();
@@ -123,6 +131,9 @@ private:
 
     VM& m_vm;
     const Ref<CachedBytecode> m_cachedBytecode;
+    Vector<AtomStringImpl*> m_atomsByOrdinal;
+    UniqueArray<AtomStringImpl*> m_atomsOfLength1;
+    UniqueArray<AtomStringImpl*> m_atomsOfLength2;
     const void* m_activeRecord { nullptr };
     const void* m_activeTail { nullptr };
     UncheckedKeyHashMap<ptrdiff_t, void*> m_offsetToPtrMap;
@@ -150,7 +161,8 @@ UnlinkedCodeBlockType* decodeCodeBlock(VM& vm, const SourceCodeKey& key, Ref<Cac
 
 std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cachedBytecode);
 
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const UnlinkedFunctionCodeBlock*, BytecodeCacheError&);
+// `firstStringOrdinal`: CachedBytecode::stringOrdinalEnd() of the payload this will be appended to.
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const UnlinkedFunctionCodeBlock*, BytecodeCacheError&, uint32_t firstStringOrdinal);
 
 JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
 
