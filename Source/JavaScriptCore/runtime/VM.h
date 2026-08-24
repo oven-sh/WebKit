@@ -1095,6 +1095,15 @@ public:
     void setOnComputeErrorInfo(ErrorInfoFunction&& function) { m_onComputeErrorInfo = WTF::move(function); }
     void setOnComputeErrorInfoJSValue(ErrorInfoFunctionJSValue&& function) { m_onComputeErrorInfoJSValue = WTF::move(function); }
     void setComputeLineColumnWithSourcemap(WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
+
+    // While set, ErrorInstance::visitChildren marks the captured stack frames, so a live error keeps
+    // them until its error info is materialized (V8 keeps them alive the same way). Otherwise the frames
+    // are weak: once one dies, ErrorInstance::reconcileWeakReferencesAtGCEnd renders the stack string
+    // in the GC end phase, where onComputeErrorInfoJSValue (Error.prepareStackTrace) cannot run.
+    // The embedder sets this while a user Error.prepareStackTrace is installed. Read by marking
+    // threads; a stale read only means that error's frames stay weak for this cycle.
+    bool keepsErrorStackFramesAlive() const { return m_keepsErrorStackFramesAlive.load(std::memory_order_relaxed); }
+    void setKeepsErrorStackFramesAlive(bool value) { m_keepsErrorStackFramesAlive.store(value, std::memory_order_relaxed); }
 #endif
     
     template<typename Func>
@@ -1334,6 +1343,7 @@ private:
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
     StackTraceAppenderFunction m_onAppendStackTrace;
     WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)> m_computeLineColumnWithSourcemap;
+    std::atomic<bool> m_keepsErrorStackFramesAlive { false };
 #endif
     uintptr_t m_currentWeakRefVersion { 0 };
 

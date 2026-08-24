@@ -358,6 +358,30 @@ private:
 };
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+template<typename Visitor>
+void ErrorInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    // The frames are weak by default (see reconcileWeakReferencesAtGCEnd). While the embedder needs
+    // them to survive until materializeErrorInfoIfNeeded runs (Error.prepareStackTrace is installed),
+    // mark them, as Exception does for its own copy of the trace.
+    if (!visitor.vm().keepsErrorStackFramesAlive())
+        return;
+
+    Locker locker { thisObject->cellLock() };
+    if (!thisObject->m_stackTrace)
+        return;
+    for (StackFrame& frame : *thisObject->m_stackTrace)
+        frame.visitAggregate(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(ErrorInstance);
+#endif
+
 void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
 #if USE(BUN_JSC_ADDITIONS)
@@ -373,6 +397,7 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     // get caught in a trace.
     // Since the frames are weak, a dead one means the trace can no longer be reconstructed, so
     // materialize it into strings while it is still readable.
+    // (With VM::keepsErrorStackFramesAlive(), visitChildren marked every frame, so none is dead here.)
     for (const auto& frame : *m_stackTrace.get()) {
         if (!frame.isMarked(vm)) {
             computeErrorInfo(vm, false);
