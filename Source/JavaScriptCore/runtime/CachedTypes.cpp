@@ -302,9 +302,9 @@ Vector<uint8_t> EncoderStringTable::serialize() const
 DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes)
     : m_bytes(bytes)
 {
-    RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t));
+    RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t) && !(std::bit_cast<uintptr_t>(bytes.data()) % alignof(uint32_t)));
     m_count = *std::bit_cast<const uint32_t*>(bytes.data());
-    RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t) * (1 + static_cast<size_t>(m_count)));
+    RELEASE_ASSERT(m_count <= (bytes.size() - sizeof(uint32_t)) / sizeof(uint32_t), m_count, bytes.size());
     if (m_count) {
         m_atomsReservation = roundUpToMultipleOf(WTF::pageSize(), static_cast<size_t>(m_count) * sizeof(AtomStringImpl*));
         m_atoms = static_cast<AtomStringImpl**>(OSAllocator::reserveAndCommit(m_atomsReservation, OSAllocator::FastMallocPages));
@@ -313,14 +313,41 @@ DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes)
 
 DecoderStringTable::~DecoderStringTable()
 {
-#if ASSERT_ENABLED
+    // One per VM: a Worker that exits must give back the references it took on its thread's atoms.
     for (uint32_t i = 0; i < m_count; ++i) {
         if (m_atoms[i])
             m_atoms[i]->deref();
     }
-#endif
     if (m_atoms)
         OSAllocator::decommitAndRelease(m_atoms, m_atomsReservation);
+}
+
+// The blob comes from an executable users sometimes edit; never read outside it.
+DecoderStringTable::Record DecoderStringTable::record(uint32_t ordinal) const
+{
+    RELEASE_ASSERT(ordinal < m_count);
+    const uint32_t* offsets = std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t));
+    size_t offset = offsets[ordinal];
+    RELEASE_ASSERT(!(offset % 4) && offset <= m_bytes.size() && m_bytes.size() - offset >= 2 * sizeof(uint32_t), offset, m_bytes.size());
+    const uint32_t* header = std::bit_cast<const uint32_t*>(m_bytes.data() + offset);
+    Record result;
+    result.length = header[0] & 0x7fffffffu;
+    result.is8Bit = header[0] >> 31;
+    result.hash = header[1];
+    result.characters = std::bit_cast<const uint8_t*>(header + 2);
+    size_t byteLength = static_cast<size_t>(result.length) * (result.is8Bit ? sizeof(Latin1Character) : sizeof(char16_t));
+    RELEASE_ASSERT(byteLength <= m_bytes.size() - offset - 2 * sizeof(uint32_t), ordinal, result.length, m_bytes.size());
+    return result;
+}
+
+template<typename CharacterType>
+static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, uint32_t hash)
+{
+    // Same threshold as CachedUniquedStringImplBase::minimumLengthToAliasPayload: long strings alias the (persistent) blob.
+    if (characters.size() >= 48)
+        return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(characters) }).releaseNonNull();
+    WTF::HashTranslatorCharBuffer<CharacterType> hashed { characters, hash };
+    return AtomStringImpl::add(hashed).releaseNonNull();
 }
 
 Ref<AtomStringImpl> DecoderStringTable::atomFor(uint32_t ordinal)
@@ -328,32 +355,13 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(uint32_t ordinal)
     RELEASE_ASSERT(ordinal < m_count);
     if (AtomStringImpl* known = m_atoms[ordinal]) [[likely]]
         return *known;
-    const uint32_t* offsets = std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t));
-    const uint32_t* record = std::bit_cast<const uint32_t*>(m_bytes.data() + offsets[ordinal]);
-    uint32_t length = record[0] & 0x7fffffffu;
-    bool is8Bit = record[0] >> 31;
-    uint32_t hash = record[1];
-    RefPtr<AtomStringImpl> atom;
-    if (is8Bit) {
-        std::span<const Latin1Character> chars { std::bit_cast<const Latin1Character*>(record + 2), length };
-        if (length >= 48)
-            atom = AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(chars) });
-        else {
-            WTF::HashTranslatorCharBuffer<Latin1Character> hashed { chars, hash };
-            atom = AtomStringImpl::add(hashed);
-        }
-    } else {
-        std::span<const char16_t> chars { std::bit_cast<const char16_t*>(record + 2), length };
-        if (length >= 48)
-            atom = AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(chars) });
-        else {
-            WTF::HashTranslatorCharBuffer<char16_t> hashed { chars, hash };
-            atom = AtomStringImpl::add(hashed);
-        }
-    }
+    Record r = record(ordinal);
+    Ref<AtomStringImpl> atom = r.is8Bit
+        ? atomize(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length }, r.hash)
+        : atomize(std::span { std::bit_cast<const char16_t*>(r.characters), r.length }, r.hash);
     atom->ref();
-    m_atoms[ordinal] = atom.get();
-    return atom.releaseNonNull();
+    m_atoms[ordinal] = atom.ptr();
+    return atom;
 }
 
 String DecoderStringTable::plainStringFor(uint32_t ordinal)
@@ -361,16 +369,13 @@ String DecoderStringTable::plainStringFor(uint32_t ordinal)
     RELEASE_ASSERT(ordinal < m_count);
     if (AtomStringImpl* known = m_atoms[ordinal])
         return String { known };
-    const uint32_t* offsets = std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t));
-    const uint32_t* record = std::bit_cast<const uint32_t*>(m_bytes.data() + offsets[ordinal]);
-    uint32_t length = record[0] & 0x7fffffffu;
-    bool is8Bit = record[0] >> 31;
-    if (is8Bit) {
-        std::span<const Latin1Character> chars { std::bit_cast<const Latin1Character*>(record + 2), length };
-        return length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    Record r = record(ordinal);
+    if (r.is8Bit) {
+        std::span<const Latin1Character> chars { std::bit_cast<const Latin1Character*>(r.characters), r.length };
+        return r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
     }
-    std::span<const char16_t> chars { std::bit_cast<const char16_t*>(record + 2), length };
-    return length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    std::span<const char16_t> chars { std::bit_cast<const char16_t*>(r.characters), r.length };
+    return r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
 }
 
 bool Decoder::payloadContains(const void* start, size_t size) const
