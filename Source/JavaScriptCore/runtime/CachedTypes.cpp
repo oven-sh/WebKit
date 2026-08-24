@@ -214,38 +214,26 @@ void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
     m_atomsByOrdinal[ordinal] = &atom;
 }
 
-// 1- and 2-character inline strings (the bulk of minified identifiers) are memoized in flat tables indexed by their
-// characters; 3-character ones go to the atom table each time (a 16M-entry table is not worth it).
-AtomStringImpl* Decoder::atomForInlineString(uint32_t packed) const
+// 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 65536-entry table on the VM (shared by every Decoder — one 512 KB slab, not one per retained Decoder); length 3 goes to the atom table each time.
+Ref<AtomStringImpl> Decoder::atomForInlineString(uint32_t packed)
 {
     unsigned length = (packed >> 2) & 3;
     if (length == 1)
-        return m_atomsOfLength1 ? m_atomsOfLength1[(packed >> 8) & 0xff] : nullptr;
-    if (length == 2)
-        return m_atomsOfLength2 ? m_atomsOfLength2[(packed >> 8) & 0xffff] : nullptr;
-    return nullptr;
-}
-
-void Decoder::setAtomForInlineString(uint32_t packed, AtomStringImpl& atom)
-{
-    unsigned length = (packed >> 2) & 3;
-    AtomStringImpl** slot;
-    if (length == 1) {
-        if (!m_atomsOfLength1) {
-            m_atomsOfLength1 = makeUniqueArray<AtomStringImpl*>(256);
-            std::fill_n(m_atomsOfLength1.get(), 256, nullptr);
-        }
-        slot = &m_atomsOfLength1[(packed >> 8) & 0xff];
-    } else if (length == 2) {
-        if (!m_atomsOfLength2) {
-            m_atomsOfLength2 = makeUniqueArray<AtomStringImpl*>(65536);
-            std::fill_n(m_atomsOfLength2.get(), 65536, nullptr);
-        }
-        slot = &m_atomsOfLength2[(packed >> 8) & 0xffff];
-    } else
-        return;
-    atom.ref();
-    *slot = &atom;
+        return m_vm.smallStrings.singleCharacterStringRep(static_cast<unsigned char>(packed >> 8));
+    if (length == 2) {
+        if (!m_twoCharacterAtoms) [[unlikely]]
+            m_twoCharacterAtoms = m_vm.ensureCachedBytecodeTwoCharacterAtoms();
+        AtomStringImpl*& slot = m_twoCharacterAtoms[(packed >> 8) & 0xffff];
+        if (slot) [[likely]]
+            return *slot;
+        std::array<Latin1Character, 2> characters { static_cast<Latin1Character>(packed >> 8), static_cast<Latin1Character>(packed >> 16) };
+        Ref<AtomStringImpl> atom = AtomStringImpl::add(std::span<const Latin1Character>(characters)).releaseNonNull();
+        atom->ref();
+        slot = atom.ptr();
+        return atom;
+    }
+    std::array<Latin1Character, 3> characters { static_cast<Latin1Character>(packed >> 8), static_cast<Latin1Character>(packed >> 16), static_cast<Latin1Character>(packed >> 24) };
+    return AtomStringImpl::add(std::span<const Latin1Character>(characters.data(), length)).releaseNonNull();
 }
 
 bool Decoder::payloadContains(const void* start, size_t size) const
@@ -713,18 +701,6 @@ Decoder::~Decoder()
         if (atom)
             atom->deref();
     }
-    if (m_atomsOfLength1) {
-        for (size_t i = 0; i < 256; ++i) {
-            if (m_atomsOfLength1[i])
-                m_atomsOfLength1[i]->deref();
-        }
-    }
-    if (m_atomsOfLength2) {
-        for (size_t i = 0; i < 65536; ++i) {
-            if (m_atomsOfLength2[i])
-                m_atomsOfLength2[i]->deref();
-        }
-    }
     for (auto& finalizer : m_finalizers)
         finalizer();
 }
@@ -880,19 +856,7 @@ public:
         return true;
     }
     bool NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
-    Ref<AtomStringImpl> inlineString(Decoder& decoder) const
-    {
-        uint32_t packed = std::bit_cast<uint32_t>(m_offset);
-        if (AtomStringImpl* known = decoder.atomForInlineString(packed))
-            return *known;
-        unsigned length = (packed >> 2) & 3;
-        std::array<Latin1Character, inlineStringMaxLength> characters;
-        for (unsigned i = 0; i < length; ++i)
-            characters[i] = static_cast<Latin1Character>(packed >> (8 * (i + 1)));
-        Ref<AtomStringImpl> atom = AtomStringImpl::add(std::span<const Latin1Character> { characters.data(), length }).releaseNonNull();
-        decoder.setAtomForInlineString(packed, atom.get());
-        return atom;
-    }
+    Ref<AtomStringImpl> inlineString(Decoder& decoder) const { return decoder.atomForInlineString(std::bit_cast<uint32_t>(m_offset)); }
 
 protected:
     const uint8_t* NODELETE buffer() const

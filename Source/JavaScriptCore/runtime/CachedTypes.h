@@ -104,9 +104,8 @@ public:
     // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
     AtomStringImpl* atomForOrdinal(uint32_t) const;
     void setAtomForOrdinal(uint32_t, AtomStringImpl&);
-    // Same for 1-3 character strings stored in their slot (keyed by the packed slot value).
-    AtomStringImpl* atomForInlineString(uint32_t packed) const;
-    void setAtomForInlineString(uint32_t packed, AtomStringImpl&);
+    // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
+    Ref<AtomStringImpl> atomForInlineString(uint32_t packed);
     bool recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const;
 
     ~Decoder();
@@ -132,8 +131,7 @@ private:
     VM& m_vm;
     const Ref<CachedBytecode> m_cachedBytecode;
     Vector<AtomStringImpl*> m_atomsByOrdinal;
-    UniqueArray<AtomStringImpl*> m_atomsOfLength1;
-    UniqueArray<AtomStringImpl*> m_atomsOfLength2;
+    AtomStringImpl** m_twoCharacterAtoms { nullptr };
     const void* m_activeRecord { nullptr };
     const void* m_activeTail { nullptr };
     UncheckedKeyHashMap<ptrdiff_t, void*> m_offsetToPtrMap;
