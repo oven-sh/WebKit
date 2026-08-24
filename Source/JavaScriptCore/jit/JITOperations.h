@@ -62,7 +62,9 @@ class JSGlobalObject;
 class JSLexicalEnvironment;
 class JSObject;
 class JSRemoteFunction;
+#if USE(BUN_JSC_ADDITIONS)
 class JSTracedFunction;
+#endif
 class JSScope;
 class JSString;
 class JSValue;

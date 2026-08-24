@@ -192,7 +192,9 @@
 #include "JSRawJSONObject.h"
 #include "JSRegExpStringIteratorInlines.h"
 #include "JSRemoteFunctionInlines.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunctionInlines.h"
+#endif
 #include "JSSetInlines.h"
 #include "JSSetIteratorInlines.h"
 #include "JSStringIteratorInlines.h"

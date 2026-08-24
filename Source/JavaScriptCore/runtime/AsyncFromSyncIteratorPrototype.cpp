@@ -26,7 +26,9 @@
 
 #include "config.h"
 #include "AsyncFromSyncIteratorPrototype.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "AsyncContextSwapScope.h"
+#endif
 
 #include "IteratorOperations.h"
 #include "JSArrayInlines.h"
