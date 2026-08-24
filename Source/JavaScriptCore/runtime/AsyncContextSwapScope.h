@@ -135,13 +135,14 @@ public:
         JSValue asyncContext = asyncContextData->getInternalField(0);
         if (driver.isCell()) {
             JSCell* cell = driver.asCell();
-            if (cell->type() == JSAsyncFunctionGeneratorType) {
+            JSType type = cell->type();
+            if (type == JSAsyncFunctionGeneratorType) {
                 auto* generator = uncheckedDowncast<JSAsyncFunctionGenerator>(cell);
                 if (generator->asyncContext() != asyncContext)
                     generator->setAsyncContext(vm, asyncContext);
                 return driver;
             }
-            if (cell->type() == JSAsyncGeneratorType) {
+            if (type == JSAsyncGeneratorType) {
                 auto* generator = uncheckedDowncast<JSAsyncGenerator>(cell);
                 if (generator->asyncContext() != asyncContext)
                     generator->setAsyncContext(vm, asyncContext);
@@ -159,9 +160,10 @@ public:
     {
         if (contextArg.isCell()) {
             JSCell* cell = contextArg.asCell();
-            if (cell->type() == JSAsyncFunctionGeneratorType)
+            JSType type = cell->type();
+            if (type == JSAsyncFunctionGeneratorType)
                 return uncheckedDowncast<JSAsyncFunctionGenerator>(cell)->asyncContext();
-            if (cell->type() == JSAsyncGeneratorType)
+            if (type == JSAsyncGeneratorType)
                 return uncheckedDowncast<JSAsyncGenerator>(cell)->asyncContext();
         }
         return unwrapContextTuple(contextArg);
