@@ -1100,11 +1100,7 @@ SourceProviderCache* VM::addSourceProviderCache(SourceProvider* sourceProvider)
 
 void VM::clearSourceProviderCaches()
 {
-    // A cache that something other than this map holds is in use by a parse (or a recursivelyGenerateUnlinkedCodeBlock())
-    // in progress; keep it, so that whether the parser skips a nested function never depends on when a collection ran.
-    sourceProviderCacheMap.removeIf([](auto& entry) {
-        return entry.value->hasOneRef();
-    });
+    sourceProviderCacheMap.clear();
 }
 
 bool VM::hasExceptionsAfterHandlingTraps()

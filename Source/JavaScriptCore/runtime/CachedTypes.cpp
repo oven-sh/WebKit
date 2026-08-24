@@ -312,18 +312,16 @@ struct SourceTypeImpl<T, std::enable_if_t<!std::is_fundamental<T>::value && !std
 template<typename T>
 using SourceType = typename SourceTypeImpl<T>::type;
 
-// What the Encoder writes must be a function of the source alone -- embedders build the payload on one machine, embed
-// or ship it, and compare or load it on another -- and the format is the object representation of whatever is placed in
-// the Encoder's pages. So nothing about this process may reach those bytes: not alignof(std::max_align_t) or pageSize()
-// (both vary by platform and decide where padding goes), not the order a hash table happens to iterate in (see
-// EncodingOrder), and no byte whose value the language leaves to the ABI or to chance -- struct padding, bit-field
-// slack, a base's tail padding that Itanium reuses and MSVC does not. isPortableRecord() is checked wherever a type
-// enters a page: fixed-width scalars, no padding anywhere (has_unique_object_representations), so every byte is a named,
-// initialized field and the layout follows from the declaration alone. A type that fails it gets its fields reordered
-// or widened, or an explicit m_padding.
-// The same rule is what lets a payload encoded under one C++ ABI be decoded under another (Bun cross-compiles
-// executables that embed it); the one thing a decoder still computes for itself is the metadata table's offsets, from
-// the entry counts stored here, because sizeof(Op::Metadata) is its own.
+// A payload is decoded by a different build than encoded it -- Bun cross-compiles executables that embed it, so the
+// two sides differ in OS, CPU and C++ ABI (Itanium vs. MSVC) -- and the format is the object representation of whatever
+// is placed in the Encoder's pages. Everything placed there goes through Encoder::malloc<T> / mallocArray<T> /
+// mallocCopy<T>, which static_assert isPortableRecord<T>(): fixed-width scalars and no padding bytes or bit-field
+// slack anywhere in T (std::has_unique_object_representations). With no byte left for an ABI to place, T's layout is
+// the prefix sum of its declared field sizes, which every ABI then agrees on; a difference that exists under one ABI
+// only (tail-padding reuse, bit-field allocation units, empty-base layout) shows up as padding under that ABI and fails
+// that platform's build. A type that fails gets its fields reordered or widened, or an explicit m_padding.
+// The one thing a decoder computes for itself is the metadata table's offsets, from the entry counts stored here,
+// because sizeof(Op::Metadata) is its own.
 #if USE(BUN_JSC_ADDITIONS)
 static_assert(std::endian::native == std::endian::little && sizeof(void*) == 8);
 static_assert(sizeof(bool) == 1 && sizeof(int) == 4 && sizeof(long long) == 8 && sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
@@ -332,14 +330,11 @@ static_assert(sizeof(bool) == 1 && sizeof(int) == 4 && sizeof(long long) == 8 &&
 #endif
 #endif
 
-static constexpr size_t encoderMaxAlignment = 8; // not alignof(std::max_align_t): 16 on x86-64 Linux/macOS, 8 elsewhere
-static constexpr size_t encoderMinPageSize = 4 * KB; // not pageSize() (4, 16 or 64 KB): where a page ends decides where the next allocation lands
-
 template<typename T>
 static consteval bool isPortableRecord()
 {
     using U = std::remove_cv_t<T>;
-    static_assert(alignof(U) <= encoderMaxAlignment);
+    static_assert(alignof(U) <= 8);
     static_assert(std::is_trivially_destructible_v<U>, "decoded in place and never destroyed; MSVC would also prepend an array cookie to new T[]");
     static_assert(!std::is_pointer_v<U> && !std::is_same_v<U, wchar_t> && !std::is_same_v<U, long double>);
     static_assert(sizeof(long) == sizeof(long long) || (!std::is_same_v<U, long> && !std::is_same_v<U, unsigned long>), "long is 4 bytes here and 8 on LP64");
@@ -672,7 +667,7 @@ private:
 
         bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
         {
-            ASSERT(alignment && alignment <= encoderMaxAlignment && isPowerOfTwo(alignment));
+            ASSERT(alignment && alignment <= alignof(std::max_align_t) && isPowerOfTwo(alignment));
             ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
             if (static_cast<size_t>(offset + size) > capacity())
                 return false;
@@ -703,7 +698,7 @@ private:
 
         void NODELETE alignEnd()
         {
-            ptrdiff_t size = roundUpToMultipleOf(encoderMaxAlignment, m_offset);
+            ptrdiff_t size = roundUpToMultipleOf(alignof(std::max_align_t), m_offset);
             if (size == m_offset)
                 return;
             RELEASE_ASSERT(static_cast<size_t>(size) <= capacity());
@@ -719,7 +714,7 @@ private:
 
     void allocateNewPage(size_t size = 0)
     {
-        static constexpr size_t minPageSize = encoderMinPageSize;
+        static size_t minPageSize = pageSize();
         if (m_currentPage) {
             m_currentPage->alignEnd();
             m_baseOffset += m_currentPage->size();
@@ -913,15 +908,11 @@ public:
     static constexpr unsigned inlineStringMaxLength = 3;
     bool tryEncodeInlineString(const StringImpl& string)
     {
-        if (string.isSymbol() || !string.length() || string.length() > inlineStringMaxLength)
+        if (string.isSymbol() || !string.is8Bit() || !string.length() || string.length() > inlineStringMaxLength)
             return false;
         uint32_t packed = inlineStringTag | string.length() << 2;
-        for (unsigned i = 0; i < string.length(); ++i) {
-            char16_t character = string[i]; // whether the atom happens to be stored 16-bit is not a property of the source
-            if (!isLatin1(character))
-                return false;
-            packed |= static_cast<uint32_t>(character) << (8 * (i + 1));
-        }
+        for (unsigned i = 0; i < string.length(); ++i)
+            packed |= static_cast<uint32_t>(string.span8()[i]) << (8 * (i + 1));
         m_offset = std::bit_cast<Offset>(packed);
         return true;
     }
@@ -1311,36 +1302,6 @@ private:
     unsigned m_size;
 };
 
-// Hash tables iterate in an order that depends on where their keys hashed to -- for SymbolImpl keys a per-process
-// counter, for robin-hood tables the table's own address -- so their entries are encoded in key order to keep the
-// payload a function of the source alone. Keys are ordered by contents, then by what kind of StringImpl they decode to;
-// two keys equal in both would decode to the same StringImpl and cannot share a table.
-struct EncodingOrder {
-    static std::strong_ordering compare(unsigned a, unsigned b) { return a <=> b; }
-    static unsigned kind(const StringImpl* string)
-    {
-        if (!string->isSymbol())
-            return 0;
-        auto& symbol = *static_cast<const SymbolImpl*>(string);
-        return 1 + symbol.isRegistered() * 2 + symbol.isPrivate();
-    }
-    static std::strong_ordering compare(const StringImpl* a, const StringImpl* b)
-    {
-        if (auto order = codePointCompare(StringView(*a), StringView(*b)); order != 0)
-            return order;
-        return kind(a) <=> kind(b);
-    }
-    template<typename T, typename Traits> static std::strong_ordering compare(const RefPtr<T, Traits>& a, const RefPtr<T, Traits>& b) { return compare(a.get(), b.get()); }
-
-    template<typename Entries, typename KeyOf>
-    static void sort(Entries& entries, const KeyOf& keyOf)
-    {
-        std::stable_sort(entries.begin(), entries.end(), [&](const auto& a, const auto& b) {
-            return compare(keyOf(a), keyOf(b)) < 0;
-        });
-    }
-};
-
 template<typename First, typename Second>
 class CachedPair : public CachedObject<std::pair<SourceType<First>, SourceType<Second>>> {
 public:
@@ -1374,7 +1335,6 @@ public:
         unsigned i = 0;
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
-        EncodingOrder::sort(entriesVector, [](const auto& entry) -> const auto& { return entry.first; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1407,7 +1367,6 @@ public:
         unsigned i = 0;
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
-        EncodingOrder::sort(entriesVector, [](const auto& entry) -> const auto& { return entry.first; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1532,9 +1491,7 @@ public:
     std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
 private:
-    // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.",
-    // and Latin-1 contents are stored 8-bit even if this process's atom for them happens to be 16-bit (an equal 16-bit
-    // string was atomized first), since that is not a property of the source.
+    // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.".
     struct Shape {
         explicit Shape(const StringImpl& string)
             : characters(const_cast<StringImpl*>(&string))
@@ -1549,8 +1506,6 @@ private:
                     characters = symbol.substring(strlen("Symbol."));
                 }
             }
-            if (!characters->is8Bit())
-                characters = StringImpl::create8BitIfPossible(characters->span16());
         }
         size_t byteLength() const { return characters->length() * (characters->is8Bit() ? 1 : 2); }
         RefPtr<StringImpl> characters;
@@ -1742,7 +1697,6 @@ public:
         unsigned i = 0;
         for (const auto& item : set)
             entriesVector[i++] = item;
-        EncodingOrder::sort(entriesVector, [](const auto& item) -> const auto& { return item; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1942,17 +1896,15 @@ class CachedCompactTDZEnvironment : public CachedObject<CompactTDZEnvironment> {
 public:
     void encode(Encoder& encoder, const CompactTDZEnvironment& env)
     {
-        // A Compact is sorted by StringImpl address; decode() sorts again.
-        CompactTDZEnvironment::Compact compact;
         if (std::holds_alternative<CompactTDZEnvironment::Compact>(env.m_variables))
-            compact = std::get<CompactTDZEnvironment::Compact>(env.m_variables);
+            m_variables.encode(encoder, std::get<CompactTDZEnvironment::Compact>(env.m_variables));
         else {
+            CompactTDZEnvironment::Compact compact;
             for (auto& key : std::get<CompactTDZEnvironment::Inflated>(env.m_variables))
                 compact.append(key);
+            m_variables.encode(encoder, compact);
         }
-        EncodingOrder::sort(compact, [](const auto& key) -> const auto& { return key; });
-        m_variables.encode(encoder, compact);
-        m_hash = env.m_hash; // of the contents, not the addresses
+        m_hash = env.m_hash;
     }
 
     void decode(Decoder& decoder, CompactTDZEnvironment& env) const
@@ -2131,7 +2083,7 @@ public:
     void encode(Encoder& encoder, JSCellButterfly& immutableButterfly)
     {
         m_length = immutableButterfly.length();
-        m_indexingType = immutableButterfly.indexingMode(); // not indexingTypeAndMisc(): the rest of that byte is cell-lock state
+        m_indexingType = immutableButterfly.indexingTypeAndMisc();
         if (hasDouble(m_indexingType))
             m_cachedDoubles.encode(encoder, immutableButterfly.toButterfly()->contiguousDouble().data(), m_length);
         else
@@ -3861,7 +3813,7 @@ private:
     uint32_t m_reservedCalleeLocals;
 };
 
-static_assert(alignof(GenericCacheEntry) <= encoderMaxAlignment);
+static_assert(alignof(GenericCacheEntry) <= alignof(std::max_align_t));
 
 template<typename UnlinkedCodeBlockType>
 class CacheEntry : public GenericCacheEntry {

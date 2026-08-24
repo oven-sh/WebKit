@@ -2389,18 +2389,14 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
         else
             failIfFalse(parseSourceElements(syntaxChecker, CheckForStrictMode), bodyType == StandardFunctionBodyBlock ? "Cannot parse body of this function" : "Cannot parse body of this arrow function");
     }
-    // For an expression body the current token is already past the function (and possibly lines further on); the
-    // function ends at the body's last token, as it ends at the '}' for a block body and as the SourceProviderCache path
-    // in parseFunctionInfo() records it.
-    JSTokenLocation endLocation = isArrowFunctionBodyExpression ? m_lastTokenLocation : tokenLocation();
-    unsigned endColumn = endLocation.startOffset - endLocation.lineStartOffset;
+    unsigned endColumn = tokenColumn();
     SuperBinding functionSuperBinding = adjustSuperBindingForBaseConstructor(constructorKind, superBinding, sourceParseMode(), currentScope());
     ImplementationVisibility implementationVisibility = this->implementationVisibility();
     if (isAsyncFunctionWrapperParseMode(sourceParseMode()) && currentScope()->usesAwait()) {
         implementationVisibility = std::max(ImplementationVisibility::Private, implementationVisibility);
         currentScope()->setImplementationVisibility(implementationVisibility);
     }
-    return context.createFunctionMetadata(startLocation, endLocation, startColumn, endColumn, functionStart, functionNameStart, parametersStart, implementationVisibility, lexicallyScopedFeatures(), constructorKind, functionSuperBinding, parameterCount, sourceParseMode(), isArrowFunctionBodyExpression);
+    return context.createFunctionMetadata(startLocation, tokenLocation(), startColumn, endColumn, functionStart, functionNameStart, parametersStart, implementationVisibility, lexicallyScopedFeatures(), constructorKind, functionSuperBinding, parameterCount, sourceParseMode(), isArrowFunctionBodyExpression);
 }
 
 static const char* NODELETE stringArticleForFunctionMode(SourceParseMode mode)
@@ -2609,13 +2605,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     int startColumn = -1;
     FunctionBodyType functionBodyType;
 
-    // Track this per function so it can be stored in, and replayed from, the SourceProviderCache; otherwise whether
-    // the enclosing code gets NoEvalCacheFeature would depend on whether this function's body was skipped.
-    bool enclosingCodeContainsTaggedTemplate = std::exchange(m_seenTaggedTemplateInNonReparsingFunctionMode, false);
-    auto propagateContainsTaggedTemplate = makeScopeExit([&] {
-        m_seenTaggedTemplateInNonReparsingFunctionMode |= enclosingCodeContainsTaggedTemplate;
-    });
-
     auto tryLoadCachedFunction = [&] () -> bool {
         if (!Options::useSourceProviderCache()) [[unlikely]]
             return false;
@@ -2662,7 +2651,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
                 mode, functionBodyType == ArrowFunctionBodyExpression);
             functionInfo.endOffset = cachedInfo->endFunctionOffset;
             functionInfo.parameterCount = cachedInfo->parameterCount;
-            m_seenTaggedTemplateInNonReparsingFunctionMode = cachedInfo->containsTaggedTemplate;
 
             functionScope->restoreFromSourceProviderCache(cachedInfo);
             popScope(functionScope, TreeBuilder::NeedsFreeVariableInfo);
@@ -2671,13 +2659,9 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
             if (endColumnIsOnStartLine)
                 m_token.m_startPosition.lineStartOffset = currentLineStartOffset;
-            if (m_token.m_endPosition.line == static_cast<int>(functionInfo.startLine))
-                m_token.m_endPosition.lineStartOffset = currentLineStartOffset;
 
-            // The last token may span lines (a template literal ending an expression body), so resume from where it
-            // ended, not from the line it started on.
-            m_lexer->setOffset(m_token.m_endPosition.offset, m_token.m_endPosition.lineStartOffset);
-            m_lexer->setLineNumber(m_token.m_endPosition.line);
+            m_lexer->setOffset(m_token.m_endPosition.offset, m_token.m_startPosition.lineStartOffset);
+            m_lexer->setLineNumber(m_token.m_startPosition.line);
 
             switch (functionBodyType) {
             case ArrowFunctionBodyExpression:
@@ -2877,12 +2861,10 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     }
 
     JSTokenLocation location = m_token.location();
-    JSTextPosition lastTokenEndPosition = m_token.m_endPosition;
     functionInfo.endOffset = m_token.m_data.offset;
     
     if (functionBodyType == ArrowFunctionBodyExpression) {
         location = locationBeforeLastToken();
-        lastTokenEndPosition = m_lastTokenEndPosition;
         functionInfo.endOffset = location.endOffset;
     } else {
         recordFunctionEntryLocation(JSTextPosition(startLocation.line, startLocation.startOffset, startLocation.lineStartOffset));
@@ -2903,13 +2885,10 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         parameters.lastTokenStartOffset = location.startOffset;
         parameters.lastTokenEndOffset = location.endOffset;
         parameters.lastTokenLineStartOffset = location.lineStartOffset;
-        parameters.lastTokenEndLine = lastTokenEndPosition.line;
-        parameters.lastTokenEndLineStartOffset = lastTokenEndPosition.lineStartOffset;
         parameters.parameterCount = functionInfo.parameterCount;
         parameters.constructorKind = constructorKind;
         parameters.expectedSuperBinding = expectedSuperBinding;
         parameters.implementationVisibility = implementationVisibility;
-        parameters.containsTaggedTemplate = m_seenTaggedTemplateInNonReparsingFunctionMode;
         if (functionBodyType == ArrowFunctionBodyExpression) {
             parameters.isBodyArrowExpression = true;
             parameters.tokenType = m_token.m_type;
@@ -3481,7 +3460,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                 loc.lineStartOffset = position.lineStartOffset;
                 loc.startOffset = position.offset;
                 loc.endOffset = position.offset;
-                restoreLexerState(LexerState { position.offset, static_cast<unsigned>(position.lineStartOffset), loc, position, static_cast<unsigned>(position.line), hasLineTerminatorBeforeToken, ERRORTOK });
+                restoreLexerState(LexerState { position.offset, static_cast<unsigned>(position.lineStartOffset), loc, static_cast<unsigned>(position.line), hasLineTerminatorBeforeToken, ERRORTOK });
             }
             JSTokenLocation startLocation(tokenLocation());
             JSTextPosition startPosition = tokenStartPosition();
@@ -3512,7 +3491,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                     loc.lineStartOffset = initializerPosition->lineStartOffset;
                     loc.startOffset = initializerPosition->offset;
                     loc.endOffset = initializerPosition->offset;
-                    restoreLexerState(LexerState { initializerPosition->offset, static_cast<unsigned>(initializerPosition->lineStartOffset), loc, *initializerPosition, static_cast<unsigned>(initializerPosition->line), hasLineTerminatorBeforeToken, ERRORTOK });
+                    restoreLexerState(LexerState { initializerPosition->offset, static_cast<unsigned>(initializerPosition->lineStartOffset), loc, static_cast<unsigned>(initializerPosition->line), hasLineTerminatorBeforeToken, ERRORTOK });
                 }
                 // parseExpression() is more permissive way to parse AssignmentExpression than parseAssignmentExpression() that is used in parseClass().
                 // This is very intentional: we need to fail for `foo = 1, 2` but support reparsing `foo = (1, 2)`, which is tricky because open paren
