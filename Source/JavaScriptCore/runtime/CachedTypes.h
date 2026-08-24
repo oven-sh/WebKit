@@ -108,8 +108,8 @@ private:
     };
     Record record(uint32_t ordinal) const;
     std::span<const uint8_t> m_bytes;
-    AtomStringImpl** m_atoms { nullptr };
-    size_t m_atomsReservation { 0 };
+    StringImpl** m_strings { nullptr }; // demand-zero; per ordinal, the atom or the plain StringImpl a constant made first
+    size_t m_stringsReservation { 0 };
     uint32_t m_count { 0 };
 };
 
