@@ -2889,7 +2889,24 @@ public:
 
     // `limit` bounds the parse for the integrity check; once the region is verified it is read unbounded.
     Tail readTail(const uint8_t* limit = nullptr) const;
-    Scalars scalars() const { return readTail().scalars; }
+    // The tail the decode in progress already parsed (see ActiveTailScope), else a fresh parse.
+    const Tail& tail(Decoder& decoder, Tail& storage) const
+    {
+        if (auto* active = static_cast<const Tail*>(decoder.activeCodeBlockTail(this)))
+            return *active;
+        storage = readTail();
+        return storage;
+    }
+    struct ActiveTailScope {
+        ActiveTailScope(Decoder& decoder, const void* record, const Tail& tail)
+            : m_decoder(decoder)
+        {
+            decoder.setActiveCodeBlockTail(record, &tail);
+        }
+        ~ActiveTailScope() { m_decoder.setActiveCodeBlockTail(nullptr, nullptr); }
+        Decoder& m_decoder;
+    };
+    Scalars scalars(Decoder& decoder) const { Tail storage; return tail(decoder, storage).scalars; }
 
     const uint8_t* regionBegin() const { return std::bit_cast<const uint8_t*>(this) - m_recordOffsetInRegion; }
     template<typename T> const T* at(const Array& array) const { return array.count ? reinterpret_cast<const T*>(regionBegin() + array.at) : nullptr; }
@@ -2897,7 +2914,8 @@ public:
 
     JSInstructionStream* instructions(Decoder& decoder) const
     {
-        Layout layout = readTail().layout;
+        Tail storage;
+        const Layout& layout = tail(decoder, storage).layout;
         std::span<const uint8_t> bytes { at<uint8_t>(layout.instructions), layout.instructions.count };
         if (decoder.canBorrowPayload())
             return new JSInstructionStream(bytes, JSInstructionStream::Borrow);
@@ -2908,7 +2926,8 @@ public:
 
     Ref<UnlinkedMetadataTable> metadata(Decoder& decoder) const
     {
-        Layout layout = readTail().layout;
+        Tail storage;
+        const Layout& layout = tail(decoder, storage).layout;
         if (!(layout.flags & LayoutHasMetadata))
             return UnlinkedMetadataTable::empty();
         std::span<const uint32_t> entryCounts { at<uint32_t>(layout.metadataEntryCounts), layout.metadataEntryCounts.count };
@@ -2919,17 +2938,20 @@ public:
 
     RefPtr<StringImpl> sourceURLDirective(Decoder& decoder) const
     {
-        auto* e = extras(readTail().layout);
+        Tail storage;
+        auto* e = extras(tail(decoder, storage).layout);
         return e ? e->sourceURLDirective.decode(decoder) : nullptr;
     }
     RefPtr<StringImpl> sourceMappingURLDirective(Decoder& decoder) const
     {
-        auto* e = extras(readTail().layout);
+        Tail storage;
+        auto* e = extras(tail(decoder, storage).layout);
         return e ? e->sourceMappingURLDirective.decode(decoder) : nullptr;
     }
     UnlinkedCodeBlock::RareData* rareData(Decoder& decoder) const
     {
-        auto* e = extras(readTail().layout);
+        Tail storage;
+        auto* e = extras(tail(decoder, storage).layout);
         return e ? e->rareData.decode(decoder) : nullptr;
     }
 
@@ -3097,6 +3119,7 @@ enum class CachedCodeBlockTag : uint32_t {
     CachedProgramCodeBlockTag,
     CachedModuleCodeBlockTag,
     CachedEvalCodeBlockTag,
+    CachedBuiltinFunctionTag, // a root UnlinkedFunctionExecutable created by BuiltinExecutables (an embedder's JS builtins)
 };
 
 static CachedCodeBlockTag NODELETE tagFromSourceCodeType(SourceCodeType type)
@@ -3146,7 +3169,7 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     , m_instructions(cachedCodeBlock.instructions(decoder))
     , m_rareData(cachedCodeBlock.rareData(decoder))
 {
-    auto scalars = cachedCodeBlock.scalars();
+    auto scalars = cachedCodeBlock.scalars(decoder);
     m_thisRegister = scalars.thisRegister;
     m_scopeRegister = scalars.scopeRegister;
     m_numVars = scalars.numVars;
@@ -3199,6 +3222,7 @@ UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
     Tail tail;
     if (!regionIsIntact(decoder, tail))
         return nullptr;
+    ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedProgramCodeBlock>(decoder.vm())) UnlinkedProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
@@ -3211,6 +3235,7 @@ UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) 
     Tail tail;
     if (!regionIsIntact(decoder, tail))
         return nullptr;
+    ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedModuleProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedModuleProgramCodeBlock>(decoder.vm())) UnlinkedModuleProgramCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
@@ -3223,6 +3248,7 @@ UnlinkedEvalCodeBlock* CachedEvalCodeBlock::decode(Decoder& decoder) const
     Tail tail;
     if (!regionIsIntact(decoder, tail))
         return nullptr;
+    ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedEvalCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedEvalCodeBlock>(decoder.vm())) UnlinkedEvalCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
@@ -3235,6 +3261,7 @@ UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) con
     Tail tail;
     if (!regionIsIntact(decoder, tail))
         return nullptr;
+    ActiveTailScope activeTail(decoder, this, tail);
     UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
@@ -3786,6 +3813,7 @@ bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, Unlink
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedProgramCodeBlock*>&>(result));
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedModuleProgramCodeBlock*>&>(result));
+    case CachedCodeBlockTag::CachedBuiltinFunctionTag:
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
@@ -3804,6 +3832,7 @@ bool GenericCacheEntry::decode(Decoder& decoder, SourceCodeKey& key) const
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, key);
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, key);
+    case CachedCodeBlockTag::CachedBuiltinFunctionTag:
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         return false;
@@ -3822,6 +3851,7 @@ bool GenericCacheEntry::isStillValid(Decoder& decoder, const SourceCodeKey& key,
         return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->isStillValid(decoder, key);
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->isStillValid(decoder, key);
+    case CachedCodeBlockTag::CachedBuiltinFunctionTag:
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
@@ -3835,6 +3865,62 @@ void encodeCodeBlock(Encoder& encoder, const SourceCodeKey& key, const UnlinkedC
 {
     auto* entry = encoder.template malloc<CacheEntry<UnlinkedCodeBlockType>>(encoder);
     entry->encode(encoder, { key, uncheckedDowncast<UnlinkedCodeBlockType>(codeBlock) });
+}
+
+// A builtin function (BuiltinExecutables::createExecutable) and, lazily, its body and nested functions. The embedder
+// supplies the source it was created from and a stamp identifying that source's contents; nothing is hashed at load.
+class BuiltinFunctionCacheEntry : public GenericCacheEntry {
+public:
+    BuiltinFunctionCacheEntry(Encoder& encoder)
+        : GenericCacheEntry(encoder, CachedCodeBlockTag::CachedBuiltinFunctionTag)
+    {
+    }
+
+    void encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable, unsigned sourceLength, unsigned embedderStamp)
+    {
+        m_sourceLength = sourceLength;
+        m_embedderStamp = embedderStamp;
+        sealHeader(encoder);
+        m_executable.encode(encoder, &executable);
+    }
+
+    UnlinkedFunctionExecutable* decode(Decoder& decoder, unsigned sourceLength, unsigned embedderStamp) const
+    {
+        if (tag() != CachedCodeBlockTag::CachedBuiltinFunctionTag || !isUpToDate(decoder))
+            return nullptr;
+        if (m_sourceLength != sourceLength || m_embedderStamp != embedderStamp)
+            return nullptr;
+        auto* record = m_executable.getIfInPayload(decoder);
+        if (!record || !record->isIntact(decoder))
+            return nullptr;
+        return m_executable.decode(decoder);
+    }
+
+private:
+    unsigned m_sourceLength { 0 };
+    unsigned m_embedderStamp { 0 };
+    CachedPtr<CachedFunctionExecutable> m_executable;
+};
+
+RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp)
+{
+    BytecodeCacheError error;
+    FileSystem::FileHandle invalidFileHandle;
+    Encoder encoder(vm, invalidFileHandle);
+    encoder.template malloc<BuiltinFunctionCacheEntry>(encoder)->encode(encoder, *executable, sourceLength, embedderStamp);
+    encoder.encodeDeferred();
+    return encoder.release(error);
+}
+
+UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp)
+{
+    if (cachedBytecode->span().size() < sizeof(BuiltinFunctionCacheEntry))
+        return nullptr;
+    unsigned sourceLength = provider.source().length();
+    auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(cachedBytecode->span().data());
+    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider);
+    DeferGC deferGC(vm);
+    return entry->decode(decoder.get(), sourceLength, embedderStamp);
 }
 
 RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error)

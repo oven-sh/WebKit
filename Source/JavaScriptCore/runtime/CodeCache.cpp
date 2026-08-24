@@ -57,8 +57,10 @@ void CodeCacheMap::pruneSlowCase()
     }
 }
 
-static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error)
+static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth = std::numeric_limits<unsigned>::max())
 {
+    if (!depth)
+        return;
     auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable, CodeSpecializationKind constructorKind) {
         if (constructorKind == CodeSpecializationKind::CodeForConstruct && SourceParseModeSet(SourceParseMode::AsyncArrowFunctionMode, SourceParseMode::AsyncMethodMode, SourceParseMode::AsyncFunctionMode).contains(unlinkedExecutable->parseMode()))
             return;
@@ -66,17 +68,17 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
         SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
         UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, constructorKind, codeGenerationMode, error, unlinkedExecutable->parseMode());
         if (unlinkedFunctionCodeBlock)
-            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error);
+            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1);
     };
 
     // FIXME: We should also generate CodeBlocks for CodeForConstruct
     // https://bugs.webkit.org/show_bug.cgi?id=193823
     //
-    // NOTE: We changed this in Bun. We check if the function is a constructor
-    // and if it is, we generate a CodeForConstruct block.
+    // NOTE: We changed this in Bun. A class constructor can only be `new`ed, so it gets a CodeForConstruct block;
+    // everything else gets CodeForCall.
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++) {
         auto* functionDecl = unlinkedCodeBlock->functionDecl(i);
-        if (functionDecl->isConstructor()) {
+        if (functionDecl->isClassConstructorFunction()) {
             generate(functionDecl, CodeSpecializationKind::CodeForConstruct);
         } else {
             generate(functionDecl, CodeSpecializationKind::CodeForCall);
@@ -84,7 +86,7 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
     }
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++) {
         auto* functionExpr = unlinkedCodeBlock->functionExpr(i);
-        if (functionExpr->isConstructor()) {
+        if (functionExpr->isClassConstructorFunction()) {
             generate(functionExpr, CodeSpecializationKind::CodeForConstruct);
         } else {
             generate(functionExpr, CodeSpecializationKind::CodeForCall);
@@ -160,6 +162,14 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
 
     generateUnlinkedCodeBlockForFunctions(vm, unlinkedCodeBlock, source, codeGenerationMode, error);
     return unlinkedCodeBlock;
+}
+
+void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error, unsigned depth)
+{
+    SourceCode source = executable->linkedSourceCode(parentSource);
+    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
+    if (codeBlock)
+        generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, { }, error, depth);
 }
 
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType)
