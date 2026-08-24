@@ -135,7 +135,9 @@ public:
     //                        never for a ticket that takePendingWork() returned true for.
     //                        The ticket's dependencies may already be cleared; its type()
     //                        and embedderData() are still valid. May be called from any
-    //                        thread.
+    //                        thread, including a collector thread at the end of a collection
+    //                        with the world stopped: it must not run script, allocate JS
+    //                        cells, or take the API lock.
     WTF::Function<void(Ticket&)> onAddPendingWork;
     WTF::Function<void(Ref<Ticket>&&, Task&&)> onScheduleWorkSoon;
     WTF::Function<void(Ticket&)> onCancelPendingWork;
