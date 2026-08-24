@@ -1034,8 +1034,6 @@ private:
     LexicallyScopedFeatures m_lexicallyScopedFeatures;
     ConstructorKind m_constructorKind { ConstructorKind::None };
     InnerArrowFunctionCodeFeatures m_innerArrowFunctionFeatures { 0 };
-    // In declaration order: the order these are declared as vars in decides their registers / scope offsets.
-    Vector<std::pair<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck>> m_sloppyModeFunctionHoistingCandidates;
     UncheckedKeyHashMap<FunctionMetadataNode*, unsigned> m_sloppyModeFunctionHoistingCandidateIndices;
     UncheckedKeyHashSet<UniquedStringImpl*> m_closedVariableCandidates;
 
@@ -1052,6 +1050,8 @@ private:
 
     UniquedStringImpl* m_lastAddedUsedVariable { nullptr };
     Vector<UniquedStringImplPtrSet, 6> m_usedVariables;
+    // In declaration order: the order these are declared as vars in decides their registers / scope offsets.
+    Vector<std::pair<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck>> m_sloppyModeFunctionHoistingCandidates;
 
     static void verifyLayout();
 };
