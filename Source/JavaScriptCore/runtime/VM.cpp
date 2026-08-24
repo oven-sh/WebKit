@@ -1004,7 +1004,7 @@ NativeExecutable* VM::getRemoteFunction(bool isJSFunction)
 NativeExecutable* VM::getTracedFunction(bool isJSFunction)
 {
     bool slowCase = !isJSFunction;
-#if !ENABLE(JIT) || OS(WINDOWS)
+#if !ENABLE(JIT)
     slowCase = true;
 #endif
     auto getOrCreate = [&] (Weak<NativeExecutable>& slot) -> NativeExecutable* {
