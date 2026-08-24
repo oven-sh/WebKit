@@ -2108,7 +2108,6 @@ private:
     // offset 128
     std::unique_ptr<LexerType> m_lexer;
     JSTokenLocation m_lastTokenLocation;
-    JSTextPosition m_lastTokenEndPosition; // a token that spans lines (a template literal) ends on a later line than m_lastTokenLocation.line
     Scope* m_currentScope { nullptr };
     String m_errorMessage;
     DebuggerParseData* m_debuggerParseData;
@@ -2129,6 +2128,7 @@ private:
     bool m_seenArgumentsDotLength { false };
     bool m_parsingBuiltin;
     bool m_isEvalContext;
+    JSTextPosition m_lastTokenEndPosition; // where m_lastTokenLocation's token ended: a later line than it started on if it is a template literal
 
     RefPtr<SourceProviderCache> m_functionCache;
     CallOrApplyDepthScope* m_callOrApplyDepthScope { nullptr };
