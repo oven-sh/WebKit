@@ -68,6 +68,21 @@ y${"`"}; }
     return [1, 2, 3].map(v =>
         v * spansLines(v, 1)).concat(inner());
 }
+function annexB(flag) {
+    if (flag) { function first() { return 1; } function second() { return 2; } }
+    else { function third() { return 3; } }
+    { function fourth() { return typeof first + typeof third; } function fifth() {} function sixth() {} }
+    return [typeof first, typeof second, typeof third, fourth()];
+}
+class ManyComputed {
+    ["a" + 1] = 1; ["b" + 2] = 2; ["c"] = 3; ["d"] = 4; ["e"] = 5; ["f"] = 6; ["g"] = 7; ["h"] = 8; ["i"] = 9; ["j"] = 10; ["k"] = 11;
+    static ["s1"] = 1; static ["s2"] = 2;
+    #p = 1; #q = 2;
+    total() { return this.a1 + this.k + this.#p + this.#q + ManyComputed.s2; }
+}
+function folded() {
+    return [2 ** 10, 2 ** -2, 2 ** 0.5, 9 ** 0.5, (-8) ** (1 / 3), 10 ** 21, 1e3 ** 1e3, 0.1 ** 3, annexB(true), new ManyComputed().total()];
+}
 function tdz() {
     const fns = [];
     for (let i = 0; i < 3; i++) { let captured = i; fns.push(() => captured + i); }
