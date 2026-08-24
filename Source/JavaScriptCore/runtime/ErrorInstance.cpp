@@ -136,6 +136,30 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
     return Base::estimatedSize(cell, vm) + size;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The captured frames stay reachable until the error info is materialized or the error dies,
+// like V8's CallSiteInfo. The first .stack read then always sees live callees and code blocks:
+// the embedder's onComputeErrorInfoJSValue callback can build call sites and call
+// Error.prepareStackTrace on them, and the header is computed from the current name and message.
+// Upstream keeps the frames weak and pre-renders a frames-only string in
+// reconcileWeakReferencesAtGCEnd when one of them dies, which drops all of that.
+template<typename Visitor>
+void ErrorInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    Locker locker { thisObject->cellLock() };
+    if (thisObject->m_stackTrace) {
+        for (StackFrame& frame : *thisObject->m_stackTrace)
+            frame.visitAggregate(visitor);
+    }
+}
+
+DEFINE_VISIT_CHILDREN(ErrorInstance);
+#endif
+
 void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size_t framesToSkip, bool append)
 {
     {
@@ -385,8 +409,13 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     // get caught in a trace.
     // Since the frames are weak, a dead one means the trace can no longer be reconstructed, so
     // materialize it into strings while it is still readable.
+    // With USE(BUN_JSC_ADDITIONS), visitChildren keeps the frames of a live error marked, so a dead
+    // frame here means it was stored without a write barrier.
     for (const auto& frame : *m_stackTrace.get()) {
         if (!frame.isMarked(vm)) {
+#if USE(BUN_JSC_ADDITIONS)
+            ASSERT_NOT_REACHED();
+#endif
             computeErrorInfo(vm, false);
             return;
         }
