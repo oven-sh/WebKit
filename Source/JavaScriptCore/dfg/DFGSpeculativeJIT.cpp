@@ -61,7 +61,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSAsyncFunctionGenerator.h"
 #include "JSAsyncGeneratorFunction.h"
 #include "JSBoundFunction.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSGeneratorFunction.h"

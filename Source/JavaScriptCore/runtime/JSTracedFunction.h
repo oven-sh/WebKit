@@ -36,6 +36,7 @@ namespace JSC {
 class JSPromise;
 
 JSC_DECLARE_HOST_FUNCTION(tracedFunctionCallGeneric);
+JSC_DECLARE_HOST_FUNCTION(tracedFunctionCallForJSFunction);
 
 // A function that runs the embedder's enter/leave hooks (VM::TracedFunctionHooks)
 // around a call, forwarding `this` and the arguments. Calls go through a JIT
@@ -79,7 +80,10 @@ public:
     // 0 from the prologue (frame not yet allocated / hook not yet run — the
     // local slot is garbage), TracedFrameEntered once the local is meaningful.
     static constexpr int spanLocal = 0;
-    static constexpr int numberOfFrameLocals = 1;
+    // The call target, type-checked before the enter hook and not re-read from
+    // the (hook-visible) argument slots afterwards.
+    static constexpr int targetLocal = 1;
+    static constexpr int numberOfFrameLocals = 2;
     enum FrameState : uint32_t { TracedFrameNotEntered = 0, TracedFrameEntered = 1 };
 
     DECLARE_EXPORT_INFO;

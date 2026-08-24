@@ -143,6 +143,14 @@ JSC_DEFINE_HOST_FUNCTION(tracedFunctionCallGeneric, (JSGlobalObject* globalObjec
     return JSValue::encode(result);
 }
 
+// Same body; a distinct function so JITThunks::hostFunctionStub (keyed on the
+// function pointer) gives the thunk-backed and the generic NativeExecutable
+// separate entries, as remoteFunctionCallForJSFunction does.
+JSC_DEFINE_HOST_FUNCTION(tracedFunctionCallForJSFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return tracedFunctionCallGeneric(globalObject, callFrame);
+}
+
 } // namespace JSC
 
 #endif // USE(BUN_JSC_ADDITIONS)

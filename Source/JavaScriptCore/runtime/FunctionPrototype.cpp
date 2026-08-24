@@ -27,7 +27,9 @@
 #include "FunctionExecutable.h"
 #include "IntegrityInlines.h"
 #include "JSBoundFunction.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "JSCInlines.h"
 
 namespace JSC {

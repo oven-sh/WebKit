@@ -30,7 +30,9 @@
 #include "JITThunks.h"
 #include "JSBoundFunction.h"
 #include "JSRemoteFunction.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "LLIntThunks.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "SpecializedThunkJIT.h"
@@ -1468,6 +1470,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
     constexpr unsigned extraStackNeeded = stackMisalignment ? stackAlignmentBytes() - stackMisalignment : 0;
     static constexpr int numFrameLocals = JSTracedFunction::numberOfFrameLocals;
     VirtualRegister spanLocal = virtualRegisterForLocal(JSTracedFunction::spanLocal);
+    VirtualRegister targetLocal = virtualRegisterForLocal(JSTracedFunction::targetLocal);
 
     jit.loadCell(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
     jit.load32(CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), GPRInfo::regT1);
@@ -1516,7 +1519,12 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
     CCallHelpers::JumpList noCallee;
     auto loadTarget = [&](GPRReg calleeGPR, GPRReg argumentCountGPR, GPRReg targetGPR, CCallHelpers::JumpList& slow) {
         jit.loadPtr(CCallHelpers::Address(calleeGPR, JSTracedFunction::offsetOfTargetFunction()), targetGPR);
-        auto isWrap = jit.branchTestPtr(CCallHelpers::NonZero, targetGPR);
+        auto isCallLast = jit.branchTestPtr(CCallHelpers::Zero, targetGPR);
+        // Shape::Wrap: creation picks the generic executable for non-JSFunction
+        // targets; checked here too so this code never depends on that.
+        slow.append(jit.branchIfNotType(targetGPR, JSFunctionType));
+        auto wrapChecked = jit.jump();
+        isCallLast.link(&jit);
         // Shape::CallLast: target = arguments[argumentCount - 1], if any and if a JSFunction.
         noCallee.append(jit.branch32(CCallHelpers::Below, argumentCountGPR, CCallHelpers::TrustedImm32(2)));
         jit.loadValue(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(0)).indexedBy(argumentCountGPR, CCallHelpers::TimesEight).withOffset(-static_cast<int>(sizeof(Register))), JSValueRegs { targetGPR });
@@ -1527,7 +1535,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
         slow.append(jit.branchIfObject(targetGPR));
         noCallee.append(jit.jump());
         isFunction.link(&jit);
-        isWrap.link(&jit);
+        wrapChecked.link(&jit);
     };
     auto loadCodePointer = [&](GPRReg targetGPR, GPRReg executableGPR, GPRReg codeGPR) {
         jit.loadPtr(CCallHelpers::Address(targetGPR, JSFunction::offsetOfExecutableOrRareData()), executableGPR);
@@ -1540,6 +1548,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
     {
         CCallHelpers::JumpList slow;
         loadTarget(GPRInfo::regT0, GPRInfo::regT1, GPRInfo::regT2, slow);
+        jit.storeCell(GPRInfo::regT2, jit.addressFor(targetLocal));
         loadCodePointer(GPRInfo::regT2, GPRInfo::regT3, GPRInfo::regT2);
         slow.append(jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT2));
         auto fast = jit.jump();
@@ -1564,9 +1573,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
     jit.loadCell(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
     jit.load32(CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), GPRInfo::regT1);
 
-    // Build the callee frame.
-    jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, JSTracedFunction::offsetOfTargetFunction()), GPRInfo::regT2);
-    auto wrapShape = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::regT2);
+    // Build the callee frame. The target is the cell checked before the hook
+    // ran (targetLocal), not a re-read of the argument slots.
+    auto wrapShape = jit.branchTestPtr(CCallHelpers::NonZero, CCallHelpers::Address(GPRInfo::regT0, JSTracedFunction::offsetOfTargetFunction()));
     {
         // Shape::CallLast: fn(span) with this = undefined.
         jit.store32(CCallHelpers::TrustedImm32(2), CCallHelpers::calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis));
@@ -1575,7 +1584,6 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
         jit.moveTrustedValue(jsUndefined(), valueRegs);
         haveSpan.link(&jit);
         jit.storeValue(valueRegs, CCallHelpers::calleeArgumentSlot(1));
-        jit.loadValue(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(0)).indexedBy(GPRInfo::regT1, CCallHelpers::TimesEight).withOffset(-static_cast<int>(sizeof(Register))), JSValueRegs { GPRInfo::regT2 });
     }
     auto frameBuilt = jit.jump();
     wrapShape.link(&jit);
@@ -1592,6 +1600,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
     frameBuilt.link(&jit);
 
     // regT2 = target JSFunction (checked before the hook ran).
+    jit.loadCell(jit.addressFor(targetLocal), GPRInfo::regT2);
     jit.storeCell(GPRInfo::regT2, CCallHelpers::calleeFrameSlot(CallFrameSlot::callee));
     loadCodePointer(GPRInfo::regT2, GPRInfo::regT1, GPRInfo::regT3);
     auto codeExists = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::regT3);

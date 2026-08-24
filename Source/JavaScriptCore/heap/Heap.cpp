@@ -65,7 +65,9 @@
 #include "JSPromiseReaction.h"
 #include "JSRawJSONObject.h"
 #include "JSRemoteFunction.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "JSSentinel.h"
 #include "JSVirtualMachineInternal.h"
 #include "JSWeakMap.h"

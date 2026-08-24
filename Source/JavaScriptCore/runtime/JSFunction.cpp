@@ -36,7 +36,9 @@
 #include "JSCInlines.h"
 #include "JSGlobalObject.h"
 #include "JSRemoteFunction.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "ObjectConstructor.h"
 #include "ObjectPrototype.h"
 #include "PropertyNameArray.h"

@@ -2356,9 +2356,7 @@ public:
         : m_jit(jit)
         , m_edge(edge)
         , m_gprOrInvalid(InvalidGPRReg)
-#ifndef NDEBUG
         , m_format(DataFormatNone)
-#endif
     {
         ASSERT(m_jit);
         ASSERT_UNUSED(mode, mode == ManualOperandSpeculation || (edge.useKind() == Int32Use || edge.useKind() == KnownInt32Use));

@@ -68,7 +68,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSMicrotask.h"
 #include "JSPromise.h"
 #include "JSRemoteFunction.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "JSSentinel.h"
 #include "JSSetIterator.h"
 #include "JSStringIteratorInlines.h"

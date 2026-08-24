@@ -130,7 +130,6 @@ class JSLock;
 class JSObject;
 struct JSPIContext;
 class JSPromise;
-class JSTracedFunction;
 class JSPropertyNameEnumerator;
 class JITSizeStatistics;
 class JITThunks;
@@ -206,6 +205,7 @@ struct DebugState;
 struct EntryFrame;
 
 #if USE(BUN_JSC_ADDITIONS)
+class JSTracedFunction;
 // The embedder's side of JSTracedFunction (see JSTracedFunction.h). All null = plain calls.
 struct TracedFunctionHooks {
     EncodedJSValue (*enter)(JSGlobalObject*, CallFrame*, JSTracedFunction*) { nullptr };

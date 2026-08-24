@@ -34,6 +34,7 @@ namespace JSC {
 #if USE(BUN_JSC_ADDITIONS)
 #define JSC_FOR_EACH_BUN_JSC_INTRINSIC(macro) \
     macro(BufferAccessorIntrinsic) \
+    macro(TracedFunctionCallIntrinsic) \
 
 #else
 #define JSC_FOR_EACH_BUN_JSC_INTRINSIC(macro)
@@ -178,7 +179,6 @@ namespace JSC {
     macro(ArrayBufferIsViewIntrinsic) \
     macro(BoundFunctionCallIntrinsic) \
     macro(RemoteFunctionCallIntrinsic) \
-    macro(TracedFunctionCallIntrinsic) \
     macro(IteratorIntrinsic) \
     macro(JSMapGetIntrinsic) \
     macro(JSMapHasIntrinsic) \

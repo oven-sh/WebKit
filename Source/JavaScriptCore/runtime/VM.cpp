@@ -81,7 +81,9 @@
 #include "JSMicrotaskDispatcher.h"
 #include "JSModuleLoaderInlines.h"
 #include "JSPromise.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "JSPromiseCombinatorsContextInlines.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseConstructor.h"
@@ -1009,7 +1011,7 @@ NativeExecutable* VM::getTracedFunction(bool isJSFunction)
         if (auto* cached = slot.get())
             return cached;
         NativeExecutable* result = getHostFunction(
-            tracedFunctionCallGeneric,
+            slowCase ? tracedFunctionCallGeneric : tracedFunctionCallForJSFunction,
             ImplementationVisibility::Public, slowCase ? NoIntrinsic : TracedFunctionCallIntrinsic,
             callHostFunctionAsConstructor, nullptr, 0, String());
         slot = Weak<NativeExecutable>(result);

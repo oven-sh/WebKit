@@ -88,7 +88,9 @@
 #include "JSAsyncGenerator.h"
 #include "JSAsyncGeneratorFunction.h"
 #include "JSBoundFunction.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSGenerator.h"

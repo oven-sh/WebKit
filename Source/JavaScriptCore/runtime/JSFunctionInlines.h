@@ -30,7 +30,9 @@
 #include "JSBoundFunction.h"
 #include "JSFunction.h"
 #include "JSRemoteFunction.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "NativeExecutable.h"
 #include "WebAssemblyFunction.h"
 #include <JavaScriptCore/ExceptionHelpers.h>

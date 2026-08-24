@@ -68,7 +68,9 @@
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseReaction.h"
 #include "JSRemoteFunction.h"
+#if USE(BUN_JSC_ADDITIONS)
 #include "JSTracedFunction.h"
+#endif
 #include "JSString.h"
 #include "JSWebAssemblyException.h"
 #include "LLIntThunks.h"
