@@ -269,6 +269,13 @@ struct SourceTypeImpl<T, std::enable_if_t<!std::is_fundamental<T>::value && !std
 template<typename T>
 using SourceType = typename SourceTypeImpl<T>::type;
 
+// What the Encoder writes must be a function of the source alone (embedders compare payloads built on different
+// machines), so nothing about this process may reach the bytes: not alignof(std::max_align_t) (16 on x86-64
+// Linux/macOS, 8 elsewhere), not pageSize() (where a page ends decides where the next allocation lands), not the
+// order a hash table happens to iterate in (see EncodingOrder), not padding bits nobody wrote.
+static constexpr size_t encoderMaxAlignment = 8;
+static constexpr size_t encoderMinPageSize = 4 * KB;
+
 class Encoder {
     WTF_MAKE_NONCOPYABLE(Encoder);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -560,7 +567,7 @@ private:
 
         bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
         {
-            ASSERT(alignment && alignment <= alignof(std::max_align_t) && isPowerOfTwo(alignment));
+            ASSERT(alignment && alignment <= encoderMaxAlignment && isPowerOfTwo(alignment));
             ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
             if (static_cast<size_t>(offset + size) > capacity())
                 return false;
@@ -591,7 +598,7 @@ private:
 
         void NODELETE alignEnd()
         {
-            ptrdiff_t size = roundUpToMultipleOf(alignof(std::max_align_t), m_offset);
+            ptrdiff_t size = roundUpToMultipleOf(encoderMaxAlignment, m_offset);
             if (size == m_offset)
                 return;
             RELEASE_ASSERT(static_cast<size_t>(size) <= capacity());
@@ -607,7 +614,7 @@ private:
 
     void allocateNewPage(size_t size = 0)
     {
-        static size_t minPageSize = pageSize();
+        static constexpr size_t minPageSize = encoderMinPageSize;
         if (m_currentPage) {
             m_currentPage->alignEnd();
             m_baseOffset += m_currentPage->size();
@@ -1218,6 +1225,36 @@ private:
     unsigned m_size;
 };
 
+// Hash tables iterate in an order that depends on where their keys hashed to -- for SymbolImpl keys a per-process
+// counter, for robin-hood tables the table's own address -- so their entries are encoded in key order to keep the
+// payload a function of the source alone. Keys are ordered by contents, then by what kind of StringImpl they decode to;
+// two keys equal in both would decode to the same StringImpl and cannot share a table.
+struct EncodingOrder {
+    static std::strong_ordering compare(unsigned a, unsigned b) { return a <=> b; }
+    static unsigned kind(const StringImpl* string)
+    {
+        if (!string->isSymbol())
+            return 0;
+        auto& symbol = *static_cast<const SymbolImpl*>(string);
+        return 1 + symbol.isRegistered() * 2 + symbol.isPrivate();
+    }
+    static std::strong_ordering compare(const StringImpl* a, const StringImpl* b)
+    {
+        if (auto order = codePointCompare(StringView(*a), StringView(*b)); order != 0)
+            return order;
+        return kind(a) <=> kind(b);
+    }
+    template<typename T, typename Traits> static std::strong_ordering compare(const RefPtr<T, Traits>& a, const RefPtr<T, Traits>& b) { return compare(a.get(), b.get()); }
+
+    template<typename Entries, typename KeyOf>
+    static void sort(Entries& entries, const KeyOf& keyOf)
+    {
+        std::stable_sort(entries.begin(), entries.end(), [&](const auto& a, const auto& b) {
+            return compare(keyOf(a), keyOf(b)) < 0;
+        });
+    }
+};
+
 template<typename First, typename Second>
 class CachedPair : public CachedObject<std::pair<SourceType<First>, SourceType<Second>>> {
 public:
@@ -1251,6 +1288,7 @@ public:
         unsigned i = 0;
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
+        EncodingOrder::sort(entriesVector, [](const auto& entry) -> const auto& { return entry.first; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1283,6 +1321,7 @@ public:
         unsigned i = 0;
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
+        EncodingOrder::sort(entriesVector, [](const auto& entry) -> const auto& { return entry.first; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1575,6 +1614,7 @@ public:
         unsigned i = 0;
         for (const auto& item : set)
             entriesVector[i++] = item;
+        EncodingOrder::sort(entriesVector, [](const auto& item) -> const auto& { return item; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1588,6 +1628,29 @@ public:
 
 private:
     CachedVector<T> m_entries;
+};
+
+// UnlinkedHandlerInfo keeps its HandlerType in a 2-bit bit-field; the other 30 bits would be whatever the heap held.
+class CachedHandlerInfo : public CachedObject<UnlinkedHandlerInfo> {
+public:
+    void encode(Encoder&, const UnlinkedHandlerInfo& handlerInfo)
+    {
+        m_start = handlerInfo.start;
+        m_end = handlerInfo.end;
+        m_target = handlerInfo.target;
+        m_type = static_cast<uint32_t>(handlerInfo.type());
+    }
+
+    void decode(Decoder&, UnlinkedHandlerInfo& handlerInfo) const
+    {
+        handlerInfo = UnlinkedHandlerInfo(m_start, m_end, m_target, static_cast<HandlerType>(m_type));
+    }
+
+private:
+    uint32_t m_start;
+    uint32_t m_end;
+    uint32_t m_target;
+    uint32_t m_type;
 };
 
 class CachedCodeBlockRareData : public CachedObject<UnlinkedCodeBlock::RareData> {
@@ -1625,7 +1688,7 @@ public:
     }
 
 private:
-    CachedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
+    CachedVector<CachedHandlerInfo> m_exceptionHandlers;
     CachedVector<CachedSimpleJumpTable> m_unlinkedSwitchJumpTables;
     CachedVector<CachedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
@@ -1729,15 +1792,17 @@ class CachedCompactTDZEnvironment : public CachedObject<CompactTDZEnvironment> {
 public:
     void encode(Encoder& encoder, const CompactTDZEnvironment& env)
     {
+        // A Compact is sorted by StringImpl address; decode() sorts again.
+        CompactTDZEnvironment::Compact compact;
         if (std::holds_alternative<CompactTDZEnvironment::Compact>(env.m_variables))
-            m_variables.encode(encoder, std::get<CompactTDZEnvironment::Compact>(env.m_variables));
+            compact = std::get<CompactTDZEnvironment::Compact>(env.m_variables);
         else {
-            CompactTDZEnvironment::Compact compact;
             for (auto& key : std::get<CompactTDZEnvironment::Inflated>(env.m_variables))
                 compact.append(key);
-            m_variables.encode(encoder, compact);
         }
-        m_hash = env.m_hash;
+        EncodingOrder::sort(compact, [](const auto& key) -> const auto& { return key; });
+        m_variables.encode(encoder, compact);
+        m_hash = env.m_hash; // of the contents, not the addresses
     }
 
     void decode(Decoder& decoder, CompactTDZEnvironment& env) const
@@ -3709,7 +3774,7 @@ private:
     CachedCodeBlockTag m_tag;
 };
 
-static_assert(alignof(GenericCacheEntry) <= alignof(std::max_align_t));
+static_assert(alignof(GenericCacheEntry) <= encoderMaxAlignment);
 
 template<typename UnlinkedCodeBlockType>
 class CacheEntry : public GenericCacheEntry {
@@ -3755,8 +3820,8 @@ private:
     CachedPtr<CachedCodeBlockType<UnlinkedCodeBlockType>> m_codeBlock;
 };
 
-static_assert(alignof(CacheEntry<UnlinkedProgramCodeBlock>) <= alignof(std::max_align_t));
-static_assert(alignof(CacheEntry<UnlinkedModuleProgramCodeBlock>) <= alignof(std::max_align_t));
+static_assert(alignof(CacheEntry<UnlinkedProgramCodeBlock>) <= encoderMaxAlignment);
+static_assert(alignof(CacheEntry<UnlinkedModuleProgramCodeBlock>) <= encoderMaxAlignment);
 
 bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, UnlinkedCodeBlock*>& result) const
 {
