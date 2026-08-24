@@ -103,8 +103,15 @@ public:
         prune();
 
         iterator findResult = m_map.find(key);
-        if (findResult == m_map.end())
-            return fetchFromDisk<UnlinkedCodeBlockType>(vm, key);
+        if (findResult == m_map.end()) {
+            // A block decoded from the provider's cached bytecode is as reusable as one we generated: remember it, so
+            // another global in this VM loading the same source links against this block instead of decoding its own
+            // copy of the unlinked tree.
+            UnlinkedCodeBlockType* decoded = fetchFromDisk<UnlinkedCodeBlockType>(vm, key);
+            if (decoded && Options::useCodeCache())
+                addCache(key, SourceCodeValue(vm, decoded, m_age));
+            return decoded;
+        }
 
         int64_t age = m_age - findResult->value.age;
         if (age > m_capacity) {
