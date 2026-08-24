@@ -3481,7 +3481,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                 loc.lineStartOffset = position.lineStartOffset;
                 loc.startOffset = position.offset;
                 loc.endOffset = position.offset;
-                restoreLexerState(LexerState { position.offset, static_cast<unsigned>(position.lineStartOffset), loc, static_cast<unsigned>(position.line), hasLineTerminatorBeforeToken, ERRORTOK });
+                restoreLexerState(LexerState { position.offset, static_cast<unsigned>(position.lineStartOffset), loc, position, static_cast<unsigned>(position.line), hasLineTerminatorBeforeToken, ERRORTOK });
             }
             JSTokenLocation startLocation(tokenLocation());
             JSTextPosition startPosition = tokenStartPosition();
@@ -3512,7 +3512,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                     loc.lineStartOffset = initializerPosition->lineStartOffset;
                     loc.startOffset = initializerPosition->offset;
                     loc.endOffset = initializerPosition->offset;
-                    restoreLexerState(LexerState { initializerPosition->offset, static_cast<unsigned>(initializerPosition->lineStartOffset), loc, static_cast<unsigned>(initializerPosition->line), hasLineTerminatorBeforeToken, ERRORTOK });
+                    restoreLexerState(LexerState { initializerPosition->offset, static_cast<unsigned>(initializerPosition->lineStartOffset), loc, *initializerPosition, static_cast<unsigned>(initializerPosition->line), hasLineTerminatorBeforeToken, ERRORTOK });
                 }
                 // parseExpression() is more permissive way to parse AssignmentExpression than parseAssignmentExpression() that is used in parseClass().
                 // This is very intentional: we need to fail for `foo = 1, 2` but support reparsing `foo = (1, 2)`, which is tricky because open paren

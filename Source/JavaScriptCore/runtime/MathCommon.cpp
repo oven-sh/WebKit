@@ -433,8 +433,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMathPow, double, (double x, double y)
         return 1. / sqrt(x);
     }
 
-    int32_t yAsInt = y;
-    if (static_cast<double>(yAsInt) == y && yAsInt >= 0 && yAsInt <= maxExponentForIntegerMathPow) {
+    if (isIntegerExponentForMathPow(y)) {
+        int32_t yAsInt = y;
         // If the exponent is a small positive int32 integer, we do a fast exponentiation
         double result = 1;
         double xd = x;

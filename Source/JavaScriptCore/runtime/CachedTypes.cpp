@@ -861,11 +861,15 @@ public:
     static constexpr unsigned inlineStringMaxLength = 3;
     bool tryEncodeInlineString(const StringImpl& string)
     {
-        if (string.isSymbol() || !string.is8Bit() || !string.length() || string.length() > inlineStringMaxLength)
+        if (string.isSymbol() || !string.length() || string.length() > inlineStringMaxLength)
             return false;
         uint32_t packed = inlineStringTag | string.length() << 2;
-        for (unsigned i = 0; i < string.length(); ++i)
-            packed |= static_cast<uint32_t>(string.span8()[i]) << (8 * (i + 1));
+        for (unsigned i = 0; i < string.length(); ++i) {
+            char16_t character = string[i]; // whether the atom happens to be stored 16-bit is not a property of the source
+            if (!isLatin1(character))
+                return false;
+            packed |= static_cast<uint32_t>(character) << (8 * (i + 1));
+        }
         m_offset = std::bit_cast<Offset>(packed);
         return true;
     }
@@ -1448,7 +1452,9 @@ public:
     std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
 private:
-    // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.".
+    // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.",
+    // and Latin-1 contents are stored 8-bit even if this process's atom for them happens to be 16-bit (an equal 16-bit
+    // string was atomized first), since that is not a property of the source.
     struct Shape {
         explicit Shape(const StringImpl& string)
             : characters(const_cast<StringImpl*>(&string))
@@ -1463,6 +1469,8 @@ private:
                     characters = symbol.substring(strlen("Symbol."));
                 }
             }
+            if (!characters->is8Bit())
+                characters = StringImpl::create8BitIfPossible(characters->span16());
         }
         size_t byteLength() const { return characters->length() * (characters->is8Bit() ? 1 : 2); }
         RefPtr<StringImpl> characters;
@@ -2038,7 +2046,7 @@ public:
     void encode(Encoder& encoder, JSCellButterfly& immutableButterfly)
     {
         m_length = immutableButterfly.length();
-        m_indexingType = immutableButterfly.indexingTypeAndMisc();
+        m_indexingType = immutableButterfly.indexingMode(); // not indexingTypeAndMisc(): the rest of that byte is cell-lock state
         if (hasDouble(m_indexingType))
             m_cachedDoubles.encode(encoder, immutableButterfly.toButterfly()->contiguousDouble().data(), m_length);
         else

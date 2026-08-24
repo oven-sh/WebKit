@@ -72,6 +72,7 @@ public:
 
 protected:
     WTF_EXPORT_PRIVATE static unsigned NODELETE nextHashForSymbol();
+    template<typename CharacterType> static unsigned hashForSymbol(std::span<const CharacterType>, Flags);
 
     friend class StringImpl;
 
