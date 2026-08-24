@@ -182,9 +182,11 @@ struct JSTypeRange {
 };
 
 static constexpr uint8_t EmbedderArrayLikeType = 0b11101101;
+#if USE(BUN_JSC_ADDITIONS)
 // A JSInternalFieldObjectImpl subclass defined by the embedder that its
 // builtins brand-check via @isEmbedderInternalFieldObject (lowers to IsCellWithType).
 static constexpr uint8_t EmbedderInternalFieldObjectType = 0b11100001;
+#endif
 
 static constexpr uint32_t LastValueCompareCellType = HeapBigIntType;
 

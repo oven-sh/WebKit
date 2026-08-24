@@ -2370,9 +2370,7 @@ public:
         : m_jit(other.m_jit)
         , m_edge(other.m_edge)
         , m_gprOrInvalid(other.m_gprOrInvalid)
-#ifndef NDEBUG
         , m_format(other.m_format)
-#endif
     {
         other.m_gprOrInvalid = InvalidGPRReg;
         other.m_edge = Edge();

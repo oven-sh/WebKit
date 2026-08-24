@@ -10038,15 +10038,6 @@ IGNORE_CLANG_WARNINGS_END
         static_assert(initialValues.size() == JSClass::numberOfInternalFields);
         for (unsigned index = 0; index < initialValues.size(); ++index)
             m_out.store64(m_out.constInt64(JSValue::encode(initialValues[index])), object, m_heaps.JSInternalFieldObjectImpl_internalFields[index]);
-#if USE(BUN_JSC_ADDITIONS)
-        if constexpr (std::is_same_v<JSClass, JSAsyncFunctionGenerator>) {
-            // See recordEntryAsyncContext() in JSAsyncFunctionGenerator.cpp.
-            if (auto* asyncContextData = m_graph.globalObjectFor(m_origin.semantic)->m_asyncContextData.get()) {
-                LValue current = m_out.load64(m_out.absolute(std::bit_cast<char*>(asyncContextData) + JSInternalFieldObjectImpl<>::offsetOfInternalField(0)));
-                m_out.store64(current, object, m_heaps.JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(JSAsyncFunctionGenerator::Field::AsyncContext)]);
-            }
-        }
-#endif
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(object);
         m_out.jump(continuation);

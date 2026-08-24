@@ -373,8 +373,13 @@ static void asyncFromSyncIteratorContinueOrDone(JSGlobalObject* globalObject, VM
         scope.release();
         if (auto* promise = dynamicDowncast<JSPromise>(target))
             promise->reject(vm, result);
-        else
+        else {
+#if USE(BUN_JSC_ADDITIONS)
+            JSPromise::rejectWithInternalMicrotask(vm, globalObject, result, InternalMicrotask::AsyncGeneratorDriverResume, AsyncContextSwapScope::captureForAwait(vm, globalObject, target));
+#else
             JSPromise::rejectWithInternalMicrotask(vm, globalObject, result, InternalMicrotask::AsyncGeneratorDriverResume, target);
+#endif
+        }
         break;
     }
     case JSPromise::Status::Fulfilled: {
@@ -1757,8 +1762,9 @@ JSC_DEFINE_HOST_FUNCTION(asyncFunctionDrive, (JSGlobalObject* globalObject, Call
     // prefix is about to return to the caller. If that prefix changed the async
     // context (an `enterWith`-style activation), give the embedder a chance to
     // decide what the caller should observe. The continuation itself keeps the
-    // prefix's context (captured below).
-    JSValue entryContext = generator->asyncContext();
+    // prefix's context (captured below). The wrapper bytecode passes the
+    // context it saw at entry as the third argument.
+    JSValue entryContext = callFrame->argument(2);
 #endif
     asyncFunctionArrangeAwaitResume(globalObject, vm, generator, resolution);
 #if USE(BUN_JSC_ADDITIONS)

@@ -86,7 +86,7 @@ JSC_DEFINE_HOST_FUNCTION(tracedFunctionCallGeneric, (JSGlobalObject* globalObjec
     auto* traced = uncheckedDowncast<JSTracedFunction>(callFrame->jsCallee());
     auto& hooks = vm.tracedFunctionHooks();
 
-    JSValue target;
+    JSValue target = jsUndefined();
     if (traced->shape() == JSTracedFunction::Shape::Wrap)
         target = traced->targetFunction();
     else if (callFrame->argumentCount())

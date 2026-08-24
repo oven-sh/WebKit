@@ -109,7 +109,11 @@ const ClassInfo JSFullPromiseReaction::s_info = { "FullPromiseReaction"_s, &JSPr
 
 JSFullPromiseReaction* JSFullPromiseReaction::create(VM& vm, JSValue promise, JSValue onFulfilled, JSValue onRejected, JSValue context, JSPromiseReaction* next, InternalMicrotask task)
 {
+#if USE(BUN_JSC_ADDITIONS)
     ASSERT(task == InternalMicrotask::None || task == InternalMicrotask::PromiseReactionJobWithAsyncContext);
+#else
+    ASSERT(task == InternalMicrotask::None);
+#endif
     JSFullPromiseReaction* result = new (NotNull, allocateCell<JSFullPromiseReaction>(vm)) JSFullPromiseReaction(vm, vm.fullPromiseReactionStructure.get(), promise, onFulfilled, onRejected, context, next, task);
     result->finishCreation(vm);
     return result;

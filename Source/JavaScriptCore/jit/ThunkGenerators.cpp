@@ -1286,10 +1286,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     
     jit.emitFunctionPrologue();
     
-    // Set up our call frame: no CodeBlock, and CallSiteIndex = TracedFrameNotEntered
-    // until the span local below is initialized (see JSTracedFunction::FrameState).
+    // Set up our call frame.
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::addressFor(CallFrameSlot::codeBlock));
-    jit.store32(CCallHelpers::TrustedImm32(JSTracedFunction::TracedFrameNotEntered), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+    jit.store32(CCallHelpers::TrustedImm32(0), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
     constexpr unsigned stackMisalignment = sizeof(CallerFrameAndPC) % stackAlignmentBytes();
     constexpr unsigned extraStackNeeded = stackMisalignment ? stackAlignmentBytes() - stackMisalignment : 0;
@@ -1460,9 +1459,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
     CCallHelpers jit;
     jit.emitFunctionPrologue();
 
-    // Set up our call frame.
+    // Set up our call frame: no CodeBlock, and CallSiteIndex = TracedFrameNotEntered
+    // until the span local below is initialized (see JSTracedFunction::FrameState).
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::addressFor(CallFrameSlot::codeBlock));
-    jit.store32(CCallHelpers::TrustedImm32(0), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+    jit.store32(CCallHelpers::TrustedImm32(JSTracedFunction::TracedFrameNotEntered), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
     constexpr unsigned stackMisalignment = sizeof(CallerFrameAndPC) % stackAlignmentBytes();
     constexpr unsigned extraStackNeeded = stackMisalignment ? stackAlignmentBytes() - stackMisalignment : 0;
@@ -1633,6 +1633,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
     constexpr JSValueRegs resultRegs = JSRInfo::returnValueJSR;
     jit.loadValue(jit.addressFor(spanLocal), valueRegs);
     auto untraced = jit.branchIfEmpty(valueRegs);
+    // The span is the leave hook's from here on; an exception thrown by it must
+    // not also reach the unwind hook (same as tracedFunctionCallGeneric).
+    jit.store32(CCallHelpers::TrustedImm32(JSTracedFunction::TracedFrameNotEntered), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
     jit.loadCell(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT2);
     jit.setupArguments<decltype(operationTracedFunctionLeave)>(GPRInfo::regT2, valueRegs, resultRegs);
     jit.prepareCallOperation(vm);

@@ -909,7 +909,11 @@ public:
             // CallSiteIndex word is otherwise unused; the thunk stores TracedFrameEntered there once the
             // frame is allocated and the enter hook has run (before that, the local slot is uninitialized —
             // e.g. while throwing StackOverflow from the thunk prologue).
-            if (auto* traced = dynamicDowncast<JSTracedFunction>(m_callFrame->jsCallee()); traced && m_callFrame->callSiteIndex().bits() == JSTracedFunction::TracedFrameEntered) {
+            // (The NoIntrinsic slow-path executable runs tracedFunctionCallGeneric in an ordinary host frame,
+            // which handles unwind itself and whose CallSiteIndex word is not ours.)
+            if (auto* traced = dynamicDowncast<JSTracedFunction>(m_callFrame->jsCallee()); traced
+                && traced->executable()->intrinsic() == TracedFunctionCallIntrinsic
+                && m_callFrame->callSiteIndex().bits() == JSTracedFunction::TracedFrameEntered) {
                 JSValue span = m_callFrame->registers()[virtualRegisterForLocal(JSTracedFunction::spanLocal).offset()].jsValue();
                 if (span)
                     m_vm.m_unwoundTracedFrames.append({ traced, span });

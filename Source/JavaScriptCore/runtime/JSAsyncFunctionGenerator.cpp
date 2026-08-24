@@ -27,36 +27,16 @@
 #include "JSAsyncFunctionGenerator.h"
 
 #include "JSCInlines.h"
-#include "InternalFieldTuple.h"
-#include "JSGlobalObject.h"
 #include "JSInternalFieldObjectImplInlines.h"
 
 namespace JSC {
 
 const ClassInfo JSAsyncFunctionGenerator::s_info = { "AsyncFunctionGenerator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAsyncFunctionGenerator) };
 
-#if USE(BUN_JSC_ADDITIONS)
-// The AsyncContext slot starts out holding the async context that was current
-// when the async function was called, so asyncFunctionDrive can tell whether
-// the function's synchronous prefix changed it (see JSMicrotask.cpp). The
-// DFG/FTL inline allocation paths do the same load.
-static ALWAYS_INLINE void recordEntryAsyncContext(VM& vm, JSAsyncFunctionGenerator* generator, Structure* structure)
-{
-    if (auto* data = structure->globalObject()->m_asyncContextData.get()) {
-        JSValue current = data->getInternalField(0);
-        if (!current.isUndefined())
-            generator->setAsyncContext(vm, current);
-    }
-}
-#endif
-
 JSAsyncFunctionGenerator* JSAsyncFunctionGenerator::create(VM& vm, Structure* structure)
 {
     JSAsyncFunctionGenerator* generator = new (NotNull, allocateCell<JSAsyncFunctionGenerator>(vm)) JSAsyncFunctionGenerator(vm, structure);
     generator->finishCreation(vm);
-#if USE(BUN_JSC_ADDITIONS)
-    recordEntryAsyncContext(vm, generator, structure);
-#endif
     return generator;
 }
 
@@ -64,9 +44,6 @@ JSAsyncFunctionGenerator* JSAsyncFunctionGenerator::createWithInitialValues(VM& 
 {
     JSAsyncFunctionGenerator* generator = new (NotNull, allocateCell<JSAsyncFunctionGenerator>(vm)) JSAsyncFunctionGenerator(vm, structure);
     generator->finishCreation(vm);
-#if USE(BUN_JSC_ADDITIONS)
-    recordEntryAsyncContext(vm, generator, structure);
-#endif
     return generator;
 }
 
