@@ -1,7 +1,13 @@
+//@ runDefault
+//@ runDefault("--collectContinuously=1")
+//@ runDefault("--useSourceProviderCache=0")
+
 // What generateProgramBytecode()/generateModuleBytecode() write must be a function of the source alone: embedders build
 // the cache on one platform and load it on another, and check that the two agree by comparing what each encodes.
 // Hash-table order, heap addresses or padding bytes showing up in the payload break that; within one process they show
-// up as two encodings of the same source differing.
+// up as two encodings of the same source differing. (What must also hold, but a single process cannot check, is that the
+// three configurations above encode the same bytes: whether the parser skipped a nested function's body through the
+// SourceProviderCache, and whether a collection emptied that cache part-way, must not show in the payload either.)
 
 const corpus = String.raw`
 function classify(n, s) {
@@ -52,6 +58,15 @@ async function asyncStuff(n, ...rest) {
     for (const v of gen(n)) seen.push(v);
     label: for (const k in { p: 1, q: 2, r: 3 }) { if (k === "r") break label; seen.push(k); }
     return seen;
+}
+function skippedBodies() {
+    const spansLines = (a, b) =>
+        a +
+            b;
+    function inner() { const t = (s, ...v) => s.raw.join("|") + v; return t${"`"}x${"$"}{spansLines(1, 2)}
+y${"`"}; }
+    return [1, 2, 3].map(v =>
+        v * spansLines(v, 1)).concat(inner());
 }
 function tdz() {
     const fns = [];

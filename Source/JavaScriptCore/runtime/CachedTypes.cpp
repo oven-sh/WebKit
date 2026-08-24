@@ -271,15 +271,18 @@ struct SourceTypeImpl<T, std::enable_if_t<!std::is_fundamental<T>::value && !std
 template<typename T>
 using SourceType = typename SourceTypeImpl<T>::type;
 
-// The payload is decoded by a different build of this code than encoded it -- Bun cross-compiles executables that embed
-// it, so encoder and decoder differ in OS, CPU and C++ ABI (Itanium vs. MSVC) -- and the format is the object
-// representation of whatever the Encoder places in its pages. So what is placed there is restricted to types whose
-// representation the language pins down on every 64-bit little-endian target: records of fixed-width scalars with no
-// padding bytes and no bit-field slack (any byte the ABI is free to place is a byte two ABIs can place differently:
-// Itanium reuses a base's tail padding and MSVC does not, MSVC starts a new unit when adjacent bit-fields change type,
-// MSVC does not overlay a second empty base), no pointers, nothing derived from this process's sizeof, addresses,
-// hash seeds or page size. isPortableRecord() is checked wherever a type enters a page; a type that fails it gets its
-// fields reordered or widened, or explicit m_padding, until every byte is a named field.
+// What the Encoder writes must be a function of the source alone -- embedders build the payload on one machine, embed
+// or ship it, and compare or load it on another -- and the format is the object representation of whatever is placed in
+// the Encoder's pages. So nothing about this process may reach those bytes: not alignof(std::max_align_t) or pageSize()
+// (both vary by platform and decide where padding goes), not the order a hash table happens to iterate in (see
+// EncodingOrder), and no byte whose value the language leaves to the ABI or to chance -- struct padding, bit-field
+// slack, a base's tail padding that Itanium reuses and MSVC does not. isPortableRecord() is checked wherever a type
+// enters a page: fixed-width scalars, no padding anywhere (has_unique_object_representations), so every byte is a named,
+// initialized field and the layout follows from the declaration alone. A type that fails it gets its fields reordered
+// or widened, or an explicit m_padding.
+// The same rule is what lets a payload encoded under one C++ ABI be decoded under another (Bun cross-compiles
+// executables that embed it); the one thing a decoder still computes for itself is the metadata table's offsets, from
+// the entry counts stored here, because sizeof(Op::Metadata) is its own.
 #if USE(BUN_JSC_ADDITIONS)
 static_assert(std::endian::native == std::endian::little && sizeof(void*) == 8);
 static_assert(sizeof(bool) == 1 && sizeof(int) == 4 && sizeof(long long) == 8 && sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
