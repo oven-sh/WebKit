@@ -195,6 +195,59 @@ static uint32_t crc32c(uint32_t crc, std::span<const uint8_t> bytes)
     return crc32cSoftware(crc, bytes);
 }
 
+AtomStringImpl* Decoder::atomForOrdinal(uint32_t ordinal) const
+{
+    return ordinal < m_atomsByOrdinal.size() ? m_atomsByOrdinal[ordinal] : nullptr;
+}
+
+void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
+{
+    if (ordinal >= m_atomsByOrdinal.size()) {
+        // Payloads are far below 2^32 bytes and every numbered string is a 12+ byte record, so this is bounded by the payload.
+        RELEASE_ASSERT(ordinal < m_cachedBytecode->size());
+        size_t oldSize = m_atomsByOrdinal.size();
+        m_atomsByOrdinal.grow(std::max<size_t>(ordinal + 1, oldSize * 2));
+        std::fill(m_atomsByOrdinal.begin() + oldSize, m_atomsByOrdinal.end(), nullptr); // Vector::grow leaves pointers uninitialized
+    }
+    ASSERT(!m_atomsByOrdinal[ordinal]);
+    atom.ref();
+    m_atomsByOrdinal[ordinal] = &atom;
+}
+
+// 1- and 2-character inline strings (the bulk of minified identifiers) are memoized in flat tables indexed by their
+// characters; 3-character ones go to the atom table each time (a 16M-entry table is not worth it).
+AtomStringImpl* Decoder::atomForInlineString(uint32_t packed) const
+{
+    unsigned length = (packed >> 2) & 3;
+    if (length == 1)
+        return m_atomsOfLength1 ? m_atomsOfLength1[(packed >> 8) & 0xff] : nullptr;
+    if (length == 2)
+        return m_atomsOfLength2 ? m_atomsOfLength2[(packed >> 8) & 0xffff] : nullptr;
+    return nullptr;
+}
+
+void Decoder::setAtomForInlineString(uint32_t packed, AtomStringImpl& atom)
+{
+    unsigned length = (packed >> 2) & 3;
+    AtomStringImpl** slot;
+    if (length == 1) {
+        if (!m_atomsOfLength1) {
+            m_atomsOfLength1 = makeUniqueArray<AtomStringImpl*>(256);
+            std::fill_n(m_atomsOfLength1.get(), 256, nullptr);
+        }
+        slot = &m_atomsOfLength1[(packed >> 8) & 0xff];
+    } else if (length == 2) {
+        if (!m_atomsOfLength2) {
+            m_atomsOfLength2 = makeUniqueArray<AtomStringImpl*>(65536);
+            std::fill_n(m_atomsOfLength2.get(), 65536, nullptr);
+        }
+        slot = &m_atomsOfLength2[(packed >> 8) & 0xffff];
+    } else
+        return;
+    atom.ref();
+    *slot = &atom;
+}
+
 bool Decoder::payloadContains(const void* start, size_t size) const
 {
     auto payload = m_cachedBytecode->span();
@@ -292,11 +345,15 @@ public:
         ptrdiff_t m_offset;
     };
 
-    Encoder(VM& vm, FileSystem::FileHandle& fileHandle)
+    // A payload that gets appended to another one (CachedBytecode::addFunctionUpdate) is read by the same Decoder as its
+    // base, so it leaves its strings unnumbered rather than collide with numbers the base already handed out.
+    enum class NumberStrings : bool { No, Yes };
+    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes)
         : m_vm(vm)
         , m_fileHandle(fileHandle)
         , m_baseOffset(0)
         , m_currentPage(nullptr)
+        , m_numberStrings(numberStrings == NumberStrings::Yes)
     {
         allocateNewPage();
     }
@@ -468,6 +525,7 @@ public:
         m_pendingChecksums.clear();
     }
     void addChecksum(ptrdiff_t start, size_t size, ptrdiff_t checksumOffset, Vector<std::pair<ptrdiff_t, size_t>>&& externalArrays = { }) { m_pendingChecksums.append({ start, size, checksumOffset, WTF::move(externalArrays) }); }
+    uint32_t nextStringOrdinal() { return m_numberStrings ? m_nextStringOrdinal++ : std::numeric_limits<uint32_t>::max(); }
 
     // Content-sharing of arrays is only on while a code block encodes the few arrays its checksum knows how to follow
     // (decoder side: CachedCodeBlock::regionIsIntact); an array shared from outside the block's own bytes is folded into
@@ -634,6 +692,8 @@ private:
     Deque<Function<void()>> m_cold;
     struct PendingChecksum { ptrdiff_t start; size_t size; ptrdiff_t checksumOffset; Vector<std::pair<ptrdiff_t, size_t>> externalArrays; };
     Vector<PendingChecksum> m_pendingChecksums;
+    uint32_t m_nextStringOrdinal { 0 };
+    bool m_numberStrings;
     bool m_arraySharingEnabled { false };
     ptrdiff_t m_blockRegionStart { 0 };
     Vector<std::pair<ptrdiff_t, size_t>> m_blockExternalArrays;
@@ -649,6 +709,22 @@ Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvid
 
 Decoder::~Decoder()
 {
+    for (AtomStringImpl* atom : m_atomsByOrdinal) {
+        if (atom)
+            atom->deref();
+    }
+    if (m_atomsOfLength1) {
+        for (size_t i = 0; i < 256; ++i) {
+            if (m_atomsOfLength1[i])
+                m_atomsOfLength1[i]->deref();
+        }
+    }
+    if (m_atomsOfLength2) {
+        for (size_t i = 0; i < 65536; ++i) {
+            if (m_atomsOfLength2[i])
+                m_atomsOfLength2[i]->deref();
+        }
+    }
     for (auto& finalizer : m_finalizers)
         finalizer();
 }
@@ -804,14 +880,18 @@ public:
         return true;
     }
     bool NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
-    Ref<AtomStringImpl> inlineString() const
+    Ref<AtomStringImpl> inlineString(Decoder& decoder) const
     {
         uint32_t packed = std::bit_cast<uint32_t>(m_offset);
+        if (AtomStringImpl* known = decoder.atomForInlineString(packed))
+            return *known;
         unsigned length = (packed >> 2) & 3;
         std::array<Latin1Character, inlineStringMaxLength> characters;
         for (unsigned i = 0; i < length; ++i)
             characters[i] = static_cast<Latin1Character>(packed >> (8 * (i + 1)));
-        return AtomStringImpl::add(std::span<const Latin1Character> { characters.data(), length }).releaseNonNull();
+        Ref<AtomStringImpl> atom = AtomStringImpl::add(std::span<const Latin1Character> { characters.data(), length }).releaseNonNull();
+        decoder.setAtomForInlineString(packed, atom.get());
+        return atom;
     }
 
 protected:
@@ -996,7 +1076,7 @@ public:
         if constexpr (holdsString) {
             if (this->hasInlineString()) {
                 isNewAllocation = true;
-                return static_cast<Source*>(&this->inlineString().leakRef());
+                return static_cast<Source*>(&this->inlineString(decoder).leakRef());
             }
         }
 
@@ -1078,7 +1158,7 @@ public:
                     return nullptr;
                 if constexpr (CachedPtr<T, Source>::holdsString) {
                     if (m_ptr.hasInlineString())
-                        return adoptRef<Source, PtrTraits>(static_cast<Source*>(&m_ptr.inlineString().leakRef()));
+                        return adoptRef<Source, PtrTraits>(static_cast<Source*>(&m_ptr.inlineString(decoder).leakRef()));
                 }
                 return adoptRef<Source, PtrTraits>(m_ptr.get()->decode(decoder));
             }
@@ -1306,11 +1386,11 @@ public:
     static constexpr bool decodesToCanonicalObject = true;
 #endif
 
-    // The characters follow this 4-byte header directly (see tailSize), instead of a separately aligned allocation
-    // reached through an offset.
+    // The characters follow this 12-byte header (length/flags, precomputed hash, ordinal) directly (see tailSize), instead
+    // of a separately aligned allocation reached through an offset.
     static size_t tailSize(const StringImpl& string) { return Shape(string).byteLength(); }
 
-    void encode(Encoder&, const StringImpl& string)
+    void encode(Encoder& encoder, const StringImpl& string)
     {
         Shape shape(string);
         m_isSymbol = shape.isSymbol;
@@ -1320,6 +1400,8 @@ public:
         m_is8Bit = shape.characters->is8Bit();
         m_length = shape.characters->length();
         RELEASE_ASSERT(m_length == shape.characters->length()); // fits the bitfield
+        m_hash = shape.characters->hash(); // what StringImpl::hash() / the atom table use, so decode never rehashes
+        m_ordinal = m_isSymbol || !m_length ? noOrdinal : encoder.nextStringOrdinal(); // see Decoder::atomForOrdinal
         if (m_is8Bit)
             memcpy(tail(), shape.characters->span8().data(), shape.byteLength());
         else
@@ -1328,13 +1410,26 @@ public:
 
     UniquedStringImpl* decode(Decoder& decoder) const
     {
+        if (m_ordinal != noOrdinal) {
+            if (AtomStringImpl* known = decoder.atomForOrdinal(m_ordinal)) {
+                known->ref();
+                return static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(known));
+            }
+        }
         auto create = [&](auto buffer) -> UniquedStringImpl* {
             if (!m_isSymbol) {
+                RefPtr<AtomStringImpl> atom;
                 // Long strings out of a persistent payload keep their characters in the mapping (clean, shared pages) and
                 // only allocate the StringImpl header; AtomStringImpl::add adopts it in place unless the atom already exists.
                 if (buffer.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
-                    return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(buffer) }).leakRef();
-                return AtomStringImpl::add(buffer).leakRef();
+                    atom = AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(buffer) });
+                else {
+                    WTF::HashTranslatorCharBuffer<std::remove_const_t<typename decltype(buffer)::element_type>> hashed { buffer, m_hash };
+                    atom = AtomStringImpl::add(hashed);
+                }
+                if (m_ordinal != noOrdinal)
+                    decoder.setAtomForOrdinal(m_ordinal, *atom);
+                return static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(atom.leakRef()));
             }
 
             SymbolImpl* symbol;
@@ -1364,6 +1459,27 @@ public:
         }
 
         return m_is8Bit ? create(span8()) : create(span16());
+    }
+
+    // For uses that only need the characters (a string constant's JSString), not an atom: no atom table involved.
+    String decodePlainString(Decoder& decoder) const
+    {
+        if (m_isSymbol)
+            return String { adoptRef(*static_cast<StringImpl*>(decode(decoder))) };
+        if (!m_length)
+            return emptyString();
+        if (m_ordinal != noOrdinal) {
+            if (AtomStringImpl* known = decoder.atomForOrdinal(m_ordinal))
+                return String { known };
+        }
+        if (m_is8Bit) {
+            if (m_length >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
+                return StringImpl::createWithoutCopying(span8());
+            return StringImpl::create(span8());
+        }
+        if (m_length >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
+            return StringImpl::createWithoutCopying(span16());
+        return StringImpl::create(span16());
     }
 
     static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
@@ -1402,6 +1518,11 @@ private:
     uint32_t m_isWellKnownSymbol : 1;
     uint32_t m_isRegistered : 1;
     uint32_t m_isPrivate : 1;
+    uint32_t m_hash { 0 };
+    // Distinct (non-symbol) strings are numbered in encode order; the decoder keeps the atom for each number it has seen,
+    // so only the first block to name a string goes through the atom table.
+    static constexpr uint32_t noOrdinal = std::numeric_limits<uint32_t>::max();
+    uint32_t m_ordinal { noOrdinal };
 };
 class CachedUniquedStringImpl : public CachedUniquedStringImplBase<UniquedStringImpl> { };
 class CachedStringImpl : public CachedUniquedStringImplBase<StringImpl> { };
@@ -2093,11 +2214,11 @@ public:
             break;
         case EncodedType::String: {
             if (this->hasInlineString()) {
-                v = jsString(decoder.vm(), String { this->inlineString() });
+                v = jsString(decoder.vm(), String { this->inlineString(decoder) });
                 break;
             }
-            StringImpl* impl = this->buffer<CachedUniquedStringImpl>()->decode(decoder);
-            v = jsString(decoder.vm(), adoptRef(*impl));
+            // A constant becomes a JSString; it does not have to be an atom, so skip the atom table.
+            v = jsString(decoder.vm(), this->buffer<CachedUniquedStringImpl>()->decodePlainString(decoder));
             break;
         }
         case EncodedType::ImmutableButterfly:
@@ -3157,6 +3278,9 @@ template<typename CodeBlockType>
 ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, UnlinkedCodeBlock& codeBlock, const Tail& tail) const
 {
     const Layout& layout = tail.layout;
+    // Most identifiers and many constants become atoms; let the table grow once for this block rather than as they trickle in.
+    if (unsigned expected = layout.identifiers.count + layout.constants.count; expected >= 64)
+        AtomStringImpl::reserveCapacityForCurrentThread(expected);
     decodeArrayFromTail<CachedJSValue>(decoder, at<CachedJSValue>(layout.constants), layout.constants.count, codeBlock.m_constantRegisters, &codeBlock);
     decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
     codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
@@ -3904,7 +4028,7 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
 RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
 {
     FileSystem::FileHandle invalidFileHandle;
-    Encoder encoder(vm, invalidFileHandle);
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::No);
     ptrdiff_t rootOffset = encoder.offsetOf(CachedFunctionCodeBlock::create(encoder, *codeBlock));
     encoder.encodeDeferred();
     RefPtr<CachedBytecode> result = encoder.release(error);

@@ -118,8 +118,6 @@ ALWAYS_INLINE size_t UnlinkedMetadataTable::sizeInBytesForGC()
 {
     if (m_isFinalized && !m_hasMetadata)
         return 0;
-    if (m_steps && !m_isLinked)
-        return 0;
 
     if (m_is32Bit)
         return s_offset16TableSize + s_offset32TableSize;
