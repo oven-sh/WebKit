@@ -104,7 +104,7 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         thisObject->m_age = std::min<unsigned>(static_cast<unsigned>(thisObject->m_age) + 1, maxAge);
     for (auto& barrier : thisObject->m_functionDecls)
         visitor.append(barrier);
-    for (auto& barrier : thisObject->m_functionExprs)
+    for (auto& barrier : thisObject->m_functionExprs.span())
         visitor.append(barrier);
     visitor.appendValues(thisObject->m_constantRegisters.span());
     // Borrowed (cache-backed) instruction streams and expression info count here as if generated, so the collector

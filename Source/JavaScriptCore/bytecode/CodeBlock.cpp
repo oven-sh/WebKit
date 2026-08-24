@@ -325,7 +325,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     , m_metadata(other.m_metadata)
     , m_constantRegisters(other.m_constantRegisters)
     , m_functionDecls(other.m_functionDecls)
-    , m_functionExprs(other.m_functionExprs)
+    , m_functionExprs(other.materializedFunctionExprs())
     , m_creationTime(ApproximateTime::now())
 #if ASSERT_ENABLED
     , m_magic(CODEBLOCK_MAGIC)
@@ -449,12 +449,18 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     }
 
     m_functionExprs = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedCodeBlock->numberOfFunctionExprs());
-    for (size_t count = unlinkedCodeBlock->numberOfFunctionExprs(), i = 0; i < count; ++i) {
-        UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
-        if (shouldUpdateFunctionHasExecutedCache)
-            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
-        m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
-    }
+    // Function expressions are linked when first evaluated (functionExpr()), unless something wants to see every function
+    // up front: the type / control-flow profilers' unexecuted-range bookkeeping and an attached debugger.
+    bool linkFunctionExprsEagerly = shouldUpdateFunctionHasExecutedCache || m_globalObject->hasDebugger() || !Options::useLazyFunctionExpressionLinking();
+    if (linkFunctionExprsEagerly) {
+        for (size_t count = unlinkedCodeBlock->numberOfFunctionExprs(), i = 0; i < count; ++i) {
+            UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
+            if (shouldUpdateFunctionHasExecutedCache)
+                vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
+            m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
+        }
+    } else
+        m_unmaterializedFunctionExprs.store(unlinkedCodeBlock->numberOfFunctionExprs(), std::memory_order_relaxed);
 
     if (unlinkedCodeBlock->numberOfExceptionHandlers()) {
         createRareDataIfNecessary();
@@ -865,6 +871,28 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         unlinkedCodeBlock()->m_unlinkedBaselineCode = WTF::move(jitCode);
 }
 #endif // ENABLE(JIT)
+
+FunctionExecutable* CodeBlock::materializeFunctionExpr(int index)
+{
+    RELEASE_ASSERT(!isCompilationThread(), index);
+    VM& vm = this->vm();
+    ScriptExecutable* ownerExecutable = this->ownerExecutable();
+    UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock()->functionExpr(index);
+    FunctionExecutable* executable = unlinkedExecutable->link(vm, ownerExecutable->topLevelExecutable(), ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
+    m_functionExprs[index].set(vm, this, executable);
+    ASSERT(m_unmaterializedFunctionExprs.load(std::memory_order_relaxed));
+    m_unmaterializedFunctionExprs.fetch_sub(1, std::memory_order_release);
+    return executable;
+}
+
+void CodeBlock::materializeFunctionExprs()
+{
+    if (allFunctionExprsAreMaterialized()) [[likely]]
+        return;
+    for (size_t i = 0; i < m_functionExprs.size(); ++i)
+        functionExpr(i);
+    ASSERT(allFunctionExprsAreMaterialized());
+}
 
 CodeBlock::~CodeBlock()
 {
@@ -3696,8 +3724,10 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
 
         for (const WriteBarrier<FunctionExecutable>& executable : m_functionDecls)
             insertFunctionGaps(executable);
-        for (const WriteBarrier<FunctionExecutable>& executable : m_functionExprs)
-            insertFunctionGaps(executable);
+        for (const WriteBarrier<FunctionExecutable>& executable : m_functionExprs) {
+            if (executable)
+                insertFunctionGaps(executable);
+        }
 
         metadata.m_basicBlockLocation = basicBlockLocation;
     }

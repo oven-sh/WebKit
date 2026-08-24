@@ -531,8 +531,19 @@ public:
     FunctionExecutable* functionDecl(int index) { return m_functionDecls[index].get(); }
     int numberOfFunctionDecls() { return m_functionDecls.size(); }
     std::span<const WriteBarrier<FunctionExecutable>> functionDecls() { return m_functionDecls.span(); }
-    FunctionExecutable* functionExpr(int index) { return m_functionExprs[index].get(); }
+    // Linked on first use (op_new_func_exp etc., or before a JIT looks at this block); see materializeFunctionExpr().
+    FunctionExecutable* functionExpr(int index)
+    {
+        if (FunctionExecutable* executable = m_functionExprs[index].get()) [[likely]]
+            return executable;
+        return materializeFunctionExpr(index);
+    }
     size_t numberOfFunctionExprs() const { return m_functionExprs.size(); }
+    // Compiler threads read functionExpr() and cannot create cells, so a block is fully materialized before any JIT plan
+    // for it is made (JITPlan) and DFG only inlines blocks for which this is true.
+    bool allFunctionExprsAreMaterialized() const { return !m_unmaterializedFunctionExprs.load(std::memory_order_acquire); }
+    void materializeFunctionExprs();
+    const FixedVector<WriteBarrier<FunctionExecutable>>& materializedFunctionExprs() { materializeFunctionExprs(); return m_functionExprs; }
     
     const BitVector& bitVector(size_t i) LIFETIME_BOUND { return m_unlinkedCode->bitVector(i); }
 
@@ -1018,6 +1029,8 @@ private:
     Vector<WriteBarrier<Unknown>> m_constantRegisters;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDecls;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExprs;
+    std::atomic<unsigned> m_unmaterializedFunctionExprs { 0 };
+    FunctionExecutable* materializeFunctionExpr(int index);
 
     WriteBarrier<CodeBlock> m_alternative;
 

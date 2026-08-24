@@ -3423,7 +3423,10 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     decodeArrayFromTail<JSInstructionStream::Offset>(decoder, at<JSInstructionStream::Offset>(layout.jumpTargets), layout.jumpTargets.count, codeBlock.m_jumpTargets);
     decodeArrayFromTail<CachedIdentifier>(decoder, at<CachedIdentifier>(layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
     decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
+    // Function expressions are created the first time op_new_func_exp (or a JIT) asks for one: UnlinkedCodeBlock::functionExpr().
+    codeBlock.m_functionExprs = LazyFunctionExecutableVector(layout.functionExprs.count);
+    if (layout.functionExprs.count)
+        codeBlock.m_functionExprs.setPending(&decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout.functionExprs));
 }
 
 UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
@@ -3860,6 +3863,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         return result.offset();
     };
     place(layout.functionDecls, codeBlock.m_functionDecls.size(), [&] { return allocateSlots(codeBlock.m_functionDecls.size()); });
+    const_cast<UnlinkedCodeBlock&>(static_cast<const UnlinkedCodeBlock&>(codeBlock)).materializeFunctionExprs(); // re-encoding a block that itself came from a cache
     place(layout.functionExprs, codeBlock.m_functionExprs.size(), [&] { return allocateSlots(codeBlock.m_functionExprs.size()); });
     if (CachedCodeBlockExtras::isNeeded(codeBlock)) {
         layout.flags |= LayoutHasExtras;
@@ -3893,7 +3897,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
             slot[i].encode(encoder, executables[i]);
     };
     encodeChildren(layout.functionDecls, codeBlock.m_functionDecls);
-    encodeChildren(layout.functionExprs, codeBlock.m_functionExprs);
+    encodeChildren(layout.functionExprs, codeBlock.m_functionExprs.span());
     return record;
 }
 
@@ -4157,6 +4161,49 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
     return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error, externalStrings);
+}
+
+void LazyFunctionExecutableVector::Storage::destroy(Storage* storage)
+{
+    if (!storage)
+        return;
+    for (size_t i = 0; i < storage->size; ++i)
+        storage->entries()[i].~WriteBarrier<UnlinkedFunctionExecutable>();
+    storage->~Storage();
+    fastFree(storage);
+}
+
+void LazyFunctionExecutableVector::setPending(RefPtr<Decoder>&& decoder, const void* slots)
+{
+    ASSERT(m_storage && !m_storage->decoder);
+    m_storage->decoder = WTF::move(decoder);
+    m_storage->slots = slots;
+    m_storage->remaining = m_storage->size;
+}
+
+UnlinkedFunctionExecutable* UnlinkedCodeBlock::materializeFunctionExpr(int index)
+{
+    // Creating cells and using the Decoder: never from a compiler thread. JITPlan materializes a block before compiling it.
+    RELEASE_ASSERT(!isCompilationThread());
+    RefPtr<Decoder> decoder = m_functionExprs.decoder();
+    RELEASE_ASSERT(decoder, index, m_functionExprs.size());
+    const auto* slots = static_cast<const CachedWriteBarrier<CachedFunctionExecutable>*>(m_functionExprs.slots());
+    WriteBarrier<UnlinkedFunctionExecutable>& slot = m_functionExprs.at(index);
+    slots[index].decode(*decoder, slot, this);
+    // An empty cache slot cannot happen (the generator never records a null expression), but do not loop on it.
+    RELEASE_ASSERT(slot.get(), index);
+    m_functionExprs.didMaterialize();
+    vm().writeBarrier(this);
+    return slot.get();
+}
+
+void UnlinkedCodeBlock::materializeFunctionExprs()
+{
+    if (!m_functionExprs.hasPending()) [[likely]]
+        return;
+    for (size_t i = 0; i < m_functionExprs.size(); ++i)
+        functionExpr(i);
+    ASSERT(!m_functionExprs.hasPending());
 }
 
 RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)

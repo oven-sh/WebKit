@@ -72,7 +72,9 @@ void UnlinkedCodeBlockGenerator::finalize(std::unique_ptr<JSInstructionStream> i
         m_codeBlock->m_constantRegisters = WTF::move(m_constantRegisters);
         m_codeBlock->m_constantsSourceCodeRepresentation = WTF::move(m_constantsSourceCodeRepresentation);
         m_codeBlock->m_functionDecls = WTF::move(m_functionDecls);
-        m_codeBlock->m_functionExprs = WTF::move(m_functionExprs);
+        m_codeBlock->m_functionExprs = LazyFunctionExecutableVector(m_functionExprs.size());
+        for (size_t i = 0; i < m_functionExprs.size(); ++i)
+            m_codeBlock->m_functionExprs[i].setWithoutWriteBarrier(m_functionExprs[i].get());
         m_codeBlock->m_expressionInfo = m_expressionInfoEncoder.createExpressionInfo();
 
         m_codeBlock->m_outOfLineJumpTargets = WTF::move(m_outOfLineJumpTargets);

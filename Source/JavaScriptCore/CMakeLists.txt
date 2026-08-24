@@ -722,6 +722,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/JumpTable.h
     bytecode/LLIntPrototypeLoadAdaptiveStructureWatchpoint.h
     bytecode/LazyOperandValueProfile.h
+    bytecode/LazyFunctionExecutableVector.h
     bytecode/LazyValueProfile.h
     bytecode/LineColumn.h
     bytecode/LinkTimeConstant.h

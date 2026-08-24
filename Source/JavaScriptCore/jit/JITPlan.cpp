@@ -57,6 +57,10 @@ JITPlan::JITPlan(JITCompilationMode mode, CodeBlock* codeBlock)
     , m_signpostMessage(signpostMessage())
 {
     m_vm->changeNumberOfActiveJITPlans(1);
+    // Compiler threads read the block's function-expression executables and cannot create them.
+    codeBlock->materializeFunctionExprs();
+    if (CodeBlock* profiledBlock = codeBlock->alternative())
+        profiledBlock->materializeFunctionExprs();
 }
 
 JITPlan::~JITPlan()

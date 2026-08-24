@@ -594,6 +594,7 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Bool, useSourceProviderCache, true, Normal, "If false, the parser will not use the source provider cache. It's good to verify everything works when this is false. Because the cache is so successful, it can mask bugs."_s) \
     v(Bool, useCodeCache, true, Normal, "If false, the unlinked byte code cache will not be used."_s) \
+    v(Bool, useLazyFunctionExpressionLinking, true, Normal, "Link a code block's function expressions when first evaluated instead of when the code block is created."_s) \
     \
     v(Bool, useWasm, canUseWasm(), Normal, "Expose the Wasm global object."_s) \
     \

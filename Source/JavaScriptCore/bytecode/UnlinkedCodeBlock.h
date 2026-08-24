@@ -36,6 +36,7 @@
 #include "Identifier.h"
 #include "InstructionStream.h"
 #include "JSCast.h"
+#include "LazyFunctionExecutableVector.h"
 #include "Opcode.h"
 #include "ParserModes.h"
 #include "RegExp.h"
@@ -259,9 +260,16 @@ public:
     UnlinkedFunctionExecutable* functionDecl(int index) { return m_functionDecls[index].get(); }
     size_t numberOfFunctionDecls() { return m_functionDecls.size(); }
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls() const { return m_functionDecls.span(); }
-    UnlinkedFunctionExecutable* functionExpr(int index) { return m_functionExprs[index].get(); }
+    // Blocks decoded from the bytecode cache create a function expression's executable the first time it is asked for.
+    UnlinkedFunctionExecutable* functionExpr(int index)
+    {
+        if (UnlinkedFunctionExecutable* executable = m_functionExprs[index].get()) [[likely]]
+            return executable;
+        return materializeFunctionExpr(index);
+    }
     size_t numberOfFunctionExprs() { return m_functionExprs.size(); }
-    std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionExprs() const { return m_functionExprs.span(); }
+    bool hasUnmaterializedFunctionExprs() const { return m_functionExprs.hasPending(); }
+    JS_EXPORT_PRIVATE void materializeFunctionExprs();
 
     // Exception handling support
     size_t numberOfExceptionHandlers() const { return m_rareData ? m_rareData->m_exceptionHandlers.size() : 0; }
@@ -474,7 +482,8 @@ private:
     FixedVector<SourceCodeRepresentation> m_constantsSourceCodeRepresentation;
     using FunctionExpressionVector = FixedVector<WriteBarrier<UnlinkedFunctionExecutable>>;
     FunctionExpressionVector m_functionDecls;
-    FunctionExpressionVector m_functionExprs;
+    LazyFunctionExecutableVector m_functionExprs;
+    UnlinkedFunctionExecutable* materializeFunctionExpr(int index);
 
 public:
     struct RareData {

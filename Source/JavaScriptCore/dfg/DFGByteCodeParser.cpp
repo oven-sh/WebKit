@@ -1785,6 +1785,13 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
     if (!m_graph.m_plan.isFTL())
         targetCodeBlock = codeBlock;
 
+    // The parser reads an inlinee's function-expression executables and cannot create them here; a block that has not
+    // linked all of its own yet (it has never been handed to a JIT) is inlined next time.
+    if (!codeBlock->allFunctionExprsAreMaterialized()) {
+        VERBOSE_LOG("    Failing because the callee has function expressions it has not linked yet.\n");
+        return { UINT_MAX, InlineAttribute::None };
+    }
+
     if (codeBlock->couldBeTainted() != m_codeBlock->couldBeTainted()) {
         VERBOSE_LOG("    Failing because taintedness of callee does not match the caller");
         return { UINT_MAX, InlineAttribute::None };
@@ -11559,6 +11566,7 @@ void ByteCodeParser::handleNewFunc(NodeType op, Bytecode bytecode)
 template <typename Bytecode>
 void ByteCodeParser::handleNewFuncExp(NodeType op, Bytecode bytecode)
 {
+    RELEASE_ASSERT(m_inlineStackTop->m_profiledBlock->allFunctionExprsAreMaterialized());
     FunctionExecutable* expr = m_inlineStackTop->m_profiledBlock->functionExpr(bytecode.m_functionDecl);
     FrozenValue* frozen = m_graph.freezeStrong(expr);
     Node* scope = get(bytecode.m_scope);
