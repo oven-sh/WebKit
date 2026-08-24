@@ -480,8 +480,10 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
             if (keyCount <= this->keyCount() || !HashTableSizePolicy::shouldExpand(keyCount + deletedCount(), tableSize()))
                 return;
             unsigned newTableSize = computeBestTableSize(keyCount);
-            if (newTableSize > tableSize())
-                rehash(newTableSize, nullptr);
+            if (newTableSize <= tableSize())
+                return;
+            invalidateIterators(this);
+            rehash(newTableSize, nullptr);
         }
 
         void reserveInitialCapacity(unsigned keyCount)
