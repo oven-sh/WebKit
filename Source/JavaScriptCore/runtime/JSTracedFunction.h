@@ -73,11 +73,14 @@ public:
     static constexpr ptrdiff_t offsetOfTargetFunction() { return OBJECT_OFFSETOF(JSTracedFunction, m_targetFunction); }
     static constexpr ptrdiff_t offsetOfShape() { return OBJECT_OFFSETOF(JSTracedFunction, m_shape); }
 
-    // The frame local the thunk keeps the enter hook's value in (read back on
-    // unwind), valid once the frame's CallSiteIndex reads spanLocalValidCallSiteIndex.
+    // tracedFunctionCallGenerator's frame: one local holding the enter hook's
+    // value, which Interpreter::unwind hands to the unwind hook. The frame has
+    // no CodeBlock, so its CallSiteIndex word carries the frame state instead:
+    // 0 from the prologue (frame not yet allocated / hook not yet run — the
+    // local slot is garbage), TracedFrameEntered once the local is meaningful.
     static constexpr int spanLocal = 0;
     static constexpr int numberOfFrameLocals = 1;
-    static constexpr uint32_t spanLocalValidCallSiteIndex = 1;
+    enum FrameState : uint32_t { TracedFrameNotEntered = 0, TracedFrameEntered = 1 };
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

@@ -905,8 +905,11 @@ public:
         }
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
         if (!m_callFrame->isNativeCalleeFrame() && !m_callFrame->codeBlock()) {
-            if (auto* traced = dynamicDowncast<JSTracedFunction>(m_callFrame->jsCallee()); traced && m_callFrame->callSiteIndex().bits() == JSTracedFunction::spanLocalValidCallSiteIndex) {
-                // A tracedFunctionCallGenerator frame past its enter hook: the local holds the hook's value.
+            // tracedFunctionCallGenerator frames have no CodeBlock. Like every CodeBlock-less frame their
+            // CallSiteIndex word is otherwise unused; the thunk stores TracedFrameEntered there once the
+            // frame is allocated and the enter hook has run (before that, the local slot is uninitialized —
+            // e.g. while throwing StackOverflow from the thunk prologue).
+            if (auto* traced = dynamicDowncast<JSTracedFunction>(m_callFrame->jsCallee()); traced && m_callFrame->callSiteIndex().bits() == JSTracedFunction::TracedFrameEntered) {
                 JSValue span = m_callFrame->registers()[virtualRegisterForLocal(JSTracedFunction::spanLocal).offset()].jsValue();
                 if (span)
                     m_vm.m_unwoundTracedFrames.append({ traced, span });
@@ -971,6 +974,9 @@ static void sanitizeRemoteFunctionException(VM& vm, JSRemoteFunction* remoteFunc
 
 NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Exception* exception)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(vm.m_unwoundTracedFrames.isEmpty());
+#endif
     // If we're unwinding the stack due to a regular exception (not a TerminationException), then
     // we want to use a DeferTerminationForAWhile scope. This is because we want to avoid a
     // TerminationException being raised (due to a concurrent termination request) in the middle
@@ -1020,13 +1026,17 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
         exception = scope.exception(); // clear m_needExceptionCheck
     }
 #if USE(BUN_JSC_ADDITIONS)
-    if (!vm.m_unwoundTracedFrames.isEmpty()) {
+    if (!vm.m_unwoundTracedFrames.isEmpty()) [[unlikely]] {
+        // Taken out before any hook runs: a hook that throws re-enters unwind()
+        // with an empty list and cannot observe or mutate this one.
         auto frames = std::exchange(vm.m_unwoundTracedFrames, { });
         if (auto unwindHook = vm.tracedFunctionHooks().unwind) {
             for (auto& [traced, span] : frames)
                 unwindHook(traced->globalObject(), traced, span, exception);
         }
+        // A hook may have replaced the pending exception; it may not clear it.
         exception = scope.exception();
+        RELEASE_ASSERT(exception);
     }
 #endif
 

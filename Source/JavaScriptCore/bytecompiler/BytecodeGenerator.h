@@ -973,7 +973,7 @@ namespace JSC {
         RegisterID* emitIsEmpty(RegisterID* dst, RegisterID* src);
         RegisterID* emitIsDerivedArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DerivedArrayType); }
         RegisterID* emitIsDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, DisposableStackType); }
-        RegisterID* emitIsTelemetrySpan(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, static_cast<JSType>(BunTelemetrySpanType)); }
+        RegisterID* emitIsEmbedderInternalFieldObject(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, static_cast<JSType>(EmbedderInternalFieldObjectType)); }
         RegisterID* emitIsAsyncDisposableStack(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, AsyncDisposableStackType); }
         void emitRequireObjectCoercible(RegisterID* value, ASCIILiteral error);
         void emitRequireObjectCoercibleForDestructuring(RegisterID* value, const Identifier* propertyName);

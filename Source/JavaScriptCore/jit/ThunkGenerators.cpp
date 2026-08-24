@@ -1286,9 +1286,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     
     jit.emitFunctionPrologue();
     
-    // Set up our call frame.
+    // Set up our call frame: no CodeBlock, and CallSiteIndex = TracedFrameNotEntered
+    // until the span local below is initialized (see JSTracedFunction::FrameState).
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::addressFor(CallFrameSlot::codeBlock));
-    jit.store32(CCallHelpers::TrustedImm32(0), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+    jit.store32(CCallHelpers::TrustedImm32(JSTracedFunction::TracedFrameNotEntered), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
     constexpr unsigned stackMisalignment = sizeof(CallerFrameAndPC) % stackAlignmentBytes();
     constexpr unsigned extraStackNeeded = stackMisalignment ? stackAlignmentBytes() - stackMisalignment : 0;
@@ -1471,7 +1472,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
     jit.loadCell(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
     jit.load32(CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), GPRInfo::regT1);
 
-    // Callee frame for max(argumentCountIncludingThis, 2) arguments plus our locals:
+    // No register is live across any of the operation calls below; everything
+    // is reloaded from our frame (callee, argument count, the span local).
+    //
+    // Callee frame for max(argumentCountIncludingThis, 2) arguments plus our locals
+    // (Shape::CallLast always passes exactly [undefined, span], hence the 2):
     //     stackAlign((numParams + numFrameLocals + (CallFrameHeaderSize - CallerFrameAndPCSize)) * sizeof(Register))
     jit.move(GPRInfo::regT1, GPRInfo::regT2);
     auto atLeastTwo = jit.branch32(CCallHelpers::AboveOrEqual, GPRInfo::regT2, CCallHelpers::TrustedImm32(2));
@@ -1553,9 +1558,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> tracedFunctionCallGenerator(VM& vm)
     exceptionChecks.append(jit.emitJumpIfException(vm));
     jit.setupResults(valueRegs);
     jit.storeValue(valueRegs, jit.addressFor(spanLocal));
-    // Tell Interpreter::unwind the span local is now meaningful (a native
-    // frame's CallSiteIndex is otherwise 0).
-    jit.store32(CCallHelpers::TrustedImm32(JSTracedFunction::spanLocalValidCallSiteIndex), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+    // From here on an exception unwinding through this frame reports the span.
+    jit.store32(CCallHelpers::TrustedImm32(JSTracedFunction::TracedFrameEntered), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
     jit.loadCell(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
     jit.load32(CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), GPRInfo::regT1);

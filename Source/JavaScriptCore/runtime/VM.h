@@ -637,8 +637,10 @@ public:
     Weak<NativeExecutable> m_fastTracedFunctionExecutable;
     Weak<NativeExecutable> m_slowTracedFunctionExecutable;
     TracedFunctionHooks m_tracedFunctionHooks { };
-    // Traced frames the current unwind passed through (innermost first); consumed by Interpreter::unwind.
-    Vector<std::pair<JSTracedFunction*, JSValue>, 2> m_unwoundTracedFrames;
+    // Traced frames the current Interpreter::unwind walked through (innermost
+    // first). Filled during the walk, moved out and handed to
+    // tracedFunctionHooks().unwind right after it; empty at all other times.
+    Vector<std::pair<JSTracedFunction*, JSValue>, 4> m_unwoundTracedFrames;
 #endif
 
     const Ref<DeferredWorkTimer> deferredWorkTimer;
