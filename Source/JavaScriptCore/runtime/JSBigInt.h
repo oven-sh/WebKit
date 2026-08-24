@@ -565,6 +565,15 @@ private:
 
     static std::span<Digit> NODELETE divideSingle(std::span<Digit> q, Digit& remainder, std::span<const Digit>, Digit);
     static std::tuple<std::span<Digit>, std::span<Digit>> divideSchoolbook(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
+    class BurnikelZiegler;
+    static std::tuple<std::span<Digit>, std::span<Digit>> divideBurnikelZiegler(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
+    static void invertBasecase(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch);
+    static void invertNewton(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch);
+    static void invert(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch);
+    static void divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>, std::span<const Digit> inverse, std::span<Digit> scratch);
+    static std::tuple<std::span<Digit>, std::span<Digit>> divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
+    static size_t NODELETE quotientLength(std::span<const Digit>, std::span<const Digit>);
+    static std::tuple<std::span<Digit>, std::span<Digit>> divideDigitsInto(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
     static Digit divideSameSize(std::span<const Digit>, std::span<const Digit>);
     static std::span<Digit> remainderSameSize(std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
 
@@ -641,6 +650,7 @@ private:
     static bool NODELETE greaterThanOrEqual(std::span<const Digit>, std::span<const Digit>);
 
     static std::span<Digit> rightShift(std::span<Digit> z, std::span<const Digit> x, unsigned);
+    static void rightShiftZeroPadded(std::span<Digit> z, std::span<const Digit> x, unsigned);
     static std::span<Digit> leftShift(std::span<Digit> z, std::span<const Digit> x, unsigned);
 
     static String toStringBasePowerOfTwo(VM&, JSGlobalObject*, JSBigInt*, unsigned radix);

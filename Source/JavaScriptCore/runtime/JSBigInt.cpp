@@ -2945,7 +2945,9 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
 {
     RELEASE_ASSERT(b.size() >= 2); // Use divideSingle otherwise.
     RELEASE_ASSERT(a.size() >= b.size()); // No-op otherwise.
-    RELEASE_ASSERT(q.empty() || q.size() >= a.size() - b.size() + 1);
+    // The quotient has a.size() - b.size() + 1 digits unless a's top b.size() digits are below b,
+    // in which case the top one is zero and q may omit it; the loop below asserts that.
+    RELEASE_ASSERT(q.empty() || q.size() >= a.size() - b.size());
     RELEASE_ASSERT(r.empty() || r.size() >= b.size());
 
     // The unusual variable names inside this function are consistent with
@@ -3059,12 +3061,731 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
     // Determine the actual quotient length: it's m+1 if q[m] is non-zero, otherwise m.
     auto qResult = q;
     if (!q.empty())
-        qResult = q.first(m + 1);
+        qResult = q.first(std::min(m + 1, q.size()));
     auto rResult = r;
     if (!r.empty())
         rResult = rightShift(r, uSpan, shift);
 
     return { qResult, rResult };
+}
+
+// Z := X, zero-padding Z. Only the digits of X that fit are read.
+static void copyZeroPadded(std::span<JSBigInt::Digit> z, std::span<const JSBigInt::Digit> x)
+{
+    size_t count = std::min(x.size(), z.size());
+    memcpySpan(z.first(count), x.first(count));
+    std::ranges::fill(z.subspan(count), 0);
+}
+
+// Z := X >> shift, zero-padding Z. Z and X may alias.
+void JSBigInt::rightShiftZeroPadded(std::span<Digit> z, std::span<const Digit> x, unsigned shift)
+{
+    auto shifted = rightShift(z, x, shift);
+    std::ranges::fill(z.subspan(shifted.size()), 0);
+}
+
+// X += y for a single digit y. X must have room for the carry.
+static void addDigit(std::span<JSBigInt::Digit> x, JSBigInt::Digit y)
+{
+    JSBigInt::Digit carry = y;
+    for (size_t i = 0; carry; i++) {
+        JSBigInt::Digit newCarry = 0;
+        x[i] = JSBigInt::digitAdd(x[i], carry, newCarry);
+        carry = newCarry;
+    }
+}
+
+// X -= y for a single digit y <= X.
+static void subtractDigit(std::span<JSBigInt::Digit> x, JSBigInt::Digit y)
+{
+    JSBigInt::Digit borrow = y;
+    for (size_t i = 0; borrow; i++) {
+        JSBigInt::Digit newBorrow = 0;
+        x[i] = JSBigInt::digitSub(x[i], borrow, newBorrow);
+        borrow = newBorrow;
+    }
+}
+
+// Burnikel-Ziegler division, ported from V8 [1].
+// Reference: "Fast Recursive Division" by Christoph Burnikel and Joachim Ziegler, found at
+// http://cr.yp.to/bib/1998/burnikel.ps
+//
+// [1]: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/bigint/div-burnikel.cc
+static constexpr size_t burnikelThreshold = 57;
+
+// Compares [aHigh, A] with B, returning the sign of the difference.
+static int compareWithHighDigit(JSBigInt::Digit aHigh, std::span<const JSBigInt::Digit> a, std::span<const JSBigInt::Digit> b)
+{
+    b = normalize(b);
+    size_t aLength;
+    if (!aHigh) {
+        a = normalize(a);
+        aLength = a.size();
+    } else
+        aLength = a.size() + 1;
+    if (aLength != b.size())
+        return aLength < b.size() ? -1 : 1;
+    size_t i = aLength;
+    if (aHigh) {
+        i--;
+        if (aHigh != b[i])
+            return aHigh < b[i] ? -1 : 1;
+    }
+    while (i-- > 0) {
+        if (a[i] != b[i])
+            return a[i] < b[i] ? -1 : 1;
+    }
+    return 0;
+}
+
+// Since the Burnikel-Ziegler method is inherently recursive, we put non-changing data into a
+// container object.
+class JSBigInt::BurnikelZiegler {
+    WTF_MAKE_NONCOPYABLE(BurnikelZiegler);
+public:
+    explicit BurnikelZiegler(size_t scratchSpace)
+        : m_scratch(scratchSpace >= burnikelThreshold ? scratchSpace : 0)
+    {
+    }
+
+    void divideBasecase(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
+    void d3n2n(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a1a2, std::span<const Digit> a3, std::span<const Digit>);
+    void d2n1n(std::span<Digit> q, std::span<Digit> r, std::span<const Digit>, std::span<const Digit>);
+
+private:
+    Vector<Digit> m_scratch;
+};
+
+void JSBigInt::BurnikelZiegler::divideBasecase(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+{
+    a = normalize(a);
+    b = normalize(b);
+    ASSERT(!b.empty());
+    auto comparison = compareDigits(a, b);
+    if (comparison != ComparisonResult::GreaterThan) {
+        std::ranges::fill(q, 0);
+        if (comparison == ComparisonResult::Equal) {
+            // If A == B, then Q=1, R=0.
+            std::ranges::fill(r, 0);
+            q[0] = 1;
+        } else {
+            // If A < B, then Q=0, R=A.
+            copyZeroPadded(r, a);
+        }
+        return;
+    }
+    if (b.size() == 1) {
+        Digit remainder = 0;
+        auto quotient = divideSingle(q, remainder, a, b[0]);
+        std::ranges::fill(q.subspan(quotient.size()), 0);
+        r[0] = remainder;
+        std::ranges::fill(r.subspan(1), 0);
+        return;
+    }
+    auto [quotient, remainder] = divideSchoolbook(q, r, a, b);
+    std::ranges::fill(q.subspan(quotient.size()), 0);
+    std::ranges::fill(r.subspan(remainder.size()), 0);
+}
+
+// Algorithm 2 from the paper. Variable names same as there.
+// Returns Q(uotient) and R(emainder) for A/B, with B having two thirds the size of A = [A1, A2, A3].
+void JSBigInt::BurnikelZiegler::d3n2n(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a1a2, std::span<const Digit> a3, std::span<const Digit> b)
+{
+    ASSERT(!(b.size() & 1));
+    size_t n = b.size() / 2;
+    ASSERT(a1a2.size() == 2 * n);
+    // Actual condition is stricter than length: A < B * 2^(digitBits * n)
+    ASSERT(compareDigits(a1a2, b) == ComparisonResult::LessThan);
+    ASSERT(a3.size() == n);
+    ASSERT(q.size() == n);
+    ASSERT(r.size() == 2 * n);
+    // 1. Split A into three parts A = [A1, A2, A3] with Ai < 2^(digitBits * n).
+    auto a1 = a1a2.subspan(n, n);
+    // 2. Split B into two parts B = [B1, B2] with Bi < 2^(digitBits * n).
+    auto b1 = b.subspan(n, n);
+    auto b2 = b.first(n);
+    // 3. Distinguish the cases A1 < B1 or A1 >= B1.
+    auto qhat = q;
+    auto r1 = r.subspan(n, n);
+    Digit r1High = 0;
+    if (compareDigits(a1, b1) == ComparisonResult::LessThan) {
+        // 3a. If A1 < B1, compute Qhat = floor([A1, A2] / B1) with remainder R1 using algorithm
+        //     D2n1n.
+        d2n1n(qhat, r1, a1a2, b1);
+    } else {
+        // 3b. If A1 >= B1, set Qhat = 2^(digitBits * n) - 1 and set R1 = [A1, A2] - [B1, 0] + [0, B1]
+        std::ranges::fill(qhat, ~static_cast<Digit>(0));
+        // Step 1: compute A1 - B1, which can't underflow because of the comparison guarding this
+        // else-branch, and always has a one-digit result because of this function's
+        // preconditions.
+        auto temp = r1;
+        subZeroPadded(temp, normalize(a1), normalize(b1));
+        auto difference = normalize(std::span<const Digit>(temp));
+        ASSERT(difference.size() <= 1);
+        if (!difference.empty())
+            r1High = difference[0];
+        // Step 2: compute A2 + B1.
+        auto a2 = a1a2.first(n);
+        r1High += addAndReturnCarry(r1, a2, b1);
+    }
+    // 4. Compute D = Qhat * B2 using (Karatsuba) multiplication.
+    auto d = m_scratch.mutableSpan().first(2 * n);
+    multiplyZeroPadded(d, qhat, b2);
+
+    // 5. Compute Rhat = R1*2^(digitBits * n) + A3 - D = [R1, A3] - D.
+    copyZeroPadded(r.first(n), a3);
+    // 6. As long as Rhat < 0, repeat:
+    while (compareWithHighDigit(r1High, r, d) < 0) {
+        // 6a. Rhat = Rhat + B
+        r1High += inplaceAdd(r, b);
+        // 6b. Qhat = Qhat - 1
+        subtractDigit(qhat, 1);
+    }
+    // 5. Compute Rhat = R1*2^(digitBits * n) + A3 - D = [R1, A3] - D.
+    Digit borrow = inplaceSub(r, d);
+    ASSERT_UNUSED(borrow, borrow == r1High);
+    ASSERT(compareDigits(r, b) == ComparisonResult::LessThan);
+    // 7. Return R = Rhat, Q = Qhat.
+}
+
+// Algorithm 1 from the paper. Variable names same as there.
+// Returns Q(uotient) and (R)emainder for A/B, with A twice the size of B.
+void JSBigInt::BurnikelZiegler::d2n1n(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+{
+    size_t n = b.size();
+    ASSERT(a.size() <= 2 * n);
+    // A < B * 2^(digitBits * n)
+    ASSERT(compareDigits(clampedSubspan(a, n, n), b) == ComparisonResult::LessThan);
+    ASSERT(q.size() == n);
+    ASSERT(r.size() == n);
+    // 1. If n is odd or smaller than some convenient constant, compute Q and R by school division
+    //    and return.
+    if ((n & 1) || n < burnikelThreshold)
+        return divideBasecase(q, r, a, b);
+    // 2. Split A into four parts A = [A1, ..., A4] with Ai < 2^(digitBits * n / 2). Split B into
+    //    two parts [B2, B1] with Bi < 2^(digitBits * n / 2).
+    auto a1a2 = clampedSubspan(a, n, n);
+    auto a3 = clampedSubspan(a, n / 2, n / 2);
+    auto a4 = clampedSubspan(a, 0, n / 2);
+    // 3. Compute the high part Q1 of floor(A/B) as Q1 = floor([A1, A2, A3] / [B1, B2]) with
+    //    remainder R1 = [R11, R12], using algorithm D3n2n.
+    auto q1 = q.subspan(n / 2, n / 2);
+    Vector<Digit> r1(n);
+    d3n2n(q1, r1.mutableSpan(), a1a2, a3, b);
+    // 4. Compute the low part Q2 of floor(A/B) as Q2 = floor([R11, R12, A4] / [B1, B2]) with
+    //    remainder R, using algorithm D3n2n.
+    auto q2 = q.first(n / 2);
+    d3n2n(q2, r, r1.span(), a4, b);
+    // 5. Return Q = [Q1, Q2] and R.
+}
+
+// Algorithm 3 from the paper. Variables names same as there.
+// Returns Q(uotient) and R(emainder) for A/B (no size restrictions). R is optional, Q is not. Every
+// digit of Q and of R is written.
+std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideBurnikelZiegler(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+{
+    RELEASE_ASSERT(a.size() >= b.size());
+    RELEASE_ASSERT(r.empty() || r.size() >= b.size());
+    RELEASE_ASSERT(q.size() > a.size() - b.size());
+    size_t quotientLength = a.size() - b.size() + 1;
+    size_t aLength = a.size();
+    size_t s = b.size();
+    // The requirements are:
+    // - n >= s, n as small as possible.
+    // - m must be a power of two.
+    // 1. Set m = min {2^k | 2^k * burnikelThreshold > s}.
+    size_t m = static_cast<size_t>(1) << std::bit_width(s / burnikelThreshold);
+    // 2. Set j = roundup(s/m) and n = j * m.
+    size_t j = (s + m - 1) / m;
+    size_t n = j * m;
+    // 3. Set sigma = max{tao | 2^tao * B < 2^(digitBits * n)}.
+    unsigned sigma = clz(b[s - 1]);
+    size_t digitShift = n - s;
+    // 4. Set B = B * 2^sigma to normalize B. Shift A by the same amount.
+    // Usage of temp: B[n], Z[2n], Ri[n], Qi[n].
+    Vector<Digit> temp(n * 5);
+    auto bShifted = temp.mutableSpan().first(n);
+    std::ranges::fill(bShifted.first(digitShift), 0);
+    auto shiftedDivisor = leftShift(bShifted.subspan(digitShift), b, sigma);
+    ASSERT_UNUSED(shiftedDivisor, shiftedDivisor.size() == s);
+    b = bShifted;
+    // We need an extra digit if A's top digit does not have enough space for the left-shift by
+    // {sigma}. Additionally, the top bit of A must be 0 (see "-1" in step 5 below), which combined
+    // with B being normalized (i.e. B's top bit is 1) ensures the preconditions of the helper
+    // functions.
+    size_t extraDigit = clz(a[aLength - 1]) < sigma + 1 ? 1 : 0;
+    aLength = a.size() + digitShift + extraDigit;
+    Vector<Digit> aShiftedStorage(aLength);
+    auto aShifted = aShiftedStorage.mutableSpan();
+    std::ranges::fill(aShifted.first(digitShift), 0);
+    auto shiftedDividend = leftShift(aShifted.subspan(digitShift), a, sigma);
+    // A shift of zero copies a's digits without the carry digit.
+    std::ranges::fill(aShifted.subspan(digitShift + shiftedDividend.size()), 0);
+    a = aShifted;
+    // 5. Set t = min{t >= 2 | A < 2^(digitBits * t * n - 1)}.
+    size_t t = std::max<size_t>((aLength + n - 1) / n, 2);
+    // 6. Split A conceptually into t blocks.
+    // 7. Set Z_(t-2) = [A_(t-1), A_(t-2)].
+    size_t zLength = n * 2;
+    auto z = temp.mutableSpan().subspan(n, zLength);
+    copyZeroPadded(z, clampedSubspan(a, n * (t - 2), zLength));
+    // 8. For i from t-2 downto 0 do:
+    BurnikelZiegler bz(n);
+    auto ri = temp.mutableSpan().subspan(3 * n, n);
+    {
+        // First iteration unrolled and specialized.
+        // We might not have n digits at the top of Q, so use temporary storage for Qi...
+        auto qi = temp.mutableSpan().subspan(4 * n, n);
+        bz.d2n1n(qi, ri, z, b);
+        // ...but there *will* be enough space for any non-zero result digits!
+        auto quotientChunk = normalize(std::span<const Digit>(qi));
+        auto target = q.subspan(n * (t - 2));
+        ASSERT(quotientChunk.size() <= target.size());
+        copyZeroPadded(target, quotientChunk);
+    }
+    // Now loop over any remaining iterations.
+    for (size_t i = t - 2; i-- > 0;) {
+        // 8b. If i > 0, set Z_(i-1) = [Ri, A_(i-1)].
+        // (De-duped with unrolled first iteration, hence reading A_(i).)
+        copyZeroPadded(z.subspan(n), ri);
+        copyZeroPadded(z.first(n), clampedSubspan(a, n * i, n));
+        // 8a. Using algorithm D2n1n compute Qi, Ri such that Zi = B*Qi + Ri.
+        auto qi = q.subspan(i * n, n);
+        bz.d2n1n(qi, ri, z, b);
+    }
+    // 9. Return Q = [Q_(t-2), ..., Q_0] and R = R_0 * 2^(-sigma).
+#if ASSERT_ENABLED
+    for (size_t i = 0; i < digitShift; i++)
+        ASSERT(!ri[i]);
+#endif
+    if (!r.empty()) {
+        auto remainder = normalize(std::span<const Digit>(ri.subspan(digitShift)));
+        ASSERT(remainder.size() <= r.size());
+        rightShiftZeroPadded(r, remainder, sigma);
+        r = r.first(s);
+    }
+    return { q.first(quotientLength), r };
+}
+
+// Barrett division, finding the inverse with Newton's method, ported from V8 [1].
+// Reference: "Fast Division of Large Integers" by Karl Hasselström, found at
+// https://treskal.com/s/masters-thesis.pdf
+//
+// Many thanks to Karl Wiberg, k@w5.se, for both writing up an understandable theoretical
+// description of the algorithm and privately providing a demo implementation, on which the
+// implementation in this file is based.
+//
+// [1]: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/bigint/div-barrett.cc
+#if CPU(REGISTER64)
+static constexpr size_t barrettThreshold = 13000;
+#else
+static constexpr size_t barrettThreshold = 22000;
+#endif
+static constexpr size_t newtonInversionThreshold = 25;
+
+static constexpr size_t divideBarrettScratchSpace(size_t n) { return n + 2; }
+// Local values S and W need "n plus a few" digits; U needs 2*n "plus a few". In all tested cases
+// the "few" were either 2 or 3, so give 5 to be safe. S and W are not live at the same time.
+static constexpr size_t invertNewtonExtraSpace = 5;
+static constexpr size_t invertNewtonScratchSpace(size_t n) { return 3 * n + 2 * invertNewtonExtraSpace; }
+static constexpr size_t invertScratchSpace(size_t n) { return n < newtonInversionThreshold ? 2 * n : invertNewtonScratchSpace(n); }
+
+#if ASSERT_ENABLED
+static void assertIntegerPartRange(std::span<const JSBigInt::Digit> x, JSBigInt::Digit min, JSBigInt::Digit max)
+{
+    JSBigInt::Digit integerPart = x.back();
+    ASSERT(integerPart >= min);
+    ASSERT(integerPart <= max);
+}
+#else
+static void assertIntegerPartRange(std::span<const JSBigInt::Digit>, JSBigInt::Digit, JSBigInt::Digit) { }
+#endif
+
+// Z := (the fractional part of) 1/V, via naive division.
+// See comments at {invert} and {invertNewton} below for details.
+void JSBigInt::invertBasecase(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch)
+{
+    ASSERT(z.size() > v.size());
+    ASSERT(!v.empty());
+    ASSERT(scratch.size() >= 2 * v.size());
+    size_t n = v.size();
+    auto x = scratch.first(2 * n);
+    Digit borrow = 0;
+    size_t i = 0;
+    for (; i < n; i++)
+        x[i] = 0;
+    for (; i < 2 * n; i++) {
+        Digit newBorrow = 0;
+        x[i] = digitSub2(0, v[i - n], borrow, newBorrow);
+        borrow = newBorrow;
+    }
+    ASSERT(borrow == 1);
+    // We don't need the remainder.
+    std::span<Digit> quotient;
+    if (n < burnikelThreshold)
+        quotient = std::get<0>(divideSchoolbook(z, { }, x, v));
+    else
+        quotient = std::get<0>(divideBurnikelZiegler(z, { }, x, v));
+    std::ranges::fill(z.subspan(quotient.size()), 0);
+}
+
+// This is Algorithm 4.2 from the paper.
+// Computes the inverse of V, shifted by digitBits * 2 * V.size(), accurate to V.size()+1 digits.
+// The V.size() low digits of the result digits will be written to Z, plus there is an implicit
+// top digit with value 1.
+// Needs invertNewtonScratchSpace(V.size()) of scratch space.
+// The result is either correct or off by one (about half the time it is correct, half the time it
+// is one too much, and in the corner case where V is minimal and the implicit top digit would
+// have to be 2 it is one too little). Barrett's division algorithm can handle that, so we don't
+// care.
+void JSBigInt::invertNewton(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch)
+{
+    const size_t vn = v.size();
+    ASSERT(z.size() >= vn);
+    ASSERT(scratch.size() >= invertNewtonScratchSpace(vn));
+    const size_t sOffset = 0;
+    const size_t wOffset = 0; // S and W can share their scratch space.
+    const size_t uOffset = vn + invertNewtonExtraSpace;
+
+    // The base case won't work otherwise.
+    ASSERT(v.size() >= 3);
+
+    size_t basecasePrecision = std::min<size_t>(newtonInversionThreshold - 1, (vn + 1) / 2);
+    // V must have more digits than the basecase.
+    ASSERT(v.size() > basecasePrecision);
+    ASSERT(v.back() >> (digitBits - 1));
+
+    // Step (1): Setup.
+    // Calculate precision required at each step.
+    // {k} is the number of fraction bits for the current iteration.
+    size_t k = vn * digitBits;
+    std::array<size_t, 8 * sizeof(size_t)> targetFractionBits; // "k_i" in the paper.
+    unsigned iterations = 0; // "i" in the paper, except inverted to run downwards.
+    while (k > basecasePrecision * digitBits) {
+        targetFractionBits[iterations++] = k;
+        k = (k + 1) / 2;
+    }
+    // At this point, k <= basecasePrecision * digitBits is the number of fraction bits to use in
+    // the base case. {iterations} is one past the highest index in use for targetFractionBits.
+
+    // Step (2): Initial approximation.
+    size_t initialDigits = (k + 1 + digitBits - 1) / digitBits;
+    auto topPartOfV = v.subspan(vn - initialDigits, initialDigits);
+    invertBasecase(z, topPartOfV, scratch);
+    z[initialDigits] = z[initialDigits] + 1; // Implicit top digit.
+    // From now on, we'll keep zLength updated to the part that's already computed.
+    size_t zLength = initialDigits + 1;
+
+    // Step (3): Precision doubling loop.
+    while (true) {
+        assertIntegerPartRange(z.first(zLength), 1, 2);
+
+        // (3b): S = Z^2
+        auto s = scratch.subspan(sOffset, 2 * zLength);
+        multiplyZeroPadded(s, z.first(zLength), z.first(zLength));
+        ASSERT(!s.back());
+        s = s.first(s.size() - 1); // Top digit of S is unused.
+        assertIntegerPartRange(s, 1, 4);
+
+        // (3c): T = V, truncated so that at least 2k+3 fraction bits remain.
+        size_t fractionDigits = (2 * k + 3 + digitBits - 1) / digitBits;
+        size_t tLength = std::min(v.size(), fractionDigits);
+        auto t = v.subspan(v.size() - tLength, tLength);
+
+        // (3d): U = T * S, truncated so that at least 2k+1 fraction bits remain (U has one
+        // integer digit, which might be zero).
+        fractionDigits = (2 * k + 1 + digitBits - 1) / digitBits;
+        auto u = scratch.subspan(uOffset, s.size() + t.size());
+        ASSERT(u.size() > fractionDigits);
+        multiplyZeroPadded(u, s, t);
+        u = u.subspan(u.size() - (1 + fractionDigits));
+        assertIntegerPartRange(u, 0, 3);
+
+        // (3e): W = 2 * Z, padded with "0" fraction bits so that it has the same number of
+        // fraction bits as U.
+        ASSERT(u.size() >= zLength);
+        auto w = scratch.subspan(wOffset, u.size());
+        size_t paddingDigits = u.size() - zLength;
+        std::ranges::fill(w.first(paddingDigits), 0);
+        auto doubled = leftShift(w.subspan(paddingDigits), z.first(zLength), 1);
+        ASSERT_UNUSED(doubled, doubled.size() == zLength);
+        assertIntegerPartRange(w, 2, 4);
+
+        // (3f): Z = W - U.
+        // This check is '<=' instead of '<' because U's top digit is its integer part, and we want
+        // vn fraction digits.
+        if (u.size() <= vn) {
+            // Normal subtraction.
+            // This is not the last iteration.
+            ASSERT(iterations > 1);
+            zLength = u.size();
+            Digit borrow = subtractAndReturnBorrow(z.first(zLength), w, u);
+            ASSERT_UNUSED(borrow, !borrow);
+            assertIntegerPartRange(z.first(zLength), 1, 2);
+        } else {
+            // Truncate some least significant digits so that we get vn fraction digits, and
+            // compute the integer digit separately.
+            // This is the last iteration.
+            ASSERT(iterations == 1);
+            zLength = vn;
+            auto wPart = w.subspan(w.size() - vn - 1, vn);
+            auto uPart = u.subspan(u.size() - vn - 1, vn);
+            Digit borrow = subtractAndReturnBorrow(z.first(vn), wPart, uPart);
+            Digit integerPart = w.back() - u.back() - borrow;
+            ASSERT(integerPart == 1 || integerPart == 2);
+            if (integerPart == 2) {
+                // This is the rare case where the correct result would be 2.0, but since we can't
+                // express that by returning only the fractional part with an implicit 1-digit, we
+                // have to return [1.]9999... instead.
+                std::ranges::fill(z.first(vn), ~static_cast<Digit>(0));
+            }
+            break;
+        }
+        // (3g, 3h): Update local variables and loop.
+        k = targetFractionBits[--iterations];
+    }
+}
+
+// Computes the inverse of V, shifted by digitBits * 2 * V.size(), accurate to V.size()+1 digits.
+// The V.size() low digits of the result digits will be written to Z, plus there is an implicit
+// top digit with value 1.
+// (Corner case: if V is minimal, the implicit digit should be 2; in that case we return one less
+// than the correct answer. divideBarrett can handle that.)
+// Needs invertScratchSpace(V.size()) digits of scratch space.
+void JSBigInt::invert(std::span<Digit> z, std::span<const Digit> v, std::span<Digit> scratch)
+{
+    ASSERT(z.size() > v.size());
+    ASSERT(!v.empty());
+    ASSERT(v.back() >> (digitBits - 1));
+    ASSERT(scratch.size() >= invertScratchSpace(v.size()));
+
+    size_t vn = v.size();
+    if (vn >= newtonInversionThreshold)
+        return invertNewton(z, v, scratch);
+    if (vn == 1) {
+        Digit d = v[0];
+        Digit dummyRemainder = 0;
+        z[0] = digitDiv(~d, ~static_cast<Digit>(0), d, dummyRemainder);
+        z[1] = 0;
+    } else {
+        invertBasecase(z, v, scratch);
+        if (z[vn] == 1) {
+            std::ranges::fill(z.first(vn), ~static_cast<Digit>(0));
+            z[vn] = 0;
+        }
+    }
+}
+
+// This is algorithm 3.5 from the paper.
+// Computes Q(uotient) and R(emainder) for A/B using I, which is a precomputed approximation of
+// 1/B (e.g. with invert() above).
+// Needs divideBarrettScratchSpace(A.size()) scratch space.
+void JSBigInt::divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b, std::span<const Digit> inverse, std::span<Digit> scratch)
+{
+    ASSERT(q.size() > a.size() - b.size());
+    ASSERT(r.size() >= b.size());
+    ASSERT(a.size() > b.size()); // Careful: This is *not* '>=' !
+    ASSERT(a.size() <= 2 * b.size());
+    ASSERT(!b.empty());
+    ASSERT(b.back() >> (digitBits - 1));
+    ASSERT(inverse.size() == a.size() - b.size());
+    ASSERT(scratch.size() >= divideBarrettScratchSpace(a.size()));
+
+    auto fullQuotient = q;
+    size_t n = b.size();
+
+    // (1): A1 = A with B.size() fewer digits.
+    auto a1 = a.subspan(n);
+    ASSERT(a1.size() == inverse.size());
+
+    // (2): Q = A1*I with I.size() fewer digits.
+    // {inverse} has an implicit high digit with value 1, so we add {A1} to the high part of the
+    // multiplication result.
+    auto k = scratch.first(2 * inverse.size());
+    multiplyZeroPadded(k, a1, inverse);
+    q = q.first(inverse.size() + 1);
+    addZeroPadded(q, k.subspan(inverse.size()), a1);
+    // K is no longer used, can reuse {scratch} for P.
+
+    // (3): R = A - B*Q (approximate remainder).
+    auto p = scratch.first(a.size() + 1);
+    multiplyZeroPadded(p, b, q);
+    auto remainder = r.first(n);
+    Digit borrow = subtractAndReturnBorrow(remainder, a, p.first(n));
+    // R may be allocated wider than B, zero out any extra digits if so.
+    std::ranges::fill(r.subspan(n), 0);
+    Digit rHigh = a[n] - p[n] - borrow;
+
+    // Adjust R and Q so that they become the correct remainder and quotient.
+    // The number of iterations is guaranteed to be at most some very small constant, unless the
+    // caller gave us a bad approximate quotient.
+    if (rHigh >> (digitBits - 1)) {
+        // (5b): R < 0, so R += B
+        Digit qSub = 0;
+        do {
+            rHigh += inplaceAdd(remainder, b);
+            qSub++;
+            ASSERT(qSub <= 5);
+        } while (rHigh);
+        subtractDigit(q, qSub);
+    } else {
+        Digit qAdd = 0;
+        while (rHigh || greaterThanOrEqual(remainder, b)) {
+            // (5c): R >= B, so R -= B
+            rHigh -= inplaceSub(remainder, b);
+            qAdd++;
+            ASSERT(qAdd <= 5);
+        }
+        addDigit(q, qAdd);
+    }
+    // (5a): Return.
+    std::ranges::fill(fullQuotient.subspan(q.size()), 0);
+}
+
+// Computes Q(uotient) and R(emainder) for A/B, using Barrett division. Every digit of Q and of R
+// is written.
+std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideBarrett(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+{
+    RELEASE_ASSERT(q.size() > a.size() - b.size() + 1);
+    RELEASE_ASSERT(r.size() >= b.size());
+    RELEASE_ASSERT(a.size() > b.size()); // Careful: This is *not* '>=' !
+    RELEASE_ASSERT(!b.empty());
+    size_t quotientLength = a.size() - b.size() + 1;
+    size_t remainderLength = b.size();
+
+    // Normalize B, and shift A by the same amount.
+    unsigned shift = clz(b.back());
+    Vector<Digit> bNormalizedStorage;
+    Vector<Digit> aNormalizedStorage;
+    if (shift) {
+        bNormalizedStorage.resize(b.size());
+        auto shifted = leftShift(bNormalizedStorage.mutableSpan(), b, shift);
+        ASSERT_UNUSED(shifted, shifted.size() == b.size());
+        b = bNormalizedStorage.span();
+        // A gains a digit if its top digit has no room for the shift.
+        aNormalizedStorage.resize(a.size() + (clz(a.back()) < shift ? 1 : 0));
+        auto shiftedDividend = leftShift(aNormalizedStorage.mutableSpan(), a, shift);
+        ASSERT_UNUSED(shiftedDividend, shiftedDividend.size() == aNormalizedStorage.size());
+        a = aNormalizedStorage.span();
+    }
+
+    // The core divideBarrett function above only supports A having at most twice as many digits
+    // as B. We generalize this to arbitrary inputs similar to Burnikel-Ziegler division by
+    // performing a t-by-1 division of B-sized chunks. It's easy to special-case the situation
+    // where we don't need to bother.
+    size_t barrettDividendLength = a.size() <= 2 * b.size() ? a.size() : 2 * b.size();
+    size_t inverseLength = barrettDividendLength - b.size();
+    // +1 is for temporary use by invert().
+    Vector<Digit> inverseStorage(inverseLength + 1);
+    size_t scratchLength = std::max(invertScratchSpace(inverseLength), divideBarrettScratchSpace(barrettDividendLength));
+    Vector<Digit> scratchStorage(scratchLength);
+    auto scratch = scratchStorage.mutableSpan();
+    invert(inverseStorage.mutableSpan(), b.subspan(b.size() - inverseLength, inverseLength), scratch);
+    ASSERT(!inverseStorage[inverseLength]);
+    auto inverse = inverseStorage.span().first(inverseLength);
+    if (a.size() > 2 * b.size()) {
+        // This follows the variable names and and algorithmic steps of divideBurnikelZiegler().
+        size_t n = b.size(); // Chunk length.
+        // (5): {t} is the number of B-sized chunks of A.
+        size_t t = (a.size() + n - 1) / n;
+        ASSERT(t >= 3);
+        // (6)/(7): Z is used for the current 2-chunk block to be divided by B, initialized to the
+        // two topmost chunks of A.
+        size_t zLength = n * 2;
+        Vector<Digit> zStorage(zLength);
+        auto z = zStorage.mutableSpan();
+        copyZeroPadded(z, clampedSubspan(a, n * (t - 2), zLength));
+        // (8): For i from t-2 downto 0 do
+        size_t qiLength = n + 1;
+        Vector<Digit> qiStorage(qiLength);
+        auto qi = qiStorage.mutableSpan();
+        Vector<Digit> riStorage(n);
+        auto ri = riStorage.mutableSpan();
+        // First iteration unrolled and specialized.
+        {
+            size_t i = t - 2;
+            divideBarrett(qi, ri, z, b, inverse, scratch);
+            auto target = q.subspan(n * i);
+            // In the first iteration, all qiLength = n + 1 digits may be used.
+            copyZeroPadded(target, qi);
+#if ASSERT_ENABLED
+            for (size_t j = target.size(); j < qiLength; j++)
+                ASSERT(!qi[j]);
+#endif
+        }
+        // Now loop over any remaining iterations.
+        for (size_t i = t - 2; i-- > 0;) {
+            // (8b): If i > 0, set Z_(i-1) = [Ri, A_(i-1)].
+            // (De-duped with unrolled first iteration, hence reading A_(i).)
+            copyZeroPadded(z.subspan(n), ri);
+            copyZeroPadded(z.first(n), clampedSubspan(a, n * i, n));
+            // (8a): Compute Qi, Ri such that Zi = B*Qi + Ri.
+            divideBarrett(qi, ri, z, b, inverse, scratch);
+            ASSERT(!qi[qiLength - 1]);
+            // (9): Return Q = [Q_(t-2), ..., Q_0]...
+            copyZeroPadded(q.subspan(n * i, n), qi);
+        }
+        auto remainder = normalize(std::span<const Digit>(ri));
+        ASSERT(remainder.size() <= r.size());
+        // (9): ...and R = R_0 * 2^(-leading_zeros).
+        rightShiftZeroPadded(r, remainder, shift);
+    } else {
+        divideBarrett(q, r, a, b, inverse, scratch);
+        rightShiftZeroPadded(r, r, shift);
+    }
+    return { q.first(quotientLength), r.first(remainderLength) };
+}
+
+// The number of quotient digits a caller of divideDigitsInto has to provide.
+size_t JSBigInt::quotientLength(std::span<const Digit> a, std::span<const Digit> b)
+{
+    ASSERT(a.size() >= b.size());
+    size_t length = a.size() - b.size() + 1;
+    // Barrett division normalizes the dividend itself, which can grow it by a digit.
+    if (b.size() >= barrettThreshold)
+        length++;
+    return length;
+}
+
+// Computes Q(uotient) and R(emainder) for A/B with the algorithm suited to the operands' sizes.
+// Either Q or R may be empty; Q, when present, must have quotientLength(a, b) digits. The returned
+// spans are not normalized.
+//
+// The recursive algorithms pay for their block structure in full even when the quotient is short,
+// whereas the schoolbook cost is the quotient length times the divisor length, so both the
+// divisor and the quotient have to be long enough. V8 only gates on the divisor; measured here, a
+// quotient under 57 digits loses on every divisor size, by a factor of 4 at one digit.
+static bool shouldUseSchoolbookDivision(size_t dividendSize, size_t divisorSize)
+{
+    return divisorSize < burnikelThreshold || dividendSize - divisorSize < burnikelThreshold;
+}
+
+std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideDigitsInto(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
+{
+    ASSERT(b.size() >= 2);
+    ASSERT(a.size() >= b.size());
+    ASSERT(q.empty() || q.size() >= quotientLength(a, b));
+    ASSERT(r.empty() || r.size() >= b.size());
+    if (shouldUseSchoolbookDivision(a.size(), b.size()))
+        return divideSchoolbook(q, r, a, b);
+    if (b.size() < barrettThreshold) {
+        if (!q.empty())
+            return divideBurnikelZiegler(q, r, a, b);
+        Vector<Digit> quotientStorage(quotientLength(a, b));
+        auto [quotient, remainder] = divideBurnikelZiegler(quotientStorage.mutableSpan(), r, a, b);
+        return { { }, remainder };
+    }
+    if (q.empty()) {
+        Vector<Digit> quotientStorage(quotientLength(a, b));
+        auto [quotient, remainder] = divideBarrett(quotientStorage.mutableSpan(), r, a, b);
+        return { { }, remainder };
+    }
+    if (r.empty()) {
+        Vector<Digit> remainderStorage(b.size());
+        auto [quotient, remainder] = divideBarrett(q, remainderStorage.mutableSpan(), a, b);
+        return { quotient, { } };
+    }
+    return divideBarrett(q, r, a, b);
 }
 
 static ALWAYS_INLINE JSBigInt::Digit estimateQhat(std::span<const JSBigInt::Digit> a, std::span<const JSBigInt::Digit> b)
@@ -3266,8 +3987,8 @@ JSBigInt::ImplResult JSBigInt::divideImpl(JSGlobalObject* globalObject, BigIntIm
         return quotient;
     }
 
-    Vector<Digit, 16> q(qLength);
-    auto [qSpan, rSpan] = divideSchoolbook(q.mutableSpan(), { }, xSpan, ySpan);
+    Vector<Digit, 16> q(quotientLength(xSpan, ySpan));
+    auto [qSpan, rSpan] = divideDigitsInto(q.mutableSpan(), { }, xSpan, ySpan);
     RELEASE_AND_RETURN(scope, tryCreateFromImpl(globalObject, vm, resultSign, qSpan));
 }
 
@@ -3387,7 +4108,7 @@ std::span<JSBigInt::Digit> JSBigInt::divideDigits(std::span<Digit> quotient, std
         return quotient.first(1);
     }
 
-    auto [quotientSpan, remainderSpan] = divideSchoolbook(quotient, { }, x, y);
+    auto [quotientSpan, remainderSpan] = divideDigitsInto(quotient, { }, x, y);
     return normalize(quotientSpan);
 }
 
@@ -4036,7 +4757,7 @@ JSBigInt::ImplResult JSBigInt::remainderImpl(JSGlobalObject* globalObject, BigIn
     if (xSpan.size() == ySpan.size())
         rSpan = remainderSameSize(r.mutableSpan(), xSpan, ySpan);
     else
-        rSpan = std::get<1>(divideSchoolbook({ }, r.mutableSpan(), xSpan, ySpan));
+        rSpan = std::get<1>(divideDigitsInto({ }, r.mutableSpan(), xSpan, ySpan));
     RELEASE_AND_RETURN(scope, tryCreateFromImpl(globalObject, vm, x.sign(), rSpan));
 }
 
