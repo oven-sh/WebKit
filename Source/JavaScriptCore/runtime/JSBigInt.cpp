@@ -6501,6 +6501,288 @@ double JSBigInt::toNumber(JSGlobalObject* globalObject) const
     return 0.0;
 }
 
+// Numerical value of the first 128 ASCII characters, using 255 as sentinel for "invalid".
+static constexpr auto charValueTable = WTF::toArray<uint8_t>({
+    255, 255, 255, 255, 255, 255, 255, 255, // 0..7
+    255, 255, 255, 255, 255, 255, 255, 255, // 8..15
+    255, 255, 255, 255, 255, 255, 255, 255, // 16..23
+    255, 255, 255, 255, 255, 255, 255, 255, // 24..31
+    255, 255, 255, 255, 255, 255, 255, 255, // 32..39
+    255, 255, 255, 255, 255, 255, 255, 255, // 40..47
+    0, 1, 2, 3, 4, 5, 6, 7, // 48..55    '0' == 48
+    8, 9, 255, 255, 255, 255, 255, 255, // 56..63    '9' == 57
+    255, 10, 11, 12, 13, 14, 15, 16, // 64..71    'A' == 65
+    17, 18, 19, 20, 21, 22, 23, 24, // 72..79
+    25, 26, 27, 28, 29, 30, 31, 32, // 80..87
+    33, 34, 35, 255, 255, 255, 255, 255, // 88..95    'Z' == 90
+    255, 10, 11, 12, 13, 14, 15, 16, // 96..103   'a' == 97
+    17, 18, 19, 20, 21, 22, 23, 24, // 104..111
+    25, 26, 27, 28, 29, 30, 31, 32, // 112..119
+    33, 34, 35, 255, 255, 255, 255, 255, // 120..127  'z' == 122
+});
+
+template<typename CharType>
+static ALWAYS_INLINE unsigned digitCharValue(CharType character)
+{
+    if (static_cast<unsigned>(character) >= charValueTable.size())
+        return 255;
+    return charValueTable[character];
+}
+
+// The number of parts, each holding as many characters as fit one digit, from which the balanced
+// combination below beats the multiplyAdd loop in parseInt. That loop advances by the characters
+// that fit an int32, about half a digit, so the crossover is far below V8's 25 parts: measured on
+// 64-bit, 3 parts break even and 4 win for every radix. The 32-bit value is V8's.
+#if CPU(REGISTER64)
+static constexpr size_t fromStringLargeThreshold = 4;
+#else
+static constexpr size_t fromStringLargeThreshold = 165;
+#endif
+static_assert(fromStringLargeThreshold >= 3);
+
+// The number of characters of the given radix whose value fits one digit, and that radix power.
+struct CharactersPerDigit {
+    unsigned count;
+    JSBigInt::Digit multiplier;
+};
+
+static constexpr CharactersPerDigit computeCharactersPerDigit(unsigned radix)
+{
+    JSBigInt::Digit multiplier = radix;
+    unsigned count = 1;
+    while (multiplier <= std::numeric_limits<JSBigInt::Digit>::max() / radix) {
+        multiplier *= radix;
+        count++;
+    }
+    return { count, multiplier };
+}
+
+static constexpr auto charactersPerDigitTable = [] {
+    std::array<CharactersPerDigit, 37> table { };
+    for (unsigned radix = 2; radix <= 36; radix++)
+        table[radix] = computeCharactersPerDigit(radix);
+    return table;
+}();
+
+// Combines the parts in a balanced-binary-tree like order, ported from V8 [1]: multiply-and-add
+// neighboring pairs of parts, then loop, until only one part is left. The benefit is that the
+// multiplications will have inputs of similar sizes, which makes them amenable to fast
+// multiplication algorithms. We have to do more multiplications than the classic algorithm though,
+// because we also have to multiply the multipliers.
+// Optimizations:
+// - We can skip the multiplier for the first part, because we never need it.
+// - Most multipliers are the same; we can avoid repeated multiplications and just copy the
+//   previous result. (In theory we could even de-dupe them, but as the parts/multipliers grow,
+//   we'll need most of the memory anyway.) Copied results are marked with a * below.
+// - We can reuse memory using a system of three buffers whose usage rotates:
+//   - one is considered empty, and is overwritten with the new parts,
+//   - one holds the multipliers (and will be "empty" in the next round), and
+//   - one initially holds the parts and is overwritten with the new multipliers
+//   Parts and multipliers both grow in each iteration, and get fewer, so we use the space of two
+//   adjacent old chunks for one new chunk.
+//   {z} is also big enough, but it's convenient to let only the last round write into it, so the
+//   result always ends up in the right place without needing another copy. So we need to
+//   allocate two scratch vectors.
+// - We don't have to keep track of the positions and sizes of the chunks, because we can deduce
+//   their precise placement from the iteration index. Chunks at the end of a buffer are shorter,
+//   which the clamped subspans express.
+//
+// Example, assuming a digit is 4 bits, fitting one decimal digit. Initial state:
+//
+//     parts          1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
+//     multipliers   10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+//
+// After the first iteration of the outer loop:
+//
+//     parts          12    34    56    78    90    12    34    5
+//     multipliers         100  *100  *100  *100  *100  *100   10
+//
+// After the second iteration:
+//
+//     parts          1234        5678        9012        345
+//     multipliers               10000      *10000       1000
+//
+// After the third iteration:
+//
+//     parts          12345678                9012345
+//     multipliers                           10000000
+//
+// And then there's an obvious last iteration.
+//
+// [1]: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/bigint/fromstring.cc
+void JSBigInt::fromStringLarge(std::span<Digit> z, std::span<Digit> parts, Digit maxMultiplier, Digit lastMultiplier)
+{
+    size_t numParts = parts.size();
+    // The first round below never writes to z, and the loop after it only runs once there are at
+    // least two parts left, so two parts would leave z untouched.
+    ASSERT(numParts >= 3);
+    ASSERT(z.size() >= numParts);
+    Vector<Digit> tempStorage(numParts * 2);
+    auto multipliers = tempStorage.mutableSpan().first(numParts);
+    auto temp = tempStorage.mutableSpan().subspan(numParts, numParts);
+    // Unrolled and specialized first iteration: partLength == 1, so instead of digit sub-vectors
+    // we have individual digit values, and the multipliers are known up front.
+    {
+        auto newParts = temp;
+        auto newMultipliers = parts;
+        size_t i = 0;
+        for (; i + 1 < numParts; i += 2) {
+            Digit pIn = parts[i];
+            Digit pIn2 = parts[i + 1];
+            Digit mIn = maxMultiplier;
+            Digit mIn2 = i == numParts - 2 ? lastMultiplier : maxMultiplier;
+            // p[j] = p[i] * m[i+1] + p[i+1]
+            auto [pLow, pHigh] = digitMul(pIn, mIn2);
+            Digit carry = 0;
+            newParts[i] = digitAdd(pLow, pIn2, carry);
+            newParts[i + 1] = pHigh + carry;
+            // m[j] = m[i] * m[i+1]
+            if (i > 0) {
+                if (i > 2 && mIn2 != lastMultiplier) {
+                    newMultipliers[i] = newMultipliers[i - 2];
+                    newMultipliers[i + 1] = newMultipliers[i - 1];
+                } else {
+                    auto [mLow, mHigh] = digitMul(mIn, mIn2);
+                    newMultipliers[i] = mLow;
+                    newMultipliers[i + 1] = mHigh;
+                }
+            }
+        }
+        // Trailing last part (if {numParts} was odd).
+        if (i < numParts) {
+            newParts[i] = parts[i];
+            newMultipliers[i] = lastMultiplier;
+            i += 2;
+        }
+        numParts = i >> 1;
+        auto newTemp = multipliers;
+        parts = newParts;
+        multipliers = newMultipliers;
+        temp = newTemp;
+    }
+    size_t partLength = 2;
+
+    // Remaining iterations.
+    while (numParts > 1) {
+        // In the very last iteration, write into {z}.
+        auto newParts = numParts == 2 ? z : temp;
+        auto newMultipliers = parts;
+        size_t newPartLength = partLength * 2;
+        size_t i = 0;
+        for (; i + 1 < numParts; i += 2) {
+            size_t start = i * partLength;
+            auto pIn = clampedSubspan(parts, start, partLength);
+            auto pIn2 = clampedSubspan(parts, start + partLength, partLength);
+            auto mIn = clampedSubspan(multipliers, start, partLength);
+            auto mIn2 = clampedSubspan(multipliers, start + partLength, partLength);
+            auto pOut = clampedSubspan(newParts, start, newPartLength);
+            auto mOut = clampedSubspan(newMultipliers, start, newPartLength);
+            // p[j] = p[i] * m[i+1] + p[i+1]
+            multiplyZeroPadded(pOut, pIn, mIn2);
+            Digit overflow = inplaceAddAndPropagate(pOut, pIn2);
+            ASSERT_UNUSED(overflow, !overflow);
+            // m[j] = m[i] * m[i+1]
+            if (i > 0) {
+                bool copied = false;
+                if (i > 2) {
+                    size_t previousStart = (i - 2) * partLength;
+                    auto mInPrevious = clampedSubspan(multipliers, previousStart, partLength);
+                    auto mIn2Previous = clampedSubspan(multipliers, previousStart + partLength, partLength);
+                    if (compareDigits(mIn, mInPrevious) == ComparisonResult::Equal && compareDigits(mIn2, mIn2Previous) == ComparisonResult::Equal) {
+                        copied = true;
+                        auto mOutPrevious = clampedSubspan(newMultipliers, previousStart, newPartLength);
+                        memcpySpan(mOut, mOutPrevious.first(mOut.size()));
+                    }
+                }
+                if (!copied) {
+                    multiplyZeroPadded(mOut, mIn, mIn2);
+                }
+            }
+        }
+        // Trailing last part (if {numParts} was odd).
+        if (i < numParts) {
+            auto pIn = clampedSubspan(parts, i * partLength, partLength);
+            auto mIn = clampedSubspan(multipliers, i * partLength, partLength);
+            auto pOut = clampedSubspan(newParts, i * partLength, newPartLength);
+            auto mOut = clampedSubspan(newMultipliers, i * partLength, newPartLength);
+            copyZeroPadded(pOut, pIn);
+            copyZeroPadded(mOut, mIn);
+            i += 2;
+        }
+        numParts = i >> 1;
+        partLength = newPartLength;
+        auto newTemp = multipliers;
+        parts = newParts;
+        multipliers = newMultipliers;
+        temp = newTemp;
+    }
+    // z might be bigger than we requested; be robust towards that.
+    std::ranges::fill(z.subspan(std::min(partLength, z.size())), 0);
+}
+
+// The digits of a string of characters in a non-power-of-two radix, given the number of
+// characters that fit one digit. Combines them with fromStringLarge above, and returns false on
+// an invalid character.
+template<typename CharType>
+bool JSBigInt::parseDigitsLarge(std::span<Digit> result, std::span<const CharType> characters, unsigned radix, unsigned charsPerPart, Digit maxMultiplier)
+{
+    size_t numParts = (characters.size() + charsPerPart - 1) / charsPerPart;
+    ASSERT(result.size() >= numParts);
+    ASSERT(numParts >= 3);
+    Vector<Digit> partsStorage(numParts);
+    auto parts = partsStorage.mutableSpan();
+    size_t position = 0;
+    Digit lastMultiplier = maxMultiplier;
+    for (size_t i = 0; i < numParts; i++) {
+        size_t count = std::min<size_t>(charsPerPart, characters.size() - position);
+        Digit part = 0;
+        Digit multiplier = 1;
+        for (size_t j = 0; j < count; j++) {
+            unsigned value = digitCharValue(characters[position + j]);
+            if (value >= radix)
+                return false;
+            part = part * radix + value;
+            multiplier *= radix;
+        }
+        parts[i] = part;
+        lastMultiplier = multiplier;
+        position += count;
+    }
+    fromStringLarge(result, parts, maxMultiplier, lastMultiplier);
+    return true;
+}
+
+// The digits of a string of characters in a power-of-two radix: each character contributes
+// exactly ctz(radix) bits, so they are packed from the least significant character up. Returns
+// false on an invalid character.
+template<typename CharType>
+bool JSBigInt::parseDigitsPowerOfTwo(std::span<Digit> result, std::span<const CharType> characters, unsigned radix)
+{
+    ASSERT(hasOneBitSet(radix));
+    unsigned bitsPerChar = ctz(radix);
+    ASSERT(result.size() * digitBits >= characters.size() * bitsPerChar);
+    size_t digitIndex = 0;
+    Digit digit = 0;
+    unsigned bitsInDigit = 0;
+    for (size_t i = characters.size(); i-- > 0;) {
+        unsigned value = digitCharValue(characters[i]);
+        if (value >= radix)
+            return false;
+        digit |= static_cast<Digit>(value) << bitsInDigit;
+        bitsInDigit += bitsPerChar;
+        if (bitsInDigit >= digitBits) {
+            result[digitIndex++] = digit;
+            bitsInDigit -= digitBits;
+            // The bits of this character that did not fit, if any.
+            digit = bitsInDigit ? static_cast<Digit>(value) >> (bitsPerChar - bitsInDigit) : 0;
+        }
+    }
+    if (bitsInDigit)
+        result[digitIndex++] = digit;
+    std::ranges::fill(result.subspan(digitIndex), 0);
+    return true;
+}
+
 template <typename CharType>
 JSValue JSBigInt::parseInt(JSGlobalObject* globalObject, std::span<const CharType> data, ErrorParseMode errorParseMode)
 {
@@ -6638,10 +6920,74 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
     }
 #endif // USE(BIGINT32)
 
+    auto computeLength = [](unsigned radix, unsigned charcount) -> std::optional<unsigned> {
+        ASSERT(2 <= radix && radix <= 36);
+
+        size_t bitsPerChar = maxBitsPerCharTable[radix];
+        size_t chars = charcount;
+        const unsigned roundup = bitsPerCharTableMultiplier - 1;
+        if (chars <= (std::numeric_limits<size_t>::max() - roundup) / bitsPerChar) {
+            size_t bitsMin = bitsPerChar * chars;
+
+            // Divide by 32 (see table), rounding up.
+            bitsMin = (bitsMin + roundup) >> bitsPerCharTableShift;
+            if (bitsMin <= static_cast<size_t>(maxInt)) {
+                // Divide by kDigitsBits, rounding up.
+                unsigned length = (bitsMin + digitBits - 1) / digitBits;
+                if (length <= maxLength)
+                    return length;
+            }
+        }
+
+        return std::nullopt;
+    };
+
+    unsigned initialLength = length - p;
+
+    // Inputs too long for the multiplyAdd loop below to stay cheap are parsed in one of the
+    // linear-time ways: packing bits for a power-of-two radix, or combining digit-sized parts
+    // in a balanced tree otherwise. Inputs that may fit a BigInt32 keep the loop. The comparisons
+    // spell out ceil(initialLength / charsPerPart) >= fromStringLargeThreshold without the
+    // division, since they run on every parse; the length check in front of the table load is
+    // implied by the part count (over 30 characters for every radix) and only short-circuits it.
+    {
+        bool isPowerOfTwoRadix = hasOneBitSet(radix);
+        bool useLinearParse = isPowerOfTwoRadix
+            ? initialLength > lengthLimitForBigInt32
+            : initialLength > 30 && initialLength > (fromStringLargeThreshold - 1) * charactersPerDigitTable[radix].count;
+        if (useLinearParse) {
+            auto [charsPerPart, maxMultiplier] = charactersPerDigitTable[radix];
+            size_t numParts = (initialLength + charsPerPart - 1) / charsPerPart;
+            auto characters = data.subspan(p, initialLength);
+            auto resultLength = computeLength(radix, initialLength);
+            if (!resultLength) [[unlikely]] {
+                if (nullOrGlobalObjectForOOM) {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    throwOutOfMemoryError(nullOrGlobalObjectForOOM, scope, "BigInt generated from this operation is too big"_s);
+                }
+                return JSValue();
+            }
+            // The parts can outnumber the digits of the result by one: the last part is short,
+            // and the bit estimate above is tighter than a digit per part.
+            Vector<Digit> resultVector(std::max<size_t>(resultLength.value(), numParts));
+            bool valid = isPowerOfTwoRadix
+                ? parseDigitsPowerOfTwo(resultVector.mutableSpan(), characters, radix)
+                : parseDigitsLarge(resultVector.mutableSpan(), characters, radix, charsPerPart, maxMultiplier);
+            if (!valid) {
+                if (errorParseMode == ErrorParseMode::ThrowExceptions) {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    ASSERT(nullOrGlobalObjectForOOM);
+                    throwVMError(nullOrGlobalObjectForOOM, scope, createSyntaxError(nullOrGlobalObjectForOOM, "Failed to parse String to BigInt"_s));
+                }
+                return JSValue();
+            }
+            return tryCreateFromImpl(nullOrGlobalObjectForOOM, vm, sign == ParseIntSign::Signed, resultVector.span());
+        }
+    }
+
     unsigned limit0 = '0' + (radix < 10 ? radix : 10);
     unsigned limita = 'a' + (static_cast<int32_t>(radix) - 10);
     unsigned limitA = 'A' + (static_cast<int32_t>(radix) - 10);
-    unsigned initialLength = length - p;
     Vector<Digit, 16> resultVector;
     while (p < length) {
         Checked<uint64_t, CrashOnOverflow> digit = 0;
@@ -6681,28 +7027,6 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
 #endif
                 }
             }
-
-            auto computeLength = [](unsigned radix, unsigned charcount) -> std::optional<unsigned> {
-                ASSERT(2 <= radix && radix <= 36);
-
-                size_t bitsPerChar = maxBitsPerCharTable[radix];
-                size_t chars = charcount;
-                const unsigned roundup = bitsPerCharTableMultiplier - 1;
-                if (chars <= (std::numeric_limits<size_t>::max() - roundup) / bitsPerChar) {
-                    size_t bitsMin = bitsPerChar * chars;
-
-                    // Divide by 32 (see table), rounding up.
-                    bitsMin = (bitsMin + roundup) >> bitsPerCharTableShift;
-                    if (bitsMin <= static_cast<size_t>(maxInt)) {
-                        // Divide by kDigitsBits, rounding up.
-                        unsigned length = (bitsMin + digitBits - 1) / digitBits;
-                        if (length <= maxLength)
-                            return length;
-                    }
-                }
-
-                return std::nullopt;
-            };
 
             auto length = computeLength(radix, initialLength);
             if (!length) [[unlikely]] {

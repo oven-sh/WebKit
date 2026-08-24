@@ -662,6 +662,11 @@ private:
 
     template <typename CharType>
     static JSValue parseInt(JSGlobalObject*, VM&, std::span<const CharType> data, unsigned startIndex, unsigned radix, ErrorParseMode, ParseIntSign = ParseIntSign::Signed, ParseIntMode = ParseIntMode::AllowEmptyString);
+    static void fromStringLarge(std::span<Digit> z, std::span<Digit> parts, Digit maxMultiplier, Digit lastMultiplier);
+    template<typename CharType>
+    static bool parseDigitsLarge(std::span<Digit> result, std::span<const CharType>, unsigned radix, unsigned charsPerPart, Digit maxMultiplier);
+    template<typename CharType>
+    static bool parseDigitsPowerOfTwo(std::span<Digit> result, std::span<const CharType>, unsigned radix);
 
     template <typename BigIntImpl>
     static JSBigInt* copy(JSGlobalObject*, BigIntImpl x);
