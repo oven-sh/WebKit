@@ -50,6 +50,7 @@
 #include "UnlinkedProgramCodeBlock.h"
 #include "VariableEnvironmentInlines.h"
 #include <array>
+#include <ranges>
 #include <bit>
 #include <wtf/FileHandle.h>
 #include <wtf/InlineMap.h>
@@ -1573,12 +1574,12 @@ public:
     template<WTF::ShouldValidateKey shouldValidateKey>
     void encode(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map)
     {
-        SourceType<decltype(m_entries)> entriesVector(map.size());
-        unsigned i = 0;
-        for (const auto& it : map)
-            entriesVector[i++] = { it.key, it.value };
-        EncodingOrder::sort(entriesVector, [](const auto& entry) -> const auto& { return entry.first; });
-        m_entries.encodeRange(encoder, entriesVector.size(), entriesVector);
+        Vector<const typename std::remove_reference_t<decltype(map)>::KeyValuePairType*> entries;
+        entries.reserveInitialCapacity(map.size());
+        for (auto& entry : map)
+            entries.append(&entry);
+        EncodingOrder::sort(entries, [](auto* entry) -> const auto& { return entry->key; });
+        m_entries.encodeRange(encoder, entries.size(), entries | std::views::transform([](auto* entry) -> const auto& { return *entry; }));
     }
 
     template<WTF::ShouldValidateKey shouldValidateKey>
