@@ -54,32 +54,53 @@ ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(bool is32Bit, unsigne
 {
 }
 
-ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(bool is32Bit, unsigned numValueProfiles, std::span<const uint32_t> persistentSteps)
+ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(unsigned numValueProfiles, std::span<const uint32_t> persistentSteps)
     : m_hasMetadata(true)
     , m_isFinalized(true)
     , m_isLinked(false)
-    , m_is32Bit(is32Bit)
+    , m_is32Bit(stepsNeed32BitOffsets(persistentSteps))
     , m_numValueProfiles(numValueProfiles)
     , m_stepsCount(persistentSteps.size())
     , m_steps(persistentSteps.data())
     , m_rawBuffer(nullptr)
 {
+    // A table with value profiles but no metadata entries has no steps; it is still steps-backed (owns no buffer).
+    static constexpr uint32_t noSteps = 0;
+    if (!m_steps)
+        m_steps = &noSteps;
 }
 
 template<typename OffsetType>
-void UnlinkedMetadataTable::expandSteps(std::span<const uint32_t> steps, OffsetType* table)
+unsigned UnlinkedMetadataTable::expandSteps(std::span<const uint32_t> steps, OffsetType* table)
 {
-    uint32_t value = 0;
+    // finalize()'s layout, from (opcode, count) pairs instead of the preprocess buffer. 64-bit so that counts out of a
+    // payload cannot wrap the offset; a table too big for 32-bit offsets is refused rather than truncated.
+    uint64_t offset = s_offset16TableSize;
     unsigned i = 0;
     for (uint32_t step : steps) {
-        unsigned end = step >> stepIndexShift;
-        RELEASE_ASSERT(end >= i && end < s_offsetTableEntries); // as the encoder wrote them; a malformed payload stops here rather than past the table
-        for (; i < end; ++i)
-            table[i] = value;
-        value += step & stepDeltaMask;
+        unsigned opcode = step >> stepIndexShift;
+        RELEASE_ASSERT(opcode >= i && opcode < s_offsetTableEntries - 1); // ascending, as the encoder wrote them
+        for (; i <= opcode; ++i) {
+            if (table)
+                table[i] = offset; // aligned when accessed, as in finalize()
+        }
+        offset = roundUpToMultipleOf(metadataAlignment(static_cast<OpcodeID>(opcode)), offset);
+        offset += static_cast<uint64_t>(step & stepCountMask) * metadataSize(static_cast<OpcodeID>(opcode));
+        RELEASE_ASSERT(offset + s_offset32TableSize <= std::numeric_limits<Offset32>::max());
     }
-    for (; i < s_offsetTableEntries; ++i)
-        table[i] = value;
+    for (; i < s_offsetTableEntries; ++i) {
+        if (table)
+            table[i] = offset;
+    }
+    if (offset > UINT16_MAX) {
+        ASSERT(!table || sizeof(OffsetType) == sizeof(Offset32));
+        if (table) {
+            for (i = 0; i < s_offsetTableEntries; ++i)
+                table[i] += s_offset32TableSize;
+        }
+        return offset + s_offset32TableSize;
+    }
+    return offset;
 }
 
 ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(EmptyTag)

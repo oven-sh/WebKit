@@ -36,8 +36,6 @@
 namespace JSC {
 
 struct VariableEnvironmentEntry {
-    friend class CachedVariableEnvironmentEntry;
-
 public:
     ALWAYS_INLINE bool isCaptured() const { return m_bits & IsCaptured; }
     ALWAYS_INLINE bool isConst() const { return m_bits & IsConst; }

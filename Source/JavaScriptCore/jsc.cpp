@@ -327,7 +327,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionCreateNonRopeNonAtomString);
 
 static JSC_DECLARE_HOST_FUNCTION(functionPrintStdOut);
 static JSC_DECLARE_HOST_FUNCTION(functionGenerateBytecodeCacheFile);
-static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCacheFor);
 static JSC_DECLARE_HOST_FUNCTION(functionBuiltinFromBytecodeCache);
 static JSC_DECLARE_HOST_FUNCTION(functionBuiltinBytecodeSize);
 static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCachePageTouch);
@@ -690,7 +689,6 @@ private:
         addFunction(vm, "disassembleBase64"_s, functionDisassembleBase64, 1);
         addFunction(vm, "debug"_s, functionDebug, 1);
         addFunction(vm, "generateBytecodeCacheFile"_s, functionGenerateBytecodeCacheFile, 3);
-        addFunction(vm, "bytecodeCacheFor"_s, functionBytecodeCacheFor, 2);
         addFunction(vm, "builtinFromBytecodeCache"_s, functionBuiltinFromBytecodeCache, 3);
         addFunction(vm, "builtinBytecodeSize"_s, functionBuiltinBytecodeSize, 2);
         addFunction(vm, "bytecodeCachePageTouch"_s, functionBytecodeCachePageTouch, 4);
@@ -1780,34 +1778,6 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateBytecodeCacheFile, (JSGlobalObject* glo
     if (error.isValid())
         return throwVMError(globalObject, scope, error.message());
     return JSValue::encode(jsNumber(result ? result->size() : 0));
-}
-
-// bytecodeCacheFor(sourceText, "module" | "program") — the cache payload for sourceText as a Uint8Array, for tests that
-// compare what two runs (or two platforms, or two parser configurations) encode for the same source.
-JSC_DEFINE_HOST_FUNCTION(functionBytecodeCacheFor, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    String text = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    String kind = callFrame->argument(1).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    bool isModule = kind == "module"_s;
-    URL url { "file:///bytecodeCacheFor.js"_s };
-    SourceCode source = makeSource(text, SourceOrigin { url }, SourceTaintedOrigin::Untainted, url.string(), TextPosition(), isModule ? SourceProviderSourceType::Module : SourceProviderSourceType::Program);
-    FileSystem::FileHandle inMemory;
-    BytecodeCacheError error;
-    RefPtr<CachedBytecode> result = isModule ? generateModuleBytecode(vm, source, inMemory, error) : generateProgramBytecode(vm, source, inMemory, error);
-    if (error.isValid())
-        return throwVMError(globalObject, scope, error.message());
-    if (!result)
-        return throwVMError(globalObject, scope, "no bytecode generated"_s);
-    RefPtr<Uint8Array> bytes = Uint8Array::tryCreate(result->span());
-    if (!bytes)
-        return throwVMError(globalObject, scope, "out of memory"_s);
-    JSObject* array = JSUint8Array::create(vm, globalObject->typedArrayStructure(TypeUint8, false), bytes.releaseNonNull());
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(array);
 }
 
 // builtinFromBytecodeCache(source, roundTrip[, depth]) — what an embedder does with its JS builtins: create a builtin executable from

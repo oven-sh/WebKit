@@ -1294,11 +1294,7 @@ ExpressionNode* ASTBuilder::makePowNode(const JSTokenLocation& location, Express
     if (strippedExpr1->isNumber() && strippedExpr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*strippedExpr1);
         const NumberNode& numberExpr2 = static_cast<NumberNode&>(*strippedExpr2);
-        // Only fold what operationMathPow() computes with IEEE arithmetic alone; its other cases go to the C library's
-        // pow(), which does not round identically everywhere, and a parse-time constant ends up in serialized bytecode
-        // that has to be the same wherever it was built. Left unfolded, those get the pow() of wherever the code runs.
-        if (isIntegerExponentForMathPow(numberExpr2.value()))
-            return createNumberFromBinaryOperation(location, operationMathPow(numberExpr1.value(), numberExpr2.value()), numberExpr1, numberExpr2);
+        return createNumberFromBinaryOperation(location, operationMathPow(numberExpr1.value(), numberExpr2.value()), numberExpr1, numberExpr2);
     }
 
     if (strippedExpr1->isNumber())
