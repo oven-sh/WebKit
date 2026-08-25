@@ -918,6 +918,11 @@ namespace JSC {
         RegisterID* emitResolveConstantLocal(RegisterID* dst, const Variable&);
         RegisterID* emitResolveScope(RegisterID* dst, const Variable&);
         RegisterID* emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable&, ResolveMode);
+        // emitResolveScope + emitGetFromScope as one instruction when the resolve is a static non-local lookup.
+        RegisterID* emitResolveAndGetFromScope(RegisterID* dst, const Variable&, ResolveMode);
+        // A static non-local lookup: its resolved scope is never a `with` object, so a call through it takes `this` as
+        // undefined, the same as what to_this makes of the scope.
+        bool canFuseResolveAndGet(const Variable& variable) { return variable.offset().kind() == VarKind::Invalid && resolveType() != Dynamic; }
         RegisterID* emitPutToScope(RegisterID* scope, const Variable&, RegisterID* value, ResolveMode, InitializationMode);
         RegisterID* emitPutToScopeDynamic(RegisterID* scope, const Identifier&, RegisterID* value, ResolveMode, InitializationMode);
 

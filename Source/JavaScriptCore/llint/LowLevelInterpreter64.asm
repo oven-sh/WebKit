@@ -2965,6 +2965,162 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
 end)
 
 
+# resolve_scope then get_from_scope, with the resolved scope in t3 instead of a register. Either half that cannot be
+# served inline goes to the one slow path, which does both from the start.
+llintOpWithMetadata(op_resolve_and_get_from_scope, OpResolveAndGetFromScope, macro (size, get, dispatch, metadata, return)
+    metadata(t5, t0)
+
+    macro loadConstantScope()
+        loadp OpResolveAndGetFromScope::Metadata::m_constantScope[t5], t3
+    end
+
+    macro epochCheck(slowPath, globalObject, scratch)
+        loadi OpResolveAndGetFromScope::Metadata::m_globalLexicalBindingEpoch[t5], scratch
+        bineq JSGlobalObject::m_globalLexicalBindingEpoch[globalObject], scratch, slowPath
+    end
+
+    macro walkToScope()
+        loadi OpResolveAndGetFromScope::Metadata::m_localScopeDepth[t5], t2
+        get(m_scope, t3)
+        loadq [cfr, t3, 8], t3
+        btiz t2, .walkEnd
+    .walkLoop:
+        loadp JSScope::m_next[t3], t3
+        subi 1, t2
+        btinz t2, .walkLoop
+    .walkEnd:
+    end
+
+    loadi OpResolveAndGetFromScope::Metadata::m_resolveType[t5], t0
+
+#rgrGlobalProperty:
+    bineq t0, GlobalProperty, .rgrGlobalVar
+    loadConstantScope()
+    epochCheck(.rgDynamic, t3, t2)
+    jmp .rgGet
+
+.rgrGlobalVar:
+    bineq t0, GlobalVar, .rgrGlobalLexicalVar
+    loadConstantScope()
+    jmp .rgGet
+
+.rgrGlobalLexicalVar:
+    bineq t0, GlobalLexicalVar, .rgrClosureVar
+    loadConstantScope()
+    jmp .rgGet
+
+.rgrClosureVar:
+    bineq t0, ClosureVar, .rgrModuleVar
+    walkToScope()
+    jmp .rgGet
+
+.rgrModuleVar:
+    bineq t0, ModuleVar, .rgrGlobalPropertyWithVarInjectionChecks
+    loadp OpResolveAndGetFromScope::Metadata::m_lexicalEnvironment[t5], t3
+    jmp .rgGet
+
+.rgrGlobalPropertyWithVarInjectionChecks:
+    bineq t0, GlobalPropertyWithVarInjectionChecks, .rgrGlobalVarWithVarInjectionChecks
+    varInjectionCheck(.rgDynamic, t2)
+    loadConstantScope()
+    epochCheck(.rgDynamic, t3, t2)
+    jmp .rgGet
+
+.rgrGlobalVarWithVarInjectionChecks:
+    bineq t0, GlobalVarWithVarInjectionChecks, .rgrGlobalLexicalVarWithVarInjectionChecks
+    varInjectionCheck(.rgDynamic, t2)
+    loadConstantScope()
+    jmp .rgGet
+
+.rgrGlobalLexicalVarWithVarInjectionChecks:
+    bineq t0, GlobalLexicalVarWithVarInjectionChecks, .rgrClosureVarWithVarInjectionChecks
+    varInjectionCheck(.rgDynamic, t2)
+    loadConstantScope()
+    jmp .rgGet
+
+.rgrClosureVarWithVarInjectionChecks:
+    bineq t0, ClosureVarWithVarInjectionChecks, .rgDynamic
+    varInjectionCheck(.rgDynamic, t2)
+    walkToScope()
+
+.rgGet:
+    # t3 holds the resolved scope. Var injection was checked above, so the get half does not repeat it.
+    macro getProperty()
+        loadp OpResolveAndGetFromScope::Metadata::m_operand[t5], t1
+        move t3, t0
+        loadPropertyAtVariableOffset(t1, t0, t2)
+        valueProfile(size, OpResolveAndGetFromScope, m_valueProfile, t2, t5)
+        return(t2)
+    end
+
+    macro getGlobalVar(tdzCheckIfNecessary)
+        loadp OpResolveAndGetFromScope::Metadata::m_operand[t5], t0
+        loadq [t0], t0
+        tdzCheckIfNecessary(t0)
+        valueProfile(size, OpResolveAndGetFromScope, m_valueProfile, t0, t5)
+        return(t0)
+    end
+
+    macro getClosureVar()
+        loadp OpResolveAndGetFromScope::Metadata::m_operand[t5], t1
+        loadq JSLexicalEnvironment_variables[t3, t1, 8], t0
+        valueProfile(size, OpResolveAndGetFromScope, m_valueProfile, t0, t5)
+        return(t0)
+    end
+
+    macro checkedGlobalProperty()
+        loadi JSCell::m_structureID[t3], t1
+        bineq t1, OpResolveAndGetFromScope::Metadata::m_structureID[t5], .rgDynamic
+        getProperty()
+    end
+
+    loadi OpResolveAndGetFromScope::Metadata::m_getPutInfo + GetPutInfo::m_operand[t5], t0
+    andi ResolveTypeMask, t0
+
+#rggGlobalProperty:
+    bineq t0, GlobalProperty, .rggGlobalVar
+    checkedGlobalProperty()
+
+.rggGlobalVar:
+    bineq t0, GlobalVar, .rggGlobalLexicalVar
+    getGlobalVar(macro(v) end)
+
+.rggGlobalLexicalVar:
+    bineq t0, GlobalLexicalVar, .rggClosureVar
+    getGlobalVar(
+        macro (value)
+            bqeq value, ValueEmpty, .rgDynamic
+        end)
+
+.rggClosureVar:
+    bineq t0, ClosureVar, .rggGlobalPropertyWithVarInjectionChecks
+    getClosureVar()
+
+.rggGlobalPropertyWithVarInjectionChecks:
+    bineq t0, GlobalPropertyWithVarInjectionChecks, .rggGlobalVarWithVarInjectionChecks
+    checkedGlobalProperty()
+
+.rggGlobalVarWithVarInjectionChecks:
+    bineq t0, GlobalVarWithVarInjectionChecks, .rggGlobalLexicalVarWithVarInjectionChecks
+    getGlobalVar(macro(v) end)
+
+.rggGlobalLexicalVarWithVarInjectionChecks:
+    bineq t0, GlobalLexicalVarWithVarInjectionChecks, .rggClosureVarWithVarInjectionChecks
+    getGlobalVar(
+        macro (value)
+            bqeq value, ValueEmpty, .rgDynamic
+        end)
+
+.rggClosureVarWithVarInjectionChecks:
+    bineq t0, ClosureVarWithVarInjectionChecks, .rgDynamic
+    getClosureVar()
+
+.rgDynamic:
+    callSlowPath(_slow_path_resolve_and_get_from_scope)
+    dispatch()
+end)
+
+
 llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, return)
     macro putProperty()
         get(m_value, t1)

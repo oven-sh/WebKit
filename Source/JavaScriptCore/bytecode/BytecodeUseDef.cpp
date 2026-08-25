@@ -177,6 +177,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpResolveScope, scope)
     USES(OpResolveScopeForHoistingFuncDeclInEval, scope)
     USES(OpGetFromScope, scope)
+    USES(OpResolveAndGetFromScope, scope)
     USES(OpToPrimitive, src)
     USES(OpToPropertyKey, src)
     USES(OpToPropertyKeyOrNumber, src)
@@ -521,6 +522,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     }
 
     DEFS(OpGetFromScope, dst)
+    DEFS(OpResolveAndGetFromScope, dst)
     DEFS(OpCall, dst)
     DEFS(OpTailCall, dst)
     DEFS(OpCallDirectEval, dst)

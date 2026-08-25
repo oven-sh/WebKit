@@ -294,13 +294,12 @@ RegisterID* ResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
     }
     
     generator.emitExpressionInfo(divot, m_start, divot);
-    RefPtr<RegisterID> scope = generator.emitResolveScope(dst, var);
     RegisterID* finalDest = generator.finalDestination(dst);
     if (!generator.needsTDZCheck(var))
-        generator.emitGetFromScope(finalDest, scope.get(), var, ThrowIfNotFound);
+        generator.emitResolveAndGetFromScope(finalDest, var, ThrowIfNotFound);
     else {
         RefPtr<RegisterID> uncheckedResult = generator.newTemporary();
-        generator.emitGetFromScope(uncheckedResult.get(), scope.get(), var, ThrowIfNotFound);
+        generator.emitResolveAndGetFromScope(uncheckedResult.get(), var, ThrowIfNotFound);
         generator.emitTDZCheck(uncheckedResult.get(), m_ident);
         generator.move(finalDest, uncheckedResult.get());
     }
@@ -384,8 +383,13 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
 
             JSTextPosition newDivot = divotStart() + identifier.length();
             generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
-            generator.move(base.get(), generator.emitResolveScope(base.get(), var));
-            generator.emitGetFromScope(tag.get(), base.get(), var, ThrowIfNotFound);
+            if (generator.canFuseResolveAndGet(var)) {
+                generator.emitLoad(base.get(), jsUndefined());
+                generator.emitResolveAndGetFromScope(tag.get(), var, ThrowIfNotFound);
+            } else {
+                generator.move(base.get(), generator.emitResolveScope(base.get(), var));
+                generator.emitGetFromScope(tag.get(), base.get(), var, ThrowIfNotFound);
+            }
             generator.emitTDZCheckIfNecessary(var, tag.get(), nullptr);
         }
     } else if (m_tag->isBracketAccessorNode()) {
@@ -1309,10 +1313,15 @@ RegisterID* EvalFunctionCallNode::emitBytecode(BytecodeGenerator& generator, Reg
     else {
         JSTextPosition newDivot = divotStart() + 4;
         generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
-        generator.move(
-            callArguments.thisRegister(),
-            generator.emitResolveScope(callArguments.thisRegister(), var));
-        generator.emitGetFromScope(func.get(), callArguments.thisRegister(), var, ThrowIfNotFound);
+        if (generator.canFuseResolveAndGet(var)) {
+            generator.emitLoad(callArguments.thisRegister(), jsUndefined());
+            generator.emitResolveAndGetFromScope(func.get(), var, ThrowIfNotFound);
+        } else {
+            generator.move(
+                callArguments.thisRegister(),
+                generator.emitResolveScope(callArguments.thisRegister(), var));
+            generator.emitGetFromScope(func.get(), callArguments.thisRegister(), var, ThrowIfNotFound);
+        }
         generator.emitTDZCheckIfNecessary(var, func.get(), nullptr);
     }
 
@@ -1454,10 +1463,15 @@ RegisterID* FunctionCallResolveNode::emitBytecode(BytecodeGenerator& generator, 
         expectedFunction = NoExpectedFunction;
     } else {
         generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
-        generator.move(
-            callArguments.thisRegister(),
-            generator.emitResolveScope(callArguments.thisRegister(), var));
-        generator.emitGetFromScope(func.get(), callArguments.thisRegister(), var, ThrowIfNotFound);
+        if (generator.canFuseResolveAndGet(var)) {
+            generator.emitLoad(callArguments.thisRegister(), jsUndefined());
+            generator.emitResolveAndGetFromScope(func.get(), var, ThrowIfNotFound);
+        } else {
+            generator.move(
+                callArguments.thisRegister(),
+                generator.emitResolveScope(callArguments.thisRegister(), var));
+            generator.emitGetFromScope(func.get(), callArguments.thisRegister(), var, ThrowIfNotFound);
+        }
         generator.emitTDZCheckIfNecessary(var, func.get(), nullptr);
     }
 
@@ -2829,13 +2843,12 @@ RegisterID* TypeOfResolveNode::emitBytecode(BytecodeGenerator& generator, Regist
         return generator.emitTypeOf(generator.finalDestination(dst), local);
     }
 
-    RefPtr<RegisterID> scope = generator.emitResolveScope(dst, var);
-    RefPtr<RegisterID> value = generator.emitGetFromScope(generator.newTemporary(), scope.get(), var, DoNotThrowIfNotFound);
+    RefPtr<RegisterID> value = generator.emitResolveAndGetFromScope(generator.newTemporary(), var, DoNotThrowIfNotFound);
     generator.emitExpressionInfo(newDivot, newDivot, divotEnd());
     generator.emitTDZCheckIfNecessary(var, value.get(), nullptr);
     if (dst == generator.ignoredResult())
         return nullptr;
-    return generator.emitTypeOf(generator.finalDestination(dst, scope.get()), value.get());
+    return generator.emitTypeOf(generator.finalDestination(dst), value.get());
 }
 
 // ------------------------------ TypeOfValueNode -----------------------------------

@@ -629,6 +629,44 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             break;
         }
 
+        case op_resolve_and_get_from_scope: {
+            INITIALIZE_METADATA(OpResolveAndGetFromScope)
+
+            metadata.m_watchpointSet = nullptr;
+            const Identifier& ident = identifier(bytecode.m_var);
+            ResolveType resolveType = bytecode.m_getPutInfo.resolveType();
+            RELEASE_ASSERT(resolveType != ResolvedClosureVar);
+            ASSERT(!isInitialization(bytecode.m_getPutInfo.initializationMode()));
+
+            ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, resolveType, InitializationMode::NotInitialization);
+
+            // The resolve half (see op_resolve_scope).
+            metadata.m_resolveType = op.type;
+            metadata.m_localScopeDepth = op.depth;
+            if (op.lexicalEnvironment) {
+                if (op.type == ModuleVar) {
+                    if (stronglyReferencedModuleEnvironments.add(uncheckedDowncast<JSModuleEnvironment>(op.lexicalEnvironment)).isNewEntry)
+                        addConstant(ConcurrentJSLocker(m_lock), op.lexicalEnvironment);
+                    metadata.m_lexicalEnvironment.set(vm, this, op.lexicalEnvironment);
+                } else
+                    metadata.m_symbolTable.set(vm, this, op.lexicalEnvironment->symbolTable());
+            } else if (JSScope* constantScope = JSScope::constantScopeForCodeBlock(op.type, this)) {
+                metadata.m_constantScope.set(vm, this, constantScope);
+                if (op.type == GlobalProperty || op.type == GlobalPropertyWithVarInjectionChecks)
+                    metadata.m_globalLexicalBindingEpoch = m_globalObject->globalLexicalBindingEpoch();
+            } else
+                metadata.m_globalObject.clear();
+
+            // The get half (see op_get_from_scope).
+            metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), op.type == ModuleVar ? ClosureVar : op.type, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
+            if (op.type == GlobalVar || op.type == GlobalVarWithVarInjectionChecks || op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks)
+                metadata.m_watchpointSet = op.watchpointSet;
+            else if (op.structure)
+                metadata.m_structureID.set(vm, this, op.structure);
+            metadata.m_operand = op.operand;
+            break;
+        }
+
         case op_put_to_scope: {
             INITIALIZE_METADATA(OpPutToScope)
 
@@ -1746,6 +1784,14 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
 
         m_metadata->forEach<OpGetFromScope>(handleGetPutFromScope);
         m_metadata->forEach<OpPutToScope>(handleGetPutFromScope);
+        m_metadata->forEach<OpResolveAndGetFromScope>([&] (auto& metadata) {
+            WriteBarrierBase<SymbolTable>& symbolTable = metadata.m_symbolTable;
+            if (symbolTable && !vm.heap.isMarked(symbolTable.get())) {
+                dataLogLnIf(Options::verboseOSR(), "Clearing dead symbolTable ", RawPointer(symbolTable.get()));
+                symbolTable.clear();
+            }
+            handleGetPutFromScope(metadata);
+        });
     }
 
     // We can't just remove all the sets when we clear the caches since we might have created a watchpoint set
@@ -3310,6 +3356,19 @@ void CodeBlock::notifyLexicalBindingUpdate()
         switch (opcodeID) {
         case op_resolve_scope: {
             auto bytecode = instruction->as<OpResolveScope>();
+            auto& metadata = bytecode.metadata(this);
+            ResolveType originalResolveType = metadata.m_resolveType;
+            if (originalResolveType == GlobalProperty || originalResolveType == GlobalPropertyWithVarInjectionChecks) {
+                const Identifier& ident = identifier(bytecode.m_var);
+                if (isShadowed(ident.impl()))
+                    metadata.m_globalLexicalBindingEpoch = 0;
+                else
+                    metadata.m_globalLexicalBindingEpoch = globalObject->globalLexicalBindingEpoch();
+            }
+            break;
+        }
+        case op_resolve_and_get_from_scope: {
+            auto bytecode = instruction->as<OpResolveAndGetFromScope>();
             auto& metadata = bytecode.metadata(this);
             ResolveType originalResolveType = metadata.m_resolveType;
             if (originalResolveType == GlobalProperty || originalResolveType == GlobalPropertyWithVarInjectionChecks) {

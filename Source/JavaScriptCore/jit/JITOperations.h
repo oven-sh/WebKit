@@ -385,6 +385,9 @@ JSC_DECLARE_JIT_OPERATION(operationSetupVarargsFrame, CallFrame*, (JSGlobalObjec
 JSC_DECLARE_JIT_OPERATION(operationSwitchStringWithUnknownKeyType, char*, (JSGlobalObject*, EncodedJSValue key, size_t tableIndex));
 JSC_DECLARE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGlobalObject*, const JSInstruction* bytecodePC));
 JSC_DECLARE_JIT_OPERATION(operationGetFromScope, EncodedJSValue, (JSGlobalObject*, const JSInstruction* bytecodePC));
+JSC_DECLARE_JIT_OPERATION(operationResolveScopeHalfForBaseline, EncodedJSValue, (JSGlobalObject*, const JSInstruction* bytecodePC));
+JSC_DECLARE_JIT_OPERATION(operationGetFromScopeHalf, EncodedJSValue, (JSGlobalObject*, const JSInstruction* bytecodePC, JSObject* scope));
+JSC_DECLARE_JIT_OPERATION(operationResolveAndGetFromScope, EncodedJSValue, (JSGlobalObject*, const JSInstruction* bytecodePC));
 JSC_DECLARE_JIT_OPERATION(operationPutToScope, void, (JSGlobalObject*, const JSInstruction* bytecodePC));
 JSC_DECLARE_JIT_OPERATION(operationResolveRope, StringImpl*, (JSGlobalObject*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationResolveRopeString, JSString*, (JSGlobalObject*, JSRopeString*));

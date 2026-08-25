@@ -137,6 +137,10 @@ namespace PutToScope {
     static constexpr GPRReg bytecodeOffsetGPR { GPRInfo::argumentGPR2 };
 }
 
+namespace ResolveAndGetFromScope {
+    static constexpr GPRReg bytecodeOffsetGPR { GPRInfo::argumentGPR2 };
+}
+
 namespace GetById {
     // Registers used on both Fast and Slow paths
     using SlowOperation = decltype(operationGetByIdOptimize);

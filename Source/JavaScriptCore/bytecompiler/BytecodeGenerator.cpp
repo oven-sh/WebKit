@@ -2750,6 +2750,26 @@ RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* sco
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+RegisterID* BytecodeGenerator::emitResolveAndGetFromScope(RegisterID* dst, const Variable& variable, ResolveMode resolveMode)
+{
+    // A `with` scope resolves dynamically and may run observable traps; keep those as two instructions so an OSR exit
+    // between them never resolves twice.
+    if (!canFuseResolveAndGet(variable)) {
+        RefPtr<RegisterID> scope = emitResolveScope(nullptr, variable);
+        return emitGetFromScope(dst, scope.get(), variable, resolveMode);
+    }
+    OpResolveAndGetFromScope::emit(
+        this,
+        kill(dst),
+        scopeRegister(),
+        addConstant(variable.ident()),
+        GetPutInfo(resolveMode, resolveType(), InitializationMode::NotInitialization, ecmaMode()),
+        localScopeDepth(),
+        0,
+        nextValueProfileIndex());
+    return dst;
+}
+
 RegisterID* BytecodeGenerator::emitPutToScope(RegisterID* scope, const Variable& variable, RegisterID* value, ResolveMode resolveMode, InitializationMode initializationMode)
 {
     switch (variable.offset().kind()) {

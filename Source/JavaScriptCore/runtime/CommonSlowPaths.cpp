@@ -1383,6 +1383,16 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope_for_hoisting_func_decl_in_ev
     RETURN(resolvedScope);
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_and_get_from_scope)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpResolveAndGetFromScope>();
+    JSScope* baseScope = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
+    JSValue result = CommonSlowPaths::resolveAndGetFromScopeSlow(globalObject, codeBlock, vm, bytecode, baseScope);
+    CHECK_EXCEPTION();
+    RETURN_PROFILED(result);
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
 {
     BEGIN();

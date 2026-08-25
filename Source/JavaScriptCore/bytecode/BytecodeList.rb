@@ -562,6 +562,44 @@ op :get_from_scope,
         operand: :offset,
     }
 
+# resolve_scope followed by get_from_scope on the resolved scope, as one instruction. `scope` is the base scope the
+# resolve starts from; the resolved scope never touches a register. The metadata is the two ops' metadata laid out
+# back to back (resolve first), which the baseline thunks rely on.
+op :resolve_and_get_from_scope,
+    args: {
+        dst: VirtualRegister,
+        scope: VirtualRegister,
+        var: unsigned,
+        getPutInfo: GetPutInfo,
+        localScopeDepth: unsigned,
+        offset: unsigned,
+        valueProfile: unsigned,
+    },
+    metadata: {
+        resolveType: ResolveType,
+        _0: {
+            localScopeDepth: unsigned,
+            globalLexicalBindingEpoch: unsigned,
+        },
+        _1: {
+             lexicalEnvironment: WriteBarrierBase[JSCell],
+             symbolTable: WriteBarrierBase[SymbolTable],
+             constantScope: WriteBarrierBase[JSScope],
+             globalLexicalEnvironment: WriteBarrierBase[JSGlobalLexicalEnvironment],
+             globalObject: WriteBarrierBase[JSGlobalObject],
+        },
+        getPutInfo: GetPutInfo,
+        _2: {
+            watchpointSet: InlineWatchpointSet.*,
+            structureID: WriteBarrierStructureID,
+        },
+        operand: uintptr_t,
+    },
+    metadata_initializers: {
+        getPutInfo: :getPutInfo,
+        operand: :offset,
+    }
+
 op :put_to_scope,
     args: {
         scope: VirtualRegister,
