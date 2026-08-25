@@ -190,6 +190,13 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
         derivedContextType, evalContextType, isArrowFunctionContext, codeGenerationMode,
         std::nullopt);
     UnlinkedCodeBlockType* unlinkedCodeBlock = m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
+    if (!unlinkedCodeBlock) {
+        // A block decoded from the provider's cached bytecode is as reusable as one generated below: remember it the same
+        // way, so another global in this VM loading the same source links against it instead of decoding its own copy.
+        unlinkedCodeBlock = m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key);
+        if (unlinkedCodeBlock && Options::useCodeCache())
+            m_sourceCode.addCache(key, SourceCodeValue(vm, unlinkedCodeBlock, m_sourceCode.age()));
+    }
     if (unlinkedCodeBlock && Options::useCodeCache()) {
 #if USE(BUN_JSC_ADDITIONS)
         recordParseFromUnlinkedCodeBlock(executable, source, unlinkedCodeBlock);
