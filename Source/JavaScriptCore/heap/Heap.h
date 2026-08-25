@@ -215,8 +215,7 @@ class Heap;
 #if USE(BUN_JSC_ADDITIONS)
 #define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
     v(ffiFunctionSpace, ffiFunctionHeapCellType, JSFFIFunction) \
-    v(ffiCallbackSpace, ffiCallbackHeapCellType, JSFFICallback) \
-    v(tracedFunctionSpace, cellHeapCellType, JSTracedFunction)
+    v(ffiCallbackSpace, ffiCallbackHeapCellType, JSFFICallback)
 #else
 #define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v)
 #endif

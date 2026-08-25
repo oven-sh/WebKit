@@ -2049,9 +2049,6 @@ CREATE_INTRINSIC_FOR_BRAND_CHECK(isArrayIterator, IsArrayIterator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isUndefinedOrNull, IsUndefinedOrNull)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isWrapForValidIterator, IsWrapForValidIterator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isDisposableStack, IsDisposableStack)
-#if USE(BUN_JSC_ADDITIONS)
-CREATE_INTRINSIC_FOR_BRAND_CHECK(isEmbedderInternalFieldObject, IsEmbedderInternalFieldObject)
-#endif
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isAsyncDisposableStack, IsAsyncDisposableStack)
 
 #undef CREATE_INTRINSIC_FOR_BRAND_CHECK
@@ -5391,17 +5388,6 @@ void FunctionNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
         generator.emitPutInternalField(generator.generatorRegister(), static_cast<unsigned>(JSGenerator::Field::Next), next.get());
         generator.emitPutInternalField(generator.generatorRegister(), static_cast<unsigned>(JSGenerator::Field::State), generator.emitLoad(nullptr, jsNumber(static_cast<int32_t>(JSGenerator::State::Executing))));
 
-#if USE(BUN_JSC_ADDITIONS)
-        // The embedder's async context as it was before the body's synchronous
-        // prefix ran; asyncFunctionDrive compares it with the context at the
-        // first suspension (VM::asyncContextLeaveAsyncFrameHook).
-        RefPtr<RegisterID> entryAsyncContext = generator.newTemporary();
-        {
-            RefPtr<RegisterID> asyncContextTuple = generator.emitGetGlobalPrivate(generator.newTemporary(), generator.vm().propertyNames->builtinNames().asyncContextPrivateName());
-            generator.emitGetInternalField(entryAsyncContext.get(), asyncContextTuple.get(), 0);
-        }
-#endif
-
         Ref<Label> tryStartLabel = generator.newEmittedLabel();
         Ref<Label> catchLabel = generator.newLabel();
         Ref<Label> successLabel = generator.newLabel();
@@ -5441,12 +5427,7 @@ void FunctionNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
         {
             generator.emitLabel(driveLabel.get());
             RefPtr<RegisterID> asyncFunctionDrive = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::asyncFunctionDrive);
-#if USE(BUN_JSC_ADDITIONS)
-            CallArguments driveArgs(generator, nullptr, 3);
-            generator.move(driveArgs.argumentRegister(2), entryAsyncContext.get());
-#else
             CallArguments driveArgs(generator, nullptr, 2);
-#endif
             generator.emitLoad(driveArgs.thisRegister(), jsUndefined());
             generator.move(driveArgs.argumentRegister(0), nextResult.get());
             generator.move(driveArgs.argumentRegister(1), generator.generatorRegister());

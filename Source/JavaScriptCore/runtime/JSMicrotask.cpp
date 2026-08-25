@@ -50,9 +50,6 @@
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
-#if USE(BUN_JSC_ADDITIONS)
-#include "JSTracedFunction.h"
-#endif
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseConstructor.h"
 #include "JSPromisePrototype.h"
@@ -1759,25 +1756,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncFunctionDrive, (JSGlobalObject* globalObject, Call
     VM& vm = globalObject->vm();
     JSValue resolution = callFrame->uncheckedArgument(0);
     auto* generator = uncheckedDowncast<JSAsyncFunctionGenerator>(callFrame->uncheckedArgument(1));
-#if USE(BUN_JSC_ADDITIONS)
-    // This is the first suspension of the async function: its synchronous
-    // prefix is about to return to the caller. If that prefix changed the async
-    // context (an `enterWith`-style activation), give the embedder a chance to
-    // decide what the caller should observe. The continuation itself keeps the
-    // prefix's context (captured below). The wrapper bytecode passes the
-    // context it saw at entry as the third argument.
-    JSValue entryContext = callFrame->argument(2);
-#endif
     asyncFunctionArrangeAwaitResume(globalObject, vm, generator, resolution);
-#if USE(BUN_JSC_ADDITIONS)
-    if (auto hook = vm.asyncContextLeaveAsyncFrameHook) [[unlikely]] {
-        if (auto* data = globalObject->m_asyncContextData.get()) {
-            JSValue current = data->getInternalField(0);
-            if (current != entryContext)
-                data->putInternalField(vm, 0, hook(globalObject, entryContext, current));
-        }
-    }
-#endif
     return encodedJSUndefined();
 }
 
@@ -1934,13 +1913,6 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    case InternalMicrotask::TracedSettlementObserved: {
-        // (cell, resolution, context) from JSPromise::addSettlementObserver.
-        if (auto settled = vm.tracedFunctionHooks().settled)
-            settled(globalObject, arguments[2], static_cast<JSPromise::Status>(payload) == JSPromise::Status::Fulfilled, arguments[1]);
-        return;
-    }
-
     case InternalMicrotask::PromiseReactionJobWithAsyncContext:
 #endif
     case InternalMicrotask::PromiseReactionJob: {

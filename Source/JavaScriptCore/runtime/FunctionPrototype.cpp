@@ -27,9 +27,6 @@
 #include "FunctionExecutable.h"
 #include "IntegrityInlines.h"
 #include "JSBoundFunction.h"
-#if USE(BUN_JSC_ADDITIONS)
-#include "JSTracedFunction.h"
-#endif
 #include "JSCInlines.h"
 
 namespace JSC {
@@ -293,11 +290,7 @@ public:
         }
 
         if (callee) {
-            if (callee->inherits<JSBoundFunction>() || callee->inherits<JSRemoteFunction>()
-#if USE(BUN_JSC_ADDITIONS)
-                || callee->inherits<JSTracedFunction>()
-#endif
-                || callee->type() == ProxyObjectType)
+            if (callee->inherits<JSBoundFunction>() || callee->inherits<JSRemoteFunction>() || callee->type() == ProxyObjectType)
                 return IterationStatus::Continue;
             if (callee->inherits<JSFunction>()) {
                 if (uncheckedDowncast<JSFunction>(callee)->executable()->implementationVisibility() != ImplementationVisibility::Public)

@@ -471,34 +471,6 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
 }
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
-void JSPromise::addSettlementObserver(VM& vm, JSValue context)
-{
-    constexpr InternalMicrotask task = InternalMicrotask::TracedSettlementObserved;
-    switch (status()) {
-    case JSPromise::Status::Pending: {
-        bool wasHandled = isHandled();
-        if (inlineReactionKind() == InlineReactionKind::None && !payloadCell()) [[likely]]
-            setInlineMicrotaskReaction(vm, task, nullptr, context);
-        else {
-            JSPromiseReaction* existing = reactionHead(vm);
-            auto* reaction = JSSlimPromiseReaction::create(vm, jsUndefined(), task, context, existing);
-            setPackedCell(vm, flags(), reaction);
-        }
-        // An observer is not a handler: keep unhandled-rejection tracking as it was.
-        if (!wasHandled)
-            setPackedCell(vm, flags() & ~isHandledFlag, payloadCell());
-        break;
-    }
-    case JSPromise::Status::Rejected:
-        realm()->queueMicrotask(vm, task, static_cast<uint8_t>(Status::Rejected), jsUndefined(), settlementValue(), context);
-        break;
-    case JSPromise::Status::Fulfilled:
-        realm()->queueMicrotask(vm, task, static_cast<uint8_t>(Status::Fulfilled), jsUndefined(), settlementValue(), context);
-        break;
-    }
-}
-#endif
 
 void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotask task, JSCell* cell, JSValue context)
 {
@@ -598,24 +570,13 @@ ALWAYS_INLINE void JSPromise::settleInlineInternalMicrotask(VM& vm, JSGlobalObje
 {
     ASSERT((flagsSnapshot & inlineReactionKindMask) == (static_cast<uint16_t>(InlineReactionKind::InternalMicrotask) << inlineReactionKindShift));
     InternalMicrotask task = static_cast<InternalMicrotask>((flagsSnapshot & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
-#if USE(BUN_JSC_ADDITIONS)
-    ASSERT((flagsSnapshot & isHandledFlag) || task == InternalMicrotask::TracedSettlementObserved);
-#else
     ASSERT(flagsSnapshot & isHandledFlag);
-#endif
     JSValue context = m_slot.get();
     JSCell* cell = payloadCell();
     JSValue cellValue = cell ? JSValue(cell) : jsUndefined();
     uint16_t settledFlags = (flagsSnapshot & ~(inlineReactionKindMask | inlineReactionMicrotaskMask)) | static_cast<uint16_t>(newStatus);
     setSlot(vm, argument);
     setPackedCell(vm, settledFlags, nullptr);
-#if USE(BUN_JSC_ADDITIONS)
-    // A settlement observer (the only unhandled inline reaction) is not a
-    // handler: report the rejection now that the promise reads as settled,
-    // matching rejectPromise's order for the no-reaction case.
-    if (!(flagsSnapshot & isHandledFlag) && newStatus == Status::Rejected)
-        globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
-#endif
 #if USE(BUN_JSC_ADDITIONS)
     if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
         vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(newStatus), cellValue, argument, context });

@@ -165,12 +165,6 @@ public:
     static void fulfillWithInternalMicrotask(VM&, JSGlobalObject*, JSValue argument, InternalMicrotask, JSValue context);
 
     void performPromiseThenWithInternalMicrotask(VM&, InternalMicrotask, JSCell*, JSValue context);
-#if USE(BUN_JSC_ADDITIONS)
-    // Have VM::tracedFunctionHooks().settled(context, …) run when this promise
-    // settles, without counting as a rejection handler and without a derived
-    // promise (no allocation when this is the first reaction).
-    JS_EXPORT_PRIVATE void addSettlementObserver(VM&, JSValue context);
-#endif
 
     bool isThenFastAndNonObservable();
 

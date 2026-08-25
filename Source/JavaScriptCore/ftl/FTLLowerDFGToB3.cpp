@@ -88,9 +88,6 @@
 #include "JSAsyncGenerator.h"
 #include "JSAsyncGeneratorFunction.h"
 #include "JSBoundFunction.h"
-#if USE(BUN_JSC_ADDITIONS)
-#include "JSTracedFunction.h"
-#endif
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSGenerator.h"
@@ -11645,15 +11642,7 @@ IGNORE_CLANG_WARNINGS_END
 
         static_assert(std::is_final_v<JSRemoteFunction>, "We don't handle subclasses when comparing classInfo below");
         m_out.appendTo(notBoundFunctionCase, notBoundOrRemoteFunctionCase);
-#if USE(BUN_JSC_ADDITIONS)
-        LBasicBlock notTracedFunctionCase = m_out.newBlock();
-        m_out.branch(m_out.equal(classInfo, m_out.constIntPtr(JSRemoteFunction::info())), rarely(slowCase), usually(notTracedFunctionCase));
-        m_out.appendTo(notTracedFunctionCase, notBoundOrRemoteFunctionCase);
-        static_assert(std::is_final_v<JSTracedFunction>, "We don't handle subclasses when comparing classInfo below");
-        m_out.branch(m_out.equal(classInfo, m_out.constIntPtr(JSTracedFunction::info())), rarely(slowCase), usually(notBoundOrRemoteFunctionCase));
-#else
         m_out.branch(m_out.equal(classInfo, m_out.constIntPtr(JSRemoteFunction::info())), rarely(slowCase), usually(notBoundOrRemoteFunctionCase));
-#endif
 
         LBasicBlock lastNext = m_out.appendTo(notBoundOrRemoteFunctionCase, nativeExecutableCase);
         LValue executable = getExecutable(function);

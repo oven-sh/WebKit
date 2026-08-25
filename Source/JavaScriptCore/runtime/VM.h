@@ -204,17 +204,6 @@ struct DebugState;
 
 struct EntryFrame;
 
-#if USE(BUN_JSC_ADDITIONS)
-class JSTracedFunction;
-// The embedder's side of JSTracedFunction (see JSTracedFunction.h). All null = plain calls.
-struct TracedFunctionHooks {
-    EncodedJSValue (*enter)(JSGlobalObject*, CallFrame*, JSTracedFunction*) { nullptr };
-    EncodedJSValue (*leave)(JSGlobalObject*, JSTracedFunction*, EncodedJSValue span, EncodedJSValue result) { nullptr };
-    void (*unwind)(JSGlobalObject*, JSTracedFunction*, JSValue span, Exception*) { nullptr };
-    void (*settled)(JSGlobalObject*, JSValue context, bool fulfilled, JSValue result) { nullptr };
-};
-#endif
-
 typedef uint8_t IndexingType;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VM);
@@ -633,15 +622,6 @@ public:
 
     Weak<NativeExecutable> m_fastRemoteFunctionExecutable;
     Weak<NativeExecutable> m_slowRemoteFunctionExecutable;
-#if USE(BUN_JSC_ADDITIONS)
-    Weak<NativeExecutable> m_fastTracedFunctionExecutable;
-    Weak<NativeExecutable> m_slowTracedFunctionExecutable;
-    TracedFunctionHooks m_tracedFunctionHooks { };
-    // Traced frames the current Interpreter::unwind walked through (innermost
-    // first). Filled during the walk, moved out and handed to
-    // tracedFunctionHooks().unwind right after it; empty at all other times.
-    Vector<std::pair<JSTracedFunction*, JSValue>, 4> m_unwoundTracedFrames;
-#endif
 
     const Ref<DeferredWorkTimer> deferredWorkTimer;
 
@@ -795,10 +775,6 @@ public:
 
     NativeExecutable* getBoundFunction(bool isJSFunction, SourceTaintedOrigin taintedness);
     NativeExecutable* getRemoteFunction(bool isJSFunction);
-#if USE(BUN_JSC_ADDITIONS)
-    NativeExecutable* getTracedFunction(bool isJSFunction);
-    TracedFunctionHooks& tracedFunctionHooks() { return m_tracedFunctionHooks; }
-#endif
 
     CodePtr<JSEntryPtrTag> getCTIInternalFunctionTrampolineFor(CodeSpecializationKind);
     MacroAssemblerCodeRef<JSEntryPtrTag> getCTIThrowExceptionFromCallSlowPath();
@@ -1390,14 +1366,6 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
-
-    // Called when an async function first suspends and its synchronous prefix
-    // changed the async context (m_asyncContextData field 0) relative to what
-    // was current at the call. Returns the value the caller should observe from
-    // here on. Null = Node's AsyncLocalStorage.enterWith semantics (leave the
-    // changed value in place).
-    using AsyncContextLeaveAsyncFrameHook = JSValue (*)(JSGlobalObject*, JSValue atEntry, JSValue current);
-    AsyncContextLeaveAsyncFrameHook asyncContextLeaveAsyncFrameHook { nullptr };
 private:
 #endif
 

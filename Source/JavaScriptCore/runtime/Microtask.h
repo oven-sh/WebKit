@@ -92,7 +92,6 @@ enum class InternalMicrotask : uint8_t {
     BunPerformMicrotaskJob, // Bun's performMicrotask function with async context
     BunInvokeJobWithArguments, // Invoke job function with up to 4 arguments
     PromiseReactionJobWithAsyncContext, // PromiseReactionJob whose trailing argument is Bun's async context rather than a user context
-    TracedSettlementObserved, // JSPromise::addSettlementObserver: VM::tracedFunctionHooks().settled(context, fulfilled, result)
 #endif
 };
 

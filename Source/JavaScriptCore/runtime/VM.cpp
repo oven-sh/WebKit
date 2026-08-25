@@ -81,9 +81,6 @@
 #include "JSMicrotaskDispatcher.h"
 #include "JSModuleLoaderInlines.h"
 #include "JSPromise.h"
-#if USE(BUN_JSC_ADDITIONS)
-#include "JSTracedFunction.h"
-#endif
 #include "JSPromiseCombinatorsContextInlines.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseConstructor.h"
@@ -864,10 +861,6 @@ static ThunkGenerator NODELETE thunkGeneratorForIntrinsic(Intrinsic intrinsic)
         return boundFunctionCallGenerator;
     case RemoteFunctionCallIntrinsic:
         return remoteFunctionCallGenerator;
-#if USE(BUN_JSC_ADDITIONS)
-    case TracedFunctionCallIntrinsic:
-        return tracedFunctionCallGenerator;
-#endif
     case NumberConstructorIntrinsic:
         return numberConstructorCallThunkGenerator;
     case StringConstructorIntrinsic:
@@ -999,29 +992,6 @@ NativeExecutable* VM::getRemoteFunction(bool isJSFunction)
         return getOrCreate(m_slowRemoteFunctionExecutable);
     return getOrCreate(m_fastRemoteFunctionExecutable);
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-NativeExecutable* VM::getTracedFunction(bool isJSFunction)
-{
-    bool slowCase = !isJSFunction;
-#if !ENABLE(JIT)
-    slowCase = true;
-#endif
-    auto getOrCreate = [&] (Weak<NativeExecutable>& slot) -> NativeExecutable* {
-        if (auto* cached = slot.get())
-            return cached;
-        NativeExecutable* result = getHostFunction(
-            slowCase ? tracedFunctionCallGeneric : tracedFunctionCallForJSFunction,
-            ImplementationVisibility::Public, slowCase ? NoIntrinsic : TracedFunctionCallIntrinsic,
-            callHostFunctionAsConstructor, nullptr, 0, String());
-        slot = Weak<NativeExecutable>(result);
-        return result;
-    };
-    if (slowCase)
-        return getOrCreate(m_slowTracedFunctionExecutable);
-    return getOrCreate(m_fastTracedFunctionExecutable);
-}
-#endif
 
 CodePtr<JSEntryPtrTag> VM::getCTIInternalFunctionTrampolineFor(CodeSpecializationKind kind)
 {

@@ -2356,7 +2356,9 @@ public:
         : m_jit(jit)
         , m_edge(edge)
         , m_gprOrInvalid(InvalidGPRReg)
+#ifndef NDEBUG
         , m_format(DataFormatNone)
+#endif
     {
         ASSERT(m_jit);
         ASSERT_UNUSED(mode, mode == ManualOperandSpeculation || (edge.useKind() == Int32Use || edge.useKind() == KnownInt32Use));
@@ -2364,20 +2366,8 @@ public:
             gpr();
     }
 
-    explicit SpeculateInt32Operand(SpeculateInt32Operand&& other)
-        : m_jit(other.m_jit)
-        , m_edge(other.m_edge)
-        , m_gprOrInvalid(other.m_gprOrInvalid)
-        , m_format(other.m_format)
-    {
-        other.m_gprOrInvalid = InvalidGPRReg;
-        other.m_edge = Edge();
-    }
-
     ~SpeculateInt32Operand()
     {
-        if (!m_edge)
-            return;
         ASSERT(m_gprOrInvalid != InvalidGPRReg);
         m_jit->unlock(m_gprOrInvalid);
     }
@@ -2769,19 +2759,8 @@ public:
             gpr();
     }
     
-    explicit SpeculateBooleanOperand(SpeculateBooleanOperand&& other)
-        : m_jit(other.m_jit)
-        , m_edge(other.m_edge)
-        , m_gprOrInvalid(other.m_gprOrInvalid)
-    {
-        other.m_gprOrInvalid = InvalidGPRReg;
-        other.m_edge = Edge();
-    }
-
     ~SpeculateBooleanOperand()
     {
-        if (!m_edge)
-            return;
         ASSERT(m_gprOrInvalid != InvalidGPRReg);
         m_jit->unlock(m_gprOrInvalid);
     }
