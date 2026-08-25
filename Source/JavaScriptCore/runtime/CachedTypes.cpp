@@ -543,21 +543,23 @@ public:
 
     VM& vm() { return m_vm; }
 
-    Allocation malloc(unsigned size, size_t alignment)
-    {
-        RELEASE_ASSERT(size);
-        ptrdiff_t offset;
-        if (m_currentPage->malloc(size, alignment, offset))
-            return Allocation { m_currentPage->buffer() + offset, m_baseOffset + offset };
-        allocateNewPage(size);
-        return malloc(size, alignment);
-    }
-
+    // Everything that places a C++ object in a page comes through malloc<T> / mallocFor<T> / mallocArray<T> (or
+    // VariableLengthObject::allocate<T>, encodeArrayForTail<T>), which check isPortableRecord<T>; the untyped
+    // allocation below is only for copying bytes (string characters, digits, instruction streams) and is private.
     template<typename T, typename... Args>
     T* malloc(Args&&... args)
     {
         static_assert(isPortableRecord<T>());
         return new (malloc(sizeof(T), alignof(T)).buffer()) T(std::forward<Args>(args)...);
+    }
+
+    // `count` default-constructed T, optionally followed in the same allocation by `tailBytes` the caller fills.
+    template<typename T>
+    std::pair<T*, Allocation> mallocArray(unsigned count, size_t tailBytes = 0)
+    {
+        static_assert(isPortableRecord<T>());
+        Allocation allocation = malloc(sizeof(T) * count + tailBytes, alignof(T));
+        return { new (allocation.buffer()) T[count], allocation };
     }
 
     template<typename T, typename SourceArg>
@@ -570,6 +572,20 @@ public:
         return new (malloc(sizeof(T) + tail, alignof(T)).buffer()) T();
     }
 
+private:
+    template<typename> friend class VariableLengthObject; // allocate(size, alignment), allocateOrShareBytes(): bytes
+    template<typename T, typename Container> friend ptrdiff_t encodeArrayForTail(Encoder&, const Container&); // shared byte arrays
+    Allocation malloc(unsigned size, size_t alignment)
+    {
+        RELEASE_ASSERT(size);
+        ptrdiff_t offset;
+        if (m_currentPage->malloc(size, alignment, offset))
+            return Allocation { m_currentPage->buffer() + offset, m_baseOffset + offset };
+        allocateNewPage(size);
+        return malloc(size, alignment);
+    }
+
+public:
     ptrdiff_t currentOffset() const { return m_baseOffset + m_currentPage->size(); }
 
     // CRC-32C of [offset, offset + size) as it will appear in the payload, with the 4 bytes at `hole` read as zero
@@ -2078,6 +2094,7 @@ public:
 private:
     bool m_isEverythingCaptured;
     bool m_hasAwaitUsingDeclaration;
+    uint8_t m_padding[2] { };
     CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
     CachedPtr<CachedVariableEnvironmentRareData> m_rareData;
 };
@@ -2556,7 +2573,7 @@ struct CachedMetadataSteps {
 // Arrays a code block refers to from its varint tail by (count, offset) instead of through an 8-byte CachedVector member.
 // Plain arrays may be shared with an identical one written earlier (see Encoder::ShareableArrayScope).
 template<typename T, typename Container>
-static ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container)
+ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container)
 {
     unsigned size = container.size();
     ASSERT(size);
@@ -2575,8 +2592,7 @@ static ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container
         encoder.registerArray(hash, result.offset(), bytes.size());
         return result.offset();
     } else {
-        auto result = encoder.malloc(sizeof(T) * size, alignof(T));
-        T* buffer = new (result.buffer()) T[size];
+        auto [buffer, result] = encoder.mallocArray<T>(size);
         for (unsigned i = 0; i < size; ++i)
             ::JSC::encode(encoder, buffer[i], container[i]);
         return result.offset();
@@ -3979,24 +3995,21 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });
     // The children's slots are part of this block's bytes; the records they point at are written after the region.
     auto allocateSlots = [&](unsigned count) {
-        auto result = encoder.malloc(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * count, alignof(CachedWriteBarrier<CachedFunctionExecutable>));
-        new (result.buffer()) CachedWriteBarrier<CachedFunctionExecutable>[count];
-        return result.offset();
+        return encoder.mallocArray<CachedWriteBarrier<CachedFunctionExecutable>>(count).second.offset();
     };
     place(layout.functionDecls, codeBlock.m_functionDecls.size(), [&] { return allocateSlots(codeBlock.m_functionDecls.size()); });
     place(layout.functionExprs, codeBlock.m_functionExprs.size(), [&] { return allocateSlots(codeBlock.m_functionExprs.size()); });
     if (CachedCodeBlockExtras::isNeeded(codeBlock)) {
         layout.flags |= LayoutHasExtras;
-        auto result = encoder.malloc(sizeof(CachedCodeBlockExtras), alignof(CachedCodeBlockExtras));
-        layout.extrasAt = safeCast<int32_t>(result.offset() - regionStart);
-        (new (result.buffer()) CachedCodeBlockExtras())->encode(encoder, codeBlock);
+        auto [extras, allocation] = encoder.mallocArray<CachedCodeBlockExtras>(1);
+        layout.extrasAt = safeCast<int32_t>(allocation.offset() - regionStart);
+        extras->encode(encoder, codeBlock);
     }
 
     VarintWriter writer;
     packLayout(layout, writer);
     packScalars(codeBlock, writer);
-    auto result = encoder.malloc(sizeof(Record) + writer.size(), alignof(Record));
-    Record* record = new (result.buffer()) Record();
+    auto [record, result] = encoder.mallocArray<Record>(1, writer.size());
     record->m_recordOffsetInRegion = safeCast<uint32_t>(result.offset() - regionStart);
     writer.copyTo(record->tailBytes());
     encoder.deferCold([record, &encoder, expressionInfo = codeBlock.m_expressionInfo.get()] {
