@@ -31,9 +31,15 @@
 
 namespace JSC {
 
-class JSAsyncGenerator final : public JSInternalFieldObjectImpl<11> {
+#if USE(BUN_JSC_ADDITIONS)
+static constexpr unsigned jsAsyncGeneratorNumberOfInternalFields = 11;
+#else
+static constexpr unsigned jsAsyncGeneratorNumberOfInternalFields = 10;
+#endif
+
+class JSAsyncGenerator final : public JSInternalFieldObjectImpl<jsAsyncGeneratorNumberOfInternalFields> {
 public:
-    using Base = JSInternalFieldObjectImpl<11>;
+    using Base = JSInternalFieldObjectImpl<jsAsyncGeneratorNumberOfInternalFields>;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -86,10 +92,12 @@ public:
         ResumePromise,
         CachedDriverResult,
         CachedDriverResultTarget,
+#if USE(BUN_JSC_ADDITIONS)
         // Bun async context captured at the most recent await; see JSAsyncFunctionGenerator.
         AsyncContext,
+#endif
     };
-    static_assert(numberOfInternalFields == 11);
+    static_assert(numberOfInternalFields == jsAsyncGeneratorNumberOfInternalFields);
     static std::array<JSValue, numberOfInternalFields> initialValues()
     {
         return { {
@@ -103,7 +111,9 @@ public:
             jsUndefined(),
             jsUndefined(),
             jsUndefined(),
+#if USE(BUN_JSC_ADDITIONS)
             jsUndefined(),
+#endif
         } };
     }
 
@@ -200,6 +210,7 @@ public:
         Base::internalField(static_cast<unsigned>(Field::CachedDriverResultTarget)).set(vm, this, value);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
     JSValue asyncContext() const
     {
         return Base::internalField(static_cast<unsigned>(Field::AsyncContext)).get();
@@ -209,6 +220,7 @@ public:
     {
         Base::internalField(static_cast<unsigned>(Field::AsyncContext)).set(vm, this, value);
     }
+#endif
 
     bool isQueueEmpty() const
     {

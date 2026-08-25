@@ -960,9 +960,11 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
                 break;
             }
             JSValue context = fullReaction->context();
+            if (fullReaction->internalMicrotask() == InternalMicrotask::PromiseReactionJobWithAsyncContext) {
+                globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJobWithAsyncContext, static_cast<uint8_t>(status), promise, handler, arg, context);
+                return;
+            }
             if (!context.isUndefinedOrNull()) {
-                if (fullReaction->internalMicrotask() == InternalMicrotask::PromiseReactionJobWithAsyncContext)
-                    task = InternalMicrotask::PromiseReactionJobWithAsyncContext;
                 globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(status), promise, handler, arg, context);
                 return;
             }

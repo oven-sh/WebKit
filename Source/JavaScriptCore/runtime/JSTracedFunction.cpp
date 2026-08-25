@@ -92,14 +92,17 @@ JSC_DEFINE_HOST_FUNCTION(tracedFunctionCallGeneric, (JSGlobalObject* globalObjec
     else if (callFrame->argumentCount())
         target = callFrame->uncheckedArgument(callFrame->argumentCount() - 1);
 
+    // The enter hook's value is opaque (any JSValue, falsy ones included); the
+    // empty JSValue — also what a missing hook leaves — means "not traced".
     JSValue span;
     if (hooks.enter) {
         span = JSValue::decode(hooks.enter(globalObject, callFrame, traced));
         RETURN_IF_EXCEPTION(scope, { });
     }
+    bool isTraced = !!span; // JSValue::operator bool is !isEmpty(), not JS truthiness
     if (traced->shape() == JSTracedFunction::Shape::CallLast && !target.isCallable()) {
         // `span(name, attributes?)` with no callback: the hook's value is the result.
-        return JSValue::encode(span ? span : jsUndefined());
+        return JSValue::encode(isTraced ? span : jsUndefined());
     }
 
     auto callData = JSC::getCallData(target);
@@ -127,18 +130,18 @@ JSC_DEFINE_HOST_FUNCTION(tracedFunctionCallGeneric, (JSGlobalObject* globalObjec
             }
         } else {
             thisValue = jsUndefined();
-            args.append(span ? span : jsUndefined());
+            args.append(isTraced ? span : jsUndefined());
         }
         result = call(globalObject, target, callData, thisValue, args);
     }
     cacheEntrypoint();
     if (Exception* exception = scope.exception()) [[unlikely]] {
         // The thunk's equivalent is UnwindFunctor seeing the frame.
-        if (span && hooks.unwind)
+        if (isTraced && hooks.unwind)
             hooks.unwind(globalObject, traced, span, exception);
         return { };
     }
-    if (span && hooks.leave)
+    if (isTraced && hooks.leave)
         RELEASE_AND_RETURN(scope, hooks.leave(globalObject, traced, JSValue::encode(span), JSValue::encode(result)));
     return JSValue::encode(result);
 }
