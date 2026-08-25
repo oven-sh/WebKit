@@ -565,8 +565,7 @@ private:
     // Everything that places a C++ object in a page comes through malloc<T> / mallocFor<T> / mallocArray<T> (or
     // VariableLengthObject::allocate<T>, encodeArrayForTail<T>), which check isPortableRecord<T>; this untyped
     // allocation is only for copying bytes (string characters, digits, instruction streams).
-    template<typename> friend class VariableLengthObject; // allocate(size, alignment), allocateOrShareBytes(): bytes
-    template<typename T, typename Container> friend ptrdiff_t encodeArrayForTail(Encoder&, const Container&); // shared byte arrays
+    template<typename> friend class VariableLengthObject; // allocate(size, alignment): characters, digits, words
     Allocation malloc(unsigned size, size_t alignment)
     {
         RELEASE_ASSERT(size);
@@ -597,13 +596,22 @@ public:
         return new (malloc(sizeof(T) + tail, alignof(T)).buffer()) T();
     }
 
-    // `count` default-constructed T, optionally followed in the same allocation by `tailBytes` the caller fills.
+    // `count` default-constructed T, optionally preceded/followed in the same allocation by bytes the caller fills.
     template<typename T>
-    std::pair<T*, Allocation> mallocArray(unsigned count, size_t tailBytes = 0)
+    std::pair<T*, Allocation> mallocArray(unsigned count, size_t tailBytes = 0, size_t headBytes = 0)
     {
         static_assert(isPortableRecord<T>());
-        Allocation allocation = malloc(sizeof(T) * count + tailBytes, alignof(T));
-        return { new (allocation.buffer()) T[count], allocation };
+        ASSERT(!(headBytes % alignof(T)));
+        Allocation allocation = malloc(headBytes + sizeof(T) * count + tailBytes, alignof(T));
+        return { new (allocation.buffer() + headBytes) T[count], allocation };
+    }
+
+    // A copy of bytes that are already in their serialized form (characters, digits, packed tables).
+    Allocation mallocCopy(std::span<const uint8_t> bytes, size_t alignment)
+    {
+        Allocation allocation = malloc(bytes.size(), alignment);
+        memcpySpan(std::span { allocation.buffer(), bytes.size() }, bytes);
+        return allocation;
     }
 
     ptrdiff_t currentOffset() const { return m_baseOffset + m_currentPage->size(); }
@@ -2654,9 +2662,8 @@ struct CachedJSValuePool {
     {
         unsigned count = values.size();
         ASSERT(count);
-        auto result = encoder.malloc(byteSize(count), alignof(CachedJSValue));
+        auto [slots, result] = encoder.mallocArray<CachedJSValue>(count, 0, roundUpToMultipleOf<4>(static_cast<size_t>(count)));
         uint8_t* kinds = result.buffer();
-        CachedJSValue* slots = new (kinds + roundUpToMultipleOf<4>(static_cast<size_t>(count))) CachedJSValue[count];
         for (unsigned i = 0; i < count; ++i)
             kinds[i] = static_cast<uint8_t>(slots[i].encode(encoder, values[i].get()));
         return result.offset();
@@ -2739,7 +2746,7 @@ struct CachedMetadataSteps {
 // Arrays a code block refers to from its varint tail by (count, offset) instead of through an 8-byte CachedVector member.
 // Plain arrays may be shared with an identical one written earlier (see Encoder::ShareableArrayScope).
 template<typename T, typename Container>
-ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container)
+static ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container)
 {
     unsigned size = container.size();
     ASSERT(size);
@@ -2753,8 +2760,7 @@ ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container)
                 return *existing;
             }
         }
-        auto result = encoder.malloc(bytes.size(), alignof(T));
-        memcpySpan(std::span { result.buffer(), bytes.size() }, bytes);
+        auto result = encoder.mallocCopy(bytes, alignof(T));
         encoder.registerArray(hash, result.offset(), bytes.size());
         return result.offset();
     } else {
@@ -4457,8 +4463,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         if (auto existing = encoder.existingIdenticalArray(bytes.span(), hash, alignof(CachedExpressionInfo)))
             at = *existing;
         else {
-            auto allocation = encoder.malloc(bytes.size(), alignof(CachedExpressionInfo));
-            memcpySpan(std::span { allocation.buffer(), bytes.size() }, bytes.span());
+            auto allocation = encoder.mallocCopy(bytes.span(), alignof(CachedExpressionInfo));
             encoder.registerArray(hash, allocation.offset(), bytes.size());
             at = allocation.offset();
         }
