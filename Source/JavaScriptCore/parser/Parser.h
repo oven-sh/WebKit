@@ -446,7 +446,11 @@ public:
     {
         ASSERT(node);
         ASSERT(!strictMode());
-        m_sloppyModeFunctionHoistingCandidates.set(node, needsCheck);
+        auto result = m_sloppyModeFunctionHoistingCandidateIndices.add(node, m_sloppyModeFunctionHoistingCandidates.size());
+        if (result.isNewEntry)
+            m_sloppyModeFunctionHoistingCandidates.append({ node, needsCheck });
+        else
+            m_sloppyModeFunctionHoistingCandidates[result.iterator->value].second = needsCheck;
     }
 
     void appendFunction(FunctionMetadataNode* node)
@@ -802,12 +806,11 @@ public:
         ASSERT(allowsVarDeclarations());
         ASSERT(!isSimpleCatchParameterScope());
 
-        for (const auto& iter : m_sloppyModeFunctionHoistingCandidates) {
+        for (const auto& [metadata, needsCheck] : m_sloppyModeFunctionHoistingCandidates) {
             // ES6 Annex B.3.3. The only time we can't hoist a function is if a syntax error would
             // be caused by declaring a var with that function's name or if we have a parameter with
             // that function's name. Note that we would only cause a syntax error if we had a let/const/class
             // variable with the same name.
-            FunctionMetadataNode* metadata = iter.key;
             auto* function = metadata->ident().impl();
             if (!m_lexicalVariables.contains(function)) {
                 auto addResult = m_declaredVariables.add(function);
@@ -824,9 +827,8 @@ public:
 
     NEVER_INLINE void bubbleSloppyModeFunctionHoistingCandidates(Scope* parentScope)
     {
-        for (const auto& iter : m_sloppyModeFunctionHoistingCandidates) {
-            FunctionMetadataNode* metadata = iter.key;
-            bool needsCheck = iter.value == NeedsDuplicateDeclarationCheck::Yes;
+        for (const auto& [metadata, check] : m_sloppyModeFunctionHoistingCandidates) {
+            bool needsCheck = check == NeedsDuplicateDeclarationCheck::Yes;
             if (!needsCheck || !m_lexicalVariables.contains(metadata->ident().impl()) || isSimpleCatchParameterScope())
                 parentScope->addSloppyModeFunctionHoistingCandidate<NeedsDuplicateDeclarationCheck::Yes>(metadata);
         }
@@ -1050,7 +1052,7 @@ private:
     LexicallyScopedFeatures m_lexicallyScopedFeatures;
     ConstructorKind m_constructorKind { ConstructorKind::None };
     InnerArrowFunctionCodeFeatures m_innerArrowFunctionFeatures { 0 };
-    UncheckedKeyHashMap<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck> m_sloppyModeFunctionHoistingCandidates;
+    UncheckedKeyHashMap<FunctionMetadataNode*, unsigned> m_sloppyModeFunctionHoistingCandidateIndices;
     UncheckedKeyHashSet<UniquedStringImpl*> m_closedVariableCandidates;
 
     // offset 64 in release mode
@@ -1066,6 +1068,8 @@ private:
 
     UniquedStringImpl* m_lastAddedUsedVariable { nullptr };
     Vector<UniquedStringImplPtrSet, 6> m_usedVariables;
+    // In declaration order: the order these are declared as vars in decides their registers / scope offsets.
+    Vector<std::pair<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck>> m_sloppyModeFunctionHoistingCandidates;
 
     static void verifyLayout();
 };
@@ -1557,6 +1561,7 @@ private:
         int startOffset;
         unsigned oldLineStartOffset;
         JSTokenLocation lastTokenLocation;
+        JSTextPosition lastTokenEndPosition;
         unsigned oldLineNumber;
         bool hasLineTerminatorBeforeToken;
         JSTokenType lastTokenType;
@@ -1580,6 +1585,7 @@ private:
     ALWAYS_INLINE void next(OptionSet<LexerFlags> lexerFlags = { })
     {
         m_lastTokenLocation = m_token.location();
+        m_lastTokenEndPosition = m_token.m_endPosition;
         m_lastTokenType = m_token.m_type;
         m_token.m_type = m_lexer->lex(&m_token, lexerFlags, strictMode());
     }
@@ -1587,6 +1593,7 @@ private:
     ALWAYS_INLINE void nextWithoutClearingLineTerminator(OptionSet<LexerFlags> lexerFlags = { })
     {
         m_lastTokenLocation = m_token.location();
+        m_lastTokenEndPosition = m_token.m_endPosition;
         m_lastTokenType = m_token.m_type;
         m_token.m_type = m_lexer->lexWithoutClearingLineTerminator(&m_token, lexerFlags, strictMode());
     }
@@ -2038,6 +2045,7 @@ private:
         result.startOffset = m_token.m_startPosition.offset;
         result.oldLineStartOffset = m_token.m_startPosition.lineStartOffset;
         result.lastTokenLocation = m_lastTokenLocation;
+        result.lastTokenEndPosition = m_lastTokenEndPosition;
         result.oldLineNumber = m_token.m_startPosition.line;
         // Why is this reading from Lexer fine while we are re-lexing the same token?
         // This is because this flag is updated and indicating whether we have a line
@@ -2060,7 +2068,7 @@ private:
         m_token.m_startPosition.line = lexerState.lastTokenLocation.line;
         m_token.m_startPosition.offset = lexerState.lastTokenLocation.startOffset;
         m_token.m_startPosition.lineStartOffset = lexerState.lastTokenLocation.lineStartOffset;
-        m_token.m_endPosition.offset = lexerState.lastTokenLocation.endOffset;
+        m_token.m_endPosition = lexerState.lastTokenEndPosition;
         nextWithoutClearingLineTerminator();
     }
 
@@ -2147,6 +2155,7 @@ private:
     bool m_seenArgumentsDotLength { false };
     bool m_parsingBuiltin;
     bool m_isEvalContext;
+    JSTextPosition m_lastTokenEndPosition; // where m_lastTokenLocation's token ended: a later line than it started on if it is a template literal
 
     RefPtr<SourceProviderCache> m_functionCache;
     CallOrApplyDepthScope* m_callOrApplyDepthScope { nullptr };
