@@ -57,8 +57,10 @@ void CodeCacheMap::pruneSlowCase()
     }
 }
 
-static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error)
+static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth = std::numeric_limits<unsigned>::max())
 {
+    if (!depth)
+        return;
     auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable) {
         // FIXME: We should also generate CodeBlocks for CodeForConstruct of ordinary functions.
         // https://bugs.webkit.org/show_bug.cgi?id=193823
@@ -66,7 +68,7 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
         SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
         UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, kind, codeGenerationMode, error, unlinkedExecutable->parseMode());
         if (unlinkedFunctionCodeBlock)
-            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error);
+            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1);
     };
 
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++)
@@ -143,6 +145,14 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
 
     generateUnlinkedCodeBlockForFunctions(vm, unlinkedCodeBlock, source, codeGenerationMode, error);
     return unlinkedCodeBlock;
+}
+
+void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error, unsigned depth)
+{
+    SourceCode source = executable->linkedSourceCode(parentSource);
+    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
+    if (codeBlock)
+        generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, { }, error, depth);
 }
 
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType)

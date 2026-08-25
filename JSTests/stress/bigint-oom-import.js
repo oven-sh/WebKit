@@ -1,20 +1,26 @@
 //@ requireOptions("--forceDiskCache=0")
 
-function shouldThrowAsync(run, errorType, message) {
+// The imported module holds a BigInt literal of about 1.05 million bits. That
+// used to exceed maxLengthBits (1 << 20) and made module codegen throw. The
+// limit is 1 << 30 bits now, and a checked-in source file cannot reasonably
+// exceed it, so the import must succeed instead.
+function shouldResolve(run, check) {
     let actual;
     var hadError = false;
     run().then(function(value) { actual = value; },
                function(error) { hadError = true; actual = error; });
     drainMicrotasks();
 
-    if (!hadError)
-        throw new Error("Expected " + run + "() to throw " + errorType.name + ", but did not throw.");
-    if (!(actual instanceof errorType))
-        throw new Error("Expected " + run + "() to throw " + errorType.name + ", but threw '" + actual + "'");
-    if (message !== void 0 && actual.message !== message)
-        throw new Error("Expected " + run + "() to throw '" + message + "', but threw '" + actual.message + "'");
+    if (hadError)
+        throw new Error("Expected " + run + "() to resolve, but threw '" + actual + "'");
+    check(actual);
 }
 
-shouldThrowAsync(async () => {
-    await import("./import-tests/bigint-oom.js")
-}, RangeError, "Out of memory");
+shouldResolve(async () => {
+    return await import("./import-tests/bigint-oom.js")
+}, (module) => {
+    if (typeof module.default !== "bigint")
+        throw new Error("Expected a bigint, got " + typeof module.default);
+    if (module.default >> 1048575n === 0n)
+        throw new Error("Imported bigint is smaller than expected");
+});

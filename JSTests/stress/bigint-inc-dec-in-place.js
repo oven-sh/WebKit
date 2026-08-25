@@ -83,9 +83,9 @@ for (const L of [2, 3, 16]) {
     shouldBe(x.toString(), before);
 }
 
-// maxLength boundary: maxLengthBits = 1 << 20.
+// maxLength boundary: maxLengthBits = 1 << 30.
 {
-    const maxLengthBits = 1048576n;
+    const maxLengthBits = 1073741824n;
     // 2^maxLengthBits - 1 (exactly maxLength digits, all-ones), built without
     // materializing 2^maxLengthBits itself.
     const max = ((pow2(maxLengthBits - 1n) - 1n) << 1n) | 1n;

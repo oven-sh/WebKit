@@ -184,7 +184,8 @@ public:
     Entry NODELETE entryForInstPC(InstPC);
 
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
-    size_t NODELETE byteSize() const;
+    size_t NODELETE byteSize() const; // owned by this object
+    size_t NODELETE byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
 
     template<unsigned bitCount>
     static void print(PrintStream&, FieldID, unsigned value);

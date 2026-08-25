@@ -272,6 +272,10 @@ template <> struct CacheTypes<UnlinkedModuleProgramCodeBlock> {
 UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM&, DirectEvalExecutable*, const SourceCode&, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment*);
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType);
 UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType);
+// For a function executable that was created directly (e.g. a builtin): its body and every nested function, as an ahead-of-time cache wants.
+// `depth` bounds how many levels of nested functions get code blocks (0 = only the function's own; functions past the
+// bound stay in the cache as executables whose bodies are generated from source when first called).
+JS_EXPORT_PRIVATE void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM&, UnlinkedFunctionExecutable*, const SourceCode& parentSource, ParserError&, unsigned depth = std::numeric_limits<unsigned>::max());
 
 #if USE(BUN_JSC_ADDITIONS)
 // What a CodeCache hit does besides returning the block: the executable learns the parse results

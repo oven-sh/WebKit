@@ -93,6 +93,7 @@ public:
     void removeWeakNullEntries() requires (ValueTraits::hasIsWeakNullValueFunction);
 
     void reserveInitialCapacity(unsigned keyCount) { m_impl.reserveInitialCapacity(keyCount); }
+    void reserveCapacity(unsigned keyCount) { m_impl.reserveCapacity(keyCount); }
 
     iterator begin() const LIFETIME_BOUND;
     iterator end() const LIFETIME_BOUND;

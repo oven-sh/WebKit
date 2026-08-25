@@ -26,6 +26,7 @@
 #include "ArrayBuffer.h"
 #include "AtomicsObject.h"
 #include "BigIntConstructor.h"
+#include "BuiltinExecutableCreator.h"
 #include "BytecodeCacheError.h"
 #include "CodeBlock.h"
 #include "CodeCache.h"
@@ -326,6 +327,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionCreateNonRopeNonAtomString);
 
 static JSC_DECLARE_HOST_FUNCTION(functionPrintStdOut);
 static JSC_DECLARE_HOST_FUNCTION(functionGenerateBytecodeCacheFile);
+static JSC_DECLARE_HOST_FUNCTION(functionBuiltinFromBytecodeCache);
+static JSC_DECLARE_HOST_FUNCTION(functionBuiltinBytecodeSize);
 static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCachePageTouch);
 static JSC_DECLARE_HOST_FUNCTION(functionPrintStdErr);
 static JSC_DECLARE_HOST_FUNCTION(functionPrettyPrint);
@@ -686,6 +689,8 @@ private:
         addFunction(vm, "disassembleBase64"_s, functionDisassembleBase64, 1);
         addFunction(vm, "debug"_s, functionDebug, 1);
         addFunction(vm, "generateBytecodeCacheFile"_s, functionGenerateBytecodeCacheFile, 3);
+        addFunction(vm, "builtinFromBytecodeCache"_s, functionBuiltinFromBytecodeCache, 3);
+        addFunction(vm, "builtinBytecodeSize"_s, functionBuiltinBytecodeSize, 2);
         addFunction(vm, "bytecodeCachePageTouch"_s, functionBytecodeCachePageTouch, 4);
         addFunction(vm, "describe"_s, functionDescribe, 1);
         addFunction(vm, "describeArray"_s, functionDescribeArray, 1);
@@ -1775,6 +1780,68 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateBytecodeCacheFile, (JSGlobalObject* glo
     return JSValue::encode(jsNumber(result ? result->size() : 0));
 }
 
+// builtinFromBytecodeCache(source, roundTrip[, depth]) — what an embedder does with its JS builtins: create a builtin executable from
+// "(function (...) { ... })" source (private @names allowed); if roundTrip, generate all its code blocks, serialize it with
+// encodeBuiltinFunction, drop it, and decode it back from the bytes. Returns the resulting function.
+JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    bool roundTrip = callFrame->argument(1).toBoolean(globalObject);
+    unsigned depth = callFrame->argument(2).isUndefined() ? std::numeric_limits<unsigned>::max() : callFrame->argument(2).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    constexpr unsigned stamp = 0x5107;
+
+    SourceCode source = makeSource(text, SourceOrigin { URL({ }, "builtin://test"_s) }, SourceTaintedOrigin::Untainted, "test-builtin"_s);
+    Identifier name = Identifier::fromString(vm, "testBuiltin"_s);
+    UnlinkedFunctionExecutable* executable = nullptr;
+    if (!roundTrip)
+        executable = createBuiltinExecutable(vm, source, name, ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
+    else {
+        RefPtr<CachedBytecode> bytes;
+        {
+            UnlinkedFunctionExecutable* original = createBuiltinExecutable(vm, source, name, ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
+            ParserError error;
+            recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, original, source, error, depth);
+            if (error.isValid())
+                return throwVMError(globalObject, scope, error.toErrorObject(globalObject, source));
+            bytes = encodeBuiltinFunction(vm, original, source.length(), stamp);
+            if (!bytes)
+                return throwVMError(globalObject, scope, "encodeBuiltinFunction failed"_s);
+        }
+        // Copy into a buffer that lives for the process and mark it persistent, like an embedder's executable section.
+        auto* copy = static_cast<uint8_t*>(fastMalloc(bytes->size()));
+        memcpySpan(std::span { copy, bytes->size() }, bytes->span());
+        Ref<CachedBytecode> persistent = CachedBytecode::create(std::span { copy, bytes->size() }, [](const void*) { }, { });
+        persistent->setPayloadIsPersistent();
+        executable = decodeBuiltinFunction(vm, WTF::move(persistent), *source.provider(), stamp);
+        if (!executable)
+            return throwVMError(globalObject, scope, "decodeBuiltinFunction rejected the payload"_s);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), globalObject)));
+}
+
+// builtinBytecodeSize(source, depth) — bytes encodeBuiltinFunction produces for a builtin created from `source`.
+JSC_DEFINE_HOST_FUNCTION(functionBuiltinBytecodeSize, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned depth = callFrame->argument(1).isUndefined() ? std::numeric_limits<unsigned>::max() : callFrame->argument(1).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    SourceCode source = makeSource(text, SourceOrigin { URL({ }, "builtin://size"_s) }, SourceTaintedOrigin::Untainted, "size-builtin"_s);
+    UnlinkedFunctionExecutable* executable = createBuiltinExecutable(vm, source, Identifier::fromString(vm, "sizeBuiltin"_s), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
+    ParserError error;
+    recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
+    if (error.isValid())
+        return throwVMError(globalObject, scope, error.toErrorObject(globalObject, source));
+    RefPtr<CachedBytecode> bytes = encodeBuiltinFunction(vm, executable, source.length(), 1);
+    return JSValue::encode(jsNumber(bytes ? bytes->size() : 0));
+}
+
 // bytecodeCachePageTouch(sourcePath, cachePath, "module"|"program", depth) — map the cache cold, decode the top-level block
 // (depth 0), then the bodies of its direct children (depth 1), grandchildren (2)..., and report how many pages of the
 // mapping became resident. Returns [residentPages, totalPages, decodedCodeBlocks, decodeMilliseconds, residentBefore]. Linux only (mincore/posix_fadvise).
@@ -1829,6 +1896,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     // GC heap past this call, so the CachedBytecode is kept for the rest of the process, as diskCachePayloadIsPersistentForTesting does.
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span<uint8_t> { static_cast<uint8_t*>(base), size }, [size](const void* p) { munmap(const_cast<void*>(p), size); }, { });
     cachedBytecode->setPayloadIsPersistent();
+    // Kept for the rest of the process even if the decode below is rejected: decodeCodeBlock materializes the block (which
+    // aliases the mapping) before it compares source keys, so the mapping may already have borrowers on the GC heap.
     cachedBytecode->ref();
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
 
@@ -1841,7 +1910,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
     MarkedArgumentBuffer keepAlive;
     Vector<UnlinkedCodeBlock*> frontier { top };
     keepAlive.append(top);
-    for (int d = 0; d < depth; ++d) {
+    for (int d = 0; d < depth && !frontier.isEmpty(); ++d) {
         Vector<UnlinkedCodeBlock*> next;
         for (UnlinkedCodeBlock* block : frontier) {
             auto visit = [&](UnlinkedFunctionExecutable* executable) {
@@ -1859,7 +1928,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
 
     JSArray* result = constructEmptyArray(globalObject, nullptr, 5);
     RETURN_IF_EXCEPTION(scope, { });
-    result->putDirectIndex(globalObject, 0, jsNumber(residentAfter - residentBefore));
+    result->putDirectIndex(globalObject, 0, jsNumber(residentAfter > residentBefore ? residentAfter - residentBefore : 0));
     result->putDirectIndex(globalObject, 1, jsNumber(pages));
     result->putDirectIndex(globalObject, 2, jsNumber(decoded));
     result->putDirectIndex(globalObject, 3, jsNumber(ms));

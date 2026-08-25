@@ -30,6 +30,9 @@
 #include "VariableEnvironment.h"
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/UniqueArray.h>
+#include <wtf/text/AtomStringImpl.h>
 
 namespace JSC {
 
@@ -72,6 +75,44 @@ struct CachedPtrOffsets {
     static ptrdiff_t offsetOffset();
 };
 
+// One shared string table across every encodeCodeBlock in a build session (bun --compile --bytecode): each ≥4-char non-symbol string becomes a 4-byte externalStringTag ordinal in every chunk's payload, and the characters are written once by serialize(). Decode reads them from the DecoderStringTable the embedder hands back via VM::ClientData.
+class EncoderStringTable {
+    WTF_MAKE_NONCOPYABLE(EncoderStringTable);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(EncoderStringTable, JS_EXPORT_PRIVATE);
+public:
+    EncoderStringTable() = default;
+    JS_EXPORT_PRIVATE ~EncoderStringTable();
+    uint32_t ordinalFor(const StringImpl&);
+    JS_EXPORT_PRIVATE Vector<uint8_t> serialize() const;
+    static constexpr uint32_t maxOrdinal = (1u << 30) - 1;
+private:
+    UncheckedKeyHashMap<String, uint32_t> m_ordinals;
+    Vector<Ref<StringImpl>> m_strings;
+};
+
+// Decode side of EncoderStringTable: the mmapped serialize() blob and a demand-zero AtomStringImpl* slot per ordinal so each string goes through the atom table once. One per VM (per thread's atom table); the embedder owns it and returns it from VM::ClientData::decoderStringTable().
+class DecoderStringTable {
+    WTF_MAKE_NONCOPYABLE(DecoderStringTable);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(DecoderStringTable, JS_EXPORT_PRIVATE);
+public:
+    JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>);
+    JS_EXPORT_PRIVATE ~DecoderStringTable();
+    Ref<AtomStringImpl> atomFor(uint32_t ordinal);
+    String plainStringFor(uint32_t ordinal);
+private:
+    struct Record {
+        const uint8_t* characters;
+        uint32_t length;
+        uint32_t hash;
+        bool is8Bit;
+    };
+    Record record(uint32_t ordinal) const;
+    std::span<const uint8_t> m_bytes;
+    StringImpl** m_strings { nullptr }; // demand-zero; per ordinal, the atom or the plain StringImpl a constant made first
+    size_t m_stringsReservation { 0 };
+    uint32_t m_count { 0 };
+};
+
 class VariableLengthObjectBase {
     friend class CachedBytecode;
 
@@ -94,8 +135,19 @@ class Decoder : public RefCounted<Decoder> {
 public:
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
     bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
+    // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
+    void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
+    const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
     bool regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays = { }) const;
     bool payloadContains(const void* start, size_t size) const;
+    // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
+    AtomStringImpl* atomForOrdinal(uint32_t) const;
+    void setAtomForOrdinal(uint32_t, AtomStringImpl&);
+    // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
+    Ref<AtomStringImpl> atomForInlineString(uint32_t packed);
+    // ≥4-char strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots).
+    Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
+    String plainStringForExternalString(uint32_t ordinal);
     bool recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const;
 
     ~Decoder();
@@ -117,19 +169,31 @@ public:
 
 private:
     Decoder(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider>);
+    DecoderStringTable& externalStrings();
 
     VM& m_vm;
     const Ref<CachedBytecode> m_cachedBytecode;
+    Vector<AtomStringImpl*> m_atomsByOrdinal;
+    AtomStringImpl** m_twoCharacterAtoms { nullptr };
+    DecoderStringTable* m_externalStrings { nullptr };
+    const void* m_activeRecord { nullptr };
+    const void* m_activeTail { nullptr };
     UncheckedKeyHashMap<ptrdiff_t, void*> m_offsetToPtrMap;
     Vector<std::function<void()>> m_finalizers;
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
 };
 
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*);
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&);
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr);
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr);
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>);
+
+// An embedder's JS builtin (a root UnlinkedFunctionExecutable from BuiltinExecutables::createExecutable), with its code
+// blocks generated recursively beforehand (see recursivelyGenerateUnlinkedCodeBlocksForFunction). `embedderStamp`
+// identifies the builtin source's contents; decode checks it and the source length instead of hashing the source.
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const UnlinkedFunctionExecutable*, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* = nullptr);
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunction(VM&, Ref<CachedBytecode>, SourceProvider&, unsigned embedderStamp);
 
 template<typename UnlinkedCodeBlockType>
 UnlinkedCodeBlockType* decodeCodeBlock(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode)

@@ -665,6 +665,14 @@ VM::~VM()
 
     delete emptyList;
 
+    if (m_cachedBytecodeTwoCharacterAtoms) {
+        for (AtomStringImpl* atom : *m_cachedBytecodeTwoCharacterAtoms) {
+            if (atom)
+                atom->deref();
+        }
+        m_cachedBytecodeTwoCharacterAtoms = nullptr;
+    }
+
     delete propertyNames;
     if (vmType != VMType::Default)
         delete m_atomStringTable;
@@ -2239,5 +2247,12 @@ Wasm::DebugState* VM::debugState()
     return m_debugState.get();
 }
 #endif
+
+AtomStringImpl** VM::ensureCachedBytecodeTwoCharacterAtoms()
+{
+    if (!m_cachedBytecodeTwoCharacterAtoms) [[unlikely]]
+        m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 65536>>();
+    return m_cachedBytecodeTwoCharacterAtoms->data();
+}
 
 } // namespace JSC

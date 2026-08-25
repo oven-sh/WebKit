@@ -46,6 +46,8 @@ public:
     ALWAYS_INLINE static RefPtr<AtomStringImpl> add(StringImpl*);
     ALWAYS_INLINE static RefPtr<AtomStringImpl> add(RefPtr<StringImpl>&&);
     WTF_EXPORT_PRIVATE static RefPtr<AtomStringImpl> add(const StaticStringImpl&);
+    // A caller about to add `count` strings (e.g. decoding a cache) lets the table grow once instead of log(count) times.
+    WTF_EXPORT_PRIVATE static void reserveCapacityForCurrentThread(unsigned additionalCount);
     ALWAYS_INLINE static Ref<AtomStringImpl> add(ASCIILiteral);
 
     // Returns null if the input data contains an invalid UTF-8 sequence.
