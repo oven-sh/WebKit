@@ -1559,9 +1559,14 @@ private:
         JSCell* lexicalEnvironment;
         SymbolTable* symbolTable;
     };
+    enum class ResolveScopeKind : uint8_t {
+        Static, // a constant or a SkipScope chain: no side effects
+        Dynamic, // a ResolveScope node: the get must be a GetDynamicVar
+        Exited, // a ForceOSRExit was emitted: what follows in this bytecode is dead
+    };
     struct ResolvedScope {
         Node* node;
-        bool dynamic; // a ResolveScope node: the get must be a GetDynamicVar
+        ResolveScopeKind kind;
     };
     ResolvedScope parseResolveScope(const ResolveScopeInputs&, Node* baseScope);
     struct GetFromScopeInputs {
@@ -7072,16 +7077,19 @@ auto ByteCodeParser::parseResolveScope(const ResolveScopeInputs& inputs, Node* b
     unsigned identifierNumber = inputs.identifierNumber;
 
     if (needsDynamicLookup(resolveType, op_resolve_scope))
-        return { addToGraph(ResolveScope, OpInfo(identifierNumber), baseScope), true };
+        return { addToGraph(ResolveScope, OpInfo(identifierNumber), baseScope), ResolveScopeKind::Dynamic };
 
     // get_from_scope and put_to_scope depend on this watchpoint forcing OSR exit, so they don't add their own watchpoints.
     if (needsVarInjectionChecks(resolveType))
         m_graph.watchpoints().addLazily(m_inlineStackTop->m_codeBlock->globalObject()->varInjectionWatchpointSet());
 
+    ResolveScopeKind kind = ResolveScopeKind::Static;
     if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks) {
         JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
-        if (!m_graph.watchGlobalProperty(globalObject, identifierNumber))
+        if (!m_graph.watchGlobalProperty(globalObject, identifierNumber)) {
             addToGraph(ForceOSRExit);
+            kind = ResolveScopeKind::Exited;
+        }
     }
 
     switch (resolveType) {
@@ -7094,14 +7102,14 @@ auto ByteCodeParser::parseResolveScope(const ResolveScopeInputs& inputs, Node* b
         RELEASE_ASSERT(inputs.constantScope);
         RELEASE_ASSERT(inputs.constantScope == JSScope::constantScopeForCodeBlock(resolveType, m_inlineStackTop->m_codeBlock));
         addToGraph(Phantom, baseScope);
-        return { weakJSConstant(inputs.constantScope), false };
+        return { weakJSConstant(inputs.constantScope), kind };
     }
     case ModuleVar: {
         // Module environment is already strongly referenced by the CodeBlock.
         // BytecodeUseDef reports m_scope as a use regardless of resolve type,
         // so we need to keep it OSR-available even though LLInt won't read it.
         addToGraph(Phantom, baseScope);
-        return { weakJSConstant(inputs.lexicalEnvironment), false };
+        return { weakJSConstant(inputs.lexicalEnvironment), kind };
     }
     case ResolvedClosureVar:
     case ClosureVar:
@@ -7115,23 +7123,23 @@ auto ByteCodeParser::parseResolveScope(const ResolveScopeInputs& inputs, Node* b
         if (inputs.symbolTable) {
             if (JSScope* scope = inputs.symbolTable->singleton().inferredValue()) {
                 m_graph.watchpoints().addLazily(m_graph, inputs.symbolTable);
-                return { weakJSConstant(scope), false };
+                return { weakJSConstant(scope), kind };
             }
         }
         if (JSScope* scope = localBase->dynamicCastConstant<JSScope*>()) {
             for (unsigned n = inputs.depth; n--;)
                 scope = scope->next();
-            return { weakJSConstant(scope), false };
+            return { weakJSConstant(scope), kind };
         }
         for (unsigned n = inputs.depth; n--;)
             localBase = addToGraph(SkipScope, localBase);
-        return { localBase, false };
+        return { localBase, kind };
     }
     case UnresolvedProperty:
     case UnresolvedPropertyWithVarInjectionChecks: {
         addToGraph(Phantom, baseScope);
         addToGraph(ForceOSRExit);
-        return { addToGraph(JSConstant, OpInfo(m_constantNull)), true };
+        return { addToGraph(JSConstant, OpInfo(m_constantNull)), ResolveScopeKind::Exited };
     }
     case Dynamic:
         RELEASE_ASSERT_NOT_REACHED();
@@ -10757,8 +10765,21 @@ void ByteCodeParser::parseBlock(unsigned limit)
             }
 
             Node* baseScope = get(bytecode.m_scope);
+            // Both halves live in one bytecode, so nothing that can exit may follow a node that clobbered the exit
+            // state. A dynamic resolve therefore becomes one GetDynamicVar that resolves first (no ResolveScope node),
+            // and after a ForceOSRExit the rest of the instruction is dead.
+            if (needsDynamicLookup(resolveInputs.resolveType, op_resolve_scope)) {
+                uint64_t opInfo1 = makeDynamicVarOpInfo(identifierNumber, getInputs.getPutInfo.operand() | GetPutInfo::resolvesScopeFirstBit);
+                set(bytecode.m_dst, addToGraph(GetDynamicVar, OpInfo(opInfo1), OpInfo(getPrediction()), baseScope));
+                NEXT_OPCODE(op_resolve_and_get_from_scope);
+            }
             ResolvedScope resolved = parseResolveScope(resolveInputs, baseScope);
-            set(bytecode.m_dst, parseGetFromScope(getInputs, resolved.node, baseScope, resolved.dynamic));
+            if (resolved.kind == ResolveScopeKind::Exited) {
+                set(bytecode.m_dst, addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+                NEXT_OPCODE(op_resolve_and_get_from_scope);
+            }
+            ASSERT(resolved.kind == ResolveScopeKind::Static);
+            set(bytecode.m_dst, parseGetFromScope(getInputs, resolved.node, baseScope, false));
             NEXT_OPCODE(op_resolve_and_get_from_scope);
         }
 

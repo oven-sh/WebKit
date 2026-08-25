@@ -4579,13 +4579,11 @@ JSC_DEFINE_JIT_OPERATION(operationSwitchStringWithUnknownKeyType, char*, (JSGlob
     OPERATION_RETURN(scope, reinterpret_cast<char*>(result));
 }
 
-// The resolve_scope slow path, also the resolve half of resolve_and_get_from_scope (same metadata fields).
+// The resolve_scope slow path, also the resolve half of resolve_and_get_from_scope (same metadata fields). The caller
+// is the operation JIT code called into; it has already set up the frame tracer.
 template<typename Bytecode>
-static OperationReturnType<EncodedJSValue> resolveScopeForBaseline(JSGlobalObject* globalObject, const JSInstruction* pc)
+static OperationReturnType<EncodedJSValue> resolveScopeForBaseline(VM& vm, CallFrame* callFrame, JSGlobalObject* globalObject, const JSInstruction* pc)
 {
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     CodeBlock* codeBlock = callFrame->codeBlock();
@@ -4635,21 +4633,24 @@ static OperationReturnType<EncodedJSValue> resolveScopeForBaseline(JSGlobalObjec
 
 JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGlobalObject* globalObject, const JSInstruction* pc))
 {
-    return resolveScopeForBaseline<OpResolveScope>(globalObject, pc);
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return resolveScopeForBaseline<OpResolveScope>(vm, callFrame, globalObject, pc);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationResolveScopeHalfForBaseline, EncodedJSValue, (JSGlobalObject* globalObject, const JSInstruction* pc))
 {
-    return resolveScopeForBaseline<OpResolveAndGetFromScope>(globalObject, pc);
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return resolveScopeForBaseline<OpResolveAndGetFromScope>(vm, callFrame, globalObject, pc);
 }
 
 // The get_from_scope slow path, also the get half of resolve_and_get_from_scope with the resolved scope passed in.
 template<typename Bytecode>
-static OperationReturnType<EncodedJSValue> getFromScopeForBaseline(JSGlobalObject* globalObject, const JSInstruction* pc, JSObject* environment)
+static OperationReturnType<EncodedJSValue> getFromScopeForBaseline(VM& vm, CallFrame* callFrame, JSGlobalObject* globalObject, const JSInstruction* pc, JSObject* environment)
 {
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     CodeBlock* codeBlock = callFrame->codeBlock();
@@ -4690,12 +4691,18 @@ static OperationReturnType<EncodedJSValue> getFromScopeForBaseline(JSGlobalObjec
 
 JSC_DEFINE_JIT_OPERATION(operationGetFromScope, EncodedJSValue, (JSGlobalObject* globalObject, const JSInstruction* pc))
 {
-    return getFromScopeForBaseline<OpGetFromScope>(globalObject, pc, nullptr);
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return getFromScopeForBaseline<OpGetFromScope>(vm, callFrame, globalObject, pc, nullptr);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetFromScopeHalf, EncodedJSValue, (JSGlobalObject* globalObject, const JSInstruction* pc, JSObject* environment))
 {
-    return getFromScopeForBaseline<OpResolveAndGetFromScope>(globalObject, pc, environment);
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return getFromScopeForBaseline<OpResolveAndGetFromScope>(vm, callFrame, globalObject, pc, environment);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationResolveAndGetFromScope, EncodedJSValue, (JSGlobalObject* globalObject, const JSInstruction* pc))

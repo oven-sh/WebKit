@@ -232,7 +232,11 @@ public:
     static constexpr unsigned initializationBits = ((1 << modeShift) - 1) & ~typeBits;
     static constexpr unsigned modeBits = ((1 << 30) - 1) & ~initializationBits & ~typeBits;
     static constexpr unsigned isStrictBit = 1 << 30;
+    // Only in the DFG's GetDynamicVar for resolve_and_get_from_scope: the scope it is given is the base scope, and the
+    // operation resolves the identifier through it first (one node, so no OSR exit can land between the two halves).
+    static constexpr unsigned resolvesScopeFirstBit = 1u << 31;
     static_assert((modeBits & initializationBits & typeBits & isStrictBit) == 0x0, "There should be no intersection between ResolveMode ResolveType and InitializationMode");
+    static_assert((resolvesScopeFirstBit & (modeBits | initializationBits | typeBits | isStrictBit)) == 0x0);
 
     GetPutInfo() = default;
 
