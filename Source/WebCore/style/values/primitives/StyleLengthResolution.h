@@ -43,9 +43,11 @@ enum class LengthUnit : uint8_t;
 
 namespace Style {
 
+class BuilderState;
 class ComputedStyle;
 
 // Resolves length `value` of the provided `CSS::LengthUnit` type to a length with `CSS::LengthUnit::Px` type.
+double resolveLength(double value, CSS::LengthUnit, const BuilderState&);
 double resolveLength(double value, CSS::LengthUnit, const CSSToLengthConversionData&);
 
 // Only valid for absolute length units (Px, Cm, Mm, Q, In, Pt, Pc).
@@ -62,39 +64,19 @@ bool equalForLengthResolution(const ComputedStyle&, const ComputedStyle&);
 
 // Utilities for common conversions.
 
-double emToPxDouble(double value, const CSSToLengthConversionData&);
 double emToPxDouble(double value, const ComputedStyle&);
-double emToPxDoubleZoomed(double value, const CSSToLengthConversionData&);
 double emToPxDoubleZoomed(double value, const ComputedStyle&);
-
-template<typename T> inline T emToPx(double value, const CSSToLengthConversionData& conversionData)
-{
-    if constexpr (std::floating_point<T>)
-        return static_cast<T>(emToPxDouble(value, conversionData));
-    else if constexpr (std::integral<T>)
-        return roundForImpreciseConversion<T>(emToPxDouble(value, conversionData));
-}
 
 template<typename T> inline T emToPx(double value, const ComputedStyle& style)
 {
-    // For `em`, we only need the element's style, so we can overload this to take just a `ComputedStyle`.
     if constexpr (std::floating_point<T>)
         return static_cast<T>(emToPxDouble(value, style));
     else if constexpr (std::integral<T>)
         return roundForImpreciseConversion<T>(emToPxDouble(value, style));
 }
 
-template<typename T> inline T emToPxZoomed(double value, const CSSToLengthConversionData& conversionData)
-{
-    if constexpr (std::floating_point<T>)
-        return static_cast<T>(emToPxDoubleZoomed(value, conversionData));
-    else if constexpr (std::integral<T>)
-        return roundForImpreciseConversion<T>(emToPxDoubleZoomed(value, conversionData));
-}
-
 template<typename T> inline T emToPxZoomed(double value, const ComputedStyle& style)
 {
-    // For `em`, we only need the element's style, so we can overload this to take just a `ComputedStyle`.
     if constexpr (std::floating_point<T>)
         return static_cast<T>(emToPxDoubleZoomed(value, style));
     else if constexpr (std::integral<T>)

@@ -72,6 +72,10 @@ endif ()
 
 list(APPEND WebKit_SERIALIZATION_IN_FILES
     Shared/glib/AvailableInputDevices.serialization.in
+    Shared/glib/CoreIPCGByteArray.serialization.in
+    Shared/glib/CoreIPCGTlsCertificate.serialization.in
+    Shared/glib/CoreIPCGUnixFDList.serialization.in
+    Shared/glib/CoreIPCGVariant.serialization.in
     Shared/glib/DMABufBufferAttributes.serialization.in
     Shared/glib/InputMethodState.serialization.in
     Shared/glib/RenderProcessInfo.serialization.in
@@ -80,6 +84,8 @@ list(APPEND WebKit_SERIALIZATION_IN_FILES
     Shared/glib/SelectionData.serialization.in
     Shared/glib/SystemSettings.serialization.in
     Shared/glib/UserMessage.serialization.in
+
+    Shared/gtk/ArgumentCodersGtk.serialization.in
 
     Shared/soup/WebCoreArgumentCodersSoup.serialization.in
 )

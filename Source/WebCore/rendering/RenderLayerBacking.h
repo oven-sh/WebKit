@@ -169,6 +169,12 @@ public:
         return std::nullopt;
     }
 
+    bool hasAnyScrollingNodeID() const
+    {
+        return m_scrollingNodeID || m_frameHostingNodeID || m_pluginHostingNodeID
+            || m_viewportConstrainedNodeID || m_positioningNodeID || m_ancestorClippingStack;
+    }
+
     void setScrollingNodeIDForRole(ScrollingNodeID, ScrollCoordinationRole);
 
     bool hasMaskLayer() const { return m_maskLayer; }
@@ -384,7 +390,8 @@ private:
 #if ENABLE(MODEL_PROCESS)
     bool updateContentsContainmentLayer();
 #endif
-    bool updateMaskingLayer(bool hasMask, bool hasClipPath);
+    bool updateMaskingLayer(bool hasMask, bool hasClipPath, bool hasCornerShapeMask);
+    bool needsCornerShapeMask() const;
     void updateReflectionLayer();
     bool updateTransformFlatteningLayer(const RenderLayer* compositingAncestor);
 #if USE(SYSTEM_PREVIEW) && ENABLE(MODEL_PROCESS)

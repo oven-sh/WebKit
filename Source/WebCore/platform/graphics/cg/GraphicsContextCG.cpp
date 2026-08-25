@@ -977,11 +977,10 @@ void GraphicsContextCG::fillRectWithRoundedHole(const FloatRect& rect, const Flo
     else
         path.addRect(roundedHoleRect.rect());
 
-    WindRule oldFillRule = fillRule();
     Color oldFillColor = fillColor();
 
-    setFillRule(WindRule::EvenOdd);
-    setFillColor(color);
+    if (oldFillColor != color)
+        setCGFillColor(context, color, colorSpace());
 
     // fillRectWithRoundedHole() assumes that the edges of rect are clipped out, so we only care about shadows cast around inside the hole.
     bool drawOwnShadow = canUseShadowBlur();
@@ -996,13 +995,13 @@ void GraphicsContextCG::fillRectWithRoundedHole(const FloatRect& rect, const Flo
         contextShadow.drawInsetShadow(*this, rect, roundedHoleRect);
     }
 
-    fillPath(path);
+    drawPathWithCGContext(context, kCGPathEOFill, path);
 
     if (drawOwnShadow)
         stateSaver.restore();
 
-    setFillRule(oldFillRule);
-    setFillColor(oldFillColor);
+    if (oldFillColor != color)
+        setCGFillColor(context, oldFillColor, colorSpace());
 }
 
 void GraphicsContextCG::resetClip()
@@ -1201,12 +1200,20 @@ void GraphicsContextCG::setCGStyle(const std::optional<GraphicsStyle>& style, bo
 
 void GraphicsContextCG::didUpdateState(GraphicsContextState& state)
 {
-    if (!state.changes())
+    auto changes = state.changes();
+    if (!changes)
         return;
+
+    if (changes.contains(GraphicsContextState::Change::ShadowsIgnoreTransforms)) {
+        if (state.dropShadow())
+            changes.add(GraphicsContextState::Change::DropShadow);
+        if (state.style())
+            changes.add(GraphicsContextState::Change::Style);
+    }
 
     auto context = platformContext();
 
-    for (auto change : state.changes()) {
+    for (auto change : changes) {
         switch (change) {
         case GraphicsContextState::Change::FillBrush:
             if (!state.fillBrush().hasPatternOrGradient())
@@ -1307,7 +1314,7 @@ void GraphicsContextCG::strokeRect(const FloatRect& rect, float lineWidth)
             CGContextDrawLayerInRect(context, CGRectMake(destinationX, destinationY, adjustedWidth, adjustedHeight), layer.get());
         } else {
             CGContextStateSaver stateSaver(context);
-            setStrokeThickness(lineWidth);
+            CGContextSetLineWidth(context, std::max(lineWidth, 0.f));
             CGContextAddRect(context, rect);
             CGContextReplacePathWithStrokedPath(context);
             CGContextClip(context);
@@ -1325,11 +1332,10 @@ void GraphicsContextCG::strokeRect(const FloatRect& rect, float lineWidth)
     // The convenience functions currently (in at least OSX 10.9.4) fail to
     // apply some attributes of the graphics state in certain cases
     // (as identified in https://bugs.webkit.org/show_bug.cgi?id=132948)
-    CGContextStateSaver stateSaver(context);
-    setStrokeThickness(lineWidth);
-
+    CGContextSetLineWidth(context, std::max(lineWidth, 0.f));
     CGContextAddRect(context, rect);
     CGContextStrokePath(context);
+    CGContextSetLineWidth(context, std::max(strokeThickness(), 0.f));
 }
 
 void GraphicsContextCG::strokeArc(const PathArc& arc)

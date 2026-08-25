@@ -64,6 +64,7 @@
 #include "VideoTrackConfiguration.h"
 #include "VideoTrackList.h"
 #include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/RunLoop.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
@@ -235,6 +236,18 @@ void MediaElementSession::addMediaUsageManagerSessionIfNecessary()
 #endif
 }
 
+void MediaElementSession::mediaUsageManagerSessionWillBeSuspended()
+{
+#if ENABLE(MEDIA_USAGE)
+    // The back/forward cache keeps this MediaElementSession (and thus this flag) alive across
+    // suspend/resume, but the UI process unconditionally clears its usage-tracking map on every
+    // navigation commit, including the eventual restore commit.
+    // Reset the flag so the next updateMediaUsageIfChanged() after resuming re-adds the session
+    // before updating it, instead of sending an update for an identifier the UI process no longer has.
+    m_haveAddedMediaUsageManagerSession = false;
+#endif
+}
+
 void MediaElementSession::registerWithDocument(Document& document)
 {
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -267,14 +280,12 @@ void MediaElementSession::clientWillBeginAutoplaying()
     updateClientDataBuffering();
 }
 
-void MediaElementSession::clientWillBeginPlayback(CompletionHandler<void(bool)>&& completionHandler)
+Ref<GenericPromise> MediaElementSession::clientWillBeginPlayback()
 {
-    PlatformMediaSession::clientWillBeginPlayback([weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](bool willBegin) mutable {
+    return PlatformMediaSession::clientWillBeginPlayback()->whenSettled(RunLoop::mainSingleton(), [weakThis = WeakPtr { *this }](auto&& result) {
         RefPtr protectedThis = weakThis.get();
-        if (!protectedThis || !willBegin) {
-            completionHandler(false);
-            return;
-        }
+        if (!protectedThis || !result)
+            return GenericPromise::createAndReject();
 
         protectedThis->m_elementIsHiddenBecauseItWasRemovedFromDOM = false;
         protectedThis->updateClientDataBuffering();
@@ -284,7 +295,7 @@ void MediaElementSession::clientWillBeginPlayback(CompletionHandler<void(bool)>&
             session->willBeginPlayback();
 #endif
 
-        completionHandler(true);
+        return GenericPromise::createAndResolve();
     });
 }
 
@@ -1210,7 +1221,7 @@ bool MediaElementSession::requiresPlaybackTargetRouteMonitoring() const
 static bool isElementMainContentForPurposesOfAutoplay(const HTMLMediaElement& element, bool shouldHitTestMainFrame)
 {
     Ref document = element.document();
-    if (!document->hasLivingRenderTree() || document->activeDOMObjectsAreStopped() || element.isSuspended() || !element.hasAudio() || !element.hasVideo())
+    if (document->renderTreeState() != Document::RenderTreeState::Built || document->activeDOMObjectsAreStopped() || element.isSuspended() || !element.hasAudio() || !element.hasVideo())
         return false;
 
     // Elements which have not yet been laid out, or which are not yet in the DOM, cannot be main content.
@@ -1263,24 +1274,31 @@ static bool isElementMainContentForPurposesOfAutoplay(const HTMLMediaElement& el
 
 static bool isElementRectMostlyInMainFrame(const HTMLMediaElement& element)
 {
-    if (!element.renderer())
+    CheckedPtr renderer = element.renderer();
+    if (!renderer)
         return false;
 
     RefPtr documentFrame = element.document().frame();
     if (!documentFrame)
         return false;
 
+    RefPtr documentView = documentFrame->virtualView();
+    if (!documentView)
+        return false;
+
     RefPtr mainFrameView = protect(documentFrame->mainFrame())->virtualView();
     if (!mainFrameView)
         return false;
 
-    IntRect mainFrameRectAdjustedForScrollPosition = IntRect(-mainFrameView->documentScrollPositionRelativeToViewOrigin(), mainFrameView->contentsSize());
-    IntRect elementRectInMainFrame = element.boundingBoxInRootViewCoordinates();
+    IntRect mainFrameRect { -mainFrameView->documentScrollPositionRelativeToViewOrigin(), mainFrameView->contentsSize() };
+
+    IntRect elementRectInMainFrame = enclosingIntRect(documentView->convertToRootViewAcrossIsolatedFrames(FloatRect { renderer->absoluteBoundingBoxRect() }));
+
     auto totalElementArea = elementRectInMainFrame.area<RecordOverflow>();
     if (totalElementArea.hasOverflowed())
         return false;
 
-    elementRectInMainFrame.intersect(mainFrameRectAdjustedForScrollPosition);
+    elementRectInMainFrame.intersect(mainFrameRect);
 
     return elementRectInMainFrame.area() > totalElementArea / 2;
 }
@@ -1309,8 +1327,8 @@ static bool isElementLargeRelativeToMainFrame(const HTMLMediaElement& element)
 static bool isElementLargeEnoughForMainContent(const HTMLMediaElement& element, MediaSessionMainContentPurpose purpose)
 {
     static const double elementMainContentAreaMinimum = 400 * 300;
-    static const double maximumAspectRatio = purpose == MediaSessionMainContentPurpose::MediaControls ? 3 : 1.8;
     static const double minimumAspectRatio = .5; // Slightly smaller than 9:16.
+    const double maximumAspectRatio = purpose == MediaSessionMainContentPurpose::MediaControls ? 3 : 1.8;
 
     // Elements which have not yet been laid out, or which are not yet in the DOM, cannot be main content.
     CheckedPtr renderer = element.renderer();

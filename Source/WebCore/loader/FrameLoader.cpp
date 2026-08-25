@@ -737,9 +737,9 @@ void FrameLoader::clear(RefPtr<Document>&& newDocument, bool clearWindowProperti
     if (neededClear && document->backForwardCacheState() != Document::InBackForwardCache) {
         document->cancelParsing();
         document->stopActiveDOMObjects();
-        bool hadLivingRenderTree = document->hasLivingRenderTree();
+        bool hadRenderTree = document->renderTreeState() == Document::RenderTreeState::Built;
         document->willBeRemovedFromFrame();
-        if (hadLivingRenderTree)
+        if (hadRenderTree)
             document->adjustFocusedNodeOnNodeRemoval(*document);
     }
 
@@ -813,6 +813,9 @@ void FrameLoader::receivedFirstData()
 
     ASSERT(frame->document());
     Ref document = *frame->document();
+
+    if (frame->isMainFrame())
+        document->quirks().logQuirksToConsoleIfNecessary();
 
     LinkLoader::loadLinksFromHeader(documentLoader->response().httpHeaderField(HTTPHeaderName::Link), document->url(), document, LinkLoader::MediaAttributeCheck::MediaAttributeEmpty);
 
@@ -1295,7 +1298,10 @@ void FrameLoader::setFirstPartyForCookies(const URL& url)
         RefPtr localFrame = dynamicDowncast<LocalFrame>(*descendantFrame);
         if (!localFrame)
             continue;
-        if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(protect(localFrame->document())->url()) || registrableDomain.matches(protect(localFrame->document())->url()))
+        if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(protect(localFrame->document())->url())) {
+            if (RefPtr parent = dynamicDowncast<LocalFrame>(localFrame->tree().parent()))
+                protect(localFrame->document())->setSiteForCookies(parent->document()->siteForCookies());
+        } else if (registrableDomain.matches(protect(localFrame->document())->url()))
             protect(localFrame->document())->setSiteForCookies(url);
     }
 }

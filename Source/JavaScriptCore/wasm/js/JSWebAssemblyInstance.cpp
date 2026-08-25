@@ -38,6 +38,7 @@
 #include "JSWebAssemblyMemory.h"
 #include "JSWebAssemblyModule.h"
 #include "JSWebAssemblyStruct.h"
+#include "JSWebAssemblyTag.h"
 #include "Register.h"
 #include "VMTrapsInlines.h"
 #include "WasmBaselineData.h"
@@ -102,6 +103,11 @@ JSWebAssemblyInstance::JSWebAssemblyInstance(VM& vm, Structure* structure, JSWeb
         new (importFunctionInfo(i)) WasmOrJSImportableFunctionCallLinkInfo();
 
     zeroSpan(cachedMemoryBaseSizePairs());
+
+    for (unsigned i = 0; i < m_moduleInformation->memoryCount(); ++i) {
+        if (m_moduleInformation->memory(i).isMemory64())
+            m_memoryIsMemory64Bits.set(i);
+    }
 
     m_globals = globals().data();
     memset(reinterpret_cast<uint8_t*>(globals().data()), 0, globals().size_bytes());
@@ -220,6 +226,10 @@ void JSWebAssemblyInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     for (auto& wrapper : thisObject->functionWrappers())
         visitor.appendUnbarriered(wrapper.get());
     for (auto& entry : thisObject->m_constantExpressionValues)
+        visitor.append(entry.value);
+    for (auto& entry : thisObject->m_tagWrappers)
+        visitor.append(entry.value);
+    for (auto& entry : thisObject->m_importedGlobalWrappers)
         visitor.append(entry.value);
 }
 
@@ -448,6 +458,39 @@ void JSWebAssemblyInstance::setFunctionWrapper(unsigned i, JSValue value)
     Locker locker { cellLock() };
     m_functionWrappers.set(i, WriteBarrier<Unknown>(vm(), this, value));
     ASSERT(getFunctionWrapper(i) == value);
+}
+
+void JSWebAssemblyInstance::setTagWrapper(VM& vm, unsigned index, JSWebAssemblyTag* tag)
+{
+    ASSERT(tag);
+    Locker locker { cellLock() };
+    ASSERT(!m_tagWrappers.contains(index));
+    m_tagWrappers.set(index, WriteBarrier<JSWebAssemblyTag>(vm, this, tag));
+}
+
+JSWebAssemblyTag* JSWebAssemblyInstance::tagWrapper(unsigned index) const
+{
+    Locker locker { cellLock() };
+    auto iterator = m_tagWrappers.find(index);
+    if (iterator == m_tagWrappers.end())
+        return nullptr;
+    return iterator->value.get();
+}
+
+void JSWebAssemblyInstance::setImportedGlobalWrapper(VM& vm, unsigned index, JSWebAssemblyGlobal* global)
+{
+    ASSERT(global);
+    Locker locker { cellLock() };
+    m_importedGlobalWrappers.set(index, WriteBarrier<JSWebAssemblyGlobal>(vm, this, global));
+}
+
+JSWebAssemblyGlobal* JSWebAssemblyInstance::importedGlobalWrapper(unsigned index) const
+{
+    Locker locker { cellLock() };
+    auto iterator = m_importedGlobalWrappers.find(index);
+    if (iterator == m_importedGlobalWrappers.end())
+        return nullptr;
+    return iterator->value.get();
 }
 
 JSValue JSWebAssemblyInstance::ensureFunctionWrapper(FunctionSpaceIndex functionIndexSpace)

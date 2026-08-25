@@ -157,8 +157,19 @@ RenderBlockFlow::MarginInfo::MarginInfo(const RenderBlockFlow& block, IgnoreScro
 
     m_quirkContainer = block.isRenderTableCell() || block.isBody();
 
-    m_positiveMargin = m_canCollapseMarginBeforeWithChildren ? block.maxPositiveMarginBefore() : 0_lu;
-    m_negativeMargin = m_canCollapseMarginBeforeWithChildren ? block.maxNegativeMarginBefore() : 0_lu;
+    // A block-start margin that our containing block trims away must not be collapsed with our children's
+    // margins either, even though it is still part of our margin box. The side the containing block trims is
+    // expressed in its own writing mode, so it is only our block-start margin when we share that writing mode:
+    // for a block-opposing or perpendicular box it is a different edge, which does not seed the margins below.
+    auto blockStartMarginIsTrimmed = [&] {
+        if (block.isWritingModeRoot())
+            return false;
+        CheckedPtr containingBlock = dynamicDowncast<RenderBlockFlow>(block.parent());
+        return containingBlock && containingBlock->shouldTrimChildMargin(Style::MarginTrimSide::BlockStart, block);
+    };
+    auto canCollapseOwnMarginBeforeWithChildren = m_canCollapseMarginBeforeWithChildren && !blockStartMarginIsTrimmed();
+    m_positiveMargin = canCollapseOwnMarginBeforeWithChildren ? block.maxPositiveMarginBefore() : 0_lu;
+    m_negativeMargin = canCollapseOwnMarginBeforeWithChildren ? block.maxNegativeMarginBefore() : 0_lu;
 }
 
 RenderBlockFlow::MarginInfo::MarginInfo(bool canCollapseWithChildren, bool canCollapseMarginBeforeWithChildren, bool canCollapseMarginAfterWithChildren, bool quirkContainer, bool atBeforeSideOfBlock, bool atAfterSideOfBlock,  bool hasMarginBeforeQuirk, bool hasMarginAfterQuirk, bool determinedMarginBeforeQuirk, LayoutUnit positiveMargin, LayoutUnit negativeMargin, LayoutUnit marginBeforeWithClearance)
@@ -863,6 +874,9 @@ LayoutUnit RenderBlockFlow::shiftForAlignContent(LayoutUnit intrinsicLogicalHeig
             svgTextLayout->shiftLineBy(-space, 0);
     } else {
         for (CheckedPtr child = firstChildBox(); child; child = child->nextSiblingBox()) {
+            // A float is in our float list too and moves with it below, so leave it alone here.
+            if (child->isFloating())
+                continue;
             setLogicalTopForChild(*child, logicalTopForChild(*child) + space);
             if (child->isOutOfFlowPositioned() && child->style().hasStaticBlockPosition(isHorizontalWritingMode())) {
                 ASSERT(child->layer());
@@ -1020,7 +1034,7 @@ void RenderBlockFlow::layoutBlockChildren(RelayoutChildren relayoutChildren, Lay
     }
     
     if (style().marginTrim().contains(Style::MarginTrimSide::BlockEnd))
-        trimBlockEndChildrenMargins();
+        adjustBlockEndChildrenForMarginTrim();
     // Now do the handling of the bottom of the block, adding in our bottom border/padding and
     // determining the correct collapsed bottom margin information.
     auto borderBoxLogicalHeight = handleAfterSideOfBlock(marginInfo, logicalHeight() - borderAndPaddingBefore());
@@ -1054,20 +1068,16 @@ RenderBlockFlow::BlockPositionAndMargin RenderBlockFlow::layoutBlockChildFromInl
     return { logicalTopForChild(child), logicalHeight(), marginInfo };
 }
 
-void RenderBlockFlow::trimBlockEndChildrenMargins()
+void RenderBlockFlow::adjustBlockEndChildrenForMarginTrim()
 {
-    auto trimSelfCollapsingChildDescendantsMargins = [&](RenderBox& child) {
-        ASSERT(child.isSelfCollapsingBlock());
-        for (auto itr = RenderIterator<RenderBox>(&child, child.firstChildBox()); itr; itr = itr.traverseNext()) {
-            setTrimmedMarginForChild(*itr, Style::MarginTrimSide::BlockStart);
-            setTrimmedMarginForChild(*itr, Style::MarginTrimSide::BlockEnd);
-        }
-    };
-
     ASSERT(style().marginTrim().contains(Style::MarginTrimSide::BlockEnd));
-    // If we are trimming the block end margin, we need to make sure we trim the margin of the children
-    // at the end of the block by walking back up the container. Any self collapsing children will also need to
-    // have their position adjusted to below the last non self-collapsing child in its containing block
+    // FIXME: A preceding sibling's block-end margin collapses through a self-collapsing child to the block-end
+    // edge, so it is adjoining the trimmed edge and should be trimmed too, but it has already been accumulated
+    // into MarginInfo by the time we get here and still contributes to our block size when we cannot collapse
+    // with our children. The block-start edge handles the equivalent case with LayoutState::marginTrimBlockStart.
+    // The trimmed margins themselves are discarded by marginValuesForChild, but any self collapsing child
+    // at the block-end edge still needs its position adjusted to below the last non self-collapsing child in
+    // its containing block, so walk back up the container to find them.
     auto* child = lastChildBox();
     while (child) {
         if (child->isExcludedFromNormalLayout() || !child->isInFlow()) {
@@ -1075,17 +1085,9 @@ void RenderBlockFlow::trimBlockEndChildrenMargins()
             continue;
         }
 
-        auto* childContainingBlock = child->containingBlock();
-        setTrimmedMarginForChild(*child, Style::MarginTrimSide::BlockEnd);
         if (child->isSelfCollapsingBlock()) {
-            setTrimmedMarginForChild(*child, Style::MarginTrimSide::BlockStart);
+            auto* childContainingBlock = child->containingBlock();
             childContainingBlock->setLogicalTopForChild(*child, childContainingBlock->logicalHeight());
-            
-            // If this self-collapsing child has any other children, which must also be
-            // self-collapsing, we should trim the margins of all its descendants
-            if (child->firstChildBox() && !child->childrenInline())
-                trimSelfCollapsingChildDescendantsMargins(*child);
-
             child = child->previousSiblingBox();
         }  else if (auto* nestedBlock = dynamicDowncast<RenderBlockFlow>(child); nestedBlock && nestedBlock->isBlockContainer() && !nestedBlock->childrenInline() && !nestedBlock->style().marginTrim().contains(Style::MarginTrimSide::BlockEnd)) {
             // The margins *inside* this nested block are protected so we should not introspect and try to trim any of them.
@@ -1531,6 +1533,30 @@ MarginValues RenderBlockFlow::marginValuesForChild(RenderBox& child) const
             childAfterNegative = -afterMargin;
     }
 
+    // The block-start margin is trimmed either because this is the first in-flow child of a margin-trimming
+    // container, or because the layout state flag says it collapses through to the block-start edge of a
+    // margin-trimming ancestor. That flag is only set while we are still at the block-start edge, so it cannot
+    // reach a child that is preceded by an in-flow sibling with content. See layoutBlockChildren and the
+    // clearing in layoutBlockChild.
+    auto blockStartMarginIsTrimmed = [&] {
+        if (shouldTrimChildMargin(Style::MarginTrimSide::BlockStart, child))
+            return true;
+        auto* layoutState = view().frameView().layoutContext().layoutState();
+        return layoutState && layoutState->marginTrimBlockStart();
+    }();
+    auto blockEndMarginIsTrimmed = shouldTrimChildMargin(Style::MarginTrimSide::BlockEnd, child);
+
+    auto selfCollapsingMarginsAreTrimmed = (blockStartMarginIsTrimmed || blockEndMarginIsTrimmed) && child.isSelfCollapsingBlock();
+
+    if (blockStartMarginIsTrimmed || selfCollapsingMarginsAreTrimmed) {
+        childBeforePositive = 0_lu;
+        childBeforeNegative = 0_lu;
+    }
+    if (blockEndMarginIsTrimmed || selfCollapsingMarginsAreTrimmed) {
+        childAfterPositive = 0_lu;
+        childAfterNegative = 0_lu;
+    }
+
     return MarginValues(childBeforePositive, childBeforeNegative, childAfterPositive, childAfterNegative);
 }
 
@@ -1611,24 +1637,7 @@ LayoutUnit RenderBlockFlow::collapseMarginsWithChildInfo(RenderBox* child, Margi
     bool childIsSelfCollapsing = child && child->isSelfCollapsingBlock();
     bool beforeQuirk = child && hasMarginBeforeQuirk(*child);
     bool afterQuirk = child && hasMarginAfterQuirk(*child);
-    auto trimChildBlockMargins = [&]() {
-        auto childBlockFlow = dynamicDowncast<RenderBlockFlow>(child);
-        if (childBlockFlow)
-            childBlockFlow->setMaxMarginBeforeValues(0_lu, 0_lu);
-        setTrimmedMarginForChild(*child, Style::MarginTrimSide::BlockStart);
-
-        // The margin after for a self collapsing child should also be trimmed so it does not 
-        // influence the margins of the first non collapsing child
-        if (childIsSelfCollapsing) {
-            if (childBlockFlow)
-                childBlockFlow->setMaxMarginAfterValues(0_lu, 0_lu);
-            setTrimmedMarginForChild(*child, Style::MarginTrimSide::BlockEnd);
-        }
-    };
-    if (frame().view()->layoutContext().layoutState()->marginTrimBlockStart()) {
-        ASSERT(marginInfo.atBeforeSideOfBlock());
-        trimChildBlockMargins();
-    }
+    ASSERT_IMPLIES(frame().view()->layoutContext().layoutState()->marginTrimBlockStart(), marginInfo.atBeforeSideOfBlock());
 
     // Get the four margin values for the child and cache them.
     MarginValues childMargins = child ? marginValuesForChild(*child) : MarginValues(0, 0, 0, 0);
@@ -1746,14 +1755,9 @@ bool RenderBlockFlow::isChildEligibleForMarginTrim(Style::MarginTrimSide marginT
     case Style::MarginTrimSide::BlockEnd:
         // The block-end margin of a block-level last child, when trimming at the block-end edge.
         return lastInFlowChildBox() == &child;
-    case Style::MarginTrimSide::InlineStart:
-    case Style::MarginTrimSide::InlineEnd:
-        // It has no effect on the inline-axis margins of block-level descendants, nor on any margins of inline-level descendants.
-        return false;
-    default:
-        ASSERT_NOT_REACHED();
-        return false;
     }
+    ASSERT_NOT_REACHED();
+    return false;
 }
 
 LayoutUnit RenderBlockFlow::clearFloatsIfNeeded(RenderBox& child, MarginInfo& marginInfo, LayoutUnit oldTopPosMargin, LayoutUnit oldTopNegMargin, LayoutUnit yPos)
@@ -1814,6 +1818,13 @@ void RenderBlockFlow::marginBeforeEstimateForChild(RenderBox& child, LayoutUnit&
     if (document().inQuirksMode() && hasMarginBeforeQuirk(child) && (isRenderTableCell() || isBody()))
         return;
 
+    // If we are trimming the block start margins then that means
+    // grandchild margins we would collapse with below are discarded along with it
+    // (i.e. they would have no effect on the estimate).
+    auto* layoutState = view().frameView().layoutContext().layoutState();
+    if (shouldTrimChildMargin(Style::MarginTrimSide::BlockStart, child) || (layoutState && layoutState->marginTrimBlockStart()))
+        return;
+
     LayoutUnit beforeChildMargin = marginBeforeForChild(child);
     positiveMarginBefore = std::max(positiveMarginBefore, beforeChildMargin);
     negativeMarginBefore = std::max(negativeMarginBefore, -beforeChildMargin);
@@ -1849,7 +1860,8 @@ void RenderBlockFlow::marginBeforeEstimateForChild(RenderBox& child, LayoutUnit&
     // If we have a 'clear' value but also have a margin we may not actually require clearance to move past any floats.
     // If that's the case we want to be sure we estimate the correct position including margins after any floats rather
     // than use 'clearance' later which could give us the wrong position.
-    if (Style::ComputedStyle::usedClear(*grandchildBox) != UsedClear::None && !childBlock->marginBeforeForChild(*grandchildBox))
+    auto grandchildMarginBefore = childBlock->shouldTrimChildMargin(Style::MarginTrimSide::BlockStart, *grandchildBox) ? 0_lu : childBlock->marginBeforeForChild(*grandchildBox);
+    if (Style::ComputedStyle::usedClear(*grandchildBox) != UsedClear::None && !grandchildMarginBefore)
         return;
 
     // Collapse the margin of the grandchild box with our own to produce an estimate.
@@ -4161,70 +4173,79 @@ bool RenderBlockFlow::layoutSimpleBlockContentInInline(MarginInfo& marginInfo)
         return false;
     }
 
-    for (auto walker = InlineWalker(*this); !walker.atEnd(); walker.advance()) {
-        ASSERT(!walker.current()->selfNeedsLayout());
+    auto layoutBlockLevelBoxes = [&]() -> bool {
+        for (auto walker = InlineWalker(*this); !walker.atEnd(); walker.advance()) {
+            ASSERT(!walker.current()->selfNeedsLayout());
 
-        CheckedRef renderer = *walker.current();
-        CheckedPtr blockRenderer = dynamicDowncast<RenderBox>(renderer.get());
-        if (!blockRenderer || !blockRenderer->isBlockLevelBox()) {
-            // The line this content sits on consumes the margin after of the preceding block level box as the
-            // spacing before the line, so nothing is left to collapse with the container's margin after.
-            auto isContentfulInline = [&] {
-                if (CheckedPtr text = dynamicDowncast<RenderText>(renderer.get()))
-                    return text->hasRenderedText();
-                return !is<RenderInline>(renderer.get()) && !renderer->isFloatingOrOutOfFlowPositioned();
-            };
-            if (isContentfulInline()) {
-                marginInfo.setMargin({ }, { });
-                marginInfo.setAtBeforeSideOfBlock(false);
+            CheckedRef renderer = *walker.current();
+            CheckedPtr blockRenderer = dynamicDowncast<RenderBox>(renderer.get());
+            if (!blockRenderer || !blockRenderer->isBlockLevelBox()) {
+                // The line this content sits on consumes the margin after of the preceding block level box as the
+                // spacing before the line, so nothing is left to collapse with the container's margin after.
+                auto isContentfulInline = [&] {
+                    if (CheckedPtr text = dynamicDowncast<RenderText>(renderer.get()))
+                        return text->hasRenderedText();
+                    return !is<RenderInline>(renderer.get()) && !renderer->isFloatingOrOutOfFlowPositioned();
+                };
+                if (isContentfulInline()) {
+                    marginInfo.setMargin({ }, { });
+                    marginInfo.setAtBeforeSideOfBlock(false);
+                }
+                continue;
             }
-            continue;
-        }
 
-        auto logicalHeight = blockRenderer->logicalHeight();
-        auto isEligibleForBlockOnlyLayout = [&] {
-            // Do not interfere with margin collapsing.
-            if (!blockRenderer->isInFlow() || !logicalHeight)
-                return false;
-            // FIXME: This should be some narrower test.
-            if (blockRenderer->isRenderTable())
-                return false;
-            if (CheckedPtr renderBlock = dynamicDowncast<RenderBlock>(*blockRenderer))
-                return !renderBlock->containsFloats();
-            return true;
-        };
-        if (!isEligibleForBlockOnlyLayout())
-            return false;
-
-        auto displayBox = InlineIterator::boxFor(*blockRenderer);
-        if (!displayBox) {
-            ASSERT_NOT_REACHED();
-            return false;
-        }
-
-        auto borderBoxLogicalTop = blockRenderer->logicalTop();
-        auto marginBoxLogicalTop = borderBoxLogicalTop;
-
-        if (!marginInfo.canCollapseWithMarginBefore()) {
-            // Although this box is not expected to change position or size (since no self-layout is set),
-            // we treat layout as starting at the box's top margin to avoid confusion when the container performs layout on it.
-            // This logic is copied from estimateLogicalTopPosition.
-            auto marginValues = marginValuesForChild(*blockRenderer);
-            marginBoxLogicalTop -= std::max(marginInfo.positiveMargin(), marginValues.positiveMarginBefore()) - std::max(marginInfo.negativeMargin(), marginValues.negativeMarginBefore());
-        }
-
-        marginInfo = layoutBlockChildFromInlineLayout(*blockRenderer, marginBoxLogicalTop, marginInfo).marginInfo;
-        auto shouldFallbackToNormalInlineLayout = [&] {
-            if (logicalHeight != blockRenderer->logicalHeight())
+            auto logicalHeight = blockRenderer->logicalHeight();
+            auto isEligibleForBlockOnlyLayout = [&] {
+                // Do not interfere with margin collapsing.
+                if (!blockRenderer->isInFlow() || !logicalHeight)
+                    return false;
+                // FIXME: This should be some narrower test.
+                if (blockRenderer->isRenderTable())
+                    return false;
+                if (CheckedPtr renderBlock = dynamicDowncast<RenderBlock>(*blockRenderer))
+                    return !renderBlock->containsFloats();
                 return true;
-            if (CheckedPtr renderBlock = dynamicDowncast<RenderBlock>(*blockRenderer))
-                return renderBlock->containsFloats();
-            return false;
-        };
-        if (shouldFallbackToNormalInlineLayout())
-            return false;
-        blockRenderer->setLogicalTop(borderBoxLogicalTop);
+            };
+            if (!isEligibleForBlockOnlyLayout())
+                return false;
+
+            auto displayBox = InlineIterator::boxFor(*blockRenderer);
+            if (!displayBox) {
+                ASSERT_NOT_REACHED();
+                return false;
+            }
+
+            auto borderBoxLogicalTop = blockRenderer->logicalTop();
+            auto marginBoxLogicalTop = borderBoxLogicalTop;
+
+            if (!marginInfo.canCollapseWithMarginBefore()) {
+                // Although this box is not expected to change position or size (since no self-layout is set),
+                // we treat layout as starting at the box's top margin to avoid confusion when the container performs layout on it.
+                // This logic is copied from estimateLogicalTopPosition.
+                auto marginValues = marginValuesForChild(*blockRenderer);
+                marginBoxLogicalTop -= std::max(marginInfo.positiveMargin(), marginValues.positiveMarginBefore()) - std::max(marginInfo.negativeMargin(), marginValues.negativeMarginBefore());
+            }
+
+            marginInfo = layoutBlockChildFromInlineLayout(*blockRenderer, marginBoxLogicalTop, marginInfo).marginInfo;
+            auto shouldFallbackToNormalInlineLayout = [&] {
+                if (logicalHeight != blockRenderer->logicalHeight())
+                    return true;
+                if (CheckedPtr renderBlock = dynamicDowncast<RenderBlock>(*blockRenderer))
+                    return renderBlock->containsFloats();
+                return false;
+            };
+            if (shouldFallbackToNormalInlineLayout())
+                return false;
+            blockRenderer->setLogicalTop(borderBoxLogicalTop);
+        }
+        return true;
+    };
+
+    if (!layoutBlockLevelBoxes()) {
+        rebuildFloatingObjectSetFromIntrudingFloats();
+        return false;
     }
+
     inlineLayout()->updateOverflow();
     return true;
 }

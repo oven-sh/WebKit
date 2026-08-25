@@ -235,7 +235,11 @@ public:
 
     void updateCache(const UnlinkedFunctionExecutable*, const SourceCode&, CodeSpecializationKind, const UnlinkedFunctionCodeBlock*);
 
-    void clear() { m_sourceCode.clear(); }
+    void clear()
+    {
+        write();
+        m_sourceCode.clear();
+    }
     JS_EXPORT_PRIVATE void write();
 
 private:
@@ -277,7 +281,7 @@ JS_EXPORT_PRIVATE void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM&, Unl
 #if USE(BUN_JSC_ADDITIONS)
 // What a CodeCache hit does besides returning the block: the executable learns the parse results
 // (newCodeBlockFor() requires them) and the provider the //# sourceURL / sourceMappingURL directives.
-void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedCodeBlock*);
+void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedGlobalCodeBlock*);
 #endif
 
 void writeCodeBlock(const SourceCodeKey&, const SourceCodeValue&);

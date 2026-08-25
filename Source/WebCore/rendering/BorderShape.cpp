@@ -430,8 +430,7 @@ static void addAlignedToCurveOffsetContour(Path& path, const FloatRoundedRect& r
     RectCorners<CornerInput> referenceCorners;
     buildCornerInputs(referenceSnapped, cornerCurvatures, -leftOffset, -topOffset, -rightOffset, -bottomOffset, referenceCorners);
 
-    auto outsetMiter = referenceRect.contains(targetRect) ? OutsetMiter::No : OutsetMiter::Yes;
-    borderContourPath(path, referenceCorners, &targetRect, outsetMiter);
+    borderContourPath(path, referenceCorners, &targetRect);
 }
 
 static void addOuterCornerShapeToPath(Path& path, const FloatRoundedRect& outerSnapped, const RectCorners<float>& cornerCurvatures, const std::optional<FloatRoundedRect>& offsetReferenceRect)
@@ -440,6 +439,26 @@ static void addOuterCornerShapeToPath(Path& path, const FloatRoundedRect& outerS
     buildCornerInputs(outerSnapped, cornerCurvatures, 0, 0, 0, 0, cornerRects);
     rebuildOffsetCornersFromReference(cornerRects, offsetReferenceRect, cornerCurvatures, outerSnapped.rect());
     borderContourPath(path, cornerRects);
+}
+
+std::optional<Path> BorderShape::pathForShapedRect(const FloatRoundedRect& roundedRect, const RectCorners<float>& cornerCurvatures)
+{
+    auto& radii = roundedRect.radii();
+    auto isRound = [](float curvature, const FloatSize& radius) {
+        return curvature == 1.0f || radius.isEmpty();
+    };
+    if (isRound(cornerCurvatures.topLeft(), radii.topLeft())
+        && isRound(cornerCurvatures.topRight(), radii.topRight())
+        && isRound(cornerCurvatures.bottomLeft(), radii.bottomLeft())
+        && isRound(cornerCurvatures.bottomRight(), radii.bottomRight()))
+        return std::nullopt;
+
+    RectCorners<CornerInput> cornerRects;
+    buildCornerInputs(roundedRect, cornerCurvatures, 0, 0, 0, 0, cornerRects);
+
+    Path path;
+    borderContourPath(path, cornerRects, nullptr, ContourStart::TopEdge);
+    return path;
 }
 
 Path BorderShape::pathForOuterCornerShape(const FloatRoundedRect& outerSnapped, const std::optional<FloatRoundedRect>& snappedOffsetReference) const

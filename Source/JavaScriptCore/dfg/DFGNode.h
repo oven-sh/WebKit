@@ -2320,10 +2320,10 @@ public:
         return op() == NotifyWrite;
     }
     
-    WatchpointSet* watchpointSet()
+    InlineWatchpointSet* watchpointSet()
     {
         ASSERT(hasWatchpointSet());
-        return m_opInfo.as<WatchpointSet*>();
+        return m_opInfo.as<InlineWatchpointSet*>();
     }
     
     bool hasStoragePointer()

@@ -608,6 +608,8 @@ media/media-source/media-source-video-seek-pause.html [ Failure Pass ]
 # GStreamer incorrectly demux the webm and creates gaps.
 webkit.org/b/266195 media/media-source/media-managedmse-multipletracks-bufferedchange.html [ Failure ]
 
+webkit.org/b/322164 media/media-source/media-source-real-webm-backwards-timecode.html [ Failure ]
+
 # Support to pause with 0 rate playback seems to work only in GStreamer ports
 media/media-source/media-source-play-zero-playbackrate.html [ Pass ]
 
@@ -947,29 +949,31 @@ imported/w3c/web-platform-tests/storage/ [ Pass ]
 storage/storagemanager/ [ Pass ]
 
 # display-p3 canvas and ImageData enabled for WebKitGTK/WPEWebKit since 319168@main.
-fast/canvas/canvas-color-space-display-p3-ImageData.html
-fast/canvas/gradient-into-p3-canvas.html
-imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-canvas.html
-imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-ImageBitmap.html
-imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-ImageData.html
-imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-canvas.html
-imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-settings.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.fillText.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.fillText.shadow.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.strokeText.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toBlob.p3.canvas.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toBlob.with.putImageData.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.jpeg.p3.canvas.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.p3.canvas.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.with.putImageData.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.to.p3.html
-imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.to.srgb.html
-imported/w3c/web-platform-tests/html/canvas/offscreen/manual/wide-gamut-canvas/2d.color.space.p3.convertToBlobp3.canvas.html
-imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.html
-imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.worker.html
-imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.html
-imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.worker.html
-storage/indexeddb/structured-clone-image-data-display-p3.html
+fast/canvas/canvas-color-space-display-p3-ImageData.html [ Pass ]
+fast/canvas/gradient-into-p3-canvas.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-canvas.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-ImageBitmap.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-ImageData.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-canvas.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-settings.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.fillText.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.fillText.shadow.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.strokeText.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toBlob.p3.canvas.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toBlob.with.putImageData.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.jpeg.p3.canvas.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.p3.canvas.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.with.putImageData.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.to.p3.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.to.srgb.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/wide-gamut-canvas/2d.color.space.p3.convertToBlobp3.canvas.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.worker.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.html [ Pass ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.worker.html [ Pass ]
+storage/indexeddb/structured-clone-image-data-display-p3.html [ Pass ]
+
+imported/w3c/web-platform-tests/css/css-pseudo/marker-content-012.html [ Pass ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of PASSING tests.
@@ -1038,9 +1042,6 @@ accessibility/css-content-alt-text.html [ Skip ]
 
 # AXObjectCache::announce not implemented.
 accessibility/announcement-notification.html [ Skip ]
-
-# Failing since introduced.
-accessibility/focus-change-id-mutation-and-removal-crash.html [ Skip ]
 
 # AccessibilityUIElement::isInTable is not implemented.
 accessibility/table-ancestry.html [ Skip ]
@@ -1117,12 +1118,6 @@ accessibility/loading-iframe-updates-axtree.html [ Skip ]
 # Missing AccessibilityUIElement::{isBusy, isAtomicLiveRegion, liveRegionStatus, liveRegionRelevant} implementations.
 accessibility/live-region-attributes-update-after-dynamic-change.html [ Skip ]
 
-# Missing AccessibilityUIElement::focusableAncestor implementation.
-accessibility/focusable-ancestor.html [ Failure ]
-
-# Missing AccessibilityUIElement::{editableAncestor, highestEditableAncestor} implementations.
-accessibility/editable-ancestor.html [ Failure ]
-
 # Timing out since it was added in https://bugs.webkit.org/show_bug.cgi?id=239434.
 accessibility/text-updates-after-dynamic-change.html [ Skip ]
 
@@ -1131,9 +1126,6 @@ accessibility/aria-multiline.html [ Skip ]
 
 # Failing since added in https://bugs.webkit.org/show_bug.cgi?id=244069.
 accessibility/dynamically-ignored-canvas.html [ Skip ]
-
-# Missing AccessibilityUIElement::takeFocus().
-accessibility/basic-focusability.html [ Skip ]
 
 # Missing AccessibilityUIElement::uiElementForSearchPredicate implementation.
 accessibility/aria-controlled-table-row-visibility.html [ Skip ]
@@ -1175,18 +1167,40 @@ accessibility/visible-character-range-vertical-rl.html [ Skip ]
 
 accessibility/display-contents/tree-and-treeitems.html [ Failure ]
 
-webkit.org/b/212805 accessibility/svg-text.html [ Failure ]
-
 accessibility/combobox/mac [ Skip ]
 accessibility/shadow-dom/reference-target/mac [ Skip ]
+
+accessibility/aria-image-emits-object-replacement.html [ Failure ]
+accessibility/bezier-path-curves.html [ Failure ]
+accessibility/css-speech-speak.html [ Failure ]
+accessibility/heading-clickpoint.html [ Failure ]
+accessibility/index-for-zero-offset-text-marker.html [ Failure ]
+accessibility/large-text-area.html [ Failure ]
+accessibility/line-requests-starting-after-first-line.html [ Failure ]
+accessibility/listmarker-suffix.html [ Failure ]
+accessibility/mixed-checkbox.html [ Failure ]
+accessibility/native-vs-nonnative-checkboxes.html [ Failure ]
+accessibility/offset-from-root-outside-text-run.html [ Failure ]
+accessibility/range-from-webarea.html [ Failure ]
+accessibility/replace-text-with-empty-range.html [ Failure ]
+accessibility/replace-text-with-range-on-webarea-element.html [ Failure ]
+accessibility/replace-text-with-range.html [ Failure ]
+accessibility/search-predicate-visited-links.html [ Failure Timeout ]
+accessibility/shadow-dom/reference-target/aria-describedby.html [ Failure ]
+accessibility/stitched-text-marker-range-for-ui-element.html [ Failure ]
+accessibility/string-range-contains-listmarker.html [ Failure ]
+accessibility/text-marker-emitted-newlines.html [ Failure ]
+accessibility/text-marker-length.html [ Failure ]
+accessibility/text-marker-string-excludes-generated-content.html [ Failure ]
+accessibility/text-markers-for-input-with-placeholder.html [ Failure ]
+
+# Requires (ACCESSIBILITY_NON_BLINKING_CURSOR), so internals.setPrefersNonBlinkingCursor is undefined here.
+accessibility/prefers-non-blinking-cursor.html [ Skip ]
 
 accessibility/textarea-line-for-index.html [ Skip ]
 
 # AX support for datetime input elements needs to be completed in glib platforms.
 accessibility/datetime [ Skip ]
-
-# Requires AccessibilityUIElement::dismiss to return whether or not it was handled.
-accessibility/dismiss-action-returns-whether-keyevent-handled.html [ Skip ]
 
 # Different roles
 accessibility/contenteditable-values.html [ Skip ]
@@ -1196,11 +1210,6 @@ accessibility/aria-table-indextext.html [ Failure ]
 
 # Started failing on [313982@main..313983@main].
 webkit.org/b/315858 [ Release ] accessibility/aria-owns-deep-chain-no-timeout.html [ Timeout Pass ]
-
-# Added in r263823. Both tests are timing out.
-webkit.org/b/213874 accessibility/keyevents-for-increment-actions-with-node-removal.html [ Skip ]
-webkit.org/b/213874 accessibility/keyevents-posted-for-increment-actions.html [ Skip ]
-webkit.org/b/213874 accessibility/keyevents-posted-for-dismiss-action.html [ Skip ]
 
 webkit.org/b/199860 accessibility/button-with-aria-haspopup-role.html [ Failure ]
 webkit.org/b/199860 accessibility/datalist.html [ Failure ]
@@ -1271,9 +1280,6 @@ webkit.org/b/232249 accessibility/video-element-url-attribute.html [ Failure ]
 webkit.org/b/232255 accessibility/math-has-non-presentational-children.html [ Failure ]
 
 webkit.org/b/232256 accessibility/auto-fill-crash.html [ Failure ]
-
-# Times out due to missing AccessibilityUIElement::takeFocus
-http/tests/accessibility/focus-text-field-in-iframe.html [ Skip ]
 
 # Times out due to missing AccessibilityUIElement::linkedUIElementAtIndex() implementation.
 accessibility/combobox/combobox-linked-listbox-destroyed.html [ Skip ]
@@ -1608,6 +1614,13 @@ webkit.org/b/178441 editing/deleting/delete-ligature-003.html [ Failure ]
 webkit.org/b/239345 editing/execCommand/insert-ordered-list-and-delete.html [ Failure Pass ]
 
 webkit.org/b/179605 editing/execCommand/underline-selection-containing-image.html [ Failure ]
+
+# Moving the selection out of a composition only aborts the composition on macOS, where
+# Editor::selectionWillChange() cancels it. That function is an empty stub on every other
+# port, so no compositionend is dispatched. Same gap as
+# fast/events/ime-compositionend-on-selection-change.html.
+editing/input/compositionend-after-clicking-outside-editable.html [ Failure ]
+editing/input/compositionend-data-after-aborting-composition.html [ Failure ]
 
 # Assertion failure if ASSERT_ENABLED
 webkit.org/b/286128 [ Release ] editing/inserting/insert-list-user-select-none-crash.html [ Crash Pass Timeout ]
@@ -3136,9 +3149,6 @@ webkit.org/b/214029 imported/w3c/web-platform-tests/html/semantics/embedded-cont
 webkit.org/b/214125 imported/w3c/web-platform-tests/html/rendering/widgets/select-wrap-no-spill.optional.html [ Failure ]
 imported/w3c/web-platform-tests/html/rendering/widgets/button-layout/propagate-text-decoration.html [ ImageOnlyFailure ]
 
-# GTK/WPE don't support the "none" value for selections of input and textarea elements.
-webkit.org/b/180931 imported/w3c/web-platform-tests/html/semantics/forms/textfieldselection/selection-after-content-change.html [ Failure ]
-
 # GTK/WPE fail newly added WPT `meter` element test cases.
 imported/w3c/web-platform-tests/html/semantics/forms/the-meter-element/meter-appearance-none-even-less-good-value-rendering.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/semantics/forms/the-meter-element/meter-appearance-none-optimum-value-rendering.html [ ImageOnlyFailure ]
@@ -4174,8 +4184,6 @@ webkit.org/b/194044 imported/w3c/web-platform-tests/media-source/mediasource-add
 # Added in r276357. Also marked as ImageOnlyFailure in iOS TestExpectations.
 fast/text/line-break-with-locale.html [ ImageOnlyFailure ]
 
-webkit.org/b/225423 fast/canvas/canvas-composite-text-alpha.html [ Failure ]
-
 # Decoded images/video frames are always tagged as sRGB regardless of their embedded ICC
 # profile: PNGImageDecoder/JPEGImageDecoder convert via LCMS straight to sRGB during decode,
 # and ImageBackingStoreSkia.cpp hardcodes SkColorSpace::MakeSRGB() on the result. Wide-gamut
@@ -4339,7 +4347,7 @@ imported/w3c/web-platform-tests/css/css-color/system-color-hightlights-vs-getSel
 imported/w3c/web-platform-tests/css/css-color/system-color-hightlights-vs-getSelection-002.html [ ImageOnlyFailure ]
 
 # Flakily crashing on GTK and WPE bots
-webkit.org/b/286131 imported/w3c/web-platform-tests/css/css-transforms/transform-box/cssbox-content-box-002.html [ Pass Crash ImageOnlyFailure ]
+webkit.org/b/286131 imported/w3c/web-platform-tests/css/css-transforms/transform-box/cssbox-content-box-002.html [ Pass Crash ImageOnlyFailure Timeout ]
 
 imported/w3c/web-platform-tests/css/css-overscroll-behavior/overscroll-behavior.html [ Skip ]
 imported/w3c/web-platform-tests/css/css-scroll-snap/input/mouse-wheel.html [ Skip ]
@@ -4647,7 +4655,6 @@ webkit.org/b/278719 fast/events/touch/multi-touch-some-without-handlers.html [ T
 webkit.org/b/278719 fast/events/touch/ontouchstart-active-selector.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/page-scaled-touch-gesture-click.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/scroll-without-mouse-lacks-mousemove-events.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/send-oncancel-event.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/touch-constructor.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/touch-input-element-change-documents.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/touch-scaled-scrolled.html [ Failure ]
@@ -4675,9 +4682,6 @@ imported/w3c/web-platform-tests/upgrade-insecure-requests/gen/srcdoc-inherit.met
 
 # CSS image-orientation is not yet enabled.
 webkit.org/b/89052 fast/css/image-orientation/image-orientation.html [ Failure ]
-
-# IsLoggedIn is an experimental feature (Introduced in r250944)
-http/tests/is-logged-in/available-in-secure-contexts.https.html [ Failure ]
 
 # User-installed font infrastructure is ony present on certain OSes.
 fast/text/user-installed-fonts/disable.html [ Skip ]
@@ -4898,6 +4902,8 @@ webkit.org/b/303873 imported/w3c/web-platform-tests/trusted-types/navigate-to-ja
 
 # No USE(AUDIO_SESSION) support:
 media/volume-activate-audio-session.html [ Skip ]
+media/audio-session-not-activated-for-denied-audible-element.html [ Skip ]
+media/audio-session-not-activated-when-unmuting-denied-element.html [ Skip ]
 
 # Does not work on glib platforms
 http/tests/performance/performance-resource-timing-cross-origin-media-with-cors.html [ Skip ]
@@ -5240,8 +5246,6 @@ webkit.org/b/315517 imported/w3c/web-platform-tests/css/css-values/attr-pseudo-e
 
 webkit.org/b/315756 fast/css/container-query-orientation-modal-dialog-crash.html [ Crash Pass ]
 
-webkit.org/b/315925 inspector/heap/getRemoteObject.html [ Failure Pass ]
-
 webkit.org/b/316158 fullscreen/full-screen-enter-while-exiting-mid-completion-handler.html [ Crash Pass ]
 
 webkit.org/b/316192 [ Release ] imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/no-cors.https.html [ Crash Pass ]
@@ -5289,8 +5293,7 @@ fast/dom/HTMLImageElement/sizes/image-sizes-js-change.html [ Pass Failure ]
 webkit.org/b/317607 http/tests/media/track/text-track-cross-origin-in-band.html [ Failure ]
 webkit.org/b/317607 http/tests/media/track/track-removal-clears-pending-list.html [ Failure ]
 
-webkit.org/b/319954 [ x86_64 ] imported/w3c/web-platform-tests/css/css-text/white-space/white-space-trim-inline-block.html [ ImageOnlyFailure ]
-webkit.org/b/319954 [ arm64 ] imported/w3c/web-platform-tests/css/css-text/white-space/white-space-trim-inline-block.html [ Pass ImageOnlyFailure ]
+webkit.org/b/319954 imported/w3c/web-platform-tests/css/css-text/white-space/white-space-trim-inline-block.html [ Pass ImageOnlyFailure ]
 
 webkit.org/b/317966 http/tests/web-locks/web-lock-in-serviceworker.html [ Crash Failure Pass ]
 webkit.org/b/320245 [ x86_64 ] imported/w3c/web-platform-tests/web-locks/bfcache/abort.tentative.https.html [ Pass Failure ]
@@ -5383,6 +5386,8 @@ webkit.org/b/321482 imported/w3c/web-platform-tests/css/filter-effects/filtered-
 
 webkit.org/b/321708 webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count-on-src-change.html [ Crash Failure Timeout Pass ]
 webkit.org/b/321708 webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count.html [ Crash Failure Timeout Pass ]
+
+webkit.org/b/164277 fast/preloader/image-srcset.html [ Pass Failure ]
 
 webkit.org/b/318029 [ Release ] media/media-source/media-source-seek-twice.html [ Pass Timeout ]
 
