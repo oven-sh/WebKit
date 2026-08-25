@@ -126,6 +126,7 @@ NetworkProcess/NetworkSession.cpp @cost:9
 NetworkProcess/NetworkSocketChannel.cpp
 NetworkProcess/PingLoad.cpp @cost:4
 NetworkProcess/PreconnectTask.cpp @cost:3
+NetworkProcess/QualifiedServerTrustFetch.cpp @cost:3
 
 NetworkProcess/Authentication/AuthenticationManager.cpp @cost:7
 
@@ -433,6 +434,7 @@ UIProcess/RemotePageVideoPresentationManagerProxy.cpp
 UIProcess/RemotePageWebAuthenticatorCoordinatorProxy.cpp
 UIProcess/RemotePageWebDeviceOrientationUpdateProviderProxy.cpp
 UIProcess/ResponsivenessTimer.cpp
+UIProcess/SecurityFlagsController.cpp
 UIProcess/SessionHistoryTraversalQueue.cpp
 UIProcess/SpeechRecognitionRemoteRealtimeMediaSource.cpp
 UIProcess/SpeechRecognitionRemoteRealtimeMediaSourceManager.cpp

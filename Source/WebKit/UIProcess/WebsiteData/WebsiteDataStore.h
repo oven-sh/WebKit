@@ -76,6 +76,14 @@
 #include <WebCore/SoupNetworkProxySettings.h>
 #endif
 
+#if defined(__swift__) && OS(WINDOWS)
+// The Swift C++ importer eagerly instantiates class-template members
+// (including Vector<T>::span()), and MSVC's STL rejects std::span<T> when T
+// is incomplete.
+#include "ITPThirdPartyData.h"
+#include "WebsiteDataRecord.h"
+#endif
+
 namespace API {
 class Data;
 class DownloadClient;
@@ -233,6 +241,8 @@ public:
     void logTestingEvent(const String&);
     IsolatedSiteStore& isolatedSiteStore();
     std::optional<OptionSet<IsolatedSiteStore::Signal>> isolatedSiteSignalsForTesting(const URL&);
+    void setHighValueFraudTargetDomainsForTesting(Vector<String>&&);
+    void setMaximumIsolatedSiteCountForTesting(size_t);
     void logUserInteraction(const URL&, CompletionHandler<void()>&&);
     void getAllStorageAccessEntries(WebPageProxyIdentifier, CompletionHandler<void(Vector<String>&& domains)>&&);
     void hasHadUserInteraction(const URL&, CompletionHandler<void(bool)>&&);
@@ -542,6 +552,9 @@ private:
 #endif
     void initializeManagedDomains(ForceReinitialization = ForceReinitialization::No);
 
+    bool computeSiteIsolationHighValueFraudTargetDomainsEnabled() const;
+    void updateIsolatedSiteStoreSettings();
+
     void fetchDataAndApply(OptionSet<WebsiteDataType>, OptionSet<WebsiteDataFetchOption>, Ref<WorkQueue>&&, Function<void(Vector<WebsiteDataRecord>)>&& apply);
 
     void platformInitialize();
@@ -691,7 +704,7 @@ private:
 #if HAVE(NW_PROXY_CONFIG)
     std::optional<Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>> m_proxyConfigData;
 #endif
-    bool m_storageSiteValidationEnabled { false };
+    bool m_storageSiteValidationEnabled { true };
     HashSet<URL> m_persistedSiteURLs;
 
     RemoveDataTaskCounter m_removeDataTaskCounter;

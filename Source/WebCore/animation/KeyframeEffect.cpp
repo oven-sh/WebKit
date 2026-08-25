@@ -264,6 +264,9 @@ static double computedOffset(Style::SingleAnimationRangeName rangeName, Style::P
 
     auto [attachmentRangeStartOffset, attachmentRangeEndOffset] = viewTimeline->offsetIntervalForAttachmentRange(attachmentRange);
     auto attachmentRangeOffsetDelta = attachmentRangeEndOffset - attachmentRangeStartOffset;
+    if (!attachmentRangeOffsetDelta)
+        return std::numeric_limits<double>::quiet_NaN();
+
     return (computedOffsetWithinNamedRange - attachmentRangeStartOffset) / attachmentRangeOffsetDelta;
 }
 
@@ -1294,21 +1297,13 @@ bool KeyframeEffect::animatesProperty(const AnimatableCSSProperty& property) con
 
     return WTF::switchOn(property,
         [&](CSSPropertyID cssProperty) {
-            return m_parsedKeyframes.findIf([&](const auto& keyframe) {
-                for (auto keyframeProperty : keyframe.styleStrings.keys()) {
-                    if (keyframeProperty == cssProperty)
-                        return true;
-                }
-                return false;
+            return m_parsedKeyframes.findIf([&](auto& keyframe) {
+                return keyframe.styleStrings.contains(cssProperty);
             });
         },
         [&](const AtomString& customProperty) {
-            return m_parsedKeyframes.findIf([&](const auto& keyframe) {
-                for (auto keyframeProperty : keyframe.customStyleStrings.keys()) {
-                    if (keyframeProperty == customProperty)
-                        return true;
-                }
-                return false;
+            return m_parsedKeyframes.findIf([&](auto& keyframe) {
+                return keyframe.customStyleStrings.contains(customProperty);
             });
         }) != notFound;
 }
@@ -2504,7 +2499,7 @@ void KeyframeEffect::applyPendingAcceleratedActions()
         case AcceleratedAction::Stop:
             ASSERT(document());
             renderer->animationFinished(m_blendingKeyframes);
-            if (!document()->renderTreeBeingDestroyed())
+            if (document()->renderTreeState() != Document::RenderTreeState::BeingDestroyed)
                 protect(m_target)->invalidateStyleAndLayerComposition();
             m_runningAccelerated = canBeAccelerated() ? RunningAccelerated::NotStarted : RunningAccelerated::Prevented;
             break;
@@ -2745,10 +2740,12 @@ bool KeyframeEffect::ticksContinuouslyWhileActive() const
     if (doesNotAffectStyles)
         return false;
 
-    auto targetHasDisplayContents = [&]() {
-        return m_target && !m_pseudoElementIdentifier && m_target->hasDisplayContents();
+    // A renderer-less target can still have a resolved style kept for it — display:contents, and a <model> inside
+    // a spatial:portal — in which case there is something to animate and this has to keep ticking.
+    auto targetHasStyleToAnimate = [&]() {
+        return m_target && !m_pseudoElementIdentifier && m_target->renderOrDisplayContentsStyle();
     };
-    if (!renderer() && !m_blendingKeyframes.properties().contains(CSSPropertyDisplay) && !targetHasDisplayContents())
+    if (!renderer() && !m_blendingKeyframes.properties().contains(CSSPropertyDisplay) && !targetHasStyleToAnimate())
         return false;
 
     if (isCompletelyAccelerated() && isRunningAccelerated()) {

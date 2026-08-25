@@ -1101,6 +1101,8 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     m_mayStartMediaWhenInWindow = parameters.mayStartMediaWhenInWindow;
     if (parameters.mediaPlaybackIsSuspended)
         page->suspendAllMediaPlayback();
+    if (parameters.areActiveDOMObjectsAndAnimationsSuspended)
+        page->suspendActiveDOMObjectsAndAnimations();
 
     if (parameters.openedByDOM)
         page->setOpenedByDOM();
@@ -1449,7 +1451,7 @@ void WebPage::frameTreeSyncDataChangedInAnotherProcess(FrameIdentifier frameID, 
         break;
 
     case FrameTreeSyncDataType::ChildrenFrameLayoutInfo:
-        updateExposedRectFromParent(*coreFrame);
+        updateChildFrameVisibleRectsFromParent(*coreFrame);
         break;
 
     default:
@@ -1481,18 +1483,12 @@ void WebPage::allFrameTreeSyncDataChangedInAnotherProcess(FrameIdentifier frameI
     RefPtr coreFrame = frame->coreFrame();
     if (coreFrame) {
         coreFrame->updateFrameTreeSyncData(WTF::move(data));
-        updateExposedRectFromParent(*coreFrame);
+        updateChildFrameVisibleRectsFromParent(*coreFrame);
     }
 }
 
-void WebPage::updateExposedRectFromParent(WebCore::Frame& parentCoreFrame)
+void WebPage::updateChildFrameVisibleRectsFromParent(WebCore::Frame& parentCoreFrame)
 {
-    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=320601 - Align iOS and macOS behavior regarding m_exposedContentRect
-#if PLATFORM(IOS_FAMILY)
-    // When a RemoteFrame parent broadcasts childrenFrameLayoutInfo, each entry carries the child's visible
-    // rect in the parent (already clamped to the top-level viewport on the sender side).
-    // Project that rect into the child's own root-content coords and use it as the frame's exposedContentRect,
-    // so its tiled backing covers only the on-screen portion, matching the rect with site isolation off.
     if (!m_page || !m_page->settings().siteIsolationEnabled())
         return;
 
@@ -1505,50 +1501,90 @@ void WebPage::updateExposedRectFromParent(WebCore::Frame& parentCoreFrame)
         RefPtr localChild = dynamicDowncast<LocalFrame>(child.get());
         if (!localChild)
             continue;
+
         RefPtr childView = localChild->view();
         if (!childView)
             continue;
+
         auto it = childrenInfo.find(localChild->frameID());
         if (it == childrenInfo.end())
             continue;
 
-        // Project the parent-supplied visible rect into this child's root-content coordinates. A missing
-        // rect (fully below the fold / clipped out) maps to an empty rect so all tiles can be released.
         Ref layoutInfo = it->value;
-        auto visibleRectInParent = layoutInfo->visibleRectInParent();
-        bool visibleRectInParentIsEmpty = !visibleRectInParent || visibleRectInParent->isEmpty();
-        auto projected = layoutInfo->projectVisibleRectToChildContent().value_or(FloatRect { });
+        bool needsViewportContentsChanged = false;
+
+        auto ownerHasRenderer = layoutInfo->ownerHasRenderer();
+        if (childView->ownerHasRendererInParentFrameProcess() != ownerHasRenderer) {
+            childView->setOwnerHasRendererInParentFrameProcess(ownerHasRenderer);
+
+            // We need to re-run viewportContentsChanged() when display:none state changes, as the
+            // frame throttling logic in updateScriptedAnimationsAndTimersThrottlingState depends
+            // on it.
+            needsViewportContentsChanged = true;
+        }
+
+        auto visibleRectFromParentFrameProcess = [&]() -> std::optional<IntRect> {
+            // This is the portion of the child frame that is on screen in the parent's content
+            // coordinate space.
+            auto onScreenRectInParent = layoutInfo->visibleRectInParent();
+            if (!onScreenRectInParent) {
+                // Either the owner element has no renderer, or this frame is entirely clipped by an
+                // ancestor in the parent frame process.
+                return IntRect { };
+            }
+            onScreenRectInParent->intersect(layoutInfo->windowClipRectInParent());
+
+            auto onScreenRectInChild = layoutInfo->mapParentContentsToChildWindow(*onScreenRectInParent);
+            if (onScreenRectInChild) {
+                onScreenRectInChild->intersect(FloatRect { { }, childView->size() });
+                return enclosingIntRect(*onScreenRectInChild);
+            }
+
+            // We couldn't map the rect into the child's coordinate space (e.g. non-affine
+            // transform). Return std::nullopt, which will cause LocalFrameView::windowClipRect
+            // to make the conservative assumption that the visibleContentRect is unclipped.
+            return std::nullopt;
+        }();
+
+        if (childView->visibleRectFromParentFrameProcess() != visibleRectFromParentFrameProcess) {
+            childView->setVisibleRectFromParentFrameProcess(visibleRectFromParentFrameProcess);
+            needsViewportContentsChanged = true;
+        }
+
+        if (needsViewportContentsChanged)
+            childView->viewportContentsChanged();
+
+#if PLATFORM(IOS_FAMILY)
+        // FIXME (320601): this only affects tile coverage on iOS by setting exposedContentRect on
+        // this child frame based on the exposedContentRect from the parent frame process. We need
+        // to do something similar on macOS (see visibleRectForLayerFlushing).
+        auto exposedContentRectInParent = layoutInfo->exposedContentRectInParent();
+        bool exposedContentRectInParentIsEmpty = !exposedContentRectInParent || exposedContentRectInParent->isEmpty();
+        auto projected = exposedContentRectInParentIsEmpty ? FloatRect { } : layoutInfo->mapParentContentsToChildWindow(*exposedContentRectInParent).value_or(FloatRect { });
         projected.intersect(FloatRect { { }, childView->size() });
 
-        // If the main WCP says this frame is visible but the projection is empty, fallback to the full
-        // rect until we get updated geometry from the main WCP
-        if (!visibleRectInParentIsEmpty && projected.isEmpty())
+        // The parent frame process thinks this frame is visible, but we think it isn't. Err on the
+        // side of tiling the full view until we get updated geometry from the parent frame process.
+        if (!exposedContentRectInParentIsEmpty && projected.isEmpty())
             projected = FloatRect { { }, childView->size() };
 
-        // This runs once per parent rendering update, so only touch the frame (and schedule a rendering
-        // update) when the coverage rect actually changes — or the first time the embedder supplies a rect,
-        // which flips WebFrame's full-size fallback off. This keeps steady-state (no scroll/resize)
-        // broadcasts from scheduling redundant rendering updates.
-        // exposedContentRect tracks the main WCP visible region, while unobscured content size stays at
-        // the child view's size (setUnobscuredContentSize is itself a no-op when unchanged).
         if (childView->exposedContentRect() != projected) {
             childView->setExposedContentRect(projected);
             needsRenderingUpdate = true;
         }
+
         childView->setUnobscuredContentSize(childView->size());
         if (!childView->hasEverSetExposedContentRectFromEmbedder()) {
             childView->setHasSetExposedContentRectFromEmbedder();
             needsRenderingUpdate = true;
         }
+#endif
     }
 
     if (needsRenderingUpdate) {
         if (RefPtr drawingArea = this->drawingArea())
             drawingArea->triggerRenderingUpdate();
     }
-#else
-    UNUSED_PARAM(parentCoreFrame);
-#endif
 }
 
 void WebPage::updateUserActivationState(const Vector<FrameIdentifier>& frameIDs, MonotonicTime activationTime)
@@ -1562,6 +1598,21 @@ void WebPage::updateUserActivationState(const Vector<FrameIdentifier>& frameIDs,
             continue;
         if (RefPtr window = localFrame->window())
             window->updateActivation(activationTime);
+    }
+}
+
+void WebPage::updateLastHandledUserGestureTimestamp(const Vector<FrameIdentifier>& frameIDs, MonotonicTime gestureTime)
+{
+    for (auto frameID : frameIDs) {
+        RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
+        if (!webFrame || webFrame->page() != this)
+            continue;
+        RefPtr localFrame = webFrame->coreLocalFrame();
+        if (!localFrame)
+            continue;
+        localFrame->setHasHadUserInteraction();
+        if (RefPtr document = localFrame->document())
+            document->updateLastHandledUserGestureTimestamp(gestureTime);
     }
 }
 
@@ -1704,6 +1755,8 @@ void WebPage::reinitializeWebPage(WebPageCreationParameters&& parameters)
     setMinimumSizeForAutoLayout(parameters.minimumSizeForAutoLayout);
     setSizeToContentAutoSizeMaximumSize(parameters.sizeToContentAutoSizeMaximumSize);
 
+    setObscuredContentInsets(parameters.obscuredContentInsets);
+
     if (m_activityState != parameters.activityState)
         setActivityState(parameters.activityState, ActivityStateChangeAsynchronous, [] { });
 
@@ -1715,6 +1768,11 @@ void WebPage::reinitializeWebPage(WebPageCreationParameters&& parameters)
 #endif
 
     setUseColorAppearance(parameters.useDarkAppearance, parameters.useElevatedUserInterfaceLevel);
+
+    if (auto& remotePageParameters = parameters.remotePageParameters) {
+        if (RefPtr page = m_page; page && is<RemoteFrame>(page->mainFrame()))
+            page->updateTopDocumentSyncData(Ref { remotePageParameters->topDocumentSyncData });
+    }
 
     if (auto&& provisionalFrameCreationParameters = parameters.provisionalFrameCreationParameters) {
         ASSERT(m_page->settings().siteIsolationEnabled());
@@ -2724,14 +2782,16 @@ void WebPage::loadSimulatedRequestAndResponse(LoadParameters&& loadParameters, R
 
 void WebPage::stopLoading()
 {
-    if (!m_page || !m_mainFrame->coreLocalFrame())
+    if (!m_page)
         return;
 
     SendStopResponsivenessTimer stopper;
 
-    Ref coreFrame = *m_mainFrame->coreLocalFrame();
-    coreFrame->loader().stopForUserCancel();
-    coreFrame->loader().completePageTransitionIfNeeded();
+    for (Ref frame : copyToVectorOf<Ref<LocalFrame>>(m_page->rootFrames()))
+        frame->loader().stopForUserCancel();
+
+    if (RefPtr localMainFrame = m_page->localMainFrame())
+        localMainFrame->loader().completePageTransitionIfNeeded();
 }
 
 void WebPage::stopLoadingDueToProcessSwap()
@@ -3547,29 +3607,22 @@ RefPtr<ShareableBitmap> WebPage::shareableBitmapForNodeIncludingOffscreen(Node& 
     return bitmap;
 }
 
-void WebPage::takeRemoteSnapshot(IntRect snapshotRect, IntSize bitmapSize, SnapshotOptions snapshotOptions, RemoteSnapshotIdentifier snapshotIdentifier, CompletionHandler<void(bool)>&& completionHandler)
+void WebPage::takeRemoteSnapshot(IntRect snapshotRect, IntSize bitmapSize, SnapshotOptions snapshotOptions, RemoteSnapshotIdentifier snapshotIdentifier, CompletionHandler<void(std::optional<IntSize>)>&& completionHandler)
 {
 #if ENABLE(GPU_PROCESS)
     ASSERT(m_page->settings().remoteSnapshottingEnabled());
 
     RefPtr coreFrame = m_mainFrame->coreLocalFrame();
     if (!coreFrame) {
-        completionHandler(false);
+        completionHandler(std::nullopt);
         return;
     }
 
     RefPtr frameView = coreFrame->view();
     if (!frameView) {
-        completionHandler(false);
+        completionHandler(std::nullopt);
         return;
     }
-
-    Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
-    m_remoteSnapshotState = {
-        snapshotIdentifier,
-        remoteRenderingBackend->createSnapshotRecorder(snapshotIdentifier),
-        MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler))
-    };
 
     auto originalLayoutViewportOverrideRect = frameView->layoutViewportOverrideRect();
 
@@ -3577,6 +3630,22 @@ void WebPage::takeRemoteSnapshot(IntRect snapshotRect, IntSize bitmapSize, Snaps
     auto paintBehavior = originalPaintBehavior;
 
     preSnapshotSetup(snapshotRect, bitmapSize, snapshotOptions, paintBehavior, *frameView);
+
+    if (bitmapSize.isEmpty()) {
+        postSnapshotTakedown(originalPaintBehavior, paintBehavior, originalLayoutViewportOverrideRect, *frameView);
+        completionHandler(std::nullopt);
+        return;
+    }
+
+    Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
+    m_remoteSnapshotState = {
+        snapshotIdentifier,
+        remoteRenderingBackend->createSnapshotRecorder(snapshotIdentifier),
+        MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), bitmapSize] (bool success) mutable {
+            completionHandler(success ? std::optional<IntSize>(bitmapSize) : std::nullopt);
+        })
+    };
+
     paintSnapshotAtSize(snapshotRect, bitmapSize, snapshotOptions, *coreFrame, *frameView, m_remoteSnapshotState->recorder);
     postSnapshotTakedown(originalPaintBehavior, paintBehavior, originalLayoutViewportOverrideRect, *frameView);
 
@@ -4509,6 +4578,17 @@ void WebPage::touchEvent(const WebTouchEvent& touchEvent, CompletionHandler<void
     bool handled = handleTouchEvent(localMainFrame->frameID(), touchEvent, m_page.get()).value_or(false);
 
     completionHandler(touchEvent.type(), handled);
+}
+#endif
+
+#if ENABLE(COORDINATED_TOUCH_EVENTS)
+bool WebPage::dispatchTouchEvent(const WebTouchEvent& event)
+{
+    bool result = false;
+    touchEvent(event, [&](std::optional<WebEventType>, bool handled) {
+        result = handled;
+    });
+    return result;
 }
 #endif
 
@@ -6565,7 +6645,7 @@ bool WebPage::hasRichlyEditableSelection() const
 
 void WebPage::changeSpellingToWord(const String& word)
 {
-    replaceSelectionWithText(protect(corePage()->focusController().focusedOrMainFrame()).get(), word);
+    replaceSelectionWithText(protect(corePage()->focusController().focusedOrMainFrame()).get(), word, EditAction::InsertReplacement);
 }
 
 void WebPage::unmarkAllMisspellings()
@@ -6691,9 +6771,9 @@ void WebPage::didSelectItemFromActiveContextMenu(const WebContextMenuItemData& i
 }
 #endif
 
-void WebPage::replaceSelectionWithText(LocalFrame* frame, const String& text)
+void WebPage::replaceSelectionWithText(LocalFrame* frame, const String& text, EditAction editingAction)
 {
-    return protect(frame->editor())->replaceSelectionWithText(text, WebCore::Editor::SelectReplacement::Yes, WebCore::Editor::SmartReplace::No);
+    return protect(frame->editor())->replaceSelectionWithText(text, Editor::SelectReplacement::Yes, Editor::SmartReplace::No, editingAction);
 }
 
 #if !PLATFORM(IOS_FAMILY)
@@ -7701,7 +7781,7 @@ void WebPage::didChangeSelection(LocalFrame& frame)
         return;
 
     callOnMainRunLoop([protectedThis = Ref { *this }, frame = Ref { frame }] {
-        if (!frame->document() || !frame->document()->hasLivingRenderTree() || frame->selection().isNone()) [[unlikely]]
+        if (!frame->document() || frame->document()->renderTreeState() != Document::RenderTreeState::Built || frame->selection().isNone()) [[unlikely]]
             return;
 
         protectedThis->preemptivelySendAutocorrectionContext();
@@ -8028,7 +8108,7 @@ void WebPage::didEndUserTriggeredSelectionChanges()
 void WebPage::discardedComposition(const Document& document)
 {
     send(Messages::WebPageProxy::CompositionWasCanceled());
-    if (!document.hasLivingRenderTree())
+    if (document.renderTreeState() != Document::RenderTreeState::Built)
         return;
 
     sendEditorStateUpdate();
@@ -8523,7 +8603,7 @@ void WebPage::sendEditorStateUpdate()
     if (!frame)
         return;
 
-    if (frame->editor().ignoreSelectionChanges() || !frame->document() || !frame->document()->hasLivingRenderTree())
+    if (frame->editor().ignoreSelectionChanges() || !frame->document() || frame->document()->renderTreeState() != Document::RenderTreeState::Built)
         return;
 
     m_pendingEditorStateUpdateStatus = PendingEditorStateUpdateStatus::NotScheduled;
@@ -10716,7 +10796,7 @@ void WebPage::remoteDictionaryPopupInfoToRootView(WebCore::FrameIdentifier frame
     completionHandler(popupInfo);
 }
 
-void WebPage::hitTestAtPoint(WebCore::FrameIdentifier frameID, WebCore::FloatPoint point, CompletionHandler<void(NodeHitTestResult)>&& completionHandler)
+void WebPage::hitTestAtPoint(WebCore::FrameIdentifier frameID, WebCore::FloatPoint point, const ContentWorldData& worldData, CompletionHandler<void(NodeHitTestResult)>&& completionHandler)
 {
     RefPtr frame = WebFrame::webFrame(frameID);
     if (!frame)
@@ -10740,7 +10820,7 @@ void WebPage::hitTestAtPoint(WebCore::FrameIdentifier frameID, WebCore::FloatPoi
             case Frame::FrameType::Remote:
                 return completionHandler( { NodeHitTestResult::RemoteFrameInfo { contentFrame->frameID(), transformedCoordinates } });
             case Frame::FrameType::Local:
-                return hitTestAtPoint(contentFrame->frameID(), transformedCoordinates, WTF::move(completionHandler));
+                return hitTestAtPoint(contentFrame->frameID(), transformedCoordinates, worldData, WTF::move(completionHandler));
             }
         }
     }
@@ -10753,7 +10833,12 @@ void WebPage::hitTestAtPoint(WebCore::FrameIdentifier frameID, WebCore::FloatPoi
     if (!nodeWebFrame)
         return completionHandler({ });
 
-    auto handleAndInfo = nodeWebFrame->createAndPrepareToSendJSHandle(*node);
+    m_userContentController->addContentWorldIfNecessary(worldData);
+    RefPtr world = m_userContentController->worldForIdentifier(worldData.identifier);
+    if (!world)
+        return completionHandler({ });
+
+    auto handleAndInfo = nodeWebFrame->createAndPrepareToSendJSHandle(*node, *world);
     if (!handleAndInfo)
         return completionHandler({ });
 

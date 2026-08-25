@@ -190,9 +190,6 @@ public:
     void computeBlockDirectionMargins(const RenderBlock& containingBlock, LayoutUnit& marginBefore, LayoutUnit& marginAfter) const;
     void computeAndSetBlockDirectionMargins(const RenderBlock& containingBlock);
 
-    void markMarginAsTrimmed(Style::MarginTrimSide);
-    bool NODELETE hasTrimmedMargin(Style::MarginTrimSide) const;
-
     enum class VisualEffectOverflowOption : uint8_t {
         ExcludeFilterOutsets,
     };
@@ -615,9 +612,6 @@ protected:
 
     void willBeDestroyed() override;
 
-    inline bool shouldTrimChildMargin(Style::MarginTrimSide, const RenderBox&) const;
-    virtual bool isChildEligibleForMarginTrim(Style::MarginTrimSide, const RenderBox&) const { return false; }
-
     virtual bool NODELETE shouldResetLogicalHeightBeforeLayout() const;
     void NODELETE resetLogicalHeightBeforeLayoutIfNeeded();
 
@@ -690,8 +684,6 @@ private:
     bool scrollLayer(ScrollDirection, ScrollGranularity, unsigned stepCount, Element** stopElement);
 
     bool fixedElementLaysOutRelativeToFrame(const LocalFrameView&) const;
-
-    template<typename Function> LayoutUnit computeOrTrimInlineMargin(const RenderBlock& containingBlock, Style::MarginTrimSide marginSide, NOESCAPE const Function& computeInlineMargin) const;
 
     bool isScrollableOrRubberbandableBox() const override;
 

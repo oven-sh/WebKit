@@ -1484,7 +1484,7 @@ void AccessibilityUIElementAtspi::increment()
         return;
 
     m_element->updateBackingStore();
-    m_element->setCurrentValue(intValue() + m_element->minimumIncrement());
+    m_element->increment();
 }
 
 void AccessibilityUIElementAtspi::decrement()
@@ -1493,7 +1493,7 @@ void AccessibilityUIElementAtspi::decrement()
         return;
 
     m_element->updateBackingStore();
-    m_element->setCurrentValue(intValue() - m_element->minimumIncrement());
+    m_element->decrement();
 }
 
 void AccessibilityUIElementAtspi::showMenu()
@@ -1504,6 +1504,12 @@ void AccessibilityUIElementAtspi::press()
 {
     m_element->updateBackingStore();
     m_element->doAction();
+}
+
+bool AccessibilityUIElementAtspi::dismiss()
+{
+    m_element->updateBackingStore();
+    return m_element->dismiss();
 }
 
 void AccessibilityUIElementAtspi::setSelectedChild(AccessibilityUIElement* element) const
@@ -1660,6 +1666,8 @@ bool AccessibilityUIElementAtspi::hasPopup() const
 
 void AccessibilityUIElementAtspi::takeFocus()
 {
+    m_element->updateBackingStore();
+    m_element->focus();
 }
 
 void AccessibilityUIElementAtspi::takeSelection()
@@ -1884,6 +1892,31 @@ JSRetainPtr<JSStringRef> AccessibilityUIElementAtspi::lineAtOffset(int offset)
 JSRetainPtr<JSStringRef> AccessibilityUIElementAtspi::sentenceAtOffset(int offset)
 {
     return OpaqueJSString::tryCreate(stringAtOffset(m_element.get(), offset, WebCore::AccessibilityObjectAtspi::TextGranularity::SentenceStart)).leakRef();
+}
+
+
+RefPtr<AccessibilityUIElement> AccessibilityUIElementAtspi::focusableAncestor()
+{
+    m_element->updateBackingStore();
+    if (auto ancestor = m_element->focusableAncestor())
+        return AccessibilityUIElementAtspi::create(ancestor);
+    return nullptr;
+}
+
+RefPtr<AccessibilityUIElement> AccessibilityUIElementAtspi::editableAncestor()
+{
+    m_element->updateBackingStore();
+    if (auto ancestor = m_element->editableAncestor())
+        return AccessibilityUIElementAtspi::create(ancestor);
+    return nullptr;
+}
+
+RefPtr<AccessibilityUIElement> AccessibilityUIElementAtspi::highestEditableAncestor()
+{
+    m_element->updateBackingStore();
+    if (auto ancestor = m_element->highestEditableAncestor())
+        return AccessibilityUIElementAtspi::create(ancestor);
+    return nullptr;
 }
 
 bool AccessibilityUIElementAtspi::replaceTextInRange(JSStringRef, int, int)

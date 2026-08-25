@@ -46,6 +46,7 @@
 #include "NetworkSession.h"
 #include "NetworkStorageManager.h"
 #include "PrivateRelayed.h"
+#include "QualifiedServerTrustFetch.h"
 #include "ResourceLoadInfo.h"
 #include "ServiceWorkerFetchTask.h"
 #include "SharedBufferReference.h"
@@ -71,6 +72,7 @@
 #include <WebCore/HTTPStatusCodes.h>
 #include <WebCore/LegacySchemeRegistry.h>
 #include <WebCore/LinkHeader.h>
+#include <WebCore/LinkRelAttribute.h>
 #include <WebCore/NetworkLoadMetrics.h>
 #include <WebCore/NetworkStorageSession.h>
 #include <WebCore/OriginAccessPatterns.h>
@@ -117,6 +119,14 @@
 
 namespace WebKit {
 using namespace WebCore;
+
+#if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
+// Upper bounds on what may accumulate in m_deferredMessages while the WebProcess has not yet answered
+// ContinueDidReceiveResponse. Generous for a fast load whose data outruns the content-policy check, but keeps a
+// WebProcess that never answers from growing the network process' memory without limit.
+static constexpr size_t maximumDeferredMessagesSize = 100 * MB;
+static constexpr size_t maximumDeferredMessageCount = 1024;
+#endif
 
 struct NetworkResourceLoader::SynchronousLoadData {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(NetworkResourceLoader);
@@ -196,6 +206,11 @@ NetworkResourceLoader::~NetworkResourceLoader()
     ASSERT(!m_networkLoad);
     ASSERT(!isSynchronous() || !m_synchronousLoadData->delayedReply);
     ASSERT(m_fileReferences.isEmpty());
+#if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
+    // Before answering the handlers: answering one runs the wrapper installed by didReceiveResponse(), which would
+    // otherwise try to deliver deferred messages from here.
+    cancelDeferredMessages();
+#endif
     while (!m_responseCompletionHandlers.isEmpty())
         m_responseCompletionHandlers.takeFirst()(PolicyAction::Ignore);
 }
@@ -538,6 +553,7 @@ ResourceLoadInfo NetworkResourceLoader::resourceLoadInfo()
         case WebCore::FetchOptions::Destination::Audio:
             return ResourceLoadInfo::Type::Media;
         case WebCore::FetchOptions::Destination::Audioworklet:
+        case WebCore::FetchOptions::Destination::CompressionDictionary:
             return ResourceLoadInfo::Type::Other;
         case WebCore::FetchOptions::Destination::Document:
         case WebCore::FetchOptions::Destination::Iframe:
@@ -655,6 +671,9 @@ void NetworkResourceLoader::convertToDownload(DownloadID downloadID, const Resou
 
     if (!m_responseCompletionHandlers.isEmpty()) {
         auto firstHandler = m_responseCompletionHandlers.takeFirst();
+#if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
+        cancelDeferredMessages();
+#endif
         while (!m_responseCompletionHandlers.isEmpty())
             m_responseCompletionHandlers.takeFirst()(PolicyAction::Ignore);
         protect(connectionToWebProcess().networkProcess().downloadManager())->convertNetworkLoadToDownload(downloadID, networkLoad.releaseNonNull(), WTF::move(firstHandler), WTF::move(m_fileReferences), request, response);
@@ -944,6 +963,25 @@ void NetworkResourceLoader::didReceiveInformationalResponse(ResourceResponse&& r
 
 void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedResponse, PrivateRelayed privateRelayed, ResponseCompletionHandler&& completionHandler)
 {
+#if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
+    if (m_isProcessingResponse) {
+        m_deferredMessages.append(DeferredResponse { WTF::move(receivedResponse), privateRelayed, WTF::move(completionHandler) });
+        if (m_deferredMessages.size() > maximumDeferredMessageCount)
+            failDueToExcessiveDeferredMessages();
+        return;
+    }
+
+    // Claim the pipeline before any of the asynchronous steps below (e.g. processClearSiteDataHeader()), so a follow-up
+    // message cannot overtake this response while it is still being processed. Released once this response is resolved,
+    // which for a main resource is when the WebProcess answers ContinueDidReceiveResponse.
+    m_isProcessingResponse = true;
+    completionHandler = [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)](PolicyAction policyAction) mutable {
+        completionHandler(policyAction);
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->responseProcessingCompleted(policyAction);
+    };
+#endif
+
     LOADER_RELEASE_LOG("didReceiveResponse: (httpStatusCode=%d, MIMEType=%" PUBLIC_LOG_STRING ", expectedContentLength=%lld, hasCachedEntryForValidation=%d, hasNetworkLoadChecker=%d)", receivedResponse.httpStatusCode(), receivedResponse.mimeType().utf8().data(), receivedResponse.expectedContentLength(), !!m_cacheEntryForValidation, !!m_networkLoadChecker);
 
 #if ENABLE(CONTENT_FILTERING)
@@ -1174,6 +1212,19 @@ void NetworkResourceLoader::sendDidReceiveResponseWithPotentialProcessSwap(const
 
 void NetworkResourceLoader::didReceiveBuffer(const WebCore::FragmentedSharedBuffer& buffer)
 {
+#if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
+    if (m_isProcessingResponse) {
+        // The WebProcess has not validated the response this data belongs to yet (see didReceiveResponse()).
+        if (m_deferredMessagesSize + buffer.size() > maximumDeferredMessagesSize) {
+            failDueToExcessiveDeferredMessages();
+            return;
+        }
+        m_deferredMessagesSize += buffer.size();
+        m_deferredMessages.append(Ref { buffer });
+        return;
+    }
+#endif
+
     if (!m_numBytesReceived)
         LOADER_RELEASE_LOG("didReceiveData: Started receiving data");
     m_numBytesReceived += buffer.size();
@@ -1201,6 +1252,13 @@ void NetworkResourceLoader::didReceiveBuffer(const WebCore::FragmentedSharedBuff
 
 void NetworkResourceLoader::didFinishLoading(const NetworkLoadMetrics& originalNetworkLoadMetrics)
 {
+#if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
+    if (m_isProcessingResponse) {
+        m_deferredMessages.append(originalNetworkLoadMetrics);
+        return;
+    }
+#endif
+
     // https://fetch.spec.whatwg.org/#navigation-tao-check
     std::optional<NetworkLoadMetrics> navigationMetrics;
     if (parameters().options.mode == FetchOptions::Mode::Navigate && originalNetworkLoadMetrics.hasCrossOriginRedirect
@@ -1263,11 +1321,24 @@ void NetworkResourceLoader::didFinishLoading(const NetworkLoadMetrics& originalN
     if (shouldSendResourceLoadMessages())
         connectionToWebProcess().networkProcess().parentProcessConnection()->send(Messages::NetworkProcessProxy::ResourceLoadDidCompleteWithError(webPageProxyID(), resourceLoadInfo(), m_response, { }), 0);
 
+    // If this is done too early, we can receive the 2qwac response before the main frame main resource
+    // actually commits with all the response IPC. Since it's low priority, do it here to avoid
+    // slowing down the page load.
+    if (isMainFrameLoad())
+        checkForQualifiedServerTrust(m_response);
+
     cleanup(LoadResult::Success);
 }
 
 void NetworkResourceLoader::didFailLoading(const ResourceError& error)
 {
+#if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
+    if (m_isProcessingResponse) {
+        m_deferredMessages.append(error);
+        return;
+    }
+#endif
+
     bool wasServiceWorkerLoad = false;
     wasServiceWorkerLoad = !!m_serviceWorkerFetchTask;
     LOADER_RELEASE_LOG_ERROR("didFailLoading: (wasServiceWorkerLoad=%d, isTimeout=%d, isCancellation=%d, isAccessControl=%d, errorCode=%d)", wasServiceWorkerLoad, error.isTimeout(), error.isCancellation(), error.isAccessControl(), error.errorCode());
@@ -1682,7 +1753,85 @@ void NetworkResourceLoader::continueDidReceiveResponse()
 
     if (!m_responseCompletionHandlers.isEmpty())
         m_responseCompletionHandlers.takeFirst()(PolicyAction::Use);
+
+#if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
+    // Answering the handler above runs the wrapper installed by didReceiveResponse(), which releases the pipeline and
+    // delivers what arrived while we waited. Cover the case where there was no handler left to answer.
+    deliverDeferredMessages();
+#endif
 }
+
+#if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
+
+// Called once the response being processed is resolved, so whatever arrived while it was outstanding can be delivered,
+// up to the next response (which will again claim the pipeline and wait for its own ContinueDidReceiveResponse).
+void NetworkResourceLoader::responseProcessingCompleted(PolicyAction policyAction)
+{
+    m_isProcessingResponse = false;
+
+    // Anything queued behind a response that was not accepted belongs to a part the WebProcess must never see: the
+    // response was blocked (CSP frame-ancestors, X-Frame-Options, COOP/COEP, content filtering) or the load is being
+    // abandoned, and no DidReceiveResponse was sent for it. Delivering its body would hand WebContent the bytes of a
+    // blocked part, and WebResourceLoader would get DidReceiveData with no preceding DidReceiveResponse.
+    if (policyAction != PolicyAction::Use) {
+        LOADER_RELEASE_LOG("responseProcessingCompleted: Dropping deferred messages, response was not accepted (deferredMessageCount=%zu)", m_deferredMessages.size());
+        cancelDeferredMessages();
+        return;
+    }
+
+    deliverDeferredMessages();
+}
+
+void NetworkResourceLoader::deliverDeferredMessages()
+{
+    while (!m_isProcessingResponse && !m_deferredMessages.isEmpty()) {
+        WTF::switchOn(m_deferredMessages.takeFirst(),
+            [&](DeferredResponse&& deferredResponse) {
+                didReceiveResponse(WTF::move(deferredResponse.response), deferredResponse.privateRelayed, WTF::move(deferredResponse.completionHandler));
+            }, [&](Ref<const WebCore::FragmentedSharedBuffer>&& buffer) {
+                m_deferredMessagesSize -= buffer->size();
+                didReceiveBuffer(buffer.get());
+            }, [&](WebCore::NetworkLoadMetrics&& metrics) {
+                didFinishLoading(metrics);
+            }, [&](WebCore::ResourceError&& error) {
+                didFailLoading(error);
+            });
+    }
+}
+
+void NetworkResourceLoader::cancelDeferredMessages()
+{
+    auto deferredMessages = std::exchange(m_deferredMessages, { });
+    m_deferredMessagesSize = 0;
+    for (auto& message : deferredMessages) {
+        WTF::switchOn(message,
+            [](DeferredResponse& deferredResponse) { deferredResponse.completionHandler(PolicyAction::Ignore); },
+            [](auto&) { });
+    }
+}
+
+void NetworkResourceLoader::failDueToExcessiveDeferredMessages()
+{
+    LOADER_RELEASE_LOG_ERROR("failDueToExcessiveDeferredMessages: Cancelling load, too much deferred while waiting for ContinueDidReceiveResponse (deferredMessageCount=%zu, deferredMessagesSize=%zu)", m_deferredMessages.size(), m_deferredMessagesSize);
+
+    Ref protectedThis { *this };
+
+    // Empty both queues before failing so that the failure is not itself deferred, and answer the response handler
+    // only once the load is torn down so that a reentrant network callback cannot fail the load a second time.
+    auto responseCompletionHandlers = std::exchange(m_responseCompletionHandlers, { });
+    m_isProcessingResponse = false;
+    cancelDeferredMessages();
+
+    if (RefPtr networkLoad = m_networkLoad)
+        networkLoad->cancel();
+
+    didFailLoading(ResourceError { errorDomainWebKitInternal, 0, m_parameters.request.url(), "Too much data buffered while waiting for the previous multipart part to be handled"_s, ResourceError::Type::General });
+
+    while (!responseCompletionHandlers.isEmpty())
+        responseCompletionHandlers.takeFirst()(PolicyAction::Ignore);
+}
+
+#endif // HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
 
 void NetworkResourceLoader::pendingStreamAppendData(IPC::SharedBufferReference&& chunk)
 {
@@ -1791,6 +1940,41 @@ void NetworkResourceLoader::didReceiveMainResourceResponse(const WebCore::Resour
         speculativeLoadManager->registerMainResourceLoadResponse(globalFrameID(), originalRequest(), response);
     if (auto& certificateInfo = response.certificateInfo(); certificateInfo && !certificateInfo->isEmpty())
         connectionToWebProcess().networkProcess().parentProcessConnection()->send(Messages::WebFrameProxyFromNetworkProcess::ReceivedMainResourceResponseWithCertificateInfo(response.url().hostAndPort(), *certificateInfo), frameID());
+}
+
+void NetworkResourceLoader::checkForQualifiedServerTrust(const WebCore::ResourceResponse& response)
+{
+    CheckedPtr session = m_connection->networkProcess().networkSession(sessionID());
+    if (!session)
+        return;
+
+    if (!response.url().protocolIs("https"_s))
+        return;
+
+    auto headerValue = response.httpHeaderField(HTTPHeaderName::Link);
+    if (headerValue.isEmpty())
+        return;
+
+    auto tlsCertificates = response.certificateInfo();
+    if (!tlsCertificates)
+        return;
+
+    LinkHeaderSet headerSet(headerValue);
+    for (const auto& header : headerSet) {
+        if (!header.valid() || header.url().isEmpty())
+            continue;
+        // From https://www.etsi.org/deliver/etsi_ts/119400_119499/11941105/02.01.01_60/ts_11941105v020101p.pdf section 6.2.2:
+        // Examine the HTTP headers included in any main frame navigation response from the server (relating to
+        // navigation by the web browser to the address as displayed in the address bar) for a HTTP 'Link' response
+        // header (as defined in IETF RFC 8288 [6]) with a rel value of tls-certificate-binding.
+        if (!WebCore::LinkRelAttribute(nullptr, header.rel()).isTLSCertificateBinding)
+            continue;
+        URL url { header.url() };
+        if (!url.isValid())
+            continue;
+        if (protocolHostAndPortAreEqual(response.url(), url))
+            return QualifiedServerTrustFetch::create(*session, url, m_parameters, *tlsCertificates);
+    }
 }
 
 void NetworkResourceLoader::initializeReportingEndpoints(const ResourceResponse& response)
@@ -2015,14 +2199,14 @@ static String escapeForJSON(const String& s)
     return makeStringByReplacingAll(makeStringByReplacingAll(s, '\\', "\\\\"_s), '"', "\\\""_s);
 }
 
-template<typename IdentifierType, typename ThreadSafety, typename RawValue>
-static String escapeIDForJSON(const std::optional<ObjectIdentifierGeneric<IdentifierType, ThreadSafety, RawValue>>& value)
+template<typename IdentifierType, typename ThreadSafety>
+static String escapeIDForJSON(const std::optional<ObjectIdentifierGeneric<IdentifierType, ThreadSafety>>& value)
 {
     return value ? String::number(value->toUInt64()) : "None"_str;
 }
 
-template<typename IdentifierType, typename ThreadSafety, typename RawValue>
-static String escapeIDForJSON(const std::optional<ProcessQualified<ObjectIdentifierGeneric<IdentifierType, ThreadSafety, RawValue>>>& value)
+template<typename IdentifierType, typename ThreadSafety>
+static String escapeIDForJSON(const std::optional<ProcessQualified<ObjectIdentifierGeneric<IdentifierType, ThreadSafety>>>& value)
 {
     return value ? String::number(value->object().toUInt64()) : "None"_str;
 }

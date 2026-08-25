@@ -2705,7 +2705,7 @@ void WebViewImpl::pageDidScroll(const IntPoint& scrollOffset)
 
     if (pageIsScrolledToTopDidChange) {
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
-        updateScrollPocketVisibilityWhenScrolledToTop();
+        updateScrollPocketVisibilityWhenScrolledToTopAndNonEditable();
         updatePrefersSolidColorHardPocket();
 #endif
         [protect(view()) didChangeValueForKey:@"hasScrolledContentsUnderTitlebar"];
@@ -2721,10 +2721,10 @@ void WebViewImpl::didEndSyntheticMomentumScrolling()
 
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
 
-void WebViewImpl::updateScrollPocketVisibilityWhenScrolledToTop()
+void WebViewImpl::updateScrollPocketVisibilityWhenScrolledToTopAndNonEditable()
 {
     RetainPtr view = m_view.get();
-    if ([view _usesAutomaticContentInsetBackgroundFill] && pageIsScrolledToTop())
+    if ([view _usesAutomaticContentInsetBackgroundFill] && pageIsScrolledToTop() && !m_page->isEditable())
         [view _addReasonToHideTopScrollPocket:HideScrollPocketReason::ScrolledToTop];
     else
         [view _removeReasonToHideTopScrollPocket:HideScrollPocketReason::ScrolledToTop];
@@ -8189,7 +8189,7 @@ void WebViewImpl::updateScrollPocket()
         [view addSubview:m_topScrollPocket.get()];
         for (NSView *pocketContainer in m_viewsAboveScrollPocket.get())
             [m_topScrollPocket addElementContainer:pocketContainer];
-        updateScrollPocketVisibilityWhenScrolledToTop();
+        updateScrollPocketVisibilityWhenScrolledToTopAndNonEditable();
         updatePrefersSolidColorHardPocket();
     } else
         captureView = [m_topScrollPocket captureView];
@@ -8514,10 +8514,17 @@ void WebViewImpl::updateRefreshControllerForWheelEvent(NSEvent *event)
 }
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
-void WebViewImpl::updateRefreshControllerForPanGesture(NSGestureRecognizerState state)
+void WebViewImpl::updateRefreshControllerForPanGesture(NSGestureRecognizerState state, RefreshControllerEligibility eligibility)
 {
     if (!m_refreshController)
         return;
+
+    if (eligibility == RefreshControllerEligibility::Ineligible) {
+        m_refreshControllerIsTracking = false;
+        m_canShowRefreshController = false;
+        m_suppressRefreshControllerUpdates = true;
+        return;
+    }
 
     // Track whether this scroll gesture began at the top of the page.
     // Only allow refresh control activation for gestures that started at top.

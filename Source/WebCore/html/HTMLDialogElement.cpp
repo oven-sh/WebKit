@@ -122,6 +122,7 @@ ClosedByState HTMLDialogElement::computedClosedByState() const
     return result;
 }
 
+// https://html.spec.whatwg.org/multipage/interactive-elements.html#dom-dialog-show
 ExceptionOr<void> HTMLDialogElement::show()
 {
     // If the element already has an open attribute, then return.
@@ -147,6 +148,9 @@ ExceptionOr<void> HTMLDialogElement::show()
 
     setAttributeWithoutSynchronization(openAttr, emptyAtom());
 
+    // Invalidate style for correct focusability computation in the focusing steps after showing the dialog.
+    invalidateStyle();
+
     Ref document = this->document();
     m_previouslyFocusedElement = document->focusedElement();
 
@@ -157,16 +161,15 @@ ExceptionOr<void> HTMLDialogElement::show()
     return { };
 }
 
+// https://html.spec.whatwg.org/multipage/interactive-elements.html#show-a-modal-dialog
 ExceptionOr<void> HTMLDialogElement::showModal(Element* source)
 {
-    // If subject already has an open attribute, then throw an "InvalidStateError" DOMException.
     if (isOpen()) {
         if (isModal())
             return { };
         return Exception { ExceptionCode::InvalidStateError, "Cannot call showModal() on an open non-modal dialog."_s };
     }
 
-    // If subject is not connected, then throw an "InvalidStateError" DOMException.
     if (!isConnected())
         return Exception { ExceptionCode::InvalidStateError, "Element is not connected."_s };
 
@@ -229,6 +232,7 @@ ExceptionOr<void> HTMLDialogElement::showModal(Element* source)
     return { };
 }
 
+// https://html.spec.whatwg.org/multipage/interactive-elements.html#dom-dialog-close
 void HTMLDialogElement::close(const String& result, Element* source)
 {
     if (!isOpen())
@@ -248,7 +252,9 @@ void HTMLDialogElement::close(const String& result, Element* source)
 
     removeAttribute(openAttr);
 
-    if (isModal())
+    bool wasModal = isModal();
+
+    if (wasModal)
         removeFromTopLayer();
 
     setIsModal(false);
@@ -256,20 +262,20 @@ void HTMLDialogElement::close(const String& result, Element* source)
     if (!result.isNull())
         m_returnValue = result;
 
-    // FIXME: Focus should only be restored when the document's focused element is still inside
-    // this dialog, or when the dialog was modal. Adding that condition requires show() to run the
-    // dialog focusing steps reliably first: focusability is determined from a possibly stale
-    // computed style, so for a dialog that was previously shown and closed no candidate looks
-    // focusable and focus never enters the dialog. See webkit.org/b/321623.
     if (RefPtr element = std::exchange(m_previouslyFocusedElement, nullptr).get()) {
-        FocusOptions options;
-        options.preventScroll = true;
-        element->focus(options);
+        RefPtr focusedElement = document().focusedElement();
+        bool focusIsInsideDialog = focusedElement == this || (focusedElement && focusedElement->isComposedTreeDescendantOf(*this));
+        if (wasModal || focusIsInsideDialog) {
+            FocusOptions options;
+            options.preventScroll = true;
+            element->focus(options);
+        }
     }
 
     queueTaskToDispatchEvent(TaskSource::UserInteraction, Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
+// https://html.spec.whatwg.org/multipage/interactive-elements.html#dom-dialog-requestclose
 void HTMLDialogElement::requestClose(const String& returnValue, Element* source)
 {
     if (!isOpen())

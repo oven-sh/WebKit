@@ -998,6 +998,9 @@ static void addBrowsingContextControllerMethodStubsIfNeeded()
     if ([key isEqualToString:@"serverTrust"])
         return (__bridge id)[self serverTrust];
 
+    if ([key isEqualToString:@"qualifiedServerTrust"])
+        return (__bridge id)[self qualifiedServerTrust];
+
     return [super valueForUndefinedKey:key];
 }
 
@@ -1200,6 +1203,11 @@ static void addBrowsingContextControllerMethodStubsIfNeeded()
 - (SecTrustRef)serverTrust
 {
     return _page->pageLoadState().certificateInfo().trust().get();
+}
+
+- (SecTrustRef)qualifiedServerTrust
+{
+    return _page->pageLoadState().qualifiedServerTrust().trust();
 }
 
 - (void)_didAccessBackForwardList
@@ -4527,6 +4535,10 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKCONTENTVIEW)
     if (wasEditable == editable)
         return;
 
+#if PLATFORM(MAC) && ENABLE(CONTENT_INSET_BACKGROUND_FILL)
+    _impl->updateScrollPocketVisibilityWhenScrolledToTopAndNonEditable();
+#endif
+
 #if PLATFORM(IOS_FAMILY)
     [_contentView _didChangeWebViewEditability];
 #endif
@@ -4975,10 +4987,15 @@ static RetainPtr<NSArray> wkTextManipulationErrors(NSArray<_WKTextManipulationIt
 
 - (void)_hitTestAtPoint:(CGPoint)point inFrameCoordinateSpace:(WKFrameInfo *)frame completionHandler:(void (^)(_WKJSHandle *, NSError *))completionHandler
 {
+    [self _hitTestAtPoint:point inFrameCoordinateSpace:frame inContentWorld:WKContentWorld.pageWorld completionHandler:completionHandler];
+}
+
+- (void)_hitTestAtPoint:(CGPoint)point inFrameCoordinateSpace:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)contentWorld completionHandler:(void (^)(_WKJSHandle *, NSError *))completionHandler
+{
     RefPtr mainFrame = _page->mainFrame();
     if (!frame && !mainFrame)
         return completionHandler(nil, unknownError().get());
-    _page->hitTestAtPoint(frame ? frame->_frameInfo->frameInfoData().frameID : mainFrame->frameID(), point, [completionHandler = makeBlockPtr(completionHandler)] (auto&& result) mutable {
+    _page->hitTestAtPoint(frame ? frame->_frameInfo->frameInfoData().frameID : mainFrame->frameID(), point, protect(*contentWorld->_contentWorld), [completionHandler = makeBlockPtr(completionHandler)] (auto&& result) mutable {
         if (!result)
             return completionHandler(nil, unknownError().get());
         completionHandler(wrapper(API::JSHandle::create(WTF::move(*result))).get(), nil);

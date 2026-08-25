@@ -106,7 +106,7 @@ public:
     TextureMapperLayer& ensureTarget();
 #if USE(SKIA)
     SkiaCompositingLayer& ensureSkiaTarget();
-    sk_sp<GrContextThreadSafeProxy> threadSafeGrContext() const;
+    sk_sp<GrContextThreadSafeProxy> threadSafeGrContext() const { return m_threadSafeGrContext; }
 #endif
     void invalidateTarget();
 
@@ -148,6 +148,7 @@ public:
     bool masksToBounds() const WTF_REQUIRES_LOCK(m_lock);
     void setPreserves3D(bool) WTF_REQUIRES_LOCK(m_lock);
     void setBackfaceVisibility(bool) WTF_REQUIRES_LOCK(m_lock);
+    void setBackgroundColor(const Color&) WTF_REQUIRES_LOCK(m_lock);
     void setOpacity(float) WTF_REQUIRES_LOCK(m_lock);
     void setBlendMode(BlendMode) WTF_REQUIRES_LOCK(m_lock);
 
@@ -157,6 +158,7 @@ public:
     void setContentsRect(const FloatRect&) WTF_REQUIRES_LOCK(m_lock);
     void setContentsRectClipsDescendants(bool) WTF_REQUIRES_LOCK(m_lock);
     void setContentsClippingRect(const FloatRoundedRect&) WTF_REQUIRES_LOCK(m_lock);
+    void setContentsClipShapePath(const Path&) WTF_REQUIRES_LOCK(m_lock);
     void setContentsScale(float) WTF_REQUIRES_LOCK(m_lock);
     float contentsScale() const WTF_REQUIRES_LOCK(m_lock);
     enum class RequireComposition : bool { No, Yes };
@@ -240,6 +242,7 @@ private:
         BackdropRect,
         BackdropRoot,
         BackfaceVisibility,
+        BackgroundColor,
         BackingStore,
         BlendMode,
         BoundsOrigin,
@@ -248,6 +251,7 @@ private:
         ClipPath,
         ContentsBuffer,
         ContentsClippingRect,
+        ContentsClipShapePath,
         ContentsColor,
         ContentsImage,
         ContentsOpaque,
@@ -279,6 +283,7 @@ private:
     std::unique_ptr<TextureMapperLayer> m_target;
 #if USE(SKIA)
     RefPtr<SkiaCompositingLayer> m_skiaTarget;
+    sk_sp<GrContextThreadSafeProxy> m_threadSafeGrContext;
 #endif
 
     // Accessed only from the main thread.
@@ -312,6 +317,8 @@ private:
     FloatRect m_contentsRect WTF_GUARDED_BY_LOCK(m_lock);
     bool m_contentsRectClipsDescendants WTF_GUARDED_BY_LOCK(m_lock) { false };
     FloatRoundedRect m_contentsClippingRect WTF_GUARDED_BY_LOCK(m_lock);
+    Path m_contentsClipShapePath WTF_GUARDED_BY_LOCK(m_lock);
+    Color m_backgroundColor WTF_GUARDED_BY_LOCK(m_lock);
     Color m_contentsColor WTF_GUARDED_BY_LOCK(m_lock);
     FloatSize m_contentsTileSize WTF_GUARDED_BY_LOCK(m_lock);
     FloatSize m_contentsTilePhase WTF_GUARDED_BY_LOCK(m_lock);

@@ -144,6 +144,7 @@
 #include <utility>
 #include <wtf/Borrow.h>
 #include <wtf/DataLog.h>
+#include <wtf/HexNumber.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -2090,7 +2091,7 @@ void AXObjectCache::notificationPostTimerFired()
     RefPtr document = m_document.get();
     m_notificationPostTimer.stop();
 
-    if (!document || !document->hasLivingRenderTree())
+    if (!document || document->renderTreeState() != Document::RenderTreeState::Built)
         return;
 
     // In tests, posting notifications has a tendency to immediately queue up other notifications, which can lead to unexpected behavior

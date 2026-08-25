@@ -6,9 +6,10 @@
 </head>
 <body>
 
-<!-- A text control's value is rendered by shadow dom elements whose style is built directly
-     rather than produced by the style cascade, so the style adjuster does not run on them.
-     This test verifies that the used value of user-select is correct. -->
+<!-- For input and textarea, some elements in the shadow tree have their style built
+     directly, skipping the style cascade. This skips the style adjuster. This test
+     verifies that the used value of user-select is correct for the text in these
+     elements. -->
 
 <input id="mutable" value="mutable">
 <input id="readOnly" readonly value="readOnly">
@@ -33,7 +34,7 @@
 <div id="description"></div>
 <div id="console"></div>
 <script>
-description("Verifies the used user-select value for the inner text element of a text control, and contrasts it with ordinary editable content.");
+description("Verifies the used user-select value for the inner text element of a text control.");
 
 function selectTextIn(id)
 {
@@ -99,19 +100,19 @@ shouldBeEqualToString('extendOneCharacterIn("textarea")', 't');
 shouldBeEqualToString('extendOneCharacterIn("textareaReadOnly")', 't');
 
 debug("");
-debug("'all' makes the value atomically selectable, whether the text is editable or not.");
-shouldBeEqualToString('extendOneCharacterIn("webkitUserSelectAll")', "webkitUserSelectAll");
-shouldBeEqualToString('extendOneCharacterIn("textareaWebkitUserSelectAll")', "textareaWebkitUserSelectAll");
+debug("'all' makes the value atomically selectable, but it doesn't apply if editable.");
+shouldBeEqualToString('extendOneCharacterIn("webkitUserSelectAll")', "w");
+shouldBeEqualToString('extendOneCharacterIn("textareaWebkitUserSelectAll")', "t");
 shouldBeEqualToString('extendOneCharacterIn("readOnlyWebkitUserSelectAll")', "readOnlyWebkitUserSelectAll");
 shouldBeEqualToString('extendOneCharacterIn("textareaReadOnlyWebkitUserSelectAll")', "textareaReadOnlyWebkitUserSelectAll");
 
 debug("");
-debug("'all' removes editability from ordinary editable content");
+debug("'all' no longer removes editability from ordinary editable content.");
 shouldBeTrue('typedTextLandsAt("editableParagraph")');
-shouldBeFalse('typedTextLandsAt("editableParagraphWebkitUserSelectAll")');
+shouldBeTrue('typedTextLandsAt("editableParagraphWebkitUserSelectAll")');
 
 debug("");
-debug("Exceptionally, 'all' does not remove editability from editable text controls.");
+debug("'all' does not remove editability from editable text controls.");
 shouldBeTrue('typedTextLandsAt("mutable")');
 shouldBeTrue('typedTextLandsAt("textarea")');
 shouldBeFalse('typedTextLandsAt("readOnly")');

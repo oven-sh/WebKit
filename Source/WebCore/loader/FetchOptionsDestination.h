@@ -53,7 +53,8 @@ enum class FetchOptionsDestination : uint8_t {
     Video,
     Worker,
     Xslt,
-    Text
+    Text,
+    CompressionDictionary
 };
     
 } // namespace WebCore

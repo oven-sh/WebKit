@@ -1050,7 +1050,7 @@ void AXIsolatedTree::updateChildren(AccessibilityObject& axObject, ResolveNodeCh
         return;
     }
 
-    if (!axObject.document() || !axObject.document()->hasLivingRenderTree())
+    if (!axObject.document() || axObject.document()->renderTreeState() != Document::RenderTreeState::Built)
         return;
 
     // We're about to do a lot of work, so start the attribute cache.
@@ -2370,8 +2370,7 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         setProperty(AXProperty::TextRuns, WTF::makeUnique<AXTextRuns>(object.textRuns()));
         setProperty(AXProperty::IsReplacedElementForTextEmission, object.isReplacedElementForTextEmission());
         setProperty(AXProperty::IsInUserAgentShadowTree, object.isInUserAgentShadowTree());
-        if (object.role() == AccessibilityRole::LineBreak)
-            setProperty(AXProperty::IsCollapsedTrailingLineBreak, object.isCollapsedTrailingLineBreak());
+        setProperty(AXProperty::IsInsideNativeTextControl, object.isInsideNativeTextControl());
         switch (object.textEmissionBehavior()) {
         case TextEmissionBehavior::DoubleNewline:
             propertyFlags.add(AXPropertyFlag::IsTextEmissionBehaviorDoubleNewline);
