@@ -70,9 +70,7 @@
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #if USE(BUN_JSC_ADDITIONS)
-#if USE(BUN_JSC_ADDITIONS)
 #include "AsyncContextSwapScope.h"
-#endif
 extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 #endif
 #if ENABLE(WEBASSEMBLY)
