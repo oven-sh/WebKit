@@ -80,11 +80,12 @@ class ASTBuilder {
         Operator m_op;
     };
 public:
-    ASTBuilder(VM& vm, ParserArena& parserArena, SourceCode* sourceCode)
+    ASTBuilder(VM& vm, ParserArena& parserArena, SourceCode* sourceCode, OptionSet<CodeGenerationMode> codeGenerationMode = { })
         : m_vm(vm)
         , m_parserArena(parserArena)
         , m_sourceCode(sourceCode)
         , m_evalCount(0)
+        , m_codeGenerationMode(codeGenerationMode)
     {
     }
     
@@ -1226,6 +1227,7 @@ private:
     Vector<std::pair<int, int>, 10, UnsafeVectorOverflow> m_binaryOperatorStack;
     Vector<std::pair<int, JSTextPosition>, 10, UnsafeVectorOverflow> m_unaryTokenStack;
     int m_evalCount;
+    OptionSet<CodeGenerationMode> m_codeGenerationMode;
 };
 
 ExpressionNode* ASTBuilder::makeTypeOfNode(const JSTokenLocation& location, ExpressionNode* expr, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
@@ -1294,10 +1296,10 @@ ExpressionNode* ASTBuilder::makePowNode(const JSTokenLocation& location, Express
     if (strippedExpr1->isNumber() && strippedExpr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*strippedExpr1);
         const NumberNode& numberExpr2 = static_cast<NumberNode&>(*strippedExpr2);
-        // Only fold what operationMathPow() computes with IEEE arithmetic alone; its other cases go to the C library's
-        // pow(), which does not round identically everywhere, and a parse-time constant ends up in serialized bytecode
-        // that has to be the same wherever it was built. Left unfolded, those get the pow() of wherever the code runs.
-        if (isIntegerExponentForMathPow(numberExpr2.value()))
+        // For a bytecode cache, fold only what operationMathPow() computes with IEEE arithmetic alone: its other cases go
+        // to the C library's pow(), which does not round identically everywhere, and the constant would be serialized.
+        // Left unfolded, those get the pow() of wherever the code runs.
+        if (!m_codeGenerationMode.contains(CodeGenerationMode::BytecodeCache) || isIntegerExponentForMathPow(numberExpr2.value()))
             return createNumberFromBinaryOperation(location, operationMathPow(numberExpr1.value(), numberExpr2.value()), numberExpr1, numberExpr2);
     }
 

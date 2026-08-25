@@ -46,7 +46,7 @@ public:
         DerivedContextType derivedContextType, EvalContextType evalContextType, bool isArrowFunctionContext,
         OptionSet<CodeGenerationMode> codeGenerationMode)
         : m_flags(
-            (static_cast<unsigned>(codeGenerationMode.toRaw()) << 6) |
+            (static_cast<unsigned>((codeGenerationMode - CodeGenerationMode::BytecodeCache).toRaw()) << 6) | // a block generated for a cache serves any request for the source
             (static_cast<unsigned>(scriptMode) << 5) |
             (static_cast<unsigned>(isArrowFunctionContext) << 4) |
             (static_cast<unsigned>(evalContextType) << 3) |

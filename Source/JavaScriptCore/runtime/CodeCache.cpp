@@ -85,7 +85,7 @@ UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& s
     bool isInsideOrdinaryFunction = executable && executable->isInsideOrdinaryFunction();
 
     std::unique_ptr<RootNode> rootNode = parse<RootNode>(
-        vm, source, Identifier(), ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin, lexicallyScopedFeatures, scriptMode, CacheTypes<UnlinkedCodeBlockType>::parseMode, FunctionMode::None, SuperBinding::NotNeeded, error, ConstructorKind::None, derivedContextType, evalContextType, privateNameEnvironment, nullptr, isInsideOrdinaryFunction);
+        vm, source, Identifier(), ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin, lexicallyScopedFeatures, scriptMode, CacheTypes<UnlinkedCodeBlockType>::parseMode, FunctionMode::None, SuperBinding::NotNeeded, error, ConstructorKind::None, derivedContextType, evalContextType, privateNameEnvironment, nullptr, isInsideOrdinaryFunction, codeGenerationMode);
 
     if (!rootNode)
         return nullptr;
@@ -143,6 +143,7 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
     // cache so that a full collection part-way through cannot drop it (see VM::clearSourceProviderCaches()); otherwise
     // what the parser records for a function, and with it the bytecode cache built from this, would depend on GC timing.
     Ref sourceProviderCache = *vm.addSourceProviderCache(source.provider());
+    codeGenerationMode.add(CodeGenerationMode::BytecodeCache);
 
     bool isArrowFunctionContext = false;
     UnlinkedCodeBlockType* unlinkedCodeBlock = generateUnlinkedCodeBlockImpl<UnlinkedCodeBlockType>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType, DerivedContextType::None, isArrowFunctionContext);
@@ -157,9 +158,9 @@ void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionEx
 {
     Ref sourceProviderCache = *vm.addSourceProviderCache(parentSource.provider()); // as in recursivelyGenerateUnlinkedCodeBlock()
     SourceCode source = executable->linkedSourceCode(parentSource);
-    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
+    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, CodeGenerationMode::BytecodeCache, error, executable->parseMode());
     if (codeBlock)
-        generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, { }, error, depth);
+        generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, CodeGenerationMode::BytecodeCache, error, depth);
 }
 
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth)
