@@ -98,13 +98,20 @@ public:
     iterator end() { return m_map.end(); }
 
     template<typename UnlinkedCodeBlockType>
-    UnlinkedCodeBlockType* findCacheAndUpdateAge(VM&, const SourceCodeKey& key)
+    UnlinkedCodeBlockType* findCacheAndUpdateAge(VM& vm, const SourceCodeKey& key)
     {
         prune();
 
         iterator findResult = m_map.find(key);
-        if (findResult == m_map.end())
-            return nullptr;
+        if (findResult == m_map.end()) {
+            // A block decoded from the provider's cached bytecode is as reusable as one we generated: remember it the
+            // way getUnlinkedGlobalCodeBlock() remembers those, so another global in this VM loading the same source
+            // links against this block instead of decoding its own copy of the unlinked tree.
+            UnlinkedCodeBlockType* decoded = fetchFromDisk<UnlinkedCodeBlockType>(vm, key);
+            if (decoded && Options::useCodeCache())
+                addCache(key, SourceCodeValue(vm, decoded, m_age));
+            return decoded;
+        }
 
         int64_t age = m_age - findResult->value.age;
         if (age > m_capacity) {
@@ -154,6 +161,16 @@ public:
 
     int64_t age() { return m_age; }
 
+private:
+    template<typename UnlinkedCodeBlockType>
+    UnlinkedCodeBlockType* fetchFromDiskImpl(VM& vm, const SourceCodeKey& key)
+    {
+        RefPtr<CachedBytecode> cachedBytecode = key.source().provider().cachedBytecode();
+        if (!cachedBytecode || !cachedBytecode->size())
+            return nullptr;
+        return decodeCodeBlock<UnlinkedCodeBlockType>(vm, key, *cachedBytecode);
+    }
+
     template<typename UnlinkedCodeBlockType>
     UnlinkedCodeBlockType* fetchFromDisk(VM& vm, const SourceCodeKey& key)
     {
@@ -171,16 +188,6 @@ public:
             UNUSED_PARAM(key);
             return nullptr;
         }
-    }
-
-private:
-    template<typename UnlinkedCodeBlockType>
-    UnlinkedCodeBlockType* fetchFromDiskImpl(VM& vm, const SourceCodeKey& key)
-    {
-        RefPtr<CachedBytecode> cachedBytecode = key.source().provider().cachedBytecode();
-        if (!cachedBytecode || !cachedBytecode->size())
-            return nullptr;
-        return decodeCodeBlock<UnlinkedCodeBlockType>(vm, key, *cachedBytecode);
     }
 
     // This constant factor biases cache capacity toward allowing a minimum
