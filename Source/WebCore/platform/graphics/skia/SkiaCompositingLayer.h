@@ -78,10 +78,12 @@ public:
     void setChildrenTransform(const TransformationMatrix& matrix) { m_childrenTransform = matrix; }
     void setPreserves3D(bool preserves3D) { m_preserves3D = preserves3D; }
     void setBackfaceVisibility(bool visible) { m_backfaceVisibility = visible; }
+    void setBackgroundColor(const Color& color) { m_backgroundColor = color; }
     void setContentsVisible(bool visible) { m_contentsVisible = visible; }
     void setContentsOpaque(bool opaque) { m_contentsOpaque = opaque; }
     void setMasksToBounds(bool masksToBounds) { m_masksToBounds = masksToBounds; }
     void setContentsClippingRect(const FloatRoundedRect& rect) { m_contentsClippingRect = rect; }
+    void setContentsClipPath(std::optional<SkPath>&& clipPath) { m_contentsClipPath = WTF::move(clipPath); }
     void setContentsRectClipsDescendants(bool clips) { m_contentsRectClipsDescendants = clips; }
     void setOpacity(float);
     void setBlendMode(BlendMode);
@@ -133,7 +135,7 @@ private:
     bool isReplica() const { return !!m_replicatedLayer; }
     // Contents are painted into m_contentsRect, which the layer bounds do not have to contain.
     bool paintsContentsRect() const { return m_contentsBuffer || m_imageBackingStore || (m_contentsSolidColor.isValid() && m_contentsSolidColor.isVisible()); }
-    bool hasVisualContent() const { return m_backingStore || paintsContentsRect(); }
+    bool hasVisualContent() const { return (m_backgroundColor.isValid() && m_backgroundColor.isVisible()) || m_backingStore || paintsContentsRect(); }
     bool hasVisiblePaintableContent() const { return !m_rect.isEmpty() && m_visible && m_contentsVisible && hasVisualContent(); }
 
     // A backdrop filter paints the layer without any content of its own, so it contributes damage too.
@@ -312,6 +314,7 @@ private:
     float m_opacity { 1 };
     std::optional<SkBlendMode> m_blendMode;
     std::optional<SkPath> m_clipPath;
+    std::optional<SkPath> m_contentsClipPath;
     sk_sp<SkImage> m_maskImage;
     RefPtr<SkiaCompositingLayer> m_mask;
     RefPtr<SkiaCompositingLayer> m_replica;
@@ -320,6 +323,7 @@ private:
     RefPtr<CoordinatedAnimatedBackingStoreClient> m_animatedBackingStoreClient;
     RefPtr<CoordinatedImageBackingStore> m_imageBackingStore;
     std::unique_ptr<CoordinatedPlatformLayerBuffer> m_contentsBuffer;
+    Color m_backgroundColor;
     Color m_contentsSolidColor;
     std::optional<DebugBorder> m_debugBorder;
     std::optional<unsigned> m_repaintCount;

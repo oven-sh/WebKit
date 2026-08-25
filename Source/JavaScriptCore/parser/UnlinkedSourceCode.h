@@ -36,7 +36,7 @@ namespace JSC {
     class UnlinkedSourceCode {
         template<typename SourceType>
         friend class CachedUnlinkedSourceCodeShape;
-        friend class CachedSourceCodeWithoutProvider;
+        friend class CachedFunctionExecutableRareData;
 
     public:
         UnlinkedSourceCode()

@@ -40,6 +40,7 @@
 #include "WasmFormat.h"
 #include "WasmGlobal.h"
 #include "WasmInstanceAnchor.h"
+#include "WasmLimits.h"
 #include "WasmMemory.h"
 #include "WasmModule.h"
 #include "WasmModuleInformation.h"
@@ -48,6 +49,7 @@
 #include "WebAssemblyFunction.h"
 #include "WebAssemblyGCStructure.h"
 #include "WriteBarrier.h"
+#include <wtf/BitSet.h>
 #include <wtf/BitVector.h>
 #include <wtf/FixedVector.h>
 #include <wtf/Ref.h>
@@ -61,6 +63,7 @@ namespace JSC {
 class JSModuleNamespaceObject;
 class JSWebAssemblyArray;
 class JSWebAssemblyModule;
+class JSWebAssemblyTag;
 class WebAssemblyModuleRecord;
 
 namespace Wasm {
@@ -124,7 +127,6 @@ public:
             m_cachedMemory0Size = m_memories[i]->memory().size();
             m_wasmMemory = value->memory();
         }
-        m_cachedMemory0IsMemory64 = moduleInformation().memory(0).isMemory64();
         m_memories[i]->memory().registerInstance(*this);
     }
 
@@ -164,6 +166,11 @@ public:
         linkGlobal(index, *value->global());
         vm.writeBarrier(this, value);
     }
+
+    void setTagWrapper(VM&, unsigned index, JSWebAssemblyTag*);
+    JSWebAssemblyTag* tagWrapper(unsigned index) const;
+    void setImportedGlobalWrapper(VM&, unsigned index, JSWebAssemblyGlobal*);
+    JSWebAssemblyGlobal* importedGlobalWrapper(unsigned index) const;
 
     JSWebAssemblyModule* jsModule() const LIFETIME_BOUND { return m_jsModule.get(); }
     const Wasm::ModuleInformation& moduleInformation() const { return m_moduleInformation.get(); }
@@ -228,8 +235,6 @@ public:
 
     uint32_t cachedTable0Length() const { return m_cachedTable0Length; }
     Wasm::FuncRefTable::Function* cachedTable0Buffer() const { return m_cachedTable0Buffer; }
-
-    bool cachedMemory0IsMemory64() const { return m_cachedMemory0IsMemory64; }
 
     void updateCachedTable0();
 
@@ -306,7 +311,12 @@ public:
     static constexpr ptrdiff_t offsetOfCachedTable0Buffer() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_cachedTable0Buffer); }
     static constexpr ptrdiff_t offsetOfCachedTable0Length() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_cachedTable0Length); }
     static constexpr ptrdiff_t offsetOfBuiltinCalleeBits() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_builtinCalleeBits); }
-    static constexpr ptrdiff_t offsetOfCachedMemory0IsMemory64() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_cachedMemory0IsMemory64); }
+    using MemoryIsMemory64BitSet = WTF::BitSet<Wasm::maxMemories>;
+#if CPU(REGISTER64)
+    static_assert(sizeof(MemoryIsMemory64BitSet::WordType) == sizeof(uint64_t));
+    static_assert(sizeof(MemoryIsMemory64BitSet) == sizeof(uint64_t) * ((Wasm::maxMemories + 63) / 64));
+#endif
+    static constexpr ptrdiff_t offsetOfMemoryIsMemory64Bits() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_memoryIsMemory64Bits); }
     static constexpr ptrdiff_t offsetOfCachedMemory0Size() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_cachedMemory0Size); }
 
     // Tail accessors.
@@ -456,7 +466,7 @@ private:
     const Ref<const Wasm::ModuleInformation> m_moduleInformation;
     RefPtr<Wasm::InstanceAnchor> m_anchor;
     RefPtr<SourceProvider> m_sourceProvider;
-    bool m_cachedMemory0IsMemory64 { false };
+    MemoryIsMemory64BitSet m_memoryIsMemory64Bits;
     uint64_t m_cachedMemory0Size { 0 }; // memory.size for memory 0, handled specially to avoid performance regressions
 
     RefPtr<Wasm::Memory> m_wasmMemory;
@@ -469,6 +479,10 @@ private:
     BitVector m_globalsToBinding;
     unsigned m_numImportFunctions { 0 };
     UncheckedKeyHashMap<uint32_t, Ref<Wasm::Global>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_linkedGlobals;
+    using TagWrapperMap = UncheckedKeyHashMap<uint32_t, WriteBarrier<JSWebAssemblyTag>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    TagWrapperMap m_tagWrappers;
+    using GlobalWrapperMap = UncheckedKeyHashMap<uint32_t, WriteBarrier<JSWebAssemblyGlobal>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    GlobalWrapperMap m_importedGlobalWrappers;
     BitVector m_passiveElements;
     BitVector m_passiveDataSegments;
     FixedVector<RefPtr<const Wasm::Tag>> m_tags;

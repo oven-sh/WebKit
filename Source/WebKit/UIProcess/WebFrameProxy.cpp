@@ -609,6 +609,12 @@ void WebFrameProxy::prepareForProvisionalLoadInProcess(WebProcessProxy& process,
 
     Site site = effectiveOrigin ? Site { *effectiveOrigin } : Site { navigation.currentRequest().url() };
     RefPtr page = m_page.get();
+
+    // Joining a process to a suspended page would leave content running that `_suspendPage:`
+    // promised was frozen. std::nullopt cancels the navigation before the load is sent.
+    if (page->isSuspended())
+        return completionHandler(std::nullopt);
+
     // FIXME: Main resource (of main or subframe) request redirects should go straight from the network to UI process so we don't need to make the processes for each domain in a redirect chain. <rdar://116202119>
     Site mainFrameSite(page->mainFrame()->url());
     auto mainFrameDomain = WebCore::RegistrableDomain { protect(page->mainFrame())->securityOrigin()->data() };
@@ -843,7 +849,9 @@ void WebFrameProxy::remoteProcessDidTerminate(WebProcessProxy& process, ClearFra
 {
     // Only clear the FrameTreeSyncData on all child processes once, when handling the main frame.
     // No point in clearing it multiple times in a tight loop.
-    if (clearFrameTreeSyncData == ClearFrameTreeSyncData::Yes)
+    // Site isolation may have been disabled after this remote page was created.
+    RefPtr webPage = page();
+    if (clearFrameTreeSyncData == ClearFrameTreeSyncData::Yes && webPage && protect(webPage->preferences())->siteIsolationEnabled())
         broadcastFrameTreeSyncData(FrameTreeSyncData::create());
 
     for (Ref child : m_childFrames)
@@ -865,7 +873,7 @@ Ref<FrameTreeSyncData> WebFrameProxy::calculateFrameTreeSyncData() const
     bool isSecureForPaymentSession = false;
 #endif
 
-    return FrameTreeSyncData::create(isSecureForPaymentSession, securityOrigin(), m_documentSecurityPolicy, m_effectiveSandboxFlags.contains(WebCore::SandboxFlag::Origin), url().protocol().toString(), IntRect { }, ScrollPosition { }, LayoutRect { }, HashMap<FrameIdentifier, Ref<RemoteFrameLayoutInfo>> { });
+    return FrameTreeSyncData::create(isSecureForPaymentSession, securityOrigin(), m_documentSecurityPolicy, m_effectiveSandboxFlags.contains(WebCore::SandboxFlag::Origin), url().protocol().toString(), IntRect { }, ScrollPosition { }, LayoutRect { }, IntSize { }, HashMap<FrameIdentifier, Ref<RemoteFrameLayoutInfo>> { });
 }
 
 Ref<SecurityOrigin> WebFrameProxy::securityOrigin() const
@@ -1158,11 +1166,11 @@ void WebFrameProxy::requestTextExtraction(WebCore::TextExtraction::Request&& req
     sendWithAsyncReply(Messages::WebFrame::RequestTextExtraction(WTF::move(request)), WTF::move(completion));
 }
 
-void WebFrameProxy::handleTextExtractionInteraction(TextExtraction::Interaction&& interaction, CompletionHandler<void(bool, String&&, FloatRect)>&& completion)
+void WebFrameProxy::handleTextExtractionInteraction(TextExtraction::Interaction&& interaction, CompletionHandler<void(bool, String&&, Vector<String>&&, FloatRect)>&& completion)
 {
     if (RefPtr page = m_page.get(); !page || !page->hasRunningProcess()) {
         ASSERT_NOT_REACHED();
-        return completion(false, "Internal inconsistency / unexpected state. Please file a bug"_s, { });
+        return completion(false, "Internal inconsistency / unexpected state. Please file a bug"_s, { }, { });
     }
 
     sendWithAsyncReply(Messages::WebFrame::HandleTextExtractionInteraction(WTF::move(interaction)), WTF::move(completion));

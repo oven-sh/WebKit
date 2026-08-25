@@ -237,10 +237,6 @@ webkit.org/b/251107 [ Debug ] inspector/canvas/recording-webgl2-full.html [ Fail
 webkit.org/b/251107 inspector/canvas/recording-webgl2-snapshots.html [ Failure ]
 webkit.org/b/251107 webgl/2.0.y/conformance/offscreencanvas/offscreencanvas-transfer-image-bitmap.html [ Timeout ]
 
-# No colorspaces in non-Cocoa WebGL.
-fast/canvas/webgl/colorspaces-test.html [ Failure ]
-fast/canvas/webgl/context-lost-restored-p3.html [ Failure ]
-
 # These tests reference specific fonts on Mac port.
 Bug(GTK) fast/text/font-weights.html [ WontFix ]
 Bug(GTK) fast/text/font-weights-zh.html [ WontFix ]
@@ -1061,7 +1057,6 @@ imported/w3c/web-platform-tests/css/filter-effects/blur-text.html [ ImageOnlyFai
 webkit.org/b/264680 fast/scrolling/gtk/user-scroll-snapping-interaction.html [ Timeout ]
 webkit.org/b/264680 [ Release ] http/wpt/service-workers/controlled-sharedworker.https.html [ Failure Pass ]
 webkit.org/b/264680 imported/w3c/web-platform-tests/html/infrastructure/urls/resolving-urls/query-encoding/windows-1251.html?include=loading [ Failure Pass ]
-webkit.org/b/264680 inspector/heap/getPreview.html [ Failure Pass ]
 webkit.org/b/264680 scrollbars/scrollbar-selectors.html [ Pass Timeout ]
 
 # Crash due to unimplemented event type.
@@ -1094,41 +1089,15 @@ webkit.org/b/309572 compositing/video/video-object-view-box-object-position-no-p
 webkit.org/b/309572 compositing/video/video-object-view-box-writing-mode-no-poster.html [ Failure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/window-resize-aborts-transition-before-ready.html [ Failure ]
 
-http/tests/login-status/login-status-api-getter-setter-functions.html [ Failure ]
-
 imported/w3c/web-platform-tests/css/css-overflow/overflow-auto-scrolling-with-margin-and-transform.html [ Skip ]
 
-webkit.org/b/278719 fast/events/touch/basic-multi-touch-events.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/basic-multi-touch-events-limited.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/touch-target.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/touch-target-limited.html [ Timeout ]
-
-webkit.org/b/278719 fast/events/touch/basic-single-touch-events.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/emulate-touch-events.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/input-touch-target.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/inserted-fragment-touch-target.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/moved-touch-target.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/multi-touch-grouped-targets.html [ Skip ]
-webkit.org/b/278719 fast/events/touch/multi-touch-inside-iframes.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/multi-touch-inside-nested-iframes.html [ Skip ]
-webkit.org/b/278719 fast/events/touch/removed-fragment-touch-target.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/removed-touch-target.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/tap-highlight-color.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/textarea-touch-target.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/text-node-touch-target.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/touch-active-state.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/touch-coords-in-zoom-and-scroll.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/touch-event-frames.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/touch-event-pageXY.html [ Skip ]
+webkit.org/b/278719 fast/events/touch/touch-event-frames.html [ Failure ]
+webkit.org/b/278719 fast/events/touch/touch-event-pageXY.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/touch-handler-count.html [ Failure ]
-webkit.org/b/278719 fast/events/touch/touch-inside-iframe.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/touch-inside-iframe-scrolled.html [ Timeout ]
-webkit.org/b/278719 fast/events/touch/touch-slider.html [ Crash Failure ]
 webkit.org/b/278719 fast/events/touch/touch-stale-node-crash.html [ Timeout ]
 webkit.org/b/278719 imported/w3c/web-platform-tests/touch-events/idlharness.window.html [ Failure ]
 webkit.org/b/278719 imported/w3c/web-platform-tests/touch-events/touch-globaleventhandler-interface.html [ Failure ]
-
-webkit.org/b/208984 fast/events/touch/touch-slider-no-js-touch-listener.html [ Failure ]
 
 webkit.org/b/213782 svg/custom/object-sizing-explicit-width.xhtml [ Failure Pass ]
 
@@ -1244,7 +1213,6 @@ webkit.org/b/315994 [ Debug ] imported/w3c/web-platform-tests/css/css-fonts/vari
 webkit.org/b/315994 imported/w3c/web-platform-tests/css/css-view-transitions/new-content-inline-with-offset-from-containing-block-clipped.html [ ImageOnlyFailure Pass ]
 webkit.org/b/315994 imported/w3c/web-platform-tests/css/css-view-transitions/old-content-inline-with-offset-from-containing-block-clipped.html [ ImageOnlyFailure Pass ]
 
-webkit.org/b/278719 fast/events/touch/touch-scaled-scrolled.html [ Failure Timeout ]
 webkit.org/b/317009 [ Release ] fast/events/mouse-events-on-textarea-resize.html [ Pass Failure ]
 
 webkit.org/b/316547 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/back-forward-cache/pushstate.https.html [ Failure ]
@@ -1299,7 +1267,6 @@ webkit.org/b/319061 [ Debug ] media/muted-video-is-playing-audio.html [ Timeout 
 webkit.org/b/319062 [ Debug ] inspector/dom/getMediaStats.html [ Failure ]
 webkit.org/b/319063 [ Debug ] fullscreen/full-screen-enter-while-exiting.html [ Timeout ]
 webkit.org/b/319064 [ Debug ] fullscreen/video-inside-flex-item.html [ Failure ]
-webkit.org/b/319065 [ Debug ] imported/w3c/web-platform-tests/pointerevents/pointerevent_setpointercapture_relatedtarget.html [ Failure ]
 webkit.org/b/319066 [ Debug ] imported/w3c/web-platform-tests/css/css-view-transitions/view-transition-waituntil-finished-promise.html [ Failure ]
 
 webkit.org/b/319072 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-audio-element/audio-loading-lazy-window-onload.html [ Failure Pass ]
@@ -1333,3 +1300,5 @@ webkit.org/b/320649 [ Debug ] webrtc/disable-encryption.html [ Crash Pass ]
 webkit.org/b/321451 [ Debug ] inspector/unit-tests/debouncer.html [ Failure Pass ]
 
 webkit.org/b/321789 animations/no-style-recalc-during-accelerated-animation.html [ Failure Pass ]
+
+webkit.org/b/322025 fast/animation/request-animation-frame-during-modal.html [ Failure Pass ]

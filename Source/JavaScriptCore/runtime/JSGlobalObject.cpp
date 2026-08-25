@@ -2459,7 +2459,7 @@ bool JSGlobalObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSGlobalObject* thisObject = uncheckedDowncast<JSGlobalObject>(object);
 
-    SymbolTableEntry entry;
+    SymbolTableEntry::Fast entry;
     PropertyDescriptor currentDescriptor;
     if (symbolTableGet(thisObject, propertyName, entry, currentDescriptor)) {
         bool isExtensible = false; // ignored since current descriptor is present
@@ -2477,8 +2477,13 @@ bool JSGlobalObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
             RETURN_IF_EXCEPTION(scope, false);
         }
         if (descriptor.writablePresent() && !descriptor.writable() && !entry.isReadOnly()) {
-            entry.setReadOnly();
-            thisObject->symbolTable()->set(propertyName.uid(), entry);
+            {
+                SymbolTable* symbolTable = thisObject->symbolTable();
+                ConcurrentJSLocker locker(symbolTable->m_lock);
+                auto iter = symbolTable->find(locker, propertyName.uid());
+                ASSERT(iter != symbolTable->end(locker));
+                iter->value.setReadOnly();
+            }
             thisObject->varReadOnlyWatchpointSet().fireAll(vm, "GlobalVar was redefined as ReadOnly");
         }
         return true;
@@ -3300,7 +3305,7 @@ void JSGlobalObject::addStaticGlobals(std::span<GlobalPropertyInfo> globals)
         // the static globals because configurable = false.
         ASSERT(global.attributes & PropertyAttribute::DontDelete);
 
-        WatchpointSet* watchpointSet = nullptr;
+        InlineWatchpointSet* watchpointSet = nullptr;
         WriteBarrierBase<Unknown>* variable = nullptr;
         {
             ConcurrentJSLocker locker(symbolTable()->m_lock);

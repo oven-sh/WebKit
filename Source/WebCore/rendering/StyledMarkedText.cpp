@@ -30,6 +30,7 @@
 #include "ElementRuleCollector.h"
 #include "IntSize.h"
 #include "LocalFrameView.h"
+#include "LocalFrameViewInlines.h"
 #include "RenderElement.h"
 #include "RenderObjectDocument.h"
 #include "RenderText.h"
@@ -154,7 +155,7 @@ static StyledMarkedText resolveStyleForMarkedText(const MarkedText& markedText, 
     case MarkedText::Type::Selection: {
         style.textStyles = computeTextSelectionPaintStyle(style.textStyles, renderer, lineStyle, paintInfo, style.textShadow);
 
-        if (auto selectionStyle = renderer.selectionPseudoStyle())
+        if (CheckedPtr selectionStyle = renderer.selectionPseudoStyle())
             computeDecorationStylesForPseudoElementStyle(style, *selectionStyle, paintInfo);
 
         Color selectionBackgroundColor = renderer.selectionBackgroundColor();

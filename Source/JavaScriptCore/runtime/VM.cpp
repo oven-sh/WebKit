@@ -1094,7 +1094,7 @@ SourceProviderCache* VM::addSourceProviderCache(SourceProvider* sourceProvider)
 {
     auto addResult = sourceProviderCacheMap.add(sourceProvider, nullptr);
     if (addResult.isNewEntry)
-        addResult.iterator->value = adoptRef(new SourceProviderCache);
+        addResult.iterator->value = SourceProviderCache::create(sourceProvider->source().length());
     return addResult.iterator->value.get();
 }
 
@@ -1166,6 +1166,21 @@ void VM::throwTerminationException()
     setException(terminationException());
     if (m_executionForbiddenOnTermination)
         setExecutionForbidden();
+}
+
+void VM::throwTerminationExceptionIfNeeded()
+{
+    if (hasPendingTerminationException())
+        return;
+
+    if (traps().needHandling(VMTraps::NeedTermination))
+        traps().handleTraps(VMTraps::NeedTermination);
+
+    if (hasPendingTerminationException())
+        return;
+
+    if (hasTerminationRequest() && !traps().isDeferringTermination())
+        throwTerminationException();
 }
 
 Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exceptionToThrow)
@@ -1519,11 +1534,11 @@ void VM::callPromiseRejectionCallback(Strong<JSPromise>& promise)
     auto callData = JSC::getCallDataInline(callback);
     ASSERT(callData.type != CallData::Type::None);
 
-    MarkedArgumentBuffer args;
-    args.append(promise.get());
-    args.append(promise->result());
-    ASSERT(!args.hasOverflowed());
-    call(promise->realm(), callback, callData, jsNull(), args);
+    auto args = WTF::toArray<EncodedJSValue>({
+        JSValue::encode(promise.get()),
+        JSValue::encode(promise->result()),
+    });
+    call(promise->realm(), callback, callData, jsNull(), ArgList { args.data(), args.size() });
     scope.clearException();
 }
 
@@ -1970,6 +1985,11 @@ void VM::beginMarking()
 void VM::reconcileWeakReferencesAtGCEnd()
 {
     m_syncResumeCallCache->reconcileWeakReferencesAtGCEnd(*this);
+}
+
+void VM::clearMicrotaskCallCaches()
+{
+    m_syncResumeCallCache->clear();
 }
 
 template<typename Visitor>

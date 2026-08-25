@@ -136,7 +136,7 @@ auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64
         // PROT_NONE region, but it's better if we use a smaller immediate because it can codegens better. We know that anything equal to or greater
         // than the declared 'maximum' will trap, so we can compare against that number. If there was no declared 'maximum' then we still know that
         // any access equal to or greater than 4GiB will trap, no need to add the redzone.
-        if (uoffset >= Memory::fastMappedRedzoneBytes()) {
+        if (boundary >= Memory::fastMappedRedzoneBytes()) {
             RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!m_info.memory(memoryIndex).isMemory64());
             uint64_t maximum = m_info.memory(memoryIndex).maximum() ? m_info.memory(memoryIndex).maximum().bytes() : std::numeric_limits<uint32_t>::max();
             m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
@@ -223,7 +223,7 @@ void BBQJIT::emitModOrDiv(Value& lhs, Location lhsLocation, Value& rhs, Location
 
     ASSERT(resultLocation.isRegister());
     ASSERT(lhsLocation.asGPR() != X86Registers::eax && lhsLocation.asGPR() != X86Registers::edx);
-    ASSERT(rhsLocation.asGPR() != X86Registers::eax && lhsLocation.asGPR() != X86Registers::edx);
+    ASSERT(rhsLocation.asGPR() != X86Registers::eax && rhsLocation.asGPR() != X86Registers::edx);
 
     ScratchScope<2, 0> scratches(*this, lhsLocation, rhsLocation, resultLocation);
 
@@ -629,13 +629,7 @@ void BBQJIT::emitCCall(Func function, std::span<const Value> arguments, Value& r
     case TypeKind::Noexnref:
     case TypeKind::Noneref:
     case TypeKind::Nofuncref:
-    case TypeKind::Noexternref:
-    case TypeKind::Rec:
-    case TypeKind::Sub:
-    case TypeKind::Subfinal:
-    case TypeKind::Array:
-    case TypeKind::Struct:
-    case TypeKind::Func: {
+    case TypeKind::Noexternref: {
         resultLocation = Location::fromGPR(GPRInfo::returnValueGPR);
         ASSERT(validGPRs().contains(GPRInfo::returnValueGPR, IgnoreVectors));
         break;

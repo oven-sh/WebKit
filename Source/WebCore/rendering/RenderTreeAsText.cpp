@@ -365,7 +365,7 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
         ts << " [r="_s << cell->rowIndex() << " c="_s << cell->col() << " rs="_s << cell->rowSpan() << " cs="_s << cell->colSpan() << ']';
 
     if (auto* listMarker = dynamicDowncast<RenderListMarker>(o)) {
-        auto text = listMarker->textWithoutSuffix();
+        auto text = listMarker->textContent(RenderListMarker::IncludeSuffix::No);
         if (!text.isEmpty()) {
             if (text.length() != 1)
                 text = quoteAndEscapeNonPrintables(text);
@@ -548,6 +548,9 @@ void write(TextStream& ts, const RenderObject& renderer, OptionSet<RenderAsTextF
         writeTextRuns(ts, *textRenderer);
         return;
     }
+
+    if (CheckedPtr listMarker = dynamicDowncast<RenderListMarker>(renderer); listMarker && listMarker->synthesizesGlyph())
+        return;
 
     for (auto& child : childrenOfType<RenderObject>(downcast<RenderElement>(renderer))) {
         if (child.hasLayer())
@@ -918,7 +921,7 @@ String markerTextForListItem(Element* element)
     auto* renderer = dynamicDowncast<RenderListItem>(element->renderer());
     if (!renderer)
         return String();
-    return renderer->markerTextWithoutSuffix();
+    return renderer->markerText(RenderListMarker::IncludeSuffix::No);
 }
 
 } // namespace WebCore

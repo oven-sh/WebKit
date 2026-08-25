@@ -319,6 +319,8 @@ public:
     double requestAnimationFrameInterval() const;
     bool NODELETE scriptedAnimationsAreSuspended() const;
     bool NODELETE areTimersThrottled() const;
+    double domTimerAlignmentInterval() const;
+    double domTimerAlignmentIntervalIncreaseLimit() const;
 
     enum EventThrottlingBehavior { Responsive, Unresponsive };
     void NODELETE setEventThrottlingBehaviorOverride(std::optional<EventThrottlingBehavior>);
@@ -700,6 +702,8 @@ public:
 
     void setHeaderHeight(float);
     void setFooterHeight(float);
+
+    float obscuredContentInsetTop();
 
     struct FullscreenInsets {
         float top { 0 };
@@ -1152,6 +1156,7 @@ public:
     bool NODELETE supportsAudioSession() const;
     AudioSessionCategory audioSessionCategory() const;
     void systemAudioSessionCategory(DOMPromiseDeferred<IDLEnumeration<AudioSessionCategory>>&&);
+    void systemAudioSessionActivationCount(DOMPromiseDeferred<IDLUnsignedLongLong>&&);
     AudioSessionMode audioSessionMode() const;
     RouteSharingPolicy routeSharingPolicy() const;
 #if ENABLE(VIDEO)
@@ -1342,6 +1347,7 @@ public:
 #endif
 
     bool elementIsActiveNowPlayingSession(HTMLMediaElement&) const;
+    void elementIsActiveNowPlayingSessionInGPUProcess(HTMLMediaElement&, DOMPromiseDeferred<IDLBoolean>&&);
 
 #endif // ENABLE(VIDEO)
 
@@ -1555,6 +1561,7 @@ public:
     bool destroySleepDisabler(unsigned identifier);
 
     void setTopDocumentURLForQuirks(const String&);
+    Vector<String> activeQuirks() const;
 
 #if ENABLE(APP_HIGHLIGHTS)
     Vector<String> appHighlightContextMenuItemTitles() const;

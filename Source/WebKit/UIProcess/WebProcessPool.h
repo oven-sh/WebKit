@@ -190,14 +190,12 @@ public:
 
     WebBackForwardCache& backForwardCache() { return m_backForwardCache.get(); }
     
-    template<typename RawValue>
-    void addMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase<RawValue>& destinationID, IPC::MessageReceiver& receiver)
+    void addMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase& destinationID, IPC::MessageReceiver& receiver)
     {
         addMessageReceiver(messageReceiverName, destinationID.toUInt64(), receiver);
     }
     
-    template<typename RawValue>
-    void removeMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase<RawValue>& destinationID)
+    void removeMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase& destinationID)
     {
         removeMessageReceiver(messageReceiverName, destinationID.toUInt64());
     }
@@ -253,6 +251,7 @@ public:
     void setProcessesShouldSuspend(bool);
 #endif
 
+    void reclaimIdleProcesses();
     void handleMemoryPressureWarning(Critical);
 
 #if PLATFORM(COCOA)
@@ -626,6 +625,7 @@ public:
     Seconds pltResourceDelayInterval() const { return m_pltResourceDelayInterval; }
 
     bool hasUsedSiteIsolation() const { return m_hasUsedSiteIsolation; }
+    static bool hasAnyProcessPoolUsedSiteIsolation();
 
     unsigned prewarmedProcessCountLimit() const;
 
@@ -881,6 +881,7 @@ private:
     ProcessSuppressionDisabledCounter m_processSuppressionDisabledForPageCounter;
     HiddenPageThrottlingAutoIncreasesCounter m_hiddenPageThrottlingAutoIncreasesCounter;
     RunLoop::Timer m_hiddenPageThrottlingTimer;
+    Seconds m_hiddenPageDOMTimerThrottlingIncreaseLimit;
 
 #if ENABLE(GPU_PROCESS)
     RunLoop::Timer m_resetGPUProcessCrashCountTimer;

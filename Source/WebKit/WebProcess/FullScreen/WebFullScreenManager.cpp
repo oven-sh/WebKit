@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,6 +39,7 @@
 #include <WebCore/Color.h>
 #include <WebCore/ContainerNodeInlines.h>
 #include <WebCore/DocumentFullscreen.h>
+#include <WebCore/DocumentPage.h>
 #include <WebCore/DocumentQuirks.h>
 #include <WebCore/DocumentView.h>
 #include <WebCore/EventNames.h>
@@ -49,6 +50,7 @@
 #include <WebCore/LocalFrame.h>
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
+#include <WebCore/LocalFrameViewInlines.h>
 #include <WebCore/MIMETypeRegistry.h>
 #include <WebCore/NodeDocument.h>
 #include <WebCore/RenderImage.h>
@@ -479,8 +481,18 @@ void WebFullScreenManager::performEnterFullScreen()
     }
 
     if (m_pendingMode == HTMLMediaElementEnums::VideoFullscreenModeInWindow) {
-        willEnterFullScreen(*element, WTF::move(m_pendingWillEnterCallback), WTF::move(m_pendingDidEnterCallback), m_pendingMode);
-        m_inWindowFullScreenMode = true;
+        ASSERT(m_elementFrameIdentifier);
+        m_page->sendWithAsyncReply(Messages::WebFullScreenManagerProxy::EnterInWindowFullScreen(*m_elementFrameIdentifier), [
+            this,
+            protectedThis = Ref { *this },
+            element = Ref { *element },
+            mode = m_pendingMode,
+            willEnterFullScreenCallback = WTF::move(m_pendingWillEnterCallback),
+            didEnterFullScreenCallback = WTF::move(m_pendingDidEnterCallback)
+        ] mutable {
+            willEnterFullScreen(element, WTF::move(willEnterFullScreenCallback), WTF::move(didEnterFullScreenCallback), mode);
+            m_inWindowFullScreenMode = true;
+        });
     } else {
         ASSERT(m_elementFrameIdentifier);
         m_page->sendWithAsyncReply(Messages::WebFullScreenManagerProxy::EnterFullScreen(*m_elementFrameIdentifier, protect(m_element->document())->quirks().blocksReturnToFullscreenFromPictureInPictureQuirk(), WTF::move(mediaDetails)), [
@@ -951,6 +963,9 @@ void WebFullScreenManager::enterFullScreenForOwnerElements(WebCore::FrameIdentif
     }
     for (auto element : elements | std::views::reverse)
         DocumentFullscreen::elementEnterFullscreen(element);
+
+    if (!elements.isEmpty())
+        protect(elements.last()->document())->updateLayout();
 
     completionHandler();
 }

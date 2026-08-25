@@ -2878,8 +2878,9 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     const int minimumSourceLengthToCache = functionBodyType == StandardFunctionBodyBlock ? 16 : 8;
     std::unique_ptr<SourceProviderCacheItem> newInfo;
     int sourceLength = functionInfo.endOffset - functionInfo.startOffset;
+    SourceProviderCacheItemCreationParameters parameters;
+    bool hasPrecomputedFreeVariables = false;
     if (TreeBuilder::CanUseFunctionCache && m_functionCache && sourceLength > minimumSourceLengthToCache) {
-        SourceProviderCacheItemCreationParameters parameters;
         parameters.endFunctionOffset = functionInfo.endOffset;
         parameters.lastTokenLine = location.line;
         parameters.lastTokenStartOffset = location.startOffset;
@@ -2894,12 +2895,13 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
             parameters.tokenType = m_token.m_type;
         }
         functionScope->fillParametersForSourceProviderCache(parameters, nonLocalCapturesFromParameterExpressions);
+        hasPrecomputedFreeVariables = true;
         newInfo = SourceProviderCacheItem::create(parameters);
     }
 
     bool functionScopeWasStrictMode = functionScope->strictMode();
     
-    popScope(functionScope, TreeBuilder::NeedsFreeVariableInfo);
+    popScope(functionScope, TreeBuilder::NeedsFreeVariableInfo, hasPrecomputedFreeVariables, parameters.freeVariables());
     
     if (functionBodyType != ArrowFunctionBodyExpression)
         consumeOrFail(CLOSEBRACE, "Expected a closing '}' after a ", stringForFunctionMode(mode), " body");
@@ -5433,7 +5435,20 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
     TreeExpression base = 0;
     JSTextPosition expressionStart = tokenStartPosition();
     JSTokenLocation location = tokenLocation();
-    Vector<JSTextPosition, 4> newTokenStartPositions;
+
+    // No need to accumulate newTokenStartPositions if the builder is SyntaxChecker.
+    struct IgnoredPositions {
+        void append(const JSTextPosition&) { ++m_size; }
+        JSTextPosition operator[](size_t) const { return { }; }
+        size_t size() const { return m_size; }
+    private:
+        unsigned m_size { 0 };
+    };
+    static_assert(!std::is_same_v<TreeBuilder, SyntaxChecker>
+        || requires (TreeBuilder& builder, TreeExpression expression, const JSTokenLocation& newLocation) { builder.createNewExpr(newLocation, expression, 0, 0, 0); },
+        "SyntaxChecker::createNewExpr is expected to accept ints instead of JSTextPositions and ignore them.");
+
+    std::conditional_t<std::is_same_v<TreeBuilder, SyntaxChecker>, IgnoredPositions, Vector<JSTextPosition, 4>> newTokenStartPositions;
     while (match(NEW)) {
         newTokenStartPositions.append(tokenStartPosition());
         next();

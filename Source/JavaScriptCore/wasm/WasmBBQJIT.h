@@ -1191,7 +1191,7 @@ public:
             // PROT_NONE region, but it's better if we use a smaller immediate because it can codegens better. We know that anything equal to or greater
             // than the declared 'maximum' will trap, so we can compare against that number. If there was no declared 'maximum' then we still know that
             // any access equal to or greater than 4GiB will trap, no need to add the redzone.
-            if (uoffset >= Memory::fastMappedRedzoneBytes()) {
+            if (boundary >= Memory::fastMappedRedzoneBytes()) {
                 uint64_t maximum = m_info.memory(memoryIndex).maximum() ? m_info.memory(memoryIndex).maximum().bytes() : std::numeric_limits<uint32_t>::max();
                 m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
                 if (boundary)
@@ -1437,6 +1437,10 @@ public:
     [[nodiscard]] PartialResult addArrayNewFixed(TypeSignatureIndex typeIndex, ArgumentList& args, ExpressionType& result);
 
     void emitArrayGetPayload(StorageType, GPRReg arrayGPR, GPRReg payloadGPR);
+    void emitZeroExtendI32(Value, GPRReg resultGPR);
+    void emitGetArraySizeWithNullCheck(TypedExpression array, GPRReg lengthGPR);
+    void emitArrayRangeCheck(GPRReg lengthGPR, Value offset, Value size, ExceptionType);
+    void emitArrayElementAddress(StorageType elementType, Value array, Value index, GPRReg resultGPR);
 
     [[nodiscard]] PartialResult addArrayGet(ExtGCOpType arrayGetKind, TypeSignatureIndex typeIndex, TypedExpression arrayref, ExpressionType index, ExpressionType& result);
 

@@ -58,6 +58,13 @@
 #include <wtf/OSObjectPtr.h>
 #endif
 
+#if defined(__swift__) && OS(WINDOWS)
+// The Swift C++ importer eagerly instantiates class-template members
+// (including Vector<T>::span()), and MSVC's STL rejects std::span<T> when T
+// is incomplete.
+#include "ITPThirdPartyData.h"
+#endif
+
 namespace IPC {
 class FormDataReference;
 }
@@ -113,6 +120,7 @@ enum class WebsiteDataType : uint32_t;
 
 struct FrameInfoData;
 struct NetworkProcessCreationParameters;
+struct SecurityFlags;
 struct ResourceLoadInfo;
 struct WebPushMessage;
 struct WebsiteData;
@@ -144,6 +152,8 @@ public:
     void getNetworkProcessConnection(WebProcessProxy&, CompletionHandler<void(NetworkProcessConnectionInfo&&)>&&);
 
     void sharedPreferencesForWebProcessDidChange(WebProcessProxy&, SharedPreferencesForWebProcess&&, CompletionHandler<void()>&&);
+    void securityFlagsDidChange(const SecurityFlags&);
+    void isSecurityFlagEnabledForTesting(const String&, CompletionHandler<void(std::optional<bool>)>&&);
 
     Ref<DownloadProxy> createDownloadProxy(WebsiteDataStore&, Ref<API::DownloadClient>&&, const WebCore::ResourceRequest&, const std::optional<FrameInfoData>&, WebPageProxy* originatingPage);
     void dataTaskWithRequest(WebPageProxy&, PAL::SessionID, WebCore::ResourceRequest&&, const std::optional<WebCore::SecurityOriginData>& topOrigin, bool shouldRunAtForegroundPriority, CompletionHandler<void(API::DataTask&)>&&);
@@ -276,6 +286,8 @@ public:
 #if ENABLE(NETWORK_ISSUE_REPORTING)
     void reportNetworkIssue(WebPageProxyIdentifier, const URL&);
 #endif
+
+    void receivedQualifiedServerTrust(WebKit::WebPageProxyIdentifier, WebCore::CertificateInfo&&, WebCore::CertificateInfo&&);
 
     void resourceLoadDidSendRequest(WebPageProxyIdentifier, ResourceLoadInfo&&, WebCore::ResourceRequest&&, std::optional<IPC::FormDataReference>&&);
     void resourceLoadDidPerformHTTPRedirection(WebPageProxyIdentifier, ResourceLoadInfo&&, WebCore::ResourceResponse&&, WebCore::ResourceRequest&&);

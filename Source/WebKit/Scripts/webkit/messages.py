@@ -355,11 +355,6 @@ def message_to_struct_declaration(receiver, message):
 
 def atomic_object_identifier(type):
     # FIXME: This can be derived from *.serialization.in files.
-    uuid_object_identifiers = [
-        'WebCore::FileSystemHandleGlobalIdentifier',
-    ]
-    if type in uuid_object_identifiers:
-        return 'UUID'
     atomic_object_identifiers = [
         'WebCore::FileSystemHandleIdentifier',
         'WebCore::FileSystemSyncAccessHandleIdentifier',
@@ -446,7 +441,6 @@ def serialized_identifiers():
         'WebCore::DictationContext',
         'WebCore::NodeIdentifier',
         'WebCore::FetchIdentifier',
-        'WebCore::FileSystemHandleGlobalIdentifier',
         'WebCore::FileSystemHandleIdentifier',
         'WebCore::FileSystemSyncAccessHandleIdentifier',
         'WebCore::FileSystemWritableFileStreamIdentifier',
@@ -599,6 +593,7 @@ def types_that_cannot_be_forward_declared():
         'Inspector::SearchResult',
         'MachSendRight',
         'MediaTime',
+        'WebCore::NowPlayingCandidateState',
         'PlatformXR::CompositionLayerType',
         'PlatformXR::DeviceLayer',
         'PlatformXR::ReferenceSpaceType',
@@ -623,6 +618,7 @@ def types_that_cannot_be_forward_declared():
         'WebCore::DictationContext',
         'WebCore::DragApplicationFlags',
         'WebCore::DragEventTargetData',
+        'WebCore::FileSystemHandleGlobalIdentifier',
         'WebCore::FloatBoxExtent',
         'WebCore::GCGLExtension',
         'WebCore::GlyphBufferAdvance',
@@ -1075,6 +1071,7 @@ def class_template_headers(template_string):
         'Markable': {'headers': ['<wtf/Markable.h>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'OptionSet': {'headers': ['<wtf/OptionSet.h>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'Vector': {'headers': ['<wtf/Vector.h>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
+        'std::array': {'headers': ['<array>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'std::optional': {'headers': ['<optional>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'std::pair': {'headers': ['<utility>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'std::span': {'headers': ['<span>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
@@ -1273,6 +1270,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::FontInternalAttributes': ['<WebCore/Font.h>'],
         'WebCore::FileChooserSettings': ['<WebCore/FileChooser.h>'],
         'WebCore::FillLightMode': ['<WebCore/FillLightMode.h>'],
+        'WebCore::FileSystemHandleGlobalIdentifier': ['<WebCore/FileSystemHandleGlobalIdentifier.h>'],
         'WebCore::FirstPartyWebsiteDataRemovalMode': ['<WebCore/NetworkStorageSession.h>'],
         'WebCore::FontChanges': ['<WebCore/FontAttributeChanges.h>'],
         'WebCore::FontPlatformDataAttributes': ['<WebCore/FontPlatformData.h>'],
@@ -1372,6 +1370,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::NetworkTransactionInformation': ['<WebCore/NetworkLoadInformation.h>'],
         'WebCore::NavigationUpgradeToHTTPSBehavior': ['<WebCore/FrameLoaderTypes.h>'],
         'WebCore::NowPlayingMetadata': ['<WebCore/NowPlayingInfo.h>'],
+        'WebCore::NowPlayingCandidateState': ['<WebCore/NowPlayingInfo.h>'],
         'WebCore::OpaqueOriginIdentifier': ['<WebCore/SecurityOriginData.h>'],
         'WebCore::PasteboardCustomData': ['<WebCore/Pasteboard.h>'],
         'WebCore::PasteboardBuffer': ['<WebCore/Pasteboard.h>'],

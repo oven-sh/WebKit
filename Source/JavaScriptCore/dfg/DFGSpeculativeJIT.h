@@ -1322,7 +1322,7 @@ public:
         SwitchData*, const Vector<StringSwitchCase>&, unsigned numChecked,
         unsigned begin, unsigned end, GPRReg buffer, GPRReg length, GPRReg temp,
         unsigned alreadyCheckedLength, bool checkedExactLength);
-    void emitSwitchStringOnString(Node*, SwitchData*, GPRReg string, Edge stringEdge);
+    void emitSwitchStringOnString(Node*, SwitchData*, GPRReg stringGPR, Edge stringEdge);
     void emitSwitchString(Node*, SwitchData*);
     void emitSwitch(Node*);
     
@@ -1380,12 +1380,14 @@ public:
     void compileLoadMapValue(Node*);
     void compileIsEmptyStorage(Node*);
     void compileMapIteratorNext(Node*);
+    void loadMapEntryData(bool isMap, GPRReg storageGPR, GPRReg entryGPR, GPRReg scratchGPR, JSValueRegs resultRegs, int32_t indexAdjust);
     void compileMapIteratorKey(Node*);
     void compileMapIteratorValue(Node*);
     void compileMapStorage(Node*);
     void compileMapStorageOrSentinel(Node*);
     void compileMapIterationNext(Node*);
     void compileMapIterationEntry(Node*);
+    void compileMapIterationEntryData(Node*, unsigned dataOffset);
     void compileMapIterationEntryKey(Node*);
     void compileMapIterationEntryValue(Node*);
     void compileMapOrSetSize(Node*);

@@ -242,7 +242,11 @@ public:
 
     void updateCache(const UnlinkedFunctionExecutable*, const SourceCode&, CodeSpecializationKind, const UnlinkedFunctionCodeBlock*);
 
-    void clear() { m_sourceCode.clear(); }
+    void clear()
+    {
+        write();
+        m_sourceCode.clear();
+    }
     JS_EXPORT_PRIVATE void write();
 
 private:
@@ -273,8 +277,9 @@ template <> struct CacheTypes<UnlinkedModuleProgramCodeBlock> {
 };
 
 UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM&, DirectEvalExecutable*, const SourceCode&, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment*);
-UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType);
-UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType);
+// `depth` bounds how many levels of nested functions get code blocks (0 = only the program's own).
+UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = std::numeric_limits<unsigned>::max());
+UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = std::numeric_limits<unsigned>::max());
 // For a function executable that was created directly (e.g. a builtin): its body and every nested function, as an ahead-of-time cache wants.
 // `depth` bounds how many levels of nested functions get code blocks (0 = only the function's own; functions past the
 // bound stay in the cache as executables whose bodies are generated from source when first called).
@@ -283,7 +288,7 @@ JS_EXPORT_PRIVATE void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM&, Unl
 #if USE(BUN_JSC_ADDITIONS)
 // What a CodeCache hit does besides returning the block: the executable learns the parse results
 // (newCodeBlockFor() requires them) and the provider the //# sourceURL / sourceMappingURL directives.
-void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedCodeBlock*);
+void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedGlobalCodeBlock*);
 #endif
 
 void writeCodeBlock(const SourceCodeKey&, const SourceCodeValue&);

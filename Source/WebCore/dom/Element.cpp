@@ -1652,7 +1652,7 @@ int Element::clientWidth()
     Ref document = this->document();
     document->updateLayoutIfDimensionsOutOfDate(*this, DimensionsCheck::Width, { LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible, LayoutOptions::IgnorePendingStylesheets });
 
-    if (!document->hasLivingRenderTree())
+    if (document->renderTreeState() != Document::RenderTreeState::Built)
         return 0;
 
     CheckedRef renderView = *document->renderView();
@@ -1689,7 +1689,7 @@ int Element::clientHeight()
 {
     Ref document = this->document();
     document->updateLayoutIfDimensionsOutOfDate(*this, DimensionsCheck::Height, { LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible, LayoutOptions::IgnorePendingStylesheets });
-    if (!document->hasLivingRenderTree())
+    if (document->renderTreeState() != Document::RenderTreeState::Built)
         return 0;
 
     CheckedRef renderView = *document->renderView();
@@ -2886,11 +2886,12 @@ bool Element::computedStyleIsDisplayNone()
 
 void Element::storeDisplayContentsOrNoneStyle(std::unique_ptr<Style::ComputedStyle> style)
 {
-    // This is used by RenderTreeUpdater to store the style for Elements with display:{contents|none}.
+    // This is used by RenderTreeUpdater to store the style for Elements with display:{contents|none}, and for
+    // renderer-less Elements that still need it (see renderOrDisplayContentsStyle()).
     // Normally style is held in renderers but display:contents doesn't generate one.
     // This is kept distinct from ElementRareData::computedStyle() which can update outside style resolution.
     // This way renderOrDisplayContentsStyle() always returns consistent styles matching the rendering state.
-    ASSERT(style && (style->display() == Style::DisplayType::Contents || style->display() == Style::DisplayType::None));
+    ASSERT(style);
     ASSERT(!renderer() || isPseudoElement());
     ensureElementRareData().setDisplayContentsOrNoneStyle(WTF::move(style));
 }
@@ -4812,6 +4813,12 @@ const Style::ComputedStyle* Element::renderOrDisplayContentsStyle(const std::opt
     if (hasDisplayContents())
         return elementRareData()->displayContentsOrNoneStyle();
 
+    if (!renderer() && hasRareData()) {
+        auto* style = elementRareData()->displayContentsOrNoneStyle();
+        if (style && style->display() != Style::DisplayType::None)
+            return style;
+    }
+
     return renderStyle();
 }
 
@@ -5964,10 +5971,13 @@ void Element::resetComputedStyle()
         element.elementRareData()->setComputedStyle(nullptr);
     };
     reset(*this);
-    for (Ref child : descendantsOfType<Element>(*this)) {
+    for (Ref descendant : composedTreeDescendants(*this)) {
+        RefPtr child = dynamicDowncast<Element>(descendant.get());
+        if (!child)
+            continue;
         if (!child->hasRareData() || !child->elementRareData()->computedStyle() || child->hasDisplayContents() || child->hasDisplayNone())
             continue;
-        reset(child);
+        reset(*child);
     }
 }
 
