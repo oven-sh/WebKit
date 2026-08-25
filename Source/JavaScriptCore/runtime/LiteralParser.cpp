@@ -1978,6 +1978,7 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
 {
     ASSERT(m_mode == StrictJSON);
     VM& vm = getVM(m_globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     size_t lastGoodPosition = 0;
 
     m_lexer.next();
@@ -1996,6 +1997,9 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
                 value = parse(vm, StartParseExpression, nullptr);
         } else
             value = parsePrimitiveValue(vm);
+        // An out-of-memory or stack-overflow exception returns an empty value
+        // too; it is the caller's to report, not a parse error.
+        RETURN_IF_EXCEPTION(scope, (StreamingJSONParseResult { lastGoodPosition, StreamingJSONParseResult::Status::Error }));
 
         if (!value) {
             if (m_lexer.isAtEnd())
