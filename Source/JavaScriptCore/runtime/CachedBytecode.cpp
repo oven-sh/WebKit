@@ -75,6 +75,7 @@ void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
                     return { };
                 auto record = bytes.subspan(base - start);
                 RELEASE_ASSERT(record.size() >= CachedFunctionExecutableOffsets::fixedSize());
+                RELEASE_ASSERT(CachedFunctionExecutableOffsets::isUpdatable(record)); // only the jsc shell's disk cache writes patchable records
                 uint32_t extent;
                 memcpySpan(std::span { reinterpret_cast<uint8_t*>(&extent), sizeof(extent) }, record.subspan(CachedFunctionExecutableOffsets::extentOffset(), sizeof(extent)));
                 RELEASE_ASSERT(extent >= CachedFunctionExecutableOffsets::fixedSize() && extent <= record.size()); // our own encoder wrote this record moments ago
