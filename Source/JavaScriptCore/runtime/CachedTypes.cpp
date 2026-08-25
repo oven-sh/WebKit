@@ -1522,8 +1522,16 @@ public:
     }
 
 private:
+    // The gap an ABI would leave between/after the two (a 16-bit VariableEnvironmentEntry next to a 32-bit key, a
+    // 64-bit SymbolTableEntry after one) is spelled out, so isPortableRecord holds for every First/Second.
+    template<size_t N, unsigned> struct Padding { uint8_t bytes[N] { }; };
+    template<unsigned Which> struct Padding<0, Which> { };
+    static constexpr size_t offsetOfSecond = roundUpToMultipleOf<alignof(Second)>(sizeof(First));
+    static constexpr size_t end = offsetOfSecond + sizeof(Second);
     First m_first;
+    NO_UNIQUE_ADDRESS Padding<offsetOfSecond - sizeof(First), 1> m_paddingBeforeSecond;
     Second m_second;
+    NO_UNIQUE_ADDRESS Padding<roundUpToMultipleOf<std::max(alignof(First), alignof(Second))>(end) - end, 2> m_paddingAfterSecond;
 };
 
 template<typename Key, typename Value, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>, typename TableTraits = WTF::HashTableTraits>
@@ -2024,26 +2032,7 @@ private:
     CachedArray<unsigned> m_storage;
 };
 
-// VariableEnvironmentEntry and PrivateNameEntry are 16 bits; next to a 32-bit key that would leave two padding bytes.
-class CachedVariableEnvironmentEntry : public CachedObject<VariableEnvironmentEntry> {
-public:
-    void encode(Encoder&, const VariableEnvironmentEntry& entry) { m_bits = entry.m_bits; }
-    void decode(Decoder&, VariableEnvironmentEntry& entry) const { entry.m_bits = m_bits; }
-
-private:
-    uint32_t m_bits;
-};
-
-class CachedPrivateNameEntry : public CachedObject<PrivateNameEntry> {
-public:
-    void encode(Encoder&, const PrivateNameEntry& entry) { m_bits = entry.bits(); }
-    void decode(Decoder&, PrivateNameEntry& entry) const { entry = PrivateNameEntry(m_bits); }
-
-private:
-    uint32_t m_bits;
-};
-
-typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedPrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
+typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, PrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
 
 class CachedVariableEnvironmentRareData : public CachedObject<VariableEnvironment::RareData> {
 public:
@@ -2089,7 +2078,7 @@ public:
 private:
     bool m_isEverythingCaptured;
     bool m_hasAwaitUsingDeclaration;
-    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedVariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
+    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
     CachedPtr<CachedVariableEnvironmentRareData> m_rareData;
 };
 
@@ -2198,16 +2187,16 @@ class CachedSymbolTableEntry : public CachedObject<SymbolTableEntry> {
 public:
     void encode(Encoder&, const SymbolTableEntry& symbolTableEntry)
     {
-        m_bits = std::bit_cast<decltype(m_bits)>(static_cast<int64_t>(symbolTableEntry.m_bits | SymbolTableEntry::SlimFlag));
+        m_bits = symbolTableEntry.m_bits | SymbolTableEntry::SlimFlag;
     }
 
     void decode(Decoder&, SymbolTableEntry& symbolTableEntry) const
     {
-        symbolTableEntry.m_bits = std::bit_cast<int64_t>(m_bits);
+        symbolTableEntry.m_bits = m_bits;
     }
 
 private:
-    std::array<uint32_t, 2> m_bits; // 4-byte aligned, so that a CachedPair of a 4-byte key and this has no hole
+    intptr_t m_bits;
 };
 
 class CachedSymbolTableRareData : public CachedObject<SymbolTable::SymbolTableRareData> {
