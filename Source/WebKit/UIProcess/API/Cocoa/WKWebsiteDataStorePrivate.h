@@ -129,6 +129,8 @@ typedef NS_ENUM(uint8_t, _WKRestrictedOpenerType) {
 
 -(bool)_hasServiceWorkerBackgroundActivityForTesting WK_API_AVAILABLE(macos(13.0), ios(16.0));
 -(NSNumber *)_isolatedSiteSignalsForTesting:(NSURL *)url WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0)); // IsolatedSiteStore::Signal bits, or nil if the site is not isolated.
+-(void)_setHighValueFraudTargetDomainsForTesting:(NSArray<NSString *> *)domains WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
+-(void)_setMaximumIsolatedSiteCountForTesting:(NSUInteger)count WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
 -(void)_getPendingPushMessage:(void(^)(NSDictionary *))completionHandler WK_API_AVAILABLE(macos(15.2), ios(18.2));
 -(void)_getPendingPushMessages:(void(^)(NSArray<NSDictionary *> *))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
 -(void)_processPushMessage:(NSDictionary *)pushMessage completionHandler:(void(^)(bool))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
@@ -150,6 +152,12 @@ typedef NS_ENUM(uint8_t, _WKRestrictedOpenerType) {
 
 -(void)_setRestrictedOpenerTypeForTesting:(_WKRestrictedOpenerType)type forDomain:(NSString *)domain WK_API_AVAILABLE(macos(15.0), ios(18.0), visionos(2.0));
 -(void)_getAppBadgeForTesting:(void(^)(NSNumber *))completionHandler WK_API_AVAILABLE(macos(15.0), ios(18.0), visionos(2.0));
+
+// Resets every security flag to its secure default, then turns off the named ones, so an empty array resets.
+// Ignores the WebKitDebugDisabledSecurityFlags user default, which every other path honours.
++ (void)_setDisabledSecurityFlagsForTesting:(NSArray<NSString *> *)flagNames WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+// Answers nil if this build has no flag by that name.
+- (void)_isSecurityFlagEnabledInNetworkProcessForTesting:(NSString *)flagName completionHandler:(void(^)(NSNumber *))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 
 @property (nonatomic, readonly) NSUUID *_identifier;
 @property (nonatomic, readonly) NSString *_webPushPartition;

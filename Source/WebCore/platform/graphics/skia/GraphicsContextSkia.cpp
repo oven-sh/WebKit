@@ -868,10 +868,6 @@ void GraphicsContextSkia::didUpdateState(GraphicsContextState&)
 {
 }
 
-void GraphicsContextSkia::didUpdateSingleState(GraphicsContextState&, GraphicsContextState::ChangeIndex)
-{
-}
-
 void GraphicsContextSkia::concatCTM(const AffineTransform& ctm)
 {
     m_canvas.concat(ctm);
@@ -1229,6 +1225,11 @@ void GraphicsContextSkia::beginRecording(RecordingMode recordingMode, const sk_s
             pushSkiaState();
         }
         break;
+    case RecordingMode::Scrollbar:
+        ASSERT(threadSafeGrContext);
+        m_threadSafeGrContext = threadSafeGrContext;
+        m_contextMode = ContextMode::ScrollbarRecordingMode;
+        break;
     }
 }
 
@@ -1249,6 +1250,10 @@ SkiaRecordingData GraphicsContextSkia::endRecording()
     }
     case ContextMode::CanvasRecordingMode:
         ASSERT(!m_threadSafeGrContext);
+        return { };
+    case ContextMode::ScrollbarRecordingMode:
+        ASSERT(m_threadSafeGrContext);
+        m_threadSafeGrContext = nullptr;
         return { };
     case ContextMode::PaintingMode:
         RELEASE_ASSERT_NOT_REACHED();

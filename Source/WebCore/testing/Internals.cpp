@@ -1507,7 +1507,7 @@ ExceptionOr<void> Internals::resumeAnimations() const
 uint64_t Internals::identifierForTimeline(AnimationTimeline& timeline) const
 {
 #if ENABLE(THREADED_ANIMATIONS)
-    return timeline.acceleratedTimelineIdentifier().toRawValue();
+    return timeline.acceleratedTimelineIdentifier().toUInt64();
 #else
     UNUSED_PARAM(timeline);
     return 0;
@@ -1749,6 +1749,24 @@ bool Internals::scriptedAnimationsAreSuspended() const
 bool Internals::areTimersThrottled() const
 {
     return contextDocument()->isTimerThrottlingEnabled();
+}
+
+double Internals::domTimerAlignmentInterval() const
+{
+    RefPtr document = contextDocument();
+    RefPtr page = document ? document->page() : nullptr;
+    if (!page)
+        return 0;
+    return page->domTimerAlignmentInterval().milliseconds();
+}
+
+double Internals::domTimerAlignmentIntervalIncreaseLimit() const
+{
+    RefPtr document = contextDocument();
+    RefPtr page = document ? document->page() : nullptr;
+    if (!page)
+        return 0;
+    return page->domTimerAlignmentIntervalIncreaseLimit().milliseconds();
 }
 
 void Internals::setEventThrottlingBehaviorOverride(std::optional<EventThrottlingBehavior> value)
@@ -4287,6 +4305,15 @@ void Internals::setFooterHeight(float height)
     document->page()->setFooterHeight(height);
 }
 
+float Internals::obscuredContentInsetTop()
+{
+    RefPtr document = contextDocument();
+    if (!document || !document->page())
+        return 0;
+
+    return protect(document->page())->obscuredContentInsets().top();
+}
+
 void Internals::setFullscreenInsets(FullscreenInsets insets)
 {
     Page* page = contextDocument()->frame()->page();
@@ -5917,6 +5944,13 @@ bool Internals::elementIsActiveNowPlayingSession(HTMLMediaElement& element) cons
     return element.isActiveNowPlayingSession();
 }
 
+void Internals::elementIsActiveNowPlayingSessionInGPUProcess(HTMLMediaElement& element, DOMPromiseDeferred<IDLBoolean>&& promise)
+{
+    platformStrategies()->mediaStrategy()->isActiveNowPlayingSessionInGPUProcessForTesting(element.mediaSession().mediaSessionIdentifier(), [promise = WTF::move(promise)](bool result) mutable {
+        promise.resolve(result);
+    });
+}
+
 #endif // ENABLE(VIDEO)
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -7042,6 +7076,22 @@ void Internals::systemAudioSessionCategory(DOMPromiseDeferred<IDLEnumeration<Aud
         });
 #else
     promise.resolve(AudioSessionCategory::None);
+#endif
+}
+
+void Internals::systemAudioSessionActivationCount(DOMPromiseDeferred<IDLUnsignedLongLong>&& promise)
+{
+#if USE(AUDIO_SESSION)
+    AudioSession::singleton().systemActivationCountForTesting()->whenSettled(RunLoop::mainSingleton(),
+        [promise = WTF::move(promise)](auto&& result) mutable {
+            if (!result) {
+                promise.reject(Exception { ExceptionCode::InvalidStateError, "Could not read the system audio session activation count"_s });
+                return;
+            }
+            promise.resolve(*result);
+        });
+#else
+    promise.resolve(0);
 #endif
 }
 
@@ -8628,6 +8678,15 @@ void Internals::setTopDocumentURLForQuirks(const String& urlString)
 
     protect(document->page())->settings().setNeedsSiteSpecificQuirks(true);
     document->quirks().setTopDocumentURLForTesting(URL { urlString });
+}
+
+Vector<String> Internals::activeQuirks() const
+{
+    RefPtr document = contextDocument();
+    if (!document)
+        return { };
+
+    return document->quirks().activeQuirks();
 }
 
 #if ENABLE(DAMAGE_TRACKING)

@@ -99,7 +99,6 @@ class Box;
 namespace Style {
 class ComputedStyle;
 class PseudoElementRequest;
-enum class MarginTrimSide : uint8_t;
 }
 
 enum class Affinity : bool;
@@ -1039,7 +1038,7 @@ public:
     virtual bool shouldPaintSelectionGaps() const { return false; }
 
     // When performing a global document tear-down, or when going into the back/forward cache, the renderer of the document is cleared.
-    bool renderTreeBeingDestroyed() const; // Defined in RenderObjectInlines.h
+    bool renderTreeBeingDestroyed() const; // Defined in RenderObjectDocument.h
 
     void destroy();
 
@@ -1297,7 +1296,6 @@ private:
         // Dirty bit was set with MarkingBehavior::MarkOnlyThis
         bool contentLogicalWidthsInvalidationIsMarkOnlyThis { false };
         bool isYouTubeReplacement { false };
-        EnumSet<Style::MarginTrimSide> trimmedMargins;
 
         // From RenderElement
         std::unique_ptr<ReferencedSVGResources> referencedSVGResources;

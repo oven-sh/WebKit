@@ -84,14 +84,12 @@ public:
     void removeMessageReceiver(IPC::ReceiverName);
     void removeMessageReceiver(IPC::MessageReceiver&);
     
-    template<typename RawValue>
-    void addMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase<RawValue>& destinationID, IPC::MessageReceiver& receiver)
+    void addMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase& destinationID, IPC::MessageReceiver& receiver)
     {
         addMessageReceiver(messageReceiverName, destinationID.toUInt64(), receiver);
     }
     
-    template<typename RawValue>
-    void removeMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase<RawValue>& destinationID)
+    void removeMessageReceiver(IPC::ReceiverName messageReceiverName, const ObjectIdentifierGenericBase& destinationID)
     {
         removeMessageReceiver(messageReceiverName, destinationID.toUInt64());
     }
@@ -123,10 +121,6 @@ public:
     virtual void preferenceDidUpdate(const String& domain, const String& key, const std::optional<String>& encodedValue);
 #endif
     static void setNotifyOptions();
-
-#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-    static std::optional<String> getHomeDirectory();
-#endif
 
 protected:
     explicit AuxiliaryProcess();

@@ -925,6 +925,8 @@ enum ContentsFormat {
     undefined setHeaderHeight(unrestricted float height);
     undefined setFooterHeight(unrestricted float height);
 
+    float obscuredContentInsetTop();
+
     undefined setFullscreenInsets(FullscreenInsets insets);
     undefined setFullscreenAutoHideDuration(double duration);
 
@@ -961,6 +963,9 @@ enum ContentsFormat {
 
     DOMString requestAnimationFrameThrottlingReasons();
     boolean areTimersThrottled();
+
+    double domTimerAlignmentInterval();
+    double domTimerAlignmentIntervalIncreaseLimit();
 
     undefined setLowPowerModeEnabled(boolean enabled);
     undefined setAggressiveThermalMitigationEnabled(boolean enabled);
@@ -1316,6 +1321,7 @@ enum ContentsFormat {
     readonly attribute boolean supportsAudioSession;
     AudioSessionCategory audioSessionCategory();
     Promise<AudioSessionCategory> systemAudioSessionCategory();
+    Promise<unsigned long long> systemAudioSessionActivationCount();
     AudioSessionMode audioSessionMode();
     [Conditional=VIDEO] AudioSessionCategory categoryAtMostRecentPlayback(HTMLMediaElement element);
     [Conditional=VIDEO] AudioSessionMode modeAtMostRecentPlayback(HTMLMediaElement element);
@@ -1364,6 +1370,7 @@ enum ContentsFormat {
     [Conditional=VIDEO] readonly attribute NowPlayingMetadata? nowPlayingMetadata;
     [Conditional=VIDEO] readonly attribute NowPlayingState nowPlayingState;
     [Conditional=VIDEO] boolean elementIsActiveNowPlayingSession(HTMLMediaElement element);
+    [Conditional=VIDEO] Promise<boolean> elementIsActiveNowPlayingSessionInGPUProcess(HTMLMediaElement element);
     [Conditional=VIDEO] attribute double nowPlayingUpdateInterval;
 
     [Conditional=VIDEO] HTMLMediaElement? bestMediaElementForRemoteControls(PlaybackControlsPurpose purpose);
@@ -1545,6 +1552,7 @@ enum ContentsFormat {
     Promise<ImageBufferResourceLimits> getImageBufferResourceLimits();
 
     undefined setTopDocumentURLForQuirks(DOMString urlString);
+    sequence<DOMString> activeQuirks();
 
     [CallWith=CurrentGlobalObject] ReadableStream readableStreamFromMessagePort(MessagePort port);
     [CallWith=CurrentGlobalObject] WritableStream writableStreamFromMessagePort(MessagePort port);

@@ -1937,6 +1937,23 @@ void RenderLayer::dirtyVisibleContentStatus()
         parent()->dirtyAncestorChainVisibleDescendantStatus();
 }
 
+void RenderLayer::dirtyVisibleContentStatusIncludingAncestors()
+{
+    dirtyVisibleContentStatus();
+
+    // computeHasVisibleContent() looks past a hidden layer into the children it paints, so those
+    // ancestors are stale too. That walk stops at the first self-painting layer.
+    if (isSelfPaintingLayer())
+        return;
+
+    for (auto* ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
+        if (ancestor->renderer().style().usedVisibility() != Visibility::Visible)
+            ancestor->dirtyVisibleContentStatus();
+        if (ancestor->isSelfPaintingLayer())
+            break;
+    }
+}
+
 void RenderLayer::dirtyAncestorChainVisibleDescendantStatus()
 {
     setNeedsPositionUpdate();
@@ -2042,7 +2059,7 @@ bool RenderLayer::computeHasVisibleContent() const
     if (m_svgData && !renderer().style().filter().isNone())
         return true;
 
-    // Layer's renderer has visibility:hidden, but some non-layer child may have visibility:visible.
+    // Layer's renderer has visibility:hidden, but a child we paint ourselves may have visibility:visible.
     auto nextRenderer = [&] (auto& renderer) -> const RenderObject* {
         for (auto* ancestor = &renderer; ancestor && ancestor != &this->renderer(); ancestor = ancestor->parent()) {
             if (auto* sibling = ancestor->nextSibling())
@@ -2052,7 +2069,7 @@ bool RenderLayer::computeHasVisibleContent() const
     };
     const auto* renderer = this->renderer().firstChild();
     while (renderer) {
-        if (CheckedPtr renderElement = dynamicDowncast<RenderElement>(renderer); renderElement && !renderElement->hasLayer()) {
+        if (CheckedPtr renderElement = dynamicDowncast<RenderElement>(renderer); renderElement && !renderElement->hasSelfPaintingLayer()) {
             if (renderElement->style().usedVisibility() == Visibility::Visible)
                 return true;
             if (auto* firstChild = renderElement->firstChild()) {
@@ -5639,14 +5656,14 @@ LayoutRect RenderLayer::calculateLayerBounds(const RenderLayer* ancestorLayer, c
 
         auto renderableInfiniteRect = LayoutRect::renderableInfiniteRect();
         if (clipRect.width() > renderableInfiniteRect.width() || clipRect.height() > renderableInfiniteRect.height()) {
-            // When ancestor clips only one axis, leaving the other one unbounded, clip again passing
-            // document rectangle as constraining rectangle to clipRectRelativeToAncestor(),
-            // like selfClipRect() does, to ensure we return a finite rectangle. Checking either width or
-            // height matches LayoutRect::infiniteRect doesn't work either because clipRectRelativeToAncestor()
-            // returns a rectangle that has been moved and intersected, so it's close to infinite but not exactly
-            // infinite. So, comparing to LayoutRect::renderableInfiniteRect() we make sure that we don't return
+            // Similar to the CSS clip check below, fall back to the descendant union if ancestor clipped
+            // only one axis, leaving the other one unbounded. The clipRect.isInfinte() check doesn't
+            // work here because it checks both axis. Checking either width or height matches
+            // LayoutRect::infiniteRect doesn't work either because clipRectRelativeToAncestor() returns
+            // a rectangle that has been moved and intersected, so it's close to infinite but not exactly
+            // infinite. Comparing to LayoutRect::renderableInfiniteRect() we make sure that we don't return
             // a rectangle that can't be handled as layer bounds.
-            clipRect = clipRectRelativeToAncestor(clippingRootLayer, offsetFromRoot, renderer().view().documentRect());
+            return infiniteRect;
         }
 
         if (renderer().hasClip()) {
@@ -5960,6 +5977,9 @@ void RenderLayer::updateSelfPaintingLayer()
 
     if (!parent())
         return;
+
+    // We are part of what a hidden ancestor paints now.
+    parent()->dirtyVisibleContentStatusIncludingAncestors();
 
     if (isSelfPaintingLayer)
         parent()->setAncestorChainHasSelfPaintingLayerDescendant();

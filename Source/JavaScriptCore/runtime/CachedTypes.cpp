@@ -238,6 +238,165 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(uint32_t packed)
     return AtomStringImpl::add(std::span<const Latin1Character>(characters.data(), length)).releaseNonNull();
 }
 
+ALWAYS_INLINE DecoderStringTable& Decoder::externalStrings()
+{
+    if (!m_externalStrings) [[unlikely]] {
+        m_externalStrings = m_vm.clientData ? m_vm.clientData->decoderStringTable() : nullptr;
+        RELEASE_ASSERT_WITH_MESSAGE(m_externalStrings, "bytecode payload uses an external string table but the embedder did not provide one");
+    }
+    return *m_externalStrings;
+}
+
+Ref<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
+{
+    return externalStrings().atomFor(ordinal);
+}
+
+String Decoder::plainStringForExternalString(uint32_t ordinal)
+{
+    return externalStrings().plainStringFor(ordinal);
+}
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EncoderStringTable);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DecoderStringTable);
+
+EncoderStringTable::~EncoderStringTable() = default;
+
+uint32_t EncoderStringTable::ordinalFor(const StringImpl& string)
+{
+    ASSERT(!string.isSymbol() && string.length());
+    auto result = m_ordinals.add(String { const_cast<StringImpl*>(&string) }, static_cast<uint32_t>(m_strings.size()));
+    if (result.isNewEntry)
+        m_strings.append(const_cast<StringImpl&>(string));
+    return result.iterator->value;
+}
+
+// [u32 count][u32 offsets[count]][records: {u32 length|is8Bit<<31, u32 hash, chars, pad-to-4}...]; offsets are from the start of the blob.
+Vector<uint8_t> EncoderStringTable::serialize() const
+{
+    Vector<uint8_t> out;
+    uint32_t count = static_cast<uint32_t>(m_strings.size());
+    size_t header = sizeof(uint32_t) * (1 + static_cast<size_t>(count));
+    size_t body = 0;
+    for (auto& s : m_strings)
+        body += roundUpToMultipleOf<4>(2 * sizeof(uint32_t) + s->length() * (s->is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
+    out.grow(header + body);
+    std::memset(out.mutableSpan().data(), 0, out.size());
+    uint32_t* words = std::bit_cast<uint32_t*>(out.mutableSpan().data());
+    words[0] = count;
+    size_t offset = header;
+    for (uint32_t i = 0; i < count; ++i) {
+        words[1 + i] = static_cast<uint32_t>(offset);
+        const StringImpl& s = m_strings[i].get();
+        uint32_t* record = std::bit_cast<uint32_t*>(out.mutableSpan().data() + offset);
+        record[0] = s.length() | (s.is8Bit() ? 1u << 31 : 0);
+        record[1] = s.hash();
+        if (s.is8Bit())
+            std::memcpy(record + 2, s.span8().data(), s.length());
+        else
+            std::memcpy(record + 2, s.span16().data(), s.length() * sizeof(char16_t));
+        offset += roundUpToMultipleOf<4>(2 * sizeof(uint32_t) + s.length() * (s.is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
+    }
+    ASSERT(offset == out.size());
+    return out;
+}
+
+DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes)
+    : m_bytes(bytes)
+{
+    RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t) && !(std::bit_cast<uintptr_t>(bytes.data()) % alignof(uint32_t)));
+    m_count = *std::bit_cast<const uint32_t*>(bytes.data());
+    RELEASE_ASSERT(m_count <= (bytes.size() - sizeof(uint32_t)) / sizeof(uint32_t), m_count, bytes.size());
+    if (m_count) {
+        m_stringsReservation = roundUpToMultipleOf(WTF::pageSize(), static_cast<size_t>(m_count) * sizeof(StringImpl*));
+        m_strings = static_cast<StringImpl**>(OSAllocator::reserveAndCommit(m_stringsReservation, OSAllocator::FastMallocPages));
+    }
+}
+
+DecoderStringTable::~DecoderStringTable()
+{
+    // One per VM: a Worker that exits must give back the references it took on its thread's atoms.
+    for (uint32_t i = 0; i < m_count; ++i) {
+        if (m_strings[i])
+            m_strings[i]->deref();
+    }
+    if (m_strings)
+        OSAllocator::decommitAndRelease(m_strings, m_stringsReservation);
+}
+
+// The blob comes from an executable users sometimes edit; never read outside it.
+DecoderStringTable::Record DecoderStringTable::record(uint32_t ordinal) const
+{
+    RELEASE_ASSERT(ordinal < m_count);
+    const uint32_t* offsets = std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t));
+    size_t offset = offsets[ordinal];
+    RELEASE_ASSERT(!(offset % 4) && offset <= m_bytes.size() && m_bytes.size() - offset >= 2 * sizeof(uint32_t), offset, m_bytes.size());
+    const uint32_t* header = std::bit_cast<const uint32_t*>(m_bytes.data() + offset);
+    Record result;
+    result.length = header[0] & 0x7fffffffu;
+    result.is8Bit = header[0] >> 31;
+    result.hash = header[1];
+    result.characters = std::bit_cast<const uint8_t*>(header + 2);
+    size_t byteLength = static_cast<size_t>(result.length) * (result.is8Bit ? sizeof(Latin1Character) : sizeof(char16_t));
+    RELEASE_ASSERT(byteLength <= m_bytes.size() - offset - 2 * sizeof(uint32_t), ordinal, result.length, m_bytes.size());
+    return result;
+}
+
+template<typename CharacterType>
+static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, uint32_t hash)
+{
+    // Same threshold as CachedUniquedStringImplBase::minimumLengthToAliasPayload: long strings alias the (persistent) blob.
+    if (characters.size() >= 48)
+        return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(characters) }).releaseNonNull();
+    WTF::HashTranslatorCharBuffer<CharacterType> hashed { characters, hash };
+    return AtomStringImpl::add(hashed).releaseNonNull();
+}
+
+// A slot holds the one StringImpl this VM uses for that string: an atom once an identifier has asked for it, or the
+// plain StringImpl a string constant made first (which atomFor then promotes or replaces).
+Ref<AtomStringImpl> DecoderStringTable::atomFor(uint32_t ordinal)
+{
+    RELEASE_ASSERT(ordinal < m_count);
+    StringImpl*& slot = m_strings[ordinal];
+    if (slot) [[likely]] {
+        if (slot->isAtom()) [[likely]]
+            return *static_cast<AtomStringImpl*>(slot);
+        Ref<AtomStringImpl> atom = AtomStringImpl::add(slot).releaseNonNull(); // makes `slot` the atom unless one already exists
+        if (atom.ptr() != slot) {
+            atom->ref();
+            std::exchange(slot, atom.ptr())->deref();
+        }
+        return atom;
+    }
+    Record r = record(ordinal);
+    Ref<AtomStringImpl> atom = r.is8Bit
+        ? atomize(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length }, r.hash)
+        : atomize(std::span { std::bit_cast<const char16_t*>(r.characters), r.length }, r.hash);
+    atom->ref();
+    slot = atom.ptr();
+    return atom;
+}
+
+String DecoderStringTable::plainStringFor(uint32_t ordinal)
+{
+    RELEASE_ASSERT(ordinal < m_count);
+    StringImpl*& slot = m_strings[ordinal];
+    if (slot)
+        return String { slot };
+    Record r = record(ordinal);
+    RefPtr<StringImpl> string;
+    if (r.is8Bit) {
+        std::span<const Latin1Character> chars { std::bit_cast<const Latin1Character*>(r.characters), r.length };
+        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    } else {
+        std::span<const char16_t> chars { std::bit_cast<const char16_t*>(r.characters), r.length };
+        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    }
+    string->ref();
+    slot = string.get();
+    return String { WTF::move(string) };
+}
+
 bool Decoder::payloadContains(const void* start, size_t size) const
 {
     auto payload = m_cachedBytecode->span();
@@ -248,7 +407,7 @@ bool Decoder::payloadContains(const void* start, size_t size) const
 bool Decoder::recordAndArrayChecksumMatches(const void* record, size_t recordSize, const uint32_t* storedChecksum, const void* array, size_t arraySize) const
 {
 #if USE(BUN_JSC_ADDITIONS)
-    if (!Options::verifyBytecodeCacheChecksums())
+    if (m_cachedBytecode->payloadIsPersistent() || !Options::verifyBytecodeCacheChecksums())
         return true;
 #endif
     auto* begin = static_cast<const uint8_t*>(record);
@@ -271,7 +430,8 @@ bool Decoder::recordAndArrayChecksumMatches(const void* record, size_t recordSiz
 bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays) const
 {
 #if USE(BUN_JSC_ADDITIONS)
-    if (!Options::verifyBytecodeCacheChecksums())
+    // A persistent payload is a section of the executable itself: corruption there means the program is already broken, and code signing already covers it. Checksums guard separate on-disk cache files.
+    if (m_cachedBytecode->payloadIsPersistent() || !Options::verifyBytecodeCacheChecksums())
         return true;
 #endif
     auto* begin = static_cast<const uint8_t*>(start);
@@ -371,15 +531,18 @@ public:
     // A payload that gets appended to another one (CachedBytecode::addFunctionUpdate) is read by the same Decoder as its
     // base, so it leaves its strings unnumbered rather than collide with numbers the base already handed out.
     enum class NumberStrings : bool { No, Yes };
-    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes)
+    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes, EncoderStringTable* externalStrings = nullptr)
         : m_vm(vm)
         , m_fileHandle(fileHandle)
         , m_baseOffset(0)
         , m_currentPage(nullptr)
+        , m_externalStrings(externalStrings)
         , m_numberStrings(numberStrings == NumberStrings::Yes)
     {
         allocateNewPage();
     }
+
+    EncoderStringTable* NODELETE externalStrings() { return m_externalStrings; }
 
     VM& vm() { return m_vm; }
 
@@ -744,6 +907,7 @@ private:
     struct PendingChecksum { ptrdiff_t start; size_t size; ptrdiff_t checksumOffset; Vector<std::pair<ptrdiff_t, size_t>> externalArrays; };
     Vector<PendingChecksum> m_pendingChecksums;
     uint32_t m_nextStringOrdinal { 0 };
+    EncoderStringTable* m_externalStrings;
     bool m_numberStrings;
     bool m_arraySharingEnabled { false };
     ptrdiff_t m_blockRegionStart { 0 };
@@ -925,6 +1089,21 @@ public:
     bool NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
     Ref<AtomStringImpl> inlineString(Decoder& decoder) const { return decoder.atomForInlineString(std::bit_cast<uint32_t>(m_offset)); }
 
+    // A ≥4-char non-symbol string held in the embedder's shared EncoderStringTable/DecoderStringTable: the slot is an ordinal into that one process-wide table, so every chunk's payload carries 4 bytes instead of a full record. Tag 10 is the value low-two-bits neither a 4-aligned record offset (00), an inline string (01), nor the empty sentinel (11) can produce.
+    static constexpr uint32_t externalStringTag = 2;
+    bool NODELETE hasExternalString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == externalStringTag; }
+    uint32_t NODELETE externalStringOrdinal() const { return static_cast<uint32_t>(std::bit_cast<uint32_t>(m_offset)) >> 2; }
+    bool tryEncodeExternalString(Encoder& encoder, const StringImpl& string)
+    {
+        if (!encoder.externalStrings() || string.isSymbol() || !string.length())
+            return false;
+        uint32_t ordinal = encoder.externalStrings()->ordinalFor(string);
+        if (ordinal > EncoderStringTable::maxOrdinal) [[unlikely]]
+            return false;
+        m_offset = std::bit_cast<Offset>(externalStringTag | ordinal << 2);
+        return true;
+    }
+
 protected:
     const uint8_t* NODELETE buffer() const
     {
@@ -1039,6 +1218,8 @@ public:
         if constexpr (holdsString) {
             if (this->tryEncodeInlineString(*src))
                 return;
+            if (this->tryEncodeExternalString(encoder, *src))
+                return;
         }
 
         if constexpr (requires (Encoder& e, const Source& s) { T::create(e, s); }) {
@@ -1088,6 +1269,10 @@ public:
                 isNewAllocation = true;
                 return static_cast<Source*>(&this->inlineString(decoder).leakRef());
             }
+            if (this->hasExternalString()) {
+                isNewAllocation = true;
+                return static_cast<Source*>(&decoder.atomForExternalString(this->externalStringOrdinal()).leakRef());
+            }
         }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -1126,7 +1311,7 @@ public:
         if (this->isEmpty())
             return nullptr;
         if constexpr (holdsString) {
-            if (this->hasInlineString())
+            if (this->hasInlineString() || this->hasExternalString())
                 return nullptr;
         }
         const T* target = this->template buffer<T>();
@@ -1169,6 +1354,8 @@ public:
                 if constexpr (CachedPtr<T, Source>::holdsString) {
                     if (m_ptr.hasInlineString())
                         return adoptRef<Source, PtrTraits>(static_cast<Source*>(&m_ptr.inlineString(decoder).leakRef()));
+                    if (m_ptr.hasExternalString())
+                        return adoptRef<Source, PtrTraits>(static_cast<Source*>(&decoder.atomForExternalString(m_ptr.externalStringOrdinal()).leakRef()));
                 }
                 return adoptRef<Source, PtrTraits>(m_ptr.get()->decode(decoder));
             }
@@ -1242,6 +1429,18 @@ public:
         T* buffer = this->template allocate<T>(encoder, m_size);
         for (unsigned i = 0; i < m_size; ++i)
             ::JSC::encode(encoder, buffer[i], vector[i]);
+    }
+
+    template<typename Range>
+    void encodeRange(Encoder& encoder, unsigned size, const Range& range)
+    {
+        m_size = size;
+        if (!m_size)
+            return;
+        T* buffer = this->template allocate<T>(encoder, m_size);
+        unsigned i = 0;
+        for (const auto& element : range)
+            buffer[i++].encode(encoder, element);
     }
 
     template<typename... Args, typename VectorContainer>
@@ -1347,6 +1546,13 @@ public:
         ::JSC::encode(encoder, m_second, pair.second);
     }
 
+    template<typename Key, typename Value>
+    void encode(Encoder& encoder, const WTF::KeyValuePair<Key, Value>& pair)
+    {
+        ::JSC::encode(encoder, m_first, pair.key);
+        ::JSC::encode(encoder, m_second, pair.value);
+    }
+
     void decode(Decoder& decoder, std::pair<SourceType<First>, SourceType<Second>>& pair) const
     {
         ::JSC::decode(decoder, m_first, pair.first);
@@ -1372,7 +1578,7 @@ public:
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
         EncodingOrder::sort(entriesVector, [](const auto& entry) -> const auto& { return entry.first; });
-        m_entries.encode(encoder, entriesVector);
+        m_entries.encodeRange(encoder, entriesVector.size(), entriesVector);
     }
 
     template<WTF::ShouldValidateKey shouldValidateKey>
@@ -1380,8 +1586,8 @@ public:
     {
         SourceType<decltype(m_entries)> decodedEntries;
         m_entries.decode(decoder, decodedEntries);
-        for (const auto& pair : decodedEntries)
-            map.set(pair.first, pair.second);
+        for (auto& pair : decodedEntries)
+            map.set(WTF::move(pair.first), WTF::move(pair.second));
     }
 
 private:
@@ -2258,6 +2464,8 @@ public:
             StringImpl& impl = *str.data.impl();
             if (this->tryEncodeInlineString(impl))
                 return;
+            if (this->tryEncodeExternalString(encoder, impl))
+                return;
             if (auto existing = encoder.cachedOffsetForStringContents(impl)) {
                 this->pointAtPayloadOffset(encoder, *existing);
                 return;
@@ -2308,6 +2516,10 @@ public:
         case EncodedType::String: {
             if (this->hasInlineString()) {
                 v = jsString(decoder.vm(), String { this->inlineString(decoder) });
+                break;
+            }
+            if (this->hasExternalString()) {
+                v = jsString(decoder.vm(), decoder.plainStringForExternalString(this->externalStringOrdinal()));
                 break;
             }
             // A constant becomes a JSString; it does not have to be an atom, so skip the atom table.
@@ -2934,24 +3146,20 @@ struct CachedCodeBlockExtras {
     void encode(Encoder& encoder, const UnlinkedCodeBlock& codeBlock)
     {
         rareData.encode(encoder, codeBlock.m_rareData.get());
-        sourceURLDirective.encode(encoder, codeBlock.m_sourceURLDirective.get());
-        sourceMappingURLDirective.encode(encoder, codeBlock.m_sourceMappingURLDirective.get());
         outOfLineJumpTargets.encode(encoder, codeBlock.m_outOfLineJumpTargets);
     }
     static bool isNeeded(const UnlinkedCodeBlock& codeBlock)
     {
-        return codeBlock.m_rareData || codeBlock.m_sourceURLDirective || codeBlock.m_sourceMappingURLDirective || !codeBlock.m_outOfLineJumpTargets.isEmpty();
+        return codeBlock.m_rareData || !codeBlock.m_outOfLineJumpTargets.isEmpty();
     }
 
     CachedPtr<CachedCodeBlockRareData> rareData;
-    CachedRefPtr<CachedStringImpl> sourceURLDirective;
-    CachedRefPtr<CachedStringImpl> sourceMappingURLDirective;
     CachedHashMap<JSInstructionStream::Offset, int> outOfLineJumpTargets;
 };
 
-// A code block is written as one region: its arrays (metadata steps, instructions, constants, identifiers, jump targets,
-// child slots, extras), then a 16-byte record followed by a varint tail that says where in the region each array is and
-// holds every count/register/flag, then whatever the derived record adds, then the children's executable records.
+// A code block is written as one region: its arrays (metadata steps, instructions, constants, identifiers, child slots,
+// extras), then a 16-byte record followed by a varint tail that says where in the region each array is and holds every
+// count/register/flag, then whatever the derived record adds, then the children's executable records.
 // Offsets in the tail are relative to the start of the region, so they are 1-2 bytes for nearly every function.
 template<typename CodeBlockType>
 class CachedCodeBlock : public CachedObject<CodeBlockType> {
@@ -2966,7 +3174,6 @@ public:
         VirtualRegister scopeRegister;
         unsigned isConstructor : 1;
         unsigned isBuiltinDefaultClassConstructor : 1;
-        unsigned hasCapturedVariables : 1;
         unsigned isBuiltinFunction : 1;
         unsigned superBinding : 1;
         unsigned scriptMode : 1;
@@ -2978,12 +3185,8 @@ public:
         unsigned hasTailCalls : 1;
         unsigned codeType : 2;
         unsigned hasCheckpoints : 1;
-        CodeFeatures features;
-        LexicallyScopedFeatures lexicallyScopedFeatures;
         SourceParseMode parseMode;
         OptionSet<CodeGenerationMode> codeGenerationMode;
-        unsigned lineCount;
-        unsigned endColumn;
         int numVars;
         int numCalleeLocals;
         int numParameters;
@@ -3010,7 +3213,6 @@ public:
         Array constants;
         Array constantsSourceCodeRepresentation;
         Array identifiers;
-        Array jumpTargets;
         Array functionDecls;
         Array functionExprs;
         int32_t extrasAt { 0 };
@@ -3073,18 +3275,6 @@ public:
         return CachedMetadataSteps::build(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
     }
 
-    RefPtr<StringImpl> sourceURLDirective(Decoder& decoder) const
-    {
-        Tail storage;
-        auto* e = extras(tail(decoder, storage).layout);
-        return e ? e->sourceURLDirective.decode(decoder) : nullptr;
-    }
-    RefPtr<StringImpl> sourceMappingURLDirective(Decoder& decoder) const
-    {
-        Tail storage;
-        auto* e = extras(tail(decoder, storage).layout);
-        return e ? e->sourceMappingURLDirective.decode(decoder) : nullptr;
-    }
     UnlinkedCodeBlock::RareData* rareData(Decoder& decoder) const
     {
         Tail storage;
@@ -3108,9 +3298,9 @@ public:
             return false;
         const Layout& layout = tail.layout;
 
-        // Every array must lie inside the region, except the four the encoder may have shared from an earlier block,
+        // Every array must lie inside the region, except the three the encoder may have shared from an earlier block,
         // which are folded into the checksum instead (in encoder order).
-        std::array<std::span<const uint8_t>, 4> external;
+        std::array<std::span<const uint8_t>, 3> external;
         unsigned externalCount = 0;
         auto covered = [&](const Array& array, size_t elementSize, bool shareable) {
             if (!array.count)
@@ -3127,7 +3317,6 @@ public:
         if (!covered(layout.steps, sizeof(uint32_t), true)
             || !covered(layout.instructions, 1, true)
             || !covered(layout.constantsSourceCodeRepresentation, sizeof(SourceCodeRepresentation), true)
-            || !covered(layout.jumpTargets, sizeof(JSInstructionStream::Offset), true)
             || !covered(layout.constants, sizeof(CachedJSValue), false)
             || !covered(layout.identifiers, sizeof(CachedIdentifier), false)
             || !covered(layout.functionDecls, sizeof(CachedWriteBarrier<CachedFunctionExecutable>), false)
@@ -3166,9 +3355,46 @@ private:
     CachedPtr<CachedExpressionInfo> m_expressionInfo; // written by the deferred cold pass, so it stays a fixed slot
 };
 
-class CachedProgramCodeBlock : public CachedCodeBlock<UnlinkedProgramCodeBlock> {
-    using Base = CachedCodeBlock<UnlinkedProgramCodeBlock>;
-    friend Base;
+// The members only Program/Eval/Module code has (UnlinkedGlobalCodeBlock); a function record does not pay for them.
+template<typename CodeBlockType>
+class CachedGlobalCodeBlock : public CachedCodeBlock<CodeBlockType> {
+    using Base = CachedCodeBlock<CodeBlockType>;
+
+protected:
+    void encodeOwnMembers(Encoder& encoder, const UnlinkedGlobalCodeBlock& codeBlock)
+    {
+        m_features = codeBlock.m_features;
+        m_lexicallyScopedFeatures = codeBlock.m_lexicallyScopedFeatures;
+        m_hasCapturedVariables = codeBlock.m_hasCapturedVariables;
+        m_lineCount = codeBlock.m_lineCount;
+        m_endColumn = codeBlock.m_endColumn;
+        m_sourceURLDirective.encode(encoder, codeBlock.m_sourceURLDirective.get());
+        m_sourceMappingURLDirective.encode(encoder, codeBlock.m_sourceMappingURLDirective.get());
+    }
+    void decodeOwnMembers(Decoder& decoder, UnlinkedGlobalCodeBlock& codeBlock) const
+    {
+        codeBlock.m_features = m_features;
+        codeBlock.m_lexicallyScopedFeatures = m_lexicallyScopedFeatures;
+        codeBlock.m_hasCapturedVariables = m_hasCapturedVariables;
+        codeBlock.m_lineCount = m_lineCount;
+        codeBlock.m_endColumn = m_endColumn;
+        codeBlock.m_sourceURLDirective = m_sourceURLDirective.decode(decoder);
+        codeBlock.m_sourceMappingURLDirective = m_sourceMappingURLDirective.decode(decoder);
+    }
+
+private:
+    CodeFeatures m_features;
+    LexicallyScopedFeatures m_lexicallyScopedFeatures;
+    bool m_hasCapturedVariables;
+    unsigned m_lineCount;
+    unsigned m_endColumn;
+    CachedRefPtr<CachedStringImpl> m_sourceURLDirective;
+    CachedRefPtr<CachedStringImpl> m_sourceMappingURLDirective;
+};
+
+class CachedProgramCodeBlock : public CachedGlobalCodeBlock<UnlinkedProgramCodeBlock> {
+    using Base = CachedGlobalCodeBlock<UnlinkedProgramCodeBlock>;
+    friend CachedCodeBlock<UnlinkedProgramCodeBlock>;
 
 public:
     UnlinkedProgramCodeBlock* decode(Decoder&) const;
@@ -3176,11 +3402,13 @@ public:
 private:
     void encodeOwnMembers(Encoder& encoder, const UnlinkedProgramCodeBlock& codeBlock)
     {
+        Base::encodeOwnMembers(encoder, codeBlock);
         m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
         m_lexicalDeclarations.encode(encoder, codeBlock.m_lexicalDeclarations);
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedProgramCodeBlock& codeBlock) const
     {
+        Base::decodeOwnMembers(decoder, codeBlock);
         m_varDeclarations.decode(decoder, codeBlock.m_varDeclarations);
         m_lexicalDeclarations.decode(decoder, codeBlock.m_lexicalDeclarations);
     }
@@ -3189,9 +3417,9 @@ private:
     CachedVariableEnvironment m_lexicalDeclarations;
 };
 
-class CachedModuleCodeBlock : public CachedCodeBlock<UnlinkedModuleProgramCodeBlock> {
-    using Base = CachedCodeBlock<UnlinkedModuleProgramCodeBlock>;
-    friend Base;
+class CachedModuleCodeBlock : public CachedGlobalCodeBlock<UnlinkedModuleProgramCodeBlock> {
+    using Base = CachedGlobalCodeBlock<UnlinkedModuleProgramCodeBlock>;
+    friend CachedCodeBlock<UnlinkedModuleProgramCodeBlock>;
 
 public:
     UnlinkedModuleProgramCodeBlock* decode(Decoder&) const;
@@ -3199,11 +3427,13 @@ public:
 private:
     void encodeOwnMembers(Encoder& encoder, const UnlinkedModuleProgramCodeBlock& codeBlock)
     {
+        Base::encodeOwnMembers(encoder, codeBlock);
         m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
         m_moduleEnvironmentSymbolTableConstantRegisterOffset = codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset;
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedModuleProgramCodeBlock& codeBlock) const
     {
+        Base::decodeOwnMembers(decoder, codeBlock);
         m_varDeclarations.decode(decoder, codeBlock.m_varDeclarations);
         codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset = m_moduleEnvironmentSymbolTableConstantRegisterOffset;
     }
@@ -3212,9 +3442,9 @@ private:
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset;
 };
 
-class CachedEvalCodeBlock : public CachedCodeBlock<UnlinkedEvalCodeBlock> {
-    using Base = CachedCodeBlock<UnlinkedEvalCodeBlock>;
-    friend Base;
+class CachedEvalCodeBlock : public CachedGlobalCodeBlock<UnlinkedEvalCodeBlock> {
+    using Base = CachedGlobalCodeBlock<UnlinkedEvalCodeBlock>;
+    friend CachedCodeBlock<UnlinkedEvalCodeBlock>;
 
 public:
     UnlinkedEvalCodeBlock* decode(Decoder&) const;
@@ -3222,11 +3452,13 @@ public:
 private:
     void encodeOwnMembers(Encoder& encoder, const UnlinkedEvalCodeBlock& codeBlock)
     {
+        Base::encodeOwnMembers(encoder, codeBlock);
         m_variables.encode(encoder, codeBlock.m_variables);
         m_functionHoistingCandidates.encode(encoder, codeBlock.m_functionHoistingCandidates);
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedEvalCodeBlock& codeBlock) const
     {
+        Base::decodeOwnMembers(decoder, codeBlock);
         m_variables.decode(decoder, codeBlock.m_variables);
         m_functionHoistingCandidates.decode(decoder, codeBlock.m_functionHoistingCandidates);
     }
@@ -3300,8 +3532,6 @@ template<typename CodeBlockType>
 ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* structure, const CachedCodeBlock<CodeBlockType>& cachedCodeBlock)
     : Base(decoder.vm(), structure)
     , m_age(0)
-    , m_sourceURLDirective(cachedCodeBlock.sourceURLDirective(decoder))
-    , m_sourceMappingURLDirective(cachedCodeBlock.sourceMappingURLDirective(decoder))
     , m_metadata(cachedCodeBlock.metadata(decoder))
     , m_instructions(cachedCodeBlock.instructions(decoder))
     , m_rareData(cachedCodeBlock.rareData(decoder))
@@ -3313,7 +3543,6 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_numCalleeLocals = scalars.numCalleeLocals;
     m_isConstructor = scalars.isConstructor;
     m_numParameters = scalars.numParameters;
-    m_hasCapturedVariables = scalars.hasCapturedVariables;
     m_isBuiltinFunction = scalars.isBuiltinFunction;
     m_isBuiltinDefaultClassConstructor = scalars.isBuiltinDefaultClassConstructor;
     m_superBinding = scalars.superBinding;
@@ -3326,12 +3555,8 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_evalContextType = scalars.evalContextType;
     m_codeType = scalars.codeType;
     m_hasCheckpoints = scalars.hasCheckpoints;
-    m_lexicallyScopedFeatures = scalars.lexicallyScopedFeatures;
-    m_features = scalars.features;
     m_parseMode = scalars.parseMode;
     m_codeGenerationMode = scalars.codeGenerationMode;
-    m_lineCount = scalars.lineCount;
-    m_endColumn = scalars.endColumn;
     m_valueProfiles = FixedVector<UnlinkedValueProfile>(scalars.numValueProfiles);
     m_arrayProfiles = FixedVector<UnlinkedArrayProfile>(scalars.numArrayProfiles);
     m_binaryArithProfiles = FixedVector<BinaryArithProfile>(scalars.numBinaryArithProfiles);
@@ -3351,7 +3576,6 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
     if (auto* e = extras(layout))
         e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
-    decodeArrayFromTail<JSInstructionStream::Offset>(decoder, at<JSInstructionStream::Offset>(layout.jumpTargets), layout.jumpTargets.count, codeBlock.m_jumpTargets);
     decodeArrayFromTail<CachedIdentifier>(decoder, at<CachedIdentifier>(layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
     decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
     decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
@@ -3620,26 +3844,24 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
 
 enum CachedCodeBlockFlag : uint32_t {
     CodeBlockIsConstructorShift = 0,
-    CodeBlockHasCapturedVariablesShift = 1,
-    CodeBlockSuperBindingShift = 2,
-    CodeBlockScriptModeShift = 3,
-    CodeBlockIsArrowFunctionContextShift = 4,
-    CodeBlockIsClassContextShift = 5,
-    CodeBlockHasTailCallsShift = 6,
-    CodeBlockHasCheckpointsShift = 7,
-    CodeBlockConstructorKindShift = 8, // 2 bits
-    CodeBlockDerivedContextTypeShift = 10, // 2
-    CodeBlockEvalContextTypeShift = 12, // 2
-    CodeBlockCodeTypeShift = 14, // 2
-    CodeBlockIsBuiltinFunctionShift = 16,
-    CodeBlockIsBuiltinDefaultClassConstructorShift = 17,
+    CodeBlockSuperBindingShift = 1,
+    CodeBlockScriptModeShift = 2,
+    CodeBlockIsArrowFunctionContextShift = 3,
+    CodeBlockIsClassContextShift = 4,
+    CodeBlockHasTailCallsShift = 5,
+    CodeBlockHasCheckpointsShift = 6,
+    CodeBlockConstructorKindShift = 7, // 2 bits
+    CodeBlockDerivedContextTypeShift = 9, // 2
+    CodeBlockEvalContextTypeShift = 11, // 2
+    CodeBlockCodeTypeShift = 13, // 2
+    CodeBlockIsBuiltinFunctionShift = 15,
+    CodeBlockIsBuiltinDefaultClassConstructorShift = 16,
 };
 
 template<typename CodeBlockType>
 void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBlock, VarintWriter& writer)
 {
     uint32_t flags = static_cast<uint32_t>(codeBlock.m_isConstructor) << CodeBlockIsConstructorShift
-        | static_cast<uint32_t>(codeBlock.m_hasCapturedVariables) << CodeBlockHasCapturedVariablesShift
         | static_cast<uint32_t>(codeBlock.m_superBinding) << CodeBlockSuperBindingShift
         | static_cast<uint32_t>(codeBlock.m_scriptMode) << CodeBlockScriptModeShift
         | static_cast<uint32_t>(codeBlock.m_isArrowFunctionContext) << CodeBlockIsArrowFunctionContextShift
@@ -3653,8 +3875,6 @@ void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBl
         | static_cast<uint32_t>(codeBlock.m_isBuiltinFunction) << CodeBlockIsBuiltinFunctionShift
         | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift;
     writer.u32(flags);
-    writer.u32(codeBlock.m_features);
-    writer.u8(static_cast<uint8_t>(codeBlock.m_lexicallyScopedFeatures));
     writer.u8(static_cast<uint8_t>(codeBlock.m_parseMode));
     writer.u8(codeBlock.m_codeGenerationMode.toRaw());
     writer.i32(codeBlock.m_thisRegister.offset());
@@ -3662,8 +3882,6 @@ void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBl
     writer.i32(codeBlock.m_numVars);
     writer.i32(codeBlock.m_numCalleeLocals);
     writer.i32(codeBlock.m_numParameters);
-    writer.u32(codeBlock.m_lineCount);
-    writer.u32(codeBlock.m_endColumn);
     writer.u32(codeBlock.m_valueProfiles.size());
     writer.u32(codeBlock.m_arrayProfiles.size());
     writer.u32(codeBlock.m_binaryArithProfiles.size());
@@ -3686,7 +3904,6 @@ void CachedCodeBlock<CodeBlockType>::packLayout(const Layout& layout, VarintWrit
     array(layout.constants);
     array(layout.constantsSourceCodeRepresentation);
     array(layout.identifiers);
-    array(layout.jumpTargets);
     array(layout.functionDecls);
     array(layout.functionExprs);
     if (layout.flags & LayoutHasExtras)
@@ -3712,7 +3929,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     array(layout.constants);
     array(layout.constantsSourceCodeRepresentation);
     array(layout.identifiers);
-    array(layout.jumpTargets);
     array(layout.functionDecls);
     array(layout.functionExprs);
     if (layout.flags & LayoutHasExtras)
@@ -3722,7 +3938,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     uint32_t flags = reader.u32();
     auto bits = [&](unsigned shift, unsigned width = 1) -> unsigned { return (flags >> shift) & ((1u << width) - 1); };
     s.isConstructor = bits(CodeBlockIsConstructorShift);
-    s.hasCapturedVariables = bits(CodeBlockHasCapturedVariablesShift);
     s.superBinding = bits(CodeBlockSuperBindingShift);
     s.scriptMode = bits(CodeBlockScriptModeShift);
     s.isArrowFunctionContext = bits(CodeBlockIsArrowFunctionContextShift);
@@ -3735,8 +3950,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     s.codeType = bits(CodeBlockCodeTypeShift, 2);
     s.isBuiltinFunction = bits(CodeBlockIsBuiltinFunctionShift);
     s.isBuiltinDefaultClassConstructor = bits(CodeBlockIsBuiltinDefaultClassConstructorShift);
-    s.features = static_cast<CodeFeatures>(reader.u32());
-    s.lexicallyScopedFeatures = static_cast<LexicallyScopedFeatures>(reader.u8());
     s.parseMode = static_cast<SourceParseMode>(reader.u8());
     s.codeGenerationMode = OptionSet<CodeGenerationMode>::fromRaw(reader.u8());
     s.thisRegister = VirtualRegister(reader.i32());
@@ -3744,8 +3957,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     s.numVars = reader.i32();
     s.numCalleeLocals = reader.i32();
     s.numParameters = reader.i32();
-    s.lineCount = reader.u32();
-    s.endColumn = reader.u32();
     s.numValueProfiles = reader.u32();
     s.numArrayProfiles = reader.u32();
     s.numBinaryArithProfiles = reader.u32();
@@ -3766,7 +3977,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
             array.at = safeCast<int32_t>(write() - regionStart);
     };
 
-    // These four may be shared with an identical array written earlier; regionIsIntact() follows them in this order.
+    // These three may be shared with an identical array written earlier; regionIsIntact() follows them in this order.
     {
         Encoder::ShareableArrayScope shareable(encoder);
         const UnlinkedMetadataTable& metadata = codeBlock.m_metadata.get();
@@ -3780,7 +3991,6 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
         place(layout.instructions, instructions.m_instructions.size(), [&] { return encodeArrayForTail<uint8_t>(encoder, instructions.m_instructions); });
         place(layout.constantsSourceCodeRepresentation, codeBlock.m_constantsSourceCodeRepresentation.size(), [&] { return encodeArrayForTail<SourceCodeRepresentation>(encoder, codeBlock.m_constantsSourceCodeRepresentation); });
-        place(layout.jumpTargets, codeBlock.m_jumpTargets.size(), [&] { return encodeArrayForTail<JSInstructionStream::Offset>(encoder, codeBlock.m_jumpTargets); });
     }
     place(layout.constants, codeBlock.m_constantRegisters.size(), [&] { return encodeArrayForTail<CachedJSValue>(encoder, codeBlock.m_constantRegisters); });
     place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });
@@ -4042,11 +4252,11 @@ private:
     CachedPtr<CachedFunctionExecutable> m_executable;
 };
 
-RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp)
+RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* externalStrings)
 {
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
-    Encoder encoder(vm, invalidFileHandle);
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, externalStrings);
     encoder.template malloc<BuiltinFunctionCacheEntry>(encoder)->encode(encoder, *executable, sourceLength, embedderStamp);
     encoder.encodeDeferred();
     return encoder.release(error);
@@ -4063,11 +4273,11 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     return entry->decode(decoder.get(), sourceLength, embedderStamp);
 }
 
-RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error)
+RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings)
 {
     const ClassInfo* classInfo = codeBlock->classInfo();
 
-    Encoder encoder(vm, fileHandle);
+    Encoder encoder(vm, fileHandle, Encoder::NumberStrings::Yes, externalStrings);
     if (classInfo == UnlinkedProgramCodeBlock::info())
         encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, key, codeBlock);
     else if (classInfo == UnlinkedModuleProgramCodeBlock::info())
@@ -4079,11 +4289,11 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
     return encoder.release(error);
 }
 
-RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock)
+RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, EncoderStringTable* externalStrings)
 {
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
-    return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error);
+    return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error, externalStrings);
 }
 
 RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)

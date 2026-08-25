@@ -1389,7 +1389,7 @@ void WebExtensionContext::addInjectedContent(const InjectedContentVector& inject
 
         HashSet<String> excludeMatchPatternsSet;
         excludeMatchPatternsSet.addAll(injectedContentData.expandedExcludeMatchPatternStrings());
-        excludeMatchPatternsSet.unionWith(baseExcludeMatchPatternsSet);
+        excludeMatchPatternsSet.addAll(baseExcludeMatchPatternsSet);
 
         auto excludeMatchPatterns = copyToVector(excludeMatchPatternsSet);
 
@@ -1668,7 +1668,7 @@ bool WebExtensionContext::isPrivilegedMessage(IPC::Decoder& message) const
 {
     if (!m_privilegedIdentifier)
         return false;
-    return m_privilegedIdentifier.value().toRawValue() == message.destinationID();
+    return m_privilegedIdentifier.value().toUInt64() == message.destinationID();
 }
 
 WebExtensionContextParameters WebExtensionContext::parameters(IncludePrivilegedIdentifier includePrivilegedIdentifier, WebProcessProxy& destinationProcess) const

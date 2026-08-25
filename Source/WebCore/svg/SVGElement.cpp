@@ -51,6 +51,7 @@
 #include "SVGElementRareData.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGEllipseElement.h"
+#include "SVGFEImageElement.h"
 #include "SVGForeignObjectElement.h"
 #include "SVGGraphicsElement.h"
 #include "SVGImageElement.h"
@@ -289,12 +290,23 @@ void SVGElement::addReferencingElement(SVGElement& element)
     auto& rareDataOfReferencingElement = element.ensureSVGRareData();
     RELEASE_ASSERT(!rareDataOfReferencingElement.referenceTarget());
     rareDataOfReferencingElement.setReferenceTarget(*this);
+    invalidateLayerRequirementForFEImageReference(element);
 }
 
 void SVGElement::removeReferencingElement(SVGElement& element)
 {
     ensureSVGRareData().removeReferencingElement(element);
     element.ensureSVGRareData().setReferenceTarget(nullptr);
+    invalidateLayerRequirementForFEImageReference(element);
+}
+
+void SVGElement::invalidateLayerRequirementForFEImageReference(const SVGElement& referencingElement)
+{
+    if (!is<SVGFEImageElement>(referencingElement))
+        return;
+    if (!document().settings().layerBasedSVGEngineEnabled())
+        return;
+    invalidateStyleAndLayerComposition();
 }
 
 void SVGElement::removeElementReference()
@@ -303,6 +315,17 @@ void SVGElement::removeElementReference()
         return;
     if (RefPtr destination = m_svgRareData->referenceTarget())
         destination->removeReferencingElement(*this);
+}
+
+bool SVGElement::isReferencedByFEImage() const
+{
+    if (!m_svgRareData)
+        return false;
+    for (Ref element : m_svgRareData->referencingElements()) {
+        if (is<SVGFEImageElement>(element))
+            return true;
+    }
+    return false;
 }
 
 Vector<WeakPtr<SVGResourceElementClient>> SVGElement::referencingCSSClients() const
@@ -1007,6 +1030,8 @@ CSSPropertyID SVGElement::cssPropertyIdForSVGAttributeName(const QualifiedName& 
         return CSSPropertyTextAnchor;
     case AttributeNames::text_decorationAttr:
         return CSSPropertyTextDecoration;
+    case AttributeNames::text_overflowAttr:
+        return CSSPropertyTextOverflow;
     case AttributeNames::text_renderingAttr:
         return CSSPropertyTextRendering;
     case AttributeNames::unicode_bidiAttr:
@@ -1113,16 +1138,19 @@ void SVGElement::postConnectionSteps()
 
 bool SVGElement::isResourceContainerTagName(const QualifiedName& tagName)
 {
-    static NeverDestroyed resourceContainerTags = MemoryCompactLookupOnlyRobinHoodHashSet<QualifiedName> {
-        SVGNames::clipPathTag,
-        SVGNames::filterTag,
-        SVGNames::linearGradientTag,
-        SVGNames::markerTag,
-        SVGNames::maskTag,
-        SVGNames::patternTag,
-        SVGNames::radialGradientTag,
+    if (tagName.namespaceURI() != SVGNames::svgNamespaceURI)
+        return false;
+
+    static NeverDestroyed resourceContainerLocalNames = MemoryCompactLookupOnlyRobinHoodHashSet<AtomString> {
+        SVGNames::clipPathTag->localName(),
+        SVGNames::filterTag->localName(),
+        SVGNames::linearGradientTag->localName(),
+        SVGNames::markerTag->localName(),
+        SVGNames::maskTag->localName(),
+        SVGNames::patternTag->localName(),
+        SVGNames::radialGradientTag->localName(),
     };
-    return resourceContainerTags.get().contains(tagName);
+    return resourceContainerLocalNames.get().contains(tagName.localName());
 }
 
 bool SVGElement::isInSVGResourceContainer() const

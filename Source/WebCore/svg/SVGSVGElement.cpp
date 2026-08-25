@@ -631,6 +631,14 @@ bool SVGSVGElement::hasSynthesizedViewBoxForSVGImage() const
     return !m_useCurrentView && viewBox().isEmpty() && isEmbeddedThroughSVGImage(*this);
 }
 
+bool SVGSVGElement::viewBoxDisablesPainting()
+{
+    if (!hasEmptyViewBox())
+        return false;
+
+    return m_useCurrentView ? currentView().hasEmptyViewBox() : true;
+}
+
 FloatRect SVGSVGElement::currentViewBoxRect() const
 {
     if (m_useCurrentView) {
@@ -661,6 +669,21 @@ FloatSize SVGSVGElement::currentViewportSizeExcludingZoom() const
     if (!m_cachedViewportSizeExcludingZoom)
         m_cachedViewportSizeExcludingZoom = computeCurrentViewportSizeExcludingZoom();
     return *m_cachedViewportSizeExcludingZoom;
+}
+
+FloatSize SVGSVGElement::viewportSizeForLengthResolution() const
+{
+    auto compute = [&]() -> FloatSize {
+        auto viewBoxSize = currentViewBoxRect().size();
+        return viewBoxSize.isEmpty() ? currentViewportSizeExcludingZoom() : viewBoxSize;
+    };
+
+    if (!document().settings().layerBasedSVGEngineEnabled())
+        return compute();
+
+    if (!m_cachedViewportSizeForLengthResolution)
+        m_cachedViewportSizeForLengthResolution = compute();
+    return *m_cachedViewportSizeForLengthResolution;
 }
 
 FloatSize SVGSVGElement::computeCurrentViewportSizeExcludingZoom() const
