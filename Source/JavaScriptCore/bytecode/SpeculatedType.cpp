@@ -602,7 +602,9 @@ SpeculatedType speculationFromCell(JSCell* cell)
     if (cell->isString()) {
         JSString* string = uncheckedDowncast<JSString>(cell);
         if (const StringImpl* impl = string->tryGetValueImpl()) {
-            if (!Integrity::isSanePointer(impl)) [[unlikely]] {
+            // Alignment check rejects HeapCell::zap residue in m_fiber seen on weak-memory-order
+            // CPUs when a freshly-allocated JSString is read before its m_fiber store is visible.
+            if (!Integrity::isSanePointer(impl) || (reinterpret_cast<uintptr_t>(impl) & (alignof(StringImpl) - 1))) [[unlikely]] {
                 ASSERT_NOT_REACHED();
                 return SpecNone;
             }
