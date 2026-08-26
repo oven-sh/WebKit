@@ -616,15 +616,6 @@ public:
 
     ptrdiff_t currentOffset() const { return m_baseOffset + m_currentPage->size(); }
 
-    // Where malloc(size, alignment) would place the next allocation.
-    ptrdiff_t predictOffset(size_t size, size_t alignment) const
-    {
-        ptrdiff_t offset;
-        if (m_currentPage->canMalloc(size, alignment, offset))
-            return m_baseOffset + offset;
-        return m_baseOffset + roundUpToMultipleOf(alignof(std::max_align_t), static_cast<ptrdiff_t>(m_currentPage->size()));
-    }
-
     // CRC-32C of [offset, offset + size) as it will appear in the payload, with the 4 bytes at `hole` read as zero
     // (that is where the checksum itself is stored).
     uint32_t checksumOfRange(ptrdiff_t offset, size_t size, ptrdiff_t hole)
@@ -847,21 +838,15 @@ private:
         {
         }
 
-        bool canMalloc(size_t size, size_t alignment, ptrdiff_t& result) const
+        bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
         {
             ASSERT(alignment && alignment <= alignof(std::max_align_t) && isPowerOfTwo(alignment));
             ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
             if (static_cast<size_t>(offset + size) > capacity())
                 return false;
-            result = offset;
-            return true;
-        }
 
-        bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
-        {
-            if (!canMalloc(size, alignment, result))
-                return false;
-            m_offset = result + size;
+            result = offset;
+            m_offset = offset + size;
             return true;
         }
 
@@ -3481,7 +3466,6 @@ public:
     };
     struct Layout {
         uint8_t flags { 0 };
-        unsigned recordOffsetInRegion { 0 };
         unsigned metadataValueProfiles { 0 };
         Array steps;
         Array instructions; // count is in bytes
@@ -3523,9 +3507,9 @@ public:
     };
     Scalars scalars(Decoder& decoder) const { Tail storage; return tail(decoder, storage).scalars; }
 
-    const uint8_t* regionBegin(const Layout& layout) const { return std::bit_cast<const uint8_t*>(this) - layout.recordOffsetInRegion; }
-    template<typename T> const T* at(const Layout& layout, const Array& array) const { return array.count ? reinterpret_cast<const T*>(regionBegin(layout) + array.at) : nullptr; }
-    const CachedCodeBlockExtras* extras(const Layout& layout) const { return layout.flags & LayoutHasExtras ? reinterpret_cast<const CachedCodeBlockExtras*>(regionBegin(layout) + layout.extrasAt) : nullptr; }
+    const uint8_t* regionBegin() const { return std::bit_cast<const uint8_t*>(this) - m_offsetInRegion; }
+    template<typename T> const T* at(const Layout&, const Array& array) const { return array.count ? reinterpret_cast<const T*>(regionBegin() + array.at) : nullptr; }
+    const CachedCodeBlockExtras* extras(const Layout& layout) const { return layout.flags & LayoutHasExtras ? reinterpret_cast<const CachedCodeBlockExtras*>(regionBegin() + layout.extrasAt) : nullptr; }
 
     JSInstructionStream* instructions(Decoder& decoder) const
     {
@@ -3572,7 +3556,7 @@ public:
         if (!tail.intact)
             return false;
         const Layout& layout = tail.layout;
-        const uint8_t* begin = regionBegin(layout);
+        const uint8_t* begin = regionBegin();
         if (begin > std::bit_cast<const uint8_t*>(this) || begin < payload.data())
             return false;
         const uint8_t* end = payloadEnd;
@@ -3646,6 +3630,7 @@ private:
     uint8_t* tailBytes() { return std::bit_cast<uint8_t*>(this) + sizeof(Record); }
 
     CachedPtr<CachedExpressionInfo> m_expressionInfo; // written by the deferred cold pass, so it stays a fixed slot
+    uint32_t m_offsetInRegion; // not in the tail: the tail is packed before the record is placed
 };
 
 // The members only Program/Eval/Module code has (UnlinkedGlobalCodeBlock); a function record does not pay for them.
@@ -4318,7 +4303,6 @@ template<typename CodeBlockType>
 void CachedCodeBlock<CodeBlockType>::packLayout(const Layout& layout, VarintWriter& writer)
 {
     writer.u8(layout.flags);
-    writer.u32(layout.recordOffsetInRegion);
     if (layout.flags & LayoutHasMetadata)
         writer.u32(layout.metadataValueProfiles);
     auto array = [&](const Array& a) {
@@ -4344,7 +4328,6 @@ auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tai
     VarintReader reader(tailBytes(), limit);
     Layout& layout = tail.layout;
     layout.flags = reader.u8();
-    layout.recordOffsetInRegion = reader.u32();
     if (layout.flags & LayoutHasMetadata)
         layout.metadataValueProfiles = reader.u32();
     auto array = [&](Array& a) {
@@ -4439,20 +4422,11 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     if (encoder.checksums())
         layout.flags |= LayoutHasChecksum;
     VarintWriter writer;
-    // The record's own offset in the region is known before it is placed: the tail is fixed-size for a given layout.
-    {
-        Layout probe = layout;
-        VarintWriter probeWriter;
-        packLayout(probe, probeWriter);
-        packScalars(codeBlock, probeWriter);
-        ptrdiff_t predicted = encoder.predictOffset(sizeof(Record) + probeWriter.size() + ((layout.flags & LayoutHasChecksum) ? 2 * sizeof(uint32_t) : 0), alignof(Record));
-        layout.recordOffsetInRegion = safeCast<uint32_t>(predicted - regionStart);
-    }
     packLayout(layout, writer);
     packScalars(codeBlock, writer);
     size_t trailerBytes = (layout.flags & LayoutHasChecksum) ? 2 * sizeof(uint32_t) : 0;
     auto [record, result] = encoder.mallocArray<Record>(1, writer.size() + trailerBytes);
-    RELEASE_ASSERT(result.offset() - regionStart == layout.recordOffsetInRegion);
+    record->m_offsetInRegion = safeCast<uint32_t>(result.offset() - regionStart);
     writer.copyTo(record->tailBytes());
     ptrdiff_t trailerOffset = result.offset() + sizeof(Record) + writer.size();
     encoder.deferCold([record, &encoder, expressionInfo = codeBlock.m_expressionInfo.get()] {
