@@ -1788,7 +1788,7 @@ private:
                     characters = symbol.substring(strlen("Symbol."));
                 }
             }
-            if (!characters->is8Bit())
+            if (!characters->is8Bit() && WTF::charactersAreAllLatin1(characters->span16()))
                 characters = StringImpl::create8BitIfPossible(characters->span16());
         }
         size_t byteLength() const { return characters->length() * (characters->is8Bit() ? 1 : 2); }
