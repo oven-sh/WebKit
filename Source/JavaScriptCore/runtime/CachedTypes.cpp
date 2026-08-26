@@ -1605,7 +1605,9 @@ public:
         for (const auto& it : map)
             entries.append({ it.key.get(), it.value.bits() });
         std::sort(entries.begin(), entries.end());
-        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(std::span { std::bit_cast<const uint8_t*>(entries.span().data()), entries.size() * sizeof(entries[0]) });
+        unsigned hash = entries.size(); // of the values; the pairs' bytes include padding
+        for (auto [name, bits] : entries)
+            hash = pairIntHash(hash, pairIntHash(PtrHash<const UniquedStringImpl*>::hash(name), bits));
         if (auto existing = encoder.sharedPrivateNameEnvironment(hash, entries)) {
             m_entries.shareElements(encoder, *existing, map.size());
             return;
