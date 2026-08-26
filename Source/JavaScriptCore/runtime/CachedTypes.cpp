@@ -159,13 +159,6 @@ public:
         , m_overran(offset > payload.size())
     {
     }
-    Reader(const uint8_t* p, const uint8_t* end)
-        : m_begin(p)
-        , m_p(p)
-        , m_end(end)
-    {
-    }
-
     uint8_t u8()
     {
         if (m_p >= m_end) [[unlikely]] {
@@ -232,7 +225,18 @@ public:
     void alignTo(size_t alignment, const uint8_t* base) { skip((alignment - (m_p - base) % alignment) % alignment); }
 
     bool has(size_t n) const { return static_cast<size_t>(m_end - m_p) >= n; }
+    // A count read from the stream is at most the bytes left (every element takes one or more); a larger one is damage.
+    bool checkCount(size_t count)
+    {
+        if (has(count)) [[likely]]
+            return true;
+        m_overran = true;
+        m_p = m_end;
+        return false;
+    }
     bool overran() const { return m_overran; }
+    // A value this stream refers to (a string record, a shared object) did not decode: the stream is as damaged as if it had run out.
+    void setOverran() { m_overran = true; }
     const uint8_t* position() const { return m_p; }
     size_t offset() const { return m_p - m_begin; }
     void seek(size_t offset)
@@ -782,12 +786,14 @@ void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
 {
     if (ordinal >= m_atomsByOrdinal.size()) {
         // Every numbered string is a record of several bytes, so this is bounded by the payload.
-        RELEASE_ASSERT(ordinal < m_cachedBytecode->size());
+        if (ordinal >= m_cachedBytecode->size())
+            return;
         size_t oldSize = m_atomsByOrdinal.size();
         m_atomsByOrdinal.grow(std::max<size_t>(ordinal + 1, oldSize * 2));
         std::fill(m_atomsByOrdinal.begin() + oldSize, m_atomsByOrdinal.end(), nullptr); // Vector::grow leaves pointers uninitialized
     }
-    ASSERT(!m_atomsByOrdinal[ordinal]);
+    if (m_atomsByOrdinal[ordinal])
+        return;
     atom.ref();
     m_atomsByOrdinal[ordinal] = &atom;
 }
@@ -811,40 +817,44 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(std::span<const Latin1Character
     return AtomStringImpl::add(characters).releaseNonNull();
 }
 
-ALWAYS_INLINE DecoderStringTable& Decoder::externalStrings()
+ALWAYS_INLINE DecoderStringTable* Decoder::externalStrings()
 {
     if (!m_externalStrings) [[unlikely]] {
         m_externalStrings = m_vm.clientData ? m_vm.clientData->decoderStringTable() : nullptr;
-        RELEASE_ASSERT_WITH_MESSAGE(m_externalStrings, "bytecode payload uses an external string table but the embedder did not provide one");
+        if (!m_externalStrings)
+            dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] payload names an external string but the embedder provided no table");
     }
-    return *m_externalStrings;
+    return m_externalStrings;
 }
 
-Ref<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
+RefPtr<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
 {
-    return externalStrings().atomFor(ordinal);
+    auto* table = externalStrings();
+    return table && ordinal < table->size() ? RefPtr { table->atomFor(ordinal) } : nullptr;
 }
 
 String Decoder::plainStringForExternalString(uint32_t ordinal)
 {
-    return externalStrings().plainStringFor(ordinal);
+    auto* table = externalStrings();
+    return table && ordinal < table->size() ? table->plainStringFor(ordinal) : String();
 }
 
-void* Decoder::sharedObjectAt(uint32_t offset) const
+std::optional<std::pair<void*, const void*>> Decoder::sharedObjectAt(uint32_t offset) const
 {
     auto it = m_sharedObjects.find(offset);
-    return it == m_sharedObjects.end() ? nullptr : it->value;
+    return it == m_sharedObjects.end() ? std::nullopt : std::optional { it->value };
 }
 
-void Decoder::setSharedObjectAt(uint32_t offset, void* object)
+void Decoder::setSharedObjectAt(uint32_t offset, void* object, const void* type)
 {
-    m_sharedObjects.add(offset, object);
+    m_sharedObjects.add(offset, std::pair { object, type });
 }
 
-CompactTDZEnvironmentMap::Handle Decoder::handleForTDZEnvironment(CompactTDZEnvironment* environment) const
+std::optional<CompactTDZEnvironmentMap::Handle> Decoder::handleForTDZEnvironment(CompactTDZEnvironment* environment) const
 {
     auto it = m_environmentToHandleMap.find(environment);
-    RELEASE_ASSERT(it != m_environmentToHandleMap.end());
+    if (it == m_environmentToHandleMap.end())
+        return std::nullopt;
     return it->value;
 }
 
@@ -978,27 +988,47 @@ public:
     static void encode(Writer& writer, Encoder& encoder, const String& string) { encode(writer, encoder, string.impl()); }
     static void encode(Writer& writer, Encoder& encoder, const Identifier& identifier) { encode(writer, encoder, identifier.impl()); }
 
-    // A +1 reference; null for a null StringRef.
+    // A +1 reference; null only for a null StringRef (a damaged one marks the reader overran and yields the empty atom).
     static RefPtr<UniquedStringImpl> decode(Reader& reader, Decoder& decoder)
     {
+        size_t referrerAt = reader.offset();
         uint32_t head = reader.varuint();
         if (!head)
             return nullptr;
+        RefPtr<UniquedStringImpl> result;
         switch (head & 3) {
-        case Inline: {
-            auto characters = reader.bytes(head >> 2 & 3);
-            if (characters.empty())
-                return nullptr;
-            return uniqued(decoder.atomForInlineString(characters));
-        }
+        case Inline:
+            if (auto characters = reader.bytes(head >> 2 & 3); !characters.empty())
+                result = uniqued(decoder.atomForInlineString(characters));
+            break;
         case External:
-            return uniqued(decoder.atomForExternalString(head >> 2));
-        case Record: {
-            Reader record(decoder.payload(), head >> 2);
-            return decodeRecord(record, decoder);
+            if (RefPtr<AtomStringImpl> atom = decoder.atomForExternalString(head >> 2))
+                result = uniqued(atom.releaseNonNull());
+            break;
+        case Record:
+            if (head >> 2 < referrerAt) { // records are written before their first use
+                Reader record(decoder.payload(), head >> 2);
+                result = decodeRecord(record, decoder);
+                if (record.overran())
+                    result = nullptr;
+            }
+            break;
         }
+        if (!result) {
+            reader.setOverran();
+            result = static_cast<UniquedStringImpl*>(emptyAtom().impl());
         }
-        return nullptr;
+        return result;
+    }
+    // Where the format has no null (map keys, identifiers): a null StringRef there is damage.
+    static RefPtr<UniquedStringImpl> decodeNonNull(Reader& reader, Decoder& decoder)
+    {
+        RefPtr<UniquedStringImpl> result = decode(reader, decoder);
+        if (!result) {
+            reader.setOverran();
+            result = static_cast<UniquedStringImpl*>(emptyAtom().impl());
+        }
+        return result;
     }
     static Identifier decodeIdentifier(Reader& reader, Decoder& decoder)
     {
@@ -1012,22 +1042,33 @@ public:
     // For uses that only need the characters (a string constant's JSString), not an atom: no atom table involved.
     static String decodePlainString(Reader& reader, Decoder& decoder)
     {
+        size_t referrerAt = reader.offset();
         uint32_t head = reader.varuint();
         if (!head)
             return String();
+        String result;
         switch (head & 3) {
-        case Inline: {
-            auto characters = reader.bytes(head >> 2 & 3);
-            return characters.empty() ? String() : String { decoder.atomForInlineString(characters) };
-        }
+        case Inline:
+            if (auto characters = reader.bytes(head >> 2 & 3); !characters.empty())
+                result = decoder.atomForInlineString(characters);
+            break;
         case External:
-            return decoder.plainStringForExternalString(head >> 2);
-        case Record: {
-            Reader record(decoder.payload(), head >> 2);
-            return decodePlainRecord(record, decoder);
+            result = decoder.plainStringForExternalString(head >> 2);
+            break;
+        case Record:
+            if (head >> 2 < referrerAt) {
+                Reader record(decoder.payload(), head >> 2);
+                result = decodePlainRecord(record, decoder);
+                if (record.overran())
+                    result = String();
+            }
+            break;
         }
+        if (result.isNull()) {
+            reader.setOverran();
+            result = emptyString();
         }
-        return String();
+        return result;
     }
 
 private:
@@ -1099,7 +1140,7 @@ private:
     {
         RecordHead head = readHead(reader);
         if (head.ordinal != Encoder::noOrdinal) {
-            if (AtomStringImpl* known = decoder.atomForOrdinal(head.ordinal))
+            if (AtomStringImpl* known = decoder.atomForOrdinal(head.ordinal); known && known->hash() == head.hash)
                 return static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(known));
         }
         if (!head.length) {
@@ -1136,8 +1177,7 @@ private:
             SymbolImpl* symbol = head.flags & IsWellKnownSymbol
                 ? vm.propertyNames->builtinNames().lookUpWellKnownSymbol(characters)
                 : vm.propertyNames->builtinNames().lookUpPrivateName(characters);
-            RELEASE_ASSERT(symbol);
-            return symbol;
+            return symbol; // null if this VM has no such symbol, which the caller treats as damage
         };
         if (head.flags & Is8Bit) {
             auto bytes = reader.bytes(head.length);
@@ -1156,17 +1196,21 @@ private:
         if (!head.length)
             return emptyString();
         if (head.ordinal != Encoder::noOrdinal) {
-            if (AtomStringImpl* known = decoder.atomForOrdinal(head.ordinal))
+            if (AtomStringImpl* known = decoder.atomForOrdinal(head.ordinal); known && known->hash() == head.hash)
                 return known;
         }
         if (head.flags & Is8Bit) {
             auto bytes = reader.bytes(head.length);
+            if (bytes.size() != head.length)
+                return String();
             std::span characters { std::bit_cast<const Latin1Character*>(bytes.data()), bytes.size() };
             if (characters.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
                 return StringImpl::createWithoutCopying(characters);
             return StringImpl::create(characters);
         }
         auto characters = read16(reader, head.length);
+        if (reader.overran())
+            return String();
         return StringImpl::create(characters.span());
     }
 };
@@ -1198,15 +1242,28 @@ struct CachedShared {
     {
         using Result = decltype(T::decode(reader, decoder, args...));
         isNew = false;
+        size_t referrerAt = reader.offset();
         uint32_t at = reader.varuint();
         if (!at)
             return nullptr;
-        if (void* existing = decoder.sharedObjectAt(at))
-            return static_cast<Result>(existing);
+        // A shared value is written before anything that refers to it; this also keeps a damaged payload from sending us in circles.
+        if (at >= referrerAt) {
+            reader.setOverran();
+            return nullptr;
+        }
+        static const char type = 0;
+        if (auto existing = decoder.sharedObjectAt(at)) {
+            if (existing->second == &type)
+                return static_cast<Result>(existing->first);
+            reader.setOverran(); // an offset that decoded as something else
+            return nullptr;
+        }
         Reader record(decoder.payload(), at);
         Result result = T::decode(record, decoder, std::forward<Args>(args)...);
+        if (record.overran())
+            reader.setOverran();
         if (result) {
-            decoder.setSharedObjectAt(at, result);
+            decoder.setSharedObjectAt(at, result, &type);
             isNew = true;
         }
         return result;
@@ -1250,15 +1307,14 @@ public:
         environment.m_isEverythingCaptured = flags & IsEverythingCaptured;
         environment.m_hasAwaitUsingDeclaration = flags & HasAwaitUsingDeclaration;
         unsigned count = reader.varuint();
-        if (!reader.has(count))
+        if (!reader.checkCount(count))
             return;
         environment.m_map.reserveInitialCapacity(count);
         for (unsigned i = 0; i < count; ++i) {
-            RefPtr<UniquedStringImpl> name = CachedString::decode(reader, decoder);
+            RefPtr<UniquedStringImpl> name = CachedString::decodeNonNull(reader, decoder);
             VariableEnvironmentEntry entry;
             entry.m_bits = reader.varuint();
-            if (name)
-                environment.m_map.add(WTF::move(name), entry);
+            environment.m_map.add(WTF::move(name), entry);
         }
         if (flags & HasPrivateNames) {
             environment.m_rareData = WTF::makeUnique<VariableEnvironment::RareData>();
@@ -1282,16 +1338,21 @@ public:
     }
     static void decodePrivateNames(Reader& reader, Decoder& decoder, PrivateNameEnvironment& environment)
     {
-        Reader entries(decoder.payload(), reader.varuint());
+        size_t referrerAt = reader.offset();
+        uint32_t at = reader.varuint();
+        if (at >= referrerAt)
+            return reader.setOverran();
+        Reader entries(decoder.payload(), at);
         unsigned count = entries.varuint();
-        if (!entries.has(count))
-            return;
-        for (unsigned i = 0; i < count; ++i) {
-            RefPtr<UniquedStringImpl> name = CachedString::decode(entries, decoder);
-            PrivateNameEntry entry(entries.varuint());
-            if (name)
+        if (entries.checkCount(count)) {
+            for (unsigned i = 0; i < count; ++i) {
+                RefPtr<UniquedStringImpl> name = CachedString::decodeNonNull(entries, decoder);
+                PrivateNameEntry entry(entries.varuint());
                 environment.add(WTF::move(name), entry);
+            }
         }
+        if (entries.overran())
+            reader.setOverran();
     }
 };
 
@@ -1319,12 +1380,10 @@ public:
         auto* environment = new CompactTDZEnvironment;
         CompactTDZEnvironment::Compact names;
         unsigned count = reader.varuint();
-        if (reader.has(count)) {
+        if (reader.checkCount(count)) {
             names.reserveInitialCapacity(count);
-            for (unsigned i = 0; i < count; ++i) {
-                if (RefPtr<UniquedStringImpl> name = CachedString::decode(reader, decoder))
-                    names.append(WTF::move(name));
-            }
+            for (unsigned i = 0; i < count; ++i)
+                names.append(CachedString::decodeNonNull(reader, decoder));
         }
         environment->m_hash = 0;
         for (auto& name : names)
@@ -1348,8 +1407,12 @@ public:
         CompactTDZEnvironment* environment = CachedShared<CachedCompactTDZEnvironment>::decode(reader, decoder, isNew);
         if (!environment)
             return CompactTDZEnvironmentMap::Handle();
-        if (!isNew)
-            return decoder.handleForTDZEnvironment(environment);
+        if (!isNew) {
+            if (auto handle = decoder.handleForTDZEnvironment(environment))
+                return WTF::move(*handle);
+            reader.setOverran();
+            return CompactTDZEnvironmentMap::Handle();
+        }
         bool isNewEntry;
         CompactTDZEnvironmentMap::Handle handle = decoder.vm().m_compactVariableMap->get(environment, isNewEntry);
         if (!isNewEntry) {
@@ -1379,6 +1442,8 @@ public:
     {
         CompactTDZEnvironmentMap::Handle handle = CachedCompactTDZEnvironmentMapHandle::decode(reader, decoder);
         RefPtr<TDZEnvironmentLink> parent = decodeRef(reader, decoder);
+        if (reader.overran())
+            return nullptr;
         return new TDZEnvironmentLink(WTF::move(handle), WTF::move(parent));
     }
     static RefPtr<TDZEnvironmentLink> decodeRef(Reader& reader, Decoder& decoder)
@@ -1432,7 +1497,7 @@ public:
         unsigned length = reader.varuint();
         if (!length--)
             return nullptr;
-        if (!reader.has(length))
+        if (!reader.checkCount(length))
             return nullptr;
         ScopedArgumentsTable* arguments = ScopedArgumentsTable::tryCreate(vm, length);
         RELEASE_ASSERT(arguments);
@@ -1476,14 +1541,13 @@ public:
         VM& vm = decoder.vm();
         SymbolTable* symbolTable = SymbolTable::create(vm);
         unsigned count = reader.varuint();
-        if (!reader.has(count))
+        if (!reader.checkCount(count))
             return symbolTable;
         for (unsigned i = 0; i < count; ++i) {
-            RefPtr<UniquedStringImpl> name = CachedString::decode(reader, decoder);
+            RefPtr<UniquedStringImpl> name = CachedString::decodeNonNull(reader, decoder);
             SymbolTableEntry entry;
             CachedSymbolTableEntry::unpack(entry, reader.varint());
-            if (name)
-                symbolTable->m_map.add(WTF::move(name), WTF::move(entry));
+            symbolTable->m_map.add(WTF::move(name), WTF::move(entry));
         }
         symbolTable->m_maxScopeOffset = ScopeOffset(reader.varuint());
         uint8_t flags = reader.u8();
@@ -1548,7 +1612,7 @@ public:
         jumpTable.m_defaultOffset = reader.varint();
         jumpTable.m_isList = reader.boolean();
         unsigned count = reader.varuint();
-        if (!reader.has(count))
+        if (!reader.checkCount(count))
             return;
         jumpTable.m_branchOffsets = FixedVector<int32_t>(count);
         for (unsigned i = 0; i < count; ++i)
@@ -1575,17 +1639,16 @@ public:
     static void decode(Reader& reader, Decoder& decoder, UnlinkedStringJumpTable& jumpTable)
     {
         unsigned count = reader.varuint();
-        if (!reader.has(count))
+        if (!reader.checkCount(count))
             return;
         Vector<std::pair<RefPtr<StringImpl>, UnlinkedStringJumpTable::OffsetLocation>> entries;
         entries.reserveInitialCapacity(count);
         for (unsigned i = 0; i < count; ++i) {
-            RefPtr<StringImpl> string = CachedString::decode(reader, decoder);
+            RefPtr<StringImpl> string = CachedString::decodeNonNull(reader, decoder);
             UnlinkedStringJumpTable::OffsetLocation location;
             location.m_branchOffset = reader.varint();
             location.m_indexInTable = reader.varuint();
-            if (string)
-                entries.append({ WTF::move(string), location });
+            entries.append({ WTF::move(string), location });
         }
         for (auto& [string, location] : entries)
             jumpTable.m_offsetTable.add(WTF::move(string), location);
@@ -1658,7 +1721,7 @@ public:
         auto* rareData = new UnlinkedCodeBlock::RareData { };
         auto counted = [&](auto&& each) {
             unsigned count = reader.varuint();
-            if (!reader.has(count))
+            if (!reader.checkCount(count))
                 return 0u;
             each(count);
             return count;
@@ -1705,12 +1768,10 @@ public:
             rareData->m_constantIdentifierSets = FixedVector<IdentifierSet>(count);
             for (auto& set : rareData->m_constantIdentifierSets) {
                 unsigned size = reader.varuint();
-                if (!reader.has(size))
+                if (!reader.checkCount(size))
                     return;
-                for (unsigned i = 0; i < size; ++i) {
-                    if (RefPtr<UniquedStringImpl> name = CachedString::decode(reader, decoder))
-                        set.add(WTF::move(name));
-                }
+                for (unsigned i = 0; i < size; ++i)
+                    set.add(CachedString::decodeNonNull(reader, decoder));
             }
         });
         rareData->m_needsClassFieldInitializer = reader.boolean();
@@ -1739,7 +1800,7 @@ struct CachedCodeBlockExtras {
     {
         auto& targets = codeBlock.m_outOfLineJumpTargets;
         unsigned count = reader.varuint();
-        if (!reader.has(count))
+        if (!reader.checkCount(count))
             return;
         for (unsigned i = 0; i < count; ++i) {
             JSInstructionStream::Offset offset = reader.varuint();
@@ -1883,7 +1944,7 @@ public:
         case Kind::ImmutableButterfly: {
             IndexingType indexingMode = reader.u8();
             unsigned length = reader.varuint();
-            if (!reader.has(length))
+            if (!reader.checkCount(length))
                 return JSValue();
             JSCellButterfly* butterfly = JSCellButterfly::create(vm, indexingMode, length);
             for (unsigned i = 0; i < length; ++i) {
@@ -1897,13 +1958,13 @@ public:
         case Kind::RegExp: {
             String pattern = CachedString::decodeString(reader, decoder);
             auto flags = OptionSet<Yarr::Flags>::fromRaw(reader.u16());
-            if (pattern.isNull())
+            if (reader.overran())
                 return JSValue();
             return RegExp::create(vm, pattern, flags);
         }
         case Kind::TemplateObjectDescriptor: {
             unsigned count = reader.varuint();
-            if (!reader.has(count))
+            if (!reader.checkCount(count))
                 return JSValue();
             TemplateObjectDescriptor::StringVector rawStrings;
             TemplateObjectDescriptor::OptionalStringVector cookedStrings;
@@ -1925,7 +1986,7 @@ public:
             unsigned length = reader.varuint();
             if (!length)
                 return vm.heapBigIntConstantZero.get();
-            if (!reader.has(length))
+            if (!reader.checkCount(length))
                 return JSValue();
             JSBigInt* bigInt = JSBigInt::tryCreateWithLength(vm, length);
             RELEASE_ASSERT(bigInt);
@@ -1935,6 +1996,7 @@ public:
             return bigInt;
         }
         }
+        reader.setOverran();
         return JSValue();
     }
 };
@@ -2273,7 +2335,7 @@ public:
         uint32_t bits = reader.varuint();
         if (bits & HasWrapperParameterNames) {
             unsigned count = reader.varuint();
-            if (reader.has(count)) {
+            if (reader.checkCount(count)) {
                 rareData->m_generatorOrAsyncWrapperFunctionParameterNames = FixedVector<Identifier>(count);
                 for (auto& name : rareData->m_generatorOrAsyncWrapperFunctionParameterNames)
                     name = CachedString::decodeIdentifier(reader, decoder);
@@ -2281,7 +2343,7 @@ public:
         }
         if (bits & HasClassElementDefinitions) {
             unsigned count = reader.varuint();
-            if (reader.has(count)) {
+            if (reader.checkCount(count)) {
                 rareData->m_classElementDefinitions = FixedVector<UnlinkedFunctionExecutable::ClassElementDefinition>(count);
                 for (auto& definition : rareData->m_classElementDefinitions) {
                     definition.ident = CachedString::decodeIdentifier(reader, decoder);
@@ -2405,7 +2467,7 @@ public:
     bool hasCapturedVariables { false };
     Identifier name;
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables;
-    std::unique_ptr<UnlinkedFunctionExecutable::RareData> rareData;
+    mutable std::unique_ptr<UnlinkedFunctionExecutable::RareData> rareData; // moved into the executable decoded from this
 
 private:
     enum class Mode { Check, Decode };
@@ -2602,7 +2664,7 @@ CachedFunctionExecutable::CachedFunctionExecutable(Decoder& decoder, uint32_t at
         return;
     }
     if (header & HasName)
-        name = CachedString::decodeIdentifier(reader, decoder);
+        name = Identifier::fromUid(decoder.vm(), CachedString::decodeNonNull(reader, decoder).get());
     if (header & HasTDZ)
         parentScopeTDZVariables = CachedTDZEnvironmentLink::decodeRef(reader, decoder);
     if (header & HasRareData)
@@ -2654,7 +2716,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_unlinkedCodeBlockForConstruct()
     , m_ecmaName(record.name)
     , m_parentScopeTDZVariables(record.parentScopeTDZVariables)
-    , m_rareData(const_cast<CachedFunctionExecutable&>(record).rareData.release())
+    , m_rareData(WTF::move(record.rareData))
 {
     if (record.callBlockAt || record.constructBlockAt) {
         m_isCached = true;
@@ -2789,10 +2851,10 @@ protected:
     Reader ownMembersReader(Decoder& decoder) const { return Reader(decoder.payload(), m_regionAt + m_layout.ownAt); }
     // What the kind of code block adds; a function block has nothing.
     static void encodeOwnMembers(Writer&, Encoder&, const CodeBlockType&) { }
-    void decodeOwnMembers(Decoder&, CodeBlockType&) const { }
+    bool decodeOwnMembers(Decoder&, CodeBlockType&) const { return true; }
 
 private:
-    void decodeArrays(Decoder&, UnlinkedCodeBlock&) const;
+    bool decodeArrays(Decoder&, UnlinkedCodeBlock&) const; // false if anything read past its bounds
 
     Layout m_layout;
     Scalars m_scalars;
@@ -2852,12 +2914,13 @@ private:
         CachedVariableEnvironment::encode(writer, encoder, codeBlock.m_varDeclarations);
         CachedVariableEnvironment::encode(writer, encoder, codeBlock.m_lexicalDeclarations);
     }
-    void decodeOwnMembers(Decoder& decoder, UnlinkedProgramCodeBlock& codeBlock) const
+    bool decodeOwnMembers(Decoder& decoder, UnlinkedProgramCodeBlock& codeBlock) const
     {
         Reader reader = ownMembersReader(decoder);
         Base::decodeOwnMembers(reader, decoder, codeBlock);
         CachedVariableEnvironment::decode(reader, decoder, codeBlock.m_varDeclarations);
         CachedVariableEnvironment::decode(reader, decoder, codeBlock.m_lexicalDeclarations);
+        return !reader.overran();
     }
 };
 
@@ -2876,12 +2939,13 @@ private:
         CachedVariableEnvironment::encode(writer, encoder, codeBlock.m_varDeclarations);
         writer.varint(codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset);
     }
-    void decodeOwnMembers(Decoder& decoder, UnlinkedModuleProgramCodeBlock& codeBlock) const
+    bool decodeOwnMembers(Decoder& decoder, UnlinkedModuleProgramCodeBlock& codeBlock) const
     {
         Reader reader = ownMembersReader(decoder);
         Base::decodeOwnMembers(reader, decoder, codeBlock);
         CachedVariableEnvironment::decode(reader, decoder, codeBlock.m_varDeclarations);
         codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset = reader.varint();
+        return !reader.overran();
     }
 };
 
@@ -2904,13 +2968,13 @@ private:
         for (auto& candidate : codeBlock.m_functionHoistingCandidates)
             CachedString::encode(writer, encoder, candidate);
     }
-    void decodeOwnMembers(Decoder& decoder, UnlinkedEvalCodeBlock& codeBlock) const
+    bool decodeOwnMembers(Decoder& decoder, UnlinkedEvalCodeBlock& codeBlock) const
     {
         Reader reader = ownMembersReader(decoder);
         Base::decodeOwnMembers(reader, decoder, codeBlock);
         auto identifiers = [&](auto& out) {
             unsigned count = reader.varuint();
-            if (!reader.has(count))
+            if (!reader.checkCount(count))
                 return;
             out = std::remove_reference_t<decltype(out)>(count);
             for (auto& identifier : out)
@@ -2918,6 +2982,7 @@ private:
         };
         identifiers(codeBlock.m_variables);
         identifiers(codeBlock.m_functionHoistingCandidates);
+        return !reader.overran();
     }
 };
 
@@ -3286,10 +3351,11 @@ ALWAYS_INLINE UnlinkedFunctionCodeBlock::UnlinkedFunctionCodeBlock(Decoder& deco
 }
 
 template<typename CodeBlockType>
-void CachedCodeBlock<CodeBlockType>::decodeArrays(Decoder& decoder, UnlinkedCodeBlock& codeBlock) const
+bool CachedCodeBlock<CodeBlockType>::decodeArrays(Decoder& decoder, UnlinkedCodeBlock& codeBlock) const
 {
     VM& vm = decoder.vm();
     const Layout& layout = m_layout;
+    bool intact = true;
     // Most identifiers and many constants become atoms; let the table grow once for this block rather than as they trickle in.
     if (unsigned expected = layout.identifiers.count + layout.constants.count; expected >= 64)
         AtomStringImpl::reserveCapacityForCurrentThread(expected);
@@ -3298,6 +3364,7 @@ void CachedCodeBlock<CodeBlockType>::decodeArrays(Decoder& decoder, UnlinkedCode
         codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
         for (auto& constant : codeBlock.m_constantRegisters)
             constant.set(vm, &codeBlock, CachedJSValue::decode(reader, decoder));
+        intact &= !reader.overran();
     }
     if (layout.representations.count) {
         auto bytes = arrayReader(decoder, layout.representations).bytes(layout.representations.count);
@@ -3309,23 +3376,29 @@ void CachedCodeBlock<CodeBlockType>::decodeArrays(Decoder& decoder, UnlinkedCode
     if (layout.flags & LayoutHasJumpTargets) {
         Reader reader(decoder.payload(), m_regionAt + layout.jumpTargetsAt);
         CachedCodeBlockExtras::decodeOutOfLineJumpTargets(reader, codeBlock);
+        intact &= !reader.overran();
     }
     if (layout.identifiers.count) {
         Reader reader = arrayReader(decoder, layout.identifiers);
         codeBlock.m_identifiers = FixedVector<Identifier>(layout.identifiers.count);
         for (auto& identifier : codeBlock.m_identifiers)
-            identifier = CachedString::decodeIdentifier(reader, decoder);
+            identifier = Identifier::fromUid(vm, CachedString::decodeNonNull(reader, decoder).get());
+        intact &= !reader.overran();
     }
-    auto children = [&](const Array& slots, auto& executables) {
+    auto children = [&](const Array& slots, auto& executables, bool declarations) {
         if (!slots.count)
             return;
         Reader reader = arrayReader(decoder, slots);
         executables = FixedVector<WriteBarrier<UnlinkedFunctionExecutable>>(slots.count);
-        for (auto& executable : executables)
-            executable.set(vm, &codeBlock, CachedFunctionExecutable(decoder, reader.u32()).decode(decoder));
+        for (auto& executable : executables) {
+            CachedFunctionExecutable record(decoder, reader.u32());
+            intact &= record.intact && (!declarations || !record.name.isNull());
+            executable.set(vm, &codeBlock, record.decode(decoder));
+        }
     };
-    children(layout.functionDecls, codeBlock.m_functionDecls);
-    children(layout.functionExprs, codeBlock.m_functionExprs);
+    children(layout.functionDecls, codeBlock.m_functionDecls, true);
+    children(layout.functionExprs, codeBlock.m_functionExprs, false);
+    return intact;
 }
 
 template<typename CodeBlockType>
@@ -3335,8 +3408,10 @@ CodeBlockType* CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder) const
     auto& record = static_cast<const CachedCodeBlockType<CodeBlockType>&>(*this);
     CodeBlockType* codeBlock = record.construct(decoder);
     codeBlock->finishCreation(decoder.vm());
-    decodeArrays(decoder, *codeBlock);
-    record.decodeOwnMembers(decoder, *codeBlock);
+    if (!decodeArrays(decoder, *codeBlock) || !record.decodeOwnMembers(decoder, *codeBlock)) {
+        dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] code block record damaged; regenerating from source");
+        return nullptr;
+    }
     return codeBlock;
 }
 

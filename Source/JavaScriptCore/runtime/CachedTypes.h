@@ -102,6 +102,7 @@ public:
     JS_EXPORT_PRIVATE ~DecoderStringTable();
     Ref<AtomStringImpl> atomFor(uint32_t ordinal);
     String plainStringFor(uint32_t ordinal);
+    uint32_t size() const { return m_count; }
 private:
     struct Record {
         const uint8_t* characters;
@@ -139,27 +140,27 @@ public:
     // 1-3 character strings stored in line: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
     Ref<AtomStringImpl> atomForInlineString(std::span<const Latin1Character>);
     // Strings stored by ordinal in the embedder's shared DecoderStringTable.
-    Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
+    RefPtr<AtomStringImpl> atomForExternalString(uint32_t ordinal); // null if there is no table or no such ordinal
     String plainStringForExternalString(uint32_t ordinal);
 
     // Values written once and referred to by offset decode once (CachedShared).
-    void* sharedObjectAt(uint32_t offset) const;
-    void setSharedObjectAt(uint32_t offset, void*);
-    CompactTDZEnvironmentMap::Handle handleForTDZEnvironment(CompactTDZEnvironment*) const;
+    std::optional<std::pair<void*, const void*>> sharedObjectAt(uint32_t offset) const; // the object and a tag for its type
+    void setSharedObjectAt(uint32_t offset, void*, const void* type);
+    std::optional<CompactTDZEnvironmentMap::Handle> handleForTDZEnvironment(CompactTDZEnvironment*) const;
     void setHandleForTDZEnvironment(CompactTDZEnvironment*, const CompactTDZEnvironmentMap::Handle&);
     void addLeafExecutable(const UnlinkedFunctionExecutable*, uint32_t offset);
     void addFinalizer(Function<void()>&&);
 
 private:
     Decoder(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider>);
-    DecoderStringTable& externalStrings();
+    DecoderStringTable* externalStrings();
 
     VM& m_vm;
     const Ref<CachedBytecode> m_cachedBytecode;
     Vector<AtomStringImpl*> m_atomsByOrdinal;
     AtomStringImpl** m_twoCharacterAtoms { nullptr };
     DecoderStringTable* m_externalStrings { nullptr };
-    UncheckedKeyHashMap<uint32_t, void*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_sharedObjects;
+    UncheckedKeyHashMap<uint32_t, std::pair<void*, const void*>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_sharedObjects;
     Vector<Function<void()>> m_finalizers;
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
