@@ -488,6 +488,7 @@ static consteval bool isPortableRecord()
     using U = std::remove_cv_t<T>;
     static_assert(alignof(U) <= 8);
     static_assert(std::is_trivially_destructible_v<U>, "decoded in place and never destroyed; MSVC would also prepend an array cookie to new T[]");
+    static_assert(!std::is_polymorphic_v<U>, "a vptr is a pointer into this process");
     static_assert(!std::is_pointer_v<U> && !std::is_same_v<U, wchar_t> && !std::is_same_v<U, long double>);
     static_assert(sizeof(long) == sizeof(long long) || (!std::is_same_v<U, long> && !std::is_same_v<U, unsigned long>), "long is 4 bytes here and 8 on LP64");
     static_assert(std::has_unique_object_representations_v<U> || std::is_floating_point_v<U>,
