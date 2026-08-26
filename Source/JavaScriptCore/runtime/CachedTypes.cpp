@@ -2623,7 +2623,8 @@ struct CachedMetadataSteps {
             if (end <= start)
                 continue;
             uint32_t count = (end - start) / metadataSize(opcode);
-            ASSERT(count && start + count * metadataSize(opcode) == end && count <= countMask);
+            ASSERT(count && start + count * metadataSize(opcode) == end);
+            RELEASE_ASSERT(count <= countMask); // or it would spill into the opcode bits
             steps.append(i << indexShift | count);
         }
 #if ASSERT_ENABLED
