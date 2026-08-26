@@ -25,11 +25,6 @@
 
 #include "config.h"
 #include "CachedTypes.h"
-#include <wtf/Deque.h>
-#include <wtf/Function.h>
-#if CPU(X86_64)
-#include <cpuid.h>
-#endif
 
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
@@ -49,57 +44,160 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "UnlinkedProgramCodeBlock.h"
 #include "VariableEnvironmentInlines.h"
+#include <wtf/Deque.h>
 #include <wtf/FileHandle.h>
-#include <wtf/InlineMap.h>
+#include <wtf/Function.h>
 #include <wtf/MallocSpan.h>
-#include <wtf/Packed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/UUID.h>
 #include <wtf/text/AtomStringImpl.h>
+#include <array>
+#include <bit>
+#if CPU(X86_64)
+#include <cpuid.h>
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-bool Decoder::canBorrowPayload() const
-{
-#if USE(BUN_JSC_ADDITIONS)
-    return Options::useBorrowedBytecodeFromCache() && m_cachedBytecode->payloadIsPersistent();
-#else
-    return false;
-#endif
-}
+// The bytecode cache format.
+//
+// A payload is a byte string. Every value in it is written by one of the primitives below and read back by the matching
+// one; nothing is ever the memory image of a C++ object, so the format does not depend on the compiler, ABI, or CPU that
+// produced it (Bun embeds payloads in cross-compiled executables), and every byte is a function of what was encoded.
+//
+//   u8 u16 u32 u64    fixed width, little-endian
+//   f64               the IEEE-754 bits as a u64
+//   varuint / varint  LEB128, at most 5 bytes; varint is zigzag
+//   bytes             a length given elsewhere, then that many bytes
+//
+// Composite values are those primitives in a stated order (each Cached* below is that statement for one type). A
+// reference to something elsewhere in the payload is its absolute offset: a varuint when the target was written first
+// (string records, shared environments), a u32 written as 0 and patched when the target is written later (a function's
+// code blocks, a block's expression info, a code block's child executable records). Offset 0 is the entry header, so 0
+// doubles as "none".
+//
+// Nothing is aligned except the three arrays a decoder may use in place out of a mapped payload instead of copying
+// (instruction bytes need nothing; metadata steps and expression-info words are 4-aligned), and those are read in place
+// only on a little-endian host, which is asserted.
+//
+// Layout is the one from before: a code block is a region -- its arrays, then a record with a varint tail saying where
+// each array is and holding every count and flag, then its children's executable records; bodies follow breadth-first;
+// expression info goes last. Decoding one function reads one contiguous run of a mapped payload.
 
-// Scalars of the per-function records are written as a LEB128 tail right after the fixed part of the record: most of them
-// are small or zero in almost every function, and they are read exactly once, into the object being constructed.
-class VarintWriter {
+static_assert(std::endian::native == std::endian::little, "arrays borrowed from a mapped payload are read in place");
+static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
+#if USE(BIGINT32)
+#error "a BigInt32 constant would be written as an immediate that a build without them cannot decode"
+#endif
+
+// -- Primitives -------------------------------------------------------------------------------------------------------
+
+class Writer {
 public:
+    void u8(uint8_t v) { m_bytes.append(v); }
+    void boolean(bool v) { u8(v ? 1 : 0); }
+    void u16(uint16_t v)
+    {
+        u8(static_cast<uint8_t>(v));
+        u8(static_cast<uint8_t>(v >> 8));
+    }
     void u32(uint32_t v)
     {
+        for (unsigned shift = 0; shift < 32; shift += 8)
+            u8(static_cast<uint8_t>(v >> shift));
+    }
+    void u64(uint64_t v)
+    {
+        for (unsigned shift = 0; shift < 64; shift += 8)
+            u8(static_cast<uint8_t>(v >> shift));
+    }
+    void f64(double v) { u64(std::bit_cast<uint64_t>(v)); }
+    void varuint(uint32_t v)
+    {
         while (v >= 0x80) {
-            m_bytes.append(static_cast<uint8_t>(v) | 0x80);
+            u8(static_cast<uint8_t>(v) | 0x80);
             v >>= 7;
         }
-        m_bytes.append(static_cast<uint8_t>(v));
+        u8(static_cast<uint8_t>(v));
     }
-    void i32(int32_t v) { u32((static_cast<uint32_t>(v) << 1) ^ static_cast<uint32_t>(v >> 31)); }
-    void u8(uint8_t v) { m_bytes.append(v); }
+    void varint(int32_t v) { varuint((static_cast<uint32_t>(v) << 1) ^ static_cast<uint32_t>(v >> 31)); }
+    void bytes(std::span<const uint8_t> b) { m_bytes.append(b); }
+    void zeros(size_t n) { m_bytes.grow(m_bytes.size() + n); memset(m_bytes.mutableSpan().data() + m_bytes.size() - n, 0, n); }
+
+    // A u32 written now as a placeholder and patched once its value is known.
+    size_t reserveU32()
+    {
+        size_t at = size();
+        u32(0);
+        return at;
+    }
+    void patchU32(size_t at, uint32_t v)
+    {
+        uint8_t* p = m_bytes.mutableSpan().data() + at;
+        for (unsigned i = 0; i < 4; ++i)
+            p[i] = static_cast<uint8_t>(v >> (8 * i));
+    }
+
     size_t size() const { return m_bytes.size(); }
-    void copyTo(uint8_t* out) const { memcpy(out, m_bytes.span().data(), m_bytes.size()); }
+    std::span<const uint8_t> span() const LIFETIME_BOUND { return m_bytes.span(); }
+    void clear() { m_bytes.shrink(0); }
 
 private:
     Vector<uint8_t, 128> m_bytes;
 };
 
-class VarintReader {
+// Reads never leave [begin, end): past the end every read yields 0 and overran() is set, and whoever is decoding treats
+// the record as damaged (the function is generated from source instead).
+class Reader {
 public:
-    // `end` bounds the read when the bytes have not been checksummed yet; past it every read yields 0 and overran() is set.
-    explicit VarintReader(const uint8_t* p, const uint8_t* end = nullptr)
-        : m_p(p)
+    Reader(std::span<const uint8_t> payload, size_t offset)
+        : m_begin(payload.data())
+        , m_p(payload.data() + std::min(offset, payload.size()))
+        , m_end(payload.data() + payload.size())
+        , m_overran(offset > payload.size())
+    {
+    }
+    Reader(const uint8_t* p, const uint8_t* end)
+        : m_begin(p)
+        , m_p(p)
         , m_end(end)
     {
     }
+
+    uint8_t u8()
+    {
+        if (m_p >= m_end) [[unlikely]] {
+            m_overran = true;
+            return 0;
+        }
+        return *m_p++;
+    }
+    bool boolean() { return u8(); }
+    uint16_t u16()
+    {
+        uint16_t v = u8();
+        return v | static_cast<uint16_t>(u8()) << 8;
+    }
     uint32_t u32()
+    {
+        if (!has(4)) [[unlikely]] {
+            m_overran = true;
+            m_p = m_end;
+            return 0;
+        }
+        uint32_t v = static_cast<uint32_t>(m_p[0]) | static_cast<uint32_t>(m_p[1]) << 8 | static_cast<uint32_t>(m_p[2]) << 16 | static_cast<uint32_t>(m_p[3]) << 24;
+        m_p += 4;
+        return v;
+    }
+    uint64_t u64()
+    {
+        uint64_t low = u32();
+        return low | static_cast<uint64_t>(u32()) << 32;
+    }
+    double f64() { return std::bit_cast<double>(u64()); }
+    uint32_t varuint()
     {
         uint32_t v = 0;
         for (unsigned shift = 0;; shift += 7) {
@@ -113,27 +211,58 @@ public:
             }
         }
     }
-    int32_t i32()
+    int32_t varint()
     {
-        uint32_t v = u32();
+        uint32_t v = varuint();
         return static_cast<int32_t>((v >> 1) ^ -(v & 1));
     }
-    uint8_t u8()
+    // `n` bytes in place; empty on overrun.
+    std::span<const uint8_t> bytes(size_t n)
     {
-        if (m_end && m_p >= m_end) {
+        if (!has(n)) [[unlikely]] {
             m_overran = true;
-            return 0;
+            m_p = m_end;
+            return { };
         }
-        return *m_p++;
+        auto result = std::span { m_p, n };
+        m_p += n;
+        return result;
     }
+    void skip(size_t n) { bytes(n); }
+    void alignTo(size_t alignment, const uint8_t* base) { skip((alignment - (m_p - base) % alignment) % alignment); }
+
+    bool has(size_t n) const { return static_cast<size_t>(m_end - m_p) >= n; }
     bool overran() const { return m_overran; }
     const uint8_t* position() const { return m_p; }
+    size_t offset() const { return m_p - m_begin; }
+    void seek(size_t offset)
+    {
+        if (offset > static_cast<size_t>(m_end - m_begin)) {
+            m_overran = true;
+            m_p = m_end;
+        } else
+            m_p = m_begin + offset;
+    }
 
 private:
+    const uint8_t* m_begin;
     const uint8_t* m_p;
     const uint8_t* m_end;
     bool m_overran { false };
 };
+
+static uint32_t readU32(const uint8_t* p)
+{
+    return static_cast<uint32_t>(p[0]) | static_cast<uint32_t>(p[1]) << 8 | static_cast<uint32_t>(p[2]) << 16 | static_cast<uint32_t>(p[3]) << 24;
+}
+
+static void writeU32(uint8_t* p, uint32_t v)
+{
+    for (unsigned i = 0; i < 4; ++i)
+        p[i] = static_cast<uint8_t>(v >> (8 * i));
+}
+
+// -- Checksums --------------------------------------------------------------------------------------------------------
 
 // CRC-32C of the bytes one code-block decode reads, so a truncated or corrupted payload falls back to generating that
 // function from source instead of being trusted. Hardware where the ISA guarantees it, a table elsewhere.
@@ -195,65 +324,23 @@ static uint32_t crc32c(uint32_t crc, std::span<const uint8_t> bytes)
     return crc32cSoftware(crc, bytes);
 }
 
-AtomStringImpl* Decoder::atomForOrdinal(uint32_t ordinal) const
+// CRC-32C of `bytes` with the 4 bytes at `hole` (where the checksum itself is stored) read as zero.
+static uint32_t checksumWithHole(std::span<const uint8_t> bytes, size_t hole)
 {
-    return ordinal < m_atomsByOrdinal.size() ? m_atomsByOrdinal[ordinal] : nullptr;
+    static const uint8_t zeros[4] = { };
+    uint32_t crc = ~0u;
+    crc = crc32c(crc, bytes.first(hole));
+    crc = crc32c(crc, std::span { zeros, 4 });
+    crc = crc32c(crc, bytes.subspan(hole + 4));
+    return ~crc;
 }
 
-void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
+uint32_t bytecodeCacheRecordChecksum(std::span<const uint8_t> record, size_t checksumOffset)
 {
-    if (ordinal >= m_atomsByOrdinal.size()) {
-        // Payloads are far below 2^32 bytes and every numbered string is a 12+ byte record, so this is bounded by the payload.
-        RELEASE_ASSERT(ordinal < m_cachedBytecode->size());
-        size_t oldSize = m_atomsByOrdinal.size();
-        m_atomsByOrdinal.grow(std::max<size_t>(ordinal + 1, oldSize * 2));
-        std::fill(m_atomsByOrdinal.begin() + oldSize, m_atomsByOrdinal.end(), nullptr); // Vector::grow leaves pointers uninitialized
-    }
-    ASSERT(!m_atomsByOrdinal[ordinal]);
-    atom.ref();
-    m_atomsByOrdinal[ordinal] = &atom;
+    return checksumWithHole(record, checksumOffset);
 }
 
-// 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 65536-entry table on the VM (shared by every Decoder — one 512 KB slab, not one per retained Decoder); length 3 goes to the atom table each time.
-Ref<AtomStringImpl> Decoder::atomForInlineString(uint32_t packed)
-{
-    unsigned length = (packed >> 2) & 3;
-    if (length == 1)
-        return m_vm.smallStrings.singleCharacterStringRep(static_cast<unsigned char>(packed >> 8));
-    if (length == 2) {
-        if (!m_twoCharacterAtoms) [[unlikely]]
-            m_twoCharacterAtoms = m_vm.ensureCachedBytecodeTwoCharacterAtoms();
-        AtomStringImpl*& slot = m_twoCharacterAtoms[(packed >> 8) & 0xffff];
-        if (slot) [[likely]]
-            return *slot;
-        std::array<Latin1Character, 2> characters { static_cast<Latin1Character>(packed >> 8), static_cast<Latin1Character>(packed >> 16) };
-        Ref<AtomStringImpl> atom = AtomStringImpl::add(std::span<const Latin1Character>(characters)).releaseNonNull();
-        atom->ref();
-        slot = atom.ptr();
-        return atom;
-    }
-    std::array<Latin1Character, 3> characters { static_cast<Latin1Character>(packed >> 8), static_cast<Latin1Character>(packed >> 16), static_cast<Latin1Character>(packed >> 24) };
-    return AtomStringImpl::add(std::span<const Latin1Character>(characters.data(), length)).releaseNonNull();
-}
-
-ALWAYS_INLINE DecoderStringTable& Decoder::externalStrings()
-{
-    if (!m_externalStrings) [[unlikely]] {
-        m_externalStrings = m_vm.clientData ? m_vm.clientData->decoderStringTable() : nullptr;
-        RELEASE_ASSERT_WITH_MESSAGE(m_externalStrings, "bytecode payload uses an external string table but the embedder did not provide one");
-    }
-    return *m_externalStrings;
-}
-
-Ref<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
-{
-    return externalStrings().atomFor(ordinal);
-}
-
-String Decoder::plainStringForExternalString(uint32_t ordinal)
-{
-    return externalStrings().plainStringFor(ordinal);
-}
+// -- The embedder's shared string table ------------------------------------------------------------------------------
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EncoderStringTable);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DecoderStringTable);
@@ -279,20 +366,24 @@ Vector<uint8_t> EncoderStringTable::serialize() const
     for (auto& s : m_strings)
         body += roundUpToMultipleOf<4>(2 * sizeof(uint32_t) + s->length() * (s->is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
     out.grow(header + body);
-    std::memset(out.mutableSpan().data(), 0, out.size());
-    uint32_t* words = std::bit_cast<uint32_t*>(out.mutableSpan().data());
-    words[0] = count;
+    uint8_t* base = out.mutableSpan().data();
+    std::memset(base, 0, out.size());
+    writeU32(base, count);
     size_t offset = header;
     for (uint32_t i = 0; i < count; ++i) {
-        words[1 + i] = static_cast<uint32_t>(offset);
+        writeU32(base + sizeof(uint32_t) * (1 + i), static_cast<uint32_t>(offset));
         const StringImpl& s = m_strings[i].get();
-        uint32_t* record = std::bit_cast<uint32_t*>(out.mutableSpan().data() + offset);
-        record[0] = s.length() | (s.is8Bit() ? 1u << 31 : 0);
-        record[1] = s.hash();
+        uint8_t* record = base + offset;
+        writeU32(record, s.length() | (s.is8Bit() ? 1u << 31 : 0));
+        writeU32(record + 4, s.hash());
         if (s.is8Bit())
-            std::memcpy(record + 2, s.span8().data(), s.length());
-        else
-            std::memcpy(record + 2, s.span16().data(), s.length() * sizeof(char16_t));
+            std::memcpy(record + 8, s.span8().data(), s.length());
+        else {
+            for (unsigned c = 0; c < s.length(); ++c) {
+                record[8 + 2 * c] = static_cast<uint8_t>(s.span16()[c]);
+                record[8 + 2 * c + 1] = static_cast<uint8_t>(s.span16()[c] >> 8);
+            }
+        }
         offset += roundUpToMultipleOf<4>(2 * sizeof(uint32_t) + s.length() * (s.is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
     }
     ASSERT(offset == out.size());
@@ -302,8 +393,8 @@ Vector<uint8_t> EncoderStringTable::serialize() const
 DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes)
     : m_bytes(bytes)
 {
-    RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t) && !(std::bit_cast<uintptr_t>(bytes.data()) % alignof(uint32_t)));
-    m_count = *std::bit_cast<const uint32_t*>(bytes.data());
+    RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t));
+    m_count = readU32(bytes.data());
     RELEASE_ASSERT(m_count <= (bytes.size() - sizeof(uint32_t)) / sizeof(uint32_t), m_count, bytes.size());
     if (m_count) {
         m_stringsReservation = roundUpToMultipleOf(WTF::pageSize(), static_cast<size_t>(m_count) * sizeof(StringImpl*));
@@ -326,25 +417,27 @@ DecoderStringTable::~DecoderStringTable()
 DecoderStringTable::Record DecoderStringTable::record(uint32_t ordinal) const
 {
     RELEASE_ASSERT(ordinal < m_count);
-    const uint32_t* offsets = std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t));
-    size_t offset = offsets[ordinal];
+    size_t offset = readU32(m_bytes.data() + sizeof(uint32_t) * (1 + ordinal));
     RELEASE_ASSERT(!(offset % 4) && offset <= m_bytes.size() && m_bytes.size() - offset >= 2 * sizeof(uint32_t), offset, m_bytes.size());
-    const uint32_t* header = std::bit_cast<const uint32_t*>(m_bytes.data() + offset);
+    const uint8_t* header = m_bytes.data() + offset;
     Record result;
-    result.length = header[0] & 0x7fffffffu;
-    result.is8Bit = header[0] >> 31;
-    result.hash = header[1];
-    result.characters = std::bit_cast<const uint8_t*>(header + 2);
+    uint32_t lengthAndWidth = readU32(header);
+    result.length = lengthAndWidth & 0x7fffffffu;
+    result.is8Bit = lengthAndWidth >> 31;
+    result.hash = readU32(header + 4);
+    result.characters = header + 8;
     size_t byteLength = static_cast<size_t>(result.length) * (result.is8Bit ? sizeof(Latin1Character) : sizeof(char16_t));
     RELEASE_ASSERT(byteLength <= m_bytes.size() - offset - 2 * sizeof(uint32_t), ordinal, result.length, m_bytes.size());
     return result;
 }
 
+// Same threshold as CachedString::minimumLengthToAliasPayload: long strings alias the (persistent) blob.
+static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
+
 template<typename CharacterType>
 static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, uint32_t hash)
 {
-    // Same threshold as CachedUniquedStringImplBase::minimumLengthToAliasPayload: long strings alias the (persistent) blob.
-    if (characters.size() >= 48)
+    if (characters.size() >= minimumLengthToAliasPayload)
         return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(characters) }).releaseNonNull();
     WTF::HashTranslatorCharBuffer<CharacterType> hashed { characters, hash };
     return AtomStringImpl::add(hashed).releaseNonNull();
@@ -367,6 +460,7 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(uint32_t ordinal)
         return atom;
     }
     Record r = record(ordinal);
+    // 16-bit characters are read in place only where the blob happens to be 2-aligned there; the encoder 4-aligns records.
     Ref<AtomStringImpl> atom = r.is8Bit
         ? atomize(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length }, r.hash)
         : atomize(std::span { std::bit_cast<const char16_t*>(r.characters), r.length }, r.hash);
@@ -385,314 +479,143 @@ String DecoderStringTable::plainStringFor(uint32_t ordinal)
     RefPtr<StringImpl> string;
     if (r.is8Bit) {
         std::span<const Latin1Character> chars { std::bit_cast<const Latin1Character*>(r.characters), r.length };
-        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+        string = r.length >= minimumLengthToAliasPayload ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
     } else {
         std::span<const char16_t> chars { std::bit_cast<const char16_t*>(r.characters), r.length };
-        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+        string = r.length >= minimumLengthToAliasPayload ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
     }
     string->ref();
     slot = string.get();
     return String { WTF::move(string) };
 }
 
-std::span<const uint8_t> Decoder::payloadSpan() const
-{
-    return m_cachedBytecode->span();
-}
+// -- Encoder ----------------------------------------------------------------------------------------------------------
 
-bool Decoder::payloadContains(const void* start, size_t size) const
-{
-    auto payload = m_cachedBytecode->span();
-    auto* begin = static_cast<const uint8_t*>(start);
-    return begin >= payload.data() && size <= payload.size() && begin + size <= payload.data() + payload.size();
-}
-
-bool Decoder::verifiesChecksums() const
-{
-#if USE(BUN_JSC_ADDITIONS)
-    // A persistent payload is a section of the executable itself: corruption there means the program is already broken, and code signing already covers it. Checksums guard separate on-disk cache files.
-    return !m_cachedBytecode->payloadIsPersistent() && Options::verifyBytecodeCacheChecksums();
-#else
-    return true;
-#endif
-}
-
-bool Decoder::regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays) const
-{
-#if USE(BUN_JSC_ADDITIONS)
-    if (!verifiesChecksums())
-        return true;
-#endif
-    auto* begin = static_cast<const uint8_t*>(start);
-    auto* hole = reinterpret_cast<const uint8_t*>(storedChecksum);
-    if (!payloadContains(start, size) || hole < begin || hole + 4 > begin + size)
-        return false; // includes a stored size too small to cover the record that holds the checksum
-    static const uint8_t zeros[4] = { };
-    uint32_t crc = ~0u;
-    crc = crc32c(crc, std::span { begin, hole });
-    crc = crc32c(crc, std::span { zeros, 4 });
-    crc = crc32c(crc, std::span { hole + 4, begin + size });
-    for (auto external : externalArrays) {
-        if (!payloadContains(external.data(), external.size()))
-            return false;
-        crc = crc32c(crc, external);
-    }
-    uint32_t stored;
-    memcpy(&stored, storedChecksum, sizeof(stored));
-    if (~crc == stored)
-        return true;
-    dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] code block checksum mismatch; regenerating from source");
-    return false;
-}
-
-namespace Yarr {
-enum class Flags : uint16_t;
-}
-
-template <typename T, typename = void>
-struct SourceTypeImpl {
-    using type = T;
-};
-
-template<typename T>
-struct SourceTypeImpl<T, std::enable_if_t<!std::is_fundamental<T>::value && !std::is_same<typename T::SourceType_, void>::value>> {
-    using type = typename T::SourceType_;
-
-};
-
-template<typename T>
-using SourceType = typename SourceTypeImpl<T>::type;
-
+// The payload being written: an append-only byte string plus the bookkeeping that lets a value written once be referred
+// to again (strings by contents, environments by identity, byte-identical arrays), the two deferred passes that give the
+// payload its locality (function bodies breadth-first, expression info last), and the checksums sealed at the end.
 class Encoder {
     WTF_MAKE_NONCOPYABLE(Encoder);
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
-    class Allocation {
-        friend class Encoder;
-
-    public:
-        uint8_t* NODELETE buffer() const { return m_buffer; }
-        ptrdiff_t NODELETE offset() const { return m_offset; }
-
-    private:
-        Allocation(uint8_t* buffer, ptrdiff_t offset)
-            : m_buffer(buffer)
-            , m_offset(offset)
-        {
-        }
-
-        uint8_t* m_buffer;
-        ptrdiff_t m_offset;
-    };
-
     // A payload that gets appended to another one (CachedBytecode::addFunctionUpdate) is read by the same Decoder as its
-    // base, so it leaves its strings unnumbered rather than collide with numbers the base already handed out.
+    // base: its offsets are absolute in the combined payload (baseOffset), and it leaves its strings unnumbered rather
+    // than collide with numbers the base already handed out.
     enum class NumberStrings : bool { No, Yes };
-    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes, EncoderStringTable* externalStrings = nullptr, BytecodeCacheChecksums checksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable updatable = BytecodeCacheUpdatable::Yes)
+    Encoder(VM& vm, FileSystem::FileHandle& fileHandle, NumberStrings numberStrings = NumberStrings::Yes, EncoderStringTable* externalStrings = nullptr, BytecodeCacheChecksums checksums = BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable updatable = BytecodeCacheUpdatable::Yes, size_t baseOffset = 0)
         : m_vm(vm)
         , m_fileHandle(fileHandle)
-        , m_baseOffset(0)
-        , m_currentPage(nullptr)
+        , m_baseOffset(baseOffset)
         , m_externalStrings(externalStrings)
         , m_numberStrings(numberStrings == NumberStrings::Yes)
         , m_updatable(updatable == BytecodeCacheUpdatable::Yes)
         , m_checksums(m_updatable || checksums == BytecodeCacheChecksums::Yes)
     {
-        allocateNewPage();
     }
 
+    VM& vm() { return m_vm; }
     EncoderStringTable* NODELETE externalStrings() { return m_externalStrings; }
-
-    // Every function nested in a class with private names carries a copy of the class's private-name environment; the
-    // encoded entries are written once per distinct environment and shared.
-    struct SharedPrivateNameEnvironment {
-        unsigned hash;
-        Vector<std::pair<const UniquedStringImpl*, uint16_t>> entries;
-        ptrdiff_t elements;
-    };
-    std::optional<ptrdiff_t> sharedPrivateNameEnvironment(unsigned hash, const Vector<std::pair<const UniquedStringImpl*, uint16_t>>& entries) const
-    {
-        for (const auto& shared : m_sharedPrivateNameEnvironments) {
-            if (shared.hash == hash && shared.entries == entries)
-                return shared.elements;
-        }
-        return std::nullopt;
-    }
-    void addSharedPrivateNameEnvironment(unsigned hash, Vector<std::pair<const UniquedStringImpl*, uint16_t>>&& entries, ptrdiff_t elements)
-    {
-        m_sharedPrivateNameEnvironments.append({ hash, WTF::move(entries), elements });
-    }
-
     bool updatable() const { return m_updatable; }
     bool checksums() const { return m_checksums; }
 
-    VM& vm() { return m_vm; }
+    // Absolute offset of the next byte appended.
+    uint32_t position() const { return safeCast<uint32_t>(m_baseOffset + m_out.size()); }
 
-    Allocation malloc(unsigned size, size_t alignment)
+    uint32_t append(const Writer& writer)
     {
-        RELEASE_ASSERT(size);
-        ptrdiff_t offset;
-        if (m_currentPage->malloc(size, alignment, offset))
-            return Allocation { m_currentPage->buffer() + offset, m_baseOffset + offset };
-        allocateNewPage(size);
-        return malloc(size, alignment);
+        uint32_t at = position();
+        m_out.append(writer.span());
+        return at;
     }
-
-    template<typename T, typename... Args>
-    T* malloc(Args&&... args)
+    uint32_t appendBytes(std::span<const uint8_t> bytes, size_t alignment = 1)
     {
-        return new (malloc(sizeof(T), alignof(T)).buffer()) T(std::forward<Args>(args)...);
+        alignTo(alignment);
+        uint32_t at = position();
+        m_out.append(bytes);
+        return at;
     }
-
-    template<typename T, typename SourceArg>
-    T* mallocFor(const SourceArg& source)
+    uint32_t appendU32Placeholders(unsigned count)
     {
-        size_t tail = 0;
-        if constexpr (requires { T::tailSize(*this, source); })
-            tail = T::tailSize(*this, source);
-        else if constexpr (requires { T::tailSize(source); })
-            tail = T::tailSize(source);
-        return new (malloc(sizeof(T) + tail, alignof(T)).buffer()) T();
+        uint32_t at = position();
+        m_out.grow(m_out.size() + 4 * static_cast<size_t>(count));
+        memset(m_out.mutableSpan().data() + (at - m_baseOffset), 0, 4 * static_cast<size_t>(count));
+        return at;
     }
-
-    ptrdiff_t currentOffset() const { return m_baseOffset + m_currentPage->size(); }
-
-    // For an allocation whose size depends on where it lands: a record that stores its own offset as a varint.
-    template<typename SizeAt>
-    Allocation mallocPlaced(size_t alignment, const SizeAt& sizeAt)
+    void alignTo(size_t alignment)
     {
-        ptrdiff_t offset = m_baseOffset + roundUpToMultipleOf(static_cast<ptrdiff_t>(alignment), static_cast<ptrdiff_t>(m_currentPage->size()));
-        unsigned size = sizeAt(offset);
-        ptrdiff_t pageOffset;
-        if (!m_currentPage->malloc(size, alignment, pageOffset)) {
-            // A fresh page starts max-aligned, so the allocation lands at its base.
-            offset = m_baseOffset + roundUpToMultipleOf(static_cast<ptrdiff_t>(alignof(std::max_align_t)), static_cast<ptrdiff_t>(m_currentPage->size()));
-            size = sizeAt(offset);
-            allocateNewPage(size);
-            bool fits = m_currentPage->malloc(size, alignment, pageOffset);
-            RELEASE_ASSERT(fits);
-        }
-        RELEASE_ASSERT(m_baseOffset + pageOffset == offset);
-        return Allocation { m_currentPage->buffer() + pageOffset, offset };
+        while (position() % alignment)
+            m_out.append(0);
     }
+    void patchU32(uint32_t at, uint32_t value) { writeU32(m_out.mutableSpan().data() + (at - m_baseOffset), value); }
+    std::span<const uint8_t> bytesAt(uint32_t at, size_t size) const LIFETIME_BOUND { return m_out.span().subspan(at - m_baseOffset, size); }
 
-    // CRC-32C of [offset, offset + size) as it will appear in the payload, with the 4 bytes at `hole` read as zero
-    // (that is where the checksum itself is stored).
-    uint32_t checksumOfRange(ptrdiff_t offset, size_t size, ptrdiff_t hole)
+    // Non-symbol strings decode to AtomStringImpl::add(characters), so two strings with the same characters decode to
+    // the same atom: the record is written once and every user refers to it.
+    std::optional<uint32_t> existingString(const StringImpl& string) const
     {
-        uint32_t crc = ~0u;
-        ptrdiff_t baseOffset = 0;
-        ptrdiff_t end = offset + size;
-        for (const auto& page : m_pages) {
-            ptrdiff_t pageEnd = baseOffset + page.size();
-            ptrdiff_t from = std::max(offset, baseOffset);
-            ptrdiff_t to = std::min(end, pageEnd);
-            for (ptrdiff_t cursor = from; cursor < to;) {
-                ptrdiff_t stop = to;
-                if (cursor < hole)
-                    stop = std::min(stop, hole);
-                else if (cursor < hole + 4) {
-                    static const uint8_t zeros[4] = { };
-                    ptrdiff_t skip = std::min<ptrdiff_t>(hole + 4, to) - cursor;
-                    crc = crc32c(crc, std::span { zeros, static_cast<size_t>(skip) });
-                    cursor += skip;
-                    continue;
-                }
-                crc = crc32c(crc, page.span().subspan(cursor - baseOffset, stop - cursor));
-                cursor = stop;
-            }
-            baseOffset = pageEnd;
-            if (baseOffset >= end)
-                break;
-        }
-        return ~crc;
+        auto it = m_stringsByContents.find(String(const_cast<StringImpl*>(&string)));
+        return it == m_stringsByContents.end() ? std::nullopt : std::optional { it->value };
     }
+    void rememberString(const StringImpl& string, uint32_t at) { m_stringsByContents.add(String(const_cast<StringImpl*>(&string)), at); }
+    // Distinct strings are numbered in encode order; the decoder keeps the atom for each number it has seen, so only the
+    // first block to name a string goes through the atom table.
+    static constexpr uint32_t noOrdinal = std::numeric_limits<uint32_t>::max();
+    uint32_t nextStringOrdinal() { return m_numberStrings ? m_nextStringOrdinal++ : noOrdinal; }
 
-    std::span<const uint8_t> bytesAt(ptrdiff_t offset, size_t size) { return mutableBytesAt(offset, size); }
-    std::span<uint8_t> mutableBytesAt(ptrdiff_t offset, size_t size)
+    // An object several encoded values point at (a TDZ environment shared by sibling functions) is written once; the
+    // decoder likewise decodes it once, so what was one object is one object again.
+    std::optional<uint32_t> existingObject(const void* object) const
     {
-        ptrdiff_t baseOffset = 0;
-        for (auto& page : m_pages) {
-            if (offset - baseOffset < static_cast<ptrdiff_t>(page.size()))
-                return page.mutableSpan().subspan(offset - baseOffset, size);
-            baseOffset += page.size();
-        }
-        RELEASE_ASSERT_NOT_REACHED();
+        auto it = m_objects.find(object);
+        return it == m_objects.end() ? std::nullopt : std::optional { it->value };
     }
+    void rememberObject(const void* object, uint32_t at) { m_objects.add(object, at); }
 
-    ptrdiff_t offsetOf(const void* address)
-    {
-        ptrdiff_t offset;
-        ptrdiff_t baseOffset = 0;
-        for (const auto& page : m_pages) {
-            if (page.getOffset(address, offset))
-                return baseOffset + offset;
-            baseOffset += page.size();
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-        return 0;
-    }
-
-    void cachePtr(const void* ptr, ptrdiff_t offset)
-    {
-        m_ptrToOffsetMap.add(ptr, offset);
-    }
-
-    // Byte-identical immutable arrays (instruction streams, expression info, jump tables of small functions repeat a lot)
+    // Byte-identical immutable runs (instruction streams, expression info, jump tables of small functions repeat a lot)
     // are stored once; later occurrences point at the first. Decoded objects are per code block either way.
-    std::optional<ptrdiff_t> existingIdenticalArray(std::span<const uint8_t> bytes, unsigned hash, size_t alignment)
+    static unsigned hashBytes(std::span<const uint8_t> bytes) { return StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size()); }
+    std::optional<uint32_t> existingBytes(std::span<const uint8_t> bytes, unsigned hash, size_t alignment = 1) const
     {
-        auto it = m_arraysByHash.find(hash);
-        if (it == m_arraysByHash.end())
+        auto it = m_bytesByHash.find(hash);
+        if (it == m_bytesByHash.end())
             return std::nullopt;
         for (auto [candidate, size] : it->value) {
-            // An earlier copy made for a less-aligned element type may sit at an offset this one cannot use.
             if (size == bytes.size() && !(candidate % alignment) && equalSpans(bytesAt(candidate, size), bytes))
                 return candidate;
         }
         return std::nullopt;
     }
-    void registerArray(unsigned hash, ptrdiff_t offset, size_t size)
+    void rememberBytes(unsigned hash, uint32_t at, size_t size) { m_bytesByHash.add(hash, Vector<std::pair<uint32_t, size_t>, 1> { }).iterator->value.append({ at, size }); }
+    uint32_t appendBytesOnce(std::span<const uint8_t> bytes, size_t alignment = 1)
     {
-        m_arraysByHash.add(hash, Vector<std::pair<ptrdiff_t, size_t>, 1> { }).iterator->value.append({ offset, size });
+        unsigned hash = hashBytes(bytes);
+        if (auto existing = existingBytes(bytes, hash, alignment))
+            return *existing;
+        uint32_t at = appendBytes(bytes, alignment);
+        rememberBytes(hash, at, bytes.size());
+        return at;
     }
 
-    // Non-symbol strings decode to AtomStringImpl::add(characters), so two records with the same characters decode to the
-    // same atom: write the characters once and point every user at them.
-    std::optional<ptrdiff_t> cachedOffsetForStringContents(const StringImpl& string)
+    // A code block's arrays may be shared with an identical array an earlier block wrote; one that lies outside the
+    // block's own bytes is folded into the block's checksum so it is verified by whoever reads it (see regionIsIntact).
+    void beginBlockRegion(uint32_t start) { m_blockRegionStart = start; m_blockExternalArrays.clear(); }
+    uint32_t appendBlockArray(std::span<const uint8_t> bytes, size_t alignment = 1)
     {
-        if (string.isSymbol() || !string.length())
-            return std::nullopt;
-        auto it = m_stringsByContents.find(String(const_cast<StringImpl*>(&string)));
-        if (it == m_stringsByContents.end())
-            return std::nullopt;
-        return it->value;
+        unsigned hash = hashBytes(bytes);
+        if (auto existing = existingBytes(bytes, hash, alignment)) {
+            if (*existing < m_blockRegionStart)
+                m_blockExternalArrays.append({ *existing, bytes.size() });
+            return *existing;
+        }
+        uint32_t at = appendBytes(bytes, alignment);
+        rememberBytes(hash, at, bytes.size());
+        return at;
     }
-    void cacheStringContents(const StringImpl& string, ptrdiff_t offset)
-    {
-        if (string.isSymbol() || !string.length())
-            return;
-        m_stringsByContents.add(String(const_cast<StringImpl*>(&string)), offset);
-    }
-
-    std::optional<ptrdiff_t> cachedOffsetForPtr(const void* ptr)
-    {
-        auto it = m_ptrToOffsetMap.find(ptr);
-        if (it == m_ptrToOffsetMap.end())
-            return std::nullopt;
-        return { it->value };
-    }
-
-    void addLeafExecutable(const UnlinkedFunctionExecutable* executable, ptrdiff_t offset)
-    {
-        m_leafExecutables.add(executable, offset);
-    }
+    Vector<std::pair<uint32_t, size_t>> takeBlockExternalArrays() { return std::exchange(m_blockExternalArrays, { }); }
 
     // Layout: a code block's own arrays and its children's executable records are written contiguously; the children's
     // bodies follow breadth-first, and data that is only read on rare paths (expression info) goes after every body.
-    // Decoding one block then reads one contiguous run of the payload rather than records scattered through every
-    // descendant's subtree, so a mapped payload pages in only what is decoded.
     void deferBody(Function<void()>&& encodeBody) { m_bodies.append(WTF::move(encodeBody)); }
     void deferCold(Function<void()>&& encodeCold) { m_cold.append(WTF::move(encodeCold)); }
     void encodeDeferred()
@@ -703,189 +626,76 @@ public:
             m_cold.takeFirst()();
             RELEASE_ASSERT(m_bodies.isEmpty());
         }
-        // Slots inside a checksummed region (a block's ExpressionInfo, its children's records) are filled by the deferred
-        // work above, so the checksums are computed only now that every byte is final.
+        // Slots inside a checksummed range (a block's expression info offset, its children's records) are filled by the
+        // deferred work above, so the checksums are computed only now that every byte is final.
         for (auto& pending : m_pendingChecksums) {
-            uint32_t crc = ~checksumOfRange(pending.start, pending.size, pending.checksumOffset);
-            for (auto [offset, size] : pending.externalArrays)
-                crc = crc32c(crc, bytesAt(offset, size));
-            uint32_t checksum = ~crc;
-            memcpySpan(mutableBytesAt(pending.checksumOffset, sizeof(checksum)), std::span { reinterpret_cast<const uint8_t*>(&checksum), sizeof(checksum) });
+            uint32_t crc = ~checksumWithHole(bytesAt(pending.start, pending.size), pending.checksumAt - pending.start);
+            for (auto [at, size] : pending.externalArrays)
+                crc = crc32c(crc, bytesAt(at, size));
+            patchU32(pending.checksumAt, ~crc);
         }
         m_pendingChecksums.clear();
     }
-    void addChecksum(ptrdiff_t start, size_t size, ptrdiff_t checksumOffset, Vector<std::pair<ptrdiff_t, size_t>>&& externalArrays = { }) { m_pendingChecksums.append({ start, size, checksumOffset, WTF::move(externalArrays) }); }
-    uint32_t nextStringOrdinal() { return m_numberStrings ? m_nextStringOrdinal++ : std::numeric_limits<uint32_t>::max(); }
+    void addChecksum(uint32_t start, uint32_t size, uint32_t checksumAt, Vector<std::pair<uint32_t, size_t>>&& externalArrays = { }) { m_pendingChecksums.append({ start, size, checksumAt, WTF::move(externalArrays) }); }
 
-    // Content-sharing of arrays is only on while a code block encodes the few arrays its checksum knows how to follow
-    // (decoder side: CachedCodeBlock::regionIsIntact); an array shared from outside the block's own bytes is folded into
-    // the block's checksum so it is verified by whoever reads it, not only by whoever wrote it first.
-    class ShareableArrayScope {
-    public:
-        ShareableArrayScope(Encoder& encoder)
-            : m_encoder(encoder)
-            , m_previous(std::exchange(encoder.m_arraySharingEnabled, true))
-        {
-        }
-        ~ShareableArrayScope() { m_encoder.m_arraySharingEnabled = m_previous; }
-
-    private:
-        Encoder& m_encoder;
-        bool m_previous;
-    };
-    bool arraySharingEnabled() const { return m_arraySharingEnabled; }
-    void beginBlockRegion(ptrdiff_t start) { m_blockRegionStart = start; m_blockExternalArrays.clear(); }
-    void noteSharedArray(ptrdiff_t offset, size_t size)
-    {
-        if (offset < m_blockRegionStart)
-            m_blockExternalArrays.append({ offset, size });
-    }
-    Vector<std::pair<ptrdiff_t, size_t>> takeBlockExternalArrays() { return std::exchange(m_blockExternalArrays, { }); }
+    // CachedBytecode keeps these relative to the payload they are in and rebases them when payloads are combined.
+    void addLeafExecutable(const UnlinkedFunctionExecutable* executable, uint32_t at) { m_leafExecutables.add(executable, at - m_baseOffset); }
 
     RefPtr<CachedBytecode> release(BytecodeCacheError& error)
     {
-        if (!m_currentPage)
-            return nullptr;
-        m_currentPage->alignEnd();
-
-        if (m_fileHandle) {
+        if (m_fileHandle)
             return releaseMapped(error);
-        }
-
-        size_t size = m_baseOffset + m_currentPage->size();
-        auto buffer = MallocSpan<uint8_t, VMMalloc>::malloc(size);
-        auto bufferSpan = buffer.mutableSpan();
-        for (const auto& page : m_pages)
-            memcpySpan(consumeSpan(bufferSpan, page.size()), page.span());
-        RELEASE_ASSERT(bufferSpan.empty());
+        auto buffer = MallocSpan<uint8_t, VMMalloc>::malloc(m_out.size());
+        memcpySpan(buffer.mutableSpan(), m_out.span());
         return CachedBytecode::create(WTF::move(buffer), WTF::move(m_leafExecutables));
     }
 
 private:
     RefPtr<CachedBytecode> releaseMapped(BytecodeCacheError& error)
     {
-        size_t size = m_baseOffset + m_currentPage->size();
-        if (!m_fileHandle.truncate(size)) {
+        if (!m_fileHandle.truncate(m_out.size())) {
             error = BytecodeCacheError::StandardError(errno);
             return nullptr;
         }
-
-        for (const auto& page : m_pages) {
-            auto bytesWritten = m_fileHandle.write(page.span());
-            if (!bytesWritten) {
-                error = BytecodeCacheError::StandardError(errno);
-                return nullptr;
-            }
-
-            if (*bytesWritten != page.size()) {
-                error = BytecodeCacheError::WriteError(*bytesWritten, page.size());
-                return nullptr;
-            }
+        auto bytesWritten = m_fileHandle.write(m_out.span());
+        if (!bytesWritten) {
+            error = BytecodeCacheError::StandardError(errno);
+            return nullptr;
         }
-
+        if (*bytesWritten != m_out.size()) {
+            error = BytecodeCacheError::WriteError(*bytesWritten, m_out.size());
+            return nullptr;
+        }
         auto mappedFileData = m_fileHandle.map(FileSystem::MappedFileMode::Private);
         if (!mappedFileData) {
             error = BytecodeCacheError::StandardError(errno);
             return nullptr;
         }
-
         return CachedBytecode::create(WTF::move(*mappedFileData), WTF::move(m_leafExecutables));
-    }
-
-    class Page {
-    public:
-        Page(size_t size)
-            : m_buffer(MallocSpan<uint8_t, VMMalloc>::zeroedMalloc(size)) // alignment gaps end up in the file: keep them deterministic
-        {
-        }
-
-        bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
-        {
-            ASSERT(alignment && alignment <= alignof(std::max_align_t) && isPowerOfTwo(alignment));
-            ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
-            if (static_cast<size_t>(offset + size) > capacity())
-                return false;
-
-            result = offset;
-            m_offset = offset + size;
-            return true;
-        }
-
-        // FIXME: Port call sites for span() / mutableSpan() and remove.
-        const uint8_t* NODELETE buffer() const { return m_buffer.span().data(); }
-        uint8_t* NODELETE buffer() { return m_buffer.mutableSpan().data(); }
-        size_t size() const { return static_cast<size_t>(m_offset); }
-
-        std::span<uint8_t> mutableSpan() LIFETIME_BOUND { return m_buffer.mutableSpan().first(size()); }
-        std::span<const uint8_t> span() const LIFETIME_BOUND { return m_buffer.span().first(size()); }
-
-        bool NODELETE getOffset(const void* address, ptrdiff_t& result) const
-        {
-            auto* addr = static_cast<const uint8_t*>(address);
-            auto* bufferStart = buffer();
-            if (addr >= bufferStart && addr < bufferStart + m_offset) {
-                result = addr - bufferStart;
-                return true;
-            }
-            return false;
-        }
-
-        void NODELETE alignEnd()
-        {
-            ptrdiff_t size = roundUpToMultipleOf(alignof(std::max_align_t), m_offset);
-            if (size == m_offset)
-                return;
-            RELEASE_ASSERT(static_cast<size_t>(size) <= capacity());
-            m_offset = size;
-        }
-
-    private:
-        size_t capacity() const { return m_buffer.sizeInBytes(); }
-
-        MallocSpan<uint8_t, VMMalloc> m_buffer;
-        ptrdiff_t m_offset { 0 };
-    };
-
-    void allocateNewPage(size_t size = 0)
-    {
-        static size_t minPageSize = pageSize();
-        if (m_currentPage) {
-            m_currentPage->alignEnd();
-            m_baseOffset += m_currentPage->size();
-        }
-        // Grow geometrically so offsetOf()/bytesAt(), which walk the page list, stay cheap on large payloads.
-        size_t preferred = minPageSize << std::min<size_t>(m_pages.size() + 4, 14);
-        if (size < preferred)
-            size = preferred;
-        else
-            size = roundUpToMultipleOf(minPageSize, size);
-        m_pages.append(Page { size });
-        m_currentPage = &m_pages.last();
     }
 
     VM& m_vm;
     FileSystem::FileHandle& m_fileHandle;
-    ptrdiff_t m_baseOffset;
-    Page* m_currentPage;
-    Vector<Page> m_pages;
-    UncheckedKeyHashMap<const void*, ptrdiff_t> m_ptrToOffsetMap;
-    HashMap<String, ptrdiff_t> m_stringsByContents; // keyed by contents (StringHash), not identity
-    LeafExecutableMap m_leafExecutables;
-    Deque<Function<void()>> m_bodies;
-    Deque<Function<void()>> m_cold;
-    struct PendingChecksum { ptrdiff_t start; size_t size; ptrdiff_t checksumOffset; Vector<std::pair<ptrdiff_t, size_t>> externalArrays; };
-    Vector<PendingChecksum> m_pendingChecksums;
-    uint32_t m_nextStringOrdinal { 0 };
+    size_t m_baseOffset;
+    Vector<uint8_t> m_out;
     EncoderStringTable* m_externalStrings;
     bool m_numberStrings;
     bool m_updatable;
     bool m_checksums;
-    Vector<SharedPrivateNameEnvironment> m_sharedPrivateNameEnvironments;
-    bool m_arraySharingEnabled { false };
-    ptrdiff_t m_blockRegionStart { 0 };
-    Vector<std::pair<ptrdiff_t, size_t>> m_blockExternalArrays;
-    UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
+    uint32_t m_nextStringOrdinal { 0 };
+    HashMap<String, uint32_t> m_stringsByContents; // keyed by contents (StringHash), not identity
+    UncheckedKeyHashMap<const void*, uint32_t> m_objects;
+    UncheckedKeyHashMap<unsigned, Vector<std::pair<uint32_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_bytesByHash;
+    uint32_t m_blockRegionStart { 0 };
+    Vector<std::pair<uint32_t, size_t>> m_blockExternalArrays;
+    Deque<Function<void()>> m_bodies;
+    Deque<Function<void()>> m_cold;
+    struct PendingChecksum { uint32_t start; uint32_t size; uint32_t checksumAt; Vector<std::pair<uint32_t, size_t>> externalArrays; };
+    Vector<PendingChecksum> m_pendingChecksums;
+    LeafExecutableMap m_leafExecutables;
 };
+
+// -- Decoder ----------------------------------------------------------------------------------------------------------
 
 Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider)
     : m_vm(vm)
@@ -909,36 +719,126 @@ Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<
     return adoptRef(*new Decoder(vm, WTF::move(cachedBytecode), WTF::move(provider)));
 }
 
-size_t Decoder::size() const
+std::span<const uint8_t> Decoder::payload() const
 {
-    return m_cachedBytecode->size();
+    return m_cachedBytecode->span();
 }
 
-ptrdiff_t Decoder::offsetOf(const void* ptr)
+RefPtr<SourceProvider> Decoder::provider() const
 {
-    auto* addr = static_cast<const uint8_t*>(ptr);
-    auto cachedBytecodeSpan = m_cachedBytecode->span();
-    ASSERT(addr >= cachedBytecodeSpan.data() && addr < std::to_address(cachedBytecodeSpan.end()));
-    return addr - cachedBytecodeSpan.data();
+    return m_provider;
 }
 
-void Decoder::cacheOffset(ptrdiff_t offset, void* ptr)
+bool Decoder::canBorrowPayload() const
 {
-    m_offsetToPtrMap.add(offset, ptr);
+#if USE(BUN_JSC_ADDITIONS)
+    return Options::useBorrowedBytecodeFromCache() && m_cachedBytecode->payloadIsPersistent();
+#else
+    return false;
+#endif
 }
 
-std::optional<void*> Decoder::cachedPtrForOffset(ptrdiff_t offset)
+bool Decoder::verifiesChecksums() const
 {
-    auto it = m_offsetToPtrMap.find(offset);
-    if (it == m_offsetToPtrMap.end())
-        return std::nullopt;
-    return { it->value };
+#if USE(BUN_JSC_ADDITIONS)
+    // A persistent payload is a section of the executable itself: corruption there means the program is already broken, and code signing already covers it. Checksums guard separate on-disk cache files.
+    return !m_cachedBytecode->payloadIsPersistent() && Options::verifyBytecodeCacheChecksums();
+#else
+    return true;
+#endif
 }
 
-const void* Decoder::ptrForOffsetFromBase(ptrdiff_t offset)
+bool Decoder::payloadContains(size_t offset, size_t size) const
 {
-    ASSERT(offset > 0 && static_cast<size_t>(offset) < m_cachedBytecode->size());
-    return m_cachedBytecode->span().subspan(offset).data();
+    size_t payloadSize = payload().size();
+    return offset <= payloadSize && size <= payloadSize - offset;
+}
+
+bool Decoder::checksumMatches(size_t start, size_t size, size_t checksumAt, std::span<const std::pair<size_t, size_t>> externalArrays) const
+{
+    if (!verifiesChecksums())
+        return true;
+    if (!payloadContains(start, size) || checksumAt < start || checksumAt + 4 > start + size)
+        return false; // includes a stored size too small to cover the record that holds the checksum
+    auto bytes = payload().subspan(start, size);
+    uint32_t crc = ~checksumWithHole(bytes, checksumAt - start);
+    for (auto [at, arraySize] : externalArrays) {
+        if (!payloadContains(at, arraySize))
+            return false;
+        crc = crc32c(crc, payload().subspan(at, arraySize));
+    }
+    if (~crc == readU32(payload().data() + checksumAt))
+        return true;
+    dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] checksum mismatch; regenerating from source");
+    return false;
+}
+
+AtomStringImpl* Decoder::atomForOrdinal(uint32_t ordinal) const
+{
+    return ordinal < m_atomsByOrdinal.size() ? m_atomsByOrdinal[ordinal] : nullptr;
+}
+
+void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
+{
+    if (ordinal >= m_atomsByOrdinal.size()) {
+        // Every numbered string is a record of several bytes, so this is bounded by the payload.
+        RELEASE_ASSERT(ordinal < m_cachedBytecode->size());
+        size_t oldSize = m_atomsByOrdinal.size();
+        m_atomsByOrdinal.grow(std::max<size_t>(ordinal + 1, oldSize * 2));
+        std::fill(m_atomsByOrdinal.begin() + oldSize, m_atomsByOrdinal.end(), nullptr); // Vector::grow leaves pointers uninitialized
+    }
+    ASSERT(!m_atomsByOrdinal[ordinal]);
+    atom.ref();
+    m_atomsByOrdinal[ordinal] = &atom;
+}
+
+// 1- and 2-character strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 65536-entry table on the VM (shared by every Decoder — one 512 KB slab, not one per retained Decoder); length 3 goes to the atom table each time.
+Ref<AtomStringImpl> Decoder::atomForInlineString(std::span<const Latin1Character> characters)
+{
+    if (characters.size() == 1)
+        return m_vm.smallStrings.singleCharacterStringRep(characters[0]);
+    if (characters.size() == 2) {
+        if (!m_twoCharacterAtoms) [[unlikely]]
+            m_twoCharacterAtoms = m_vm.ensureCachedBytecodeTwoCharacterAtoms();
+        AtomStringImpl*& slot = m_twoCharacterAtoms[characters[0] | characters[1] << 8];
+        if (slot) [[likely]]
+            return *slot;
+        Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
+        atom->ref();
+        slot = atom.ptr();
+        return atom;
+    }
+    return AtomStringImpl::add(characters).releaseNonNull();
+}
+
+ALWAYS_INLINE DecoderStringTable& Decoder::externalStrings()
+{
+    if (!m_externalStrings) [[unlikely]] {
+        m_externalStrings = m_vm.clientData ? m_vm.clientData->decoderStringTable() : nullptr;
+        RELEASE_ASSERT_WITH_MESSAGE(m_externalStrings, "bytecode payload uses an external string table but the embedder did not provide one");
+    }
+    return *m_externalStrings;
+}
+
+Ref<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
+{
+    return externalStrings().atomFor(ordinal);
+}
+
+String Decoder::plainStringForExternalString(uint32_t ordinal)
+{
+    return externalStrings().plainStringFor(ordinal);
+}
+
+void* Decoder::sharedObjectAt(uint32_t offset) const
+{
+    auto it = m_sharedObjects.find(offset);
+    return it == m_sharedObjects.end() ? nullptr : it->value;
+}
+
+void Decoder::setSharedObjectAt(uint32_t offset, void* object)
+{
+    m_sharedObjects.add(offset, object);
 }
 
 CompactTDZEnvironmentMap::Handle Decoder::handleForTDZEnvironment(CompactTDZEnvironment* environment) const
@@ -954,7 +854,7 @@ void Decoder::setHandleForTDZEnvironment(CompactTDZEnvironment* environment, con
     RELEASE_ASSERT(addResult.isNewEntry);
 }
 
-void Decoder::addLeafExecutable(const UnlinkedFunctionExecutable* executable, ptrdiff_t offset)
+void Decoder::addLeafExecutable(const UnlinkedFunctionExecutable* executable, uint32_t offset)
 {
 #if USE(BUN_JSC_ADDITIONS)
     // Only CachedBytecode::addFunctionUpdate reads this map, and Bun never calls it.
@@ -964,1213 +864,491 @@ void Decoder::addLeafExecutable(const UnlinkedFunctionExecutable* executable, pt
     m_cachedBytecode->leafExecutables().add(executable, offset);
 }
 
-template<typename Functor>
-void Decoder::addFinalizer(const Functor& fn)
+void Decoder::addFinalizer(Function<void()>&& finalizer)
 {
-    m_finalizers.append(fn);
+    m_finalizers.append(WTF::move(finalizer));
 }
 
-RefPtr<SourceProvider> Decoder::provider() const
-{
-    return m_provider;
-}
+// -- Ordering ---------------------------------------------------------------------------------------------------------
 
-template<typename T>
-static void encode(Encoder& encoder, T& dst, const SourceType<T>& src)
-{
-    if constexpr (std::is_same_v<T, SourceType<T>>)
-        dst = src;
-    else
-        dst.encode(encoder, src);
-}
-
-template<typename T, typename... Args>
-static void decode(Decoder& decoder, const T& src, SourceType<T>& dst, Args... args)
-{
-    if constexpr (std::is_same_v<T, SourceType<T>>)
-        dst = src;
-    else
-        src.decode(decoder, dst, args...);
-}
-
-template<typename Source>
-class CachedObject {
-    WTF_MAKE_NONCOPYABLE(CachedObject);
-
-public:
-    using SourceType_ = Source;
-
-    CachedObject() = default;
-
-    inline void* operator new(size_t, void* where) { return where; }
-    void* operator new[](size_t, void* where) { return where; }
-
-    // Copied from WTF_FORBID_HEAP_ALLOCATION, since we only want to allow placement new
-    void* operator new(size_t) = delete;
-    void operator delete(void*) = delete;
-    void* operator new[](size_t size) = delete;
-    void operator delete[](void*) = delete;
-    void* operator new(size_t, NotNullTag, void* location) = delete;
-};
-
-template<typename Source>
-class VariableLengthObject : public CachedObject<Source>, VariableLengthObjectBase {
-    template<typename, typename>
-    friend class CachedPtr;
-    friend struct CachedPtrOffsets;
-
-public:
-    using typename VariableLengthObjectBase::Offset;
-
-    VariableLengthObject()
-        : VariableLengthObjectBase(s_invalidOffset)
+// Hash tables iterate in an order that depends on where their keys hashed to -- for SymbolImpl keys a per-process
+// counter, for robin-hood tables the table's own address -- so their entries are written in key order. Keys are
+// ordered by contents, then by what kind of StringImpl they decode to; two keys equal in both would decode to the same
+// StringImpl and cannot share a table.
+struct EncodingOrder {
+    static std::strong_ordering compare(unsigned a, unsigned b) { return a <=> b; }
+    static unsigned kind(const StringImpl* string)
     {
+        if (!string->isSymbol())
+            return 0;
+        auto& symbol = *static_cast<const SymbolImpl*>(string);
+        return 1 + symbol.isRegistered() * 2 + symbol.isPrivate();
     }
-
-    bool NODELETE isEmpty() const
+    static std::strong_ordering compare(const StringImpl* a, const StringImpl* b)
     {
-        return m_offset == s_invalidOffset;
+        if (auto order = codePointCompare(StringView(*a), StringView(*b)); order != 0)
+            return order;
+        return kind(a) <=> kind(b);
     }
+    template<typename T, typename Traits> static std::strong_ordering compare(const RefPtr<T, Traits>& a, const RefPtr<T, Traits>& b) { return compare(a.get(), b.get()); }
 
-    // Encoder side: where this object's payload landed, as a payload offset (encoder pages are not contiguous in memory,
-    // so `this + m_offset` is only meaningful once decoded).
-    ptrdiff_t payloadOffsetInEncoder(Encoder& encoder) const { return encoder.offsetOf(&this->m_offset) + this->m_offset; }
-    // Encoder side: point at something already written instead of allocating.
-    void pointAtPayloadOffset(Encoder& encoder, ptrdiff_t offset) { this->m_offset = safeCast<Offset>(offset - encoder.offsetOf(&this->m_offset)); }
-
-    // A 1-3 character Latin-1 string that decodes to an atom fits in the 4-byte slot that would otherwise hold the offset
-    // of its record: low two bits 01 (record offsets are multiples of 4 and the empty sentinel ends in 11), then the
-    // length, then the characters. Minified code is mostly such names.
-    static constexpr uint32_t inlineStringTag = 1;
-    static constexpr uint32_t inlineStringTagMask = 3;
-    static constexpr unsigned inlineStringMaxLength = 3;
-    bool tryEncodeInlineString(const StringImpl& string)
+    template<typename Entries, typename KeyOf>
+    static void sort(Entries& entries, const KeyOf& keyOf)
     {
-        if (string.isSymbol() || !string.is8Bit() || !string.length() || string.length() > inlineStringMaxLength)
-            return false;
-        uint32_t packed = inlineStringTag | string.length() << 2;
-        for (unsigned i = 0; i < string.length(); ++i)
-            packed |= static_cast<uint32_t>(string.span8()[i]) << (8 * (i + 1));
-        m_offset = std::bit_cast<Offset>(packed);
-        return true;
+        std::stable_sort(entries.begin(), entries.end(), [&](const auto& a, const auto& b) {
+            return compare(keyOf(a), keyOf(b)) < 0;
+        });
     }
-    bool NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
-    // The slot as a plain value, for owners whose kind byte says it holds one rather than an offset.
-    uint32_t NODELETE rawSlot() const { return std::bit_cast<uint32_t>(m_offset); }
-    void setRawSlot(uint32_t value) { m_offset = std::bit_cast<Offset>(value); }
-    Ref<AtomStringImpl> inlineString(Decoder& decoder) const { return decoder.atomForInlineString(std::bit_cast<uint32_t>(m_offset)); }
-
-    // A ≥4-char non-symbol string held in the embedder's shared EncoderStringTable/DecoderStringTable: the slot is an ordinal into that one process-wide table, so every chunk's payload carries 4 bytes instead of a full record. Tag 10 is the value low-two-bits neither a 4-aligned record offset (00), an inline string (01), nor the empty sentinel (11) can produce.
-    static constexpr uint32_t externalStringTag = 2;
-    bool NODELETE hasExternalString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == externalStringTag; }
-    uint32_t NODELETE externalStringOrdinal() const { return static_cast<uint32_t>(std::bit_cast<uint32_t>(m_offset)) >> 2; }
-    bool tryEncodeExternalString(Encoder& encoder, const StringImpl& string)
+    template<typename Map>
+    static Vector<const typename Map::KeyValuePairType*> sortedEntries(const Map& map)
     {
-        if (!encoder.externalStrings() || string.isSymbol() || !string.length())
-            return false;
-        uint32_t ordinal = encoder.externalStrings()->ordinalFor(string);
-        if (ordinal > EncoderStringTable::maxOrdinal) [[unlikely]]
-            return false;
-        m_offset = std::bit_cast<Offset>(externalStringTag | ordinal << 2);
-        return true;
-    }
-
-protected:
-    const uint8_t* NODELETE buffer() const
-    {
-        ASSERT(!isEmpty());
-        return std::bit_cast<const uint8_t*>(this) + m_offset;
-    }
-
-    template<typename T>
-    const T* NODELETE buffer() const
-    {
-        ASSERT(!(std::bit_cast<uintptr_t>(buffer()) % alignof(T)));
-        return std::bit_cast<const T*>(buffer());
-    }
-
-    uint8_t* allocate(Encoder& encoder, size_t size, size_t alignment)
-    {
-        ptrdiff_t offsetOffset = encoder.offsetOf(&m_offset);
-        auto result = encoder.malloc(size, alignment);
-        m_offset = safeCast<Offset>(result.offset() - offsetOffset);
-        return result.buffer();
-    }
-
-    template<typename T>
-#if CPU(ARM64) && CPU(ADDRESS32)
-    // FIXME: Remove this once it's no longer needed and LLVM doesn't miscompile us:
-    // <rdar://problem/49792205>
-    __attribute__((optnone))
-#endif
-    T* allocate(Encoder& encoder, unsigned size = 1)
-    {
-        uint8_t* result = allocate(encoder, sizeof(T) * size, alignof(T));
-        ASSERT(!(std::bit_cast<uintptr_t>(result) % alignof(T)));
-        return new (result) T[size];
-    }
-
-    // For arrays whose encoding is a plain copy of the source bytes: share an earlier identical array if there is one.
-    void allocateOrShareBytes(Encoder& encoder, std::span<const uint8_t> bytes, size_t alignment)
-    {
-        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size());
-        if (encoder.arraySharingEnabled()) {
-            if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignment)) {
-                m_offset = safeCast<Offset>(*existing - encoder.offsetOf(&m_offset));
-                encoder.noteSharedArray(*existing, bytes.size());
-                return;
-            }
-        }
-        ptrdiff_t offsetOffset = encoder.offsetOf(&m_offset);
-        auto result = encoder.malloc(bytes.size(), alignment);
-        m_offset = safeCast<Offset>(result.offset() - offsetOffset);
-        memcpySpan(std::span { result.buffer(), bytes.size() }, bytes);
-        encoder.registerArray(hash, result.offset(), bytes.size());
-    }
-
-    // One T followed, in the same allocation, by the variable-length tail T asks for (see VarintWriter).
-    template<typename T, typename SourceArg>
-    T* allocateFor(Encoder& encoder, const SourceArg& source)
-    {
-        size_t tail = 0;
-        if constexpr (requires { T::tailSize(encoder, source); })
-            tail = T::tailSize(encoder, source);
-        else if constexpr (requires { T::tailSize(source); })
-            tail = T::tailSize(source);
-        uint8_t* result = allocate(encoder, sizeof(T) + tail, alignof(T));
-        return new (result) T();
-    }
-
-private:
-    constexpr static Offset s_invalidOffset = std::numeric_limits<Offset>::max();
-};
-
-template<typename T, typename Source = SourceType<T>>
-class CachedArray : public VariableLengthObject<Source*> {
-public:
-    void encode(Encoder& encoder, const Source* array, unsigned size)
-    {
-        if (!size)
-            return;
-        if constexpr (std::is_same_v<T, Source> && std::is_trivially_copyable_v<T>) {
-            this->allocateOrShareBytes(encoder, std::span { std::bit_cast<const uint8_t*>(array), sizeof(T) * size }, alignof(T));
-            return;
-        }
-        T* dst = this->template allocate<T>(encoder, size);
-        for (unsigned i = 0; i < size; ++i)
-            ::JSC::encode(encoder, dst[i], array[i]);
-    }
-
-    template<typename... Args>
-    void decode(Decoder& decoder, Source* array, unsigned size, Args... args) const
-    {
-        if (!size)
-            return;
-        const T* buffer = this->template buffer<T>();
-        for (unsigned i = 0; i < size; ++i)
-            ::JSC::decode(decoder, buffer[i], array[i], args...);
-    }
-
-    // Raw view of the encoded elements, for element types whose encoding is the identity.
-    const T* borrow() const
-    {
-        static_assert(std::is_same_v<T, Source> && std::is_trivially_copyable_v<T>);
-        return this->isEmpty() ? nullptr : this->template buffer<T>();
-    }
-    const void* rawElements() const { return this->isEmpty() ? nullptr : this->buffer(); } // decoded side only
-};
-
-#if USE(BUN_JSC_ADDITIONS)
-// A cached type declares `static constexpr bool isSingleOwner = true` when the Encoder
-// only ever reaches it through one CachedPtr, so there is nothing for the
-// ptr <-> offset maps to deduplicate on either side.
-template<typename T> inline constexpr bool isSingleOwnerCachedType = requires { T::isSingleOwner; };
-
-// A cached type declares `static constexpr bool decodesToCanonicalObject = true` when its
-// decode() returns a +1 reference to an object that is already unique for its content
-// (atoms, registry symbols), so shared references can be re-decoded instead of mapped.
-template<typename T> inline constexpr bool isCanonicalCachedType = requires { T::decodesToCanonicalObject; };
-#endif
-
-class CachedUniquedStringImpl;
-class CachedStringImpl;
-
-template<typename T, typename Source = SourceType<T>>
-class CachedPtr : public VariableLengthObject<Source*> {
-    template<typename, typename, typename>
-    friend class CachedRefPtr;
-
-    friend struct CachedPtrOffsets;
-
-public:
-    static constexpr bool holdsString = std::is_same_v<T, CachedUniquedStringImpl> || std::is_same_v<T, CachedStringImpl>;
-
-    void encode(Encoder& encoder, const Source* src)
-    {
-        if (!src)
-            return;
-        if constexpr (holdsString) {
-            if (this->tryEncodeInlineString(*src))
-                return;
-            if (this->tryEncodeExternalString(encoder, *src))
-                return;
-        }
-
-        if constexpr (requires (Encoder& e, const Source& s) { T::create(e, s); }) {
-            // Code blocks write their arrays first and their record after, so they place themselves.
-            T* record = T::create(encoder, *src);
-            this->m_offset = safeCast<VariableLengthObjectBase::Offset>(encoder.offsetOf(record) - encoder.offsetOf(&this->m_offset));
-            return;
-        } else
-#if USE(BUN_JSC_ADDITIONS)
-        if constexpr (isSingleOwnerCachedType<T>) {
-            ASSERT(!encoder.cachedOffsetForPtr(src));
-            this->template allocateFor<T>(encoder, *src)->encode(encoder, *src);
-            return;
-        } else
-#endif
-        {
-
-        if (std::optional<ptrdiff_t> offset = encoder.cachedOffsetForPtr(src)) {
-            this->m_offset = safeCast<VariableLengthObjectBase::Offset>(*offset - encoder.offsetOf(&this->m_offset));
-            return;
-        }
-        if constexpr (holdsString) {
-            if (std::optional<ptrdiff_t> offset = encoder.cachedOffsetForStringContents(*src)) {
-                this->m_offset = safeCast<VariableLengthObjectBase::Offset>(*offset - encoder.offsetOf(&this->m_offset));
-                encoder.cachePtr(src, *offset);
-                return;
-            }
-        }
-
-        T* cachedObject = this->template allocateFor<T>(encoder, *src);
-        cachedObject->encode(encoder, *src);
-        encoder.cachePtr(src, encoder.offsetOf(cachedObject));
-        if constexpr (holdsString)
-            encoder.cacheStringContents(*src, encoder.offsetOf(cachedObject));
-        }
-    }
-
-    template<typename... Args>
-    Source* decode(Decoder& decoder, bool& isNewAllocation, Args&&... args) const
-    {
-        if (this->isEmpty()) {
-            isNewAllocation = false;
-            return nullptr;
-        }
-        if constexpr (holdsString) {
-            if (this->hasInlineString()) {
-                isNewAllocation = true;
-                return static_cast<Source*>(&this->inlineString(decoder).leakRef());
-            }
-            if (this->hasExternalString()) {
-                isNewAllocation = true;
-                return static_cast<Source*>(&decoder.atomForExternalString(this->externalStringOrdinal()).leakRef());
-            }
-        }
-
-#if USE(BUN_JSC_ADDITIONS)
-        if constexpr (isSingleOwnerCachedType<T>) {
-            if (Options::useLeanBytecodeCacheDecoder()) {
-                isNewAllocation = true;
-                return get()->decode(decoder, std::forward<Args>(args)...);
-            }
-        }
-#endif
-
-        ptrdiff_t bufferOffset = decoder.offsetOf(this->buffer());
-        if (std::optional<void*> ptr = decoder.cachedPtrForOffset(bufferOffset)) {
-            isNewAllocation = false;
-            return static_cast<Source*>(*ptr);
-        }
-
-        isNewAllocation = true;
-        Source* ptr = get()->decode(decoder, std::forward<Args>(args)...);
-        decoder.cacheOffset(bufferOffset, ptr);
-        return ptr;
-    }
-
-    template<typename... Args>
-    Source* decode(Decoder& decoder, Args&&... args) const
-    {
-        bool unusedIsNewAllocation;
-        return decode(decoder, unusedIsNewAllocation, std::forward<Args>(args)...);
-    }
-
-    const T* NODELETE operator->() const { return get(); }
-
-    // For integrity checks before anything is decoded: the target if it lies inside the payload, else null.
-    const T* getIfInPayload(Decoder& decoder) const
-    {
-        if (this->isEmpty())
-            return nullptr;
-        if constexpr (holdsString) {
-            if (this->hasInlineString() || this->hasExternalString())
-                return nullptr;
-        }
-        const T* target = this->template buffer<T>();
-        return decoder.payloadContains(target, sizeof(T)) ? target : nullptr;
-    }
-
-private:
-    const T* NODELETE get() const
-    {
-        RELEASE_ASSERT(!this->isEmpty());
-        return this->template buffer<T>();
-    }
-};
-
-ptrdiff_t CachedPtrOffsets::offsetOffset()
-{
-    return OBJECT_OFFSETOF(CachedPtr<void>, m_offset);
-}
-
-template<typename T, typename Source = SourceType<T>, typename PtrTraits = RawPtrTraits<Source>>
-class CachedRefPtr : public CachedObject<RefPtr<Source, PtrTraits>> {
-public:
-    void encode(Encoder& encoder, const Source* src)
-    {
-        m_ptr.encode(encoder, src);
-    }
-
-    void encode(Encoder& encoder, const RefPtr<Source, PtrTraits> src)
-    {
-        encode(encoder, src.get());
-    }
-
-    RefPtr<Source, PtrTraits> decode(Decoder& decoder) const
-    {
-#if USE(BUN_JSC_ADDITIONS)
-        if constexpr (isCanonicalCachedType<T>) {
-            if (Options::useLeanBytecodeCacheDecoder()) {
-                if (m_ptr.isEmpty())
-                    return nullptr;
-                if constexpr (CachedPtr<T, Source>::holdsString) {
-                    if (m_ptr.hasInlineString())
-                        return adoptRef<Source, PtrTraits>(static_cast<Source*>(&m_ptr.inlineString(decoder).leakRef()));
-                    if (m_ptr.hasExternalString())
-                        return adoptRef<Source, PtrTraits>(static_cast<Source*>(&decoder.atomForExternalString(m_ptr.externalStringOrdinal()).leakRef()));
-                }
-                return adoptRef<Source, PtrTraits>(m_ptr.get()->decode(decoder));
-            }
-        }
-#endif
-        bool isNewAllocation;
-        Source* decodedPtr = m_ptr.decode(decoder, isNewAllocation);
-        if (!decodedPtr)
-            return nullptr;
-        if (isNewAllocation) {
-            decoder.addFinalizer([=] {
-                WTF::DefaultRefDerefTraits<Source>::derefIfNotNull(decodedPtr);
-            });
-        }
-        auto result = adoptRef<Source, PtrTraits>(decodedPtr);
-        result->ref();
-        return result;
-    }
-
-    void decode(Decoder& decoder, RefPtr<Source, PtrTraits>& src) const
-    {
-        src = decode(decoder);
-    }
-
-private:
-    CachedPtr<T, Source> m_ptr;
-};
-
-template<typename T, typename Source = SourceType<T>>
-class CachedWriteBarrier : public CachedObject<WriteBarrier<Source>> {
-    friend struct CachedWriteBarrierOffsets;
-
-public:
-    bool NODELETE isEmpty() const { return m_ptr.isEmpty(); }
-    const CachedPtr<T, Source>& ptr() const { return m_ptr; }
-
-    void encode(Encoder& encoder, const WriteBarrier<Source> src)
-    {
-        m_ptr.encode(encoder, src.get());
-    }
-
-    void decode(Decoder& decoder, WriteBarrier<Source>& src, const JSCell* owner) const
-    {
-        Source* decodedPtr = m_ptr.decode(decoder);
-        if (decodedPtr)
-            src.set(decoder.vm(), owner, decodedPtr);
-    }
-
-private:
-    CachedPtr<T, Source> m_ptr;
-};
-
-ptrdiff_t CachedWriteBarrierOffsets::ptrOffset()
-{
-    return OBJECT_OFFSETOF(CachedWriteBarrier<void>, m_ptr);
-}
-
-template<typename T, size_t InlineCapacity = 0, typename OverflowHandler = CrashOnOverflow, typename Malloc = WTF::VectorBufferMalloc>
-class CachedVector : public VariableLengthObject<Vector<SourceType<T>, InlineCapacity, OverflowHandler, 16, Malloc>> {
-public:
-    template<typename VectorContainer>
-    void encode(Encoder& encoder, const VectorContainer& vector)
-    {
-        m_size = vector.size();
-        if (!m_size)
-            return;
-        if constexpr (std::is_same_v<T, SourceType<T>> && std::is_trivially_copyable_v<T>) {
-            this->allocateOrShareBytes(encoder, std::span { std::bit_cast<const uint8_t*>(vector.span().data()), sizeof(T) * m_size }, alignof(T));
-            return;
-        }
-        T* buffer = this->template allocate<T>(encoder, m_size);
-        for (unsigned i = 0; i < m_size; ++i)
-            ::JSC::encode(encoder, buffer[i], vector[i]);
-    }
-
-    template<typename Range>
-    void encodeRange(Encoder& encoder, unsigned size, const Range& range)
-    {
-        m_size = size;
-        if (!m_size)
-            return;
-        T* buffer = this->template allocate<T>(encoder, m_size);
-        unsigned i = 0;
-        for (const auto& element : range)
-            buffer[i++].encode(encoder, element);
-    }
-
-    template<typename... Args, typename VectorContainer>
-    void decode(Decoder& decoder, VectorContainer& vector, Args... args) const
-    {
-        if (!m_size)
-            return;
-        vector = VectorContainer(m_size);
-        const T* buffer = this->template buffer<T>();
-        for (unsigned i = 0; i < m_size; ++i)
-            ::JSC::decode(decoder, buffer[i], vector[i], args...);
-    }
-
-    // Raw view of the encoded elements, for element types whose encoding is the identity.
-    std::span<const T> borrow() const
-    {
-        static_assert(std::is_same_v<T, SourceType<T>> && std::is_trivially_copyable_v<T>);
-        if (!m_size)
-            return { };
-        return { this->template buffer<T>(), m_size };
-    }
-
-    // Allocate the element slots now and let the caller encode into them later (used to keep a code block's own bytes
-    // ahead of its children's records).
-    template<typename VectorContainer>
-    std::span<T> allocateElements(Encoder& encoder, const VectorContainer& vector)
-    {
-        m_size = vector.size();
-        if (!m_size)
-            return { };
-        return { this->template allocate<T>(encoder, m_size), m_size };
-    }
-
-    // Encoder side: point at element slots an identical vector wrote earlier.
-    void shareElements(Encoder& encoder, ptrdiff_t elements, unsigned size)
-    {
-        m_size = size;
-        if (m_size)
-            this->pointAtPayloadOffset(encoder, elements);
-    }
-    ptrdiff_t elementsOffset(Encoder& encoder) const { return this->payloadOffsetInEncoder(encoder); }
-
-    // Encoder side: the slots allocateElements() made.
-    std::span<T> mutableElements(Encoder& encoder)
-    {
-        if (!m_size)
-            return { };
-        auto bytes = encoder.mutableBytesAt(this->payloadOffsetInEncoder(encoder), sizeof(T) * m_size);
-        return { reinterpret_cast<T*>(bytes.data()), m_size };
-    }
-
-    // Where the encoded elements are (decoded side), whether or not they are inside the payload; empty if none.
-    std::span<const uint8_t> rawBytes() const
-    {
-        if (!m_size)
-            return { };
-        return { this->buffer(), sizeof(T) * m_size };
-    }
-
-    // The encoded elements themselves, bounds-checked, for integrity checks before decoding.
-    std::span<const T> elementsIfInPayload(Decoder& decoder) const
-    {
-        if (!m_size)
-            return { };
-        const T* elements = this->template buffer<T>();
-        if (!decoder.payloadContains(elements, sizeof(T) * m_size))
-            return { };
-        return { elements, m_size };
-    }
-    unsigned size() const { return m_size; }
-
-private:
-    unsigned m_size;
-};
-
-template<typename First, typename Second>
-class CachedPair : public CachedObject<std::pair<SourceType<First>, SourceType<Second>>> {
-public:
-    void encode(Encoder& encoder, const std::pair<SourceType<First>, SourceType<Second>>& pair)
-    {
-        ::JSC::encode(encoder, m_first, pair.first);
-        ::JSC::encode(encoder, m_second, pair.second);
-    }
-
-    template<typename Key, typename Value>
-    void encode(Encoder& encoder, const WTF::KeyValuePair<Key, Value>& pair)
-    {
-        ::JSC::encode(encoder, m_first, pair.key);
-        ::JSC::encode(encoder, m_second, pair.value);
-    }
-
-    void decode(Decoder& decoder, std::pair<SourceType<First>, SourceType<Second>>& pair) const
-    {
-        ::JSC::decode(decoder, m_first, pair.first);
-        ::JSC::decode(decoder, m_second, pair.second);
-    }
-
-private:
-    First m_first;
-    Second m_second;
-};
-
-template<typename Key, typename Value, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>, typename TableTraits = WTF::HashTableTraits>
-class CachedHashMap : public CachedObject<HashMap<SourceType<Key>, SourceType<Value>, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits>> {
-    template<typename K, typename V, WTF::ShouldValidateKey shouldValidateKey>
-    using Map = HashMap<K, V, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits, shouldValidateKey>;
-
-public:
-    template<WTF::ShouldValidateKey shouldValidateKey>
-    void encode(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map)
-    {
-        m_entries.encodeRange(encoder, map.size(), map);
-    }
-
-    // A private-name environment: its entries are shared with an identical environment written earlier (decode rebuilds
-    // the map from the entries, so their order does not matter).
-    template<WTF::ShouldValidateKey shouldValidateKey>
-    void encodeShared(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map)
-    {
-        Vector<std::pair<const UniquedStringImpl*, uint16_t>> entries;
+        Vector<const typename Map::KeyValuePairType*> entries;
         entries.reserveInitialCapacity(map.size());
-        for (const auto& it : map)
-            entries.append({ it.key.get(), it.value.bits() });
-        std::sort(entries.begin(), entries.end());
-        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(std::span { std::bit_cast<const uint8_t*>(entries.span().data()), entries.size() * sizeof(entries[0]) });
-        if (auto existing = encoder.sharedPrivateNameEnvironment(hash, entries)) {
-            m_entries.shareElements(encoder, *existing, map.size());
+        for (auto& entry : map)
+            entries.append(&entry);
+        sort(entries, [](auto* entry) -> const auto& { return entry->key; });
+        return entries;
+    }
+};
+
+// -- Strings ----------------------------------------------------------------------------------------------------------
+
+// StringRef := varuint head, then by its low two bits:
+//   head == 0   null
+//   tag 1       inline: length = head >> 2 (1 to 3), then that many Latin-1 characters. Minified code is mostly these.
+//   tag 2       external: ordinal = head >> 2, into the embedder's shared DecoderStringTable
+//   tag 3       record: absolute offset = head >> 2 of a string record written earlier in this payload
+//
+// String record := u8 flags, varuint length, u32 hash, varuint ordinal + 1 (0 = unnumbered), characters
+//   characters are `length` bytes when Is8Bit, else `length` u16. Well-known symbols are stored by their description
+//   minus "Symbol."; Latin-1 contents are stored 8-bit even if this process's atom for them happens to be 16-bit (an
+//   equal 16-bit string was atomized first), since that is not a property of the source.
+class CachedString {
+public:
+    enum Tag : uint32_t { Inline = 1, External = 2, Record = 3 };
+    enum Flag : uint8_t {
+        Is8Bit = 1 << 0,
+        IsSymbol = 1 << 1,
+        IsRegistered = 1 << 2,
+        IsPrivate = 1 << 3,
+        IsWellKnownSymbol = 1 << 4,
+    };
+
+    static void encode(Writer& writer, Encoder& encoder, const StringImpl* string)
+    {
+        if (!string) {
+            writer.varuint(0);
             return;
         }
-        encode(encoder, map);
-        if (map.size())
-            encoder.addSharedPrivateNameEnvironment(hash, WTF::move(entries), m_entries.elementsOffset(encoder));
-    }
-
-    template<WTF::ShouldValidateKey shouldValidateKey>
-    void decode(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map) const
-    {
-        SourceType<decltype(m_entries)> decodedEntries;
-        m_entries.decode(decoder, decodedEntries);
-        for (auto& pair : decodedEntries)
-            map.set(WTF::move(pair.first), WTF::move(pair.second));
-    }
-
-private:
-    CachedVector<CachedPair<Key, Value>> m_entries;
-};
-
-template<typename Key, typename Value, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>>
-using CachedMemoryCompactLookupOnlyRobinHoodHashMap = CachedHashMap<Key, Value, HashArg, KeyTraitsArg, MappedTraitsArg, WTF::MemoryCompactLookupOnlyRobinHoodHashTableTraits>;
-
-template<typename Key, typename Value, unsigned Capacity, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>>
-class CachedInlineMap : public CachedObject<InlineMap<SourceType<Key>, SourceType<Value>, Capacity, HashArg, KeyTraitsArg, MappedTraitsArg>> {
-
-    using Map = InlineMap<SourceType<Key>, SourceType<Value>, Capacity, HashArg, KeyTraitsArg, MappedTraitsArg>;
-
-public:
-
-    void encode(Encoder& encoder, const Map& map)
-    {
-        SourceType<decltype(m_entries)> entriesVector(map.size());
-        unsigned i = 0;
-        for (const auto& it : map)
-            entriesVector[i++] = { it.key, it.value };
-        m_entries.encode(encoder, entriesVector);
-    }
-
-    void decode(Decoder& decoder, Map& map) const
-    {
-        SourceType<decltype(m_entries)> decodedEntries;
-        m_entries.decode(decoder, decodedEntries);
-        map.reserveInitialCapacity(decodedEntries.size());
-        for (const auto& pair : decodedEntries)
-            map.add(pair.first, pair.second);
-    }
-
-private:
-    CachedVector<CachedPair<Key, Value>> m_entries;
-};
-
-template<typename T>
-class CachedUniquedStringImplBase : public CachedObject<T> {
-public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool decodesToCanonicalObject = true;
-#endif
-
-    // The characters follow this 12-byte header (length/flags, precomputed hash, ordinal) directly (see tailSize), instead
-    // of a separately aligned allocation reached through an offset.
-    static size_t tailSize(const StringImpl& string) { return Shape(string).byteLength(); }
-
-    void encode(Encoder& encoder, const StringImpl& string)
-    {
-        Shape shape(string);
-        m_isSymbol = shape.isSymbol;
-        m_isRegistered = shape.isRegistered;
-        m_isWellKnownSymbol = shape.isWellKnownSymbol;
-        m_isPrivate = shape.isPrivate;
-        m_is8Bit = shape.characters->is8Bit();
-        m_length = shape.characters->length();
-        RELEASE_ASSERT(m_length == shape.characters->length()); // fits the bitfield
-        m_hash = shape.characters->hash(); // what StringImpl::hash() / the atom table use, so decode never rehashes
-        m_ordinal = m_isSymbol || !m_length ? noOrdinal : encoder.nextStringOrdinal(); // see Decoder::atomForOrdinal
-        if (m_is8Bit)
-            memcpy(tail(), shape.characters->span8().data(), shape.byteLength());
-        else
-            memcpy(tail(), shape.characters->span16().data(), shape.byteLength());
-    }
-
-    UniquedStringImpl* decode(Decoder& decoder) const
-    {
-        if (m_ordinal != noOrdinal) {
-            if (AtomStringImpl* known = decoder.atomForOrdinal(m_ordinal)) {
-                known->ref();
-                return static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(known));
+        bool isSymbol = string->isSymbol();
+        unsigned length = string->length();
+        if (!isSymbol && length && length <= 3) {
+            Latin1Character characters[3];
+            bool allLatin1 = true;
+            for (unsigned i = 0; i < length; ++i) {
+                char16_t c = (*string)[i];
+                allLatin1 &= isLatin1(c);
+                characters[i] = static_cast<Latin1Character>(c);
+            }
+            if (allLatin1) {
+                writer.varuint(Inline | length << 2);
+                writer.bytes(std::span { characters, length });
+                return;
             }
         }
-        auto create = [&](auto buffer) -> UniquedStringImpl* {
-            if (!m_isSymbol) {
+        if (!isSymbol && length && encoder.externalStrings()) {
+            uint32_t ordinal = encoder.externalStrings()->ordinalFor(*string);
+            if (ordinal <= EncoderStringTable::maxOrdinal) [[likely]] {
+                writer.varuint(External | ordinal << 2);
+                return;
+            }
+        }
+        // A symbol is one object however many times it is named; other strings are shared by contents.
+        std::optional<uint32_t> at = isSymbol ? encoder.existingObject(string) : encoder.existingString(*string);
+        if (!at) {
+            at = writeRecord(encoder, *string);
+            if (isSymbol)
+                encoder.rememberObject(string, *at);
+            else
+                encoder.rememberString(*string, *at);
+        }
+        RELEASE_ASSERT(*at < 1u << 30);
+        writer.varuint(Record | *at << 2);
+    }
+    static void encode(Writer& writer, Encoder& encoder, const String& string) { encode(writer, encoder, string.impl()); }
+    static void encode(Writer& writer, Encoder& encoder, const Identifier& identifier) { encode(writer, encoder, identifier.impl()); }
+
+    // A +1 reference; null for a null StringRef.
+    static RefPtr<UniquedStringImpl> decode(Reader& reader, Decoder& decoder)
+    {
+        uint32_t head = reader.varuint();
+        if (!head)
+            return nullptr;
+        switch (head & 3) {
+        case Inline: {
+            auto characters = reader.bytes(head >> 2 & 3);
+            if (characters.empty())
+                return nullptr;
+            return uniqued(decoder.atomForInlineString(characters));
+        }
+        case External:
+            return uniqued(decoder.atomForExternalString(head >> 2));
+        case Record: {
+            Reader record(decoder.payload(), head >> 2);
+            return decodeRecord(record, decoder);
+        }
+        }
+        return nullptr;
+    }
+    static Identifier decodeIdentifier(Reader& reader, Decoder& decoder)
+    {
+        RefPtr<UniquedStringImpl> string = decode(reader, decoder);
+        if (!string)
+            return Identifier();
+        return Identifier::fromUid(decoder.vm(), string.get());
+    }
+    static String decodeString(Reader& reader, Decoder& decoder) { return RefPtr<StringImpl> { decode(reader, decoder) }; }
+
+    // For uses that only need the characters (a string constant's JSString), not an atom: no atom table involved.
+    static String decodePlainString(Reader& reader, Decoder& decoder)
+    {
+        uint32_t head = reader.varuint();
+        if (!head)
+            return String();
+        switch (head & 3) {
+        case Inline: {
+            auto characters = reader.bytes(head >> 2 & 3);
+            return characters.empty() ? String() : String { decoder.atomForInlineString(characters) };
+        }
+        case External:
+            return decoder.plainStringForExternalString(head >> 2);
+        case Record: {
+            Reader record(decoder.payload(), head >> 2);
+            return decodePlainRecord(record, decoder);
+        }
+        }
+        return String();
+    }
+
+private:
+    static RefPtr<UniquedStringImpl> uniqued(Ref<AtomStringImpl>&& atom) { return adoptRef(static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(&atom.leakRef()))); }
+
+    static uint32_t writeRecord(Encoder& encoder, const StringImpl& string)
+    {
+        RefPtr<StringImpl> characters = const_cast<StringImpl*>(&string);
+        uint8_t flags = 0;
+        if (string.isSymbol()) {
+            auto& symbol = static_cast<const SymbolImpl&>(string);
+            flags |= IsSymbol;
+            if (symbol.isRegistered())
+                flags |= IsRegistered;
+            if (symbol.isPrivate())
+                flags |= IsPrivate;
+            if (!symbol.isNullSymbol() && !symbol.isPrivate()) {
+                flags |= IsWellKnownSymbol;
+                characters = const_cast<SymbolImpl&>(symbol).substring(strlen("Symbol."));
+            }
+        }
+        if (!characters->is8Bit())
+            characters = StringImpl::create8BitIfPossible(characters->span16());
+        if (characters->is8Bit())
+            flags |= Is8Bit;
+
+        Writer writer;
+        writer.u8(flags);
+        writer.varuint(characters->length());
+        writer.u32(characters->hash()); // what StringImpl::hash() / the atom table use, so decode never rehashes
+        writer.varuint((flags & IsSymbol) || !characters->length() ? 0 : encoder.nextStringOrdinal() + 1);
+        if (flags & Is8Bit)
+            writer.bytes(characters->span8());
+        else {
+            for (char16_t c : characters->span16())
+                writer.u16(c);
+        }
+        return encoder.append(writer);
+    }
+
+    struct RecordHead {
+        uint8_t flags;
+        unsigned length;
+        uint32_t hash;
+        uint32_t ordinal; // Encoder::noOrdinal when unnumbered
+    };
+    static RecordHead readHead(Reader& reader)
+    {
+        RecordHead head;
+        head.flags = reader.u8();
+        head.length = reader.varuint();
+        head.hash = reader.u32();
+        uint32_t ordinal = reader.varuint();
+        head.ordinal = ordinal ? ordinal - 1 : Encoder::noOrdinal;
+        return head;
+    }
+    static Vector<char16_t, 32> read16(Reader& reader, unsigned length)
+    {
+        Vector<char16_t, 32> characters;
+        characters.grow(length);
+        for (unsigned i = 0; i < length; ++i)
+            characters[i] = reader.u16();
+        if (reader.overran())
+            characters.shrink(0);
+        return characters;
+    }
+
+    static RefPtr<UniquedStringImpl> decodeRecord(Reader& reader, Decoder& decoder)
+    {
+        RecordHead head = readHead(reader);
+        if (head.ordinal != Encoder::noOrdinal) {
+            if (AtomStringImpl* known = decoder.atomForOrdinal(head.ordinal))
+                return static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(known));
+        }
+        if (!head.length) {
+            if (head.flags & IsSymbol)
+                return RefPtr<UniquedStringImpl> { SymbolImpl::createNullSymbol() };
+            return static_cast<UniquedStringImpl*>(emptyAtom().impl());
+        }
+        auto create = [&](auto characters) -> RefPtr<UniquedStringImpl> {
+            if (characters.empty())
+                return nullptr; // overran
+            if (!(head.flags & IsSymbol)) {
                 RefPtr<AtomStringImpl> atom;
                 // Long strings out of a persistent payload keep their characters in the mapping (clean, shared pages) and
                 // only allocate the StringImpl header; AtomStringImpl::add adopts it in place unless the atom already exists.
-                if (buffer.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
-                    atom = AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(buffer) });
-                else {
-                    WTF::HashTranslatorCharBuffer<std::remove_const_t<typename decltype(buffer)::element_type>> hashed { buffer, m_hash };
+                if constexpr (sizeof(characters[0]) == 1) {
+                    if (characters.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
+                        atom = AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(characters) });
+                }
+                if (!atom) {
+                    WTF::HashTranslatorCharBuffer<std::remove_const_t<typename decltype(characters)::element_type>> hashed { characters, head.hash };
                     atom = AtomStringImpl::add(hashed);
                 }
-                if (m_ordinal != noOrdinal)
-                    decoder.setAtomForOrdinal(m_ordinal, *atom);
-                return static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(atom.leakRef()));
+                if (head.ordinal != Encoder::noOrdinal)
+                    decoder.setAtomForOrdinal(head.ordinal, *atom);
+                return static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(atom.get()));
             }
-
-            SymbolImpl* symbol;
             VM& vm = decoder.vm();
-            if (m_isRegistered) {
-                String str(buffer);
-                if (m_isPrivate)
-                    symbol = static_cast<SymbolImpl*>(&protect(vm.privateSymbolRegistry())->symbolForKey(str).leakRef());
-                else
-                    symbol = static_cast<SymbolImpl*>(&protect(vm.symbolRegistry())->symbolForKey(str).leakRef());
-            } else {
-                if (m_isWellKnownSymbol)
-                    symbol = vm.propertyNames->builtinNames().lookUpWellKnownSymbol(buffer);
-                else
-                    symbol = vm.propertyNames->builtinNames().lookUpPrivateName(buffer);
-                RELEASE_ASSERT(symbol);
-                symbol->ref();
+            if (head.flags & IsRegistered) {
+                String key(characters);
+                if (head.flags & IsPrivate)
+                    return RefPtr<UniquedStringImpl> { protect(vm.privateSymbolRegistry())->symbolForKey(key) };
+                return RefPtr<UniquedStringImpl> { protect(vm.symbolRegistry())->symbolForKey(key) };
             }
-            ASSERT(m_isWellKnownSymbol != symbol->isPrivate());
+            SymbolImpl* symbol = head.flags & IsWellKnownSymbol
+                ? vm.propertyNames->builtinNames().lookUpWellKnownSymbol(characters)
+                : vm.propertyNames->builtinNames().lookUpPrivateName(characters);
+            RELEASE_ASSERT(symbol);
             return symbol;
         };
-
-        if (!m_length) {
-            if (m_isSymbol)
-                return &SymbolImpl::createNullSymbol().leakRef();
-            return RefPtr { emptyAtom().impl() }.leakRef();
+        if (head.flags & Is8Bit) {
+            auto bytes = reader.bytes(head.length);
+            return create(std::span { std::bit_cast<const Latin1Character*>(bytes.data()), bytes.size() });
         }
-
-        return m_is8Bit ? create(span8()) : create(span16());
+        auto characters = read16(reader, head.length);
+        return create(std::span<const char16_t> { characters.span() });
     }
 
-    // For uses that only need the characters (a string constant's JSString), not an atom: no atom table involved.
-    String decodePlainString(Decoder& decoder) const
+    static String decodePlainRecord(Reader& reader, Decoder& decoder)
     {
-        if (m_isSymbol)
-            return String { adoptRef(*static_cast<StringImpl*>(decode(decoder))) };
-        if (!m_length)
+        Reader start = reader;
+        RecordHead head = readHead(reader);
+        if (head.flags & IsSymbol)
+            return decodeRecord(start, decoder).get();
+        if (!head.length)
             return emptyString();
-        if (m_ordinal != noOrdinal) {
-            if (AtomStringImpl* known = decoder.atomForOrdinal(m_ordinal))
-                return String { known };
+        if (head.ordinal != Encoder::noOrdinal) {
+            if (AtomStringImpl* known = decoder.atomForOrdinal(head.ordinal))
+                return known;
         }
-        if (m_is8Bit) {
-            if (m_length >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
-                return StringImpl::createWithoutCopying(span8());
-            return StringImpl::create(span8());
+        if (head.flags & Is8Bit) {
+            auto bytes = reader.bytes(head.length);
+            std::span characters { std::bit_cast<const Latin1Character*>(bytes.data()), bytes.size() };
+            if (characters.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
+                return StringImpl::createWithoutCopying(characters);
+            return StringImpl::create(characters);
         }
-        if (m_length >= minimumLengthToAliasPayload && decoder.canBorrowPayload())
-            return StringImpl::createWithoutCopying(span16());
-        return StringImpl::create(span16());
+        auto characters = read16(reader, head.length);
+        return StringImpl::create(characters.span());
     }
-
-    static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
-    std::span<const Latin1Character> NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
-    std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
-
-private:
-    // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.".
-    struct Shape {
-        explicit Shape(const StringImpl& string)
-            : characters(const_cast<StringImpl*>(&string))
-            , isSymbol(string.isSymbol())
-        {
-            if (isSymbol) {
-                SymbolImpl& symbol = static_cast<SymbolImpl&>(*characters);
-                isRegistered = symbol.isRegistered();
-                isPrivate = symbol.isPrivate();
-                if (!symbol.isNullSymbol() && !isPrivate) {
-                    isWellKnownSymbol = true;
-                    characters = symbol.substring(strlen("Symbol."));
-                }
-            }
-        }
-        size_t byteLength() const { return characters->length() * (characters->is8Bit() ? 1 : 2); }
-        RefPtr<StringImpl> characters;
-        bool isSymbol { false };
-        bool isRegistered { false };
-        bool isWellKnownSymbol { false };
-        bool isPrivate { false };
-    };
-    const uint8_t* tail() const { return std::bit_cast<const uint8_t*>(this + 1); }
-    uint8_t* tail() { return std::bit_cast<uint8_t*>(this + 1); }
-    uint32_t m_length : 27;
-    uint32_t m_is8Bit : 1;
-    uint32_t m_isSymbol : 1;
-    uint32_t m_isWellKnownSymbol : 1;
-    uint32_t m_isRegistered : 1;
-    uint32_t m_isPrivate : 1;
-    uint32_t m_hash { 0 };
-    // Distinct (non-symbol) strings are numbered in encode order; the decoder keeps the atom for each number it has seen,
-    // so only the first block to name a string goes through the atom table.
-    static constexpr uint32_t noOrdinal = std::numeric_limits<uint32_t>::max();
-    uint32_t m_ordinal { noOrdinal };
-};
-class CachedUniquedStringImpl : public CachedUniquedStringImplBase<UniquedStringImpl> { };
-class CachedStringImpl : public CachedUniquedStringImplBase<StringImpl> { };
-
-class CachedString : public CachedObject<String> {
-public:
-    void encode(Encoder& encoder, const String& string)
-    {
-        m_impl.encode(encoder, static_cast<UniquedStringImpl*>(string.impl()));
-    }
-
-    String decode(Decoder& decoder) const
-    {
-        return String(static_cast<RefPtr<StringImpl>>(m_impl.decode(decoder)));
-    }
-
-    void decode(Decoder& decoder, String& dst) const
-    {
-        dst = decode(decoder);
-    }
-
-private:
-    CachedRefPtr<CachedUniquedStringImpl> m_impl;
 };
 
-class CachedIdentifier : public CachedObject<Identifier> {
-public:
-    void encode(Encoder& encoder, const Identifier& identifier)
-    {
-        m_string.encode(encoder, identifier.string());
-    }
-
-    Identifier decode(Decoder& decoder) const
-    {
-        String str = m_string.decode(decoder);
-        if (str.isNull())
-            return Identifier();
-
-        return Identifier::fromUid(decoder.vm(), (UniquedStringImpl*)str.impl());
-    }
-
-    void decode(Decoder& decoder, Identifier& ident) const
-    {
-        ident = decode(decoder);
-    }
-
-private:
-    CachedString m_string;
-};
-
+// A value several others point at, written once at its own offset and referred to by that offset; decoded once, so the
+// sharing survives the round trip. SharedRef := varuint offset (0 = null).
 template<typename T>
-class CachedOptional : public VariableLengthObject<std::optional<SourceType<T>>> {
-public:
-    void encode(Encoder& encoder, const std::optional<SourceType<T>>& source)
+struct CachedShared {
+    template<typename Source>
+    static void encode(Writer& writer, Encoder& encoder, const Source* object)
     {
-        if (!source)
+        if (!object) {
+            writer.varuint(0);
             return;
-
-        this->template allocateFor<T>(encoder, *source)->encode(encoder, *source);
-    }
-
-    std::optional<SourceType<T>> decode(Decoder& decoder) const
-    {
-        if (this->isEmpty())
-            return std::nullopt;
-
-        return { this->template buffer<T>()->decode(decoder) };
-    }
-
-    void decode(Decoder& decoder, std::optional<SourceType<T>>& dst) const
-    {
-        dst = decode(decoder);
-    }
-
-    void encode(Encoder& encoder, const std::unique_ptr<SourceType<T>>& source)
-    {
-        if (!source)
-            encode(encoder, std::nullopt);
-        else
-            encode(encoder, { *source });
-    }
-
-    SourceType<T>* decodeAsPtr(Decoder& decoder) const
-    {
-        RELEASE_ASSERT(!this->isEmpty());
-        return this->template buffer<T>()->decode(decoder);
-    }
-};
-
-class CachedSimpleJumpTable : public CachedObject<UnlinkedSimpleJumpTable> {
-public:
-    void encode(Encoder& encoder, const UnlinkedSimpleJumpTable& jumpTable)
-    {
-        m_min = jumpTable.m_min;
-        m_defaultOffset = jumpTable.m_defaultOffset;
-        m_isList = jumpTable.m_isList;
-        m_branchOffsets.encode(encoder, jumpTable.m_branchOffsets);
-    }
-
-    void decode(Decoder& decoder, UnlinkedSimpleJumpTable& jumpTable) const
-    {
-        jumpTable.m_min = m_min;
-        jumpTable.m_defaultOffset = m_defaultOffset;
-        jumpTable.m_isList = m_isList;
-        m_branchOffsets.decode(decoder, jumpTable.m_branchOffsets);
-    }
-
-private:
-    int32_t m_min;
-    int32_t m_defaultOffset;
-    int32_t m_isList;
-    CachedVector<int32_t> m_branchOffsets;
-};
-
-class CachedStringJumpTable : public CachedObject<UnlinkedStringJumpTable> {
-public:
-    void encode(Encoder& encoder, const UnlinkedStringJumpTable& jumpTable)
-    {
-        m_offsetTable.encode(encoder, jumpTable.m_offsetTable);
-        m_minLength = jumpTable.m_minLength;
-        m_maxLength = jumpTable.m_maxLength;
-        m_defaultOffset = jumpTable.m_defaultOffset;
-    }
-
-    void decode(Decoder& decoder, UnlinkedStringJumpTable& jumpTable) const
-    {
-        m_offsetTable.decode(decoder, jumpTable.m_offsetTable);
-        jumpTable.m_minLength = m_minLength;
-        jumpTable.m_maxLength = m_maxLength;
-        jumpTable.m_defaultOffset = m_defaultOffset;
-    }
-
-private:
-    CachedMemoryCompactLookupOnlyRobinHoodHashMap<CachedRefPtr<CachedStringImpl>, UnlinkedStringJumpTable::OffsetLocation> m_offsetTable;
-    unsigned m_minLength { 0 };
-    unsigned m_maxLength { 0 };
-    int32_t m_defaultOffset { 0 };
-};
-
-class CachedBitVector : public VariableLengthObject<BitVector> {
-public:
-    void encode(Encoder& encoder, const BitVector& bitVector)
-    {
-        m_numBits = bitVector.size();
-        if (!m_numBits)
-            return;
-        size_t sizeInBytes = BitVector::byteCount(m_numBits);
-        uint8_t* buffer = this->allocate(encoder, sizeInBytes, alignof(uintptr_t));
-        memcpy(buffer, bitVector.words().data(), sizeInBytes);
-    }
-
-    void decode(Decoder&, BitVector& bitVector) const
-    {
-        if (!m_numBits)
-            return;
-        bitVector.ensureSize(m_numBits);
-        size_t sizeInBytes = BitVector::byteCount(m_numBits);
-        memcpy(bitVector.words().data(), this->buffer(), sizeInBytes);
-    }
-
-private:
-    size_t m_numBits;
-};
-
-template<typename T, typename HashArg = DefaultHash<T>>
-class CachedHashSet : public CachedObject<UncheckedKeyHashSet<SourceType<T>, HashArg>> {
-public:
-    void encode(Encoder& encoder, const UncheckedKeyHashSet<SourceType<T>, HashArg>& set)
-    {
-        SourceType<decltype(m_entries)> entriesVector(set.size());
-        unsigned i = 0;
-        for (const auto& item : set)
-            entriesVector[i++] = item;
-        m_entries.encode(encoder, entriesVector);
-    }
-
-    void decode(Decoder& decoder, UncheckedKeyHashSet<SourceType<T>, HashArg>& set) const
-    {
-        SourceType<decltype(m_entries)> entriesVector;
-        m_entries.decode(decoder, entriesVector);
-        for (const auto& item : entriesVector)
-            set.add(item);
-    }
-
-private:
-    CachedVector<T> m_entries;
-};
-
-class CachedCodeBlockRareData : public CachedObject<UnlinkedCodeBlock::RareData> {
-public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool isSingleOwner = true;
-#endif
-
-    void encode(Encoder& encoder, const UnlinkedCodeBlock::RareData& rareData)
-    {
-        m_exceptionHandlers.encode(encoder, rareData.m_exceptionHandlers);
-        m_unlinkedSwitchJumpTables.encode(encoder, rareData.m_unlinkedSwitchJumpTables);
-        m_unlinkedStringSwitchJumpTables.encode(encoder, rareData.m_unlinkedStringSwitchJumpTables);
-        m_typeProfilerInfoMap.encode(encoder, rareData.m_typeProfilerInfoMap);
-        m_opProfileControlFlowBytecodeOffsets.encode(encoder, rareData.m_opProfileControlFlowBytecodeOffsets);
-        m_bitVectors.encode(encoder, rareData.m_bitVectors);
-        m_constantIdentifierSets.encode(encoder, rareData.m_constantIdentifierSets);
-        m_needsClassFieldInitializer = rareData.m_needsClassFieldInitializer;
-        m_privateBrandRequirement = rareData.m_privateBrandRequirement;
-    }
-
-    UnlinkedCodeBlock::RareData* decode(Decoder& decoder) const
-    {
-        UnlinkedCodeBlock::RareData* rareData = new UnlinkedCodeBlock::RareData { };
-        m_exceptionHandlers.decode(decoder, rareData->m_exceptionHandlers);
-        m_unlinkedSwitchJumpTables.decode(decoder, rareData->m_unlinkedSwitchJumpTables);
-        m_unlinkedStringSwitchJumpTables.decode(decoder, rareData->m_unlinkedStringSwitchJumpTables);
-        m_typeProfilerInfoMap.decode(decoder, rareData->m_typeProfilerInfoMap);
-        m_opProfileControlFlowBytecodeOffsets.decode(decoder, rareData->m_opProfileControlFlowBytecodeOffsets);
-        m_bitVectors.decode(decoder, rareData->m_bitVectors);
-        m_constantIdentifierSets.decode(decoder, rareData->m_constantIdentifierSets);
-        rareData->m_needsClassFieldInitializer = m_needsClassFieldInitializer;
-        rareData->m_privateBrandRequirement = m_privateBrandRequirement;
-        return rareData;
-    }
-
-private:
-    CachedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
-    CachedVector<CachedSimpleJumpTable> m_unlinkedSwitchJumpTables;
-    CachedVector<CachedStringJumpTable> m_unlinkedStringSwitchJumpTables;
-    CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
-    CachedVector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
-    CachedVector<CachedBitVector> m_bitVectors;
-    CachedVector<CachedHashSet<CachedRefPtr<CachedUniquedStringImpl>, IdentifierRepHash>> m_constantIdentifierSets;
-    unsigned m_needsClassFieldInitializer : 1;
-    unsigned m_privateBrandRequirement : 1;
-};
-
-// [u32 numberOfEncodedInfo][u8 flags][varint chapters][varint extensions][pad to 4][payload words][u32 checksum if flagged]
-// Self-contained and position-independent, so identical ones (every async wrapper, say) are written once.
-class CachedExpressionInfo : public CachedObject<ExpressionInfo> {
-public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool isSingleOwner = true;
-#endif
-    enum Flag : uint8_t { HasChecksum = 1 << 0 };
-
-    static Vector<uint8_t, 64> pack(const ExpressionInfo& info, bool checksum)
-    {
-        VarintWriter head;
-        head.u8(checksum ? HasChecksum : 0);
-        head.u32(info.m_numberOfChapters);
-        head.u32(info.m_numberOfEncodedInfoExtensions);
-        size_t payloadAt = roundUpToMultipleOf<4>(sizeof(uint32_t) + head.size());
-        size_t payloadBytes = info.payloadSize() * sizeof(unsigned);
-        Vector<uint8_t, 64> bytes;
-        bytes.grow(payloadAt + payloadBytes + (checksum ? sizeof(uint32_t) : 0));
-        memset(bytes.mutableSpan().data(), 0, bytes.size());
-        uint32_t count = info.m_numberOfEncodedInfo;
-        memcpy(bytes.mutableSpan().data(), &count, sizeof(count));
-        head.copyTo(bytes.mutableSpan().data() + sizeof(uint32_t));
-        if (payloadBytes)
-            memcpy(bytes.mutableSpan().data() + payloadAt, info.payload(), payloadBytes);
-        if (checksum) {
-            uint32_t crc = ~crc32c(~0u, bytes.span().first(payloadAt + payloadBytes));
-            memcpy(bytes.mutableSpan().data() + payloadAt + payloadBytes, &crc, sizeof(crc));
         }
-        return bytes;
+        std::optional<uint32_t> at = encoder.existingObject(object);
+        if (!at) {
+            Writer record;
+            T::encode(record, encoder, *object);
+            at = encoder.append(record);
+            encoder.rememberObject(object, *at);
+        }
+        writer.varuint(*at);
     }
 
-    // A damaged one decodes as "no expression info" (stack traces lose line/column for that function) rather than failing the function.
-    std::unique_ptr<ExpressionInfo> decode(Decoder& decoder) const
+    // What T::decode returned for this offset the first time; T decides how that is owned.
+    template<typename... Args>
+    static auto decode(Reader& reader, Decoder& decoder, bool& isNew, Args&&... args) -> decltype(T::decode(reader, decoder, args...))
     {
-        const uint8_t* base = std::bit_cast<const uint8_t*>(this);
-        auto payload = decoder.payloadSpan();
-        const uint8_t* limit = payload.data() + payload.size();
-        if (!decoder.payloadContains(base, sizeof(uint32_t) + 1))
-            return ExpressionInfo::createUninitialized(0, 0, 0);
-        VarintReader reader(base + sizeof(uint32_t), limit);
+        using Result = decltype(T::decode(reader, decoder, args...));
+        isNew = false;
+        uint32_t at = reader.varuint();
+        if (!at)
+            return nullptr;
+        if (void* existing = decoder.sharedObjectAt(at))
+            return static_cast<Result>(existing);
+        Reader record(decoder.payload(), at);
+        Result result = T::decode(record, decoder, std::forward<Args>(args)...);
+        if (result) {
+            decoder.setSharedObjectAt(at, result);
+            isNew = true;
+        }
+        return result;
+    }
+};
+
+// -- Environments ------------------------------------------------------------------------------------------------------
+
+// VariableEnvironment := u8 flags, varuint count, count × { StringRef name, varuint entry bits }, [PrivateNameEnvironment]
+class CachedVariableEnvironment {
+public:
+    enum Flag : uint8_t { IsEverythingCaptured = 1 << 0, HasAwaitUsingDeclaration = 1 << 1, HasPrivateNames = 1 << 2 };
+
+    static void encode(Writer& writer, Encoder& encoder, const VariableEnvironment& environment)
+    {
+        uint8_t flags = 0;
+        if (environment.m_isEverythingCaptured)
+            flags |= IsEverythingCaptured;
+        if (environment.m_hasAwaitUsingDeclaration)
+            flags |= HasAwaitUsingDeclaration;
+        if (environment.m_rareData)
+            flags |= HasPrivateNames;
+        writer.u8(flags);
+        Vector<std::pair<const UniquedStringImpl*, uint16_t>> entries;
+        entries.reserveInitialCapacity(environment.m_map.size());
+        for (auto& entry : environment.m_map)
+            entries.append({ entry.key.get(), entry.value.bits() });
+        EncodingOrder::sort(entries, [](auto& entry) { return entry.first; });
+        writer.varuint(entries.size());
+        for (auto [name, bits] : entries) {
+            CachedString::encode(writer, encoder, name);
+            writer.varuint(bits);
+        }
+        if (environment.m_rareData)
+            encodePrivateNames(writer, encoder, environment.m_rareData->m_privateNames);
+    }
+
+    static void decode(Reader& reader, Decoder& decoder, VariableEnvironment& environment)
+    {
         uint8_t flags = reader.u8();
-        unsigned chapters = reader.u32();
-        unsigned extensions = reader.u32();
-        if (reader.overran())
-            return ExpressionInfo::createUninitialized(0, 0, 0);
-        unsigned encodedInfo = m_numberOfEncodedInfo;
-        size_t payloadAt = roundUpToMultipleOf<4>(reader.position() - base);
-        size_t payloadBytes = ExpressionInfo::payloadSizeInBytes(chapters, encodedInfo, extensions);
-        size_t total = payloadAt + payloadBytes + ((flags & HasChecksum) ? sizeof(uint32_t) : 0);
-        if (!decoder.payloadContains(base, total))
-            return ExpressionInfo::createUninitialized(0, 0, 0);
-        if ((flags & HasChecksum) && decoder.verifiesChecksums()) {
-            uint32_t stored;
-            memcpy(&stored, base + payloadAt + payloadBytes, sizeof(stored));
-            if (stored != ~crc32c(~0u, std::span { base, payloadAt + payloadBytes })) {
-                dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] expression info checksum mismatch; dropping it");
-                return ExpressionInfo::createUninitialized(0, 0, 0);
+        environment.m_isEverythingCaptured = flags & IsEverythingCaptured;
+        environment.m_hasAwaitUsingDeclaration = flags & HasAwaitUsingDeclaration;
+        unsigned count = reader.varuint();
+        if (!reader.has(count))
+            return;
+        environment.m_map.reserveInitialCapacity(count);
+        for (unsigned i = 0; i < count; ++i) {
+            RefPtr<UniquedStringImpl> name = CachedString::decode(reader, decoder);
+            VariableEnvironmentEntry entry;
+            entry.m_bits = reader.varuint();
+            if (name)
+                environment.m_map.add(WTF::move(name), entry);
+        }
+        if (flags & HasPrivateNames) {
+            environment.m_rareData = WTF::makeUnique<VariableEnvironment::RareData>();
+            decodePrivateNames(reader, decoder, environment.m_rareData->m_privateNames);
+        }
+    }
+
+    // PrivateNameEnvironment := varuint offset of { varuint count, count × { StringRef name, varuint entry bits } }
+    // Every function nested in a class with private names carries a copy of the class's environment, so the entries are
+    // written once per distinct environment and each copy is a reference to them.
+    static void encodePrivateNames(Writer& writer, Encoder& encoder, const PrivateNameEnvironment& environment)
+    {
+        Writer entries;
+        auto sorted = EncodingOrder::sortedEntries(environment);
+        entries.varuint(sorted.size());
+        for (auto* entry : sorted) {
+            CachedString::encode(entries, encoder, entry->key.get());
+            entries.varuint(entry->value.bits());
+        }
+        writer.varuint(encoder.appendBytesOnce(entries.span()));
+    }
+    static void decodePrivateNames(Reader& reader, Decoder& decoder, PrivateNameEnvironment& environment)
+    {
+        Reader entries(decoder.payload(), reader.varuint());
+        unsigned count = entries.varuint();
+        if (!entries.has(count))
+            return;
+        for (unsigned i = 0; i < count; ++i) {
+            RefPtr<UniquedStringImpl> name = CachedString::decode(entries, decoder);
+            PrivateNameEntry entry(entries.varuint());
+            if (name)
+                environment.add(WTF::move(name), entry);
+        }
+    }
+};
+
+// CompactTDZEnvironment := varuint count, count × StringRef       (shared: one object per distinct environment)
+class CachedCompactTDZEnvironment {
+public:
+    static void encode(Writer& writer, Encoder& encoder, const CompactTDZEnvironment& environment)
+    {
+        // A Compact is sorted by StringImpl address; decode() sorts again.
+        CompactTDZEnvironment::Compact names;
+        if (std::holds_alternative<CompactTDZEnvironment::Compact>(environment.m_variables))
+            names = std::get<CompactTDZEnvironment::Compact>(environment.m_variables);
+        else {
+            for (auto& name : std::get<CompactTDZEnvironment::Inflated>(environment.m_variables))
+                names.append(name);
+        }
+        EncodingOrder::sort(names, [](const auto& name) -> const auto& { return name; });
+        writer.varuint(names.size());
+        for (auto& name : names)
+            CachedString::encode(writer, encoder, name.get());
+    }
+
+    static CompactTDZEnvironment* decode(Reader& reader, Decoder& decoder)
+    {
+        auto* environment = new CompactTDZEnvironment;
+        CompactTDZEnvironment::Compact names;
+        unsigned count = reader.varuint();
+        if (reader.has(count)) {
+            names.reserveInitialCapacity(count);
+            for (unsigned i = 0; i < count; ++i) {
+                if (RefPtr<UniquedStringImpl> name = CachedString::decode(reader, decoder))
+                    names.append(WTF::move(name));
             }
         }
-        const unsigned* words = reinterpret_cast<const unsigned*>(base + payloadAt);
-        if (decoder.canBorrowPayload() && payloadBytes)
-            return ExpressionInfo::createBorrowed(chapters, encodedInfo, extensions, words);
-        auto info = ExpressionInfo::createUninitialized(chapters, encodedInfo, extensions);
-        if (payloadBytes)
-            memcpy(info->payload(), words, payloadBytes);
-        return info;
+        environment->m_hash = 0;
+        for (auto& name : names)
+            environment->m_hash ^= name->hash(); // as CompactTDZEnvironment's constructor computes it
+        CompactTDZEnvironment::sortCompact(names);
+        environment->m_variables = CompactTDZEnvironment::Variables(WTF::move(names));
+        return environment;
     }
-
-private:
-    uint32_t m_numberOfEncodedInfo;
-};
-static_assert(sizeof(CachedExpressionInfo) == sizeof(uint32_t) && alignof(CachedExpressionInfo) == 4);
-
-typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, PrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
-
-class CachedVariableEnvironmentRareData : public CachedObject<VariableEnvironment::RareData> {
-public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool isSingleOwner = true;
-#endif
-
-    void encode(Encoder& encoder, const VariableEnvironment::RareData& rareData)
-    {
-        m_privateNames.encode(encoder, rareData.m_privateNames);
-    }
-
-    void decode(Decoder& decoder, VariableEnvironment::RareData& rareData) const
-    {
-        m_privateNames.decode(decoder, rareData.m_privateNames);
-    }
-
-private:
-    CachedPrivateNameEnvironment m_privateNames;
 };
 
-class CachedVariableEnvironment : public CachedObject<VariableEnvironment> {
+class CachedCompactTDZEnvironmentMapHandle {
 public:
-    void encode(Encoder& encoder, const VariableEnvironment& env)
+    static void encode(Writer& writer, Encoder& encoder, const CompactTDZEnvironmentMap::Handle& handle)
     {
-        m_isEverythingCaptured = env.m_isEverythingCaptured;
-        m_hasAwaitUsingDeclaration = env.m_hasAwaitUsingDeclaration;
-        m_map.encode(encoder, env.m_map);
-        m_rareData.encode(encoder, env.m_rareData.get());
+        CachedShared<CachedCompactTDZEnvironment>::encode(writer, encoder, handle.m_environment);
     }
 
-    void decode(Decoder& decoder, VariableEnvironment& env) const
+    static CompactTDZEnvironmentMap::Handle decode(Reader& reader, Decoder& decoder)
     {
-        env.m_isEverythingCaptured = m_isEverythingCaptured;
-        env.m_hasAwaitUsingDeclaration = m_hasAwaitUsingDeclaration;
-        m_map.decode(decoder, env.m_map);
-        if (!m_rareData.isEmpty()) {
-            env.m_rareData = WTF::makeUnique<VariableEnvironment::RareData>();
-            m_rareData->decode(decoder, *env.m_rareData);
-        }
-    }
-
-private:
-    bool m_isEverythingCaptured;
-    bool m_hasAwaitUsingDeclaration;
-    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
-    CachedPtr<CachedVariableEnvironmentRareData> m_rareData;
-};
-
-class CachedCompactTDZEnvironment : public CachedObject<CompactTDZEnvironment> {
-public:
-    void encode(Encoder& encoder, const CompactTDZEnvironment& env)
-    {
-        if (std::holds_alternative<CompactTDZEnvironment::Compact>(env.m_variables))
-            m_variables.encode(encoder, std::get<CompactTDZEnvironment::Compact>(env.m_variables));
-        else {
-            CompactTDZEnvironment::Compact compact;
-            for (auto& key : std::get<CompactTDZEnvironment::Inflated>(env.m_variables))
-                compact.append(key);
-            m_variables.encode(encoder, compact);
-        }
-        m_hash = env.m_hash;
-    }
-
-    void decode(Decoder& decoder, CompactTDZEnvironment& env) const
-    {
-        {
-            CompactTDZEnvironment::Compact compact;
-            m_variables.decode(decoder, compact);
-            CompactTDZEnvironment::sortCompact(compact);
-            env.m_variables = CompactTDZEnvironment::Variables(WTF::move(compact));
-        }
-        env.m_hash = m_hash;
-    }
-
-    CompactTDZEnvironment* decode(Decoder& decoder) const
-    {
-        CompactTDZEnvironment* env = new CompactTDZEnvironment;
-        decode(decoder, *env);
-        return env;
-    }
-
-private:
-    CachedVector<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>> m_variables;
-    unsigned m_hash;
-};
-
-class CachedCompactTDZEnvironmentMapHandle : public CachedObject<CompactTDZEnvironmentMap::Handle> {
-public:
-    void encode(Encoder& encoder, const CompactTDZEnvironmentMap::Handle& handle)
-    {
-        m_environment.encode(encoder, handle.m_environment);
-    }
-
-    CompactTDZEnvironmentMap::Handle decode(Decoder& decoder) const
-    {
-        bool isNewAllocation;
-        CompactTDZEnvironment* environment = m_environment.decode(decoder, isNewAllocation);
-        if (!environment) {
-            ASSERT(!isNewAllocation);
+        bool isNew;
+        CompactTDZEnvironment* environment = CachedShared<CachedCompactTDZEnvironment>::decode(reader, decoder, isNew);
+        if (!environment)
             return CompactTDZEnvironmentMap::Handle();
-        }
-
-        if (!isNewAllocation)
+        if (!isNew)
             return decoder.handleForTDZEnvironment(environment);
         bool isNewEntry;
         CompactTDZEnvironmentMap::Handle handle = decoder.vm().m_compactVariableMap->get(environment, isNewEntry);
@@ -2182,254 +1360,407 @@ public:
         decoder.setHandleForTDZEnvironment(environment, handle);
         return handle;
     }
-
-    void decode(Decoder& decoder, CompactTDZEnvironmentMap::Handle& handle) const
-    {
-        handle = decode(decoder);
-    }
-
-private:
-    CachedPtr<CachedCompactTDZEnvironment> m_environment;
 };
 
-class CachedScopedArgumentsTable : public CachedObject<ScopedArgumentsTable> {
+// TDZEnvironmentLink := SharedRef environment, SharedRef parent link      (shared)
+class CachedTDZEnvironmentLink {
 public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool isSingleOwner = true;
-#endif
-
-    void encode(Encoder& encoder, const ScopedArgumentsTable& scopedArgumentsTable)
+    static void encode(Writer& writer, Encoder& encoder, const TDZEnvironmentLink& link)
     {
-        m_length = scopedArgumentsTable.m_arguments.size();
-        m_arguments.encode(encoder, scopedArgumentsTable.m_arguments.span().data(), m_length);
+        CachedCompactTDZEnvironmentMapHandle::encode(writer, encoder, link.m_handle);
+        encodeRef(writer, encoder, link.m_parent.get());
+    }
+    static void encodeRef(Writer& writer, Encoder& encoder, const TDZEnvironmentLink* link)
+    {
+        CachedShared<CachedTDZEnvironmentLink>::encode(writer, encoder, link);
     }
 
-    ScopedArgumentsTable* decode(Decoder& decoder) const
+    static TDZEnvironmentLink* decode(Reader& reader, Decoder& decoder)
     {
-        ScopedArgumentsTable* scopedArgumentsTable = ScopedArgumentsTable::tryCreate(decoder.vm(), m_length);
-        RELEASE_ASSERT(scopedArgumentsTable); // We crash here. This is unlikely to continue execution if we hit this condition when decoding UnlinkedCodeBlock.
-        m_arguments.decode(decoder, scopedArgumentsTable->m_arguments.mutableSpan().data(), m_length);
-        return scopedArgumentsTable;
+        CompactTDZEnvironmentMap::Handle handle = CachedCompactTDZEnvironmentMapHandle::decode(reader, decoder);
+        RefPtr<TDZEnvironmentLink> parent = decodeRef(reader, decoder);
+        return new TDZEnvironmentLink(WTF::move(handle), WTF::move(parent));
     }
-
-private:
-    uint32_t m_length;
-    CachedArray<ScopeOffset> m_arguments;
+    static RefPtr<TDZEnvironmentLink> decodeRef(Reader& reader, Decoder& decoder)
+    {
+        bool isNew;
+        TDZEnvironmentLink* link = CachedShared<CachedTDZEnvironmentLink>::decode(reader, decoder, isNew);
+        if (isNew) {
+            // The map's entry holds the reference decode() was born with until the decoder dies.
+            decoder.addFinalizer([=] {
+                link->deref();
+            });
+        }
+        return link;
+    }
 };
 
-class CachedSymbolTableEntry : public CachedObject<SymbolTableEntry> {
+// -- Symbol tables ----------------------------------------------------------------------------------------------------
+
+// A slim SymbolTableEntry is a 32-bit raw VarOffset (zero-extended) above six flag bits. Offsets are far below 2^25 in
+// magnitude, so the two fit one varint: the offset's low 26 bits, sign-extended, above the flags.
+class CachedSymbolTableEntry {
+    static constexpr intptr_t flagsMask = (intptr_t { 1 } << SymbolTableEntry::FlagBits) - 1;
+
 public:
-    // A slim entry is a 32-bit raw VarOffset above six flag bits. Offsets are far below 2^25, so the two fit in one word.
-    void encode(Encoder&, const SymbolTableEntry& symbolTableEntry)
+    static int32_t pack(const SymbolTableEntry& entry)
     {
-        intptr_t bits = symbolTableEntry.bits() | SymbolTableEntry::SlimFlag;
+        intptr_t bits = entry.bits() | SymbolTableEntry::SlimFlag;
         int32_t rawOffset = static_cast<int32_t>(bits >> SymbolTableEntry::FlagBits);
         RELEASE_ASSERT((rawOffset << SymbolTableEntry::FlagBits) >> SymbolTableEntry::FlagBits == rawOffset);
-        m_bits = (rawOffset << SymbolTableEntry::FlagBits) | static_cast<int32_t>(bits & ((1 << SymbolTableEntry::FlagBits) - 1));
-        ASSERT(unpack() == bits);
+        return (rawOffset << SymbolTableEntry::FlagBits) | static_cast<int32_t>(bits & flagsMask);
     }
-
-    void decode(Decoder&, SymbolTableEntry& symbolTableEntry) const
+    static void unpack(SymbolTableEntry& entry, int32_t packed)
     {
-        symbolTableEntry.m_bits = unpack();
+        unsigned rawOffset = static_cast<unsigned>(packed >> SymbolTableEntry::FlagBits);
+        entry.m_bits = (static_cast<intptr_t>(rawOffset) << SymbolTableEntry::FlagBits) | (packed & flagsMask) | SymbolTableEntry::SlimFlag;
     }
-
-private:
-    intptr_t unpack() const
-    {
-        unsigned rawOffset = static_cast<unsigned>(m_bits >> SymbolTableEntry::FlagBits);
-        return (static_cast<intptr_t>(rawOffset) << SymbolTableEntry::FlagBits) | (m_bits & ((1 << SymbolTableEntry::FlagBits) - 1));
-    }
-
-    int32_t m_bits;
 };
 
-class CachedSymbolTableRareData : public CachedObject<SymbolTable::SymbolTableRareData> {
+class CachedScopedArgumentsTable {
 public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool isSingleOwner = true;
-#endif
-
-    void encode(Encoder& encoder, const SymbolTable::SymbolTableRareData& rareData)
+    static void encode(Writer& writer, const ScopedArgumentsTable* arguments)
     {
-        m_privateNames.encode(encoder, rareData.m_privateNames);
+        if (!arguments)
+            return writer.varuint(0);
+        writer.varuint(arguments->m_arguments.size() + 1);
+        for (ScopeOffset offset : arguments->m_arguments)
+            writer.varuint(offset.offsetUnchecked());
     }
-
-    void decode(Decoder& decoder, SymbolTable::SymbolTableRareData& rareData) const
+    static ScopedArgumentsTable* decode(Reader& reader, VM& vm)
     {
-        m_privateNames.decode(decoder, rareData.m_privateNames);
+        unsigned length = reader.varuint();
+        if (!length--)
+            return nullptr;
+        if (!reader.has(length))
+            return nullptr;
+        ScopedArgumentsTable* arguments = ScopedArgumentsTable::tryCreate(vm, length);
+        RELEASE_ASSERT(arguments);
+        for (unsigned i = 0; i < length; ++i)
+            arguments->m_arguments[i] = ScopeOffset(reader.varuint());
+        return arguments;
     }
-
-private:
-    CachedPrivateNameEnvironment m_privateNames;
 };
 
-class CachedSymbolTable : public CachedObject<SymbolTable> {
+// SymbolTable := varuint count, count × { StringRef name, varint entry }, varuint maxScopeOffset, u8 flags, u8 scopeType,
+//                varuint argumentsLength + 1 (0 = none), argumentsLength × varuint scopeOffset, [PrivateNameEnvironment]
+class CachedSymbolTable {
 public:
-    void encode(Encoder& encoder, const SymbolTable& symbolTable)
-    {
-        m_map.encode(encoder, symbolTable.m_map);
-        m_maxScopeOffset = symbolTable.m_maxScopeOffset;
-        m_usesSloppyEval = symbolTable.m_usesSloppyEval;
-        m_nestedLexicalScope = symbolTable.m_nestedLexicalScope;
-        m_scopeType = symbolTable.m_scopeType;
-        m_arguments.encode(encoder, symbolTable.m_arguments.get());
-        m_rareData.encode(encoder, symbolTable.m_rareData.get());
-    }
+    enum Flag : uint8_t { UsesSloppyEval = 1 << 0, NestedLexicalScope = 1 << 1, HasPrivateNames = 1 << 2 };
 
-    SymbolTable* decode(Decoder& decoder) const
+    static void encode(Writer& writer, Encoder& encoder, const SymbolTable& symbolTable)
     {
-        SymbolTable* symbolTable = SymbolTable::create(decoder.vm());
-        m_map.decode(decoder, symbolTable->m_map);
-        symbolTable->m_maxScopeOffset = m_maxScopeOffset;
-        symbolTable->m_usesSloppyEval = m_usesSloppyEval;
-        symbolTable->m_nestedLexicalScope = m_nestedLexicalScope;
-        symbolTable->m_scopeType = m_scopeType;
-        ScopedArgumentsTable* scopedArgumentsTable = m_arguments.decode(decoder);
-        if (scopedArgumentsTable)
-            symbolTable->m_arguments.set(decoder.vm(), symbolTable, scopedArgumentsTable);
-        if (!m_rareData.isEmpty()) {
-            symbolTable->m_rareData = WTF::makeUnique<SymbolTable::SymbolTableRareData>();
-            m_rareData->decode(decoder, *symbolTable->m_rareData);
+        auto entries = EncodingOrder::sortedEntries(symbolTable.m_map);
+        writer.varuint(entries.size());
+        for (auto* entry : entries) {
+            CachedString::encode(writer, encoder, entry->key.get());
+            writer.varint(CachedSymbolTableEntry::pack(entry->value));
         }
+        writer.varuint(symbolTable.m_maxScopeOffset.offsetUnchecked());
+        uint8_t flags = 0;
+        if (symbolTable.m_usesSloppyEval)
+            flags |= UsesSloppyEval;
+        if (symbolTable.m_nestedLexicalScope)
+            flags |= NestedLexicalScope;
+        if (symbolTable.m_rareData)
+            flags |= HasPrivateNames;
+        writer.u8(flags);
+        writer.u8(symbolTable.m_scopeType);
+        CachedScopedArgumentsTable::encode(writer, symbolTable.m_arguments.get());
+        if (symbolTable.m_rareData)
+            CachedVariableEnvironment::encodePrivateNames(writer, encoder, symbolTable.m_rareData->m_privateNames);
+    }
 
+    static SymbolTable* decode(Reader& reader, Decoder& decoder)
+    {
+        VM& vm = decoder.vm();
+        SymbolTable* symbolTable = SymbolTable::create(vm);
+        unsigned count = reader.varuint();
+        if (!reader.has(count))
+            return symbolTable;
+        for (unsigned i = 0; i < count; ++i) {
+            RefPtr<UniquedStringImpl> name = CachedString::decode(reader, decoder);
+            SymbolTableEntry entry;
+            CachedSymbolTableEntry::unpack(entry, reader.varint());
+            if (name)
+                symbolTable->m_map.add(WTF::move(name), WTF::move(entry));
+        }
+        symbolTable->m_maxScopeOffset = ScopeOffset(reader.varuint());
+        uint8_t flags = reader.u8();
+        symbolTable->m_usesSloppyEval = flags & UsesSloppyEval;
+        symbolTable->m_nestedLexicalScope = flags & NestedLexicalScope;
+        symbolTable->m_scopeType = reader.u8();
+        if (ScopedArgumentsTable* arguments = CachedScopedArgumentsTable::decode(reader, vm))
+            symbolTable->m_arguments.set(vm, symbolTable, arguments);
+        if (flags & HasPrivateNames) {
+            symbolTable->m_rareData = WTF::makeUnique<SymbolTable::SymbolTableRareData>();
+            CachedVariableEnvironment::decodePrivateNames(reader, decoder, symbolTable->m_rareData->m_privateNames);
+        }
         return symbolTable;
     }
-
-private:
-    CachedHashMap<CachedRefPtr<CachedUniquedStringImpl>, CachedSymbolTableEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, SymbolTableIndexHashTraits> m_map;
-    ScopeOffset m_maxScopeOffset;
-    unsigned m_usesSloppyEval : 1;
-    unsigned m_nestedLexicalScope : 1;
-    unsigned m_scopeType : 3;
-    CachedPtr<CachedScopedArgumentsTable> m_arguments;
-    CachedPtr<CachedSymbolTableRareData> m_rareData;
 };
 
-// A pool reached through a slot-relative offset (constant arrays in a butterfly).
-class CachedJSValuePoolRef : public VariableLengthObject<WriteBarrier<Unknown>*> {
+// -- A code block's rare data ------------------------------------------------------------------------------------------
+
+// BitVector := varuint numBits, ceil(numBits / 8) bytes, bit i in byte i / 8 at position i % 8
+class CachedBitVector {
 public:
-    void encode(Encoder&, std::span<const WriteBarrier<Unknown>>);
-    void decode(Decoder&, WriteBarrier<Unknown>* out, unsigned count, const JSCell* owner) const;
-};
-
-class CachedJSValue;
-class CachedImmutableButterfly : public CachedObject<JSCellButterfly> {
-public:
-    CachedImmutableButterfly()
-        : m_cachedDoubles()
+    static void encode(Writer& writer, const BitVector& bits)
     {
+        size_t numBits = bits.size();
+        writer.varuint(numBits);
+        for (size_t byte = 0; byte < (numBits + 7) / 8; ++byte) {
+            uint8_t value = 0;
+            for (unsigned bit = 0; bit < 8 && byte * 8 + bit < numBits; ++bit)
+                value |= bits.get(byte * 8 + bit) << bit;
+            writer.u8(value);
+        }
     }
-
-    void encode(Encoder& encoder, JSCellButterfly& immutableButterfly)
+    static void decode(Reader& reader, BitVector& bits)
     {
-        m_length = immutableButterfly.length();
-        m_indexingType = immutableButterfly.indexingTypeAndMisc();
-        if (hasDouble(m_indexingType))
-            m_cachedDoubles.encode(encoder, immutableButterfly.toButterfly()->contiguousDouble().data(), m_length);
-        else
-            m_cachedValues.encode(encoder, std::span<const WriteBarrier<Unknown>> { immutableButterfly.toButterfly()->contiguous().data(), m_length });
-    }
-
-    JSCellButterfly* decode(Decoder& decoder) const
-    {
-        JSCellButterfly* immutableButterfly = JSCellButterfly::create(decoder.vm(), m_indexingType, m_length);
-        if (hasDouble(m_indexingType))
-            m_cachedDoubles.decode(decoder, immutableButterfly->toButterfly()->contiguousDouble().data(), m_length, immutableButterfly);
-        else
-            m_cachedValues.decode(decoder, immutableButterfly->toButterfly()->contiguous().data(), m_length, immutableButterfly);
-        return immutableButterfly;
-    }
-
-private:
-    IndexingType m_indexingType;
-    unsigned m_length;
-    union {
-        CachedArray<double> m_cachedDoubles;
-        CachedJSValuePoolRef m_cachedValues;
-    };
-};
-
-class CachedRegExp : public CachedObject<RegExp> {
-public:
-    void encode(Encoder& encoder, const RegExp& regExp)
-    {
-        m_patternString.encode(encoder, regExp.m_patternString);
-        m_flags = regExp.m_flags;
-    }
-
-    RegExp* decode(Decoder& decoder) const
-    {
-        String pattern { m_patternString.decode(decoder) };
-        return RegExp::create(decoder.vm(), pattern, m_flags);
-    }
-
-private:
-    CachedString m_patternString;
-    OptionSet<Yarr::Flags> m_flags;
-};
-
-class CachedTemplateObjectDescriptor : public CachedObject<TemplateObjectDescriptor> {
-public:
-    void encode(Encoder& encoder, const JSTemplateObjectDescriptor& descriptor)
-    {
-        m_rawStrings.encode(encoder, descriptor.descriptor().rawStrings());
-        m_cookedStrings.encode(encoder, descriptor.descriptor().cookedStrings());
-        m_endOffset = descriptor.endOffset();
-    }
-
-    JSTemplateObjectDescriptor* decode(Decoder& decoder) const
-    {
-        TemplateObjectDescriptor::StringVector decodedRawStrings;
-        TemplateObjectDescriptor::OptionalStringVector decodedCookedStrings;
-        m_rawStrings.decode(decoder, decodedRawStrings);
-        m_cookedStrings.decode(decoder, decodedCookedStrings);
-        return JSTemplateObjectDescriptor::create(decoder.vm(), TemplateObjectDescriptor::create(WTF::move(decodedRawStrings), WTF::move(decodedCookedStrings)), m_endOffset);
-    }
-
-private:
-    CachedVector<CachedString, 4> m_rawStrings;
-    CachedVector<CachedOptional<CachedString>, 4> m_cookedStrings;
-    int m_endOffset;
-};
-
-class CachedBigInt : public VariableLengthObject<JSBigInt> {
-public:
-    void encode(Encoder& encoder, JSBigInt& bigInt)
-    {
-        m_length = bigInt.length();
-        m_sign = bigInt.sign();
-
-        if (!m_length)
+        size_t numBits = reader.varuint();
+        auto bytes = reader.bytes((numBits + 7) / 8);
+        if (bytes.size() < (numBits + 7) / 8)
             return;
-
-        unsigned size = sizeof(JSBigInt::Digit) * m_length;
-        uint8_t* buffer = this->allocate(encoder, size, alignof(JSBigInt::Digit));
-        memcpy(buffer, bigInt.dataStorage(), size);
+        bits.ensureSize(numBits);
+        for (size_t i = 0; i < numBits; ++i) {
+            if (bytes[i / 8] >> (i % 8) & 1)
+                bits.quickSet(i);
+        }
     }
-
-    JSBigInt* decode(Decoder& decoder) const
-    {
-        if (!m_length)
-            return decoder.vm().heapBigIntConstantZero.get();
-
-        JSBigInt* bigInt = JSBigInt::tryCreateWithLength(decoder.vm(), m_length);
-        RELEASE_ASSERT(bigInt);
-        bigInt->setSign(m_sign);
-        if (m_length)
-            memcpy(bigInt->dataStorage(), this->buffer(), sizeof(JSBigInt::Digit) * m_length);
-        return bigInt;
-    }
-
-private:
-    unsigned m_length;
-    bool m_sign;
 };
 
-// A constant is a kind byte and a 4-byte slot; the owner keeps the kinds in a parallel array (CachedJSValuePool). Small
-// values live in the slot itself. Everything else is what VariableLengthObject already does: an inline/external string,
-// or the slot-relative offset of a record.
-class CachedJSValue : public VariableLengthObject<WriteBarrier<Unknown>> {
+// SimpleJumpTable := varint min, varint defaultOffset, u8 isList, varuint count, count × varint branchOffset
+class CachedSimpleJumpTable {
+public:
+    static void encode(Writer& writer, const UnlinkedSimpleJumpTable& jumpTable)
+    {
+        writer.varint(jumpTable.m_min);
+        writer.varint(jumpTable.m_defaultOffset);
+        writer.boolean(jumpTable.m_isList);
+        writer.varuint(jumpTable.m_branchOffsets.size());
+        for (int32_t offset : jumpTable.m_branchOffsets)
+            writer.varint(offset);
+    }
+    static void decode(Reader& reader, UnlinkedSimpleJumpTable& jumpTable)
+    {
+        jumpTable.m_min = reader.varint();
+        jumpTable.m_defaultOffset = reader.varint();
+        jumpTable.m_isList = reader.boolean();
+        unsigned count = reader.varuint();
+        if (!reader.has(count))
+            return;
+        jumpTable.m_branchOffsets = FixedVector<int32_t>(count);
+        for (unsigned i = 0; i < count; ++i)
+            jumpTable.m_branchOffsets[i] = reader.varint();
+    }
+};
+
+// StringJumpTable := varuint count, count × { StringRef, varint branchOffset, varuint indexInTable }, varuint minLength, varuint maxLength, varint defaultOffset
+class CachedStringJumpTable {
+public:
+    static void encode(Writer& writer, Encoder& encoder, const UnlinkedStringJumpTable& jumpTable)
+    {
+        auto entries = EncodingOrder::sortedEntries(jumpTable.m_offsetTable);
+        writer.varuint(entries.size());
+        for (auto* entry : entries) {
+            CachedString::encode(writer, encoder, entry->key.get());
+            writer.varint(entry->value.m_branchOffset);
+            writer.varuint(entry->value.m_indexInTable);
+        }
+        writer.varuint(jumpTable.m_minLength);
+        writer.varuint(jumpTable.m_maxLength);
+        writer.varint(jumpTable.m_defaultOffset);
+    }
+    static void decode(Reader& reader, Decoder& decoder, UnlinkedStringJumpTable& jumpTable)
+    {
+        unsigned count = reader.varuint();
+        if (!reader.has(count))
+            return;
+        Vector<std::pair<RefPtr<StringImpl>, UnlinkedStringJumpTable::OffsetLocation>> entries;
+        entries.reserveInitialCapacity(count);
+        for (unsigned i = 0; i < count; ++i) {
+            RefPtr<StringImpl> string = CachedString::decode(reader, decoder);
+            UnlinkedStringJumpTable::OffsetLocation location;
+            location.m_branchOffset = reader.varint();
+            location.m_indexInTable = reader.varuint();
+            if (string)
+                entries.append({ WTF::move(string), location });
+        }
+        for (auto& [string, location] : entries)
+            jumpTable.m_offsetTable.add(WTF::move(string), location);
+        jumpTable.m_minLength = reader.varuint();
+        jumpTable.m_maxLength = reader.varuint();
+        jumpTable.m_defaultOffset = reader.varint();
+    }
+};
+
+// CodeBlockRareData :=
+//   varuint count, count × { varuint start, varuint end, varuint target, u8 type }        exception handlers
+//   varuint count, count × SimpleJumpTable
+//   varuint count, count × StringJumpTable
+//   varuint count, count × { varuint bytecodeOffset, varuint startDivot, varuint endDivot } type profiler ranges
+//   varuint count, count × varuint                                                          control flow profiler bytecode offsets
+//   varuint count, count × BitVector
+//   varuint count, count × { varuint count, count × StringRef }                            constant identifier sets
+//   u8 needsClassFieldInitializer, u8 privateBrandRequirement
+class CachedCodeBlockRareData {
+public:
+    static void encode(Writer& writer, Encoder& encoder, const UnlinkedCodeBlock::RareData& rareData)
+    {
+        writer.varuint(rareData.m_exceptionHandlers.size());
+        for (auto& handler : rareData.m_exceptionHandlers) {
+            writer.varuint(handler.start);
+            writer.varuint(handler.end);
+            writer.varuint(handler.target);
+            writer.u8(static_cast<uint8_t>(handler.type()));
+        }
+        writer.varuint(rareData.m_unlinkedSwitchJumpTables.size());
+        for (auto& table : rareData.m_unlinkedSwitchJumpTables)
+            CachedSimpleJumpTable::encode(writer, table);
+        writer.varuint(rareData.m_unlinkedStringSwitchJumpTables.size());
+        for (auto& table : rareData.m_unlinkedStringSwitchJumpTables)
+            CachedStringJumpTable::encode(writer, encoder, table);
+        {
+            Vector<std::pair<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange>> ranges;
+            for (auto& entry : rareData.m_typeProfilerInfoMap)
+                ranges.append({ entry.key, entry.value });
+            EncodingOrder::sort(ranges, [](auto& entry) { return entry.first; });
+            writer.varuint(ranges.size());
+            for (auto& [offset, range] : ranges) {
+                writer.varuint(offset);
+                writer.varuint(range.m_startDivot);
+                writer.varuint(range.m_endDivot);
+            }
+        }
+        writer.varuint(rareData.m_opProfileControlFlowBytecodeOffsets.size());
+        for (auto offset : rareData.m_opProfileControlFlowBytecodeOffsets)
+            writer.varuint(offset);
+        writer.varuint(rareData.m_bitVectors.size());
+        for (auto& bits : rareData.m_bitVectors)
+            CachedBitVector::encode(writer, bits);
+        writer.varuint(rareData.m_constantIdentifierSets.size());
+        for (auto& set : rareData.m_constantIdentifierSets) {
+            Vector<RefPtr<UniquedStringImpl>> names;
+            for (auto& name : set)
+                names.append(name);
+            EncodingOrder::sort(names, [](auto& name) -> const auto& { return name; });
+            writer.varuint(names.size());
+            for (auto& name : names)
+                CachedString::encode(writer, encoder, name.get());
+        }
+        writer.boolean(rareData.m_needsClassFieldInitializer);
+        writer.u8(rareData.m_privateBrandRequirement);
+    }
+
+    static UnlinkedCodeBlock::RareData* decode(Reader& reader, Decoder& decoder)
+    {
+        auto* rareData = new UnlinkedCodeBlock::RareData { };
+        auto counted = [&](auto&& each) {
+            unsigned count = reader.varuint();
+            if (!reader.has(count))
+                return 0u;
+            each(count);
+            return count;
+        };
+        counted([&](unsigned count) {
+            rareData->m_exceptionHandlers = FixedVector<UnlinkedHandlerInfo>(count);
+            for (auto& handler : rareData->m_exceptionHandlers) {
+                uint32_t start = reader.varuint();
+                uint32_t end = reader.varuint();
+                uint32_t target = reader.varuint();
+                handler = UnlinkedHandlerInfo(start, end, target, static_cast<HandlerType>(reader.u8() & 3));
+            }
+        });
+        counted([&](unsigned count) {
+            rareData->m_unlinkedSwitchJumpTables = FixedVector<UnlinkedSimpleJumpTable>(count);
+            for (auto& table : rareData->m_unlinkedSwitchJumpTables)
+                CachedSimpleJumpTable::decode(reader, table);
+        });
+        counted([&](unsigned count) {
+            rareData->m_unlinkedStringSwitchJumpTables = FixedVector<UnlinkedStringJumpTable>(count);
+            for (auto& table : rareData->m_unlinkedStringSwitchJumpTables)
+                CachedStringJumpTable::decode(reader, decoder, table);
+        });
+        counted([&](unsigned count) {
+            for (unsigned i = 0; i < count; ++i) {
+                unsigned offset = reader.varuint();
+                UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange range;
+                range.m_startDivot = reader.varuint();
+                range.m_endDivot = reader.varuint();
+                rareData->m_typeProfilerInfoMap.set(offset, range);
+            }
+        });
+        counted([&](unsigned count) {
+            rareData->m_opProfileControlFlowBytecodeOffsets = FixedVector<JSInstructionStream::Offset>(count);
+            for (auto& offset : rareData->m_opProfileControlFlowBytecodeOffsets)
+                offset = reader.varuint();
+        });
+        counted([&](unsigned count) {
+            rareData->m_bitVectors = FixedVector<BitVector>(count);
+            for (auto& bits : rareData->m_bitVectors)
+                CachedBitVector::decode(reader, bits);
+        });
+        counted([&](unsigned count) {
+            rareData->m_constantIdentifierSets = FixedVector<IdentifierSet>(count);
+            for (auto& set : rareData->m_constantIdentifierSets) {
+                unsigned size = reader.varuint();
+                if (!reader.has(size))
+                    return;
+                for (unsigned i = 0; i < size; ++i) {
+                    if (RefPtr<UniquedStringImpl> name = CachedString::decode(reader, decoder))
+                        set.add(WTF::move(name));
+                }
+            }
+        });
+        rareData->m_needsClassFieldInitializer = reader.boolean();
+        rareData->m_privateBrandRequirement = reader.u8() & 1;
+        return rareData;
+    }
+
+};
+
+// OutOfLineJumpTargets := varuint count, count × { varuint bytecodeOffset, varint target }
+struct CachedCodeBlockExtras {
+    static void encodeOutOfLineJumpTargets(Writer& writer, const UnlinkedCodeBlock& codeBlock)
+    {
+        auto& targets = codeBlock.m_outOfLineJumpTargets;
+        Vector<std::pair<JSInstructionStream::Offset, int>> entries;
+        for (auto& entry : targets)
+            entries.append({ entry.key, entry.value });
+        EncodingOrder::sort(entries, [](auto& entry) { return entry.first; });
+        writer.varuint(entries.size());
+        for (auto [offset, target] : entries) {
+            writer.varuint(offset);
+            writer.varint(target);
+        }
+    }
+    static void decodeOutOfLineJumpTargets(Reader& reader, UnlinkedCodeBlock& codeBlock)
+    {
+        auto& targets = codeBlock.m_outOfLineJumpTargets;
+        unsigned count = reader.varuint();
+        if (!reader.has(count))
+            return;
+        for (unsigned i = 0; i < count; ++i) {
+            JSInstructionStream::Offset offset = reader.varuint();
+            targets.set(offset, reader.varint());
+        }
+    }
+};
+
+// -- Constants --------------------------------------------------------------------------------------------------------
+
+// JSValue := u8 kind, then by kind:
+//   Undefined, Null, True, False, Empty    nothing
+//   Int32                                  varint
+//   Double                                 f64
+//   String                                 StringRef
+//   SymbolTable                            SymbolTable
+//   ImmutableButterfly                     u8 indexingMode, varuint length, length × (f64 if a double array, else JSValue)
+//   RegExp                                 StringRef pattern, u16 flags
+//   TemplateObjectDescriptor               varuint count, count × StringRef raw, count × { u8 present, [StringRef cooked] }, varint endOffset
+//   BigInt                                 u8 sign, varuint length, length × u64 digit
+class CachedJSValue {
 public:
     enum class Kind : uint8_t {
         Undefined,
@@ -2437,8 +1768,8 @@ public:
         True,
         False,
         Empty,
-        Int32, // the slot holds the value
-        Double, // the slot points at the 8 raw bytes
+        Int32,
+        Double,
         SymbolTable,
         String,
         ImmutableButterfly,
@@ -2447,79 +1778,89 @@ public:
         BigInt,
     };
 
-    Kind encode(Encoder& encoder, JSValue v)
+    static void encode(Writer& writer, Encoder& encoder, JSValue value)
     {
-        if (v.isEmpty())
-            return Kind::Empty;
-        if (!v.isCell()) {
-            if (v.isInt32()) {
-                this->setRawSlot(static_cast<uint32_t>(v.asInt32()));
-                return Kind::Int32;
+        if (value.isEmpty())
+            return writer.u8(static_cast<uint8_t>(Kind::Empty));
+        if (!value.isCell()) {
+            if (value.isInt32()) {
+                writer.u8(static_cast<uint8_t>(Kind::Int32));
+                return writer.varint(value.asInt32());
             }
-            if (v.isUndefined())
-                return Kind::Undefined;
-            if (v.isNull())
-                return Kind::Null;
-            if (v.isTrue())
-                return Kind::True;
-            if (v.isFalse())
-                return Kind::False;
-            RELEASE_ASSERT(v.isDouble());
-            *this->allocate<EncodedJSValue>(encoder) = JSValue::encode(v);
-            return Kind::Double;
+            if (value.isUndefined())
+                return writer.u8(static_cast<uint8_t>(Kind::Undefined));
+            if (value.isNull())
+                return writer.u8(static_cast<uint8_t>(Kind::Null));
+            if (value.isTrue())
+                return writer.u8(static_cast<uint8_t>(Kind::True));
+            if (value.isFalse())
+                return writer.u8(static_cast<uint8_t>(Kind::False));
+            RELEASE_ASSERT(value.isDouble());
+            writer.u8(static_cast<uint8_t>(Kind::Double));
+            return writer.f64(value.asDouble());
         }
 
-        JSCell* cell = v.asCell();
-
+        JSCell* cell = value.asCell();
         if (auto* symbolTable = dynamicDowncast<SymbolTable>(cell)) {
-            this->allocate<CachedSymbolTable>(encoder)->encode(encoder, *symbolTable);
-            return Kind::SymbolTable;
+            writer.u8(static_cast<uint8_t>(Kind::SymbolTable));
+            return CachedSymbolTable::encode(writer, encoder, *symbolTable);
         }
-
         if (auto* string = dynamicDowncast<JSString>(cell)) {
-            auto str = string->tryGetValue();
-            RELEASE_ASSERT(str.data.impl()); // constants are never unresolved ropes; a failed resolution must not be encoded as garbage
-            StringImpl& impl = *str.data.impl();
-            if (this->tryEncodeInlineString(impl))
-                return Kind::String;
-            if (this->tryEncodeExternalString(encoder, impl))
-                return Kind::String;
-            if (auto existing = encoder.cachedOffsetForStringContents(impl)) {
-                this->pointAtPayloadOffset(encoder, *existing);
-                return Kind::String;
+            auto value = string->tryGetValue();
+            RELEASE_ASSERT(value.data.impl()); // constants are never unresolved ropes; a failed resolution must not be encoded as garbage
+            writer.u8(static_cast<uint8_t>(Kind::String));
+            return CachedString::encode(writer, encoder, value.data.impl());
+        }
+        if (auto* butterfly = dynamicDowncast<JSCellButterfly>(cell)) {
+            writer.u8(static_cast<uint8_t>(Kind::ImmutableButterfly));
+            IndexingType indexingMode = butterfly->indexingMode(); // not indexingTypeAndMisc(): the rest of that byte is cell-lock state
+            unsigned length = butterfly->length();
+            writer.u8(indexingMode);
+            writer.varuint(length);
+            for (unsigned i = 0; i < length; ++i) {
+                if (hasDouble(indexingMode))
+                    writer.f64(butterfly->toButterfly()->contiguousDouble().at(butterfly, i));
+                else
+                    encode(writer, encoder, butterfly->toButterfly()->contiguous().at(butterfly, i).get());
             }
-            auto* record = this->allocateFor<CachedUniquedStringImpl>(encoder, impl);
-            record->encode(encoder, impl);
-            encoder.cacheStringContents(impl, encoder.offsetOf(record));
-            return Kind::String;
+            return;
         }
-
-        if (auto* immutableButterfly = dynamicDowncast<JSCellButterfly>(cell)) {
-            this->allocate<CachedImmutableButterfly>(encoder)->encode(encoder, *immutableButterfly);
-            return Kind::ImmutableButterfly;
+        if (auto* regExp = dynamicDowncast<RegExp>(cell)) {
+            writer.u8(static_cast<uint8_t>(Kind::RegExp));
+            CachedString::encode(writer, encoder, regExp->pattern());
+            return writer.u16(regExp->flags().toRaw());
         }
-
-        if (auto* regexp = dynamicDowncast<RegExp>(cell)) {
-            this->allocate<CachedRegExp>(encoder)->encode(encoder, *regexp);
-            return Kind::RegExp;
+        if (auto* descriptor = dynamicDowncast<JSTemplateObjectDescriptor>(cell)) {
+            writer.u8(static_cast<uint8_t>(Kind::TemplateObjectDescriptor));
+            auto& rawStrings = descriptor->descriptor().rawStrings();
+            auto& cookedStrings = descriptor->descriptor().cookedStrings();
+            ASSERT(rawStrings.size() == cookedStrings.size());
+            writer.varuint(rawStrings.size());
+            for (auto& raw : rawStrings)
+                CachedString::encode(writer, encoder, raw);
+            for (auto& cooked : cookedStrings) {
+                writer.boolean(cooked.has_value());
+                if (cooked)
+                    CachedString::encode(writer, encoder, *cooked);
+            }
+            return writer.varint(descriptor->endOffset());
         }
-
-        if (auto* templateObjectDescriptor = dynamicDowncast<JSTemplateObjectDescriptor>(cell)) {
-            this->allocate<CachedTemplateObjectDescriptor>(encoder)->encode(encoder, *templateObjectDescriptor);
-            return Kind::TemplateObjectDescriptor;
-        }
-
         if (auto* bigInt = dynamicDowncast<JSBigInt>(cell)) {
-            this->allocate<CachedBigInt>(encoder)->encode(encoder, *bigInt);
-            return Kind::BigInt;
+            writer.u8(static_cast<uint8_t>(Kind::BigInt));
+            writer.boolean(bigInt->sign());
+            writer.varuint(bigInt->length());
+            static_assert(sizeof(JSBigInt::Digit) == sizeof(uint64_t));
+            for (unsigned i = 0; i < bigInt->length(); ++i)
+                writer.u64(bigInt->digit(i));
+            return;
         }
-
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    JSValue decode(Decoder& decoder, Kind kind) const
+    static JSValue decode(Reader& reader, Decoder& decoder)
     {
-        switch (kind) {
+        VM& vm = decoder.vm();
+        switch (static_cast<Kind>(reader.u8())) {
         case Kind::Undefined:
             return jsUndefined();
         case Kind::Null:
@@ -2531,80 +1872,145 @@ public:
         case Kind::Empty:
             return JSValue();
         case Kind::Int32:
-            return jsNumber(static_cast<int32_t>(this->rawSlot()));
+            return jsNumber(reader.varint());
         case Kind::Double:
-            return JSValue::decode(*this->buffer<EncodedJSValue>());
+            return JSValue(JSValue::EncodeAsDouble, reader.f64());
         case Kind::SymbolTable:
-            return this->buffer<CachedSymbolTable>()->decode(decoder);
+            return CachedSymbolTable::decode(reader, decoder);
         case Kind::String:
-            if (this->hasInlineString())
-                return jsString(decoder.vm(), String { this->inlineString(decoder) });
-            if (this->hasExternalString())
-                return jsString(decoder.vm(), decoder.plainStringForExternalString(this->externalStringOrdinal()));
             // A constant becomes a JSString; it does not have to be an atom, so skip the atom table.
-            return jsString(decoder.vm(), this->buffer<CachedUniquedStringImpl>()->decodePlainString(decoder));
-        case Kind::ImmutableButterfly:
-            return this->buffer<CachedImmutableButterfly>()->decode(decoder);
-        case Kind::RegExp:
-            return this->buffer<CachedRegExp>()->decode(decoder);
-        case Kind::TemplateObjectDescriptor:
-            return this->buffer<CachedTemplateObjectDescriptor>()->decode(decoder);
-        case Kind::BigInt:
-            return this->buffer<CachedBigInt>()->decode(decoder);
+            return jsString(vm, CachedString::decodePlainString(reader, decoder));
+        case Kind::ImmutableButterfly: {
+            IndexingType indexingMode = reader.u8();
+            unsigned length = reader.varuint();
+            if (!reader.has(length))
+                return JSValue();
+            JSCellButterfly* butterfly = JSCellButterfly::create(vm, indexingMode, length);
+            for (unsigned i = 0; i < length; ++i) {
+                if (hasDouble(indexingMode))
+                    butterfly->toButterfly()->contiguousDouble().at(butterfly, i) = reader.f64();
+                else
+                    butterfly->toButterfly()->contiguous().at(butterfly, i).set(vm, butterfly, decode(reader, decoder));
+            }
+            return butterfly;
         }
-        RELEASE_ASSERT_NOT_REACHED();
+        case Kind::RegExp: {
+            String pattern = CachedString::decodeString(reader, decoder);
+            auto flags = OptionSet<Yarr::Flags>::fromRaw(reader.u16());
+            if (pattern.isNull())
+                return JSValue();
+            return RegExp::create(vm, pattern, flags);
+        }
+        case Kind::TemplateObjectDescriptor: {
+            unsigned count = reader.varuint();
+            if (!reader.has(count))
+                return JSValue();
+            TemplateObjectDescriptor::StringVector rawStrings;
+            TemplateObjectDescriptor::OptionalStringVector cookedStrings;
+            rawStrings.reserveInitialCapacity(count);
+            cookedStrings.reserveInitialCapacity(count);
+            for (unsigned i = 0; i < count; ++i)
+                rawStrings.append(CachedString::decodeString(reader, decoder));
+            for (unsigned i = 0; i < count; ++i) {
+                if (reader.boolean())
+                    cookedStrings.append(CachedString::decodeString(reader, decoder));
+                else
+                    cookedStrings.append(std::nullopt);
+            }
+            int endOffset = reader.varint();
+            return JSTemplateObjectDescriptor::create(vm, TemplateObjectDescriptor::create(WTF::move(rawStrings), WTF::move(cookedStrings)), endOffset);
+        }
+        case Kind::BigInt: {
+            bool sign = reader.boolean();
+            unsigned length = reader.varuint();
+            if (!length)
+                return vm.heapBigIntConstantZero.get();
+            if (!reader.has(length))
+                return JSValue();
+            JSBigInt* bigInt = JSBigInt::tryCreateWithLength(vm, length);
+            RELEASE_ASSERT(bigInt);
+            bigInt->setSign(sign);
+            for (unsigned i = 0; i < length; ++i)
+                bigInt->setDigit(i, reader.u64());
+            return bigInt;
+        }
+        }
+        return JSValue();
     }
 };
-static_assert(sizeof(CachedJSValue) == sizeof(uint32_t));
 
-// `count` kind bytes, then (4-aligned) `count` slots.
-struct CachedJSValuePool {
-    static size_t byteSize(unsigned count) { return roundUpToMultipleOf<4>(static_cast<size_t>(count)) + sizeof(CachedJSValue) * count; }
-    static const CachedJSValue* slots(const uint8_t* pool, unsigned count) { return reinterpret_cast<const CachedJSValue*>(pool + roundUpToMultipleOf<4>(static_cast<size_t>(count))); }
+// -- Expression info --------------------------------------------------------------------------------------------------
 
-    // Returns the pool's payload offset.
-    static ptrdiff_t encode(Encoder& encoder, std::span<const WriteBarrier<Unknown>> values)
+// ExpressionInfo := u32 numberOfEncodedInfo, u8 flags, varuint chapters, varuint extensions, zeros to a 4-byte boundary,
+//                   words × u32, [u32 checksum]
+// where words is the number ExpressionInfo derives from the three counts. Written 4-aligned so the words can be used
+// in place; self-contained and position-independent, so identical ones (every async wrapper, say) are written once.
+// A damaged one decodes as "no expression info" (stack traces lose line/column for that function) rather than failing
+// the function.
+class CachedExpressionInfo {
+public:
+    enum Flag : uint8_t { HasChecksum = 1 << 0 };
+
+    static Vector<uint8_t, 64> pack(const ExpressionInfo& info, bool checksum)
     {
-        unsigned count = values.size();
-        ASSERT(count);
-        auto result = encoder.malloc(byteSize(count), alignof(CachedJSValue));
-        uint8_t* kinds = result.buffer();
-        CachedJSValue* slots = new (kinds + roundUpToMultipleOf<4>(static_cast<size_t>(count))) CachedJSValue[count];
-        for (unsigned i = 0; i < count; ++i)
-            kinds[i] = static_cast<uint8_t>(slots[i].encode(encoder, values[i].get()));
-        return result.offset();
+        Writer writer;
+        writer.u32(info.m_numberOfEncodedInfo);
+        writer.u8(checksum ? HasChecksum : 0);
+        writer.varuint(info.m_numberOfChapters);
+        writer.varuint(info.m_numberOfEncodedInfoExtensions);
+        writer.zeros(roundUpToMultipleOf<4>(writer.size()) - writer.size());
+        static_assert(sizeof(*info.payload()) == sizeof(uint32_t));
+        for (size_t i = 0; i < info.payloadSize(); ++i)
+            writer.u32(info.payload()[i]);
+        if (checksum)
+            writer.u32(~crc32c(~0u, writer.span()));
+        return Vector<uint8_t, 64>(writer.span());
     }
 
-    static void decode(Decoder& decoder, const uint8_t* pool, unsigned count, WriteBarrier<Unknown>* out, const JSCell* owner)
+    static std::unique_ptr<ExpressionInfo> decode(Decoder& decoder, uint32_t at)
     {
-        const CachedJSValue* slot = slots(pool, count);
-        for (unsigned i = 0; i < count; ++i)
-            out[i].set(decoder.vm(), owner, slot[i].decode(decoder, static_cast<CachedJSValue::Kind>(pool[i])));
+        Reader reader(decoder.payload(), at);
+        const uint8_t* base = reader.position();
+        unsigned encodedInfo = reader.u32();
+        uint8_t flags = reader.u8();
+        unsigned chapters = reader.varuint();
+        unsigned extensions = reader.varuint();
+        reader.alignTo(4, base);
+        if (reader.overran() || at % 4)
+            return ExpressionInfo::createUninitialized(0, 0, 0);
+        size_t words = ExpressionInfo::payloadSizeInBytes(chapters, encodedInfo, extensions) / sizeof(uint32_t);
+        auto wordBytes = reader.bytes(words * sizeof(uint32_t));
+        if (wordBytes.size() != words * sizeof(uint32_t))
+            return ExpressionInfo::createUninitialized(0, 0, 0);
+        if (flags & HasChecksum) {
+            size_t covered = reader.position() - base;
+            uint32_t stored = reader.u32();
+            if (reader.overran() || (decoder.verifiesChecksums() && stored != ~crc32c(~0u, std::span { base, covered }))) {
+                dataLogLnIf(Options::verboseDiskCache(), "[Disk Cache] expression info checksum mismatch; dropping it");
+                return ExpressionInfo::createUninitialized(0, 0, 0);
+            }
+        }
+        const unsigned* wordsInPlace = reinterpret_cast<const unsigned*>(wordBytes.data()); // little-endian host, 4-aligned: see the top of the file
+        if (decoder.canBorrowPayload() && words)
+            return ExpressionInfo::createBorrowed(chapters, encodedInfo, extensions, wordsInPlace);
+        auto info = ExpressionInfo::createUninitialized(chapters, encodedInfo, extensions);
+        for (size_t i = 0; i < words; ++i)
+            info->payload()[i] = readU32(wordBytes.data() + 4 * i);
+        return info;
     }
 };
 
-inline void CachedJSValuePoolRef::encode(Encoder& encoder, std::span<const WriteBarrier<Unknown>> values)
-{
-    if (values.empty())
-        return;
-    this->pointAtPayloadOffset(encoder, CachedJSValuePool::encode(encoder, values));
-}
-
-inline void CachedJSValuePoolRef::decode(Decoder& decoder, WriteBarrier<Unknown>* out, unsigned count, const JSCell* owner) const
-{
-    if (!count)
-        return;
-    CachedJSValuePool::decode(decoder, this->buffer(), count, out, owner);
-}
+// -- Metadata ---------------------------------------------------------------------------------------------------------
 
 // UnlinkedMetadataTable's offset table is cumulative and most opcodes have no metadata in a given function, so a code
-// block stores only the entries where the running offset changes: (index << 24 | delta). A typical function has a handful
-// instead of 51.
+// block stores only the opcodes that have entries: (opcode << 24 | entry count). A typical function has a handful
+// instead of 51. The decoder lays the table out with its own sizeof(Op::Metadata), which is why counts and not offsets.
 struct CachedMetadataSteps {
     static constexpr unsigned indexShift = UnlinkedMetadataTable::stepIndexShift;
-    static constexpr uint32_t deltaMask = UnlinkedMetadataTable::stepDeltaMask;
+    static constexpr uint32_t countMask = UnlinkedMetadataTable::stepCountMask;
     static_assert(UnlinkedMetadataTable::s_offsetTableEntries < (1u << (32 - indexShift)));
 
+    // The inverse of UnlinkedMetadataTable::finalize(): (opcode << 24 | entry count) back out of the offset table.
     static Vector<uint32_t, 16> compute(const UnlinkedMetadataTable& metadataTable)
     {
         ASSERT(metadataTable.m_isFinalized && metadataTable.m_hasMetadata);
@@ -2613,26 +2019,34 @@ struct CachedMetadataSteps {
             steps.append(std::span { metadataTable.m_steps, metadataTable.m_stepsCount });
             return steps;
         }
-        uint32_t previous = 0;
-        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i) {
-            uint32_t value = metadataTable.m_is32Bit ? metadataTable.offsetTable32()[i] : metadataTable.offsetTable16()[i];
-            if (value == previous)
+        auto offsetAt = [&](unsigned i) -> uint32_t { return metadataTable.m_is32Bit ? metadataTable.offsetTable32()[i] : metadataTable.offsetTable16()[i]; };
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries - 1; ++i) {
+            auto opcode = static_cast<OpcodeID>(i);
+            uint32_t start = roundUpToMultipleOf(metadataAlignment(opcode), offsetAt(i));
+            uint32_t end = offsetAt(i + 1);
+            if (end <= start)
                 continue;
-            RELEASE_ASSERT(value > previous && value - previous <= deltaMask);
-            steps.append(i << indexShift | (value - previous));
-            previous = value;
+            uint32_t count = (end - start) / metadataSize(opcode);
+            ASSERT(count && start + count * metadataSize(opcode) == end && count <= countMask);
+            steps.append(i << indexShift | count);
         }
+#if ASSERT_ENABLED
+        std::array<UnlinkedMetadataTable::Offset32, UnlinkedMetadataTable::s_offsetTableEntries> check;
+        UnlinkedMetadataTable::expandSteps(steps.span(), check.data());
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i)
+            ASSERT(check[i] == offsetAt(i));
+#endif
         return steps;
     }
 
-    static Ref<UnlinkedMetadataTable> build(bool is32Bit, unsigned numValueProfiles, std::span<const uint32_t> steps)
+    static Ref<UnlinkedMetadataTable> build(unsigned numValueProfiles, std::span<const uint32_t> steps)
     {
-        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(is32Bit, numValueProfiles);
+        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(UnlinkedMetadataTable::stepsNeed32BitOffsets(steps), numValueProfiles);
         metadataTable->m_isFinalized = true;
         metadataTable->m_isLinked = false;
         metadataTable->m_hasMetadata = true;
         metadataTable->m_numValueProfiles = numValueProfiles;
-        if (is32Bit)
+        if (metadataTable->m_is32Bit)
             UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable32());
         else
             UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable16());
@@ -2640,504 +2054,278 @@ struct CachedMetadataSteps {
     }
 };
 
-// Arrays a code block refers to from its varint tail by (count, offset) instead of through an 8-byte CachedVector member.
-// Plain arrays may be shared with an identical one written earlier (see Encoder::ShareableArrayScope).
-template<typename T, typename Container>
-static ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container)
-{
-    unsigned size = container.size();
-    ASSERT(size);
-    if constexpr (std::is_same_v<T, SourceType<T>> && std::is_trivially_copyable_v<T>) {
-        auto bytes = std::span { std::bit_cast<const uint8_t*>(container.span().data()), sizeof(T) * size };
-        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes) ^ static_cast<unsigned>(bytes.size());
-        if (encoder.arraySharingEnabled()) {
-            if (auto existing = encoder.existingIdenticalArray(bytes, hash, alignof(T))) {
-                encoder.noteSharedArray(*existing, bytes.size());
-                return *existing;
+// -- Source code ------------------------------------------------------------------------------------------------------
+
+// JSTextPosition := varint line, varint offset, varint lineStartOffset
+class CachedJSTextPosition {
+public:
+    static void encode(Writer& writer, const JSTextPosition& position)
+    {
+        writer.varint(position.line);
+        writer.varint(position.offset);
+        writer.varint(position.lineStartOffset);
+    }
+    static JSTextPosition decode(Reader& reader)
+    {
+        JSTextPosition position;
+        position.line = reader.varint();
+        position.offset = reader.varint();
+        position.lineStartOffset = reader.varint();
+        return position;
+    }
+};
+
+// SourceProvider := u8 sourceType, StringRef sourceOrigin, StringRef sourceURL, StringRef preRedirectURL,
+//                   StringRef sourceURLDirective, StringRef sourceMappingURLDirective, varint startLine, varint startColumn,
+//                   u8 taintedOrigin, then by sourceType: varuint sourceLength (Bun: the source text is not stored) or
+//                   StringRef source; WebAssembly: varuint size, bytes
+class CachedSourceProvider {
+public:
+    static void encode(Writer& writer, Encoder& encoder, const SourceProvider& provider)
+    {
+        SourceProviderSourceType sourceType = provider.sourceType();
+        writer.u8(static_cast<uint8_t>(sourceType));
+        CachedString::encode(writer, encoder, provider.sourceOrigin().url().string());
+        CachedString::encode(writer, encoder, provider.sourceURL());
+        CachedString::encode(writer, encoder, provider.preRedirectURL());
+        CachedString::encode(writer, encoder, provider.sourceURLDirective());
+        CachedString::encode(writer, encoder, provider.sourceMappingURLDirective());
+        writer.varint(provider.startPosition().m_line.zeroBasedInt());
+        writer.varint(provider.startPosition().m_column.zeroBasedInt());
+        writer.u8(static_cast<uint8_t>(provider.sourceTaintedOrigin()));
+        switch (sourceType) {
+        case SourceProviderSourceType::Program:
+        case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule:
+            // SourceCodeKey::operator== under BUN_JSC_ADDITIONS does not compare source text; length() and host() are compared.
+            writer.varuint(provider.source().length());
+#else
+            CachedString::encode(writer, encoder, provider.source().toString());
+#endif
+            break;
+#if ENABLE(WEBASSEMBLY)
+        case SourceProviderSourceType::WebAssembly: {
+            auto& data = static_cast<const WebAssemblySourceProvider&>(provider).dataVector();
+            writer.varuint(data.size());
+            writer.bytes(data.span());
+            break;
+        }
+#endif
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    static RefPtr<SourceProvider> decode(Reader& reader, Decoder& decoder)
+    {
+        auto sourceType = static_cast<SourceProviderSourceType>(reader.u8());
+        SourceOrigin sourceOrigin { URL({ }, CachedString::decodeString(reader, decoder)) };
+        String sourceURL = CachedString::decodeString(reader, decoder);
+        String preRedirectURL = CachedString::decodeString(reader, decoder);
+        String sourceURLDirective = CachedString::decodeString(reader, decoder);
+        String sourceMappingURLDirective = CachedString::decodeString(reader, decoder);
+        int startLine = reader.varint();
+        int startColumn = reader.varint();
+        TextPosition startPosition { OrdinalNumber::fromZeroBasedInt(startLine), OrdinalNumber::fromZeroBasedInt(startColumn) };
+        auto taintedOrigin = static_cast<SourceTaintedOrigin>(reader.u8());
+        RefPtr<SourceProvider> provider;
+        switch (sourceType) {
+        case SourceProviderSourceType::Program:
+        case SourceProviderSourceType::Module:
+#if USE(BUN_JSC_ADDITIONS)
+        case SourceProviderSourceType::BunTranspiledModule: {
+            unsigned sourceLength = reader.varuint();
+            // Reuse the runtime SourceProvider the Decoder was constructed with rather than allocating one holding a copy
+            // of the source: the decoded key is only used for SourceCodeKey equality, which does not look at source bytes.
+            if (RefPtr<SourceProvider> runtimeProvider = decoder.provider()) {
+                if (runtimeProvider->sourceType() == sourceType && runtimeProvider->source().length() == sourceLength)
+                    return runtimeProvider;
             }
-        }
-        auto result = encoder.malloc(bytes.size(), alignof(T));
-        memcpySpan(std::span { result.buffer(), bytes.size() }, bytes);
-        encoder.registerArray(hash, result.offset(), bytes.size());
-        return result.offset();
-    } else {
-        auto result = encoder.malloc(sizeof(T) * size, alignof(T));
-        T* buffer = new (result.buffer()) T[size];
-        for (unsigned i = 0; i < size; ++i)
-            ::JSC::encode(encoder, buffer[i], container[i]);
-        return result.offset();
-    }
-}
-
-template<typename T, typename Container, typename... Args>
-static void decodeArrayFromTail(Decoder& decoder, const void* elements, unsigned size, Container& out, Args... args)
-{
-    if (!size)
-        return;
-    out = Container(size);
-    const T* buffer = static_cast<const T*>(elements);
-    for (unsigned i = 0; i < size; ++i)
-        ::JSC::decode(decoder, buffer[i], out[i], args...);
-}
-
-class CachedSourceOrigin : public CachedObject<SourceOrigin> {
-public:
-    void encode(Encoder& encoder, const SourceOrigin& sourceOrigin)
-    {
-        m_string.encode(encoder, sourceOrigin.url().string());
-    }
-
-    SourceOrigin decode(Decoder& decoder) const
-    {
-        return SourceOrigin { URL({ }, m_string.decode(decoder)) };
-    }
-
-private:
-    CachedString m_string;
-};
-
-class CachedTextPosition : public CachedObject<TextPosition> {
-public:
-    void encode(Encoder&, TextPosition textPosition)
-    {
-        m_line = textPosition.m_line.zeroBasedInt();
-        m_column = textPosition.m_column.zeroBasedInt();
-    }
-
-    TextPosition decode(Decoder&) const
-    {
-        return TextPosition { OrdinalNumber::fromZeroBasedInt(m_line), OrdinalNumber::fromZeroBasedInt(m_column) };
-    }
-
-private:
-    int m_line;
-    int m_column;
-};
-
-template <typename Source, typename CachedType>
-class CachedSourceProviderShape : public CachedObject<Source> {
-public:
-    void encode(Encoder& encoder, const SourceProvider& sourceProvider)
-    {
-        m_sourceOrigin.encode(encoder, sourceProvider.sourceOrigin());
-        m_sourceURL.encode(encoder, sourceProvider.sourceURL());
-        m_preRedirectURL.encode(encoder, sourceProvider.preRedirectURL());
-        m_sourceURLDirective.encode(encoder, sourceProvider.sourceURLDirective());
-        m_sourceMappingURLDirective.encode(encoder, sourceProvider.sourceMappingURLDirective());
-        m_startPosition.encode(encoder, sourceProvider.startPosition());
-        m_sourceTaintedOrigin = sourceProvider.sourceTaintedOrigin();
-    }
-
-    void decode(Decoder& decoder, SourceProvider& sourceProvider) const
-    {
-        sourceProvider.setSourceURLDirective(m_sourceURLDirective.decode(decoder));
-        sourceProvider.setSourceMappingURLDirective(m_sourceMappingURLDirective.decode(decoder));
-        sourceProvider.setSourceTaintedOrigin(m_sourceTaintedOrigin);
-    }
-
-protected:
-    CachedSourceOrigin m_sourceOrigin;
-    CachedString m_sourceURL;
-    CachedString m_preRedirectURL;
-    CachedString m_sourceURLDirective;
-    CachedString m_sourceMappingURLDirective;
-    CachedTextPosition m_startPosition;
-    SourceTaintedOrigin m_sourceTaintedOrigin;
-};
-
-class CachedStringSourceProvider : public CachedSourceProviderShape<StringSourceProvider, CachedStringSourceProvider> {
-    using Base = CachedSourceProviderShape<StringSourceProvider, CachedStringSourceProvider>;
-
-public:
-#if USE(BUN_JSC_ADDITIONS)
-    // Takes the base type for the same reason decode() returns it: Bun's runtime
-    // provider is a SourceProvider sibling of StringSourceProvider, and only
-    // base-class API is used below.
-    void encode(Encoder& encoder, const SourceProvider& sourceProvider)
-#else
-    void encode(Encoder& encoder, const StringSourceProvider& sourceProvider)
-#endif
-    {
-        Base::encode(encoder, sourceProvider);
-#if USE(BUN_JSC_ADDITIONS)
-        // SourceCodeKey::operator== under BUN_JSC_ADDITIONS does not compare source
-        // text, so encoding it here only wastes ~source_size bytes of bytecode and
-        // forces a ~source_size heap allocation at decode time. Store length only —
-        // the comparison still validates length() and host().
-        m_sourceLength = sourceProvider.source().length();
-#else
-        m_source.encode(encoder, sourceProvider.source().toString());
-#endif
-    }
-
-#if USE(BUN_JSC_ADDITIONS)
-    // The caller (CachedSourceProvider::decode) returns SourceProvider*, so the
-    // BUN reuse path can return the runtime provider as its base type without
-    // any reinterpret_cast through the StringSourceProvider sibling.
-    SourceProvider* decode(Decoder& decoder, SourceProviderSourceType sourceType) const
-#else
-    StringSourceProvider* decode(Decoder& decoder, SourceProviderSourceType sourceType) const
-#endif
-    {
-#if USE(BUN_JSC_ADDITIONS)
-        // Reuse the runtime SourceProvider the Decoder was constructed with rather
-        // than allocating a fresh StringSourceProvider holding a heap copy of the
-        // source. The decoded key is only used for SourceCodeKey equality, which
-        // under BUN_JSC_ADDITIONS does not look at source bytes.
-        //
-        // Base::decode is intentionally skipped: the runtime provider already has
-        // its sourceURLDirective / sourceMappingURLDirective / sourceTaintedOrigin
-        // set, and the decoded key only needs sourceOrigin().url().host() and
-        // length() for equality. CachedSourceProviderShape fields are offset-based
-        // (not stream-based), so leaving them undecoded does not affect later reads.
-        if (RefPtr<SourceProvider> provider = decoder.provider()) {
-            if (provider->sourceType() == sourceType && provider->source().length() == m_sourceLength)
-                return provider.leakRef();
-        }
-        // Fallback for callers that did not supply a provider: decode without source
-        // bytes. SourceCodeKey::operator== ignores string(), but length() is compared,
-        // so synthesize a provider whose source() is empty — length() will mismatch
-        // and the cache entry will be rejected, which is the conservative behaviour.
-        String decodedSource;
-#else
-        String decodedSource = m_source.decode(decoder);
-#endif
-        SourceOrigin decodedSourceOrigin = m_sourceOrigin.decode(decoder);
-        String decodedSourceURL = m_sourceURL.decode(decoder);
-        TextPosition decodedStartPosition = m_startPosition.decode(decoder);
-
-        Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(decodedSource, decodedSourceOrigin, decodedSourceURL, m_sourceTaintedOrigin, decodedStartPosition, sourceType);
-        Base::decode(decoder, sourceProvider.get());
-        return &sourceProvider.leakRef();
-    }
-
-private:
-#if USE(BUN_JSC_ADDITIONS)
-    unsigned m_sourceLength;
-#else
-    CachedString m_source;
-#endif
-};
-
-#if ENABLE(WEBASSEMBLY)
-class CachedWebAssemblySourceProvider : public CachedSourceProviderShape<WebAssemblySourceProvider, CachedWebAssemblySourceProvider> {
-    using Base = CachedSourceProviderShape<WebAssemblySourceProvider, CachedWebAssemblySourceProvider>;
-
-public:
-    void encode(Encoder& encoder, const WebAssemblySourceProvider& sourceProvider)
-    {
-        Base::encode(encoder, sourceProvider);
-        m_data.encode(encoder, sourceProvider.dataVector());
-    }
-
-    WebAssemblySourceProvider* decode(Decoder& decoder) const
-    {
-        Vector<uint8_t> decodedData;
-        SourceOrigin decodedSourceOrigin = m_sourceOrigin.decode(decoder);
-        String decodedSourceURL = m_sourceURL.decode(decoder);
-
-        m_data.decode(decoder, decodedData);
-
-        Ref<WebAssemblySourceProvider> sourceProvider = WebAssemblySourceProvider::create(WTF::move(decodedData), decodedSourceOrigin, decodedSourceURL);
-        Base::decode(decoder, sourceProvider.get());
-
-        return &sourceProvider.leakRef();
-    }
-
-private:
-    CachedVector<uint8_t> m_data;
-};
-#endif
-
-class CachedSourceProvider : public VariableLengthObject<SourceProvider> {
-public:
-    void encode(Encoder& encoder, const SourceProvider& sourceProvider)
-    {
-        m_sourceType = sourceProvider.sourceType();
-        switch (m_sourceType) {
-        case SourceProviderSourceType::Program:
-        case SourceProviderSourceType::Module:
-#if USE(BUN_JSC_ADDITIONS)
-        case SourceProviderSourceType::BunTranspiledModule:
-            this->allocate<CachedStringSourceProvider>(encoder)->encode(encoder, sourceProvider);
-#else
-            this->allocate<CachedStringSourceProvider>(encoder)->encode(encoder, reinterpret_cast<const StringSourceProvider&>(sourceProvider));
-#endif
+            // No provider supplied: one whose source() is empty, so length() mismatches and the cache entry is rejected.
+            provider = StringSourceProvider::create(String(), sourceOrigin, sourceURL, taintedOrigin, startPosition, sourceType);
             break;
-#if ENABLE(WEBASSEMBLY)
-        case SourceProviderSourceType::WebAssembly:
-            this->allocate<CachedWebAssemblySourceProvider>(encoder)->encode(encoder, reinterpret_cast<const WebAssemblySourceProvider&>(sourceProvider));
+        }
+#else
+        {
+            String source = CachedString::decodeString(reader, decoder);
+            provider = StringSourceProvider::create(source, sourceOrigin, sourceURL, taintedOrigin, startPosition, sourceType);
             break;
+        }
+#endif
+#if ENABLE(WEBASSEMBLY)
+        case SourceProviderSourceType::WebAssembly: {
+            auto bytes = reader.bytes(reader.varuint());
+            provider = WebAssemblySourceProvider::create(Vector<uint8_t>(bytes), sourceOrigin, sourceURL);
+            break;
+        }
 #endif
         default:
-            RELEASE_ASSERT_NOT_REACHED();
+            return nullptr;
         }
+        provider->setSourceURLDirective(sourceURLDirective);
+        provider->setSourceMappingURLDirective(sourceMappingURLDirective);
+        return provider;
     }
-
-    SourceProvider* decode(Decoder& decoder) const
-    {
-        switch (m_sourceType) {
-        case SourceProviderSourceType::Program:
-        case SourceProviderSourceType::Module:
-#if USE(BUN_JSC_ADDITIONS)
-        case SourceProviderSourceType::BunTranspiledModule:
-#endif
-            return this->buffer<CachedStringSourceProvider>()->decode(decoder, m_sourceType);
-#if ENABLE(WEBASSEMBLY)
-        case SourceProviderSourceType::WebAssembly:
-            return this->buffer<CachedWebAssemblySourceProvider>()->decode(decoder);
-#endif
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-    }
-
-private:
-    SourceProviderSourceType m_sourceType;
 };
 
-template<typename Source>
-class CachedUnlinkedSourceCodeShape : public CachedObject<Source> {
+// UnlinkedSourceCode := SourceProvider, varint startOffset, varint endOffset
+template<typename SourceType>
+class CachedUnlinkedSourceCodeShape {
 public:
-    void encode(Encoder& encoder, const UnlinkedSourceCode& sourceCode)
+    static void encode(Writer& writer, Encoder& encoder, const SourceType& source)
     {
-        m_provider.encode(encoder, sourceCode.m_provider);
-        m_startOffset = sourceCode.startOffset();
-        m_endOffset = sourceCode.endOffset();
+        CachedSourceProvider::encode(writer, encoder, *source.m_provider);
+        writer.varint(source.m_startOffset);
+        writer.varint(source.m_endOffset);
     }
-
-    void decode(Decoder& decoder, UnlinkedSourceCode& sourceCode) const
+    static bool decode(Reader& reader, Decoder& decoder, SourceType& source)
     {
-        sourceCode.m_provider = m_provider.decode(decoder);
-        sourceCode.m_startOffset = m_startOffset;
-        sourceCode.m_endOffset = m_endOffset;
+        source.m_provider = CachedSourceProvider::decode(reader, decoder);
+        source.m_startOffset = reader.varint();
+        source.m_endOffset = reader.varint();
+        return source.m_provider;
     }
+};
+using CachedUnlinkedSourceCode = CachedUnlinkedSourceCodeShape<UnlinkedSourceCode>;
 
-private:
-    CachedRefPtr<CachedSourceProvider> m_provider;
-    int m_startOffset;
-    int m_endOffset;
+// SourceCodeKey := UnlinkedSourceCode, StringRef name, varuint flags, u32 hash, varint functionConstructorParametersEndPosition
+class CachedSourceCodeKey {
+public:
+    static void encode(Writer& writer, Encoder& encoder, const SourceCodeKey& key)
+    {
+        CachedUnlinkedSourceCode::encode(writer, encoder, key.m_sourceCode);
+        CachedString::encode(writer, encoder, key.m_name);
+        writer.varuint(key.m_flags.m_flags);
+        writer.u32(key.m_hash);
+        writer.varint(key.m_functionConstructorParametersEndPosition);
+    }
+    static bool decode(Reader& reader, Decoder& decoder, SourceCodeKey& key)
+    {
+        bool hasProvider = CachedUnlinkedSourceCode::decode(reader, decoder, key.m_sourceCode);
+        key.m_name = CachedString::decodeString(reader, decoder);
+        key.m_flags.m_flags = reader.varuint();
+        key.m_hash = reader.u32();
+        key.m_functionConstructorParametersEndPosition = reader.varint();
+        return hasProvider && !reader.overran();
+    }
 };
 
+// -- Function executables ---------------------------------------------------------------------------------------------
 
-class CachedUnlinkedSourceCode : public CachedUnlinkedSourceCodeShape<UnlinkedSourceCode> { };
-
-class CachedSourceCode : public CachedUnlinkedSourceCodeShape<SourceCode> {
-    using Base = CachedUnlinkedSourceCodeShape<SourceCode>;
-
+// FunctionExecutableRareData := varuint bits, then only the members that are set:
+//   [varuint count, count × StringRef]                                            generator/async wrapper parameter names
+//   [varuint count, count × { StringRef ident, JSTextPosition, u8 hasInitializer, [JSTextPosition], u8 kind }]  class element definitions
+//   [PrivateNameEnvironment]                                                       parent private-name environment
+//   [varuint startOffset, varuint length, varint firstLine, varint startColumn]   class source
+// Most rare data is an async function's (empty) wrapper parameter names.
+class CachedFunctionExecutableRareData {
 public:
-    void encode(Encoder& encoder, const SourceCode& sourceCode)
-    {
-        Base::encode(encoder, sourceCode);
-        m_firstLine = sourceCode.firstLine().zeroBasedInt();
-        m_startColumn = sourceCode.startColumn().zeroBasedInt();
-    }
-
-    void decode(Decoder& decoder, SourceCode& sourceCode) const
-    {
-        Base::decode(decoder, sourceCode);
-        sourceCode.m_firstLine = OrdinalNumber::fromZeroBasedInt(m_firstLine);
-        sourceCode.m_startColumn = OrdinalNumber::fromZeroBasedInt(m_startColumn);
-    }
-
-private:
-    int m_firstLine;
-    int m_startColumn;
-};
-
-class CachedTDZEnvironmentLink : public CachedObject<TDZEnvironmentLink> {
-public:
-    void encode(Encoder& encoder, const TDZEnvironmentLink& environment)
-    {
-        m_handle.encode(encoder, environment.m_handle);
-        m_parent.encode(encoder, environment.m_parent);
-    }
-
-    TDZEnvironmentLink* decode(Decoder& decoder) const
-    {
-        CompactTDZEnvironmentMap::Handle handle = m_handle.decode(decoder);
-        RefPtr<TDZEnvironmentLink> parent = m_parent.decode(decoder);
-        return new TDZEnvironmentLink(WTF::move(handle), WTF::move(parent));
-    }
-
-private:
-    CachedCompactTDZEnvironmentMapHandle m_handle;
-    CachedRefPtr<CachedTDZEnvironmentLink> m_parent;
-};
-
-class CachedJSTextPosition : public CachedObject<JSTextPosition> {
-public:
-    void encode(Encoder&, const JSTextPosition& position)
-    {
-        m_line = position.line;
-        m_offset = position.offset;
-        m_lineStartOffset = position.lineStartOffset;
-    }
-
-    JSTextPosition decode(Decoder&) const
-    {
-        return JSTextPosition { m_line, m_offset, m_lineStartOffset };
-    }
-
-private:
-    int m_line;
-    int m_offset;
-    int m_lineStartOffset;
-};
-
-class CachedClassElementDefinition : public CachedObject<UnlinkedFunctionExecutable::ClassElementDefinition> {
-public:
-    void encode(Encoder& encoder, const UnlinkedFunctionExecutable::ClassElementDefinition& definition)
-    {
-        m_ident.encode(encoder, definition.ident);
-        m_position.encode(encoder, definition.position);
-        m_initializerPosition.encode(encoder, definition.initializerPosition);
-        m_kind = static_cast<uint8_t>(definition.kind);
-    }
-
-    void decode(Decoder& decoder, UnlinkedFunctionExecutable::ClassElementDefinition& definition) const
-    {
-        definition.ident = m_ident.decode(decoder);
-        definition.position = m_position.decode(decoder);
-        definition.initializerPosition = m_initializerPosition.decode(decoder);
-        definition.kind = static_cast<UnlinkedFunctionExecutable::ClassElementDefinition::Kind>(m_kind);
-    }
-
-private:
-    CachedIdentifier m_ident;
-    CachedJSTextPosition m_position;
-    CachedOptional<CachedJSTextPosition> m_initializerPosition;
-    uint8_t m_kind;
-};
-
-// A header word of presence bits, then only the members that are set: the three vectors (4-byte aligned), then the
-// class source's four numbers as varints. Most rare data is an async function's (empty) wrapper parameter names.
-class CachedFunctionExecutableRareData : public CachedObject<UnlinkedFunctionExecutable::RareData> {
-public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool isSingleOwner = true;
-#endif
-    enum Header : uint32_t {
+    enum Bit : uint32_t {
         HasClassSource = 1 << 0,
         HasWrapperParameterNames = 1 << 1,
         HasClassElementDefinitions = 1 << 2,
         HasParentPrivateNameEnvironment = 1 << 3,
     };
 
-    static uint32_t headerFor(const UnlinkedFunctionExecutable::RareData& rareData)
+    static void encode(Writer& writer, Encoder& encoder, const UnlinkedFunctionExecutable::RareData& rareData)
     {
-        uint32_t header = 0;
+        uint32_t bits = 0;
         if (!rareData.m_classSource.isNull())
-            header |= HasClassSource;
+            bits |= HasClassSource;
         if (!rareData.m_generatorOrAsyncWrapperFunctionParameterNames.isEmpty())
-            header |= HasWrapperParameterNames;
+            bits |= HasWrapperParameterNames;
         if (!rareData.m_classElementDefinitions.isEmpty())
-            header |= HasClassElementDefinitions;
+            bits |= HasClassElementDefinitions;
         if (!rareData.m_parentPrivateNameEnvironment.isEmpty())
-            header |= HasParentPrivateNameEnvironment;
-        return header;
-    }
-
-    static size_t tailSize(const UnlinkedFunctionExecutable::RareData& rareData)
-    {
-        uint32_t header = headerFor(rareData);
-        size_t size = 0;
-        if (header & HasWrapperParameterNames)
-            size += sizeof(CachedVector<CachedIdentifier>);
-        if (header & HasClassElementDefinitions)
-            size += sizeof(CachedVector<CachedClassElementDefinition>);
-        if (header & HasParentPrivateNameEnvironment)
-            size += sizeof(CachedPrivateNameEnvironment);
-        if (header & HasClassSource)
-            size += packClassSource(rareData.m_classSource).size();
-        return size;
-    }
-
-    void encode(Encoder& encoder, const UnlinkedFunctionExecutable::RareData& rareData)
-    {
-        m_header = headerFor(rareData);
-        uint8_t* p = std::bit_cast<uint8_t*>(this) + sizeof(uint32_t);
-        if (m_header & HasWrapperParameterNames) {
-            auto* names = new (p) CachedVector<CachedIdentifier>();
-            p += sizeof(*names);
-            names->encode(encoder, rareData.m_generatorOrAsyncWrapperFunctionParameterNames);
+            bits |= HasParentPrivateNameEnvironment;
+        writer.varuint(bits);
+        if (bits & HasWrapperParameterNames) {
+            writer.varuint(rareData.m_generatorOrAsyncWrapperFunctionParameterNames.size());
+            for (auto& name : rareData.m_generatorOrAsyncWrapperFunctionParameterNames)
+                CachedString::encode(writer, encoder, name);
         }
-        if (m_header & HasClassElementDefinitions) {
-            auto* definitions = new (p) CachedVector<CachedClassElementDefinition>();
-            p += sizeof(*definitions);
-            definitions->encode(encoder, rareData.m_classElementDefinitions);
+        if (bits & HasClassElementDefinitions) {
+            writer.varuint(rareData.m_classElementDefinitions.size());
+            for (auto& definition : rareData.m_classElementDefinitions) {
+                CachedString::encode(writer, encoder, definition.ident);
+                CachedJSTextPosition::encode(writer, definition.position);
+                writer.boolean(definition.initializerPosition.has_value());
+                if (definition.initializerPosition)
+                    CachedJSTextPosition::encode(writer, *definition.initializerPosition);
+                writer.u8(static_cast<uint8_t>(definition.kind));
+            }
         }
-        if (m_header & HasParentPrivateNameEnvironment) {
-            auto* environment = new (p) CachedPrivateNameEnvironment();
-            p += sizeof(*environment);
-            environment->encodeShared(encoder, rareData.m_parentPrivateNameEnvironment);
-        }
-        if (m_header & HasClassSource) {
-            VarintWriter writer = packClassSource(rareData.m_classSource);
-            writer.copyTo(p);
+        if (bits & HasParentPrivateNameEnvironment)
+            CachedVariableEnvironment::encodePrivateNames(writer, encoder, rareData.m_parentPrivateNameEnvironment);
+        if (bits & HasClassSource) {
+            const SourceCode& source = rareData.m_classSource;
+            writer.varuint(source.startOffset());
+            writer.varuint(source.endOffset() - source.startOffset());
+            writer.varint(source.firstLine().zeroBasedInt());
+            writer.varint(source.startColumn().zeroBasedInt());
         }
     }
 
-    UnlinkedFunctionExecutable::RareData* decode(Decoder& decoder) const
+    static std::unique_ptr<UnlinkedFunctionExecutable::RareData> decode(Reader& reader, Decoder& decoder)
     {
-        UnlinkedFunctionExecutable::RareData* rareData = new UnlinkedFunctionExecutable::RareData { };
-        const uint8_t* p = std::bit_cast<const uint8_t*>(this) + sizeof(uint32_t);
-        if (m_header & HasWrapperParameterNames) {
-            reinterpret_cast<const CachedVector<CachedIdentifier>*>(p)->decode(decoder, rareData->m_generatorOrAsyncWrapperFunctionParameterNames);
-            p += sizeof(CachedVector<CachedIdentifier>);
+        auto rareData = makeUnique<UnlinkedFunctionExecutable::RareData>();
+        uint32_t bits = reader.varuint();
+        if (bits & HasWrapperParameterNames) {
+            unsigned count = reader.varuint();
+            if (reader.has(count)) {
+                rareData->m_generatorOrAsyncWrapperFunctionParameterNames = FixedVector<Identifier>(count);
+                for (auto& name : rareData->m_generatorOrAsyncWrapperFunctionParameterNames)
+                    name = CachedString::decodeIdentifier(reader, decoder);
+            }
         }
-        if (m_header & HasClassElementDefinitions) {
-            reinterpret_cast<const CachedVector<CachedClassElementDefinition>*>(p)->decode(decoder, rareData->m_classElementDefinitions);
-            p += sizeof(CachedVector<CachedClassElementDefinition>);
+        if (bits & HasClassElementDefinitions) {
+            unsigned count = reader.varuint();
+            if (reader.has(count)) {
+                rareData->m_classElementDefinitions = FixedVector<UnlinkedFunctionExecutable::ClassElementDefinition>(count);
+                for (auto& definition : rareData->m_classElementDefinitions) {
+                    definition.ident = CachedString::decodeIdentifier(reader, decoder);
+                    definition.position = CachedJSTextPosition::decode(reader);
+                    if (reader.boolean())
+                        definition.initializerPosition = CachedJSTextPosition::decode(reader);
+                    definition.kind = static_cast<UnlinkedFunctionExecutable::ClassElementDefinition::Kind>(reader.u8());
+                }
+            }
         }
-        if (m_header & HasParentPrivateNameEnvironment) {
-            reinterpret_cast<const CachedPrivateNameEnvironment*>(p)->decode(decoder, rareData->m_parentPrivateNameEnvironment);
-            p += sizeof(CachedPrivateNameEnvironment);
-        }
-        if (m_header & HasClassSource) {
-            VarintReader reader(p);
+        if (bits & HasParentPrivateNameEnvironment)
+            CachedVariableEnvironment::decodePrivateNames(reader, decoder, rareData->m_parentPrivateNameEnvironment);
+        if (bits & HasClassSource) {
             SourceCode& source = rareData->m_classSource;
             source.m_provider = decoder.provider();
-            source.m_startOffset = reader.u32();
-            source.m_endOffset = source.m_startOffset + reader.u32();
-            source.m_firstLine = OrdinalNumber::fromZeroBasedInt(reader.i32());
-            source.m_startColumn = OrdinalNumber::fromZeroBasedInt(reader.i32());
+            source.m_startOffset = reader.varuint();
+            source.m_endOffset = source.m_startOffset + reader.varuint();
+            source.m_firstLine = OrdinalNumber::fromZeroBasedInt(reader.varint());
+            source.m_startColumn = OrdinalNumber::fromZeroBasedInt(reader.varint());
         }
         return rareData;
     }
-
-private:
-    static VarintWriter packClassSource(const SourceCode& source)
-    {
-        VarintWriter writer;
-        writer.u32(source.startOffset());
-        writer.u32(source.endOffset() - source.startOffset());
-        writer.i32(source.firstLine().zeroBasedInt());
-        writer.i32(source.startColumn().zeroBasedInt());
-        return writer;
-    }
-
-    uint32_t m_header;
 };
-static_assert(sizeof(CachedFunctionExecutableRareData) == sizeof(uint32_t));
 
-// Layout: a header word (what is present, parse mode), then only what is present, 4-byte slots first so they stay aligned:
-//   [mutable metadata 8][checksum 4][extent 4]   updatable records (the jsc shell's disk cache patches them in place)
-//   [checksum 4][extent 4]                       checksummed but not updatable
-//   [call slot][construct slot][name][TDZ link][rare data]
-//   varint tail: flags, features, lexically scoped features, source positions, parameter count, [line info]
-// A persistent payload (bun --compile) has none of the first two rows and only the slots it uses.
-class CachedFunctionExecutable : public CachedObject<UnlinkedFunctionExecutable> {
-    friend struct CachedFunctionExecutableOffsets;
+static uint32_t encodeFunctionCodeBlockRecord(Encoder&, const UnlinkedFunctionCodeBlock&);
 
+// ExecutableRecord :=
+//   u32 header                                              what is present (Header), parse mode << 16
+//   if Updatable:       u32 features, u8 lexicallyScopedFeatures, u8 hasCapturedVariables, u16 0
+//   if HasChecksum:     u32 checksum, u32 extent           the checksum covers [record, record + extent)
+//   if HasCallBlock:    u32 callBlockAt                    offset of the code block record; 0 until its body is written
+//   if HasConstructBlock: u32 constructBlockAt
+//   varuint flags, varuint features, u8 lexicallyScopedFeatures, varuint startOffset, varint × 6 (positions as deltas),
+//   varuint parameterCount, [varuint firstLineOffset, varuint lineCount]
+//   if HasName:         StringRef
+//   if HasTDZ:          SharedRef TDZEnvironmentLink
+//   if HasRareData:     FunctionExecutableRareData
+// An updatable record (the jsc shell's disk cache patches it when a lazily compiled function joins the cache later)
+// always has the first three rows, at fixed offsets; a persistent payload (bun --compile) has only what it uses.
+class CachedFunctionExecutable {
 public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool isSingleOwner = true;
-#endif
-
     enum Header : uint32_t {
-        HasCallSlot = 1 << 0,
-        HasConstructSlot = 1 << 1,
+        HasCallBlock = 1 << 0,
+        HasConstructBlock = 1 << 1,
         HasName = 1 << 2,
         HasTDZ = 1 << 3,
         HasRareData = 1 << 4,
@@ -3147,233 +2335,399 @@ public:
         HasCapturedVariables = 1 << 8,
         ParseModeShift = 16, // 8 bits
     };
-
-    struct Scalars {
-        unsigned firstLineOffset;
-        unsigned lineCount;
-        unsigned unlinkedFunctionStart;
-        unsigned unlinkedBodyStartColumn;
-        unsigned unlinkedBodyEndColumn;
-        unsigned startOffset;
-        unsigned sourceLength;
-        unsigned parametersStartOffset;
-        unsigned unlinkedFunctionEnd;
-        unsigned parameterCount;
-        SourceParseMode sourceParseMode;
-        ImplementationVisibility implementationVisibility;
-        bool isBuiltinFunction;
-        bool isBuiltinDefaultClassConstructor;
-        unsigned constructAbility;
-        unsigned constructorKind;
-        unsigned functionMode;
-        unsigned scriptMode;
-        unsigned superBinding;
-        unsigned derivedContextType;
-        unsigned evalContextType;
-        bool inlineAttribute;
-        bool needsClassFieldInitializer;
-        unsigned privateBrandRequirement;
-        bool hasName;
-        CodeFeatures features;
-        LexicallyScopedFeatures lexicallyScopedFeatures;
-        bool hasCapturedVariables;
+    enum Flag : uint32_t {
+        // one word of 1- and 2-bit fields, written as a varuint (the high bits are the rarely-set ones)
+        ScriptModeShift = 0,
+        SuperBindingShift = 1,
+        ConstructAbilityShift = 2,
+        HasNameFlagShift = 3,
+        ConstructorKindShift = 4, // 2 bits
+        FunctionModeShift = 6, // 2
+        ImplementationVisibilityShift = 8, // 2
+        DerivedContextTypeShift = 10, // 2
+        EvalContextTypeShift = 12, // 2
+        PrivateBrandRequirementShift = 14,
+        InlineAttributeShift = 15,
+        NeedsClassFieldInitializerShift = 16,
+        IsBuiltinFunctionShift = 17,
+        IsBuiltinDefaultClassConstructorShift = 18,
     };
+    static_assert(bitWidthOfImplementationVisibility <= 2);
 
-    using CodeBlockSlot = CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock>;
+    // Offsets of the fixed fields of an updatable record.
+    static constexpr size_t metadataOffset = 4;
+    static constexpr size_t checksumOffset = metadataOffset + 8;
+    static constexpr size_t extentOffset = checksumOffset + 4;
+    static constexpr size_t callBlockOffset = extentOffset + 4;
+    static constexpr size_t constructBlockOffset = callBlockOffset + 4;
+    static constexpr size_t updatableFixedSize = constructBlockOffset + 4;
 
-    // The record, parsed.
-    struct View {
-        uint32_t header { 0 };
-        const CachedFunctionExecutableMetadata* metadata { nullptr };
-        const uint32_t* checksum { nullptr };
-        const uint32_t* extent { nullptr };
-        const CodeBlockSlot* call { nullptr };
-        const CodeBlockSlot* construct { nullptr };
-        const CachedIdentifier* name { nullptr };
-        const CachedRefPtr<CachedTDZEnvironmentLink>* tdz { nullptr };
-        const CachedPtr<CachedFunctionExecutableRareData>* rareData { nullptr };
-        const uint8_t* tail { nullptr };
-        const uint8_t* tailEnd { nullptr };
-        Scalars scalars;
-        bool intact { false };
-    };
+    static uint32_t encode(Encoder&, const UnlinkedFunctionExecutable&);
 
-    static size_t tailSize(const Encoder& encoder, const UnlinkedFunctionExecutable& executable)
-    {
-        // Everything after the header word; see encode() for the order.
-        return slotBytes(headerFor(executable, &encoder)) + packedTail(executable).size();
-    }
-
-    void encode(Encoder&, const UnlinkedFunctionExecutable&);
+    // The record at `at`, parsed and its references decoded; `intact` is false if it does not parse or its checksum is off.
+    CachedFunctionExecutable(Decoder&, uint32_t at);
     UnlinkedFunctionExecutable* decode(Decoder&) const;
+    // Whether the record at `at` parses and checks out, without decoding anything.
+    static bool isIntact(Decoder&, uint32_t at);
 
-    // `limit` bounds the parse; the payload end for an integrity check, unbounded once verified.
-    View view(const uint8_t* limit = nullptr) const;
-
-    // Checked by the owning code block (or the cache entry) before it decodes anything.
-    bool isIntact(Decoder& decoder) const
-    {
-        if (!decoder.payloadContains(this, sizeof(uint32_t)))
-            return false;
-        auto payload = decoder.payloadSpan();
-        View v = view(payload.data() + payload.size());
-        if (!v.intact)
-            return false;
-        if (!(v.header & HasChecksum))
-            return true;
-        return decoder.regionChecksumMatches(this, *v.extent, v.checksum);
-    }
+    bool intact { false };
+    uint32_t at { 0 };
+    uint32_t header { 0 };
+    uint32_t callBlockAt { 0 };
+    uint32_t constructBlockAt { 0 };
+    unsigned firstLineOffset { 0 };
+    unsigned lineCount { 0 };
+    unsigned unlinkedFunctionStart { 0 };
+    unsigned unlinkedBodyStartColumn { 0 };
+    unsigned unlinkedBodyEndColumn { 0 };
+    unsigned startOffset { 0 };
+    unsigned sourceLength { 0 };
+    unsigned parametersStartOffset { 0 };
+    unsigned unlinkedFunctionEnd { 0 };
+    unsigned parameterCount { 0 };
+    SourceParseMode sourceParseMode { };
+    ImplementationVisibility implementationVisibility { };
+    bool isBuiltinFunction { false };
+    bool isBuiltinDefaultClassConstructor { false };
+    unsigned constructAbility { 0 };
+    unsigned constructorKind { 0 };
+    unsigned functionMode { 0 };
+    unsigned scriptMode { 0 };
+    unsigned superBinding { 0 };
+    unsigned derivedContextType { 0 };
+    unsigned evalContextType { 0 };
+    bool inlineAttribute { false };
+    bool needsClassFieldInitializer { false };
+    unsigned privateBrandRequirement { 0 };
+    bool hasName { false };
+    CodeFeatures features { 0 };
+    LexicallyScopedFeatures lexicallyScopedFeatures { 0 };
+    bool hasCapturedVariables { false };
+    Identifier name;
+    RefPtr<TDZEnvironmentLink> parentScopeTDZVariables;
+    std::unique_ptr<UnlinkedFunctionExecutable::RareData> rareData;
 
 private:
-    static uint32_t headerFor(const UnlinkedFunctionExecutable&, const Encoder*);
-    static size_t slotBytes(uint32_t header)
-    {
-        size_t bytes = 0;
-        if (header & Updatable)
-            bytes += sizeof(CachedFunctionExecutableMetadata);
-        if (header & HasChecksum)
-            bytes += 2 * sizeof(uint32_t);
-        for (uint32_t bit : { HasCallSlot, HasConstructSlot, HasName, HasTDZ, HasRareData }) {
-            if (header & bit)
-                bytes += sizeof(uint32_t);
-        }
-        return bytes;
-    }
-    static Vector<uint8_t, 64> packedTail(const UnlinkedFunctionExecutable&);
-    static void packScalars(const UnlinkedFunctionExecutable&, VarintWriter&);
-
-    uint8_t* bytes() { return std::bit_cast<uint8_t*>(this); }
-    const uint8_t* bytes() const { return std::bit_cast<const uint8_t*>(this); }
-
-    uint32_t m_header;
+    enum class Mode { Check, Decode };
+    CachedFunctionExecutable(Decoder&, uint32_t at, Mode);
 };
-static_assert(sizeof(CachedFunctionExecutable) == sizeof(uint32_t));
-
-// Fixed offsets of an updatable record (see CachedFunctionExecutable::Header).
-ptrdiff_t CachedFunctionExecutableOffsets::metadataOffset()
-{
-    return sizeof(uint32_t);
-}
-
-ptrdiff_t CachedFunctionExecutableOffsets::checksumOffset()
-{
-    return metadataOffset() + sizeof(CachedFunctionExecutableMetadata);
-}
-
-ptrdiff_t CachedFunctionExecutableOffsets::extentOffset()
-{
-    return checksumOffset() + sizeof(uint32_t);
-}
-
-ptrdiff_t CachedFunctionExecutableOffsets::codeBlockForCallOffset()
-{
-    return extentOffset() + sizeof(uint32_t);
-}
-
-ptrdiff_t CachedFunctionExecutableOffsets::codeBlockForConstructOffset()
-{
-    return codeBlockForCallOffset() + sizeof(uint32_t);
-}
-
-size_t CachedFunctionExecutableOffsets::fixedSize()
-{
-    return codeBlockForConstructOffset() + sizeof(uint32_t);
-}
 
 bool CachedFunctionExecutableOffsets::isUpdatable(std::span<const uint8_t> record)
 {
-    uint32_t header;
-    if (record.size() < sizeof(header))
-        return false;
-    memcpySpan(std::span { reinterpret_cast<uint8_t*>(&header), sizeof(header) }, record.first(sizeof(header)));
-    return header & CachedFunctionExecutable::Updatable;
+    return record.size() >= 4 && (readU32(record.data()) & CachedFunctionExecutable::Updatable);
 }
+ptrdiff_t CachedFunctionExecutableOffsets::metadataOffset() { return CachedFunctionExecutable::metadataOffset; }
+ptrdiff_t CachedFunctionExecutableOffsets::checksumOffset() { return CachedFunctionExecutable::checksumOffset; }
+ptrdiff_t CachedFunctionExecutableOffsets::extentOffset() { return CachedFunctionExecutable::extentOffset; }
+ptrdiff_t CachedFunctionExecutableOffsets::codeBlockForCallOffset() { return CachedFunctionExecutable::callBlockOffset; }
+ptrdiff_t CachedFunctionExecutableOffsets::codeBlockForConstructOffset() { return CachedFunctionExecutable::constructBlockOffset; }
+size_t CachedFunctionExecutableOffsets::fixedSize() { return CachedFunctionExecutable::updatableFixedSize; }
 
-uint32_t bytecodeCacheRecordChecksum(std::span<const uint8_t> record, size_t checksumOffset)
+uint32_t CachedFunctionExecutable::encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable)
 {
-    static const uint8_t zeros[4] = { };
-    uint32_t crc = ~0u;
-    crc = crc32c(crc, record.first(checksumOffset));
-    crc = crc32c(crc, std::span { zeros, 4 });
-    crc = crc32c(crc, record.subspan(checksumOffset + 4));
-    return ~crc;
+    uint32_t header = static_cast<uint32_t>(executable.m_sourceParseMode) << ParseModeShift;
+    if (executable.m_hasCapturedVariables)
+        header |= HasCapturedVariables;
+    if (executable.m_firstLineOffset || executable.m_lineCount)
+        header |= HasLines;
+    if (!executable.ecmaName().isNull())
+        header |= HasName;
+    if (executable.m_parentScopeTDZVariables)
+        header |= HasTDZ;
+    if (executable.m_rareData)
+        header |= HasRareData;
+    if (executable.m_unlinkedCodeBlockForCall)
+        header |= HasCallBlock;
+    if (executable.m_unlinkedCodeBlockForConstruct)
+        header |= HasConstructBlock;
+    if (encoder.checksums())
+        header |= HasChecksum;
+    if (encoder.updatable())
+        header |= Updatable | HasChecksum | HasCallBlock | HasConstructBlock;
+
+    Writer writer;
+    writer.u32(header);
+    if (header & Updatable) {
+        writer.u32(executable.m_features);
+        writer.u8(executable.m_lexicallyScopedFeatures);
+        writer.boolean(executable.m_hasCapturedVariables);
+        writer.u16(0);
+    }
+    size_t checksumAt = 0;
+    size_t extentAt = 0;
+    if (header & HasChecksum) {
+        checksumAt = writer.reserveU32();
+        extentAt = writer.reserveU32();
+    }
+    size_t callBlockAt = header & HasCallBlock ? writer.reserveU32() : 0;
+    size_t constructBlockAt = header & HasConstructBlock ? writer.reserveU32() : 0;
+
+    uint32_t flags = static_cast<uint32_t>(executable.m_scriptMode) << ScriptModeShift
+        | static_cast<uint32_t>(executable.m_superBinding) << SuperBindingShift
+        | static_cast<uint32_t>(executable.m_constructAbility) << ConstructAbilityShift
+        | static_cast<uint32_t>(executable.m_hasName) << HasNameFlagShift
+        | static_cast<uint32_t>(executable.m_constructorKind) << ConstructorKindShift
+        | static_cast<uint32_t>(executable.m_functionMode) << FunctionModeShift
+        | static_cast<uint32_t>(executable.m_implementationVisibility) << ImplementationVisibilityShift
+        | static_cast<uint32_t>(executable.m_derivedContextType) << DerivedContextTypeShift
+        | static_cast<uint32_t>(executable.m_evalContextType) << EvalContextTypeShift
+        | static_cast<uint32_t>(executable.m_privateBrandRequirement) << PrivateBrandRequirementShift
+        | static_cast<uint32_t>(executable.m_inlineAttribute) << InlineAttributeShift
+        | static_cast<uint32_t>(executable.m_needsClassFieldInitializer) << NeedsClassFieldInitializerShift
+        | static_cast<uint32_t>(executable.m_isBuiltinFunction) << IsBuiltinFunctionShift
+        | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << IsBuiltinDefaultClassConstructorShift;
+    writer.varuint(flags);
+    writer.varuint(executable.m_features);
+    writer.u8(static_cast<uint8_t>(executable.m_lexicallyScopedFeatures));
+    // Source positions cluster around the function's start, so all but the first are deltas.
+    unsigned start = executable.m_startOffset;
+    writer.varuint(start);
+    writer.varint(static_cast<int32_t>(executable.m_unlinkedFunctionStart - start));
+    writer.varint(static_cast<int32_t>(executable.m_parametersStartOffset - start));
+    writer.varuint(executable.m_sourceLength);
+    writer.varint(static_cast<int32_t>(executable.m_unlinkedFunctionEnd - (start + executable.m_sourceLength)));
+    // Columns are offsets from a line start; on one line the two differ by the same constant, so the second is a delta of the first.
+    int32_t bodyStartColumnDelta = static_cast<int32_t>(executable.m_unlinkedBodyStartColumn - executable.m_unlinkedFunctionStart);
+    writer.varint(bodyStartColumnDelta);
+    writer.varint(static_cast<int32_t>(executable.m_unlinkedBodyEndColumn - executable.m_unlinkedFunctionEnd) - bodyStartColumnDelta);
+    writer.varuint(executable.m_parameterCount);
+    if (header & HasLines) {
+        writer.varuint(executable.m_firstLineOffset);
+        writer.varuint(executable.m_lineCount);
+    }
+    if (header & HasName)
+        CachedString::encode(writer, encoder, executable.ecmaName());
+    if (header & HasTDZ)
+        CachedTDZEnvironmentLink::encodeRef(writer, encoder, executable.m_parentScopeTDZVariables.get());
+    if (header & HasRareData)
+        CachedFunctionExecutableRareData::encode(writer, encoder, *executable.m_rareData);
+
+    if (header & HasChecksum)
+        writer.patchU32(extentAt, writer.size());
+    uint32_t at = encoder.append(writer);
+    if (header & HasChecksum)
+        encoder.addChecksum(at, writer.size(), at + checksumAt);
+    if (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct)
+        encoder.addLeafExecutable(&executable, at);
+
+    encoder.deferBody([&encoder, at, callBlockAt, constructBlockAt, forCall = executable.m_unlinkedCodeBlockForCall.get(), forConstruct = executable.m_unlinkedCodeBlockForConstruct.get()] {
+        if (forCall)
+            encoder.patchU32(at + callBlockAt, encodeFunctionCodeBlockRecord(encoder, *forCall));
+        if (forConstruct)
+            encoder.patchU32(at + constructBlockAt, encodeFunctionCodeBlockRecord(encoder, *forConstruct));
+    });
+    return at;
 }
 
-template<typename CodeBlockType> struct CachedCodeBlockRecordFor;
+CachedFunctionExecutable::CachedFunctionExecutable(Decoder& decoder, uint32_t at)
+    : CachedFunctionExecutable(decoder, at, Mode::Decode)
+{
+}
+
+bool CachedFunctionExecutable::isIntact(Decoder& decoder, uint32_t at)
+{
+    return CachedFunctionExecutable(decoder, at, Mode::Check).intact;
+}
+
+CachedFunctionExecutable::CachedFunctionExecutable(Decoder& decoder, uint32_t at, Mode mode)
+    : at(at)
+{
+    Reader reader(decoder.payload(), at);
+    header = reader.u32();
+    uint32_t checksumFieldAt = 0;
+    uint32_t extent = 0;
+    if (header & Updatable) {
+        // The jsc shell's disk cache patches these after a lazily compiled function joins the cache.
+        features = reader.u32();
+        lexicallyScopedFeatures = reader.u8();
+        hasCapturedVariables = reader.boolean();
+        reader.u16();
+    }
+    if (header & HasChecksum) {
+        checksumFieldAt = reader.offset();
+        reader.u32();
+        extent = reader.u32();
+    }
+    if (header & HasCallBlock)
+        callBlockAt = reader.u32();
+    if (header & HasConstructBlock)
+        constructBlockAt = reader.u32();
+    if (reader.overran())
+        return;
+    if (mode == Mode::Check && (header & HasChecksum)) {
+        // Nothing past the fixed fields is read before the checksum has been verified.
+        intact = decoder.checksumMatches(at, extent, checksumFieldAt);
+        return;
+    }
+
+    uint32_t flags = reader.varuint();
+    auto bits = [&](unsigned shift, unsigned width = 1) { return (flags >> shift) & ((1u << width) - 1); };
+    scriptMode = bits(ScriptModeShift);
+    superBinding = bits(SuperBindingShift);
+    constructAbility = bits(ConstructAbilityShift);
+    hasName = bits(HasNameFlagShift);
+    constructorKind = bits(ConstructorKindShift, 2);
+    functionMode = bits(FunctionModeShift, 2);
+    implementationVisibility = static_cast<ImplementationVisibility>(bits(ImplementationVisibilityShift, 2));
+    derivedContextType = bits(DerivedContextTypeShift, 2);
+    evalContextType = bits(EvalContextTypeShift, 2);
+    privateBrandRequirement = bits(PrivateBrandRequirementShift);
+    inlineAttribute = bits(InlineAttributeShift);
+    needsClassFieldInitializer = bits(NeedsClassFieldInitializerShift);
+    isBuiltinFunction = bits(IsBuiltinFunctionShift);
+    isBuiltinDefaultClassConstructor = bits(IsBuiltinDefaultClassConstructorShift);
+    CodeFeatures generatedFeatures = reader.varuint();
+    LexicallyScopedFeatures generatedLexicallyScopedFeatures = reader.u8();
+    if (!(header & Updatable)) {
+        features = generatedFeatures;
+        lexicallyScopedFeatures = generatedLexicallyScopedFeatures;
+        hasCapturedVariables = header & HasCapturedVariables;
+    }
+    sourceParseMode = static_cast<SourceParseMode>((header >> ParseModeShift) & 0xff);
+    startOffset = reader.varuint();
+    unlinkedFunctionStart = startOffset + reader.varint();
+    parametersStartOffset = startOffset + reader.varint();
+    sourceLength = reader.varuint();
+    unlinkedFunctionEnd = startOffset + sourceLength + reader.varint();
+    int32_t bodyStartColumnDelta = reader.varint();
+    unlinkedBodyStartColumn = unlinkedFunctionStart + bodyStartColumnDelta;
+    unlinkedBodyEndColumn = unlinkedFunctionEnd + bodyStartColumnDelta + reader.varint();
+    parameterCount = reader.varuint();
+    if (header & HasLines) {
+        firstLineOffset = reader.varuint();
+        lineCount = reader.varuint();
+    }
+    if (mode == Mode::Check) {
+        intact = !reader.overran();
+        return;
+    }
+    if (header & HasName)
+        name = CachedString::decodeIdentifier(reader, decoder);
+    if (header & HasTDZ)
+        parentScopeTDZVariables = CachedTDZEnvironmentLink::decodeRef(reader, decoder);
+    if (header & HasRareData)
+        rareData = CachedFunctionExecutableRareData::decode(reader, decoder);
+    intact = !reader.overran();
+}
+
+ALWAYS_INLINE UnlinkedFunctionExecutable* CachedFunctionExecutable::decode(Decoder& decoder) const
+{
+    UnlinkedFunctionExecutable* executable = new (NotNull, allocateCell<UnlinkedFunctionExecutable>(decoder.vm())) UnlinkedFunctionExecutable(decoder, *this);
+    executable->finishCreation(decoder.vm());
+    return executable;
+}
+
+ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& decoder, const CachedFunctionExecutable& record)
+    : Base(decoder.vm(), decoder.vm().unlinkedFunctionExecutableStructure.get())
+    , m_firstLineOffset(record.firstLineOffset)
+    , m_isGeneratedFromCache(true)
+    , m_lineCount(record.lineCount)
+    , m_hasCapturedVariables(record.hasCapturedVariables)
+    , m_unlinkedFunctionStart(record.unlinkedFunctionStart)
+    , m_isBuiltinFunction(record.isBuiltinFunction)
+    , m_unlinkedBodyStartColumn(record.unlinkedBodyStartColumn)
+    , m_isBuiltinDefaultClassConstructor(record.isBuiltinDefaultClassConstructor)
+    , m_unlinkedBodyEndColumn(record.unlinkedBodyEndColumn)
+    , m_constructAbility(record.constructAbility)
+    , m_startOffset(record.startOffset)
+    , m_scriptMode(record.scriptMode)
+    , m_sourceLength(record.sourceLength)
+    , m_superBinding(record.superBinding)
+    , m_parametersStartOffset(record.parametersStartOffset)
+    , m_isCached(false)
+    , m_unlinkedFunctionEnd(record.unlinkedFunctionEnd)
+    , m_needsClassFieldInitializer(record.needsClassFieldInitializer)
+    , m_parameterCount(record.parameterCount)
+    , m_singletonHasBeenInvalidated(false)
+    , m_privateBrandRequirement(record.privateBrandRequirement)
+    , m_features(record.features)
+    , m_constructorKind(record.constructorKind)
+    , m_sourceParseMode(record.sourceParseMode)
+    , m_implementationVisibility(static_cast<unsigned>(record.implementationVisibility))
+    , m_lexicallyScopedFeatures(record.lexicallyScopedFeatures)
+    , m_functionMode(record.functionMode)
+    , m_derivedContextType(record.derivedContextType)
+    , m_inlineAttribute(record.inlineAttribute)
+    , m_evalContextType(record.evalContextType)
+    , m_hasName(record.hasName)
+    , m_unlinkedCodeBlockForCall()
+    , m_unlinkedCodeBlockForConstruct()
+    , m_ecmaName(record.name)
+    , m_parentScopeTDZVariables(record.parentScopeTDZVariables)
+    , m_rareData(const_cast<CachedFunctionExecutable&>(record).rareData.release())
+{
+    if (record.callBlockAt || record.constructBlockAt) {
+        m_isCached = true;
+        m_decoder = &decoder;
+        m_cachedCodeBlockForCallOffset = record.callBlockAt;
+        m_cachedCodeBlockForConstructOffset = record.constructBlockAt;
+    }
+    if (!record.callBlockAt || !record.constructBlockAt)
+        decoder.addLeafExecutable(this, record.at);
+}
+
+// -- Code blocks ------------------------------------------------------------------------------------------------------
 
 class CachedProgramCodeBlock;
 class CachedModuleCodeBlock;
 class CachedEvalCodeBlock;
 class CachedFunctionCodeBlock;
-template<> struct CachedCodeBlockRecordFor<UnlinkedProgramCodeBlock> { using type = CachedProgramCodeBlock; };
-template<> struct CachedCodeBlockRecordFor<UnlinkedModuleProgramCodeBlock> { using type = CachedModuleCodeBlock; };
-template<> struct CachedCodeBlockRecordFor<UnlinkedEvalCodeBlock> { using type = CachedEvalCodeBlock; };
-template<> struct CachedCodeBlockRecordFor<UnlinkedFunctionCodeBlock> { using type = CachedFunctionCodeBlock; };
+template<typename CodeBlockType> struct CachedCodeBlockTypeFor;
+template<> struct CachedCodeBlockTypeFor<UnlinkedProgramCodeBlock> { using type = CachedProgramCodeBlock; };
+template<> struct CachedCodeBlockTypeFor<UnlinkedModuleProgramCodeBlock> { using type = CachedModuleCodeBlock; };
+template<> struct CachedCodeBlockTypeFor<UnlinkedEvalCodeBlock> { using type = CachedEvalCodeBlock; };
+template<> struct CachedCodeBlockTypeFor<UnlinkedFunctionCodeBlock> { using type = CachedFunctionCodeBlock; };
+template<typename CodeBlockType> using CachedCodeBlockType = typename CachedCodeBlockTypeFor<CodeBlockType>::type;
 
-// The few members most code blocks never have; written (before the record, like everything else) only when one is set.
-struct CachedCodeBlockExtras {
-    void encode(Encoder& encoder, const UnlinkedCodeBlock& codeBlock)
-    {
-        rareData.encode(encoder, codeBlock.m_rareData.get());
-        outOfLineJumpTargets.encode(encoder, codeBlock.m_outOfLineJumpTargets);
-    }
-    static bool isNeeded(const UnlinkedCodeBlock& codeBlock)
-    {
-        return codeBlock.m_rareData || !codeBlock.m_outOfLineJumpTargets.isEmpty();
-    }
-
-    CachedPtr<CachedCodeBlockRareData> rareData;
-    CachedHashMap<JSInstructionStream::Offset, int> outOfLineJumpTargets;
-};
-
-// A code block is written as one region: its arrays (metadata steps, instructions, constants, identifiers, child slots,
-// extras), then a 16-byte record followed by a varint tail that says where in the region each array is and holds every
-// count/register/flag, then whatever the derived record adds, then the children's executable records.
-// Offsets in the tail are relative to the start of the region, so they are 1-2 bytes for nearly every function.
+// A code block is a region: its arrays, then the record everything points at, then its children's executable records.
+//
+//   [steps]            4-aligned, count × u32        the metadata table as (opcode << 24 | entries); see CachedMetadataSteps
+//   [instructions]     count bytes
+//   [representations]  count × u8                    constants' SourceCodeRepresentation
+//   [constants]        count × JSValue
+//   [identifiers]      count × StringRef
+//   [rare data]        CodeBlockRareData
+//   [jump targets]     OutOfLineJumpTargets
+//   [own members]      what the kind of code block adds (GlobalCodeBlock below; nothing for a function)
+//   [child slots]      (functionDecls + functionExprs) × u32   offsets of the children's executable records, patched
+//   record:
+//     u32 expressionInfoAt                            patched in the cold pass
+//     Layout: u8 flags, varuint recordOffsetInRegion, [varuint metadataValueProfiles], 7 × Array, [varint rareDataAt],
+//             [varint jumpTargetsAt], [varint ownAt]     Array := varuint count, [varint at]; offsets are from the region's start
+//     Scalars: varuint flags, u8 parseMode, u8 codeGenerationMode, varint thisRegister, varint scopeRegister,
+//              varint numVars, varint numCalleeLocals, varint numParameters, varuint × 4 profile counts
+//     [u32 regionSize, u32 checksum]                  the checksum covers [region, region + regionSize)
+//
+// The first three arrays may be shared with an identical one an earlier block wrote (their `at` is then negative);
+// regionIsIntact() folds those into this block's checksum in that order.
 template<typename CodeBlockType>
-class CachedCodeBlock : public CachedObject<CodeBlockType> {
+class CachedCodeBlock {
 public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr bool isSingleOwner = true;
-#endif
-    using Record = typename CachedCodeBlockRecordFor<CodeBlockType>::type;
-
-    struct Scalars {
-        VirtualRegister thisRegister;
-        VirtualRegister scopeRegister;
-        unsigned isConstructor : 1;
-        unsigned isBuiltinDefaultClassConstructor : 1;
-        unsigned isBuiltinFunction : 1;
-        unsigned superBinding : 1;
-        unsigned scriptMode : 1;
-        unsigned isArrowFunctionContext : 1;
-        unsigned isClassContext : 1;
-        unsigned constructorKind : 2;
-        unsigned derivedContextType : 2;
-        unsigned evalContextType : 2;
-        unsigned hasTailCalls : 1;
-        unsigned codeType : 2;
-        unsigned hasCheckpoints : 1;
-        SourceParseMode parseMode;
-        OptionSet<CodeGenerationMode> codeGenerationMode;
-        int numVars;
-        int numCalleeLocals;
-        int numParameters;
-        unsigned numValueProfiles;
-        unsigned numArrayProfiles;
-        unsigned numBinaryArithProfiles;
-        unsigned numUnaryArithProfiles;
-    };
-
     enum LayoutFlag : uint8_t {
         LayoutHasMetadata = 1 << 0,
-        LayoutMetadataIs32Bit = 1 << 1,
-        LayoutHasExtras = 1 << 2,
-        LayoutHasChecksum = 1 << 3, // [u32 region size][u32 checksum] follow the tail
+        LayoutHasRareData = 1 << 1,
+        LayoutHasJumpTargets = 1 << 2,
+        LayoutHasOwnMembers = 1 << 3,
+        LayoutHasChecksum = 1 << 4,
+    };
+    enum Flag : uint32_t {
+        IsConstructorShift = 0,
+        SuperBindingShift = 1,
+        ScriptModeShift = 2,
+        IsArrowFunctionContextShift = 3,
+        IsClassContextShift = 4,
+        HasTailCallsShift = 5,
+        HasCheckpointsShift = 6,
+        ConstructorKindShift = 7, // 2 bits
+        DerivedContextTypeShift = 9, // 2
+        EvalContextTypeShift = 11, // 2
+        CodeTypeShift = 13, // 2
+        IsBuiltinFunctionShift = 15,
+        IsBuiltinDefaultClassConstructorShift = 16,
     };
     struct Array {
         unsigned count { 0 };
-        int32_t at { 0 }; // relative to the region start; only meaningful when count is non-zero
+        int32_t at { 0 }; // from the region start; only meaningful when count is non-zero
     };
     struct Layout {
         uint8_t flags { 0 };
@@ -3381,341 +2735,499 @@ public:
         unsigned metadataValueProfiles { 0 };
         Array steps;
         Array instructions; // count is in bytes
+        Array representations;
         Array constants;
-        Array constantsSourceCodeRepresentation;
         Array identifiers;
         Array functionDecls;
         Array functionExprs;
-        int32_t extrasAt { 0 };
+        int32_t rareDataAt { 0 };
+        int32_t jumpTargetsAt { 0 };
+        int32_t ownAt { 0 };
     };
-    struct Tail {
-        Layout layout;
-        Scalars scalars;
-        const uint8_t* end { nullptr }; // where the tail's varints stop: the region size and checksum, when present, follow
-        bool intact { true };
+    struct Scalars {
+        VirtualRegister thisRegister;
+        VirtualRegister scopeRegister;
+        bool isConstructor { false };
+        bool isBuiltinDefaultClassConstructor { false };
+        bool isBuiltinFunction { false };
+        bool superBinding { false };
+        bool scriptMode { false };
+        bool isArrowFunctionContext { false };
+        bool isClassContext { false };
+        bool hasTailCalls { false };
+        bool hasCheckpoints { false };
+        unsigned constructorKind { 0 };
+        unsigned derivedContextType { 0 };
+        unsigned evalContextType { 0 };
+        unsigned codeType { 0 };
+        SourceParseMode parseMode { };
+        OptionSet<CodeGenerationMode> codeGenerationMode;
+        int numVars { 0 };
+        int numCalleeLocals { 0 };
+        int numParameters { 0 };
+        unsigned numValueProfiles { 0 };
+        unsigned numArrayProfiles { 0 };
+        unsigned numBinaryArithProfiles { 0 };
+        unsigned numUnaryArithProfiles { 0 };
     };
 
-    static Record* create(Encoder&, const CodeBlockType&);
-    void decode(Decoder&, UnlinkedCodeBlock&, const Tail&) const;
+    // Writes the region and returns the record's offset.
+    static uint32_t encode(Encoder&, const CodeBlockType&);
 
-    // `limit` bounds the parse for the integrity check; once the region is verified it is read unbounded.
-    Tail readTail(const uint8_t* limit = nullptr) const;
-    // The tail the decode in progress already parsed (see ActiveTailScope), else a fresh parse.
-    const Tail& tail(Decoder& decoder, Tail& storage) const
-    {
-        if (auto* active = static_cast<const Tail*>(decoder.activeCodeBlockTail(this)))
-            return *active;
-        storage = readTail();
-        return storage;
-    }
-    struct ActiveTailScope {
-        ActiveTailScope(Decoder& decoder, const void* record, const Tail& tail)
-            : m_decoder(decoder)
-        {
-            decoder.setActiveCodeBlockTail(record, &tail);
-        }
-        ~ActiveTailScope() { m_decoder.setActiveCodeBlockTail(nullptr, nullptr); }
-        Decoder& m_decoder;
-    };
-    Scalars scalars(Decoder& decoder) const { Tail storage; return tail(decoder, storage).scalars; }
+    // The record at `at`, parsed. Nothing is decoded until regionIsIntact() has passed.
+    CachedCodeBlock(Decoder&, uint32_t at);
+    bool regionIsIntact(Decoder&);
+    CodeBlockType* decode(Decoder&) const;
 
-    const uint8_t* regionBegin(const Layout& layout) const { return std::bit_cast<const uint8_t*>(this) - layout.recordOffsetInRegion; }
-    template<typename T> const T* at(const Layout& layout, const Array& array) const { return array.count ? reinterpret_cast<const T*>(regionBegin(layout) + array.at) : nullptr; }
-    const CachedCodeBlockExtras* extras(const Layout& layout) const { return layout.flags & LayoutHasExtras ? reinterpret_cast<const CachedCodeBlockExtras*>(regionBegin(layout) + layout.extrasAt) : nullptr; }
-
-    JSInstructionStream* instructions(Decoder& decoder) const
-    {
-        Tail storage;
-        const Layout& layout = tail(decoder, storage).layout;
-        std::span<const uint8_t> bytes { at<uint8_t>(layout, layout.instructions), layout.instructions.count };
-        if (decoder.canBorrowPayload())
-            return new JSInstructionStream(bytes, JSInstructionStream::Borrow);
-        Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamBufferMalloc> copy;
-        copy.append(bytes);
-        return new JSInstructionStream(WTF::move(copy));
-    }
-
-    Ref<UnlinkedMetadataTable> metadata(Decoder& decoder) const
-    {
-        Tail storage;
-        const Layout& layout = tail(decoder, storage).layout;
-        if (!(layout.flags & LayoutHasMetadata))
-            return UnlinkedMetadataTable::empty();
-        std::span<const uint32_t> steps { at<uint32_t>(layout, layout.steps), layout.steps.count };
-        if (decoder.canBorrowPayload())
-            return UnlinkedMetadataTable::createFromPersistentSteps(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
-        return CachedMetadataSteps::build(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
-    }
-
-    UnlinkedCodeBlock::RareData* rareData(Decoder& decoder) const
-    {
-        Tail storage;
-        auto* e = extras(tail(decoder, storage).layout);
-        return e ? e->rareData.decode(decoder) : nullptr;
-    }
-
-    // The region (arrays, record, tail, derived members, child slots) is checksummed when the payload carries checksums; a
-    // mismatch on decode means the payload is damaged and the block is generated from source instead. Without them the
-    // check is that everything the block points at lies inside the payload.
-    bool regionIsIntact(Decoder& decoder, Tail& tail) const
-    {
-        // `this` came from a slot that CachedBytecode::commitUpdates may rewrite and is therefore not itself checksummed.
-        if (!decoder.payloadContains(this, sizeof(Record)))
-            return false;
-        auto payload = decoder.payloadSpan();
-        const uint8_t* payloadEnd = payload.data() + payload.size();
-        tail = readTail(payloadEnd);
-        if (!tail.intact)
-            return false;
-        const Layout& layout = tail.layout;
-        const uint8_t* begin = regionBegin(layout);
-        if (begin > std::bit_cast<const uint8_t*>(this) || begin < payload.data())
-            return false;
-        const uint8_t* end = payloadEnd;
-        uint32_t regionSize = 0;
-        const uint8_t* storedChecksum = nullptr;
-        if (layout.flags & LayoutHasChecksum) {
-            if (!decoder.payloadContains(tail.end, 2 * sizeof(uint32_t)))
-                return false;
-            memcpy(&regionSize, tail.end, sizeof(regionSize));
-            storedChecksum = tail.end + sizeof(uint32_t);
-            end = begin + regionSize;
-            if (!decoder.payloadContains(begin, regionSize) || storedChecksum + sizeof(uint32_t) > end)
-                return false;
-        }
-
-        // Every array must lie inside the region, except the three the encoder may have shared from an earlier block,
-        // which are folded into the checksum instead (in encoder order).
-        std::array<std::span<const uint8_t>, 3> external;
-        unsigned externalCount = 0;
-        auto coveredBytes = [&](const Array& array, size_t bytes) {
-            if (!array.count)
-                return true;
-            const uint8_t* p = begin + array.at;
-            return array.at >= 0 && p + bytes <= end && p + bytes >= p;
-        };
-        auto covered = [&](const Array& array, size_t elementSize, bool shareable) {
-            if (!array.count)
-                return true;
-            size_t bytes = elementSize * array.count;
-            const uint8_t* p = begin + array.at;
-            if (array.at >= 0 && p + bytes <= end && p + bytes >= p)
-                return true;
-            if (!shareable || !decoder.payloadContains(p, bytes))
-                return false;
-            external[externalCount++] = { p, bytes };
-            return true;
-        };
-        if (!covered(layout.steps, sizeof(uint32_t), true)
-            || !covered(layout.instructions, 1, true)
-            || !covered(layout.constantsSourceCodeRepresentation, sizeof(SourceCodeRepresentation), true)
-            || !coveredBytes(layout.constants, CachedJSValuePool::byteSize(layout.constants.count))
-            || !covered(layout.identifiers, sizeof(CachedIdentifier), false)
-            || !covered(layout.functionDecls, sizeof(CachedWriteBarrier<CachedFunctionExecutable>), false)
-            || !covered(layout.functionExprs, sizeof(CachedWriteBarrier<CachedFunctionExecutable>), false))
-            return false;
-        if ((layout.flags & LayoutHasExtras) && (layout.extrasAt < 0 || begin + layout.extrasAt + sizeof(CachedCodeBlockExtras) > end))
-            return false;
-        if (storedChecksum && !decoder.regionChecksumMatches(begin, regionSize, reinterpret_cast<const uint32_t*>(storedChecksum), std::span { external.data(), externalCount }))
-            return false;
-
-        for (const Array* children : { &layout.functionDecls, &layout.functionExprs }) {
-            auto* slots = at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, *children);
-            for (unsigned i = 0; i < children->count; ++i) {
-                auto* record = slots[i].ptr().getIfInPayload(decoder);
-                if (!record || !record->isIntact(decoder))
-                    return false;
-            }
-        }
-        return true;
-    }
+    const Scalars& scalars() const { return m_scalars; }
+    JSInstructionStream* instructions(Decoder&) const;
+    Ref<UnlinkedMetadataTable> metadata(Decoder&) const;
+    UnlinkedCodeBlock::RareData* rareData(Decoder&) const;
 
 protected:
-    // Derived records with nothing of their own use these.
-    void encodeOwnMembers(Encoder&, const CodeBlockType&) { }
+    Reader arrayReader(Decoder& decoder, const Array& array) const { return Reader(decoder.payload(), m_regionAt + array.at); }
+    Reader ownMembersReader(Decoder& decoder) const { return Reader(decoder.payload(), m_regionAt + m_layout.ownAt); }
+    // What the kind of code block adds; a function block has nothing.
+    static void encodeOwnMembers(Writer&, Encoder&, const CodeBlockType&) { }
     void decodeOwnMembers(Decoder&, CodeBlockType&) const { }
 
 private:
-    static void packScalars(const UnlinkedCodeBlock&, VarintWriter&);
-    static void packLayout(const Layout&, VarintWriter&);
-    const uint8_t* tailBytes() const { return std::bit_cast<const uint8_t*>(this) + sizeof(Record); }
-    uint8_t* tailBytes() { return std::bit_cast<uint8_t*>(this) + sizeof(Record); }
+    void decodeArrays(Decoder&, UnlinkedCodeBlock&) const;
 
-    CachedPtr<CachedExpressionInfo> m_expressionInfo; // written by the deferred cold pass, so it stays a fixed slot
+    Layout m_layout;
+    Scalars m_scalars;
+    uint32_t m_recordAt { 0 };
+    uint32_t m_regionAt { 0 };
+    uint32_t m_expressionInfoAt { 0 };
+    uint32_t m_trailerAt { 0 }; // where the region size and checksum are, when present
+    bool m_parsed { false };
+    bool m_verified { false };
 };
 
-// The members only Program/Eval/Module code has (UnlinkedGlobalCodeBlock); a function record does not pay for them.
+// GlobalCodeBlock own members := varuint features, u8 lexicallyScopedFeatures, u8 hasCapturedVariables, varuint lineCount,
+//                                varuint endColumn, StringRef sourceURLDirective, StringRef sourceMappingURLDirective
+//   Program adds:  VariableEnvironment varDeclarations, VariableEnvironment lexicalDeclarations
+//   Module adds:   VariableEnvironment varDeclarations, varint moduleEnvironmentSymbolTableConstantRegisterOffset
+//   Eval adds:     varuint count, count × StringRef variables, varuint count, count × StringRef functionHoistingCandidates
 template<typename CodeBlockType>
 class CachedGlobalCodeBlock : public CachedCodeBlock<CodeBlockType> {
-    using Base = CachedCodeBlock<CodeBlockType>;
+public:
+    using CachedCodeBlock<CodeBlockType>::CachedCodeBlock;
 
 protected:
-    void encodeOwnMembers(Encoder& encoder, const UnlinkedGlobalCodeBlock& codeBlock)
+    static void encodeOwnMembers(Writer& writer, Encoder& encoder, const UnlinkedGlobalCodeBlock& codeBlock)
     {
-        m_features = codeBlock.m_features;
-        m_lexicallyScopedFeatures = codeBlock.m_lexicallyScopedFeatures;
-        m_hasCapturedVariables = codeBlock.m_hasCapturedVariables;
-        m_lineCount = codeBlock.m_lineCount;
-        m_endColumn = codeBlock.m_endColumn;
-        m_sourceURLDirective.encode(encoder, codeBlock.m_sourceURLDirective.get());
-        m_sourceMappingURLDirective.encode(encoder, codeBlock.m_sourceMappingURLDirective.get());
+        writer.varuint(codeBlock.m_features);
+        writer.u8(codeBlock.m_lexicallyScopedFeatures);
+        writer.boolean(codeBlock.m_hasCapturedVariables);
+        writer.varuint(codeBlock.m_lineCount);
+        writer.varuint(codeBlock.m_endColumn);
+        CachedString::encode(writer, encoder, codeBlock.m_sourceURLDirective.get());
+        CachedString::encode(writer, encoder, codeBlock.m_sourceMappingURLDirective.get());
     }
-    void decodeOwnMembers(Decoder& decoder, UnlinkedGlobalCodeBlock& codeBlock) const
+    void decodeOwnMembers(Reader& reader, Decoder& decoder, UnlinkedGlobalCodeBlock& codeBlock) const
     {
-        codeBlock.m_features = m_features;
-        codeBlock.m_lexicallyScopedFeatures = m_lexicallyScopedFeatures;
-        codeBlock.m_hasCapturedVariables = m_hasCapturedVariables;
-        codeBlock.m_lineCount = m_lineCount;
-        codeBlock.m_endColumn = m_endColumn;
-        codeBlock.m_sourceURLDirective = m_sourceURLDirective.decode(decoder);
-        codeBlock.m_sourceMappingURLDirective = m_sourceMappingURLDirective.decode(decoder);
+        codeBlock.m_features = reader.varuint();
+        codeBlock.m_lexicallyScopedFeatures = reader.u8();
+        codeBlock.m_hasCapturedVariables = reader.boolean();
+        codeBlock.m_lineCount = reader.varuint();
+        codeBlock.m_endColumn = reader.varuint();
+        codeBlock.m_sourceURLDirective = CachedString::decodeString(reader, decoder).releaseImpl();
+        codeBlock.m_sourceMappingURLDirective = CachedString::decodeString(reader, decoder).releaseImpl();
     }
-
-private:
-    CodeFeatures m_features;
-    LexicallyScopedFeatures m_lexicallyScopedFeatures;
-    bool m_hasCapturedVariables;
-    unsigned m_lineCount;
-    unsigned m_endColumn;
-    CachedRefPtr<CachedStringImpl> m_sourceURLDirective;
-    CachedRefPtr<CachedStringImpl> m_sourceMappingURLDirective;
 };
 
-class CachedProgramCodeBlock : public CachedGlobalCodeBlock<UnlinkedProgramCodeBlock> {
+class CachedProgramCodeBlock final : public CachedGlobalCodeBlock<UnlinkedProgramCodeBlock> {
     using Base = CachedGlobalCodeBlock<UnlinkedProgramCodeBlock>;
     friend CachedCodeBlock<UnlinkedProgramCodeBlock>;
 
 public:
-    UnlinkedProgramCodeBlock* decode(Decoder&) const;
+    using Base::Base;
 
 private:
-    void encodeOwnMembers(Encoder& encoder, const UnlinkedProgramCodeBlock& codeBlock)
+    UnlinkedProgramCodeBlock* construct(Decoder& decoder) const { return new (NotNull, allocateCell<UnlinkedProgramCodeBlock>(decoder.vm())) UnlinkedProgramCodeBlock(decoder, *this); }
+    static void encodeOwnMembers(Writer& writer, Encoder& encoder, const UnlinkedProgramCodeBlock& codeBlock)
     {
-        Base::encodeOwnMembers(encoder, codeBlock);
-        m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
-        m_lexicalDeclarations.encode(encoder, codeBlock.m_lexicalDeclarations);
+        Base::encodeOwnMembers(writer, encoder, codeBlock);
+        CachedVariableEnvironment::encode(writer, encoder, codeBlock.m_varDeclarations);
+        CachedVariableEnvironment::encode(writer, encoder, codeBlock.m_lexicalDeclarations);
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedProgramCodeBlock& codeBlock) const
     {
-        Base::decodeOwnMembers(decoder, codeBlock);
-        m_varDeclarations.decode(decoder, codeBlock.m_varDeclarations);
-        m_lexicalDeclarations.decode(decoder, codeBlock.m_lexicalDeclarations);
+        Reader reader = ownMembersReader(decoder);
+        Base::decodeOwnMembers(reader, decoder, codeBlock);
+        CachedVariableEnvironment::decode(reader, decoder, codeBlock.m_varDeclarations);
+        CachedVariableEnvironment::decode(reader, decoder, codeBlock.m_lexicalDeclarations);
     }
-
-    CachedVariableEnvironment m_varDeclarations;
-    CachedVariableEnvironment m_lexicalDeclarations;
 };
 
-class CachedModuleCodeBlock : public CachedGlobalCodeBlock<UnlinkedModuleProgramCodeBlock> {
+class CachedModuleCodeBlock final : public CachedGlobalCodeBlock<UnlinkedModuleProgramCodeBlock> {
     using Base = CachedGlobalCodeBlock<UnlinkedModuleProgramCodeBlock>;
     friend CachedCodeBlock<UnlinkedModuleProgramCodeBlock>;
 
 public:
-    UnlinkedModuleProgramCodeBlock* decode(Decoder&) const;
+    using Base::Base;
 
 private:
-    void encodeOwnMembers(Encoder& encoder, const UnlinkedModuleProgramCodeBlock& codeBlock)
+    UnlinkedModuleProgramCodeBlock* construct(Decoder& decoder) const { return new (NotNull, allocateCell<UnlinkedModuleProgramCodeBlock>(decoder.vm())) UnlinkedModuleProgramCodeBlock(decoder, *this); }
+    static void encodeOwnMembers(Writer& writer, Encoder& encoder, const UnlinkedModuleProgramCodeBlock& codeBlock)
     {
-        Base::encodeOwnMembers(encoder, codeBlock);
-        m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
-        m_moduleEnvironmentSymbolTableConstantRegisterOffset = codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset;
+        Base::encodeOwnMembers(writer, encoder, codeBlock);
+        CachedVariableEnvironment::encode(writer, encoder, codeBlock.m_varDeclarations);
+        writer.varint(codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset);
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedModuleProgramCodeBlock& codeBlock) const
     {
-        Base::decodeOwnMembers(decoder, codeBlock);
-        m_varDeclarations.decode(decoder, codeBlock.m_varDeclarations);
-        codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset = m_moduleEnvironmentSymbolTableConstantRegisterOffset;
+        Reader reader = ownMembersReader(decoder);
+        Base::decodeOwnMembers(reader, decoder, codeBlock);
+        CachedVariableEnvironment::decode(reader, decoder, codeBlock.m_varDeclarations);
+        codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset = reader.varint();
     }
-
-    CachedVariableEnvironment m_varDeclarations;
-    int m_moduleEnvironmentSymbolTableConstantRegisterOffset;
 };
 
-class CachedEvalCodeBlock : public CachedGlobalCodeBlock<UnlinkedEvalCodeBlock> {
+class CachedEvalCodeBlock final : public CachedGlobalCodeBlock<UnlinkedEvalCodeBlock> {
     using Base = CachedGlobalCodeBlock<UnlinkedEvalCodeBlock>;
     friend CachedCodeBlock<UnlinkedEvalCodeBlock>;
 
 public:
-    UnlinkedEvalCodeBlock* decode(Decoder&) const;
+    using Base::Base;
 
 private:
-    void encodeOwnMembers(Encoder& encoder, const UnlinkedEvalCodeBlock& codeBlock)
+    UnlinkedEvalCodeBlock* construct(Decoder& decoder) const { return new (NotNull, allocateCell<UnlinkedEvalCodeBlock>(decoder.vm())) UnlinkedEvalCodeBlock(decoder, *this); }
+    static void encodeOwnMembers(Writer& writer, Encoder& encoder, const UnlinkedEvalCodeBlock& codeBlock)
     {
-        Base::encodeOwnMembers(encoder, codeBlock);
-        m_variables.encode(encoder, codeBlock.m_variables);
-        m_functionHoistingCandidates.encode(encoder, codeBlock.m_functionHoistingCandidates);
+        Base::encodeOwnMembers(writer, encoder, codeBlock);
+        writer.varuint(codeBlock.m_variables.size());
+        for (auto& variable : codeBlock.m_variables)
+            CachedString::encode(writer, encoder, variable);
+        writer.varuint(codeBlock.m_functionHoistingCandidates.size());
+        for (auto& candidate : codeBlock.m_functionHoistingCandidates)
+            CachedString::encode(writer, encoder, candidate);
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedEvalCodeBlock& codeBlock) const
     {
-        Base::decodeOwnMembers(decoder, codeBlock);
-        m_variables.decode(decoder, codeBlock.m_variables);
-        m_functionHoistingCandidates.decode(decoder, codeBlock.m_functionHoistingCandidates);
+        Reader reader = ownMembersReader(decoder);
+        Base::decodeOwnMembers(reader, decoder, codeBlock);
+        auto identifiers = [&](auto& out) {
+            unsigned count = reader.varuint();
+            if (!reader.has(count))
+                return;
+            out = std::remove_reference_t<decltype(out)>(count);
+            for (auto& identifier : out)
+                identifier = CachedString::decodeIdentifier(reader, decoder);
+        };
+        identifiers(codeBlock.m_variables);
+        identifiers(codeBlock.m_functionHoistingCandidates);
     }
-
-    CachedVector<CachedIdentifier, 0, UnsafeVectorOverflow> m_variables;
-    CachedVector<CachedIdentifier, 0, UnsafeVectorOverflow> m_functionHoistingCandidates;
 };
 
-class CachedFunctionCodeBlock : public CachedCodeBlock<UnlinkedFunctionCodeBlock> {
-    using Base = CachedCodeBlock<UnlinkedFunctionCodeBlock>;
-    friend Base;
+class CachedFunctionCodeBlock final : public CachedCodeBlock<UnlinkedFunctionCodeBlock> {
+    friend CachedCodeBlock<UnlinkedFunctionCodeBlock>;
 
 public:
-    UnlinkedFunctionCodeBlock* decode(Decoder&) const;
+    using CachedCodeBlock<UnlinkedFunctionCodeBlock>::CachedCodeBlock;
+
+private:
+    UnlinkedFunctionCodeBlock* construct(Decoder& decoder) const { return new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this); }
 };
 
-
-ALWAYS_INLINE UnlinkedFunctionCodeBlock::UnlinkedFunctionCodeBlock(Decoder& decoder, const CachedFunctionCodeBlock& cachedCodeBlock)
-    : Base(decoder, decoder.vm().unlinkedFunctionCodeBlockStructure.get(), cachedCodeBlock)
+static uint32_t encodeFunctionCodeBlockRecord(Encoder& encoder, const UnlinkedFunctionCodeBlock& codeBlock)
 {
+    return CachedFunctionCodeBlock::encode(encoder, codeBlock);
 }
 
-template<typename T>
-struct CachedCodeBlockTypeImpl;
-
-enum class CachedCodeBlockTag {
-    CachedProgramCodeBlockTag,
-    CachedModuleCodeBlockTag,
-    CachedEvalCodeBlockTag,
-    CachedBuiltinFunctionTag, // a root UnlinkedFunctionExecutable created by BuiltinExecutables (an embedder's JS builtins)
-};
-
-static CachedCodeBlockTag NODELETE tagFromSourceCodeType(SourceCodeType type)
+template<typename CodeBlockType>
+uint32_t CachedCodeBlock<CodeBlockType>::encode(Encoder& encoder, const CodeBlockType& codeBlock)
 {
-    switch (type) {
-    case SourceCodeType::ProgramType:
-        return CachedCodeBlockTag::CachedProgramCodeBlockTag;
-    case SourceCodeType::EvalType:
-        return CachedCodeBlockTag::CachedEvalCodeBlockTag;
-    case SourceCodeType::ModuleType:
-        return CachedCodeBlockTag::CachedModuleCodeBlockTag;
-    case SourceCodeType::FunctionType:
-        break;
+    using Record = CachedCodeBlockType<CodeBlockType>;
+    uint32_t regionAt = encoder.position();
+    encoder.beginBlockRegion(regionAt);
+    Layout layout;
+    auto place = [&](Array& array, unsigned count, auto&& write) {
+        array.count = count;
+        if (count)
+            array.at = safeCast<int32_t>(static_cast<int64_t>(write()) - regionAt);
+    };
+    // Values a stream refers to (string records, shared environments) are written before the stream; the stream itself
+    // is composed aside and appended whole, so it is contiguous.
+    auto placeStream = [&](int32_t& at, auto&& write) {
+        Writer writer;
+        write(writer);
+        at = safeCast<int32_t>(static_cast<int64_t>(encoder.append(writer)) - regionAt);
+    };
+
+    const UnlinkedMetadataTable& metadata = codeBlock.m_metadata.get();
+    if (metadata.m_hasMetadata) {
+        layout.flags |= LayoutHasMetadata;
+        layout.metadataValueProfiles = metadata.m_numValueProfiles;
+        Writer steps;
+        for (uint32_t step : CachedMetadataSteps::compute(metadata))
+            steps.u32(step);
+        place(layout.steps, steps.size() / 4, [&] { return encoder.appendBlockArray(steps.span(), 4); });
     }
-    ASSERT_NOT_REACHED();
-    return static_cast<CachedCodeBlockTag>(-1);
+    const JSInstructionStream& instructions = *codeBlock.m_instructions;
+    RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
+    place(layout.instructions, instructions.m_instructions.size(), [&] { return encoder.appendBlockArray(instructions.m_instructions.span()); });
+    {
+        static_assert(sizeof(SourceCodeRepresentation) == 1);
+        auto& representations = codeBlock.m_constantsSourceCodeRepresentation;
+        place(layout.representations, representations.size(), [&] { return encoder.appendBlockArray(std::span { reinterpret_cast<const uint8_t*>(representations.span().data()), representations.size() }); });
+    }
+    place(layout.constants, codeBlock.m_constantRegisters.size(), [&] {
+        Writer writer;
+        for (auto& constant : codeBlock.m_constantRegisters)
+            CachedJSValue::encode(writer, encoder, constant.get());
+        return encoder.append(writer);
+    });
+    place(layout.identifiers, codeBlock.m_identifiers.size(), [&] {
+        Writer writer;
+        for (auto& identifier : codeBlock.m_identifiers)
+            CachedString::encode(writer, encoder, identifier);
+        return encoder.append(writer);
+    });
+    if (codeBlock.m_rareData) {
+        layout.flags |= LayoutHasRareData;
+        placeStream(layout.rareDataAt, [&](Writer& writer) { CachedCodeBlockRareData::encode(writer, encoder, *codeBlock.m_rareData); });
+    }
+    if (!codeBlock.m_outOfLineJumpTargets.isEmpty()) {
+        layout.flags |= LayoutHasJumpTargets;
+        placeStream(layout.jumpTargetsAt, [&](Writer& writer) { CachedCodeBlockExtras::encodeOutOfLineJumpTargets(writer, codeBlock); });
+    }
+    if constexpr (!std::is_same_v<CodeBlockType, UnlinkedFunctionCodeBlock>) {
+        layout.flags |= LayoutHasOwnMembers;
+        placeStream(layout.ownAt, [&](Writer& writer) { Record::encodeOwnMembers(writer, encoder, codeBlock); });
+    }
+    // The children's slots are part of this block's bytes; the records they point at are written after the region.
+    place(layout.functionDecls, codeBlock.m_functionDecls.size(), [&] { return encoder.appendU32Placeholders(codeBlock.m_functionDecls.size()); });
+    place(layout.functionExprs, codeBlock.m_functionExprs.size(), [&] { return encoder.appendU32Placeholders(codeBlock.m_functionExprs.size()); });
+
+    if (encoder.checksums())
+        layout.flags |= LayoutHasChecksum;
+    uint32_t recordAt = encoder.position();
+    layout.recordOffsetInRegion = recordAt - regionAt;
+
+    Writer record;
+    size_t expressionInfoSlot = record.reserveU32();
+    record.u8(layout.flags);
+    record.varuint(layout.recordOffsetInRegion);
+    if (layout.flags & LayoutHasMetadata)
+        record.varuint(layout.metadataValueProfiles);
+    for (const Array* array : { &layout.steps, &layout.instructions, &layout.representations, &layout.constants, &layout.identifiers, &layout.functionDecls, &layout.functionExprs }) {
+        record.varuint(array->count);
+        if (array->count)
+            record.varint(array->at);
+    }
+    if (layout.flags & LayoutHasRareData)
+        record.varint(layout.rareDataAt);
+    if (layout.flags & LayoutHasJumpTargets)
+        record.varint(layout.jumpTargetsAt);
+    if (layout.flags & LayoutHasOwnMembers)
+        record.varint(layout.ownAt);
+
+    uint32_t flags = static_cast<uint32_t>(codeBlock.m_isConstructor) << IsConstructorShift
+        | static_cast<uint32_t>(codeBlock.m_superBinding) << SuperBindingShift
+        | static_cast<uint32_t>(codeBlock.m_scriptMode) << ScriptModeShift
+        | static_cast<uint32_t>(codeBlock.m_isArrowFunctionContext) << IsArrowFunctionContextShift
+        | static_cast<uint32_t>(codeBlock.m_isClassContext) << IsClassContextShift
+        | static_cast<uint32_t>(codeBlock.m_hasTailCalls) << HasTailCallsShift
+        | static_cast<uint32_t>(codeBlock.m_hasCheckpoints) << HasCheckpointsShift
+        | static_cast<uint32_t>(codeBlock.m_constructorKind) << ConstructorKindShift
+        | static_cast<uint32_t>(codeBlock.m_derivedContextType) << DerivedContextTypeShift
+        | static_cast<uint32_t>(codeBlock.m_evalContextType) << EvalContextTypeShift
+        | static_cast<uint32_t>(codeBlock.m_codeType) << CodeTypeShift
+        | static_cast<uint32_t>(codeBlock.m_isBuiltinFunction) << IsBuiltinFunctionShift
+        | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << IsBuiltinDefaultClassConstructorShift;
+    record.varuint(flags);
+    record.u8(static_cast<uint8_t>(codeBlock.m_parseMode));
+    record.u8(codeBlock.m_codeGenerationMode.toRaw());
+    record.varint(codeBlock.m_thisRegister.offset());
+    record.varint(codeBlock.m_scopeRegister.offset());
+    record.varint(codeBlock.m_numVars);
+    record.varint(codeBlock.m_numCalleeLocals);
+    record.varint(codeBlock.m_numParameters);
+    record.varuint(codeBlock.m_valueProfiles.size());
+    record.varuint(codeBlock.m_arrayProfiles.size());
+    record.varuint(codeBlock.m_binaryArithProfiles.size());
+    record.varuint(codeBlock.m_unaryArithProfiles.size());
+    size_t trailer = 0;
+    if (layout.flags & LayoutHasChecksum) {
+        trailer = record.reserveU32();
+        record.reserveU32();
+    }
+    encoder.append(record);
+    uint32_t regionSize = encoder.position() - regionAt;
+    if (layout.flags & LayoutHasChecksum) {
+        encoder.patchU32(recordAt + trailer, regionSize);
+        encoder.addChecksum(regionAt, regionSize, recordAt + trailer + 4, encoder.takeBlockExternalArrays());
+    } else
+        encoder.takeBlockExternalArrays();
+
+    encoder.deferCold([&encoder, slot = recordAt + expressionInfoSlot, expressionInfo = codeBlock.m_expressionInfo.get()] {
+        auto bytes = CachedExpressionInfo::pack(*expressionInfo, encoder.checksums());
+        encoder.patchU32(slot, encoder.appendBytesOnce(bytes.span(), 4));
+    });
+
+    auto encodeChildren = [&](const Array& slots, const auto& executables) {
+        for (unsigned i = 0; i < slots.count; ++i)
+            encoder.patchU32(regionAt + slots.at + 4 * i, CachedFunctionExecutable::encode(encoder, *executables[i].get()));
+    };
+    encodeChildren(layout.functionDecls, codeBlock.m_functionDecls);
+    encodeChildren(layout.functionExprs, codeBlock.m_functionExprs);
+    return recordAt;
 }
 
-template<>
-struct CachedCodeBlockTypeImpl<UnlinkedProgramCodeBlock> {
-    using type = CachedProgramCodeBlock;
-    static constexpr CachedCodeBlockTag tag = CachedCodeBlockTag::CachedProgramCodeBlockTag;
-};
+template<typename CodeBlockType>
+CachedCodeBlock<CodeBlockType>::CachedCodeBlock(Decoder& decoder, uint32_t at)
+    : m_recordAt(at)
+{
+    Reader reader(decoder.payload(), at);
+    m_expressionInfoAt = reader.u32();
+    Layout& layout = m_layout;
+    layout.flags = reader.u8();
+    layout.recordOffsetInRegion = reader.varuint();
+    if (layout.flags & LayoutHasMetadata)
+        layout.metadataValueProfiles = reader.varuint();
+    for (Array* array : { &layout.steps, &layout.instructions, &layout.representations, &layout.constants, &layout.identifiers, &layout.functionDecls, &layout.functionExprs }) {
+        array->count = reader.varuint();
+        if (array->count)
+            array->at = reader.varint();
+    }
+    if (layout.flags & LayoutHasRareData)
+        layout.rareDataAt = reader.varint();
+    if (layout.flags & LayoutHasJumpTargets)
+        layout.jumpTargetsAt = reader.varint();
+    if (layout.flags & LayoutHasOwnMembers)
+        layout.ownAt = reader.varint();
 
-template<>
-struct CachedCodeBlockTypeImpl<UnlinkedModuleProgramCodeBlock> {
-    using type = CachedModuleCodeBlock;
-    static constexpr CachedCodeBlockTag tag = CachedCodeBlockTag::CachedModuleCodeBlockTag;
-};
+    Scalars& s = m_scalars;
+    uint32_t flags = reader.varuint();
+    auto bits = [&](unsigned shift, unsigned width = 1) -> unsigned { return (flags >> shift) & ((1u << width) - 1); };
+    s.isConstructor = bits(IsConstructorShift);
+    s.superBinding = bits(SuperBindingShift);
+    s.scriptMode = bits(ScriptModeShift);
+    s.isArrowFunctionContext = bits(IsArrowFunctionContextShift);
+    s.isClassContext = bits(IsClassContextShift);
+    s.hasTailCalls = bits(HasTailCallsShift);
+    s.hasCheckpoints = bits(HasCheckpointsShift);
+    s.constructorKind = bits(ConstructorKindShift, 2);
+    s.derivedContextType = bits(DerivedContextTypeShift, 2);
+    s.evalContextType = bits(EvalContextTypeShift, 2);
+    s.codeType = bits(CodeTypeShift, 2);
+    s.isBuiltinFunction = bits(IsBuiltinFunctionShift);
+    s.isBuiltinDefaultClassConstructor = bits(IsBuiltinDefaultClassConstructorShift);
+    s.parseMode = static_cast<SourceParseMode>(reader.u8());
+    s.codeGenerationMode = OptionSet<CodeGenerationMode>::fromRaw(reader.u8());
+    s.thisRegister = VirtualRegister(reader.varint());
+    s.scopeRegister = VirtualRegister(reader.varint());
+    s.numVars = reader.varint();
+    s.numCalleeLocals = reader.varint();
+    s.numParameters = reader.varint();
+    s.numValueProfiles = reader.varuint();
+    s.numArrayProfiles = reader.varuint();
+    s.numBinaryArithProfiles = reader.varuint();
+    s.numUnaryArithProfiles = reader.varuint();
+    m_trailerAt = reader.offset();
+    m_parsed = !reader.overran() && layout.recordOffsetInRegion <= at;
+    m_regionAt = at - layout.recordOffsetInRegion;
+}
 
-template<>
-struct CachedCodeBlockTypeImpl<UnlinkedEvalCodeBlock> {
-    using type = CachedEvalCodeBlock;
-    static constexpr CachedCodeBlockTag tag = CachedCodeBlockTag::CachedEvalCodeBlockTag;
-};
+// The region is checksummed when the payload carries checksums; a mismatch means the payload is damaged and the block
+// is generated from source instead. Without them the check is that everything the record locates lies inside the payload.
+template<typename CodeBlockType>
+bool CachedCodeBlock<CodeBlockType>::regionIsIntact(Decoder& decoder)
+{
+    if (!m_parsed)
+        return false;
+    const Layout& layout = m_layout;
+    size_t payloadSize = decoder.payload().size();
+    size_t regionEnd = payloadSize; // bound for the arrays when there is no stored region size
+    if (layout.flags & LayoutHasChecksum) {
+        Reader trailer(decoder.payload(), m_trailerAt);
+        uint32_t regionSize = trailer.u32();
+        uint32_t checksumAt = m_trailerAt + 4;
+        if (trailer.overran() || regionSize < checksumAt + 4 - m_regionAt)
+            return false;
+        regionEnd = m_regionAt + regionSize;
+    }
 
-template<typename T>
-using CachedCodeBlockType = typename CachedCodeBlockTypeImpl<T>::type;
+    // Every array must lie inside the region, except the three the encoder may have shared from an earlier block,
+    // which are folded into the checksum instead (in encoder order).
+    std::array<std::pair<size_t, size_t>, 3> external;
+    unsigned externalCount = 0;
+    auto located = [&](const Array& array, size_t bytes, bool shareable) {
+        if (!array.count)
+            return true;
+        int64_t start = static_cast<int64_t>(m_regionAt) + array.at;
+        if (start >= m_regionAt && start + static_cast<int64_t>(bytes) <= static_cast<int64_t>(regionEnd))
+            return true;
+        if (!shareable || start < 0 || !decoder.payloadContains(start, bytes))
+            return false;
+        external[externalCount++] = { static_cast<size_t>(start), bytes };
+        return true;
+    };
+    // A stream's length is only known by reading it; its start is checked here and every read is bounds-checked.
+    auto streamLocated = [&](bool present, int32_t at) {
+        return !present || (at >= 0 && m_regionAt + at < regionEnd);
+    };
+    if (!located(layout.steps, 4 * static_cast<size_t>(layout.steps.count), true)
+        || !located(layout.instructions, layout.instructions.count, true)
+        || !located(layout.representations, layout.representations.count, true)
+        || !streamLocated(layout.constants.count, layout.constants.at)
+        || !streamLocated(layout.identifiers.count, layout.identifiers.at)
+        || !located(layout.functionDecls, 4 * static_cast<size_t>(layout.functionDecls.count), false)
+        || !located(layout.functionExprs, 4 * static_cast<size_t>(layout.functionExprs.count), false)
+        || !streamLocated(layout.flags & LayoutHasRareData, layout.rareDataAt)
+        || !streamLocated(layout.flags & LayoutHasJumpTargets, layout.jumpTargetsAt)
+        || !streamLocated(layout.flags & LayoutHasOwnMembers, layout.ownAt)
+        || (layout.steps.count && (m_regionAt + layout.steps.at) % 4))
+        return false;
+    if ((layout.flags & LayoutHasChecksum) && !decoder.checksumMatches(m_regionAt, regionEnd - m_regionAt, m_trailerAt + 4, std::span { external.data(), externalCount }))
+        return false;
+
+    for (const Array* children : { &layout.functionDecls, &layout.functionExprs }) {
+        Reader slots = arrayReader(decoder, *children);
+        for (unsigned i = 0; i < children->count; ++i) {
+            uint32_t recordAt = slots.u32();
+            if (!recordAt || !CachedFunctionExecutable::isIntact(decoder, recordAt))
+                return false;
+        }
+    }
+    m_verified = true;
+    return true;
+}
+
+template<typename CodeBlockType>
+JSInstructionStream* CachedCodeBlock<CodeBlockType>::instructions(Decoder& decoder) const
+{
+    auto bytes = arrayReader(decoder, m_layout.instructions).bytes(m_layout.instructions.count);
+    if (decoder.canBorrowPayload())
+        return new JSInstructionStream(bytes, JSInstructionStream::Borrow);
+    Vector<uint8_t, 0, UnsafeVectorOverflow, 16, InstructionStreamBufferMalloc> copy;
+    copy.append(bytes);
+    return new JSInstructionStream(WTF::move(copy));
+}
+
+template<typename CodeBlockType>
+Ref<UnlinkedMetadataTable> CachedCodeBlock<CodeBlockType>::metadata(Decoder& decoder) const
+{
+    const Layout& layout = m_layout;
+    if (!(layout.flags & LayoutHasMetadata))
+        return UnlinkedMetadataTable::empty();
+    auto bytes = arrayReader(decoder, layout.steps).bytes(4 * static_cast<size_t>(layout.steps.count));
+    std::span<const uint32_t> steps { reinterpret_cast<const uint32_t*>(bytes.data()), layout.steps.count }; // little-endian host, 4-aligned: see the top of the file
+    if (decoder.canBorrowPayload())
+        return UnlinkedMetadataTable::createFromPersistentSteps(layout.metadataValueProfiles, steps);
+    return CachedMetadataSteps::build(layout.metadataValueProfiles, steps);
+}
+
+template<typename CodeBlockType>
+UnlinkedCodeBlock::RareData* CachedCodeBlock<CodeBlockType>::rareData(Decoder& decoder) const
+{
+    if (!(m_layout.flags & LayoutHasRareData))
+        return nullptr;
+    Reader reader(decoder.payload(), m_regionAt + m_layout.rareDataAt);
+    return CachedCodeBlockRareData::decode(reader, decoder);
+}
 
 template<typename CodeBlockType>
 ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* structure, const CachedCodeBlock<CodeBlockType>& cachedCodeBlock)
@@ -3725,7 +3237,7 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     , m_instructions(cachedCodeBlock.instructions(decoder))
     , m_rareData(cachedCodeBlock.rareData(decoder))
 {
-    auto scalars = cachedCodeBlock.scalars(decoder);
+    const auto& scalars = cachedCodeBlock.scalars();
     m_thisRegister = scalars.thisRegister;
     m_scopeRegister = scalars.scopeRegister;
     m_numVars = scalars.numVars;
@@ -3753,79 +3265,6 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_llintExecuteCounter.setNewThreshold(thresholdForJIT(Options::thresholdForJITAfterWarmUp()));
 }
 
-template<typename CodeBlockType>
-ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, UnlinkedCodeBlock& codeBlock, const Tail& tail) const
-{
-    const Layout& layout = tail.layout;
-    // Most identifiers and many constants become atoms; let the table grow once for this block rather than as they trickle in.
-    if (unsigned expected = layout.identifiers.count + layout.constants.count; expected >= 64)
-        AtomStringImpl::reserveCapacityForCurrentThread(expected);
-    if (layout.constants.count) {
-        codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
-        CachedJSValuePool::decode(decoder, at<uint8_t>(layout, layout.constants), layout.constants.count, codeBlock.m_constantRegisters.mutableSpan().data(), &codeBlock);
-    }
-    decodeArrayFromTail<SourceCodeRepresentation>(decoder, at<SourceCodeRepresentation>(layout, layout.constantsSourceCodeRepresentation), layout.constantsSourceCodeRepresentation.count, codeBlock.m_constantsSourceCodeRepresentation);
-    codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
-    if (auto* e = extras(layout))
-        e->outOfLineJumpTargets.decode(decoder, codeBlock.m_outOfLineJumpTargets);
-    decodeArrayFromTail<CachedIdentifier>(decoder, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionDecls), layout.functionDecls.count, codeBlock.m_functionDecls, &codeBlock);
-    decodeArrayFromTail<CachedWriteBarrier<CachedFunctionExecutable>>(decoder, at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, layout.functionExprs), layout.functionExprs.count, codeBlock.m_functionExprs, &codeBlock);
-}
-
-UnlinkedProgramCodeBlock* CachedProgramCodeBlock::decode(Decoder& decoder) const
-{
-    Tail tail;
-    if (!regionIsIntact(decoder, tail))
-        return nullptr;
-    ActiveTailScope activeTail(decoder, this, tail);
-    UnlinkedProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedProgramCodeBlock>(decoder.vm())) UnlinkedProgramCodeBlock(decoder, *this);
-    codeBlock->finishCreation(decoder.vm());
-    Base::decode(decoder, *codeBlock, tail);
-    decodeOwnMembers(decoder, *codeBlock);
-    return codeBlock;
-}
-
-UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) const
-{
-    Tail tail;
-    if (!regionIsIntact(decoder, tail))
-        return nullptr;
-    ActiveTailScope activeTail(decoder, this, tail);
-    UnlinkedModuleProgramCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedModuleProgramCodeBlock>(decoder.vm())) UnlinkedModuleProgramCodeBlock(decoder, *this);
-    codeBlock->finishCreation(decoder.vm());
-    Base::decode(decoder, *codeBlock, tail);
-    decodeOwnMembers(decoder, *codeBlock);
-    return codeBlock;
-}
-
-UnlinkedEvalCodeBlock* CachedEvalCodeBlock::decode(Decoder& decoder) const
-{
-    Tail tail;
-    if (!regionIsIntact(decoder, tail))
-        return nullptr;
-    ActiveTailScope activeTail(decoder, this, tail);
-    UnlinkedEvalCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedEvalCodeBlock>(decoder.vm())) UnlinkedEvalCodeBlock(decoder, *this);
-    codeBlock->finishCreation(decoder.vm());
-    Base::decode(decoder, *codeBlock, tail);
-    decodeOwnMembers(decoder, *codeBlock);
-    return codeBlock;
-}
-
-UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) const
-{
-    Tail tail;
-    if (!regionIsIntact(decoder, tail))
-        return nullptr;
-    ActiveTailScope activeTail(decoder, this, tail);
-    UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
-    codeBlock->finishCreation(decoder.vm());
-    Base::decode(decoder, *codeBlock, tail);
-    decodeOwnMembers(decoder, *codeBlock);
-    return codeBlock;
-}
-
-
 ALWAYS_INLINE UnlinkedProgramCodeBlock::UnlinkedProgramCodeBlock(Decoder& decoder, const CachedProgramCodeBlock& cachedCodeBlock)
     : Base(decoder, decoder.vm().unlinkedProgramCodeBlockStructure.get(), cachedCodeBlock)
 {
@@ -3841,794 +3280,216 @@ ALWAYS_INLINE UnlinkedEvalCodeBlock::UnlinkedEvalCodeBlock(Decoder& decoder, con
 {
 }
 
-enum CachedFunctionExecutableFlag : uint32_t {
-    // one word of 1- and 2-bit fields, written as a varint (the high bits are the rarely-set ones)
-    ExecutableScriptModeShift = 0,
-    ExecutableSuperBindingShift = 1,
-    ExecutableConstructAbilityShift = 2,
-    ExecutableHasNameShift = 3,
-    ExecutableConstructorKindShift = 4, // 2 bits
-    ExecutableFunctionModeShift = 6, // 2
-    ExecutableImplementationVisibilityShift = 8, // 2
-    ExecutableDerivedContextTypeShift = 10, // 2
-    ExecutableEvalContextTypeShift = 12, // 2
-    ExecutablePrivateBrandRequirementShift = 14,
-    ExecutableInlineAttributeShift = 15,
-    ExecutableNeedsClassFieldInitializerShift = 16,
-    ExecutableIsBuiltinFunctionShift = 17,
-    ExecutableIsBuiltinDefaultClassConstructorShift = 18,
-};
-static_assert(bitWidthOfImplementationVisibility <= 2);
-
-void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& executable, VarintWriter& writer)
+ALWAYS_INLINE UnlinkedFunctionCodeBlock::UnlinkedFunctionCodeBlock(Decoder& decoder, const CachedFunctionCodeBlock& cachedCodeBlock)
+    : Base(decoder, decoder.vm().unlinkedFunctionCodeBlockStructure.get(), cachedCodeBlock)
 {
-    uint32_t flags = static_cast<uint32_t>(executable.m_scriptMode) << ExecutableScriptModeShift
-        | static_cast<uint32_t>(executable.m_superBinding) << ExecutableSuperBindingShift
-        | static_cast<uint32_t>(executable.m_constructAbility) << ExecutableConstructAbilityShift
-        | static_cast<uint32_t>(executable.m_hasName) << ExecutableHasNameShift
-        | static_cast<uint32_t>(executable.m_constructorKind) << ExecutableConstructorKindShift
-        | static_cast<uint32_t>(executable.m_functionMode) << ExecutableFunctionModeShift
-        | static_cast<uint32_t>(executable.m_implementationVisibility) << ExecutableImplementationVisibilityShift
-        | static_cast<uint32_t>(executable.m_derivedContextType) << ExecutableDerivedContextTypeShift
-        | static_cast<uint32_t>(executable.m_evalContextType) << ExecutableEvalContextTypeShift
-        | static_cast<uint32_t>(executable.m_privateBrandRequirement) << ExecutablePrivateBrandRequirementShift
-        | static_cast<uint32_t>(executable.m_inlineAttribute) << ExecutableInlineAttributeShift
-        | static_cast<uint32_t>(executable.m_needsClassFieldInitializer) << ExecutableNeedsClassFieldInitializerShift
-        | static_cast<uint32_t>(executable.m_isBuiltinFunction) << ExecutableIsBuiltinFunctionShift
-        | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift;
-    writer.u32(flags);
-    writer.u32(executable.m_features);
-    writer.u8(static_cast<uint8_t>(executable.m_lexicallyScopedFeatures));
-    // Source positions cluster around the function's start, so all but the first are deltas.
-    unsigned start = executable.m_startOffset;
-    writer.u32(start);
-    writer.i32(static_cast<int32_t>(executable.m_unlinkedFunctionStart - start));
-    writer.i32(static_cast<int32_t>(executable.m_parametersStartOffset - start));
-    writer.u32(executable.m_sourceLength);
-    writer.i32(static_cast<int32_t>(executable.m_unlinkedFunctionEnd - (start + executable.m_sourceLength)));
-    // Columns are offsets from a line start; on one line the two differ by the same constant, so the second is a delta of the first.
-    int32_t bodyStartColumnDelta = static_cast<int32_t>(executable.m_unlinkedBodyStartColumn - executable.m_unlinkedFunctionStart);
-    writer.i32(bodyStartColumnDelta);
-    writer.i32(static_cast<int32_t>(executable.m_unlinkedBodyEndColumn - executable.m_unlinkedFunctionEnd) - bodyStartColumnDelta);
-    writer.u32(executable.m_parameterCount);
-    if (executable.m_firstLineOffset || executable.m_lineCount) {
-        writer.u32(executable.m_firstLineOffset);
-        writer.u32(executable.m_lineCount);
-    }
-}
-
-Vector<uint8_t, 64> CachedFunctionExecutable::packedTail(const UnlinkedFunctionExecutable& executable)
-{
-    VarintWriter writer;
-    packScalars(executable, writer);
-    Vector<uint8_t, 64> bytes;
-    bytes.grow(writer.size());
-    writer.copyTo(bytes.mutableSpan().data());
-    return bytes;
-}
-
-uint32_t CachedFunctionExecutable::headerFor(const UnlinkedFunctionExecutable& executable, const Encoder* encoder)
-{
-    uint32_t header = static_cast<uint32_t>(executable.m_sourceParseMode) << ParseModeShift;
-    if (executable.m_hasCapturedVariables)
-        header |= HasCapturedVariables;
-    if (executable.m_firstLineOffset || executable.m_lineCount)
-        header |= HasLines;
-    if (!executable.ecmaName().isNull())
-        header |= HasName;
-    if (executable.m_parentScopeTDZVariables)
-        header |= HasTDZ;
-    if (executable.m_rareData)
-        header |= HasRareData;
-    if (executable.m_unlinkedCodeBlockForCall)
-        header |= HasCallSlot;
-    if (executable.m_unlinkedCodeBlockForConstruct)
-        header |= HasConstructSlot;
-    if (encoder->checksums())
-        header |= HasChecksum;
-    if (encoder->updatable())
-        header |= Updatable | HasChecksum | HasCallSlot | HasConstructSlot;
-    return header;
-}
-
-auto CachedFunctionExecutable::view(const uint8_t* limit) const -> View
-{
-    View v;
-    const uint8_t* p = bytes();
-    auto room = [&](size_t n) { return !limit || (p + n <= limit && p + n >= p); };
-    if (!room(sizeof(uint32_t)))
-        return v;
-    v.header = m_header;
-    p += sizeof(uint32_t);
-    auto take = [&](auto*& out) -> bool {
-        using T = std::remove_const_t<std::remove_pointer_t<std::remove_reference_t<decltype(out)>>>;
-        if (!room(sizeof(T)))
-            return false;
-        out = reinterpret_cast<const T*>(p);
-        p += sizeof(T);
-        return true;
-    };
-    if ((v.header & Updatable) && !take(v.metadata))
-        return v;
-    if ((v.header & HasChecksum) && (!take(v.checksum) || !take(v.extent)))
-        return v;
-    if ((v.header & HasCallSlot) && !take(v.call))
-        return v;
-    if ((v.header & HasConstructSlot) && !take(v.construct))
-        return v;
-    if ((v.header & HasName) && !take(v.name))
-        return v;
-    if ((v.header & HasTDZ) && !take(v.tdz))
-        return v;
-    if ((v.header & HasRareData) && !take(v.rareData))
-        return v;
-    v.tail = p;
-
-    VarintReader reader(p, limit);
-    Scalars& s = v.scalars;
-    uint32_t flags = reader.u32();
-    auto bits = [&](unsigned shift, unsigned width = 1) { return (flags >> shift) & ((1u << width) - 1); };
-    s.scriptMode = bits(ExecutableScriptModeShift);
-    s.superBinding = bits(ExecutableSuperBindingShift);
-    s.constructAbility = bits(ExecutableConstructAbilityShift);
-    s.hasName = bits(ExecutableHasNameShift);
-    s.constructorKind = bits(ExecutableConstructorKindShift, 2);
-    s.functionMode = bits(ExecutableFunctionModeShift, 2);
-    s.implementationVisibility = static_cast<ImplementationVisibility>(bits(ExecutableImplementationVisibilityShift, 2));
-    s.derivedContextType = bits(ExecutableDerivedContextTypeShift, 2);
-    s.evalContextType = bits(ExecutableEvalContextTypeShift, 2);
-    s.privateBrandRequirement = bits(ExecutablePrivateBrandRequirementShift);
-    s.inlineAttribute = bits(ExecutableInlineAttributeShift);
-    s.needsClassFieldInitializer = bits(ExecutableNeedsClassFieldInitializerShift);
-    s.isBuiltinFunction = bits(ExecutableIsBuiltinFunctionShift);
-    s.isBuiltinDefaultClassConstructor = bits(ExecutableIsBuiltinDefaultClassConstructorShift);
-    s.features = static_cast<CodeFeatures>(reader.u32());
-    s.lexicallyScopedFeatures = static_cast<LexicallyScopedFeatures>(reader.u8());
-    s.hasCapturedVariables = v.header & HasCapturedVariables;
-    s.sourceParseMode = static_cast<SourceParseMode>((v.header >> ParseModeShift) & 0xff);
-    s.startOffset = reader.u32();
-    s.unlinkedFunctionStart = s.startOffset + reader.i32();
-    s.parametersStartOffset = s.startOffset + reader.i32();
-    s.sourceLength = reader.u32();
-    s.unlinkedFunctionEnd = s.startOffset + s.sourceLength + reader.i32();
-    int32_t bodyStartColumnDelta = reader.i32();
-    s.unlinkedBodyStartColumn = s.unlinkedFunctionStart + bodyStartColumnDelta;
-    s.unlinkedBodyEndColumn = s.unlinkedFunctionEnd + bodyStartColumnDelta + reader.i32();
-    s.parameterCount = reader.u32();
-    if (v.header & HasLines) {
-        s.firstLineOffset = reader.u32();
-        s.lineCount = reader.u32();
-    } else {
-        s.firstLineOffset = 0;
-        s.lineCount = 0;
-    }
-    if (v.metadata) {
-        // The jsc shell's disk cache patches these after a lazily compiled function joins the cache.
-        s.features = v.metadata->m_features;
-        s.lexicallyScopedFeatures = v.metadata->m_lexicallyScopedFeatures;
-        s.hasCapturedVariables = v.metadata->m_hasCapturedVariables;
-    }
-    v.tailEnd = reader.position();
-    v.intact = !reader.overran();
-    return v;
-}
-
-ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable)
-{
-    uint32_t header = headerFor(executable, &encoder);
-    m_header = header;
-    uint8_t* p = bytes() + sizeof(uint32_t);
-    CachedFunctionExecutableMetadata* metadata = nullptr;
-    uint32_t* checksum = nullptr;
-    uint32_t* extent = nullptr;
-    CodeBlockSlot* call = nullptr;
-    CodeBlockSlot* construct = nullptr;
-    CachedIdentifier* name = nullptr;
-    CachedRefPtr<CachedTDZEnvironmentLink>* tdz = nullptr;
-    CachedPtr<CachedFunctionExecutableRareData>* rareData = nullptr;
-    auto place = [&](auto*& out) {
-        using T = std::remove_pointer_t<std::remove_reference_t<decltype(out)>>;
-        out = new (p) T();
-        p += sizeof(T);
-    };
-    if (header & Updatable)
-        place(metadata);
-    if (header & HasChecksum) {
-        place(checksum);
-        place(extent);
-    }
-    if (header & HasCallSlot)
-        place(call);
-    if (header & HasConstructSlot)
-        place(construct);
-    if (header & HasName)
-        place(name);
-    if (header & HasTDZ)
-        place(tdz);
-    if (header & HasRareData)
-        place(rareData);
-    {
-        Vector<uint8_t, 64> tail = packedTail(executable);
-        memcpy(p, tail.span().data(), tail.size());
-        ASSERT(p + tail.size() == bytes() + sizeof(uint32_t) + tailSize(encoder, executable));
-    }
-    if (metadata) {
-        metadata->m_features = executable.m_features;
-        metadata->m_lexicallyScopedFeatures = executable.m_lexicallyScopedFeatures;
-        metadata->m_hasCapturedVariables = executable.m_hasCapturedVariables;
-    }
-    if (rareData)
-        rareData->encode(encoder, executable.m_rareData.get());
-    if (name)
-        name->encode(encoder, executable.ecmaName());
-    if (tdz)
-        tdz->encode(encoder, executable.m_parentScopeTDZVariables);
-
-    if (!executable.m_unlinkedCodeBlockForCall || !executable.m_unlinkedCodeBlockForConstruct)
-        encoder.addLeafExecutable(&executable, encoder.offsetOf(this));
-
-    if (checksum) {
-        ptrdiff_t start = encoder.offsetOf(this);
-        *extent = safeCast<uint32_t>(encoder.currentOffset() - start);
-        encoder.addChecksum(start, *extent, encoder.offsetOf(checksum));
-    }
-
-    encoder.deferBody([call, construct, &encoder, forCall = executable.m_unlinkedCodeBlockForCall, forConstruct = executable.m_unlinkedCodeBlockForConstruct] {
-        if (call)
-            call->encode(encoder, forCall);
-        if (construct)
-            construct->encode(encoder, forConstruct);
-    });
-}
-
-ALWAYS_INLINE UnlinkedFunctionExecutable* CachedFunctionExecutable::decode(Decoder& decoder) const
-{
-    UnlinkedFunctionExecutable* executable = new (NotNull, allocateCell<UnlinkedFunctionExecutable>(decoder.vm())) UnlinkedFunctionExecutable(decoder, *this);
-    executable->finishCreation(decoder.vm());
-    return executable;
-}
-
-ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& decoder, const CachedFunctionExecutable& cachedExecutable)
-    : Base(decoder.vm(), decoder.vm().unlinkedFunctionExecutableStructure.get())
-    , m_isGeneratedFromCache(true)
-    , m_hasCapturedVariables(false)
-    , m_isCached(false)
-    , m_singletonHasBeenInvalidated(false)
-    , m_features(0)
-    , m_lexicallyScopedFeatures(NoLexicallyScopedFeatures)
-    , m_unlinkedCodeBlockForCall()
-    , m_unlinkedCodeBlockForConstruct()
-{
-    CachedFunctionExecutable::View v = cachedExecutable.view();
-    const auto& scalars = v.scalars;
-    m_hasCapturedVariables = scalars.hasCapturedVariables;
-    m_features = scalars.features;
-    m_lexicallyScopedFeatures = scalars.lexicallyScopedFeatures;
-    if (v.name)
-        m_ecmaName = v.name->decode(decoder);
-    if (v.tdz)
-        m_parentScopeTDZVariables = v.tdz->decode(decoder);
-    if (v.rareData)
-        m_rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder));
-    m_firstLineOffset = scalars.firstLineOffset;
-    m_lineCount = scalars.lineCount;
-    m_unlinkedFunctionStart = scalars.unlinkedFunctionStart;
-    m_isBuiltinFunction = scalars.isBuiltinFunction;
-    m_unlinkedBodyStartColumn = scalars.unlinkedBodyStartColumn;
-    m_isBuiltinDefaultClassConstructor = scalars.isBuiltinDefaultClassConstructor;
-    m_unlinkedBodyEndColumn = scalars.unlinkedBodyEndColumn;
-    m_constructAbility = scalars.constructAbility;
-    m_startOffset = scalars.startOffset;
-    m_scriptMode = scalars.scriptMode;
-    m_sourceLength = scalars.sourceLength;
-    m_superBinding = scalars.superBinding;
-    m_parametersStartOffset = scalars.parametersStartOffset;
-    m_unlinkedFunctionEnd = scalars.unlinkedFunctionEnd;
-    m_needsClassFieldInitializer = scalars.needsClassFieldInitializer;
-    m_parameterCount = scalars.parameterCount;
-    m_privateBrandRequirement = scalars.privateBrandRequirement;
-    m_constructorKind = scalars.constructorKind;
-    m_sourceParseMode = scalars.sourceParseMode;
-    m_implementationVisibility = static_cast<unsigned>(scalars.implementationVisibility);
-    m_functionMode = scalars.functionMode;
-    m_derivedContextType = scalars.derivedContextType;
-    m_inlineAttribute = scalars.inlineAttribute;
-    m_evalContextType = scalars.evalContextType;
-    m_hasName = scalars.hasName;
-
-    uint32_t leafExecutables = 2;
-    auto checkBounds = [&](int32_t& codeBlockOffset, const CachedFunctionExecutable::CodeBlockSlot* slot) {
-        if (slot && !slot->isEmpty()) {
-            ptrdiff_t offset = decoder.offsetOf(slot);
-            if (static_cast<size_t>(offset) < decoder.size()) {
-                codeBlockOffset = offset;
-                m_isCached = true;
-                leafExecutables--;
-                return;
-            }
-        }
-
-        codeBlockOffset = 0;
-    };
-
-    if ((v.call && !v.call->isEmpty()) || (v.construct && !v.construct->isEmpty())) {
-        checkBounds(m_cachedCodeBlockForCallOffset, v.call);
-        checkBounds(m_cachedCodeBlockForConstructOffset, v.construct);
-        if (m_isCached)
-            m_decoder = &decoder;
-        else
-            m_decoder = nullptr;
-    }
-
-    if (leafExecutables)
-        decoder.addLeafExecutable(this, decoder.offsetOf(&cachedExecutable));
-}
-
-enum CachedCodeBlockFlag : uint32_t {
-    CodeBlockIsConstructorShift = 0,
-    CodeBlockSuperBindingShift = 1,
-    CodeBlockScriptModeShift = 2,
-    CodeBlockIsArrowFunctionContextShift = 3,
-    CodeBlockIsClassContextShift = 4,
-    CodeBlockHasTailCallsShift = 5,
-    CodeBlockHasCheckpointsShift = 6,
-    CodeBlockConstructorKindShift = 7, // 2 bits
-    CodeBlockDerivedContextTypeShift = 9, // 2
-    CodeBlockEvalContextTypeShift = 11, // 2
-    CodeBlockCodeTypeShift = 13, // 2
-    CodeBlockIsBuiltinFunctionShift = 15,
-    CodeBlockIsBuiltinDefaultClassConstructorShift = 16,
-};
-
-template<typename CodeBlockType>
-void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBlock, VarintWriter& writer)
-{
-    uint32_t flags = static_cast<uint32_t>(codeBlock.m_isConstructor) << CodeBlockIsConstructorShift
-        | static_cast<uint32_t>(codeBlock.m_superBinding) << CodeBlockSuperBindingShift
-        | static_cast<uint32_t>(codeBlock.m_scriptMode) << CodeBlockScriptModeShift
-        | static_cast<uint32_t>(codeBlock.m_isArrowFunctionContext) << CodeBlockIsArrowFunctionContextShift
-        | static_cast<uint32_t>(codeBlock.m_isClassContext) << CodeBlockIsClassContextShift
-        | static_cast<uint32_t>(codeBlock.m_hasTailCalls) << CodeBlockHasTailCallsShift
-        | static_cast<uint32_t>(codeBlock.m_hasCheckpoints) << CodeBlockHasCheckpointsShift
-        | static_cast<uint32_t>(codeBlock.m_constructorKind) << CodeBlockConstructorKindShift
-        | static_cast<uint32_t>(codeBlock.m_derivedContextType) << CodeBlockDerivedContextTypeShift
-        | static_cast<uint32_t>(codeBlock.m_evalContextType) << CodeBlockEvalContextTypeShift
-        | static_cast<uint32_t>(codeBlock.m_codeType) << CodeBlockCodeTypeShift
-        | static_cast<uint32_t>(codeBlock.m_isBuiltinFunction) << CodeBlockIsBuiltinFunctionShift
-        | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift;
-    writer.u32(flags);
-    writer.u8(static_cast<uint8_t>(codeBlock.m_parseMode));
-    writer.u8(codeBlock.m_codeGenerationMode.toRaw());
-    writer.i32(codeBlock.m_thisRegister.offset());
-    writer.i32(codeBlock.m_scopeRegister.offset());
-    writer.i32(codeBlock.m_numVars);
-    writer.i32(codeBlock.m_numCalleeLocals);
-    writer.i32(codeBlock.m_numParameters);
-    writer.u32(codeBlock.m_valueProfiles.size());
-    writer.u32(codeBlock.m_arrayProfiles.size());
-    writer.u32(codeBlock.m_binaryArithProfiles.size());
-    writer.u32(codeBlock.m_unaryArithProfiles.size());
 }
 
 template<typename CodeBlockType>
-void CachedCodeBlock<CodeBlockType>::packLayout(const Layout& layout, VarintWriter& writer)
+void CachedCodeBlock<CodeBlockType>::decodeArrays(Decoder& decoder, UnlinkedCodeBlock& codeBlock) const
 {
-    writer.u8(layout.flags);
-    writer.u32(layout.recordOffsetInRegion);
-    if (layout.flags & LayoutHasMetadata)
-        writer.u32(layout.metadataValueProfiles);
-    auto array = [&](const Array& a) {
-        writer.u32(a.count);
-        if (a.count)
-            writer.i32(a.at);
-    };
-    array(layout.steps);
-    array(layout.instructions);
-    array(layout.constants);
-    array(layout.constantsSourceCodeRepresentation);
-    array(layout.identifiers);
-    array(layout.functionDecls);
-    array(layout.functionExprs);
-    if (layout.flags & LayoutHasExtras)
-        writer.i32(layout.extrasAt);
-}
-
-template<typename CodeBlockType>
-auto CachedCodeBlock<CodeBlockType>::readTail(const uint8_t* limit) const -> Tail
-{
-    Tail tail;
-    VarintReader reader(tailBytes(), limit);
-    Layout& layout = tail.layout;
-    layout.flags = reader.u8();
-    layout.recordOffsetInRegion = reader.u32();
-    if (layout.flags & LayoutHasMetadata)
-        layout.metadataValueProfiles = reader.u32();
-    auto array = [&](Array& a) {
-        a.count = reader.u32();
-        if (a.count)
-            a.at = reader.i32();
-    };
-    array(layout.steps);
-    array(layout.instructions);
-    array(layout.constants);
-    array(layout.constantsSourceCodeRepresentation);
-    array(layout.identifiers);
-    array(layout.functionDecls);
-    array(layout.functionExprs);
-    if (layout.flags & LayoutHasExtras)
-        layout.extrasAt = reader.i32();
-
-    Scalars& s = tail.scalars;
-    uint32_t flags = reader.u32();
-    auto bits = [&](unsigned shift, unsigned width = 1) -> unsigned { return (flags >> shift) & ((1u << width) - 1); };
-    s.isConstructor = bits(CodeBlockIsConstructorShift);
-    s.superBinding = bits(CodeBlockSuperBindingShift);
-    s.scriptMode = bits(CodeBlockScriptModeShift);
-    s.isArrowFunctionContext = bits(CodeBlockIsArrowFunctionContextShift);
-    s.isClassContext = bits(CodeBlockIsClassContextShift);
-    s.hasTailCalls = bits(CodeBlockHasTailCallsShift);
-    s.hasCheckpoints = bits(CodeBlockHasCheckpointsShift);
-    s.constructorKind = bits(CodeBlockConstructorKindShift, 2);
-    s.derivedContextType = bits(CodeBlockDerivedContextTypeShift, 2);
-    s.evalContextType = bits(CodeBlockEvalContextTypeShift, 2);
-    s.codeType = bits(CodeBlockCodeTypeShift, 2);
-    s.isBuiltinFunction = bits(CodeBlockIsBuiltinFunctionShift);
-    s.isBuiltinDefaultClassConstructor = bits(CodeBlockIsBuiltinDefaultClassConstructorShift);
-    s.parseMode = static_cast<SourceParseMode>(reader.u8());
-    s.codeGenerationMode = OptionSet<CodeGenerationMode>::fromRaw(reader.u8());
-    s.thisRegister = VirtualRegister(reader.i32());
-    s.scopeRegister = VirtualRegister(reader.i32());
-    s.numVars = reader.i32();
-    s.numCalleeLocals = reader.i32();
-    s.numParameters = reader.i32();
-    s.numValueProfiles = reader.u32();
-    s.numArrayProfiles = reader.u32();
-    s.numBinaryArithProfiles = reader.u32();
-    s.numUnaryArithProfiles = reader.u32();
-    tail.end = reader.position();
-    tail.intact = !reader.overran();
-    return tail;
-}
-
-template<typename CodeBlockType>
-auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockType& codeBlock) -> Record*
-{
-    ptrdiff_t regionStart = encoder.currentOffset();
-    encoder.beginBlockRegion(regionStart);
-    Layout layout;
-    auto place = [&](Array& array, unsigned count, auto&& write) {
-        array.count = count;
-        if (count)
-            array.at = safeCast<int32_t>(write() - regionStart);
-    };
-
-    // These three may be shared with an identical array written earlier; regionIsIntact() follows them in this order.
-    {
-        Encoder::ShareableArrayScope shareable(encoder);
-        const UnlinkedMetadataTable& metadata = codeBlock.m_metadata.get();
-        if (metadata.m_hasMetadata) {
-            layout.flags |= LayoutHasMetadata | (metadata.m_is32Bit ? LayoutMetadataIs32Bit : 0);
-            layout.metadataValueProfiles = metadata.m_numValueProfiles;
-            auto steps = CachedMetadataSteps::compute(metadata);
-            place(layout.steps, steps.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, steps); });
-        }
-        const JSInstructionStream& instructions = *codeBlock.m_instructions;
-        RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
-        place(layout.instructions, instructions.m_instructions.size(), [&] { return encodeArrayForTail<uint8_t>(encoder, instructions.m_instructions); });
-        place(layout.constantsSourceCodeRepresentation, codeBlock.m_constantsSourceCodeRepresentation.size(), [&] { return encodeArrayForTail<SourceCodeRepresentation>(encoder, codeBlock.m_constantsSourceCodeRepresentation); });
+    VM& vm = decoder.vm();
+    const Layout& layout = m_layout;
+    // Most identifiers and many constants become atoms; let the table grow once for this block rather than as they trickle in.
+    if (unsigned expected = layout.identifiers.count + layout.constants.count; expected >= 64)
+        AtomStringImpl::reserveCapacityForCurrentThread(expected);
+    if (layout.constants.count) {
+        Reader reader = arrayReader(decoder, layout.constants);
+        codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
+        for (auto& constant : codeBlock.m_constantRegisters)
+            constant.set(vm, &codeBlock, CachedJSValue::decode(reader, decoder));
     }
-    place(layout.constants, codeBlock.m_constantRegisters.size(), [&] { return CachedJSValuePool::encode(encoder, codeBlock.m_constantRegisters.span()); });
-    place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });
-    // The children's slots are part of this block's bytes; the records they point at are written after the region.
-    auto allocateSlots = [&](unsigned count) {
-        auto result = encoder.malloc(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * count, alignof(CachedWriteBarrier<CachedFunctionExecutable>));
-        new (result.buffer()) CachedWriteBarrier<CachedFunctionExecutable>[count];
-        return result.offset();
-    };
-    place(layout.functionDecls, codeBlock.m_functionDecls.size(), [&] { return allocateSlots(codeBlock.m_functionDecls.size()); });
-    place(layout.functionExprs, codeBlock.m_functionExprs.size(), [&] { return allocateSlots(codeBlock.m_functionExprs.size()); });
-    if (CachedCodeBlockExtras::isNeeded(codeBlock)) {
-        layout.flags |= LayoutHasExtras;
-        auto result = encoder.malloc(sizeof(CachedCodeBlockExtras), alignof(CachedCodeBlockExtras));
-        layout.extrasAt = safeCast<int32_t>(result.offset() - regionStart);
-        (new (result.buffer()) CachedCodeBlockExtras())->encode(encoder, codeBlock);
+    if (layout.representations.count) {
+        auto bytes = arrayReader(decoder, layout.representations).bytes(layout.representations.count);
+        codeBlock.m_constantsSourceCodeRepresentation = FixedVector<SourceCodeRepresentation>(bytes.size());
+        for (size_t i = 0; i < bytes.size(); ++i)
+            codeBlock.m_constantsSourceCodeRepresentation[i] = static_cast<SourceCodeRepresentation>(bytes[i]);
     }
-
-    if (encoder.checksums())
-        layout.flags |= LayoutHasChecksum;
-    size_t trailerBytes = (layout.flags & LayoutHasChecksum) ? 2 * sizeof(uint32_t) : 0;
-    VarintWriter writer;
-    // The tail holds the record's own offset in the region as a varint, so its size is settled where it is placed.
-    auto result = encoder.mallocPlaced(alignof(Record), [&](ptrdiff_t offset) {
-        layout.recordOffsetInRegion = safeCast<uint32_t>(offset - regionStart);
-        writer = { };
-        packLayout(layout, writer);
-        packScalars(codeBlock, writer);
-        return sizeof(Record) + writer.size() + trailerBytes;
-    });
-    Record* record = new (result.buffer()) Record();
-    writer.copyTo(record->tailBytes());
-    ptrdiff_t trailerOffset = result.offset() + sizeof(Record) + writer.size();
-    encoder.deferCold([record, &encoder, expressionInfo = codeBlock.m_expressionInfo.get()] {
-        // Self-checksummed and position-independent, so an identical one written earlier is reused.
-        auto bytes = CachedExpressionInfo::pack(*expressionInfo, encoder.checksums());
-        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(bytes.span()) ^ static_cast<unsigned>(bytes.size());
-        ptrdiff_t at;
-        if (auto existing = encoder.existingIdenticalArray(bytes.span(), hash, alignof(CachedExpressionInfo)))
-            at = *existing;
-        else {
-            auto allocation = encoder.malloc(bytes.size(), alignof(CachedExpressionInfo));
-            memcpySpan(std::span { allocation.buffer(), bytes.size() }, bytes.span());
-            encoder.registerArray(hash, allocation.offset(), bytes.size());
-            at = allocation.offset();
-        }
-        record->m_expressionInfo.pointAtPayloadOffset(encoder, at);
-    });
-    record->encodeOwnMembers(encoder, codeBlock);
-
-    uint32_t regionSize = safeCast<uint32_t>(encoder.currentOffset() - regionStart);
-    if (trailerBytes) {
-        memcpySpan(encoder.mutableBytesAt(trailerOffset, sizeof(uint32_t)), std::span { reinterpret_cast<const uint8_t*>(&regionSize), sizeof(regionSize) });
-        encoder.addChecksum(regionStart, regionSize, trailerOffset + sizeof(uint32_t), encoder.takeBlockExternalArrays());
-    } else
-        encoder.takeBlockExternalArrays();
-
-    auto encodeChildren = [&](const Array& slots, const auto& executables) {
+    codeBlock.m_expressionInfo = CachedExpressionInfo::decode(decoder, m_expressionInfoAt);
+    if (layout.flags & LayoutHasJumpTargets) {
+        Reader reader(decoder.payload(), m_regionAt + layout.jumpTargetsAt);
+        CachedCodeBlockExtras::decodeOutOfLineJumpTargets(reader, codeBlock);
+    }
+    if (layout.identifiers.count) {
+        Reader reader = arrayReader(decoder, layout.identifiers);
+        codeBlock.m_identifiers = FixedVector<Identifier>(layout.identifiers.count);
+        for (auto& identifier : codeBlock.m_identifiers)
+            identifier = CachedString::decodeIdentifier(reader, decoder);
+    }
+    auto children = [&](const Array& slots, auto& executables) {
         if (!slots.count)
             return;
-        auto bytes = encoder.mutableBytesAt(regionStart + slots.at, sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * slots.count);
-        auto* slot = reinterpret_cast<CachedWriteBarrier<CachedFunctionExecutable>*>(bytes.data());
-        for (unsigned i = 0; i < slots.count; ++i)
-            slot[i].encode(encoder, executables[i]);
+        Reader reader = arrayReader(decoder, slots);
+        executables = FixedVector<WriteBarrier<UnlinkedFunctionExecutable>>(slots.count);
+        for (auto& executable : executables)
+            executable.set(vm, &codeBlock, CachedFunctionExecutable(decoder, reader.u32()).decode(decoder));
     };
-    encodeChildren(layout.functionDecls, codeBlock.m_functionDecls);
-    encodeChildren(layout.functionExprs, codeBlock.m_functionExprs);
-    return record;
+    children(layout.functionDecls, codeBlock.m_functionDecls);
+    children(layout.functionExprs, codeBlock.m_functionExprs);
 }
 
-class CachedSourceCodeKey : public CachedObject<SourceCodeKey> {
-public:
-    void encode(Encoder& encoder, const SourceCodeKey& key)
-    {
-        m_sourceCode.encode(encoder, key.m_sourceCode);
-        m_name.encode(encoder, key.m_name);
-        m_flags = key.m_flags.m_flags;
-        m_hash = key.hash();
-        m_functionConstructorParametersEndPosition = key.m_functionConstructorParametersEndPosition;
-    }
+template<typename CodeBlockType>
+CodeBlockType* CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder) const
+{
+    RELEASE_ASSERT(m_verified);
+    auto& record = static_cast<const CachedCodeBlockType<CodeBlockType>&>(*this);
+    CodeBlockType* codeBlock = record.construct(decoder);
+    codeBlock->finishCreation(decoder.vm());
+    decodeArrays(decoder, *codeBlock);
+    record.decodeOwnMembers(decoder, *codeBlock);
+    return codeBlock;
+}
 
-    void decode(Decoder& decoder, SourceCodeKey& key) const
-    {
-        m_sourceCode.decode(decoder, key.m_sourceCode);
-        m_name.decode(decoder, key.m_name);
-        key.m_flags.m_flags = m_flags;
-        key.m_hash = m_hash;
-        key.m_functionConstructorParametersEndPosition = m_functionConstructorParametersEndPosition;
-    }
+template<typename CodeBlockType>
+static CodeBlockType* decodeCodeBlockRecord(Decoder& decoder, uint32_t at)
+{
+    CachedCodeBlockType<CodeBlockType> record(decoder, at);
+    if (!record.regionIsIntact(decoder))
+        return nullptr;
+    return record.decode(decoder);
+}
 
-private:
-    CachedUnlinkedSourceCode m_sourceCode;
-    CachedString m_name;
-    unsigned m_flags;
-    unsigned m_hash;
-    int m_functionConstructorParametersEndPosition;
+void decodeFunctionCodeBlock(Decoder& decoder, uint32_t at, WriteBarrier<UnlinkedFunctionCodeBlock>& codeBlock, const JSCell* owner)
+{
+    ASSERT(decoder.vm().heap.isDeferred());
+    if (UnlinkedFunctionCodeBlock* decoded = decodeCodeBlockRecord<UnlinkedFunctionCodeBlock>(decoder, at))
+        codeBlock.set(decoder.vm(), owner, decoded);
+}
+
+// -- Entries ----------------------------------------------------------------------------------------------------------
+
+enum class CachedCodeBlockTag : uint8_t {
+    Program,
+    Module,
+    Eval,
+    BuiltinFunction, // a root UnlinkedFunctionExecutable created by BuiltinExecutables (an embedder's JS builtins)
 };
 
-class GenericCacheEntry {
-public:
-    bool decode(Decoder&, std::pair<SourceCodeKey, UnlinkedCodeBlock*>&) const;
-    bool decode(Decoder&, SourceCodeKey&) const;
-    bool isStillValid(Decoder&, const SourceCodeKey&, CachedCodeBlockTag) const;
+template<typename CodeBlockType> static constexpr CachedCodeBlockTag tagFor = CachedCodeBlockTag::Eval;
+template<> constexpr CachedCodeBlockTag tagFor<UnlinkedProgramCodeBlock> = CachedCodeBlockTag::Program;
+template<> constexpr CachedCodeBlockTag tagFor<UnlinkedModuleProgramCodeBlock> = CachedCodeBlockTag::Module;
 
-protected:
-    GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
-        : m_cacheVersion(computeJSCBytecodeCacheVersion())
-        , m_tag(tag)
+static CachedCodeBlockTag tagFromSourceCodeType(SourceCodeType type)
+{
+    switch (type) {
+    case SourceCodeType::ProgramType:
+        return CachedCodeBlockTag::Program;
+    case SourceCodeType::EvalType:
+        return CachedCodeBlockTag::Eval;
+    case SourceCodeType::ModuleType:
+        return CachedCodeBlockTag::Module;
+    case SourceCodeType::FunctionType:
+        break;
+    }
+    ASSERT_NOT_REACHED();
+    return static_cast<CachedCodeBlockTag>(-1);
+}
+
+// The payload starts with an entry:
+//   u32 cacheVersion, u8 tag, u8 reservedCalleeLocals, u32 headerSize, u32 headerChecksum, u32 keyAt, u32 rootAt
+// followed (after the strings it names) by the key record keyAt points at:
+//   varuint length, length bytes                 boot session
+//   Program / Module:  SourceCodeKey
+//   BuiltinFunction:   varuint sourceLength, varuint embedderStamp
+// headerSize is where the key record ends; the checksum covers [0, headerSize). rootAt is the root code block's record
+// (Program / Module) or the root executable record (BuiltinFunction).
+class CacheEntry {
+public:
+    static constexpr size_t versionAt = 0;
+    static constexpr size_t tagAt = 4;
+    static constexpr size_t reservedCalleeLocalsAt = 5;
+    static constexpr size_t headerSizeAt = 6;
+    static constexpr size_t headerChecksumAt = 10;
+    static constexpr size_t keyRecordAt = 14;
+    static constexpr size_t rootRecordAt = 18;
+    static constexpr size_t fixedSize = 22;
+
+    template<typename WriteKey, typename WriteRoot>
+    static void encode(Encoder& encoder, CachedCodeBlockTag tag, const WriteKey& writeKey, const WriteRoot& writeRoot)
     {
-        m_bootSessionUUID.encode(encoder, bootSessionUUIDString());
+        Writer fixed;
+        fixed.u32(computeJSCBytecodeCacheVersion());
+        fixed.u8(static_cast<uint8_t>(tag));
+        // The one property of the encoding CPU that generated bytecode depends on: BytecodeGenerator numbers a code block's
+        // locals after the LLInt/baseline callee-save area. Equal on every CPU JSC targets today; a port where it differed
+        // would produce foreign payloads, not portable ones.
+        fixed.u8(CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters());
+        fixed.zeros(fixedSize - fixed.size());
+        uint32_t at = encoder.append(fixed);
+        RELEASE_ASSERT(!at);
+
+        Writer key;
+        String bootSession = bootSessionUUIDString();
+        key.varuint(bootSession.length());
+        for (unsigned i = 0; i < bootSession.length(); ++i)
+            key.u8(static_cast<uint8_t>(bootSession[i]));
+        writeKey(key);
+        encoder.patchU32(keyRecordAt, encoder.append(key));
+        uint32_t headerSize = encoder.position();
+        encoder.patchU32(headerSizeAt, headerSize);
+        encoder.addChecksum(0, headerSize, headerChecksumAt);
+        encoder.patchU32(rootRecordAt, writeRoot());
     }
 
-    CachedCodeBlockTag NODELETE tag() const { return m_tag; }
+    CacheEntry(Decoder& decoder)
+    {
+        Reader reader(decoder.payload(), 0);
+        m_version = reader.u32();
+        m_tag = static_cast<CachedCodeBlockTag>(reader.u8());
+        m_reservedCalleeLocals = reader.u8();
+        m_headerSize = reader.u32();
+        reader.u32();
+        m_keyAt = reader.u32();
+        m_rootAt = reader.u32();
+        m_parsed = !reader.overran();
+    }
+
+    CachedCodeBlockTag tag() const { return m_tag; }
+    uint32_t rootAt() const { return m_rootAt; }
 
     bool isUpToDate(Decoder& decoder) const
     {
-        if (m_cacheVersion != computeJSCBytecodeCacheVersion())
+        if (!m_parsed || m_version != computeJSCBytecodeCacheVersion())
             return false;
-        // The entry, its boot session string and its source code key, up to where the code block starts.
-        if (!decoder.regionChecksumMatches(this, m_headerSize, &m_headerChecksum))
+        if (m_reservedCalleeLocals != CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
             return false;
-        if (m_bootSessionUUID.decode(decoder) != bootSessionUUIDString())
+        if (m_keyAt < fixedSize || m_keyAt >= m_headerSize || m_rootAt < m_headerSize)
             return false;
-        return true;
+        return decoder.checksumMatches(0, m_headerSize, headerChecksumAt);
     }
 
-    void sealHeader(Encoder& encoder)
+    // Positioned after the boot session, which has been checked; overran() if it did not match.
+    Reader keyReader(Decoder& decoder) const
     {
-        m_headerSize = safeCast<uint32_t>(encoder.currentOffset()); // the entry is at offset 0
-        encoder.addChecksum(0, m_headerSize, encoder.offsetOf(&m_headerChecksum));
+        Reader reader(decoder.payload(), m_keyAt);
+        String bootSession = bootSessionUUIDString();
+        auto stored = reader.bytes(reader.varuint());
+        if (!equalSpans(stored, bootSession.span8()))
+            reader.seek(decoder.payload().size() + 1);
+        return reader;
     }
 
 private:
-    uint32_t m_cacheVersion;
+    uint32_t m_version { 0 };
+    CachedCodeBlockTag m_tag { };
+    uint8_t m_reservedCalleeLocals { 0 };
     uint32_t m_headerSize { 0 };
-    uint32_t m_headerChecksum { 0 };
-    CachedString m_bootSessionUUID;
-    CachedCodeBlockTag m_tag;
+    uint32_t m_keyAt { 0 };
+    uint32_t m_rootAt { 0 };
+    bool m_parsed { false };
 };
-
-static_assert(alignof(GenericCacheEntry) <= alignof(std::max_align_t));
 
 template<typename UnlinkedCodeBlockType>
-class CacheEntry : public GenericCacheEntry {
-public:
-    CacheEntry(Encoder& encoder)
-        : GenericCacheEntry(encoder, CachedCodeBlockTypeImpl<UnlinkedCodeBlockType>::tag)
-    {
-    }
-
-    void encode(Encoder& encoder, std::pair<SourceCodeKey, const UnlinkedCodeBlockType*> pair)
-    {
-        m_key.encode(encoder, pair.first);
-        sealHeader(encoder);
-        m_codeBlock.encode(encoder, pair.second);
-    }
-
-private:
-    friend GenericCacheEntry;
-
-    bool isStillValid(Decoder& decoder, const SourceCodeKey& key) const
-    {
-        SourceCodeKey decodedKey;
-        m_key.decode(decoder, decodedKey);
-        return decodedKey == key;
-    }
-
-    bool decode(Decoder& decoder, std::pair<SourceCodeKey, UnlinkedCodeBlockType*>& result) const
-    {
-        ASSERT(tag() == CachedCodeBlockTypeImpl<UnlinkedCodeBlockType>::tag);
-        SourceCodeKey decodedKey;
-        m_key.decode(decoder, decodedKey);
-        result = { WTF::move(decodedKey), m_codeBlock.decode(decoder) };
-        return true;
-    }
-
-    bool decode(Decoder& decoder, SourceCodeKey& key) const
-    {
-        m_key.decode(decoder, key);
-        return true;
-    }
-
-    CachedSourceCodeKey m_key;
-    CachedPtr<CachedCodeBlockType<UnlinkedCodeBlockType>> m_codeBlock;
-};
-
-static_assert(alignof(CacheEntry<UnlinkedProgramCodeBlock>) <= alignof(std::max_align_t));
-static_assert(alignof(CacheEntry<UnlinkedModuleProgramCodeBlock>) <= alignof(std::max_align_t));
-
-bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, UnlinkedCodeBlock*>& result) const
+static void encodeCodeBlock(Encoder& encoder, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock)
 {
-    if (!isUpToDate(decoder))
-        return false;
-
-    switch (m_tag) {
-    case CachedCodeBlockTag::CachedProgramCodeBlockTag:
-        return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedProgramCodeBlock*>&>(result));
-    case CachedCodeBlockTag::CachedModuleCodeBlockTag:
-        return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedModuleProgramCodeBlock*>&>(result));
-    case CachedCodeBlockTag::CachedBuiltinFunctionTag:
-    case CachedCodeBlockTag::CachedEvalCodeBlockTag:
-        // We do not cache eval code blocks
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-    return false;
-}
-
-bool GenericCacheEntry::decode(Decoder& decoder, SourceCodeKey& key) const
-{
-    if (!isUpToDate(decoder))
-        return false;
-
-    switch (m_tag) {
-    case CachedCodeBlockTag::CachedProgramCodeBlockTag:
-        return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, key);
-    case CachedCodeBlockTag::CachedModuleCodeBlockTag:
-        return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, key);
-    case CachedCodeBlockTag::CachedBuiltinFunctionTag:
-    case CachedCodeBlockTag::CachedEvalCodeBlockTag:
-        // We do not cache eval code blocks
-        return false;
-    }
-
-    return false;
-}
-
-bool GenericCacheEntry::isStillValid(Decoder& decoder, const SourceCodeKey& key, CachedCodeBlockTag tag) const
-{
-    if (!isUpToDate(decoder))
-        return false;
-
-    switch (tag) {
-    case CachedCodeBlockTag::CachedProgramCodeBlockTag:
-        return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->isStillValid(decoder, key);
-    case CachedCodeBlockTag::CachedModuleCodeBlockTag:
-        return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->isStillValid(decoder, key);
-    case CachedCodeBlockTag::CachedBuiltinFunctionTag:
-    case CachedCodeBlockTag::CachedEvalCodeBlockTag:
-        // We do not cache eval code blocks
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-    return false;
-}
-
-template<typename UnlinkedCodeBlockType>
-void encodeCodeBlock(Encoder& encoder, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock)
-{
-    auto* entry = encoder.template malloc<CacheEntry<UnlinkedCodeBlockType>>(encoder);
-    entry->encode(encoder, { key, uncheckedDowncast<UnlinkedCodeBlockType>(codeBlock) });
-}
-
-// A builtin function (BuiltinExecutables::createExecutable) and, lazily, its body and nested functions. The embedder
-// supplies the source it was created from and a stamp identifying that source's contents; nothing is hashed at load.
-class BuiltinFunctionCacheEntry : public GenericCacheEntry {
-public:
-    BuiltinFunctionCacheEntry(Encoder& encoder)
-        : GenericCacheEntry(encoder, CachedCodeBlockTag::CachedBuiltinFunctionTag)
-    {
-    }
-
-    void encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable, unsigned sourceLength, unsigned embedderStamp)
-    {
-        m_sourceLength = sourceLength;
-        m_embedderStamp = embedderStamp;
-        sealHeader(encoder);
-        m_executable.encode(encoder, &executable);
-    }
-
-    UnlinkedFunctionExecutable* decode(Decoder& decoder, unsigned sourceLength, unsigned embedderStamp) const
-    {
-        if (tag() != CachedCodeBlockTag::CachedBuiltinFunctionTag || !isUpToDate(decoder))
-            return nullptr;
-        if (m_sourceLength != sourceLength || m_embedderStamp != embedderStamp)
-            return nullptr;
-        auto* record = m_executable.getIfInPayload(decoder);
-        if (!record || !record->isIntact(decoder))
-            return nullptr;
-        return m_executable.decode(decoder);
-    }
-
-private:
-    unsigned m_sourceLength { 0 };
-    unsigned m_embedderStamp { 0 };
-    CachedPtr<CachedFunctionExecutable> m_executable;
-};
-
-RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* externalStrings, BytecodeCacheChecksums checksums, BytecodeCacheUpdatable updatable)
-{
-    BytecodeCacheError error;
-    FileSystem::FileHandle invalidFileHandle;
-    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, externalStrings, checksums, updatable);
-    encoder.template malloc<BuiltinFunctionCacheEntry>(encoder)->encode(encoder, *executable, sourceLength, embedderStamp);
-    encoder.encodeDeferred();
-    return encoder.release(error);
-}
-
-UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp)
-{
-    if (cachedBytecode->span().size() < sizeof(BuiltinFunctionCacheEntry))
-        return nullptr;
-    unsigned sourceLength = provider.source().length();
-    auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(cachedBytecode->span().data());
-    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider);
-    DeferGC deferGC(vm);
-    return entry->decode(decoder.get(), sourceLength, embedderStamp);
+    CacheEntry::encode(encoder, tagFor<UnlinkedCodeBlockType>,
+        [&](Writer& writer) { CachedSourceCodeKey::encode(writer, encoder, key); },
+        [&] { return CachedCodeBlockType<UnlinkedCodeBlockType>::encode(encoder, *uncheckedDowncast<UnlinkedCodeBlockType>(codeBlock)); });
 }
 
 RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings, BytecodeCacheChecksums checksums, BytecodeCacheUpdatable updatable)
 {
     const ClassInfo* classInfo = codeBlock->classInfo();
-
     Encoder encoder(vm, fileHandle, Encoder::NumberStrings::Yes, externalStrings, checksums, updatable);
     if (classInfo == UnlinkedProgramCodeBlock::info())
         encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, key, codeBlock);
@@ -4637,7 +3498,6 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
     else
         ASSERT(classInfo == UnlinkedEvalCodeBlock::info());
     encoder.encodeDeferred();
-
     return encoder.release(error);
 }
 
@@ -4648,28 +3508,69 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
     return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error, externalStrings, checksums, updatable);
 }
 
-RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
+// A builtin function (BuiltinExecutables::createExecutable) and, lazily, its body and nested functions. The embedder
+// supplies the source it was created from and a stamp identifying that source's contents; nothing is hashed at load.
+RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* externalStrings, BytecodeCacheChecksums checksums, BytecodeCacheUpdatable updatable)
+{
+    BytecodeCacheError error;
+    FileSystem::FileHandle invalidFileHandle;
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, externalStrings, checksums, updatable);
+    CacheEntry::encode(encoder, CachedCodeBlockTag::BuiltinFunction,
+        [&](Writer& writer) {
+            writer.varuint(sourceLength);
+            writer.varuint(embedderStamp);
+        },
+        [&] { return CachedFunctionExecutable::encode(encoder, *executable); });
+    encoder.encodeDeferred();
+    return encoder.release(error);
+}
+
+UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp)
+{
+    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider);
+    CacheEntry entry(decoder.get());
+    if (entry.tag() != CachedCodeBlockTag::BuiltinFunction || !entry.isUpToDate(decoder.get()))
+        return nullptr;
+    Reader key = entry.keyReader(decoder.get());
+    unsigned sourceLength = key.varuint();
+    unsigned stamp = key.varuint();
+    if (key.overran() || sourceLength != provider.source().length() || stamp != embedderStamp)
+        return nullptr;
+    if (!CachedFunctionExecutable::isIntact(decoder.get(), entry.rootAt()))
+        return nullptr;
+    DeferGC deferGC(vm);
+    CachedFunctionExecutable record(decoder.get(), entry.rootAt());
+    if (!record.intact)
+        return nullptr;
+    return record.decode(decoder.get());
+}
+
+// A function's code block on its own, to be appended to the payload it was left out of (CachedBytecode::addFunctionUpdate).
+RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, size_t baseOffset, BytecodeCacheError& error)
 {
     FileSystem::FileHandle invalidFileHandle;
-    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::No);
-    ptrdiff_t rootOffset = encoder.offsetOf(CachedFunctionCodeBlock::create(encoder, *codeBlock));
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::No, nullptr, BytecodeCacheChecksums::Yes, BytecodeCacheUpdatable::Yes, baseOffset);
+    uint32_t recordAt = CachedFunctionCodeBlock::encode(encoder, *codeBlock);
     encoder.encodeDeferred();
     RefPtr<CachedBytecode> result = encoder.release(error);
     if (result)
-        result->setRootOffset(rootOffset);
+        result->setRootOffset(recordAt - baseOffset);
     return result;
 }
 
 std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cachedBytecode)
 {
-    const auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
     Ref<Decoder> decoder = Decoder::create(vm, WTF::move(cachedBytecode));
-
+    CacheEntry entry(decoder.get());
+    if (!entry.isUpToDate(decoder.get()) || (entry.tag() != CachedCodeBlockTag::Program && entry.tag() != CachedCodeBlockTag::Module))
+        return std::nullopt;
+    Reader reader = entry.keyReader(decoder.get());
     SourceCodeKey key;
-    if (!cachedEntry->decode(decoder.get(), key))
+    if (!CachedSourceCodeKey::decode(reader, decoder.get(), key))
         return std::nullopt;
     return key;
 }
+
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode)
 {
     MonotonicTime before;
@@ -4677,40 +3578,48 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     if (Options::reportBytecodeCacheDecodeTimes()) [[unlikely]]
         before = MonotonicTime::now();
 
-    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider());
-    std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
+    CacheEntry entry(decoder.get());
+    if (!entry.isUpToDate(decoder.get()))
+        return nullptr;
+    UnlinkedCodeBlock* codeBlock = nullptr;
     {
         DeferGC deferGC(vm);
-        if (!cachedEntry->decode(decoder.get(), entry))
+        Reader reader = entry.keyReader(decoder.get());
+        SourceCodeKey decodedKey;
+        if (!CachedSourceCodeKey::decode(reader, decoder.get(), decodedKey) || decodedKey != key)
             return nullptr;
+        switch (entry.tag()) {
+        case CachedCodeBlockTag::Program:
+            codeBlock = decodeCodeBlockRecord<UnlinkedProgramCodeBlock>(decoder.get(), entry.rootAt());
+            break;
+        case CachedCodeBlockTag::Module:
+            codeBlock = decodeCodeBlockRecord<UnlinkedModuleProgramCodeBlock>(decoder.get(), entry.rootAt());
+            break;
+        case CachedCodeBlockTag::Eval:
+        case CachedCodeBlockTag::BuiltinFunction:
+            return nullptr;
+        }
     }
-    if (entry.first != key)
-        return nullptr;
 
     if (Options::reportBytecodeCacheDecodeTimes()) [[unlikely]] {
         MonotonicTime after = MonotonicTime::now();
         dataLogLn("BytecodeCache: decoded ", key.source().provider().sourceURL(), " (", cachedBytecodeSize, " bytes) in ", (after - before).milliseconds(), " ms.");
     }
-
-    return entry.second;
+    return codeBlock;
 }
 
 bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, const SourceCodeKey& key, SourceCodeType type)
 {
-    auto span = cachedBytecode->span();
-    if (span.empty())
+    if (cachedBytecode->span().empty())
         return false;
-    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(span.data());
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode));
-    return cachedEntry->isStillValid(decoder.get(), key, tagFromSourceCodeType(type));
-}
-
-void decodeFunctionCodeBlock(Decoder& decoder, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>& codeBlock, const JSCell* owner)
-{
-    ASSERT(decoder.vm().heap.isDeferred());
-    auto* cachedCodeBlock = static_cast<const CachedWriteBarrier<CachedFunctionCodeBlock, UnlinkedFunctionCodeBlock>*>(decoder.ptrForOffsetFromBase(cachedFunctionCodeBlockOffset));
-    cachedCodeBlock->decode(decoder, codeBlock, owner);
+    CacheEntry entry(decoder.get());
+    if (!entry.isUpToDate(decoder.get()) || entry.tag() != tagFromSourceCodeType(type))
+        return false;
+    Reader reader = entry.keyReader(decoder.get());
+    SourceCodeKey decodedKey;
+    return CachedSourceCodeKey::decode(reader, decoder.get(), decodedKey) && decodedKey == key;
 }
 
 } // namespace JSC

@@ -76,8 +76,8 @@ void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
                 auto record = bytes.subspan(base - start);
                 RELEASE_ASSERT(record.size() >= CachedFunctionExecutableOffsets::fixedSize());
                 RELEASE_ASSERT(CachedFunctionExecutableOffsets::isUpdatable(record)); // only the jsc shell's disk cache writes patchable records
-                uint32_t extent;
-                memcpySpan(std::span { reinterpret_cast<uint8_t*>(&extent), sizeof(extent) }, record.subspan(CachedFunctionExecutableOffsets::extentOffset(), sizeof(extent)));
+                auto extentBytes = record.subspan(CachedFunctionExecutableOffsets::extentOffset(), 4);
+                uint32_t extent = extentBytes[0] | extentBytes[1] << 8 | extentBytes[2] << 16 | static_cast<uint32_t>(extentBytes[3]) << 24;
                 RELEASE_ASSERT(extent >= CachedFunctionExecutableOffsets::fixedSize() && extent <= record.size()); // our own encoder wrote this record moments ago
                 return record.first(extent);
             };
@@ -98,6 +98,12 @@ void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
         callback(base + fieldOffset, bytes);
         memcpySpan(recordBytes(base).mutableSpan().subspan(fieldOffset, bytes.size()), bytes);
     };
+    auto littleEndian = [](uint32_t value) {
+        std::array<uint8_t, 4> bytes;
+        for (unsigned i = 0; i < 4; ++i)
+            bytes[i] = static_cast<uint8_t>(value >> (8 * i));
+        return bytes;
+    };
 
     off_t offset = m_payload.size();
     for (const auto& update : m_updates) {
@@ -108,16 +114,23 @@ void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
             const CacheUpdate::FunctionUpdate& functionUpdate = update.asFunction();
             payload = &functionUpdate.m_payload;
             {
-                ptrdiff_t kindOffset = functionUpdate.m_kind == CodeSpecializationKind::CodeForCall ? CachedFunctionExecutableOffsets::codeBlockForCallOffset() : CachedFunctionExecutableOffsets::codeBlockForConstructOffset();
-                ptrdiff_t fieldOffset = kindOffset + CachedWriteBarrierOffsets::ptrOffset() + CachedPtrOffsets::offsetOffset();
-                VariableLengthObjectBase::Offset offsetPayload = safeCast<VariableLengthObjectBase::Offset>(static_cast<ptrdiff_t>(offset + functionUpdate.m_rootOffset) - (functionUpdate.m_base + fieldOffset));
-                static_assert(std::is_same<decltype(VariableLengthObjectBase::m_offset), VariableLengthObjectBase::Offset>::value);
-                patch(functionUpdate.m_base, fieldOffset, { reinterpret_cast<const uint8_t*>(&offsetPayload), sizeof(offsetPayload) });
+                // The record's code block field for `kind` becomes the offset the update's root record will have once appended.
+                ptrdiff_t fieldOffset = functionUpdate.m_kind == CodeSpecializationKind::CodeForCall ? CachedFunctionExecutableOffsets::codeBlockForCallOffset() : CachedFunctionExecutableOffsets::codeBlockForConstructOffset();
+                auto bytes = littleEndian(safeCast<uint32_t>(offset + functionUpdate.m_rootOffset));
+                patch(functionUpdate.m_base, fieldOffset, bytes);
             }
-            patch(functionUpdate.m_base, CachedFunctionExecutableOffsets::metadataOffset(), { reinterpret_cast<const uint8_t*>(&functionUpdate.m_metadata), sizeof(functionUpdate.m_metadata) });
             {
-                uint32_t checksum = bytecodeCacheRecordChecksum(recordBytes(functionUpdate.m_base).span(), CachedFunctionExecutableOffsets::checksumOffset());
-                callback(functionUpdate.m_base + CachedFunctionExecutableOffsets::checksumOffset(), { reinterpret_cast<const uint8_t*>(&checksum), sizeof(checksum) });
+                // u32 features, u8 lexicallyScopedFeatures, u8 hasCapturedVariables (see CachedFunctionExecutable).
+                std::array<uint8_t, 6> bytes;
+                auto features = littleEndian(functionUpdate.m_metadata.m_features);
+                std::copy(features.begin(), features.end(), bytes.begin());
+                bytes[4] = static_cast<uint8_t>(functionUpdate.m_metadata.m_lexicallyScopedFeatures);
+                bytes[5] = functionUpdate.m_metadata.m_hasCapturedVariables;
+                patch(functionUpdate.m_base, CachedFunctionExecutableOffsets::metadataOffset(), bytes);
+            }
+            {
+                auto checksum = littleEndian(bytecodeCacheRecordChecksum(recordBytes(functionUpdate.m_base).span(), CachedFunctionExecutableOffsets::checksumOffset()));
+                callback(functionUpdate.m_base + CachedFunctionExecutableOffsets::checksumOffset(), checksum);
             }
         }
 

@@ -29,6 +29,7 @@
 #include "ParserModes.h"
 #include "VariableEnvironment.h"
 #include <wtf/FileSystem.h>
+#include <wtf/Function.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueArray.h>
@@ -61,7 +62,8 @@ enum class BytecodeCacheChecksums : bool { No, Yes };
 // function joins the cache later. A payload generated all at once (bun --compile) needs none of that.
 enum class BytecodeCacheUpdatable : bool { No, Yes };
 
-// Offsets within an updatable executable record (the jsc shell's disk cache patches these fields in place).
+// Offsets within an updatable executable record (the jsc shell's disk cache patches these fields in place). The two
+// code block fields are u32 payload offsets of the code block's record; every field is little-endian.
 struct CachedFunctionExecutableOffsets {
     static ptrdiff_t NODELETE codeBlockForCallOffset();
     static ptrdiff_t NODELETE codeBlockForConstructOffset();
@@ -75,14 +77,6 @@ struct CachedFunctionExecutableOffsets {
 
 // CRC-32C of `record` with the 4 bytes at `checksumOffset` read as zero (how every checksummed record is sealed).
 JS_EXPORT_PRIVATE uint32_t bytecodeCacheRecordChecksum(std::span<const uint8_t> record, size_t checksumOffset);
-
-struct CachedWriteBarrierOffsets {
-    static ptrdiff_t NODELETE ptrOffset();
-};
-
-struct CachedPtrOffsets {
-    static ptrdiff_t offsetOffset();
-};
 
 // One shared string table across every encodeCodeBlock in a build session (bun --compile --bytecode): each ≥4-char non-symbol string becomes a 4-byte externalStringTag ordinal in every chunk's payload, and the characters are written once by serialize(). Decode reads them from the DecoderStringTable the embedder hands back via VM::ClientData.
 class EncoderStringTable {
@@ -122,60 +116,39 @@ private:
     uint32_t m_count { 0 };
 };
 
-class VariableLengthObjectBase {
-    friend class CachedBytecode;
-
-public:
-    // Relative offset from this field to the object's payload. A payload is one code block tree, far below 2 GB.
-    using Offset = int32_t;
-
-protected:
-    VariableLengthObjectBase(Offset offset)
-        : m_offset(offset)
-    {
-    }
-
-    Offset m_offset;
-};
-
 class Decoder : public RefCounted<Decoder> {
     WTF_MAKE_NONCOPYABLE(Decoder);
 
 public:
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr);
-    bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
-    // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
-    void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
-    const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
-    bool regionChecksumMatches(const void* start, uint32_t size, const uint32_t* storedChecksum, std::span<const std::span<const uint8_t>> externalArrays = { }) const;
-    bool payloadContains(const void* start, size_t size) const;
-    std::span<const uint8_t> payloadSpan() const;
-    bool verifiesChecksums() const;
-    // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
-    AtomStringImpl* atomForOrdinal(uint32_t) const;
-    void setAtomForOrdinal(uint32_t, AtomStringImpl&);
-    // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
-    Ref<AtomStringImpl> atomForInlineString(uint32_t packed);
-    // ≥4-char strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots).
-    Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
-    String plainStringForExternalString(uint32_t ordinal);
-
     ~Decoder();
 
     VM& NODELETE vm() { return m_vm; }
-    size_t size() const;
+    std::span<const uint8_t> payload() const;
+    bool payloadContains(size_t offset, size_t size) const;
+    RefPtr<SourceProvider> NODELETE provider() const;
+    bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
+    bool verifiesChecksums() const;
+    // CRC-32C of [start, start + size) with the u32 at checksumAt read as zero, then of each external array, against
+    // the u32 stored at checksumAt.
+    bool checksumMatches(size_t start, size_t size, size_t checksumAt, std::span<const std::pair<size_t, size_t>> externalArrays = { }) const;
 
-    ptrdiff_t offsetOf(const void*);
-    void cacheOffset(ptrdiff_t, void*);
-    std::optional<void*> cachedPtrForOffset(ptrdiff_t);
-    const void* ptrForOffsetFromBase(ptrdiff_t);
+    // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
+    AtomStringImpl* atomForOrdinal(uint32_t) const;
+    void setAtomForOrdinal(uint32_t, AtomStringImpl&);
+    // 1-3 character strings stored in line: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
+    Ref<AtomStringImpl> atomForInlineString(std::span<const Latin1Character>);
+    // Strings stored by ordinal in the embedder's shared DecoderStringTable.
+    Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
+    String plainStringForExternalString(uint32_t ordinal);
+
+    // Values written once and referred to by offset decode once (CachedShared).
+    void* sharedObjectAt(uint32_t offset) const;
+    void setSharedObjectAt(uint32_t offset, void*);
     CompactTDZEnvironmentMap::Handle handleForTDZEnvironment(CompactTDZEnvironment*) const;
     void setHandleForTDZEnvironment(CompactTDZEnvironment*, const CompactTDZEnvironmentMap::Handle&);
-    void addLeafExecutable(const UnlinkedFunctionExecutable*, ptrdiff_t);
-    RefPtr<SourceProvider> NODELETE provider() const;
-
-    template<typename Functor>
-    void addFinalizer(const Functor&);
+    void addLeafExecutable(const UnlinkedFunctionExecutable*, uint32_t offset);
+    void addFinalizer(Function<void()>&&);
 
 private:
     Decoder(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider>);
@@ -186,10 +159,8 @@ private:
     Vector<AtomStringImpl*> m_atomsByOrdinal;
     AtomStringImpl** m_twoCharacterAtoms { nullptr };
     DecoderStringTable* m_externalStrings { nullptr };
-    const void* m_activeRecord { nullptr };
-    const void* m_activeTail { nullptr };
-    UncheckedKeyHashMap<ptrdiff_t, void*> m_offsetToPtrMap;
-    Vector<std::function<void()>> m_finalizers;
+    UncheckedKeyHashMap<uint32_t, void*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_sharedObjects;
+    Vector<Function<void()>> m_finalizers;
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
 };
@@ -213,9 +184,10 @@ UnlinkedCodeBlockType* decodeCodeBlock(VM& vm, const SourceCodeKey& key, Ref<Cac
 
 std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cachedBytecode);
 
-JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const UnlinkedFunctionCodeBlock*, BytecodeCacheError&);
+// `baseOffset` is where the result will be appended to the payload the function's executable record is in (its offsets are absolute in that payload).
+JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM&, const UnlinkedFunctionCodeBlock*, size_t baseOffset, BytecodeCacheError&);
 
-JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
+JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, uint32_t codeBlockRecordOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 

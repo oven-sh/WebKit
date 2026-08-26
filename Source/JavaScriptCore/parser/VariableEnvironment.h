@@ -80,6 +80,8 @@ public:
     void dump(PrintStream&) const;
 
 private:
+    friend class CachedVariableEnvironment;
+
     enum Traits : uint16_t {
         IsCaptured = 1 << 0,
         IsConst = 1 << 1,

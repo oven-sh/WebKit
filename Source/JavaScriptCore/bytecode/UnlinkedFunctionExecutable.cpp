@@ -287,8 +287,8 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     ASSERT(m_cachedCodeBlockForCallOffset || m_cachedCodeBlockForConstructOffset);
 
     RefPtr<Decoder> decoder = WTF::move(m_decoder);
-    int32_t cachedCodeBlockForCallOffset = m_cachedCodeBlockForCallOffset;
-    int32_t cachedCodeBlockForConstructOffset = m_cachedCodeBlockForConstructOffset;
+    uint32_t cachedCodeBlockForCallOffset = m_cachedCodeBlockForCallOffset;
+    uint32_t cachedCodeBlockForConstructOffset = m_cachedCodeBlockForConstructOffset;
 
     DeferGC deferGC(vm);
 

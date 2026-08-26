@@ -327,8 +327,8 @@ private:
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForConstruct;
         struct {
-            int32_t m_cachedCodeBlockForCallOffset;
-            int32_t m_cachedCodeBlockForConstructOffset;
+            uint32_t m_cachedCodeBlockForCallOffset; // payload offsets of the code blocks' records; 0 for none
+            uint32_t m_cachedCodeBlockForConstructOffset;
         };
     };
 
