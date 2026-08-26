@@ -635,7 +635,7 @@ public:
         ptrdiff_t pageOffset;
         if (!m_currentPage->malloc(size, alignment, pageOffset)) {
             // A fresh page starts max-aligned, so the allocation lands at its base.
-            offset = m_baseOffset + roundUpToMultipleOf(static_cast<ptrdiff_t>(alignof(std::max_align_t)), static_cast<ptrdiff_t>(m_currentPage->size()));
+            offset = m_baseOffset + roundUpToMultipleOf(static_cast<ptrdiff_t>(encoderMaxAlignment), static_cast<ptrdiff_t>(m_currentPage->size()));
             size = sizeAt(offset);
             allocateNewPage(size);
             bool fits = m_currentPage->malloc(size, alignment, pageOffset);
