@@ -155,7 +155,7 @@ public:
     AtomStringImpl* atomForOrdinal(uint32_t) const;
     void setAtomForOrdinal(uint32_t, AtomStringImpl&);
     // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
-    Ref<AtomStringImpl> atomForInlineString(uint32_t packed);
+    Ref<AtomStringImpl> atomForInlineString(std::span<const uint8_t, 4> slot);
     // ≥4-char strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots).
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
     String plainStringForExternalString(uint32_t ordinal);
