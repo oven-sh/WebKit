@@ -495,6 +495,7 @@ static consteval bool isPortableRecord()
     using U = std::remove_cv_t<T>;
     static_assert(alignof(U) <= 8);
     static_assert(std::is_trivially_destructible_v<U>, "decoded in place and never destroyed; MSVC would also prepend an array cookie to new T[]");
+    static_assert(!std::is_polymorphic_v<U>, "a vptr is a pointer into this process");
     static_assert(!std::is_pointer_v<U> && !std::is_same_v<U, wchar_t> && !std::is_same_v<U, long double>);
     static_assert(sizeof(long) == sizeof(long long) || (!std::is_same_v<U, long> && !std::is_same_v<U, unsigned long>), "long is 4 bytes here and 8 on LP64");
     static_assert(std::has_unique_object_representations_v<U> || std::is_floating_point_v<U>,
@@ -623,13 +624,26 @@ public:
 
     ptrdiff_t currentOffset() const { return m_baseOffset + m_currentPage->size(); }
 
-    // Where malloc(size, alignment) would place the next allocation.
-    ptrdiff_t predictOffset(size_t size, size_t alignment) const
+    // One T whose total size (T plus tail) depends on where it lands: a record that stores its own offset as a varint.
+    template<typename T, typename SizeAt>
+    std::pair<T*, Allocation> mallocPlaced(const SizeAt& sizeAt)
     {
-        ptrdiff_t offset;
-        if (m_currentPage->canMalloc(size, alignment, offset))
-            return m_baseOffset + offset;
-        return m_baseOffset + roundUpToMultipleOf(alignof(std::max_align_t), static_cast<ptrdiff_t>(m_currentPage->size()));
+        static_assert(isPortableRecord<T>());
+        constexpr size_t alignment = alignof(T);
+        ptrdiff_t offset = m_baseOffset + roundUpToMultipleOf(static_cast<ptrdiff_t>(alignment), static_cast<ptrdiff_t>(m_currentPage->size()));
+        unsigned size = sizeAt(offset);
+        ptrdiff_t pageOffset;
+        if (!m_currentPage->malloc(size, alignment, pageOffset)) {
+            // A fresh page starts max-aligned, so the allocation lands at its base.
+            offset = m_baseOffset + roundUpToMultipleOf(static_cast<ptrdiff_t>(alignof(std::max_align_t)), static_cast<ptrdiff_t>(m_currentPage->size()));
+            size = sizeAt(offset);
+            allocateNewPage(size);
+            bool fits = m_currentPage->malloc(size, alignment, pageOffset);
+            RELEASE_ASSERT(fits);
+        }
+        RELEASE_ASSERT(m_baseOffset + pageOffset == offset);
+        Allocation allocation { m_currentPage->buffer() + pageOffset, offset };
+        return { new (allocation.buffer()) T(), allocation };
     }
 
     // CRC-32C of [offset, offset + size) as it will appear in the payload, with the 4 bytes at `hole` read as zero
@@ -854,21 +868,15 @@ private:
         {
         }
 
-        bool canMalloc(size_t size, size_t alignment, ptrdiff_t& result) const
+        bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
         {
             ASSERT(alignment && alignment <= encoderMaxAlignment && isPowerOfTwo(alignment));
             ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
             if (static_cast<size_t>(offset + size) > capacity())
                 return false;
-            result = offset;
-            return true;
-        }
 
-        bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
-        {
-            if (!canMalloc(size, alignment, result))
-                return false;
-            m_offset = result + size;
+            result = offset;
+            m_offset = offset + size;
             return true;
         }
 
@@ -4492,21 +4500,16 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
 
     if (encoder.checksums())
         layout.flags |= LayoutHasChecksum;
-    VarintWriter writer;
-    // The record's own offset in the region is known before it is placed: the tail is fixed-size for a given layout.
-    {
-        Layout probe = layout;
-        VarintWriter probeWriter;
-        packLayout(probe, probeWriter);
-        packScalars(codeBlock, probeWriter);
-        ptrdiff_t predicted = encoder.predictOffset(sizeof(Record) + probeWriter.size() + ((layout.flags & LayoutHasChecksum) ? 2 * sizeof(uint32_t) : 0), alignof(Record));
-        layout.recordOffsetInRegion = safeCast<uint32_t>(predicted - regionStart);
-    }
-    packLayout(layout, writer);
-    packScalars(codeBlock, writer);
     size_t trailerBytes = (layout.flags & LayoutHasChecksum) ? 2 * sizeof(uint32_t) : 0;
-    auto [record, result] = encoder.mallocArray<Record>(1, writer.size() + trailerBytes);
-    RELEASE_ASSERT(result.offset() - regionStart == layout.recordOffsetInRegion);
+    VarintWriter writer;
+    // The tail holds the record's own offset in the region as a varint, so its size is settled where it is placed.
+    auto [record, result] = encoder.mallocPlaced<Record>([&](ptrdiff_t offset) {
+        layout.recordOffsetInRegion = safeCast<uint32_t>(offset - regionStart);
+        writer = { };
+        packLayout(layout, writer);
+        packScalars(codeBlock, writer);
+        return sizeof(Record) + writer.size() + trailerBytes;
+    });
     writer.copyTo(record->tailBytes());
     ptrdiff_t trailerOffset = result.offset() + sizeof(Record) + writer.size();
     encoder.deferCold([record, &encoder, expressionInfo = codeBlock.m_expressionInfo.get()] {
