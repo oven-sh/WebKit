@@ -471,7 +471,6 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
 }
 #endif
 
-
 void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotask task, JSCell* cell, JSValue context)
 {
     JSValue cellValue = cell ? JSValue(cell) : jsUndefined();
@@ -569,8 +568,8 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
 ALWAYS_INLINE void JSPromise::settleInlineInternalMicrotask(VM& vm, JSGlobalObject* globalObject, Status newStatus, JSValue argument, uint16_t flagsSnapshot)
 {
     ASSERT((flagsSnapshot & inlineReactionKindMask) == (static_cast<uint16_t>(InlineReactionKind::InternalMicrotask) << inlineReactionKindShift));
-    InternalMicrotask task = static_cast<InternalMicrotask>((flagsSnapshot & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
     ASSERT(flagsSnapshot & isHandledFlag);
+    InternalMicrotask task = static_cast<InternalMicrotask>((flagsSnapshot & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift);
     JSValue context = m_slot.get();
     JSCell* cell = payloadCell();
     JSValue cellValue = cell ? JSValue(cell) : jsUndefined();
