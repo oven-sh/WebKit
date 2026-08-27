@@ -401,7 +401,13 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
 #endif
         else
+#if USE(BUN_JSC_ADDITIONS)
+            // The derived promise settles in PromiseResolveWithoutHandlerJob; carry the async context
+            // so that it settles (and is reported to the rejection tracker) in the context then() was called in.
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, context);
+#else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+#endif
         markAsHandled();
         break;
     }
@@ -414,7 +420,11 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled);
 #endif
         else
+#if USE(BUN_JSC_ADDITIONS)
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, context);
+#else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, jsUndefined());
+#endif
         break;
     }
     }
@@ -453,7 +463,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
         if (rejectedCallable)
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
         else
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, context);
         markAsHandled();
         break;
     }
@@ -462,7 +472,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
         if (fulfilledCallable)
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
         else
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, jsUndefined());
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, context);
         break;
     }
     }
@@ -912,9 +922,12 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
             // performPromiseThen normalizes non-callable sides to jsUndefined() when storing
             // an async context in a full reaction; cheap tag check instead of isCallable().
             if (handler.isUndefined()) {
+                // No handler for this settlement: the derived promise just adopts it. Pass the
+                // reaction's context along so PromiseResolveWithoutHandlerJob settles it in the
+                // async context then() was called in.
                 task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
                 handler = argument;
-                arg = jsUndefined();
+                arg = fullReaction->context();
                 break;
             }
             JSValue context = fullReaction->context();

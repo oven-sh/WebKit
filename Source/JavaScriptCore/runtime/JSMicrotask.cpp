@@ -1814,15 +1814,24 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
         auto* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[1]);
 
-        if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
-            RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
-
 #if USE(BUN_JSC_ADDITIONS)
+        // Install the async context captured by resolvePromise() for both paths below: the slow
+        // path registers reactions through performPromiseThen, which captures the current context.
         AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
 #endif
 
+        if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
+
         scope.release();
+#if USE(BUN_JSC_ADDITIONS)
+        // promiseToResolve adopts promise's settlement in PromiseResolveWithoutHandlerJob. Capture
+        // the context (now installed) with the reaction so that it settles in the same context the
+        // slow path and PromiseResolveThenableJob would settle it in.
+        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, jsUndefined()));
+#else
         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, jsUndefined());
+#endif
         return;
     }
 
@@ -1872,6 +1881,15 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveWithoutHandlerJob: {
+#if USE(BUN_JSC_ADDITIONS)
+        // arguments[2] is the context the reaction was registered with: an InternalFieldTuple
+        // [userContext, asyncContext] from performPromiseThen, performPromiseThenWithContext or
+        // PromiseResolveThenableJobFast, or undefined. Keep the async context installed while the
+        // derived promise settles, so that a rejection reaches the rejection tracker in the context
+        // then() was called in, the same as PromiseReactionJob does when there is a handler.
+        JSValue contextArg = arguments[2];
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
+#endif
         RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload)));
     }
 
