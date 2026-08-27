@@ -67,6 +67,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #pragma clang diagnostic error "-Wms-bitfield-padding"
 #endif
 
+// Everything placed in a payload must have no padding bytes and no unused bit-field bits on the ABI compiling this. The
+// C++ ABIs a payload moves between all place bases and fields in declaration order and differ only in where they pad, so a
+// type that is padding-free under each of them has the same field offsets under all of them.
+// (Hence the m_unused members below: padding, spelled out.) double only fails the trait because +0/-0 and NaNs have
+// several representations; its layout is IEEE-754 binary64 everywhere.
+template<typename T> concept PayloadType = std::has_unique_object_representations_v<T> || std::is_same_v<T, double>;
+
 namespace JSC {
 
 bool Decoder::canBorrowPayload() const
@@ -552,7 +559,7 @@ public:
         return malloc(size, alignment);
     }
 
-    template<typename T, typename... Args>
+    template<PayloadType T, typename... Args>
     T* malloc(Args&&... args)
     {
         return new (malloc(sizeof(T), alignof(T)).buffer()) T(std::forward<Args>(args)...);
@@ -566,6 +573,7 @@ public:
             tail = T::tailSize(*this, source);
         else if constexpr (requires { T::tailSize(source); })
             tail = T::tailSize(source);
+        static_assert(PayloadType<T>);
         return new (malloc(sizeof(T) + tail, alignof(T)).buffer()) T();
     }
 
@@ -1122,6 +1130,7 @@ protected:
 #endif
     T* allocate(Encoder& encoder, unsigned size = 1)
     {
+        static_assert(PayloadType<T>);
         uint8_t* result = allocate(encoder, sizeof(T) * size, alignof(T));
         ASSERT(!(std::bit_cast<uintptr_t>(result) % alignof(T)));
         return new (result) T[size];
@@ -1154,6 +1163,7 @@ protected:
             tail = T::tailSize(encoder, source);
         else if constexpr (requires { T::tailSize(source); })
             tail = T::tailSize(source);
+        static_assert(PayloadType<T>);
         uint8_t* result = allocate(encoder, sizeof(T) + tail, alignof(T));
         return new (result) T();
     }
@@ -1954,7 +1964,7 @@ class CachedBitVector : public VariableLengthObject<BitVector> {
 public:
     void encode(Encoder& encoder, const BitVector& bitVector)
     {
-        m_numBits = bitVector.size();
+        m_numBits = safeCast<uint32_t>(bitVector.size());
         if (!m_numBits)
             return;
         size_t sizeInBytes = BitVector::byteCount(m_numBits);
@@ -1972,7 +1982,7 @@ public:
     }
 
 private:
-    size_t m_numBits;
+    uint32_t m_numBits;
 };
 
 template<typename T, typename HashArg = DefaultHash<T>>
@@ -2067,6 +2077,7 @@ private:
     CachedVector<CachedHashSet<CachedRefPtr<CachedUniquedStringImpl>, IdentifierRepHash>> m_constantIdentifierSets;
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_privateBrandRequirement : 1;
+    unsigned m_unused : 30 { 0 };
 };
 
 // [u32 numberOfEncodedInfo][u8 flags][varint chapters][varint extensions][pad to 4][payload words][u32 checksum if flagged]
@@ -2143,7 +2154,19 @@ private:
 };
 static_assert(sizeof(CachedExpressionInfo) == sizeof(uint32_t) && alignof(CachedExpressionInfo) == 4);
 
-typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, PrivateNameEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
+// VariableEnvironmentEntry and PrivateNameEntry are 16 bits; held in 32 so the pairs that hold them have no padding.
+template<typename Entry>
+class CachedEntryBits : public CachedObject<Entry> {
+public:
+    void encode(Encoder&, const Entry& entry) { m_bits = std::bit_cast<uint16_t>(entry); }
+    void decode(Decoder&, Entry& entry) const { entry = std::bit_cast<Entry>(static_cast<uint16_t>(m_bits)); }
+    Entry decode(Decoder&) const { return std::bit_cast<Entry>(static_cast<uint16_t>(m_bits)); }
+
+private:
+    uint32_t m_bits;
+};
+
+typedef CachedHashMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<PrivateNameEntry>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> CachedPrivateNameEnvironment;
 
 class CachedVariableEnvironmentRareData : public CachedObject<VariableEnvironment::RareData> {
 public:
@@ -2189,7 +2212,8 @@ public:
 private:
     bool m_isEverythingCaptured;
     bool m_hasAwaitUsingDeclaration;
-    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, VariableEnvironmentEntry, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
+    uint8_t m_unused[2] { };
+    CachedInlineMap<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>, CachedEntryBits<VariableEnvironmentEntry>, VariableEnvironment::inlineMapCapacity, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>, VariableEnvironmentEntryHashTraits> m_map;
     CachedPtr<CachedVariableEnvironmentRareData> m_rareData;
 };
 
@@ -2381,6 +2405,7 @@ private:
     unsigned m_usesSloppyEval : 1;
     unsigned m_nestedLexicalScope : 1;
     unsigned m_scopeType : 3;
+    unsigned m_unused : 27 { 0 };
     CachedPtr<CachedScopedArgumentsTable> m_arguments;
     CachedPtr<CachedSymbolTableRareData> m_rareData;
 };
@@ -2422,6 +2447,7 @@ public:
 
 private:
     IndexingType m_indexingType;
+    uint8_t m_unused[3] { };
     unsigned m_length;
     union {
         CachedArray<double> m_cachedDoubles;
@@ -2446,6 +2472,7 @@ public:
 private:
     CachedString m_patternString;
     OptionSet<Yarr::Flags> m_flags;
+    uint8_t m_unused[2] { };
 };
 
 class CachedTemplateObjectDescriptor : public CachedObject<TemplateObjectDescriptor> {
@@ -2503,6 +2530,7 @@ public:
 private:
     unsigned m_length;
     bool m_sign;
+    uint8_t m_unused[3] { };
 };
 
 // A constant is a kind byte and a 4-byte slot; the owner keeps the kinds in a parallel array (CachedJSValuePool). Small
@@ -2751,6 +2779,7 @@ static ptrdiff_t encodeArrayForTail(Encoder& encoder, const Container& container
         encoder.registerArray(hash, result.offset(), bytes.size());
         return result.offset();
     } else {
+        static_assert(PayloadType<T>);
         auto result = encoder.malloc(sizeof(T) * size, alignof(T));
         T* buffer = new (result.buffer()) T[size];
         for (unsigned i = 0; i < size; ++i)
@@ -2833,6 +2862,7 @@ protected:
     CachedString m_sourceMappingURLDirective;
     CachedTextPosition m_startPosition;
     SourceTaintedOrigin m_sourceTaintedOrigin;
+    uint8_t m_unused[3] { };
 };
 
 class CachedStringSourceProvider : public CachedSourceProviderShape<StringSourceProvider, CachedStringSourceProvider> {
@@ -2984,6 +3014,7 @@ public:
 
 private:
     SourceProviderSourceType m_sourceType;
+    uint8_t m_unused[3] { };
 };
 
 template<typename Source>
@@ -3098,6 +3129,7 @@ private:
     CachedJSTextPosition m_position;
     CachedOptional<CachedJSTextPosition> m_initializerPosition;
     uint8_t m_kind;
+    uint8_t m_unused[3] { };
 };
 
 // A header word of presence bits, then only the members that are set: the three vectors (4-byte aligned), then the
@@ -4411,6 +4443,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     // The children's slots are part of this block's bytes; the records they point at are written after the region.
     auto allocateSlots = [&](unsigned count) {
         auto result = encoder.malloc(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * count, alignof(CachedWriteBarrier<CachedFunctionExecutable>));
+        static_assert(PayloadType<CachedWriteBarrier<CachedFunctionExecutable>>);
         new (result.buffer()) CachedWriteBarrier<CachedFunctionExecutable>[count];
         return result.offset();
     };
@@ -4420,6 +4453,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         layout.flags |= LayoutHasExtras;
         auto result = encoder.malloc(sizeof(CachedCodeBlockExtras), alignof(CachedCodeBlockExtras));
         layout.extrasAt = safeCast<int32_t>(result.offset() - regionStart);
+        static_assert(PayloadType<CachedCodeBlockExtras>);
         (new (result.buffer()) CachedCodeBlockExtras())->encode(encoder, codeBlock);
     }
 
@@ -4435,6 +4469,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         packScalars(codeBlock, writer);
         return sizeof(Record) + writer.size() + trailerBytes;
     });
+    static_assert(PayloadType<Record>);
     Record* record = new (result.buffer()) Record();
     writer.copyTo(record->tailBytes());
     ptrdiff_t trailerOffset = result.offset() + sizeof(Record) + writer.size();
@@ -4800,6 +4835,64 @@ bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, cons
     return cachedEntry->isStillValid(decoder.get(), key, tagFromSourceCodeType(type));
 }
 
+
+// The size of every record under every ABI we build (see PayloadType). Changing a record means changing its number here,
+// and with it the serialized form.
+static_assert(sizeof(GenericCacheEntry) == 24);
+static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 56);
+static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 56);
+static_assert(sizeof(BuiltinFunctionCacheEntry) == 36);
+static_assert(sizeof(VariableLengthObjectBase) == 4);
+static_assert(sizeof(CachedPtr<CachedString>) == 4);
+static_assert(sizeof(CachedRefPtr<CachedUniquedStringImpl>) == 4);
+static_assert(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) == 4);
+static_assert(sizeof(CachedVector<uint32_t>) == 8);
+static_assert(sizeof(CachedArray<double>) == 4);
+static_assert(sizeof(CachedOptional<CachedJSTextPosition>) == 4);
+static_assert(sizeof(CachedPair<CachedRefPtr<CachedUniquedStringImpl>, CachedEntryBits<VariableEnvironmentEntry>>) == 8);
+static_assert(sizeof(CachedHashSet<CachedRefPtr<CachedUniquedStringImpl>, IdentifierRepHash>) == 8);
+static_assert(sizeof(CachedPrivateNameEnvironment) == 8);
+static_assert(sizeof(CachedBigInt) == 12);
+static_assert(sizeof(CachedBitVector) == 8);
+static_assert(sizeof(CachedClassElementDefinition) == 24);
+static_assert(sizeof(CachedCodeBlockExtras) == 12);
+static_assert(sizeof(CachedCodeBlockRareData) == 60);
+static_assert(sizeof(CachedCompactTDZEnvironment) == 12);
+static_assert(sizeof(CachedCompactTDZEnvironmentMapHandle) == 4);
+static_assert(sizeof(CachedEvalCodeBlock) == 40);
+static_assert(sizeof(CachedExpressionInfo) == 4);
+static_assert(sizeof(CachedFunctionCodeBlock) == 4);
+static_assert(sizeof(CachedFunctionExecutable) == 4);
+static_assert(sizeof(CachedFunctionExecutableRareData) == 4);
+static_assert(sizeof(CachedHandlerInfo) == 16);
+static_assert(sizeof(CachedIdentifier) == 4);
+static_assert(sizeof(CachedImmutableButterfly) == 12);
+static_assert(sizeof(CachedJSTextPosition) == 12);
+static_assert(sizeof(CachedJSValue) == 4);
+static_assert(sizeof(CachedJSValuePoolRef) == 4);
+static_assert(sizeof(CachedModuleCodeBlock) == 44);
+static_assert(sizeof(CachedProgramCodeBlock) == 56);
+static_assert(sizeof(CachedRegExp) == 8);
+static_assert(sizeof(CachedScopedArgumentsTable) == 8);
+static_assert(sizeof(CachedSimpleJumpTable) == 20);
+static_assert(sizeof(CachedSourceCodeKey) == 28);
+static_assert(sizeof(CachedSourceOrigin) == 4);
+static_assert(sizeof(CachedSourceProvider) == 8);
+static_assert(sizeof(CachedString) == 4);
+static_assert(sizeof(CachedStringImpl) == 12);
+static_assert(sizeof(CachedStringJumpTable) == 20);
+static_assert(sizeof(CachedStringSourceProvider) == 36);
+static_assert(sizeof(CachedSymbolTable) == 24);
+static_assert(sizeof(CachedSymbolTableEntry) == 4);
+static_assert(sizeof(CachedSymbolTableRareData) == 8);
+static_assert(sizeof(CachedTDZEnvironmentLink) == 8);
+static_assert(sizeof(CachedTemplateObjectDescriptor) == 20);
+static_assert(sizeof(CachedTextPosition) == 8);
+static_assert(sizeof(CachedUniquedStringImpl) == 12);
+static_assert(sizeof(CachedUnlinkedSourceCode) == 12);
+static_assert(sizeof(CachedVariableEnvironment) == 16);
+static_assert(sizeof(CachedVariableEnvironmentRareData) == 8);
+static_assert(sizeof(CachedWebAssemblySourceProvider) == 40);
 void decodeFunctionCodeBlock(Decoder& decoder, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>& codeBlock, const JSCell* owner)
 {
     ASSERT(decoder.vm().heap.isDeferred());
