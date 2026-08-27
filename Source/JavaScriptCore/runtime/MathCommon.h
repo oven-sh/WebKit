@@ -35,14 +35,6 @@
 namespace JSC {
 
 constexpr int32_t maxExponentForIntegerMathPow = 1000;
-
-// operationMathPow()'s exact path: repeated squaring, no call into the C library.
-inline bool isIntegerExponentForMathPow(double y)
-{
-    if (!(y >= 0 && y <= maxExponentForIntegerMathPow))
-        return false;
-    return static_cast<double>(static_cast<int32_t>(y)) == y;
-}
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationMathPow, double, (double x, double y));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationToInt32, UCPUStrictInt32, (double));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationToInt32SensibleSlow, UCPUStrictInt32, (double));

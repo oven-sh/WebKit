@@ -1293,14 +1293,12 @@ ExpressionNode* ASTBuilder::makePowNode(const JSTokenLocation& location, Express
     auto* strippedExpr1 = expr1->stripUnaryPlus();
     auto* strippedExpr2 = expr2->stripUnaryPlus();
 
-    if (strippedExpr1->isNumber() && strippedExpr2->isNumber()) {
+    // Not folded for a bytecode cache: operationMathPow() can call the C library's pow(), which does not round identically
+    // everywhere, and the constant would be serialized. Unfolded, it gets the pow() of wherever the code runs.
+    if (strippedExpr1->isNumber() && strippedExpr2->isNumber() && !m_codeGenerationMode.contains(CodeGenerationMode::BytecodeCache)) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*strippedExpr1);
         const NumberNode& numberExpr2 = static_cast<NumberNode&>(*strippedExpr2);
-        // For a bytecode cache, fold only what operationMathPow() computes with IEEE arithmetic alone: its other cases go
-        // to the C library's pow(), which does not round identically everywhere, and the constant would be serialized.
-        // Left unfolded, those get the pow() of wherever the code runs.
-        if (!m_codeGenerationMode.contains(CodeGenerationMode::BytecodeCache) || isIntegerExponentForMathPow(numberExpr2.value()))
-            return createNumberFromBinaryOperation(location, operationMathPow(numberExpr1.value(), numberExpr2.value()), numberExpr1, numberExpr2);
+        return createNumberFromBinaryOperation(location, operationMathPow(numberExpr1.value(), numberExpr2.value()), numberExpr1, numberExpr2);
     }
 
     if (strippedExpr1->isNumber())
