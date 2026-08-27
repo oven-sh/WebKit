@@ -521,7 +521,7 @@ public:
     std::optional<ptrdiff_t> sharedPrivateNameEnvironment(unsigned hash, const Vector<std::pair<const UniquedStringImpl*, uint16_t>>& entries) const
     {
         for (const auto& shared : m_sharedPrivateNameEnvironments) {
-            if (shared.hash == hash && shared.entries == entries)
+            if (shared.hash == hash && std::ranges::equal(shared.entries, entries)) // pair by pair: Vector's operator== would memcmp the pairs' padding too
                 return shared.elements;
         }
         return std::nullopt;
@@ -1605,7 +1605,7 @@ public:
         for (const auto& it : map)
             entries.append({ it.key.get(), it.value.bits() });
         std::sort(entries.begin(), entries.end());
-        unsigned hash = entries.size(); // of the values; the pairs' bytes include padding
+        unsigned hash = entries.size(); // of the values, not the pairs' bytes: those include padding
         for (auto [name, bits] : entries)
             hash = pairIntHash(hash, pairIntHash(PtrHash<const UniquedStringImpl*>::hash(name), bits));
         if (auto existing = encoder.sharedPrivateNameEnvironment(hash, entries)) {
