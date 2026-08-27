@@ -254,17 +254,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
-      - name: Install Scoop
-        run: |
-          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-          Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
-          Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
-      - name: Install LLVM and Ninja (ARM64)
+      # No scoop: `irm get.scoop.sh | iex` installs nothing since
+      # ScoopInstaller/Install@a6210927 (the installer skips Install-Scoop
+      # when $MyInvocation.InvocationName is '.', and the runner's pwsh
+      # shell dot-sources every `run:` script). Nothing needed it anyway:
+      # cmake and ninja come from the Visual Studio install, see the PATH
+      # reorder in windows-release.ps1.
+      - name: Install LLVM (ARM64)
         if: matrix.platform == 'ARM64'
         run: |
-          "C:\Program Files\7-Zip" >> $Env:GITHUB_PATH
-          scoop config use_external_7zip true
-          scoop install ninja
           # Install LLVM ARM64 from official LLVM releases
           # Use LLVM 21 for ARM64 - has better Windows ARM64 support and fixes SEH unwind bugs
           $llvmVersion = "21.1.8"

@@ -251,6 +251,33 @@ void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSSourceCod
     m_fetchPromise->fulfill(vm, jsSourceCode);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void ModuleRegistryEntry::provideModule(JSGlobalObject* globalObject, JSSourceCode* jsSourceCode, AbstractModuleRecord* record)
+{
+    VM& vm = globalObject->vm();
+    ASSERT(!m_record);
+
+    if (!m_fetchPromise) {
+        JSPromise* fetchPromise = JSPromise::create(vm, globalObject->promiseStructure());
+        fetchPromise->markAsHandled();
+        fetchPromise->fulfill(vm, jsSourceCode);
+        m_fetchPromise.set(vm, this, fetchPromise);
+    } else if (m_status == Status::New)
+        m_fetchPromise->fulfill(vm, jsSourceCode);
+
+    if (!m_modulePromise) {
+        JSPromise* modulePromise = JSPromise::create(vm, globalObject->promiseStructure());
+        modulePromise->markAsHandled();
+        modulePromise->fulfill(vm, record);
+        m_modulePromise.set(vm, this, modulePromise);
+    } else if (m_modulePromise->status() == JSPromise::Status::Pending)
+        m_modulePromise->fulfill(vm, record); // its ModuleRegistryFetchSettled reaction sees this and bails
+
+    m_record.set(vm, this, record);
+    m_status = Status::Fetched;
+}
+#endif
+
 void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractModuleRecord* record)
 {
     if (m_status == Status::FetchFailed) {

@@ -94,6 +94,12 @@ public:
     void provideFetch(JSGlobalObject*, SourceCode&&);
     void provideFetch(JSGlobalObject*, JSSourceCode*);
     void fetchComplete(JSGlobalObject*, AbstractModuleRecord*);
+#if USE(BUN_JSC_ADDITIONS)
+    // For an embedder that already has both the source and the module record: leaves the entry Fetched with settled
+    // fetch and module promises, without scheduling the fetch -> makeModule microtask chain. The entry must not have a
+    // record yet; a pending fetch promise piped from an in-flight fetch is left for that fetch to settle.
+    JS_EXPORT_PRIVATE void provideModule(JSGlobalObject*, JSSourceCode*, AbstractModuleRecord*);
+#endif
 
 private:
     ModuleRegistryEntry(VM&, Structure*, Identifier key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher>);

@@ -107,7 +107,7 @@ private:
 
     UnlinkedMetadataTable();
     UnlinkedMetadataTable(bool is32Bit, unsigned numValueProfiles);
-    UnlinkedMetadataTable(bool is32Bit, unsigned numValueProfiles, std::span<const uint32_t> persistentSteps);
+    UnlinkedMetadataTable(unsigned numValueProfiles, std::span<const uint32_t> persistentSteps);
     UnlinkedMetadataTable(EmptyTag);
 
     static Ref<UnlinkedMetadataTable> create(bool is32Bit, unsigned numValueProfiles)
@@ -115,17 +115,20 @@ private:
         return adoptRef(*new UnlinkedMetadataTable(is32Bit, numValueProfiles));
     }
 
-    // The offset table as the bytecode cache stores it — only the entries where the cumulative offset steps,
-    // (index << 24 | delta) — in memory that outlives the VM. While no CodeBlock is linked the table owns no buffer at all
-    // and expands the steps straight into the linked buffer at link().
+    // The table as the bytecode cache stores it: (opcode << 24 | entry count) for each opcode that has entries, in memory
+    // that outlives the VM. Counts, not offsets: sizeof(Op::Metadata) differs between the C++ ABIs a payload moves
+    // between, so expandSteps() lays the table out with this build's sizes. Until a CodeBlock is linked the table owns
+    // no buffer and expands the steps straight into the linked buffer at link().
     static constexpr unsigned stepIndexShift = 24;
-    static constexpr uint32_t stepDeltaMask = (1u << stepIndexShift) - 1;
-    static Ref<UnlinkedMetadataTable> createFromPersistentSteps(bool is32Bit, unsigned numValueProfiles, std::span<const uint32_t> steps)
+    static constexpr uint32_t stepCountMask = (1u << stepIndexShift) - 1;
+    static Ref<UnlinkedMetadataTable> createFromPersistentSteps(unsigned numValueProfiles, std::span<const uint32_t> steps)
     {
-        return adoptRef(*new UnlinkedMetadataTable(is32Bit, numValueProfiles, steps));
+        return adoptRef(*new UnlinkedMetadataTable(numValueProfiles, steps));
     }
-    template<typename OffsetType> static void expandSteps(std::span<const uint32_t>, OffsetType* table);
-    bool isBackedBySteps() const { return !!m_steps; }
+    // Offset of the end of the metadata (the table's last entry); with table null, computes only that.
+    template<typename OffsetType> static unsigned expandSteps(std::span<const uint32_t>, OffsetType* table);
+    static bool stepsNeed32BitOffsets(std::span<const uint32_t> steps) { return expandSteps<Offset32>(steps, nullptr) > UINT16_MAX; }
+    bool isBackedBySteps() const { return m_isBackedBySteps; }
 
     static Ref<UnlinkedMetadataTable> empty()
     {
@@ -140,12 +143,8 @@ private:
     {
         ASSERT(m_isFinalized);
         unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
-        if (m_steps && !m_isLinked) {
-            unsigned end = 0;
-            for (uint32_t step : std::span { m_steps, m_stepsCount })
-                end += step & stepDeltaMask;
-            return valueProfileSize + end;
-        }
+        if (m_isBackedBySteps && !m_isLinked)
+            return valueProfileSize + expandSteps<Offset32>(std::span { m_steps, m_stepsCount }, nullptr);
         if (m_is32Bit)
             return valueProfileSize + offsetTable32()[s_offsetTableEntries - 1];
         return valueProfileSize + offsetTable16()[s_offsetTableEntries - 1];
@@ -178,12 +177,12 @@ private:
 
     Offset16* offsetTable16() const
     {
-        ASSERT(!m_is32Bit && (m_isLinked || !m_steps));
+        ASSERT(!m_is32Bit && (m_isLinked || !m_isBackedBySteps));
         return std::bit_cast<Offset16*>(m_rawBuffer + prefixSize());
     }
     Offset32* offsetTable32() const
     {
-        ASSERT(m_is32Bit && (m_isLinked || !m_steps));
+        ASSERT(m_is32Bit && (m_isLinked || !m_isBackedBySteps));
         return std::bit_cast<Offset32*>(m_rawBuffer + prefixSize() + s_offset16TableSize);
     }
 
@@ -191,6 +190,7 @@ private:
     bool m_isFinalized : 1;
     bool m_isLinked : 1;
     bool m_is32Bit : 1;
+    bool m_isBackedBySteps : 1 { false };
     TriState m_didOptimize : 2 { TriState::Indeterminate };
     unsigned m_numValueProfiles { 0 };
     unsigned m_stepsCount { 0 };

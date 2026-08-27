@@ -1694,6 +1694,10 @@ RegisterID* BytecodeGenerator::addConstantValue(JSValue v, SourceCodeRepresentat
 
     if (sourceCodeRepresentation == SourceCodeRepresentation::Double && v.isInt32())
         v = jsDoubleNumber(v.asNumber());
+    // A NaN the parser folded (0 / 0) has whatever bits this CPU's arithmetic produces (the sign differs between x86 and
+    // ARM); the constant, and so the bytecode, should not depend on that.
+    if (v.isDouble() && std::isnan(v.asDouble()))
+        v = jsNaN();
     EncodedJSValueWithRepresentation valueMapKey { JSValue::encode(v), sourceCodeRepresentation };
     JSValueMap::AddResult result = m_jsValueMap.add(valueMapKey, m_nextConstantOffset);
     if (result.isNewEntry) {
@@ -2799,7 +2803,9 @@ RegisterID* BytecodeGenerator::initializeVariable(const Variable& variable, Regi
 
 RegisterID* BytecodeGenerator::emitInstanceof(RegisterID* dst, RegisterID* value, RegisterID* constructor, RegisterID* hasInstanceOrPrototype)
 {
-    OpInstanceof::emit(this, dst, value, constructor, hasInstanceOrPrototype, nextValueProfileIndex(), nextValueProfileIndex());
+    unsigned hasInstanceValueProfile = nextValueProfileIndex();
+    unsigned prototypeValueProfile = nextValueProfileIndex();
+    OpInstanceof::emit(this, dst, value, constructor, hasInstanceOrPrototype, hasInstanceValueProfile, prototypeValueProfile);
     return dst;
 }
 
@@ -3673,7 +3679,10 @@ void BytecodeGenerator::emitAsyncIteratorOpen(RegisterID* iterator, RegisterID* 
         emitDebugHook(WillExecuteExpression, node->divotStart());
 
     emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
-    OpAsyncIteratorOpen::emit(this, iterator, next, symbolIterator, iterable.thisRegister(), iterable.stackOffset(), nextValueProfileIndex(), nextValueProfileIndex(), nextValueProfileIndex());
+    unsigned iterableValueProfile = nextValueProfileIndex();
+    unsigned iteratorValueProfile = nextValueProfileIndex();
+    unsigned nextValueProfile = nextValueProfileIndex();
+    OpAsyncIteratorOpen::emit(this, iterator, next, symbolIterator, iterable.thisRegister(), iterable.stackOffset(), iterableValueProfile, iteratorValueProfile, nextValueProfile);
 }
 
 void BytecodeGenerator::emitGetGenericAsyncIterator(RegisterID* iterator, RegisterID* next, RegisterID* subject, const ThrowableExpressionData* node)
@@ -5430,7 +5439,10 @@ void BytecodeGenerator::emitIteratorOpen(RegisterID* iterator, RegisterID* nextO
         emitDebugHook(WillExecuteExpression, node->divotStart());
 
     emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
-    OpIteratorOpen::emit(this, iterator, nextOrIndex, symbolIterator, iterable.thisRegister(), iterable.stackOffset(), nextValueProfileIndex(), nextValueProfileIndex(), nextValueProfileIndex());
+    unsigned iterableValueProfile = nextValueProfileIndex();
+    unsigned iteratorValueProfile = nextValueProfileIndex();
+    unsigned nextValueProfile = nextValueProfileIndex();
+    OpIteratorOpen::emit(this, iterator, nextOrIndex, symbolIterator, iterable.thisRegister(), iterable.stackOffset(), iterableValueProfile, iteratorValueProfile, nextValueProfile);
 }
 
 void BytecodeGenerator::emitIteratorNext(RegisterID* done, RegisterID* value, RegisterID* iterable, RegisterID* nextOrIndex, CallArguments& iterator, const ThrowableExpressionData* node)
@@ -5444,7 +5456,10 @@ void BytecodeGenerator::emitIteratorNext(RegisterID* done, RegisterID* value, Re
         emitDebugHook(WillExecuteExpression, node->divotStart());
 
     emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
-    OpIteratorNext::emit(this, done, value, iterable, nextOrIndex, iterator.thisRegister(), iterator.stackOffset(), nextValueProfileIndex(), nextValueProfileIndex(), nextValueProfileIndex());
+    unsigned nextResultValueProfile = nextValueProfileIndex();
+    unsigned doneValueProfile = nextValueProfileIndex();
+    unsigned valueValueProfile = nextValueProfileIndex();
+    OpIteratorNext::emit(this, done, value, iterable, nextOrIndex, iterator.thisRegister(), iterator.stackOffset(), nextResultValueProfile, doneValueProfile, valueValueProfile);
 }
 
 RegisterID* BytecodeGenerator::emitGetGenericIterator(RegisterID* argument, ThrowableExpressionData* node)
