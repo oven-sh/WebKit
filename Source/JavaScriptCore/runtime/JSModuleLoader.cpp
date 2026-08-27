@@ -369,7 +369,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
         if (entry->fetchError())
             removeFailedFetchEntry(entry);
         else {
-            JSValue error = flags.contains(ModuleLoadFlag::ForGraphInstance) && entry->status() != ModuleRegistryEntry::Status::InstantiationFailed ? JSValue() : entry->error(globalObject);
+            JSValue error = entry->error(globalObject, flags.contains(ModuleLoadFlag::ForGraphInstance) ? ModuleRegistryEntry::IncludeEvaluationError::No : ModuleRegistryEntry::IncludeEvaluationError::Yes);
             RETURN_IF_EXCEPTION(scope, nullptr);
             if (error)
                 return JSPromise::rejectedPromise(globalObject, error);
@@ -585,10 +585,10 @@ AbstractModuleRecord* JSModuleLoader::linkWithoutEvaluating(JSGlobalObject* glob
     // Only a fetch or instantiation failure makes the template unusable; the
     // primary graph's evaluation error is its own (an instance evaluates the
     // record separately, with its own [[EvaluationError]]).
-    if (entry->status() == ModuleRegistryEntry::Status::FetchFailed || entry->status() == ModuleRegistryEntry::Status::InstantiationFailed) {
-        JSValue error = entry->error(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        scope.throwException(globalObject, error ? error : createError(globalObject, makeString("Module '"_s, moduleKey.string(), "' failed to load"_s)));
+    JSValue error = entry->error(globalObject, ModuleRegistryEntry::IncludeEvaluationError::No);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (error) {
+        scope.throwException(globalObject, error);
         return nullptr;
     }
     record->link(globalObject, WTF::move(scriptFetcher));

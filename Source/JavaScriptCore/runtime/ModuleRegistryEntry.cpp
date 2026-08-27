@@ -139,10 +139,12 @@ JSPromise* ModuleRegistryEntry::loadPromise() const
     return m_loadPromise.get();
 }
 
-JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject) const
+JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject, IncludeEvaluationError includeEvaluationError) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (includeEvaluationError == IncludeEvaluationError::No && m_status == Status::EvaluationFailed)
+        return { };
     if (JSValue error = m_error.get()) {
         if (m_status == Status::FetchFailed) {
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(error))
@@ -150,7 +152,7 @@ JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject) const
         }
         RELEASE_AND_RETURN(scope, error);
     }
-    if (m_record) {
+    if (m_record && includeEvaluationError == IncludeEvaluationError::Yes) {
         if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_record.get()))
             RELEASE_AND_RETURN(scope, cyclic->evaluationError());
     }
