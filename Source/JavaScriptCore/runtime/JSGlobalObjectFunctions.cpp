@@ -822,6 +822,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     JSValue parameters = callFrame->argument(1);
     bool deferred = callFrame->argument(2).isTrue();
 
+#if USE(BUN_JSC_ADDITIONS)
     // Module graph instances: import() from code that belongs to an instance
     // loads the requested graph as a template (no evaluation of the primary)
     // and instantiates it into the caller's instance.
@@ -833,6 +834,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
             return JSValue::encode(promise);
         }
     }
+#endif
 
     // A primary-graph import() issued by host code that runs during an
     // instance's load is the primary's, not that instance's.

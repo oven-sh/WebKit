@@ -1637,6 +1637,7 @@ static void dynamicImportEvaluateSettled(JSGlobalObject* globalObject, VM& vm, T
         capabilityPromise->reject(vm, arguments[1]);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 // import() into a module graph instance (JSModuleLoader::importIntoGraphInstance):
 // the load settled. arguments[0] = result promise, [1] = key or error,
 // [2] = context object { @moduleGraphInstance, name: key, type, @defer }.
@@ -1681,6 +1682,8 @@ static void moduleGraphInstanceEvaluateSettled(JSGlobalObject* globalObject, VM&
     }
     resultPromise->resolve(globalObject, vm, moduleNamespace);
 }
+
+#endif
 
 // AND-join over the asynchronous transitive dependencies of a deferred import
 // into an instance (JSModuleRecord::instantiateIntoGraphInstanceAsync).
@@ -2407,12 +2410,20 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::ModuleGraphInstanceLoadSettled: {
+#if USE(BUN_JSC_ADDITIONS)
         moduleGraphInstanceLoadSettled(globalObject, vm, scope, arguments, payload);
+#else
+        RELEASE_ASSERT_NOT_REACHED();
+#endif
         return;
     }
 
     case InternalMicrotask::ModuleGraphInstanceEvaluateSettled: {
+#if USE(BUN_JSC_ADDITIONS)
         moduleGraphInstanceEvaluateSettled(globalObject, vm, scope, arguments, payload);
+#else
+        RELEASE_ASSERT_NOT_REACHED();
+#endif
         return;
     }
 

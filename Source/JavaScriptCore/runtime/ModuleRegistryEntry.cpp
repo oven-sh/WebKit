@@ -143,8 +143,13 @@ JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject, IncludeEvaluati
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (includeEvaluationError == IncludeEvaluationError::No && m_status == Status::EvaluationFailed)
-        return { };
+    if (includeEvaluationError == IncludeEvaluationError::No && m_status == Status::EvaluationFailed) {
+        // Only the record's own evaluation having thrown is excluded; a load
+        // failure of a dependency recorded on this entry still counts.
+        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_record.get());
+        if (cyclic && cyclic->status() == CyclicModuleRecord::Status::Evaluated && cyclic->evaluationError())
+            return { };
+    }
     if (JSValue error = m_error.get()) {
         if (m_status == Status::FetchFailed) {
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(error))

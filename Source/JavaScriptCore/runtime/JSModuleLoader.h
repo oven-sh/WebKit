@@ -103,16 +103,17 @@ public:
     // Module graph instances (prototype): link a fetched module graph without
     // evaluating it, so it can serve as the template for instantiateIntoGraphInstance.
     JS_EXPORT_PRIVATE AbstractModuleRecord* linkWithoutEvaluating(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetcher>, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript);
-    // import() from inside a graph instance: load `specifier` (resolved against
-    // `referrer`) as a template and instantiate it into the instance that
-    // `callerEnvironment` belongs to; resolves with a per-instance namespace object.
+#if USE(BUN_JSC_ADDITIONS)
+    // import() from code of a module graph instance: fetch and link the graph as
+    // a template (through the synchronous loader), instantiate it into the
+    // instance, and resolve with the instance's namespace object. (An
+    // asynchronous-loader form is needed for ports without loadModuleSync.)
     JS_EXPORT_PRIVATE static JSPromise* importIntoGraphInstance(JSGlobalObject*, JSString* specifier, JSValue parameters, const SourceOrigin& referrer, ModuleGraphInstance*, bool deferred = false);
-    // Shared tail of the above and the embedder entry point: link `key` as a template, instantiate into `instance` with `overlay`, return the namespace.
-    // loadModule without evaluation, synchronously, with `instance` as the current loading graph instance.
     JS_EXPORT_PRIVATE static JSPromise* loadModuleForGraphInstance(JSGlobalObject*, const Identifier& key, RefPtr<ScriptFetchParameters>&&, ModuleGraphInstance*);
-    // Resolves with the per-instance namespace object once the (possibly async) instance evaluation completes.
+    // Resolves with the instance's namespace object once its (possibly asynchronous) evaluation completes.
     JS_EXPORT_PRIVATE static JSPromise* instantiateLoadedModuleIntoGraphInstance(JSGlobalObject*, const Identifier& key, ModuleGraphInstance*, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript, bool deferred = false);
     static JSObject* createGraphInstanceImportContext(JSGlobalObject*, ModuleGraphInstance*, const Identifier& key, ScriptFetchParameters::Type, bool deferred);
+#endif
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);

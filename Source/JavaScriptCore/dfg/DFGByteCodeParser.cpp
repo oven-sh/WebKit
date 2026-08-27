@@ -10496,10 +10496,10 @@ void ByteCodeParser::parseBlock(unsigned limit)
                         break;
                     }
                 }
-                if (JSScope* constantScope = localBase->dynamicCastConstant<JSScope*>()) {
+                if (JSScope* resolvedScope = localBase->dynamicCastConstant<JSScope*>()) {
                     for (unsigned n = depth; n--;)
-                        constantScope = constantScope->next();
-                    if (auto* importer = dynamicDowncast<JSModuleEnvironment>(constantScope)) {
+                        resolvedScope = resolvedScope->next();
+                    if (auto* importer = dynamicDowncast<JSModuleEnvironment>(resolvedScope)) {
                         // Import slots sit past the symbol table's scope size; index the storage directly.
                         if (JSValue exporter = importer->variables()[slot.offset()].get()) {
                             set(bytecode.m_dst, weakJSConstant(exporter.asCell()));

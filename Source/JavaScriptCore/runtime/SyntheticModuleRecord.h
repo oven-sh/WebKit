@@ -110,12 +110,14 @@ private:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<JSObject> m_lazyExportsSource;
+#endif
+    // Module graph instances: how to produce this record's bindings again for
+    // another instance (JSON source to re-parse, or the host's provider).
     SourceCode m_jsonSource;
     RefPtr<SyntheticSourceProvider> m_provider;
     bool m_primaryPending { false };
     enum class PlainDataState : uint8_t { Unknown, Yes, No };
     PlainDataState m_plainDataState { PlainDataState::Unknown };
-#endif
 };
 
 } // namespace JSC

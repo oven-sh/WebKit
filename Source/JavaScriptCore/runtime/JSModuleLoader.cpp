@@ -446,6 +446,7 @@ JSPromise* JSModuleLoader::linkAndEvaluateModule(JSGlobalObject* globalObject, c
     return promise;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 JSPromise* JSModuleLoader::loadModuleForGraphInstance(JSGlobalObject* globalObject, const Identifier& key, RefPtr<ScriptFetchParameters>&& parameters, ModuleGraphInstance* instance)
 {
     VM& vm = globalObject->vm();
@@ -570,6 +571,8 @@ JSPromise* JSModuleLoader::importIntoGraphInstance(JSGlobalObject* globalObject,
     loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphInstanceLoadSettled, result, context);
     return result;
 }
+
+#endif // USE(BUN_JSC_ADDITIONS)
 
 AbstractModuleRecord* JSModuleLoader::linkWithoutEvaluating(JSGlobalObject* globalObject, const Identifier& moduleKey, RefPtr<ScriptFetcher> scriptFetcher, ScriptFetchParameters::Type type)
 {
@@ -939,7 +942,14 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     if (mapEntry->status() == ModuleRegistryEntry::Status::New) {
         JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleRequest.m_attributes, scriptFetcher);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (Exception* exception = scope.exception()) [[unlikely]] {
+            // A host fetch hook that throws synchronously: record the failure on
+            // the entry (a later load of this key sees it, or retries after the
+            // entry is dropped) rather than leaving a New entry in the map.
+            if (!vm.isTerminationException(exception))
+                mapEntry->setFetchError(globalObject, exception->value());
+            return nullptr;
+        }
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
         mapEntry->ensureFetchPromise(globalObject)->pipeFrom(vm, promise);
