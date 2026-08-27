@@ -1694,6 +1694,10 @@ RegisterID* BytecodeGenerator::addConstantValue(JSValue v, SourceCodeRepresentat
 
     if (sourceCodeRepresentation == SourceCodeRepresentation::Double && v.isInt32())
         v = jsDoubleNumber(v.asNumber());
+    // A NaN the parser folded (0 / 0) has whatever bits this CPU's arithmetic produces (the sign differs between x86 and
+    // ARM); the constant, and so the bytecode, should not depend on that.
+    if (v.isDouble() && std::isnan(v.asDouble()))
+        v = jsNaN();
     EncodedJSValueWithRepresentation valueMapKey { JSValue::encode(v), sourceCodeRepresentation };
     JSValueMap::AddResult result = m_jsValueMap.add(valueMapKey, m_nextConstantOffset);
     if (result.isNewEntry) {
