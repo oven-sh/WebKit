@@ -272,6 +272,11 @@ void SyntheticModuleRecord::materializePrimaryIfPending(JSGlobalObject* globalOb
         m_primaryPending = true; // a later use retries
         return;
     }
+    if (values.hasOverflowed()) [[unlikely]] {
+        m_primaryPending = true;
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
     JSModuleEnvironment* environment = moduleEnvironment();
     SymbolTable* symbolTable = environment->symbolTable();
     for (const auto& [key, entry] : exportEntries()) {
@@ -322,6 +327,10 @@ JSModuleEnvironment* SyntheticModuleRecord::createGraphInstanceEnvironment(JSGlo
         Vector<Identifier, 4> names;
         m_provider->generate(globalObject, moduleKey(), names, values);
         RETURN_IF_EXCEPTION(scope, nullptr);
+        if (values.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
         SymbolTable* symbolTable = primary->symbolTable();
         for (const auto& [key, entry] : exportEntries()) {
             SymbolTableEntry::Fast symbolEntry = symbolTable->get(entry.localName.impl());

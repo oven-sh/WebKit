@@ -480,6 +480,12 @@ JSPromise* JSModuleRecord::instantiateIntoGraphInstanceAsync(JSGlobalObject* glo
             }
             promises.append(promise);
         }
+        if (promises.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
+            rejected->rejectWithCaughtException(vm, scope);
+            return rejected;
+        }
         // SafePerformPromiseAll: an AND-join through internal microtasks (first
         // rejection rejects). Nothing here is script-observable or Strong<>-rooted.
         JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());

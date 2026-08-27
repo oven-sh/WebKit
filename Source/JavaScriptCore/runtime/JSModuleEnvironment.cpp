@@ -127,7 +127,7 @@ JSModuleEnvironment* JSModuleEnvironment::importedEnvironmentFor(JSGlobalObject*
         return this;
     std::optional<unsigned> slotIndex = record ? record->importSlotIndexFor(exporter) : std::nullopt;
     if (slotIndex) {
-        if (JSValue filled = importSlot(*slotIndex).get(); filled.isCell())
+        if (JSValue filled = importSlot(*slotIndex).get(); filled && filled.isCell())
             return uncheckedDowncast<JSModuleEnvironment>(filled);
     }
     JSModuleEnvironment* environment = exporter->graphInstanceEnvironment(globalObject, instance, true);

@@ -4108,6 +4108,10 @@ void JSGlobalObject::configureModuleScopeOverlay(const Vector<Identifier>& names
         overlaid.append(name);
         values.append(value);
     }
+    if (values.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(this, scope);
+        return;
+    }
 
     // 2. The symbol table every overlay shares. Slot 0 holds the module graph
     //    instance an overlay belongs to (empty in the primary graph's), so code

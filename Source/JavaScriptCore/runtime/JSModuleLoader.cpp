@@ -1470,6 +1470,10 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
             // primary's are produced later, if the primary ever links to them.
             for (unsigned i = 0; i < args.size(); ++i)
                 primaryValues.append(JSValue());
+            if (primaryValues.hasOverflowed()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return promise->rejectWithCaughtException(vm, scope);
+            }
         }
         auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, moduleKey, exportNames, loadingInstance ? primaryValues : args, lazyExportsSource ? lazyExportsSource : (loadingInstance ? globalObject->globalThis() : nullptr));
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));

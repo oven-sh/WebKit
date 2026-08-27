@@ -293,8 +293,15 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         if (Options::useModuleGraphInstances()) {
             Vector<AbstractModuleRecord*> importedRecords;
             for (const auto& [key, in] : importEntries()) {
+#if USE(BUN_JSC_ADDITIONS)
+                // SingleTypeScript: a named import that may be absent; when it
+                // does resolve it is bound (and needs a slot) exactly like Single.
+                if (in.type != ImportEntryType::Single && in.type != ImportEntryType::SingleTypeScript)
+                    continue;
+#else
                 if (in.type != ImportEntryType::Single)
                     continue;
+#endif
                 AbstractModuleRecord* importedModule = hostResolveImportedModule(globalObject, in.moduleRequest, in.moduleRequestType);
                 RETURN_IF_EXCEPTION(scope, void());
                 Resolution resolution = importedModule->resolveExport(globalObject, in.importName);

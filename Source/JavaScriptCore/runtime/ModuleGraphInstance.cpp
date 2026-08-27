@@ -199,6 +199,7 @@ void ModuleGraphInstance::clear(JSGlobalObject* globalObject)
         }
         m_records.clear();
     }
+    RELEASE_ASSERT(!pending.hasOverflowed());
     if (pending.isEmpty())
         return;
     // May run as a deferred clear when an evaluation step unwinds with an
