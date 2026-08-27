@@ -63,8 +63,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // A payload written on one platform is read in place on another, so the records below must be laid out identically under
 // the Itanium and MSVC C++ ABIs. Their bit-fields are the likeliest thing to break that: make the compiler refuse any
 // bit-field in this file that MSVC would pack differently.
-#if COMPILER(CLANG) && __has_warning("-Wms-bitfield-padding")
+#if defined(__has_warning)
+#if __has_warning("-Wms-bitfield-padding")
 #pragma clang diagnostic error "-Wms-bitfield-padding"
+#endif
 #endif
 
 // Everything placed in a payload must have no padding bytes and no unused bit-field bits on the ABI compiling this. The
