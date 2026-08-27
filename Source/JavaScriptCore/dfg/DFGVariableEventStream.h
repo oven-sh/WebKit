@@ -31,6 +31,7 @@
 #include "DFGVariableEvent.h"
 #include "Operands.h"
 #include "ValueRecovery.h"
+#include <wtf/FixedVector.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace DFG {
@@ -41,16 +42,31 @@ struct UndefinedOperandSpan {
     unsigned numberOfRegisters;
 };
 
+// The encoded event stream is a byte buffer plus a side table that maps each
+// Reset checkpoint's event index to its byte offset. SpeculativeJIT keeps
+// appending plain VariableEvents while compiling; we compact them here once the
+// stream is finalized, because the only reader (reconstruct()) already seeks
+// back to the nearest Reset and replays forward, so random access to individual
+// events was never required. Stream indices handed to reconstruct() remain
+// event counts, unchanged from the builder's size().
+//
+// Encoding: one tag byte per event holding the VariableEventKind in the low 4
+// bits, with the upper bits carrying the bytecode OperandKind for
+// MovHintEvent/SetLocalEvent. MinifiedID, Operand::value() and
+// VirtualRegister offsets are written as LEB128 varints; DataFormat and
+// machine-register IDs (int8_t on every backend) take one byte each.
 class VariableEventStream {
 public:
+    static constexpr unsigned operandKindShift = 4;
+    static constexpr uint8_t eventKindMask = (1u << operandKindShift) - 1;
+
     VariableEventStream() = default;
-    VariableEventStream(Vector<VariableEvent>&& stream)
-        : m_stream(WTF::move(stream))
-    {
-    }
+    VariableEventStream(Vector<VariableEvent>&&);
 
     unsigned reconstruct(CodeBlock*, CodeOrigin, MinifiedGraph&, unsigned index, Operands<ValueRecovery>&) const;
     unsigned reconstruct(CodeBlock*, CodeOrigin, MinifiedGraph&, unsigned index, Operands<ValueRecovery>&, Vector<UndefinedOperandSpan>*) const;
+
+    size_t sizeInBytes() const { return m_bytes.byteSize() + m_checkpoints.byteSize(); }
 
 private:
     enum class ReconstructionStyle {
@@ -62,7 +78,16 @@ private:
         CodeBlock*, CodeOrigin, MinifiedGraph&,
         unsigned index, Operands<ValueRecovery>&, Vector<UndefinedOperandSpan>*) const;
 
-    FixedVector<VariableEvent> m_stream;
+    struct Checkpoint {
+        unsigned eventIndex;
+        unsigned byteOffset;
+    };
+
+    static void encodeEvent(Vector<uint8_t>& out, const VariableEvent&);
+    VariableEvent decodeEvent(size_t& offset) const;
+
+    FixedVector<uint8_t> m_bytes;
+    FixedVector<Checkpoint> m_checkpoints;
 };
 
 class VariableEventStreamBuilder {
