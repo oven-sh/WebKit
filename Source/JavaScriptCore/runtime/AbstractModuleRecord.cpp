@@ -852,9 +852,13 @@ JSModuleEnvironment* AbstractModuleRecord::graphInstanceEnvironment(JSGlobalObje
     JSModuleEnvironment* environment = synthetic->createGraphInstanceEnvironment(globalObject);
     globalObject->setCurrentGraphInstanceForLoading(vm, previousLoadingInstance);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    environment->setGraphInstance(vm, instance);
-    instance->add(vm, this, environment);
-    return environment;
+    // The provider ran host code: the instance may have been disposed, or this
+    // record instantiated into it re-entrantly (add() then returns that one).
+    if (instance->isCleared()) {
+        throwTypeError(globalObject, scope, "Module graph instance was disposed"_s);
+        return nullptr;
+    }
+    return instance->add(vm, this, environment)->environment();
 }
 
 // GetModuleNamespace for the record as instantiated in `instance`: one namespace
@@ -1155,6 +1159,10 @@ void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject, ModuleGrap
     ModuleGraphInstance::BusyScope busy(globalObject, instance);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (instance && instance->isCleared()) {
+        throwTypeError(globalObject, scope, "Module graph instance was disposed"_s);
+        return;
+    }
     // 1. If ReadyForSyncExecution(module) is false, throw a TypeError exception.
     if (!readyForSyncExecution(instance)) {
         throwTypeError(globalObject, scope, "Unable to synchronously evaluate deferred module"_s);

@@ -56,10 +56,15 @@ namespace JSC {
 // instance did not instantiate (shared with the primary graph) uses its own.
 static ModuleRecordInstance* recordInstanceFor(const CyclicModuleRecord* record, ModuleGraphInstance* instance)
 {
-    // A cleared instance has no state; falling back to the record's own state
-    // would read or write the primary graph's.
-    ASSERT(!instance || !instance->isCleared());
-    return instance ? instance->recordInstance(const_cast<CyclicModuleRecord*>(record)) : nullptr;
+    if (!instance)
+        return nullptr;
+    // Evaluating an instance never reads or writes the primary graph's state:
+    // instantiation gives every Cyclic Module Record the instance reaches its
+    // own state (JSModuleRecord::createInstanceEnvironment), and a cleared
+    // instance is refused before evaluation starts.
+    ModuleRecordInstance* recordInstance = instance->recordInstance(const_cast<CyclicModuleRecord*>(record));
+    RELEASE_ASSERT(recordInstance, "module graph instance has no state for a cyclic module record it evaluates");
+    return recordInstance;
 }
 
 CyclicModuleRecord::Status CyclicModuleRecord::status(ModuleGraphInstance* instance) const
@@ -589,6 +594,9 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, ModuleGrap
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (instance && instance->isCleared()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Module graph instance was disposed"_s)));
 
     // 1. Assert: This call to Evaluate is not happening at the same time as another call to Evaluate within the surrounding agent.
     // FIXME: is this needed?

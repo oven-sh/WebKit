@@ -1637,6 +1637,68 @@ static void dynamicImportEvaluateSettled(JSGlobalObject* globalObject, VM& vm, T
         capabilityPromise->reject(vm, arguments[1]);
 }
 
+// import() into a module graph instance (JSModuleLoader::importIntoGraphInstance):
+// the load settled. arguments[0] = result promise, [1] = key or error,
+// [2] = context object { @moduleGraphInstance, name: key, type, @defer }.
+static void moduleGraphInstanceLoadSettled(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
+{
+    auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
+    if (static_cast<JSPromise::Status>(payload) != JSPromise::Status::Fulfilled) {
+        resultPromise->reject(vm, arguments[1]);
+        return;
+    }
+    JSObject* context = asObject(arguments[2]);
+    auto* instance = uncheckedDowncast<ModuleGraphInstance>(context->getDirect(vm, vm.propertyNames->builtinNames().moduleGraphInstancePrivateName()));
+    Identifier key = context->getDirect(vm, vm.propertyNames->name).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto type = static_cast<ScriptFetchParameters::Type>(context->getDirect(vm, vm.propertyNames->type).asInt32());
+    bool deferred = context->getDirect(vm, vm.propertyNames->builtinNames().deferPrivateName()).isTrue();
+    JSPromise* namespacePromise = JSModuleLoader::instantiateLoadedModuleIntoGraphInstance(globalObject, key, instance, type, deferred);
+    if (scope.exception()) [[unlikely]] {
+        resultPromise->rejectWithCaughtException(vm, scope);
+        return;
+    }
+    resultPromise->pipeFrom(vm, namespacePromise);
+}
+
+// The instance's evaluation of the imported module settled: resolve with the
+// namespace object for (record, instance). arguments as above plus context.value = record.
+static void moduleGraphInstanceEvaluateSettled(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
+{
+    auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
+    if (static_cast<JSPromise::Status>(payload) != JSPromise::Status::Fulfilled) {
+        resultPromise->reject(vm, arguments[1]);
+        return;
+    }
+    JSObject* context = asObject(arguments[2]);
+    auto* instance = uncheckedDowncast<ModuleGraphInstance>(context->getDirect(vm, vm.propertyNames->builtinNames().moduleGraphInstancePrivateName()));
+    auto* record = uncheckedDowncast<AbstractModuleRecord>(context->getDirect(vm, vm.propertyNames->value));
+    bool deferred = context->getDirect(vm, vm.propertyNames->builtinNames().deferPrivateName()).isTrue();
+    JSModuleNamespaceObject* moduleNamespace = record->getModuleNamespace(globalObject, instance, deferred ? AbstractModuleRecord::ModulePhase::Defer : AbstractModuleRecord::ModulePhase::Evaluation);
+    if (scope.exception()) [[unlikely]] {
+        resultPromise->rejectWithCaughtException(vm, scope);
+        return;
+    }
+    resultPromise->resolve(globalObject, vm, moduleNamespace);
+}
+
+// AND-join over the asynchronous transitive dependencies of a deferred import
+// into an instance (JSModuleRecord::instantiateIntoGraphInstanceAsync).
+// arguments[0] = result promise, [1] = value or error, [2] = JSPromiseCombinatorsGlobalContext (count).
+static void moduleGraphInstanceDependencySettled(JSGlobalObject* globalObject, VM& vm, ThrowScope&, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
+{
+    auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
+    auto* joinContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(arguments[2]);
+    if (static_cast<JSPromise::Status>(payload) != JSPromise::Status::Fulfilled) {
+        resultPromise->reject(vm, arguments[1]); // first rejection wins
+        return;
+    }
+    uint64_t remaining = joinContext->remainingElementsCount() - 1;
+    joinContext->setRemainingElementsCount(remaining);
+    if (!remaining)
+        resultPromise->resolve(globalObject, vm, jsUndefined());
+}
+
 static void importModuleNamespace(JSGlobalObject* globalObject, VM& vm, ThrowScope&, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
 {
     // requestImportModule: namespace getter
@@ -2341,6 +2403,21 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::DynamicImportDeferDependencySettled: {
         dynamicImportDeferDependencySettled(globalObject, vm, scope, arguments, payload);
+        return;
+    }
+
+    case InternalMicrotask::ModuleGraphInstanceLoadSettled: {
+        moduleGraphInstanceLoadSettled(globalObject, vm, scope, arguments, payload);
+        return;
+    }
+
+    case InternalMicrotask::ModuleGraphInstanceEvaluateSettled: {
+        moduleGraphInstanceEvaluateSettled(globalObject, vm, scope, arguments, payload);
+        return;
+    }
+
+    case InternalMicrotask::ModuleGraphInstanceDependencySettled: {
+        moduleGraphInstanceDependencySettled(globalObject, vm, scope, arguments, payload);
         return;
     }
 

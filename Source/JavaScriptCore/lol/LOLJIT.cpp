@@ -3597,9 +3597,10 @@ void LOLJIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
     // If we profile certain resolve types, we're guaranteed all linked code will have the same
     // resolve type.
 
-    if (profiledResolveType == ModuleVar)
+    if (profiledResolveType == ModuleVar) {
+        RELEASE_ASSERT(!Options::useModuleGraphInstances()); // import slots not implemented here
         loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), destRegs.payloadGPR());
-    else if (profiledResolveType == ClosureVar) {
+    } else if (profiledResolveType == ClosureVar) {
         move(scopeRegs.payloadGPR(), destRegs.payloadGPR());
         unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
         if (localScopeDepth < 8) {

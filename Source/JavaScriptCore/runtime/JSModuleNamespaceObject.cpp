@@ -152,6 +152,12 @@ void JSModuleNamespaceObject::ensureDeferredNamespaceEvaluation(JSGlobalObject* 
     ASSERT(m_isDeferred);
     // A namespace of a module graph instance evaluates its module in that instance.
     ModuleGraphInstance* instance = m_graphInstance.get();
+    if (instance && instance->isCleared()) {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, scope, "Module namespace belongs to a module graph instance that was disposed"_s);
+        return;
+    }
     // Fast path: if the module's cycle has already successfully evaluated, EvaluateModuleSync would
     // observe a fulfilled promise and return without throwing, so we can skip the work entirely.
     // We must consult [[CycleRoot]] here because Evaluate() redirects to it; for a non-root SCC

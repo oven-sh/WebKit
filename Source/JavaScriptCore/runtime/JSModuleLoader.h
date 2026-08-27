@@ -52,6 +52,9 @@ enum class ModuleLoadFlag : uint8_t {
     Dynamic = 1 << 1,
     UseImportMap = 1 << 2,
     Deferred = 1 << 3,
+    // Loading a template for a module graph instance: the primary graph's
+    // evaluation error for an already-loaded module is not this load's failure.
+    ForGraphInstance = 1 << 4,
 };
 
 class JSModuleLoader final : public JSCell {
@@ -109,6 +112,7 @@ public:
     JS_EXPORT_PRIVATE static JSPromise* loadModuleForGraphInstance(JSGlobalObject*, const Identifier& key, RefPtr<ScriptFetchParameters>&&, ModuleGraphInstance*);
     // Resolves with the per-instance namespace object once the (possibly async) instance evaluation completes.
     JS_EXPORT_PRIVATE static JSPromise* instantiateLoadedModuleIntoGraphInstance(JSGlobalObject*, const Identifier& key, ModuleGraphInstance*, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript, bool deferred = false);
+    static JSObject* createGraphInstanceImportContext(JSGlobalObject*, ModuleGraphInstance*, const Identifier& key, ScriptFetchParameters::Type, bool deferred);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);

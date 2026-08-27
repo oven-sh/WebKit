@@ -356,6 +356,7 @@ public:
     WriteBarrier<SymbolTable> m_moduleScopeOverlaySymbolTable;
     WriteBarrier<ModuleGraphInstance> m_currentGraphInstanceForLoading;
     WriteBarrier<JSLexicalEnvironment> m_primaryModuleScopeOverlay;
+    bool m_hasCreatedModuleEnvironment { false };
 
     WriteBarrier<ObjectPrototype> m_objectPrototype;
     WriteBarrier<FunctionPrototype> m_functionPrototype;
@@ -925,6 +926,8 @@ public:
     // holds the global's own values.
     JS_EXPORT_PRIVATE void configureModuleScopeOverlay(const Vector<Identifier>& names);
     SymbolTable* moduleScopeOverlaySymbolTable() const { return m_moduleScopeOverlaySymbolTable.get(); }
+    // True for a scope created by createModuleScopeOverlay (or the primary overlay).
+    bool isModuleScopeOverlay(JSScope*) const;
     JSLexicalEnvironment* primaryModuleScopeOverlay() const { return m_primaryModuleScopeOverlay.get(); }
     // Parent scope for module environments: the primary overlay if configured, else the global lexical environment.
     JS_EXPORT_PRIVATE JSScope* moduleEnvironmentParentScope();

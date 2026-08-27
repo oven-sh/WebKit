@@ -26,7 +26,9 @@
 #include "config.h"
 #include "ModuleGraphInstance.h"
 
+#include "DeferTermination.h"
 #include "Error.h"
+#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "JSInternalFieldObjectImplInlines.h"
 #include "JSModuleEnvironment.h"
@@ -149,9 +151,13 @@ ModuleRecordInstance* ModuleGraphInstance::recordInstance(AbstractModuleRecord* 
 
 ModuleRecordInstance* ModuleGraphInstance::add(VM& vm, AbstractModuleRecord* record, JSModuleEnvironment* environment)
 {
-    ASSERT(!m_records.contains(record));
-    ASSERT(!m_cleared); // callers check isCleared() and throw first
+    RELEASE_ASSERT(!m_cleared); // callers check isCleared() and throw first
+    // Idempotent: host code that runs while a record is instantiated (a
+    // synthetic module's generator) may have instantiated it re-entrantly.
+    if (ModuleRecordInstance* existing = recordInstance(record))
+        return existing;
     ModuleRecordInstance* instance = ModuleRecordInstance::create(vm, this, record, environment);
+    environment->setGraphInstance(vm, this);
     Locker locker { cellLock() };
     m_records.add(record, WriteBarrier<ModuleRecordInstance>(vm, this, instance));
     return instance;
@@ -161,6 +167,12 @@ bool ModuleGraphInstance::remove(AbstractModuleRecord* record)
 {
     Locker locker { cellLock() };
     return m_records.remove(record);
+}
+
+void ModuleGraphInstance::destroy(JSCell* cell)
+{
+    SUPPRESS_MEMORY_UNSAFE_CAST auto* thisObject = static_cast<ModuleGraphInstance*>(cell);
+    thisObject->~ModuleGraphInstance();
 }
 
 void ModuleGraphInstance::clear(JSGlobalObject* globalObject)
@@ -173,7 +185,10 @@ void ModuleGraphInstance::clear(JSGlobalObject* globalObject)
     }
     m_clearPending = false;
     VM& vm = globalObject->vm();
-    Vector<JSPromise*, 4> pending;
+    // Pending top-level evaluation promises are rejected below; keep them alive
+    // (they were reachable only through the records' state) across the
+    // allocation of the error.
+    MarkedArgumentBuffer pending;
     {
         Locker locker { cellLock() };
         m_cleared = true;
@@ -186,9 +201,13 @@ void ModuleGraphInstance::clear(JSGlobalObject* globalObject)
     }
     if (pending.isEmpty())
         return;
+    // May run as a deferred clear when an evaluation step unwinds with an
+    // exception pending (BusyScope): rejecting is bookkeeping, not a new throw.
+    DeferTerminationForAWhile deferTermination(vm);
+    SuspendExceptionScope suspendException(vm);
     JSObject* error = createTypeError(globalObject, "Module graph instance was disposed during evaluation"_s);
-    for (JSPromise* capability : pending)
-        capability->reject(vm, JSValue(error));
+    for (unsigned i = 0; i < pending.size(); ++i)
+        uncheckedDowncast<JSPromise>(pending.at(i))->reject(vm, JSValue(error));
 }
 
 } // namespace JSC

@@ -49,6 +49,7 @@
 #include "SymbolTableInlines.h"
 #include "SyntheticModuleRecord.h"
 #include "JSPromise.h"
+#include "JSPromiseCombinatorsGlobalContext.h"
 #include "ModuleProgramExecutable.h"
 #include "ModuleProgramCodeBlock.h"
 #include "SourceProfiler.h"
@@ -237,6 +238,15 @@ JSModuleEnvironment* JSModuleRecord::createInstanceEnvironment(JSGlobalObject* g
     if (JSModuleEnvironment* existing = instance->environment(this))
         return existing;
 
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return nullptr;
+    }
+    // Evaluate() step 2 for the template: it must have completed Link().
+    if (status() == Status::New || status() == Status::Unlinked || status() == Status::Linking) {
+        throwTypeError(globalObject, scope, makeString("Module '"_s, moduleKey().string(), "' is not linked and cannot be instantiated into a module graph instance"_s));
+        return nullptr;
+    }
     ModuleProgramExecutable* executable = m_retainedExecutable.get();
     if (!executable) {
         throwTypeError(globalObject, scope, makeString("Module '"_s, moduleKey().string(), "' cannot be instantiated again: it was linked before module graph instances were enabled"_s));
@@ -244,12 +254,24 @@ JSModuleEnvironment* JSModuleRecord::createInstanceEnvironment(JSGlobalObject* g
     }
 
     SymbolTable* symbolTable = executable->moduleEnvironmentSymbolTable();
+    // The record's CodeBlocks are shared by every instance and were linked
+    // against the primary environment's scope chain, so an instance's parent
+    // scope must have the same shape: the global's module environment parent
+    // scope, or an overlay from createModuleScopeOverlay when the primary graph
+    // is under one too.
     JSScope* parentScope = instance->parentScope() ? instance->parentScope() : globalObject->moduleEnvironmentParentScope();
+    if (instance->parentScope() && !(globalObject->isModuleScopeOverlay(parentScope) && globalObject->primaryModuleScopeOverlay())) {
+        throwTypeError(globalObject, scope, "A module graph instance's parent scope must be a module scope overlay of a global object whose modules are under one"_s);
+        return nullptr;
+    }
     JSModuleEnvironment* env = JSModuleEnvironment::create(vm, globalObject, parentScope, symbolTable, jsTDZValue(), this);
     RETURN_IF_EXCEPTION(scope, nullptr);
     env->setGraphInstance(vm, instance);
-    // Register before recursing so import cycles terminate (status Linked).
+    // Register before recursing so import cycles terminate (status Linked), and
+    // in `created` so a failure further on can roll every record of this
+    // instantiation back out of the instance (Link() step 4.a).
     instance->add(vm, this, env);
+    created.append(this);
 
     for (const auto& request : requestedModules()) {
         AbstractModuleRecord* imported = hostResolveImportedModule(globalObject, request.m_specifier, request.type());
@@ -257,6 +279,12 @@ JSModuleEnvironment* JSModuleRecord::createInstanceEnvironment(JSGlobalObject* g
         if (auto* importedSource = dynamicDowncast<JSModuleRecord>(imported)) {
             importedSource->createInstanceEnvironment(globalObject, instance, created);
             RETURN_IF_EXCEPTION(scope, nullptr);
+        } else if (is<CyclicModuleRecord>(imported)) {
+            // Every Cyclic Module Record an instance reaches must have its own
+            // state in the instance (the evaluation algorithm never falls back to
+            // the primary graph's); only Source Text Module Records can today.
+            throwTypeError(globalObject, scope, makeString("Module '"_s, imported->moduleKey().string(), "' cannot be instantiated into a module graph instance (only JavaScript and synthetic modules can)"_s));
+            return nullptr;
         } else {
             // Synthetic records with per-instance state get an environment in
             // the instance; others are shared with the primary graph.
@@ -330,8 +358,16 @@ JSModuleEnvironment* JSModuleRecord::createInstanceEnvironment(JSGlobalObject* g
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
-    created.append(this);
     return env;
+}
+
+// Link() step 4.a for an instance: an instantiation that failed part-way leaves
+// nothing behind, so a retry starts clean instead of evaluating half-initialised
+// environments.
+static void rollBackInstantiation(ModuleGraphInstance* instance, const Vector<JSModuleRecord*>& created)
+{
+    for (JSModuleRecord* record : created)
+        instance->remove(record);
 }
 
 static void fillGraphInstanceImportSlots(JSGlobalObject* globalObject, const Vector<JSModuleRecord*>& created, ModuleGraphInstance* instance)
@@ -350,7 +386,10 @@ JSModuleEnvironment* JSModuleRecord::instantiateIntoGraphInstance(JSGlobalObject
 
     Vector<JSModuleRecord*> created;
     JSModuleEnvironment* env = createInstanceEnvironment(globalObject, instance, created);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (scope.exception()) [[unlikely]] {
+        rollBackInstantiation(instance, created);
+        return nullptr;
+    }
     fillGraphInstanceImportSlots(globalObject, created, instance);
     if (phase == ModulePhase::Defer) {
         // import defer: only the asynchronous transitive dependencies evaluate
@@ -359,13 +398,25 @@ JSModuleEnvironment* JSModuleRecord::instantiateIntoGraphInstance(JSGlobalObject
         UncheckedKeyHashSet<AbstractModuleRecord*> seen;
         gatherAsynchronousTransitiveDependencies(asyncDependencies, seen, instance);
         for (AbstractModuleRecord* dependency : asyncDependencies) {
-            if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(dependency)) {
+            auto* cyclic = dynamicDowncast<CyclicModuleRecord>(dependency);
+            if (!cyclic)
+                continue;
 #if USE(BUN_JSC_ADDITIONS)
-                cyclic->evaluate(globalObject, -1, instance);
+            JSPromise* promise = cyclic->evaluate(globalObject, -1, instance);
 #else
-                cyclic->evaluate(globalObject, instance);
+            JSPromise* promise = cyclic->evaluate(globalObject, instance);
 #endif
-                RETURN_IF_EXCEPTION(scope, nullptr);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            switch (promise->status()) {
+            case JSPromise::Status::Fulfilled:
+                continue;
+            case JSPromise::Status::Rejected:
+                promise->markAsHandled();
+                scope.throwException(globalObject, promise->result());
+                return nullptr;
+            case JSPromise::Status::Pending:
+                throwTypeError(globalObject, scope, makeString("Module '"_s, cyclic->moduleKey().string(), "' uses top-level await and cannot be evaluated synchronously"_s));
+                return nullptr;
             }
         }
         return env;
@@ -400,6 +451,7 @@ JSPromise* JSModuleRecord::instantiateIntoGraphInstanceAsync(JSGlobalObject* glo
     Vector<JSModuleRecord*> created;
     createInstanceEnvironment(globalObject, instance, created);
     if (scope.exception()) [[unlikely]] {
+        rollBackInstantiation(instance, created);
         JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
         rejected->rejectWithCaughtException(vm, scope);
         return rejected;
@@ -428,18 +480,17 @@ JSPromise* JSModuleRecord::instantiateIntoGraphInstanceAsync(JSGlobalObject* glo
             }
             promises.append(promise);
         }
-        // All must fulfil (first rejection rejects): fold them into one chain.
-        JSPromise* result = JSPromise::resolvedPromise(globalObject, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        for (unsigned i = 0; i < promises.size(); ++i) {
-            JSValue next = promises.at(i);
-            auto* waitNext = JSNativeStdFunction::create(vm, globalObject, 0, String(), [next = Strong<Unknown>(vm, next)](JSGlobalObject*, CallFrame*) -> EncodedJSValue {
-                return JSValue::encode(next.get());
-            });
-            result = uncheckedDowncast<JSPromise>(result->then(globalObject, waitNext, jsUndefined()));
-            RETURN_IF_EXCEPTION(scope, nullptr);
+        // SafePerformPromiseAll: an AND-join through internal microtasks (first
+        // rejection rejects). Nothing here is script-observable or Strong<>-rooted.
+        JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
+        if (promises.isEmpty()) {
+            result->resolve(globalObject, vm, jsUndefined());
+            RELEASE_AND_RETURN(scope, result);
         }
-        RELEASE_AND_RETURN(scope, result);
+        auto* joinContext = JSPromiseCombinatorsGlobalContext::create(vm, result, jsUndefined(), promises.size());
+        for (unsigned i = 0; i < promises.size(); ++i)
+            uncheckedDowncast<JSPromise>(promises.at(i))->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphInstanceDependencySettled, result, joinContext);
+        return result;
     }
 #if USE(BUN_JSC_ADDITIONS)
     JSPromise* promise = CyclicModuleRecord::evaluate(globalObject, -1, instance);
@@ -463,7 +514,7 @@ void JSModuleRecord::executeInstance(JSGlobalObject* globalObject, ModuleRecordI
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!hasTLA()) {
         ASSERT(!capability);
-        vm.interpreter.executeModuleProgram(this, m_retainedExecutable.get(), globalObject, recordInstance->environment(), jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
+        vm.interpreter.executeModuleProgram(this, recordInstance, m_retainedExecutable.get(), globalObject, recordInstance->environment(), jsUndefined(), jsNumber(static_cast<int32_t>(ResumeMode::NormalMode)));
         pinRetainedCodeBlock(vm);
         RETURN_IF_EXCEPTION(scope, void());
         return;

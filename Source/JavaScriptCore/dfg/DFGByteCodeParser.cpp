@@ -10500,7 +10500,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     for (unsigned n = depth; n--;)
                         constantScope = constantScope->next();
                     if (auto* importer = dynamicDowncast<JSModuleEnvironment>(constantScope)) {
-                        if (JSValue exporter = importer->variableAt(slot).get()) {
+                        // Import slots sit past the symbol table's scope size; index the storage directly.
+                        if (JSValue exporter = importer->variables()[slot.offset()].get()) {
                             set(bytecode.m_dst, weakJSConstant(exporter.asCell()));
                             break;
                         }
