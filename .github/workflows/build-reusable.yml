@@ -257,7 +257,15 @@ jobs:
       - name: Install Scoop
         run: |
           Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-          Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+          # Since ScoopInstaller/Install#136 the installer only installs when it is not
+          # dot-sourced, and Actions dot-sources the step script, so `irm | iex` only
+          # defines its functions. Run the script as a file with the call operator instead.
+          $scoopInstaller = Join-Path $env:RUNNER_TEMP "install-scoop.ps1"
+          Invoke-RestMethod -Uri https://get.scoop.sh -OutFile $scoopInstaller
+          & $scoopInstaller
+          if (-not (Test-Path (Join-Path (Resolve-Path ~).Path "scoop\shims\scoop.ps1"))) {
+            throw "Scoop did not install"
+          }
           Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
       - name: Install LLVM and Ninja (ARM64)
         if: matrix.platform == 'ARM64'
