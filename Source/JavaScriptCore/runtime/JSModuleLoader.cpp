@@ -632,10 +632,15 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             ModuleRegistryEntry* loadedEntry = getRegisteredMayBeNull(loaded->moduleKey(), type);
             ASSERT(loadedEntry);
             ASSERT(loadedEntry->record() == loaded);
-            ASSERT(loadedEntry->loadPromise());
+#if USE(BUN_JSC_ADDITIONS)
+            JSPromise* loadedPromise = loadedEntry->loadedPromise(globalObject);
+#else
+            JSPromise* loadedPromise = loadedEntry->loadPromise();
+#endif
+            ASSERT(loadedPromise);
             finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, loaded, scriptFetcher);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            return loadedEntry->loadPromise();
+            return loadedPromise;
         }
     }
 
@@ -757,7 +762,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+        JSPromise* promise = mapEntry->loadedPromise(globalObject);
+#else
         JSPromise* promise = mapEntry->loadPromise();
+#endif
         if (promise) {
             if (mapEntry->record()) {
                 finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, mapEntry->record(), scriptFetcher);

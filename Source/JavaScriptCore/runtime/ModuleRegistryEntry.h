@@ -88,10 +88,17 @@ public:
     void provideFetch(JSGlobalObject*, JSSourceCode*);
     void fetchComplete(JSGlobalObject*, AbstractModuleRecord*);
 #if USE(BUN_JSC_ADDITIONS)
-    // For an embedder that already has both the source and the module record: leaves the entry Fetched with settled
-    // fetch and module promises, without scheduling the fetch -> makeModule microtask chain. The entry must not have a
-    // record yet; a pending fetch promise piped from an in-flight fetch is left for that fetch to settle.
-    JS_EXPORT_PRIVATE void provideModule(JSGlobalObject*, JSSourceCode*, AbstractModuleRecord*);
+    // For an embedder that already has both the source and the module record: leaves the entry Fetched without
+    // allocating the fetch / module / load promises or scheduling the fetch -> makeModule microtask chain. The
+    // promises are materialized on demand, already settled, if a later top-level load or import edge asks for them.
+    // The entry must not have a record yet.
+    JS_EXPORT_PRIVATE void provideModule(VM&, JSSourceCode*, AbstractModuleRecord*);
+    // The embedder additionally guarantees record()'s [[LoadedModules]] is complete and every module reachable from
+    // it is registered the same way, i.e. what a settled loadPromise means.
+    void markLoaded() { ASSERT(m_record); m_isLoaded = true; }
+    bool isLoaded() const;
+    // loadPromise(), materializing it first for an entry that was markLoaded().
+    JSPromise* loadedPromise(JSGlobalObject*);
 #endif
 
 private:
@@ -109,6 +116,10 @@ private:
     // The fetch / instantiation / evaluation errors are mutually exclusive: m_status
     // disambiguates which kind m_error holds (FetchFailed / InstantiationFailed / EvaluationFailed).
     WriteBarrier<Unknown> m_error;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<JSSourceCode> m_providedSource;
+    bool m_isLoaded { false };
+#endif
     Status m_status { Status::New };
 };
 
