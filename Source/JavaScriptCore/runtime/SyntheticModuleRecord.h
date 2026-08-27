@@ -63,7 +63,7 @@ public:
     // True for data modules: a JSON source to re-parse, or exports that are all
     // plain data (primitives / arrays / plain objects), deep-copied per graph.
     // Native/builtin modules (functions, host objects, lazy exports) are shared.
-    bool hasPerGraphInstanceState();
+    bool hasPerGraphInstanceState() const;
     JSModuleEnvironment* createGraphInstanceEnvironment(JSGlobalObject*);
     // Host synthetic modules with per-graph state of their own (a CommonJS
     // module behind an ESM import): the provider regenerates per graph, and if
@@ -116,8 +116,6 @@ private:
     SourceCode m_jsonSource;
     RefPtr<SyntheticSourceProvider> m_provider;
     bool m_primaryPending { false };
-    enum class PlainDataState : uint8_t { Unknown, Yes, No };
-    PlainDataState m_plainDataState { PlainDataState::Unknown };
 };
 
 } // namespace JSC
