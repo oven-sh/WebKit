@@ -334,6 +334,8 @@ JSModuleEnvironment* SyntheticModuleRecord::createGraphInstanceEnvironment(JSGlo
         SymbolTable* symbolTable = primary->symbolTable();
         for (const auto& [key, entry] : exportEntries()) {
             SymbolTableEntry::Fast symbolEntry = symbolTable->get(entry.localName.impl());
+            if (symbolEntry.isNull())
+                continue;
             JSValue value = jsUndefined();
             for (unsigned i = 0; i < names.size(); ++i) {
                 if (names[i] == entry.localName) {
