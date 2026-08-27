@@ -31,7 +31,6 @@
 #include "IndirectEvalExecutable.h"
 #include "ModuleProgramExecutable.h"
 #include "ProgramExecutable.h"
-#include "SourceProviderCache.h"
 #include "VariableEnvironmentInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -139,9 +138,6 @@ template <class UnlinkedCodeBlockType>
     requires (!std::same_as<UnlinkedCodeBlockType, UnlinkedEvalCodeBlock>)
 UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth)
 {
-    // Held so a full collection part-way through cannot drop it (VM::clearSourceProviderCaches()) and change which nested bodies the parser skips.
-    Ref sourceProviderCache = *vm.addSourceProviderCache(source.provider());
-
     bool isArrowFunctionContext = false;
     UnlinkedCodeBlockType* unlinkedCodeBlock = generateUnlinkedCodeBlockImpl<UnlinkedCodeBlockType>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType, DerivedContextType::None, isArrowFunctionContext);
     if (!unlinkedCodeBlock)
@@ -153,7 +149,6 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
 
 void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error, unsigned depth)
 {
-    Ref sourceProviderCache = *vm.addSourceProviderCache(parentSource.provider()); // as in recursivelyGenerateUnlinkedCodeBlock()
     SourceCode source = executable->linkedSourceCode(parentSource);
     UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
     if (codeBlock)
