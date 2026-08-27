@@ -834,6 +834,11 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
         }
     }
 
+    // A primary-graph import() issued by host code that runs during an
+    // instance's load is the primary's, not that instance's.
+    std::optional<JSGlobalObject::GraphInstanceLoadingScope> primaryLoading;
+    if (Options::useModuleGraphInstances() && globalObject->currentGraphInstanceForLoading()) [[unlikely]]
+        primaryLoading.emplace(globalObject, nullptr);
     auto* importPromise = globalObject->moduleLoader()->importModule(globalObject, specifier, parameters, sourceOrigin, deferred);
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();

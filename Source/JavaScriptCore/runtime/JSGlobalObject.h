@@ -940,6 +940,20 @@ public:
     // (e.g. CommonJS modules behind an ESM import) to this instance.
     ModuleGraphInstance* currentGraphInstanceForLoading() const { return m_currentGraphInstanceForLoading.get(); }
     JS_EXPORT_PRIVATE void setCurrentGraphInstanceForLoading(VM&, ModuleGraphInstance*);
+    // Brackets a load performed on behalf of `instance` (host-provided
+    // synthetic modules created meanwhile belong to it); restores on exit.
+    class GraphInstanceLoadingScope {
+    public:
+        GraphInstanceLoadingScope(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
+            : m_globalObject(globalObject), m_previous(globalObject->currentGraphInstanceForLoading())
+        {
+            globalObject->setCurrentGraphInstanceForLoading(globalObject->vm(), instance);
+        }
+        ~GraphInstanceLoadingScope() { m_globalObject->setCurrentGraphInstanceForLoading(m_globalObject->vm(), m_previous); }
+    private:
+        JSGlobalObject* m_globalObject;
+        ModuleGraphInstance* m_previous;
+    };
 
     ObjectPrototype* objectPrototype() const LIFETIME_BOUND { return m_objectPrototype.get(); }
     FunctionPrototype* functionPrototype() const LIFETIME_BOUND { return m_functionPrototype.get(); }

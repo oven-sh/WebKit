@@ -464,10 +464,11 @@ JSPromise* JSModuleLoader::loadModuleForGraphInstance(JSGlobalObject* globalObje
         }
     }
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ModuleGraphInstance* previous = globalObject->currentGraphInstanceForLoading();
-    globalObject->setCurrentGraphInstanceForLoading(vm, instance);
-    JSPromise* promise = globalObject->moduleLoader()->loadModuleSync(globalObject, key, WTF::move(parameters), nullptr, { ModuleLoadFlag::ForGraphInstance });
-    globalObject->setCurrentGraphInstanceForLoading(vm, previous);
+    JSPromise* promise = nullptr;
+    {
+        JSGlobalObject::GraphInstanceLoadingScope loading(globalObject, instance);
+        promise = globalObject->moduleLoader()->loadModuleSync(globalObject, key, WTF::move(parameters), nullptr, { ModuleLoadFlag::ForGraphInstance });
+    }
     RELEASE_AND_RETURN(scope, promise);
 }
 
@@ -496,10 +497,11 @@ JSPromise* JSModuleLoader::instantiateLoadedModuleIntoGraphInstance(JSGlobalObje
     // The loading instance is current only while linking (host-provided
     // synthetic modules consult it); evaluating the instance below runs script,
     // and loads that script triggers must not be attributed to this instance.
-    ModuleGraphInstance* previousLoadingInstance = globalObject->currentGraphInstanceForLoading();
-    globalObject->setCurrentGraphInstanceForLoading(vm, instance);
-    AbstractModuleRecord* record = globalObject->moduleLoader()->linkWithoutEvaluating(globalObject, key, nullptr, type);
-    globalObject->setCurrentGraphInstanceForLoading(vm, previousLoadingInstance);
+    AbstractModuleRecord* record = nullptr;
+    {
+        JSGlobalObject::GraphInstanceLoadingScope loading(globalObject, instance);
+        record = globalObject->moduleLoader()->linkWithoutEvaluating(globalObject, key, nullptr, type);
+    }
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto phase = deferred ? AbstractModuleRecord::ModulePhase::Defer : AbstractModuleRecord::ModulePhase::Evaluation;
     auto* sourceRecord = dynamicDowncast<JSModuleRecord>(record);

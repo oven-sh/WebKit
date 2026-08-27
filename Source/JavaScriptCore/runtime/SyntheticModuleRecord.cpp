@@ -354,11 +354,14 @@ void SyntheticModuleRecord::materializePrimaryIfPending(JSGlobalObject* globalOb
     // While a graph is loading, the primary is nobody's business yet.
     if (!m_primaryPending || !m_provider || globalObject->currentGraphInstanceForLoading())
         return;
-    m_primaryPending = false;
+    m_primaryPending = false; // before generate(): the provider may re-enter
     MarkedArgumentBuffer values;
     Vector<Identifier, 4> names;
     m_provider->generate(globalObject, moduleKey(), names, values);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (scope.exception()) [[unlikely]] {
+        m_primaryPending = true; // a later use retries
+        return;
+    }
     JSModuleEnvironment* environment = moduleEnvironment();
     SymbolTable* symbolTable = environment->symbolTable();
     for (const auto& [key, entry] : exportEntries()) {

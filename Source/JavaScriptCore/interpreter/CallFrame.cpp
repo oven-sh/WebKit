@@ -207,10 +207,13 @@ JSScope* CallFrame::callerScope(VM& vm)
         switch (visitor->codeType()) {
         case StackVisitor::Frame::CodeType::Native:
         case StackVisitor::Frame::CodeType::Wasm:
+        // Eval code runs in its caller's scope, but its callee is the global
+        // object's shared eval callee whose scope is only set while the eval is
+        // being entered: attribute to the frame that called eval instead.
+        case StackVisitor::Frame::CodeType::Eval:
             return IterationStatus::Continue;
         case StackVisitor::Frame::CodeType::Function:
         case StackVisitor::Frame::CodeType::Module:
-        case StackVisitor::Frame::CodeType::Eval:
         case StackVisitor::Frame::CodeType::Global:
             break;
         }

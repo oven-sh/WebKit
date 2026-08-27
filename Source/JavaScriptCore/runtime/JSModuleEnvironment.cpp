@@ -125,17 +125,19 @@ JSModuleEnvironment* JSModuleEnvironment::importedEnvironmentFor(JSGlobalObject*
     AbstractModuleRecord* record = moduleRecord();
     if (record == exporter)
         return this;
-    if (record) {
-        if (auto slotIndex = record->importSlotIndexFor(exporter)) {
-            if (JSValue filled = importSlot(*slotIndex).get(); filled.isCell())
-                return uncheckedDowncast<JSModuleEnvironment>(filled);
-        }
+    std::optional<unsigned> slotIndex = record ? record->importSlotIndexFor(exporter) : std::nullopt;
+    if (slotIndex) {
+        if (JSValue filled = importSlot(*slotIndex).get(); filled.isCell())
+            return uncheckedDowncast<JSModuleEnvironment>(filled);
     }
     JSModuleEnvironment* environment = exporter->graphInstanceEnvironment(globalObject, instance, true);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (environment)
-        return environment;
-    return exporter->moduleEnvironment();
+    if (!environment)
+        environment = exporter->moduleEnvironment(); // shared with the primary graph
+    // Fill the slot so the interpreter and JIT fast paths take over from here.
+    if (slotIndex && environment)
+        importSlot(*slotIndex).set(vm, this, environment);
+    return environment;
 }
 
 ModuleGraphInstance* JSModuleEnvironment::graphInstance()

@@ -847,10 +847,11 @@ JSModuleEnvironment* AbstractModuleRecord::graphInstanceEnvironment(JSGlobalObje
     auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(this);
     if (!synthetic || !synthetic->hasPerGraphInstanceState())
         return nullptr;
-    ModuleGraphInstance* previousLoadingInstance = globalObject->currentGraphInstanceForLoading();
-    globalObject->setCurrentGraphInstanceForLoading(vm, instance);
-    JSModuleEnvironment* environment = synthetic->createGraphInstanceEnvironment(globalObject);
-    globalObject->setCurrentGraphInstanceForLoading(vm, previousLoadingInstance);
+    JSModuleEnvironment* environment = nullptr;
+    {
+        JSGlobalObject::GraphInstanceLoadingScope loading(globalObject, instance);
+        environment = synthetic->createGraphInstanceEnvironment(globalObject);
+    }
     RETURN_IF_EXCEPTION(scope, nullptr);
     // The provider ran host code: the instance may have been disposed, or this
     // record instantiated into it re-entrantly (add() then returns that one).

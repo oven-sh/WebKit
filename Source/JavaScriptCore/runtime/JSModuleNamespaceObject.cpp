@@ -493,12 +493,16 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     }
 
     auto* record = resolution.moduleRecord;
-    auto* moduleNamespaceObject = record->getModuleNamespace(globalObject);
+    // A namespace of a module graph instance overrides within that instance.
+    ModuleGraphInstance* instance = m_graphInstance.get();
+    auto* moduleNamespaceObject = instance ? record->getModuleNamespace(globalObject, instance) : record->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
     bool putResult = false;
     moduleNamespaceObject->m_isOverridingValue = true;
-    if (JSModuleEnvironment* moduleEnvironment = record->moduleEnvironmentMayBeNull()) {
+    JSModuleEnvironment* moduleEnvironment = instance ? environmentFor(globalObject, record) : record->moduleEnvironmentMayBeNull();
+    RETURN_IF_EXCEPTION(scope, {});
+    if (moduleEnvironment) {
         symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, resolution.localName, value, false, true, putResult);
         RETURN_IF_EXCEPTION(scope, {});
     }
