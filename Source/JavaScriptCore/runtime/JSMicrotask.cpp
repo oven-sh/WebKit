@@ -2309,7 +2309,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
 #endif
         if (auto* recordInstance = dynamicDowncast<ModuleRecordInstance>(contextArg))
-            RELEASE_AND_RETURN(scope, asyncModuleExecutionResume(globalObject, vm, recordInstance, arguments[1], static_cast<JSPromise::Status>(payload)));
+            RELEASE_AND_RETURN(scope, asyncModuleExecutionResume(uncheckedDowncast<JSModuleRecord>(recordInstance->record())->realm(), vm, recordInstance, arguments[1], static_cast<JSPromise::Status>(payload)));
         auto* module = uncheckedDowncast<JSModuleRecord>(contextArg);
         RELEASE_AND_RETURN(scope, asyncModuleExecutionResume(module->realm(), vm, module, arguments[1], static_cast<JSPromise::Status>(payload)));
     }
