@@ -446,7 +446,7 @@ public:
     {
         ASSERT(node);
         ASSERT(!strictMode());
-        ASSERT(!m_sloppyModeFunctionHoistingCandidates.containsIf([&](auto& candidate) { return candidate.first == node; })); // declared in one scope, bubbled up once per scope
+        ASSERT(!m_sloppyModeFunctionHoistingCandidates.containsIf([&](auto& candidate) { return candidate.key == node; })); // declared in one scope, bubbled up once per scope
         m_sloppyModeFunctionHoistingCandidates.append({ node, needsCheck });
     }
 
@@ -803,11 +803,12 @@ public:
         ASSERT(allowsVarDeclarations());
         ASSERT(!isSimpleCatchParameterScope());
 
-        for (const auto& [metadata, needsCheck] : m_sloppyModeFunctionHoistingCandidates) {
+        for (const auto& iter : m_sloppyModeFunctionHoistingCandidates) {
             // ES6 Annex B.3.3. The only time we can't hoist a function is if a syntax error would
             // be caused by declaring a var with that function's name or if we have a parameter with
             // that function's name. Note that we would only cause a syntax error if we had a let/const/class
             // variable with the same name.
+            FunctionMetadataNode* metadata = iter.key;
             auto* function = metadata->ident().impl();
             if (!m_lexicalVariables.contains(function)) {
                 auto addResult = m_declaredVariables.add(function);
@@ -824,8 +825,9 @@ public:
 
     NEVER_INLINE void bubbleSloppyModeFunctionHoistingCandidates(Scope* parentScope)
     {
-        for (const auto& [metadata, check] : m_sloppyModeFunctionHoistingCandidates) {
-            bool needsCheck = check == NeedsDuplicateDeclarationCheck::Yes;
+        for (const auto& iter : m_sloppyModeFunctionHoistingCandidates) {
+            FunctionMetadataNode* metadata = iter.key;
+            bool needsCheck = iter.value == NeedsDuplicateDeclarationCheck::Yes;
             if (!needsCheck || !m_lexicalVariables.contains(metadata->ident().impl()) || isSimpleCatchParameterScope())
                 parentScope->addSloppyModeFunctionHoistingCandidate<NeedsDuplicateDeclarationCheck::Yes>(metadata);
         }
@@ -1065,7 +1067,7 @@ private:
     UniquedStringImpl* m_lastAddedUsedVariable { nullptr };
     Vector<UniquedStringImplPtrSet, 6> m_usedVariables;
     // In declaration order: the order these are declared as vars in decides their registers / scope offsets.
-    Vector<std::pair<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck>> m_sloppyModeFunctionHoistingCandidates;
+    Vector<KeyValuePair<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck>> m_sloppyModeFunctionHoistingCandidates;
 
     static void verifyLayout();
 };
