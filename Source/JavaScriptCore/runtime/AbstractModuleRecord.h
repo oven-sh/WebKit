@@ -157,6 +157,15 @@ public:
     DECLARE_EXPORT_INFO;
 
     void appendRequestedModule(const Identifier&, RefPtr<ScriptFetchParameters>&&, ModulePhase = ModulePhase::Evaluation);
+#if USE(BUN_JSC_ADDITIONS)
+    // For records built from a serialized description whose sizes are known up front.
+    void reserveCapacity(unsigned requestedModules, unsigned importEntries, unsigned exportEntries)
+    {
+        m_requestedModules.reserveInitialCapacity(requestedModules);
+        m_importEntries.reserveInitialCapacity(importEntries);
+        m_exportEntries.reserveInitialCapacity(exportEntries);
+    }
+#endif
     void addStarExportEntry(const Identifier&, ScriptFetchParameters::Type);
     void addImportEntry(const ImportEntry&);
     void addExportEntry(const ExportEntry&);

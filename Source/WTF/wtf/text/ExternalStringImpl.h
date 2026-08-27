@@ -40,6 +40,10 @@ public:
     WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> create(std::span<const char16_t> characters, void* ctx, ExternalStringImplFreeFunction&&);
     WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> createStatic(std::span<const Latin1Character> characters);
     WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> createStatic(std::span<const char16_t> characters);
+#if USE(BUN_JSC_ADDITIONS)
+    // For immortal buffers whose StringImpl::hash() the embedder already knows (e.g. computed at build time).
+    WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> createStatic(std::span<const Latin1Character> characters, unsigned existingHash);
+#endif
 
     void releaseBufferEarly();
     static const uintptr_t isAlreadyReleasedMarker = 0xDEADB33F;

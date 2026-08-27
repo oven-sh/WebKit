@@ -49,6 +49,17 @@ WTF_EXPORT_PRIVATE Ref<ExternalStringImpl> ExternalStringImpl::createStatic(std:
     return adoptRef(*new ExternalStringImpl(characters, nullptr, [](auto, auto, auto) -> void {}));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+WTF_EXPORT_PRIVATE Ref<ExternalStringImpl> ExternalStringImpl::createStatic(std::span<const Latin1Character> characters, unsigned existingHash)
+{
+    auto impl = createStatic(characters);
+    ASSERT(existingHash == StringHasher::computeHashAndMaskTop8Bits(characters));
+    if (existingHash)
+        impl->setHash(existingHash);
+    return impl;
+}
+#endif
+
 
 
 ExternalStringImpl::ExternalStringImpl(std::span<const Latin1Character> characters, void* ctx, ExternalStringImplFreeFunction&& free)

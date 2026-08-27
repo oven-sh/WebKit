@@ -1239,7 +1239,7 @@ public:
         if (!src)
             return;
         if constexpr (holdsString) {
-            if (this->tryEncodeInlineString(*src))
+            if (!encoder.externalStrings() && this->tryEncodeInlineString(*src))
                 return;
             if (this->tryEncodeExternalString(encoder, *src))
                 return;
@@ -2589,7 +2589,7 @@ public:
             auto str = string->tryGetValue();
             RELEASE_ASSERT(str.data.impl()); // constants are never unresolved ropes; a failed resolution must not be encoded as garbage
             StringImpl& impl = *str.data.impl();
-            if (this->tryEncodeInlineString(impl))
+            if (!encoder.externalStrings() && this->tryEncodeInlineString(impl))
                 return Kind::String;
             if (this->tryEncodeExternalString(encoder, impl))
                 return Kind::String;
