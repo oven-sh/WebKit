@@ -101,9 +101,10 @@ function templateArguments(name: string): string[] {
 }
 
 function cacheRecords(records: Map<string, Record>): Record[] {
-  // Roots: everything laid out in a payload derives from CachedObject<> / VariableLengthObjectBase, plus the entry headers.
+  // Roots: everything laid out in a payload derives from CachedObject<> / VariableLengthObjectBase, or (the entry headers)
+  // from GenericCacheEntry.
   const isRoot = (record: Record, seen: string[] = []): boolean =>
-    /^JSC::(\w*CacheEntry\b|CachedObject<|VariableLengthObjectBase$)/.test(record.name) ||
+    /^JSC::(GenericCacheEntry$|CachedObject<|VariableLengthObjectBase$)/.test(record.name) ||
     record.bases.some(base => records.has(base) && !seen.includes(base) && isRoot(records.get(base)!, [...seen, record.name]));
   // T of every CachedObject<T> / VariableLengthObject<T>: the in-memory types the cache converts from, never laid out in a payload.
   const sourceTypes = new Set([...records.values()].filter(r => /^JSC::(CachedObject|VariableLengthObject)</.test(r.name)).map(r => templateArguments(r.name)[0]));
