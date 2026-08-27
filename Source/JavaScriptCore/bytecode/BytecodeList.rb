@@ -1176,6 +1176,23 @@ op :yield,
         argument: VirtualRegister,
     }
 
+op :save_generator_locals,
+    args: {
+        scope: VirtualRegister,
+        liveLocals: unsigned,
+        savedLocals: unsigned,
+        firstScopeOffset: unsigned,
+    }
+
+op :restore_generator_locals,
+    args: {
+        scope: VirtualRegister,
+        liveLocals: unsigned,
+        savedLocals: unsigned,
+        firstScopeOffset: unsigned,
+        valueProfile: unsigned,
+    }
+
 op :check_traps
 
 op :log_shadow_chicken_prologue,

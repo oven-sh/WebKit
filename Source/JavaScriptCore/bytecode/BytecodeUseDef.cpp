@@ -292,6 +292,8 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpPutInternalField, base, value)
 
     USES(OpYield, argument)
+    USES(OpSaveGeneratorLocals, scope)
+    USES(OpRestoreGeneratorLocals, scope)
 
     USES(OpEnumeratorNext, mode, index, base, enumerator)
     USES(OpEnumeratorGetByVal, base, mode, propertyName, index, enumerator)
@@ -459,6 +461,8 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_log_shadow_chicken_prologue:
     case op_log_shadow_chicken_tail:
     case op_yield:
+    case op_save_generator_locals:
+    case op_restore_generator_locals:
     case op_nop:
     case op_unreachable:
     case op_super_sampler_begin:

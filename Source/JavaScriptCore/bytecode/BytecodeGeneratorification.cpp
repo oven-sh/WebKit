@@ -38,6 +38,7 @@
 #include "StrongInlines.h"
 #include "UnlinkedCodeBlockGenerator.h"
 #include "UnlinkedMetadataTableInlines.h"
+#include <wtf/HashMap.h>
 
 namespace JSC {
 
@@ -166,6 +167,9 @@ private:
         return storage;
     }
 
+    void emitBulkSaveAndRestore(BytecodeRewriter&);
+    void emitPerLocalSaveAndRestore(BytecodeRewriter&);
+
     BytecodeGenerator& m_bytecodeGenerator;
     JSInstructionStream::Offset m_enterPoint;
     std::optional<GeneratorFrameData> m_generatorFrameData;
@@ -204,7 +208,6 @@ void BytecodeGeneratorification::run()
 {
     // We calculate the liveness at each merge point. This gives us the information which registers should be saved and resumed conservatively.
 
-    VM& vm = m_bytecodeGenerator.vm();
     {
         GeneratorLivenessAnalysis pass(*this);
         pass.run(m_codeBlock, m_instructions);
@@ -231,6 +234,89 @@ void BytecodeGeneratorification::run()
         });
     }
 
+    if (Options::useGeneratorBulkSaveRestore())
+        emitBulkSaveAndRestore(rewriter);
+    else
+        emitPerLocalSaveAndRestore(rewriter);
+
+    if (m_generatorFrameData) {
+        auto instruction = m_instructions.at(m_generatorFrameData->m_point);
+        rewriter.replaceBytecodeWithFragment(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
+            if (!m_generatorFrameSymbolTable->scopeSize()) {
+                // This will cause us to put jsUndefined() into the generator frame's scope value.
+                fragment.appendInstruction<OpMov>(m_generatorFrameData->m_dst, m_generatorFrameData->m_initialValue);
+            } else
+                fragment.appendInstruction<OpCreateLexicalEnvironment>(m_generatorFrameData->m_dst, m_generatorFrameData->m_scope, m_generatorFrameData->m_symbolTable, m_generatorFrameData->m_initialValue);
+        });
+    }
+
+    rewriter.execute();
+}
+
+void BytecodeGeneratorification::emitBulkSaveAndRestore(BytecodeRewriter& rewriter)
+{
+    BitVector savedLocals;
+    for (const YieldData& data : m_yields) {
+        data.liveness.forEachSetBit([&](size_t index) {
+            savedLocals.set(index);
+        });
+    }
+
+    unsigned firstScopeOffset = m_generatorFrameSymbolTable->scopeSize();
+    for (unsigned i = 0, count = savedLocals.bitCount(); i < count; ++i) {
+        ScopeOffset scopeOffset = m_generatorFrameSymbolTable->takeNextScopeOffset(NoLockingNecessary);
+        ASSERT_UNUSED(scopeOffset, scopeOffset.offset() == firstScopeOffset + i);
+    }
+
+    unsigned numberOfLocalBits = savedLocals.size();
+    UncheckedKeyHashMap<BitVector, unsigned> bitVectorIndices;
+    auto addBitVectorConstant = [&](const BitVector& bitVector) {
+        return bitVectorIndices.ensure(bitVector, [&] {
+            return m_codeBlock->addBitVector(BitVector(bitVector));
+        }).iterator->value;
+    };
+    unsigned savedLocalsIndex = savedLocals.isEmpty() ? 0 : addBitVectorConstant(savedLocals);
+
+    for (const YieldData& data : m_yields) {
+        VirtualRegister scope = virtualRegisterForArgumentIncludingThis(static_cast<int32_t>(JSGenerator::Argument::Frame));
+        auto instruction = m_instructions.at(data.point);
+
+        if (data.liveness.isEmpty()) {
+            rewriter.insertFragmentBefore(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
+                fragment.appendInstruction<OpRet>(data.argument);
+            });
+            rewriter.replaceBytecodeWithFragment(instruction, [&] (BytecodeRewriter::Fragment&) { });
+            continue;
+        }
+
+        BitVector liveLocals;
+        liveLocals.ensureSize(numberOfLocalBits);
+        data.liveness.forEachSetBit([&](size_t index) {
+            liveLocals.quickSet(index);
+        });
+        unsigned liveLocalsIndex = addBitVectorConstant(liveLocals);
+
+        unsigned firstValueProfile = m_bytecodeGenerator.nextValueProfileIndex();
+        for (unsigned i = 1, count = data.liveness.bitCount(); i < count; ++i)
+            m_bytecodeGenerator.nextValueProfileIndex();
+
+        // Emit save sequence.
+        rewriter.insertFragmentBefore(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
+            fragment.appendInstruction<OpSaveGeneratorLocals>(scope, liveLocalsIndex, savedLocalsIndex, firstScopeOffset);
+            // Insert op_ret just after save sequence.
+            fragment.appendInstruction<OpRet>(data.argument);
+        });
+
+        // Emit resume sequence.
+        rewriter.replaceBytecodeWithFragment(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
+            fragment.appendInstruction<OpRestoreGeneratorLocals>(scope, liveLocalsIndex, savedLocalsIndex, firstScopeOffset, firstValueProfile);
+        });
+    }
+}
+
+void BytecodeGeneratorification::emitPerLocalSaveAndRestore(BytecodeRewriter& rewriter)
+{
+    VM& vm = m_bytecodeGenerator.vm();
     for (const YieldData& data : m_yields) {
         VirtualRegister scope = virtualRegisterForArgumentIncludingThis(static_cast<int32_t>(JSGenerator::Argument::Frame));
 
@@ -273,19 +359,6 @@ void BytecodeGeneratorification::run()
             });
         });
     }
-
-    if (m_generatorFrameData) {
-        auto instruction = m_instructions.at(m_generatorFrameData->m_point);
-        rewriter.replaceBytecodeWithFragment(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
-            if (!m_generatorFrameSymbolTable->scopeSize()) {
-                // This will cause us to put jsUndefined() into the generator frame's scope value.
-                fragment.appendInstruction<OpMov>(m_generatorFrameData->m_dst, m_generatorFrameData->m_initialValue);
-            } else
-                fragment.appendInstruction<OpCreateLexicalEnvironment>(m_generatorFrameData->m_dst, m_generatorFrameData->m_scope, m_generatorFrameData->m_symbolTable, m_generatorFrameData->m_initialValue);
-        });
-    }
-
-    rewriter.execute();
 }
 
 void performGeneratorification(BytecodeGenerator& bytecodeGenerator, UnlinkedCodeBlockGenerator* codeBlock, JSInstructionStreamWriter& instructions, SymbolTable* generatorFrameSymbolTable, int generatorFrameSymbolTableIndex)

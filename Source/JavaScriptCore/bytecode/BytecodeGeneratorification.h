@@ -26,12 +26,13 @@
 
 #pragma once
 
+#include <wtf/BitVector.h>
+
 namespace JSC {
 
 class BytecodeGenerator;
 class SymbolTable;
 class UnlinkedCodeBlockGenerator;
-class SymbolTable;
 
 struct JSOpcodeTraits;
 template<typename> struct BaseInstruction;
@@ -40,5 +41,16 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
 using JSInstructionStreamWriter = InstructionStreamWriter<JSInstruction>;
 
 void performGeneratorification(BytecodeGenerator&, UnlinkedCodeBlockGenerator*, JSInstructionStreamWriter&, SymbolTable* generatorFrameSymbolTable, int generatorFrameSymbolTableIndex);
+
+template<typename Functor>
+void forEachLiveGeneratorLocal(const BitVector& liveLocals, const BitVector& savedLocals, const Functor& functor)
+{
+    unsigned slot = 0;
+    savedLocals.forEachSetBit([&](size_t index) {
+        if (liveLocals.quickGet(index))
+            functor(index, slot);
+        ++slot;
+    });
+}
 
 } // namespace JSC
