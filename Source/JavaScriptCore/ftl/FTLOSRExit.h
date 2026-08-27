@@ -83,9 +83,29 @@ public:
     // correct them.
     DataFormat m_profileDataFormat;
     MethodOfGettingAValueProfile m_valueProfile;
-    
-    FixedOperands<ExitValue> m_values;
+
     Bag<ExitTimeObjectMaterialization> m_materializations;
+
+    unsigned numberOfArguments() const { return m_numberOfArguments; }
+    unsigned numberOfLocals() const { return m_numberOfLocals; }
+    unsigned numberOfTmps() const { return m_numberOfTmps; }
+
+    // Encode a dense operand array into the compact byte representation and
+    // take ownership of it. Called once by LowerDFGToB3::buildExitArguments.
+    void setValues(const Operands<ExitValue>&);
+
+    // Decode the compact representation back into a dense Operands<ExitValue>,
+    // applying m_localsOffset to every InJSStack* value whose virtual register
+    // is a local (the lazy equivalent of the old per-value withLocalsOffset()
+    // rewrite in FTLCompile.cpp).
+    Operands<ExitValue> decodeValues() const;
+
+    // Record the locals offset produced by FTL::compile(). Applied lazily at
+    // decode time; materializations are still rewritten eagerly via
+    // ExitTimeObjectMaterialization::accountForLocalsOffset().
+    void setLocalsOffset(int offset) { m_localsOffset = offset; }
+
+    size_t encodedValuesByteSize() const { return m_encodedValues.byteSize() + m_valueMaterializations.byteSize(); }
 
     void validateReferences(const TrackedReferences&);
 
@@ -118,6 +138,23 @@ private:
     Ref<OSRExitHandle> prepareOSRExitHandle(
         State&, ExitKind, const DFG::NodeOrigin&, const B3::StackmapGenerationParams&,
         uint32_t dfgNodeIndex, unsigned offset);
+
+    // The per-operand ExitValue table is stored as a compact byte stream:
+    // one tag byte per run (ExitValueKind, with the upper bits carrying a
+    // short Dead run length), followed by a zig-zag varint virtual register
+    // for InJSStack* kinds, a DataFormat byte plus a varint argument index
+    // for ExitValueArgument, eight raw bytes for ExitValueConstant, and a
+    // varint index into m_valueMaterializations for
+    // ExitValueMaterializeNewObject. Most descriptors are dominated by Dead
+    // runs, so the encoded form is a fraction of the dense
+    // FixedOperands<ExitValue> it replaces. decodeValues() reconstructs the
+    // dense array on demand for compileStub / validateReferences / dumping.
+    unsigned m_numberOfArguments;
+    unsigned m_numberOfLocals;
+    unsigned m_numberOfTmps;
+    int m_localsOffset { 0 };
+    FixedVector<uint8_t> m_encodedValues;
+    FixedVector<ExitTimeObjectMaterialization*> m_valueMaterializations;
 };
 
 struct OSRExit : public DFG::OSRExitBase {
