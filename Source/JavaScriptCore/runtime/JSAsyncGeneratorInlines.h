@@ -27,6 +27,7 @@
 
 #include "JSAsyncFunctionGenerator.h"
 #include "JSAsyncGenerator.h"
+#include "ModuleGraphInstance.h"
 #include "JSInternalFieldObjectImplInlines.h"
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
@@ -36,7 +37,7 @@ namespace JSC {
 
 ALWAYS_INLINE void JSAsyncGenerator::enqueue(VM& vm, JSValue value, int32_t mode, JSObject* settlementTarget)
 {
-    ASSERT(settlementTarget->inherits<JSPromise>() || settlementTarget->inherits<JSAsyncGenerator>() || settlementTarget->inherits<JSAsyncFunctionGenerator>() || settlementTarget->inherits<JSModuleRecord>());
+    ASSERT(settlementTarget->inherits<JSPromise>() || settlementTarget->inherits<JSAsyncGenerator>() || settlementTarget->inherits<JSAsyncFunctionGenerator>() || settlementTarget->inherits<JSModuleRecord>() || settlementTarget->inherits<ModuleRecordInstance>());
     if (isQueueEmpty()) [[likely]] {
         setResumeValue(vm, value);
         setResumeMode(mode);

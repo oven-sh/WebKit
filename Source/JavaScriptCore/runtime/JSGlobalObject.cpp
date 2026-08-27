@@ -180,6 +180,7 @@
 #include "JSModuleLoaderInlines.h"
 #include "JSModuleNamespaceObjectInlines.h"
 #include "JSModuleRecord.h"
+#include "ModuleGraphInstanceInlines.h"
 #include "JSModuleRecordInlines.h"
 #include "JSNativeStdFunctionInlines.h"
 #include "JSONObjectInlines.h"
@@ -685,6 +686,47 @@ JSC_DEFINE_HOST_FUNCTION(disableSuperSampler, (JSGlobalObject*, CallFrame*))
 {
     disableSuperSampler();
     return JSValue::encode(jsUndefined());
+}
+
+
+void JSGlobalObject::setCurrentGraphInstanceForLoading(VM& vm, ModuleGraphInstance* instance)
+{
+    if (instance)
+        m_currentGraphInstanceForLoading.set(vm, this, instance);
+    else
+        m_currentGraphInstanceForLoading.clear();
+}
+
+ModuleGraphInstance* JSGlobalObject::graphInstanceForScope(JSScope* scope, JSScope** overlayOut)
+{
+    // The innermost module environment on the chain names its instance directly;
+    // an overlay (when configured) names it for non-module code scoped to the
+    // instance. Either is decisive: the first one found ends the walk.
+    SymbolTable* overlayTable = m_moduleScopeOverlaySymbolTable.get();
+    for (; scope; scope = scope->next()) {
+        if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(scope)) {
+            ModuleGraphInstance* instance = moduleEnvironment->graphInstance();
+            if (overlayOut) {
+                *overlayOut = nullptr;
+                for (JSScope* outer = scope->next(); overlayTable && outer; outer = outer->next()) {
+                    auto* environment = dynamicDowncast<JSLexicalEnvironment>(outer);
+                    if (environment && environment->symbolTable() == overlayTable) {
+                        *overlayOut = environment;
+                        break;
+                    }
+                }
+            }
+            return instance;
+        }
+        auto* environment = dynamicDowncast<JSLexicalEnvironment>(scope);
+        if (!overlayTable || !environment || environment->symbolTable() != overlayTable)
+            continue;
+        JSValue instance = environment->variableAt(ScopeOffset(0)).get();
+        if (overlayOut)
+            *overlayOut = environment;
+        return instance && instance.isCell() ? dynamicDowncast<ModuleGraphInstance>(instance.asCell()) : nullptr;
+    }
+    return nullptr;
 }
 
 } // namespace JSC
@@ -1370,6 +1412,10 @@ void JSGlobalObject::init(VM& vm)
     m_moduleRecordStructure.initLater(
         [] (const Initializer<Structure>& init) {
             init.set(JSModuleRecord::createStructure(init.vm, init.owner, jsNull()));
+        });
+    m_moduleGraphInstanceStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            init.set(ModuleGraphInstance::createStructure(init.vm, init.owner, jsNull()));
         });
     m_syntheticModuleRecordStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -3106,6 +3152,9 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_regExpProtoSymbolReplace);
     thisObject->m_throwTypeErrorArgumentsCalleeGetterSetter.visit(visitor);
     thisObject->m_moduleLoader.visit(visitor);
+    visitor.append(thisObject->m_moduleScopeOverlaySymbolTable);
+    visitor.append(thisObject->m_currentGraphInstanceForLoading);
+    visitor.append(thisObject->m_primaryModuleScopeOverlay);
 
     visitor.append(thisObject->m_objectPrototype);
     visitor.append(thisObject->m_functionPrototype);
@@ -3194,6 +3243,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_regExpMatchesArrayWithIndicesStructure);
     visitor.append(thisObject->m_regExpMatchesIndicesArrayStructure);
     thisObject->m_moduleRecordStructure.visit(visitor);
+    thisObject->m_moduleGraphInstanceStructure.visit(visitor);
     thisObject->m_syntheticModuleRecordStructure.visit(visitor);
     thisObject->m_moduleNamespaceObjectStructure.visit(visitor);
     thisObject->m_proxyObjectStructure.visit(visitor);
@@ -4033,5 +4083,94 @@ Inspector::JSGlobalObjectInspectorController& JSGlobalObject::inspectorControlle
     return *m_inspectorController.get();
 }
 #endif
+
+
+void JSGlobalObject::configureModuleScopeOverlay(const Vector<Identifier>& names)
+{
+    RELEASE_ASSERT(Options::useModuleGraphInstances());
+    VM& vm = this->vm();
+    if (m_moduleScopeOverlaySymbolTable)
+        return;
+    SymbolTable* symbolTable = SymbolTable::create(vm);
+    symbolTable->setScopeType(SymbolTable::ScopeType::LexicalScope);
+    // Slot 0: the module graph instance this overlay belongs to — lets any code
+    // running in a graph (module code or CJS wrappers scoped to the overlay) be
+    // attributed to it by walking the scope chain. Empty in the primary overlay.
+    {
+        auto offset = symbolTable->takeNextScopeOffset(NoLockingNecessary);
+        ASSERT_UNUSED(offset, !offset.offset());
+        SymbolTableEntry entry(VarOffset(ScopeOffset(0)), static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum));
+        symbolTable->set(NoLockingNecessary, vm.propertyNames->builtinNames().moduleGraphInstancePrivateName().impl(), WTF::move(entry));
+    }
+    for (auto& name : names) {
+        if (name.isPrivateName())
+            continue;
+        auto offset = symbolTable->takeNextScopeOffset(NoLockingNecessary);
+        symbolTable->set(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(offset)));
+    }
+    m_moduleScopeOverlaySymbolTable.set(vm, this, symbolTable);
+    JSLexicalEnvironment* primary = JSLexicalEnvironment::create(vm, this, globalLexicalEnvironment(), symbolTable, jsUndefined());
+    Vector<std::pair<Identifier, ScopeOffset>> slots;
+    {
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        for (auto iter = symbolTable->begin(locker), end = symbolTable->end(locker); iter != end; ++iter)
+            slots.append({ Identifier::fromUid(vm, iter->key.get()), iter->value.scopeOffset() });
+    }
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        for (auto& [name, offset] : slots) {
+            if (name.isPrivateName())
+                continue;
+            JSValue value = get(this, name);
+            if (catchScope.exception()) {
+                catchScope.clearException();
+                value = jsUndefined();
+            }
+            primary->variableAt(offset).set(vm, primary, value ? value : jsUndefined());
+        }
+    }
+    m_primaryModuleScopeOverlay.set(vm, this, primary);
+}
+
+JSScope* JSGlobalObject::moduleEnvironmentParentScope()
+{
+    if (auto* overlay = m_primaryModuleScopeOverlay.get())
+        return overlay;
+    return globalLexicalEnvironment();
+}
+
+JSLexicalEnvironment* JSGlobalObject::createModuleScopeOverlay(JSObject* values, ModuleGraphInstance* instance)
+{
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    SymbolTable* symbolTable = m_moduleScopeOverlaySymbolTable.get();
+    if (!symbolTable) {
+        throwTypeError(this, scope, "module scope overlay is not configured"_s);
+        return nullptr;
+    }
+    JSLexicalEnvironment* primary = m_primaryModuleScopeOverlay.get();
+    JSLexicalEnvironment* overlay = JSLexicalEnvironment::create(vm, this, globalLexicalEnvironment(), symbolTable, jsUndefined());
+    Vector<std::pair<Identifier, ScopeOffset>> slots;
+    {
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        for (auto iter = symbolTable->begin(locker), end = symbolTable->end(locker); iter != end; ++iter)
+            slots.append({ Identifier::fromUid(vm, iter->key.get()), iter->value.scopeOffset() });
+    }
+    for (auto& [name, offset] : slots) {
+        if (name.isPrivateName()) {
+            overlay->variableAt(offset).set(vm, overlay, instance ? JSValue(instance) : jsUndefined());
+            continue;
+        }
+        JSValue value;
+        if (values) {
+            value = values->get(this, name);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        if (!value || value.isUndefined())
+            value = primary->variableAt(offset).get();
+        overlay->variableAt(offset).set(vm, overlay, value);
+    }
+    return overlay;
+}
 
 } // namespace JSC

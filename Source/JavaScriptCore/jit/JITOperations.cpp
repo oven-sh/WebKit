@@ -65,6 +65,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSGlobalObjectFunctions.h"
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSMapIterator.h"
+#include "JSModuleEnvironment.h"
+#include "AbstractModuleRecord.h"
 #include "JSMicrotask.h"
 #include "JSPromise.h"
 #include "JSRemoteFunction.h"
@@ -4591,15 +4593,27 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     auto bytecode = pc->as<OpResolveScope>();
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* environment = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
+    auto& metadata = bytecode.metadata(codeBlock);
+
+    if (metadata.m_resolveType == ModuleVar) {
+        // See slow_path_resolve_scope: the importing module environment on this
+        // scope chain decides which graph instance's exporter environment to use.
+        JSModuleEnvironment* linkedExporter = uncheckedDowncast<JSModuleEnvironment>(metadata.m_lexicalEnvironment.get());
+        JSScope* cursor = environment;
+        for (unsigned i = 0; i < metadata.m_localScopeDepth; ++i)
+            cursor = cursor->next();
+        JSObject* result = linkedExporter;
+        if (auto* importer = dynamicDowncast<JSModuleEnvironment>(cursor); importer && importer->graphInstance())
+            result = importer->importedEnvironmentFor(globalObject, linkedExporter->moduleRecord());
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        OPERATION_RETURN(scope, JSValue::encode(result));
+    }
+
     JSObject* resolvedScope = JSScope::resolve(globalObject, environment, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_resolveType;
-
-    // ModuleVar does not keep the scope register value alive in DFG.
-    ASSERT(resolveType != ModuleVar);
 
     switch (resolveType) {
     case GlobalProperty:

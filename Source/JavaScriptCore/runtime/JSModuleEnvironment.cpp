@@ -32,6 +32,9 @@
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
+#include "ModuleGraphInstance.h"
+#include "JSModuleRecord.h"
+#include "SyntheticModuleRecord.h"
 
 namespace JSC {
 
@@ -51,11 +54,16 @@ JSModuleEnvironment* JSModuleEnvironment::create(
     //
     // JSModuleEnvironment:
     //     [ JSLexicalEnvironment ][ variable slots ][ additional slots for JSModuleEnvironment ]
+    //     ... [ module record ][ graph instance ][ import slots (importSlotCount) ]
+    unsigned importSlotCount = moduleRecord ? moduleRecord->importSlotCount() : 0;
     JSModuleEnvironment* result =
         new (
             NotNull,
-            allocateCell<JSModuleEnvironment>(vm, JSModuleEnvironment::allocationSize(symbolTable)))
+            allocateCell<JSModuleEnvironment>(vm, JSModuleEnvironment::allocationSize(symbolTable, importSlotCount)))
         JSModuleEnvironment(vm, structure, currentScope, symbolTable, initialValue, moduleRecord);
+    result->importSlotCountSlot() = importSlotCount;
+    for (unsigned i = 0; i < importSlotCount; ++i)
+        result->importSlot(i).setStartingValue(JSValue());
     result->finishCreation(vm);
     return result;
 }
@@ -68,6 +76,77 @@ void JSModuleEnvironment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.appendValues(thisObject->variables(), thisObject->symbolTable()->scopeSize());
     visitor.append(thisObject->moduleRecordSlot());
+    visitor.append(thisObject->graphInstanceSlot());
+    if (unsigned count = thisObject->importSlotCount())
+        visitor.appendValues(std::bit_cast<WriteBarrierBase<Unknown>*>(std::bit_cast<char*>(thisObject) + offsetOfImportSlot(thisObject->symbolTable(), 0)), count);
+}
+
+void JSModuleEnvironment::fillImportSlots(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    AbstractModuleRecord* record = moduleRecord();
+    if (!record)
+        return;
+    UNUSED_PARAM(globalObject);
+    ModuleGraphInstance* instance = graphInstance();
+    ASSERT(importSlotCount() == record->importSlotCount());
+    unsigned count = std::min(importSlotCount(), record->importSlotCount());
+    for (unsigned i = 0; i < count; ++i) {
+        if (importSlot(i).get())
+            continue;
+        AbstractModuleRecord* exporter = record->importedRecordAt(i);
+        JSModuleEnvironment* target = nullptr;
+        if (instance) {
+            if (JSModuleEnvironment* found = instance->environment(exporter))
+                target = found;
+            else if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(exporter); synthetic && !synthetic->hasPerGraphInstanceState())
+                target = exporter->moduleEnvironmentMayBeNull(); // stateless synthetic exporters are shared with the primary graph
+            else if (!dynamicDowncast<JSModuleRecord>(exporter) && !dynamicDowncast<SyntheticModuleRecord>(exporter))
+                target = exporter->moduleEnvironmentMayBeNull();
+        } else
+            target = exporter->moduleEnvironmentMayBeNull();
+        if (target)
+            importSlot(i).set(vm, this, target);
+    }
+}
+
+JSModuleEnvironment* JSModuleEnvironment::importedEnvironmentFor(JSGlobalObject* globalObject, AbstractModuleRecord* exporter)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ModuleGraphInstance* instance = graphInstance();
+    if (!instance)
+        return exporter->moduleEnvironment();
+    // A binding of this module itself resolves to this environment, and an
+    // import whose slot has been filled resolves through the slot: code that
+    // runs from an instance keeps resolving within that instance whatever the
+    // instance map holds by then (an embedder may clear it once the instance
+    // is no longer wanted for new imports).
+    AbstractModuleRecord* record = moduleRecord();
+    if (record == exporter)
+        return this;
+    if (record) {
+        if (auto slotIndex = record->importSlotIndexFor(exporter)) {
+            if (JSValue filled = importSlot(*slotIndex).get(); filled.isCell())
+                return uncheckedDowncast<JSModuleEnvironment>(filled);
+        }
+    }
+    JSModuleEnvironment* environment = exporter->graphInstanceEnvironment(globalObject, instance, true);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (environment)
+        return environment;
+    return exporter->moduleEnvironment();
+}
+
+ModuleGraphInstance* JSModuleEnvironment::graphInstance()
+{
+    JSValue value = graphInstanceSlot().get();
+    return value && value.isCell() ? uncheckedDowncast<ModuleGraphInstance>(value.asCell()) : nullptr;
+}
+
+void JSModuleEnvironment::setGraphInstance(VM& vm, ModuleGraphInstance* instance)
+{
+    graphInstanceSlot().set(vm, this, instance ? JSValue(instance) : JSValue());
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleEnvironment);
@@ -81,7 +160,8 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
     RETURN_IF_EXCEPTION(scope, false);
     if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
         // When resolveImport resolves the resolution, the imported module environment must have the binding.
-        JSModuleEnvironment* importedModuleEnvironment = resolution.moduleRecord->moduleEnvironment();
+        JSModuleEnvironment* importedModuleEnvironment = thisObject->importedEnvironmentFor(globalObject, resolution.moduleRecord);
+        RETURN_IF_EXCEPTION(scope, false);
         PropertySlot redirectSlot(importedModuleEnvironment, PropertySlot::InternalMethodType::Get);
         bool result = importedModuleEnvironment->methodTable()->getOwnPropertySlot(importedModuleEnvironment, globalObject, resolution.localName, redirectSlot);
         ASSERT_UNUSED(result, result);

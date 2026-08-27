@@ -10411,6 +10411,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
             ResolveType resolveType;
             unsigned depth;
+            unsigned moduleImportSlot = 0;
             JSScope* constantScope = nullptr;
             JSCell* lexicalEnvironment = nullptr;
             SymbolTable* symbolTable = nullptr;
@@ -10418,6 +10419,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
                 resolveType = metadata.m_resolveType;
                 depth = metadata.m_localScopeDepth;
+                moduleImportSlot = metadata.m_moduleImportSlot;
                 switch (resolveType) {
                 case GlobalProperty:
                 case GlobalVar:
@@ -10471,11 +10473,45 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 break;
             }
             case ModuleVar: {
-                // Module environment is already strongly referenced by the CodeBlock.
-                set(bytecode.m_dst, weakJSConstant(lexicalEnvironment));
-                // BytecodeUseDef reports m_scope as a use regardless of resolve type,
-                // so we need to keep it OSR-available even though LLInt won't read it.
-                addToGraph(Phantom, get(bytecode.m_scope));
+                Node* localBase = get(bytecode.m_scope);
+                addToGraph(Phantom, localBase);
+                if (!moduleImportSlot) {
+                    // No import slot (module graph instances off): the linked
+                    // exporter environment is the only one there is.
+                    set(bytecode.m_dst, weakJSConstant(lexicalEnvironment));
+                    break;
+                }
+                // Module graph instances: the exporter environment is the importing
+                // environment's import slot — a closure-variable-like load. It folds
+                // to the linked exporter environment while that is the exporting
+                // module's only environment (its symbol table's singleton; the
+                // watchpoint fires when an instance creates a second one), and to
+                // the slot's value when the importing environment is a constant here.
+                ScopeOffset slot(moduleImportSlot - 1);
+                if (lexicalEnvironment) {
+                    SymbolTable* exporterSymbolTable = uncheckedDowncast<JSSymbolTableObject>(lexicalEnvironment)->symbolTable();
+                    if (exporterSymbolTable->singleton().inferredValue() == lexicalEnvironment) {
+                        m_graph.watchpoints().addLazily(m_graph, exporterSymbolTable);
+                        set(bytecode.m_dst, weakJSConstant(lexicalEnvironment));
+                        break;
+                    }
+                }
+                if (JSScope* constantScope = localBase->dynamicCastConstant<JSScope*>()) {
+                    for (unsigned n = depth; n--;)
+                        constantScope = constantScope->next();
+                    if (auto* importer = dynamicDowncast<JSModuleEnvironment>(constantScope)) {
+                        if (JSValue exporter = importer->variableAt(slot).get()) {
+                            set(bytecode.m_dst, weakJSConstant(exporter.asCell()));
+                            break;
+                        }
+                    }
+                }
+                for (unsigned n = depth; n--;)
+                    localBase = addToGraph(SkipScope, localBase);
+                Node* exporter = addToGraph(GetClosureVar, OpInfo(slot.offset()), OpInfo(SpecObjectOther), localBase);
+                addToGraph(CheckNotEmpty, exporter);
+                addToGraph(Check, Edge(exporter, CellUse));
+                set(bytecode.m_dst, exporter);
                 break;
             }
             case ResolvedClosureVar:

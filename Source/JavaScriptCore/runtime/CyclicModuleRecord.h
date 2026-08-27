@@ -29,6 +29,8 @@
 
 namespace JSC {
 
+class ModuleGraphInstance;
+
 class ErrorInstance;
 
 class CyclicModuleRecord : public AbstractModuleRecord {
@@ -57,33 +59,63 @@ public:
 
     void initializeEnvironment(JSGlobalObject*, RefPtr<ScriptFetcher>);
     void link(JSGlobalObject*, RefPtr<ScriptFetcher>);
+    // Every evaluation entry point takes the module graph instance being
+    // evaluated (null: the primary instantiation, whose state lives on the
+    // record itself). See ModuleGraphInstance.
 #if USE(BUN_JSC_ADDITIONS)
-    JSPromise* evaluate(JSGlobalObject*, int64_t referrerAsyncOrder = -1);
+    JSPromise* evaluate(JSGlobalObject*, int64_t referrerAsyncOrder = -1, ModuleGraphInstance* = nullptr);
 #else
-    JSPromise* evaluate(JSGlobalObject*);
+    JSPromise* evaluate(JSGlobalObject*, ModuleGraphInstance* = nullptr);
 #endif
-    void execute(JSGlobalObject*, JSPromise* = nullptr);
-    void executeAsync(JSGlobalObject*);
-    void asyncExecutionFulfilled(JSGlobalObject*);
-    void asyncExecutionRejected(JSGlobalObject*, JSValue);
+    void execute(JSGlobalObject*, JSPromise* = nullptr, ModuleGraphInstance* = nullptr);
+    void executeAsync(JSGlobalObject*, ModuleGraphInstance* = nullptr);
+    void asyncExecutionFulfilled(JSGlobalObject*, ModuleGraphInstance* = nullptr);
+    void asyncExecutionRejected(JSGlobalObject*, JSValue, ModuleGraphInstance* = nullptr);
 
     Status status() const { return m_status; }
     JSValue evaluationError() const { return m_evaluationError.get(); }
     unsigned dfsAncestorIndex() const { return m_dfsAncestorIndex; }
+    // Evaluation state of this record in `instance` (null, or a record the
+    // instance shares with the primary graph: the record's own state).
+    using AbstractModuleRecord::cycleRoot;
+    using AbstractModuleRecord::asyncEvaluationOrder;
+    using AbstractModuleRecord::pendingAsyncDependencies;
+    using AbstractModuleRecord::topLevelCapability;
+    using AbstractModuleRecord::setCycleRoot;
+    using AbstractModuleRecord::setAsyncEvaluationOrder;
+    using AbstractModuleRecord::setPendingAsyncDependencies;
+    using AbstractModuleRecord::appendAsyncParentModule;
+    using AbstractModuleRecord::setTopLevelCapability;
+    Status status(ModuleGraphInstance*) const;
+    JSValue evaluationError(ModuleGraphInstance*) const;
+    unsigned dfsAncestorIndex(ModuleGraphInstance*) const;
+    CyclicModuleRecord* cycleRoot(ModuleGraphInstance*) const;
+    AsyncEvaluationOrder asyncEvaluationOrder(ModuleGraphInstance*) const;
+    std::optional<int> pendingAsyncDependencies(ModuleGraphInstance*) const;
+    JSPromise* topLevelCapability(ModuleGraphInstance*) const;
+    void setStatus(ModuleGraphInstance*, Status);
+    void setEvaluationError(VM&, ModuleGraphInstance*, JSValue);
+    void setDFSAncestorIndex(ModuleGraphInstance*, unsigned);
+    void setCycleRoot(VM&, ModuleGraphInstance*, CyclicModuleRecord*);
+    void setAsyncEvaluationOrder(ModuleGraphInstance*, AsyncEvaluationOrder);
+    void setPendingAsyncDependencies(ModuleGraphInstance*, std::optional<int>);
+    void appendAsyncParentModule(VM&, ModuleGraphInstance*, AbstractModuleRecord*);
+    void setTopLevelCapability(VM&, ModuleGraphInstance*, JSPromise*);
+    template<typename Functor> void forEachAsyncParentModule(ModuleGraphInstance*, const Functor&) const;
 
     // https://tc39.es/proposal-defer-import-eval/#sec-IsModuleSCCEvaluated
     // A module in an import cycle reaches EVALUATED once its own body has run, so only its cycle
     // root reaching EVALUATED tells you the whole cycle is done.
-    bool isSCCEvaluated() const
+    bool isSCCEvaluated(ModuleGraphInstance* instance = nullptr) const
     {
         // 1. If module.[[CycleRoot]] is not EMPTY, then
         //   1.a. If module.[[CycleRoot]].[[Status]] is EVALUATED, return true.
         //   1.b. Return false.
-        if (CyclicModuleRecord* root = cycleRoot())
-            return root->status() == Status::Evaluated;
+        if (CyclicModuleRecord* root = cycleRoot(instance))
+            return root->status(instance) == Status::Evaluated;
         // 2. If module.[[Status]] is EVALUATED, return true.
         // 3. Return false.
-        return status() == Status::Evaluated;
+        return status(instance) == Status::Evaluated;
     }
 
     void setStatus(Status newStatus) { m_status = newStatus; }

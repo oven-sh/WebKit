@@ -169,6 +169,16 @@ auto ModuleRegistryEntry::status() const -> Status
     return m_status;
 }
 
+bool ModuleRegistryEntry::hasSettledFailure() const
+{
+    if (m_status == Status::FetchFailed || m_status == Status::InstantiationFailed)
+        return true;
+    if (m_record)
+        return false;
+    auto rejected = [](JSPromise* promise) { return promise && promise->status() == JSPromise::Status::Rejected; };
+    return rejected(m_fetchPromise.get()) || rejected(m_modulePromise.get()) || rejected(m_loadPromise.get());
+}
+
 void ModuleRegistryEntry::setRecord(VM& vm, AbstractModuleRecord* record)
 {
     m_record.set(vm, this, record);

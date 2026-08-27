@@ -76,6 +76,9 @@ public:
     JSValue error(JSGlobalObject*) const;
     JSValue fetchError() const;
     Status status() const;
+    // A finished, failed load: fetch or record creation / instantiation failed and
+    // nothing is in flight (an entry another program run may retry from scratch).
+    bool hasSettledFailure() const;
 
     void setRecord(VM&, AbstractModuleRecord*);
     void setLoadPromise(VM&, JSPromise*);

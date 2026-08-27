@@ -31,6 +31,7 @@
 #include "ExecutableAllocator.h"
 #include "InlineCallFrame.h"
 #include "JSCInlines.h"
+#include "JSCallee.h"
 #include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyModule.h"
 #include "LLIntPCRanges.h"
@@ -192,6 +193,39 @@ SUPPRESS_ASAN CallFrame* CallFrame::unsafeCallerFrame(EntryFrame*& currEntryFram
         return currVMEntryRecord->unsafePrevTopCallFrame();
     }
     return static_cast<CallFrame*>(unsafeCallerFrameOrEntryFrame());
+}
+
+
+JSScope* CallFrame::callerScope(VM& vm)
+{
+    RELEASE_ASSERT(callee().isCell());
+    JSScope* found = nullptr;
+    bool haveSkippedFirstFrame = false;
+    StackVisitor::visit(this, vm, [&](StackVisitor& visitor) {
+        if (!std::exchange(haveSkippedFirstFrame, true))
+            return IterationStatus::Continue;
+        switch (visitor->codeType()) {
+        case StackVisitor::Frame::CodeType::Native:
+        case StackVisitor::Frame::CodeType::Wasm:
+            return IterationStatus::Continue;
+        case StackVisitor::Frame::CodeType::Function:
+        case StackVisitor::Frame::CodeType::Module:
+        case StackVisitor::Frame::CodeType::Eval:
+        case StackVisitor::Frame::CodeType::Global:
+            break;
+        }
+        // The callee carries the scope its code was created with at every tier
+        // (the scope register is not materialized in optimized frames).
+        JSCell* calleeCell = visitor->callee().asCell();
+        if (auto* function = dynamicDowncast<JSFunction>(calleeCell)) {
+            if (!function->isHostFunction() && function->jsExecutable()->isPrivateBuiltinFunction())
+                return IterationStatus::Continue;
+            found = function->scope();
+        } else if (auto* callee = dynamicDowncast<JSCallee>(calleeCell))
+            found = callee->scope();
+        return IterationStatus::Done;
+    });
+    return found;
 }
 
 SourceOrigin CallFrame::callerSourceOrigin(VM& vm)

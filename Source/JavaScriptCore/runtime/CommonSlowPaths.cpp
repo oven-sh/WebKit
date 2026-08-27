@@ -47,6 +47,7 @@
 #include "JSCellButterfly.h"
 #include "JSIteratorHelper.h"
 #include "JSLexicalEnvironment.h"
+#include "JSModuleEnvironment.h"
 #include "JSMap.h"
 #include "JSMapIterator.h"
 #include "JSPromise.h"
@@ -1390,14 +1391,28 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* scope = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
+
+    if (metadata.m_resolveType == ModuleVar) {
+        // The CodeBlock was linked against one instantiation of the importing
+        // module; other instantiations of the same graph share it. Walk to the
+        // importing module environment on THIS scope chain and pick the
+        // exporter's environment from the same graph instance.
+        JSModuleEnvironment* linkedExporter = uncheckedDowncast<JSModuleEnvironment>(metadata.m_lexicalEnvironment.get());
+        JSScope* cursor = scope;
+        for (unsigned i = 0; i < metadata.m_localScopeDepth; ++i)
+            cursor = cursor->next();
+        JSObject* result = linkedExporter;
+        if (auto* importer = dynamicDowncast<JSModuleEnvironment>(cursor); importer && importer->graphInstance())
+            result = importer->importedEnvironmentFor(globalObject, linkedExporter->moduleRecord());
+        CHECK_EXCEPTION();
+        RETURN(result);
+    }
+
     JSObject* resolvedScope = JSScope::resolve(globalObject, scope, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     CHECK_EXCEPTION();
 
     ResolveType resolveType = metadata.m_resolveType;
-
-    // ModuleVar does not keep the scope register value alive in DFG.
-    ASSERT(resolveType != ModuleVar);
 
     switch (resolveType) {
     case GlobalProperty:

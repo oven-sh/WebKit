@@ -49,6 +49,7 @@
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
+#include "ModuleGraphInstance.h"
 #include "JSPromise.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseConstructor.h"
@@ -950,15 +951,16 @@ static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPr
     promiseResolveThenableJob(globalObject, resolutionObject, then, resolve, reject, microtaskCallCache);
 }
 
-static void asyncModuleExecutionDone(JSGlobalObject* globalObject, JSModuleRecord* module, JSValue value, JSPromise::Status status)
+static void asyncModuleExecutionDone(JSGlobalObject* globalObject, JSModuleRecord* module, JSValue value, JSPromise::Status status, ModuleGraphInstance* instance = nullptr)
 {
+    ModuleGraphInstance::BusyScope busy(globalObject, instance);
     if (status == JSPromise::Status::Fulfilled) {
-        module->asyncExecutionFulfilled(globalObject);
+        module->asyncExecutionFulfilled(globalObject, instance);
         return;
     }
 
     ASSERT(status == JSPromise::Status::Rejected);
-    module->asyncExecutionRejected(globalObject, value);
+    module->asyncExecutionRejected(globalObject, value, instance);
 }
 
 void asyncModuleResolveEvaluation(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, JSModuleRecord* module, JSValue result)
@@ -982,6 +984,24 @@ void asyncModuleResolveEvaluation(JSGlobalObject* globalObject, VM& vm, ThrowSco
         JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, result, InternalMicrotask::AsyncModuleExecutionResume, module);
 }
 
+void asyncModuleResolveEvaluation(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, ModuleRecordInstance* recordInstance, JSValue result)
+{
+    auto* capability = recordInstance->asyncCapability();
+
+    if (scope.exception()) [[unlikely]] {
+        capability->rejectWithCaughtException(vm, scope);
+        return;
+    }
+
+    if (result == vm.fastAsyncGeneratorSentinel())
+        return;
+
+    if (recordInstance->isExecutionFinished())
+        capability->resolve(globalObject, vm, result);
+    else
+        JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, result, InternalMicrotask::AsyncModuleExecutionResume, recordInstance);
+}
+
 static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, JSModuleRecord* module, JSValue resolution, JSPromise::Status status)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -992,6 +1012,23 @@ static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, JSM
 
     JSValue result = module->evaluate(globalObject, resolution, resumeMode);
     asyncModuleResolveEvaluation(globalObject, vm, scope, module, result);
+}
+
+static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, ModuleRecordInstance* recordInstance, JSValue resolution, JSPromise::Status status)
+{
+    if (recordInstance->graphInstance()->isCleared())
+        return; // the instance was disposed while this module was suspended
+    ModuleGraphInstance::BusyScope busy(globalObject, recordInstance->graphInstance());
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue resumeMode = jsNumber(status == JSPromise::Status::Fulfilled
+        ? static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)
+        : static_cast<int32_t>(JSGenerator::ResumeMode::ThrowMode));
+
+    auto* module = uncheckedDowncast<JSModuleRecord>(recordInstance->record());
+    JSValue result = module->evaluateInstance(globalObject, recordInstance, resolution, resumeMode);
+    asyncModuleResolveEvaluation(globalObject, vm, scope, recordInstance, result);
 }
 
 static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
@@ -1776,8 +1813,14 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue resoluti
         return;
     }
 
-    // The only remaining for-await driver kind is a top-level-await module. Any other context type
-    // reaching here means a new driver was wired up without a branch above.
+    // The only remaining for-await driver kind is a top-level-await module (in the primary graph or
+    // in a module graph instance). Any other context type reaching here means a new driver was wired up
+    // without a branch above.
+    if (auto* recordInstance = dynamicDowncast<ModuleRecordInstance>(context)) {
+        if (!recordInstance->graphInstance()->isCleared())
+            asyncModuleExecutionResume(uncheckedDowncast<JSModuleRecord>(recordInstance->record())->realm(), vm, recordInstance, resolution, status);
+        return;
+    }
     auto* module = dynamicDowncast<JSModuleRecord>(context);
     RELEASE_ASSERT(module);
     asyncModuleExecutionResume(module->realm(), vm, module, resolution, status);
@@ -2182,6 +2225,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionDone: {
+        if (auto* recordInstance = dynamicDowncast<ModuleRecordInstance>(arguments[2])) {
+            if (recordInstance->graphInstance()->isCleared())
+                return; // disposed while evaluating: nothing left to complete
+            auto* module = uncheckedDowncast<JSModuleRecord>(recordInstance->record());
+            RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(module->realm(), module, arguments[1], static_cast<JSPromise::Status>(payload), recordInstance->graphInstance()));
+        }
         auto* module = uncheckedDowncast<JSModuleRecord>(arguments[2]);
         RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(module->realm(), module, arguments[1], static_cast<JSPromise::Status>(payload)));
     }
@@ -2194,6 +2243,8 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #if USE(BUN_JSC_ADDITIONS)
         AsyncContextSwapScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(contextArg));
 #endif
+        if (auto* recordInstance = dynamicDowncast<ModuleRecordInstance>(contextArg))
+            RELEASE_AND_RETURN(scope, asyncModuleExecutionResume(globalObject, vm, recordInstance, arguments[1], static_cast<JSPromise::Status>(payload)));
         auto* module = uncheckedDowncast<JSModuleRecord>(contextArg);
         RELEASE_AND_RETURN(scope, asyncModuleExecutionResume(module->realm(), vm, module, arguments[1], static_cast<JSPromise::Status>(payload)));
     }

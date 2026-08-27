@@ -221,6 +221,8 @@ JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject* globalObject
 
     JSObject* exception = nullptr;
     FunctionExecutable* function = FunctionExecutable::fromGlobalCode(functionName, globalObject, WTF::move(program), sourceOrigin, taintedOrigin, sourceURL, position, lexicallyScopedFeatures, exception, overrideLineNumber, functionConstructorParametersEndPosition, functionConstructionMode);
+    // Creating the error object for a parse failure runs host error-info hooks that may themselves throw.
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (!function) [[unlikely]] {
         ASSERT(exception);
         throwException(globalObject, scope, exception);

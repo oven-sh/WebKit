@@ -1594,6 +1594,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ModuleMap.h
     runtime/ModuleProgramExecutable.h
     runtime/ModuleProgramExecutableInlines.h
+    runtime/ModuleGraphInstance.h
+    runtime/ModuleGraphInstanceInlines.h
     runtime/ModuleRegistryEntry.h
     runtime/NarrowingNumberPredictionFuzzerAgent.h
     runtime/NativeCallee.h

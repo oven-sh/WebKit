@@ -228,6 +228,11 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         JS_EXPORT_PRIVATE CallFrame* callerFrame(EntryFrame*&) const;
 
         JS_EXPORT_PRIVATE SourceOrigin callerSourceOrigin(VM&);
+        // Module graph instances (prototype): the module environment the calling JS
+        // code closes over (its own for module code; via the callee's scope chain for
+        // functions), or null. Lets import() load into the caller's graph instance.
+        // The scope the calling JS code closes over (null for native callers).
+        JS_EXPORT_PRIVATE JSScope* callerScope(VM&);
 
         static constexpr ptrdiff_t callerFrameOffset() { return OBJECT_OFFSETOF(CallerFrameAndPC, callerFrame); }
 

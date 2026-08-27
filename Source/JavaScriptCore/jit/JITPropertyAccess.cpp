@@ -896,9 +896,27 @@ void JIT::emit_op_resolve_scope(const JSInstruction* currentInstruction)
     // If we profile certain resolve types, we're guaranteed all linked code will have the same
     // resolve type.
 
-    if (profiledResolveType == ModuleVar)
-        loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), returnValueGPR);
-    else if (profiledResolveType == ClosureVar) {
+    if (profiledResolveType == ModuleVar) {
+        unsigned moduleImportSlot = bytecode.metadata(m_profiledCodeBlock).m_moduleImportSlot;
+        if (!moduleImportSlot) {
+            // No import slot (module graph instances off, or a binding that is
+            // not an import): the exporter environment is a link-time constant.
+            loadPtrFromMetadata(bytecode, Metadata::offsetOfLexicalEnvironment(), returnValueGPR);
+        } else {
+            // Module graph instances: the exporter environment is read from the
+            // importing environment's import slot, so the same code serves every
+            // instance. Walk to the importing environment and load the slot; an
+            // unfilled slot goes to the slow path.
+            emitGetVirtualRegister(scope, scopeGPR);
+            static_assert(scopeGPR == returnValueGPR);
+            unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
+            for (unsigned index = 0; index < localScopeDepth; ++index)
+                loadPtr(Address(returnValueGPR, JSScope::offsetOfNext()), returnValueGPR);
+            static_assert(sizeof(WriteBarrier<Unknown>) == 8);
+            load64(Address(returnValueGPR, JSLexicalEnvironment::offsetOfVariables() + (moduleImportSlot - 1) * sizeof(WriteBarrier<Unknown>)), returnValueGPR);
+            addSlowCase(branchIfEmpty(returnValueGPR));
+        }
+    } else if (profiledResolveType == ClosureVar) {
         emitGetVirtualRegister(scope, scopeGPR);
         static_assert(scopeGPR == returnValueGPR);
         unsigned localScopeDepth = bytecode.metadata(m_profiledCodeBlock).m_localScopeDepth;
@@ -1093,10 +1111,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
             emitResolveClosure(needsVarInjectionChecks(resolveType));
             break;
         case Dynamic:
+        case ModuleVar:
             slowCase.append(jit.jump());
             break;
         case ResolvedClosureVar:
-        case ModuleVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();

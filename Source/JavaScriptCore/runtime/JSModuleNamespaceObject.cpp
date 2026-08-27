@@ -30,6 +30,7 @@
 #include "CyclicModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
+#include "ModuleGraphInstance.h"
 #include "JSModuleRecord.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "SyntheticModuleRecord.h"
@@ -98,11 +99,43 @@ void JSModuleNamespaceObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleRecord);
+    visitor.append(thisObject->m_graphInstance);
+    visitor.append(thisObject->m_instanceEnvironment);
     for (auto& entry : thisObject->m_exports.values())
         visitor.appendHidden(entry.moduleRecord);
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleNamespaceObject);
+
+void JSModuleNamespaceObject::setGraphInstance(VM& vm, ModuleGraphInstance* instance, JSModuleEnvironment* environment)
+{
+    m_graphInstance.setMayBeNull(vm, this, instance);
+    m_instanceEnvironment.setMayBeNull(vm, this, environment);
+}
+
+JSModuleEnvironment* JSModuleNamespaceObject::environmentFor(JSGlobalObject* globalObject, AbstractModuleRecord* record)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (ModuleGraphInstance* instance = m_graphInstance.get()) {
+        // Own exports: this instance's environment; re-exports: through its
+        // import slots; then the instance. A namespace stays bound to the
+        // instance it was created for.
+        if (JSModuleEnvironment* own = m_instanceEnvironment.get()) {
+            if (record == m_moduleRecord.get())
+                return own;
+            RELEASE_AND_RETURN(scope, own->importedEnvironmentFor(globalObject, record));
+        }
+        if (JSModuleEnvironment* found = instance->environment(record))
+            return found;
+        if (instance->isCleared()) {
+            throwTypeError(globalObject, scope, "Module namespace belongs to a module graph instance that was disposed"_s);
+            return nullptr;
+        }
+        // Otherwise the record is one the instance shares with the primary graph.
+    }
+    return record->moduleEnvironment();
+}
 
 // https://tc39.es/proposal-defer-import-eval/#sec-IsSymbolLikeNamespaceKey
 ALWAYS_INLINE bool JSModuleNamespaceObject::isSymbolLikeNamespaceKey(VM& vm, PropertyName propertyName)
@@ -117,18 +150,20 @@ void JSModuleNamespaceObject::ensureDeferredNamespaceEvaluation(JSGlobalObject* 
 {
     // 1. If O.[[Deferred]] is true, then
     ASSERT(m_isDeferred);
+    // A namespace of a module graph instance evaluates its module in that instance.
+    ModuleGraphInstance* instance = m_graphInstance.get();
     // Fast path: if the module's cycle has already successfully evaluated, EvaluateModuleSync would
     // observe a fulfilled promise and return without throwing, so we can skip the work entirely.
     // We must consult [[CycleRoot]] here because Evaluate() redirects to it; for a non-root SCC
     // member, status/evaluationError on the module itself may not reflect the cycle's outcome.
     if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_moduleRecord.get())) {
-        CyclicModuleRecord* root = cyclic->cycleRoot() ? cyclic->cycleRoot() : cyclic;
-        if (root->status() == CyclicModuleRecord::Status::Evaluated && !root->evaluationError())
+        CyclicModuleRecord* root = cyclic->cycleRoot(instance) ? cyclic->cycleRoot(instance) : cyclic;
+        if (root->status(instance) == CyclicModuleRecord::Status::Evaluated && !root->evaluationError(instance))
             return;
     }
     //   1.a. Let m be O.[[Module]].
     //   1.b. Perform ? EvaluateModuleSync(m).
-    m_moduleRecord->evaluateSync(globalObject);
+    m_moduleRecord->evaluateSync(globalObject, instance);
     // 2. Return O.[[Exports]].
 }
 
@@ -185,10 +220,11 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
             // 10. If binding.[[BindingName]] is "*namespace*", then
             //     a. Return ? GetModuleNamespace(targetModule).
             // We call getModuleNamespace() to ensure materialization. And after that, looking up the value from the scope to encourage module namespace object IC.
-            exportEntry.moduleRecord->getModuleNamespace(globalObject);
+            exportEntry.moduleRecord->getModuleNamespace(globalObject, m_graphInstance.get());
             RETURN_IF_EXCEPTION(scope, false);
         }
-        JSModuleEnvironment* environment = exportEntry.moduleRecord->moduleEnvironment();
+        JSModuleEnvironment* environment = environmentFor(globalObject, exportEntry.moduleRecord.get());
+        RETURN_IF_EXCEPTION(scope, false);
         ScopeOffset scopeOffset;
         JSValue value = getValue(environment, exportEntry.localName, scopeOffset);
 #if USE(BUN_JSC_ADDITIONS)

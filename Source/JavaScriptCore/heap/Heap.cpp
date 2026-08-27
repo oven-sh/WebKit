@@ -75,6 +75,7 @@
 #include "MarkedSpaceInlines.h"
 #include "MarkingConstraintSet.h"
 #include "MegamorphicCache.h"
+#include "ModuleGraphInstance.h"
 #include "ModuleLoadingContext.h"
 #include "ModuleProgramExecutable.h"
 #include "ModuleRegistryEntry.h"

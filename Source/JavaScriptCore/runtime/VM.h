@@ -553,6 +553,7 @@ public:
     WriteBarrier<Structure> moduleLoaderStructure;
     WriteBarrier<Structure> moduleRegistryEntryStructure;
     WriteBarrier<Structure> moduleLoadingContextStructure;
+    WriteBarrier<Structure> moduleRecordInstanceStructure;
     WriteBarrier<Structure> moduleLoaderPayloadStructure;
     WriteBarrier<Structure> moduleGraphLoadingStateStructure;
     WriteBarrier<Structure> promiseCombinatorsContextStructure;

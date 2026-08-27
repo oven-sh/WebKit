@@ -34,6 +34,8 @@
 #include "IntlDateTimeFormat.h"
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
+#include "ModuleGraphInstance.h"
+#include "JSModuleEnvironment.h"
 #include "JSPromise.h"
 #include "JSSet.h"
 #include "Lexer.h"
@@ -819,6 +821,19 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     // we should retrieve this from the arguments.
     JSValue parameters = callFrame->argument(1);
     bool deferred = callFrame->argument(2).isTrue();
+
+    // Module graph instances: import() from code that belongs to an instance
+    // loads the requested graph as a template (no evaluation of the primary)
+    // and instantiates it into the caller's instance.
+    if (Options::useModuleGraphInstances()) [[unlikely]] {
+        if (ModuleGraphInstance* instance = globalObject->graphInstanceForScope(callFrame->callerScope(vm))) {
+            JSPromise* promise = JSModuleLoader::importIntoGraphInstance(globalObject, specifier, parameters, sourceOrigin, instance, deferred);
+            if (scope.exception()) [[unlikely]]
+                return rejectWithCaughtException();
+            return JSValue::encode(promise);
+        }
+    }
+
     auto* importPromise = globalObject->moduleLoader()->importModule(globalObject, specifier, parameters, sourceOrigin, deferred);
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();

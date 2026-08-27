@@ -161,6 +161,9 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObj);
 #endif
         JSValue executeModuleProgram(JSModuleRecord*, ModuleProgramExecutable*, JSGlobalObject*, JSModuleEnvironment*, JSValue sentValue, JSValue resumeMode);
+        // Module graph instances (prototype): as above with an explicit holder for the
+        // top-level-await generator state (State, Frame internal fields) instead of the record.
+        JSValue executeModuleProgram(JSModuleRecord*, JSObject* generatorState, ModuleProgramExecutable*, JSGlobalObject*, JSModuleEnvironment*, JSValue sentValue, JSValue resumeMode);
         JSValue executeCall(JSObject* function, const CallData&, JSValue thisValue, JSCell* context, const ArgList&);
         JSObject* executeConstruct(JSObject* function, const CallData&, const ArgList&, JSValue newTarget);
         JSValue executeEval(EvalExecutable*, JSValue thisValue, JSScope*);

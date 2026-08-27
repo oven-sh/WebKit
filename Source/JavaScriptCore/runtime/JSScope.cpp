@@ -97,6 +97,8 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
                 SymbolTableEntry& entry = iter->value;
                 ASSERT(!entry.isNull());
                 op = ResolveOp(makeType(ModuleVar, needsVarInjectionChecks), depth, nullptr, importedEnvironment, entry.watchpointSet(), entry.scopeOffset().offset(), resolution.localName.impl());
+                if (auto slotIndex = moduleRecord->importSlotIndexFor(importedRecord))
+                    op.moduleImportSlot = 1 + JSModuleEnvironment::importSlotScopeOffset(moduleEnvironment->symbolTable(), *slotIndex).offset();
                 return true;
             }
         }
