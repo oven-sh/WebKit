@@ -167,6 +167,7 @@ public:
     // an asynchronous completion or resumption); a clear() requested meanwhile
     // is performed when the outermost step returns.
     class BusyScope {
+        WTF_MAKE_NONCOPYABLE(BusyScope);
     public:
         BusyScope(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
             : m_globalObject(globalObject), m_instance(instance)

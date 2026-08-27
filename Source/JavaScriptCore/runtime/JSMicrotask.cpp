@@ -1696,7 +1696,9 @@ static void moduleGraphInstanceDependencySettled(JSGlobalObject* globalObject, V
         resultPromise->reject(vm, arguments[1]); // first rejection wins
         return;
     }
-    uint64_t remaining = joinContext->remainingElementsCount() - 1;
+    uint64_t count = joinContext->remainingElementsCount();
+    ASSERT(count > 0);
+    uint64_t remaining = count - 1;
     joinContext->setRemainingElementsCount(remaining);
     if (!remaining)
         resultPromise->resolve(globalObject, vm, jsUndefined());

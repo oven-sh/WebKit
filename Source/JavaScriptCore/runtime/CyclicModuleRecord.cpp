@@ -183,7 +183,8 @@ void CyclicModuleRecord::setTopLevelCapability(VM& vm, ModuleGraphInstance* inst
 template<typename Functor>
 void CyclicModuleRecord::forEachAsyncParentModule(ModuleGraphInstance* instance, const Functor& functor) const
 {
-    const Vector<WriteBarrier<AbstractModuleRecord>>& parents = recordInstanceFor(this, instance) ? recordInstanceFor(this, instance)->asyncParentModules() : asyncParentModules();
+    ModuleRecordInstance* state = recordInstanceFor(this, instance);
+    const Vector<WriteBarrier<AbstractModuleRecord>>& parents = state ? state->asyncParentModules() : asyncParentModules();
     for (const WriteBarrier<AbstractModuleRecord>& parent : parents)
         functor(uncheckedDowncast<CyclicModuleRecord>(parent.get()));
 }
@@ -292,6 +293,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // of the named imports) before the environment is sized.
         if (Options::useModuleGraphInstances()) {
             Vector<AbstractModuleRecord*> importedRecords;
+            UncheckedKeyHashSet<AbstractModuleRecord*> seenRecords;
             for (const auto& [key, in] : importEntries()) {
 #if USE(BUN_JSC_ADDITIONS)
                 // SingleTypeScript: a named import that may be absent; when it
@@ -308,7 +310,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 RETURN_IF_EXCEPTION(scope, void());
                 if (resolution.type != Resolution::Type::Resolved)
                     continue;
-                if (!importedRecords.contains(resolution.moduleRecord))
+                if (seenRecords.add(resolution.moduleRecord).isNewEntry)
                     importedRecords.append(resolution.moduleRecord);
             }
             setImportedRecords(vm, importedRecords);

@@ -4179,8 +4179,13 @@ JSLexicalEnvironment* JSGlobalObject::createModuleScopeOverlay(JSObject* values,
         }
         JSValue value;
         if (values) {
-            value = values->get(this, name);
+            PropertySlot slot(values, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool hasOwn = values->methodTable()->getOwnPropertySlot(values, this, name, slot);
             RETURN_IF_EXCEPTION(scope, nullptr);
+            if (hasOwn) {
+                value = slot.getValue(this, name);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
         }
         if (!value || value.isUndefined())
             value = primary->variableAt(offset).get();

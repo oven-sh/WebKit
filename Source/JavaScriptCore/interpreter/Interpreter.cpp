@@ -1744,9 +1744,10 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, JSObject* gene
 
     ProtoCallFrame protoCallFrame;
     auto stateField = [&]() -> WriteBarrier<Unknown>& {
-        if (generatorState == record)
-            return record->internalField(JSModuleRecord::Field::State);
-        return uncheckedDowncast<ModuleRecordInstance>(generatorState)->internalField(ModuleRecordInstance::Field::State);
+        if (auto* recordInstance = dynamicDowncast<ModuleRecordInstance>(generatorState))
+            return recordInstance->internalField(ModuleRecordInstance::Field::State);
+        ASSERT(generatorState == record);
+        return record->internalField(JSModuleRecord::Field::State);
     };
     EncodedJSValue args[numberOfArguments] = {
         JSValue::encode(generatorState),

@@ -3931,9 +3931,13 @@ JSC_DEFINE_HOST_FUNCTION(functionInstantiateModuleGraph, (JSGlobalObject* global
     auto* record = dynamicDowncast<JSModuleRecord>(ns->moduleRecord());
     if (!record)
         return throwVMTypeError(globalObject, scope, "namespace does not belong to a source text module"_s);
-    auto* instance = dynamicDowncast<ModuleGraphInstance>(callFrame->argument(1));
-    if (!instance)
+    JSValue instanceValue = callFrame->argument(1);
+    auto* instance = dynamicDowncast<ModuleGraphInstance>(instanceValue);
+    if (!instance) {
+        if (!instanceValue.isUndefined())
+            return throwVMTypeError(globalObject, scope, "expected a ModuleGraphInstance"_s);
         instance = ModuleGraphInstance::create(vm, globalObject, nullptr);
+    }
     JSModuleEnvironment* environment = record->instantiateIntoGraphInstance(globalObject, instance);
     RETURN_IF_EXCEPTION(scope, {});
     JSModuleNamespaceObject* namespaceObject = record->getModuleNamespace(globalObject, instance);

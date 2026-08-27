@@ -1462,6 +1462,10 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         Vector<Identifier, 4> exportNames;
         JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        if (args.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return promise->rejectWithCaughtException(vm, scope);
+        }
 
         ModuleGraphInstance* loadingInstance = syntheticSourceProvider->regeneratesPerGraphInstance() ? globalObject->currentGraphInstanceForLoading() : nullptr;
         MarkedArgumentBuffer primaryValues;

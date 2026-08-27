@@ -29,6 +29,7 @@
 #include "AbstractModuleRecord.h"
 #include "CyclicModuleRecord.h"
 #include "JSCInlines.h"
+#include <wtf/SetForScope.h>
 #include "JSModuleEnvironment.h"
 #include "ModuleGraphInstance.h"
 #include "JSModuleRecord.h"
@@ -499,7 +500,7 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     RETURN_IF_EXCEPTION(scope, false);
 
     bool putResult = false;
-    moduleNamespaceObject->m_isOverridingValue = true;
+    SetForScope overridingValue(moduleNamespaceObject->m_isOverridingValue, true);
     JSModuleEnvironment* moduleEnvironment = instance ? environmentFor(globalObject, record) : record->moduleEnvironmentMayBeNull();
     RETURN_IF_EXCEPTION(scope, {});
     if (moduleEnvironment) {
@@ -509,7 +510,6 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     JSC::PutPropertySlot putter = JSC::PutPropertySlot(moduleNamespaceObject, false);
     putResult = moduleNamespaceObject->put(moduleNamespaceObject, globalObject, name, value, putter);
     RETURN_IF_EXCEPTION(scope, {});
-    moduleNamespaceObject->m_isOverridingValue = false;
     return putResult;
 }
 
