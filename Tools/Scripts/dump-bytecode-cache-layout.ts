@@ -118,7 +118,7 @@ function cacheRecords(records: Map<string, Record>): Record[] {
     // template arguments name in-memory source types or traits, and RefPtr<T>, Bag<T> and the like point at T rather
     // than contain it, so no other template argument is followed.
     const reached = record.members.map(m => m.type).filter((t): t is string => !!t);
-    const elementArguments: Record<string, number> = { CachedVector: 1, CachedArray: 1, CachedOptional: 1, CachedHashSet: 1, CachedPair: 2, CachedHashMap: 2, CachedInlineMap: 2 };
+    const elementArguments: { [container: string]: number } = { CachedVector: 1, CachedArray: 1, CachedOptional: 1, CachedHashSet: 1, CachedPair: 2, CachedHashMap: 2, CachedInlineMap: 2 };
     const container = record.name.match(/^JSC::(Cached\w+)</)?.[1];
     if (container && container !== "CachedObject") {
       const args = templateArguments(record.name);
