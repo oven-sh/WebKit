@@ -325,6 +325,7 @@ ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
 
 COPY --from=build_icu /icu-out /icu-out
+COPY --from=build_icu /usr/local/bin/node /usr/local/bin/node
 COPY . /webkit
 WORKDIR /webkit
 
@@ -417,7 +418,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
     \
     mkdir -p /output/lib /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc && \
-    python3 /webkit/Tools/Scripts/dump-bytecode-cache-layout.py /webkitbuild > /output/bytecode-cache-layout.txt && \
+    node --experimental-strip-types /webkit/Tools/Scripts/dump-bytecode-cache-layout.ts /webkitbuild > /output/bytecode-cache-layout.txt && \
     cp -rL $WEBKIT_OUT_DIR/lib/* /output/lib/ && \
     cp -rL $WEBKIT_OUT_DIR/bin /output/bin && \
     # Sanitizer builds ship the ASAN runtime with the artifact: anything that

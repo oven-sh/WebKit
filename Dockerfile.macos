@@ -231,7 +231,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     /webkit && \
     cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
-    python3 /webkit/Tools/Scripts/dump-bytecode-cache-layout.py /webkitbuild > /output/bytecode-cache-layout.txt && \
+    bun /webkit/Tools/Scripts/dump-bytecode-cache-layout.ts /webkitbuild > /output/bytecode-cache-layout.txt && \
     # -L everywhere: WebKit's cmake stages the WTF/bmalloc framework headers
     # as *symlinks* into the source tree when the host filesystem supports
     # them. Copied verbatim they'd dangle outside this container (pointing at
