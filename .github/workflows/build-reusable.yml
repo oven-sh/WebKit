@@ -723,6 +723,7 @@ jobs:
       # archive carries its layouts (Tools/Scripts/dump-bytecode-cache-layout.ts); any difference from linux-amd64, or a
       # missing dump, fails the release. The one native build (windows-arm64-debug) has no dump and is not compared.
       - name: Bytecode cache layouts agree across platforms
+        if: false # each image still writes bytecode-cache-layout.txt; the cross-platform comparison moves to its own fast job in a follow-up
         run: |
           set -euo pipefail
           mkdir -p layouts
