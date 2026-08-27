@@ -121,6 +121,11 @@ public:
     // The environment of `exporter` in the same graph instance as this one
     // (the exporter's primary environment if this is a primary environment).
     JSModuleEnvironment* importedEnvironmentFor(JSGlobalObject*, AbstractModuleRecord* exporter);
+    // op_resolve_scope slow path for a ModuleVar under module graph instances:
+    // walk `depth` scopes from `scope` to the importing module environment and
+    // return the exporter's environment in that environment's instance
+    // (`linkedExporter` — the one the CodeBlock was linked against — otherwise).
+    static JSObject* resolveModuleVarScope(JSGlobalObject*, JSScope*, unsigned depth, JSModuleEnvironment* linkedExporter);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);

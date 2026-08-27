@@ -37,6 +37,7 @@
 #include "DFGOSREntry.h"
 #include "DFGThunks.h"
 #include "Debugger.h"
+#include "JSModuleEnvironment.h"
 #include "EnsureStillAliveHere.h"
 #include "ExceptionFuzz.h"
 #include "FrameTracers.h"
@@ -85,16 +86,22 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
 
     const JSInstruction* pc = codeBlock->instructionAt(BytecodeIndex(bytecodeOffset));
     auto bytecode = pc->as<OpResolveScope>();
+    auto& metadata = bytecode.metadata(codeBlock);
+
+    // ModuleVar reaches here only with module graph instances (an unfilled
+    // import slot); see slow_path_resolve_scope.
+    if (metadata.m_resolveType == ModuleVar) {
+        JSObject* result = JSModuleEnvironment::resolveModuleVarScope(globalObject, environment, metadata.m_localScopeDepth, uncheckedDowncast<JSModuleEnvironment>(metadata.m_lexicalEnvironment.get()));
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        OPERATION_RETURN(scope, JSValue::encode(result));
+    }
+
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSObject* resolvedScope = JSScope::resolve(globalObject, environment, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    auto& metadata = bytecode.metadata(codeBlock);
     ResolveType resolveType = metadata.m_resolveType;
-
-    // ModuleVar does not keep the scope register value alive in DFG.
-    ASSERT(resolveType != ModuleVar);
 
     switch (resolveType) {
     case GlobalProperty:

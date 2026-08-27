@@ -4596,15 +4596,7 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     auto& metadata = bytecode.metadata(codeBlock);
 
     if (metadata.m_resolveType == ModuleVar) {
-        // See slow_path_resolve_scope: the importing module environment on this
-        // scope chain decides which graph instance's exporter environment to use.
-        JSModuleEnvironment* linkedExporter = uncheckedDowncast<JSModuleEnvironment>(metadata.m_lexicalEnvironment.get());
-        JSScope* cursor = environment;
-        for (unsigned i = 0; i < metadata.m_localScopeDepth; ++i)
-            cursor = cursor->next();
-        JSObject* result = linkedExporter;
-        if (auto* importer = dynamicDowncast<JSModuleEnvironment>(cursor); importer && importer->graphInstance())
-            result = importer->importedEnvironmentFor(globalObject, linkedExporter->moduleRecord());
+        JSObject* result = JSModuleEnvironment::resolveModuleVarScope(globalObject, environment, metadata.m_localScopeDepth, uncheckedDowncast<JSModuleEnvironment>(metadata.m_lexicalEnvironment.get()));
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         OPERATION_RETURN(scope, JSValue::encode(result));
     }

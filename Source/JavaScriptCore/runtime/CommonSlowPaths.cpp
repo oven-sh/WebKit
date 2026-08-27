@@ -1393,17 +1393,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     JSScope* scope = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
 
     if (metadata.m_resolveType == ModuleVar) {
-        // The CodeBlock was linked against one instantiation of the importing
-        // module; other instantiations of the same graph share it. Walk to the
-        // importing module environment on THIS scope chain and pick the
-        // exporter's environment from the same graph instance.
-        JSModuleEnvironment* linkedExporter = uncheckedDowncast<JSModuleEnvironment>(metadata.m_lexicalEnvironment.get());
-        JSScope* cursor = scope;
-        for (unsigned i = 0; i < metadata.m_localScopeDepth; ++i)
-            cursor = cursor->next();
-        JSObject* result = linkedExporter;
-        if (auto* importer = dynamicDowncast<JSModuleEnvironment>(cursor); importer && importer->graphInstance())
-            result = importer->importedEnvironmentFor(globalObject, linkedExporter->moduleRecord());
+        JSObject* result = JSModuleEnvironment::resolveModuleVarScope(globalObject, scope, metadata.m_localScopeDepth, uncheckedDowncast<JSModuleEnvironment>(metadata.m_lexicalEnvironment.get()));
         CHECK_EXCEPTION();
         RETURN(result);
     }

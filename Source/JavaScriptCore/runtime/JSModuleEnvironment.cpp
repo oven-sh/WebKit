@@ -140,6 +140,19 @@ JSModuleEnvironment* JSModuleEnvironment::importedEnvironmentFor(JSGlobalObject*
     return environment;
 }
 
+JSObject* JSModuleEnvironment::resolveModuleVarScope(JSGlobalObject* globalObject, JSScope* scope, unsigned depth, JSModuleEnvironment* linkedExporter)
+{
+    // The CodeBlock was linked against one instantiation of the importing
+    // module; other instantiations share it. The importing module environment
+    // on THIS scope chain decides which instance's exporter environment applies.
+    JSScope* cursor = scope;
+    for (unsigned i = 0; i < depth; ++i)
+        cursor = cursor->next();
+    if (auto* importer = dynamicDowncast<JSModuleEnvironment>(cursor); importer && importer->graphInstance())
+        return importer->importedEnvironmentFor(globalObject, linkedExporter->moduleRecord());
+    return linkedExporter;
+}
+
 ModuleGraphInstance* JSModuleEnvironment::graphInstance()
 {
     JSValue value = graphInstanceSlot().get();
