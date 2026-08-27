@@ -2,6 +2,56 @@ name: Build WebKit (Reusable)
 
 env:
   LLVM_VERSION: 21
+  # Every build job uploads <label>/bun-webkit.tar.gz. This list is the release: a label missing from the run fails it.
+  ARTIFACTS: |
+    # linux
+    bun-webkit-linux-amd64
+    bun-webkit-linux-amd64-lto
+    bun-webkit-linux-amd64-debug
+    bun-webkit-linux-amd64-asan
+    bun-webkit-linux-amd64-debug-asan
+    bun-webkit-linux-arm64
+    bun-webkit-linux-arm64-lto
+    bun-webkit-linux-arm64-debug
+    bun-webkit-linux-arm64-asan
+    bun-webkit-linux-arm64-debug-asan
+    # linux-musl
+    bun-webkit-linux-amd64-musl
+    bun-webkit-linux-amd64-musl-lto
+    bun-webkit-linux-amd64-musl-debug
+    bun-webkit-linux-arm64-musl
+    bun-webkit-linux-arm64-musl-lto
+    bun-webkit-linux-arm64-musl-debug
+    # macos-cross
+    bun-webkit-macos-arm64
+    bun-webkit-macos-arm64-lto
+    bun-webkit-macos-arm64-debug
+    bun-webkit-macos-arm64-asan
+    bun-webkit-macos-arm64-debug-asan
+    bun-webkit-macos-amd64
+    bun-webkit-macos-amd64-lto
+    bun-webkit-macos-amd64-debug
+    # windows / windows-cross
+    bun-webkit-windows-amd64
+    bun-webkit-windows-amd64-lto
+    bun-webkit-windows-amd64-debug
+    bun-webkit-windows-amd64-asan
+    bun-webkit-windows-arm64
+    bun-webkit-windows-arm64-debug
+    # freebsd
+    bun-webkit-freebsd-amd64
+    bun-webkit-freebsd-amd64-lto
+    bun-webkit-freebsd-amd64-debug
+    bun-webkit-freebsd-arm64
+    bun-webkit-freebsd-arm64-lto
+    bun-webkit-freebsd-arm64-debug
+    # linux-android
+    bun-webkit-linux-arm64-android
+    bun-webkit-linux-arm64-android-lto
+    bun-webkit-linux-arm64-android-debug
+    bun-webkit-linux-amd64-android
+    bun-webkit-linux-amd64-android-lto
+    bun-webkit-linux-amd64-android-debug
 
 on:
   workflow_call:
@@ -125,7 +175,7 @@ jobs:
           RELEASE_FLAGS: ${{matrix.RELEASE_FLAGS}}
           ENABLE_SANITIZERS: ${{matrix.ENABLE_SANITIZERS}}
         run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
+          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz ${{runner.temp}}/bytecode-cache-layout.txt
           if [ "${{matrix.package_json_arch}}" = "arm64" ]; then
             export MARCH_FLAG="-march=armv8-a+crc -mtune=ampere1"
           else
@@ -137,12 +187,18 @@ jobs:
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so
           rm -rf bun-webkit/lib/*.so.*
+          cp bun-webkit/bytecode-cache-layout.txt .
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{matrix.label}}
           path: ${{runner.temp}}/bun-webkit.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: layout-${{matrix.label}}
+          path: ${{runner.temp}}/bytecode-cache-layout.txt
+          if-no-files-found: error
 
   windows-cross:
     name: Windows (cross-compiled from Linux)
@@ -225,17 +281,23 @@ jobs:
           install: true
       - name: Run
         run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
+          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz ${{runner.temp}}/bytecode-cache-layout.txt
           WIN_ARCH="${{matrix.win_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash windows-cross-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["windows"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
+          cp bun-webkit/bytecode-cache-layout.txt .
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{matrix.label}}
           path: ${{runner.temp}}/bun-webkit.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: layout-${{matrix.label}}
+          path: ${{runner.temp}}/bytecode-cache-layout.txt
+          if-no-files-found: error
 
   windows:
     name: Windows
@@ -361,7 +423,7 @@ jobs:
           install: true
       - name: Run
         run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
+          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz ${{runner.temp}}/bytecode-cache-layout.txt
           if [ "${{matrix.package_json_arch}}" = "arm64" ]; then
             export MARCH_FLAG="-march=armv8-a+crc -mtune=ampere1"
           else
@@ -373,12 +435,18 @@ jobs:
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so
           rm -rf bun-webkit/lib/*.so.*
+          cp bun-webkit/bytecode-cache-layout.txt .
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{matrix.label}}
           path: ${{runner.temp}}/bun-webkit.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: layout-${{matrix.label}}
+          path: ${{runner.temp}}/bytecode-cache-layout.txt
+          if-no-files-found: error
 
   macos-cross:
     name: macOS (cross-compiled from Linux)
@@ -466,17 +534,23 @@ jobs:
           install: true
       - name: Run
         run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
+          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz ${{runner.temp}}/bytecode-cache-layout.txt
           MACOS_ARCH="${{matrix.macos_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" CPP_FLAGS="${{matrix.cpp_flags}}" ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" ENABLE_MALLOC_HEAP_BREAKDOWN="${{matrix.ENABLE_MALLOC_HEAP_BREAKDOWN}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash macos-cross-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["darwin"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
+          cp bun-webkit/bytecode-cache-layout.txt .
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{matrix.label}}
           path: ${{runner.temp}}/bun-webkit.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: layout-${{matrix.label}}
+          path: ${{runner.temp}}/bytecode-cache-layout.txt
+          if-no-files-found: error
 
   freebsd:
     name: FreeBSD
@@ -536,18 +610,24 @@ jobs:
           install: true
       - name: Run
         run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
+          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz ${{runner.temp}}/bytecode-cache-layout.txt
           FREEBSD_ARCH="${{matrix.freebsd_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash freebsd-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["freebsd"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
+          cp bun-webkit/bytecode-cache-layout.txt .
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{matrix.label}}
           path: ${{runner.temp}}/bun-webkit.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: layout-${{matrix.label}}
+          path: ${{runner.temp}}/bytecode-cache-layout.txt
+          if-no-files-found: error
 
   linux-android:
     name: Linux Android
@@ -607,18 +687,95 @@ jobs:
           install: true
       - name: Run
         run: |
-          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
+          rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz ${{runner.temp}}/bytecode-cache-layout.txt
           ANDROID_ARCH="${{matrix.android_arch}}" WEBKIT_RELEASE_TYPE="${{matrix.CMAKE_BUILD_TYPE}}" LTO_FLAG="${{matrix.lto_flag}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash android-release.sh
           cd ${{runner.temp}}
           echo "#define BUN_WEBKIT_VERSION \"${{ inputs.build_ref }}\"" >> bun-webkit/include/cmakeconfig.h
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["android"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
+          cp bun-webkit/bytecode-cache-layout.txt .
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{matrix.label}}
           path: ${{runner.temp}}/bun-webkit.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: layout-${{matrix.label}}
+          path: ${{runner.temp}}/bytecode-cache-layout.txt
+          if-no-files-found: error
+
+  # A bytecode cache payload written on one platform is read in place on the others (bun build --compile
+  # cross-compiles), so the records it is made of must be laid out identically everywhere. Every Docker-built job
+  # uploads the layouts of its build (Tools/Scripts/dump-bytecode-cache-layout.ts) as layout-<label>; this job fails,
+  # and blocks the release, if any of them differs from linux-amd64 or is missing. The one native build
+  # (windows-arm64-debug) has no dump and is not compared.
+  bytecode-cache-layout:
+    name: Bytecode cache layouts agree across platforms
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+    needs:
+      - linux
+      - macos-cross
+      - windows-cross
+      - linux-musl
+      - linux-android
+      - freebsd
+    steps:
+      - name: Download layouts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            rm -rf layouts
+            gh run download "$GITHUB_RUN_ID" --pattern 'layout-*' -D layouts && break
+            echo "download failed (attempt $attempt)"; sleep $((attempt * 5))
+          done
+          ls layouts
+      - name: Compare
+        run: |
+          set -uo pipefail
+          reference=layouts/layout-bun-webkit-linux-amd64/bytecode-cache-layout.txt
+          if [ ! -s "$reference" ]; then echo "::error::no layout dump for linux-amd64"; exit 1; fi
+          status=0
+          mkdir -p diffs
+          {
+            echo "Reference: linux-amd64 — $(grep -vc '^ ' "$reference") records"
+            echo
+            echo "| build | result |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          while read -r name; do
+            [ "$name" = bun-webkit-windows-arm64-debug ] && continue
+            f="layouts/layout-$name/bytecode-cache-layout.txt"
+            if [ ! -s "$f" ]; then
+              echo "::error::$name uploaded no bytecode cache layout dump"
+              echo "| ${name#bun-webkit-} | missing |" >> "$GITHUB_STEP_SUMMARY"
+              status=1
+            elif ! diff -u --label linux-amd64 --label "${name#bun-webkit-}" "$reference" "$f" > "diffs/$name.diff"; then
+              echo "::error::bytecode cache record layouts of $name differ from linux-amd64"
+              echo "| ${name#bun-webkit-} | **differs**: $(grep -c '^[-+][^-+]' "diffs/$name.diff") lines |" >> "$GITHUB_STEP_SUMMARY"
+              status=1
+            else
+              rm "diffs/$name.diff"
+              echo "| ${name#bun-webkit-} | same |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done < <(grep -v '^ *#' <<< "$ARTIFACTS" | grep .)
+          for d in diffs/*.diff; do
+            [ -e "$d" ] || continue
+            { echo; echo "<details><summary>$(basename "$d" .diff)</summary>"; echo; echo '```diff'; head -200 "$d"; echo '```'; echo "</details>"; } >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit $status
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: bytecode-cache-layout-diffs
+          path: diffs/
 
   release:
     name: release
@@ -635,6 +792,7 @@ jobs:
       - linux-musl
       - linux-android
       - freebsd
+      - bytecode-cache-layout
     outputs:
       tag: ${{ steps.release_info.outputs.tag }}
     steps:
@@ -649,60 +807,10 @@ jobs:
       - run: lsipc
       - run: whoami
 
-      # Every build job uploads <label>/bun-webkit.tar.gz. This list is the release: a label missing from the run fails the job.
       - name: Download artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          ARTIFACTS: |
-            # linux
-            bun-webkit-linux-amd64
-            bun-webkit-linux-amd64-lto
-            bun-webkit-linux-amd64-debug
-            bun-webkit-linux-amd64-asan
-            bun-webkit-linux-amd64-debug-asan
-            bun-webkit-linux-arm64
-            bun-webkit-linux-arm64-lto
-            bun-webkit-linux-arm64-debug
-            bun-webkit-linux-arm64-asan
-            bun-webkit-linux-arm64-debug-asan
-            # linux-musl
-            bun-webkit-linux-amd64-musl
-            bun-webkit-linux-amd64-musl-lto
-            bun-webkit-linux-amd64-musl-debug
-            bun-webkit-linux-arm64-musl
-            bun-webkit-linux-arm64-musl-lto
-            bun-webkit-linux-arm64-musl-debug
-            # macos-cross
-            bun-webkit-macos-arm64
-            bun-webkit-macos-arm64-lto
-            bun-webkit-macos-arm64-debug
-            bun-webkit-macos-arm64-asan
-            bun-webkit-macos-arm64-debug-asan
-            bun-webkit-macos-amd64
-            bun-webkit-macos-amd64-lto
-            bun-webkit-macos-amd64-debug
-            # windows / windows-cross
-            bun-webkit-windows-amd64
-            bun-webkit-windows-amd64-lto
-            bun-webkit-windows-amd64-debug
-            bun-webkit-windows-amd64-asan
-            bun-webkit-windows-arm64
-            bun-webkit-windows-arm64-debug
-            # freebsd
-            bun-webkit-freebsd-amd64
-            bun-webkit-freebsd-amd64-lto
-            bun-webkit-freebsd-amd64-debug
-            bun-webkit-freebsd-arm64
-            bun-webkit-freebsd-arm64-lto
-            bun-webkit-freebsd-arm64-debug
-            # linux-android
-            bun-webkit-linux-arm64-android
-            bun-webkit-linux-arm64-android-lto
-            bun-webkit-linux-arm64-android-debug
-            bun-webkit-linux-amd64-android
-            bun-webkit-linux-amd64-android-lto
-            bun-webkit-linux-amd64-android-debug
         run: |
           set -euo pipefail
           grep -v '^ *#' <<< "$ARTIFACTS" | grep . > artifacts.txt
@@ -717,33 +825,6 @@ jobs:
           mkdir -p out
           while read -r name; do mv "dl/$name/bun-webkit.tar.gz" "out/$name.tar.gz"; done < artifacts.txt
           ls -la out
-
-      # A bytecode cache payload written on one platform is read in place on the others (bun build --compile
-      # cross-compiles), so the records it is made of must be laid out identically everywhere. Every Docker-built
-      # archive carries its layouts (Tools/Scripts/dump-bytecode-cache-layout.ts); any difference from linux-amd64, or a
-      # missing dump, fails the release. The one native build (windows-arm64-debug) has no dump and is not compared.
-      - name: Bytecode cache layouts agree across platforms
-        if: false # each image still writes bytecode-cache-layout.txt; the cross-platform comparison moves to its own fast job in a follow-up
-        run: |
-          set -euo pipefail
-          mkdir -p layouts
-          status=0
-          while read -r name; do
-            [ "$name" = bun-webkit-windows-arm64-debug ] && continue
-            if ! tar -xzf "out/$name.tar.gz" -O bun-webkit/bytecode-cache-layout.txt > "layouts/$name.txt"; then
-              echo "::error::$name has no bytecode-cache-layout.txt"
-              status=1
-            fi
-          done < artifacts.txt
-          for f in layouts/*.txt; do
-            if ! diff -u layouts/bun-webkit-linux-amd64.txt "$f" > "$f.diff"; then
-              echo "::error::bytecode cache record layouts in $(basename "$f" .txt) differ from linux-amd64"
-              head -50 "$f.diff"
-              status=1
-            fi
-          done
-          echo "$(ls layouts/*.txt | wc -l) platforms compared"
-          exit $status
 
       - name: Set release info
         id: release_info
