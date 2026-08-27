@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Prints the memory layout of every record the bytecode cache (runtime/CachedTypes.cpp) writes into a payload, in a
 // form that is textually identical across targets exactly when the layouts are. The release workflow diffs this file
 // between platforms: a payload encoded on one must decode on the others, so their Cached* records must agree.

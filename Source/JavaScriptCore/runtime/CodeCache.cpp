@@ -139,9 +139,7 @@ template <class UnlinkedCodeBlockType>
     requires (!std::same_as<UnlinkedCodeBlockType, UnlinkedEvalCodeBlock>)
 UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth)
 {
-    // Every function below is reparsed against the SourceProviderCache that the enclosing parse filled in. Hold the
-    // cache so that a full collection part-way through cannot drop it (see VM::clearSourceProviderCaches()); otherwise
-    // what the parser records for a function, and with it the bytecode cache built from this, would depend on GC timing.
+    // Held so a full collection part-way through cannot drop it (VM::clearSourceProviderCaches()) and change which nested bodies the parser skips.
     Ref sourceProviderCache = *vm.addSourceProviderCache(source.provider());
     codeGenerationMode.add(CodeGenerationMode::BytecodeCache);
 

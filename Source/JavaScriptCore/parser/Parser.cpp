@@ -2390,9 +2390,7 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
         else
             failIfFalse(parseSourceElements(syntaxChecker, CheckForStrictMode), bodyType == StandardFunctionBodyBlock ? "Cannot parse body of this function" : "Cannot parse body of this arrow function");
     }
-    // For an expression body the current token is already past the function (and possibly lines further on); the
-    // function ends at the body's last token, as it ends at the '}' for a block body and as the SourceProviderCache path
-    // in parseFunctionInfo() records it.
+    // An expression body ends at its last token (the current token is already past it), as the SourceProviderCache path records it.
     JSTokenLocation endLocation = isArrowFunctionBodyExpression ? m_lastTokenLocation : tokenLocation();
     unsigned endColumn = endLocation.startOffset - endLocation.lineStartOffset;
     SuperBinding functionSuperBinding = adjustSuperBindingForBaseConstructor(constructorKind, superBinding, sourceParseMode(), currentScope());
@@ -2610,8 +2608,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     int startColumn = -1;
     FunctionBodyType functionBodyType;
 
-    // Track this per function so it can be stored in, and replayed from, the SourceProviderCache; otherwise whether
-    // the enclosing code gets NoEvalCacheFeature would depend on whether this function's body was skipped.
+    // Per function, so the SourceProviderCache can replay it for a skipped body (it decides the enclosing code's NoEvalCacheFeature).
     bool enclosingCodeContainsTaggedTemplate = std::exchange(m_seenTaggedTemplateInNonReparsingFunctionMode, false);
     auto propagateContainsTaggedTemplate = makeScopeExit([&] {
         m_seenTaggedTemplateInNonReparsingFunctionMode |= enclosingCodeContainsTaggedTemplate;
@@ -2675,8 +2672,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
             if (m_token.m_endPosition.line == static_cast<int>(functionInfo.startLine))
                 m_token.m_endPosition.lineStartOffset = currentLineStartOffset;
 
-            // The last token may span lines (a template literal ending an expression body), so resume from where it
-            // ended, not from the line it started on.
+            // Resume where the last token ended; a template literal ending an expression body spans lines.
             m_lexer->setOffset(m_token.m_endPosition.offset, m_token.m_endPosition.lineStartOffset);
             m_lexer->setLineNumber(m_token.m_endPosition.line);
 

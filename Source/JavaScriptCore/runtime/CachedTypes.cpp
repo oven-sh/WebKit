@@ -49,6 +49,7 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "UnlinkedProgramCodeBlock.h"
 #include "VariableEnvironmentInlines.h"
+#include <ranges>
 #include <wtf/FileHandle.h>
 #include <wtf/InlineMap.h>
 #include <wtf/MallocSpan.h>
@@ -56,7 +57,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/UUID.h>
 #include <wtf/text/AtomStringImpl.h>
-#include <ranges>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -464,11 +464,9 @@ struct SourceTypeImpl<T, std::enable_if_t<!std::is_fundamental<T>::value && !std
 template<typename T>
 using SourceType = typename SourceTypeImpl<T>::type;
 
-// Nothing about the encoding process may reach the payload, so that it is a function of the source alone: not
-// alignof(std::max_align_t) or pageSize() (both vary by platform and decide where padding goes), not the order a hash
-// table happens to iterate in (see EncodingOrder), not bits a struct leaves unset (see CachedHandlerInfo).
-static constexpr size_t encoderMaxAlignment = 8; // not alignof(std::max_align_t): 16 on x86-64 Linux/macOS, 8 elsewhere
-static constexpr size_t encoderMinPageSize = 4 * KB; // not pageSize() (4, 16 or 64 KB): where a page ends decides where the next allocation lands
+// Fixed rather than the host's alignof(std::max_align_t) / pageSize(): both decide where padding goes, and both vary by platform.
+static constexpr size_t encoderMaxAlignment = 8;
+static constexpr size_t encoderMinPageSize = 4 * KB;
 
 class Encoder {
     WTF_MAKE_NONCOPYABLE(Encoder);
@@ -521,7 +519,8 @@ public:
     std::optional<ptrdiff_t> sharedPrivateNameEnvironment(unsigned hash, const Vector<std::pair<const UniquedStringImpl*, uint16_t>>& entries) const
     {
         for (const auto& shared : m_sharedPrivateNameEnvironments) {
-            if (shared.hash == hash && std::ranges::equal(shared.entries, entries)) // pair by pair: Vector's operator== would memcmp the pairs' padding too
+            // Pair by pair: Vector's operator== would memcmp the pairs' padding too.
+            if (shared.hash == hash && std::ranges::equal(shared.entries, entries))
                 return shared.elements;
         }
         return std::nullopt;
@@ -1521,12 +1520,10 @@ private:
     unsigned m_size;
 };
 
-// Hash tables iterate in an order that depends on where their keys hashed to -- for SymbolImpl keys a per-process
-// counter, for robin-hood tables the table's own address -- so their entries are encoded in key order to keep the
-// payload a function of the source alone. Keys are ordered by contents, then by what kind of StringImpl they decode to;
-// two keys equal in both would decode to the same StringImpl and cannot share a table.
+// A hash table's iteration order can depend on the process (a robin-hood table seeds its hash with its own address), so
+// tables are encoded in key order: by contents, then by the kind of StringImpl the key decodes to (keys equal in both
+// would decode to one StringImpl, so no table holds two).
 struct EncodingOrder {
-    static std::strong_ordering compare(unsigned a, unsigned b) { return a <=> b; }
     static unsigned kind(const StringImpl* string)
     {
         if (!string->isSymbol())
@@ -1534,20 +1531,19 @@ struct EncodingOrder {
         auto& symbol = *static_cast<const SymbolImpl*>(string);
         return 1 + symbol.isRegistered() * 2 + symbol.isPrivate();
     }
-    static std::strong_ordering compare(const StringImpl* a, const StringImpl* b)
+    static bool less(unsigned a, unsigned b) { return a < b; }
+    static bool less(const StringImpl* a, const StringImpl* b)
     {
         if (auto order = codePointCompare(StringView(*a), StringView(*b)); order != 0)
-            return order;
-        return kind(a) <=> kind(b);
+            return order < 0;
+        return kind(a) < kind(b);
     }
-    template<typename T, typename Traits> static std::strong_ordering compare(const RefPtr<T, Traits>& a, const RefPtr<T, Traits>& b) { return compare(a.get(), b.get()); }
+    template<typename T, typename Traits> static bool less(const RefPtr<T, Traits>& a, const RefPtr<T, Traits>& b) { return less(a.get(), b.get()); }
 
     template<typename Entries, typename KeyOf>
     static void sort(Entries& entries, const KeyOf& keyOf)
     {
-        std::stable_sort(entries.begin(), entries.end(), [&](const auto& a, const auto& b) {
-            return compare(keyOf(a), keyOf(b)) < 0;
-        });
+        std::sort(entries.begin(), entries.end(), [&](const auto& a, const auto& b) { return less(keyOf(a), keyOf(b)); });
     }
 };
 
@@ -1605,9 +1601,7 @@ public:
         for (const auto& it : map)
             entries.append({ it.key.get(), it.value.bits() });
         std::sort(entries.begin(), entries.end());
-        unsigned hash = entries.size(); // of the values, not the pairs' bytes: those include padding
-        for (auto [name, bits] : entries)
-            hash = pairIntHash(hash, pairIntHash(PtrHash<const UniquedStringImpl*>::hash(name), bits));
+        unsigned hash = computeHash(entries);
         if (auto existing = encoder.sharedPrivateNameEnvironment(hash, entries)) {
             m_entries.shareElements(encoder, *existing, map.size());
             return;
@@ -1646,8 +1640,7 @@ public:
         unsigned i = 0;
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
-        EncodingOrder::sort(entriesVector, [](const auto& entry) -> const auto& { return entry.first; });
-        m_entries.encode(encoder, entriesVector);
+        m_entries.encode(encoder, entriesVector); // in the map's order (declaration order while inline): it is the order global vars are created in
     }
 
     void decode(Decoder& decoder, Map& map) const
@@ -2207,7 +2200,7 @@ public:
         }
         EncodingOrder::sort(compact, [](const auto& key) -> const auto& { return key; });
         m_variables.encode(encoder, compact);
-        m_hash = env.m_hash; // of the contents, not the addresses
+        m_hash = env.m_hash;
     }
 
     void decode(Decoder& decoder, CompactTDZEnvironment& env) const
@@ -4529,9 +4522,7 @@ protected:
             return false;
         if (m_bootSessionUUID.decode(decoder) != bootSessionUUIDString())
             return false;
-        // The one property of the encoding CPU that generated bytecode depends on: BytecodeGenerator numbers a code block's
-        // locals after the LLInt/baseline callee-save area. Equal on every CPU JSC targets today; a port where it differed
-        // would produce foreign payloads, not portable ones.
+        // BytecodeGenerator numbers a code block's locals after the LLInt/baseline callee-save area, so its size is baked into the bytecode.
         if (m_reservedCalleeLocals != CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
             return false;
         return true;
@@ -4552,7 +4543,7 @@ private:
     uint32_t m_reservedCalleeLocals;
 };
 
-static_assert(alignof(GenericCacheEntry) <= alignof(std::max_align_t));
+static_assert(alignof(GenericCacheEntry) <= encoderMaxAlignment);
 
 template<typename UnlinkedCodeBlockType>
 class CacheEntry : public GenericCacheEntry {

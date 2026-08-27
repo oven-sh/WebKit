@@ -116,10 +116,9 @@ private:
     }
 
     // The table as the bytecode cache stores it: (opcode << 24 | entry count) for each opcode that has entries, in memory
-    // that outlives the VM. Counts rather than offsets, because offsets are sums of sizeof(Op::Metadata) and the payload
-    // may have been written by a build (another C++ ABI) where those differ; expandSteps() lays them out with this
-    // build's sizes exactly as finalize() does. While no CodeBlock is linked the table owns no buffer at all and expands
-    // the steps straight into the linked buffer at link().
+    // that outlives the VM. Counts, not offsets: sizeof(Op::Metadata) differs between the C++ ABIs a payload moves
+    // between, so expandSteps() lays the table out with this build's sizes. Until a CodeBlock is linked the table owns
+    // no buffer and expands the steps straight into the linked buffer at link().
     static constexpr unsigned stepIndexShift = 24;
     static constexpr uint32_t stepCountMask = (1u << stepIndexShift) - 1;
     static Ref<UnlinkedMetadataTable> createFromPersistentSteps(unsigned numValueProfiles, std::span<const uint32_t> steps)

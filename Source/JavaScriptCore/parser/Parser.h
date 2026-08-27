@@ -446,11 +446,8 @@ public:
     {
         ASSERT(node);
         ASSERT(!strictMode());
-        auto result = m_sloppyModeFunctionHoistingCandidateIndices.add(node, m_sloppyModeFunctionHoistingCandidates.size());
-        if (result.isNewEntry)
-            m_sloppyModeFunctionHoistingCandidates.append({ node, needsCheck });
-        else
-            m_sloppyModeFunctionHoistingCandidates[result.iterator->value].second = needsCheck;
+        ASSERT(!m_sloppyModeFunctionHoistingCandidates.containsIf([&](auto& candidate) { return candidate.first == node; })); // declared in one scope, bubbled up once per scope
+        m_sloppyModeFunctionHoistingCandidates.append({ node, needsCheck });
     }
 
     void appendFunction(FunctionMetadataNode* node)
@@ -1052,7 +1049,6 @@ private:
     LexicallyScopedFeatures m_lexicallyScopedFeatures;
     ConstructorKind m_constructorKind { ConstructorKind::None };
     InnerArrowFunctionCodeFeatures m_innerArrowFunctionFeatures { 0 };
-    UncheckedKeyHashMap<FunctionMetadataNode*, unsigned> m_sloppyModeFunctionHoistingCandidateIndices;
     UncheckedKeyHashSet<UniquedStringImpl*> m_closedVariableCandidates;
 
     // offset 64 in release mode
@@ -2156,7 +2152,7 @@ private:
     bool m_seenArgumentsDotLength { false };
     bool m_parsingBuiltin;
     bool m_isEvalContext;
-    JSTextPosition m_lastTokenEndPosition; // where m_lastTokenLocation's token ended: a later line than it started on if it is a template literal
+    JSTextPosition m_lastTokenEndPosition; // on a later line than m_lastTokenLocation when that token is a template literal
 
     RefPtr<SourceProviderCache> m_functionCache;
     CallOrApplyDepthScope* m_callOrApplyDepthScope { nullptr };

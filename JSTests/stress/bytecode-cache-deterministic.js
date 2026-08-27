@@ -1,6 +1,6 @@
 //@ runDefault
-//@ runDefault("--collectContinuously=1")
-//@ runDefault("--useSourceProviderCache=0")
+//@ run("collect-continuously", "--collectContinuously=1")
+//@ run("no-source-provider-cache", "--useSourceProviderCache=0")
 
 // What generateProgramBytecode()/generateModuleBytecode() write must be a function of the source alone: embedders build
 // the cache on one platform and load it on another, and check that the two agree by comparing what each encodes.

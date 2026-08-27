@@ -116,15 +116,15 @@ public:
     unsigned parameterCount : 31;
     bool taintedByWithScope : 1;
     unsigned lastTokenLineStartOffset : 31;
-    bool usesImportMeta : 1 { false };
-    unsigned lastTokenEndLine : 31;
-    bool containsTaggedTemplate : 1 { false };
-    unsigned lastTokenEndLineStartOffset : 31;
     bool isBodyArrowExpression : 1;
     unsigned tokenType : 24; // JSTokenType
     unsigned innerArrowFunctionFeatures : 6; // InnerArrowFunctionCodeFeatures
     unsigned constructorKind : 2; // ConstructorKind
     unsigned implementationVisibility : 2; // ImplementationVisibility
+    bool usesImportMeta : 1 { false };
+    bool containsTaggedTemplate : 1 { false };
+    unsigned lastTokenEndLine;
+    unsigned lastTokenEndLineStartOffset;
 
     std::span<const PackedRefPtr<UniquedStringImpl>> usedVariables() const LIFETIME_BOUND { return span(); }
 
@@ -152,15 +152,15 @@ inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCach
     , parameterCount(parameters.parameterCount)
     , taintedByWithScope(parameters.lexicallyScopedFeatures & TaintedByWithScopeLexicallyScopedFeature)
     , lastTokenLineStartOffset(parameters.lastTokenLineStartOffset)
-    , usesImportMeta(parameters.usesImportMeta)
-    , lastTokenEndLine(parameters.lastTokenEndLine)
-    , containsTaggedTemplate(parameters.containsTaggedTemplate)
-    , lastTokenEndLineStartOffset(parameters.lastTokenEndLineStartOffset)
     , isBodyArrowExpression(parameters.isBodyArrowExpression)
     , tokenType(static_cast<unsigned>(parameters.tokenType))
     , innerArrowFunctionFeatures(static_cast<unsigned>(parameters.innerArrowFunctionFeatures))
     , constructorKind(static_cast<unsigned>(parameters.constructorKind))
     , implementationVisibility(static_cast<unsigned>(parameters.implementationVisibility))
+    , usesImportMeta(parameters.usesImportMeta)
+    , containsTaggedTemplate(parameters.containsTaggedTemplate)
+    , lastTokenEndLine(parameters.lastTokenEndLine)
+    , lastTokenEndLineStartOffset(parameters.lastTokenEndLineStartOffset)
 {
     ASSERT(tokenType == static_cast<unsigned>(parameters.tokenType));
     ASSERT(innerArrowFunctionFeatures == static_cast<unsigned>(parameters.innerArrowFunctionFeatures));

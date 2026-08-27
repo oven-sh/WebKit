@@ -719,19 +719,21 @@ jobs:
           ls -la out
 
       # A bytecode cache payload written on one platform is read in place on the others (bun build --compile
-      # cross-compiles), so the records it is made of must be laid out identically everywhere. Each build recorded its
-      # layouts (Tools/Scripts/dump-bytecode-cache-layout.ts); any difference from linux-amd64 fails the release.
+      # cross-compiles), so the records it is made of must be laid out identically everywhere. Every Docker-built
+      # archive carries its layouts (Tools/Scripts/dump-bytecode-cache-layout.ts); any difference from linux-amd64, or a
+      # missing dump, fails the release. The one native build (windows-arm64-debug) has no dump and is not compared.
       - name: Bytecode cache layouts agree across platforms
         run: |
           set -euo pipefail
           mkdir -p layouts
-          for archive in out/*.tar.gz; do
-            name=$(basename "$archive" .tar.gz)
-            tar -xzf "$archive" -O bun-webkit/bytecode-cache-layout.txt > "layouts/$name.txt" 2>/dev/null || rm -f "layouts/$name.txt"
-          done
-          ls layouts
-          test -s layouts/bun-webkit-linux-amd64.txt
           status=0
+          while read -r name; do
+            [ "$name" = bun-webkit-windows-arm64-debug ] && continue
+            if ! tar -xzf "out/$name.tar.gz" -O bun-webkit/bytecode-cache-layout.txt > "layouts/$name.txt"; then
+              echo "::error::$name has no bytecode-cache-layout.txt"
+              status=1
+            fi
+          done < artifacts.txt
           for f in layouts/*.txt; do
             if ! diff -u layouts/bun-webkit-linux-amd64.txt "$f" > "$f.diff"; then
               echo "::error::bytecode cache record layouts in $(basename "$f" .txt) differ from linux-amd64"

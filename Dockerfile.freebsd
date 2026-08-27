@@ -75,6 +75,13 @@ RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/
 # ICU — cross-compiled. Same two-stage host/target build as Android: host
 # tools first, then --with-cross-build.
 # ───────────────────────────────────────────────────────────────────────────
+
+# Node — only used to run Tools/Scripts/dump-bytecode-cache-layout.ts after the build.
+ARG NODE_VERSION=24.16.0
+RUN wget -qO- "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
+      | tar -xJ -C /usr/local --strip-components=1 && \
+    node --version
+
 FROM base AS build_icu
 
 ARG MARCH_FLAG
@@ -199,6 +206,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     /webkit && \
     cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    node --experimental-strip-types /webkit/Tools/Scripts/dump-bytecode-cache-layout.ts /webkitbuild > /output/bytecode-cache-layout.txt && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
