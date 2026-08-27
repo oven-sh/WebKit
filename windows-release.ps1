@@ -36,6 +36,7 @@ $env:PATH = ($SplitPath | Where-Object { $_ -notlike "*strawberry*" }) -join ';'
 Write-Host $env:PATH
 
 (Get-Command link).Path
+(Get-Command ninja).Path
 clang-cl.exe --version
 
 $env:CC = "clang-cl"
