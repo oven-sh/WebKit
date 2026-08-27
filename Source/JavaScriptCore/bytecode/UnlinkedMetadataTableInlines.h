@@ -59,15 +59,12 @@ ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable(unsigned numValueProf
     , m_isFinalized(true)
     , m_isLinked(false)
     , m_is32Bit(stepsNeed32BitOffsets(persistentSteps))
+    , m_isBackedBySteps(true)
     , m_numValueProfiles(numValueProfiles)
     , m_stepsCount(persistentSteps.size())
     , m_steps(persistentSteps.data())
     , m_rawBuffer(nullptr)
 {
-    // A table with value profiles but no metadata entries has no steps; it is still steps-backed (owns no buffer).
-    static constexpr uint32_t noSteps = 0;
-    if (!m_steps)
-        m_steps = &noSteps;
 }
 
 template<typename OffsetType>
@@ -176,7 +173,7 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
     unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
     uint8_t* buffer = static_cast<uint8_t*>(MetadataTableMalloc::zeroedMalloc(sizeof(LinkingData) + totalSize));
     uint8_t* table = buffer + valueProfileSize + sizeof(LinkingData);
-    if (m_steps && !m_isLinked) {
+    if (m_isBackedBySteps && !m_isLinked) {
         if (m_is32Bit)
             expandSteps(std::span { m_steps, m_stepsCount }, std::bit_cast<Offset32*>(table + s_offset16TableSize));
         else
@@ -205,7 +202,7 @@ ALWAYS_INLINE void UnlinkedMetadataTable::unlink(MetadataTable& metadataTable)
 
     if (metadataTable.buffer() == buffer()) {
         ASSERT(m_isLinked);
-        if (m_steps) {
+        if (m_isBackedBySteps) {
             MetadataTableMalloc::free(m_rawBuffer);
             m_rawBuffer = nullptr;
             m_isLinked = false;

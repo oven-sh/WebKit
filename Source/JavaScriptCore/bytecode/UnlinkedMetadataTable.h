@@ -128,7 +128,7 @@ private:
     // Offset of the end of the metadata (the table's last entry); with table null, computes only that.
     template<typename OffsetType> static unsigned expandSteps(std::span<const uint32_t>, OffsetType* table);
     static bool stepsNeed32BitOffsets(std::span<const uint32_t> steps) { return expandSteps<Offset32>(steps, nullptr) > UINT16_MAX; }
-    bool isBackedBySteps() const { return !!m_steps; }
+    bool isBackedBySteps() const { return m_isBackedBySteps; }
 
     static Ref<UnlinkedMetadataTable> empty()
     {
@@ -143,7 +143,7 @@ private:
     {
         ASSERT(m_isFinalized);
         unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
-        if (m_steps && !m_isLinked)
+        if (m_isBackedBySteps && !m_isLinked)
             return valueProfileSize + expandSteps<Offset32>(std::span { m_steps, m_stepsCount }, nullptr);
         if (m_is32Bit)
             return valueProfileSize + offsetTable32()[s_offsetTableEntries - 1];
@@ -177,12 +177,12 @@ private:
 
     Offset16* offsetTable16() const
     {
-        ASSERT(!m_is32Bit && (m_isLinked || !m_steps));
+        ASSERT(!m_is32Bit && (m_isLinked || !m_isBackedBySteps));
         return std::bit_cast<Offset16*>(m_rawBuffer + prefixSize());
     }
     Offset32* offsetTable32() const
     {
-        ASSERT(m_is32Bit && (m_isLinked || !m_steps));
+        ASSERT(m_is32Bit && (m_isLinked || !m_isBackedBySteps));
         return std::bit_cast<Offset32*>(m_rawBuffer + prefixSize() + s_offset16TableSize);
     }
 
@@ -190,6 +190,7 @@ private:
     bool m_isFinalized : 1;
     bool m_isLinked : 1;
     bool m_is32Bit : 1;
+    bool m_isBackedBySteps : 1 { false };
     TriState m_didOptimize : 2 { TriState::Indeterminate };
     unsigned m_numValueProfiles { 0 };
     unsigned m_stepsCount { 0 };

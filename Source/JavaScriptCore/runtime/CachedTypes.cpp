@@ -2683,7 +2683,7 @@ struct CachedMetadataSteps {
     {
         ASSERT(metadataTable.m_isFinalized && metadataTable.m_hasMetadata);
         Vector<uint32_t, 16> steps;
-        if (metadataTable.m_steps && !metadataTable.m_isLinked) {
+        if (metadataTable.m_isBackedBySteps && !metadataTable.m_isLinked) {
             steps.append(std::span { metadataTable.m_steps, metadataTable.m_stepsCount });
             return steps;
         }
