@@ -113,10 +113,17 @@ function cacheRecords(records: Map<string, Record>): Record[] {
     const record = queue.pop()!;
     if (selected.has(record.name)) continue;
     selected.set(record.name, record);
+    // Members held by value are part of the record. So are the elements a Cached container writes into its tail:
+    // the leading template arguments of these (a JSC::Cached* argument anywhere is a record in its own right). Other
+    // template arguments name in-memory source types or traits, and RefPtr<T>, Bag<T> and the like point at T rather
+    // than contain it, so no other template argument is followed.
     const reached = record.members.map(m => m.type).filter((t): t is string => !!t);
-    // A Cached container's element type is written into the payload too (in its variable-length tail), so follow
-    // template arguments -- except CachedObject<T> / VariableLengthObject<T>, whose T is the in-memory source type.
-    if (!/^JSC::(CachedObject|VariableLengthObject)</.test(record.name)) reached.push(...templateArguments(record.name).filter(t => !sourceTypes.has(t)));
+    const elementArguments: Record<string, number> = { CachedVector: 1, CachedArray: 1, CachedOptional: 1, CachedHashSet: 1, CachedPair: 2, CachedHashMap: 2, CachedInlineMap: 2 };
+    const container = record.name.match(/^JSC::(Cached\w+)</)?.[1];
+    if (container && container !== "CachedObject") {
+      const args = templateArguments(record.name);
+      reached.push(...args.filter((t, i) => i < (elementArguments[container] ?? 0) || /^JSC::Cached/.test(t)).filter(t => !sourceTypes.has(t)));
+    }
     for (const name of reached) {
       if (/[*&]$/.test(name)) continue;
       const r = records.get(normalize(name));
