@@ -4894,7 +4894,9 @@ static_assert(sizeof(CachedUniquedStringImpl) == 12);
 static_assert(sizeof(CachedUnlinkedSourceCode) == 12);
 static_assert(sizeof(CachedVariableEnvironment) == 16);
 static_assert(sizeof(CachedVariableEnvironmentRareData) == 8);
+#if ENABLE(WEBASSEMBLY)
 static_assert(sizeof(CachedWebAssemblySourceProvider) == 40);
+#endif
 void decodeFunctionCodeBlock(Decoder& decoder, int32_t cachedFunctionCodeBlockOffset, WriteBarrier<UnlinkedFunctionCodeBlock>& codeBlock, const JSCell* owner)
 {
     ASSERT(decoder.vm().heap.isDeferred());
