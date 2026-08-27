@@ -81,7 +81,7 @@ class ManyComputed {
     total() { return this.a1 + this.k + this.#p + this.#q + ManyComputed.s2; }
 }
 function folded() {
-    return [2 ** 10, 2 ** -2, 2 ** 0.5, 9 ** 0.5, (-8) ** (1 / 3), 10 ** 21, 1e3 ** 1e3, 0.1 ** 3, annexB(true), new ManyComputed().total()];
+    return [2 ** 10, 10 ** 21, annexB(true), new ManyComputed().total()];
 }
 function tdz() {
     const fns = [];

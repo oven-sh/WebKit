@@ -63,7 +63,7 @@ UnlinkedCodeBlock::UnlinkedCodeBlock(VM& vm, Structure* structure, CodeType code
     , m_age(0)
     , m_hasCheckpoints(false)
     , m_parseMode(info.parseMode())
-    , m_codeGenerationMode(codeGenerationMode - CodeGenerationMode::BytecodeCache) // a parser option, not a property of the block
+    , m_codeGenerationMode(codeGenerationMode)
     , m_metadata(UnlinkedMetadataTable::create())
 {
     ASSERT(m_constructorKind == static_cast<unsigned>(info.constructorKind()));

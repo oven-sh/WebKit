@@ -43,7 +43,6 @@ enum class CodeGenerationMode : uint8_t {
     Debugger = 1 << 0,
     TypeProfiler = 1 << 1,
     ControlFlowProfiler = 1 << 2,
-    BytecodeCache = 1 << 3, // the result will be serialized and may run on another platform
 };
 
 enum class FunctionMode { None, FunctionExpression, FunctionDeclaration, MethodDefinition };

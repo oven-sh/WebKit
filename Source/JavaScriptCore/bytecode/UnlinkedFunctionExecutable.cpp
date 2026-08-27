@@ -60,7 +60,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     ASSERT(isFunctionParseMode(executable->parseMode()));
     auto* classElementDefinitions = executable->classElementDefinitions();
     std::unique_ptr<FunctionNode> function = parse<FunctionNode>(
-        vm, source, executable->name(), executable->implementationVisibility(), builtinMode, executable->lexicallyScopedFeatures(), scriptMode, executable->parseMode(), executable->functionMode(), executable->superBinding(), error, executable->constructorKind(), executable->derivedContextType(), EvalContextType::None, nullptr, classElementDefinitions, false, codeGenerationMode);
+        vm, source, executable->name(), executable->implementationVisibility(), builtinMode, executable->lexicallyScopedFeatures(), scriptMode, executable->parseMode(), executable->functionMode(), executable->superBinding(), error, executable->constructorKind(), executable->derivedContextType(), EvalContextType::None, nullptr, classElementDefinitions);
 
     if (!function) {
         ASSERT(error.isValid());

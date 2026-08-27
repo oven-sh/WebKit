@@ -80,12 +80,11 @@ class ASTBuilder {
         Operator m_op;
     };
 public:
-    ASTBuilder(VM& vm, ParserArena& parserArena, SourceCode* sourceCode, OptionSet<CodeGenerationMode> codeGenerationMode = { })
+    ASTBuilder(VM& vm, ParserArena& parserArena, SourceCode* sourceCode)
         : m_vm(vm)
         , m_parserArena(parserArena)
         , m_sourceCode(sourceCode)
         , m_evalCount(0)
-        , m_codeGenerationMode(codeGenerationMode)
     {
     }
     
@@ -1227,7 +1226,6 @@ private:
     Vector<std::pair<int, int>, 10, UnsafeVectorOverflow> m_binaryOperatorStack;
     Vector<std::pair<int, JSTextPosition>, 10, UnsafeVectorOverflow> m_unaryTokenStack;
     int m_evalCount;
-    OptionSet<CodeGenerationMode> m_codeGenerationMode;
 };
 
 ExpressionNode* ASTBuilder::makeTypeOfNode(const JSTokenLocation& location, ExpressionNode* expr, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
@@ -1293,9 +1291,7 @@ ExpressionNode* ASTBuilder::makePowNode(const JSTokenLocation& location, Express
     auto* strippedExpr1 = expr1->stripUnaryPlus();
     auto* strippedExpr2 = expr2->stripUnaryPlus();
 
-    // Not folded for a bytecode cache: operationMathPow() can call the C library's pow(), which does not round identically
-    // everywhere, and the constant would be serialized. Unfolded, it gets the pow() of wherever the code runs.
-    if (strippedExpr1->isNumber() && strippedExpr2->isNumber() && !m_codeGenerationMode.contains(CodeGenerationMode::BytecodeCache)) {
+    if (strippedExpr1->isNumber() && strippedExpr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*strippedExpr1);
         const NumberNode& numberExpr2 = static_cast<NumberNode&>(*strippedExpr2);
         return createNumberFromBinaryOperation(location, operationMathPow(numberExpr1.value(), numberExpr2.value()), numberExpr1, numberExpr2);
