@@ -93,6 +93,7 @@
 #include "SubspaceInlines.h"
 #include "SuperSampler.h"
 #include "SweepingScope.h"
+#include "Symbol.h"
 #include "SymbolTableInlines.h"
 #include "SynchronousStopTheWorldMutatorScheduler.h"
 #include "TypeProfiler.h"
@@ -101,6 +102,7 @@
 #include "VM.h"
 #include "VerifierSlotVisitorInlines.h"
 #include "WasmCallee.h"
+#include "WeakGCMapInlines.h"
 #include "WeakMapImplInlines.h"
 #include "WeakSetInlines.h"
 #include <algorithm>
@@ -3133,6 +3135,12 @@ void Heap::addCoreConstraints()
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
                 if (vm.smallStrings.needsToBeVisited(*m_collectionScope))
                     vm.smallStrings.visitStrongReferences(visitor);
+                // Property metadata retains a SymbolImpl rather than its hash-consed Symbol cell.
+                vm.symbolImplToSymbolMap.forEach([&](Symbol* symbol) {
+                    if (!symbol->uid().isRegistered() && !symbol->uid().hasOneRef())
+                        visitor.appendUnbarriered(symbol);
+                    return IterationStatus::Continue;
+                });
             }
             
             {

@@ -51,3 +51,16 @@ noInline(test);
 
 for (var i = 0; i < 1e4; ++i)
     test();
+
+function makeMapWithPropertySymbol() {
+    var map = new WeakMap();
+    var symbol = Symbol("property");
+    var object = { [symbol]: true };
+    map.set(symbol, 42);
+    return [map, object];
+}
+
+var [mapWithPropertySymbol, objectWithSymbolProperty] = makeMapWithPropertySymbol();
+gc();
+var propertySymbol = Reflect.ownKeys(objectWithSymbolProperty)[0];
+shouldBe(mapWithPropertySymbol.get(propertySymbol), 42);
