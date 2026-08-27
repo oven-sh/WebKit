@@ -1051,7 +1051,7 @@ private:
     LexicallyScopedFeatures m_lexicallyScopedFeatures;
     ConstructorKind m_constructorKind { ConstructorKind::None };
     InnerArrowFunctionCodeFeatures m_innerArrowFunctionFeatures { 0 };
-    UncheckedKeyHashSet<UniquedStringImpl*> m_closedVariableCandidates;
+    Vector<KeyValuePair<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck>> m_sloppyModeFunctionHoistingCandidates; // in declaration order
 
     // offset 64 in release mode
     VariableEnvironment m_lexicalVariables;
@@ -1066,8 +1066,7 @@ private:
 
     UniquedStringImpl* m_lastAddedUsedVariable { nullptr };
     Vector<UniquedStringImplPtrSet, 6> m_usedVariables;
-    // In declaration order: the order these are declared as vars in decides their registers / scope offsets.
-    Vector<KeyValuePair<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck>> m_sloppyModeFunctionHoistingCandidates;
+    UncheckedKeyHashSet<UniquedStringImpl*> m_closedVariableCandidates;
 
     static void verifyLayout();
 };
