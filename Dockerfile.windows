@@ -411,11 +411,13 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG ${LTO_FLAG}" \
     "-DCMAKE_C_FLAGS_DEBUG=/FS /O0 /Ob0" \
     "-DCMAKE_CXX_FLAGS_DEBUG=/FS /O0 /Ob0" \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -G Ninja \
     /webkit && \
     cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
     \
     mkdir -p /output/lib /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc && \
+    python3 /webkit/Tools/Scripts/dump-bytecode-cache-layout.py /webkitbuild > /output/bytecode-cache-layout.txt && \
     cp -rL $WEBKIT_OUT_DIR/lib/* /output/lib/ && \
     cp -rL $WEBKIT_OUT_DIR/bin /output/bin && \
     # Sanitizer builds ship the ASAN runtime with the artifact: anything that
