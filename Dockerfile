@@ -308,7 +308,6 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cd /webkitbuild && \
     cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
-    node --experimental-strip-types /webkit/Tools/Scripts/dump-bytecode-cache-layout.ts /webkitbuild > /output/bytecode-cache-layout.txt && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
