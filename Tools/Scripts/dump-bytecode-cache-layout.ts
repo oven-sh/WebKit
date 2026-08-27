@@ -17,7 +17,7 @@ function fail(message: string): never {
 
 function splitCommand(command: string): string[] {
   const args: string[] = [];
-  for (const m of command.matchAll(/"((?:\\.|[^"\\])*)"|'([^']*)'|(\S+)/g)) args.push(m[1]?.replace(/\\(.)/g, "$1") ?? m[2] ?? m[3]);
+  for (const m of command.matchAll(/"((?:\\.|[^"\\])*)"|'([^']*)'|(\S+)/g)) args.push(m[1]?.replace(/\\(["\\])/g, "$1") ?? m[2] ?? m[3]);
   return args;
 }
 
