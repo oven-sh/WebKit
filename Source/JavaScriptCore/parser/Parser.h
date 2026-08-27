@@ -446,7 +446,8 @@ public:
     {
         ASSERT(node);
         ASSERT(!strictMode());
-        m_sloppyModeFunctionHoistingCandidates.set(node, needsCheck);
+        ASSERT(!m_sloppyModeFunctionHoistingCandidates.containsIf([&](auto& candidate) { return candidate.key == node; })); // declared in one scope, bubbled up once per scope
+        m_sloppyModeFunctionHoistingCandidates.append({ node, needsCheck });
     }
 
     void appendFunction(FunctionMetadataNode* node)
@@ -1050,8 +1051,7 @@ private:
     LexicallyScopedFeatures m_lexicallyScopedFeatures;
     ConstructorKind m_constructorKind { ConstructorKind::None };
     InnerArrowFunctionCodeFeatures m_innerArrowFunctionFeatures { 0 };
-    UncheckedKeyHashMap<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck> m_sloppyModeFunctionHoistingCandidates;
-    UncheckedKeyHashSet<UniquedStringImpl*> m_closedVariableCandidates;
+    Vector<KeyValuePair<FunctionMetadataNode*, NeedsDuplicateDeclarationCheck>> m_sloppyModeFunctionHoistingCandidates; // in declaration order
 
     // offset 64 in release mode
     VariableEnvironment m_lexicalVariables;
@@ -1066,6 +1066,7 @@ private:
 
     UniquedStringImpl* m_lastAddedUsedVariable { nullptr };
     Vector<UniquedStringImplPtrSet, 6> m_usedVariables;
+    UncheckedKeyHashSet<UniquedStringImpl*> m_closedVariableCandidates;
 
     static void verifyLayout();
 };
@@ -1557,6 +1558,7 @@ private:
         int startOffset;
         unsigned oldLineStartOffset;
         JSTokenLocation lastTokenLocation;
+        JSTextPosition lastTokenEndPosition;
         unsigned oldLineNumber;
         bool hasLineTerminatorBeforeToken;
         JSTokenType lastTokenType;
@@ -1580,6 +1582,7 @@ private:
     ALWAYS_INLINE void next(OptionSet<LexerFlags> lexerFlags = { })
     {
         m_lastTokenLocation = m_token.location();
+        m_lastTokenEndPosition = m_token.m_endPosition;
         m_lastTokenType = m_token.m_type;
         m_token.m_type = m_lexer->lex(&m_token, lexerFlags, strictMode());
     }
@@ -1587,6 +1590,7 @@ private:
     ALWAYS_INLINE void nextWithoutClearingLineTerminator(OptionSet<LexerFlags> lexerFlags = { })
     {
         m_lastTokenLocation = m_token.location();
+        m_lastTokenEndPosition = m_token.m_endPosition;
         m_lastTokenType = m_token.m_type;
         m_token.m_type = m_lexer->lexWithoutClearingLineTerminator(&m_token, lexerFlags, strictMode());
     }
@@ -2038,6 +2042,7 @@ private:
         result.startOffset = m_token.m_startPosition.offset;
         result.oldLineStartOffset = m_token.m_startPosition.lineStartOffset;
         result.lastTokenLocation = m_lastTokenLocation;
+        result.lastTokenEndPosition = m_lastTokenEndPosition;
         result.oldLineNumber = m_token.m_startPosition.line;
         // Why is this reading from Lexer fine while we are re-lexing the same token?
         // This is because this flag is updated and indicating whether we have a line
@@ -2060,7 +2065,7 @@ private:
         m_token.m_startPosition.line = lexerState.lastTokenLocation.line;
         m_token.m_startPosition.offset = lexerState.lastTokenLocation.startOffset;
         m_token.m_startPosition.lineStartOffset = lexerState.lastTokenLocation.lineStartOffset;
-        m_token.m_endPosition.offset = lexerState.lastTokenLocation.endOffset;
+        m_token.m_endPosition = lexerState.lastTokenEndPosition;
         nextWithoutClearingLineTerminator();
     }
 
@@ -2147,6 +2152,7 @@ private:
     bool m_seenArgumentsDotLength { false };
     bool m_parsingBuiltin;
     bool m_isEvalContext;
+    JSTextPosition m_lastTokenEndPosition; // on a later line than m_lastTokenLocation when that token is a template literal
 
     RefPtr<SourceProviderCache> m_functionCache;
     CallOrApplyDepthScope* m_callOrApplyDepthScope { nullptr };

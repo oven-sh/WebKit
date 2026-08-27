@@ -325,6 +325,7 @@ ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
 
 COPY --from=build_icu /icu-out /icu-out
+COPY --from=build_icu /usr/local/bin/node /usr/local/bin/node
 COPY . /webkit
 WORKDIR /webkit
 
@@ -411,9 +412,11 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG ${LTO_FLAG}" \
     "-DCMAKE_C_FLAGS_DEBUG=/FS /O0 /Ob0" \
     "-DCMAKE_CXX_FLAGS_DEBUG=/FS /O0 /Ob0" \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -G Ninja \
     /webkit && \
     cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
+    mkdir -p /output && node --experimental-strip-types /webkit/Tools/Scripts/dump-bytecode-cache-layout.ts /webkitbuild > /output/bytecode-cache-layout.txt && \
     \
     mkdir -p /output/lib /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc && \
     cp -rL $WEBKIT_OUT_DIR/lib/* /output/lib/ && \

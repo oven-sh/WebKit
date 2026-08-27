@@ -49,6 +49,7 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "UnlinkedProgramCodeBlock.h"
 #include "VariableEnvironmentInlines.h"
+#include <ranges>
 #include <wtf/FileHandle.h>
 #include <wtf/InlineMap.h>
 #include <wtf/MallocSpan.h>
@@ -463,6 +464,10 @@ struct SourceTypeImpl<T, std::enable_if_t<!std::is_fundamental<T>::value && !std
 template<typename T>
 using SourceType = typename SourceTypeImpl<T>::type;
 
+// Fixed rather than the host's alignof(std::max_align_t) / pageSize(): both decide where padding goes, and both vary by platform.
+static constexpr size_t encoderMaxAlignment = 8;
+static constexpr size_t encoderMinPageSize = 4 * KB;
+
 class Encoder {
     WTF_MAKE_NONCOPYABLE(Encoder);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -514,7 +519,8 @@ public:
     std::optional<ptrdiff_t> sharedPrivateNameEnvironment(unsigned hash, const Vector<std::pair<const UniquedStringImpl*, uint16_t>>& entries) const
     {
         for (const auto& shared : m_sharedPrivateNameEnvironments) {
-            if (shared.hash == hash && shared.entries == entries)
+            // Pair by pair: Vector's operator== would memcmp the pairs' padding too.
+            if (shared.hash == hash && std::ranges::equal(shared.entries, entries))
                 return shared.elements;
         }
         return std::nullopt;
@@ -567,7 +573,7 @@ public:
         ptrdiff_t pageOffset;
         if (!m_currentPage->malloc(size, alignment, pageOffset)) {
             // A fresh page starts max-aligned, so the allocation lands at its base.
-            offset = m_baseOffset + roundUpToMultipleOf(static_cast<ptrdiff_t>(alignof(std::max_align_t)), static_cast<ptrdiff_t>(m_currentPage->size()));
+            offset = m_baseOffset + roundUpToMultipleOf(static_cast<ptrdiff_t>(encoderMaxAlignment), static_cast<ptrdiff_t>(m_currentPage->size()));
             size = sizeAt(offset);
             allocateNewPage(size);
             bool fits = m_currentPage->malloc(size, alignment, pageOffset);
@@ -801,7 +807,7 @@ private:
 
         bool malloc(size_t size, size_t alignment, ptrdiff_t& result)
         {
-            ASSERT(alignment && alignment <= alignof(std::max_align_t) && isPowerOfTwo(alignment));
+            ASSERT(alignment && alignment <= encoderMaxAlignment && isPowerOfTwo(alignment));
             ptrdiff_t offset = roundUpToMultipleOf(alignment, m_offset);
             if (static_cast<size_t>(offset + size) > capacity())
                 return false;
@@ -832,7 +838,7 @@ private:
 
         void NODELETE alignEnd()
         {
-            ptrdiff_t size = roundUpToMultipleOf(alignof(std::max_align_t), m_offset);
+            ptrdiff_t size = roundUpToMultipleOf(encoderMaxAlignment, m_offset);
             if (size == m_offset)
                 return;
             RELEASE_ASSERT(static_cast<size_t>(size) <= capacity());
@@ -848,7 +854,7 @@ private:
 
     void allocateNewPage(size_t size = 0)
     {
-        static size_t minPageSize = pageSize();
+        static constexpr size_t minPageSize = encoderMinPageSize;
         if (m_currentPage) {
             m_currentPage->alignEnd();
             m_baseOffset += m_currentPage->size();
@@ -1046,11 +1052,15 @@ public:
     static constexpr unsigned inlineStringMaxLength = 3;
     bool tryEncodeInlineString(const StringImpl& string)
     {
-        if (string.isSymbol() || !string.is8Bit() || !string.length() || string.length() > inlineStringMaxLength)
+        if (string.isSymbol() || !string.length() || string.length() > inlineStringMaxLength)
             return false;
         uint32_t packed = inlineStringTag | string.length() << 2;
-        for (unsigned i = 0; i < string.length(); ++i)
-            packed |= static_cast<uint32_t>(string.span8()[i]) << (8 * (i + 1));
+        for (unsigned i = 0; i < string.length(); ++i) {
+            char16_t character = string[i]; // whether the atom happens to be stored 16-bit is not a property of the source
+            if (!isLatin1(character))
+                return false;
+            packed |= static_cast<uint32_t>(character) << (8 * (i + 1));
+        }
         m_offset = std::bit_cast<Offset>(packed);
         return true;
     }
@@ -1510,6 +1520,33 @@ private:
     unsigned m_size;
 };
 
+// A hash table's iteration order can depend on the process (a robin-hood table seeds its hash with its own address), so
+// tables are encoded in key order: by contents, then by the kind of StringImpl the key decodes to (keys equal in both
+// would decode to one StringImpl, so no table holds two).
+struct EncodingOrder {
+    static unsigned kind(const StringImpl* string)
+    {
+        if (!string->isSymbol())
+            return 0;
+        auto& symbol = *static_cast<const SymbolImpl*>(string);
+        return 1 + symbol.isRegistered() * 2 + symbol.isPrivate();
+    }
+    static bool less(unsigned a, unsigned b) { return a < b; }
+    static bool less(const StringImpl* a, const StringImpl* b)
+    {
+        if (auto order = codePointCompare(StringView(*a), StringView(*b)); order != 0)
+            return order < 0;
+        return kind(a) < kind(b);
+    }
+    template<typename T, typename Traits> static bool less(const RefPtr<T, Traits>& a, const RefPtr<T, Traits>& b) { return less(a.get(), b.get()); }
+
+    template<typename Entries, typename KeyOf>
+    static void sort(Entries& entries, const KeyOf& keyOf)
+    {
+        std::sort(entries.begin(), entries.end(), [&](const auto& a, const auto& b) { return less(keyOf(a), keyOf(b)); });
+    }
+};
+
 template<typename First, typename Second>
 class CachedPair : public CachedObject<std::pair<SourceType<First>, SourceType<Second>>> {
 public:
@@ -1546,7 +1583,12 @@ public:
     template<WTF::ShouldValidateKey shouldValidateKey>
     void encode(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map)
     {
-        m_entries.encodeRange(encoder, map.size(), map);
+        Vector<const typename std::remove_reference_t<decltype(map)>::KeyValuePairType*> entries;
+        entries.reserveInitialCapacity(map.size());
+        for (auto& entry : map)
+            entries.append(&entry);
+        EncodingOrder::sort(entries, [](auto* entry) -> const auto& { return entry->key; });
+        m_entries.encodeRange(encoder, entries.size(), entries | std::views::transform([](auto* entry) -> const auto& { return *entry; }));
     }
 
     // A private-name environment: its entries are shared with an identical environment written earlier (decode rebuilds
@@ -1559,7 +1601,7 @@ public:
         for (const auto& it : map)
             entries.append({ it.key.get(), it.value.bits() });
         std::sort(entries.begin(), entries.end());
-        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(std::span { std::bit_cast<const uint8_t*>(entries.span().data()), entries.size() * sizeof(entries[0]) });
+        unsigned hash = computeHash(entries);
         if (auto existing = encoder.sharedPrivateNameEnvironment(hash, entries)) {
             m_entries.shareElements(encoder, *existing, map.size());
             return;
@@ -1598,7 +1640,7 @@ public:
         unsigned i = 0;
         for (const auto& it : map)
             entriesVector[i++] = { it.key, it.value };
-        m_entries.encode(encoder, entriesVector);
+        m_entries.encode(encoder, entriesVector); // in the map's order (declaration order while inline): it is the order global vars are created in
     }
 
     void decode(Decoder& decoder, Map& map) const
@@ -1722,7 +1764,9 @@ public:
     std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
 private:
-    // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.".
+    // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.",
+    // and Latin-1 contents are stored 8-bit even if this process's atom for them happens to be 16-bit (an equal 16-bit
+    // string was atomized first), since that is not a property of the source.
     struct Shape {
         explicit Shape(const StringImpl& string)
             : characters(const_cast<StringImpl*>(&string))
@@ -1737,6 +1781,8 @@ private:
                     characters = symbol.substring(strlen("Symbol."));
                 }
             }
+            if (!characters->is8Bit() && WTF::charactersAreAllLatin1(characters->span16()))
+                characters = StringImpl::create8BitIfPossible(characters->span16());
         }
         size_t byteLength() const { return characters->length() * (characters->is8Bit() ? 1 : 2); }
         RefPtr<StringImpl> characters;
@@ -1931,6 +1977,7 @@ public:
         unsigned i = 0;
         for (const auto& item : set)
             entriesVector[i++] = item;
+        EncodingOrder::sort(entriesVector, [](const auto& item) -> const auto& { return item; });
         m_entries.encode(encoder, entriesVector);
     }
 
@@ -1944,6 +1991,29 @@ public:
 
 private:
     CachedVector<T> m_entries;
+};
+
+// UnlinkedHandlerInfo keeps its HandlerType in a 2-bit bit-field; the other 30 bits would be whatever the heap held.
+class CachedHandlerInfo : public CachedObject<UnlinkedHandlerInfo> {
+public:
+    void encode(Encoder&, const UnlinkedHandlerInfo& handlerInfo)
+    {
+        m_start = handlerInfo.start;
+        m_end = handlerInfo.end;
+        m_target = handlerInfo.target;
+        m_type = static_cast<uint32_t>(handlerInfo.type());
+    }
+
+    void decode(Decoder&, UnlinkedHandlerInfo& handlerInfo) const
+    {
+        handlerInfo = UnlinkedHandlerInfo(m_start, m_end, m_target, static_cast<HandlerType>(m_type));
+    }
+
+private:
+    uint32_t m_start;
+    uint32_t m_end;
+    uint32_t m_target;
+    uint32_t m_type;
 };
 
 class CachedCodeBlockRareData : public CachedObject<UnlinkedCodeBlock::RareData> {
@@ -1981,7 +2051,7 @@ public:
     }
 
 private:
-    CachedVector<UnlinkedHandlerInfo> m_exceptionHandlers;
+    CachedVector<CachedHandlerInfo> m_exceptionHandlers;
     CachedVector<CachedSimpleJumpTable> m_unlinkedSwitchJumpTables;
     CachedVector<CachedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
@@ -2120,14 +2190,16 @@ class CachedCompactTDZEnvironment : public CachedObject<CompactTDZEnvironment> {
 public:
     void encode(Encoder& encoder, const CompactTDZEnvironment& env)
     {
+        // A Compact is sorted by StringImpl address; decode() sorts again.
+        CompactTDZEnvironment::Compact compact;
         if (std::holds_alternative<CompactTDZEnvironment::Compact>(env.m_variables))
-            m_variables.encode(encoder, std::get<CompactTDZEnvironment::Compact>(env.m_variables));
+            compact = std::get<CompactTDZEnvironment::Compact>(env.m_variables);
         else {
-            CompactTDZEnvironment::Compact compact;
             for (auto& key : std::get<CompactTDZEnvironment::Inflated>(env.m_variables))
                 compact.append(key);
-            m_variables.encode(encoder, compact);
         }
+        EncodingOrder::sort(compact, [](const auto& key) -> const auto& { return key; });
+        m_variables.encode(encoder, compact);
         m_hash = env.m_hash;
     }
 
@@ -2324,7 +2396,7 @@ public:
     void encode(Encoder& encoder, JSCellButterfly& immutableButterfly)
     {
         m_length = immutableButterfly.length();
-        m_indexingType = immutableButterfly.indexingTypeAndMisc();
+        m_indexingType = immutableButterfly.indexingMode(); // not indexingTypeAndMisc(): the rest of that byte is cell-lock state
         if (hasDouble(m_indexingType))
             m_cachedDoubles.encode(encoder, immutableButterfly.toButterfly()->contiguousDouble().data(), m_length);
         else
@@ -2598,41 +2670,52 @@ inline void CachedJSValuePoolRef::decode(Decoder& decoder, WriteBarrier<Unknown>
 }
 
 // UnlinkedMetadataTable's offset table is cumulative and most opcodes have no metadata in a given function, so a code
-// block stores only the entries where the running offset changes: (index << 24 | delta). A typical function has a handful
-// instead of 51.
+// block stores only the opcodes that have entries: (opcode << 24 | entry count). A typical function has a handful instead
+// of 51. Counts rather than offsets because sizeof(Op::Metadata) is the decoder's, not the encoder's (Bun cross-compiles
+// executables that embed the payload).
 struct CachedMetadataSteps {
     static constexpr unsigned indexShift = UnlinkedMetadataTable::stepIndexShift;
-    static constexpr uint32_t deltaMask = UnlinkedMetadataTable::stepDeltaMask;
+    static constexpr uint32_t countMask = UnlinkedMetadataTable::stepCountMask;
     static_assert(UnlinkedMetadataTable::s_offsetTableEntries < (1u << (32 - indexShift)));
 
+    // The inverse of UnlinkedMetadataTable::finalize(): (opcode << 24 | entry count) back out of the offset table.
     static Vector<uint32_t, 16> compute(const UnlinkedMetadataTable& metadataTable)
     {
         ASSERT(metadataTable.m_isFinalized && metadataTable.m_hasMetadata);
         Vector<uint32_t, 16> steps;
-        if (metadataTable.m_steps && !metadataTable.m_isLinked) {
+        if (metadataTable.m_isBackedBySteps && !metadataTable.m_isLinked) {
             steps.append(std::span { metadataTable.m_steps, metadataTable.m_stepsCount });
             return steps;
         }
-        uint32_t previous = 0;
-        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i) {
-            uint32_t value = metadataTable.m_is32Bit ? metadataTable.offsetTable32()[i] : metadataTable.offsetTable16()[i];
-            if (value == previous)
+        auto offsetAt = [&](unsigned i) -> uint32_t { return metadataTable.m_is32Bit ? metadataTable.offsetTable32()[i] : metadataTable.offsetTable16()[i]; };
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries - 1; ++i) {
+            auto opcode = static_cast<OpcodeID>(i);
+            uint32_t start = roundUpToMultipleOf(metadataAlignment(opcode), offsetAt(i));
+            uint32_t end = offsetAt(i + 1);
+            if (end <= start)
                 continue;
-            RELEASE_ASSERT(value > previous && value - previous <= deltaMask);
-            steps.append(i << indexShift | (value - previous));
-            previous = value;
+            uint32_t count = (end - start) / metadataSize(opcode);
+            ASSERT(count && start + count * metadataSize(opcode) == end);
+            RELEASE_ASSERT(count <= countMask); // or it would spill into the opcode bits
+            steps.append(i << indexShift | count);
         }
+#if ASSERT_ENABLED
+        std::array<UnlinkedMetadataTable::Offset32, UnlinkedMetadataTable::s_offsetTableEntries> check;
+        UnlinkedMetadataTable::expandSteps(steps.span(), check.data());
+        for (unsigned i = 0; i < UnlinkedMetadataTable::s_offsetTableEntries; ++i)
+            ASSERT(check[i] == offsetAt(i));
+#endif
         return steps;
     }
 
-    static Ref<UnlinkedMetadataTable> build(bool is32Bit, unsigned numValueProfiles, std::span<const uint32_t> steps)
+    static Ref<UnlinkedMetadataTable> build(unsigned numValueProfiles, std::span<const uint32_t> steps)
     {
-        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(is32Bit, numValueProfiles);
+        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(UnlinkedMetadataTable::stepsNeed32BitOffsets(steps), numValueProfiles);
         metadataTable->m_isFinalized = true;
         metadataTable->m_isLinked = false;
         metadataTable->m_hasMetadata = true;
         metadataTable->m_numValueProfiles = numValueProfiles;
-        if (is32Bit)
+        if (metadataTable->m_is32Bit)
             UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable32());
         else
             UnlinkedMetadataTable::expandSteps(steps, metadataTable->offsetTable16());
@@ -3367,7 +3450,6 @@ public:
 
     enum LayoutFlag : uint8_t {
         LayoutHasMetadata = 1 << 0,
-        LayoutMetadataIs32Bit = 1 << 1,
         LayoutHasExtras = 1 << 2,
         LayoutHasChecksum = 1 << 3, // [u32 region size][u32 checksum] follow the tail
     };
@@ -3443,8 +3525,8 @@ public:
             return UnlinkedMetadataTable::empty();
         std::span<const uint32_t> steps { at<uint32_t>(layout, layout.steps), layout.steps.count };
         if (decoder.canBorrowPayload())
-            return UnlinkedMetadataTable::createFromPersistentSteps(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
-        return CachedMetadataSteps::build(layout.flags & LayoutMetadataIs32Bit, layout.metadataValueProfiles, steps);
+            return UnlinkedMetadataTable::createFromPersistentSteps(layout.metadataValueProfiles, steps);
+        return CachedMetadataSteps::build(layout.metadataValueProfiles, steps);
     }
 
     UnlinkedCodeBlock::RareData* rareData(Decoder& decoder) const
@@ -4307,7 +4389,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         Encoder::ShareableArrayScope shareable(encoder);
         const UnlinkedMetadataTable& metadata = codeBlock.m_metadata.get();
         if (metadata.m_hasMetadata) {
-            layout.flags |= LayoutHasMetadata | (metadata.m_is32Bit ? LayoutMetadataIs32Bit : 0);
+            layout.flags |= LayoutHasMetadata;
             layout.metadataValueProfiles = metadata.m_numValueProfiles;
             auto steps = CachedMetadataSteps::compute(metadata);
             place(layout.steps, steps.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, steps); });
@@ -4424,6 +4506,7 @@ protected:
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
         : m_cacheVersion(computeJSCBytecodeCacheVersion())
         , m_tag(tag)
+        , m_reservedCalleeLocals(CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     {
         m_bootSessionUUID.encode(encoder, bootSessionUUIDString());
     }
@@ -4438,6 +4521,9 @@ protected:
         if (!decoder.regionChecksumMatches(this, m_headerSize, &m_headerChecksum))
             return false;
         if (m_bootSessionUUID.decode(decoder) != bootSessionUUIDString())
+            return false;
+        // BytecodeGenerator numbers a code block's locals after the LLInt/baseline callee-save area, so its size is baked into the bytecode.
+        if (m_reservedCalleeLocals != CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
             return false;
         return true;
     }
@@ -4454,9 +4540,10 @@ private:
     uint32_t m_headerChecksum { 0 };
     CachedString m_bootSessionUUID;
     CachedCodeBlockTag m_tag;
+    uint32_t m_reservedCalleeLocals;
 };
 
-static_assert(alignof(GenericCacheEntry) <= alignof(std::max_align_t));
+static_assert(alignof(GenericCacheEntry) <= encoderMaxAlignment);
 
 template<typename UnlinkedCodeBlockType>
 class CacheEntry : public GenericCacheEntry {
