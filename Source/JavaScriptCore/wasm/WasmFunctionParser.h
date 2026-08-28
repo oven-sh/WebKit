@@ -2463,7 +2463,7 @@ FOR_EACH_WASM_MEMORY_STORE_OP(CREATE_CASE)
         case ExtGCOpType::I31GetS: {
             TypedExpression ref;
             WASM_TRY_POP_EXPRESSION_STACK_INTO(ref, "i31.get_s");
-            WASM_VALIDATOR_FAIL_IF(!isI31ref(ref.type()), "i31.get_s ref to type ", ref.type(), " expected ", TypeKind::I31ref);
+            WASM_VALIDATOR_FAIL_IF(!isSubtype(ref.type(), Type { TypeKind::RefNull, typeIndexFromTypeKind(TypeKind::I31ref) }), "i31.get_s ref to type ", ref.type(), " expected ", TypeKind::I31ref);
 
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addI31GetS(ref, result));
@@ -2474,7 +2474,7 @@ FOR_EACH_WASM_MEMORY_STORE_OP(CREATE_CASE)
         case ExtGCOpType::I31GetU: {
             TypedExpression ref;
             WASM_TRY_POP_EXPRESSION_STACK_INTO(ref, "i31.get_u");
-            WASM_VALIDATOR_FAIL_IF(!isI31ref(ref.type()), "i31.get_u ref to type ", ref.type(), " expected ", TypeKind::I31ref);
+            WASM_VALIDATOR_FAIL_IF(!isSubtype(ref.type(), Type { TypeKind::RefNull, typeIndexFromTypeKind(TypeKind::I31ref) }), "i31.get_u ref to type ", ref.type(), " expected ", TypeKind::I31ref);
 
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addI31GetU(ref, result));
@@ -3024,7 +3024,7 @@ FOR_EACH_WASM_MEMORY_STORE_OP(CREATE_CASE)
         case ExtGCOpType::AnyConvertExtern: {
             TypedExpression reference;
             WASM_TRY_POP_EXPRESSION_STACK_INTO(reference, "any.convert_extern"_s);
-            WASM_VALIDATOR_FAIL_IF(!isExternref(reference.type()), "any.convert_extern reference to type "_s, reference.type(), " expected "_s, TypeKind::Externref);
+            WASM_VALIDATOR_FAIL_IF(!isSubtype(reference.type(), externrefType()), "any.convert_extern reference to type "_s, reference.type(), " expected "_s, TypeKind::Externref);
 
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addAnyConvertExtern(reference, result));
