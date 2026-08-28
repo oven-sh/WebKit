@@ -58,25 +58,9 @@ TestWebKitAPI.WebPageTransferableTests/exportToImage(type:) [ Skip ]
 [ iOS Debug ] TestWebKitAPI.ContentRuleList.RequestMethods [ Pass Timeout ]
 [ iOS Debug ] TestWebKitAPI.ContentRuleList.ResourceTypes [ Pass Timeout ]
 
-# webkit.org/b/322125 [ iOS ]NEW TEST(319178@main): 3x TestWebKitAPI.HTTP2Server.* (api-tests) is a constant timeout. 
-[ iOS ] TestWebKitAPI.HTTP2Server.MultipleRequestsOverOneConnection [ Skip ]
-[ iOS ] TestWebKitAPI.HTTP2Server.NonDefaultStatusCodeAndResponseHeader [ Skip ]
-[ iOS ] TestWebKitAPI.HTTP2Server.POSTBody [ Skip ]
-
-# webkit.org/b/322126 [ iOS ]NEW TEST(319204@main): 3x TestWebKitAPI.HTTP3Server.* (api-tests) is a constant timeout.
-[ iOS Debug ] TestWebKitAPI.HTTP3Server.MultipleRequestsOverOneConnection [ Skip ]
-[ iOS Release ] TestWebKitAPI.HTTP3Server.MultipleRequestsOverOneConnection [ Pass Timeout ]
-[ iOS ] TestWebKitAPI.HTTP3Server.NonDefaultStatusCodeAndResponseHeader [ Skip ]
-[ iOS ] TestWebKitAPI.HTTP3Server.POSTBody [ Skip ]
-
 # webkit.org/b/318893 [ iOS DEBUG ] 2x TestWebKitAPI.IPCTestingAPI.* (api-tests) are constant fails.
 [ iOS Debug ] TestWebKitAPI.IPCTestingAPI.LockdownModeDetection [ Failure ]
 [ iOS Debug ] TestWebKitAPI.IPCTestingAPI.LockdownModeDisabledAllowsWebGL [ Failure ]
-
-# webkit.org/b/322223 [ DEBUG ]REGRESSION(318495@main): 3x TestWebKitAPI.SiteIsolation.BrowsingContext*/CrossOriginPopup* (api-tests) is a constant crash.
-[ debug ] TestWebKitAPI.SiteIsolation.BrowsingContextGroupSwitchForIncompatibleCrossOriginOpenerPolicy [ Crash ]
-[ debug ] TestWebKitAPI.SiteIsolation.CrossOriginPopupWithCOOPValueSameOrigin [ Crash ]
-[ debug ] TestWebKitAPI.SiteIsolation.CrossOriginPopupWithOpenerCOOPValueSameOrigin [ Crash ]
 
 # webkit.org/b/318742 [ iOS DEBUG ] 3x TestWebKitAPI.WKWebExtensionAPICookies.* (api-tests) are constant crashes/timeout.
 [ iOS Debug ] TestWebKitAPI.WKWebExtensionAPICookies.GetAllAfterNetworkProcessTermination [ Timeout ]
@@ -298,7 +282,8 @@ webkit.org/b/176250 [ mac ] TestWebKitAPI.WebKit.DOMWindowExtensionBasic [ Skip 
 webkit.org/b/176250 [ mac ] TestWebKitAPI.WebKit.DOMWindowExtensionNoCache [ Skip ]
 rdar://107850827 [ mac ] TestWebKitAPI.WebKit.FirstResponderScrollingPosition [ Skip ]
 webkit.org/b/278563 [ mac debug ] TestWebKitAPI.Webkit.LoadMoreThan4GB [ Skip ]
-webkit.org/b/318485 [ mac release ] TestWebKitAPI.WebKit.MediaBufferingPolicy [ Pass Failure ]
+webkit.org/b/318485 [ sequoia ] TestWebKitAPI.WebKit.MediaBufferingPolicy [ Pass Failure ]
+webkit.org/b/318485 [ sequoia ] TestWebKitAPI.WebKit.MediaBufferingPolicyWhenSuspendedOrHidden [ Pass Failure ]
 webkit.org/b/298289 TestWebKitAPI.WebKit.MobileAssetSandboxCheck [ Skip ]
 webkit.org/b/176250 [ mac ] TestWebKitAPI.WebKit.NewFirstVisuallyNonEmptyLayout [ Skip ]
 webkit.org/b/176250 [ mac ] TestWebKitAPI.WebKit.NewFirstVisuallyNonEmptyLayoutForImages [ Skip ]

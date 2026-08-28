@@ -211,7 +211,7 @@ ExceptionOr<void> FetchRequest::initializeWith(const String& url, Init&& init)
     m_request.setInitiatorIdentifier(context->resourceRequestIdentifier());
 
     if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext()); document && document->settings().localNetworkAccessEnabled())
-        m_targetAddressSpace = updateTargetAddressSpaceIfNeeded(m_targetAddressSpace, m_request.url());
+        m_targetAddressSpace = updateTargetAddressSpaceIfNeeded(init.targetAddressSpace.value_or(m_targetAddressSpace), m_request.url());
 
     auto optionsResult = initializeOptions(init);
     if (optionsResult.hasException())
@@ -401,7 +401,9 @@ ExceptionOr<Ref<FetchRequest>> FetchRequest::clone(JSDOMGlobalObject& globalObje
     auto clone = adoptRef(*new FetchRequest(*context, std::nullopt, FetchHeaders::create(m_headers.get()), ResourceRequest { m_request }, FetchOptions { m_options }, String { m_referrer }));
     clone->suspendIfNeeded();
     clone->m_duplex = m_duplex;
-    clone->cloneBody(globalObject, *this);
+    if (auto exception = clone->cloneBody(globalObject, *this))
+        return { WTF::move(*exception) };
+
     clone->setNavigationPreloadIdentifier(m_navigationPreloadIdentifier);
     clone->m_enableContentExtensionsCheck = m_enableContentExtensionsCheck;
     if (auto* document = dynamicDowncast<Document>(*context); document && document->settings().localNetworkAccessEnabled())

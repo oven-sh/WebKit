@@ -275,7 +275,7 @@ public:
     bool NODELETE shouldIgnorePlaysInlineRequirementQuirk() const;
 
 #if PLATFORM(IOS_FAMILY)
-    bool shouldAllowPopupFromMicrosoftOfficeToOneDrive() const { return m_quirksData.quirkIsEnabled(QuirksData::SiteSpecificQuirk::ShouldAllowPopupFromMicrosoftOfficeToOneDrive); }
+    bool shouldAllowPopupFromMicrosoftOfficeToOneDrive() const { return m_quirksData.quirkIsEnabled(SiteSpecificQuirk::ShouldAllowPopupFromMicrosoftOfficeToOneDrive); }
     bool needsPopupFromMicrosoftOfficeToOneDrive(const URL& targetURL) const;
 #endif
 
@@ -386,9 +386,6 @@ public:
 
 private:
     bool needsQuirks() const;
-    bool isDomain(const String&) const;
-    bool isEmbedDomain(const String&) const;
-    bool isYoutubeEmbedDomain() const;
 
     static bool domainNeedsAvoidResizingWhenInputViewBoundsChangeQuirk(const URL&, QuirksData&);
     static bool domainNeedsScrollbarWidthThinDisabledQuirk(const URL&, QuirksData&);
@@ -402,6 +399,19 @@ private:
     mutable WeakPtr<const Element, WeakPtrImplWithEventTargetData> m_facebookStoriesCreationFormContainer;
 
     mutable QuirksData m_quirksData;
+
+    mutable QuirkBitSet m_probedQuirks;
+
+    template<typename Probe>
+    bool quirkIsEnabledAfterProbing(SiteSpecificQuirk quirk, NOESCAPE Probe&& probe) const
+    {
+        auto index = static_cast<size_t>(quirk);
+        if (!m_probedQuirks.get(index)) {
+            m_probedQuirks.set(index);
+            m_quirksData.setQuirkState(quirk, probe());
+        }
+        return m_quirksData.quirkIsEnabled(quirk);
+    }
 
     bool m_needsConfigurableIndexedPropertiesQuirk { false };
     bool m_needsToCopyUserSelectNoneQuirk { false };

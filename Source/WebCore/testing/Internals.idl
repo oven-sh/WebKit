@@ -648,6 +648,8 @@ enum ContentsFormat {
 
     DOMString documentBackgroundColor();
 
+    DOMString paintedCaretColor();
+
     boolean displayP3Available();
 
     undefined setPagination(DOMString mode, long gap, optional long pageLength = 0);
@@ -1317,6 +1319,7 @@ enum ContentsFormat {
     undefined updateQuotaBasedOnSpaceUsage();
 
     undefined setConsoleMessageListener(StringCallback? callback);
+    undefined configureLoggingChannel(DOMString channelName, boolean enabled);
 
     readonly attribute boolean supportsAudioSession;
     AudioSessionCategory audioSessionCategory();

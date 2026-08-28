@@ -45,10 +45,12 @@
 #include <WebCore/ShareableBitmap.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/CompletionHandler.h>
+#include <wtf/CrossThreadCopier.h>
 #include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/RunLoop.h>
 #include <wtf/cf/VectorCF.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/CString.h>
@@ -141,6 +143,21 @@ Vector<String> transcodeImages(const Vector<String>& paths, const String& destin
     return paths.map([&](auto& path) {
         // Append the transcoded path if the image needs transcoding. Otherwise append a null string.
         return path.isNull() ? nullString() : transcodeImage(path, destinationUTI, destinationExtension);
+    });
+}
+
+void transcodeImagesInBackgroundQueue(Vector<String>&& paths, String&& destinationUTI, String&& destinationExtension, CompletionHandler<void(Vector<String>&&)>&& completion)
+{
+    ASSERT(isMainThread());
+    sharedImageTranscodingQueueSingleton().dispatch([paths = crossThreadCopy(WTF::move(paths)), destinationUTI = WTF::move(destinationUTI).isolatedCopy(), destinationExtension = WTF::move(destinationExtension).isolatedCopy(), completion = WTF::move(completion)]() mutable {
+        ASSERT(!isMainThread());
+
+        auto replacementPaths = transcodeImages(paths, destinationUTI, destinationExtension);
+        ASSERT(paths.size() == replacementPaths.size());
+
+        RunLoop::mainSingleton().dispatch([replacementPaths = crossThreadCopy(WTF::move(replacementPaths)), completion = WTF::move(completion)]() mutable {
+            completion(WTF::move(replacementPaths));
+        });
     });
 }
 
@@ -455,7 +472,7 @@ static bool encode(CGImageRef image, const String& mimeType, std::optional<doubl
 
     CGDataConsumerCallbacks callbacks {
         [](void* context, const void* buffer, size_t count) -> size_t {
-            auto functor = *static_cast<const ScopedLambda<PutBytesCallback>*>(context);
+            auto& functor = *static_cast<const ScopedLambda<PutBytesCallback>*>(context);
             return functor(unsafeMakeSpan(static_cast<const uint8_t*>(buffer), count));
         },
         nullptr
@@ -524,10 +541,10 @@ template<typename Source> static Vector<uint8_t> encodeToVector(Source&& source,
 {
     Vector<uint8_t> result;
 
-    bool success = encode(std::forward<Source>(source), mimeType, quality, scopedLambdaRef<PutBytesCallback>([&] (std::span<const uint8_t> data) {
+    bool success = encode(std::forward<Source>(source), mimeType, quality, [&] (std::span<const uint8_t> data) {
         result.append(data);
         return data.size();
-    }));
+    });
     if (!success)
         return { };
 

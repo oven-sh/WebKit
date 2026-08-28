@@ -29,51 +29,31 @@
 #include "RenderBoxInlines.h"
 #include "RenderGrid.h"
 #include "StyleComputedStyle+GettersInlines.h"
-#include "StyleFlowTolerance.h"
 #include "StyleGridPositionsResolver.h"
-#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "WritingMode.h"
 
 namespace WebCore {
 
-void GridLanesLayout::initializeGridLanes(unsigned gridAxisTracks, Style::GridTrackSizingDirection stackingAxisDirection)
+GridLanesLayout::GridLanesLayout(RenderGrid& renderGrid, unsigned gridAxisTracksCount, Style::GridTrackSizingDirection stackingAxisDirection)
+    : m_runningPositions(gridAxisTracksCount)
+    , m_renderGrid(renderGrid)
+    , m_stackingAxisGridGap(renderGrid.gridGap(stackingAxisDirection))
+    , m_stackingAxisDirection(stackingAxisDirection)
 {
-    // Reset global variables as they may contain state from previous runs of grid lanes layout.
-    m_stackingAxisDirection = stackingAxisDirection;
-    m_stackingAxisGridGap = m_renderGrid->gridGap(m_stackingAxisDirection);
-    m_gridAxisTracksCount = gridAxisTracks;
-    m_gridContentSize = 0;
-    m_itemOffsets.clear();
-
     m_renderGrid->currentGrid().setupForGridLanesLayout();
     m_renderGrid->populateExplicitGridAndOrderIterator();
-
-    resizeAndResetRunningPositions();
 }
 
-void GridLanesLayout::performGridLanesPlacement(const GridTrackSizingAlgorithm& algorithm, unsigned gridAxisTracks, Style::GridTrackSizingDirection stackingAxisDirection, Phase layoutPhase)
+void GridLanesLayout::performGridLanesPlacement(const GridTrackSizingAlgorithm& algorithm, ResolvedFitTolerance fitTolerance, Phase layoutPhase)
 {
-    initializeGridLanes(gridAxisTracks, stackingAxisDirection);
-
-    m_renderGrid->populateGridPositionsForDirection(algorithm, Style::GridTrackSizingDirection::Columns);
-    m_renderGrid->populateGridPositionsForDirection(algorithm, Style::GridTrackSizingDirection::Rows);
-
     // 4.4 Grid Lanes Layout and Placement Algorithm
     // https://drafts.csswg.org/css-grid-3/#grid-lanes-layout-algorithm
-    // the insertIntoGridAndLayoutItem() will modify the m_autoFlowNextCursor, so m_autoFlowNextCursor needs to be reset.
-    m_autoFlowNextCursor = 0;
-
-    placeGridLanesItems(algorithm, layoutPhase);
+    placeGridLanesItems(algorithm, fitTolerance, layoutPhase);
 }
 
-void GridLanesLayout::resizeAndResetRunningPositions()
+void GridLanesLayout::placeGridLanesItems(const GridTrackSizingAlgorithm& algorithm, ResolvedFitTolerance fitTolerance, Phase layoutPhase)
 {
-    m_runningPositions.fill(LayoutUnit(), m_gridAxisTracksCount);
-}
-
-void GridLanesLayout::placeGridLanesItems(const GridTrackSizingAlgorithm& algorithm, Phase layoutPhase)
-{
-    if (!m_gridAxisTracksCount)
+    if (!gridAxisTracksCount())
         return;
 
     auto& grid = m_renderGrid->currentGrid();
@@ -81,7 +61,7 @@ void GridLanesLayout::placeGridLanesItems(const GridTrackSizingAlgorithm& algori
         if (grid.orderIterator().shouldSkipChild(*gridItem))
             continue;
 
-        auto gridArea = hasDefiniteGridAxisPosition(*gridItem, gridAxisDirection()) ? gridAreaForDefiniteGridAxisItem(*gridItem) : gridAreaForIndefiniteGridAxisItem(*gridItem);
+        auto gridArea = hasDefiniteGridAxisPosition(*gridItem, gridAxisDirection()) ? gridAreaForDefiniteGridAxisItem(*gridItem) : gridAreaForIndefiniteGridAxisItem(*gridItem, fitTolerance);
         insertIntoGridAndLayoutItem(algorithm, *gridItem, gridArea, layoutPhase);
     }
 }
@@ -159,7 +139,7 @@ void GridLanesLayout::insertIntoGridAndLayoutItem(const GridTrackSizingAlgorithm
     setItemContainingBlockToGridArea(algorithm, gridItem);
     gridItem.layoutIfNeeded();
     updateRunningPositions(gridItem, area);
-    m_autoFlowNextCursor = gridAxisSpanFromArea(area).endLine() % m_gridAxisTracksCount;
+    m_autoFlowNextCursor = gridAxisSpanFromArea(area).endLine() % gridAxisTracksCount();
 }
 
 LayoutUnit GridLanesLayout::stackingAxisMarginBoxForItem(const RenderBox& gridItem)
@@ -213,21 +193,18 @@ LayoutUnit GridLanesLayout::maxRunningPositionForSpan(unsigned startLine, unsign
     return maxPosition;
 }
 
-GridArea GridLanesLayout::gridAreaForIndefiniteGridAxisItem(const RenderBox& item)
+GridArea GridLanesLayout::gridAreaForIndefiniteGridAxisItem(const RenderBox& item, ResolvedFitTolerance fitTolerance)
 {
-    auto itemSpanLength = std::min<unsigned>(Style::GridPositionsResolver::spanSizeForAutoPlacedItem(item, gridAxisDirection()), m_gridAxisTracksCount);
-    auto gridAxisLines = m_gridAxisTracksCount + 1;
+    auto itemSpanLength = std::min<unsigned>(Style::GridPositionsResolver::spanSizeForAutoPlacedItem(item, gridAxisDirection()), gridAxisTracksCount());
+    auto gridAxisLines = gridAxisTracksCount() + 1;
 
-    // Get flow-tolerance from the grid lanes container's style
-    const auto& tolerance = m_renderGrid->style().flowTolerance();
-
-    if (tolerance.isInfinite()) {
+    if (WTF::holdsAlternative<CSS::Keyword::Infinite>(fitTolerance)) {
         // Infinite tolerance: place items strictly in order without considering track lengths
         // Use round-robin placement starting from the cursor position
         auto startingLine = m_autoFlowNextCursor;
 
         // If the item doesn't fit at the cursor position, wrap to the beginning
-        if (startingLine + itemSpanLength > m_gridAxisTracksCount)
+        if (startingLine + itemSpanLength > gridAxisTracksCount())
             startingLine = 0;
 
         auto gridAxisPosition = GridSpan::translatedDefiniteGridSpan(startingLine, startingLine + itemSpanLength);
@@ -235,31 +212,7 @@ GridArea GridLanesLayout::gridAreaForIndefiniteGridAxisItem(const RenderBox& ite
     }
 
     // For normal and length-percentage tolerances, find positions within tolerance of the shortest track
-    // Calculate tolerance value
-    auto contentBoxSize = gridAxisDirection() == Style::GridTrackSizingDirection::Columns
-        ? m_renderGrid->contentBoxLogicalHeight()
-        : m_renderGrid->contentBoxLogicalWidth();
-
-    LayoutUnit toleranceValue = tolerance.switchOn(
-        [&](const CSS::Keyword::Normal&) -> LayoutUnit {
-            // Normal resolves to 1em
-            return LayoutUnit { m_renderGrid->style().computedFontSize() };
-        },
-        [&](const typename Style::FlowTolerance::Fixed& fixed) -> LayoutUnit {
-            return LayoutUnit { fixed.resolveZoom(m_renderGrid->style().usedZoomForLength()) };
-        },
-        [&](const typename Style::FlowTolerance::Percentage& percentage) -> LayoutUnit {
-            return Style::evaluate<LayoutUnit>(percentage, contentBoxSize);
-        },
-        [&](const typename Style::FlowTolerance::Calc& calc) -> LayoutUnit {
-            return Style::evaluate<LayoutUnit>(calc, contentBoxSize, m_renderGrid->style().usedZoomForLength());
-        },
-        [](const CSS::Keyword::Infinite&) -> LayoutUnit {
-            // This case shouldn't be reached due to the outer if check
-            ASSERT_NOT_REACHED();
-            return LayoutUnit { };
-        }
-    );
+    auto toleranceValue = std::get<LayoutUnit>(fitTolerance);
 
     // Step 1: Find the absolute shortest position across all tracks
     auto maxStartingLine = gridAxisLines - itemSpanLength;
@@ -313,8 +266,9 @@ GridSpan GridLanesLayout::gridAxisSpanFromArea(const GridArea& gridArea) const
 
 GridArea GridLanesLayout::gridAreaFromGridAxisSpan(const GridSpan& gridAxisSpan) const
 {
+    auto stackingAxisSpan = GridSpan::stackingAxisTranslatedDefiniteGridSpan();
     return m_stackingAxisDirection == Style::GridTrackSizingDirection::Rows
-        ? GridArea { m_stackingAxisSpan, gridAxisSpan }
-        : GridArea { gridAxisSpan, m_stackingAxisSpan };
+        ? GridArea { stackingAxisSpan, gridAxisSpan }
+        : GridArea { gridAxisSpan, stackingAxisSpan };
 }
 } // end namespace WebCore

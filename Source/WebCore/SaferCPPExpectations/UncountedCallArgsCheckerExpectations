@@ -116,7 +116,6 @@ css/FontFaceSet.cpp
 css/SelectorCheckerTestFunctions.h
 css/ShorthandSerializer.cpp
 css/StyleAttributeMutationScope.h
-css/StyleProperties.h
 css/StyleRuleImport.h
 css/StyleSheetContents.cpp
 css/typedom/numeric/CSSMathValue.h
@@ -314,7 +313,6 @@ rendering/MarkedText.cpp
 rendering/RenderBlock.cpp
 rendering/RenderBox.cpp
 rendering/RenderElement.cpp
-[ macOS ] rendering/RenderEmbeddedObject.cpp
 rendering/RenderFragmentContainer.cpp
 rendering/RenderFrameSet.cpp
 rendering/RenderGeometryMap.cpp
@@ -400,7 +398,6 @@ svg/SVGPathByteStream.h
 svg/SVGPathElement.cpp
 svg/SVGPatternElement.cpp
 svg/SVGPolyElement.cpp
-svg/SVGRadialGradientElement.cpp
 svg/SVGSVGElement.cpp
 svg/SVGTRefElement.cpp
 svg/SVGTextPositioningElement.cpp

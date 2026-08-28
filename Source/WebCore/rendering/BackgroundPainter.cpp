@@ -826,9 +826,32 @@ template<typename Layer> LayoutSize BackgroundPainter::calculateFillTileSize(con
         imageIntrinsicSize = positioningAreaSize;
 
     auto handleKeyword = [&](auto keyword) -> LayoutSize {
+        if (image && !image->imageHasNaturalAspectRatio())
+            return positioningAreaSize;
+
         // Scale computation needs higher precision than what LayoutUnit can offer.
         FloatSize localImageIntrinsicSize = imageIntrinsicSize;
         FloatSize localPositioningAreaSize = positioningAreaSize;
+
+        if (image && localImageIntrinsicSize.isEmpty()) {
+            float intrinsicWidth = 0;
+            float intrinsicHeight = 0;
+            FloatSize intrinsicRatio;
+            image->computeIntrinsicDimensions(&renderer, intrinsicWidth, intrinsicHeight, intrinsicRatio);
+            if (!intrinsicRatio.isEmpty()) {
+                float heightAtFullWidth = localPositioningAreaSize.width() * intrinsicRatio.height() / intrinsicRatio.width();
+                bool fitToWidth = keyword.value == CSSValueContain
+                    ? heightAtFullWidth <= localPositioningAreaSize.height()
+                    : heightAtFullWidth >= localPositioningAreaSize.height();
+                auto concreteSize = fitToWidth
+                    ? FloatSize(localPositioningAreaSize.width(), heightAtFullWidth)
+                    : FloatSize(localPositioningAreaSize.height() * intrinsicRatio.width() / intrinsicRatio.height(), localPositioningAreaSize.height());
+                LayoutSize tileSize(concreteSize);
+                if (tileSize.isEmpty())
+                    return { };
+                return tileSize.expandedTo({ devicePixelSize, devicePixelSize });
+            }
+        }
 
         float horizontalScaleFactor = localImageIntrinsicSize.width() ? (localPositioningAreaSize.width() / localImageIntrinsicSize.width()) : 1;
         float verticalScaleFactor = localImageIntrinsicSize.height() ? (localPositioningAreaSize.height() / localImageIntrinsicSize.height()) : 1;
@@ -875,9 +898,13 @@ template<typename Layer> LayoutSize BackgroundPainter::calculateFillTileSize(con
             if (layerWidth.isAuto() && !layerHeight.isAuto()) {
                 if (hasNaturalAspectRatio && imageIntrinsicSize.height())
                     tileSize.setWidth(imageIntrinsicSize.width() * tileSize.height() / imageIntrinsicSize.height());
+                else
+                    tileSize.setWidth(imageIntrinsicSize.width());
             } else if (!layerWidth.isAuto() && layerHeight.isAuto()) {
                 if (hasNaturalAspectRatio && imageIntrinsicSize.width())
                     tileSize.setHeight(imageIntrinsicSize.height() * tileSize.width() / imageIntrinsicSize.width());
+                else
+                    tileSize.setHeight(imageIntrinsicSize.height());
             } else if (layerWidth.isAuto() && layerHeight.isAuto()) {
                 // If both width and height are auto, use the image's intrinsic size.
                 tileSize = imageIntrinsicSize;

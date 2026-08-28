@@ -23,6 +23,7 @@ fast/page-color-sampling [ Pass ]
 http/tests/pdf [ Pass ]
 http/tests/quicklook [ Pass ]
 http/tests/swipe [ Pass ]
+ipc/cocoa [ Pass ]
 ipc/ios [ Pass ]
 media/ios [ Pass ]
 media/audioSession/ios [ Pass ]
@@ -1335,6 +1336,8 @@ imported/w3c/web-platform-tests/shadow-dom/leaktests/selection.html [ Skip ]
 # Tests that use EventSender's mouseMoveTo, mouseUp and mouseDown
 css3/viewport-percentage-lengths/vh-resize.html [ Skip ]
 editing/caret/caret-type-for-user-select-none.html [ Skip ]
+# iOS paints the caret in the tint color, which the web process does not resolve.
+editing/caret/caret-color-legibility-after-paste.html [ Skip ]
 editing/pasteboard/can-read-in-dragstart-event.html [ Skip ]
 editing/pasteboard/cleanup-on-move.html [ Skip ]
 editing/pasteboard/copy-crash.html [ Skip ]
@@ -2633,6 +2636,8 @@ accessibility/listitem-title.html [ Pass ]
 accessibility/listmarker-suffix.html [ Pass ]
 accessibility/live-region-attributes-update-after-dynamic-change.html [ Pass ]
 accessibility/math-has-non-presentational-children.html [ Pass ]
+accessibility/mathml-multiscript-none-holds-slot.html [ Pass ]
+accessibility/mathml-multiscript-odd-postscripts.html [ Pass ]
 accessibility/menu-item-crash.html [ Pass ]
 accessibility/menu-list-crash2.html [ Pass ]
 accessibility/menu-with-menuitem-grandchildren.html [ Pass ]
@@ -3157,6 +3162,9 @@ fast/canvas/webgl/texImage2D-mse-in-dom-flipY-false.html [ Skip ]
 fast/canvas/webgl/texImage2D-mse-in-dom-flipY-true.html [ Skip ]
 fast/canvas/webgl/texImage2D-video-flipY-false.html [ Skip ]
 fast/canvas/webgl/texImage2D-video-flipY-true.html [ Skip ]
+
+# WEBGL_draw_instanced_base_vertex_base_instance is unavailable on the iOS simulator.
+webkit.org/b/319507 fast/canvas/webgl/draw-elements-base-vertex-out-of-bounds.html [ Skip ]
 
 # No colorspaces in iOS WebGL yet.
 webkit.org/b/247166 fast/canvas/webgl/colorspaces-test.html [ Failure ]
@@ -3725,6 +3733,9 @@ imported/w3c/web-platform-tests/css/css-grid/alignment/grid-self-baseline-not-ap
 imported/w3c/web-platform-tests/css/css-grid/alignment/grid-self-baseline-not-applied-if-sizing-cyclic-dependency-002.html [ Skip ]
 imported/w3c/web-platform-tests/css/css-grid/subgrid/alignment-in-subgridded-axes-001.html [ Skip ]
 webkit.org/b/266091 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/intrinsic-sizing/grid-lanes-intrinsic-sizing-cols-006.html
+
+imported/w3c/web-platform-tests/css/css-grid/layout-algorithm/flex-sizing-rows-indefinite-height.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/layout-algorithm/grid-template-flexible-rerun-track-sizing.html [ ImageOnlyFailure ]
 
 
 fast/text/text-styles/-apple-system [ Pass ]
@@ -6642,7 +6653,6 @@ webkit.org/b/214468 imported/w3c/web-platform-tests/css/css-shapes/shape-outside
 webkit.org/b/214468 imported/w3c/web-platform-tests/css/css-shapes/shape-outside/shape-image/shape-image-016.html [ ImageOnlyFailure ]
 webkit.org/b/214468 imported/w3c/web-platform-tests/css/css-sizing/thin-element-render.html [ ImageOnlyFailure ]
 webkit.org/b/214468 imported/w3c/web-platform-tests/css/css-values/ch-unit-002.html [ ImageOnlyFailure ]
-webkit.org/b/277995 imported/w3c/web-platform-tests/css/css-values/attr-all-types.html [ Failure ]
 imported/w3c/web-platform-tests/css/css-values/viewport-units-scrollbars-compute.html [ Skip ]
 
 #1px diff
@@ -8151,6 +8161,8 @@ fast/forms/form-control-refresh/checkbox-radio-inactive-appearance-dark-bg-light
 fast/forms/form-control-refresh/checkbox-radio-inactive-appearance-light-bg-dark-color-scheme.html [ Skip ]
 fast/forms/form-control-refresh/progress-window-inactive-state-dark-mode.html [ Skip ]
 fast/forms/form-control-refresh/progress-window-inactive-state-light-mode.html [ Skip ]
+fast/forms/form-control-refresh/spinbutton-window-inactive-state-dark-mode.html [ Skip ]
+fast/forms/form-control-refresh/spinbutton-window-inactive-state-light-mode.html [ Skip ]
 
 # rdar://155348715 (REGRESSION (Liquid Glass): [ iOS 26 ] 72 WPT/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-select-*.html tests are constantly failing (IMAGE).)
 # Explicit pass expectations for many of these tests are set above. Uncomment that block once this is resolved.
@@ -8854,8 +8866,6 @@ webkit.org/b/318157 imported/w3c/web-platform-tests/IndexedDB/nested-cloning-lar
 webkit.org/b/318157 imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.sharedworker.html [ Pass Failure ] # rdar://178158917
 
 webkit.org/b/318375 imported/w3c/web-platform-tests/css/css-anchor-position/scroll-to-anchored-fixed-001.html [ Pass ImageOnlyFailure ]
-
-webkit.org/b/318258 [ Debug ] ipc/fecolormatrix-type-values-mismatch-crash.html [ Failure ]
 
 # rdar://179251021
 imported/w3c/web-platform-tests/xhr/send-entity-body-document.htm [ Pass Failure ]

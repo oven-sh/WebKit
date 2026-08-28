@@ -48,6 +48,7 @@ class GraphicsContext;
 class Image;
 class ImageBuffer;
 class IntRect;
+class NativeImage;
 class ScriptExecutionContext;
 class SecurityOrigin;
 class WebCoreOpaqueRoot;
@@ -76,6 +77,8 @@ public:
 
     WEBCORE_EXPORT RefPtr<ImageBuffer> makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect = ShouldApplyPostProcessingToDirtyRect::Yes);
 
+    WEBCORE_EXPORT RefPtr<NativeImage> copyNativeImage() const;
+
     void setOriginClean() { m_originClean = true; }
     void setOriginTainted() { m_originClean = false; }
     bool originClean() const { return m_originClean; }
@@ -90,7 +93,7 @@ public:
     void addObserver(CanvasObserver&);
     void removeObserver(CanvasObserver&);
     bool NODELETE hasObserver(CanvasObserver&) const;
-    void notifyObserversCanvasChanged(const FloatRect&);
+    void notifyObserversContentsWillChange(const FloatRect&);
     void notifyObserversCanvasResized();
     void notifyObserversCanvasDestroyed(); // Must be called in destruction before clearing m_context.
     void addDisplayBufferObserver(CanvasDisplayBufferObserver&);
@@ -98,11 +101,13 @@ public:
     void notifyObserversCanvasDisplayBufferPrepared();
     bool hasDisplayBufferObservers() const { return !m_displayBufferObservers.isEmptyIgnoringNullReferences(); }
 
-    HashSet<Element*> cssCanvasClients() const;
+    HashSet<Ref<Element>> cssCanvasClients() const;
 
+    // Called before the canvas contents are updated, so that the observers and the pending
+    // readback post-processing are notified of the area that is about to change.
     // !rect means caller knows the full canvas is invalidated previously.
-    void didDraw(const std::optional<FloatRect>& rect) { return didDraw(rect, ShouldApplyPostProcessingToDirtyRect::Yes); }
-    virtual void didDraw(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect);
+    void willUpdateContents(const std::optional<FloatRect>& rect) { return willUpdateContents(rect, ShouldApplyPostProcessingToDirtyRect::Yes); }
+    virtual void willUpdateContents(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect);
 
     virtual Image* copiedImage() const = 0;
     virtual void clearCopiedImage() const = 0;
@@ -117,7 +122,7 @@ public:
     virtual void queueTaskKeepingObjectAlive(TaskSource, Function<void(CanvasBase&)>&&) = 0;
     virtual void dispatchEvent(Event&) = 0;
 
-    bool postProcessPixelBufferResults(Ref<PixelBuffer>&&) const;
+    bool postProcessPixelBufferResults(PixelBuffer&) const;
     void recordLastFillText(const String&);
 
     void setNoiseInjectionSalt(NoiseInjectionHashSalt salt) { m_canvasNoiseHashSalt = salt; }

@@ -106,6 +106,7 @@
 #include "FrameInspectorController.h"
 #include "FrameLoader.h"
 #include "FrameMemoryMonitor.h"
+#include "FrameSelection.h"
 #include "FrameSnapshotting.h"
 #include "GCObservation.h"
 #include "GraphicsLayer.h"
@@ -155,6 +156,7 @@
 #include "LocalFrameView.h"
 #include "LocalizedStrings.h"
 #include "Location.h"
+#include "LogInitialization.h"
 #include "MallocStatistics.h"
 #include "MediaControlsHost.h"
 #include "MediaDevices.h"
@@ -2545,6 +2547,29 @@ ExceptionOr<String> Internals::documentBackgroundColor()
     if (!document || !document->view())
         return Exception { ExceptionCode::InvalidAccessError };
     return serializationForCSS(document->view()->documentBackgroundColor());
+}
+
+ExceptionOr<String> Internals::paintedCaretColor()
+{
+    RefPtr document = contextDocument();
+    if (!document)
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    document->updateLayoutIgnorePendingStylesheets();
+
+    RefPtr frame = document->frame();
+    if (!frame)
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    CheckedRef selection = frame->selection();
+    if (!selection->selection().isCaret())
+        return Exception { ExceptionCode::InvalidStateError, "There is no caret selection"_s };
+
+    auto caretColor = selection->paintedCaretColor();
+    if (!caretColor.isValid())
+        return Exception { ExceptionCode::InvalidStateError, "The platform does not resolve a caret color"_s };
+
+    return serializationForCSS(caretColor);
 }
 
 ExceptionOr<void> Internals::setPagination(const String& mode, int gap, int pageLength)
@@ -7256,6 +7281,14 @@ void Internals::setConsoleMessageListener(RefPtr<StringCallback>&& listener)
 
     if (RefPtr page = contextDocument()->page())
         page->setConsoleMessageListenerForTesting(WTF::move(listener));
+}
+
+void Internals::configureLoggingChannel(const String& channelName, bool enabled)
+{
+    if (auto* channel = getLogChannel(channelName)) {
+        channel->state = enabled ? WTFLogChannelState::On : WTFLogChannelState::Off;
+        channel->level = enabled ? WTFLogLevel::Info : WTFLogLevel::Error;
+    }
 }
 
 void Internals::setResponseSizeWithPadding(FetchResponse& response, uint64_t size)

@@ -37,6 +37,7 @@
 #include "ImageBuffer.h"
 #include "InspectorInstrumentation.h"
 #include "IntRect.h"
+#include "NativeImage.h"
 #include "NoiseInjectionPolicy.h"
 #include "RenderElementInlines.h"
 #include "ScriptTrackingPrivacyCategory.h"
@@ -99,6 +100,15 @@ RefPtr<ImageBuffer> CanvasBase::makeRenderingResultsAvailable(ShouldApplyPostPro
     return ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
 }
 
+RefPtr<NativeImage> CanvasBase::copyNativeImage() const
+{
+    if (RefPtr context = renderingContext())
+        return context->surfaceBufferToNativeImage(CanvasRenderingContext::SurfaceBuffer::DrawingBuffer);
+    if (!validateArea())
+        return nullptr;
+    return ImageBuffer::sinkIntoNativeImage(ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8));
+}
+
 static inline size_t NODELETE maxCanvasArea()
 {
     if (maxCanvasAreaForTesting)
@@ -140,19 +150,19 @@ bool CanvasBase::hasObserver(CanvasObserver& observer) const
     return m_observers.contains(observer);
 }
 
-void CanvasBase::notifyObserversCanvasChanged(const FloatRect& rect)
+void CanvasBase::notifyObserversContentsWillChange(const FloatRect& rect)
 {
     for (CheckedRef observer : m_observers)
-        observer->canvasChanged(*this, rect);
+        observer->canvasContentsWillChange(*this, rect);
 }
 
-void CanvasBase::didDraw(const std::optional<FloatRect>& rect, ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
+void CanvasBase::willUpdateContents(const std::optional<FloatRect>& rect, ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
 {
     addCanvasNeedingPreparationForDisplayOrFlush();
     IntRect dirtyRect { { }, size() };
     if (rect)
         dirtyRect.intersect(enclosingIntRect(*rect));
-    notifyObserversCanvasChanged(dirtyRect);
+    notifyObserversContentsWillChange(dirtyRect);
 
     // FIXME: We should exclude rects with ShouldApplyPostProcessingToDirtyRect::No
     if (shouldInjectNoiseBeforeReadback()) {
@@ -197,9 +207,9 @@ void CanvasBase::notifyObserversCanvasDisplayBufferPrepared()
         observer->canvasDisplayBufferPrepared(*this);
 }
 
-HashSet<Element*> CanvasBase::cssCanvasClients() const
+HashSet<Ref<Element>> CanvasBase::cssCanvasClients() const
 {
-    HashSet<Element*> cssCanvasClients;
+    HashSet<Ref<Element>> cssCanvasClients;
     for (CheckedRef observer : m_observers) {
         RefPtr image = dynamicDowncast<Style::CanvasImage>(observer.get());
         if (!image)
@@ -208,7 +218,7 @@ HashSet<Element*> CanvasBase::cssCanvasClients() const
         for (auto entry : image->clients()) {
             CheckedRef client = entry.key;
             if (RefPtr element = client->element())
-                cssCanvasClients.add(element.get());
+                cssCanvasClients.add(element.releaseNonNull());
         }
     }
     return cssCanvasClients;
@@ -307,10 +317,10 @@ void CanvasBase::removeCanvasNeedingPreparationForDisplayOrFlush()
     // FIXME: WorkerGlobalContext does not have prepare phase yet.
 }
 
-bool CanvasBase::postProcessPixelBufferResults(Ref<PixelBuffer>&& pixelBuffer) const
+bool CanvasBase::postProcessPixelBufferResults(PixelBuffer& pixelBuffer) const
 {
     if (m_canvasNoiseHashSalt)
-        return m_canvasNoiseInjection.postProcessPixelBufferResults(std::forward<Ref<PixelBuffer>>(pixelBuffer), *m_canvasNoiseHashSalt);
+        return m_canvasNoiseInjection.postProcessPixelBufferResults(pixelBuffer, *m_canvasNoiseHashSalt);
     return false;
 }
 

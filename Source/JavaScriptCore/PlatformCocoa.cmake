@@ -14,7 +14,7 @@ list(APPEND JavaScriptCore_LIBRARIES
 )
 
 target_link_options(JavaScriptCore PRIVATE
-    -Wl,-unexported_symbols_list,${JAVASCRIPTCORE_DIR}/unexported-libc++.txt
+    "LINKER:-unexported_symbols_list,${JAVASCRIPTCORE_DIR}/unexported-libc++.txt"
 )
 
 list(APPEND JavaScriptCore_UNIFIED_SOURCE_LIST_FILES
@@ -183,20 +183,16 @@ if (WEBKIT_SDK_IS_IOS_FAMILY)
     set_target_properties(JavaScriptCore PROPERTIES
         INSTALL_NAME_DIR "${JavaScriptCore_INSTALL_NAME_DIR}"
     )
-    target_link_options(JavaScriptCore PRIVATE
-        -compatibility_version 1.0.0
-        -current_version ${WEBKIT_MAC_VERSION}
-    )
 
     if (WTF_LIBRARY_TYPE STREQUAL "STATIC")
         target_link_options(JavaScriptCore PRIVATE
-            "SHELL:-Wl,-force_load $<TARGET_FILE:WTF>"
+            "LINKER:-force_load,$<TARGET_FILE:WTF>"
         )
     endif ()
 
     # BrowserEngineCore provides the inline-JIT-permissions API (be_memory_*)
     # that threadSelfRestrict uses; weak-linked (iOS 17.4+).
-    target_link_options(JavaScriptCore PRIVATE -weak_framework BrowserEngineCore)
+    target_link_options(JavaScriptCore PRIVATE "LINKER:-weak_framework,BrowserEngineCore")
 
     target_compile_definitions(JavaScriptCore PRIVATE PAS_BMALLOC_HIDDEN=1)
     target_compile_options(JavaScriptCore PRIVATE

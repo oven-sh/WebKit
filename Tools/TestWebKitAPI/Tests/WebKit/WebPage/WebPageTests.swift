@@ -69,7 +69,7 @@ private class TestNavigationDecider: WebPage.NavigationDeciding {
     }
 }
 
-#if ENABLE_CXX_INTEROP
+#if ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
 @MainActor
 private struct TrustingNavigationDecider: WebPage.NavigationDeciding {
     mutating func decideAuthenticationChallengeDisposition(
@@ -89,7 +89,7 @@ extension WebPage.Configuration {
         self.websiteDataStore = WKWebsiteDataStore._store(with: storeConfiguration)
     }
 }
-#endif // ENABLE_CXX_INTEROP
+#endif // ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
 
 // MARK: Tests
 
@@ -113,7 +113,7 @@ struct WebPageTests {
         // FIXME: (283456) Make this test more comprehensive once Observation supports observing a stream of changes to properties.
     }
 
-    #if ENABLE_CXX_INTEROP
+    #if ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
     @Test
     func qualifiedServerTrust() async throws {
         var server = HTTPServer(protocol: .httpsProxy) {
@@ -152,8 +152,8 @@ struct WebPageTests {
             // the same identity as the page itself.
             let qualifiedServerTrustKey = try #require(SecTrustCopyKey(qualifiedServerTrust))
             let serverKey = try #require(SecTrustCopyKey(serverTrust))
-            let qualifiedServerTrustKeyData = unsafe try #require(SecKeyCopyExternalRepresentation(qualifiedServerTrustKey, nil))
-            let serverKeyData = unsafe try #require(SecKeyCopyExternalRepresentation(serverKey, nil))
+            let qualifiedServerTrustKeyData = try #require(unsafe SecKeyCopyExternalRepresentation(qualifiedServerTrustKey, nil))
+            let serverKeyData = try #require(unsafe SecKeyCopyExternalRepresentation(serverKey, nil))
             #expect(CFEqual(qualifiedServerTrustKeyData, serverKeyData))
 
             // Committing a response without a tls-certificate-binding link clears the 2-QWAC.
@@ -163,7 +163,7 @@ struct WebPageTests {
             #expect(page.qualifiedServerTrust == nil)
         }
     }
-    #endif // ENABLE_CXX_INTEROP
+    #endif // ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
 
     @Test
     func decidePolicyForNavigationActionFragment() async throws {

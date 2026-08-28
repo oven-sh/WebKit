@@ -572,6 +572,7 @@ def serialized_identifiers():
         'WebKit::WebTransportSessionIdentifier',
         'WebKit::WebURLSchemeHandlerIdentifier',
         'WebKit::WebUndoStepID',
+        'WebKit::XRDeviceIdentifier',
     ]
 
 
@@ -706,6 +707,7 @@ def types_that_cannot_be_forward_declared():
         'WebKit::WebExtensionRegisteredScriptParameters',
         'WebKit::WebExtensionScriptInjectionParameters',
         'WebKit::WebExtensionScriptInjectionResultParameters',
+        'WebKit::WebExtensionSidebarSide',
         'WebKit::WebExtensionStorageAccessLevel',
         'WebKit::WebExtensionTabParameters',
         'WebKit::WebExtensionTabQueryParameters',
@@ -1617,6 +1619,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::ScriptTrackingPrivacyRules': ['"ScriptTrackingPrivacyFilter.h"'],
         'WebKit::SelectionFlags': ['"GestureTypes.h"'],
         'WebKit::SelectionTouch': ['"GestureTypes.h"'],
+        'WebKit::SelectWithGestureResult': ['"GestureTypes.h"'],
         'WebKit::SwapBuffersDisplayRequirement': ['"PrepareBackingStoreBuffersData.h"'],
         'WebKit::TapIdentifier': ['"IdentifierTypes.h"'],
         'WebKit::TextCheckerRequestID': ['"IdentifierTypes.h"'],
@@ -1626,6 +1629,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::WebExtensionContextInstallReason': ['"WebExtensionContext.h"'],
         'WebKit::WebExtensionCookieFilterParameters': ['"WebExtensionCookieParameters.h"'],
         'WebKit::WebExtensionError': ['"WebExtensionError.h"'],
+        'WebKit::WebExtensionSidebarSide': ['"WebExtensionSidebarParameters.h"'],
         'WebKit::WebExtensionTabImageFormat': ['"WebExtensionTab.h"'],
         'WebKit::WebExtensionWindowTypeFilter': ['"WebExtensionWindow.h"'],
         'WebKit::WebModelIdentifier': ['"WebModelIdentifier.h"'],

@@ -167,8 +167,8 @@ template<typename, typename WeakPtrImpl = DefaultWeakPtrImpl, typename = RawPtrT
 template<typename, typename = DefaultWeakPtrImpl> class WeakRef;
 template<typename T> class InlineWeakPtr;
 template<typename T> struct NoTaggingTraits;
-template<typename T, typename = NoTaggingTraits<T>> class ThreadSafeWeakPtr;
-template<typename T, typename = NoTaggingTraits<T>> class ThreadSafeWeakRef;
+template<typename T> class ThreadSafeWeakPtr;
+template<typename T> class ThreadSafeWeakRef;
 
 template <typename T>
 using SaSegmentedVector = SegmentedVector<T, 8, 0, SegmentedVectorGrowthPolicy::Constant, SequesteredArenaMalloc>;
@@ -336,8 +336,6 @@ using WTF::WeakPtr;
 using WTF::WeakRef;
 using WTF::WorkQueue;
 using WTF::makeUniqueRef;
-
-template<class T, class E> using Expected = std::experimental::expected<T, E>;
 
 // Sometimes an inline method simply forwards to another one and does nothing else. If it were
 // just a forward declaration of that method then you would only need a forward declaration of

@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Apple Inc. All rights reserved.
+// Copyright (C) 2025-2026 Apple Inc. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -21,13 +21,62 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if ENABLE_CXX_INTEROP
+#if ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
 
 import Testing
 import wtf
+public import TestWTFLibrary
+public import TestWTFLibrary.SwiftCxxInteropTestbed
 
 private typealias Cxx = SwiftCxxInteropTestbed
 
+// MARK: - Conformances
+
+// This is safe because all conformances to the protocol are safe as long as they don't
+// implement any of the requirements themselves.
+extension Cxx.IntCompletionHandler: @unsafe TestWTFLibrary.CxxCompletionHandler {
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public typealias Argument = CInt
+}
+
+// `MoveOnlyProbe` is move-only in C++, so Swift imports it as `~Copyable`. This one takes it by rvalue
+// reference, which the importer spells as `callAsFunction(consuming:)`, hence `CxxConsumingCompletionHandler`.
+extension Cxx.MoveOnlyProbeCompletionHandler: @unsafe TestWTFLibrary.CxxConsumingCompletionHandler {
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public typealias Argument = SwiftCxxInteropTestbed.MoveOnlyProbe
+}
+
+// Copyable but not trivially copyable: this argument reaches Swift through its copy constructor.
+extension Cxx.CopyCountingProbeCompletionHandler: @unsafe TestWTFLibrary.CxxCompletionHandler {
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public typealias Argument = SwiftCxxInteropTestbed.CopyCountingProbe
+}
+
+// Trivially copyable in C++, but Swift imports the `probe` field as a managed reference, so the bridge
+// has to let Swift copy this argument rather than take it.
+extension Cxx.SharedProbeHolderCompletionHandler: @unsafe TestWTFLibrary.CxxCompletionHandler {
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public typealias Argument = SwiftCxxInteropTestbed.SharedProbeHolder
+}
+
+// Noncopyable, so it is transferred to Swift, and it notices if Swift relocates it byte-wise.
+extension Cxx.SelfReferentialProbeCompletionHandler: @unsafe TestWTFLibrary.CxxConsumingCompletionHandler {
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public typealias Argument = SwiftCxxInteropTestbed.SelfReferentialProbe
+}
+
+// MARK: - Helpers
+
+/// Observed via a weak reference to prove the closure context was released.
+private final class Probe {}
+
+private final class Recorder {
+    var values: [CInt] = []
+}
+
+// MARK: - Tests
+
+@Suite(.serialized)
 @MainActor
 struct SwiftCxxInteropTests {
     @Test
@@ -42,21 +91,220 @@ struct SwiftCxxInteropTests {
     }
 
     @Test
-    func wtfCompletionHandlerCanBeInvokedFromSwift() async throws {
-        // FIXME: Improve the ergonomics of using this from Swift.
-
+    func completionHandlerReceivesItsArgument() async throws {
         let result = await withCheckedContinuation { continuation in
-            let completionHandler = Cxx.IntCompletionHandler(
-                { result in continuation.resume(returning: result)
-                },
-                WTF.ThreadLikeAssertion(WTF.CurrentThreadLike())
-            )
+            let completionHandler = Cxx.IntCompletionHandler { argument in
+                continuation.resume(returning: argument)
+            }
 
             Cxx.callIntCompletionHandler(3, consuming: completionHandler)
         }
 
         #expect(result == 3)
     }
+
+    @Test
+    func wtfCompletionHandlerCanBeInvokedFromSwift() async throws {
+        let result = await withCheckedContinuation { continuation in
+            let completionHandler = Cxx.IntCompletionHandler(continuation)
+
+            Cxx.callIntCompletionHandler(3, consuming: completionHandler)
+        }
+
+        #expect(result == 3)
+    }
+
+    @Test
+    func completionHandlerPreservesCapturedState() async throws {
+        let captured: CInt = 40
+
+        let result = await withCheckedContinuation { continuation in
+            let completionHandler = Cxx.IntCompletionHandler { argument in
+                continuation.resume(returning: argument + captured)
+            }
+
+            Cxx.callIntCompletionHandler(2, consuming: completionHandler)
+        }
+
+        #expect(result == 42)
+    }
+
+    @Test
+    func voidCompletionHandlerCanBeInvokedFromSwift() async throws {
+        var didCall = false
+
+        let completionHandler = Cxx.VoidCompletionHandler {
+            didCall = true
+        }
+        Cxx.callVoidCompletionHandler(consuming: completionHandler)
+
+        #expect(didCall)
+    }
+
+    @Test
+    func voidCompletionHandlerWorksWithAContinuation() async throws {
+        await withCheckedContinuation { continuation in
+            let completionHandler = Cxx.VoidCompletionHandler(continuation)
+
+            Cxx.callVoidCompletionHandler(consuming: completionHandler)
+        }
+    }
+
+    @Test
+    func separateHandlersDoNotShareAContext() async throws {
+        let recorder = Recorder()
+
+        let first = Cxx.IntCompletionHandler { recorder.values.append($0 * 10) }
+        let second = Cxx.IntCompletionHandler { recorder.values.append($0 * 100) }
+
+        Cxx.callIntCompletionHandler(1, consuming: first)
+        Cxx.callIntCompletionHandler(2, consuming: second)
+
+        #expect(recorder.values == [10, 200])
+    }
+
+    // MARK: Context lifetime
+
+    @Test
+    func contextIsReleasedAfterTheHandlerIsCalled() async throws {
+        weak var weakProbe: Probe?
+
+        do {
+            let probe = Probe()
+            weakProbe = probe
+
+            let completionHandler = Cxx.IntCompletionHandler { _ in
+                // Capture the probe so it is kept alive only by the closure context.
+                _ = probe
+            }
+            Cxx.callIntCompletionHandler(1, consuming: completionHandler)
+        }
+
+        #expect(weakProbe == nil, "the closure context should be released once the handler has run")
+    }
+
+    @Test
+    func contextSurvivesUntilTheHandlerIsInvokedLater() async throws {
+        // Leaving a stored handler behind would strand it for the next test, so clear the
+        // slot even if this test returns early.
+        defer { Cxx.resetStoredIntCompletionHandler() }
+
+        // storeIntCompletionHandler() returns without calling the handler, so the closure has
+        // to outlive that call.
+        let result = await withCheckedContinuation { continuation in
+            Cxx.storeIntCompletionHandler(consuming: .init(continuation))
+
+            Cxx.invokeStoredIntCompletionHandler(9)
+        }
+
+        #expect(result == 9)
+    }
+
+    // MARK: Noncopyable arguments
+
+    @Test
+    func moveOnlyCompletionHandlerReceivesItsArgument() async throws {
+        let recorder = Recorder()
+
+        Cxx.callMoveOnlyProbeCompletionHandler(
+            5,
+            consuming: .init { (probe: consuming Cxx.MoveOnlyProbe) in
+                recorder.values.append(probe.value())
+            }
+        )
+
+        #expect(recorder.values == [5])
+        #expect(Cxx.liveMoveOnlyProbeCount() == 0, "the argument should be destroyed exactly once")
+    }
+
+    @Test
+    func moveOnlyArgumentIsDestroyedWhenTheClosureIgnoresIt() async throws {
+        // C++ hands ownership of the argument to Swift, so nothing else will destroy it if the closure
+        // does not look at it.
+        Cxx.callMoveOnlyProbeCompletionHandler(8, consuming: .init { _ in })
+
+        #expect(Cxx.liveMoveOnlyProbeCount() == 0, "an ignored argument should still be destroyed")
+    }
+
+    @Test
+    func storedMoveOnlyCompletionHandlerSurvivesUntilInvoked() async throws {
+        // See contextSurvivesUntilTheHandlerIsInvokedLater().
+        defer { Cxx.resetStoredMoveOnlyProbeCompletionHandler() }
+
+        let recorder = Recorder()
+
+        Cxx.storeMoveOnlyProbeCompletionHandler(
+            consuming: .init { (probe: consuming Cxx.MoveOnlyProbe) in
+                recorder.values.append(probe.value())
+            }
+        )
+        Cxx.invokeStoredMoveOnlyProbeCompletionHandler(9)
+
+        #expect(recorder.values == [9])
+        #expect(Cxx.liveMoveOnlyProbeCount() == 0, "the argument should be destroyed exactly once")
+    }
+
+    // MARK: Copyable, non-trivially-copyable arguments
+
+    @Test
+    func copyableArgumentIsCopiedRatherThanTakenFromTheCaller() async throws {
+        Cxx.resetCopyCountingProbeCounts()
+
+        let recorder = Recorder()
+
+        // A copyable argument reaches Swift as a copy made by Swift, not by C++.
+        Cxx.callCopyCountingProbeCompletionHandler(
+            11,
+            consuming: .init { (probe: Cxx.CopyCountingProbe) in
+                recorder.values.append(probe.value())
+            }
+        )
+
+        #expect(recorder.values == [11], "Swift should see the value C++ passed")
+        #expect(Cxx.copyCountingProbeCopyCount() == 1, "exactly one copy should be made for Swift")
+        #expect(Cxx.liveCopyCountingProbeCount() == 0, "every probe should be destroyed")
+    }
+
+    // MARK: Arguments holding a managed reference
+
+    @Test
+    func argumentHoldingAManagedReferenceLeavesTheCallersCountAlone() async throws {
+        Cxx.resetSharedProbe()
+
+        // The closure never looks at the argument, so any change to the reference count is the bridge's
+        // doing rather than the closure's. C++ passed a borrowed reference and still holds it.
+        let refCountAfter = Cxx.callSharedProbeHolderCompletionHandler(consuming: .init { _ in })
+
+        #expect(
+            Cxx.sharedProbeRefCalls() == Cxx.sharedProbeDerefCalls(),
+            "the bridge must balance every retain and release it causes"
+        )
+        #expect(refCountAfter == 1, "the caller's own reference must survive the handler")
+    }
+
+    // MARK: Relocation
+
+    @Test
+    func noncopyableArgumentIsRelocatedWithItsMoveConstructor() async throws {
+        let recorder = Recorder()
+
+        // Pins the property that WTF::CompletionHandler's static_assert relies on: a noncopyable
+        // argument with a non-trivial destructor is relocated by running its C++ move constructor, so
+        // a pointer into the object stays valid. If Swift ever copies the bytes instead, the interior
+        // pointer is left aimed at storage C++ has already abandoned.
+        Cxx.callSelfReferentialProbeCompletionHandler(
+            7,
+            consuming: .init { (probe: consuming Cxx.SelfReferentialProbe) in
+                unsafe recorder.values.append(probe.interiorPointerIsValid() ? 1 : 0)
+                unsafe recorder.values.append(probe.valueThroughInteriorPointer())
+            }
+        )
+
+        #expect(
+            recorder.values == [1, 7],
+            "a noncopyable argument must be relocated with its move constructor, not by copying its bytes"
+        )
+    }
 }
 
-#endif // ENABLE_CXX_INTEROP
+#endif // ENABLE_CXX_INTEROP && compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN

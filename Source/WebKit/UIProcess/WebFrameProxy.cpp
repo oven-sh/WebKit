@@ -76,11 +76,14 @@
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/SecurityPolicy.h>
 #include <WebCore/ShareableBitmapHandle.h>
+#include <WebCore/Site.h>
 #include <WebCore/WebKitJSHandle.h>
 #include <stdio.h>
 #include <wtf/CallbackAggregator.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RunLoop.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/WeakRef.h>
 #include <wtf/text/WTFString.h>
@@ -110,6 +113,32 @@ namespace WebKit {
 using namespace WebCore;
 
 class WebPageProxy;
+
+static constexpr Seconds unloadEventsExpirationDelay { 1_s };
+
+class FrameProcessRefWithExpiration : public RefCountedAndCanMakeWeakPtr<FrameProcessRefWithExpiration> {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(FrameProcessRefWithExpiration);
+public:
+    static Ref<FrameProcessRefWithExpiration> create(Ref<FrameProcess>&& frameProcess, Seconds expirationDelay)
+    {
+        ASSERT(RunLoop::isMain());
+        return adoptRef(*new FrameProcessRefWithExpiration(WTF::move(frameProcess), expirationDelay));
+    }
+
+private:
+    FrameProcessRefWithExpiration(Ref<FrameProcess>&& frameProcess, Seconds expirationDelay)
+        : m_frameProcess(WTF::move(frameProcess))
+        , m_expirationTimer(RunLoop::mainSingleton(), "FrameProcessRefWithExpiration::ExpirationTimer"_s, [weakThis = WeakPtr { *this }] {
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->m_frameProcess = nullptr;
+        })
+    {
+        m_expirationTimer.startOneShot(expirationDelay);
+    }
+
+    RefPtr<FrameProcess> m_frameProcess;
+    RunLoop::Timer m_expirationTimer;
+};
 
 static HashMap<FrameIdentifier, WeakRef<WebFrameProxy>>& NODELETE allFrames()
 {
@@ -659,7 +688,10 @@ void WebFrameProxy::commitProvisionalFrame(IPC::Connection& connection, FrameIde
 {
     ASSERT(m_page);
     if (m_provisionalFrame) {
-        protect(process())->send(Messages::WebPage::LoadDidCommitInAnotherProcess(frameID, m_provisionalFrame->process().coreProcessIdentifier(), m_layerHostingContextIdentifier, nullptr), *webPageIDInCurrentProcess());
+        ASSERT(url().isEmpty() || WebCore::Site { url() } != WebCore::Site { request.url() });
+
+        // Keep FrameProcess alive until message reply, so the current active document could finish dispatching necessary events.
+        protect(process())->sendWithAsyncReply(Messages::WebPage::LoadDidCommitInAnotherProcess(frameID, m_provisionalFrame->process().coreProcessIdentifier(), m_layerHostingContextIdentifier, nullptr), [keepAlive = FrameProcessRefWithExpiration::create(Ref { frameProcess() }, unloadEventsExpirationDelay)] { }, *webPageIDInCurrentProcess());
 
         WebCore::ProcessIdentifier oldProcessID = process().coreProcessIdentifier();
         std::optional<WebCore::PageIdentifier> oldPageID = webPageIDInCurrentProcess();
@@ -1274,7 +1306,7 @@ void WebFrameProxy::updateDocumentSecurityOrigin(WebFrameProxy* creator, ForInit
     m_documentSecurityOrigin = SecurityOrigin::create(url());
 }
 
-WebCore::CertificateInfo WebFrameProxy::certificateInfoFromNetworkProcess(const URL& url) const
+WebCore::CertificateInfo WebFrameProxy::provisionalCertificateInfoFromNetworkProcess(const URL& url) const
 {
     String hostAndPort = url.hostAndPort();
     if (!decltype(m_hostAndPortToCertificateInfo)::isValidKey(hostAndPort))
@@ -1306,7 +1338,7 @@ WebCore::CertificateInfo WebFrameProxy::certificateInfoFromNetworkProcess(const 
 
 void WebFrameProxy::commitCertificateInfo(const URL& url, bool hasCertificateInfo)
 {
-    m_certificateInfo = hasCertificateInfo ? certificateInfoFromNetworkProcess(url) : CertificateInfo();
+    m_certificateInfo = hasCertificateInfo ? provisionalCertificateInfoFromNetworkProcess(url) : CertificateInfo();
 }
 
 void WebFrameProxy::receivedMainResourceResponseWithCertificateInfo(String&& hostAndPort, WebCore::CertificateInfo&& certificateInfo)
@@ -1318,13 +1350,13 @@ void WebFrameProxy::receivedMainResourceResponseWithCertificateInfo(String&& hos
         m_hostAndPortToCertificateInfo.set(WTF::move(hostAndPort), WTF::move(certificateInfo));
 }
 
-void WebFrameProxy::copyCertificateInfoForProcessSwapOnNavigationResponse(const URL& url, const WebFrameProxy& oldMainFrame)
+void WebFrameProxy::setCertificateInfoForProcessSwapOnNavigationResponse(const URL& url, WebCore::CertificateInfo&& certificateInfo)
 {
     ASSERT(isMainFrame());
-    ASSERT(oldMainFrame.isMainFrame());
+    ASSERT(!certificateInfo.isEmpty());
     ASSERT(m_hostAndPortToCertificateInfo.isEmpty());
 
-    m_hostAndPortToCertificateInfo.set(url.hostAndPort(), oldMainFrame.certificateInfoFromNetworkProcess(url));
+    m_hostAndPortToCertificateInfo.set(url.hostAndPort(), WTF::move(certificateInfo));
 }
 
 } // namespace WebKit
