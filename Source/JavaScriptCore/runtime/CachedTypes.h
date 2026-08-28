@@ -33,6 +33,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueArray.h>
 #include <wtf/text/AtomStringImpl.h>
+#include <optional>
 
 namespace JSC {
 
@@ -92,6 +93,9 @@ public:
     EncoderStringTable() = default;
     JS_EXPORT_PRIVATE ~EncoderStringTable();
     uint32_t ordinalFor(const StringImpl&);
+    // The 4-byte slot a cached non-symbol string occupies (CachedPtr's encoding): a 1-3 character Latin-1 string inline,
+    // else an ordinal into this table, or the empty sentinel. DecoderStringTable::atomForSlot reads it back.
+    JS_EXPORT_PRIVATE uint32_t slotFor(const StringImpl&);
     JS_EXPORT_PRIVATE Vector<uint8_t> serialize() const;
     static constexpr uint32_t maxOrdinal = (1u << 30) - 1;
 private:
@@ -108,6 +112,9 @@ public:
     JS_EXPORT_PRIVATE ~DecoderStringTable();
     Ref<AtomStringImpl> atomFor(uint32_t ordinal);
     String plainStringFor(uint32_t ordinal);
+    // The atom for a slot EncoderStringTable::slotFor wrote, resolved as the Decoder resolves the same slot in a code
+    // block; null for a malformed slot.
+    JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> atomForSlot(VM&, uint32_t slot);
 private:
     struct Record {
         const uint8_t* characters;
@@ -128,6 +135,29 @@ class VariableLengthObjectBase {
 public:
     // Relative offset from this field to the object's payload. A payload is one code block tree, far below 2 GB.
     using Offset = int32_t;
+
+    // A 1-3 character Latin-1 string that decodes to an atom fits in the 4-byte slot that would otherwise hold the offset
+    // of its record: low two bits 01 (record offsets are multiples of 4 and the empty sentinel ends in 11), then the
+    // length, then the characters. Minified code is mostly such names. Tag 10 is a ≥4-char string held by ordinal in the
+    // embedder's EncoderStringTable/DecoderStringTable.
+    static constexpr uint32_t inlineStringTag = 1;
+    static constexpr uint32_t inlineStringTagMask = 3;
+    static constexpr unsigned inlineStringMaxLength = 3;
+    static constexpr uint32_t externalStringTag = 2;
+    static constexpr uint32_t emptySentinel = std::numeric_limits<int32_t>::max(); // s_invalidOffset
+    static std::optional<uint32_t> packInlineString(const StringImpl& string)
+    {
+        if (string.isSymbol() || !string.length() || string.length() > inlineStringMaxLength)
+            return std::nullopt;
+        uint32_t packed = inlineStringTag | string.length() << 2;
+        for (unsigned i = 0; i < string.length(); ++i) {
+            char16_t character = string[i]; // whether the atom happens to be stored 16-bit is not a property of the source
+            if (!isLatin1(character))
+                return std::nullopt;
+            packed |= static_cast<uint32_t>(character) << (8 * (i + 1));
+        }
+        return packed;
+    }
 
 protected:
     VariableLengthObjectBase(Offset offset)
@@ -155,7 +185,8 @@ public:
     AtomStringImpl* atomForOrdinal(uint32_t) const;
     void setAtomForOrdinal(uint32_t, AtomStringImpl&);
     // 1-3 character strings stored in their slot: length 1 hits SmallStrings, length 2 the VM's shared 65536-entry table.
-    Ref<AtomStringImpl> atomForInlineString(std::span<const uint8_t, 4> slot);
+    static Ref<AtomStringImpl> atomForInlineString(VM&, std::span<const uint8_t, 4> slot);
+    Ref<AtomStringImpl> atomForInlineString(std::span<const uint8_t, 4> slot) { return atomForInlineString(m_vm, slot); }
     // ≥4-char strings stored by ordinal in the embedder's shared DecoderStringTable (externalStringTag slots).
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
     String plainStringForExternalString(uint32_t ordinal);
@@ -184,7 +215,6 @@ private:
     VM& m_vm;
     const Ref<CachedBytecode> m_cachedBytecode;
     Vector<AtomStringImpl*> m_atomsByOrdinal;
-    AtomStringImpl** m_twoCharacterAtoms { nullptr };
     DecoderStringTable* m_externalStrings { nullptr };
     const void* m_activeRecord { nullptr };
     const void* m_activeTail { nullptr };
