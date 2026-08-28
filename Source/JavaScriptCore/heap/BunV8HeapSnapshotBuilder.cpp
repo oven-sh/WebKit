@@ -41,23 +41,17 @@ BunV8HeapSnapshotBuilder::BunV8HeapSnapshotBuilder(HeapProfiler& profiler)
     // calculateDistances BFS uses shortcut edges from root as user roots
     // (distance=1) and assigns baseSystemDistance to anything reachable only
     // through (GC roots). Synthetic IDs occupy 1..kSyntheticIdCount.
-    m_nodes.append({
-        .id = 1,
-        .typeIndex = static_cast<unsigned>(V8NodeType::Synthetic),
+    m_nodes.append(Node {
         .name = ""_s,
         .selfSize = 0,
-        .edges = {},
-        .traceLocation = std::nullopt,
-        .parentNodeId = std::nullopt,
-    });
-    m_nodes.append({
-        .id = 2,
+        .id = 1,
         .typeIndex = static_cast<unsigned>(V8NodeType::Synthetic),
+    });
+    m_nodes.append(Node {
         .name = "(GC roots)"_s,
         .selfSize = 0,
-        .edges = {},
-        .traceLocation = std::nullopt,
-        .parentNodeId = kRootNodeIndex,
+        .id = 2,
+        .typeIndex = static_cast<unsigned>(V8NodeType::Synthetic),
     });
 
     // Add empty string as first string (index 0)
@@ -168,20 +162,28 @@ unsigned BunV8HeapSnapshotBuilder::analyzeNodeInternal(JSCell* cell)
         m_snapshot->appendNode(HeapSnapshotNode(cell, identifier));
     }
 
-    m_nodes.append({
+    m_nodes.append(Node {
         .cell = cell,
+        .selfSize = cell->estimatedSizeInBytes(m_profiler.vm()),
         .id = identifier + kSyntheticIdCount,
         .typeIndex = typeIndex,
-        .selfSize = cell->estimatedSizeInBytes(m_profiler.vm()),
-        .edges = {},
-        .traceLocation = getTraceLocation(cell),
-        .parentNodeId = std::nullopt,
     });
 
     if (cell->type() == GlobalObjectType)
         m_globalObjectNodeIndices.append(index);
 
     return index;
+}
+
+// m_edges stays a contiguous Vector because serialization sorts it. A Vector
+// caps a single allocation at ~2GiB and CRASH()es past it, so record the
+// overflow instead and let the serializers fail with a null result.
+void BunV8HeapSnapshotBuilder::appendEdge(Edge&& edge)
+{
+    if (m_overflowed.load(std::memory_order_relaxed))
+        return;
+    if (!m_edges.tryAppend(WTF::move(edge))) [[unlikely]]
+        m_overflowed.store(true, std::memory_order_relaxed);
 }
 
 void BunV8HeapSnapshotBuilder::appendSyntheticRootEdges()
@@ -191,14 +193,14 @@ void BunV8HeapSnapshotBuilder::appendSyntheticRootEdges()
     rootToGcRoots.toNodeId = kGcRootsNodeIndex;
     rootToGcRoots.typeIndex = static_cast<unsigned>(V8EdgeType::Element);
     rootToGcRoots.index = 0;
-    m_edges.append(WTF::move(rootToGcRoots));
+    appendEdge(WTF::move(rootToGcRoots));
 
     for (unsigned globalIndex : m_globalObjectNodeIndices) {
         Edge shortcut {};
         shortcut.fromNodeId = kRootNodeIndex;
         shortcut.toNodeId = globalIndex;
         shortcut.typeIndex = static_cast<unsigned>(V8EdgeType::Shortcut);
-        m_edges.append(WTF::move(shortcut));
+        appendEdge(WTF::move(shortcut));
     }
 }
 
@@ -221,23 +223,12 @@ void BunV8HeapSnapshotBuilder::analyzeEdge(JSCell* from, JSCell* to, RootMarkRea
 
     edge.typeIndex = getEdgeTypeIndex(reason);
 
-    // Only track parent-child relationships for non-property and non-element edges
-    switch (edge.typeIndex) {
-    case static_cast<unsigned>(V8EdgeType::Element):
-    case static_cast<unsigned>(V8EdgeType::Property):
-    case static_cast<unsigned>(V8EdgeType::Context):
-        break;
-    default: {
+    if (edge.typeIndex == static_cast<unsigned>(V8EdgeType::Hidden)) {
         Locker locker { m_buildingNodeMutex };
-        m_nodes[edge.toNodeId].parentNodeId = edge.fromNodeId;
-        if (edge.typeIndex == static_cast<unsigned>(V8EdgeType::Hidden)) {
-            edge.index = WTF::atomicExchangeAdd(&m_nodes[edge.fromNodeId].edgesCount, 1);
-        }
-        break;
-    }
+        edge.index = WTF::atomicExchangeAdd(&m_nodes[edge.fromNodeId].edgesCount, 1);
     }
 
-    m_edges.append(WTF::move(edge));
+    appendEdge(WTF::move(edge));
 }
 
 void BunV8HeapSnapshotBuilder::analyzePropertyNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* propertyName)
@@ -251,7 +242,7 @@ void BunV8HeapSnapshotBuilder::analyzePropertyNameEdge(JSCell* from, JSCell* to,
     edge.toNodeId = getOrCreateNodeId(to);
     edge.typeIndex = static_cast<unsigned>(V8EdgeType::Property);
     edge.name = WTF::String(propertyName);
-    m_edges.append(WTF::move(edge));
+    appendEdge(WTF::move(edge));
 }
 
 void BunV8HeapSnapshotBuilder::analyzeVariableNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* variableName)
@@ -266,7 +257,7 @@ void BunV8HeapSnapshotBuilder::analyzeVariableNameEdge(JSCell* from, JSCell* to,
     edge.typeIndex = static_cast<unsigned>(V8EdgeType::Context);
     edge.name = String(variableName);
 
-    m_edges.append(WTF::move(edge));
+    appendEdge(WTF::move(edge));
 }
 
 void BunV8HeapSnapshotBuilder::analyzeIndexEdge(JSCell* from, JSCell* to, uint32_t index)
@@ -281,7 +272,7 @@ void BunV8HeapSnapshotBuilder::analyzeIndexEdge(JSCell* from, JSCell* to, uint32
     edge.typeIndex = static_cast<unsigned>(V8EdgeType::Element);
     edge.index = index;
 
-    m_edges.append(WTF::move(edge));
+    appendEdge(WTF::move(edge));
 }
 
 void BunV8HeapSnapshotBuilder::setOpaqueRootReachabilityReasonForCell(JSCell*, ASCIILiteral) {}
@@ -562,44 +553,12 @@ unsigned BunV8HeapSnapshotBuilder::addString(const String& str)
         return it->value;
 
     unsigned index = m_strings.size();
-    m_strings.append(WTF::move(key));
+    if (!m_strings.tryAppend(WTF::move(key))) [[unlikely]] {
+        m_overflowed.store(true, std::memory_order_relaxed);
+        return 0;
+    }
     m_stringsLookupTable.set(hashKey, index);
     return index;
-}
-
-std::optional<BunV8HeapSnapshotBuilder::TraceLocation> BunV8HeapSnapshotBuilder::getTraceLocation(JSCell* cell)
-{
-    if (!cell || !cell->isCallable())
-        return std::nullopt;
-
-    JSFunction* function = dynamicDowncast<JSFunction>(cell);
-    if (!function || !function->executable() || function->isHostFunction())
-        return std::nullopt;
-
-    auto* executable = function->jsExecutable();
-    if (!executable)
-        return std::nullopt;
-
-    auto* provider = executable->source().provider();
-    if (!provider)
-        return std::nullopt;
-
-    TraceLocation location;
-    location.scriptId = provider->asID();
-    location.scriptName = provider->sourceURL();
-    if (location.scriptName.isEmpty())
-        location.scriptName = String();
-
-    location.line = executable->firstLine();
-    location.column = executable->startColumn();
-    return { location };
-}
-
-void BunV8HeapSnapshotBuilder::TraceLocation::sourcemap(VM&)
-{
-    if (scriptName.isEmpty()) {
-        return;
-    }
 }
 
 String BunV8HeapSnapshotBuilder::generateV8HeapSnapshot()
@@ -667,7 +626,7 @@ String BunV8HeapSnapshotBuilder::generateV8HeapSnapshot()
         m_edges.shrink(writeIndex);
     }
 
-    StringBuilder json;
+    StringBuilder json(OverflowPolicy::RecordOverflow);
     json.append("{\"snapshot\":{\"meta\":{"_s);
 
     // Node fields
@@ -805,10 +764,40 @@ String BunV8HeapSnapshotBuilder::generateV8HeapSnapshot()
 
     json.append("}\n"_s);
 
+    if (m_overflowed.load(std::memory_order_relaxed) || json.hasOverflowed())
+        return String();
+
     return json.toString();
 }
 
-static void appendUTF8BytesQuotedJSON(Vector<uint8_t>& out, const WTF::String& str)
+namespace {
+
+// Vector<uint8_t> caps a single allocation at ~2GiB and CRASH()es past it.
+// The sink records the overflow instead so jsonBytes() can fail cleanly.
+struct JsonByteSink {
+    Vector<uint8_t> bytes;
+    bool overflowed { false };
+
+    void append(uint8_t c)
+    {
+        if (overflowed) [[unlikely]]
+            return;
+        if (!bytes.tryAppend(c)) [[unlikely]]
+            overflowed = true;
+    }
+
+    void append(std::span<const uint8_t> span)
+    {
+        if (overflowed) [[unlikely]]
+            return;
+        if (!bytes.tryAppend(span)) [[unlikely]]
+            overflowed = true;
+    }
+};
+
+} // namespace
+
+static void appendUTF8BytesQuotedJSON(JsonByteSink& out, const WTF::String& str)
 {
     out.append('"');
     if (!str.isEmpty()) {
@@ -847,17 +836,17 @@ static void appendUTF8BytesQuotedJSON(Vector<uint8_t>& out, const WTF::String& s
     out.append('"');
 }
 
-static void appendASCIILiteral(Vector<uint8_t>& out, const char* str, size_t length)
+static void appendASCIILiteral(JsonByteSink& out, const char* str, size_t length)
 {
     out.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(str), length));
 }
 
-static void appendASCII(Vector<uint8_t>& out, ASCIILiteral literal)
+static void appendASCII(JsonByteSink& out, ASCIILiteral literal)
 {
     appendASCIILiteral(out, literal.characters(), literal.length());
 }
 
-static void appendUnsigned(Vector<uint8_t>& out, size_t value)
+static void appendUnsigned(JsonByteSink& out, size_t value)
 {
     // Fast path for small numbers
     if (value == 0) {
@@ -930,7 +919,7 @@ Vector<uint8_t> BunV8HeapSnapshotBuilder::generateV8HeapSnapshotBytes()
         m_edges.shrink(writeIndex);
     }
 
-    Vector<uint8_t> out;
+    JsonByteSink out;
     const unsigned NODE_FIELD_COUNT = 7;
 
     appendASCII(out, "{\"snapshot\":{\"meta\":{"_s);
@@ -1053,7 +1042,10 @@ Vector<uint8_t> BunV8HeapSnapshotBuilder::generateV8HeapSnapshotBytes()
 
     appendASCII(out, "}\n"_s);
 
-    return out;
+    if (m_overflowed.load(std::memory_order_relaxed) || out.overflowed)
+        return {};
+
+    return WTF::move(out.bytes);
 }
 
 } // namespace JSC
