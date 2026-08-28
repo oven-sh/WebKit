@@ -638,6 +638,7 @@
 		44EF4D53A634EA5A0968572B /* es3pStateChangeTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D739486DA5E0126F0D0EF4BB /* es3pStateChangeTests.cpp */; };
 		4557460D814F5DF1D5787863 /* es3sLongRunningShaderTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7134402C9425888101366367 /* es3sLongRunningShaderTests.cpp */; };
 		457CC0343015771C001DE9FC /* angle_end2end_tests_expectations.txt in State Test Expectations */ = {isa = PBXBuildFile; fileRef = 7BD3D2E82FCDBB4E00C386DC /* angle_end2end_tests_expectations.txt */; };
+		4592BD742FC4F27700DC76EB /* IntegerOverflowClampTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4592BD732FC4F27700DC76EB /* IntegerOverflowClampTest.cpp */; };
 		45F4464AB2B8513CB3E3762B /* es3fNegativeStateApiTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2F264D619701179ECB7F6033 /* es3fNegativeStateApiTests.cpp */; };
 		46574F8EBAA668D2A75348A0 /* es3pShaderOperatorTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7F384DF192F867DA1896E9B2 /* es3pShaderOperatorTests.cpp */; };
 		46724657AF064907DE2EA506 /* deThreadTest.c in Sources */ = {isa = PBXBuildFile; fileRef = ADE748218E43074A54016343 /* deThreadTest.c */; };
@@ -1324,7 +1325,6 @@
 		7BD3D2CE2FCDB8A300C386DC /* WebGLCompressedTextureAvailabilityTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF6102DE59E2300327F7F /* WebGLCompressedTextureAvailabilityTest.cpp */; };
 		7BD3D2CF2FCDB8A300C386DC /* WebGLFramebufferTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF6112DE59E2300327F7F /* WebGLFramebufferTest.cpp */; };
 		7BD3D2D02FCDB8A300C386DC /* WebGLReadOutsideFramebufferTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF6122DE59E2300327F7F /* WebGLReadOutsideFramebufferTest.cpp */; };
-		7BD3D2D12FCDB8A300C386DC /* WEBGLVideoTextureTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF6132DE59E2300327F7F /* WEBGLVideoTextureTest.cpp */; };
 		7BD3D2D32FCDB8A300C386DC /* libANGLE.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7BB972002DE47B8A00455D13 /* libANGLE.a */; };
 		7BD3D2D42FCDB8A300C386DC /* libgtest.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7BDE1EFA2DED923F007E43DC /* libgtest.a */; };
 		7BD3D2D52FCDB8A300C386DC /* libutils.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7BFAF8232DE6EADC00327F7F /* libutils.a */; };
@@ -1669,7 +1669,6 @@
 		7BFAF6152DE59E2300327F7F /* WebGLCompatibilityTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF60F2DE59E2300327F7F /* WebGLCompatibilityTest.cpp */; };
 		7BFAF6162DE59E2300327F7F /* WebGLCompressedTextureAvailabilityTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF6102DE59E2300327F7F /* WebGLCompressedTextureAvailabilityTest.cpp */; };
 		7BFAF6172DE59E2300327F7F /* WebGLReadOutsideFramebufferTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF6122DE59E2300327F7F /* WebGLReadOutsideFramebufferTest.cpp */; };
-		7BFAF6182DE59E2300327F7F /* WEBGLVideoTextureTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF6132DE59E2300327F7F /* WEBGLVideoTextureTest.cpp */; };
 		7BFAF6432DE5A13800327F7F /* EGLReadinessCheckTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF6392DE5A13800327F7F /* EGLReadinessCheckTest.cpp */; };
 		7BFAF6442DE5A13800327F7F /* EGLContextASANTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF6252DE5A13800327F7F /* EGLContextASANTest.cpp */; };
 		7BFAF6472DE5A13800327F7F /* EGLRobustnessTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF63B2DE5A13800327F7F /* EGLRobustnessTest.cpp */; };
@@ -1748,6 +1747,7 @@
 		7BFAF8F92DE6EE7A00327F7F /* AstcDecompressor_unittest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF8F62DE6EE7A00327F7F /* AstcDecompressor_unittest.cpp */; };
 		7BFAF8FA2DE6EE7A00327F7F /* LoadToNative_unittest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF8F82DE6EE7A00327F7F /* LoadToNative_unittest.cpp */; };
 		7BFAF8FF2DE6F67600327F7F /* libutils.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 7BFAF8232DE6EADC00327F7F /* libutils.a */; };
+		7BFAF9022DE6ECA700327F7F /* MSLSymbolEnv_test.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF9012DE6ECA700327F7F /* MSLSymbolEnv_test.cpp */; };
 		7BFAF9122DE6F85B00327F7F /* TranslatorESSL.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7B359DC42A7CEE9C0016DC59 /* TranslatorESSL.cpp */; };
 		7BFAF9132DE6F85B00327F7F /* BuiltInFunctionEmulatorGLSL.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7B359DC22A7CEE9C0016DC59 /* BuiltInFunctionEmulatorGLSL.cpp */; };
 		7BFAF9142DE6F85B00327F7F /* TranslatorGLSL.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7B359DCC2A7CEE9D0016DC59 /* TranslatorGLSL.cpp */; };
@@ -3202,6 +3202,7 @@
 		44A549579F74A7BBCF80C243 /* es2fMultisampleTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = es2fMultisampleTests.cpp; sourceTree = "<group>"; };
 		44E247508F92F73A06DB9605 /* sglrReferenceContext.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = sglrReferenceContext.cpp; sourceTree = "<group>"; };
 		451D41F7AE0365931A4AA60B /* tes3InfoTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tes3InfoTests.cpp; sourceTree = "<group>"; };
+		4592BD732FC4F27700DC76EB /* IntegerOverflowClampTest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IntegerOverflowClampTest.cpp; sourceTree = "<group>"; };
 		45A743169381B27478632DE1 /* glsUniformBlockCase.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = glsUniformBlockCase.cpp; sourceTree = "<group>"; };
 		45DE4E258609976D2067B1DE /* es3sSpecialFloatTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = es3sSpecialFloatTests.cpp; sourceTree = "<group>"; };
 		463D416587F5C55E8292E1C8 /* es3fShaderDerivateTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = es3fShaderDerivateTests.cpp; sourceTree = "<group>"; };
@@ -3773,8 +3774,6 @@
 		7B359E0A2A7CFD610016DC59 /* platform_helpers.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = platform_helpers.h; sourceTree = "<group>"; };
 		7B359E0C2A7CFD610016DC59 /* platform_helpers.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = platform_helpers.cpp; sourceTree = "<group>"; };
 		7B359E0D2A7CFD610016DC59 /* SynchronizedValue.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SynchronizedValue.h; sourceTree = "<group>"; };
-		7B359E172A7CFE0B0016DC59 /* RegenerateStructNames.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = RegenerateStructNames.h; sourceTree = "<group>"; };
-		7B359E182A7CFE0B0016DC59 /* RegenerateStructNames.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RegenerateStructNames.cpp; sourceTree = "<group>"; };
 		7B4556EE2F18CE2B00DC54D0 /* SizeClipCullDistance.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SizeClipCullDistance.h; sourceTree = "<group>"; };
 		7B4556EF2F18CE2B00DC54D0 /* SizeClipCullDistance.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SizeClipCullDistance.cpp; sourceTree = "<group>"; };
 		7B4556F42F28AE5700DC54D0 /* span_util.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = span_util.h; sourceTree = "<group>"; };
@@ -4071,7 +4070,6 @@
 		7BFAF6102DE59E2300327F7F /* WebGLCompressedTextureAvailabilityTest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = WebGLCompressedTextureAvailabilityTest.cpp; sourceTree = "<group>"; };
 		7BFAF6112DE59E2300327F7F /* WebGLFramebufferTest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = WebGLFramebufferTest.cpp; sourceTree = "<group>"; };
 		7BFAF6122DE59E2300327F7F /* WebGLReadOutsideFramebufferTest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = WebGLReadOutsideFramebufferTest.cpp; sourceTree = "<group>"; };
-		7BFAF6132DE59E2300327F7F /* WEBGLVideoTextureTest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = WEBGLVideoTextureTest.cpp; sourceTree = "<group>"; };
 		7BFAF61A2DE59EB000327F7F /* etc2bc_srgb8_alpha8.inc */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.pascal; path = etc2bc_srgb8_alpha8.inc; sourceTree = "<group>"; };
 		7BFAF61B2DE59EB000327F7F /* pixel.inc */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.pascal; path = pixel.inc; sourceTree = "<group>"; };
 		7BFAF6212DE5A13800327F7F /* EGLBackwardsCompatibleContextTest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = EGLBackwardsCompatibleContextTest.cpp; sourceTree = "<group>"; };
@@ -4158,6 +4156,7 @@
 		7BFAF8F72DE6EE7A00327F7F /* AstcDecompressorTestUtils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AstcDecompressorTestUtils.h; sourceTree = "<group>"; };
 		7BFAF8F82DE6EE7A00327F7F /* LoadToNative_unittest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LoadToNative_unittest.cpp; sourceTree = "<group>"; };
 		7BFAF8FB2DE6F43700327F7F /* utils.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = utils.xcconfig; sourceTree = "<group>"; };
+		7BFAF9012DE6ECA700327F7F /* MSLSymbolEnv_test.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MSLSymbolEnv_test.cpp; sourceTree = "<group>"; };
 		7BFAF91A2DE6F8B500327F7F /* compiler_test.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = compiler_test.h; sourceTree = "<group>"; };
 		7BFAF91B2DE6F8B500327F7F /* compiler_test.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = compiler_test.cpp; sourceTree = "<group>"; };
 		7BFAF91E2DE6F8B500327F7F /* ShaderCompileTreeTest.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ShaderCompileTreeTest.h; sourceTree = "<group>"; };
@@ -6199,8 +6198,6 @@
 			isa = PBXGroup;
 			children = (
 				7B359D702A7CED460016DC59 /* apple */,
-				7B359E182A7CFE0B0016DC59 /* RegenerateStructNames.cpp */,
-				7B359E172A7CFE0B0016DC59 /* RegenerateStructNames.h */,
 				7B359D602A7CED3C0016DC59 /* RewriteRepeatedAssignToSwizzled.cpp */,
 				7B359D672A7CED3C0016DC59 /* RewriteRepeatedAssignToSwizzled.h */,
 				7B359D652A7CED3C0016DC59 /* UseInterfaceBlockFields.cpp */,
@@ -6504,6 +6501,7 @@
 				7BFAF5682DE59E0900327F7F /* IndexBufferOffsetTest.cpp */,
 				7BFAF5692DE59E0900327F7F /* IndexedPointsTest.cpp */,
 				7BFAF56A2DE59E0900327F7F /* InstancingTest.cpp */,
+				4592BD732FC4F27700DC76EB /* IntegerOverflowClampTest.cpp */,
 				7BFAF56B2DE59E0900327F7F /* KTXCompressedTextureTest.cpp */,
 				7BFAF56C2DE59E0900327F7F /* LineLoopTest.cpp */,
 				7BFAF56D2DE59E0900327F7F /* LinkAndRelinkTest.cpp */,
@@ -6582,7 +6580,6 @@
 				7BFAF6102DE59E2300327F7F /* WebGLCompressedTextureAvailabilityTest.cpp */,
 				7BFAF6112DE59E2300327F7F /* WebGLFramebufferTest.cpp */,
 				7BFAF6122DE59E2300327F7F /* WebGLReadOutsideFramebufferTest.cpp */,
-				7BFAF6132DE59E2300327F7F /* WEBGLVideoTextureTest.cpp */,
 			);
 			path = gl_tests;
 			sourceTree = "<group>";
@@ -6736,6 +6733,7 @@
 				7BFAF8532DE6ECA700327F7F /* ImmutableString_test_autogen.cpp */,
 				7BFAF8562DE6ECA700327F7F /* IntermNode_test.cpp */,
 				7BFAF8582DE6ECA700327F7F /* MSLOutput_test.cpp */,
+				7BFAF9012DE6ECA700327F7F /* MSLSymbolEnv_test.cpp */,
 				7BFAF8762DE6ECA700327F7F /* Type_test.cpp */,
 				7BFAF87A2DE6ECA700327F7F /* VariablePacker_test.cpp */,
 			);
@@ -10431,7 +10429,6 @@
 				7BD3D2CE2FCDB8A300C386DC /* WebGLCompressedTextureAvailabilityTest.cpp in Sources */,
 				7BD3D2CF2FCDB8A300C386DC /* WebGLFramebufferTest.cpp in Sources */,
 				7BD3D2D02FCDB8A300C386DC /* WebGLReadOutsideFramebufferTest.cpp in Sources */,
-				7BD3D2D12FCDB8A300C386DC /* WEBGLVideoTextureTest.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -10553,6 +10550,7 @@
 				7BFAF5EE2DE59E0900327F7F /* IndexBufferOffsetTest.cpp in Sources */,
 				7BFAF5F42DE59E0900327F7F /* IndexedPointsTest.cpp in Sources */,
 				7BFAF5CE2DE59E0900327F7F /* InstancingTest.cpp in Sources */,
+				4592BD742FC4F27700DC76EB /* IntegerOverflowClampTest.cpp in Sources */,
 				7BFAF5D82DE59E0900327F7F /* KTXCompressedTextureTest.cpp in Sources */,
 				7BB9723D2DE4827800455D13 /* libEGL_autogen.cpp in Sources */,
 				7BB972362DE480F000455D13 /* libGLESv2_autogen.cpp in Sources */,
@@ -10638,7 +10636,6 @@
 				7BFAF6162DE59E2300327F7F /* WebGLCompressedTextureAvailabilityTest.cpp in Sources */,
 				7BFAF6142DE59E2300327F7F /* WebGLFramebufferTest.cpp in Sources */,
 				7BFAF6172DE59E2300327F7F /* WebGLReadOutsideFramebufferTest.cpp in Sources */,
-				7BFAF6182DE59E2300327F7F /* WEBGLVideoTextureTest.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -10879,6 +10876,7 @@
 				7BFAF8E72DE6EDE400327F7F /* matrix_utils_unittest.cpp in Sources */,
 				7BFAF8EC2DE6EDE400327F7F /* MemoryBuffer_unittest.cpp in Sources */,
 				7BFAF8A72DE6ECA700327F7F /* MSLOutput_test.cpp in Sources */,
+				7BFAF9022DE6ECA700327F7F /* MSLSymbolEnv_test.cpp in Sources */,
 				7BFAF8E62DE6EDE400327F7F /* Optional_unittest.cpp in Sources */,
 				7BFAF8F02DE6EDE400327F7F /* PoolAlloc_unittest.cpp in Sources */,
 				7BFAF8F12DE6EDE400327F7F /* SimpleMutex_unittest.cpp in Sources */,

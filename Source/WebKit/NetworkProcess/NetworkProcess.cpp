@@ -99,6 +99,7 @@
 #include <algorithm>
 #include <wtf/CallbackAggregator.h>
 #include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/OptionSet.h>
 #include <wtf/ProcessPrivilege.h>
 #include <wtf/RunLoop.h>
@@ -171,12 +172,13 @@ static void callExitSoon(IPC::Connection*)
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkProcess);
 
-Ref<NetworkProcess> NetworkProcess::create(AuxiliaryProcessInitializationParameters&& parameters)
+NetworkProcess& NetworkProcess::singleton()
 {
-    return adoptRef(*new NetworkProcess(WTF::move(parameters)));
+    static NeverDestroyed<Ref<NetworkProcess>> networkProcess = adoptRef(*new NetworkProcess);
+    return networkProcess.get().get();
 }
 
-NetworkProcess::NetworkProcess(AuxiliaryProcessInitializationParameters&& parameters)
+NetworkProcess::NetworkProcess()
     : m_downloadManager(*this)
 #if HAVE(LSDATABASECONTEXT)
     , m_launchServicesDatabaseObserver(LaunchServicesDatabaseObserver::create())
@@ -208,8 +210,6 @@ NetworkProcess::NetworkProcess(AuxiliaryProcessInitializationParameters&& parame
         for (auto& webProcessConnection : weakThis->m_webProcessConnections.values())
             webProcessConnection->setOnLineState(isOnLine);
     });
-
-    initialize(WTF::move(parameters));
 }
 
 NetworkProcess::~NetworkProcess() = default;
@@ -1679,6 +1679,28 @@ void NetworkProcess::notifyMediaStreamingActivity(bool activity)
 {
 #if PLATFORM(COCOA)
     static constexpr auto notifyMediaStreamingName = "com.apple.WebKit.mediaStreamingActivity"_s;
+    // Every observer of that notification is woken up by it, so the published state is rate-limited:
+    // content toggling streaming rapidly gets coalesced into the state it settles on.
+    static constexpr Seconds notificationInterval = 10_s;
+
+    if (m_notifiedMediaStreamingActivity == activity) {
+        m_pendingMediaStreamingActivity.reset();
+        return;
+    }
+
+    auto elapsed = MonotonicTime::now() - m_lastMediaStreamingActivityNotificationTime;
+    if (m_notifiedMediaStreamingActivity && elapsed < notificationInterval) {
+        m_pendingMediaStreamingActivity = activity;
+        if (std::exchange(m_mediaStreamingActivityFlushScheduled, true))
+            return;
+        RunLoop::mainSingleton().dispatchAfter(notificationInterval - elapsed, [protectedThis = Ref { *this }] {
+            protectedThis->m_mediaStreamingActivityFlushScheduled = false;
+            if (auto activity = std::exchange(protectedThis->m_pendingMediaStreamingActivity, { }))
+                protectedThis->notifyMediaStreamingActivity(*activity);
+        });
+        return;
+    }
+    m_pendingMediaStreamingActivity.reset();
 
     if (m_mediaStreamingActivitityToken == NOTIFY_TOKEN_INVALID) {
         auto status = notify_register_check(notifyMediaStreamingName, &m_mediaStreamingActivitityToken);
@@ -1693,6 +1715,8 @@ void NetworkProcess::notifyMediaStreamingActivity(bool activity)
         RELEASE_LOG_ERROR(IPC, "notify_set_state() for %s failed with status (%d) 0x%X", notifyMediaStreamingName.characters(), status, status);
         return;
     }
+    m_notifiedMediaStreamingActivity = activity;
+    m_lastMediaStreamingActivityNotificationTime = MonotonicTime::now();
     status = notify_post(notifyMediaStreamingName);
     RELEASE_LOG_ERROR_IF(status != NOTIFY_STATUS_OK, IPC, "notify_post() for %s failed with status (%d) 0x%X", notifyMediaStreamingName.characters(), status, status);
 #else
@@ -2281,12 +2305,12 @@ void NetworkProcess::deleteAndRestrictWebsiteDataForRegistrableDomains(PAL::Sess
     
     bool clearServiceWorkers = websiteDataTypes.contains(WebsiteDataType::DOMCache) || websiteDataTypes.contains(WebsiteDataType::ServiceWorkerRegistrations);
     if (clearServiceWorkers && session && session->hasServiceWorkerDatabasePath()) {
-        protect(session->ensureSWServer())->getOriginsWithRegistrations([domainsToDeleteAllScriptWrittenStorageFor, callbackAggregator, session = WeakPtr { *session }](const HashSet<SecurityOriginData>& securityOrigins) mutable {
+        protect(session->ensureSWServer())->getOriginsWithRegistrations([domainsToDeleteAllScriptWrittenStorageFor, callbackAggregator, weakSession = WeakPtr { *session }](const HashSet<SecurityOriginData>& securityOrigins) mutable {
             for (auto& securityOrigin : securityOrigins) {
                 if (!domainsToDeleteAllScriptWrittenStorageFor.contains(RegistrableDomain::uncheckedCreateFromHost(securityOrigin.host())))
                     continue;
                 callbackAggregator->m_domains.add(RegistrableDomain::uncheckedCreateFromHost(securityOrigin.host()));
-                if (session) {
+                if (CheckedPtr session = weakSession) {
                     protect(session->ensureSWServer())->clear(securityOrigin, [callbackAggregator] { });
 
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
@@ -3111,8 +3135,8 @@ void NetworkProcess::simulatePrivateClickMeasurementSessionRestart(PAL::SessionI
         return completionHandler();
 
     if (CheckedPtr session = networkSession(sessionID)) {
-        session->destroyPrivateClickMeasurementStore([session = WeakPtr { *session }, completionHandler = WTF::move(completionHandler)] () mutable {
-            if (session)
+        session->destroyPrivateClickMeasurementStore([weakSession = WeakPtr { *session }, completionHandler = WTF::move(completionHandler)] () mutable {
+            if (CheckedPtr session = weakSession)
                 session->firePrivateClickMeasurementTimerImmediatelyForTesting();
             completionHandler();
         });

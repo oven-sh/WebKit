@@ -277,7 +277,7 @@ std::optional<IPC::AsyncReplyID> WebPageProxy::grantAccessToCurrentPasteboardDat
     }
     if (RefPtr frame = WebFrameProxy::webFrame(frameID))
         return WebPasteboardProxy::singleton().grantAccessToCurrentData(protect(frame->process()), pasteboardName, WTF::move(completionHandler));
-    return WebPasteboardProxy::singleton().grantAccessToCurrentData(m_legacyMainFrameProcess, pasteboardName, WTF::move(completionHandler));
+    return WebPasteboardProxy::singleton().grantAccessToCurrentData(protect(m_legacyMainFrameProcess), pasteboardName, WTF::move(completionHandler));
 }
 
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebPageProxyCocoaAdditions.mm>)
@@ -1905,7 +1905,7 @@ bool WebPageProxy::tryToSendCommandToActiveControlledVideo(PlatformMediaSession:
     if (!hasActiveVideoForControlsManager())
         return false;
 
-    WeakPtr model = protect(protect(playbackSessionManager())->controlsManagerInterface())->playbackSessionModel();
+    CheckedPtr model = protect(protect(playbackSessionManager())->controlsManagerInterface())->playbackSessionModel();
     if (!model)
         return false;
 
@@ -2206,12 +2206,12 @@ void WebPageProxy::clearAccessibilityIsolatedTree()
 #endif
 #endif // PLATFORM(MAC)
 
-void WebPageProxy::selectWithGesture(std::optional<WebCore::FrameIdentifier> frameID, IntPoint point, GestureType gestureType, GestureRecognizerState gestureState, bool isInteractingWithFocusedElement, CompletionHandler<void(const IntPoint&, GestureType, GestureRecognizerState, OptionSet<SelectionFlags>)>&& callback)
+void WebPageProxy::selectWithGesture(std::optional<WebCore::FrameIdentifier> frameID, IntPoint point, GestureType gestureType, GestureRecognizerState gestureState, bool isInteractingWithFocusedElement, SelectWithGestureCompletionHandler&& callback)
 {
     if (!hasRunningProcess())
-        return callback({ }, GestureType::Loupe, GestureRecognizerState::Possible, { });
+        return callback({ });
 
-    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::SelectWithGesture(frameID, point, gestureType, gestureState, isInteractingWithFocusedElement), Messages::WebPage::SelectWithGesture::Reply { [weakThis = WeakPtr { *this }, pointInContentViewCoordinates = point, gestureType, gestureState, isInteractingWithFocusedElement, callback = WTF::move(callback)](const IntPoint& point, GestureType innerGestureType, GestureRecognizerState innerGestureState, OptionSet<SelectionFlags> flags, std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData) mutable {
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::SelectWithGesture(frameID, point, gestureType, gestureState, isInteractingWithFocusedElement), Messages::WebPage::SelectWithGesture::Reply { [weakThis = WeakPtr { *this }, pointInContentViewCoordinates = point, gestureType, gestureState, isInteractingWithFocusedElement, callback = WTF::move(callback)](SelectWithGestureResult result, std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData) mutable {
         RefPtr protectedThis = weakThis.get();
         if (protectedThis && remoteUserInputEventData) {
             // The gesture landed on a cross-origin frame; re-dispatch it into that frame's process.
@@ -2219,12 +2219,13 @@ void WebPageProxy::selectWithGesture(std::optional<WebCore::FrameIdentifier> fra
             // reports the point in its own coordinates, but selectionChangedWithGesture() (UIKit)
             // expects content-view coordinates.
             protectedThis->selectWithGesture(remoteUserInputEventData->targetFrameID, roundedIntPoint(FloatPoint { remoteUserInputEventData->transformedPoint }), gestureType, gestureState, isInteractingWithFocusedElement,
-                [pointInContentViewCoordinates, callback = WTF::move(callback)](const IntPoint&, GestureType gestureType, GestureRecognizerState gestureState, OptionSet<SelectionFlags> flags) mutable {
-                callback(pointInContentViewCoordinates, gestureType, gestureState, flags);
+                [pointInContentViewCoordinates, callback = WTF::move(callback)](SelectWithGestureResult result) mutable {
+                result.point = pointInContentViewCoordinates;
+                callback(WTF::move(result));
             });
             return;
         }
-        callback(point, innerGestureType, innerGestureState, flags);
+        callback(WTF::move(result));
     } });
 }
 

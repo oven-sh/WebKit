@@ -3,10 +3,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set_target_properties(WebCore PROPERTIES
         INSTALL_NAME_DIR "${WebCore_INSTALL_NAME_DIR}"
     )
-    target_link_options(WebCore PRIVATE
-        -compatibility_version 1.0.0
-        -current_version ${WEBKIT_MAC_VERSION}
-    )
 endif ()
 
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/WebCore/Modules")
@@ -18,10 +14,10 @@ target_compile_options(WebCore PRIVATE
 
 target_compile_options(WebCore PRIVATE ${WEBKIT_PRIVATE_FRAMEWORKS_COMPILE_FLAG})
 
-target_link_options(WebCore PRIVATE -weak_framework BrowserEngineKit)
+target_link_options(WebCore PRIVATE "LINKER:-weak_framework,BrowserEngineKit")
 
 target_link_options(WebCore PRIVATE
-    -Wl,-unexported_symbols_list,${WEBCORE_DIR}/Configurations/WebCore.unexp
+    "LINKER:-unexported_symbols_list,${WEBCORE_DIR}/Configurations/WebCore.unexp"
 )
 
 find_library(ACCELERATE_LIBRARY Accelerate)
@@ -174,14 +170,14 @@ endif ()
 
 if (NOT ENABLE_WEBGPU)
     if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-        list(APPEND WebCore_PRIVATE_LIBRARIES "-Wl,-undefined,dynamic_lookup")
+        target_link_options(WebCore PRIVATE "LINKER:-undefined,dynamic_lookup")
     endif ()
 else ()
     list(APPEND WebCore_LIBRARIES "$<TARGET_LINKER_FILE:WebGPU>")
     list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/WebGPU/Headers")
 endif ()
 
-set(WebCore_EXTRA_LINK_OPTIONS "SHELL:-Wl,-force_load $<TARGET_FILE:PAL>")
+set(WebCore_EXTRA_LINK_OPTIONS "LINKER:-force_load,$<TARGET_FILE:PAL>")
 
 find_library(COREUI_FRAMEWORK CoreUI HINTS ${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks)
 if (COREUI_FRAMEWORK)
@@ -1059,6 +1055,8 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/graphics/angle/ANGLEHeaders.h
 
+    platform/graphics/egl/BitmapTexture.h
+    platform/graphics/egl/BitmapTexturePool.h
     platform/graphics/egl/GLContext.h
     platform/graphics/egl/GLContextWrapper.h
     platform/graphics/egl/GLDisplay.h
@@ -1316,6 +1314,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/avfoundation/AudioSourceProviderAVFObjC.h
     platform/graphics/avfoundation/AudioVideoRendererAVFObjC.h
     platform/graphics/avfoundation/ISOFairPlayStreamingPsshBox.h
+    platform/graphics/avfoundation/ImageDecoderFactoryAVF.h
     platform/graphics/avfoundation/InbandTextTrackPrivateAVF.h
     platform/graphics/avfoundation/MediaPlaybackTargetCocoa.h
     platform/graphics/avfoundation/MediaPlayerPrivateAVFoundation.h

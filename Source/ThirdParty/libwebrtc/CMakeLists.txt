@@ -38,8 +38,10 @@ endif ()
 
 set(webrtc_SOURCES
     Source/third_party/abseil-cpp/absl/base/internal/atomic_hook_test_helper.cc
+    Source/third_party/abseil-cpp/absl/base/internal/cpu_detect.cc
     Source/third_party/abseil-cpp/absl/base/internal/cycleclock.cc
     Source/third_party/abseil-cpp/absl/base/internal/exception_safety_testing.cc
+    Source/third_party/abseil-cpp/absl/base/internal/hardening.cc
     Source/third_party/abseil-cpp/absl/base/internal/low_level_alloc.cc
     Source/third_party/abseil-cpp/absl/base/internal/raw_logging.cc
     Source/third_party/abseil-cpp/absl/base/internal/scoped_set_env.cc
@@ -58,7 +60,6 @@ set(webrtc_SOURCES
     Source/third_party/abseil-cpp/absl/container/internal/raw_hash_set.cc
     Source/third_party/abseil-cpp/absl/container/internal/test_instance_tracker.cc
     Source/third_party/abseil-cpp/absl/crc/crc32c.cc
-    Source/third_party/abseil-cpp/absl/crc/internal/cpu_detect.cc
     Source/third_party/abseil-cpp/absl/crc/internal/crc.cc
     Source/third_party/abseil-cpp/absl/crc/internal/crc_cord_state.cc
     Source/third_party/abseil-cpp/absl/crc/internal/crc_x86_arm_combined.cc
@@ -227,6 +228,7 @@ list(APPEND webrtc_SOURCES
     Source/webrtc/api/enable_media_with_defaults.cc
     Source/webrtc/api/environment/deprecated_global_field_trials.cc
     Source/webrtc/api/environment/environment_factory.cc
+    Source/webrtc/api/environment/force_test_environment.cc
     Source/webrtc/api/field_trials.cc
     Source/webrtc/api/field_trials_registry.cc
     Source/webrtc/api/frame_transformer_factory.cc
@@ -257,6 +259,10 @@ list(APPEND webrtc_SOURCES
     Source/webrtc/api/rtp_sender_interface.cc
     Source/webrtc/api/rtp_transceiver_interface.cc
     Source/webrtc/api/sctp_transport_interface.cc
+    Source/webrtc/api/stats/attribute.cc
+    Source/webrtc/api/stats/rtc_stats.cc
+    Source/webrtc/api/stats/rtc_stats_report.cc
+    Source/webrtc/api/stats/rtcstats_objects.cc
     Source/webrtc/api/task_queue/default_task_queue_factory_stdlib.cc
     Source/webrtc/api/task_queue/default_task_queue_factory_win.cc
     Source/webrtc/api/task_queue/pending_task_safety_flag.cc
@@ -292,9 +298,12 @@ list(APPEND webrtc_SOURCES
     Source/webrtc/api/video/i444_buffer.cc
     Source/webrtc/api/video/nv12_buffer.cc
     Source/webrtc/api/video/rtp_video_frame_assembler.cc
+    Source/webrtc/api/video/video_adapter.cc
     Source/webrtc/api/video/video_adaptation_counters.cc
     Source/webrtc/api/video/video_bitrate_allocation.cc
     Source/webrtc/api/video/video_bitrate_allocator.cc
+    Source/webrtc/api/video/video_broadcaster.cc
+    Source/webrtc/api/video/video_common.cc
     Source/webrtc/api/video/video_content_type.cc
     Source/webrtc/api/video/video_frame.cc
     Source/webrtc/api/video/video_frame_buffer.cc
@@ -493,7 +502,6 @@ list(APPEND webrtc_SOURCES
     Source/webrtc/logging/rtc_event_log/ice_logger.cc
     Source/webrtc/logging/rtc_event_log/rtc_event_log_impl.cc
     Source/webrtc/logging/rtc_event_log/rtc_stream_config.cc
-    Source/webrtc/media/base/adapted_video_track_source.cc
     Source/webrtc/media/base/codec.cc
     Source/webrtc/media/base/codec_comparators.cc
     Source/webrtc/media/base/codec_list.cc
@@ -508,9 +516,6 @@ list(APPEND webrtc_SOURCES
     Source/webrtc/media/base/sdp_video_format_utils.cc
     Source/webrtc/media/base/stream_params.cc
     Source/webrtc/media/base/turn_utils.cc
-    Source/webrtc/media/base/video_adapter.cc
-    Source/webrtc/media/base/video_broadcaster.cc
-    Source/webrtc/media/base/video_common.cc
     Source/webrtc/media/base/video_source_base.cc
     Source/webrtc/media/engine/adm_helpers.cc
     Source/webrtc/media/engine/fake_video_codec_factory.cc
@@ -986,11 +991,6 @@ list(APPEND webrtc_SOURCES
     Source/webrtc/modules/video_coding/svc/simulcast_to_svc_converter.cc
     Source/webrtc/modules/video_coding/svc/svc_rate_allocator.cc
     Source/webrtc/modules/video_coding/timing/decode_time_percentile_filter.cc
-    Source/webrtc/modules/video_coding/timing/frame_delay_variation_kalman_filter.cc
-    Source/webrtc/modules/video_coding/timing/inter_frame_delay_variation_calculator.cc
-    Source/webrtc/modules/video_coding/timing/jitter_estimator.cc
-    Source/webrtc/modules/video_coding/timing/rtt_filter.cc
-    Source/webrtc/modules/video_coding/timing/timestamp_extrapolator.cc
     Source/webrtc/modules/video_coding/timing/timing.cc
     Source/webrtc/modules/video_coding/utility/bandwidth_quality_scaler.cc
     Source/webrtc/modules/video_coding/utility/decoded_frames_history.cc
@@ -1303,10 +1303,6 @@ list(APPEND webrtc_SOURCES
     Source/webrtc/rtc_base/virtual_socket_server.cc
     Source/webrtc/rtc_base/weak_ptr.cc
     Source/webrtc/rtc_base/zero_memory.cc
-    Source/webrtc/stats/attribute.cc
-    Source/webrtc/stats/rtc_stats.cc
-    Source/webrtc/stats/rtc_stats_report.cc
-    Source/webrtc/stats/rtcstats_objects.cc
     Source/webrtc/system_wrappers/source/clock.cc
     Source/webrtc/system_wrappers/source/metrics.cc
     Source/webrtc/video/adaptation/balanced_constraint.cc
@@ -1359,6 +1355,12 @@ list(APPEND webrtc_SOURCES
     Source/webrtc/video/stats_counter.cc
     Source/webrtc/video/stream_synchronization.cc
     Source/webrtc/video/task_queue_frame_decode_scheduler.cc
+    Source/webrtc/video/timing/default_video_jitter_timing.cc
+    Source/webrtc/video/timing/frame_delay_variation_kalman_filter.cc
+    Source/webrtc/video/timing/inter_frame_delay_variation_calculator.cc
+    Source/webrtc/video/timing/jitter_estimator.cc
+    Source/webrtc/video/timing/rtt_filter.cc
+    Source/webrtc/video/timing/timestamp_extrapolator.cc
     Source/webrtc/video/timing/simulator/assembler.cc
     Source/webrtc/video/timing/simulator/decodability_tracker.cc
     Source/webrtc/video/timing/simulator/rendering_tracker.cc

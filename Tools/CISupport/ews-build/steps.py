@@ -585,7 +585,7 @@ class ResultsDBReportMixin(abc.ABC):
             configuration['platform'] = ResultsDatabase.platform_for_query(platform)
         if (style := self.getProperty('configuration', None)) in ('debug', 'release'):
             configuration['style'] = style
-        if (flavor := self.getProperty('flavor', None)) in ('wk1', 'wk2'):
+        if (flavor := self.getProperty('flavor', None)) in ('wk1', 'wk2', 'site-isolation'):
             configuration['flavor'] = flavor
         return configuration
 
@@ -593,7 +593,7 @@ class ResultsDBReportMixin(abc.ABC):
         architecture = self.getProperty('machine_architecture', None) or self.getProperty('architecture', None)
         return {
             **self.results_db_query_configuration(),
-            'version': self.getProperty('os_version', None) or None,
+            'version': self.getProperty('os_version', None) or self.getProperty('webkit_version', None) or None,
             'architecture': architecture if architecture and ' ' not in architecture else None,
             'is_simulator': 'simulator' in (self.getProperty('fullPlatform', '') or ''),
         }
@@ -1124,6 +1124,50 @@ class ShowIdentifier(shell.ShellCommand):
         return results == SUCCESS
 
 
+class ShowWebKitVersion(shell.ShellCommand, ShellMixin):
+    """The GTK and WPE port release, which is what results.webkit.org stores for those platforms.
+
+    Its own step rather than part of ShowIdentifier: the version comes from the checkout, so a
+    failure to resolve an identifier says nothing about whether it can be read, and neither
+    failure should hide the other in a shared log.
+    """
+    name = 'show-webkit-version'
+    flunkOnFailure = False
+    haltOnFailure = False
+    warnOnFailure = False
+    SUPPORTED_PLATFORMS = ('gtk', 'wpe')
+
+    def __init__(self, **kwargs):
+        super().__init__(timeout=60, logEnviron=False, **kwargs)
+
+    def doStepIf(self, step):
+        return self.getProperty('platform', '') in self.SUPPORTED_PLATFORMS
+
+    def hideStepIf(self, results, step):
+        return not self.doStepIf(step)
+
+    @defer.inlineCallbacks
+    def run(self):
+        self.log_observer = logobserver.BufferLogObserver()
+        self.addLogObserver('stdio', self.log_observer)
+
+        platform = self.getProperty('platform', '')
+        self.command = ['grep', 'SET_PROJECT_VERSION', f'Source/cmake/Options{platform.upper()}.cmake']
+
+        rc = yield super().run()
+        if rc != SUCCESS:
+            return defer.returnValue(rc)
+
+        # GLibPort uploads the port release rather than the OS version, and drops the micro version.
+        if match := re.search(r'SET_PROJECT_VERSION\((\d+)\s+(\d+)\s+(\d+)\)', self.log_observer.getStdout()):
+            self.setProperty('webkit_version', f'{match.group(1)}.{match.group(2)}')
+        return defer.returnValue(rc)
+
+    def getResultSummary(self):
+        version = self.getProperty('webkit_version', None)
+        return {'step': f'WebKit version: {version}' if version else 'Failed to find WebKit version'}
+
+
 class InstallHooks(steps.ShellSequence):
     name = 'install-hooks'
     flunkOnFailure = False
@@ -1464,10 +1508,6 @@ class GetTestExpectationsBaseline(shell.ShellCommand, ShellMixin):
         platform = self.getProperty('platform')
         self.command += customBuildFlag(platform, self.getProperty('fullPlatform'))
 
-        patch_author = self.getProperty('patch_author')
-        if patch_author in ['webkit-wpt-import-bot@igalia.com']:
-            self.command += ['imported/w3c/web-platform-tests']
-
         additionalArguments = self.getProperty('additionalArguments', '')
         if additionalArguments:
             self.command += additionalArguments
@@ -1495,10 +1535,6 @@ class GetUpdatedTestExpectations(steps.ShellSequence, ShellMixin):
         configuration_flag = [f"--{self.getProperty('configuration')}"] if self.getProperty('configuration') else []
         platform_flag = customBuildFlag(self.getProperty('platform'), self.getProperty('fullPlatform'))
         run_webkit_command = ['python3', 'Tools/Scripts/run-webkit-tests', '--print-expectations'] + configuration_flag + platform_flag
-
-        patch_author = self.getProperty('patch_author')
-        if patch_author in ['webkit-wpt-import-bot@igalia.com']:
-            run_webkit_command += ['imported/w3c/web-platform-tests']
 
         additionalArguments = self.getProperty('additionalArguments', '')
         if additionalArguments:
@@ -3475,8 +3511,15 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
     logfiles = {'json': jsonFileName}
     results_db_log_name = 'results-db'
     command = ['perl', 'Tools/Scripts/run-javascriptcore-tests', '--no-build', '--no-fail-fast', f'--json-output={jsonFileName}', WithProperties('--%(configuration)s')]
-    # We rely on run-jsc-stress-tests to weed out any flaky tests
-    command_extra = ['--treat-failing-as-flaky=0.6,10,200']
+    # We rely on run-jsc-stress-tests to weed out any flaky tests. We also cap
+    # the effective timeout to avoid the dreaded "command timed out: 1200
+    # seconds without output" with buildbot killing the whole run because of a
+    # hanging stress test.
+    # NB: The default JSCTEST_hardTimeout is 300s (and is additive, see
+    # https://commits.webkit.org/227144@main), so use 800 here to also allow for
+    # some slack (run-jsc-stress-test spends some time silently collecting test
+    # results before printing out the summary).
+    command_extra = ['--treat-failing-as-flaky=0.6,10,200', '--max-timeout', '800']
     prefix = 'jsc_'
     NUM_FAILURES_TO_DISPLAY_IN_STATUS = 5
     FAILURE_THRESHOLD = 1000
@@ -3898,6 +3941,7 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
     logfiles = {'json': jsonFileName}
     test_failures_log_name = 'test-failures'
     results_db_log_name = 'results-db'
+    results_db_flavor = 'wk2'
     suite = 'layout-tests'
     ENABLE_GUARD_MALLOC = False
     ENABLE_ADDITIONAL_ARGUMENTS = True
@@ -3937,10 +3981,7 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
         self.command += ['--results-directory', self.resultDirectory]
         self.command += ['--debug-rwt-logging']
 
-        patch_author = self.getProperty('patch_author')
-        if patch_author in ['webkit-wpt-import-bot@igalia.com']:
-            self.command += ['imported/w3c/web-platform-tests']
-        elif GitHub.NO_FAILURE_LIMITS_LABEL in self.getProperty('github_labels', []):
+        if GitHub.NO_FAILURE_LIMITS_LABEL in self.getProperty('github_labels', []):
             self.command += ['--no-retry']
             self.maxTime = 60 * 90
         else:
@@ -3975,10 +4016,10 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
         self.addLogObserver('json', self.log_observer_json)
         self.setLayoutTestCommand()
 
-        if self.layout_test_driver == 'DumpRenderTree':
-            self.setProperty('flavor', 'wk1')
-        elif self.layout_test_driver == 'WebKitTestRunner':
-            self.setProperty('flavor', 'wk2')
+        # Only the step that starts a run labels the build: every queue reruns with
+        # ReRunWebKitTests, so a wk1 queue would relabel itself wk2 halfway through.
+        if self.results_db_flavor:
+            self.setProperty('flavor', self.results_db_flavor)
 
         if SHOULD_FILTER_LOGS is True:
             self.command = self.shell_command(' '.join(quote(str(c)) for c in self.command) + ' 2>&1 | Tools/Scripts/filter-test-logs layout')
@@ -4103,7 +4144,9 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
             yield self._addToLog(
                 self.results_db_log_name,
                 f"\n{test}: pass_rate: {data['pass_rate']}, pre-existing-failure={data['is_existing_failure']}\n"
-                f"Response from results-db: {data['raw_data']}\n{data['logs']}\npre-existing-flake={flake_summary}"
+                f"Response from results-db: {data['raw_data']}\n"
+                f"{data['logs']}"
+                f"pre-existing-flake={flake_summary}\n"
             )
 
         if self.flaky_failures_in_results_db:
@@ -4238,6 +4281,7 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
 
 class RunWebKitTestsInStressMode(RunWebKitTests):
     reports_to_results_db = False
+    results_db_flavor = None
     name = 'run-layout-tests-in-stress-mode'
     suffix = 'stress-mode'
     EXIT_AFTER_FAILURES = '10'
@@ -4333,6 +4377,7 @@ class RunWebKitTestsInSiteIsolationMode(RunWebKitTestsInStressMode):
 
 class ReRunWebKitTests(RunWebKitTests):
     name = 're-run-layout-tests'
+    results_db_flavor = None
     NUM_FAILURES_TO_DISPLAY = 10
 
     def evaluateCommand(self, cmd):
@@ -4488,6 +4533,7 @@ class ReRunWebKitTests(RunWebKitTests):
 
 class RunWebKitTestsWithoutChange(RunWebKitTests):
     name = 'run-layout-tests-without-change'
+    results_db_flavor = None
 
     @defer.inlineCallbacks
     def run(self):
@@ -4597,15 +4643,8 @@ class RunWebKitTestsWithoutChange(RunWebKitTests):
 
 
 class SiteIsolationResultsDBMixin(object):
-    reports_to_results_db = False
-
-    def results_db_query_configuration(self) -> dict:
-        # Use flavor='site-isolation' without a platform filter so that results from
-        # Apple-Tahoe-Release-WK2-Site-Isolation-Tree-Tests (the closest post-commit queue) are consulted.
-        configuration = super().results_db_query_configuration()
-        configuration['flavor'] = 'site-isolation'
-        configuration.pop('platform', None)
-        return configuration
+    # Precedes ReRunWebKitTests in the MRO so a rerun keeps this flavor instead of inheriting None.
+    results_db_flavor = 'site-isolation'
 
 
 class RunWebKitTestsEWSSiteIsolation(SiteIsolationResultsDBMixin, RunWebKitTests):
@@ -4895,6 +4934,8 @@ class AnalyzeLayoutTestsResults(ResultsDBReportMixin, buildstep.BuildStep, Bugzi
 
 
 class RunWebKit1Tests(RunWebKitTests):
+    results_db_flavor = 'wk1'
+
     @defer.inlineCallbacks
     def run(self):
         self.layout_test_driver = 'DumpRenderTree'
@@ -6463,10 +6504,26 @@ class ExtractTestResults(master.MasterShellCommand):
         step.addURL('view layout test results', self.resultDirectoryURL() + 'results.html')
         step.addURL('download layout test results', self.resultsDownloadURL())
 
+    def archiveSizeText(self):
+        try:
+            size = os.path.getsize(self.zipFile)
+        except OSError:
+            return ''
+        return f' ({size / (1024 * 1024):.1f} MB archive)'
+
     @defer.inlineCallbacks
     def run(self):
-        rc = yield super().run()
+        size_text = self.archiveSizeText()
+        try:
+            rc = yield super().run()
+        except Exception as e:
+            # Extraction just unzips the already-uploaded results archive on the buildmaster; a
+            # stall or kill here (e.g. disk pressure) shouldn't fail the build, the tests already ran.
+            if getattr(self, 'stdio_log', None) is not None:
+                yield self.stdio_log.addStdout(f'\nFailed to extract test results{size_text}: {e}\n')
+            rc = FAILURE
         self.addCustomURLs()
+        self.descriptionDone = [f'Extracted test results{size_text}' if rc == SUCCESS else f'Failed to extract test results{size_text}']
         defer.returnValue(rc)
 
 
@@ -6478,8 +6535,8 @@ class PrintConfiguration(steps.ShellSequence, ShellMixin):
     warnOnFailure = False
     logEnviron = False
     command_list_generic = [['hostname']]
-    command_list_apple = [['df', '-hl'], ['date'], ['sw_vers'], ['system_profiler', 'SPSoftwareDataType', 'SPHardwareDataType'], ['cat', '/usr/share/zoneinfo/+VERSION'], ['xcodebuild', '-sdk', '-version']]
-    command_list_linux = [['df', '-hl', '--exclude-type=fuse.portal'], ['date'], ['uname', '-a'], ['uptime']]
+    command_list_apple = [['df', '-hl'], ['date'], ['sw_vers'], ['uname', '-m'], ['system_profiler', 'SPSoftwareDataType', 'SPHardwareDataType'], ['cat', '/usr/share/zoneinfo/+VERSION'], ['xcodebuild', '-sdk', '-version']]
+    command_list_linux = [['df', '-hl', '--exclude-type=fuse.portal'], ['date'], ['uname', '-a'], ['uname', '-m'], ['uptime']]
 
     def __init__(self, **kwargs):
         super().__init__(timeout=60, **kwargs)
@@ -6525,6 +6582,11 @@ class PrintConfiguration(steps.ShellSequence, ShellMixin):
 
     def parseAndValidate(self, logText):
         os_version, os_name, xcode_version = '', '', ''
+
+        # GlibPort.architecture maps aarch64 to arm64, which is the name results.webkit.org stores.
+        if match := re.search(r'^(arm64|arm64_32|aarch64|x86_64)$', logText, re.MULTILINE):
+            self.setProperty('machine_architecture', 'arm64' if match.group(1) == 'aarch64' else match.group(1))
+
         match = re.search('ProductVersion:[ \t]*(.+?)\n', logText)
         if match:
             os_version = match.group(1).strip()
@@ -8140,7 +8202,7 @@ class FindUnexpectedStaticAnalyzerResults(shell.ShellCommand, AnalyzeChange, Add
             self.setProperty('num_failing_files', len(filtered_failures))
         if filtered_passes is not None:
             self.setProperty('num_passing_files', len(filtered_passes))
-        successful_filter = filtered_failures is not None or filtered_passes is not None
+        successful_filter = filtered_failures is not None and filtered_passes is not None
         return defer.returnValue(successful_filter)
 
     @defer.inlineCallbacks
@@ -8160,10 +8222,10 @@ class FindUnexpectedStaticAnalyzerResults(shell.ShellCommand, AnalyzeChange, Add
                         configuration=configuration,
                         commit=identifier,
                         suite=self.suite,
-                        default='PASS'
                     )
                     if not data:
-                        yield self._addToLog(self.results_db_log_name, f"Failed to match results for {test_name}, falling back to tip-of-tree\n")
+                        yield self._addToLog(self.results_db_log_name, f"Could not determine from results-db whether {test_name} is pre-existing at '{identifier}' with configuration {configuration}, falling back to tip-of-tree\n")
+                        yield self._addToLog('stdio', f'Results database cannot say whether {test_name} is pre-existing, rebuilding without the change to find out.\n')
                         return defer.returnValue(None)
                     yield self._addToLog(self.results_db_log_name, f"\n{test_name}: pre-existing={data['does_result_match']}\nResponse from results-db: {data}\n{data['logs']}")
 

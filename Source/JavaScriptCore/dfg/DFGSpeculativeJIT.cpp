@@ -3210,8 +3210,13 @@ void SpeculativeJIT::setIntTypedArrayLoadResult(Node* node, JSValueRegs resultRe
 
     if (shouldBox) {
         if (isUInt32) {
-            convertUInt32ToDouble(resultReg, resultFPR);
-            boxDouble(resultFPR, resultRegs);
+            if (node->shouldSpeculateInt32() && canSpeculate) {
+                speculationCheck(ExitKind::Overflow, JSValueRegs(), nullptr, branch32(LessThan, resultReg, TrustedImm32(0)));
+                boxInt32(resultReg, resultRegs);
+            } else {
+                convertUInt32ToDouble(resultReg, resultFPR);
+                boxDouble(resultFPR, resultRegs);
+            }
         } else
             boxInt32(resultRegs.payloadGPR(), resultRegs);
         if (outOfBounds.isSet())
@@ -12113,13 +12118,11 @@ void SpeculativeJIT::speculateStringOrOther(Edge edge)
 void SpeculativeJIT::speculateStringIdentAndLoadStorage(Edge edge, GPRReg string, GPRReg storage)
 {
     loadPtr(Address(string, JSString::offsetOfValue()), storage);
-    
+
     if (!needsTypeCheck(edge, SpecStringIdent | ~SpecString))
         return;
 
-    if (canBeRope(edge))
-        speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchIfRopeStringImpl(storage));
-    speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchTest32(Zero, Address(storage, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+    speculationCheck(BadStringType, JSValueSource::unboxedCell(string), edge, branchIfNotAtomStringImpl(string, storage, canBeRope(edge)));
 
     m_interpreter.filter(edge, SpecStringIdent | ~SpecString);
 }
@@ -14645,7 +14648,7 @@ void SpeculativeJIT::compileEnumeratorNextUpdateIndexAndMode(Node* node)
         Label incrementLoop;
         Jump done;
         constexpr bool preserveIndexReg = true;
-        compileHasIndexedProperty(node, operationHasEnumerableIndexedProperty, scopedLambda<std::tuple<GPRReg, GPRReg>()>([&] {
+        compileHasIndexedProperty(node, operationHasEnumerableIndexedProperty, [&]() -> std::tuple<GPRReg, GPRReg> {
             GPRReg newIndexGPR = newIndex.gpr();
             GPRReg scratchGPR = scratch.gpr();
 
@@ -14659,7 +14662,7 @@ void SpeculativeJIT::compileEnumeratorNextUpdateIndexAndMode(Node* node)
             initMode.link(this);
             done = branch32(AboveOrEqual, newIndexGPR, Address(enumeratorGPR, JSPropertyNameEnumerator::indexedLengthOffset()));
             return std::make_pair(newIndexGPR, scratchGPR);
-        }), preserveIndexReg);
+        }, preserveIndexReg);
         branchTest32(Zero, scratch.gpr()).linkTo(incrementLoop, this);
 
         done.link(this);
@@ -17377,7 +17380,7 @@ void SpeculativeJIT::compileEnumeratorGetByVal(Node* node)
         GPRReg enumeratorGPR;
         JumpList recoverGenericCase;
 
-        compileGetByVal(node, scopedLambda<std::tuple<JSValueRegs, DataFormat>(DataFormat, bool)>([&](DataFormat preferredFormat, bool needsFlush) {
+        compileGetByVal(node, [&](DataFormat preferredFormat, bool needsFlush) -> std::tuple<JSValueRegs, DataFormat> {
             Edge storageEdge = m_graph.varArgChild(node, 2);
             StorageOperand storage;
             if (storageEdge)
@@ -17457,7 +17460,7 @@ void SpeculativeJIT::compileEnumeratorGetByVal(Node* node)
 
             notFastNamedCases.link(this);
             return std::tuple { resultRegs, DataFormatJS };
-        }));
+        });
 
         // We rely on compileGetByVal to call jsValueResult for us.
         // FIXME: This is kinda hacky...

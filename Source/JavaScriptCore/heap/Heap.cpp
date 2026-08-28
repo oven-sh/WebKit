@@ -606,6 +606,9 @@ void Heap::lastChanceToFinalize()
     m_arrayBuffers.lastChanceToFinalize();
     m_objectSpace.lastChanceToFinalize();
     releaseDelayedReleasedObjects();
+#if ENABLE(WEBASSEMBLY)
+    Wasm::TypeInformation::cleanupIfRequested();
+#endif
 
     sweepAllLogicallyEmptyWeakBlocks();
     
@@ -841,6 +844,9 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 #endif
 
     vm().reconcileWeakReferencesAtGCEnd();
+
+    if (auto* clientData = vm().clientData)
+        clientData->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
 }
 
 void Heap::willStartIterating()
@@ -1320,6 +1326,9 @@ void Heap::sweepSynchronously()
     }
     m_objectSpace.sweepBlocks();
     m_objectSpace.shrink();
+#if ENABLE(WEBASSEMBLY)
+    Wasm::TypeInformation::cleanupIfRequested();
+#endif
     if (Options::logGC()) [[unlikely]] {
         MonotonicTime after = MonotonicTime::now();
         dataLog("=> ", capacity() / 1024, "kb, ", (after - before).milliseconds(), "ms");
@@ -2155,7 +2164,7 @@ NEVER_INLINE void Heap::collectInMutatorThread()
                     }
                 }
             };
-            callWithCurrentThreadState(scopedLambda<void(CurrentThreadState&)>(WTF::move(lambda)));
+            callWithCurrentThreadState(lambda);
             return;
         }
     }
@@ -2368,6 +2377,9 @@ void Heap::runCollectionEpilogue()
         deleteSourceProviderCaches();
         sweepEagerlyInEpilogue();
     }
+#if ENABLE(WEBASSEMBLY)
+    Wasm::TypeInformation::cleanupIfRequested();
+#endif
     
     if (HasOwnPropertyCache* cache = vm().hasOwnPropertyCache())
         cache->clear();
@@ -3433,26 +3445,25 @@ void Heap::removeGCCompletionCallback(const GCCompletionCallback& callback)
     m_gcCompletionCallbacks.removeFirst(callback);
 }
 
-void Heap::setBonusVisitorTask(RefPtr<SharedTask<void(SlotVisitor&)>> task)
-{
-    Locker locker { m_markingMutex };
-    m_bonusVisitorTask = task;
-    m_markingConditionVariable.notifyAll();
-}
-
-
 void Heap::runTaskInParallel(RefPtr<SharedTask<void(SlotVisitor&)>> task)
 {
     unsigned initialRefCount = task->refCount();
-    setBonusVisitorTask(task);
-    task->run(*m_collectorSlotVisitor);
-    setBonusVisitorTask(nullptr);
-    // The constraint solver expects return of this function to imply termination of the task in all
-    // threads. This ensures that property.
     {
         Locker locker { m_markingMutex };
+        m_bonusVisitorTask = task;
+        m_markingConditionVariable.notifyAll();
+    }
+
+    task->run(*m_collectorSlotVisitor);
+
+    {
+        Locker locker { m_markingMutex };
+        m_bonusVisitorTask = nullptr;
+
+        // The constraint solver expects return of this function to imply termination of the task in all
+        // threads. This ensures that property.
         while (task->refCount() > initialRefCount)
-            m_markingConditionVariable.wait(m_markingMutex);
+            m_bonusVisitorTaskConditionVariable.wait(m_markingMutex);
     }
 }
 

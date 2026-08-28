@@ -688,7 +688,10 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
 #if ENABLE(ENCRYPTED_MEDIA)
     , m_mediaKeySystemPermissionRequestManager { makeUniqueRefWithoutRefCountedCheck<MediaKeySystemPermissionRequestManager>(*this) }
 #endif
-    , m_pageScrolledHysteresis([this](PAL::HysteresisState state) { if (state == PAL::HysteresisState::Stopped) pageStoppedScrolling(); }, pageScrollHysteresisDuration)
+    , m_pageScrolledHysteresis([weakThis = WeakPtr { *this }](PAL::HysteresisState state) {
+        if (RefPtr protectedThis = weakThis; protectedThis && state == PAL::HysteresisState::Stopped)
+            protectedThis->pageStoppedScrolling();
+    }, pageScrollHysteresisDuration)
     , m_canRunBeforeUnloadConfirmPanel(parameters.canRunBeforeUnloadConfirmPanel)
     , m_canRunModal(parameters.canRunModal)
 #if HAVE(TOUCH_BAR)
@@ -2106,7 +2109,7 @@ void WebPage::updateRemotePageAccessibilityInheritedState(WebCore::FrameIdentifi
     if (!document)
         return;
 
-    WeakPtr cache = document->axObjectCache();
+    CheckedPtr cache = document->axObjectCache();
     if (!cache)
         return;
 
@@ -2118,7 +2121,7 @@ void WebPage::updateRemotePageAccessibilityScreenPosition(WebCore::FrameIdentifi
     RefPtr frame = WebProcess::singleton().webFrame(frameID);
     RefPtr coreFrame = frame ? frame->coreLocalFrame() : nullptr;
     RefPtr document = coreFrame ? coreFrame->document() : nullptr;
-    if (WeakPtr cache = document ? document->axObjectCache() : nullptr)
+    if (CheckedPtr cache = document ? document->axObjectCache() : nullptr)
         cache->setFrameGeometry(*coreFrame, geometry);
 }
 #endif // ENABLE(ACCESSIBILITY_LOCAL_FRAME)
@@ -2356,7 +2359,7 @@ void WebPage::close(CompletionHandler<void()>&& completionHandler)
     if (RefPtr inspector = std::exchange(m_inspector, nullptr))
         inspector->disconnectFromPage();
 
-    m_page->inspectorController().disconnectAllFrontends();
+    protect(m_page->inspectorController())->disconnectAllFrontends();
 
 #if ENABLE(FULLSCREEN_API)
     if (auto manager = std::exchange(m_fullScreenManager, { }))
@@ -2584,11 +2587,11 @@ void WebPage::createProvisionalFrame(ProvisionalFrameCreationParameters&& parame
     frame->createProvisionalFrame(WTF::move(parameters));
 }
 
-void WebPage::loadDidCommitInAnotherProcess(WebCore::FrameIdentifier frameID, WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier, RefPtr<WebCore::DocumentSyncData>&& topDocumentSyncData)
+void WebPage::loadDidCommitInAnotherProcess(WebCore::FrameIdentifier frameID, WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier, RefPtr<WebCore::DocumentSyncData>&& topDocumentSyncData, CompletionHandler<void()>&& completionHandler)
 {
     RefPtr frame = WebProcess::singleton().webFrame(frameID);
     if (!frame || frame->page() != this)
-        return;
+        return completionHandler();
 
     frame->loadDidCommitInAnotherProcess(hostingProcessID, layerHostingContextIdentifier);
 
@@ -2596,6 +2599,8 @@ void WebPage::loadDidCommitInAnotherProcess(WebCore::FrameIdentifier frameID, We
         if (RefPtr page = corePage())
             page->updateTopDocumentSyncData(topDocumentSyncData.releaseNonNull());
     }
+
+    completionHandler();
 }
 
 void WebPage::loadRequest(LoadParameters&& loadParameters)
@@ -4353,7 +4358,7 @@ std::pair<HandleUserInputEventResult, OptionSet<EventHandling>> WebPage::wheelEv
             return std::pair { HandleUserInputEventResult { false }, OptionSet<EventHandling> { } };
 
         auto platformWheelEvent = platform(wheelEvent);
-        return frame->coreLocalFrame()->eventHandler().handleWheelEvent(platformWheelEvent, processingSteps);
+        return protect(frame->coreLocalFrame()->eventHandler())->handleWheelEvent(platformWheelEvent, processingSteps);
     };
 
     auto [result, handling] = dispatchWheelEvent(wheelEvent, processingSteps);
@@ -4410,7 +4415,7 @@ bool WebPage::handleKeyEventByRelinquishingFocusToChrome(const KeyboardEvent& ev
     // Allow a shift-tab keypress event to relinquish focus even if we don't allow tab to cycle between
     // elements inside the view. We can only do this for shift-tab, not tab itself because
     // tabKeyCyclesThroughElements is used to make tab character insertion work in editable web views.
-    return corePage()->focusController().relinquishFocusToChrome(FocusDirection::Backward);
+    return protect(corePage()->focusController())->relinquishFocusToChrome(FocusDirection::Backward);
 }
 
 void WebPage::validateCommand(const String& commandName, CompletionHandler<void(bool, int32_t)>&& completionHandler)
@@ -4703,7 +4708,7 @@ void WebPage::insertNewlineInQuotedContent()
 #if ENABLE(REMOTE_INSPECTOR)
 void WebPage::setIndicating(bool indicating)
 {
-    m_page->inspectorController().setIndicating(indicating);
+    protect(m_page->inspectorController())->setIndicating(indicating);
 }
 #endif
 
@@ -10573,7 +10578,7 @@ void WebPage::frameWasFocusedInAnotherProcess(std::optional<WebCore::FrameIdenti
 {
     RefPtr frame = frameID ? WebProcess::singleton().webFrame(*frameID) : nullptr;
     RefPtr coreFrame = frame ? frame->coreFrame() : nullptr;
-    corePage()->focusController().setFocusedFrame(coreFrame.get(), WebCore::BroadcastFocusedFrame::No);
+    protect(corePage()->focusController())->setFocusedFrame(coreFrame.get(), WebCore::BroadcastFocusedFrame::No);
 }
 
 void WebPage::remotePostMessage(WebCore::FrameIdentifier source, const WebCore::SecurityOriginData& sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData>&& targetOrigin, const WebCore::MessageWithMessagePorts& message, std::optional<WebCore::UserGestureTokenData>&& userGestureToken)

@@ -637,7 +637,7 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                         return SharedDrainResult::TimedOut;
 
                     if (didReachTermination(locker)) {
-                        m_heap.m_markingConditionVariable.notifyAll();
+                        // No marker needs waking here. There is no work which can be processed in the helpers.
                         return SharedDrainResult::Done;
                     }
                     
@@ -653,6 +653,7 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                     return SharedDrainResult::TimedOut;
                 
                 if (didReachTermination(locker)) {
+                    // This is necessary to wake up MainDrain side.
                     m_heap.m_markingConditionVariable.notifyAll();
                     
                     // If we're in concurrent mode, then we know that the mutator will eventually do
@@ -676,13 +677,12 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 };
 
                 m_heap.m_markingConditionVariable.waitUntil(m_heap.m_markingMutex, timeout, isReady);
-                
-                if (!hasWork(locker)
-                    && m_heap.m_bonusVisitorTask)
-                    bonusTask = m_heap.m_bonusVisitorTask;
-                
+
                 if (m_heap.m_parallelMarkersShouldExit)
                     return SharedDrainResult::Done;
+
+                if (!hasWork(locker) && m_heap.m_bonusVisitorTask)
+                    bonusTask = m_heap.m_bonusVisitorTask;
             }
             
             if (!bonusTask && isEmpty()) {
@@ -698,10 +698,10 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             m_heap.m_numberOfActiveParallelMarkers++;
             m_heap.m_numberOfWaitingParallelMarkers--;
         }
-        
+
         if (bonusTask) {
             bonusTask->run(*this);
-            
+
             // The main thread could still be running, and may run for a while. Unless we clear the task
             // ourselves, we will keep looping around trying to run the task.
             {
@@ -709,7 +709,7 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 if (m_heap.m_bonusVisitorTask == bonusTask)
                     m_heap.m_bonusVisitorTask = nullptr;
                 bonusTask = nullptr;
-                m_heap.m_markingConditionVariable.notifyAll();
+                m_heap.m_bonusVisitorTaskConditionVariable.notifyOne();
             }
         } else {
             RELEASE_ASSERT(!isEmpty());
@@ -741,22 +741,19 @@ SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTi
         return drainInParallel(timeout);
     }
 
-    donateAll(Locker { m_heap.m_markingMutex });
-    return waitForTermination(timeout);
-}
-
-SlotVisitor::SharedDrainResult SlotVisitor::waitForTermination(MonotonicTime timeout)
-{
     Locker locker { m_heap.m_markingMutex };
+    donateAll(locker);
+
+    // Wait for termination.
     for (;;) {
         if (hasElapsed(timeout))
             return SharedDrainResult::TimedOut;
-        
+
         if (didReachTermination(locker)) {
-            m_heap.m_markingConditionVariable.notifyAll();
+            // No marker needs waking here. There is no work which can be processed in the helpers.
             return SharedDrainResult::Done;
         }
-        
+
         m_heap.m_markingConditionVariable.waitUntil(m_heap.m_markingMutex, timeout);
     }
 }

@@ -451,8 +451,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::findMegamorphicCacheEntry(VM& vm, GPR
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
-        urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
-        add32(scratch2GPR, scratch3GPR);
+        addUnsignedRightShift32(scratch3GPR, scratch2GPR, TrustedImm32(StringImpl::s_flagCount), scratch3GPR);
     }
 
     and32(TrustedImm32(primaryMask), scratch3GPR);
@@ -579,8 +578,7 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
-        urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
-        add32(scratch2GPR, scratch3GPR);
+        addUnsignedRightShift32(scratch3GPR, scratch2GPR, TrustedImm32(StringImpl::s_flagCount), scratch3GPR);
     }
 
     and32(TrustedImm32(MegamorphicCache::storeCachePrimaryMask), scratch3GPR);
@@ -674,8 +672,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::hasMegamorphicProperty(VM& vm, GPRReg
         // we're looking for, or we realize we're comparing against another entity, and go to the
         // slow path anyways.
         load32(Address(uidGPR, UniquedStringImpl::flagsOffset()), scratch2GPR);
-        urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2GPR);
-        add32(scratch2GPR, scratch3GPR);
+        addUnsignedRightShift32(scratch3GPR, scratch2GPR, TrustedImm32(StringImpl::s_flagCount), scratch3GPR);
     }
 
     and32(TrustedImm32(MegamorphicCache::hasCachePrimaryMask), scratch3GPR);
@@ -739,9 +736,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
     JumpList slowCases;
     if (propertyIsString) {
         loadPtr(Address(propertyGPR, JSString::offsetOfValue()), destGPR);
-        if (canBeRope)
-            slowCases.append(branchIfRopeStringImpl(destGPR));
-        slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        slowCases.append(branchIfNotAtomStringImpl(propertyGPR, destGPR, canBeRope));
     } else if (propertyIsSymbol)
         loadPtr(Address(propertyGPR, Symbol::offsetOfSymbolImpl()), destGPR);
     else {
@@ -753,9 +748,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
 
         isString.link(this);
         loadPtr(Address(propertyGPR, JSString::offsetOfValue()), destGPR);
-        if (canBeRope)
-            slowCases.append(branchIfRopeStringImpl(destGPR));
-        slowCases.append(branchTest32(Zero, Address(destGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+        slowCases.append(branchIfNotAtomStringImpl(propertyGPR, destGPR, canBeRope));
 
         done.link(this);
     }

@@ -54,6 +54,8 @@ class FormDataReference;
 }
 
 namespace WebCore {
+class CertificateInfo;
+class DocumentSyncData;
 class RegistrableDomain;
 class ResourceRequest;
 enum class CrossOriginOpenerPolicyValue : uint8_t;
@@ -62,6 +64,7 @@ enum class ShouldSample : bool;
 enum class ShouldTreatAsContinuingLoad : uint8_t;
 struct BackForwardItemIdentifierType;
 struct DiagnosticLoggingDictionary;
+struct DocumentSyncSerializationData;
 using BackForwardItemIdentifier = ProcessQualified<ObjectIdentifier<BackForwardItemIdentifierType>>;
 }
 
@@ -119,6 +122,10 @@ public:
     const std::optional<WebCore::Site>& deferredRemoteTransitionSite() const { return m_deferredRemoteTransitionSite; }
     bool hasActiveLoadForNavigation(const API::Navigation&) const;
 
+    void setDeferredTopDocumentSyncData(Ref<WebCore::DocumentSyncData>&&);
+    void updateDeferredTopDocumentSyncData(const WebCore::DocumentSyncSerializationData&);
+    RefPtr<WebCore::DocumentSyncData> takeDeferredTopDocumentSyncData();
+
     DrawingAreaProxy* drawingArea() const { return m_drawingArea.get(); }
     RefPtr<DrawingAreaProxy> takeDrawingArea();
 
@@ -160,7 +167,7 @@ public:
     void updateFrameProcess();
 
 private:
-    ProvisionalPageProxy(WebPageProxy&, Ref<FrameProcess>&&, BrowsingContextGroup&, RefPtr<SuspendedPageProxy>&&, API::Navigation&, bool isServerRedirect, const WebCore::ResourceRequest&, ProcessSwapRequestedByClient, bool isProcessSwappingOnNavigationResponse, API::WebsitePolicies*, WebsiteDataStore* replacedDataStoreForWebArchiveLoad = nullptr);
+    ProvisionalPageProxy(WebPageProxy&, Ref<FrameProcess>&&, BrowsingContextGroup&, RefPtr<SuspendedPageProxy>&&, API::Navigation&, bool isServerRedirect, const WebCore::ResourceRequest&, ProcessSwapRequestedByClient, bool isProcessSwappingOnNavigationResponse, WebCore::CertificateInfo&&, API::WebsitePolicies*, WebsiteDataStore* replacedDataStoreForWebArchiveLoad = nullptr);
 
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
@@ -235,6 +242,7 @@ private:
     bool m_shouldClosePage { true };
     bool m_didFailProvisionalLoad { false };
     std::optional<WebCore::Site> m_deferredRemoteTransitionSite;
+    RefPtr<WebCore::DocumentSyncData> m_deferredTopDocumentSyncData;
     URL m_provisionalLoadURL;
     WebPageProxyMessageReceiverRegistration m_messageReceiverRegistration;
     RefPtr<API::WebsitePolicies> m_mainFrameWebsitePolicies;

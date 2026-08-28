@@ -277,7 +277,7 @@ void ProcessLauncher::launchProcess()
 
     launchWithExtensionKit(*this, m_launchOptions.processType, m_client.get(), WTF::move(handler));
 #else
-    auto name = serviceName(m_launchOptions, m_client.get());
+    auto name = serviceName(m_launchOptions, protect(m_client));
     // FIXME: This is a false positive. <rdar://164843889>
     SUPPRESS_RETAINPTR_CTOR_ADOPT m_xpcConnection = adoptOSObject(xpc_connection_create(name, nullptr));
     finishLaunchingProcess(name);
@@ -561,11 +561,15 @@ void ProcessLauncher::tryFinishLaunchingProcess(ASCIILiteral name, Function<void
     });
 }
 
-void ProcessLauncher::terminateProcess()
+void ProcessLauncher::terminateProcess([[maybe_unused]] const String& reason)
 {
 #if USE(EXTENSIONKIT)
-    if (m_process)
-        m_process->invalidate();
+    if (m_process) {
+        if (reason.isEmpty())
+            m_process->invalidate();
+        else
+            m_process->invalidate(reason);
+    }
 #endif
 
     terminateXPCConnection();

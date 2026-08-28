@@ -83,7 +83,7 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProvisionalPageProxy);
 
-ProvisionalPageProxy::ProvisionalPageProxy(WebPageProxy& page, Ref<FrameProcess>&& frameProcess, BrowsingContextGroup& group, RefPtr<SuspendedPageProxy>&& suspendedPage, API::Navigation& navigation, bool isServerRedirect, const WebCore::ResourceRequest& request, ProcessSwapRequestedByClient processSwapRequestedByClient, bool isProcessSwappingOnNavigationResponse, API::WebsitePolicies* websitePolicies, WebsiteDataStore* replacedDataStoreForWebArchiveLoad)
+ProvisionalPageProxy::ProvisionalPageProxy(WebPageProxy& page, Ref<FrameProcess>&& frameProcess, BrowsingContextGroup& group, RefPtr<SuspendedPageProxy>&& suspendedPage, API::Navigation& navigation, bool isServerRedirect, const WebCore::ResourceRequest& request, ProcessSwapRequestedByClient processSwapRequestedByClient, bool isProcessSwappingOnNavigationResponse, WebCore::CertificateInfo&& certificateInfo, API::WebsitePolicies* websitePolicies, WebsiteDataStore* replacedDataStoreForWebArchiveLoad)
     : m_page(page)
     , m_webPageID(suspendedPage ? suspendedPage->webPageID() : PageIdentifier::generate())
     , m_frameProcess(WTF::move(frameProcess))
@@ -142,8 +142,11 @@ ProvisionalPageProxy::ProvisionalPageProxy(WebPageProxy& page, Ref<FrameProcess>
         previousMainFrame->transferNavigationCallbackToFrame(mainFrame);
     }
 
-    if (isProcessSwappingOnNavigationResponse && previousMainFrame)
-        protect(m_mainFrame)->copyCertificateInfoForProcessSwapOnNavigationResponse(m_provisionalLoadURL, *previousMainFrame);
+    if (!certificateInfo.isEmpty()) {
+        ASSERT(isProcessSwappingOnNavigationResponse);
+        ASSERT(!m_shouldReuseMainFrame);
+        protect(m_mainFrame)->setCertificateInfoForProcessSwapOnNavigationResponse(m_provisionalLoadURL, WTF::move(certificateInfo));
+    }
 
     // Normally, notification of a server redirect comes from the WebContent process.
     // If we are process swapping in response to a server redirect then that notification will not come from the new WebContent process.
@@ -202,6 +205,22 @@ WebProcessProxy& ProvisionalPageProxy::process() const
 bool ProvisionalPageProxy::hasActiveLoadForNavigation(const API::Navigation& navigation) const
 {
     return !m_didFailProvisionalLoad && m_navigationID == navigation.navigationID();
+}
+
+void ProvisionalPageProxy::setDeferredTopDocumentSyncData(Ref<WebCore::DocumentSyncData>&& data)
+{
+    m_deferredTopDocumentSyncData = WTF::move(data);
+}
+
+void ProvisionalPageProxy::updateDeferredTopDocumentSyncData(const WebCore::DocumentSyncSerializationData& data)
+{
+    if (RefPtr deferredTopDocumentSyncData = m_deferredTopDocumentSyncData)
+        deferredTopDocumentSyncData->update(data);
+}
+
+RefPtr<WebCore::DocumentSyncData> ProvisionalPageProxy::takeDeferredTopDocumentSyncData()
+{
+    return std::exchange(m_deferredTopDocumentSyncData, nullptr);
 }
 
 void ProvisionalPageProxy::processDidTerminate()

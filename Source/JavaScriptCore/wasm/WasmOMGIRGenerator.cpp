@@ -497,7 +497,13 @@ public:
     }
 
     // SIMD
-    void NODELETE notifyFunctionUsesSIMD() { ASSERT(m_info.usesSIMD(m_functionIndex)); }
+    bool NODELETE usesSIMD() const { return m_info.usesSIMD(m_functionIndex); }
+    void NODELETE notifyFunctionUsesSIMD()
+    {
+        ASSERT(m_info.usesSIMD(m_functionIndex));
+        m_proc.setUsesSIMD();
+    }
+
     [[nodiscard]] PartialResult addSIMDLoad(ExpressionType pointer, uint64_t offset, ExpressionType& result, uint8_t memoryIndex);
     [[nodiscard]] PartialResult addSIMDStore(ExpressionType value, ExpressionType pointer, uint64_t offset, uint8_t memoryIndex);
     [[nodiscard]] PartialResult addSIMDSplat(SIMDLane, ExpressionType scalar, ExpressionType& result);
@@ -853,7 +859,7 @@ public:
     [[nodiscard]] PartialResult endBlock(ControlEntry&, std::span<TypedExpression> enclosedStack);
     [[nodiscard]] PartialResult addEndToUnreachable(ControlEntry&, std::span<TypedExpression> enclosedStack);
 
-    [[nodiscard]] PartialResult NODELETE endTopLevel(std::span<const TypedExpression>) { return { }; }
+    [[nodiscard]] PartialResult endTopLevel(std::span<const TypedExpression>) { return { }; }
 
     // Fused comparison stubs (B3 will do this for us later).
     [[nodiscard]] PartialResult NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
@@ -1714,19 +1720,50 @@ auto OMGIRGenerator::addRefIsNull(ExpressionType value, ExpressionType& result) 
 
 auto OMGIRGenerator::addTableGet(unsigned tableIndex, ExpressionType index, ExpressionType& result) -> PartialResult
 {
-    // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
-    Value* resultValue = callWasmOperation(m_currentBlock, toB3Type(Types::Externref), operationGetWasmTableElement,
-        instanceValue(), constant(Int32, tableIndex), addressOperand(m_info.table(tableIndex).addressType().is64Bit(), index));
-    {
+    auto& tableInformation = m_info.table(tableIndex);
+    if (tableInformation.type() == TableElementType::Funcref) {
+        Value* resultValue = callWasmOperation(m_currentBlock, toB3Type(Types::Externref), operationGetWasmTableElement,
+            instanceValue(), constant(Int32, tableIndex), addressOperand(tableInformation.addressType().is64Bit(), index));
         result = push(resultValue);
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
             m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), resultValue, m_currentBlock->appendNew<WasmConstRefValue>(m_proc, origin(), 0)));
-
         check->setGenerator([=, this, origin = this->origin()] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsTableAccess);
         });
+        return { };
     }
 
+    auto* table = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTable(m_info, tableIndex)));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_tables[tableIndex], table);
+    table->setReadsMutability(B3::Mutability::Immutable);
+    table->setControlDependent(false);
+
+    Value* indexValue = addressOperand(tableInformation.addressType().is64Bit(), index);
+    auto* length32 = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), table, safeCast<int32_t>(Table::offsetOfLength()));
+    m_heaps.decorateMemory(&m_heaps.WasmTable_length, length32);
+    Value* length = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), length32);
+
+    CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
+        m_currentBlock->appendNew<Value>(m_proc, AboveEqual, origin(), indexValue, length));
+    check->setGenerator([=, this, origin = this->origin()] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+        this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsTableAccess);
+    });
+
+    auto* jsValues = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), table, safeCast<int32_t>(ExternOrAnyRefTable::offsetOfJSValues()));
+    m_heaps.decorateMemory(&m_heaps.WasmExternOrAnyRefTable_jsValues, jsValues);
+
+    static_assert(sizeof(WriteBarrier<Unknown>) == 8);
+    Value* offset = m_currentBlock->appendNew<Value>(m_proc, Shl, origin(), indexValue, constant(Int32, 3));
+    Value* slot = m_currentBlock->appendNew<Value>(m_proc, Add, origin(), jsValues, offset);
+    auto* resultValue = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int64, origin(), slot);
+    Value* rawIndex = get(index);
+    const B3::AbstractHeap* slotHeap = &m_heaps.WasmExternOrAnyRefTable_jsValuesBuffer.atAnyIndex();
+    if (rawIndex->hasInt32())
+        slotHeap = &m_heaps.WasmExternOrAnyRefTable_jsValuesBuffer[static_cast<ptrdiff_t>(static_cast<uint32_t>(rawIndex->asInt32()))];
+    else if (rawIndex->hasInt64())
+        slotHeap = &m_heaps.WasmExternOrAnyRefTable_jsValuesBuffer[static_cast<ptrdiff_t>(static_cast<uint64_t>(rawIndex->asInt64()))];
+    m_heaps.decorateMemory(slotHeap, resultValue);
+    result = push(resultValue);
     return { };
 }
 
@@ -1801,10 +1838,18 @@ auto OMGIRGenerator::addElemDrop(unsigned elementIndex) -> PartialResult
 
 auto OMGIRGenerator::addTableSize(unsigned tableIndex, ExpressionType& result) -> PartialResult
 {
-    // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
-    result = push(callWasmOperation(m_currentBlock, toB3Type(m_info.table(tableIndex).addressType().asWasmType()), operationGetWasmTableSize,
-        instanceValue(), constant(Int32, tableIndex)));
+    auto* table = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTable(m_info, tableIndex)));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_tables[tableIndex], table);
+    table->setReadsMutability(B3::Mutability::Immutable);
+    table->setControlDependent(false);
 
+    auto* length32 = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), table, safeCast<int32_t>(Table::offsetOfLength()));
+    m_heaps.decorateMemory(&m_heaps.WasmTable_length, length32);
+
+    if (m_info.table(tableIndex).addressType().is64Bit())
+        result = push(m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), length32));
+    else
+        result = push(length32);
     return { };
 }
 

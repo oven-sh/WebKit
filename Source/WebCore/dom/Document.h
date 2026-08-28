@@ -815,7 +815,10 @@ public:
     inline CachedResourceLoader& cachedResourceLoader(); // Defined in DocumentResourceLoader.h
 
     WEBCORE_EXPORT void didBecomeCurrentDocumentInFrame();
+    enum class DocumentIsGoingAway : bool { No, Yes };
+    void destroyRenderTree(DocumentIsGoingAway);
     void destroyRenderTree();
+    void updateRenderTreeForOwnerElementBox();
     WEBCORE_EXPORT void willBeRemovedFromFrame();
 
     // Override ScriptExecutionContext methods to do additional work
@@ -845,6 +848,8 @@ public:
         BeingDestroyed,
     };
     RenderTreeState renderTreeState() const { return m_renderTreeState; }
+
+    WEBCORE_EXPORT bool canEverRender() const;
 
     void updateRenderTree(std::unique_ptr<Style::Update> styleUpdate);
 
@@ -2187,6 +2192,8 @@ private:
     void setRenderer(RenderObject*) = delete;
 
     void createRenderTree();
+    void updateRenderTreesForDescendantFrames();
+    bool ownerElementGeneratesBox() const;
     void detachParser();
 
     DocumentEventTiming* documentEventTimingFromNavigationTiming();

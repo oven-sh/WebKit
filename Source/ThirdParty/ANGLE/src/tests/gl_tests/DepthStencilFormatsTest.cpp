@@ -463,9 +463,6 @@ TEST_P(DepthStencilFormatsTest, DepthStencilReadback_UShort)
 // This test will initialize a depth texture, clear it and read it back, if possible
 TEST_P(DepthStencilFormatsTest, DepthStencilReadback_UInt)
 {
-    // http://anglebug.com/40644772
-    ANGLE_SKIP_TEST_IF(IsMac() && IsIntelUHD630Mobile() && IsDesktopOpenGL());
-
     GLuint fakeData[10]    = {0};
     ReadbackTestParam type = {
         GL_DEPTH_ATTACHMENT,
@@ -482,9 +479,6 @@ TEST_P(DepthStencilFormatsTest, DepthStencilReadback_UInt)
 // This test will initialize a depth texture, clear it and read it back, if possible
 TEST_P(DepthStencilFormatsTest, DepthStencilReadback_Float)
 {
-    // http://anglebug.com/40644772
-    ANGLE_SKIP_TEST_IF(IsMac() && IsIntelUHD630Mobile() && IsDesktopOpenGL());
-
     GLuint fakeData[10]    = {0};
     ReadbackTestParam type = {
         GL_DEPTH_ATTACHMENT,
@@ -1096,6 +1090,66 @@ TEST_P(DepthStencilFormatsTest, VerifyDepthStencilUploadData)
     ASSERT_GL_NO_ERROR();
 
     EXPECT_PIXEL_RECT_EQ(0, 0, getWindowWidth(), getWindowHeight(), GLColor::black);
+}
+
+// TexImage2D with (D32_OES, DEPTH_COMPONENT, UNSIGNED_INT) should succeed.
+TEST_P(DepthStencilFormatsTest, DepthComponent32OES_UnsignedInt_Accepted)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_depth_texture") &&
+                       !IsGLExtensionEnabled("GL_ANGLE_depth_texture"));
+
+    GLTexture depthTex;
+    glBindTexture(GL_TEXTURE_2D, depthTex);
+
+    std::vector<GLuint> pixels(1, 0xffffffff);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32_OES, 1, 1, 0, GL_DEPTH_COMPONENT,
+                 GL_UNSIGNED_INT, pixels.data());
+    ASSERT_GL_NO_ERROR();
+
+    GLTexture colorTex;
+    glBindTexture(GL_TEXTURE_2D, colorTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTex, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GEQUAL);
+    glClearColor(0, 1, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    ANGLE_GL_PROGRAM(programRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    // Fail Depth Test: 0.99 >= 1.0 is false, color stays green
+    float depthValue = 0.99f;
+    drawQuad(programRed, essl1_shaders::PositionAttrib(), depthValue * 2 - 1);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+
+    // Pass Depth Test: 1.0 >= 1.0 is true, color becomes red
+    depthValue = 1.0f;
+    drawQuad(programRed, essl1_shaders::PositionAttrib(), depthValue * 2 - 1);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+
+    glDisable(GL_DEPTH_TEST);
+    ASSERT_GL_NO_ERROR();
+}
+
+// TexImage2D with (D32_OES, DEPTH_COMPONENT, UNSIGNED_INT_24_8) should fail.
+TEST_P(DepthStencilFormatsTest, DepthComponent32OES_UnsignedInt248_Rejected)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_depth_texture") &&
+                       !IsGLExtensionEnabled("GL_ANGLE_depth_texture"));
+
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_2D, tex);
+
+    std::vector<GLuint> pixels(64 * 4, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32_OES, 64, 4, 0, GL_DEPTH_COMPONENT,
+                 GL_UNSIGNED_INT_24_8, pixels.data());
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
 }
 
 // Verify that depth texture's data can be uploaded correctly

@@ -92,7 +92,7 @@ public:
     // APIs to control the module loader.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSSourceCode*);
-    JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
+    JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { });
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
 #if USE(BUN_JSC_ADDITIONS)
@@ -103,7 +103,7 @@ public:
     JSPromise* importModule(JSGlobalObject*, JSString* moduleName, JSValue parameters, const SourceOrigin& referrer, bool deferred = false);
     Identifier resolve(JSGlobalObject*, JSValue name, JSValue referrer, RefPtr<ScriptFetcher>, bool useImportMap);
     Identifier resolve(JSGlobalObject*, const Identifier& name, const Identifier& referrer, RefPtr<ScriptFetcher>, bool useImportMap);
-    JSPromise* fetch(JSGlobalObject*, JSValue key, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
+    JSPromise* fetch(JSGlobalObject*, JSValue key, const String& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSObject* createImportMetaProperties(JSGlobalObject*, JSValue key, JSModuleRecord*, RefPtr<ScriptFetcher>);
 
     // Additional platform dependent hooked APIs.

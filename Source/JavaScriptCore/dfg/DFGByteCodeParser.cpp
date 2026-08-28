@@ -762,9 +762,8 @@ private:
     {
         ASSERT(node->op() == GetLocal);
         ASSERT(node->origin.semantic.bytecodeIndex() == m_currentIndex);
-        ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
         LazyOperandValueProfileKey key(m_currentIndex, node->operand());
-        SpeculatedType prediction = m_inlineStackTop->m_lazyOperands.prediction(locker, key);
+        SpeculatedType prediction = m_inlineStackTop->m_lazyOperands.prediction(key);
         node->variableAccessData()->predict(prediction);
         return node;
     }
@@ -1268,12 +1267,8 @@ private:
             if (opcodeID == op_call_ignore_result)
                 return SpecFullTop;
 
-            SpeculatedType prediction;
-            {
-                JSValue* specFailValue = inlineStackEntry->m_specFailValueProfileBuckets.get(bytecodeIndex);
-                ConcurrentJSLocker locker(codeBlock->valueProfileLock());
-                prediction = codeBlock->valueProfilePredictionForBytecodeIndex(locker, codeOrigin.bytecodeIndex(), specFailValue);
-            }
+            JSValue* specFailValue = inlineStackEntry->m_specFailValueProfileBuckets.get(bytecodeIndex);
+            SpeculatedType prediction = codeBlock->valueProfilePredictionForBytecodeIndex(codeOrigin.bytecodeIndex(), specFailValue);
             auto* fuzzerAgent = m_vm->fuzzerAgent();
             if (fuzzerAgent) [[unlikely]]
                 return fuzzerAgent->getPrediction(codeBlock, codeOrigin, prediction) & SpecBytecodeTop;
@@ -2590,9 +2585,8 @@ bool ByteCodeParser::handleVarargsInlining(Node* callTargetNode, Operand result,
             // arguments received inside the callee. But that probably won't matter for most
             // calls.
             if (codeBlock && argument < static_cast<unsigned>(codeBlock->numParameters())) {
-                ConcurrentJSLocker locker(codeBlock->valueProfileLock());
                 ArgumentValueProfile& profile = codeBlock->valueProfileForArgument(argument);
-                variable->predict(profile.computeUpdatedPrediction(locker));
+                variable->predict(profile.computeUpdatedPrediction());
             }
             
             Node* setArgument = addToGraph(numSetArguments >= mandatoryMinimum ? SetArgumentMaybe : SetArgumentDefinitely, OpInfo(variable));
@@ -10172,11 +10166,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
             UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> seenArguments;
 
             {
-                ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->valueProfileLock());
-
                 buffer->forEach([&](ValueProfileAndVirtualRegister& profile) {
                     VirtualRegister operand(profile.m_operand);
-                    SpeculatedType prediction = profile.computeUpdatedPrediction(locker);
+                    SpeculatedType prediction = profile.computeUpdatedPrediction();
                     if (operand.isLocal())
                         localPredictions.append(prediction);
                     else {
