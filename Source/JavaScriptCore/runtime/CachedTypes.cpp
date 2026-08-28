@@ -403,6 +403,8 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(uint32_t ordinal)
 
 RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
 {
+    if (slot == VariableLengthObjectBase::emptySentinel)
+        return emptyAtom().impl();
     switch (slot & VariableLengthObjectBase::inlineStringTagMask) {
     case VariableLengthObjectBase::inlineStringTag: {
         if (!((slot >> 2) & 3))
@@ -413,8 +415,6 @@ RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
         if (slot >> 2 >= m_count)
             return nullptr;
         return atomFor(slot >> 2);
-    case VariableLengthObjectBase::emptySentinel:
-        return emptyAtom().impl();
     default:
         return nullptr;
     }
