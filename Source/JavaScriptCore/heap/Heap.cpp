@@ -25,6 +25,7 @@
 
 #include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
+#include "CachedTypes.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectingScope.h"
@@ -1037,6 +1038,12 @@ void Heap::endMarking()
     
     m_objectSpace.endMarking();
     setMutatorShouldBeFenced(Options::forceFencedBarrier());
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm().clientData) {
+        if (auto* table = vm().clientData->decoderStringTable())
+            table->didFinishCollection();
+    }
+#endif
 }
 
 size_t Heap::objectCount()
@@ -3145,6 +3152,12 @@ void Heap::addCoreConstraints()
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
                 if (vm.smallStrings.needsToBeVisited(*m_collectionScope))
                     vm.smallStrings.visitStrongReferences(visitor);
+#if USE(BUN_JSC_ADDITIONS)
+                if (vm.clientData) {
+                    if (auto* table = vm.clientData->decoderStringTable())
+                        table->visitStrongReferences(visitor, m_collectionScope.value_or(CollectionScope::Full));
+                }
+#endif
             }
             
             {
