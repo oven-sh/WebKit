@@ -232,17 +232,15 @@ void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
 }
 
 // 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 65536-entry table on the VM (shared by every Decoder — one 512 KB slab, not one per retained Decoder); length 3 goes to the atom table each time.
-Ref<AtomStringImpl> Decoder::atomForInlineString(std::span<const uint8_t, 4> slot)
+Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t, 4> slot)
 {
     static_assert(std::endian::native == std::endian::little, "inline string slots are written as a little-endian word");
     unsigned length = (slot[0] >> 2) & 3;
     std::span<const Latin1Character> characters = slot.subspan(1).first(length);
     if (length == 1)
-        return m_vm.smallStrings.singleCharacterStringRep(characters[0]);
+        return vm.smallStrings.singleCharacterStringRep(characters[0]);
     if (length == 2) {
-        if (!m_twoCharacterAtoms) [[unlikely]]
-            m_twoCharacterAtoms = m_vm.ensureCachedBytecodeTwoCharacterAtoms();
-        AtomStringImpl*& entry = m_twoCharacterAtoms[characters[0] | characters[1] << 8];
+        AtomStringImpl*& entry = vm.ensureCachedBytecodeTwoCharacterAtoms()[characters[0] | characters[1] << 8];
         if (entry) [[likely]]
             return *entry;
         Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
@@ -284,6 +282,17 @@ uint32_t EncoderStringTable::ordinalFor(const StringImpl& string)
     if (result.isNewEntry)
         m_strings.append(const_cast<StringImpl&>(string));
     return result.iterator->value;
+}
+
+uint32_t EncoderStringTable::slotFor(const StringImpl& string)
+{
+    if (!string.length())
+        return VariableLengthObjectBase::emptySentinel;
+    if (std::optional<uint32_t> packed = VariableLengthObjectBase::packInlineString(string))
+        return *packed;
+    uint32_t ordinal = ordinalFor(string);
+    RELEASE_ASSERT(ordinal <= maxOrdinal);
+    return VariableLengthObjectBase::externalStringTag | ordinal << 2;
 }
 
 // [u32 count][u32 offsets[count]][records: {u32 length|is8Bit<<31, u32 hash, chars, pad-to-4}...]; offsets are from the start of the blob.
@@ -390,6 +399,25 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(uint32_t ordinal)
     atom->ref();
     slot = atom.ptr();
     return atom;
+}
+
+RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
+{
+    switch (slot & VariableLengthObjectBase::inlineStringTagMask) {
+    case VariableLengthObjectBase::inlineStringTag: {
+        if (!((slot >> 2) & 3))
+            return nullptr;
+        return Decoder::atomForInlineString(vm, asByteSpan<uint32_t, sizeof(uint32_t)>(slot));
+    }
+    case VariableLengthObjectBase::externalStringTag:
+        if (slot >> 2 >= m_count)
+            return nullptr;
+        return atomFor(slot >> 2);
+    case VariableLengthObjectBase::emptySentinel:
+        return emptyAtom().impl();
+    default:
+        return nullptr;
+    }
 }
 
 String DecoderStringTable::plainStringFor(uint32_t ordinal)
@@ -1064,21 +1092,12 @@ public:
     // A 1-3 character Latin-1 string that decodes to an atom fits in the 4-byte slot that would otherwise hold the offset
     // of its record: low two bits 01 (record offsets are multiples of 4 and the empty sentinel ends in 11), then the
     // length, then the characters. Minified code is mostly such names.
-    static constexpr uint32_t inlineStringTag = 1;
-    static constexpr uint32_t inlineStringTagMask = 3;
-    static constexpr unsigned inlineStringMaxLength = 3;
     bool tryEncodeInlineString(const StringImpl& string)
     {
-        if (string.isSymbol() || !string.length() || string.length() > inlineStringMaxLength)
+        std::optional<uint32_t> packed = packInlineString(string);
+        if (!packed)
             return false;
-        uint32_t packed = inlineStringTag | string.length() << 2;
-        for (unsigned i = 0; i < string.length(); ++i) {
-            char16_t character = string[i]; // whether the atom happens to be stored 16-bit is not a property of the source
-            if (!isLatin1(character))
-                return false;
-            packed |= static_cast<uint32_t>(character) << (8 * (i + 1));
-        }
-        m_offset = std::bit_cast<Offset>(packed);
+        m_offset = std::bit_cast<Offset>(*packed);
         return true;
     }
     bool NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
@@ -1088,7 +1107,6 @@ public:
     Ref<AtomStringImpl> inlineString(Decoder& decoder) const { return decoder.atomForInlineString(asByteSpan<Offset, sizeof(Offset)>(m_offset)); }
 
     // A ≥4-char non-symbol string held in the embedder's shared EncoderStringTable/DecoderStringTable: the slot is an ordinal into that one process-wide table, so every chunk's payload carries 4 bytes instead of a full record. Tag 10 is the value low-two-bits neither a 4-aligned record offset (00), an inline string (01), nor the empty sentinel (11) can produce.
-    static constexpr uint32_t externalStringTag = 2;
     bool NODELETE hasExternalString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == externalStringTag; }
     uint32_t NODELETE externalStringOrdinal() const { return static_cast<uint32_t>(std::bit_cast<uint32_t>(m_offset)) >> 2; }
     bool tryEncodeExternalString(Encoder& encoder, const StringImpl& string)
