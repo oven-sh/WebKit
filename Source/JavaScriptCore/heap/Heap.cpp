@@ -2648,6 +2648,12 @@ void Heap::updateAllocationLimits()
     }
 
     m_sizeAfterLastCollect = currentHeapSize;
+#if USE(BUN_JSC_ADDITIONS)
+    if (std::exchange(m_reenableEdenActivityCallback, false) && m_edenActivityCallback)
+        m_edenActivityCallback->setEnabled(true);
+    if (std::exchange(m_reenableFullActivityCallback, false) && m_fullActivityCallback)
+        m_fullActivityCallback->setEnabled(true);
+#endif
     dataLogLnIf(verbose, "sizeAfterLastCollect = ", m_sizeAfterLastCollect);
     m_nonOversizedBytesAllocatedThisCycle = 0;
     m_oversizedBytesAllocatedThisCycle = 0;
@@ -2802,6 +2808,28 @@ bool Heap::shouldSweepSynchronously()
     // updateAllocationLimits() updates info that overCriticalMemoryThreshold() needs.
     return overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Heap::setInitialAllocationBudget(size_t bytes)
+{
+    if (m_sizeAfterLastCollect || m_lastCollectionScope)
+        return; // a collection already ran; the heap is sizing itself from what it found
+    if (bytes <= m_maxEdenSize)
+        return;
+    m_maxEdenSize = bytes;
+    m_maxHeapSize = bytes;
+    // The allocation-paced timers would otherwise bring the first collection in well under the budget; they come back
+    // on as soon as any collection (budget, explicit request, memory pressure) has run.
+    if (m_edenActivityCallback && m_edenActivityCallback->isEnabled()) {
+        m_edenActivityCallback->setEnabled(false);
+        m_reenableEdenActivityCallback = true;
+    }
+    if (m_fullActivityCallback && m_fullActivityCallback->isEnabled()) {
+        m_fullActivityCallback->setEnabled(false);
+        m_reenableFullActivityCallback = true;
+    }
+}
+#endif
 
 bool Heap::shouldDoFullCollection()
 {
