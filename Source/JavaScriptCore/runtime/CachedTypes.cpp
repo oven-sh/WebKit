@@ -262,12 +262,12 @@ ALWAYS_INLINE DecoderStringTable& Decoder::externalStrings()
 
 Ref<AtomStringImpl> Decoder::atomForExternalString(uint32_t ordinal)
 {
-    return externalStrings().atomFor(ordinal);
+    return externalStrings().atomFor(m_vm, ordinal);
 }
 
-String Decoder::plainStringForExternalString(uint32_t ordinal)
+JSString* Decoder::jsStringForExternalString(uint32_t ordinal)
 {
-    return externalStrings().plainStringFor(ordinal);
+    return externalStrings().jsStringFor(m_vm, ordinal);
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EncoderStringTable);
@@ -333,8 +333,8 @@ DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes)
     m_count = *std::bit_cast<const uint32_t*>(bytes.data());
     RELEASE_ASSERT(m_count <= (bytes.size() - sizeof(uint32_t)) / sizeof(uint32_t), m_count, bytes.size());
     if (m_count) {
-        m_stringsReservation = roundUpToMultipleOf(WTF::pageSize(), static_cast<size_t>(m_count) * sizeof(StringImpl*));
-        m_strings = static_cast<StringImpl**>(OSAllocator::reserveAndCommit(m_stringsReservation, OSAllocator::FastMallocPages));
+        m_slotsReservation = roundUpToMultipleOf(WTF::pageSize(), static_cast<size_t>(m_count) * sizeof(uintptr_t));
+        m_slots = static_cast<uintptr_t*>(OSAllocator::reserveAndCommit(m_slotsReservation, OSAllocator::FastMallocPages));
     }
 }
 
@@ -342,11 +342,38 @@ DecoderStringTable::~DecoderStringTable()
 {
     // One per VM: a Worker that exits must give back the references it took on its thread's atoms.
     for (uint32_t i = 0; i < m_count; ++i) {
-        if (m_strings[i])
-            m_strings[i]->deref();
+        if (m_slots[i] && !isCell(m_slots[i]))
+            impl(m_slots[i])->deref();
     }
-    if (m_strings)
-        OSAllocator::decommitAndRelease(m_strings, m_stringsReservation);
+    if (m_slots)
+        OSAllocator::decommitAndRelease(m_slots, m_slotsReservation);
+}
+
+StringImpl* DecoderStringTable::impl(uintptr_t slot)
+{
+    if (isCell(slot))
+        return cell(slot)->tryGetValueImpl(); // never a rope: jsStringFor made it from a resolved StringImpl
+    return std::bit_cast<StringImpl*>(slot);
+}
+
+// The slot's StringImpl, decoding it (as a plain, non-atom string) if the slot is still empty.
+StringImpl* DecoderStringTable::ensureImpl(uint32_t ordinal)
+{
+    RELEASE_ASSERT(ordinal < m_count);
+    uintptr_t& slot = m_slots[ordinal];
+    if (slot)
+        return impl(slot);
+    Record r = record(ordinal);
+    RefPtr<StringImpl> string;
+    if (r.is8Bit) {
+        std::span<const Latin1Character> chars { std::bit_cast<const Latin1Character*>(r.characters), r.length };
+        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    } else {
+        std::span<const char16_t> chars { std::bit_cast<const char16_t*>(r.characters), r.length };
+        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    }
+    slot = std::bit_cast<uintptr_t>(string.leakRef()); // the table's +1
+    return impl(slot);
 }
 
 // The blob comes from an executable users sometimes edit; never read outside it.
@@ -379,17 +406,23 @@ static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, ui
 
 // A slot holds the one StringImpl this VM uses for that string: an atom once an identifier has asked for it, or the
 // plain StringImpl a string constant made first (which atomFor then promotes or replaces).
-Ref<AtomStringImpl> DecoderStringTable::atomFor(uint32_t ordinal)
+Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
 {
     RELEASE_ASSERT(ordinal < m_count);
-    StringImpl*& slot = m_strings[ordinal];
+    uintptr_t& slot = m_slots[ordinal];
     if (slot) [[likely]] {
-        if (slot->isAtom()) [[likely]]
-            return *static_cast<AtomStringImpl*>(slot);
-        Ref<AtomStringImpl> atom = AtomStringImpl::add(slot).releaseNonNull(); // makes `slot` the atom unless one already exists
-        if (atom.ptr() != slot) {
-            atom->ref();
-            std::exchange(slot, atom.ptr())->deref();
+        StringImpl* existing = impl(slot);
+        if (existing->isAtom()) [[likely]]
+            return *static_cast<AtomStringImpl*>(existing);
+        Ref<AtomStringImpl> atom = AtomStringImpl::add(existing).releaseNonNull(); // makes `existing` the atom unless one already exists
+        if (atom.ptr() != existing) {
+            if (isCell(slot))
+                cell(slot)->swapToAtomString(vm, RefPtr<AtomStringImpl> { atom.ptr() });
+            else {
+                atom->ref();
+                slot = std::bit_cast<uintptr_t>(static_cast<StringImpl*>(atom.ptr()));
+                existing->deref();
+            }
         }
         return atom;
     }
@@ -398,7 +431,7 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(uint32_t ordinal)
         ? atomize(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length }, r.hash)
         : atomize(std::span { std::bit_cast<const char16_t*>(r.characters), r.length }, r.hash);
     atom->ref();
-    slot = atom.ptr();
+    slot = std::bit_cast<uintptr_t>(static_cast<StringImpl*>(atom.ptr()));
     return atom;
 }
 
@@ -415,31 +448,56 @@ RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
     case VariableLengthObjectBase::externalStringTag:
         if (slot >> 2 >= m_count)
             return nullptr;
-        return atomFor(slot >> 2);
+        return atomFor(vm, slot >> 2);
     default:
         return nullptr;
     }
 }
 
-String DecoderStringTable::plainStringFor(uint32_t ordinal)
+JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
 {
     RELEASE_ASSERT(ordinal < m_count);
-    StringImpl*& slot = m_strings[ordinal];
-    if (slot)
-        return String { slot };
-    Record r = record(ordinal);
-    RefPtr<StringImpl> string;
-    if (r.is8Bit) {
-        std::span<const Latin1Character> chars { std::bit_cast<const Latin1Character*>(r.characters), r.length };
-        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
-    } else {
-        std::span<const char16_t> chars { std::bit_cast<const char16_t*>(r.characters), r.length };
-        string = r.length >= 48 ? StringImpl::createWithoutCopying(chars) : StringImpl::create(chars);
+    uintptr_t& slot = m_slots[ordinal];
+    if (isCell(slot))
+        return cell(slot);
+    if (!slot) {
+        Record r = record(ordinal);
+        if (r.length == 1) {
+            char16_t c = r.is8Bit ? *r.characters : *std::bit_cast<const char16_t*>(r.characters);
+            if (c <= maxSingleCharacterString)
+                return vm.smallStrings.singleCharacterString(c); // already shared VM-wide; leave the slot empty
+        }
     }
-    string->ref();
-    slot = string.get();
-    return String { WTF::move(string) };
+    // The cell takes over the table's reference; the impl's bytes belong to the table (or the executable), not the GC heap.
+    JSString* string = JSString::createHasOtherOwner(vm, adoptRef(*ensureImpl(ordinal)));
+    slot = std::bit_cast<uintptr_t>(string) | cellTag;
+    Locker locker { m_cellsLock };
+    m_cellOrdinals.append(ordinal);
+    return string;
 }
+
+template<typename Visitor>
+void DecoderStringTable::visitStrongReferences(Visitor& visitor, CollectionScope scope)
+{
+    Locker locker { m_cellsLock };
+    // Cells visited in an earlier cycle are old and stay marked (sticky mark bits); an eden collection only needs the
+    // ones created since. The constraint can run more than once per cycle, so the cursor only advances, never resets,
+    // within a cycle.
+    size_t from = scope == CollectionScope::Full && !m_visitedThisCycle ? 0 : m_visitedCount;
+    for (size_t i = from; i < m_cellOrdinals.size(); ++i)
+        visitor.appendUnbarriered(cell(m_slots[m_cellOrdinals[i]]));
+    m_visitedCount = m_cellOrdinals.size();
+    m_visitedThisCycle = true;
+}
+
+void DecoderStringTable::didFinishCollection()
+{
+    Locker locker { m_cellsLock };
+    m_visitedThisCycle = false;
+}
+
+template void DecoderStringTable::visitStrongReferences(AbstractSlotVisitor&, CollectionScope);
+template void DecoderStringTable::visitStrongReferences(SlotVisitor&, CollectionScope);
 
 std::span<const uint8_t> Decoder::payloadSpan() const
 {
@@ -1654,8 +1712,11 @@ public:
     {
         SourceType<decltype(m_entries)> decodedEntries;
         m_entries.decode(decoder, decodedEntries);
+        if (decodedEntries.isEmpty())
+            return;
+        map.reserveInitialCapacity(decodedEntries.size());
         for (auto& pair : decodedEntries)
-            map.set(WTF::move(pair.first), WTF::move(pair.second));
+            map.add(WTF::move(pair.first), WTF::move(pair.second));
     }
 
 private:
@@ -2481,18 +2542,30 @@ public:
     void encode(Encoder& encoder, const RegExp& regExp)
     {
         m_patternString.encode(encoder, regExp.m_patternString);
+        m_atom.encode(encoder, regExp.m_atom);
         m_flags = regExp.m_flags;
+        m_specificPattern = regExp.m_specificPattern;
+        // What RegExp::finishCreation learns from parsing the pattern, so decode can skip the parse. A pattern with named
+        // groups (rare) or very many subpatterns still parses on decode.
+        m_parsed = regExp.isValid() && !regExp.m_rareData && regExp.m_numSubpatterns <= std::numeric_limits<uint16_t>::max();
+        m_numSubpatterns = m_parsed ? regExp.m_numSubpatterns : 0;
     }
 
     RegExp* decode(Decoder& decoder) const
     {
         String pattern { m_patternString.decode(decoder) };
-        return RegExp::create(decoder.vm(), pattern, m_flags);
+        if (!m_parsed)
+            return RegExp::create(decoder.vm(), pattern, m_flags);
+        return RegExp::createFromCache(decoder.vm(), pattern, m_flags, m_numSubpatterns, String { m_atom.decode(decoder) }, m_specificPattern);
     }
 
 private:
     CachedString m_patternString;
+    CachedString m_atom;
+    uint16_t m_numSubpatterns { 0 };
     OptionSet<Yarr::Flags> m_flags;
+    Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
+    uint8_t m_parsed { false };
     uint8_t m_unused[2] { };
 };
 
@@ -2666,9 +2739,9 @@ public:
             return this->buffer<CachedSymbolTable>()->decode(decoder);
         case Kind::String:
             if (this->hasInlineString())
-                return jsString(decoder.vm(), String { this->inlineString(decoder) });
+                return jsOwnedString(decoder.vm(), String { this->inlineString(decoder) });
             if (this->hasExternalString())
-                return jsString(decoder.vm(), decoder.plainStringForExternalString(this->externalStringOrdinal()));
+                return decoder.jsStringForExternalString(this->externalStringOrdinal());
             // A constant becomes a JSString; it does not have to be an atom, so skip the atom table.
             return jsString(decoder.vm(), this->buffer<CachedUniquedStringImpl>()->decodePlainString(decoder));
         case Kind::ImmutableButterfly:
@@ -4893,7 +4966,7 @@ static_assert(sizeof(CachedJSValue) == 4);
 static_assert(sizeof(CachedJSValuePoolRef) == 4);
 static_assert(sizeof(CachedModuleCodeBlock) == 44);
 static_assert(sizeof(CachedProgramCodeBlock) == 56);
-static_assert(sizeof(CachedRegExp) == 8);
+static_assert(sizeof(CachedRegExp) == 16);
 static_assert(sizeof(CachedScopedArgumentsTable) == 8);
 static_assert(sizeof(CachedSimpleJumpTable) == 20);
 static_assert(sizeof(CachedSourceCodeKey) == 28);

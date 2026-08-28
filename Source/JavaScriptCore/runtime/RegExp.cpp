@@ -266,6 +266,16 @@ RegExp* RegExp::create(VM& vm, const String& patternString, OptionSet<Yarr::Flag
     return vm.regExpCache()->lookupOrCreate(vm, patternString, flags);
 }
 
+void RegExp::finishCreationFromCache(VM& vm, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern specificPattern)
+{
+    Base::finishCreation(vm);
+    m_atom = WTF::move(atom);
+    m_specificPattern = specificPattern;
+    m_numSubpatterns = numSubpatterns;
+    m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
+}
+
+
 
 static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, Yarr::ErrorCode& errorCode)
 {
@@ -284,7 +294,7 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
         m_state = ParseError;
         return;
     }
-    ASSERT(m_numSubpatterns == pattern.m_numSubpatterns);
+    RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // finishCreationFromCache took this on trust
 
     m_atom = WTF::move(pattern.m_atom);
     m_specificPattern = pattern.m_specificPattern;
@@ -305,7 +315,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         m_state = ParseError;
         return;
     }
-    ASSERT(m_numSubpatterns == pattern.m_numSubpatterns);
+    RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // finishCreationFromCache took this on trust
 
     m_atom = WTF::move(pattern.m_atom);
     m_specificPattern = pattern.m_specificPattern;
@@ -393,7 +403,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         m_state = ParseError;
         return;
     }
-    ASSERT(m_numSubpatterns == pattern.m_numSubpatterns);
+    RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // finishCreationFromCache took this on trust
 
     m_atom = WTF::move(pattern.m_atom);
     m_specificPattern = pattern.m_specificPattern;
