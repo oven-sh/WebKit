@@ -70,6 +70,17 @@ public:
     const AbstractModuleRecord::ModuleRequest& moduleRequest() const { return m_moduleRequest; }
     JSCell* payload() const { return m_payload.get(); }
     ModuleRegistryEntry* entry() const { return m_entry.get(); }
+#if USE(BUN_JSC_ADDITIONS)
+    // A top-level load (second create() overload) has no entry until its fetch
+    // has settled and moduleLoadTopSettled has registered the key. The loader
+    // then records the entry the load goes on to load, and moduleLoadTopRejected
+    // and moduleLoadStoreError store the load's failure into that entry instead
+    // of into whatever entry the key holds by then. The two differ once the host
+    // has removed the entry while the load was in flight (removeEntry()): the key
+    // may by then hold the entry of a replacement load, which must not inherit
+    // the removed load's error.
+    void setEntry(VM&, ModuleRegistryEntry*);
+#endif
     ScriptFetcher* scriptFetcher() const { return m_scriptFetcher.get(); }
     AbstractModuleRecord* module() const { return m_module.get(); }
     void module(VM& vm, AbstractModuleRecord* mod) { m_module.set(vm, this, mod); }

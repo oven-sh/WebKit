@@ -199,8 +199,10 @@ public:
         // delete every (specifier, type) variant — text/json/HostDefined etc.
         //
         // A load of the removed entry may still be in flight. Its steps keep
-        // the detached entry, and isCacheableLoadedModule() keeps the record
-        // they produce out of m_loadedModules. Callers hold cellLock().
+        // the detached entry (ModuleLoadingContext::setEntry for the top-level
+        // ones) and store its outcome there, and isCacheableLoadedModule()
+        // keeps the record they produce out of m_loadedModules. Callers hold
+        // cellLock().
         auto* impl = key.impl();
         m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });

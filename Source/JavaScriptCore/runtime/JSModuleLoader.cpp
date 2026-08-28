@@ -844,10 +844,22 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Module
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Every caller has just registered the key (provideFetch()). That entry is the
+    // one this load links and evaluates, and the one moduleLoadStoreError stores
+    // its failure into. Read before hostLoadImportedModule(), whose resolve() hook
+    // runs host code, so that it is the entry moduleLoadTopSettled recorded too.
+    ModuleRegistryEntry* entry = getRegisteredMayBeNull(moduleRequest.m_specifier, moduleRequest.type());
+#endif
+
     JSPromise* promise = hostLoadImportedModule(globalObject, referrer, moduleRequest, payload, scriptFetcher, flags.contains(ModuleLoadFlag::UseImportMap));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto* context = ModuleLoadingContext::create(vm, moduleRequest, WTF::move(scriptFetcher), flags);
+#if USE(BUN_JSC_ADDITIONS)
+    if (entry)
+        context->setEntry(vm, entry);
+#endif
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
     resultPromise->markAsHandled();
 
