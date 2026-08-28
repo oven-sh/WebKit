@@ -93,8 +93,8 @@ public:
     EncoderStringTable() = default;
     JS_EXPORT_PRIVATE ~EncoderStringTable();
     uint32_t ordinalFor(const StringImpl&);
-    // The 4-byte slot a cached string occupies (CachedPtr's encoding): a 1-3 character Latin-1 string inline, else an
-    // ordinal into this table, or the empty sentinel. DecoderStringTable::atomForSlot reads it back.
+    // The 4-byte slot a cached non-symbol string occupies (CachedPtr's encoding): a 1-3 character Latin-1 string inline,
+    // else an ordinal into this table, or the empty sentinel. DecoderStringTable::atomForSlot reads it back.
     JS_EXPORT_PRIVATE uint32_t slotFor(const StringImpl&);
     JS_EXPORT_PRIVATE Vector<uint8_t> serialize() const;
     static constexpr uint32_t maxOrdinal = (1u << 30) - 1;

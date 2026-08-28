@@ -286,6 +286,7 @@ uint32_t EncoderStringTable::ordinalFor(const StringImpl& string)
 
 uint32_t EncoderStringTable::slotFor(const StringImpl& string)
 {
+    RELEASE_ASSERT(!string.isSymbol()); // a slot names text; a symbol has no slot form (CachedPtr writes a record for it)
     if (!string.length())
         return VariableLengthObjectBase::emptySentinel;
     if (std::optional<uint32_t> packed = VariableLengthObjectBase::packInlineString(string))
