@@ -145,7 +145,10 @@ NetworkConnectionToWebProcess::NetworkConnectionToWebProcess(NetworkProcess& net
     : m_connection(IPC::Connection::createServerConnection(WTF::move(connectionIdentifier)))
     , m_networkProcess(networkProcess)
     , m_sessionID(sessionID)
-    , m_networkResourceLoaders([this](bool hasUpload) { hasUploadStateChanged(hasUpload); })
+    , m_networkResourceLoaders([weakThis = WeakPtr { *this }](bool hasUpload) {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->hasUploadStateChanged(hasUpload);
+    })
 #if ENABLE(WEB_RTC)
     , m_mdnsRegister(*this)
 #endif
@@ -1169,26 +1172,18 @@ void NetworkConnectionToWebProcess::registerInternalFileBlobURL(const URL& url, 
     if (blobFileAccessEnforcementEnabled() && shouldCheckBlobFileAccess())
         MESSAGE_CHECK(isFilePathAllowed(path));
 
-    RefPtr sandboxExtension = SandboxExtension::create(WTF::move(extensionHandle));
-
-    if (!replacementPath.isEmpty()) {
 #if PLATFORM(COCOA)
-        // For transcoded files, check if the WebProcess has actual sandbox access
-        // via the extension granted for the original file, rather than checking
-        // our internal allowed paths list (which won't include temporary transcoded files).
-        MESSAGE_CHECK(sandboxExtension);
-        // sandbox_check returns 0 on success (has access), non-zero on failure
-        if (sandbox_check(m_connection->remoteProcessID(), "file-read-data", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_PATH | SANDBOX_CHECK_NO_REPORT), FileSystem::fileSystemRepresentation(replacementPath).data())) {
-            CONNECTION_RELEASE_LOG_ERROR(Sandbox, "registerInternalFileBlobURL: WebProcess does not have sandbox access to replacementPath");
-            MESSAGE_CHECK(false);
-        }
-#else
-        MESSAGE_CHECK(isFilePathAllowed(replacementPath));
-#endif
+    // FIXME: Promote to MESSAGE_CHECK.
+    if (!replacementPath.isEmpty() && !isFilePathAllowed(replacementPath)) {
+        RELEASE_LOG_FAULT(Loading, "NetworkConnectionToWebProcess::registerInternalFileBlobURL replacementPath is not allowed");
+        return;
     }
+#else
+    MESSAGE_CHECK(replacementPath.isEmpty() || isFilePathAllowed(replacementPath));
+#endif
 
     m_blobURLs.add({ url, std::nullopt });
-    session->blobRegistry().registerInternalFileBlobURL(url, BlobDataFileReferenceWithSandboxExtension::create(path, replacementPath, WTF::move(sandboxExtension)), contentType);
+    session->blobRegistry().registerInternalFileBlobURL(url, BlobDataFileReferenceWithSandboxExtension::create(path, replacementPath, SandboxExtension::create(WTF::move(extensionHandle))), contentType);
 }
 
 void NetworkConnectionToWebProcess::registerInternalBlobURL(const URL& url, Vector<BlobPart>&& blobParts, const String& contentType)
@@ -1700,9 +1695,14 @@ void NetworkConnectionToWebProcess::establishSWContextConnection(WebPageProxyIde
         auto allowCookieAccess = session->networkProcess().allowsFirstPartyForCookies(webProcessIdentifier(), site.domain());
         MESSAGE_CHECK_COMPLETION(allowCookieAccess != NetworkProcess::AllowCookieAccess::Terminate, completionHandler());
 
-        MESSAGE_CHECK_COMPLETION(swServer->hasPendingConnectionDomain({ site.domain(), crossOriginEmbedderPolicy }), completionHandler());
-
         // FIXME: We should MESSAGE_CHECK m_swContextConnection.
+
+        if (!swServer->hasPendingConnectionDomain({ site.domain(), crossOriginEmbedderPolicy })) {
+            CONNECTION_RELEASE_LOG(ServiceWorker, "NetworkConnectionToWebProcess::establishSWContextConnection is called while its server is not requesting for a context connection");
+            completionHandler();
+            return;
+        }
+
         ASSERT(!m_swContextConnection);
         if (m_swContextConnection) {
             CONNECTION_RELEASE_LOG_ERROR(ServiceWorker, "NetworkConnectionToWebProcess::establishSWContextConnection is called with an existing context connection");
@@ -1962,7 +1962,8 @@ void NetworkConnectionToWebProcess::navigatorSubscribeToPushService(URL&& scopeU
 
     auto registrableDomain = RegistrableDomain(scopeURL);
     session->notificationManager().subscribeToPushService(WTF::move(scopeURL), WTF::move(applicationServerKey), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler), registrableDomain = WTF::move(registrableDomain)](auto&& result) mutable {
-        if (RefPtr resourceLoadStatistics = weakThis && weakThis->networkSession() ? weakThis->networkSession()->resourceLoadStatistics() : nullptr; result && resourceLoadStatistics) {
+        RefPtr protectedThis = weakThis;
+        if (RefPtr resourceLoadStatistics = protectedThis && protectedThis->networkSession() ? protectedThis->networkSession()->resourceLoadStatistics() : nullptr; result && resourceLoadStatistics) {
             return resourceLoadStatistics->setMostRecentWebPushInteractionTime(WTF::move(registrableDomain), [result = WTF::move(result), completionHandler = WTF::move(completionHandler)]() mutable {
                 completionHandler(WTF::move(result));
             });

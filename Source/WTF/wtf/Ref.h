@@ -69,7 +69,7 @@ template<typename T> struct DefaultRefDerefTraits {
 };
 
 template<typename T>
-concept CanUseDefaultRefDerefTraits = HasRefPtrMemberFunctions<T>::value || !DefaultRefDerefTraits<T>::isDefaultImplementation;
+concept CanUseDefaultRefDerefTraits = HasRefPtrMemberFunctions<T> || !DefaultRefDerefTraits<T>::isDefaultImplementation;
 
 template<typename T, typename PtrTraits, typename RefDerefTraits> class Ref;
 template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTraits = DefaultRefDerefTraits<T>> Ref<T, PtrTraits, RefDerefTraits> adoptRef(T&);
@@ -111,14 +111,14 @@ public:
     {
     }
 
-    Ref(Ref&& other)
+    Ref(Ref&& other) noexcept
         : m_ptr(&other.leakRef())
     {
         ASSERT(m_ptr);
     }
 
     template<typename X, typename Y>
-    Ref(Ref<X, Y>&& other)
+    Ref(Ref<X, Y>&& other) noexcept
         : m_ptr(&other.leakRef())
     {
         ASSERT(m_ptr);
@@ -136,8 +136,8 @@ public:
     {
     }
 
-    template<typename X, typename Y>
-    Ref(const ThreadSafeWeakRef<X, Y>& other) requires std::is_convertible_v<X*, T*>
+    template<typename X>
+    Ref(const ThreadSafeWeakRef<X>& other) requires std::is_convertible_v<X*, T*>
         : m_ptr(&RefDerefTraits::ref(other.get()))
     {
     }
@@ -209,8 +209,8 @@ template<typename X, typename Y> Ref(const WeakRef<X, Y>&) -> Ref<X, RawPtrTrait
 template<typename X, typename Y> Ref(WeakRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 template<typename X, typename Y> Ref(const CheckedRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 template<typename X, typename Y> Ref(CheckedRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
-template<typename X, typename Y> Ref(const ThreadSafeWeakRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
-template<typename X, typename Y> Ref(ThreadSafeWeakRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> Ref(const ThreadSafeWeakRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> Ref(ThreadSafeWeakRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 
 template<typename T, typename _PtrTraits, typename RefDerefTraits> Ref<T, _PtrTraits, RefDerefTraits> adoptRef(T&);
 

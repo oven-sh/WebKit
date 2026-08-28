@@ -45,6 +45,7 @@ http/tests/swipe [ Pass ]
 http/tests/pdf [ Pass ]
 pdf [ Pass ]
 tiled-drawing [ Pass ]
+ipc/cocoa [ Pass ]
 ipc/mac [ Pass ]
 ipc/restrictedendpoints/mac [ Pass ]
 fast/page-color-sampling [ Pass ]
@@ -853,6 +854,7 @@ webkit.org/b/207796 [ Release ] fast/box-shadow/hidpi-box-shadow.html [ Pass Ima
 webkit.org/b/207938 http/wpt/crypto/derive-hmac-key-crash.any.html [ Pass Crash ]
 
 webkit.org/b/207962 accessibility/mac/aria-menu-item-selected-notification.html [ Slow ]
+webkit.org/b/207962 accessibility/isolated-tree/mac/aria-menu-item-selected-notification.html [ Slow ]
 [ Debug ] accessibility/mac/line-index-for-textmarker.html [ Slow ]
 
 webkit.org/b/208062 http/wpt/fetch/disable-speculative-for-reload.html [ Pass Failure ]
@@ -1104,6 +1106,7 @@ webkit.org/b/229764 animations/background-position.html [ Pass ImageOnlyFailure 
 webkit.org/b/228209 fast/speechrecognition/start-recognition-after-gum.html [ Pass Timeout ]
 
 webkit.org/b/230518 [ Release ]  accessibility/mac/button-shouldnot-have-axvalue.html [ Pass Crash ]
+webkit.org/b/230518 [ Release ]  accessibility/isolated-tree/mac/button-shouldnot-have-axvalue.html [ Pass Crash ]
 
 webkit.org/b/231083 imported/w3c/web-platform-tests/content-security-policy/generic/policy-inherited-correctly-by-plznavigate.html [ Pass Failure ]
 
@@ -2419,8 +2422,6 @@ media/media-source/media-managedmse-webvtt-track.html [ Pass Timeout ]
 
 webkit.org/b/319121 [ Release ] imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-corner-shape-change.html [ Pass ImageOnlyFailure ]
 
-webkit.org/b/318258 [ Debug ] ipc/fecolormatrix-type-values-mismatch-crash.html [ Failure ]
-
 webkit.org/b/319798 [ arm64 ] imported/w3c/web-platform-tests/media-source/mediasource-seek-beyond-duration.html [ Pass Failure ]
 
 webkit.org/b/320245 [ Release x86_64 ] imported/w3c/web-platform-tests/web-locks/bfcache/abort.tentative.https.html [ Pass Crash ]
@@ -2431,13 +2432,7 @@ webkit.org/b/321103 [ Debug ] imported/w3c/web-platform-tests/uievents/textInput
 
 webkit.org/b/321185 [ Debug ] imported/w3c/web-platform-tests/wasm/core/float_exprs.wast.js.html [ Pass Timeout ]
 
-webkit.org/b/321191 imported/w3c/web-platform-tests/service-workers/service-worker/fetch-event.https.h2.html [ Pass Crash Failure ]
-
 webkit.org/b/321312 imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-getSynchronizationSources.https.html [ Pass Failure ]
-
-# webkit.org/b/321298 [ Release ] REGRESSION(316423@main): [macOS Release] imported/w3c/web-platform-tests/wasm/serialization/memory/window-success.tentative.https.html is a flaky crash
-[ Release ] imported/w3c/web-platform-tests/wasm/serialization/memory/window-nested-dedicated-worker-failure.tentative.https.html [ Skip ]
-[ Release ] imported/w3c/web-platform-tests/wasm/serialization/memory/window-sharedworker-failure.tentative.https.html [ Skip ]
 
 # Debug assertion in PaymentRequest::suspend() when a request is Interactive as the document enters the back/forward cache
 webkit.org/b/321524 [ Debug ] imported/w3c/web-platform-tests/payment-request/payment-request-show-method.https.html [ Skip ]

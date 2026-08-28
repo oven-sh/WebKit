@@ -1198,17 +1198,23 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
     auto* intermediatePromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
     if (status == JSPromise::Status::Fulfilled) {
-        auto* jsSourceCode = downcast<JSSourceCode>(arguments[1]);
-
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
         ScriptFetcher* scriptFetcher = context->scriptFetcher();
 
+#if USE(BUN_JSC_ADDITIONS)
+        // ModuleRegistryEntry::provideModule(): the entry already holds its record, nothing to provide.
+        if (!arguments[1].inherits<AbstractModuleRecord>()) {
+#endif
+        auto* jsSourceCode = downcast<JSSourceCode>(arguments[1]);
         globalObject->moduleLoader()->provideFetch(globalObject, specifier, type, jsSourceCode);
         if (scope.exception()) {
             intermediatePromise->rejectWithCaughtException(vm, scope);
             return;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        }
+#endif
 
         JSPromise* statePromise = JSPromise::create(vm, globalObject->promiseStructure());
         statePromise->markAsHandled();

@@ -39,10 +39,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set_target_properties(WebGPU PROPERTIES
         INSTALL_NAME_DIR "${WebGPU_INSTALL_NAME_DIR}"
     )
-    target_link_options(WebGPU PRIVATE
-        -compatibility_version 1.0.0
-        -current_version ${WEBKIT_MAC_VERSION}
-    )
     set(MACOSX_FRAMEWORK_IDENTIFIER com.apple.WebGPU)
     set(BUNDLE_VERSION "${MACOSX_FRAMEWORK_BUNDLE_VERSION}")
     set(SHORT_VERSION_STRING "${WEBKIT_MAC_VERSION}")
@@ -92,7 +88,7 @@ target_compile_definitions(WebGPU PRIVATE
 )
 
 if (SWIFT_REQUIRED)
-    target_compile_definitions(WebGPU PRIVATE ENABLE_WEBGPU_SWIFT=1)
+    webkit_target_compile_definitions(WebGPU PRIVATE ENABLE_WEBGPU_SWIFT=1)
 endif ()
 
 # Generate an empty cmakeconfig.h for the WebGPU target

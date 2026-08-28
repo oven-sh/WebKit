@@ -32,6 +32,7 @@
 #include "GraphicsLayer.h"
 #include "GraphicsLayerContentsDisplayDelegate.h"
 #include "HTMLCanvasElement.h"
+#include "NativeImage.h"
 #include "OffscreenCanvas.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -116,6 +117,8 @@ PlaceholderRenderingContext::PlaceholderRenderingContext(HTMLCanvasElement& canv
 {
 }
 
+PlaceholderRenderingContext::~PlaceholderRenderingContext() = default;
+
 HTMLCanvasElement& PlaceholderRenderingContext::canvas() const
 {
     return downcast<HTMLCanvasElement>(canvasBase());
@@ -133,17 +136,18 @@ void PlaceholderRenderingContext::setContentsToLayer(GraphicsLayer& layer)
 
 void PlaceholderRenderingContext::setPlaceholderBuffer(Ref<ImageBuffer>&& newBuffer, bool originClean, bool opaque)
 {
-    m_opaque = opaque;
     IntSize newSize = newBuffer->truncatedLogicalSize();
+    Ref canvas = this->canvas();
+    canvas->willUpdateContents(FloatRect { { }, newSize }, ShouldApplyPostProcessingToDirtyRect::No);
+    m_opaque = opaque;
     updateMemoryCost(newBuffer->memoryCost());
     m_buffer = WTF::move(newBuffer);
-    Ref canvas = this->canvas();
+    m_bufferNativeImage = nullptr;
     canvas->setSizeForControllingContext(newSize);
     if (originClean)
         canvas->setOriginClean();
     else
         canvas->setOriginTainted();
-    canvas->didDraw(FloatRect { { }, newSize }, ShouldApplyPostProcessingToDirtyRect::No);
 }
 
 PixelFormat PlaceholderRenderingContext::pixelFormat() const
@@ -156,6 +160,17 @@ PixelFormat PlaceholderRenderingContext::pixelFormat() const
 RefPtr<ImageBuffer> PlaceholderRenderingContext::surfaceBufferToImageBuffer(SurfaceBuffer)
 {
     return m_buffer;
+}
+
+RefPtr<NativeImage> PlaceholderRenderingContext::surfaceBufferToNativeImage(SurfaceBuffer)
+{
+    if (m_bufferNativeImage)
+        return m_bufferNativeImage;
+    RefPtr buffer = m_buffer;
+    if (!buffer)
+        return nullptr;
+    m_bufferNativeImage = buffer->copyNativeImage();
+    return m_bufferNativeImage;
 }
 
 bool PlaceholderRenderingContext::isSurfaceBufferTransparentBlack(SurfaceBuffer) const

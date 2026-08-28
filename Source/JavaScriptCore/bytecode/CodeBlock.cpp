@@ -526,6 +526,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
         LINK(OpGetById)
         LINK(OpGetLength)
+        LINK(OpInstanceof)
 
         LINK(OpEnumeratorNext)
         LINK(OpEnumeratorInByVal)
@@ -3083,7 +3084,7 @@ bool CodeBlock::hasIdentifier(UniquedStringImpl* uid)
 }
 #endif
 
-void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(const ConcurrentJSLocker& locker, unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles)
+void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles)
 {
     numberOfLiveNonArgumentValueProfiles = 0;
     numberOfSamplesInProfiles = 0;
@@ -3095,7 +3096,7 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(const Co
     forEachValueProfile([&](auto& profile, bool isArgument) {
         using Profile = std::remove_reference_t<decltype(profile)>;
         static_assert(Profile::numberOfBuckets == 1);
-        bool wasLive = profile.computeUpdatedPrediction(locker) != SpecNone;
+        bool wasLive = profile.computeUpdatedPrediction() != SpecNone;
         if (wasLive) {
             ++numberOfSamplesInProfiles;
             if (!isArgument)
@@ -3110,25 +3111,23 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(const Co
         m_metadata->forEach<OpCatch>([&](auto& metadata) {
             if (metadata.m_buffer) {
                 metadata.m_buffer->forEach([&](ValueProfileAndVirtualRegister& profile) {
-                    profile.computeUpdatedPrediction(locker);
+                    profile.computeUpdatedPrediction();
                 });
             }
         });
     }
 }
 
-void CodeBlock::updateAllNonLazyValueProfilePredictions(const ConcurrentJSLocker& locker)
+void CodeBlock::updateAllNonLazyValueProfilePredictions()
 {
     unsigned ignoredValue1, ignoredValue2;
-    updateAllNonLazyValueProfilePredictionsAndCountLiveness(locker, ignoredValue1, ignoredValue2);
+    updateAllNonLazyValueProfilePredictionsAndCountLiveness(ignoredValue1, ignoredValue2);
 }
 
-void CodeBlock::updateAllLazyValueProfilePredictions(const ConcurrentJSLocker& locker)
+void CodeBlock::updateAllLazyValueProfilePredictions()
 {
 #if ENABLE(DFG_JIT)
-    lazyValueProfiles().computeUpdatedPredictions(locker, this);
-#else
-    UNUSED_PARAM(locker);
+    lazyValueProfiles().computeUpdatedPredictions(this);
 #endif
 }
 
@@ -3172,11 +3171,8 @@ void CodeBlock::updateAllArrayAllocationProfilePredictions()
 // readable: after marking, before sweep.
 void CodeBlock::updateAllPredictions()
 {
-    {
-        ConcurrentJSLocker locker(valueProfileLock());
-        updateAllNonLazyValueProfilePredictions(locker);
-        updateAllLazyValueProfilePredictions(locker);
-    }
+    updateAllNonLazyValueProfilePredictions();
+    updateAllLazyValueProfilePredictions();
     updateAllArrayAllocationProfilePredictions();
     updateAllArrayProfilePredictions();
 }
@@ -3190,11 +3186,8 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
     
     unsigned numberOfLiveNonArgumentValueProfiles;
     unsigned numberOfSamplesInProfiles;
-    {
-        ConcurrentJSLocker locker(valueProfileLock());
-        updateAllNonLazyValueProfilePredictionsAndCountLiveness(locker, numberOfLiveNonArgumentValueProfiles, numberOfSamplesInProfiles);
-        updateAllLazyValueProfilePredictions(locker);
-    }
+    updateAllNonLazyValueProfilePredictionsAndCountLiveness(numberOfLiveNonArgumentValueProfiles, numberOfSamplesInProfiles);
+    updateAllLazyValueProfilePredictions();
     updateAllArrayAllocationProfilePredictions();
     updateAllArrayProfilePredictions();
 
@@ -3458,12 +3451,12 @@ ValueProfile* CodeBlock::tryGetValueProfileForBytecodeIndex(BytecodeIndex byteco
     }
 }
 
-SpeculatedType CodeBlock::valueProfilePredictionForBytecodeIndex(const ConcurrentJSLocker& locker, BytecodeIndex bytecodeIndex, JSValue* specFailValue)
+SpeculatedType CodeBlock::valueProfilePredictionForBytecodeIndex(BytecodeIndex bytecodeIndex, JSValue* specFailValue)
 {
     if (ValueProfile* valueProfile = tryGetValueProfileForBytecodeIndex(bytecodeIndex)) {
         if (specFailValue)
-            valueProfile->computeUpdatedPredictionForExtraValue(locker, *specFailValue);
-        return valueProfile->computeUpdatedPrediction(locker);
+            valueProfile->computeUpdatedPredictionForExtraValue(*specFailValue);
+        return valueProfile->computeUpdatedPrediction();
     }
     return SpecNone;
 }

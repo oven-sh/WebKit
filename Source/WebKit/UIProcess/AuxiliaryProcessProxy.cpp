@@ -43,6 +43,7 @@
 #include <wtf/RunLoop.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/MakeString.h>
 
 #if PLATFORM(COCOA)
 #include "CoreIPCSecureCoding.h"
@@ -226,13 +227,15 @@ void AuxiliaryProcessProxy::terminate(std::optional<IPC::MessageName> invalidMes
         if (connection->kill(invalidMessageName))
             return;
     }
-#else
-    UNUSED_PARAM(invalidMessageName);
 #endif
 
     // FIXME: We should really merge process launching into IPC connection creation and get rid of the process launcher.
-    if (RefPtr processLauncher = m_processLauncher)
-        processLauncher->terminateProcess();
+    if (RefPtr processLauncher = m_processLauncher) {
+        String terminationReason;
+        if (invalidMessageName)
+            terminationReason = makeString("Received invalid IPC message: "_s, IPC::description(*invalidMessageName));
+        processLauncher->terminateProcess(terminationReason);
+    }
 }
 
 String AuxiliaryProcessProxy::stateString() const
@@ -463,7 +466,7 @@ void AuxiliaryProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::C
 #if USE(RUNNINGBOARD)
     protect(throttler())->didConnectToProcess(*this);
 #if PLATFORM(MAC)
-    m_boostedJetsamAssertion = ProcessAssertion::create(*this, "Jetsam Boost"_s, ProcessAssertionType::BoostedJetsam);
+    updateJetsamBoostAssertion();
 #endif
 #if USE(EXTENSIONKIT)
     ASSERT(launcher);
@@ -510,6 +513,9 @@ void AuxiliaryProcessProxy::shutDownProcess()
 {
     auto scopeExit = WTF::makeScopeExit([protectedThis = Ref { *this }] {
         protect(protectedThis->throttler())->didDisconnectFromProcess();
+#if USE(RUNNINGBOARD) && PLATFORM(MAC)
+        protectedThis->m_boostedJetsamAssertion = nullptr;
+#endif
     });
 
     switch (state()) {
@@ -701,6 +707,28 @@ void AuxiliaryProcessProxy::setRunningBoardThrottlingEnabled()
 bool AuxiliaryProcessProxy::runningBoardThrottlingEnabled()
 {
     return !m_lifetimeActivity;
+}
+
+void AuxiliaryProcessProxy::setJetsamBoostEnabled(bool enabled)
+{
+    if (m_isJetsamBoostEnabled == enabled)
+        return;
+    m_isJetsamBoostEnabled = enabled;
+
+    updateJetsamBoostAssertion();
+    protect(throttler())->setShouldBackgroundActivitiesUseIdleJetsamBand(!enabled);
+}
+
+void AuxiliaryProcessProxy::updateJetsamBoostAssertion()
+{
+    bool shouldHoldAssertion = m_isJetsamBoostEnabled && processID();
+    if (shouldHoldAssertion == !!m_boostedJetsamAssertion)
+        return;
+
+    if (shouldHoldAssertion)
+        m_boostedJetsamAssertion = ProcessAssertion::create(*this, "Jetsam Boost"_s, ProcessAssertionType::BoostedJetsam);
+    else
+        m_boostedJetsamAssertion = nullptr;
 }
 #endif
 

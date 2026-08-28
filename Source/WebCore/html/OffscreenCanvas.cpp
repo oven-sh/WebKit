@@ -348,23 +348,21 @@ void OffscreenCanvas::convertToBlob(ImageEncodeOptions&& options, Ref<DeferredPr
     promise->resolveWithNewlyCreated<IDLInterface<Blob>>(WTF::move(blob));
 }
 
-void OffscreenCanvas::didDraw(const std::optional<FloatRect>& rect, ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
+void OffscreenCanvas::willUpdateContents(const std::optional<FloatRect>& rect, ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
 {
     clearCopiedImage();
     scheduleCommitToPlaceholderCanvas();
-    CanvasBase::didDraw(rect, shouldApplyPostProcessingToDirtyRect);
+    CanvasBase::willUpdateContents(rect, shouldApplyPostProcessingToDirtyRect);
 }
 
 Image* OffscreenCanvas::copiedImage() const
 {
     if (m_detached)
         return nullptr;
-
-    if (!m_copiedImage) {
-        RefPtr buffer = const_cast<OffscreenCanvas*>(this)->makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect::No);
-        if (buffer)
-            m_copiedImage = BitmapImage::create(buffer->copyNativeImage());
-    }
+    if (m_copiedImage)
+        return m_copiedImage;
+    if (RefPtr image = const_cast<OffscreenCanvas*>(this)->copyNativeImage())
+        m_copiedImage = BitmapImage::create(WTF::move(image));
     return m_copiedImage.get();
 }
 

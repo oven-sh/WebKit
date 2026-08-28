@@ -737,9 +737,10 @@ void FrameLoader::clear(RefPtr<Document>&& newDocument, bool clearWindowProperti
     if (neededClear && document->backForwardCacheState() != Document::InBackForwardCache) {
         document->cancelParsing();
         document->stopActiveDOMObjects();
-        bool hadRenderTree = document->renderTreeState() == Document::RenderTreeState::Built;
+        // Taken before willBeRemovedFromFrame() detaches the document, which makes it no longer fully active.
+        bool shouldAdjustFocus = document->canEverRender();
         document->willBeRemovedFromFrame();
-        if (hadRenderTree)
+        if (shouldAdjustFocus)
             document->adjustFocusedNodeOnNodeRemoval(*document);
     }
 
@@ -5084,7 +5085,8 @@ std::pair<RefPtr<Frame>, CreatedNewPage> createWindow(LocalFrame& openerFrame, F
                 if (RefPtr page = frame->page(); page && isInVisibleAndActivePage(openerFrame))
                     page->chrome().focus();
             }
-            frame->updateOpener(openerFrame);
+            if (!features.wantsNoOpener())
+                frame->updateOpener(openerFrame);
             return { frame, CreatedNewPage::No };
         }
     }

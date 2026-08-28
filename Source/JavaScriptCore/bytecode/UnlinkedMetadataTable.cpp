@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2023, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,6 +27,7 @@
 #include "UnlinkedMetadataTable.h"
 
 #include "BytecodeStructs.h"
+#include <wtf/CheckedArithmetic.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -98,41 +99,78 @@ void MetadataStatistics::reportMetadataStatistics()
 }
 #endif
 
-void UnlinkedMetadataTable::finalize()
+bool UnlinkedMetadataTable::finalize()
 {
     ASSERT(!m_isFinalized);
     m_isFinalized = true;
     if (!m_hasMetadata) {
         MetadataTableMalloc::free(m_rawBuffer);
         m_rawBuffer = nullptr;
-        return;
+        return true;
     }
 
-    unsigned offset = s_offset16TableSize;
+    unsigned offset;
     {
+        CheckedUint32 checkedOffset = s_offset16TableSize;
         Offset32* buffer = preprocessBuffer();
-        for (unsigned i = 0; i < s_offsetTableEntries - 1; i++) {
+        for (unsigned i = 0; i < s_offsetTableEntries - 1 && !checkedOffset.hasOverflowed(); i++) {
             unsigned numberOfEntries = buffer[i];
             if (!numberOfEntries) {
-                buffer[i] = offset;
+                buffer[i] = checkedOffset.value();
                 continue;
             }
-            buffer[i] = offset; // We align when we access this.
+            buffer[i] = checkedOffset.value(); // We align when we access this.
             unsigned alignment = metadataAlignment(static_cast<OpcodeID>(i));
             ASSERT(alignment <= s_maxMetadataAlignment);
 
 #if CPU(ADDRESS64)
             // This is only necessary for the first metadata entry, if the buffer
             // is 4-byte aligned and the entry has an alignment requirement of 8
-            ASSERT(offset == roundUpToMultipleOf(alignment, offset) || offset == s_offset16TableSize);
+            ASSERT(checkedOffset.value() == roundUpToMultipleOf(alignment, checkedOffset.value()) || checkedOffset.value() == s_offset16TableSize);
 #endif
-            offset = roundUpToMultipleOf(alignment, offset);
+            unsigned alignedOffset = roundUpToMultipleOf(alignment, checkedOffset.value());
+            if (alignedOffset < checkedOffset.value()) {
+                checkedOffset.overflowed();
+                break;
+            }
+            checkedOffset = alignedOffset;
 
-            offset += numberOfEntries * metadataSize(static_cast<OpcodeID>(i));
+            checkedOffset += CheckedUint32(numberOfEntries) * metadataSize(static_cast<OpcodeID>(i));
 #if ENABLE(METADATA_STATISTICS)
+            // In the unlikely event of an overflow, MetadataStatistics::perOpcodeCount
+            // will not be accurate. But this is OK because these stats are only used for
+            // development time analysis where overflow is not expected.
             MetadataStatistics::perOpcodeCount[i] += numberOfEntries;
 #endif
         }
+
+        // Each computed offset is stored as Offset32 (with an additional s_offset32TableSize bias in the
+        // 32-bit layout) and totalSize() sums the value profile size with that biased offset as unsigned.
+        // Reject any function whose metadata cannot be addressed within those limits. The value profiles
+        // and the LinkingData are allocated by link(), which sizes that allocation from totalSize().
+        CheckedUint32 checkedValueProfileSize = m_numValueProfiles;
+        checkedValueProfileSize *= static_cast<unsigned>(sizeof(ValueProfile));
+
+        // On 32-bits, also guard against potential malloc size overflow in the link()
+        // allocation, where we add sizeof(LinkingData). On 64-bit, sizes are
+        // auto-casted to a 64-bit size_t that can handle the addition, and hence, does
+        // not need this padding to reserve space for the size of sizeof(LinkingData).
+        unsigned paddingFor32Bit = 0;
+        if constexpr (sizeof(size_t) == sizeof(unsigned))
+            paddingFor32Bit = sizeof(LinkingData);
+
+        if ((checkedOffset + s_offset32TableSize + checkedValueProfileSize + paddingFor32Bit).hasOverflowed()) [[unlikely]] {
+            MetadataTableMalloc::free(m_rawBuffer);
+            m_rawBuffer = nullptr;
+            m_hasMetadata = false;
+            m_is32Bit = false;
+            m_numValueProfiles = 0;
+            return false; // Failure.
+        }
+
+        ASSERT(!checkedOffset.hasOverflowed());
+        ASSERT(!checkedValueProfileSize.hasOverflowed());
+        offset = checkedOffset.value();
         buffer[s_offsetTableEntries - 1] = offset;
         m_is32Bit = offset > UINT16_MAX;
     }
@@ -164,6 +202,7 @@ void UnlinkedMetadataTable::finalize()
         MetadataTableMalloc::free(m_rawBuffer);
         m_rawBuffer = newBuffer;
     }
+    return true;
 }
 
 UnlinkedMetadataTable::~UnlinkedMetadataTable()

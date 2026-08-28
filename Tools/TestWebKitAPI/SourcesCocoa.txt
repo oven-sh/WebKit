@@ -117,6 +117,7 @@ Tests/WebKit/WKWebView/Copying.mm @nonARC
 Tests/WebKit/WKWebView/CreateWebArchive.mm @nonARC
 Tests/WebKit/WKWebView/CustomUserAgent.mm @nonARC
 Tests/WebKit/WKWebView/DataDetection.mm @nonARC
+Tests/WebKit/WKWebView/WebAuthnRelatedOriginsFetch.mm @nonARC
 Tests/WebKit/WKWebView/WritingTools.mm @nonARC
 Tests/WebKit/WKWebView/DecidePolicyForNavigationAction.mm @nonARC
 Tests/WebKit/WKWebView/DeviceManagementRestrictions.mm @nonARC
@@ -250,6 +251,7 @@ Tests/WebKit/WKWebView/PreferredAudioBufferSize.mm @nonARC
 Tests/WebKit/WKWebView/PrepareForMoveToWindow.mm @nonARC
 Tests/WebKit/WKWebView/PrivateClickMeasurement.mm @nonARC
 Tests/WebKit/WKWebView/ProcessInfo.mm @nonARC
+Tests/WebKit/WKWebView/ProcessJetsamPriority.mm @nonARC
 Tests/WebKit/WKWebView/ProcessPreWarming.mm @nonARC
 Tests/WebKit/WKWebView/ProcessSuspendMediaBuffering.mm @nonARC
 Tests/WebKit/WKWebView/ProcessSuspension.mm @nonARC

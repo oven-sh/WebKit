@@ -852,8 +852,6 @@ private:
     
     void assertMarkStacksEmpty();
 
-    void setBonusVisitorTask(RefPtr<SharedTask<void(SlotVisitor&)>>);
-
     void dumpHeapStatisticsAtVMDestruction();
 
     static bool useGenerationalGC();
@@ -1020,6 +1018,7 @@ private:
     bool m_worldIsStopped { false };
     Lock m_markingMutex;
     Condition m_markingConditionVariable;
+    Condition m_bonusVisitorTaskConditionVariable;
 
     MonotonicTime m_beforeGC;
     MonotonicTime m_afterGC;

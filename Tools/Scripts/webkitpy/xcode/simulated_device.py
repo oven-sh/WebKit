@@ -36,6 +36,7 @@ from webkitpy.common.system.systemhost import SystemHost
 from webkitpy.port.config import apple_additions
 from webkitpy.port.device import Device
 from webkitpy.xcode.device_type import DeviceType
+from webkitpy.xcode.simulator_daemons import disabled_launchd_jobs
 
 try:
     from plistlib import load as readPlist
@@ -71,8 +72,8 @@ class SimulatedDeviceManager(object):
 
     SIMULATOR_BOOT_TIMEOUT = 600
 
-    # FIXME: Switch this back to 6GB (or maybe lower?) once webkit.org/b/217392 is resolved.
-    MEMORY_ESTIMATE_PER_SIMULATOR_INSTANCE = 8 * (1024 ** 3)  # 8GB a simulator.
+    MEMORY_ESTIMATE_PER_SIMULATOR_INSTANCE = 2 * (1024 ** 3)  # 2GB a simulator.
+    CPU_ESTIMATE_PER_SIMULATOR_INSTANCE = 1
     PROCESS_COUNT_ESTIMATE_PER_SIMULATOR_INSTANCE = 125
 
     # Testing on iMac Pros has indicated that more than 12 simulators, even if we seem to have enough resources for them,
@@ -545,7 +546,7 @@ class SimulatedDeviceManager(object):
             return 0
 
         max_supported_simulators_for_hardware = min(
-            host.executive.cpu_count() // 2,
+            host.executive.cpu_count() // SimulatedDeviceManager.CPU_ESTIMATE_PER_SIMULATOR_INSTANCE,
             host.platform.total_bytes_memory() // SimulatedDeviceManager.MEMORY_ESTIMATE_PER_SIMULATOR_INSTANCE,
             SimulatedDeviceManager.MAX_NUMBER_OF_SIMULATORS,
         )
@@ -632,7 +633,7 @@ class SimulatedDevice(object):
         self.platform = host.platform
 
         self.launchd_configuration = {
-            'disabled.plist': {'com.apple.chronod': True},  # FIXME: rdar://129075664
+            'disabled.plist': disabled_launchd_jobs(),
         }
 
         self.environment_extras = []

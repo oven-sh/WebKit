@@ -2208,7 +2208,7 @@ void HTMLMediaElement::mediaSourceWasDetached()
 
 static bool trackIndexCompare(const Ref<TextTrack>& a, const Ref<TextTrack>& b)
 {
-    return a->trackIndex() - b->trackIndex() < 0;
+    return a->trackIndex() < b->trackIndex();
 }
 
 static bool eventTimeCueCompare(const std::pair<MediaTime, RefPtr<TextTrackCue>>& a, const std::pair<MediaTime, RefPtr<TextTrackCue>>& b)
@@ -4134,8 +4134,10 @@ void HTMLMediaElement::seekTask()
     }
     time = seekableRanges->ranges().nearest(time);
 
-    m_sentEndEvent = false;
     m_lastSeekTime = time;
+    // A seek landing on the end of the media leaves the element in ended playback, so 'ended' must not fire a second time.
+    if (!endedPlayback())
+        m_sentEndEvent = false;
     m_pendingSeekType = thisSeekType;
     setSeeking(true);
 
@@ -7114,7 +7116,7 @@ void HTMLMediaElement::userCancelledLoad(ShouldDestroyMediaPlayer shouldDestroyM
     updateActiveTextTrackCues(MediaTime::zeroTime());
 }
 
-void HTMLMediaElement::clearMediaPlayer()
+void HTMLMediaElement::clearMediaPlayer() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     invalidateWatchtimeTimer();
     invalidateBufferingStopwatch();
@@ -7154,6 +7156,12 @@ void HTMLMediaElement::clearMediaPlayer()
     }
 
     if (RefPtr player = m_player) {
+#if ENABLE(WEB_AUDIO)
+        RefPtr audioSourceNode = m_audioSourceNode.get();
+        std::optional<Locker<Lock>> audioSourceNodeLocker;
+        if (audioSourceNode)
+            audioSourceNodeLocker.emplace(audioSourceNode->processLock());
+#endif
         player->invalidate();
         m_player = nullptr;
     }

@@ -893,7 +893,7 @@ template<class T, class... Args>
 [[nodiscard]] ALWAYS_INLINE decltype(auto) makeUnique(Args&&... args)
 {
     static_assert(std::is_same<typename T::WTFIsFastMallocAllocated, int>::value, "T should use TZoneMalloc (WTF_MAKE_TZONE_ALLOCATED or one of its variants)");
-    static_assert(!HasRefPtrMemberFunctions<T>::value, "T should not be RefCounted");
+    static_assert(!HasRefPtrMemberFunctions<T>, "T should not be RefCounted");
     return std::make_unique<T>(std::forward<Args>(args)...);
 }
 
@@ -911,7 +911,7 @@ template<class T, class U = T, class... Args>
 template<class T, class... Args>
 [[nodiscard]] ALWAYS_INLINE decltype(auto) makeUniqueWithoutFastMallocCheck(Args&&... args)
 {
-    static_assert(!HasRefPtrMemberFunctions<T>::value, "T should not be RefCounted");
+    static_assert(!HasRefPtrMemberFunctions<T>, "T should not be RefCounted");
     return std::make_unique<T>(std::forward<Args>(args)...);
 }
 
@@ -1130,7 +1130,7 @@ bool contains(std::span<T, TExtent> haystack, std::span<U, UExtent> needle)
 }
 
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
-void memcpySpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
+void NODELETE memcpySpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
 {
     static_assert(sizeof(T) == sizeof(U));
     static_assert(std::is_trivially_copyable_v<T> || std::is_floating_point_v<T>);
@@ -1683,6 +1683,7 @@ using WTF::weakOrderingCast;
 using WTF::zeroBytes;
 using WTF::secureZeroBytes;
 using WTF::zeroSpan;
+using WTF::ConstInvocable;
 using WTF::DerivedFromOrConvertibleTo;
 using WTF::IntegralOrEnum;
 using WTF::Invocable;

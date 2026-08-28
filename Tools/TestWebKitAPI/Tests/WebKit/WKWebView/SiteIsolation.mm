@@ -84,6 +84,8 @@
 #endif
 
 #if PLATFORM(MAC)
+#import "Helpers/mac/AppKitSPI.h"
+
 @interface NSApplication ()
 - (void)_setKeyWindow:(NSWindow *)newKeyWindow;
 @end
@@ -2690,6 +2692,51 @@ TEST(SiteIsolation, PropagateMouseEventsToSubframe)
     EXPECT_WK_STREQ("mouseup,40,40", eventTypes[2]);
 }
 
+TEST(SiteIsolation, MouseCaptureOutsideSubframeDuringDrag)
+{
+    auto mainframeHTML = "<script>"
+    "    window.eventTypes = [];"
+    "    window.addEventListener('message', function(event) {"
+    "        window.eventTypes.push(event.data);"
+    "    });"
+    "</script>"
+    "<iframe src='https://domain2.com/subframe' style='position: absolute; left: 0; top: 0; width: 100px; height: 100px; border: none;'></iframe>"_s;
+
+    auto subframeHTML = "<script>"
+    "    addEventListener('mousedown', (event) => { window.parent.postMessage('mousedown', '*') });"
+    "    addEventListener('mousemove', (event) => { window.parent.postMessage('mousemove', '*') });"
+    "    addEventListener('mouseup', (event) => { window.parent.postMessage('mouseup', '*') });"
+    "    alert('iframe loaded');"
+    "</script>"_s;
+
+    HTTPServer server({
+        { "/mainframe"_s, { mainframeHTML } },
+        { "/subframe"_s, { subframeHTML } }
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server, CGRectMake(0, 0, 800, 600));
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://domain1.com/mainframe"]]];
+    EXPECT_WK_STREQ("iframe loaded", [webView _test_waitForAlert]);
+
+    // Press down inside the 100x100 subframe, then drag to and release at a point well
+    // outside its bounds (in the main frame's own area). Without mouse capture spanning the
+    // RemoteFrame boundary, the main frame re-hit-tests on every move and stops forwarding
+    // events to the subframe's process as soon as the point leaves its on-screen rect, so the
+    // subframe would never see the mousemove/mouseup below.
+    CGPoint insideSubframe = [webView convertPoint:CGPointMake(50, 50) toView:nil];
+    CGPoint outsideSubframe = [webView convertPoint:CGPointMake(400, 400) toView:nil];
+    [webView mouseDownAtPoint:insideSubframe simulatePressure:NO];
+    [webView mouseDragToPoint:outsideSubframe];
+    [webView mouseUpAtPoint:outsideSubframe];
+    [webView waitForPendingMouseEvents];
+
+    NSArray<NSString *> *eventTypes = [webView objectByEvaluatingJavaScript:@"window.eventTypes"];
+    while (eventTypes.count != 3u)
+        eventTypes = [webView objectByEvaluatingJavaScript:@"window.eventTypes"];
+    EXPECT_WK_STREQ("mousedown", eventTypes[0]);
+    EXPECT_WK_STREQ("mousemove", eventTypes[1]);
+    EXPECT_WK_STREQ("mouseup", eventTypes[2]);
+}
+
 TEST(SiteIsolation, RunOpenPanel)
 {
     HTTPServer server({
@@ -3247,6 +3294,64 @@ TEST(SiteIsolation, SetMarkedTextInCrossOriginIframe)
     [webView unmarkText];
     Util::runFor(10_ms);
     EXPECT_WK_STREQ("hello", [webView stringByEvaluatingJavaScript:@"input.value" inFrame:childFrameInfo.get()]);
+}
+
+TEST(SiteIsolation, FirstRectForCharacterRangeInCrossOriginIframe)
+{
+    // The iframe below has a 100px margin and its own document has no margin, so an input placed at
+    // (20, 30) inside it should land at (120, 130) in main frame coordinates. Render the same input
+    // directly in the main frame at that flattened position as a same-window control: any rendering
+    // detail specific to <input> (default border/padding/line-height) affects both identically, so
+    // comparing the two rects (rather than hand-computing an expected value) isolates whether the
+    // cross-process coordinate transform itself is correct.
+    HTTPServer server({
+        { "/control"_s, { "<body style='margin: 0'><input id='input' style='position: absolute; left: 120px; top: 130px;' value='test'></body>"_s } },
+        { "/mainframe"_s, { "<body style='margin: 0'><iframe id='iframe' style='margin: 100px; width: 400px; height: 300px; border: none;' src='https://domain2.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body style='margin: 0'><input id='input' style='position: absolute; left: 20px; top: 30px;' value='test'></body>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    enableSiteIsolation(configuration);
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration]);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate allowAnyTLSCertificate];
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    auto firstRectForRange = [webView] {
+        __block bool done = false;
+        __block NSRect result = NSZeroRect;
+        [static_cast<id<NSTextInputClient_Async>>(webView.get()) firstRectForCharacterRange:NSMakeRange(0, 1) completionHandler:^(NSRect rect, NSRange) {
+            result = rect;
+            done = true;
+        }];
+        Util::run(&done);
+        return result;
+    };
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://domain1.com/control"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView stringByEvaluatingJavaScript:@"input.focus()"];
+    [webView waitForNextPresentationUpdate];
+    NSRect controlRect = firstRectForRange();
+    EXPECT_FALSE(NSIsEmptyRect(controlRect));
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://domain1.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    RetainPtr childFrameInfo = [webView firstChildFrame];
+
+    // Focus is a no-op for cross-origin non-main-frame iframes without a user gesture; retry until
+    // it lands (bounded, so a regression fails the assertion below rather than hanging).
+    // If the query is routed to the wrong process (the main frame's, which has no focused element),
+    // it silently returns an empty rect forever.
+    NSRect rect = NSZeroRect;
+    EXPECT_TRUE(Util::waitFor([&] {
+        [webView objectByEvaluatingJavaScriptWithUserGesture:@"input.focus()" inFrame:childFrameInfo.get()];
+        [webView waitForNextPresentationUpdate];
+        rect = firstRectForRange();
+        return !NSIsEmptyRect(rect);
+    }, 500));
+
+    EXPECT_NEAR(rect.origin.x, controlRect.origin.x, 2);
+    EXPECT_NEAR(rect.origin.y, controlRect.origin.y, 2);
 }
 #endif
 
@@ -7828,6 +7933,24 @@ TEST(SiteIsolation, LoadWebArchive)
 {
     RetainPtr<NSURL> archiveURL = [NSBundle.test_resourcesBundle URLForResource:@"SiteIsolationLoadWebArchive" withExtension:@"webarchive"];
     RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    setFeatureEnabled(configuration.get(), @"SiteIsolationSharedProcessEnabled", false);
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration.get(), CGRectZero, true);
+    [webView loadRequest:[NSURLRequest requestWithURL:archiveURL.get()]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    checkFrameTreesInProcesses(webView.get(), {
+        {
+            "https://example.com"_s,
+            { { "https://apple.com"_s } }
+        },
+    });
+}
+
+TEST(SiteIsolation, LoadWebArchiveWithSharedProcess)
+{
+    RetainPtr<NSURL> archiveURL = [NSBundle.test_resourcesBundle URLForResource:@"SiteIsolationLoadWebArchive" withExtension:@"webarchive"];
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    setFeatureEnabled(configuration.get(), @"SiteIsolationSharedProcessEnabled", true);
     auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration.get(), CGRectZero, true);
     [webView loadRequest:[NSURLRequest requestWithURL:archiveURL.get()]];
     [navigationDelegate waitForDidFinishNavigation];
@@ -7924,7 +8047,7 @@ TEST(SiteIsolation, Events)
         @"pagereveal",
 #endif
         @"resize",
-        // FIXME: <rdar://150216569> There should be a pageswap from webkit.org here.
+        @"pageswap",
     ];
     if (![webkitMessages isEqualToArray:expectedWebKitMessages]) {
         WTFLogAlways("Actual webkit messages: %@", webkitMessages.get());
@@ -13310,6 +13433,7 @@ TEST(SiteIsolation, RestoredPageWithIframeIsRenderedAfterCrossSiteBFCacheRoundTr
     while (!frameTreesMatch(frameTrees(webView.get()).get(), Vector<ExpectedFrameTree> { expectedAfterGoBack }))
         TestWebKitAPI::Util::spinRunLoop();
     checkFrameTreesInProcesses(webView.get(), Vector<ExpectedFrameTree> { expectedAfterGoBack });
+    [webView waitForNextPresentationUpdate];
 
     [webView goForward];
     [navigationDelegate waitForDidFinishNavigation];

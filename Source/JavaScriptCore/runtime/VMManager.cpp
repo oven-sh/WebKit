@@ -93,14 +93,14 @@ VM* VMManager::findMatchingVMImpl(const ScopedLambda<VMManager::TestCallback>& t
         return s_recentVM;
 
     VM* result = nullptr;
-    iterateVMs(scopedLambda<IteratorCallback>([&] (VM& vm) {
+    iterateVMs([&] (VM& vm) {
         if (test(vm)) {
             result = &vm;
             s_recentVM = &vm;
             return IterationStatus::Done;
         }
         return IterationStatus::Continue;
-    }));
+    });
     return result;
 }
 
@@ -239,7 +239,7 @@ CONCURRENT_SAFE void VMManager::requestStopAllInternal(StopReason reason)
 
         // Have to use iterateVMs() instead of forEachVM() because we're already
         // holding the m_worldLock.
-        iterateVMs(scopedLambda<IteratorCallback>([&] (VM& vm) {
+        iterateVMs([&] (VM& vm) {
             vm.requestStop();
             WTF::storeLoadFence();
 
@@ -260,7 +260,7 @@ CONCURRENT_SAFE void VMManager::requestStopAllInternal(StopReason reason)
 #endif
             }
             return IterationStatus::Continue;
-        }));
+        });
     }
 }
 
@@ -319,11 +319,11 @@ void VMManager::resumeTheWorld() WTF_REQUIRES_LOCK(m_worldLock)
 
     // Have to use iterateVMs() instead of forEachVM() because we're already
     // holding the m_worldLock.
-    iterateVMs(scopedLambda<IteratorCallback>([&] (VM& vm) {
+    iterateVMs([&] (VM& vm) {
         vm.cancelStop();
         vm.traps().m_hasBeenCountedAsActive = false;
         return IterationStatus::Continue;
-    }));
+    });
 
     m_servingVM = nullptr;
     m_targetVM = nullptr;

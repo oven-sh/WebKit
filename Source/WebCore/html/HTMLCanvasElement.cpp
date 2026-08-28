@@ -595,7 +595,7 @@ std::optional<FloatRect> HTMLCanvasElement::computeDirtyRectangleIfNeeded(const 
     return dirtyRect;
 }
 
-void HTMLCanvasElement::didDraw(const std::optional<FloatRect>& rect, ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
+void HTMLCanvasElement::willUpdateContents(const std::optional<FloatRect>& rect, ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
 {
     clearCopiedImage();
     if (CheckedPtr renderer = renderBox()) {
@@ -605,7 +605,7 @@ void HTMLCanvasElement::didDraw(const std::optional<FloatRect>& rect, ShouldAppl
         else if (dirtyRect)
             renderer->repaintRectangle(enclosingIntRect(*dirtyRect));
     }
-    CanvasBase::didDraw(rect, shouldApplyPostProcessingToDirtyRect);
+    CanvasBase::willUpdateContents(rect, shouldApplyPostProcessingToDirtyRect);
 }
 
 void HTMLCanvasElement::didUpdateSizeProperties()
@@ -860,11 +860,10 @@ SecurityOrigin* HTMLCanvasElement::securityOrigin() const
 
 Image* HTMLCanvasElement::copiedImage() const
 {
-    if (!m_copiedImage) {
-        RefPtr buffer = const_cast<HTMLCanvasElement*>(this)->makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect::No);
-        if (buffer)
-            m_copiedImage = BitmapImage::create(buffer->copyNativeImage());
-    }
+    if (m_copiedImage)
+        return m_copiedImage.get();
+    if (RefPtr image = copyNativeImage())
+        m_copiedImage = BitmapImage::create(WTF::move(image));
     return m_copiedImage.get();
 }
 

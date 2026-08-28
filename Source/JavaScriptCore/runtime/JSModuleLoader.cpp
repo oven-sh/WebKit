@@ -351,7 +351,7 @@ void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier
         entry->provideFetch(globalObject, jsSourceCode); // can throw
 }
 
-JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identifier& specifier, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
+JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identifier& specifier, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, const String& referrer)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -380,7 +380,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
     }
 
     if (!promise) {
-        promise = fetch(globalObject, identifierToJSValue(vm, specifier), WTF::move(parameters), scriptFetcher);
+        promise = fetch(globalObject, identifierToJSValue(vm, specifier), referrer, WTF::move(parameters), scriptFetcher);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
@@ -444,6 +444,16 @@ JSPromise* JSModuleLoader::linkAndEvaluateModule(JSGlobalObject* globalObject, c
     }
 
     return promise;
+}
+
+// The referrer of a module fetch is the referring script's base URL, i.e. its module key. An inline
+// module's key is a Symbol: it has no URL of its own, so we return the empty string and let the host
+// substitute its base URL. A null key means there is no referring script at all.
+static String moduleReferrer(const Identifier& referrerKey)
+{
+    if (referrerKey.isSymbol())
+        return emptyString();
+    return referrerKey.string();
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -614,7 +624,8 @@ JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, con
     OptionSet<ModuleLoadFlag> flags { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Dynamic };
     if (deferred)
         flags.add(ModuleLoadFlag::Deferred);
-    JSPromise* promise = loadModule(globalObject, resolved, WTF::move(parameters), WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+    // Per "fetch an import() module script graph", the referring script's base URL is the fetch's referrer.
+    JSPromise* promise = loadModule(globalObject, resolved, WTF::move(parameters), WTF::move(scriptFetcher), flags, referrerAsyncOrder, moduleReferrer(referrer));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -689,7 +700,7 @@ Identifier JSModuleLoader::resolve(JSGlobalObject* globalObject, const Identifie
     RELEASE_AND_RETURN(scope, resolve(globalObject, nameValue, referrerValue, WTF::move(scriptFetcher), useImportMap));
 }
 
-JSPromise* JSModuleLoader::fetch(JSGlobalObject* globalObject, JSValue key, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher)
+JSPromise* JSModuleLoader::fetch(JSGlobalObject* globalObject, JSValue key, const String& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher)
 {
     dataLogLnIf(Options::dumpModuleLoadingState(), "Loader [fetch] ", printableModuleKey(globalObject, key));
 
@@ -697,7 +708,7 @@ JSPromise* JSModuleLoader::fetch(JSGlobalObject* globalObject, JSValue key, RefP
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (globalObject->globalObjectMethodTable()->moduleLoaderFetch)
-        RELEASE_AND_RETURN(scope, globalObject->globalObjectMethodTable()->moduleLoaderFetch(globalObject, this, key, WTF::move(parameters), WTF::move(scriptFetcher)));
+        RELEASE_AND_RETURN(scope, globalObject->globalObjectMethodTable()->moduleLoaderFetch(globalObject, this, key, referrer, WTF::move(parameters), WTF::move(scriptFetcher)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
     String moduleKey = key.toWTFString(globalObject);
@@ -893,7 +904,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                     // fulfill/reject. The ModuleRegistryFetchSettled reaction on
                     // fetchPromise lands on the sync queue and drives the rest of
                     // the chain (including loadPromise).
-                    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), nullptr, scriptFetcher.copyRef());
+                    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), nullptr, scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     if (promise->status() == JSPromise::Status::Fulfilled)
                         fetchPromise->fulfillPromise(vm, promise->result());
@@ -950,7 +961,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     }
 
     if (mapEntry->status() == ModuleRegistryEntry::Status::New) {
-        JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleRequest.m_attributes, scriptFetcher);
+        // Per "fetch the descendants of a module script", the referrer is the referring module's base URL.
+        JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), moduleRequest.m_attributes, scriptFetcher);
         if (Exception* exception = scope.exception()) [[unlikely]] {
             // A host fetch hook that throws synchronously: record the failure on
             // the entry (a later load of this key sees it, or retries after the

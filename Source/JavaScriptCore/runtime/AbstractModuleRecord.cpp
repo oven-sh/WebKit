@@ -1305,6 +1305,14 @@ void AbstractModuleRecord::evaluateModuleSync(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(!inherits(JSModuleRecord::info()));
+    // A synthetic module's evaluation is synchronous and yields a plain value (or throws); skip materializing the
+    // settled promise the generic path would wrap it in. This runs once per import edge to such a module.
+    if (auto* syntheticRecord = dynamicDowncast<SyntheticModuleRecord>(this)) {
+        JSValue value = syntheticRecord->evaluate(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!value.inherits<JSPromise>())
+            return;
+    }
     JSPromise* promise = evaluate(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     // "the caller guarantees that module's evaluation will return an already settled promise"

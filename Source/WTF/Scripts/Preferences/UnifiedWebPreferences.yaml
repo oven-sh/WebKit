@@ -7168,20 +7168,6 @@ ReadableByteStreamAPIEnabled:
     WebKit:
       default: true
 
-ReadableByteStreamFetchSourceEnabled:
-  type: bool
-  status: stable
-  category: dom
-  humanReadableName: "ReadableByteStream for fetch API"
-  humanReadableDescription: "Enable Readable Byte Streams for fetch API"
-  defaultValue:
-    WebCore:
-      default: true
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-
 ReadableStreamFromEnabled:
   type: bool
   status: stable
@@ -9416,7 +9402,7 @@ UseAppKitGesturesForGestureEvents:
     WebKitLegacy:
       default: false
     WebKit:
-      default: false
+      default: defaultUseAppKitGestures()
     WebCore:
       default: false
 
@@ -10675,6 +10661,21 @@ WebRTCPlatformCodecsInGPUProcessEnabled:
       default: false
     WebKit:
       "ENABLE(GPU_PROCESS_BY_DEFAULT)": true
+      default: false
+    WebCore:
+      default: false
+
+WebRTCRelayBypassDisabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "Disable WebRTC private relay bypass"
+  humanReadableDescription: "Disable WebRTC private relay bypass"
+  condition: ENABLE(WEB_RTC)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
       default: false
     WebCore:
       default: false

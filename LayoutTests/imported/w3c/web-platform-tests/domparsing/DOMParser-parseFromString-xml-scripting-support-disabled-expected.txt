@@ -1,0 +1,9 @@
+
+PASS parseFromString as HTML, appendChild
+PASS parseFromString as HTML, append importNode result
+PASS parseFromString as HTML, svg script, appendChild
+PASS parseFromString as HTML, svg script, append importNode result
+PASS parseFromString as XML, svg script, appendChild
+PASS parseFromString as XML, svg script, append importNode result
+PASS parseFromString as XML, svg script, append importNode result, but with namespace prefix
+

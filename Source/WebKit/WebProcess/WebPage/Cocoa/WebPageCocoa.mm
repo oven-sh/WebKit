@@ -2108,7 +2108,7 @@ void WebPage::insertTextAsync(const String& text, const EditingRange& replacemen
     if (!frame)
         return;
 
-    UserGestureIndicator gestureIndicator { options.processingUserGesture ? IsProcessingUserGesture::Yes : IsProcessingUserGesture::No, frame->document() };
+    UserGestureIndicator gestureIndicator { options.processingUserGesture ? IsProcessingUserGesture::Yes : IsProcessingUserGesture::No, protect(frame->document()) };
     std::optional<UserTypingGestureIndicator> userTypingGestureIndicator;
     if (options.processingUserGesture)
         userTypingGestureIndicator.emplace(*frame);
@@ -2471,7 +2471,7 @@ bool WebPage::shouldAllowSingleClickToChangeSelection(WebCore::Node& targetNode,
     if (RefPtr editableRoot = newSelection.rootEditableElement(); editableRoot && editableRoot == targetNode.rootEditableElement()) {
         // FIXME: This logic should be made consistent for both macOS and iOS.
 #if PLATFORM(MAC)
-        return inputSource != WebCore::MouseEventInputSource::Automation;
+        return targetNode.shouldSelectOnMouseDown() || inputSource != WebCore::MouseEventInputSource::Automation;
 #else
         // Text interaction gestures will handle selection in the case where we are already editing the node. In the case where we're
         // just starting to focus an editable element by tapping on it, only change the selection if we weren't already showing an
@@ -2521,14 +2521,14 @@ static std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData
     return WebCore::RemoteUserInputEventData { remoteFrame->frameID(), transformer.transformToRemoteFrameCoordinates(FloatPoint { point }) };
 }
 
-void WebPage::selectWithGesture(std::optional<WebCore::FrameIdentifier> frameID, const IntPoint& point, GestureType gestureType, GestureRecognizerState gestureState, bool isInteractingWithFocusedElement, CompletionHandler<void(const WebCore::IntPoint&, GestureType, GestureRecognizerState, OptionSet<SelectionFlags>, std::optional<WebCore::RemoteUserInputEventData>)>&& completionHandler)
+void WebPage::selectWithGesture(std::optional<WebCore::FrameIdentifier> frameID, const IntPoint& point, GestureType gestureType, GestureRecognizerState gestureState, bool isInteractingWithFocusedElement, CompletionHandler<void(SelectWithGestureResult, std::optional<WebCore::RemoteUserInputEventData>)>&& completionHandler)
 {
     SetForScope userIsInteractingChange { m_userIsInteracting, true };
 
     RefPtr localRootFrame = this->localRootFrame(frameID);
 
     if (auto remoteUserInputEventData = remoteUserInputEventDataForSelectionGesture(localRootFrame.get(), point)) {
-        completionHandler(point, gestureType, gestureState, { }, WTF::move(remoteUserInputEventData));
+        completionHandler({ point, gestureType, gestureState, { } }, WTF::move(remoteUserInputEventData));
         return;
     }
 
@@ -2537,14 +2537,14 @@ void WebPage::selectWithGesture(std::optional<WebCore::FrameIdentifier> frameID,
 
     RefPtr<WebCore::LocalFrame> frame = frameID ? localRootFrame : RefPtr { m_page->focusController().focusedOrMainFrame() };
     if (!frame) {
-        completionHandler({ }, gestureType, gestureState, { }, std::nullopt);
+        completionHandler({ { }, gestureType, gestureState, { } }, std::nullopt);
         return;
     }
 
     VisiblePosition position = visiblePositionInFocusedNodeForPoint(*frame, point, isInteractingWithFocusedElement);
 
     if (position.isNull()) {
-        completionHandler(point, gestureType, gestureState, { }, std::nullopt);
+        completionHandler({ point, gestureType, gestureState, { } }, std::nullopt);
         return;
     }
     std::optional<SimpleRange> range;
@@ -2665,7 +2665,7 @@ void WebPage::selectWithGesture(std::optional<WebCore::FrameIdentifier> frameID,
     if (range)
         WTF::protect(frame->selection())->setSelectedRange(range, position.affinity(), WebCore::FrameSelection::ShouldCloseTyping::Yes, UserTriggered::Yes);
 
-    completionHandler(point, gestureType, gestureState, flags, std::nullopt);
+    completionHandler({ point, gestureType, gestureState, flags }, std::nullopt);
 }
 
 void WebPage::updateFocusBeforeSelectingTextAtLocation(std::optional<WebCore::FrameIdentifier> frameID, const IntPoint& point)
@@ -2681,7 +2681,7 @@ void WebPage::updateFocusBeforeSelectingTextAtLocation(std::optional<WebCore::Fr
         return;
 
     RefPtr frame = result.innerNodeFrame();
-    m_page->focusController().setFocusedFrame(frame.get());
+    protect(m_page->focusController())->setFocusedFrame(frame.get());
 
     if (!result.isOverWidget())
         return;
@@ -3275,14 +3275,14 @@ Awaitable<std::optional<WebCore::FrameIdentifier>> WebPage::commitPotentialTap(s
     auto reportFailedTap = [&] {
         if (localRootFrame) {
             if (RefPtr focusedFrame = m_page->focusController().focusedFrame(); focusedFrame && focusedFrame->frameType() == WebCore::Frame::FrameType::Remote) {
-                m_page->focusController().setFocusedFrame(localRootFrame.get());
+                protect(m_page->focusController())->setFocusedFrame(localRootFrame.get());
                 if (m_isClosed)
                     return;
             }
         }
 #if ENABLE(FOCUS_ADJUSTMENT_IN_SYNTHETIC_CLICK)
         if (localRootFrame) {
-            m_page->focusController().setFocusedElement(nullptr, localRootFrame.get(), { .trigger = FocusTrigger::Click });
+            protect(m_page->focusController())->setFocusedElement(nullptr, localRootFrame.get(), { .trigger = FocusTrigger::Click });
 
             // Clearing the focused element can run script that closes the page.
             if (m_isClosed)

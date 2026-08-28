@@ -65,9 +65,6 @@ void ModuleRegistryEntry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_record);
     visitor.append(thisObject->m_fetchPromise);
     visitor.append(thisObject->m_modulePromise);
-#if USE(BUN_JSC_ADDITIONS)
-    visitor.append(thisObject->m_providedSource);
-#endif
     visitor.append(thisObject->m_loadPromise);
     visitor.append(thisObject->m_error);
 }
@@ -114,8 +111,8 @@ JSPromise* ModuleRegistryEntry::ensureFetchPromise(JSGlobalObject* globalObject)
     if (m_status == Status::FetchFailed && m_error)
         promise->reject(vm, m_error.get());
 #if USE(BUN_JSC_ADDITIONS)
-    else if (m_providedSource)
-        promise->fulfill(vm, m_providedSource.get());
+    else if (m_record)
+        promise->fulfill(vm, m_record.get()); // provideModule(): already fetched and instantiated
 #endif
 
     m_fetchPromise.set(vm, this, promise);
@@ -135,7 +132,7 @@ JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject
     modulePromise->markAsHandled();
     m_modulePromise.set(vm, this, modulePromise);
 #if USE(BUN_JSC_ADDITIONS)
-    if (m_providedSource && m_record) {
+    if (m_record) {
         modulePromise->fulfill(vm, m_record.get());
         return modulePromise;
     }
@@ -265,17 +262,17 @@ void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSSourceCod
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void ModuleRegistryEntry::provideModule(VM& vm, JSSourceCode* jsSourceCode, AbstractModuleRecord* record)
+void ModuleRegistryEntry::provideModule(VM& vm, AbstractModuleRecord* record)
 {
     ASSERT(!m_record);
     ASSERT(m_status == Status::New || m_status == Status::Fetching);
-    m_providedSource.set(vm, this, jsSourceCode);
     m_record.set(vm, this, record);
     m_status = Status::Fetched;
-    // Promises some in-flight load already created for this entry are settled now; their pending reactions see the
-    // settled module promise and bail.
+    // Promises some in-flight load already created for this entry are settled now (with the record standing in for
+    // the source: moduleLoadTopSettled has nothing to provide for it); their pending reactions see the settled module
+    // promise and bail.
     if (m_fetchPromise && m_fetchPromise->status() == JSPromise::Status::Pending)
-        m_fetchPromise->fulfillPromise(vm, jsSourceCode);
+        m_fetchPromise->fulfillPromise(vm, record);
     if (m_modulePromise && m_modulePromise->status() == JSPromise::Status::Pending)
         m_modulePromise->fulfill(vm, record);
 }
