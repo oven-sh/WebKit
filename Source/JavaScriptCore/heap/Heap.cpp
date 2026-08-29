@@ -2717,6 +2717,9 @@ GCActivityCallback* Heap::edenActivityCallback()
 
 void Heap::setGarbageCollectionTimerEnabled(bool enable)
 {
+    // An explicit choice supersedes setInitialAllocationBudget()'s "re-enable after the first collection".
+    m_reenableEdenActivityCallback = false;
+    m_reenableFullActivityCallback = false;
     if (m_fullActivityCallback)
         m_fullActivityCallback->setEnabled(enable);
     if (m_edenActivityCallback)
