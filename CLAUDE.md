@@ -204,7 +204,7 @@ GitHub Actions workflows (`.github/workflows/build.yml`) build for:
 - **Linux**: x64/arm64, glibc/musl, debug/release/LTO/ASAN
 - **Windows**: x64, debug/release
 
-Artifacts are automatically published to GitHub releases as `autobuild-{sha}`.
+Artifacts are automatically published to GitHub releases as `autobuild-{sha}`. The release starts as a draft, each build job uploads its tarball onto it, and the `release` job publishes it once every build succeeded (or deletes the draft when one failed).
 
 ## Architecture Notes
 

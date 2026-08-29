@@ -28,8 +28,55 @@ on:
         value: ${{ jobs.release.outputs.tag }}
 
 jobs:
+  # The release exists, as a draft, before any build finishes: each build job uploads its tarball straight onto it
+  # and the `release` job publishes it once every asset is there (or deletes it if anything failed). A draft has no
+  # tag and is invisible to anyone without push access, so a half-built release is never downloadable.
+  create-release:
+    name: Create draft release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - name: Create draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag }}
+          TARGET: ${{ inputs.build_ref }}
+          PRERELEASE: ${{ inputs.is_prerelease }}
+        run: |
+          set -euo pipefail
+          # A release for this tag can exist from an earlier run. Published (this is a re-run of a run that succeeded):
+          # keep it, the build jobs overwrite its assets. Draft (a run that was cancelled before it could clean up, or
+          # a run against the same tag still in flight): replace it, so that nothing stale is published under this run.
+          if existing=$(gh release view "$TAG" --json databaseId,isDraft 2>/dev/null); then
+            id=$(jq -r .databaseId <<< "$existing")
+            if [ "$(jq -r .isDraft <<< "$existing")" = false ]; then
+              echo "release $TAG is already published (id $id), reusing it"
+              echo "release_id=$id" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "replacing stale draft of $TAG (id $id)"
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"
+          fi
+          # The tag is created when the draft is published, so it is pinned to the built commit here. The API takes a
+          # full SHA or a branch, so build_ref (which may be a short SHA or a tag) is resolved first.
+          target=$(gh api "repos/$GH_REPO/commits/$TARGET" --jq .sha)
+          created=$(gh api -X POST "repos/$GH_REPO/releases" \
+            -f tag_name="$TAG" -f name="$TAG" -f target_commitish="$target" \
+            -F draft=true -F prerelease="$PRERELEASE" -F generate_release_notes=true \
+            --jq '"\(.id) \(.html_url)"')
+          echo "created draft $created"
+          echo "release_id=${created%% *}" >> "$GITHUB_OUTPUT"
+
   linux:
     name: Linux
+    permissions:
+      contents: write
     runs-on: ${{matrix.os}}
     strategy:
       matrix:
@@ -139,10 +186,25 @@ jobs:
           rm -rf bun-webkit/lib/*.so.*
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{matrix.label}}
-          path: ${{runner.temp}}/bun-webkit.tar.gz
+      # The one copy of the upload step. The other build jobs alias it (YAML anchors, supported by Actions since 2025-08).
+      - name: Upload release asset
+        env: &upload_env
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag }}
+          LABEL: ${{ matrix.label }}
+          DIR: ${{ runner.temp }}
+        run: &upload_run |
+          set -euo pipefail
+          mv "$DIR/bun-webkit.tar.gz" "$DIR/$LABEL.tar.gz"
+          # create-release runs alongside this job and is normally long done; wait for it rather than fail.
+          for i in $(seq 1 60); do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 10; done
+          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. After a failed run use 'Re-run all jobs' so that create-release runs again."; exit 1; }
+          for attempt in 1 2 3 4 5; do
+            gh release upload "$TAG" "$DIR/$LABEL.tar.gz" --clobber && { echo "uploaded $LABEL"; exit 0; }
+            echo "upload of $LABEL failed (attempt $attempt)"; sleep $((attempt * 10))
+          done
+          exit 1
 
   windows-cross:
     name: Windows (cross-compiled from Linux)
@@ -151,6 +213,8 @@ jobs:
     # native Windows runner job (except arm64-debug — see the `windows` job
     # below) and adds the -lto variants it never built. windows-release.ps1
     # remains for building on a real Windows machine.
+    permissions:
+      contents: write
     runs-on: linux-x64-gh
     strategy:
       # One variant's failure shouldn't cancel the others.
@@ -232,10 +296,9 @@ jobs:
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["windows"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{matrix.label}}
-          path: ${{runner.temp}}/bun-webkit.tar.gz
+      - name: Upload release asset
+        env: *upload_env
+        run: *upload_run
 
   windows:
     name: Windows
@@ -251,6 +314,8 @@ jobs:
             package_json_arch: "arm64"
             label: bun-webkit-windows-arm64-debug
             platform: ARM64
+    permissions:
+      contents: write
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -294,13 +359,20 @@ jobs:
           $env:PACKAGE_JSON_ARCH = "${{matrix.package_json_arch}}"
           $env:GITHUB_REPOSITORY = "${{ github.repository }}"
           ./windows-release.ps1 -Platform ${{matrix.platform}}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{matrix.label}}
-          path: bun-webkit.tar.gz
+      - name: Upload release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag }}
+          LABEL: ${{ matrix.label }}
+          DIR: .
+        run: *upload_run
 
   linux-musl:
     name: Linux musl
+    permissions:
+      contents: write
     runs-on: ${{matrix.os}}
     strategy:
       matrix:
@@ -373,10 +445,9 @@ jobs:
           rm -rf bun-webkit/lib/*.so.*
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{matrix.label}}
-          path: ${{runner.temp}}/bun-webkit.tar.gz
+      - name: Upload release asset
+        env: *upload_env
+        run: *upload_run
 
   macos-cross:
     name: macOS (cross-compiled from Linux)
@@ -386,6 +457,8 @@ jobs:
     # variants link against the darwin sanitizer runtime mirrored at the
     # compiler-rt-darwin-* release tag (a Linux LLVM install doesn't ship it).
     # mac-release.bash remains for building on a real Mac locally.
+    permissions:
+      contents: write
     runs-on: linux-x64-gh
     strategy:
       matrix:
@@ -471,15 +544,16 @@ jobs:
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["darwin"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{matrix.label}}
-          path: ${{runner.temp}}/bun-webkit.tar.gz
+      - name: Upload release asset
+        env: *upload_env
+        run: *upload_run
 
   freebsd:
     name: FreeBSD
     # Cross-compiled from a Linux host via clang --target + base.txz sysroot,
     # so all FreeBSD targets build on x64 regardless of target arch.
+    permissions:
+      contents: write
     runs-on: linux-x64-gh
     strategy:
       matrix:
@@ -542,15 +616,16 @@ jobs:
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{matrix.label}}
-          path: ${{runner.temp}}/bun-webkit.tar.gz
+      - name: Upload release asset
+        env: *upload_env
+        run: *upload_run
 
   linux-android:
     name: Linux Android
     # NDK only ships linux-x86_64 prebuilts, so all Android targets
     # cross-compile from x64 regardless of target arch.
+    permissions:
+      contents: write
     runs-on: linux-x64-gh
     strategy:
       matrix:
@@ -613,19 +688,21 @@ jobs:
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{matrix.label}}
-          path: ${{runner.temp}}/bun-webkit.tar.gz
+      - name: Upload release asset
+        env: *upload_env
+        run: *upload_run
 
   release:
     name: release
+    # Runs whatever happened to the builds (also when the run was cancelled), so the draft never outlives the run: it
+    # is published when every build job succeeded and every listed asset is on it, and deleted otherwise.
+    if: always()
     permissions:
       contents: write
-      actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 15
     needs:
+      - create-release
       - linux
       - macos-cross
       - windows
@@ -634,24 +711,17 @@ jobs:
       - linux-android
       - freebsd
     outputs:
-      tag: ${{ steps.release_info.outputs.tag }}
+      tag: ${{ steps.publish.outputs.tag }}
     steps:
-      - run: uname -a
-      - run: free
-      - run: env
-      - run: mount
-      - run: lscpu
-      - run: lsmem
-      - run: lsblk
-      - run: lspci
-      - run: lsipc
-      - run: whoami
-
-      # Every build job uploads <label>/bun-webkit.tar.gz. This list is the release: a label missing from the run fails the job.
-      - name: Download artifacts
+      # Every build job uploads <label>.tar.gz. This list is the release: a label missing from it fails the job.
+      - name: Publish or delete the draft
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          NEEDS: ${{ toJSON(needs) }}
           ARTIFACTS: |
             # linux
             bun-webkit-linux-amd64
@@ -703,48 +773,28 @@ jobs:
             bun-webkit-linux-amd64-android-debug
         run: |
           set -euo pipefail
-          grep -v '^ *#' <<< "$ARTIFACTS" | grep . > artifacts.txt
-          echo "$(wc -l < artifacts.txt) artifacts"
-          xargs -P 16 -I{} sh -euc '
-            for attempt in 1 2 3 4 5; do
-              rm -rf "dl/$1"
-              gh run download "$GITHUB_RUN_ID" -n "$1" -D "dl/$1" && { echo "downloaded $1"; exit 0; }
-              echo "download of $1 failed (attempt $attempt)"; sleep $((attempt * 5))
-            done
-            exit 1' _ {} < artifacts.txt
-          mkdir -p out
-          while read -r name; do mv "dl/$name/bun-webkit.tar.gz" "out/$name.tar.gz"; done < artifacts.txt
-          ls -la out
-
-      - name: Set release info
-        id: release_info
-        run: |
-          echo "tag=${{ inputs.release_tag }}" >> $GITHUB_OUTPUT
-
-      - name: Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.release_tag }}
-          PRERELEASE: ${{ inputs.is_prerelease }}
-        run: |
-          set -euo pipefail
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            flags=(--title "$TAG" --generate-notes)
-            [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
-            gh release create "$TAG" "${flags[@]}"
+          ok=true
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          if [ -n "$failed" ]; then
+            echo "jobs that did not succeed:"; echo "$failed"; ok=false
+          else
+            grep -v '^ *#' <<< "$ARTIFACTS" | grep . | sort > expected.txt
+            gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
+            missing=$(comm -23 expected.txt uploaded.txt)
+            if [ -n "$missing" ]; then
+              echo "assets missing from $TAG:"; echo "$missing"; ok=false
+            fi
           fi
-          # a release just created is not visible to every API replica yet; uploads racing it get "release not found"
-          for i in $(seq 1 30); do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 2; done
-          gh release view "$TAG" >/dev/null
-          xargs -P 8 -I{} sh -euc '
-            for attempt in 1 2 3 4 5; do
-              gh release upload "$TAG" "out/$1.tar.gz" --clobber && { echo "uploaded $1"; exit 0; }
-              echo "upload of $1 failed (attempt $attempt)"; sleep $((attempt * 5))
-            done
-            exit 1' _ {} < artifacts.txt || true
-          gh release view "$TAG" --json assets --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
-          if missing=$(comm -23 <(sort artifacts.txt) uploaded.txt | grep .); then
-            echo "assets missing from $TAG:"; echo "$missing"; exit 1
+          if [ "$ok" = true ]; then
+            url=$(gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -F draft=false --jq .html_url)
+            echo "published $TAG with $(wc -l < uploaded.txt) assets: $url"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          echo "$(wc -l < uploaded.txt) assets on $TAG"
+          # Only the draft this run created is deleted: not a published release (a re-run of a run that succeeded),
+          # and not a draft that a newer run for the same tag has replaced.
+          if [ -n "$RELEASE_ID" ] && [ "$(gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq .draft 2>/dev/null || echo missing)" = true ]; then
+            gh api -X DELETE "repos/$GH_REPO/releases/$RELEASE_ID"
+            echo "deleted draft $TAG (id $RELEASE_ID)"
+          fi
+          exit 1
