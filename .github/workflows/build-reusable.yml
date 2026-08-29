@@ -126,10 +126,13 @@ jobs:
           ENABLE_SANITIZERS: ${{matrix.ENABLE_SANITIZERS}}
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
+          # Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own
+          # objects and its Rust code are <arch>-unknown-linux-gnu; with LTO, lld warns about
+          # the vendor mismatch once per JavaScriptCore object.
           if [ "${{matrix.package_json_arch}}" = "arm64" ]; then
-            export MARCH_FLAG="-march=armv8-a+crc -mtune=ampere1"
+            export MARCH_FLAG="--target=aarch64-unknown-linux-gnu -march=armv8-a+crc -mtune=ampere1"
           else
-            export MARCH_FLAG="${{ matrix.MARCH_FLAG || '-march=nehalem' }}"
+            export MARCH_FLAG="--target=x86_64-unknown-linux-gnu ${{ matrix.MARCH_FLAG || '-march=nehalem' }}"
           fi
           WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="native" cpu=native LTO_FLAG="${{matrix.lto_flag}}" temp=${{runner.temp}} ENABLE_SANITIZERS="${{matrix.ENABLE_SANITIZERS}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" bash release.sh
           cd ${{runner.temp}}
@@ -360,10 +363,13 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
+          # Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own
+          # objects and its Rust code are <arch>-unknown-linux-gnu; with LTO, lld warns about
+          # the vendor mismatch once per JavaScriptCore object.
           if [ "${{matrix.package_json_arch}}" = "arm64" ]; then
-            export MARCH_FLAG="-march=armv8-a+crc -mtune=ampere1"
+            export MARCH_FLAG="--target=aarch64-unknown-linux-gnu -march=armv8-a+crc -mtune=ampere1"
           else
-            export MARCH_FLAG="${{ matrix.MARCH_FLAG || '-march=nehalem' }}"
+            export MARCH_FLAG="--target=x86_64-unknown-linux-gnu ${{ matrix.MARCH_FLAG || '-march=nehalem' }}"
           fi
           WEBKIT_RELEASE_TYPE=${{matrix.CMAKE_BUILD_TYPE}} CPU="native" cpu=native LTO_FLAG="${{matrix.lto_flag}}" USE_MIMALLOC="${{matrix.USE_MIMALLOC || 'OFF'}}" USE_EXTERNAL_MIMALLOC="${{matrix.USE_EXTERNAL_MIMALLOC || 'OFF'}}" temp=${{runner.temp}} bash musl-release.sh
           cd ${{runner.temp}}
