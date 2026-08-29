@@ -19,6 +19,7 @@ jobs:
       contents: write
       actions: read
     uses: ./.github/workflows/build-reusable.yml
+    secrets: inherit
     with:
       build_ref: ${{ github.sha }}
       release_tag: autobuild-${{ github.sha }}

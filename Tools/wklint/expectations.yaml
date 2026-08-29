@@ -1,0 +1,1012 @@
+# wklint expectations: findings listed here are known/triaged and not reported.
+# Match key: rule + file + function + key (line is informational). Regenerate with --update-expectations.
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/API/APICallbackFunction.h'
+  function: 'JSC::APICallbackFunction::callImpl'
+  key: 'toThis -> throwException'
+  line: 73
+  reason: '[c-api] latent (C API glue): contract violation; would trip validateExceptionChecks in testapi'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/API/APICallbackFunction.h'
+  function: 'JSC::APICallbackFunction::callImpl'
+  key: 'return after toThis'
+  line: 79
+  count: 2
+  reason: '[c-api] latent (C API glue): contract violation; would trip validateExceptionChecks in testapi'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/API/APICallbackFunction.h'
+  function: 'JSC::APICallbackFunction::constructImpl'
+  key: 'return after get'
+  line: 140
+  reason: '[c-api] latent (C API glue): contract violation; would trip validateExceptionChecks in testapi'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/API/JSCallbackObjectFunctions.h'
+  function: 'JSC::JSCallbackObject<JSC::JSGlobalObject>::customToPrimitive'
+  key: 'return ordinaryToPrimitive'
+  line: 256
+  reason: '[c-api] latent (C API glue): contract violation; would trip validateExceptionChecks in testapi'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/API/JSCallbackObjectFunctions.h'
+  function: 'JSC::JSCallbackObject<JSC::JSGlobalObject>::callImpl'
+  key: 'toThis -> throwException'
+  line: 588
+  reason: '[c-api] latent (C API glue): contract violation; would trip validateExceptionChecks in testapi'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/API/JSCallbackObjectFunctions.h'
+  function: 'JSC::JSCallbackObject<JSC::JSGlobalObject>::callImpl'
+  key: 'return after toThis'
+  line: 591
+  reason: '[c-api] latent (C API glue): contract violation; would trip validateExceptionChecks in testapi'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/API/JSCallbackObjectFunctions.h'
+  function: 'JSC::JSCallbackObject<JSC::JSGlobalObject>::staticFunctionGetterImpl'
+  key: 'return getValue'
+  line: 711
+  reason: '[c-api] latent (C API glue): contract violation; would trip validateExceptionChecks in testapi'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/API/JSTypedArray.cpp'
+  function: 'createTypedArray'
+  key: 'return create'
+  line: 126
+  reason: '[c-api] latent (C API glue): contract violation; would trip validateExceptionChecks in testapi'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/debugger/Debugger.cpp'
+  function: 'JSC::Debugger::pauseIfNeeded'
+  key: 'exit after handlePause'
+  line: 1131
+  reason: 'TRIAGE-ME: the ThrowScope goes out of scope while the exception from ''handlePause'' (line 1121) is unchecked; check it (RETURN_IF_EXCEPTION) or release the scope'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::operationRegExpExecStickyKnownRegExp'
+  key: 'createRegExpMatchesArray -> setLastIndex'
+  line: 1770
+  reason: 'TRIAGE-ME: ''setLastIndex'' can throw, but the exception from ''createRegExpMatchesArray'' (line 1762) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::operationCreateClonedArgumentsDuringExit'
+  key: 'putDirectIndex -> putDirectIndex'
+  line: 3035
+  reason: '[osr-materialization] latent: OSR-exit materialization writes into freshly created objects (putDirectIndex fast path); a throw here would already be fatal'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::operationCompareStringLess'
+  key: 'view -> view'
+  line: 4949
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::operationCompareStringLessEq'
+  key: 'view -> view'
+  line: 4959
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::operationCompareStringGreater'
+  key: 'view -> view'
+  line: 4969
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::operationCompareStringGreaterEq'
+  key: 'view -> view'
+  line: 4979
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::operationGetDynamicVar(JSGlobalObject *, JSObject *, UniquedStringImpl *, unsigned int)::(anonymous class)::operator()'
+  key: 'getValue -> throwException'
+  line: 5871
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::putDynamicVar'
+  key: 'getValue -> throwException'
+  line: 5896
+  count: 2
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::putDynamicVar'
+  key: 'getValue -> put'
+  line: 5908
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/dfg/DFGOperations.cpp'
+  function: 'JSC::DFG::operationThrowStaticError'
+  key: 'value -> throwException'
+  line: 6501
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/ftl/FTLOperations.cpp'
+  function: 'JSC::FTL::operationMaterializeObjectInOSR'
+  key: 'putDirectIndex -> putDirectIndex'
+  line: 686
+  count: 4
+  reason: '[osr-materialization] latent: OSR-exit materialization writes into freshly created objects (putDirectIndex fast path); a throw here would already be fatal'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::getOwnPrivatePropertySymbols'
+  key: 'getOwnPropertyNames -> putDirectIndex'
+  line: 345
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::getOwnPrivatePropertySymbols'
+  key: 'return after putDirectIndex'
+  line: 348
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::getInternalProperties'
+  key: 'boundArgsCopy -> putDirectIndex'
+  line: 570
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::weakMapEntries'
+  key: 'toIntegerOrInfinity -> constructEmptyArray'
+  line: 802
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::weakSetEntries'
+  key: 'toIntegerOrInfinity -> constructEmptyArray'
+  line: 845
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::iteratorEntries'
+  key: 'get -> toIntegerOrInfinity'
+  line: 923
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::queryInstances'
+  key: 'getPropertySlot -> throwTypeError'
+  line: 995
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::queryInstances'
+  key: 'getPropertySlot -> checkForbiddenPrototype'
+  line: 998
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::queryInstances'
+  key: 'checkForbiddenPrototype -> throwTypeError'
+  line: 999
+  count: 6
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::queryInstances'
+  key: 'checkForbiddenPrototype -> checkForbiddenPrototype'
+  line: 1000
+  count: 5
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::queryInstances'
+  key: 'checkForbiddenPrototype -> constructEmptyArray'
+  line: 1014
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::queryHolders'
+  key: 'putDirectIndex -> putDirectIndex'
+  line: 1198
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHost.cpp'
+  function: 'Inspector::JSInjectedScriptHost::queryHolders'
+  key: 'return after putDirectIndex'
+  line: 1201
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionInternalConstructorName'
+  key: 'return internalConstructorName'
+  line: 126
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionIsPromiseRejectedWithNativeGetterTypeError'
+  key: 'return isPromiseRejectedWithNativeGetterTypeError'
+  line: 152
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionWeakMapEntries'
+  key: 'return weakMapEntries'
+  line: 204
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionWeakSetEntries'
+  key: 'return weakSetEntries'
+  line: 230
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionIteratorEntries'
+  key: 'return iteratorEntries'
+  line: 243
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionQueryInstances'
+  key: 'return queryInstances'
+  line: 256
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionQueryHolders'
+  key: 'return queryHolders'
+  line: 269
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionEvaluateWithScopeExtension'
+  key: 'return evaluateWithScopeExtension'
+  line: 282
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionGetOwnPrivatePropertySymbols'
+  key: 'return getOwnPrivatePropertySymbols'
+  line: 321
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionGetOwnPrivatePropertyMethods'
+  key: 'return getOwnPrivatePropertyMethods'
+  line: 334
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSInjectedScriptHostPrototype.cpp'
+  function: 'Inspector::jsInjectedScriptHostPrototypeFunctionGetInternalProperties'
+  key: 'return getInternalProperties'
+  line: 347
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSJavaScriptCallFrame.cpp'
+  function: 'Inspector::JSJavaScriptCallFrame::scopeDescriptions'
+  key: 'constructEmptyArray -> putDirectIndex'
+  line: 142
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSJavaScriptCallFrame.cpp'
+  function: 'Inspector::JSJavaScriptCallFrame::scopeDescriptions'
+  key: 'return after constructEmptyArray'
+  line: 146
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSJavaScriptCallFrame.cpp'
+  function: 'Inspector::JSJavaScriptCallFrame::scopeChain'
+  key: 'return constructArray'
+  line: 200
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSJavaScriptCallFramePrototype.cpp'
+  function: 'Inspector::jsJavaScriptCallFramePrototypeFunctionEvaluateWithScopeExtension'
+  key: 'return evaluateWithScopeExtension'
+  line: 83
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSJavaScriptCallFramePrototype.cpp'
+  function: 'Inspector::jsJavaScriptCallFramePrototypeFunctionScopeDescriptions'
+  key: 'return scopeDescriptions'
+  line: 96
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSJavaScriptCallFramePrototype.cpp'
+  function: 'Inspector::jsJavaScriptCallFrameAttributeScopeChain'
+  key: 'return scopeChain'
+  line: 174
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/inspector/JSJavaScriptCallFramePrototype.cpp'
+  function: 'Inspector::jsJavaScriptCallFrameAttributeThisObject'
+  key: 'return thisObject'
+  line: 187
+  reason: '[inspector] latent (inspector-only code): contract violation not reachable from web content; fix opportunistically'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/interpreter/Interpreter.cpp'
+  function: 'JSC::eval'
+  key: 'value -> canCompileStrings'
+  line: 150
+  reason: 'TRIAGE-ME: ''canCompileStrings'' can throw, but the exception from ''value'' (line 150) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/interpreter/Interpreter.cpp'
+  function: 'JSC::eval'
+  key: 'value -> reportViolationForUnsafeEval'
+  line: 160
+  reason: 'TRIAGE-ME: ''reportViolationForUnsafeEval'' can throw, but the exception from ''value'' (line 160) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/interpreter/Interpreter.cpp'
+  function: 'JSC::eval'
+  key: 'reportViolationForUnsafeEval -> throwException'
+  line: 161
+  reason: '[csp-callback] latent: globalObjectMethodTable CSP callbacks are indirect calls assumed throwing; followed by throwException/eval without a check'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/interpreter/Interpreter.cpp'
+  function: 'JSC::Interpreter::executeProgram'
+  key: 'getValue -> throwException'
+  line: 1170
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/interpreter/Interpreter.cpp'
+  function: 'JSC::Interpreter::executeProgram'
+  key: 'getValue -> get'
+  line: 1178
+  reason: 'TRIAGE-ME: ''get'' can throw, but the exception from ''getValue'' (line 1169) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/interpreter/Interpreter.cpp'
+  function: 'JSC::Interpreter::executeProgram'
+  key: 'getValue -> put'
+  line: 1192
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/interpreter/Interpreter.cpp'
+  function: 'JSC::Interpreter::executeProgram'
+  key: 'getValue -> putByIndex'
+  line: 1197
+  reason: 'TRIAGE-ME: ''putByIndex'' can throw, but the exception from ''getValue'' (line 1169) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/jit/JITOperations.cpp'
+  function: 'JSC::getPrivateName'
+  key: 'return getValue'
+  line: 4077
+  count: 2
+  reason: 'TRIAGE-ME: returning the result of throwing call ''getValue'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/jit/JITOperations.cpp'
+  function: 'JSC::operationGetFromScope(JSGlobalObject *, const JSInstruction *)::(anonymous class)::operator()'
+  key: 'getValue -> throwException'
+  line: 4730
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/jit/JITOperations.cpp'
+  function: 'JSC::operationGetFromScope(JSGlobalObject *, const JSInstruction *)::(anonymous class)::operator()'
+  key: 'getValue -> getValue'
+  line: 4738
+  reason: 'TRIAGE-ME: ''getValue'' can throw, but the exception from ''getValue'' (line 4718) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/jit/JITOperations.cpp'
+  function: 'JSC::operationPutToScope'
+  key: 'getValue -> throwException'
+  line: 4779
+  count: 2
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/jit/JITOperations.cpp'
+  function: 'JSC::operationPutToScope'
+  key: 'getValue -> put'
+  line: 4790
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/llint/LLIntSlowPaths.cpp'
+  function: 'JSC::LLInt::llint_slow_path_get_from_scope(CallFrame *, const JSInstruction *)::(anonymous class)::operator()'
+  key: 'getValue -> throwException'
+  line: 2363
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/llint/LLIntSlowPaths.cpp'
+  function: 'JSC::LLInt::llint_slow_path_get_from_scope(CallFrame *, const JSInstruction *)::(anonymous class)::operator()'
+  key: 'getValue -> getValue'
+  line: 2369
+  reason: 'TRIAGE-ME: ''getValue'' can throw, but the exception from ''getValue'' (line 2351) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/llint/LLIntSlowPaths.cpp'
+  function: 'JSC::LLInt::llint_slow_path_put_to_scope'
+  key: 'getValue -> throwException'
+  line: 2404
+  count: 2
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/llint/LLIntSlowPaths.cpp'
+  function: 'JSC::LLInt::llint_slow_path_put_to_scope'
+  key: 'getValue -> put'
+  line: 2411
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/lol/LOLJITOperations.cpp'
+  function: 'JSC::LOL::operationGetFromScopeForLOL(CallFrame *, unsigned int, JSObject *)::(anonymous class)::operator()'
+  key: 'getValue -> throwException'
+  line: 157
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/lol/LOLJITOperations.cpp'
+  function: 'JSC::LOL::operationGetFromScopeForLOL(CallFrame *, unsigned int, JSObject *)::(anonymous class)::operator()'
+  key: 'getValue -> getValue'
+  line: 165
+  reason: 'TRIAGE-ME: ''getValue'' can throw, but the exception from ''getValue'' (line 145) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/lol/LOLJITOperations.cpp'
+  function: 'JSC::LOL::operationPutToScopeForLOL'
+  key: 'getValue -> throwException'
+  line: 205
+  count: 2
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/lol/LOLJITOperations.cpp'
+  function: 'JSC::LOL::operationPutToScopeForLOL'
+  key: 'getValue -> put'
+  line: 216
+  reason: '[tdz-slot-getvalue] latent: PropertySlot::getValue after JSGlobalLexicalEnvironment::getOwnPropertySlot is a plain value slot and cannot throw; contract-wise a check is missing'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/CommonSlowPaths.cpp'
+  function: 'JSC::slow_path_throw_static_error'
+  key: 'value -> throwException'
+  line: 1571
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/Completion.cpp'
+  function: 'JSC::loadAndEvaluateModule'
+  key: 'return after performPromiseThenWithInternalMicrotask'
+  line: 244
+  reason: 'TRIAGE-ME: returning while the exception from ''performPromiseThenWithInternalMicrotask'' (line 242) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ConsoleObject.cpp'
+  function: 'JSC::consoleProtoFuncCount'
+  key: 'return after count'
+  line: 244
+  reason: '[console-client] latent: ConsoleClient callbacks may reach throwing code only via argument stringification; unchecked before return'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ConsoleObject.cpp'
+  function: 'JSC::consoleProtoFuncCountReset'
+  key: 'return after countReset'
+  line: 258
+  reason: '[console-client] latent: ConsoleClient callbacks may reach throwing code only via argument stringification; unchecked before return'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ConsoleObject.cpp'
+  function: 'JSC::consoleProtoFuncProfile'
+  key: 'return after profile'
+  line: 272
+  count: 2
+  reason: '[console-client] latent: ConsoleClient callbacks may reach throwing code only via argument stringification; unchecked before return'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ConsoleObject.cpp'
+  function: 'JSC::consoleProtoFuncProfileEnd'
+  key: 'return after profileEnd'
+  line: 293
+  count: 2
+  reason: '[console-client] latent: ConsoleClient callbacks may reach throwing code only via argument stringification; unchecked before return'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ConsoleObject.cpp'
+  function: 'JSC::consoleProtoFuncTakeHeapSnapshot'
+  key: 'return after takeHeapSnapshot'
+  line: 314
+  count: 2
+  reason: '[console-client] latent: ConsoleClient callbacks may reach throwing code only via argument stringification; unchecked before return'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ConsoleObject.cpp'
+  function: 'JSC::consoleProtoFuncTime'
+  key: 'return after time'
+  line: 335
+  reason: '[console-client] latent: ConsoleClient callbacks may reach throwing code only via argument stringification; unchecked before return'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ConsoleObject.cpp'
+  function: 'JSC::consoleProtoFuncTimeLog'
+  key: 'return after timeLog'
+  line: 349
+  reason: '[console-client] latent: ConsoleClient callbacks may reach throwing code only via argument stringification; unchecked before return'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ConsoleObject.cpp'
+  function: 'JSC::consoleProtoFuncTimeEnd'
+  key: 'return after timeEnd'
+  line: 363
+  reason: '[console-client] latent: ConsoleClient callbacks may reach throwing code only via argument stringification; unchecked before return'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/CyclicModuleRecord.cpp'
+  function: 'JSC::CyclicModuleRecord::executeAsync'
+  key: 'performPromiseThenWithInternalMicrotask -> execute'
+  line: 551
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/CyclicModuleRecord.cpp'
+  function: 'JSC::CyclicModuleRecord::asyncExecutionFulfilled'
+  key: 'asyncExecutionRejected -> executeAsync'
+  line: 718
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/CyclicModuleRecord.cpp'
+  function: 'JSC::CyclicModuleRecord::asyncExecutionFulfilled'
+  key: 'asyncExecutionRejected -> execute'
+  line: 727
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/CyclicModuleRecord.cpp'
+  function: 'JSC::CyclicModuleRecord::asyncExecutionFulfilled'
+  key: 'exit after asyncExecutionRejected'
+  line: 751
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/DirectEvalExecutable.cpp'
+  function: 'JSC::DirectEvalExecutable::create'
+  key: 'reportViolationForUnsafeEval -> throwException'
+  line: 45
+  reason: '[csp-callback] latent: globalObjectMethodTable CSP callbacks are indirect calls assumed throwing; followed by throwException/eval without a check'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ErrorInstance.cpp'
+  function: 'JSC::ErrorInstance::sanitizedMessageString'
+  key: 'getOwnPropertySlot -> getValue'
+  line: 253
+  reason: 'TRIAGE-ME: ''getValue'' can throw, but the exception from ''getOwnPropertySlot'' (line 252) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ErrorInstance.cpp'
+  function: 'JSC::ErrorInstance::sanitizedNameString'
+  key: 'getOwnPropertySlot -> getOwnPropertySlot'
+  line: 280
+  reason: 'TRIAGE-ME: ''getOwnPropertySlot'' can throw, but the exception from ''getOwnPropertySlot'' (line 280) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ErrorInstance.cpp'
+  function: 'JSC::ErrorInstance::sanitizedNameString'
+  key: 'getOwnPropertySlot -> getValue'
+  line: 281
+  reason: 'TRIAGE-ME: ''getValue'' can throw, but the exception from ''getOwnPropertySlot'' (line 280) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/FunctionConstructor.cpp'
+  function: 'JSC::constructFunction'
+  key: 'reportViolationForUnsafeEval -> throwException'
+  line: 206
+  reason: '[csp-callback] latent: globalObjectMethodTable CSP callbacks are indirect calls assumed throwing; followed by throwException/eval without a check'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/IndirectEvalExecutable.cpp'
+  function: 'JSC::IndirectEvalExecutable::createImpl'
+  key: 'reportViolationForUnsafeEval -> throwException'
+  line: 46
+  reason: '[csp-callback] latent: globalObjectMethodTable CSP callbacks are indirect calls assumed throwing; followed by throwException/eval without a check'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSArrayBufferView.cpp'
+  function: 'JSC::JSArrayBufferView::unsharedJSBuffer'
+  key: 'return toJS'
+  line: 245
+  reason: 'TRIAGE-ME: returning the result of throwing call ''toJS'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSArrayBufferView.cpp'
+  function: 'JSC::JSArrayBufferView::possiblySharedJSBuffer'
+  key: 'return toJS'
+  line: 255
+  reason: 'TRIAGE-ME: returning the result of throwing call ''toJS'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSCJSValue.cpp'
+  function: 'JSC::JSValue::putToPrimitiveByIndex'
+  key: 'return putToPrimitive'
+  line: 240
+  reason: 'TRIAGE-ME: returning the result of throwing call ''putToPrimitive'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSGlobalObject.cpp'
+  function: 'JSC::jsonParse'
+  key: 'return JSONParse'
+  line: 465
+  reason: 'TRIAGE-ME: returning the result of throwing call ''JSONParse'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSGlobalObject.cpp'
+  function: 'JSC::JSGlobalObject::tryInstallSpeciesWatchpoint'
+  key: 'return after getValue'
+  line: 3314
+  reason: 'TRIAGE-ME: returning while the exception from ''getValue'' (line 3312) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSGlobalObject.cpp'
+  function: 'JSC::JSGlobalObject::tryInstallSpeciesWatchpoint'
+  key: 'getValue -> getOwnPropertySlot'
+  line: 3322
+  reason: 'TRIAGE-ME: ''getOwnPropertySlot'' can throw, but the exception from ''getValue'' (line 3312) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp'
+  function: 'JSC::globalFuncEval'
+  key: 'reportViolationForUnsafeEval -> throwException'
+  line: 493
+  reason: '[csp-callback] latent: globalObjectMethodTable CSP callbacks are indirect calls assumed throwing; followed by throwException/eval without a check'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSMicrotask.cpp'
+  function: 'JSC::moduleRegistryFetchSettled'
+  key: 'setFetchError -> reject'
+  line: 941
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSMicrotask.cpp'
+  function: 'JSC::moduleLoadTopSettled'
+  key: 'performPromiseThenWithInternalMicrotask -> performPromiseThenWithInternalMicrotask'
+  line: 1136
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSMicrotask.cpp'
+  function: 'JSC::moduleLoadTopSettled'
+  key: 'performPromiseThenWithInternalMicrotask -> pipeFrom'
+  line: 1138
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSMicrotask.cpp'
+  function: 'JSC::moduleLoadTopSettled'
+  key: 'getErrorInfo -> setFetchError'
+  line: 1154
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSMicrotask.cpp'
+  function: 'JSC::moduleLoadTopSettled'
+  key: 'setFetchError -> reject'
+  line: 1161
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSMicrotask.cpp'
+  function: 'JSC::moduleLoadStoreError'
+  key: 'getErrorInfo -> isFetchError'
+  line: 1355
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSMicrotask.cpp'
+  function: 'JSC::moduleLoadStoreError'
+  key: 'isFetchError -> setFetchError'
+  line: 1356
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSMicrotask.cpp'
+  function: 'JSC::dynamicImportLoadSettled'
+  key: 'performPromiseThenWithInternalMicrotask -> performPromiseThenWithInternalMicrotask'
+  line: 1472
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleEnvironment.cpp'
+  function: 'JSC::JSModuleEnvironment::getOwnPropertySlot'
+  key: 'getOwnPropertySlot -> getValue'
+  line: 89
+  reason: 'TRIAGE-ME: ''getValue'' can throw, but the exception from ''getOwnPropertySlot'' (line 86) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleEnvironment.cpp'
+  function: 'JSC::JSModuleEnvironment::deleteProperty'
+  key: 'return deleteProperty'
+  line: 140
+  reason: 'TRIAGE-ME: returning the result of throwing call ''deleteProperty'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::maybeDuplicateFetchError'
+  key: 'hasOwnProperty -> duplicateError'
+  line: 166
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::loadModule'
+  key: 'return rejectedPromise'
+  line: 367
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::loadModule'
+  key: 'ensureFetchPromise -> fetch'
+  line: 374
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::loadModule'
+  key: 'ensureFetchPromise -> performPromiseThenWithInternalMicrotask'
+  line: 387
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::loadModule'
+  key: 'performPromiseThenWithInternalMicrotask -> performPromiseThenWithInternalMicrotask'
+  line: 391
+  count: 2
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::loadModule'
+  key: 'return after performPromiseThenWithInternalMicrotask'
+  line: 393
+  count: 2
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::requestImportModule'
+  key: 'return after performPromiseThenWithInternalMicrotask'
+  line: 458
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'reject -> finishLoadingImportedModule'
+  line: 660
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'return rejectedPromise'
+  line: 708
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'ensureFetchPromise -> ensureModulePromise'
+  line: 719
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'ensureModulePromise -> fetch'
+  line: 729
+  count: 2
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'ensureModulePromise -> makeModule'
+  line: 742
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'ensureModulePromise -> finishLoadingImportedModule'
+  line: 763
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'ensureModulePromise -> performPromiseThenWithInternalMicrotask'
+  line: 769
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'return after performPromiseThenWithInternalMicrotask'
+  line: 773
+  count: 2
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'ensureFetchPromise -> pipeFrom'
+  line: 786
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::hostLoadImportedModule'
+  key: 'pipeFrom -> ensureModulePromise'
+  line: 788
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleLoader.cpp'
+  function: 'JSC::JSModuleLoader::innerModuleLoading'
+  key: 'performPromiseThenWithInternalMicrotask -> hostLoadImportedModule'
+  line: 881
+  reason: '[module-loader] latent (module loading): promise-plumbing helpers leave a pending obligation; failures surface as rejections in practice'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleNamespaceObject.cpp'
+  function: 'JSC::JSModuleNamespaceObject::getOwnPropertySlotCommon'
+  key: 'return getOwnPropertySlot'
+  line: 156
+  count: 2
+  reason: 'TRIAGE-ME: returning the result of throwing call ''getOwnPropertySlot'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleNamespaceObject.cpp'
+  function: 'JSC::JSModuleNamespaceObject::overrideExports'
+  key: 'put -> getModuleNamespace'
+  line: 407
+  reason: 'TRIAGE-ME: ''getModuleNamespace'' can throw, but the exception from ''put'' (line 415) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleNamespaceObject.cpp'
+  function: 'JSC::JSModuleNamespaceObject::overrideExports'
+  key: 'symbolTablePutTouchWatchpointSet -> put'
+  line: 415
+  reason: 'TRIAGE-ME: ''put'' can throw, but the exception from ''symbolTablePutTouchWatchpointSet'' (line 412) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSModuleNamespaceObject.cpp'
+  function: 'JSC::JSModuleNamespaceObject::overrideExports'
+  key: 'exit after put'
+  line: 419
+  reason: 'TRIAGE-ME: the ThrowScope goes out of scope while the exception from ''put'' (line 415) is unchecked; check it (RETURN_IF_EXCEPTION) or release the scope'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSObject.cpp'
+  function: 'JSC::JSObject::setPrototypeWithCycleCheck'
+  key: 'return after getPrototype'
+  line: 2157
+  reason: 'TRIAGE-ME: returning while the exception from ''getPrototype'' (line 2156) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSObject.cpp'
+  function: 'JSC::JSObject::setPrototypeWithCycleCheck'
+  key: 'getPrototype -> typeError'
+  line: 2159
+  reason: 'TRIAGE-ME: ''typeError'' can throw, but the exception from ''getPrototype'' (line 2156) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSObject.cpp'
+  function: 'JSC::JSObject::setPrototypeWithCycleCheck'
+  key: 'return after toThis'
+  line: 2167
+  reason: 'TRIAGE-ME: returning while the exception from ''toThis'' (line 2164) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSObject.cpp'
+  function: 'JSC::JSObject::setPrototypeWithCycleCheck'
+  key: 'toThis -> isExtensible'
+  line: 2169
+  reason: 'TRIAGE-ME: ''isExtensible'' can throw, but the exception from ''toThis'' (line 2164) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSObject.cpp'
+  function: 'JSC::validateAndApplyPropertyDescriptor'
+  key: 'return after putDirectAccessor'
+  line: 3984
+  count: 2
+  reason: 'TRIAGE-ME: returning while the exception from ''putDirectAccessor'' (line 3976) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSOrderedHashTableHelper.h'
+  function: 'JSC::JSOrderedHashTableHelper<JSC::MapTraits>::find'
+  key: 'return find'
+  line: 392
+  reason: 'TRIAGE-ME: returning the result of throwing call ''find'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSPromise.cpp'
+  function: 'JSC::JSPromise::promiseReject'
+  key: 'return after reject'
+  line: 1196
+  reason: '[promise] latent (promise machinery): call()/reject helpers after which the function returns; exceptions become rejections'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSPromiseConstructor.cpp'
+  function: 'JSC::promiseConstructorFuncAll'
+  key: 'throw@503 -> operator()'
+  line: 504
+  reason: '[promise] latent (promise machinery): call()/reject helpers after which the function returns; exceptions become rejections'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSPromiseConstructor.cpp'
+  function: 'JSC::promiseConstructorFuncAllSettled'
+  key: 'throw@812 -> operator()'
+  line: 813
+  reason: '[promise] latent (promise machinery): call()/reject helpers after which the function returns; exceptions become rejections'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSPromiseConstructor.cpp'
+  function: 'JSC::promiseConstructorFuncAny'
+  key: 'throw@1265 -> operator()'
+  line: 1266
+  reason: '[promise] latent (promise machinery): call()/reject helpers after which the function returns; exceptions become rejections'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/JSPromisePrototype.cpp'
+  function: 'JSC::promiseProtoFuncFinally'
+  key: 'return after performPromiseThenWithInternalMicrotask'
+  line: 300
+  reason: '[promise] latent (promise machinery): call()/reject helpers after which the function returns; exceptions become rejections'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/ModuleProgramExecutable.cpp'
+  function: 'JSC::ModuleProgramExecutable::tryCreate'
+  key: 'return after getUnlinkedCodeBlock'
+  line: 87
+  reason: 'TRIAGE-ME: returning while the exception from ''getUnlinkedCodeBlock'' (line 86) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/OperationsInlines.h'
+  function: 'JSC::jsLess'
+  key: 'return view'
+  line: 474
+  reason: 'TRIAGE-ME: returning the result of throwing call ''view'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/OperationsInlines.h'
+  function: 'JSC::jsLess'
+  key: 'view -> view'
+  line: 474
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/OperationsInlines.h'
+  function: 'JSC::jsLessEq'
+  key: 'return view'
+  line: 523
+  reason: 'TRIAGE-ME: returning the result of throwing call ''view'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/OperationsInlines.h'
+  function: 'JSC::jsLessEq'
+  key: 'view -> view'
+  line: 523
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/PropertyDescriptor.cpp'
+  function: 'JSC::PropertyDescriptor::equalTo'
+  key: 'return strictEqual'
+  line: 259
+  reason: 'TRIAGE-ME: returning the result of throwing call ''strictEqual'' without releasing the scope; use RELEASE_AND_RETURN(scope, ...)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/PropertyDescriptor.cpp'
+  function: 'JSC::PropertyDescriptor::equalTo'
+  key: 'strictEqual -> strictEqual'
+  line: 260
+  reason: 'TRIAGE-ME: ''strictEqual'' can throw, but the exception from ''strictEqual'' (line 259) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/RegExpObjectInlines.h'
+  function: 'JSC::RegExpObject::execInline'
+  key: 'createRegExpMatchesArray -> setLastIndex'
+  line: 251
+  reason: 'TRIAGE-ME: ''setLastIndex'' can throw, but the exception from ''createRegExpMatchesArray'' (line 241) has not been checked yet (missing RETURN_IF_EXCEPTION between them)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/SetPrototype.cpp'
+  function: 'JSC::getSetSizeAsInt'
+  key: 'toIntegerOrInfinity -> throwVMRangeError'
+  line: 213
+  reason: '[tointeger-on-number-or-latent] latent: toIntegerOrInfinity(...) — throwing callee left unchecked before the next verification point'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/SetPrototype.cpp'
+  function: 'JSC::getSetSizeAsInt'
+  key: 'return after toIntegerOrInfinity'
+  line: 216
+  count: 2
+  reason: 'TRIAGE-ME: returning while the exception from ''toIntegerOrInfinity'' (line 210) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/StringPrototype.cpp'
+  function: 'JSC::stringProtoFuncToLowerCase'
+  key: 'return after view'
+  line: 1714
+  reason: 'TRIAGE-ME: returning while the exception from ''view'' (line 1704) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/StringPrototype.cpp'
+  function: 'JSC::stringProtoFuncToLowerCase'
+  key: 'view -> value'
+  line: 1717
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/StringPrototype.cpp'
+  function: 'JSC::stringProtoFuncToUpperCase'
+  key: 'return after view'
+  line: 1750
+  reason: 'TRIAGE-ME: returning while the exception from ''view'' (line 1740) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/StringPrototype.cpp'
+  function: 'JSC::stringProtoFuncToUpperCase'
+  key: 'view -> value'
+  line: 1753
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/StringPrototypeInlines.h'
+  function: 'JSC::tryReplaceOneCharUsingString'
+  key: 'value -> value'
+  line: 598
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/runtime/StringPrototypeInlines.h'
+  function: 'JSC::replaceAllWithCacheUsingRegExpSearchThreeArguments'
+  key: 'value -> value'
+  line: 947
+  count: 2
+  reason: '[rope-resolution-oom] latent: JSString::value/view can only throw OOM on rope resolution; second resolution unchecked'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/tools/JSDollarVM.cpp'
+  function: '(anonymous namespace)::ImpureGetter::getOwnPropertySlot'
+  key: 'return after getPropertySlot'
+  line: 498
+  reason: '[testing-only] latent (testing/tooling-only code)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/tools/JSDollarVM.cpp'
+  function: '(anonymous namespace)::ImpureGetter::getOwnPropertySlot'
+  key: 'return getOwnPropertySlot'
+  line: 502
+  reason: '[testing-only] latent (testing/tooling-only code)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/tools/JSDollarVM.cpp'
+  function: 'JSC::functionSetUserPreferredLanguages'
+  key: 'get -> toWTFString'
+  line: 4100
+  reason: '[testing-only] latent (testing/tooling-only code)'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/wasm/js/JSWebAssembly.cpp'
+  function: 'JSC::compileAndInstantiate'
+  key: 'exit after addPendingWork'
+  line: 336
+  reason: 'TRIAGE-ME: the ThrowScope goes out of scope while the exception from ''addPendingWork'' (line 297) is unchecked; check it (RETURN_IF_EXCEPTION) or release the scope'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/wasm/js/JSWebAssembly.cpp'
+  function: 'JSC::webAssemblyCompileStreamingFunc'
+  key: 'return after performPromiseThenWithInternalMicrotask'
+  line: 485
+  reason: 'TRIAGE-ME: returning while the exception from ''performPromiseThenWithInternalMicrotask'' (line 484) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/wasm/js/JSWebAssembly.cpp'
+  function: 'JSC::webAssemblyInstantiateStreamingFunc'
+  key: 'return after performPromiseThenWithInternalMicrotask'
+  line: 534
+  reason: 'TRIAGE-ME: returning while the exception from ''performPromiseThenWithInternalMicrotask'' (line 533) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/wasm/js/WebAssemblySuspending.cpp'
+  function: 'JSC::runWebAssemblySuspendingFunction'
+  key: 'return after performPromiseThen'
+  line: 189
+  reason: 'TRIAGE-ME: returning while the exception from ''performPromiseThen'' (line 187) is unchecked; check it (RETURN_IF_EXCEPTION) or use RELEASE_AND_RETURN'
+- rule: jsc-unchecked-exception
+  file: 'Source/JavaScriptCore/wasm/js/WebAssemblyTablePrototype.cpp'
+  function: 'JSC::webAssemblyTableProtoFuncGrow'
+  key: 'addressValueToUint64 -> throwVMTypeError'
+  line: 97
+  reason: 'TRIAGE-ME: throwing via ''throwVMTypeError'' while the exception from ''addressValueToUint64'' (line 95) has not been checked'

@@ -54,6 +54,17 @@ export DEBIAN_VERSION="bookworm"
 
 export temp=${temp:-"$(mktemp -d -t bun-webkit-linux-$BUILDKIT_ARCH-release-$(date +%s)-XXXX)"}
 export ENABLE_SANITIZERS=${ENABLE_SANITIZERS:-}
+# wklint (JSC exception-check linter): set WKLINT_TAG (a webkit-lint release tag)
+# and WEBKIT_LINT_RELEASE_TOKEN in the environment to run it during the build.
+export WKLINT_TAG=${WKLINT_TAG:-""}
+WKLINT_SECRET_ARGS=""
+# `:+x` keeps the token out of the xtrace output (only a literal "x" is traced).
+if [ -n "${WEBKIT_LINT_RELEASE_TOKEN:+x}" ]; then
+    WKLINT_SECRET_ARGS="--secret id=WEBKIT_LINT_RELEASE_TOKEN,env=WEBKIT_LINT_RELEASE_TOKEN"
+else
+    # No token available (e.g. a fork PR without secrets): skip the linter.
+    WKLINT_TAG=""
+fi
 export USE_MIMALLOC=${USE_MIMALLOC:-"OFF"}
 export USE_EXTERNAL_MIMALLOC=${USE_EXTERNAL_MIMALLOC:-"OFF"}
 
@@ -70,6 +81,8 @@ docker buildx build \
   --build-arg MARCH_FLAG="$MARCH_FLAG" \
   --build-arg RELEASE_FLAGS="$RELEASE_FLAGS" \
   --build-arg WEBKIT_RELEASE_TYPE=$WEBKIT_RELEASE_TYPE \
+  --build-arg WKLINT_TAG="$WKLINT_TAG" \
+  $WKLINT_SECRET_ARGS \
   --build-arg RELEASE_FLAGS="${RELEASE_FLAGS:-"-O2 -DNDEBUG=1"}" \
   --build-arg USE_MIMALLOC="$USE_MIMALLOC" \
   --build-arg USE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \

@@ -7,6 +7,10 @@ ARG LLVM_VERSION="21"
 # The -lto variants append -g1 (line tables only) after this, see $G below; every other variant keeps full -g.
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
+# wklint (JSC exception-check linter) release from oven-sh/webkit-lint:
+# "latest", a specific "autobuild-<sha>" tag, or "" (default: do not lint).
+# The prebuilt is x86-64 only, so it also stays off on non-amd64 builds.
+ARG WKLINT_TAG=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 
@@ -26,6 +30,7 @@ ARG TARGETARCH
 ARG ENABLE_SANITIZERS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
+ARG WKLINT_TAG
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -119,6 +124,30 @@ RUN curl -fsSL --retry 5 --retry-connrefused \
     && apt-get update \
     && apt-get install -y /tmp/llvm/*.deb \
     && rm -rf /tmp/llvm /tmp/llvm.tar.gz /var/lib/apt/lists/*
+
+# wklint: JSC exception-check static analyzer (oven-sh/webkit-lint prebuilt).
+# Fetched only when WKLINT_TAG is set; the token is a BuildKit secret because
+# the release lives in an internal repository.
+RUN --mount=type=secret,id=WEBKIT_LINT_RELEASE_TOKEN \
+    if [ -n "$WKLINT_TAG" ] && [ "$TARGETARCH" = "amd64" ]; then \
+        if [ ! -f /run/secrets/WEBKIT_LINT_RELEASE_TOKEN ]; then \
+            echo "wklint: WKLINT_TAG is set but the WEBKIT_LINT_RELEASE_TOKEN secret is missing; skipping the linter."; \
+            exit 0; \
+        fi; \
+        set -eu; \
+        token=$(cat /run/secrets/WEBKIT_LINT_RELEASE_TOKEN); \
+        if [ "$WKLINT_TAG" = "latest" ]; then \
+            api="https://api.github.com/repos/oven-sh/webkit-lint/releases/latest"; \
+        else \
+            api="https://api.github.com/repos/oven-sh/webkit-lint/releases/tags/${WKLINT_TAG}"; \
+        fi; \
+        asset_url=$(curl -fsSL -H "Authorization: token ${token}" "$api" \
+            | python3 -c 'import json,sys; print([a["url"] for a in json.load(sys.stdin)["assets"] if a["name"].endswith("-linux-x64.tar.zst")][0])'); \
+        curl -fsSL -H "Authorization: token ${token}" -H "Accept: application/octet-stream" \
+            -o /tmp/wklint.tar.zst "$asset_url"; \
+        mkdir -p /opt && tar -I zstd -xf /tmp/wklint.tar.zst -C /opt && rm /tmp/wklint.tar.zst; \
+        /opt/wklint-linux-x64/bin/wklint --version; \
+    fi
 
 # Configure library paths
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
@@ -308,6 +337,19 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cd /webkitbuild && \
     cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    if [ -x /opt/wklint-linux-x64/bin/wklint ]; then \
+        set +e; \
+        python3 /opt/wklint-linux-x64/tools/wklint-run.py \
+            -p /webkitbuild --wklint /opt/wklint-linux-x64/bin/wklint \
+            --files 'JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-.*\.cpp' \
+            --checks 'jsc-*' --source-root /webkit \
+            --workdir /webkitbuild/wklint-cache \
+            --expectations /webkit/Tools/wklint/expectations.yaml \
+            --json-out /output/wklint-findings.json \
+            > /output/wklint-report.txt 2> /output/wklint-log.txt; \
+        echo $? > /output/wklint-exit-code; \
+        set -e; \
+    fi && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \

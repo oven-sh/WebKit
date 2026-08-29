@@ -22,6 +22,14 @@ on:
         description: 'LLVM version to use'
         type: string
         default: '19'
+      wklint_tag:
+        description: 'oven-sh/webkit-lint release for the JSC exception-check linter: "latest", an "autobuild-<sha>" tag, or "off" (empty falls back to the WKLINT_TAG repo variable, then latest)'
+        type: string
+        default: ''
+    secrets:
+      WEBKIT_LINT_RELEASE_TOKEN:
+        description: 'Read access to oven-sh/webkit-lint releases (optional; the linter is skipped without it)'
+        required: false
     outputs:
       release_tag:
         description: 'The release tag that was created'
@@ -40,6 +48,7 @@ jobs:
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Debug"
             RELEASE_FLAGS: "-O3 -DNDEBUG=1"
+            wklint: "true"
           - lto_flag: ""
             label: bun-webkit-linux-arm64-debug
             os: linux-arm64-gh
@@ -124,6 +133,8 @@ jobs:
         env:
           RELEASE_FLAGS: ${{matrix.RELEASE_FLAGS}}
           ENABLE_SANITIZERS: ${{matrix.ENABLE_SANITIZERS}}
+          WKLINT_TAG: ${{ matrix.wklint == 'true' && (inputs.wklint_tag || vars.WKLINT_TAG || 'latest') != 'off' && (inputs.wklint_tag || vars.WKLINT_TAG || 'latest') || '' }}
+          WEBKIT_LINT_RELEASE_TOKEN: ${{ secrets.WEBKIT_LINT_RELEASE_TOKEN }}
         run: |
           rm -rf ${{runner.temp}}/bun-webkit ${{runner.temp}}/bun-webkit.tar.gz
           if [ "${{matrix.package_json_arch}}" = "arm64" ]; then
@@ -137,12 +148,60 @@ jobs:
           echo '{ "name": "${{matrix.label}}", "version": "0.0.1-${{ inputs.build_ref }}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so
           rm -rf bun-webkit/lib/*.so.*
+          # wklint results live in the artifact output dir whenever the linter was
+          # invoked (the exit-code file is written even if the run failed early).
+          if [ -f bun-webkit/wklint-exit-code ]; then
+            cp bun-webkit/wklint-exit-code . 2>/dev/null || true
+            cp bun-webkit/wklint-findings.json bun-webkit/wklint-report.txt bun-webkit/wklint-log.txt . 2>/dev/null || true
+            rm -f bun-webkit/wklint-findings.json bun-webkit/wklint-report.txt bun-webkit/wklint-log.txt bun-webkit/wklint-exit-code
+          fi
           tar -czf bun-webkit.tar.gz bun-webkit
           rm -rf bun-webkit
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{matrix.label}}
           path: ${{runner.temp}}/bun-webkit.tar.gz
+      - name: Report wklint (JSC exception-check) findings
+        if: matrix.wklint == 'true'
+        working-directory: ${{runner.temp}}
+        run: |
+          if [ ! -f wklint-exit-code ]; then
+            echo "wklint did not run (WKLINT_TAG not set); skipping."
+            exit 0
+          fi
+          exit_code=$(cat wklint-exit-code)
+          echo "wklint exit code: $exit_code"
+          cat wklint-report.txt || true
+          if [ "$exit_code" != "0" ] && [ "$exit_code" != "1" ]; then
+            # Tool / infrastructure error (parse failures, crash): surface it without
+            # blocking the build during the soft launch.
+            echo "::warning title=wklint::wklint exited with $exit_code (tool error); see wklint-log.txt in the wklint-findings artifact"
+            tail -40 wklint-log.txt 2>/dev/null || true
+            exit 0
+          fi
+          if [ "$exit_code" = "1" ]; then
+            new=$(grep -c ' warning: ' wklint-report.txt || true)
+            {
+              echo "### wklint: $new new unchecked-exception finding(s)"
+              echo
+              echo "These are JSC exception-check patterns not covered by \`Tools/wklint/expectations.yaml\`."
+              echo "Fix them, or add an entry with a \`reason:\` if the finding is a known/latent case."
+              echo
+              echo '```'
+              head -60 wklint-report.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=wklint::$new new unchecked-exception finding(s); see the job summary"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.wklint == 'true' && always()
+        with:
+          name: wklint-findings
+          path: |
+            ${{runner.temp}}/wklint-findings.json
+            ${{runner.temp}}/wklint-report.txt
+          if-no-files-found: ignore
 
   windows-cross:
     name: Windows (cross-compiled from Linux)
