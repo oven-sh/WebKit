@@ -563,6 +563,9 @@ unsigned BunV8HeapSnapshotBuilder::addString(const String& str)
 
 String BunV8HeapSnapshotBuilder::generateV8HeapSnapshot()
 {
+    if (m_overflowed.load(std::memory_order_relaxed))
+        return String();
+
     // Extra pass #1: fill in the node names
     for (auto& node : m_nodes) {
         if (node.cell)
@@ -764,7 +767,9 @@ String BunV8HeapSnapshotBuilder::generateV8HeapSnapshot()
 
     json.append("}\n"_s);
 
-    if (m_overflowed.load(std::memory_order_relaxed) || json.hasOverflowed())
+    if (json.hasOverflowed())
+        m_overflowed.store(true, std::memory_order_relaxed);
+    if (m_overflowed.load(std::memory_order_relaxed))
         return String();
 
     return json.toString();
@@ -866,6 +871,9 @@ static void appendUnsigned(JsonByteSink& out, size_t value)
 
 Vector<uint8_t> BunV8HeapSnapshotBuilder::generateV8HeapSnapshotBytes()
 {
+    if (m_overflowed.load(std::memory_order_relaxed))
+        return {};
+
     // Extra pass #1: fill in the node names
     for (auto& node : m_nodes) {
         if (node.cell)
@@ -1042,7 +1050,9 @@ Vector<uint8_t> BunV8HeapSnapshotBuilder::generateV8HeapSnapshotBytes()
 
     appendASCII(out, "}\n"_s);
 
-    if (m_overflowed.load(std::memory_order_relaxed) || out.overflowed)
+    if (out.overflowed)
+        m_overflowed.store(true, std::memory_order_relaxed);
+    if (m_overflowed.load(std::memory_order_relaxed))
         return {};
 
     return WTF::move(out.bytes);
