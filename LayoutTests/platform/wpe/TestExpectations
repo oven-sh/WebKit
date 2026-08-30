@@ -25,7 +25,7 @@ imported/w3c/web-platform-tests/css/compositing/mix-blend-mode/mix-blend-mode-in
 
 webkit.org/b/307586 [ Release ] imported/w3c/web-platform-tests/css/css-view-transitions/no-raf-while-render-blocked.html [ Failure Pass ]
 
-imported/w3c/web-platform-tests/css/css-ui/text-overflow-005.html [ Pass ]
+imported/w3c/web-platform-tests/css/css-overflow/text-overflow-005.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-display/run-in/quotes-applies-to-011.xht [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text/boundary-shaping/boundary-shaping-004.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text/boundary-shaping/boundary-shaping-005.html [ ImageOnlyFailure ]
@@ -869,6 +869,10 @@ media/media-source/media-detachablemse-append.html [ Timeout Pass ]
 
 imported/w3c/web-platform-tests/css/css-overflow/overflow-auto-scrolling-with-margin-and-transform.html [ Skip ]
 
+imported/w3c/web-platform-tests/css/css-overflow/clip-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-overflow/clip-004.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-overflow/clip-005.html [ ImageOnlyFailure ]
+
 webkit.org/b/228311 imported/w3c/web-platform-tests/css/css-scoping/css-scoping-shadow-dynamic-remove-style-detached.html [ Pass Failure ]
 
 fast/events/mouse-cursor-pseudo-elements.html [ Failure Pass ]
@@ -1326,3 +1330,4 @@ webkit.org/b/322026 [ arm64 ] imported/w3c/web-platform-tests/wasm/core/f64_cmp.
 webkit.org/b/321789 animations/no-style-recalc-during-accelerated-animation.html [ Failure Pass ]
 webkit.org/b/322637 [ Debug ] imported/w3c/web-platform-tests/fullscreen/model/remove-last.html [ Pass Failure ]
 webkit.org/b/322639 [ Debug ] imported/w3c/web-platform-tests/html/semantics/popovers/popover-remove-attribute-during-focusing-steps.html [ Pass Failure ]
+webkit.org/b/322813 [ arm64 ] imported/w3c/web-platform-tests/css/css-grid/subgrid/subgrid-baseline-018.html [ Crash Pass Timeout ]

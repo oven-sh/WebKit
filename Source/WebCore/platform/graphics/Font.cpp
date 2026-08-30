@@ -105,12 +105,11 @@ Font::Font(const FontPlatformData& platformData, Origin origin, IsInterstitial i
     , m_shouldNotBeUsedForArabic(false)
 #endif
 {
-    relaxAdoptionRequirement();
     platformInit();
     platformGlyphInit();
     platformCharWidthInit();
 #if ENABLE(OPENTYPE_VERTICAL)
-    if (platformData.orientation() == FontOrientation::Vertical && orientationFallback == IsOrientationFallback::No) {
+    if (platformData.orientation() == FontOrientation::Vertical && !isTextOrientationFallback()) {
         m_verticalData = FontCache::forCurrentThread().verticalData(platformData);
         m_hasVerticalGlyphs = m_verticalData.get() && m_verticalData->hasVerticalMetrics();
     }
@@ -195,7 +194,7 @@ void Font::platformGlyphInit()
     if (RefPtr page = glyphPage(GlyphPage::pageNumberForCodePoint('0')))
         zeroGlyph = page->glyphDataForCharacter('0').glyph;
     if (zeroGlyph)
-        m_fontMetrics.setZeroWidth(widthForGlyph(zeroGlyph));
+        initZeroWidth(zeroGlyph);
 
     // Use the width of the CJK water ideogram (U+6C34) as the
     // approximated width of ideograms in the font, as mentioned in
@@ -213,6 +212,22 @@ void Font::platformGlyphInit()
     m_fontMetrics.setLineGap(m_fontMetrics.lineGap() - amountToAdjustLineGap);
     m_fontMetrics.setLineSpacing(m_fontMetrics.lineSpacing() - amountToAdjustLineGap);
     determinePitch();
+}
+
+void Font::initZeroWidth(Glyph zeroGlyph)
+{
+#if ENABLE(OPENTYPE_VERTICAL)
+    // For upright vertical text the CSS 'ch' unit is the '0' glyph's vertical advance.
+    // Use the advance height from the fon't vertical metrics (vmtx) when present, otherwise fall back
+    // to the horizontal advance.
+    RefPtr<OpenTypeVerticalData> verticalData;
+    if (platformData().orientation() == FontOrientation::Vertical && !isTextOrientationFallback())
+        verticalData = FontCache::forCurrentThread().verticalData(platformData());
+    if (verticalData && verticalData->hasVerticalMetrics())
+        m_fontMetrics.setZeroWidth(verticalData->advanceHeight(this, zeroGlyph));
+    else
+#endif
+        m_fontMetrics.setZeroWidth(widthForGlyph(zeroGlyph));
 }
 
 Font::~Font()

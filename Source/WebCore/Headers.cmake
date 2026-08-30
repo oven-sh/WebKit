@@ -2026,6 +2026,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/FrameConsoleClient.h
     page/FrameDestructionObserver.h
     page/FrameDestructionObserverInlines.h
+    page/FrameGeometrySyncData.h
     page/FrameIdentifier.h
     page/FrameInlines.h
     page/FrameSnapshotting.h
@@ -2081,7 +2082,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/PrewarmInformation.h
     page/PrintContext.h
     page/ProcessWarming.h
-    page/QuirkMatch.h
     page/QuirkNames.h
     page/QuirkTable.h
     page/Quirks.h
@@ -2117,6 +2117,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/TextAnimationTypes.h
     page/TextDirectionSubmenuInclusionBehavior.h
     page/TextIndicator.h
+    page/URLMatch.h
     page/TranslationContextMenuInfo.h
     page/UADataValues.h
     page/UALowEntropyJSON.h
@@ -2684,6 +2685,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/PlatformTextTrack.h
     platform/graphics/PlatformTimeRanges.h
     platform/graphics/PlatformTrackConfiguration.h
+    platform/graphics/PlatformVideoChromaLocation.h
     platform/graphics/PlatformVideoColorPrimaries.h
     platform/graphics/PlatformVideoColorSpace.h
     platform/graphics/PlatformVideoMatrixCoefficients.h
@@ -3438,6 +3440,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/overflow/StyleOverflowClipMargin.h
     style/values/overflow/StyleScrollBehavior.h
     style/values/overflow/StyleScrollbarGutter.h
+    style/values/overflow/StyleTextOverflow.h
 
     style/values/page/StylePageSize.h
 

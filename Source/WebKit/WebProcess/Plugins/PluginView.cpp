@@ -725,7 +725,7 @@ void PluginView::handleEvent(Event& event)
     if (!shouldForwardToPlugin(event))
         return;
 
-    const CheckedPtr currentEvent = WebPage::currentEvent();
+    const RefPtr currentEvent = WebPage::currentEvent();
     if (!currentEvent)
         return;
 
@@ -1046,7 +1046,7 @@ FetchOptions::Destination PluginView::fetchDestination() const
 
 void PluginView::loadMainResource()
 {
-    auto referrer = SecurityPolicy::generateReferrerHeader(frame()->document()->referrerPolicy(), m_mainResourceURL, frame()->loader().outgoingReferrerURL(), OriginAccessPatternsForWebProcess::singleton());
+    auto referrer = SecurityPolicy::generateReferrerHeader(frame()->document()->referrerPolicy(), m_mainResourceURL, protect(frame()->loader())->outgoingReferrerURL(), OriginAccessPatternsForWebProcess::singleton());
     if (referrer.isEmpty())
         referrer = { };
 

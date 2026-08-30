@@ -183,7 +183,6 @@ PushService::PushService(Ref<PushServiceConnection>&& pushServiceConnection, Ref
     , m_incomingPushMessageHandler(WTF::move(incomingPushMessageHandler))
 {
     RELEASE_ASSERT(m_incomingPushMessageHandler);
-    relaxAdoptionRequirement();
 
     Ref connection = m_connection;
     connection->startListeningForPublicToken([weakThis = WeakPtr { *this }](auto&& token) mutable {
@@ -417,7 +416,7 @@ void SubscribeRequest::startImpl(IsRetry isRetry)
                 return;
             }
 
-            auto clientKeys = protectedThis->service().connection().generateClientKeys();
+            auto clientKeys = protect(protectedThis->service().connection())->generateClientKeys();
             IGNORE_CLANG_WARNINGS_BEGIN("missing-designated-field-initializers")
             PushRecord record {
                 .subscriptionSetIdentifier = protectedThis->m_identifier,
