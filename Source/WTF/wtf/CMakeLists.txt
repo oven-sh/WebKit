@@ -803,6 +803,7 @@ elseif (APPLE)
 elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
     list(APPEND WTF_PUBLIC_HEADERS
         linux/CurrentProcessMemoryStatus.h
+        linux/HighPriorityThreads.h
         linux/ProcessMemoryFootprint.h
     )
 endif ()

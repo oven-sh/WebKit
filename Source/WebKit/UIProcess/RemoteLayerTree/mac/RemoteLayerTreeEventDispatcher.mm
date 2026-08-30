@@ -110,7 +110,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteLayerTreeEventDispatcher);
 RemoteLayerTreeEventDispatcher::RemoteLayerTreeEventDispatcher(RemoteScrollingCoordinatorProxyMac& scrollingCoordinator, PageIdentifier pageIdentifier)
     : m_scrollingCoordinator(WeakPtr { scrollingCoordinator })
     , m_pageIdentifier(pageIdentifier)
-    , m_processPool(scrollingCoordinator.webPageProxy().configuration().processPool())
+    , m_processPool(protect(scrollingCoordinator.webPageProxy().configuration())->processPool())
     , m_wheelEventDeltaFilter(WheelEventDeltaFilter::create())
     , m_displayLinkClient(makeUnique<RemoteLayerTreeEventDispatcherDisplayLinkClient>(*this))
     , m_wheelEventActivityHysteresis([weakThis = ThreadSafeWeakPtr { *this }](PAL::HysteresisState state) {
@@ -162,7 +162,10 @@ void RemoteLayerTreeEventDispatcher::invalidate()
     });
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
-    m_momentumEventDispatcher = nullptr;
+    {
+        Locker locker { m_momentumEventDispatcherLock };
+        m_momentumEventDispatcher = nullptr;
+    }
 #endif
 
     m_displayLinkClient = nullptr;
@@ -215,34 +218,39 @@ void RemoteLayerTreeEventDispatcher::cacheWheelEventScrollingAccelerationCurve(c
         });
         return curve;
     });
-    m_momentumEventDispatcher->setScrollingAccelerationCurve(m_pageIdentifier, WTF::move(curve));
+
+    {
+        Locker locker { m_momentumEventDispatcherLock };
+        if (m_momentumEventDispatcher)
+            m_momentumEventDispatcher->setScrollingAccelerationCurve(m_pageIdentifier, WTF::move(curve));
+    }
 #endif
 }
 
-void RemoteLayerTreeEventDispatcher::willHandleWheelEvent(const WebWheelEvent& wheelEvent)
+void RemoteLayerTreeEventDispatcher::willHandleWheelEvent(Ref<WebWheelEvent>&& wheelEvent)
 {
     ASSERT(isMainRunLoop());
     
     m_wheelEventActivityHysteresis.impulse();
-    m_wheelEventsBeingProcessed.append(wheelEvent);
+    m_wheelEventsBeingProcessed.append(WTF::move(wheelEvent));
 }
 
-void RemoteLayerTreeEventDispatcher::handleWheelEvent(const WebWheelEvent& wheelEvent, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
+void RemoteLayerTreeEventDispatcher::handleWheelEvent(Ref<WebWheelEvent>&& wheelEvent, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
 {
     ASSERT(isMainRunLoop());
 
     auto scrollingTree = this->scrollingTree();
     if (scrollingTree && scrollingTree->scrollingPerformanceTestingEnabled()) {
-        if (wheelEvent.phase() == WebWheelEvent::Phase::Began)
+        if (wheelEvent->phase() == WebWheelEvent::Phase::Began)
             startFingerDownSignpostInterval();
 
-        if (wheelEvent.phase() == WebWheelEvent::Phase::Ended)
+        if (wheelEvent->phase() == WebWheelEvent::Phase::Ended)
             endFingerDownSignpostInterval();
     }
 
-    willHandleWheelEvent(wheelEvent);
+    willHandleWheelEvent(wheelEvent.copyRef());
 
-    ScrollingThread::dispatch([dispatcher = Ref { *this }, wheelEvent, rubberBandableEdges] {
+    ScrollingThread::dispatch([dispatcher = Ref { *this }, wheelEvent = WTF::move(wheelEvent), rubberBandableEdges] {
         dispatcher->scrollingThreadHandleWheelEvent(wheelEvent, rubberBandableEdges);
     });
 }
@@ -278,10 +286,13 @@ void RemoteLayerTreeEventDispatcher::scrollingThreadHandleWheelEvent(const WebWh
     }
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
-    if (m_momentumEventDispatcher->handleWheelEvent(m_pageIdentifier, webWheelEvent, rubberBandableEdges)) {
-        continueEventHandlingOnMainThread(WheelEventHandlingResult::handled(processingSteps));
-        [CATransaction flush];
-        return;
+    {
+        Locker locker { m_momentumEventDispatcherLock };
+        if (m_momentumEventDispatcher && m_momentumEventDispatcher->handleWheelEvent(m_pageIdentifier, webWheelEvent, rubberBandableEdges)) {
+            continueEventHandlingOnMainThread(WheelEventHandlingResult::handled(processingSteps));
+            [CATransaction flush];
+            return;
+        }
     }
 #endif
 
@@ -299,8 +310,8 @@ void RemoteLayerTreeEventDispatcher::continueWheelEventHandling(WheelEventHandli
 
     LOG_WITH_STREAM(Scrolling, stream << "RemoteLayerTreeEventDispatcher::continueWheelEventHandling - result " << handlingResult);
 
-    auto event = m_wheelEventsBeingProcessed.takeFirst();
-    scrollingCoordinator->continueWheelEventHandling(event, handlingResult);
+    Ref event = m_wheelEventsBeingProcessed.takeFirst();
+    scrollingCoordinator->continueWheelEventHandling(WTF::move(event), handlingResult);
 }
 
 OptionSet<WheelEventProcessingSteps> RemoteLayerTreeEventDispatcher::determineWheelEventProcessing(const PlatformWheelEvent& wheelEvent, RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges)
@@ -491,7 +502,9 @@ void RemoteLayerTreeEventDispatcher::didRefreshDisplay(PlatformDisplayID display
     {
         // Make sure the lock is held for the handleSyntheticWheelEvent callback.
         ScrollingTree::HitTestLocker locker { *scrollingTree };
-        m_momentumEventDispatcher->displayDidRefresh(displayID);
+        Locker momentumEventDispatcherLocker { m_momentumEventDispatcherLock };
+        if (m_momentumEventDispatcher)
+            m_momentumEventDispatcher->displayDidRefresh(displayID);
     }
 #endif
 
@@ -786,7 +799,11 @@ void RemoteLayerTreeEventDispatcher::windowScreenWillChange()
 void RemoteLayerTreeEventDispatcher::windowScreenDidChange(PlatformDisplayID displayID, std::optional<FramesPerSecond> nominalFramesPerSecond)
 {
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
-    m_momentumEventDispatcher->pageScreenDidChange(m_pageIdentifier, displayID, nominalFramesPerSecond);
+    {
+        Locker locker { m_momentumEventDispatcherLock };
+        if (m_momentumEventDispatcher)
+            m_momentumEventDispatcher->pageScreenDidChange(m_pageIdentifier, displayID, nominalFramesPerSecond);
+    }
 #else
     UNUSED_PARAM(displayID);
     UNUSED_PARAM(nominalFramesPerSecond);
@@ -874,6 +891,7 @@ void RemoteLayerTreeEventDispatcher::stopDisplayDidRefreshCallbacks(PlatformDisp
 {
     ASSERT(m_momentumEventDispatcherNeedsDisplayLink);
     m_momentumEventDispatcherNeedsDisplayLink = false;
+    assertIsHeld(m_momentumEventDispatcherLock);
     if (m_momentumEventDispatcher)
         startOrStopDisplayLink();
 }
@@ -890,7 +908,9 @@ void RemoteLayerTreeEventDispatcher::didEndSyntheticMomentumScrolling()
 void RemoteLayerTreeEventDispatcher::flushMomentumEventLoggingSoon()
 {
     RunLoop::currentSingleton().dispatchAfter(1_s, [protectedThis = Ref { *this }] {
-        protectedThis->m_momentumEventDispatcher->flushLog();
+        Lock locker { protectedThis->m_momentumEventDispatcherLock };
+        if (protectedThis->m_momentumEventDispatcher)
+            protectedThis->m_momentumEventDispatcher->flushLog();
     });
 }
 #endif // ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)

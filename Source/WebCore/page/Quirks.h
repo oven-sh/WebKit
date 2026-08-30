@@ -167,7 +167,7 @@ public:
 
     bool NODELETE needsPreloadAutoQuirk() const;
 
-    bool NODELETE needsPauseBeforeFullscreenExitQuirk() const;
+    bool NODELETE needsSuppressedPauseEventOnFullscreenExitQuirk() const;
 
     bool shouldBypassBackForwardCache() const;
     bool shouldBypassAsyncScriptDeferring() const;
@@ -262,7 +262,6 @@ public:
     bool needsToCopyUserSelectNoneQuirk() const { return m_needsToCopyUserSelectNoneQuirk; }
     void setNeedsToCopyUserSelectNoneQuirk() { m_needsToCopyUserSelectNoneQuirk = true; }
 
-    bool shouldEnableCanvas2DAdvancedPrivacyProtectionQuirk() const;
     String advancedPrivacyProtectionSubstituteDataURLForScriptWithFeatures(const String& lastDrawnText, int canvasWidth, int canvasHeight) const;
 
     bool NODELETE needsResettingTransitionCancelsRunningTransitionQuirk() const;
@@ -386,13 +385,6 @@ public:
 
 private:
     bool needsQuirks() const;
-
-    static bool domainNeedsAvoidResizingWhenInputViewBoundsChangeQuirk(const URL&, QuirksData&);
-    static bool domainNeedsScrollbarWidthThinDisabledQuirk(const URL&, QuirksData&);
-#if ENABLE(VIDEO_PRESENTATION_MODE)
-    static bool domainShouldDisableEndFullscreenEventWhenEnteringPictureInPictureFromFullscreenQuirk(const URL&, QuirksData&);
-#endif
-
     URL topDocumentURL() const;
 
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
