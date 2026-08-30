@@ -50,6 +50,9 @@
 #include "SyntheticModuleRecord.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
+#endif
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -354,10 +357,19 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
     JSPromise* promise = nullptr;
 
     ScriptFetchParameters::Type type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript;
+    JSValue importerAsyncContext = jsUndefined();
 #if USE(BUN_JSC_ADDITIONS)
     // Preserve the caller's ScriptFetchParameters (HostDefined data) into the loading context
     // before `parameters` is moved into fetch() below.
     RefPtr<ScriptFetchParameters> contextParameters = parameters ? parameters : ScriptFetchParameters::create(type);
+
+    // A dynamic import() evaluates its module graph under the async context (AsyncLocalStorage
+    // store) that was active at the import() call site. We are still synchronous with that call
+    // here, so the slot holds the importer's context; the graph is linked and evaluated several
+    // internal microtasks later, by which point the slot has been reset. Capture it now, before
+    // fetch() below can run host code, and carry it through to dynamicImportLoadSettled.
+    if (flags.contains(ModuleLoadFlag::Dynamic))
+        importerAsyncContext = AsyncContextSwapScope::current(globalObject);
 #endif
 
     if (ModuleRegistryEntry* entry = getRegisteredMayBeNull(specifier, type)) {
@@ -384,7 +396,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 #else
     AbstractModuleRecord::ModuleRequest request { specifier, ScriptFetchParameters::create(type) };
 #endif
-    auto* context = ModuleLoadingContext::create(vm, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+    auto* context = ModuleLoadingContext::create(vm, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder, importerAsyncContext);
 
     JSPromise* intermediatePromise = JSPromise::create(vm, globalObject->promiseStructure());
     intermediatePromise->markAsHandled();

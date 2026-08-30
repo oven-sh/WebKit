@@ -41,6 +41,7 @@
 #include "SourceProfiler.h"
 #include "SymbolTableInlines.h"
 #if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
 #include "SyntheticModuleRecord.h"
 #endif
 #include "UnlinkedModuleProgramCodeBlock.h"
@@ -555,7 +556,16 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     // 7. Let onRejected be CreateBuiltinFunction(rejectedClosure, 0, "", « »).
     // Also handled in JSMicrotask.cpp.
     // 8. Perform PerformPromiseThen(capability.[[Promise]], onFulfilled, onRejected).
+#if USE(BUN_JSC_ADDITIONS)
+    // AsyncModuleExecutionFulfilled runs the bodies of the modules waiting on this one, so
+    // it has to run under the async context this evaluation was started under (for a
+    // dynamic import(), the importer's context installed by dynamicImportLoadSettled).
+    // Snapshot it alongside the module, as a promise reaction would; the
+    // AsyncModuleExecutionDone microtask unwraps the tuple and reinstalls it.
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, AsyncContextSwapScope::wrapWithCurrent(vm, globalObject, this));
+#else
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
+#endif
     // 9. Perform ! module.ExecuteModule(capability).
     execute(globalObject, promise);
     RETURN_IF_EXCEPTION(scope, void());
