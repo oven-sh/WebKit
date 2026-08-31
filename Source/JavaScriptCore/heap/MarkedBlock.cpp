@@ -506,31 +506,48 @@ void MarkedBlock::Handle::decommitUnusedPages()
     if (pageSize >= blockSize || blockSize / pageSize > 8)
         return;
     unsigned pageCount = blockSize / pageSize;
+    size_t atomsPerPage = pageSize / atomSize;
     RELEASE_ASSERT(!m_isFreeListed && !isAllocated());
 
-    // Pages holding the header, or any live cell, stay.
+    uint8_t all = (1u << pageCount) - 1;
     uint8_t keep = 0;
     for (size_t offset = 0; offset < headerSize; offset += pageSize)
         keep |= 1u << (offset / pageSize);
-    size_t cellBytes = cellSize();
-    for (size_t i = m_startAtom; i < endAtom; i += m_atomsPerCell) {
-        if (!isLive(reinterpret_cast<HeapCell*>(&block().atoms()[i])))
-            continue;
-        size_t begin = i * atomSize;
-        size_t last = begin + cellBytes - 1;
-        for (size_t page = begin / pageSize; page <= last / pageSize; ++page)
-            keep |= 1u << page;
-        if (keep == (1u << pageCount) - 1)
-            return;
+    {
+        // The same liveness rules as isLive(), resolved once for the whole block: which bit set (if any) says a cell is
+        // live right now.
+        MarkedSpace& space = *this->space();
+        Header& header = block().header();
+        Locker locker { header.m_lock };
+        const WTF::BitSet<atomsPerBlock>* live = nullptr;
+        if (header.m_newlyAllocatedVersion == space.newlyAllocatedVersion())
+            live = &header.m_newlyAllocated;
+        else if (!block().areMarksStale(space.markingVersion()) || (space.isMarking() && block().marksConveyLivenessDuringMarking(space.markingVersion())))
+            live = &header.m_marks;
+        if (live) {
+            for (unsigned page = 0; page < pageCount; ++page) {
+                if (keep & (1u << page))
+                    continue;
+                size_t firstAtom = page * atomsPerPage;
+                // A live cell starting in this page, or the cell straddling in from the previous page being live, keeps it.
+                if (live->findBit(firstAtom, true) < firstAtom + atomsPerPage) {
+                    keep |= 1u << page;
+                    continue;
+                }
+                if (firstAtom > m_startAtom) {
+                    size_t straddler = m_startAtom + (firstAtom - 1 - m_startAtom) / m_atomsPerCell * m_atomsPerCell;
+                    if (straddler + m_atomsPerCell > firstAtom && live->get(straddler))
+                        keep |= 1u << page;
+                }
+            }
+        }
     }
 
-    uint8_t all = (1u << pageCount) - 1;
     uint8_t toDecommit = all & ~keep & ~m_decommittedPages;
     if (!toDecommit)
         return;
     char* base = reinterpret_cast<char*>(&block());
-    unsigned page = 0;
-    while (page < pageCount) {
+    for (unsigned page = 0; page < pageCount;) {
         if (!(toDecommit & (1u << page))) {
             ++page;
             continue;
