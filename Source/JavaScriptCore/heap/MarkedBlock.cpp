@@ -568,7 +568,9 @@ void MarkedBlock::Handle::recommitPages()
 {
     if (!m_decommittedPages) [[likely]]
         return;
-#if !OS(WINDOWS)
+#if OS(DARWIN)
+    // OSAllocator::decommit is MADV_FREE_REUSABLE there and wants a matching MADV_FREE_REUSE for the kernel's
+    // accounting; elsewhere decommitted anonymous pages simply fault back in as zero pages.
     size_t pageSize = WTF::pageSize();
     unsigned pageCount = blockSize / pageSize;
     char* base = reinterpret_cast<char*>(&block());
