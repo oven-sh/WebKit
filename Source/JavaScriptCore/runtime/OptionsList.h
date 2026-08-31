@@ -272,6 +272,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, gcIncrementMaxBytes, 100000, Normal, nullptr) \
     v(Double, gcIncrementScale, 0, Normal, nullptr) \
     v(Bool, scribbleFreeCells, false, Normal, nullptr) \
+    v(Bool, decommitUnusedMarkedBlockPages, true, Normal, "after sweeping a MarkedBlock, return its interior OS pages that hold no live cell to the OS (only where OS pages are smaller than a MarkedBlock)") \
     v(Double, sizeClassProgression, 1.4, Normal, nullptr) \
     v(Unsigned, preciseAllocationCutoff, 100000, Normal, nullptr) \
     v(Bool, dumpSizeClasses, false, Normal, nullptr) \

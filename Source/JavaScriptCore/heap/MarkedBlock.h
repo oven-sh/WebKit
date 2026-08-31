@@ -162,6 +162,10 @@ public:
         void unsweepWithNoNewlyAllocated();
         
         inline void shrink();
+        // Return interior OS pages that hold no live cell to the OS (after a sweep-only sweep); re-commit them
+        // before the block is handed to an allocator or freed. No-op when an OS page is not smaller than a block.
+        void decommitUnusedPages();
+        void recommitPages();
             
         // While allocating from a free list, MarkedBlock temporarily has bogus
         // cell liveness data. To restore accurate cell liveness data, call one
@@ -244,6 +248,7 @@ public:
             
         CellAttributes m_attributes;
         bool m_isFreeListed { false };
+        uint8_t m_decommittedPages { 0 }; // bit i set: OS page i of the block is decommitted
         unsigned m_index { std::numeric_limits<unsigned>::max() };
 
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
