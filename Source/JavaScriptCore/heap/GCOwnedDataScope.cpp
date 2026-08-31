@@ -32,9 +32,15 @@ namespace JSC {
 
 #if ASSERT_ENABLED
 
+// Heap::m_topGCOwnedDataScope tracks the scopes on the mutator's stack, and it is not synchronized.
+// Heap::clearConcurrentRetainedDataIfPossible asserts it is null before it drops the strings it kept
+// alive for those scopes. Compiler and GC threads have their own guards there (no ongoing compilation,
+// mutator not fenced), so a scope constructed on one of them must not touch the mutator's tracker.
 void setTopGCOwnedDataScopeIfNeeded(const JSCell* cell, const void* scope)
 {
     if (!cell)
+        return;
+    if (isCompilationThread() || Thread::mayBeGCThread())
         return;
     if (!cell->vm().heap.m_topGCOwnedDataScope)
         cell->vm().heap.m_topGCOwnedDataScope = scope;
@@ -43,6 +49,8 @@ void setTopGCOwnedDataScopeIfNeeded(const JSCell* cell, const void* scope)
 void clearTopGCOwnedDataScopeIfNeeded(const JSCell* cell, const void* scope)
 {
     if (!cell)
+        return;
+    if (isCompilationThread() || Thread::mayBeGCThread())
         return;
     if (cell->vm().heap.m_topGCOwnedDataScope == scope)
         cell->vm().heap.m_topGCOwnedDataScope = nullptr;

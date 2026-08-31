@@ -961,17 +961,21 @@ ALWAYS_INLINE void LOLJIT::emitCompareImpl(VirtualRegister op1, JSValueRegs op1R
     // - constant int immediate to int immediate
     // - int immediate to int immediate
 
-    constexpr bool disallowAllocation = false;
     auto handleConstantCharOperand = [&](VirtualRegister left, JSValueRegs rightRegs, RelationalCondition cond) {
         if (!isOperandConstantChar(left))
             return false;
+        // This may run on a compiler thread, so read the StringImpl directly rather than through
+        // tryGetValue(), whose GCOwnedDataScope is only meant to be constructed on the mutator.
+        // A single character constant is never a rope.
+        const StringImpl* impl = asString(getConstantOperand(left))->tryGetValueImpl();
+        RELEASE_ASSERT(impl);
 
         addSlowCase(branchIfNotCell(rightRegs));
         JumpList failures;
         // FIXME: We could deduplicate the String's data load in emitLoadCharacterString if we had an extra scratch but we'd have to teach the register allocator about constants to do that unless we wanted to have the scratch in all cases, which doesn't seem worth it.
         emitLoadCharacterString(rightRegs.payloadGPR(), s_scratch, failures);
         addSlowCase(failures);
-        emitCompare(commute(cond), JSValueRegs { s_scratch }, Imm32(asString(getConstantOperand(left))->tryGetValue(disallowAllocation).data[0]));
+        emitCompare(commute(cond), JSValueRegs { s_scratch }, Imm32(impl->at(0)));
         return true;
     };
 
