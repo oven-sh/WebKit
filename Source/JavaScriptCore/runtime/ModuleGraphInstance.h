@@ -92,7 +92,7 @@ public:
     JSPromise* asyncCapability() const { return m_asyncCapability.get(); }
     void setAsyncCapability(VM& vm, JSPromise* capability) { m_asyncCapability.setMayBeNull(vm, this, capability); }
     // Generator state of a module body with top-level await (Field::State).
-    bool isExecutionFinished() const;
+    bool isTopLevelExecutionFinished() const;
     JSModuleNamespaceObject* deferredNamespaceObject() const { return m_deferredNamespaceObject.get(); }
     void setDeferredNamespaceObject(VM&, JSModuleNamespaceObject*);
 

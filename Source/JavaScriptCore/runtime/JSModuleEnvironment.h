@@ -96,7 +96,7 @@ public:
     unsigned importSlotCount() { return static_cast<unsigned>(importSlotCountSlot()); }
     WriteBarrierBase<Unknown>& importSlot(unsigned index)
     {
-        ASSERT(index < importSlotCount());
+        RELEASE_ASSERT(index < importSlotCount());
         return *std::bit_cast<WriteBarrierBase<Unknown>*>(std::bit_cast<char*>(this) + offsetOfImportSlot(symbolTable(), index));
     }
     // Point every import slot at the exporter's environment in this graph

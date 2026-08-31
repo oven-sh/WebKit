@@ -996,7 +996,7 @@ void asyncModuleResolveEvaluation(JSGlobalObject* globalObject, VM& vm, ThrowSco
     if (result == vm.fastAsyncGeneratorSentinel())
         return;
 
-    if (recordInstance->isExecutionFinished())
+    if (recordInstance->isTopLevelExecutionFinished())
         capability->resolve(globalObject, vm, result);
     else
         JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, result, InternalMicrotask::AsyncModuleExecutionResume, recordInstance);

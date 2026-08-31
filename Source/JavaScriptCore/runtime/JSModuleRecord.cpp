@@ -362,8 +362,11 @@ JSModuleEnvironment* JSModuleRecord::createInstanceEnvironment(JSGlobalObject* g
 }
 
 // Link() step 4.a for an instance: an instantiation that failed part-way leaves
-// nothing behind, so a retry starts clean instead of evaluating half-initialised
-// environments.
+// no source-text environment behind, so a retry starts clean instead of
+// evaluating half-initialised environments. Synthetic per-instance environments
+// created on the way are complete on creation (their bindings are set when the
+// environment is made) and stay in the instance, as an import() of that module
+// alone would have left them.
 static void rollBackInstantiation(ModuleGraphInstance* instance, const Vector<JSModuleRecord*>& created)
 {
     for (JSModuleRecord* record : created)

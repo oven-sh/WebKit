@@ -3931,6 +3931,8 @@ JSC_DEFINE_HOST_FUNCTION(functionInstantiateModuleGraph, (JSGlobalObject* global
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!Options::useModuleGraphInstances())
+        return throwVMTypeError(globalObject, scope, "useModuleGraphInstances is disabled"_s);
     auto* ns = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(0));
     if (!ns)
         return throwVMTypeError(globalObject, scope, "expected a module namespace object"_s);

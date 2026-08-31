@@ -98,7 +98,11 @@ void ModuleRecordInstance::appendAsyncParentModule(VM& vm, AbstractModuleRecord*
     m_asyncParentModules.append(WriteBarrier<AbstractModuleRecord>(vm, this, record));
 }
 
-bool ModuleRecordInstance::isExecutionFinished() const
+// Same encoding as JSModuleRecord::isTopLevelExecutionFinished(): Field::State is
+// the module body generator's resume point — a body that ran to completion leaves
+// it at Executing (nothing to resume), a body suspended at a top-level await
+// stores its resume label instead.
+bool ModuleRecordInstance::isTopLevelExecutionFinished() const
 {
     JSValue state = internalField(Field::State).get();
     return !state.isNumber() || state.asInt32AsAnyInt() == std::to_underlying(AbstractModuleRecord::State::Executing);

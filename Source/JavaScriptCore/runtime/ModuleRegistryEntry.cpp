@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "ModuleRegistryEntry.h"
+#include "SyntheticModuleRecord.h"
 
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
@@ -158,6 +159,12 @@ JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject, IncludeEvaluati
         // failure of a dependency recorded on this entry still counts.
         auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_record.get());
         if (cyclic && cyclic->status() == CyclicModuleRecord::Status::Evaluated && cyclic->evaluationError())
+            return { };
+        // A synthetic record with per-instance state is regenerated in each
+        // instance, so the primary's evaluation failure is not the instance's
+        // either; one shared with the primary graph keeps it.
+        auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(m_record.get());
+        if (synthetic && synthetic->hasPerGraphInstanceState())
             return { };
     }
     if (JSValue error = m_error.get()) {

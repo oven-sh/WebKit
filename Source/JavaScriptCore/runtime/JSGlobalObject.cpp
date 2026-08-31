@@ -4187,7 +4187,9 @@ JSLexicalEnvironment* JSGlobalObject::createModuleScopeOverlay(JSObject* values,
                 RETURN_IF_EXCEPTION(scope, nullptr);
             }
         }
-        if (!value || value.isUndefined())
+        // An own property of `values` wins even when undefined; only an absent
+        // name defaults to the primary's value.
+        if (!value)
             value = primary->variableAt(offset).get();
         overlay->variableAt(offset).set(vm, overlay, value);
     }
