@@ -505,6 +505,10 @@ void MarkedBlock::Handle::decommitUnusedPages()
     size_t pageSize = WTF::pageSize();
     if (pageSize >= blockSize || blockSize / pageSize > 8)
         return;
+    // Only after a full collection (the blocks an eden collection sweeps are the young ones, refilled straight away, so
+    // decommitting there mostly buys page faults) and only for blocks that are not mostly full anyway.
+    if (heap()->lastCollectionScope() != CollectionScope::Full || m_directory->isMarkingRetired(this))
+        return;
     unsigned pageCount = blockSize / pageSize;
     size_t atomsPerPage = pageSize / atomSize;
     RELEASE_ASSERT(!m_isFreeListed && !isAllocated());
