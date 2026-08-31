@@ -703,6 +703,8 @@ ModuleGraphInstance* JSGlobalObject::graphInstanceForScope(JSScope* scope, JSSco
     // an overlay (when configured) names it for non-module code scoped to the
     // instance. Either is decisive: the first one found ends the walk.
     SymbolTable* overlayTable = m_moduleScopeOverlaySymbolTable.get();
+    if (overlayOut)
+        *overlayOut = nullptr;
     for (; scope; scope = scope->next()) {
         if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(scope)) {
             ModuleGraphInstance* instance = moduleEnvironment->graphInstance();
