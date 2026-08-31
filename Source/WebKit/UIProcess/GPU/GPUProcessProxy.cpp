@@ -210,6 +210,11 @@ GPUProcessProxy::GPUProcessProxy()
     parameters.drmDevice = drmMainDevice();
 #endif
 
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    if (RefPtr mediaSessionManagerProxy = RemoteMediaSessionManagerProxy::singletonIfCreated())
+        parameters.nowPlayingFallbackSession = mediaSessionManagerProxy->computeNowPlayingFallbackSession();
+#endif
+
 #if PLATFORM(COCOA)
     m_isMetalDebugDeviceEnabledForTesting = s_enableMetalDebugDeviceInNewGPUProcessesForTesting;
     m_isMetalShaderValidationEnabledForTesting = s_enableMetalShaderValidationInNewGPUProcessesForTesting;
@@ -827,13 +832,15 @@ void GPUProcessProxy::updatePreferences(WebProcessProxy& webProcess)
     send(Messages::GPUProcess::UpdateGPUProcessPreferences(gpuPreferences), 0);
 }
 
-void GPUProcessProxy::updateScreenPropertiesIfNeeded()
+void GPUProcessProxy::updateScreenPropertiesIfNeeded(WebProcessPool& processPool)
 {
 #if PLATFORM(MAC)
     if (!canSendMessage())
         return;
 
-    setScreenProperties(collectScreenProperties());
+    setScreenProperties(processPool.cachedScreenProperties());
+#else
+    UNUSED_PARAM(processPool);
 #endif
 }
 

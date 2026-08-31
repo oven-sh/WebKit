@@ -429,6 +429,13 @@ public:
     // collection and then return. In weird cases, there could be multiple GC requests in the backlog
     // and this will wait for that backlog before running its GC and returning.
     JS_EXPORT_PRIVATE void collectSync(GCRequest = GCRequest());
+#if USE(BUN_JSC_ADDITIONS)
+    // Lets the first `bytes` of allocation happen before the first collection is considered, for an embedder that knows
+    // the program is about to build a large, entirely live object graph (loading a big precompiled module graph) where
+    // early collections find nothing to free. Only widens the budget of the cycle in progress; once a collection has run,
+    // sizing is back to the usual rules and minimums.
+    JS_EXPORT_PRIVATE void setInitialAllocationBudget(size_t bytes);
+#endif
     
     JS_EXPORT_PRIVATE void collect(Synchronousness, GCRequest = GCRequest());
     
@@ -890,6 +897,10 @@ private:
     bool m_shouldDoFullCollection { false };
     Markable<CollectionScope> m_collectionScope;
     Markable<CollectionScope> m_lastCollectionScope;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_reenableEdenActivityCallback { false };
+    bool m_reenableFullActivityCallback { false };
+#endif
     Lock m_raceMarkStackLock;
 
     MarkedSpace m_objectSpace;

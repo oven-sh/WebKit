@@ -268,6 +268,7 @@ public:
 
     unsigned imageFrameIndex(HTMLImageElement&);
     unsigned imageFrameCount(HTMLImageElement&);
+    bool forceDecodeImageFrameAtIndex(HTMLImageElement&, unsigned index);
     float imageFrameDurationAtIndex(HTMLImageElement&, unsigned index);
     void setImageFrameDecodingDuration(HTMLImageElement&, float duration);
     void resetImageAnimation(HTMLImageElement&);
@@ -946,6 +947,7 @@ public:
     ExceptionOr<String> mediaSessionRestrictions(const String& mediaType) const;
     void setMediaElementRestrictions(HTMLMediaElement&, StringView restrictionsString);
     ExceptionOr<void> postRemoteControlCommand(const String&, float argument);
+    ExceptionOr<void> postSystemRemoteControlCommand(const String&, float argument);
     void activeAudioRouteDidChange(bool shouldPause);
     bool NODELETE elementIsBlockingDisplaySleep(const HTMLMediaElement&) const;
     bool NODELETE isPlayerVisibleInViewport(const HTMLMediaElement&) const;
@@ -1351,6 +1353,7 @@ public:
 
     bool elementIsActiveNowPlayingSession(HTMLMediaElement&) const;
     void elementIsActiveNowPlayingSessionInGPUProcess(HTMLMediaElement&, DOMPromiseDeferred<IDLBoolean>&&);
+    void elementIsRemoteCommandTargetInGPUProcess(HTMLMediaElement&, DOMPromiseDeferred<IDLBoolean>&&);
 
 #endif // ENABLE(VIDEO)
 

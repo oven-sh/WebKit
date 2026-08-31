@@ -25,6 +25,7 @@
 
 #include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
+#include "CachedTypes.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectingScope.h"
@@ -1038,6 +1039,12 @@ void Heap::endMarking()
     
     m_objectSpace.endMarking();
     setMutatorShouldBeFenced(Options::forceFencedBarrier());
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm().clientData) {
+        if (auto* table = vm().clientData->decoderStringTable())
+            table->didFinishCollection();
+    }
+#endif
 }
 
 size_t Heap::objectCount()
@@ -2642,6 +2649,12 @@ void Heap::updateAllocationLimits()
     }
 
     m_sizeAfterLastCollect = currentHeapSize;
+#if USE(BUN_JSC_ADDITIONS)
+    if (std::exchange(m_reenableEdenActivityCallback, false) && m_edenActivityCallback)
+        m_edenActivityCallback->setEnabled(true);
+    if (std::exchange(m_reenableFullActivityCallback, false) && m_fullActivityCallback)
+        m_fullActivityCallback->setEnabled(true);
+#endif
     dataLogLnIf(verbose, "sizeAfterLastCollect = ", m_sizeAfterLastCollect);
     m_nonOversizedBytesAllocatedThisCycle = 0;
     m_oversizedBytesAllocatedThisCycle = 0;
@@ -2705,6 +2718,9 @@ GCActivityCallback* Heap::edenActivityCallback()
 
 void Heap::setGarbageCollectionTimerEnabled(bool enable)
 {
+    // An explicit choice supersedes setInitialAllocationBudget()'s "re-enable after the first collection".
+    m_reenableEdenActivityCallback = false;
+    m_reenableFullActivityCallback = false;
     if (m_fullActivityCallback)
         m_fullActivityCallback->setEnabled(enable);
     if (m_edenActivityCallback)
@@ -2796,6 +2812,28 @@ bool Heap::shouldSweepSynchronously()
     // updateAllocationLimits() updates info that overCriticalMemoryThreshold() needs.
     return overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Heap::setInitialAllocationBudget(size_t bytes)
+{
+    if (m_sizeAfterLastCollect || m_lastCollectionScope)
+        return; // a collection already ran; the heap is sizing itself from what it found
+    if (bytes <= m_maxEdenSize)
+        return;
+    m_maxEdenSize = bytes;
+    m_maxHeapSize = bytes;
+    // The allocation-paced timers would otherwise bring the first collection in well under the budget; they come back
+    // on as soon as any collection (budget, explicit request, memory pressure) has run.
+    if (m_edenActivityCallback && m_edenActivityCallback->isEnabled()) {
+        m_edenActivityCallback->setEnabled(false);
+        m_reenableEdenActivityCallback = true;
+    }
+    if (m_fullActivityCallback && m_fullActivityCallback->isEnabled()) {
+        m_fullActivityCallback->setEnabled(false);
+        m_reenableFullActivityCallback = true;
+    }
+}
+#endif
 
 bool Heap::shouldDoFullCollection()
 {
@@ -3146,6 +3184,12 @@ void Heap::addCoreConstraints()
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
                 if (vm.smallStrings.needsToBeVisited(*m_collectionScope))
                     vm.smallStrings.visitStrongReferences(visitor);
+#if USE(BUN_JSC_ADDITIONS)
+                if (vm.clientData) {
+                    if (auto* table = vm.clientData->decoderStringTable())
+                        table->visitStrongReferences(visitor, m_collectionScope.value_or(CollectionScope::Full));
+                }
+#endif
             }
             
             {

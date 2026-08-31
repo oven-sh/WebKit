@@ -45,7 +45,8 @@ RegExp* RegExpCache::lookup(VM&, const WTF::String& patternString, OptionSet<Yar
     return m_weakCache.get(key);
 }
 
-RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags)
+template<typename Create>
+RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags, const Create& create)
 {
     RegExpKey key(flags, patternString);
     {
@@ -54,7 +55,7 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
             return regExp;
     }
 
-    RegExp* regExp = RegExp::createWithoutCaching(vm, patternString, flags);
+    RegExp* regExp = create();
 #if ENABLE(REGEXP_TRACING)
     vm.addRegExpToTrace(regExp);
 #endif
@@ -64,6 +65,20 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
         weakAdd(m_weakCache, key, Weak<RegExp>(regExp, this));
         return regExp;
     }
+}
+
+RegExp* RegExp::createFromCache(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern specificPattern)
+{
+    return vm.regExpCache()->lookupOrCreate(vm, patternString, flags, [&] {
+        RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, patternString, flags);
+        regExp->finishCreationFromCache(vm, numSubpatterns, WTF::move(atom), specificPattern);
+        return regExp;
+    });
+}
+
+RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags)
+{
+    return lookupOrCreate(vm, patternString, flags, [&] { return RegExp::createWithoutCaching(vm, patternString, flags); });
 }
 
 RegExp* RegExpCache::ensureEmptyRegExpSlow(VM& vm)

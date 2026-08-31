@@ -535,12 +535,12 @@ static void CallbackForContainIntrinsicSize(const Vector<Ref<ResizeObserverEntry
 
             auto contentBoxSize = entry->contentBoxSize().at(0);
             if (box->style().logicalContainIntrinsicWidth().hasAuto()) {
-                auto adjustedWidth = LayoutUnit { Style::applyZoom(contentBoxSize->inlineSize(), box->style()) };
+                auto adjustedWidth = LayoutUnit { Style::applyingZoom<float>(contentBoxSize->inlineSize(), box->style()) };
                 target->setLastRememberedLogicalWidth(adjustedWidth);
             }
 
             if (box->style().logicalContainIntrinsicHeight().hasAuto()) {
-                auto adjustedHeight = LayoutUnit { Style::applyZoom(contentBoxSize->blockSize(), box->style()) };
+                auto adjustedHeight = LayoutUnit { Style::applyingZoom<float>(contentBoxSize->blockSize(), box->style()) };
                 target->setLastRememberedLogicalHeight(adjustedHeight);
             }
         }
@@ -2978,6 +2978,9 @@ bool Document::needsStyleRecalc() const
     if (backForwardCacheState() != NotInBackForwardCache)
         return false;
 
+    if (renderTreeState() != RenderTreeState::Built)
+        return false;
+
     if (m_needsFullStyleRebuild)
         return true;
 
@@ -3017,6 +3020,13 @@ bool Document::updateStyleIfNeeded()
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
     ContentChangeObserver::StyleRecalcScope observingScope(*this);
 #endif
+
+    if (!renderView()) {
+        // needsStyleRecalc() is what keeps this true, and resolveStyle() resolves nothing without it.
+        ASSERT_NOT_REACHED();
+        return false;
+    }
+
     resolveStyle();
 
     updateRenderTreesForDescendantFrames();

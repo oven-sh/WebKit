@@ -73,6 +73,7 @@ private:
     RegExp* ensureEmptyRegExpSlow(VM&);
 
     RegExp* lookupOrCreate(VM&, const WTF::String& patternString, OptionSet<Yarr::Flags>);
+    template<typename Create> RegExp* lookupOrCreate(VM&, const WTF::String& patternString, OptionSet<Yarr::Flags>, const Create&);
     void addToStrongCache(RegExp*);
 
     unsigned m_nextEntryInStrongCache { 0 };

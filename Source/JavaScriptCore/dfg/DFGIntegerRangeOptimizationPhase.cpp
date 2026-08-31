@@ -1023,7 +1023,8 @@ public:
 
     struct RangeBound {
         int32_t value;
-        const Relationship* proof { nullptr };
+        Node* proofLeft { nullptr };
+        Node* proofRight { nullptr };
     };
 
     std::optional<std::tuple<RangeBound, RangeBound>> NODELETE rangeFor(Node* node)
@@ -1043,12 +1044,14 @@ public:
             int32_t candidateMin = relationship.minValueOfLeft();
             if (candidateMin > minBound.value) {
                 minBound.value = candidateMin;
-                minBound.proof = &relationship;
+                minBound.proofLeft = relationship.left().node();
+                minBound.proofRight = relationship.right().node();
             }
             int32_t candidateMax = relationship.maxValueOfLeft();
             if (candidateMax < maxBound.value) {
                 maxBound.value = candidateMax;
-                maxBound.proof = &relationship;
+                maxBound.proofLeft = relationship.left().node();
+                maxBound.proofRight = relationship.right().node();
             }
         }
         return std::tuple { minBound, maxBound };
@@ -1071,11 +1074,9 @@ public:
 
     void pinRangeBoundProof(const RangeBound& bound)
     {
-        if (!bound.proof)
-            return;
-        if (Node* right = bound.proof->right().node(); right && !right->isConstant())
+        if (Node* right = bound.proofRight; right && !right->isConstant())
             right->mergeFlags(NodeMustGenerate);
-        if (Node* left = bound.proof->left().node(); left && !left->isConstant())
+        if (Node* left = bound.proofLeft; left && !left->isConstant())
             left->mergeFlags(NodeMustGenerate);
     }
 

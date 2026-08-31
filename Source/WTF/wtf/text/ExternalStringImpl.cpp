@@ -58,6 +58,15 @@ WTF_EXPORT_PRIVATE Ref<ExternalStringImpl> ExternalStringImpl::createStatic(std:
         impl->setHash(existingHash);
     return impl;
 }
+
+WTF_EXPORT_PRIVATE Ref<ExternalStringImpl> ExternalStringImpl::createStatic(std::span<const char16_t> characters, unsigned existingHash)
+{
+    auto impl = createStatic(characters);
+    ASSERT(existingHash == StringHasher::computeHashAndMaskTop8Bits(characters));
+    if (existingHash)
+        impl->setHash(existingHash);
+    return impl;
+}
 #endif
 
 

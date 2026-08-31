@@ -43,6 +43,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     // For immortal buffers whose StringImpl::hash() the embedder already knows (e.g. computed at build time).
     WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> createStatic(std::span<const Latin1Character> characters, unsigned existingHash);
+    WTF_EXPORT_PRIVATE static Ref<ExternalStringImpl> createStatic(std::span<const char16_t> characters, unsigned existingHash);
 #endif
 
     void releaseBufferEarly();

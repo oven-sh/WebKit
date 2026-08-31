@@ -1483,53 +1483,63 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     bool canScrollVertically = [_panGestureRecognizer _canPanVertically] && !(pinnedState.top() && pinnedState.bottom());
     gestureDelta = WebCore::FloatSize { _directionalScrollLockTracker->update(gestureDelta, canScrollHorizontally, canScrollVertically, prefersUnlockedScroll, [gesture timestamp]) };
 
-    // FIXME: Fold this into WKDirectionalScrollLockTracker as a hard clamp  applied _after_ directional lock heuristics.
+    // This clamping is a workaround for the fact that if an axis is pinned,
+    // the scrolling tree turns it into a rubberband, and the orthogonal delta
+    // is discarded, which stops panning for the rest of the gesture. (if a
+    // transient zoom + pan sequence occurs simultaneously)
+    //
+    // The clamp applies only to the wheel event that reaches the page, though,
+    // since the swipe tracker has to see the unclamped delta, or else it is
+    // unable to determine PendingSwipeTracker::scrollEventCanBecomeSwipe().
+    //
+    // FIXME: Fold this into WKDirectionalScrollLockTracker as a hard clamp applied
+    // _after_ the directional lock heuristics, for the events that reach the page.
+    auto clampedGestureDelta = gestureDelta;
     if (!canScrollVertically)
-        gestureDelta.setHeight(0);
+        clampedGestureDelta.setHeight(0);
     if (!canScrollHorizontally)
-        gestureDelta.setWidth(0);
+        clampedGestureDelta.setWidth(0);
 
-    auto wheelTicks { gestureDelta.scaled(1. / static_cast<float>(WebCore::Scrollbar::pixelsPerLineStep())) };
     auto granularity = WebKit::WebWheelEvent::Granularity::ScrollByPixelWheelEvent;
     bool directionInvertedFromDevice = false;
     auto phase = toWebEventPhase(gesture.state);
     auto momentumPhase = WebKit::WebWheelEvent::Phase::None;
     bool hasPreciseScrollingDeltas = true;
     uint32_t scrollCount = 1;
-    auto unacceleratedScrollingDelta = gestureDelta;
     auto ioHIDEventTimestamp = timestamp;
     std::optional<WebCore::FloatSize> rawPlatformDelta;
     auto momentumEndType = WebKit::WebWheelEvent::MomentumEndType::Unknown;
 
-    WebKit::WebWheelEvent wheelEvent {
-        { WebKit::WebEventType::Wheel, { }, timestamp, WTF::UUID::createVersion4() },
-        WebCore::IntPoint { position },
-        WebCore::IntPoint { globalPosition },
-        gestureDelta,
-        wheelTicks,
-        granularity,
-        directionInvertedFromDevice,
-        phase,
-        momentumPhase,
-        hasPreciseScrollingDeltas,
-        scrollCount,
-        unacceleratedScrollingDelta,
-        ioHIDEventTimestamp,
-        rawPlatformDelta,
-        momentumEndType,
-        WebKit::WebEventInputSource::Automation
+    auto makeWheelEvent = [&](WebCore::FloatSize delta) {
+        auto wheelTicks { delta.scaled(1. / static_cast<float>(WebCore::Scrollbar::pixelsPerLineStep())) };
+        auto unacceleratedScrollingDelta = delta;
+        return WebKit::NativeWebWheelEvent::create(WebKit::WebWheelEvent::create({ WebKit::WebEventType::Wheel, { }, timestamp }, {
+            .position = WebCore::IntPoint { position },
+            .globalPosition = WebCore::IntPoint { globalPosition },
+            .delta = delta,
+            .wheelTicks = wheelTicks,
+            .granularity = granularity,
+            .directionInvertedFromDevice = directionInvertedFromDevice,
+            .phase = phase,
+            .momentumPhase = momentumPhase,
+            .hasPreciseScrollingDeltas = hasPreciseScrollingDeltas,
+            .scrollCount = scrollCount,
+            .unacceleratedScrollingDelta = unacceleratedScrollingDelta,
+            .ioHIDEventTimestamp = ioHIDEventTimestamp,
+            .rawPlatformDelta = rawPlatformDelta,
+            .momentumEndType = momentumEndType,
+            .inputSource = WebKit::WebEventInputSource::Automation,
+        }));
     };
-
-    WebKit::NativeWebWheelEvent nativeEvent { wheelEvent };
 
     CheckedPtr impl = [webView _impl];
     bool forwardToGestureController = impl->allowsBackForwardNavigationGestures() && [self prefersForwardingToGestureController:gesture];
-    if (forwardToGestureController && protect(impl->ensureGestureController())->handleScrollWheelEvent(nativeEvent)) {
+    if (forwardToGestureController && protect(impl->ensureGestureController())->handleScrollWheelEvent(makeWheelEvent(gestureDelta))) {
         WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "View gesture controller handled gesture");
         return;
     }
 
-    [webView _protectedPage]->handleNativeWheelEvent(nativeEvent);
+    [webView _protectedPage]->handleNativeWheelEvent(makeWheelEvent(clampedGestureDelta));
 }
 
 #pragma mark - Momentum Handling
@@ -1576,28 +1586,24 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     WebCore::IntPoint position { [gesture locationInView:webView.get()] };
     auto globalPosition = WebCore::globalPoint([gesture locationInView:nil], [webView window]);
 
-    WebKit::WebWheelEvent momentumEvent {
-        { WebKit::WebEventType::Wheel, { }, timestamp, WTF::UUID::createVersion4() },
-        position,
-        WebCore::IntPoint { globalPosition },
-        WebCore::FloatSize { },
-        WebCore::FloatSize { },
-        WebKit::WebWheelEvent::Granularity::ScrollByPixelWheelEvent,
-        false,
-        WebKit::WebWheelEvent::Phase::None,
-        WebKit::WebWheelEvent::Phase::Began,
-        true,
-        1,
-        WebCore::FloatSize { },
-        timestamp,
-        std::nullopt,
-        WebKit::WebWheelEvent::MomentumEndType::Unknown,
-        WebKit::WebEventInputSource::Automation,
-        static_cast<float>(fastScrollMultiplier),
-    };
-    WebKit::NativeWebWheelEvent nativeMomentumEvent { momentumEvent };
+    Ref momentumEvent = WebKit::WebWheelEvent::create({ WebKit::WebEventType::Wheel, { }, timestamp }, {
+        .position = position,
+        .globalPosition = WebCore::IntPoint { globalPosition },
+        .granularity = WebKit::WebWheelEvent::Granularity::ScrollByPixelWheelEvent,
+        .directionInvertedFromDevice = false,
+        .phase = WebKit::WebWheelEvent::Phase::None,
+        .momentumPhase = WebKit::WebWheelEvent::Phase::Began,
+        .hasPreciseScrollingDeltas = true,
+        .scrollCount = 1,
+        .ioHIDEventTimestamp = timestamp,
+        .rawPlatformDelta = std::nullopt,
+        .momentumEndType = WebKit::WebWheelEvent::MomentumEndType::Unknown,
+        .inputSource = WebKit::WebEventInputSource::Automation,
+        .momentumFastScrollMultiplier = static_cast<float>(fastScrollMultiplier),
+    });
+    Ref nativeMomentumEvent = WebKit::NativeWebWheelEvent::create(momentumEvent);
 
-    nativeMomentumEvent.setRawPlatformDelta([&nativeMomentumEvent, velocity] {
+    nativeMomentumEvent->setRawPlatformDelta([&nativeMomentumEvent, velocity] {
         static constexpr WebCore::FramesPerSecond fallbackMomentumFrameRate { 60 };
         auto momentumFrameRate = WebKit::ScrollingAccelerationCurve::fromNativeWheelEvent(nativeMomentumEvent)
             .or_else([] {
@@ -1614,7 +1620,7 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     protect([webView _impl])->clearRefreshControllerTracking();
 #endif
 
-    [webView _protectedPage]->handleNativeWheelEvent(nativeMomentumEvent);
+    [webView _protectedPage]->handleNativeWheelEvent(WTF::move(nativeMomentumEvent));
     _isMomentumActive = true;
 
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG([webView _protectedPage]->logIdentifier(), "Started momentum scrolling with velocity %.2f pts/s", velocityMagnitude);

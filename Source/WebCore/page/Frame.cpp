@@ -126,7 +126,6 @@ Frame::Frame(Page& page, FrameIdentifier frameID, FrameType frameType, HTMLFrame
     , m_opener(opener)
     , m_frameTreeSyncData(WTF::move(frameTreeSyncData))
 {
-    relaxAdoptionRequirement();
     if (parent && addToFrameTree == AddToFrameTree::Yes)
         parent->tree().appendChild(*this);
 
@@ -359,6 +358,11 @@ void Frame::updateFrameTreeSyncData(Ref<FrameTreeSyncData>&& data)
 
 void Frame::updateFrameTreeSyncData(const FrameTreeSyncSerializationData& data)
 {
+    if (static_cast<FrameTreeSyncDataType>(data.value.index()) != FrameTreeSyncDataType::FrameGeometry) {
+        protect(frameTreeSyncData())->update(data);
+        return;
+    }
+
     auto invalidateChildFrameForDarkAppearanceChange = [&](const auto& oldMap, const auto& newMap) {
         for (RefPtr child = tree().firstChild(); child; child = child->tree().nextSibling()) {
             RefPtr localChild = dynamicDowncast<LocalFrame>(child);
@@ -370,6 +374,8 @@ void Frame::updateFrameTreeSyncData(const FrameTreeSyncSerializationData& data)
 
             if (!oldFrameInfo || !newFrameInfo || oldFrameInfo->ownerElementAppearance().contains(FrameOwnerElementAppearance::IsDark) != newFrameInfo->ownerElementAppearance().contains(FrameOwnerElementAppearance::IsDark)) {
                 RefPtr localChildView = localChild->view();
+                if (!localChildView)
+                    continue;
 
                 localChildView->invalidateForFrameOwnerColorSchemeChange();
                 protect(localChildView->layoutContext())->scheduleLayout();
@@ -377,11 +383,11 @@ void Frame::updateFrameTreeSyncData(const FrameTreeSyncSerializationData& data)
         }
     };
 
-    auto oldChildrenFrameLayoutMap = m_frameTreeSyncData->childrenFrameLayoutInfo;
+    auto oldChildrenFrameLayoutMap = m_frameTreeSyncData->frameGeometry.childrenFrameLayoutInfo;
 
     protect(frameTreeSyncData())->update(data);
 
-    invalidateChildFrameForDarkAppearanceChange(oldChildrenFrameLayoutMap, m_frameTreeSyncData->childrenFrameLayoutInfo);
+    invalidateChildFrameForDarkAppearanceChange(oldChildrenFrameLayoutMap, m_frameTreeSyncData->frameGeometry.childrenFrameLayoutInfo);
 }
 
 bool Frame::frameCanCreatePaymentSession() const

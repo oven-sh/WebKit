@@ -1328,6 +1328,9 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
 
     m_proc.pinRegister(GPRInfo::wasmContextInstancePointer);
     m_proc.pinRegister(GPRInfo::wasmBaseMemoryPointer);
+    // FIXME: The wasm ABI effectively has to assume this is a caller save when getting
+    // called by wasm, so there's no point in saving and restoring it if B3 chooses to
+    // use it. We actively don't restore this register in many cases anyway e.g. tail calls.
     if (mode == MemoryMode::BoundsChecking)
         m_proc.pinRegister(GPRInfo::wasmBoundsCheckingSizeRegister);
 
@@ -1786,9 +1789,28 @@ auto OMGIRGenerator::addTableSet(unsigned tableIndex, ExpressionType index, Expr
 
 auto OMGIRGenerator::addRefFunc(FunctionSpaceIndex index, ExpressionType& result) -> PartialResult
 {
-    // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
-    result = push(callWasmOperation(m_currentBlock, wasmRefType(), operationWasmRefFunc,
-        instanceValue(), constant(toB3Type(Types::I32), index)));
+    auto* loaded = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, wasmRefType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfFunctionWrapper(m_info, index)));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_functionWrappers[index], loaded);
+
+    auto* slowPath = m_proc.addBlock();
+    auto* continuation = m_proc.addBlock();
+    auto* phi = continuation->appendNew<Value>(m_proc, Phi, wasmRefType(), origin());
+
+    m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), loaded, phi);
+    m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), loaded,
+        FrequentedBlock(continuation), FrequentedBlock(slowPath, FrequencyClass::Rare));
+    slowPath->addPredecessor(m_currentBlock);
+    continuation->addPredecessor(m_currentBlock);
+
+    m_currentBlock = slowPath;
+    auto* called = callWasmOperation(m_currentBlock, wasmRefType(), operationWasmRefFunc,
+        instanceValue(), constant(Int32, index));
+    m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), called, phi);
+    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
+    continuation->addPredecessor(m_currentBlock);
+
+    m_currentBlock = continuation;
+    result = push(phi);
     TRACE_VALUE(Wasm::Types::Funcref, get(result), "ref_func ", index);
     return { };
 }
@@ -5822,6 +5844,11 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
     entries.reserveInitialCapacity(calleeSaves.registerCount() + functionSignature.argumentCount() + 1);
 
     for (const auto& regAtOffset : calleeSaves) {
+        // Don't restore wasmBoundsCheckingSizeRegister since we may have set it when checking for
+        // a cross-instance call. It's not a normal callee save independent of whether we used
+        // it or not.
+        if (regAtOffset.reg() == GPRInfo::wasmBoundsCheckingSizeRegister)
+            continue;
         ShuffleEntry entry;
         entry.src = ShuffleLocation::fromStack(fpOffsetToSPOffset(regAtOffset.offset()));
         if (regAtOffset.reg().isGPR()) {

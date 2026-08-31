@@ -68,6 +68,7 @@
 #include "FrameSelection.h"
 #include "GeometryUtilities.h"
 #include "HTMLAreaElement.h"
+#include "HTMLBRElement.h"
 #include "HTMLBodyElement.h"
 #include "HTMLDataListElement.h"
 #include "HTMLDetailsElement.h"
@@ -943,6 +944,38 @@ std::optional<SimpleRange> AccessibilityObject::simpleRange() const
             return range;
     }
     return AXObjectCache::rangeForNodeContents(*node);
+}
+
+HTMLTextFormControlElement* AccessibilityObject::nativeTextControl() const
+{
+    if (auto* textArea = dynamicDowncast<HTMLTextAreaElement>(node()))
+        return textArea;
+
+    auto* input = dynamicDowncast<HTMLInputElement>(node());
+    return input && (input->isText() || input->isNumberField()) ? input : nullptr;
+}
+
+AXTextMarkerRange AccessibilityObject::textMarkerRange() const
+{
+    // A native text control's value lives in its shadow inner text element, so the host has no
+    // children whose contents to take: simpleRange covers the control as a single replaced object,
+    // which stringifies to an object replacement character rather than the value.
+    if (RefPtr textControl = nativeTextControl()) {
+        if (RefPtr innerText = textControl->innerTextElement()) {
+            auto range = AXObjectCache::rangeForNodeContents(*innerText);
+            // A value ending in a line break renders an empty final line, which
+            // HTMLTextFormControlElement::setInnerTextValue gives a line box by appending a
+            // placeholder <br>. That <br>'s newline is collapsed out by rendering and is not a
+            // character of the value, so leave it out.
+            if (is<HTMLBRElement>(innerText->lastChild()) && range.end.offset)
+                --range.end.offset;
+            // A control with no value has no text to point at, so leave it pointing at itself,
+            // which is the only marker its callers can place in the document.
+            if (range.start != range.end)
+                return AXTextMarkerRange { std::optional { range } };
+        }
+    }
+    return simpleRange();
 }
 
 Vector<BoundaryPoint> AccessibilityObject::previousLineStartBoundaryPoints(const VisiblePosition& startingPosition, const SimpleRange& targetRange, unsigned positionsToRetrieve) const
@@ -2928,7 +2961,19 @@ bool AccessibilityObject::replaceTextInRange(const String& replacementString, co
     // Also only do this when the field is in editing mode.
     Ref frame = renderer()->frame();
     if (element->shouldUseInputMethod()) {
-        frame->selection().setSelectedRange(rangeForCharacterRange(range), Affinity::Downstream, FrameSelection::ShouldCloseTyping::Yes);
+        uint64_t textLength = getLengthForTextRange();
+        uint64_t startIndex = std::min(range.location, textLength);
+        uint64_t endIndex = startIndex + std::min(range.length, textLength - startIndex);
+
+        auto start = visiblePositionForIndex(static_cast<int>(startIndex));
+        std::optional insertionRange = makeSimpleRange(start, endIndex == startIndex ? start : visiblePositionForIndex(static_cast<int>(endIndex)));
+        if (!insertionRange)
+            return false;
+
+        // Fail if the selection can't be set, otherwise the wrong text would be replaced.
+        if (!frame->selection().setSelectedRange(*insertionRange, Affinity::Downstream, FrameSelection::ShouldCloseTyping::Yes))
+            return false;
+
         protect(frame->editor())->replaceSelectionWithText(replacementString, Editor::SelectReplacement::No, Editor::SmartReplace::No);
         return true;
     }

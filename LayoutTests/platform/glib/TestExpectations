@@ -428,7 +428,7 @@ imported/w3c/web-platform-tests/css/css-transforms/transform3d-preserve3d-013.ht
 imported/w3c/web-platform-tests/css/css-transforms/transforms-skewY.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-right-of-viewport-partially-onscreen-new.html [ Pass ]
 imported/w3c/web-platform-tests/css/selectors/selectors-4/lang-020.html [ Pass ]
-imported/w3c/web-platform-tests/css/css-ui/text-overflow-028.html [ Pass ]
+imported/w3c/web-platform-tests/css/css-overflow/text-overflow-028.html [ Pass ]
 
 # css-values passing for us.
 imported/w3c/web-platform-tests/css/css-values/ch-unit-003.html [ Pass ]
@@ -1250,9 +1250,6 @@ accessibility/statictext-path.html [ Failure ]
 # aria-braille* attributes are not implemented:
 webkit.org/b/220719 accessibility/braille-label-role.html [ Failure ]
 
-# Key events for AX actions seems to not be not being emitted
-webkit.org/b/221022 accessibility/keyevents-for-actions-mimic-real-key-events.html [ Timeout ]
-
 # Test requires WebKitTestRunner property 'standaloneWebApplicationURL', which is only implemented for Cocoa platforms.
 http/tests/resourceLoadStatistics/standalone-web-application-exempt-from-website-data-deletion.html [ Skip ]
 
@@ -1898,7 +1895,7 @@ webkit.org/b/224767 imported/w3c/web-platform-tests/media-source/mediasource-cha
 # See also bug #175578.
 webkit.org/b/167108 imported/w3c/web-platform-tests/media-source/mediasource-avtracks.html [ Failure ]
 
-webkit.org/b/167108 imported/w3c/web-platform-tests/media-source/mediasource-duration.html [ Failure ]
+webkit.org/b/167108 imported/w3c/web-platform-tests/media-source/mediasource-duration.html [ Failure Pass ]
 
 webkit.org/b/210486 imported/w3c/web-platform-tests/media-source/mediasource-correct-frames-after-reappend.html [ Failure ]
 
@@ -2114,11 +2111,6 @@ http/tests/push-api [ Skip ]
 #webkit.org/b/251344 imported/w3c/web-platform-tests/html/cross-origin-opener-policy/tentative/restrict-properties/iframe-popup.https.html?7-8 [ Failure ]
 
 webkit.org/b/202750 http/tests/download/anchor-download-attribute-content-disposition-no-extension-text-plain.html [ Failure ]
-
-# libsoup 3.6.6 mangles interior spaces in Content-Disposition filenames to '_'
-# (regressed by libsoup 9e1570c9, fixed upstream by db09564e). Remove once the
-# SDK ships a libsoup with that fix.
-http/tests/download/basic-ascii.html [ Failure ]
 
 # There is no network load scheduling or prioritization with NetworkProcess.
 webkit.org/b/123431 http/tests/local/link-stylesheet-load-order-preload.html [ Failure ]
@@ -2848,7 +2840,7 @@ imported/w3c/web-platform-tests/webrtc-extensions/transfer-datachannel-service-w
 imported/w3c/web-platform-tests/webrtc/simulcast/setParameters-maxFramerate.https.html [ Skip ] # Timeout
 imported/w3c/web-platform-tests/webrtc/simulcast/vp9-scalability-mode.https.html [ Skip ] # Timeout
 webrtc/getDisplayMedia-odd-size.html [ Skip ] # Timeout
-webrtc/video-rotation.html [ Failure ]
+webkit.org/b/322821 webrtc/video-rotation.html [ Failure Pass Timeout ]
 webrtc/video-maxBitrate-vp8.html [ Skip ] # Timeout
 webrtc/video-maxBitrate.html [ Skip ] # Timeout
 
@@ -2961,7 +2953,7 @@ imported/w3c/web-platform-tests/webrtc-encoded-transform/tentative/RTCEncodedFra
 http/wpt/webrtc/video-script-transform-simulcast.html [ Skip ]
 
 # This test is a constant failure (assert_true: front stream should be small expected true got false).
-webkit.org/b/313153 webrtc/video-replace-track.html [ Failure ]
+webkit.org/b/313153 webrtc/video-replace-track.html [ Failure Timeout ]
 
 # GStreamerRtpSenderBackend::setMediaStreamIds() unimplemented.
 webkit.org/b/235885 webrtc/video.html [ Skip ]
@@ -2999,7 +2991,6 @@ webkit.org/b/235885 webrtc/canvas-to-peer-connection-vp8.html [ Failure ]
 imported/w3c/web-platform-tests/webrtc/RTCDataChannel-worker-GC.html [ Skip ] # Timeout
 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-remote-track-currentTime.https.html [ Failure ]
 imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-track-settings.tentative.html [ Failure ]
-imported/w3c/web-platform-tests/webrtc/rtp-stats-lifetime.https.html?interop-2026 [ Failure ]
 
 # The last promise test here fails because webrtcbin doesn't rely on a singleton signaling thread.
 # See also comments in:
@@ -3161,10 +3152,12 @@ imported/w3c/web-platform-tests/html/semantics/forms/the-meter-element/meter-app
 imported/w3c/web-platform-tests/html/semantics/forms/the-meter-element/meter-appearance-none-suboptimum-value-rendering.html [ ImageOnlyFailure ]
 
 # Passes for GTK/WPE (but not for Mac/iOS) after WPT update of css-writing-modes tests
+webkit.org/b/214291 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-001.html [ Pass ]
 webkit.org/b/214291 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-004.html [ Pass ]
 webkit.org/b/214291 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-006.html [ Pass ]
 webkit.org/b/214291 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-008.html [ Pass ]
 webkit.org/b/214291 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-009.html [ Pass ]
+webkit.org/b/214291 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-012.html [ Pass ]
 webkit.org/b/214291 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-015.html [ Pass ]
 webkit.org/b/214291 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-016.html [ Pass ]
 webkit.org/b/214291 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-018.html [ Pass ]
@@ -3218,9 +3211,6 @@ imported/w3c/web-platform-tests/css/css-images/image-orientation/image-orientati
 imported/w3c/web-platform-tests/css/css-images/infinite-radial-gradient-refcrash.html [ ImageOnlyFailure ]
 
 webkit.org/b/203448 imported/w3c/web-platform-tests/css/css-position/position-absolute-dynamic-static-position-table-cell.html [ Pass ]
-
-webkit.org/b/209080 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-001.html [ Pass ]
-webkit.org/b/209080 imported/w3c/web-platform-tests/css/css-writing-modes/available-size-012.html [ Pass ]
 
 webkit.org/b/215799 imported/w3c/web-platform-tests/css/css-content/quotes-005.html [ ImageOnlyFailure ]
 
@@ -3406,19 +3396,16 @@ http/tests/ipc/webpageproxy-didfailload-failingurl-message-check.html [ Skip ]
 # CertificateInfo serializes a GRefPtr<GTlsCertificate> that coreipc.js cannot construct.
 http/tests/ipc/createnewpage-file-body-sandbox-extension.html [ Skip ]
 
-# Generic regressions whose IPC payload needs porting to Skia's colorspace format.
-ipc/nested-display-list-draw-control-part-crash.html [ Skip ]
-ipc/move-to-image-buffer-cross-thread-font-crash.html [ Skip ]
+# RemoteRenderingBackend::PrepareImageBufferSetsForDisplay is PLATFORM(COCOA).
 ipc/remotedisplaylistrecorder-drawcontrolpart-slidertrackpart-crash.html [ Skip ]
-ipc/decode-feConvolveMatrix-kernelSize-overflow.html [ Skip ]
-ipc/fecolormatrix-type-values-mismatch-crash.html [ Skip ]
-ipc/insufficient-svgfilter-inputs-crash.html [ Skip ]
-ipc/invalid-feConvolveMatrix-crash.html [ Skip ]
-ipc/invalid-svgfilter-expression-crash.html [ Skip ]
 ipc/mark-surfaces-volatile-during-prepare-for-display.html [ Skip ]
-ipc/restore-empty-stack-crash.html [ Skip ]
+
+# Hardcodes Cocoa's WebCore::FontPlatformDataAttributes in the IPC payload.
+ipc/move-to-image-buffer-cross-thread-font-crash.html [ Skip ]
+
+# Sends WebCore::PixelFormat index 3; the glib ports enable none of RGB10, RGB10A8
+# and RGBA16F, so the enum stops at BGRA8.
 ipc/convert-to-luminance-mask-float16.html [ Skip ]
-ipc/empty-svgfilterrenderer-expression-crash.html [ Skip ]
 
 # ATTACHMENT_ELEMENT is disabled in glib ports.
 ipc/restrictedendpoints/allow-access-attachmentElement.html [ Skip ]
@@ -4006,8 +3993,6 @@ webkit.org/b/297178 media/media-source/media-source-paint-stereo-to-canvas.html 
 
 # Flaky failure
 webkit.org/b/175419 imported/w3c/web-platform-tests/fetch/api/abort/serviceworker-intercepted.https.html [ Pass Failure ]
-# This test fails both invalid-chunked-encoding cases
-webkit.org/b/175419 imported/w3c/web-platform-tests/service-workers/service-worker/registration-script.https.html [ Failure ]
 # This test requires the ServiceWorkerRegistration.showNotification
 webkit.org/b/175419 http/tests/workers/service/openwindow-from-notification-click.html [ Skip ]
 
@@ -4047,8 +4032,6 @@ webkit.org/b/199001 accessibility/set-selected-text-range-after-newline.html [ F
 imported/w3c/web-platform-tests/websockets/keeping-connection-open/001.html?wss [ Slow ]
 
 # Issues with WebSockets, many due to macOS/iOS and "glib" dealing with console messages differently
-webkit.org/b/206652 imported/w3c/web-platform-tests/websockets/constructor/011.html?default [ Failure ]
-webkit.org/b/206652 imported/w3c/web-platform-tests/websockets/constructor/011.html?wss [ Failure ]
 webkit.org/b/252878 imported/w3c/web-platform-tests/websockets/multi-globals/message-received.html?wss [ Failure Pass ]
 webkit.org/b/252878 imported/w3c/web-platform-tests/websockets/unload-a-document/003.html?wss [ Failure Pass ]
 webkit.org/b/252878 imported/w3c/web-platform-tests/websockets/unload-a-document/004.html?wss [ Failure Pass ]
@@ -4065,9 +4048,6 @@ webkit.org/b/201981 http/wpt/resource-timing/rt-resources-per-worker.html [ Fail
 
 webkit.org/b/306019 imported/w3c/web-platform-tests/resource-timing/resource_timing.worker.html [ Failure Pass ]
 
-# ch units should be ignored in these tests.
-webkit.org/b/206001 imported/w3c/web-platform-tests/css/css-values/ch-unit-017.html [ ImageOnlyFailure ]
-
 # WPT fetch tests.
 webkit.org/b/206416 imported/w3c/web-platform-tests/fetch/range/sw.https.window.html [ Failure ]
 
@@ -4076,19 +4056,6 @@ imported/w3c/web-platform-tests/fetch/content-encoding/gzip/bad-gzip-body.any.ht
 imported/w3c/web-platform-tests/fetch/content-encoding/gzip/bad-gzip-body.any.serviceworker.html [ Failure ]
 imported/w3c/web-platform-tests/fetch/content-encoding/gzip/bad-gzip-body.any.sharedworker.html [ Failure ]
 imported/w3c/web-platform-tests/fetch/content-encoding/gzip/bad-gzip-body.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/bad-zstd-body.https.any.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/bad-zstd-body.https.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/bad-zstd-body.https.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/bad-zstd-body.https.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/big-zstd-body.https.any.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/big-zstd-body.https.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/big-zstd-body.https.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/big-zstd-body.https.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/zstd-body.https.any.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/zstd-body.https.any.serviceworker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/zstd-body.https.any.sharedworker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/zstd-body.https.any.worker.html [ Failure ]
-imported/w3c/web-platform-tests/fetch/content-encoding/zstd/zstd-navigation.https.window.html [ Failure ]
 imported/w3c/web-platform-tests/fetch/content-length/too-long.window.html [ Failure ]
 imported/w3c/web-platform-tests/fetch/content-type/response.window.html [ Failure ]
 imported/w3c/web-platform-tests/fetch/http-cache/partial.any.html [ Failure ]
@@ -4358,6 +4325,7 @@ imported/w3c/web-platform-tests/css/css-scroll-snap/input/mouse-wheel.html [ Ski
 imported/w3c/web-platform-tests/css/css-scroll-snap/snap-at-user-scroll-end.html [ Skip ]
 imported/w3c/web-platform-tests/css/css-transforms/scroll-preserve-3d.html [ Skip ]
 imported/w3c/web-platform-tests/dom/events/non-cancelable-when-passive [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus-invoker-inside-popover.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-scroll-within.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-self-invoke.html [ Skip ]
 imported/w3c/web-platform-tests/uievents/order-of-events/mouse-events/wheel-scrolling.html [ Skip ]
@@ -5224,7 +5192,6 @@ imported/w3c/web-platform-tests/webcodecs/videoFrame-copyTo.crossOriginIsolated.
 imported/w3c/web-platform-tests/workers/Worker-creation-happens-in-parallel.https.html [ Skip ]
 imported/w3c/web-platform-tests/workers/postMessage_block.https.html [ Skip ]
 imported/w3c/web-platform-tests/workers/Worker-postMessage-happens-in-parallel.https.html [ Skip ]
-ipc/serialized-type-info.html [ Skip ]
 ipc/stream-sync-reply-shared-memory.html [ Skip ]
 webkit.org/b/297737 ipc/send-gradient.html [ Skip ]
 webkit.org/b/297737 ipc/send-filter.html [ Skip ]
@@ -5305,12 +5272,14 @@ webkit.org/b/319045 [ Debug ] accessibility/button-in-deep-dom.html [ Timeout ]
 webkit.org/b/319047 [ Debug ] imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-033.html [ Crash ]
 webkit.org/b/319049 [ Debug ] http/tests/cache/cancel-multiple-post-xhrs.html [ Pass Failure ]
 webkit.org/b/319050 [ Debug ] imported/w3c/web-platform-tests/fetch/local-network-access/iframe.tentative.https.window.html [ Failure ]
-webkit.org/b/319051 [ Debug ] imported/w3c/web-platform-tests/uievents/mouse/mouse_boundary_events_after_removing_last_over_element.html [ Failure ]
+webkit.org/b/319051 [ Debug ] imported/w3c/web-platform-tests/uievents/mouse/mouse_boundary_events_after_removing_last_over_element.html [ Failure Pass ]
 webkit.org/b/319052 [ Debug ] http/tests/websocket/tests/hybi/inspector/handshake-error.html [ Pass Failure ]
 webkit.org/b/319053 [ Debug ] media/video-playback-restriction-play-before-load.html [ Failure ]
 webkit.org/b/319310 [ Debug ] fast/repaint/iframe-avoid-redundant-repaint.html [ Failure Pass ]
 webkit.org/b/319311 [ Debug ] fast/repaint/missing-out-of-flow-repaint-on-destroy.html [ Pass ImageOnlyFailure ]
 webkit.org/b/319312 [ Debug ] workers/bomb.html [ Skip ]
+
+imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-023.html [ ImageOnlyFailure ]
 
 webkit.org/b/319950 imported/w3c/web-platform-tests/css/css-pseudo/marker-hit-testing.html [ Failure ]
 
@@ -5399,6 +5368,10 @@ webkit.org/b/322625 [ Release ] ipc/send-gpu-GetShareableBitmap-RemoteRenderingB
 webkit.org/b/322641 [ Debug ] imported/w3c/web-platform-tests/web-animations/timing-model/animations/start-time-compat.html [ Pass Failure ]
 webkit.org/b/322642 [ Debug ] imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioworklet-interface/audioworkletprocessor-unconnected-outputs.https.window.html [ Pass Failure ]
 webkit.org/b/322646 [ Debug ] media/track/track-readiness-state.html [ Pass Failure ]
+
+webkit.org/b/322814 imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-error.html [ Crash Failure Pass ]
+webkit.org/b/322815 imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-pause-resume.html [ Pass Timeout ]
+webkit.org/b/322816 imported/w3c/web-platform-tests/resource-timing/initiator-type/style.html [ Failure Pass ]
 
 # End: Common failures between GTK and WPE.
 
