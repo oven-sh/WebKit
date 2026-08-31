@@ -1485,7 +1485,7 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
     if (!deferred) {
         // 6.c. Let evaluatePromise be module.Evaluate().
 #if USE(BUN_JSC_ADDITIONS)
-        JSPromise* evaluatePromise = module->evaluate(globalObject, dynamicPayload->referrerAsyncOrder());
+        JSPromise* evaluatePromise = module->evaluate(globalObject, dynamicPayload->referrerAsyncOrder(), capabilityPromise);
 #else
         JSPromise* evaluatePromise = module->evaluate(globalObject);
 #endif
@@ -1518,7 +1518,7 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
     MarkedArgumentBuffer asyncDepsEvaluationPromises;
     for (AbstractModuleRecord* dep : evaluationList) {
 #if USE(BUN_JSC_ADDITIONS)
-        JSPromise* depPromise = dep->evaluate(globalObject, dynamicPayload->referrerAsyncOrder());
+        JSPromise* depPromise = dep->evaluate(globalObject, dynamicPayload->referrerAsyncOrder(), capabilityPromise);
 #else
         JSPromise* depPromise = dep->evaluate(globalObject);
 #endif

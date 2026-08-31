@@ -36,6 +36,11 @@
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InternalFieldTuple.h"
+#include "JSAsyncFunctionGenerator.h"
+#include "JSPromiseCombinatorsGlobalContext.h"
+#endif
 #include "ObjectConstructor.h"
 #include "SyntheticModuleRecord.h"
 #include "VMTrapsInlines.h"
@@ -1147,7 +1152,7 @@ JS_EXPORT_PRIVATE JSValue AbstractModuleRecord::evaluate(JSGlobalObject* globalO
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder)
+JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
 #else
 JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
 #endif
@@ -1166,7 +1171,7 @@ JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
 
     if (auto* cyclicRecord = dynamicDowncast<CyclicModuleRecord>(this))
 #if USE(BUN_JSC_ADDITIONS)
-        return wrap(cyclicRecord->evaluate(globalObject, referrerAsyncOrder));
+        return wrap(cyclicRecord->evaluate(globalObject, referrerAsyncOrder, dynamicImportPromise));
 #else
         return wrap(cyclicRecord->evaluate(globalObject));
 #endif
@@ -1206,7 +1211,142 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder)
+// Bun extension for innerModuleEvaluation step 12.b.v.
+//
+// A dynamic import()'s Evaluate() runs in a microtask. By then the code that
+// called import() has already attached what it does with the result: an `await`
+// in a module body or an async function, a .then() chain, a Promise.all(). Every
+// promise on such a chain needs `importPromise` to settle first, and
+// `importPromise` needs the graph being evaluated to finish. If a chain ends in
+// the body of a module the graph is about to wait for, that module can never
+// resume and the graph can never finish: the wait is a guaranteed deadlock.
+//
+// Returns true when settling `importPromise` is what resumes `dependency`, or a
+// module `dependency` waits on. Promise.race/any settle without this promise and
+// are not followed. Resolving functions captured by user closures and async
+// generator queues are opaque and end the walk, so anything this cannot see
+// keeps the spec behavior of waiting.
+static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
+{
+    // Resuming `module` only helps if it is `dependency` or something `dependency`
+    // waits on through [[AsyncParentModules]] (12.b.v.2).
+    auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
+        UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+        Vector<AbstractModuleRecord*, 8> work;
+        work.append(module);
+        while (!work.isEmpty()) {
+            AbstractModuleRecord* current = work.takeLast();
+            if (current == dependency)
+                return true;
+            if (!seen.add(current).isNewEntry)
+                continue;
+            for (auto& parent : current->asyncParentModules())
+                work.append(parent.get());
+        }
+        return false;
+    };
+
+    auto cellOf = [](JSValue value) -> JSCell* {
+        if (value.isEmpty() || !value.isCell())
+            return nullptr;
+        return value.asCell();
+    };
+
+    // Bun's AsyncLocalStorage wraps an internal context as [context, asyncContext].
+    auto unwrapContext = [&](JSValue value) -> JSCell* {
+        JSCell* cell = cellOf(value);
+        if (auto* tuple = cell ? dynamicDowncast<InternalFieldTuple>(cell) : nullptr)
+            return cellOf(tuple->getInternalField(0));
+        return cell;
+    };
+
+    UncheckedKeyHashSet<JSPromise*> seen;
+    Vector<JSPromise*, 16> work;
+    work.append(importPromise);
+    bool found = false;
+
+    auto follow = [&](JSValue value) {
+        if (JSCell* cell = cellOf(value)) {
+            if (auto* promise = dynamicDowncast<JSPromise>(cell))
+                work.append(promise);
+        }
+    };
+
+    auto visitReaction = [&](InternalMicrotask task, JSValue cell, JSValue context) -> bool {
+        switch (task) {
+        case InternalMicrotask::AsyncFunctionResume:
+        case InternalMicrotask::AsyncGeneratorDriverResume: {
+            JSCell* driver = unwrapContext(context);
+            if (!driver)
+                break;
+            // An async function suspended at this await: its own promise settles after it resumes.
+            if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(driver))
+                follow(generator->context());
+            // A module body suspended at `for await`.
+            else if (auto* module = dynamicDowncast<AbstractModuleRecord>(driver))
+                found = resumesDependency(module);
+            // Async generators re-schedule through their request queue: not followed.
+            break;
+        }
+        case InternalMicrotask::AsyncModuleExecutionResume: {
+            // A module body suspended at `await`.
+            JSCell* driver = unwrapContext(context);
+            if (auto* module = driver ? dynamicDowncast<AbstractModuleRecord>(driver) : nullptr)
+                found = resumesDependency(module);
+            break;
+        }
+        case InternalMicrotask::PromiseAllResolveJob:
+        case InternalMicrotask::PromiseAllSettledResolveJob: {
+            // The combined promise waits for every element.
+            JSCell* contextCell = cellOf(cell);
+            if (auto* globalContext = contextCell ? dynamicDowncast<JSPromiseCombinatorsGlobalContext>(contextCell) : nullptr)
+                follow(globalContext->promise());
+            break;
+        }
+        case InternalMicrotask::PromiseRaceResolveJob:
+        case InternalMicrotask::PromiseAnyResolveJob:
+        case InternalMicrotask::AsyncFromSyncIteratorContinue:
+        case InternalMicrotask::AsyncFromSyncIteratorDone:
+        case InternalMicrotask::AsyncGeneratorYieldAwaited:
+        case InternalMicrotask::AsyncGeneratorBodyCallNormal:
+        case InternalMicrotask::AsyncGeneratorBodyCallReturn:
+        case InternalMicrotask::AsyncGeneratorAwaitReturn:
+        case InternalMicrotask::InvokeFunctionJob:
+        case InternalMicrotask::Opaque:
+        case InternalMicrotask::BunPerformMicrotaskJob:
+        case InternalMicrotask::BunInvokeJobWithArguments:
+#if ENABLE(WEBASSEMBLY)
+        case InternalMicrotask::WebAssemblyCompileStreaming:
+        case InternalMicrotask::WebAssemblyInstantiateStreaming:
+#endif
+            break;
+        default:
+            // User handlers (None), then/finally plumbing, a promise resolved with this one,
+            // and the module loader's own pipeline: the cell is a promise that settles after this one.
+            follow(cell);
+            break;
+        }
+        return !found;
+    };
+
+    constexpr size_t maxPromises = 4096;
+    while (!work.isEmpty() && !found) {
+        JSPromise* promise = work.takeLast();
+        // Already settled: its reactions are queued, nothing downstream waits on the import.
+        if (promise->status() != JSPromise::Status::Pending)
+            continue;
+        if (!seen.add(promise).isNewEntry)
+            continue;
+        if (seen.size() > maxPromises)
+            return false;
+        promise->forEachPendingReaction(visitReaction);
+    }
+    return found;
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
 #else
 unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index)
 #endif
@@ -1282,7 +1422,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
         RETURN_IF_EXCEPTION(scope, invalid);
         // 12.a. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
 #if USE(BUN_JSC_ADDITIONS)
-        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder);
+        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder, dynamicImportPromise);
 #else
         unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index);
 #endif
@@ -1331,15 +1471,21 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             if (cyclic->asyncEvaluationOrder().hasOrder()) {
 #if USE(BUN_JSC_ADDITIONS)
                 // Spec says wait on this dep. That's a guaranteed deadlock when
-                // the dep is the very module whose TLA continuation called the
-                // dynamic import() that started this Evaluate(): the dep can
-                // only finish after the import() promise settles, which is
-                // waiting on us. referrerAsyncOrder is that module's
-                // asyncEvaluationOrder(), captured at the import() call site
-                // (-1 when the referrer was not EvaluatingAsync). It is a
-                // VM-unique identity, so equality is exact — siblings that
-                // happen to be EvaluatingAsync (#30259, #30634) never match.
-                if (cyclic->asyncEvaluationOrder().order() != referrerAsyncOrder) {
+                // the dep can only finish after the dynamic import() promise that
+                // started this Evaluate() settles, which is waiting on us. Two
+                // ways to know that:
+                // - referrerAsyncOrder is the asyncEvaluationOrder() of the module
+                //   whose body lexically contains the import() call, captured at
+                //   the call site (-1 when that module was not EvaluatingAsync).
+                //   It is a VM-unique identity, so equality is exact — siblings
+                //   that happen to be EvaluatingAsync (#30259, #30634) never match.
+                // - dynamicImportPromise is that import()'s promise. When the code
+                //   that awaits it is a helper (sync or async) called from the
+                //   suspended module's body, the referrer has no order, but the
+                //   await chain hanging off the promise still ends in that body.
+                bool deadlocks = cyclic->asyncEvaluationOrder().order() == referrerAsyncOrder
+                    || (dynamicImportPromise && importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic));
+                if (!deadlocks) {
 #endif
                 // 12.b.v.1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
                 module->setPendingAsyncDependencies(module->pendingAsyncDependencies().value() + 1);

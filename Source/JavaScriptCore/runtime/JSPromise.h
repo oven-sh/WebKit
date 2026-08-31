@@ -29,6 +29,9 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/Microtask.h>
 #include <wtf/CompactPointerTuple.h>
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/ScopedLambda.h>
+#endif
 
 namespace JSC {
 
@@ -113,6 +116,15 @@ public:
     }
 
     JSValue asyncStackTraceContext() const;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Visits every reaction registered on this pending promise as
+    // (task, promiseOrCapability, contextOrHandler): for an internal microtask the
+    // cell it settles and its context, for a user handler (task None) the derived
+    // promise or capability and the handler or the full reaction's context. Stops
+    // when the callback returns false.
+    void forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>&) const;
+#endif
 
     JS_EXPORT_PRIVATE static JSPromise* resolvedPromise(JSGlobalObject*, JSValue);
     JS_EXPORT_PRIVATE static JSPromise* rejectedPromise(JSGlobalObject*, JSValue);
