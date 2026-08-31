@@ -565,9 +565,9 @@ void ScriptExecutable::visitCodeBlockEdge(Visitor& visitor, CodeBlock* codeBlock
     if (codeBlock->shouldVisitStrongly(locker, visitor))
         visitor.appendUnbarriered(codeBlock);
 
-    if (JSC::JITCode::isOptimizingJIT(codeBlock->jitType())) {
+    if (JSC::JITCode::isOptimizingJIT(codeBlock->jitType()) && !codeBlock->m_agedOut) {
         // If we jettison ourselves we'll install our alternative, so make sure that it
-        // survives GC even if we don't.
+        // survives GC even if we don't. (Not when dying of old age: then the alternative goes too.)
         visitor.append(codeBlock->m_alternative);
     }
 

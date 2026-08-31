@@ -85,7 +85,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpFFIDisassembly, false, Normal, "disassemble generated FFI thunks/stubs"_s) \
     v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
-    v(Bool, useExecutionCountForCodeBlockAging, false, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
+    v(Bool, useExecutionCountForCodeBlockAging, true, Normal, "If true, an LLInt/Baseline CodeBlock whose execution counter has advanced since the last old-age check is treated as still in use and its TTL is renewed instead of being jettisoned."_s) \
     v(Double, codeBlockAgingLeaseMultiplier, 3.0, Normal, "When useExecutionCountForCodeBlockAging proves a CodeBlock is still active, renew its old-age TTL to this many multiples of timeToLive for its tier."_s)
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v) \
     v(Bool, useLeanBytecodeCacheDecoder, true, Normal, "If true, the bytecode cache Decoder skips bookkeeping that is only needed for decoded objects shared by multiple references."_s) \

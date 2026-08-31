@@ -810,6 +810,7 @@ private:
     void reconcileWeakReferencesAtGCEnd();
 
     void deleteUnmarkedCompiledCode();
+    void releaseUnusedSharedBaselineCode();
     JS_EXPORT_PRIVATE void addToRememberedSet(const JSCell*);
     void updateAllocationLimits();
     void didFinishCollection();

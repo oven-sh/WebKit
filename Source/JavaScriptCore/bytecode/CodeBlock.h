@@ -360,6 +360,7 @@ public:
 
     RefPtr<JSC::JITCode> jitCode() { return m_jitCode; }
     static constexpr ptrdiff_t jitCodeOffset() { return OBJECT_OFFSETOF(CodeBlock, m_jitCode); }
+    bool agedOut() const { return m_agedOut; }
     JITType jitType() const
     {
         auto* jitCode = m_jitCode.get();
@@ -991,6 +992,7 @@ private:
     uint16_t m_optimizationDelayCounter { 0 };
     uint16_t m_reoptimizationRetryCounter { 0 };
     float m_previousCounter { 0 };
+    bool m_agedOut { false }; // last full-GC visit found this block past its TTL with no observed execution
     StructureWatchpointMap m_llintGetByIdWatchpointMap;
     RefPtr<JSC::JITCode> m_jitCode;
 #if ENABLE(JIT)

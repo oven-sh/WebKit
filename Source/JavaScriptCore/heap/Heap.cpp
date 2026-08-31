@@ -1235,6 +1235,34 @@ void Heap::deleteUnmarkedCompiledCode()
     m_jitStubRoutines->deleteUnmarkedJettisonedStubRoutines(vm());
 }
 
+// Baseline JIT code is cached on the UnlinkedCodeBlock (CodeBlock::setupWithUnlinkedBaselineCode) so a re-created
+// CodeBlock can reuse it, but nothing ever releases that cache: once every CodeBlock that used it has died, the machine
+// code stays for as long as the unlinked code does. Drop cache entries that have had no other owner across two
+// consecutive full collections; a later warm-up simply compiles baseline again.
+void Heap::releaseUnusedSharedBaselineCode()
+{
+#if ENABLE(JIT)
+    if (!Options::useBaselineJITCodeSharing() || !Options::useExecutionCountForCodeBlockAging())
+        return;
+    HeapIterationScope heapIterationScope(*this);
+    auto visit = [] (HeapCell* cell, HeapCell::Kind) {
+        auto* unlinked = static_cast<UnlinkedCodeBlock*>(cell);
+        auto& code = unlinked->m_unlinkedBaselineCode;
+        if (code && code->hasOneRef()) {
+            if (unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC)
+                code = nullptr;
+            else
+                unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC = true;
+        } else
+            unlinked->m_unlinkedBaselineCodeUnusedAtLastFullGC = false;
+    };
+    for (auto* space : { m_unlinkedFunctionCodeBlockSpace.get(), m_unlinkedProgramCodeBlockSpace.get(), m_unlinkedEvalCodeBlockSpace.get(), m_unlinkedModuleProgramCodeBlockSpace.get() }) {
+        if (space)
+            space->forEachLiveCell(visit);
+    }
+#endif
+}
+
 void Heap::addToRememberedSet(const JSCell* constCell)
 {
     JSCell* cell = const_cast<JSCell*>(constCell);
@@ -1841,6 +1869,8 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
         reconcileWeakReferencesAtGCEnd(); // Must precede clearCurrentlyExecuting: CodeBlock::reconcileWeakReferencesAtGCEnd queries which CodeBlocks are currently executing.
         removeDeadCompilerWorklistEntries();
         deleteUnmarkedCompiledCode();
+        if (m_collectionScope == CollectionScope::Full)
+            releaseUnusedSharedBaselineCode();
     }
 
     notifyIncrementalSweeper();

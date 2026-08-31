@@ -295,6 +295,7 @@ public:
     void setFallBackWithFailureReason(JITFailureReason failureReason) { m_failureReason = failureReason; }
     std::optional<JITFailureReason> failureReason() { return m_failureReason; }
 
+    size_t codeSize() const { return m_ref8.size() + m_ref16.size() + m_matchOnly8.size() + m_matchOnly16.size(); }
     bool has8BitCode() { return m_ref8.size(); }
     bool has16BitCode() { return m_ref16.size(); }
     void set8BitCode(MacroAssemblerCodeRef<Yarr8BitPtrTag> ref, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
