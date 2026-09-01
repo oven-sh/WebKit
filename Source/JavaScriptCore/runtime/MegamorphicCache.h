@@ -25,8 +25,6 @@
 
 #pragma once
 
-#include <wtf/Atomics.h>
-
 #include "Structure.h"
 #include <wtf/TZoneMalloc.h>
 
@@ -219,16 +217,12 @@ public:
 
     JS_EXPORT_PRIVATE void age(CollectionScope);
 
-    // SPEC-jit §5.5 (Task 8) / AUD1.K4 (K4.II.19, BINDING per-lite — lite
-    // slots NOT YET LANDED, so the whole row stays DARK; see the A16
-    // activation checklist in VMLite.cpp): with useJSThreads the inline
-    // fast paths already bail (loadMegamorphicProperty /
-    // storeMegamorphicProperty / hasMegamorphicProperty), so a fill is
-    // never read back — but the fills themselves are multi-word entry
-    // writes including a RefPtr<UniquedStringImpl> reassignment, and N
-    // mutators landing on one entry double-deref the displaced uid (UAF).
-    // Until the per-lite copies exist, every fill is a no-op flag-on.
-    // Flag-off: one predicted-false byte test on these already-slow paths.
+    // With useJSThreads the cache is inert: the inline probes
+    // (AssemblyHelpers::{load,store,has}MegamorphicProperty) bail, and a fill
+    // is a multi-word entry write including a RefPtr<UniquedStringImpl>
+    // reassignment that concurrent mutators cannot share, so fills and epoch
+    // bumps are no-ops and no entry is ever live. Flag-off this costs one
+    // predicted-false byte test on already-slow paths.
     ALWAYS_INLINE static bool fillsDisabledUnderJSThreads()
     {
         return Options::useJSThreads();
@@ -323,17 +317,14 @@ public:
         m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, m_epoch, false);
     }
 
-    uint16_t epoch() const { return WTF::atomicLoad(const_cast<uint16_t*>(&m_epoch), std::memory_order_relaxed); } // THREADS: advisory cache epoch; racy bumps tolerated (stale entries just miss/revalidate).
+    uint16_t epoch() const { return m_epoch; }
 
     void bumpEpoch()
     {
-        // THREADS: atomic RMW — a LOST bump would be a missed invalidation
-        // (an entry stamped with the new epoch by a racing filler would
-        // survive this bump), so unlike the advisory profiling counters this
-        // one must not drop increments. Invalidation slow path only; no
-        // codegen impact on cache hits.
-        uint16_t epoch = static_cast<uint16_t>(WTF::atomicExchangeAdd(&m_epoch, static_cast<uint16_t>(1), std::memory_order_relaxed) + 1);
-        if (epoch == invalidEpoch) [[unlikely]]
+        if (fillsDisabledUnderJSThreads()) [[unlikely]]
+            return;
+        ++m_epoch;
+        if (m_epoch == invalidEpoch) [[unlikely]]
             clearEntries();
     }
 

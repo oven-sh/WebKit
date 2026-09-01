@@ -99,15 +99,12 @@ public:
     JS_EXPORT_PRIVATE static JSBigInt* tryCreateFromWords(VM&, std::span<const uint64_t> words, bool sign);
     static JSBigInt* createFromWords(JSGlobalObject*, std::span<const uint64_t> words, bool sign);
 
-    // M1-bigint-u64-fastpath: direct 0/1/2-digit allocator. Never throws, never
-    // touches a ThrowScope, never builds a scratch Vector — it allocates the
-    // exact-sized cell and writes the digits in place. Result is bit-for-bit
-    // identical (length / sign / digit bytes) to
-    //     tryCreateFromImpl(globalObject, vm, sign, span{lo, hi})
-    // for every input. OOM on a <=32-byte cell is treated as fatal
-    // (RELEASE_ASSERT) so callers on the single-digit hot path need no
-    // exception machinery. Not gilOff-gated: this is a general JSC speedup.
-    JS_EXPORT_PRIVATE static JSBigInt* createFromDigit(VM&, Digit lo, Digit hi, bool sign);
+    // Direct 0/1/2-digit allocator for a result known to fit in two digits. The
+    // cell is bit-identical to tryCreateFrom(globalObject, vm, sign, { lo, hi }):
+    // hi == 0 yields a one-digit cell and lo == hi == 0 the cached zero. On
+    // allocation failure it throws OutOfMemoryError and returns nullptr, like
+    // every other JSBigInt allocator that takes a JSGlobalObject.
+    JS_EXPORT_PRIVATE static JSBigInt* createFromDigit(JSGlobalObject*, VM&, Digit lo, Digit hi, bool sign);
 
     static constexpr size_t offsetOfLength()
     {
@@ -204,7 +201,7 @@ public:
 private:
     static JSBigInt* tryCreateFromImpl(JSGlobalObject*, VM&, bool sign, std::span<const Digit>);
     static JSBigInt* createZero(VM&);
-    ALWAYS_INLINE static JSBigInt* createFromDigitInline(VM&, Digit lo, Digit hi, bool sign);
+    ALWAYS_INLINE static JSBigInt* createFromDigitInline(JSGlobalObject*, VM&, Digit lo, Digit hi, bool sign);
 
     ALWAYS_INLINE static ComparisonResult flip(ComparisonResult result)
     {

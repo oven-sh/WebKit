@@ -38,6 +38,7 @@
 #include "Lookup.h"
 #include "MegamorphicCache.h"
 #include "ObjectInitializationScope.h"
+#include "PropertyTable.h"
 #include "SparseArrayValueMap.h"
 #include "StructureInlines.h"
 #include "TypedArrayType.h"
@@ -343,6 +344,9 @@ inline void JSObject::growOutOfLineStorageForConcurrentLockedAdd(VM& vm, Structu
         bool published = casButterfly(static_cast<JSObjectWithButterfly*>(this), lockedWord,
             encodeButterfly(newButterfly, butterflyTID(lockedWord), butterflySharedWrite(lockedWord)));
         RELEASE_ASSERT(published); // No lock-free actor may target an AS word (I31).
+        // Every butterfly publication barriers the owner; the caller's value
+        // store barriers only when the value is a cell.
+        vm.writeBarrier(this);
         structure->setMaxOffset(vm, newMaxOffset);
         WTF::storeStoreFence();
         setStructureIDDirectly(structureID);
@@ -562,8 +566,10 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
     JSObject* object = this;
     while (true) {
         Structure* structure = object->structureID().decode();
-        if (Options::useJSThreads() && structure->isUncacheableDictionary() && !slot.isVMInquiry() && !threadRestrictCheck(globalObject, object)) [[unlikely]]
+        if (Options::useJSThreads() && structure->isUncacheableDictionary() && !slot.isVMInquiry() && !threadRestrictCheck(globalObject, object)) [[unlikely]] {
+            EXCEPTION_ASSERT(scope.exception()); // threadRestrictCheck returned false, so it threw.
             return false;
+        }
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
@@ -1260,8 +1266,50 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             if (!isAdded) {
                 structure->didReplaceProperty(offset);
                 if ((mode == PutModeDefineOwnProperty) && (newAttributes != attributes || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
+                    // An uncacheable dictionary edits its pinned table in place and
+                    // keeps its structure. A cacheable one transitions to a structure
+                    // whose table and maxOffset are a snapshot of this one, while
+                    // racing cell-locked adds and deletes edit this one in place
+                    // without changing the structureID: publish under the cell lock
+                    // only while the edit stamp taken before the clone still matches
+                    // (every in-place edit pins first and a pin is never undone, so
+                    // unpinned at both reads means no edit), else RESTART replays
+                    // the replace idempotently - the value is already stored.
+                    PropertyTable* plannedTable = structure->pinnedPropertyTableForConcurrentReadStamp();
+                    uint32_t plannedEditCount = plannedTable ? plannedTable->concurrentEditCount() : 0;
                     DeferredStructureTransitionWatchpointFire deferred(vm, structure);
-                    setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
+                    Structure* attributeChanged = Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred);
+                    if (attributeChanged != structure) {
+                        // Attribute changes keep type, flags and indexing mode: only
+                        // the structureID lane moves, under the §3.0 volatile-byte
+                        // merge discipline (mirrors deletePropertyNamedConcurrent).
+                        ASSERT(attributeChanged->typeInfo().type() == structure->typeInfo().type());
+                        ASSERT(attributeChanged->indexingModeIncludingHistory() == structure->indexingModeIncludingHistory());
+                        bool published = false;
+                        {
+                            Locker cellLocker { cellLock() };
+                            Atomic<uint64_t>* headerAtomic = reinterpret_cast<Atomic<uint64_t>*>(static_cast<JSCell*>(this));
+                            uint64_t expectedHeader = headerAtomic->load(std::memory_order_seq_cst);
+                            if (static_cast<uint32_t>(expectedHeader) == structureID.bits()
+                                && structure->isDictionary()
+                                && structure->pinnedPropertyTableForConcurrentReadStamp() == plannedTable
+                                && (!plannedTable || plannedTable->concurrentEditCount() == plannedEditCount)) {
+                                uint64_t desiredHeader = (expectedHeader & ~0xffffffffULL) | static_cast<uint64_t>(attributeChanged->id().bits());
+                                while (true) {
+                                    uint64_t previousHeader = headerAtomic->compareExchangeStrong(expectedHeader, desiredHeader, std::memory_order_seq_cst);
+                                    if (previousHeader == expectedHeader)
+                                        break;
+                                    RELEASE_ASSERT(headerDiffersOnlyInVolatileBits(expectedHeader, previousHeader));
+                                    expectedHeader = mergeVolatileHeaderBits(expectedHeader, previousHeader);
+                                    desiredHeader = mergeVolatileHeaderBits(desiredHeader, previousHeader);
+                                }
+                                published = true;
+                            }
+                        }
+                        if (!published)
+                            continue; // RESTART: a transition, flatten or in-place table edit landed since the snapshot.
+                        vm.writeBarrier(this, attributeChanged);
+                    }
                     if (mayBePrototype()) [[unlikely]]
                         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
                 } else {

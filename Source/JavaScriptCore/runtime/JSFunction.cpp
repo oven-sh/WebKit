@@ -46,6 +46,7 @@
 #if ENABLE(WEBASSEMBLY)
 #include "WebAssemblyFunction.h"
 #endif
+#include <wtf/Scope.h>
 
 namespace JSC {
 
@@ -120,15 +121,31 @@ JSFunction::JSFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* glo
 FunctionRareData* JSFunction::allocateRareData(VM& vm)
 {
     uintptr_t executableOrRareData = executableOrRareDataConcurrently();
+    // GIL-off, every ensure* caller is an unsynchronized check-then-act, so two mutators can race
+    // to install rare data for the same function, and exactly one cell may ever be published: the
+    // .prototype store path clears, and the DFG freezes, whatever rareData() returns, and
+    // initializeObjectAllocationProfile serializes racers on that cell's lock. The word only moves
+    // from executable to tagged rare data, so whoever finds it tagged adopts that cell.
+    bool gilOff = vm.gilOff();
+    if (gilOff && (executableOrRareData & rareDataTag)) [[unlikely]]
+        return std::bit_cast<FunctionRareData*>(executableOrRareData & ~rareDataTag);
     ASSERT(!(executableOrRareData & rareDataTag));
     FunctionRareData* rareData = FunctionRareData::create(vm, std::bit_cast<ExecutableBase*>(executableOrRareData));
-    executableOrRareData = std::bit_cast<uintptr_t>(rareData) | rareDataTag;
+    uintptr_t taggedRareData = std::bit_cast<uintptr_t>(rareData) | rareDataTag;
 
     // A DFG compilation thread may be trying to read the rare data
     // We want to ensure that it sees it properly allocated
     WTF::storeStoreFence();
 
-    WTF::atomicStore(&m_executableOrRareData, executableOrRareData, std::memory_order_release); // THREADS: publish rare data (subsumes the fence above for TSAN pairing).
+    if (gilOff) [[unlikely]] {
+        uintptr_t observed = WTF::atomicCompareExchangeStrong(&m_executableOrRareData, executableOrRareData, taggedRareData);
+        if (observed != executableOrRareData) {
+            // Lost the install race; our private cell is left to the GC.
+            ASSERT(observed & rareDataTag);
+            return std::bit_cast<FunctionRareData*>(observed & ~rareDataTag);
+        }
+    } else
+        WTF::atomicStore(&m_executableOrRareData, taggedRareData, std::memory_order_release); // THREADS: publish rare data (subsumes the fence above for TSAN pairing).
     vm.writeBarrier(this, rareData);
 
     return rareData;
@@ -164,6 +181,10 @@ FunctionRareData* JSFunction::allocateAndInitializeRareData(JSGlobalObject* glob
     ASSERT(!(executableOrRareData & rareDataTag));
     ASSERT(canUseAllocationProfiles());
     VM& vm = globalObject->vm();
+    // One mutator is inside the VM at a time here, so the plain publish below cannot race. GIL-off
+    // routes through allocateRareData() + initializeRareData(): CAS-publish, then initialize under
+    // the cell lock.
+    ASSERT(!vm.gilOff());
     JSObject* prototype = prototypeForConstruction(vm, globalObject);
     FunctionRareData* rareData = FunctionRareData::create(vm, std::bit_cast<ExecutableBase*>(executableOrRareData));
     rareData->initializeObjectAllocationProfile(vm, this->realm(), prototype, inlineCapacity, this);
@@ -379,12 +400,31 @@ void JSFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* gl
     }
 }
 
+// GIL-off: the clear() before a .prototype store is not enough. An initializer that has already
+// read the old prototype publishes a pair keyed to it after the store, and nothing would retract
+// that pair. So the store is followed by a clear that waits for the initializer's cell lock. The
+// fence orders the store before the rare-data load: an initializer publishes its rare data before
+// it reads .prototype (under its lock, after its own fence), so either this load sees the rare data
+// and the clear lands, or the initializer's read sees the new prototype.
+static void clearAllocationProfileAfterPrototypeStore(VM& vm, JSFunction* function)
+{
+    ASSERT(vm.gilOff());
+    WTF::storeLoadFence();
+    if (FunctionRareData* rareData = function->rareData())
+        rareData->clearAfterPrototypeStore(vm, "Store to prototype property of a function");
+}
+
 bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+
+    auto clearAfterPrototypeStore = WTF::makeScopeExit([&] {
+        if (vm.gilOff() && propertyName == vm.propertyNames->prototype) [[unlikely]]
+            clearAllocationProfileAfterPrototypeStore(vm, thisObject);
+    });
 
     if (propertyName == vm.propertyNames->prototype) {
         slot.disableCaching();
@@ -430,6 +470,10 @@ bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObjec
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(object);
 
+    auto clearAfterPrototypeStore = WTF::makeScopeExit([&] {
+        if (vm.gilOff() && propertyName == vm.propertyNames->prototype) [[unlikely]]
+            clearAllocationProfileAfterPrototypeStore(vm, thisObject);
+    });
 
     if (propertyName == vm.propertyNames->prototype) {
         if (FunctionRareData* rareData = thisObject->rareData())

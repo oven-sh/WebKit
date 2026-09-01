@@ -269,19 +269,24 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
 
     ASSERT(conditionSet.structuresEnsureValidity());
     {
-        // AUD1.N4(2): the multi-word entry install {miss watchpoints,
+        // Flag-on, the multi-word entry install {miss watchpoints,
         // equivalence watchpoint, value} runs under the owning Structure's
         // m_lock — two threads for-in/Object.prototype.toString-ing a shared
         // structure otherwise interleave Bag appends and unique_ptr resets
-        // (freeing a watchpoint another thread just installed). Condition-set
-        // derivation above stays OUTSIDE the lock (it walks other structures
-        // and allocates). The JIT-read word cache.m_value is published LAST,
-        // after the watchpoints it summarizes; foreign fast-path readers
-        // load it single-word (unlocked), per the ruling. No GC-allocating
-        // call runs under the lock (makeUnique/Bag = fastMalloc; install()
-        // takes no ConcurrentJSLock — verified against
-        // AdaptiveInferredPropertyValueWatchpointBase::install).
-        ConcurrentJSLocker locker(ownStructure->lock());
+        // (freeing a watchpoint another thread just installed); the first
+        // installer wins. Condition-set derivation above stays OUTSIDE the
+        // lock (it walks other structures and allocates). The locker is the
+        // GCSafe form because install() can materialize a property table
+        // (AdaptiveInferredPropertyValueWatchpointBase::install ->
+        // Structure::get) and takes the prototype structure's m_lock for its
+        // replacement watchpoint set; a collection started under this lock
+        // would hang on Structure::visitChildren's m_lock acquisition. The
+        // JIT-read word cache.m_value is published LAST, after the watchpoints
+        // it summarizes; foreign fast-path readers load it single-word
+        // (unlocked). Flag-off: single mutator, no lock.
+        std::optional<GCSafeConcurrentJSLocker> locker;
+        if (Options::useJSThreads()) [[unlikely]]
+            locker.emplace(ownStructure->lock(), vm);
         auto& cache = ensureSpecialPropertyCache().m_cache[static_cast<unsigned>(key)];
         if (cache.m_value.get())
             return; // A racing installer (or a giveUp sentinel) won under the lock; keep its entry.
@@ -305,26 +310,38 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
     }
 }
 
-// TSAN family structure-fields (AUD1.N4(3), races/forin-enumerator-cache.js):
-// GC-retirement of the enumerator watchpoint FixedVector. Freeing the vector
-// in place (the FixedVector reassignments in StructureRareDataInlines.h /
-// clearCachedPropertyNameEnumerator) destroys StructureChainInvalidation-
-// Watchpoints that are still linked into OTHER structures' transition
-// watchpoint sets; a concurrent thread firing/walking one of those sets then
-// touches freed memory. Outside a stop-the-world window the vector must
-// therefore be MOVED (buffer pointer swap — watchpoint addresses are stable)
-// into the retirement list and destroyed only in finalizeUnconditionally,
-// when mutators are stopped. Callers hold the owning Structure's m_lock
-// (Structure::setCachedPropertyNameEnumerator install path and the flag-on
-// Structure::clearCachedPrototypeChain), which serializes the moves.
-// A retired watchpoint that later fires only clears this cache again —
-// conservative over-invalidation, never unsoundness.
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RetiredStructureChainInvalidationWatchpoints);
+
+RetiredStructureChainInvalidationWatchpoints::RetiredStructureChainInvalidationWatchpoints() = default;
+RetiredStructureChainInvalidationWatchpoints::~RetiredStructureChainInvalidationWatchpoints() = default;
+
+void RetiredStructureChainInvalidationWatchpoints::add(FixedVector<StructureChainInvalidationWatchpoint>&& watchpoints)
+{
+    Locker locker { m_lock };
+    m_vectors.append(WTF::move(watchpoints));
+}
+
+void RetiredStructureChainInvalidationWatchpoints::destroyAll()
+{
+    Vector<FixedVector<StructureChainInvalidationWatchpoint>> vectors;
+    {
+        Locker locker { m_lock };
+        vectors = WTF::move(m_vectors);
+    }
+}
+
+// Freeing the enumerator watchpoint FixedVector in place would destroy
+// StructureChainInvalidationWatchpoints still linked into other structures'
+// transition watchpoint sets, which a foreign thread may be firing or walking.
+// Moving the vector keeps the watchpoint addresses stable until the Heap
+// destroys them with the world stopped. A retired watchpoint that fires in the
+// meantime only clears this cache again.
 void StructureRareData::retireCachedPropertyNameEnumeratorWatchpoints()
 {
+    ASSERT(Options::useJSThreads());
     if (m_cachedPropertyNameEnumeratorWatchpoints.isEmpty())
         return;
-    m_retiredCachedPropertyNameEnumeratorWatchpoints.append(WTF::move(m_cachedPropertyNameEnumeratorWatchpoints));
-    m_cachedPropertyNameEnumeratorWatchpoints = FixedVector<StructureChainInvalidationWatchpoint>();
+    heap()->retiredStructureChainInvalidationWatchpoints().add(WTF::move(m_cachedPropertyNameEnumeratorWatchpoints));
 }
 
 // TSAN family structure-fields (§10.9 item (4), "Box reassign" key): flag-on
@@ -415,14 +432,6 @@ void StructureRareData::clearCachedSpecialProperty(CachedSpecialPropertyKey key)
 
 void StructureRareData::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
-    // Drain the GC-retired enumerator watchpoint vectors: mutators are
-    // stopped here, so destroying the watchpoints (which unlinks them from
-    // the watched structures' transition watchpoint sets) cannot race a
-    // foreign walker. Cells die only at the following sweep, so the sets the
-    // destructors touch are still valid memory.
-    if (!m_retiredCachedPropertyNameEnumeratorWatchpoints.isEmpty()) [[unlikely]]
-        m_retiredCachedPropertyNameEnumeratorWatchpoints.clear();
-
     if (m_specialPropertyCache) {
         auto clearCacheIfInvalidated = [&](CachedSpecialPropertyKey key) {
             auto& cache = m_specialPropertyCache->m_cache[static_cast<unsigned>(key)];
