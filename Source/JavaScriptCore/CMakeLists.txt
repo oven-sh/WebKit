@@ -734,6 +734,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/InternalFunctionAllocationProfile.h
     bytecode/IntrinsicGetterAccessCase.h
     bytecode/IterationModeMetadata.h
+    bytecode/JSThreadsSafepoint.h
     bytecode/JumpTable.h
     bytecode/LLIntPrototypeLoadAdaptiveStructureWatchpoint.h
     bytecode/LazyOperandValueProfile.h
@@ -876,8 +877,10 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/GCMemoryOperations.h
     heap/GCOwnedDataScope.h
     heap/GCRequest.h
+    heap/GCSafepointEpoch.h
     heap/GCSegmentedArray.h
     heap/GCSegmentedArrayInlines.h
+    heap/GCThreadLocalCache.h
     heap/GCTypeMap.h
     heap/GigacageAlignedMemoryAllocator.h
     heap/Handle.h
@@ -888,6 +891,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/HeapCell.h
     heap/HeapCellInlines.h
     heap/HeapCellType.h
+    heap/HeapClientSet.h
     heap/HeapHelperPool.h
     heap/HeapInlines.h
     heap/HeapIterationScope.h
