@@ -45,6 +45,29 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+// TSAN-TRIAGE §3.24 (typedarray-sab; SPEC-objectmodel §4.7 analog): typed
+// array element lanes are JS-visible data words with SAB semantics — aligned,
+// tear-free per lane, value races legal (this holds for any view once it can
+// be reached from more than one JS thread, not just SharedArrayBuffer-backed
+// ones). JIT-generated lane accesses are invisible to TSAN by design; these
+// helpers are the TSAN-blessed accessors for the C++ slow paths. Relaxed
+// atomic loads/stores of 1/2/4/8-byte lanes compile to the same plain
+// MOV/STR, so flag-off codegen and semantics are unchanged. Bulk memset/
+// memmove fast paths must not be converted wholesale — they take a
+// gilOffWithProcessGate()-gated per-lane loop instead, keeping the flag-off
+// bulk path byte-identical.
+template<typename T>
+ALWAYS_INLINE T typedArrayLaneLoadRelaxed(const T* lane)
+{
+    return WTF::atomicLoad(const_cast<T*>(lane), std::memory_order_relaxed);
+}
+
+template<typename T>
+ALWAYS_INLINE void typedArrayLaneStoreRelaxed(T* lane, T value)
+{
+    WTF::atomicStore(lane, value, std::memory_order_relaxed);
+}
+
 template<typename Adaptor>
 JSGenericTypedArrayView<Adaptor>::JSGenericTypedArrayView(
     VM& vm, ConstructionContext& context)
@@ -302,7 +325,23 @@ bool JSGenericTypedArrayView<Adaptor>::setFromTypedArray(JSGlobalObject* globalO
             return false;
 
         RELEASE_ASSERT(JSC::elementSize(Adaptor::typeValue) == JSC::elementSize(other->type()));
-        memmove(typedVector() + offset, std::bit_cast<typename Adaptor::Type*>(other->vector()) + objectOffset, length * elementSize);
+        typename Adaptor::Type* dst = typedVector() + offset;
+        typename Adaptor::Type* src = std::bit_cast<typename Adaptor::Type*>(other->vector()) + objectOffset;
+        if (vm.gilOffWithProcessGate()) [[unlikely]] {
+            // TSAN-TRIAGE §3.24: GIL-off, both ranges may be raced by other JS
+            // threads, so the bulk memmove (plain C++ accesses) is replaced by
+            // relaxed lane copies. memmove overlap semantics are preserved by
+            // picking the copy direction from the pointer order. Flag-off/
+            // GIL-on keeps the byte-identical memmove (one predicted branch).
+            if (dst <= src) {
+                for (size_t i = 0; i < length; ++i)
+                    typedArrayLaneStoreRelaxed(dst + i, typedArrayLaneLoadRelaxed(src + i));
+            } else {
+                for (size_t i = length; i--;)
+                    typedArrayLaneStoreRelaxed(dst + i, typedArrayLaneLoadRelaxed(src + i));
+            }
+        } else
+            memmove(dst, src, length * elementSize);
         return true;
     };
 
@@ -372,23 +411,69 @@ void JSGenericTypedArrayView<Adaptor>::copyFromInt32ShapeArray(size_t offset, JS
     ASSERT((length + objectOffset) <= array->length());
     ASSERT(array->isIteratorProtocolFastAndNonObservable());
 
+#if USE(JSVALUE64)
+    // CVE-AUDIT MC-DF S10b / Tier-B B2 (round-4 single-snapshot): callers
+    // gate on a §10.7 mayBeSegmentedButterfly() check (setFromArrayLike) or
+    // none at all (genericTypedArrayViewPrivateFuncFromFast, which has an
+    // allocation safepoint between its shape check and this call). Once a
+    // shape family's TTL sets are fired, a foreign §4.2 flat→segmented
+    // conversion needs only the cell lock + DCAS — NO stop — so it can land
+    // between the caller's check and any butterfly() re-load here (round-4
+    // finding, JSArray.cpp:1752); the flat-only decode would then read the
+    // ButterflySpine* payload as a Butterfly* and feed spine innards to
+    // copyElements (attacker-observable heap bytes into the destination TA).
+    // Close the window by deriving every source deref from ONE tagged-word
+    // load; a segmented/null/short snapshot routes through the regime-safe
+    // tryGetIndexQuickly (handles every regime, never OOBs). A post-snapshot
+    // §4.2 conversion stays sound: it aliases the same memory and the local
+    // pointer pins the superseded flat allocation for the conservative scan
+    // (I7); flat vectorLengths are immutable flag-on. R-DOUBLE relabels
+    // touching Double on a shared word are per-event STW (§4.7/§10.6); the
+    // residual Int32→Contiguous (§4.3, lock-free) race is the round-4
+    // accepted one — garbage-decoded lanes are at worst reinterpreted
+    // numbers in TA elements, never followed as cell pointers. Flag-off all
+    // tag bits are zero (I22): the snapshot is exactly array->butterfly()
+    // and the [[unlikely]] arm is dead — byte-identical to the original.
+    Butterfly* sourceButterfly;
+    if (Options::useJSThreads()) [[unlikely]] {
+        uint64_t snapshotWord = array->taggedButterflyWord();
+        if (isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
+            || (objectOffset + length) > untaggedButterfly(snapshotWord)->vectorLength()) [[unlikely]] {
+            for (size_t i = 0; i < length; ++i) {
+                JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
+                if (value && value.isInt32()) [[likely]]
+                    setIndexQuicklyToNativeValue(offset + i, Adaptor::toNativeFromInt32(value.asInt32()));
+                else if (value && value.isNumber())
+                    setIndexQuicklyToNativeValue(offset + i, Adaptor::toNativeFromDouble(value.asNumber()));
+                else
+                    setIndexQuicklyToNativeValue(offset + i, Adaptor::toNativeFromUndefined());
+            }
+            return;
+        }
+        sourceButterfly = untaggedButterfly(snapshotWord);
+    } else
+        sourceButterfly = array->butterfly();
+#else
+    Butterfly* sourceButterfly = array->butterfly();
+#endif
+
     // If the destination is uint32_t or int32_t, we can use copyElements.
     // 1. int32_t -> uint32_t conversion does not change any bit representation. So we can simply copy them.
     // 2. Hole is represented as JSEmpty in Int32Shape, which lower 32bits is zero. And we expect 0 for undefined, thus this copying simply works.
     if constexpr (Adaptor::typeValue == TypeUint8 || Adaptor::typeValue == TypeInt8) {
-        WTF::copyElements(byteCast<uint8_t>(typedSpan().subspan(offset)), std::span { std::bit_cast<const uint64_t*>(array->butterfly()->contiguous().data() + objectOffset), length });
+        WTF::copyElements(byteCast<uint8_t>(typedSpan().subspan(offset)), std::span { std::bit_cast<const uint64_t*>(sourceButterfly->contiguous().data() + objectOffset), length });
         return;
     }
     if constexpr (Adaptor::typeValue == TypeUint16 || Adaptor::typeValue == TypeInt16) {
-        WTF::copyElements(spanReinterpretCast<uint16_t>(typedSpan().subspan(offset)), std::span { std::bit_cast<const uint64_t*>(array->butterfly()->contiguous().data() + objectOffset), length });
+        WTF::copyElements(spanReinterpretCast<uint16_t>(typedSpan().subspan(offset)), std::span { std::bit_cast<const uint64_t*>(sourceButterfly->contiguous().data() + objectOffset), length });
         return;
     }
     if constexpr (Adaptor::typeValue == TypeUint32 || Adaptor::typeValue == TypeInt32) {
-        WTF::copyElements(spanReinterpretCast<uint32_t>(typedSpan().subspan(offset)), std::span { std::bit_cast<const uint64_t*>(array->butterfly()->contiguous().data() + objectOffset), length });
+        WTF::copyElements(spanReinterpretCast<uint32_t>(typedSpan().subspan(offset)), std::span { std::bit_cast<const uint64_t*>(sourceButterfly->contiguous().data() + objectOffset), length });
         return;
     }
     for (size_t i = 0; i < length; ++i) {
-        JSValue value = array->butterfly()->contiguous().at(array, static_cast<unsigned>(i + objectOffset)).get();
+        JSValue value = sourceButterfly->contiguous().at(array, static_cast<unsigned>(i + objectOffset)).get();
         if (!!value) [[likely]]
             setIndexQuicklyToNativeValue(offset + i, Adaptor::toNativeFromInt32(value.asInt32()));
         else
@@ -405,13 +490,42 @@ void JSGenericTypedArrayView<Adaptor>::copyFromDoubleShapeArray(size_t offset, J
     ASSERT((length + objectOffset) <= array->length());
     ASSERT(array->isIteratorProtocolFastAndNonObservable());
 
+#if USE(JSVALUE64)
+    // CVE-AUDIT MC-DF S10b / Tier-B B2 (round-4 single-snapshot): same
+    // root cause as copyFromInt32ShapeArray above — every source deref goes
+    // through ONE tagged-word load; segmented/null/short snapshot routes
+    // through the regime-safe tryGetIndexQuickly. R-DOUBLE Double→Contiguous
+    // relabels on a shared word are per-event STW (§4.7/§10.6), so the
+    // raw-double read of the snapshot's lanes never follows a cell pointer.
+    // Flag-off byte-identical (I22).
+    Butterfly* sourceButterfly;
+    if (Options::useJSThreads()) [[unlikely]] {
+        uint64_t snapshotWord = array->taggedButterflyWord();
+        if (isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
+            || (objectOffset + length) > untaggedButterfly(snapshotWord)->vectorLength()) [[unlikely]] {
+            for (size_t i = 0; i < length; ++i) {
+                JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
+                if (value && value.isNumber()) [[likely]]
+                    setIndexQuicklyToNativeValue(offset + i, Adaptor::toNativeFromDouble(value.asNumber()));
+                else
+                    setIndexQuicklyToNativeValue(offset + i, Adaptor::toNativeFromUndefined());
+            }
+            return;
+        }
+        sourceButterfly = untaggedButterfly(snapshotWord);
+    } else
+        sourceButterfly = array->butterfly();
+#else
+    Butterfly* sourceButterfly = array->butterfly();
+#endif
+
     if constexpr (Adaptor::typeValue == TypeFloat64 || Adaptor::typeValue == TypeFloat32) {
-        WTF::copyElements(typedSpan().subspan(offset), std::span<const double> { array->butterfly()->contiguousDouble().data() + objectOffset, length });
+        WTF::copyElements(typedSpan().subspan(offset), std::span<const double> { sourceButterfly->contiguousDouble().data() + objectOffset, length });
         return;
     }
 
     for (size_t i = 0; i < length; ++i) {
-        double d = array->butterfly()->contiguousDouble().at(array, static_cast<unsigned>(i + objectOffset));
+        double d = sourceButterfly->contiguousDouble().at(array, static_cast<unsigned>(i + objectOffset));
         setIndexQuicklyToNativeValue(offset + i, Adaptor::toNativeFromDouble(d));
     }
 }
@@ -434,17 +548,135 @@ bool JSGenericTypedArrayView<Adaptor>::setFromArrayLike(JSGlobalObject* globalOb
 
     if constexpr (TypedArrayStorageType != TypeBigInt64 && TypedArrayStorageType != TypeBigUint64) {
         if (JSArray* array = dynamicDowncast<JSArray>(object); array && isJSArray(array)) [[likely]] {
+            // THREADS-INTEGRATE(objectmodel) §10.7 (entry 7, site 12): a
+            // tagged/segmented word must not be dereferenced as a flat
+            // butterfly by copyFromInt32ShapeArray/copyFromDoubleShapeArray
+            // (spine-as-flat deref = OOB; typedArray.set(sharedArray) is the
+            // canonical attack). The old §10.7 fix bailed to the generic
+            // per-element loop below — the §35 flatten1 19.7 ns/elem path
+            // (get() -> PropertySlot -> spine indirection, then setIndex()
+            // ToNumber + RETURN_IF_EXCEPTION every iteration). The segmented
+            // arm walks fragment runs directly (§9.3 spine layout, immutable
+            // post-publish) and reuses the flat copyElements/nativeFromInt32
+            // bodies per run. Flag-off mayBeSegmentedButterfly() is constant
+            // false (I22) so the else-arm is dead and the flat path is the
+            // unchanged byte-identical original.
+            //
+            // CVE-AUDIT MC-DF S10b / Tier-B B2: the mayBeSegmentedButterfly()
+            // check below is a check-then-reload §10.7 gate, which the
+            // round-4 finding (JSArray.cpp:1752) showed is unsound vs a
+            // cell-lock-only §4.2 conversion. It is therefore now ONLY a
+            // dispatch hint between the flat-helper and segmented-walk arms;
+            // BOTH arms are individually authoritative — copyFrom*ShapeArray
+            // re-snapshots the tagged word once and routes a raced-segmented
+            // snapshot through a regime-safe loop, and the segmented arm
+            // re-loads and re-checks (raced-flat falls through to the
+            // generic JSArray loop further below, also regime-safe).
             if (safeLength == length && (safeLength + objectOffset) <= array->length() && array->isIteratorProtocolFastAndNonObservable()) {
                 IndexingType indexingType = array->indexingType() & IndexingShapeMask;
-                if (indexingType == Int32Shape) {
-                    copyFromInt32ShapeArray(offset, array, objectOffset, safeLength);
-                    return true;
+                if (!array->mayBeSegmentedButterfly()) {
+                    if (indexingType == Int32Shape) {
+                        copyFromInt32ShapeArray(offset, array, objectOffset, safeLength);
+                        return true;
+                    }
+                    if (indexingType == DoubleShape) {
+                        copyFromDoubleShapeArray(offset, array, objectOffset, safeLength);
+                        return true;
+                    }
                 }
-                if (indexingType == DoubleShape) {
-                    copyFromDoubleShapeArray(offset, array, objectOffset, safeLength);
-                    return true;
+#if USE(JSVALUE64)
+                else if (indexingType == Int32Shape || indexingType == DoubleShape) {
+                    // SCALEBENCH §35 flatten1-segmented-int32shape-segwalk-copy:
+                    // re-load the tagged word (mayBeSegmentedButterfly proved it
+                    // tagged a moment ago, but use ONE load for spine + bounds).
+                    uint64_t word = array->taggedButterflyWord();
+                    if (isSegmentedButterfly(word)) [[likely]] {
+                        ButterflySpine* spine = butterflySpine(word);
+                        // C4: [vectorLength, publicLength) reads as holes. Clamp
+                        // the fragment walk and fill the tail as undefined.
+                        unsigned spineEnd = static_cast<unsigned>(objectOffset + safeLength);
+                        unsigned walkEnd = std::min(spineEnd, segmentedVectorLength(spine));
+                        unsigned walkStart = std::min(static_cast<unsigned>(objectOffset), walkEnd);
+                        size_t dst = offset;
+                        if (indexingType == Int32Shape) {
+                            forEachSegmentedIndexedContiguousRun(spine, walkStart, walkEnd, [&](const WriteBarrierBase<Unknown>* run, size_t runLength) {
+                                if constexpr (Adaptor::typeValue == TypeUint8 || Adaptor::typeValue == TypeInt8)
+                                    WTF::copyElements(byteCast<uint8_t>(typedSpan().subspan(dst)), std::span { std::bit_cast<const uint64_t*>(run), runLength });
+                                else if constexpr (Adaptor::typeValue == TypeUint16 || Adaptor::typeValue == TypeInt16)
+                                    WTF::copyElements(spanReinterpretCast<uint16_t>(typedSpan().subspan(dst)), std::span { std::bit_cast<const uint64_t*>(run), runLength });
+                                else if constexpr (Adaptor::typeValue == TypeUint32 || Adaptor::typeValue == TypeInt32)
+                                    WTF::copyElements(spanReinterpretCast<uint32_t>(typedSpan().subspan(dst)), std::span { std::bit_cast<const uint64_t*>(run), runLength });
+                                else {
+                                    for (size_t k = 0; k < runLength; ++k) {
+                                        JSValue value = run[k].get();
+                                        if (!!value) [[likely]]
+                                            setIndexQuicklyToNativeValue(dst + k, Adaptor::toNativeFromInt32(value.asInt32()));
+                                        else
+                                            setIndexQuicklyToNativeValue(dst + k, Adaptor::toNativeFromUndefined());
+                                    }
+                                }
+                                dst += runLength;
+                            });
+                        } else {
+                            forEachSegmentedIndexedContiguousRun(spine, walkStart, walkEnd, [&](const WriteBarrierBase<Unknown>* run, size_t runLength) {
+                                const double* dRun = std::bit_cast<const double*>(run);
+                                if constexpr (Adaptor::typeValue == TypeFloat64 || Adaptor::typeValue == TypeFloat32)
+                                    WTF::copyElements(typedSpan().subspan(dst), std::span { dRun, runLength });
+                                else {
+                                    for (size_t k = 0; k < runLength; ++k)
+                                        setIndexQuicklyToNativeValue(dst + k, Adaptor::toNativeFromDouble(dRun[k]));
+                                }
+                                dst += runLength;
+                            });
+                        }
+                        // C4 hole tail [walkEnd, spineEnd): undefined-as-native.
+                        for (; dst < offset + safeLength; ++dst)
+                            setIndexQuicklyToNativeValue(dst, Adaptor::toNativeFromUndefined());
+                        return true;
+                    }
+                    // Raced flat between the two loads: fall through to generic.
                 }
+#endif
             }
+#if USE(JSVALUE64)
+            // SCALEBENCH §35 setFromArrayLike-seg-generic-get-4deep-vtable-pl:
+            // any JSArray that did not match a memcpy/segwalk arm above
+            // (ContiguousShape, segmented-word-raced-flat, or the
+            // iterator-protocol-fast gate rejected) used to fall through to
+            // the generic object->get(unsigned) loop, whose per-element cost
+            // is the FULL property-slot chain: PropertySlot ctor +
+            // methodTable()->getOwnPropertySlotByIndex vtable +
+            // JS_EXPORT_PRIVATE tryGetIndexQuicklyConcurrent PLT stub +
+            // frame. perf -F997 W=16 thread-0 attributes ~155 ms of
+            // flatten1's 280 ms to that 4-deep chain (8.31M elem @ ~30 ns)
+            // vs ~45 ms of actual segment-index work. The header-INLINE
+            // tryGetIndexQuickly already dispatches segmented Int32/Contig/
+            // Double with zero PLT/frame and we already hold the downcast
+            // JSArray*; call it directly. An empty return (hole / OOB /
+            // ArrayStorage / Undecided) falls back to the spec get() for
+            // that one index, so semantics are identical to the generic
+            // loop. Flag-off this block is dead (I22) and the original
+            // generic loop below is the unchanged byte-identical path.
+            if (Options::useJSThreads()) [[unlikely]] {
+                for (size_t i = 0; i < safeLength; ++i) {
+                    ASSERT(i + objectOffset <= MAX_ARRAY_INDEX);
+                    JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
+                    if (!value) [[unlikely]] {
+                        value = array->get(globalObject, static_cast<unsigned>(i + objectOffset));
+                        RETURN_IF_EXCEPTION(scope, false);
+                    }
+                    success &= setIndex(globalObject, offset + i, value);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                for (size_t i = safeLength; i < length; ++i) {
+                    JSValue value = array->get(globalObject, static_cast<uint64_t>(i + objectOffset));
+                    RETURN_IF_EXCEPTION(scope, false);
+                    success &= setIndex(globalObject, offset + i, value);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                return success;
+            }
+#endif
         }
     }
 
@@ -846,8 +1078,39 @@ template<typename Adaptor> inline bool JSGenericTypedArrayView<Adaptor>::canSetI
 
 template<typename Adaptor> inline typename Adaptor::Type JSGenericTypedArrayView<Adaptor>::getIndexQuicklyAsNativeValue(size_t i) const
 {
+    // SPEC-ungil annex N6 (torn-pair table): GIL-off, the caller's bounds proof
+    // (canGetIndexQuickly / inBounds at the call site) and this access are two
+    // separate fetches of the view's {length, base} pair; a concurrent
+    // detach/shrink/resize between them is legal. Load the base ONCE and
+    // re-validate against that single snapshot:
+    //  - null base: detach raced. JSArrayBufferView::detachFromArrayBuffer()
+    //    clears the view's m_vector synchronously (N6's quarantine defers the
+    //    unmap of ArrayBuffer::m_data, NOT the view's base word), so we must
+    //    bail rather than dereference nullptr + i. Behave as a bounds-fail and
+    //    return the zero element (within the corpus oracle {sentinel, 0,
+    //    undefined}).
+    //  - non-null base with stale length: the quarantine keeps the old mapping
+    //    committed and sized >= any length the caller could have proven against
+    //    it (N6 stale-but-safe rows), so the relaxed lane load is a legal value
+    //    race. A failing inBounds() re-fetch here is the second-fetch shape N6
+    //    forbids treating as an invariant; we bail conservatively instead of
+    //    asserting.
+    // GIL-on/flag-off keeps the exact assert and identical codegen on the
+    // likely path, preserving the oracle's full assert strength.
+    // FIXME(threads): the cleaner long-term fix is to defer the m_vector
+    // clear/poison in JSArrayBufferView::detachFromArrayBuffer() to the heap
+    // §10 stop (mirroring clearBaseWordAtStop for ArrayBuffer::m_data); that
+    // file is outside this item's scope.
+    const typename Adaptor::Type* vector = typedVector();
+    if (VM::isGILOffProcess()) [[unlikely]] {
+        if (!vector || !inBounds(i)) [[unlikely]]
+            return typename Adaptor::Type();
+        // TSAN-TRIAGE §3.24: relaxed lane load (see typedArrayLaneLoadRelaxed above).
+        return typedArrayLaneLoadRelaxed(vector + i);
+    }
     ASSERT(inBounds(i));
-    return typedVector()[i];
+    // TSAN-TRIAGE §3.24: relaxed lane load (see typedArrayLaneLoadRelaxed above).
+    return typedArrayLaneLoadRelaxed(vector + i);
 }
 
 template<typename Adaptor> inline JSValue JSGenericTypedArrayView<Adaptor>::getIndexQuickly(size_t i) const
@@ -857,8 +1120,29 @@ template<typename Adaptor> inline JSValue JSGenericTypedArrayView<Adaptor>::getI
 
 template<typename Adaptor> inline void JSGenericTypedArrayView<Adaptor>::setIndexQuicklyToNativeValue(size_t i, typename Adaptor::Type value)
 {
+    // SPEC-ungil annex N6 (torn-pair table): same second-fetch shape as
+    // getIndexQuicklyAsNativeValue above. Single base snapshot; GIL-off, bail
+    // on a raced detach (null m_vector — cleared synchronously by
+    // JSArrayBufferView::detachFromArrayBuffer(); the N6 quarantine covers
+    // ArrayBuffer::m_data, not the view's base word) or a raced shrink (stale
+    // index) by dropping the store — a legal lost-value race; re-grow
+    // zeroFills. A non-null base lands in the quarantined (still committed)
+    // mapping, which N6 classifies stale-but-safe. GIL-on/flag-off keeps the
+    // exact assert and identical codegen on the likely path.
+    // FIXME(threads): long-term, defer the m_vector clear in
+    // JSArrayBufferView::detachFromArrayBuffer() to the heap §10 stop
+    // (out of this item's file scope).
+    typename Adaptor::Type* vector = typedVector();
+    if (VM::isGILOffProcess()) [[unlikely]] {
+        if (!vector || !inBounds(i)) [[unlikely]]
+            return;
+        // TSAN-TRIAGE §3.24: relaxed lane store (see typedArrayLaneStoreRelaxed above).
+        typedArrayLaneStoreRelaxed(vector + i, value);
+        return;
+    }
     ASSERT(inBounds(i));
-    typedVector()[i] = value;
+    // TSAN-TRIAGE §3.24: relaxed lane store (see typedArrayLaneStoreRelaxed above).
+    typedArrayLaneStoreRelaxed(vector + i, value);
 }
 
 template<typename Adaptor> inline void JSGenericTypedArrayView<Adaptor>::setIndexQuickly(size_t i, JSValue value)
@@ -928,10 +1212,37 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
 
     auto array = originalSpan.data();
     Vector<ElementType, 16> forShared;
-    if (isShared()) {
+    // CVE-AUDIT A2 / MC-DF S9 (mc-df-ta-sort-inplace.CRASH.log): r269531's
+    // isShared() gate is SAB-only. Under useJSThreads GIL-off a non-SAB
+    // ArrayBuffer is reachable from another mutator, so a racing lane writer
+    // breaks std::sort's strict-weak-ordering / element-stability assumptions
+    // and libstdc++ __unguarded_linear_insert walks past the front of the
+    // allocation (ASAN heap-buffer-overflow READ -4). Widen the r269531 gate
+    // to take the copy-out/sort/copy-back path whenever the backing may be
+    // raced — i.e. unconditionally under gilOffProcess (we cannot prove
+    // thread-locality here). Flag-off/GIL-on (gilOffProcess == 0) keeps the
+    // byte-identical in-place std::sort on the likely path — one
+    // predicted-false Config-page test; isShared() is immutable so hoisting
+    // it into the local preserves the original two-check semantics exactly.
+    // TSAN-TRIAGE §20.3.9 (typedarray-sort-memcpy): the copy-out/back touch
+    // live TA lanes that another mutator may atomic-write via
+    // trySetIndexQuicklyForTypedArrayConcurrent — plain memcpy is NOT the
+    // blessed accessor (OM §1 GT). Under gilOffProcess use the §3.24 relaxed
+    // lane load/store helpers (private-buffer side stays plain); flag-off
+    // keeps the byte-identical WTF::copyElements (SAB arm unchanged).
+    bool mustCopyOut = isShared();
+    if (VM::isGILOffProcess()) [[unlikely]]
+        mustCopyOut = true;
+    if (mustCopyOut) {
         if (!forShared.tryGrow(length)) [[unlikely]]
             return SortResult::OutOfMemory;
-        WTF::copyElements(forShared.mutableSpan(), spanConstCast<const typename Adaptor::Type>(originalSpan.first(length)));
+        if (VM::isGILOffProcess()) [[unlikely]] {
+            auto* dst = forShared.mutableSpan().data();
+            auto* src = originalSpan.data();
+            for (size_t i = 0; i < length; ++i)
+                dst[i] = typedArrayLaneLoadRelaxed(src + i);
+        } else
+            WTF::copyElements(forShared.mutableSpan(), spanConstCast<const typename Adaptor::Type>(originalSpan.first(length)));
         array = forShared.mutableSpan().data();
     }
 
@@ -950,8 +1261,17 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
         break;
     }
 
-    if (isShared())
-        WTF::copyElements(originalSpan, forShared.span().first(length));
+    if (mustCopyOut) {
+        if (VM::isGILOffProcess()) [[unlikely]] {
+            // TSAN-TRIAGE §20.3.9: relaxed lane stores back into the live span;
+            // private-buffer reads stay plain.
+            auto* dst = originalSpan.data();
+            auto* src = forShared.span().data();
+            for (size_t i = 0; i < length; ++i)
+                typedArrayLaneStoreRelaxed(dst + i, src[i]);
+        } else
+            WTF::copyElements(originalSpan, forShared.span().first(length));
+    }
 
     return SortResult::Success;
 }

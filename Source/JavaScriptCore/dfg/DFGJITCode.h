@@ -37,7 +37,10 @@
 #include "ExecutionCounter.h"
 #include "JITCode.h"
 #include "JumpTable.h"
+#include <atomic>
+#include <wtf/Atomics.h>
 #include <wtf/CompactPointerTuple.h>
+#include <wtf/Lock.h>
 #include <wtf/SegmentedVector.h>
 
 namespace JSC {
@@ -159,9 +162,46 @@ public:
 
     void setExitCode(unsigned exitIndex, MacroAssemblerCodeRef<OSRExitPtrTag> code)
     {
-        m_exits[exitIndex] = WTF::move(code);
+        // TSAN family osr-exit-coderef (TSAN-TRIAGE §20.3.5): GIL-off, the
+        // SCALEBENCH-bimodal lock-free DCLP probe in operationCompileOSRExit
+        // reads m_exits[i].m_codePtr without dfgOSRExitGenerationLock; this is
+        // the publishing writer (under that lock). Decompose the move-assign so
+        // m_executableMemory lands first (the slot's own RefPtr is the liveness
+        // anchor once m_codePtr publishes non-thunk), storeStoreFence, then
+        // publish m_codePtr with a relaxed atomic store paired with
+        // exitCodePtrConcurrent()'s relaxed load. offsetOfCodePtr() is the same
+        // JIT-visible word the unlinked-DFG farJump reads (DFGJITCompiler.cpp);
+        // the static_asserts pin m_executableMemory at the second word so a
+        // layout change in MacroAssemblerCodeRef trips here. Flag-off: the DCLP
+        // arm is gilOff-only, and a relaxed store of one word + a fence is
+        // codegen-equivalent on the slow path to the plain move-assign it
+        // replaces (once-per-exit-compile), so flag-off behavior is unchanged.
+        auto& slot = m_exits[exitIndex];
+        static_assert(!MacroAssemblerCodeRef<OSRExitPtrTag>::offsetOfCodePtr());
+        static_assert(sizeof(CodePtr<OSRExitPtrTag>) == sizeof(void*));
+        static_assert(sizeof(MacroAssemblerCodeRef<OSRExitPtrTag>) == 2 * sizeof(void*));
+        constexpr ptrdiff_t executableMemoryOffset = sizeof(void*);
+        auto* slotExecMem = std::bit_cast<RefPtr<ExecutableMemoryHandle>*>(std::bit_cast<char*>(&slot) + executableMemoryOffset);
+        auto* srcExecMem = std::bit_cast<RefPtr<ExecutableMemoryHandle>*>(std::bit_cast<char*>(&code) + executableMemoryOffset);
+        *slotExecMem = WTF::move(*srcExecMem);
+        WTF::storeStoreFence();
+        void** slotCodePtrWord = std::bit_cast<void**>(std::bit_cast<char*>(&slot) + MacroAssemblerCodeRef<OSRExitPtrTag>::offsetOfCodePtr());
+        WTF::atomicStore(slotCodePtrWord, code.code().taggedPtr(), std::memory_order_relaxed);
     }
     const MacroAssemblerCodeRef<OSRExitPtrTag>& exitCode(unsigned exitIndex) const { return m_exits[exitIndex]; }
+
+    // Relaxed-atomic read of m_exits[i].m_codePtr for the gilOff lock-free
+    // DCLP probe in operationCompileOSRExit (TSAN-TRIAGE §20.3.5). Pairs with
+    // setExitCode()'s relaxed-atomic publish; the caller issues
+    // WTF::loadLoadFence() after observing a non-thunk value. Returns the
+    // tagged code pointer (same value exitCode(i).code().taggedPtr() would
+    // return under the lock).
+    void* exitCodePtrConcurrent(unsigned exitIndex) const
+    {
+        static_assert(sizeof(CodePtr<OSRExitPtrTag>) == sizeof(void*));
+        auto* word = std::bit_cast<void* const*>(std::bit_cast<const char*>(&m_exits[exitIndex]) + MacroAssemblerCodeRef<OSRExitPtrTag>::offsetOfCodePtr());
+        return WTF::atomicLoad(const_cast<void**>(word), std::memory_order_relaxed);
+    }
 
     bool isInvalidated() const { return !!m_isInvalidated; }
 
@@ -201,6 +241,16 @@ public:
     void reconcileWeakReferencesAtGCEnd()
     {
         m_dummyArrayProfile.clear();
+    }
+
+    // Destroys (and thereby disarms) the privately-owned jettisoning
+    // watchpoints. Mirrors DFGCommonData::clearWatchpoints(). Used when the
+    // owning CodeBlock leaks this JITData under useJSThreads (SPEC-jit 5.3 /
+    // I7): the leaked shell must not keep armed watchpoints whose m_owner
+    // points at a destructed CodeBlock cell.
+    void clearWatchpoints()
+    {
+        m_watchpoints = FixedVector<CodeBlockJettisoningWatchpoint>();
     }
 
 private:
@@ -314,11 +364,36 @@ public:
     // Map each bytecode of CheckTierUpAndOSREnter to its trigger forcing OSR Entry.
     // This can never be modified after it has been initialized since the addresses of the triggers
     // are used by the JIT.
+    //
+    // THREADS (DFG-1): GIL-off, N mutators reach the tier-up slow paths concurrently on the
+    // same CodeBlock. m_tierUpTriggersLock guards every post-link C++ access (find/iterate/
+    // value-write) to tierUpEntryTriggers and to tierUpInLoopHierarchy. JIT'd code keeps
+    // reading the embedded TriggerReason bytes lock-free; that stays sound because keys are
+    // never added or removed after link (no rehash => stable value addresses) and the payload
+    // is a single byte. Post-link updates must go through locked find()+in-place value write —
+    // never set()/add() — so structural mutation is impossible by construction.
+    //
+    // Post-link C++ writers that address triggers by BytecodeIndex must go through
+    // setTierUpEntryTrigger() (locked find() + in-place value write; RELEASE_ASSERTs the key
+    // exists, so structural mutation/rehash is impossible by construction). Releasing
+    // m_tierUpTriggersLock also supplies the release edge ordering setOSREntryBlock before
+    // the CompilationDone publication on weak memory. Carve-out: the compiler thread's raw
+    // single-byte store through m_forcedOSREntryTrigger in
+    // ToFTLForOSREntryDeferredCompilationCallback::compilationDidBecomeReadyAsynchronously is
+    // permitted — stable post-link address, single-byte payload, same contract as the
+    // JIT-embedded lock-free reads.
+    //
+    // The former KNOWN GAP is closed (DFG-1, this round): DFGToFTLForOSREntryDeferredCompilationCallback
+    // ::compilationDidComplete was converted to setTierUpEntryTrigger() (locked find() +
+    // in-place value write), so the locked-writer set is complete — no post-link structural
+    // writer of tierUpEntryTriggers remains and the no-rehash guarantee holds.
     UncheckedKeyHashMap<BytecodeIndex, TriggerReason> tierUpEntryTriggers;
+    void setTierUpEntryTrigger(BytecodeIndex, TriggerReason);
+    Lock m_tierUpTriggersLock;
 
     WriteBarrier<CodeBlock> m_osrEntryBlock;
-    unsigned osrEntryRetry { 0 };
-    bool abandonOSREntry { false };
+    std::atomic<unsigned> osrEntryRetry { 0 };
+    std::atomic<bool> abandonOSREntry { false };
 #endif // ENABLE(FTL_JIT)
 };
 

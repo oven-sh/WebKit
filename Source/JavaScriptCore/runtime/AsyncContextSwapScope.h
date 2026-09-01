@@ -35,6 +35,12 @@
 
 namespace JSC {
 
+// ALS1 (U-T9): the async-context cursor accessor. GIL-off it resolves the
+// CURRENT lite's per-realm copy once the per-lite reroute is enabled; until
+// then (and always GIL-on / flag-off) it is the realm's m_asyncContextData.
+// Defined in JSGlobalObject.cpp.
+InternalFieldTuple* threadAsyncContextData(JSGlobalObject*);
+
 // RAII helper for Bun's AsyncLocalStorage: swaps an async context value into
 // JSGlobalObject::m_asyncContextData field 0 for the lifetime of the scope and
 // restores the previous value on destruction. A no-op when the supplied context
@@ -51,7 +57,7 @@ public:
     {
         if (asyncContext.isEmpty() || asyncContext.isUndefined())
             return;
-        m_asyncContextData = globalObject->m_asyncContextData.get();
+        m_asyncContextData = threadAsyncContextData(globalObject);
         if (!m_asyncContextData)
             return;
         m_restoreAsyncContext = m_asyncContextData->getInternalField(0);
@@ -94,7 +100,7 @@ public:
     // jsUndefined() when tracking has not been enabled on this global.
     static ALWAYS_INLINE JSValue current(JSGlobalObject* globalObject)
     {
-        if (auto* asyncContextData = globalObject->m_asyncContextData.get())
+        if (auto* asyncContextData = threadAsyncContextData(globalObject))
             return asyncContextData->getInternalField(0);
         return jsUndefined();
     }

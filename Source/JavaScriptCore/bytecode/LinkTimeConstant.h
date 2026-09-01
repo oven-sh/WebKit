@@ -55,6 +55,9 @@ class JSGlobalObject;
     v(fulfillPromise, nullptr) \
     v(markPromiseAsHandled, nullptr) \
     v(isPromiseStatePending, nullptr) \
+    v(claimGeneratorResume, nullptr) \
+    v(publishGeneratorResume, nullptr) \
+    v(claimAsyncGeneratorResume, nullptr) \
     v(resolvePromiseWithFirstResolvingFunctionCallCheck, nullptr) \
     v(rejectPromiseWithFirstResolvingFunctionCallCheck, nullptr) \
     v(fulfillPromiseWithFirstResolvingFunctionCallCheck, nullptr) \

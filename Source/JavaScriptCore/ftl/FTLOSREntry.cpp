@@ -33,6 +33,8 @@
 #include "JSCJSValueInlines.h"
 #include "OperandsInlines.h"
 #include "VMInlines.h"
+#include "VMLite.h"
+#include <limits>
 
 #if ENABLE(FTL_JIT)
 
@@ -117,9 +119,18 @@ void* prepareOSREntry(
     }
     
     RELEASE_ASSERT(values.numberOfLocals() == baseline->numCalleeLocals());
-    
-    EncodedJSValue* scratch = static_cast<EncodedJSValue*>(
-        entryCode->entryBuffer()->dataBuffer());
+
+    ScratchBuffer* entryScratchBuffer = entryCode->entryBuffer();
+    if (entryCode->entryBufferBakedIndex() != std::numeric_limits<unsigned>::max()) [[unlikely]] {
+        // UNGIL §A.1.6 (ANNEX A16, U-T4b): gilOff compilations store a
+        // per-lite registry index. This runs on the entering thread with its
+        // lite installed; the entry code's ExtractOSREntryLocal reads back
+        // through the SAME lite, so concurrent loop OSR entries into one
+        // entry CodeBlock use disjoint per-thread buffers.
+        entryScratchBuffer = VMLite::current().scratchBufferAtIndex(entryCode->entryBufferBakedIndex());
+        RELEASE_ASSERT(entryScratchBuffer);
+    }
+    EncodedJSValue* scratch = static_cast<EncodedJSValue*>(entryScratchBuffer->dataBuffer());
     
     for (int local = values.numberOfLocals(); local--;) {
         std::optional<JSValue> value = values.local(local);

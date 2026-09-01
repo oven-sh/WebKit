@@ -33,6 +33,9 @@
 #include "BytecodeOperandsForCheckpoint.h"
 #include "CallFrame.h"
 #include "CheckpointOSRExitSideState.h"
+#if ENABLE(DFG_JIT)
+#include "DFGOSRExitCompilerCommon.h" // DW-1: sortComparatorOSRExitStashRecord cross-check.
+#endif
 #include "CodeBlockInlines.h"
 #include "CommonSlowPathsInlines.h"
 #include "Error.h"
@@ -75,6 +78,7 @@
 #include "SymbolTableInlines.h"
 #include "VMInlines.h"
 #include "VMTrapsInlines.h"
+#include <wtf/Atomics.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StringPrintStream.h>
 
@@ -107,6 +111,58 @@ namespace JSC { namespace LLInt {
 
 static inline JSValue NODELETE getNonConstantOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->uncheckedR(operand).jsValue(); }
 static inline JSValue NODELETE getOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->r(operand).jsValue(); }
+
+// SPEC-jit §4.3/§5.4 (Task 6): LLInt metadata caches under JS threads.
+//
+// Flag-on (Options::useJSThreads()), a metadata cache survives only if its
+// threaded form is exactly ONE aligned 64-bit word ({StructureID, offset},
+// published with a single relaxed store; readers do a single 64-bit load and
+// compare the id half / use the offset half). Anything wider is disabled
+// wholesale: never published, so the asm fast-path checks can never match and
+// every execution takes the slow path. Per the frozen §4.3 table:
+//   - get_by_id family (incl. get_length/instanceof/iterator_*): only Default
+//     (word 1) and ArrayLength publish; setupGetByIdPrototypeCache() — the sole
+//     ProtoLoad/Unset installer — is disabled wholesale (I18).
+//   - try_get_by_id / get_by_id_direct: survive, repacked as LLIntCachedIdAndOffset.
+//   - put_by_id: transition cache disabled (fields null forever); the replace
+//     cache {m_oldStructureID, m_offset} survives as one u64.
+//   - get_private_name / put_private_name / set_private_brand /
+//     check_private_brand: disabled (a cached cell compare cannot cohere with
+//     the {id, offset} word).
+static ALWAYS_INLINE bool useThreadedLLIntPropertyCaches()
+{
+#if CPU(ADDRESS64) && CPU(LITTLE_ENDIAN)
+    // THREADS-INTEGRATE(jit): SPEC-jit M1's useThreadedLLIntICs kill switch is
+    // not yet in OptionsList.h; once it lands this becomes
+    // `Options::useJSThreads() && Options::useThreadedLLIntICs()` (with the
+    // kill switch off, flag-on, single-word caches are simply never published —
+    // the asm gate is keyed on useJSThreads alone and the threaded readers then
+    // always miss). See docs/threads/INTEGRATE-jit.md (Task 6).
+    return Options::useJSThreads();
+#else
+    // D8: flag-on is unsupported on these platforms; never publish.
+    return false;
+#endif
+}
+
+static ALWAYS_INLINE bool useUnthreadedLLIntPropertyCaches()
+{
+    return !Options::useJSThreads();
+}
+
+#if CPU(ADDRESS64)
+// SPEC-jit §4.3/I13 per-op static_asserts: flag-on survivor caches are single
+// aligned 64-bit words.
+static_assert(sizeof(OpGetByIdDirect::Metadata) == 8);
+static_assert(alignof(OpGetByIdDirect::Metadata) == 8);
+static_assert(OpGetByIdDirect::Metadata::offsetOfCache() == 0);
+// put_by_id's surviving replace cache: {m_oldStructureID, m_offset} is word 0
+// of an 8-aligned Metadata (the trailing transition fields are dead flag-on).
+static_assert(OpPutById::Metadata::offsetOfOldStructureID() == 0);
+static_assert(OpPutById::Metadata::offsetOfOffset() == 4);
+static_assert(alignof(OpPutById::Metadata) == 8);
+// get_by_id word-1 asserts live in GetByIdMetadata.h.
+#endif
 
 #define LLINT_RETURN_TWO(first, second) do {       \
         return encodeResult(first, second);        \
@@ -166,7 +222,7 @@ static inline JSValue NODELETE getOperand(CallFrame* callFrame, VirtualRegister 
     } while (false)
 
 #define LLINT_PROFILE_VALUE(value) do { \
-        codeBlock->valueProfileForOffset(bytecode.m_valueProfile).m_buckets[0] = JSValue::encode(value); \
+        codeBlock->valueProfileForOffset(bytecode.m_valueProfile).storeBucketConcurrently(0, JSValue::encode(value)); /* THREADS §5.7.4 */ \
     } while (false)
 
 #define LLINT_CALL_END_IMPL(callFrame, callTarget, callTargetTag) \
@@ -382,7 +438,30 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     ASSERT(Options::useJIT());
 
     if (codeBlock->jitType() != JITType::BaselineJIT) {
-        if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
+        // §12.2: snapshot under the UnlinkedCodeBlock lock — a bare RefPtr load
+        // here can race another mutator's plan-finalize install (torn pointer /
+        // ref-count corruption, see UnlinkedCodeBlock.h contract). Cold tier-up
+        // slow path; the lock is uncontended flag-off.
+        if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->unlinkedBaselineCodeConcurrently()) {
+            if (vm.gilOff()) [[unlikely]] {
+                // UNGIL §5.7.2 (AB18-B): this install is single-shot (setBaselineJITData asserts
+                // !m_jitData) but two mutators in the prologue/loop slow path can race it on the
+                // same linked CodeBlock. Reuse the LLIntToBaseline edge latch: only the winner
+                // installs; losers stay in LLInt and re-check soon. Re-check jitType under the
+                // latch in case the previous winner finished between our check and the CAS.
+                CodeBlock::TierUpEdgeLocker tierUpLocker(codeBlock, CodeBlock::TierUpEdge::LLIntToBaseline);
+                if (!tierUpLocker.won()) [[unlikely]] {
+                    codeBlock->jitSoon();
+                    return false;
+                }
+                if (codeBlock->jitType() != JITType::BaselineJIT) {
+                    codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
+                    codeBlock->ownerExecutable()->installCode(codeBlock);
+                }
+                WTF::loadLoadFence();
+                codeBlock->jitNextInvocation();
+                return true;
+            }
             codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
             codeBlock->ownerExecutable()->installCode(codeBlock);
             codeBlock->jitNextInvocation();
@@ -400,13 +479,35 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
 
     if (codeBlock->jitType() == JITType::BaselineJIT) {
         dataLogLnIf(Options::verboseOSR(), "    Code was already compiled.");
+        // UNGIL §5.7.2 (AB18-B): acquire pairing with setupWithUnlinkedBaselineCode's
+        // jitData-before-jitCode publication (release via setJITCode's lock/fence). Returning
+        // true OSRs this thread into the baseline prologue, which loads m_jitData at a
+        // different address than m_jitCode; order that load after the jitType() observation.
+        if (vm.gilOff()) [[unlikely]]
+            WTF::loadLoadFence();
         codeBlock->jitSoon();
         return true;
     }
 
     if (worklistState == JITWorklist::NotKnown) {
+        // THREADS §5.7.2 (SPEC-jit Task 12): serialize the LLInt->Baseline trigger; only
+        // the winner of the 0->1 CAS enqueues the plan. Losers defer (counter reset so
+        // they re-check soon) and stay in LLInt. Duplicates racing through the latch-free
+        // window are cancelled by JITWorklist::enqueue's dedup backstop (§5.7.3) — for
+        // Baseline the plan key is on the shared UnlinkedCodeBlock, so the backstop also
+        // covers two distinct linked CodeBlocks racing for the same unlinked key.
+        CodeBlock::TierUpEdgeLocker tierUpLocker(codeBlock, CodeBlock::TierUpEdge::LLIntToBaseline);
+        if (!tierUpLocker.won()) [[unlikely]] {
+            CODEBLOCK_LOG_EVENT(codeBlock, "delayJITCompile", ("tier-up already in flight"));
+            codeBlock->jitSoon();
+            return false;
+        }
         Ref<BaselineJITPlan> plan = adoptRef(*new BaselineJITPlan(codeBlock));
         JITWorklist::ensureGlobalWorklist().enqueue(WTF::move(plan));
+        if (vm.gilOff() && codeBlock->jitType() == JITType::BaselineJIT) [[unlikely]] {
+            WTF::loadLoadFence(); // See "already compiled" branch above.
+            return true;
+        }
         return codeBlock->jitType() == JITType::BaselineJIT;
     }
 
@@ -554,13 +655,17 @@ UGPRPair SYSV_ABI llint_check_stack_and_vm_traps(CallFrame* callFrame, const JSI
             slowPathLogF("Num callee registers = %u.\n", codeBlock->numCalleeLocals());
             slowPathLogF("Num vars = %u.\n", codeBlock->numVars());
         }
-        slowPathLogF("Current OS stack end is at %p.\n", vm.softStackLimit());
+        slowPathLogF("Current OS stack end is at %p.\n", softStackLimitForCurrentThread(vm));
 #if ENABLE(C_LOOP)
         slowPathLogF("Current C Loop stack end is at %p.\n", vm.cloopStackLimit());
 #endif
     }
 
-    if (vm.traps().handleTrapsIfNeeded()) {
+    // UNGIL §A.2.2 item 3b (AB-17): GIL-off, service the CURRENT lite's
+    // traps instance first, then the VM-level one (the per-lite words are
+    // what the rule-3 fan-out writes; leaving them unserviced strands the
+    // per-lite marker — review finding (g)). GIL-on: byte-identical.
+    if (handleTrapsForCurrentThreadIfNeeded(vm)) {
         if (vm.hasPendingTerminationException()) {
             throwScope.release();
             callFrame->convertToZombieFrame(vm, codeBlock);
@@ -582,7 +687,10 @@ UGPRPair SYSV_ABI llint_check_stack_and_vm_traps(CallFrame* callFrame, const JSI
         imminentOverflowDetected = true; // Stack underflow == overflow.
 #else // not C_LOOP case
 
-    void* softStackLimit = vm.softStackLimit();
+    // UNGIL §A.2.2 (AB-17 item 3, C++-reader leg): re-confirm against the
+    // CURRENT THREAD's soft limit (per-lite GIL-off), not the VM word — the
+    // PLAIN limit only. Trap servicing above is the item-3b dispatch.
+    void* softStackLimit = softStackLimitForCurrentThread(vm);
 #if CPU(ADDRESS32)
     // With 32-bit addresses, there's a chance that we can underflow, and need this check.
     // The new stack pointer should only grow smaller. The only way it can be larger than
@@ -748,7 +856,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_direct)
     if (Options::useLLIntICs() && slot.isCacheable() && !slot.isUnset()) {
         auto& metadata = bytecode.metadata(codeBlock);
         {
-            StructureID oldStructureID = metadata.m_structureID;
+            StructureID oldStructureID = metadata.m_cache.structureID;
             if (oldStructureID) {
                 Structure* a = oldStructureID.decode();
                 Structure* b = baseValue.asCell()->structure();
@@ -763,17 +871,23 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_direct)
         JSCell* baseCell = baseValue.asCell();
         Structure* structure = baseCell->structure();
         if (slot.isValue()) {
-            // Start out by clearing out the old cache.
-            metadata.m_structureID = StructureID();
-            metadata.m_offset = 0;
+            // Start out by clearing out the old cache (one all-zero word store, SPEC-jit §4.3/F3).
+            metadata.m_cache.clear();
 
             if (structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint()) {
-                {
-                    ConcurrentJSLocker locker(codeBlock->m_lock);
-                    metadata.m_structureID = structure->id();
-                    metadata.m_offset = slot.cachedOffset();
+                if (useUnthreadedLLIntPropertyCaches()) {
+                    {
+                        ConcurrentJSLocker locker(codeBlock->m_lock);
+                        metadata.m_cache.structureID = structure->id();
+                        metadata.m_cache.offset = slot.cachedOffset();
+                    }
+                    vm.writeBarrier(codeBlock);
+                } else if (useThreadedLLIntPropertyCaches() && !structure->isDictionary()) {
+                    // SPEC-jit §4.3: one-word publish, no lock (last-writer-wins).
+                    // Dictionary exclusion: see slow_path_get_by_id above.
+                    metadata.m_cache.setConcurrently(structure->id(), slot.cachedOffset());
+                    vm.writeBarrier(codeBlock);
                 }
-                vm.writeBarrier(codeBlock);
             }
         }
     }
@@ -795,6 +909,12 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_with_this)
 
 static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, JSCell* baseCell, PropertySlot& slot, const Identifier& ident)
 {
+    // SPEC-jit §4.3 (Task 6): this is the SOLE ProtoLoad/Unset installer; it is
+    // disabled wholesale under JS threads (I18) — those records cannot be
+    // published as one word. Charter: proto caches return as immutable
+    // single-pointer records (§5.8 pattern) if Task 13's budget is missed.
+    RELEASE_ASSERT(!Options::useJSThreads());
+
     Structure* structure = baseCell->structure();
 
     if (structure->typeInfo().prohibitsPropertyCaching())
@@ -865,15 +985,19 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
         && !slot.isUnset()) {
         {
             StructureID oldStructureID;
-            switch (metadata.mode) {
+            // V7: foreign threads publish/clear these fields with relaxed
+            // stores (setDefaultModeCacheConcurrently / clearToDefaultModeWithoutCache);
+            // snapshot them with relaxed loads. Stale-but-coherent is fine: the
+            // value only feeds the poly-proto heuristic.
+            switch (WTF::atomicLoad(&metadata.mode, std::memory_order_relaxed)) {
             case GetByIdMode::Default:
-                oldStructureID = metadata.defaultMode.structureID;
+                oldStructureID = WTF::atomicLoad(&metadata.defaultMode.structureID, std::memory_order_relaxed);
                 break;
             case GetByIdMode::Unset:
-                oldStructureID = metadata.unsetMode.structureID;
+                oldStructureID = WTF::atomicLoad(&metadata.unsetMode.structureID, std::memory_order_relaxed);
                 break;
             case GetByIdMode::ProtoLoad:
-                oldStructureID = metadata.protoLoadMode.structureID;
+                oldStructureID = WTF::atomicLoad(&metadata.protoLoadMode.structureID, std::memory_order_relaxed);
                 break;
             default:
                 oldStructureID = StructureID();
@@ -892,23 +1016,44 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
         JSCell* baseCell = baseValue.asCell();
         Structure* structure = baseCell->structure();
         if (slot.isValue() && slot.slotBase() == baseValue) {
-            ConcurrentJSLocker locker(codeBlock->m_lock);
-            // Start out by clearing out the old cache.
-            metadata.clearToDefaultModeWithoutCache();
+            if (useUnthreadedLLIntPropertyCaches()) {
+                ConcurrentJSLocker locker(codeBlock->m_lock);
+                // Start out by clearing out the old cache.
+                metadata.clearToDefaultModeWithoutCache();
 
-            // Prevent the prototype cache from ever happening.
-            metadata.hitCountForLLIntCaching = 0;
-        
-            if (structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint()) {
-                metadata.defaultMode.structureID = structure->id();
-                metadata.defaultMode.cachedOffset = slot.cachedOffset();
-                vm.writeBarrier(codeBlock);
+                // Prevent the prototype cache from ever happening.
+                metadata.hitCountForLLIntCaching = 0;
+
+                if (structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint()) {
+                    metadata.defaultMode.structureID = structure->id();
+                    metadata.defaultMode.cachedOffset = slot.cachedOffset();
+                    vm.writeBarrier(codeBlock);
+                }
             }
-        } else if (metadata.hitCountForLLIntCaching && slot.isValue()) [[unlikely]] {
+#if CPU(ADDRESS64) && CPU(LITTLE_ENDIAN)
+            else {
+                // SPEC-jit §4.3 (Task 6), flag-on: Default mode publishes word 1
+                // ({structureID, cachedOffset}) with ONE relaxed 64-bit store, no
+                // lock (last-writer-wins); invalidation is one all-zero store.
+                metadata.clearToDefaultModeWithoutCache();
+                WTF::atomicStore(&metadata.hitCountForLLIntCaching, static_cast<uint8_t>(0), std::memory_order_relaxed);
+
+                // Dictionary exclusion (review round 1): see slow_path_get_by_id.
+                if (useThreadedLLIntPropertyCaches() && structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint() && !structure->isDictionary()) {
+                    metadata.setDefaultModeCacheConcurrently(structure->id(), slot.cachedOffset());
+                    vm.writeBarrier(codeBlock);
+                }
+            }
+#endif
+        } else if (WTF::atomicLoad(&metadata.hitCountForLLIntCaching, std::memory_order_relaxed) && slot.isValue()) [[unlikely]] {
             ASSERT(slot.slotBase() != baseValue);
 
-            if (!(--metadata.hitCountForLLIntCaching))
-                setupGetByIdPrototypeCache(globalObject, vm, codeBlock, bytecodeIndex, metadata, baseCell, slot, ident);
+            // SPEC-jit §4.3 (Task 6): the prototype cache (ProtoLoad/Unset) is
+            // disabled wholesale under JS threads (I18).
+            if (useUnthreadedLLIntPropertyCaches()) {
+                if (!(--metadata.hitCountForLLIntCaching))
+                    setupGetByIdPrototypeCache(globalObject, vm, codeBlock, bytecodeIndex, metadata, baseCell, slot, ident);
+            }
         }
     } else if (Options::useLLIntICs() && isJSArray(baseValue) && ident == vm.propertyNames->length)
         metadata.setArrayLengthMode();
@@ -957,7 +1102,7 @@ LLINT_SLOW_PATH_DECL(slow_path_iterator_open_get_next)
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc).withCheckpoint(OpIteratorOpen::getNext), codeBlock, globalObject, iterator, vm.propertyNames->next, metadata.m_modeMetadata);
     LLINT_CHECK_EXCEPTION();
     nextRegister = result;
-    codeBlock->valueProfileForOffset(bytecode.m_nextValueProfile).m_buckets[0] = JSValue::encode(result);
+    codeBlock->valueProfileForOffset(bytecode.m_nextValueProfile).storeBucketConcurrently(0, JSValue::encode(result)); // THREADS §5.7.4
     LLINT_END();
 }
 
@@ -977,7 +1122,7 @@ LLINT_SLOW_PATH_DECL(slow_path_iterator_next_get_done)
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc).withCheckpoint(OpIteratorNext::getDone), codeBlock, globalObject, iteratorReturn, vm.propertyNames->done, metadata.m_doneModeMetadata);
     LLINT_CHECK_EXCEPTION();
     doneRegister = result;
-    codeBlock->valueProfileForOffset(bytecode.m_doneValueProfile).m_buckets[0] = JSValue::encode(result);
+    codeBlock->valueProfileForOffset(bytecode.m_doneValueProfile).storeBucketConcurrently(0, JSValue::encode(result)); // THREADS §5.7.4
     LLINT_END();
 }
 
@@ -997,7 +1142,7 @@ LLINT_SLOW_PATH_DECL(slow_path_iterator_next_get_value)
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc).withCheckpoint(OpIteratorNext::getValue), codeBlock, globalObject, iteratorReturn, vm.propertyNames->value, metadata.m_valueModeMetadata);
     LLINT_CHECK_EXCEPTION();
     valueRegister = result;
-    codeBlock->valueProfileForOffset(bytecode.m_valueValueProfile).m_buckets[0] = JSValue::encode(result);
+    codeBlock->valueProfileForOffset(bytecode.m_valueValueProfile).storeBucketConcurrently(0, JSValue::encode(result)); // THREADS §5.7.4
     LLINT_END();
 }
 
@@ -1011,7 +1156,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_hasInstance_from_instanceof)
     LLINT_CHECK_EXCEPTION();
 
     callFrame->uncheckedR(bytecode.m_hasInstanceOrPrototype) = result;
-    codeBlock->valueProfileForOffset(bytecode.m_hasInstanceValueProfile).m_buckets[0] = JSValue::encode(result);
+    codeBlock->valueProfileForOffset(bytecode.m_hasInstanceValueProfile).storeBucketConcurrently(0, JSValue::encode(result)); // THREADS §5.7.4
     LLINT_END();
 }
 
@@ -1025,7 +1170,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_prototype_from_instanceof)
     LLINT_CHECK_EXCEPTION();
 
     callFrame->uncheckedR(bytecode.m_hasInstanceOrPrototype) = result;
-    codeBlock->valueProfileForOffset(bytecode.m_prototypeValueProfile).m_buckets[0] = JSValue::encode(result);
+    codeBlock->valueProfileForOffset(bytecode.m_prototypeValueProfile).storeBucketConcurrently(0, JSValue::encode(result)); // THREADS §5.7.4
     LLINT_END();
 }
 
@@ -1090,7 +1235,11 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
         && oldStructure->propertyAccessesAreCacheable()
         && !oldStructure->mayBePrototype()) {
         {
-            StructureID oldStructureID = metadata.m_oldStructureID;
+            // V7: races with foreign publishLLIntIdAndOffsetPairConcurrently /
+            // clearLLIntIdAndOffsetPairConcurrently relaxed u64 stores. Only the
+            // id half is consumed here (poly-proto heuristic), so a relaxed
+            // 32-bit load is enough — torn {id, offset} pairing is not consumed.
+            StructureID oldStructureID = WTF::atomicLoad(&metadata.m_oldStructureID, std::memory_order_relaxed);
             if (oldStructureID) {
                 Structure* a = oldStructureID.decode();
                 Structure* b = baseValue.asCell()->structure();
@@ -1105,35 +1254,68 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
         }
 
         // Start out by clearing out the old cache.
-        metadata.m_oldStructureID = StructureID();
-        metadata.m_offset = 0;
-        metadata.m_newStructureID = StructureID();
-        metadata.m_structureChain.clear();
-        
+        if (useUnthreadedLLIntPropertyCaches()) {
+            metadata.m_oldStructureID = StructureID();
+            metadata.m_offset = 0;
+            metadata.m_newStructureID = StructureID();
+            metadata.m_structureChain.clear();
+        } else {
+            // SPEC-jit §4.3 (Task 6): flag-on, {m_oldStructureID, m_offset} is the
+            // surviving replace cache, read by the asm as ONE 64-bit word;
+            // invalidate it with one all-zero store (F3).
+            clearLLIntIdAndOffsetPairConcurrently(&metadata.m_oldStructureID);
+            // V7: flag-on, the transition cache is disabled wholesale (SPEC-jit
+            // §4.3: m_newStructureID/m_structureChain are never published, the
+            // asm transition branch is dead), so the clears are skipped here —
+            // as plain stores they were a write-write race between concurrent
+            // slow_path_put_by_id callers on permanently-null fields, and
+            // m_structureChain is a WriteBarrier slot that cannot be atomicized
+            // without bypassing the barrier. Flag-off behavior is unchanged.
+        }
+
         JSCell* baseCell = baseValue.asCell();
         Structure* newStructure = baseCell->structure();
-        
+
         if (newStructure->propertyAccessesAreCacheable() && baseCell == slot.base()) {
             if (slot.type() == PutPropertySlot::NewProperty) {
-                GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
-                if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && newStructure->previousID() == oldStructure) {
-                    ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
+                // SPEC-jit §4.3 (Task 6): the put_by_id TRANSITION cache is
+                // disabled under JS threads (fields null forever; the asm
+                // transition branch is dead flag-on).
+                if (useUnthreadedLLIntPropertyCaches()) {
+                    GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
+                    if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && newStructure->previousID() == oldStructure) {
+                        ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
 
-                    bool sawPolyProto = false;
-                    auto result = normalizePrototypeChain(globalObject, baseCell, sawPolyProto);
-                    if (result != InvalidPrototypeChain && !sawPolyProto) {
-                        ASSERT(oldStructure->isObject());
-                        metadata.m_oldStructureID = oldStructure->id();
-                        metadata.m_offset = slot.cachedOffset();
-                        metadata.m_newStructureID = newStructure->id();
-                        if (!(bytecode.m_flags.isDirect())) {
-                            StructureChain* chain = newStructure->prototypeChain(vm, globalObject, asObject(baseCell));
-                            ASSERT(chain);
-                            metadata.m_structureChain.set(vm, codeBlock, chain);
+                        bool sawPolyProto = false;
+                        auto result = normalizePrototypeChain(globalObject, baseCell, sawPolyProto);
+                        if (result != InvalidPrototypeChain && !sawPolyProto) {
+                            ASSERT(oldStructure->isObject());
+                            metadata.m_oldStructureID = oldStructure->id();
+                            metadata.m_offset = slot.cachedOffset();
+                            metadata.m_newStructureID = newStructure->id();
+                            if (!(bytecode.m_flags.isDirect())) {
+                                StructureChain* chain = newStructure->prototypeChain(vm, globalObject, asObject(baseCell));
+                                ASSERT(chain);
+                                metadata.m_structureChain.set(vm, codeBlock, chain);
+                            }
+                            vm.writeBarrier(codeBlock);
                         }
-                        vm.writeBarrier(codeBlock);
                     }
                 }
+            } else if (vm.gilOff() && newStructure != oldStructure) [[unlikely]] {
+                // GIL-off: a foreign thread transitioned baseCell's structure in the
+                // unlocked window between our pre-put snapshot (oldStructure, read
+                // before putInline) and the post-put re-read (newStructure). The
+                // replace itself ran against a consistent structure under the cell's
+                // own synchronization; only this caching-eligibility comparison is
+                // stale. With N mutators the equality is not an invariant, so do not
+                // assert — just skip caching. The replace/transition caches were
+                // already invalidated unconditionally above (the one all-zero-word
+                // clearLLIntIdAndOffsetPairConcurrently store per SPEC-jit §4.3;
+                // m_newStructureID/m_structureChain are permanently null flag-on,
+                // V7), so falling through with no publish leaves the metadata in
+                // the safe empty state. Next execution simply takes the slow path
+                // again.
             } else {
                 // This assert helps catch bugs if we accidentally forget to disable caching
                 // when we transition then store to an existing property. This is common among
@@ -1142,17 +1324,29 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                 // know how to model these types of structure transitions (or any structure
                 // transition for that matter).
                 RELEASE_ASSERT(newStructure == oldStructure);
-                newStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
-                {
-                    ConcurrentJSLocker locker(codeBlock->m_lock);
-                    metadata.m_oldStructureID = newStructure->id();
-                    metadata.m_offset = slot.cachedOffset();
+                if (useUnthreadedLLIntPropertyCaches()) {
+                    newStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
+                    {
+                        ConcurrentJSLocker locker(codeBlock->m_lock);
+                        metadata.m_oldStructureID = newStructure->id();
+                        metadata.m_offset = slot.cachedOffset();
+                    }
+                    vm.writeBarrier(codeBlock);
+                } else if (useThreadedLLIntPropertyCaches() && !newStructure->isDictionary()) {
+                    // SPEC-jit §4.3 (Task 6): replace cache survives flag-on as one
+                    // u64; one-word publish, no lock (last-writer-wins).
+                    // Dictionary exclusion (review round 1): a dictionary keeps its
+                    // structureID across butterfly growth, defeating the R7 chain;
+                    // a foreign SW=1 writer pairing {dictSID, grownOffset} with a
+                    // stale butterfly would be an OOB WRITE. See slow_path_get_by_id.
+                    newStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
+                    publishLLIntIdAndOffsetPairConcurrently(&metadata.m_oldStructureID, newStructure->id(), static_cast<int32_t>(slot.cachedOffset()));
+                    vm.writeBarrier(codeBlock);
                 }
-                vm.writeBarrier(codeBlock);
             }
         }
     }
-    
+
     LLINT_END();
 }
 
@@ -1262,7 +1456,10 @@ LLINT_SLOW_PATH_DECL(slow_path_get_private_name)
     baseObject->getPrivateField(globalObject, property, slot);
     LLINT_CHECK_EXCEPTION();
 
-    if (Options::useLLIntICs() && baseValue.isCell() && slot.isCacheable() && !slot.isUnset()) {
+    // SPEC-jit §4.3 (Task 6): the get_private_name cache is DISABLED under JS
+    // threads — the cached private-symbol cell compare cannot cohere with the
+    // {structureID, offset} word.
+    if (Options::useLLIntICs() && useUnthreadedLLIntPropertyCaches() && baseValue.isCell() && slot.isCacheable() && !slot.isUnset()) {
         auto& metadata = bytecode.metadata(codeBlock);
         {
             StructureID oldStructureID = metadata.m_structureID;
@@ -1392,7 +1589,10 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
     }
     LLINT_CHECK_EXCEPTION();
 
+    // SPEC-jit §4.3 (Task 6): the put_private_name cache is DISABLED under JS
+    // threads (multi-word record incl. a cell compare; cannot cohere).
     if (Options::useLLIntICs()
+        && useUnthreadedLLIntPropertyCaches()
         && baseValue.isCell()
         && slot.isCacheablePut()
         && subscript.isCell()
@@ -1478,7 +1678,9 @@ LLINT_SLOW_PATH_DECL(slow_path_set_private_brand)
     baseObject->setPrivateBrand(globalObject, brand);
     LLINT_CHECK_EXCEPTION();
 
-    if (Options::useLLIntICs() && !oldStructure->isDictionary()) {
+    // SPEC-jit §4.3 (Task 6): the set_private_brand cache is DISABLED under JS
+    // threads (two structure IDs + a brand cell; cannot cohere as one word).
+    if (Options::useLLIntICs() && useUnthreadedLLIntPropertyCaches() && !oldStructure->isDictionary()) {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
         Structure* newStructure = baseObject->structure();
 
@@ -1521,7 +1723,9 @@ LLINT_SLOW_PATH_DECL(slow_path_check_private_brand)
     // Since a brand can't ever be removed from an object, it's safe to
     // rely on StructureID even if it's an uncacheable dictionary.
     Structure* structure = baseObject->structure();
-    if (Options::useLLIntICs()) {
+    // SPEC-jit §4.3 (Task 6): the check_private_brand cache is DISABLED under JS
+    // threads (structure ID + brand cell pair; cannot cohere as one word).
+    if (Options::useLLIntICs() && useUnthreadedLLIntPropertyCaches()) {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
 
         metadata.m_structureID = structure->id();
@@ -2053,7 +2257,12 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
         if (callData.type == CallData::Type::Native) {
             SlowPathFrameTracer tracer(vm, calleeFrame);
             calleeFrame->setCallee(asObject(callee));
-            vm.encodedHostCallReturnValue = callData.native.function(asObject(callee)->realm(), calleeFrame);
+            // UNGIL §A.1.3 (K4 table I Group-3 row): encodedHostCallReturnValue is
+            // per-lite Group-2 state. The llint_get_host_call_return_value thunk
+            // reads the CURRENT lite's copy GIL-off (LowLevelInterpreter64.asm AB-1
+            // mode split); a raw VM-block store here is invisible to that read AND
+            // a cross-thread trample on the shared word.
+            vm.group3Primitives().encodedHostCallReturnValue = callData.native.function(asObject(callee)->realm(), calleeFrame);
             AssertNoGC assertNoGC;
             auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
             LLINT_CALL_RETURN(globalObject, callerSP, LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr(), JSEntryPtrTag);
@@ -2073,7 +2282,9 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
     if (constructData.type == CallData::Type::Native) {
         SlowPathFrameTracer tracer(vm, calleeFrame);
         calleeFrame->setCallee(asObject(callee));
-        vm.encodedHostCallReturnValue = constructData.native.function(asObject(callee)->realm(), calleeFrame);
+        // UNGIL §A.1.3 (K4 table I Group-3 row): per-lite store; see the
+        // CodeForCall arm above.
+        vm.group3Primitives().encodedHostCallReturnValue = constructData.native.function(asObject(callee)->realm(), calleeFrame);
         AssertNoGC assertNoGC;
         auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
         LLINT_CALL_RETURN(globalObject, callerSP, LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr(), JSEntryPtrTag);
@@ -2134,7 +2345,16 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
             arity = ArityCheckMode::MustCheckArity;
         else
             arity = ArityCheckMode::ArityCheckNotRequired;
-        codePtr = functionExecutable->entrypointFor(kind, arity);
+        if (vm.gilOff()) [[unlikely]] {
+            // ANNEX CBI item 3 (AB17c F4): derive the entrypoint THROUGH the
+            // CodeBlock snapshot stored to the callee frame, not through the
+            // executable's independently-republished m_jitCodeFor* mirror —
+            // a live tier-up installCode between the two reads otherwise
+            // pairs a stale entrypoint with the new CodeBlock (see
+            // bytecode/RepatchInlines.h linkFor).
+            codePtr = codeBlock->jitCode()->addressForCall(arity);
+        } else
+            codePtr = functionExecutable->entrypointFor(kind, arity);
     }
 
     ASSERT(!!codePtr);
@@ -2142,6 +2362,45 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
     auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
     LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
 }
+
+// UNGIL §A.1.3(3) U-T1 pairing invariant, A6 closure (signature
+// A6-stringFromCharCode-alloc-garbage-leng, SIGNATURES.md): a true (non-lite,
+// non-shared) thread-local echo of the {calleeFrame, varargsLength} pair the
+// size_frame slow call stored. The per-lite VMLitePrimitives copy of the pair
+// is shared-memory state a cross-thread wild write (the A1-root collateral
+// class) can trample between the paired slow calls; the geometric echo check
+// in varargsSetup cannot see a varargsLength-only trample that lands in the
+// same stackAlignmentRegisters rounding bucket — the documented residual
+// through which a silently mis-built frame could still reach a host callee
+// (argumentCount read off the frame -> garbage allocation length, the A6
+// face). C++ thread_local storage is not addressable through any lite/VM
+// routing, so a divergence between it and the consumed snapshot is a
+// definitive same-thread pairing violation -> fail-stop with a
+// self-identifying signature instead of a silent wrong-length frame.
+// The sizer's VMLitePrimitives stores of THIS pair stay (frozen ABI words,
+// SPEC-vmstate §6.3 L1; GIL-on/flag-off identity): the echo is a redundant
+// pin BESIDE them, not a reroute OF them. (The encodedHostCallReturnValue
+// writer reroutes elsewhere in this file are a different, separately
+// recorded change — the 2026-06-11b host-call Group-2 row fix — not part
+// of this echo.)
+//
+// FLAG-OFF BEHAVIORAL DELTA — explicit adjudication (A2-amend round 4,
+// F1-convention record): the echo stores, the relaxed-atomic snapshot loads,
+// the three varargsSetup RELEASE_ASSERTs, and the newCallFrame < callFrame
+// RELEASE_ASSERT in setupVarargsFrame run UNCONDITIONALLY — including plain
+// flag-off jsc (the Bun production shape). This is NOT codegen identity (the
+// asm/JIT legs remain byte-identical flag-off); it is a deliberate C++
+// slow-path tripwire kept unconditional under the house no-assert-weakening
+// rule: the pairing/geometry contract it checks must hold in EVERY
+// configuration, the cost is two TLS words on a mandatory slow path
+// (negligible), and a deterministic self-identifying crash on a future
+// contract break beats a silent wrong-length frame in any product. The
+// pairing contract the asserts enforce: every varargsSetup instantiation
+// MUST be paired with slow_path_size_frame_for_varargs (which writes the
+// echo) on the same thread within one bytecode. See the SetArgumentsWith
+// note below before instantiating the CurrentArguments arm.
+static thread_local CallFrame* t_llintVarargsCalleeFrameEcho;
+static thread_local unsigned t_llintVarargsLengthEcho;
 
 LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs)
 {
@@ -2188,20 +2447,50 @@ LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs)
     LLINT_CALL_CHECK_EXCEPTION(globalObject);
     
     CallFrame* calleeFrame = calleeFrameForVarargs(callFrame, numUsedStackSlots, length + 1);
-    vm.varargsLength = length;
-    vm.newCallFrameReturnValue = calleeFrame;
+    // UNGIL §A.1.3 (U-T1): this pair is per-call frame-setup scratch consumed by
+    // the paired varargsSetup slow call on the SAME thread; under GIL-off it must
+    // live in the current thread's lite, not the shared VM block (which aliases the
+    // main thread's physical VMLitePrimitives, VM.h §6.4(3)).
+    auto& primitives = vm.group3Primitives();
+    primitives.varargsLength = length;
+    primitives.newCallFrameReturnValue = calleeFrame;
+    // A6 closure: redundant unsharable echo of the pair (see the thread_local
+    // declarations above); compared at the varargsSetup reload.
+    t_llintVarargsCalleeFrameEcho = calleeFrame;
+    t_llintVarargsLengthEcho = length;
 
     LLINT_RETURN_CALLEE_FRAME(calleeFrame);
 }
 
 enum class SetArgumentsWith {
     Object,
+    // PAIRING-CONTRACT GUARD (A2-amend round 4): the CurrentArguments arm is
+    // currently UNINSTANTIATED (all four varargsSetup callers use Object and
+    // pair with slow_path_size_frame_for_varargs, which writes the
+    // thread-local {calleeFrame, varargsLength} echo). If a future change
+    // instantiates this arm against a different sizer (e.g. a
+    // sizeFrameForForwardArguments-style slow path, cf. JITOperations.cpp's
+    // operationSizeFrameForForwardArguments), that sizer MUST store
+    // t_llintVarargsCalleeFrameEcho/t_llintVarargsLengthEcho before
+    // varargsSetup reloads them, or the unconditional pair-echo
+    // RELEASE_ASSERTs in varargsSetup will deterministically fail-stop —
+    // including in flag-off production builds. ENFORCED AT BUILD TIME by the
+    // static_assert in varargsSetup (A4-amend round): mispairing now fails to
+    // compile rather than failing in production.
     CurrentArguments
 };
 
 template<typename Op, SetArgumentsWith set>
 static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* pc, CodeSpecializationKind)
 {
+    // A4-amend round: the PAIRING-CONTRACT GUARD on SetArgumentsWith (see the
+    // enum) is enforced at COMPILE TIME — instantiating the CurrentArguments
+    // arm without wiring its sizer to the thread-local echo pair would
+    // otherwise be a deterministic production fail-stop at the unconditional
+    // RELEASE_ASSERTs below (a comment-only landmine). Delete this
+    // static_assert ONLY together with making the new sizer store
+    // t_llintVarargsCalleeFrameEcho/t_llintVarargsLengthEcho.
+    static_assert(set == SetArgumentsWith::Object, "CurrentArguments arm is uninstantiated: its sizer must write the t_llintVarargs*Echo pair before varargsSetup reloads it (see SetArgumentsWith pairing-contract guard)");
     LLINT_BEGIN_NO_SET_PC();
 
     // This needs to:
@@ -2212,13 +2501,62 @@ static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* p
     auto& metadata = bytecode.metadata(codeBlock);
     JSValue calleeAsValue = getOperand(callFrame, bytecode.m_callee);
 
-    CallFrame* calleeFrame = vm.newCallFrameReturnValue;
-    unsigned argumentCountIncludingThis = vm.varargsLength + 1;
+    auto& primitives = vm.group3Primitives(); // Same-thread reload of the size_frame slow call's per-lite store (U-T1).
+    // Snapshot the racing per-lite storage ONCE, before the echo check below,
+    // and consume only the snapshot afterwards. The setup calls below must
+    // not re-read primitives.varargsLength: a cross-thread trample landing
+    // between the RELEASE_ASSERT and the setup call would otherwise feed an
+    // unvalidated length into loadVarargs against the validated calleeFrame,
+    // bypassing the fail-stop. A plain load would NOT guarantee this: under
+    // the data-race-free assumption the compiler is licensed to
+    // rematerialize a non-atomic load at the use sites after the
+    // RELEASE_ASSERT (nothing between the snapshot and the setup call is an
+    // opaque barrier). The relaxed atomic loads pin exactly one load each,
+    // so the values consumed below are the values the echo check validated.
+    CallFrame* calleeFrame = WTF::atomicLoad(&primitives.newCallFrameReturnValue, std::memory_order_relaxed);
+    unsigned varargsLength = WTF::atomicLoad(&primitives.varargsLength, std::memory_order_relaxed);
+    unsigned argumentCountIncludingThis = varargsLength + 1;
+    // UNGIL §A.1.3(3) / SPEC-vmstate §6.4(3) pairing invariant (U-T1): the
+    // size_frame_for_varargs slow call's per-lite {varargsLength,
+    // newCallFrameReturnValue} store and this reload run on the SAME thread
+    // within ONE bytecode and MUST resolve the same Group-3 storage. By
+    // construction they cannot diverge (group3Primitives() inputs —
+    // gilOffProcess byte, vm.m_gilOff, lite->vm, t_currentVMLite — are all
+    // immutable/unchanged across the paired slow calls; no install/uninstall
+    // point exists between them). The stored value itself also cannot be
+    // null/wild by value flow: calleeFrameForVarargs subtracts at most
+    // ~2^32 registers from a live callFrame (SIGNATURES.md 2026-06-11d). A
+    // mismatching reload therefore means the pair was TRAMPLED in storage
+    // (the W>=16 A2 face: collateral cross-thread wild-write corruption of
+    // the victim lite's primitives block, A1-root family) — fail-stop with
+    // a self-identifying signature instead of wild writes downstream.
+    // Echo check: recompute the callee frame from the (trusted) bytecode
+    // operand and the snapshotted varargsLength; catches null, foreign-pair,
+    // and most partially-trampled faces. The former residual (a
+    // varargsLength-only trample within the same stackAlignmentRegisters
+    // rounding bucket passes this geometric check) is closed by the
+    // thread-local pair echo asserted below (A6 closure).
+    RELEASE_ASSERT(calleeFrame == calleeFrameForVarargs(callFrame, -bytecode.m_firstFree.offset(), argumentCountIncludingThis));
+    // A6 closure (UNGIL §A.1.3(3) U-T1): the geometric echo above has a
+    // documented blind spot — a varargsLength-only trample within the same
+    // stackAlignmentRegisters rounding bucket recomputes the SAME calleeFrame
+    // and passes, silently building a frame whose argumentCount disagrees
+    // with what this thread sized; a host callee then reads that count
+    // unchecked (the A6 face: stringFromCharCode allocating from a garbage
+    // length). Compare the consumed snapshot against the true thread-local
+    // echo stored by the paired size_frame slow call on this thread: the
+    // pair is same-thread within one bytecode by construction, and the
+    // thread_local cannot be resolved through any lite/VM routing, so any
+    // mismatch is shared-storage corruption of the per-lite pair —
+    // fail-stop. Never-firing on a healthy tree (the A1-root is closed);
+    // defense-in-depth in the A2-hardening style, no assert weakened.
+    RELEASE_ASSERT(calleeFrame == t_llintVarargsCalleeFrameEcho);
+    RELEASE_ASSERT(varargsLength == t_llintVarargsLengthEcho);
     if constexpr (set == SetArgumentsWith::Object) {
-        setupVarargsFrameAndSetThis(globalObject, callFrame, calleeFrame, getOperand(callFrame, bytecode.m_thisValue), getOperand(callFrame, bytecode.m_arguments), bytecode.m_firstVarArg, vm.varargsLength);
+        setupVarargsFrameAndSetThis(globalObject, callFrame, calleeFrame, getOperand(callFrame, bytecode.m_thisValue), getOperand(callFrame, bytecode.m_arguments), bytecode.m_firstVarArg, varargsLength);
         LLINT_CALL_CHECK_EXCEPTION(globalObject);
     } else
-        setupForwardArgumentsFrameAndSetThis(globalObject, callFrame, calleeFrame, getOperand(callFrame, bytecode.m_thisValue), vm.varargsLength);
+        setupForwardArgumentsFrameAndSetThis(globalObject, callFrame, calleeFrame, getOperand(callFrame, bytecode.m_thisValue), varargsLength);
 
     calleeFrame->setCallerFrame(callFrame);
     calleeFrame->uncheckedR(VirtualRegister(CallFrameSlot::callee)) = calleeAsValue;
@@ -2272,7 +2610,9 @@ static inline UGPRPair commonCallDirectEval(CallFrame* callFrame, const JSInstru
     if (!result)
         RELEASE_AND_RETURN(throwScope, setUpCall(calleeFrame, CodeSpecializationKind::CodeForCall, calleeAsValue));
 
-    vm.encodedHostCallReturnValue = JSValue::encode(result);
+    // UNGIL §A.1.3 (K4 table I Group-3 row): per-lite store consumed by the
+    // mode-split llint_get_host_call_return_value thunk; see handleHostCall.
+    vm.group3Primitives().encodedHostCallReturnValue = JSValue::encode(result);
     AssertNoGC assertNoGC;
     auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
     LLINT_CALL_RETURN(globalObject, callerSP, LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr(), JSEntryPtrTag);
@@ -2317,8 +2657,14 @@ LLINT_SLOW_PATH_DECL(slow_path_throw)
 LLINT_SLOW_PATH_DECL(slow_path_handle_traps)
 {
     LLINT_BEGIN_NO_SET_PC();
-    ASSERT(vm.traps().needHandling(VMTraps::AsyncEvents));
-    vm.traps().handleTraps(VMTraps::AsyncEvents);
+    // UNGIL §A.2.2 item 3b (AB-17): GIL-off dispatch services the current
+    // lite's instance too. GIL-on: the landed unconditional form.
+    if (vm.gilOff()) [[unlikely]]
+        handleTrapsForCurrentThreadIfNeeded(vm);
+    else {
+        ASSERT(vm.traps().needHandling(VMTraps::AsyncEvents));
+        vm.traps().handleTraps(VMTraps::AsyncEvents);
+    }
     UNUSED_PARAM(pc);
     LLINT_RETURN_TWO(throwScope.exception(), globalObject);
 }
@@ -2367,7 +2713,18 @@ LLINT_SLOW_PATH_DECL(slow_path_get_from_scope)
                 return throwException(globalObject, throwScope, createTDZError(globalObject, ident.string()));
         }
 
-        CommonSlowPaths::tryCacheGetFromScopeGlobal(globalObject, codeBlock, vm, bytecode, scope, slot, ident);
+        // SPEC-jit §5.5 (review round 1): flag-on, op_get_from_scope metadata is
+        // FROZEN after CodeBlock linking. tryCacheGetFromScopeGlobal rewrites the
+        // {m_getPutInfo, m_structureID, m_operand} triple as three plain stores
+        // (under codeBlock->m_lock, which the LLInt/Baseline fast paths never
+        // take), so a racing reader could pair a new structureID with a stale
+        // operand (OOB through the masked butterfly) or a stale GlobalProperty
+        // resolveType with an operand that is now a raw pointer. GlobalProperty
+        // accesses whose link-time cache misses simply stay on this slow path.
+        // See docs/threads/INTEGRATE-jit.md (scope-metadata freeze) for the
+        // matching CommonSlowPathsInlines.h defense-in-depth hunk.
+        if (!Options::useJSThreads()) [[likely]]
+            CommonSlowPaths::tryCacheGetFromScopeGlobal(globalObject, codeBlock, vm, bytecode, scope, slot, ident);
 
         if (!result)
             return slot.getValue(globalObject, ident);
@@ -2414,7 +2771,10 @@ LLINT_SLOW_PATH_DECL(slow_path_put_to_scope)
     PutPropertySlot slot(scope, metadata.m_getPutInfo.ecmaMode().isStrict(), PutPropertySlot::UnknownContext, isInitialization(metadata.m_getPutInfo.initializationMode()));
     scope->methodTable()->put(scope, globalObject, ident, value, slot);
     
-    CommonSlowPaths::tryCachePutToScopeGlobal(globalObject, codeBlock, bytecode, scope, slot, ident);
+    // SPEC-jit §5.5 (review round 1): scope metadata is frozen post-link
+    // flag-on; see slow_path_get_from_scope above.
+    if (!Options::useJSThreads()) [[likely]]
+        CommonSlowPaths::tryCachePutToScopeGlobal(globalObject, codeBlock, bytecode, scope, slot, ident);
 
     LLINT_END();
 }
@@ -2473,8 +2833,11 @@ LLINT_SLOW_PATH_DECL(slow_path_profile_catch)
 
     auto bytecode = pc->as<OpCatch>();
     auto& metadata = bytecode.metadata(codeBlock);
-    metadata.m_buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
-        profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
+    // THREADS: acquire pairs with the release publish in
+    // ensureCatchLivenessIsComputedForBytecodeIndexSlow (another Thread may
+    // have published the buffer concurrently).
+    WTF::atomicLoad(&metadata.m_buffer, std::memory_order_acquire)->forEach([&] (ValueProfileAndVirtualRegister& profile) {
+        profile.storeBucketConcurrently(0, JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue())); // THREADS §5.7.4
     });
 
     LLINT_END();
@@ -2849,17 +3212,81 @@ extern "C" UGPRPair SYSV_ABI llint_slow_path_array_sort_comparator_return(CallFr
     //      [ userDefinedComparator frame ]
     //
     //  After the comparator's baseline finishes we land here. We re-execute
-    //  the sort call instead of advancing past it. This is safe because
-    //  ArraySortCommit (the only node that mutates the array) is downstream of
-    //  the comparator in the DFG graph and has not yet run, and the spec allows
-    //  Array.prototype.sort to invoke the comparator any number of times.
+    //  the sort's call instruction instead of advancing past it. This is safe
+    //  because ArraySortCommit (the only node that mutates the array) is
+    //  downstream of the comparator in the DFG graph and has not yet run, and
+    //  the spec allows Array.prototype.sort to invoke the comparator any
+    //  number of times.
+    //
+    //  The recovered call site is NOT always op_call: ByteCodeParser's
+    //  handleArraySort can be hosted at any of the plain call shapes, so the
+    //  sort call instruction is one of:
+    //    - op_call:               var r = array.sort(comparator)
+    //    - op_call_ignore_result: array.sort(comparator);  (result discarded)
+    //    - op_tail_call:          return array.sort(comparator)
+    //  This set is enforced at parse time: handleArraySort refuses to host the
+    //  intrinsic at any other opcode. (Without that guard, op_iterator_open /
+    //  op_iterator_next could host it via BoundFunctionCallIntrinsic expansion
+    //  of a bound sort, whose bound args defeat the argc < 2 rejection;
+    //  handleVarargsCall does not attempt intrinsics.) Re-dispatching any of
+    //  the three re-invokes the sort from scratch, which is the intended
+    //  recovery.
     LLINT_BEGIN_NO_SET_PC();
     UNUSED_PARAM(globalObject);
 
-    // reifyInlinedCallFrames stored CallSiteIndex of the sort call in argumentCountIncludingThis's tag.
+    // reifyInlinedCallFrames stored CallSiteIndex(sort call site bc) in argumentCountIncludingThis's tag.
     BytecodeIndex bytecodeIndex = callFrame->bytecodeIndex();
     auto pc = codeBlock->instructions().at(bytecodeIndex);
-    ASSERT_UNUSED(pc, pc->opcodeID() == op_call || pc->opcodeID() == op_call_ignore_result || pc->opcodeID() == op_tail_call);
+    auto opcodeIsSortCallSite = [](OpcodeID opcodeID) {
+        return opcodeID == op_call || opcodeID == op_call_ignore_result || opcodeID == op_tail_call;
+    };
+    UNUSED_VARIABLE(opcodeIsSortCallSite); // Release non-DFG builds only use it in the ASSERT below.
+#if ENABLE(DFG_JIT)
+    if (vm.gilOff()) [[unlikely]] {
+        // DW-1 (deepwater LEDGER row 1): GIL-off recovery-side validation of
+        // the sort-comparator OSR-exit pc-recovery contract. The stash side
+        // (operationCompileOSRExit -> recordSortComparatorOSRExitStashIfApplicable,
+        // which runs on every GIL-off DFG exit because the rel32 repatch is
+        // suppressed) recorded the (thread, caller baseline CodeBlock,
+        // CallSiteIndex) tuple reifyInlinedCallFrames stashed into this
+        // frame. Discriminators on violation:
+        //   - recovery codeBlock != stashed CodeBlock with matching bits =>
+        //     cross-thread CodeBlock replacement between stash and recovery;
+        //   - matching CodeBlock, differing bits => CallSiteIndex
+        //     stash/recovery routing fault (per-lite-vs-carrier family);
+        //   - stash thread uid != current uid (or unarmed) => the recovery
+        //     ran on a thread that never stashed (carrier mixup), or the
+        //     exit came from a tier whose stash side is not instrumented
+        //     (FTL exits reify through the same helper but compile through
+        //     operationCompileFTLOSRExit, which does not record).
+        // Release GIL-off today silently dispatches to the wrong pc
+        // (miscompilation-grade corruption); the RELEASE_ASSERT below turns
+        // that into a deterministic stop with the evidence attached. GIL-on
+        // (and flag-off) behavior is byte-identical: this whole block is
+        // mode-gated and the existing debug ASSERT below is unchanged.
+        auto& record = DFG::sortComparatorOSRExitStashRecord();
+        uint32_t recoveredBits = CallSiteIndex(bytecodeIndex).bits(); // Unstripped: a checkpoint bit here is itself a violation worth seeing.
+        bool opcodeIsCall = opcodeIsSortCallSite(pc->opcodeID());
+        bool stashMatches = !record.armed
+            || (record.expectedCallerBaselineCodeBlock == codeBlock && record.expectedCallSiteBits == recoveredBits && record.threadUid == Thread::currentSingleton().uid());
+        if (!opcodeIsCall || !stashMatches) [[unlikely]] {
+            dataLogLn("DW-1: sort-comparator OSR-exit pc-recovery contract violation:",
+                " threadUid=", Thread::currentSingleton().uid(),
+                " recoveryCodeBlock=", RawPointer(codeBlock),
+                " recoveryCallSiteBits=", recoveredBits,
+                " recoveryOpcode=", static_cast<unsigned>(pc->opcodeID()),
+                " stashArmed=", record.armed,
+                " stashThreadUid=", record.threadUid,
+                " stashDFGCodeBlock=", RawPointer(record.dfgCodeBlock),
+                " stashExpectedCallerBaselineCodeBlock=", RawPointer(record.expectedCallerBaselineCodeBlock),
+                " stashExpectedCallSiteBits=", record.expectedCallSiteBits,
+                " stashExitIndex=", record.exitIndex);
+            RELEASE_ASSERT(opcodeIsCall, static_cast<unsigned>(pc->opcodeID()), recoveredBits, std::bit_cast<uintptr_t>(codeBlock));
+        }
+        record.armed = false;
+    }
+#endif
+    ASSERT_UNUSED(pc, opcodeIsSortCallSite(pc->opcodeID()));
     return dispatchToCurrentInstructionDuringExit(throwScope, codeBlock, pc);
 }
 

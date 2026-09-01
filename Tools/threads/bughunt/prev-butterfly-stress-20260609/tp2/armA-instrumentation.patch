@@ -1,0 +1,61 @@
+--- /root/WebKit/Tools/threads/bughunt/tp2/KeyAtomStringCacheInlines.h.orig	2026-06-09 05:28:01.105436334 +0000
++++ /root/WebKit/Source/JavaScriptCore/runtime/KeyAtomStringCacheInlines.h	2026-06-09 05:28:11.305444544 +0000
+@@ -28,8 +28,11 @@
+ #include "Identifier.h"
+ #include "JSString.h"
+ #include "KeyAtomStringCache.h"
++#include "Options.h"
+ #include "SmallStrings.h"
+ #include "VM.h"
++#include <atomic>
++#include <wtf/DataLog.h>
+ 
+ namespace JSC {
+ 
+@@ -47,10 +50,42 @@
+ 
+     ASSERT(buffer.characters.size() <= maxStringLengthForCache);
+     auto& slot = m_cache[buffer.hash % capacity];
+-    if (slot) {
+-        auto* impl = slot->tryGetValueImpl();
+-        if (impl->hash() == buffer.hash && equal(impl, buffer.characters))
+-            return slot;
++    // BUGHUNT TP2 ARM A instrumentation (revert before landing anything):
++    // - log the 512-bucket index of "p8"/"p17" once (collision check);
++    // - after a successful hash+equal verification, widen the
++    //   verify->return window with a short spin (GIL-off only), then
++    //   explicitly RE-LOAD the slot (faithful to the original
++    //   `return slot;` at -O0) and log when the reload differs from the
++    //   verified pointer.
++    {
++        auto& chars = buffer.characters;
++        if (chars.size() >= 2 && chars.size() <= 3 && chars[0] == 'p') {
++            bool isP8 = chars.size() == 2 && chars[1] == '8';
++            bool isP17 = chars.size() == 3 && chars[1] == '1' && chars[2] == '7';
++            if (isP8 || isP17) {
++                static std::atomic<unsigned> s_loggedIdx[2];
++                if (!s_loggedIdx[isP17].exchange(1, std::memory_order_relaxed))
++                    dataLogLn("KEYATOM-IDX ", isP17 ? "p17" : "p8", " hash=", buffer.hash, " idx=", buffer.hash % capacity);
++            }
++        }
++    }
++    JSString* verified = slot;
++    if (verified) {
++        auto* impl = verified->tryGetValueImpl();
++        if (impl && impl->hash() == buffer.hash && equal(impl, buffer.characters)) {
++            if (Options::useJSThreads() && !Options::useThreadGIL()) {
++                for (volatile int spin = 0; spin < 2000; ++spin) { }
++            }
++            JSString* reloaded = *std::bit_cast<JSString* volatile*>(&slot);
++            if (reloaded != verified) [[unlikely]] {
++                auto* rimpl = reloaded ? reloaded->tryGetValueImpl() : nullptr;
++                dataLogLn("KEYATOM-RACE idx=", buffer.hash % capacity,
++                    " requested=", String(buffer.characters),
++                    " verified=", String(impl),
++                    " reloaded=", rimpl ? String(rimpl) : String("<null-or-rope>"_s));
++            }
++            return reloaded; // ARM A: preserve the buggy reload-after-verify return.
++        }
+     }
+ 
+     JSString* result = func(vm, buffer);

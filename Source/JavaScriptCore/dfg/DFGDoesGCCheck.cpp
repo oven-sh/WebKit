@@ -70,7 +70,11 @@ void DoesGCCheck::verifyCanGC(VM& vm)
         } else
             dataLog(" @ D@", nodeIndex(), " ", DFG::Graph::opName(static_cast<DFG::NodeType>(nodeOp())));
 
-        CallFrame* callFrame = vm.topCallFrame;
+        // UNGIL AB18-C (diagnostics only): read through the §A.1.3 mode-split
+        // accessor — gilOff the live topCallFrame is the current lite's, not
+        // the inert VM block's (which always reads null GIL-off and would
+        // silently skip this dump). GIL-on: same word as before.
+        CallFrame* callFrame = vm.group3Primitives().topCallFrame;
         if (callFrame) {
             if (!callFrame->isNativeCalleeFrame())
                 dataLogLn(" in ", callFrame->codeBlock());

@@ -141,6 +141,15 @@ public:
         }
         m_usedBlocks.set(0);
 #elif USE(MIMALLOC)
+        // THREADS-INTEGRATE(vmstate) SPEC-vmstate §5.1/N3 (M9): mi_heap_ts are
+        // thread-affine — handing out Structure blocks through a mimalloc heap
+        // is unsafe once multiple threads allocate Structures. With either
+        // flag on, skip arena/heap creation and use the locked-bitvector
+        // handout (tryMallocStructureBlock's m_useSystemHeap path) for the
+        // process lifetime. Flags off => branch untaken, today's path
+        // byte-identical (R3). Blocks are rare; I9 stress covers this config.
+        if (Options::useStructureAllocationLock() || Options::useSharedGCHeap()) [[unlikely]]
+            m_useSystemHeap = true;
         if (!m_useSystemHeap) [[likely]] {
             void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + MarkedBlock::blockSize);
             size_t size = g_jscConfig.sizeOfStructureHeap - MarkedBlock::blockSize;

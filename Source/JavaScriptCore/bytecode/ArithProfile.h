@@ -29,6 +29,7 @@
 #include "JSCJSValue.h"
 #include "ResultType.h"
 #include "TagRegistersMode.h"
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
@@ -97,6 +98,59 @@ public:
 
 private:
     uint8_t m_bits { 0 };
+};
+
+// With shared-heap threads (useJSThreads), arith profiling bits are written from
+// multiple mutator threads and read concurrently by compiler threads. Per
+// SPEC-ungil §5.7 (racy-profiling tolerance) / TSAN-TRIAGE §3.8, lost updates are
+// acceptable but plain mixed-thread accesses are UB. ArithProfileBits routes every
+// access through relaxed atomics while keeping the plain-bitfield syntax
+// (implicit conversion, `=`, `|=`) used by ArithProfile and its subclasses.
+// Every access is a relaxed load or relaxed store (never an atomic RMW), which
+// compiles to the same plain instructions the field had before, so flag-off
+// (useJSThreads=false) codegen is unchanged. We still update the bits only in
+// single whole-word operations; we never store an inconsistent bit
+// representation — but concurrent |= merges can lose each other's bits, which
+// §5.7.7 tolerates.
+template <typename BitfieldType>
+class ArithProfileBits {
+public:
+    ArithProfileBits() = default;
+    ALWAYS_INLINE ArithProfileBits(BitfieldType bits)
+        : m_bits { bits }
+    { }
+    ALWAYS_INLINE ArithProfileBits(const ArithProfileBits& other)
+        : m_bits { other.loadRelaxed() }
+    { }
+    ALWAYS_INLINE ArithProfileBits& operator=(const ArithProfileBits& other)
+    {
+        m_bits.storeRelaxed(other.loadRelaxed());
+        return *this;
+    }
+    ALWAYS_INLINE ArithProfileBits& operator=(BitfieldType bits)
+    {
+        m_bits.storeRelaxed(bits);
+        return *this;
+    }
+    ALWAYS_INLINE ArithProfileBits& operator|=(BitfieldType mask)
+    {
+        // Deliberately a relaxed load + relaxed store, NOT an atomic RMW: an
+        // RMW (even relaxed) compiles to `lock or` on x86-64 / an exclusive
+        // or LSE loop on ARM64 — a full fence on unconditional flag-off slow
+        // paths (LLInt/baseline/DFG profiled arith operations). Lost
+        // cross-thread bit-merges are explicitly tolerated by SPEC-jit
+        // §5.7.7 (and JIT-emitted code ORs into this word with a plain
+        // non-atomic `or` anyway, so an RMW here would buy no real
+        // guarantee). This matches the family convention used by
+        // mergeSpeculationConcurrently, ValueProfile, and ArrayProfile.
+        m_bits.storeRelaxed(m_bits.loadRelaxed() | mask);
+        return *this;
+    }
+    ALWAYS_INLINE operator BitfieldType() const { return loadRelaxed(); }
+    ALWAYS_INLINE BitfieldType loadRelaxed() const { return m_bits.loadRelaxed(); }
+
+private:
+    WTF::Atomic<BitfieldType> m_bits { 0 };
 };
 
 template <typename BitfieldType>
@@ -170,16 +224,21 @@ public:
     void emitUnconditionalSet(CCallHelpers&, GPRReg) const;
 #endif // ENABLE(JIT)
 
-    constexpr uint32_t bits() const { return m_bits; }
+    uint32_t bits() const { return m_bits; }
 
 protected:
     ArithProfile() = default;
 
     bool hasBits(int mask) const { return m_bits & mask; }
-    void setBit(int mask) { m_bits |= mask; }
+    void setBit(int mask) { m_bits |= mask; } // Relaxed load+OR+store; concurrent setters MAY lose each other's bits (blessed by SPEC-jit §5.7.7).
 
-    BitfieldType m_bits { 0 }; // We take care to update m_bits only in a single operation. We don't ever store an inconsistent bit representation to it.
+    // We take care to update m_bits only in a single operation. We don't ever store an inconsistent bit representation to it.
+    // All accesses are relaxed atomic (see ArithProfileBits) because, with useJSThreads, multiple mutator and compiler threads touch these bits concurrently.
+    ArithProfileBits<BitfieldType> m_bits;
 };
+
+static_assert(sizeof(ArithProfileBits<uint16_t>) == sizeof(uint16_t), "LLInt asm and JIT-emitted code access the profile word raw; the atomic wrapper must not change layout.");
+static_assert(alignof(ArithProfileBits<uint16_t>) == alignof(uint16_t), "LLInt asm and JIT-emitted code access the profile word raw; the atomic wrapper must not change layout.");
 
 #if ENABLE(JIT)
 extern template class ArithProfile<uint16_t>;
@@ -226,7 +285,7 @@ public:
         return bits;
     }
 
-    constexpr ObservedType argObservedType() const { return ObservedType((m_bits >> argObservedTypeShift) & observedTypeMask); }
+    ObservedType argObservedType() const { return ObservedType((m_bits >> argObservedTypeShift) & observedTypeMask); }
     void setArgObservedType(ObservedType type)
     {
         UnaryArithProfileBase bits = m_bits;
@@ -320,8 +379,8 @@ public:
         return bits;
     }
 
-    constexpr ObservedType lhsObservedType() const { return ObservedType((m_bits >> lhsObservedTypeShift) & observedTypeMask); }
-    constexpr ObservedType rhsObservedType() const { return ObservedType((m_bits >> rhsObservedTypeShift) & observedTypeMask); }
+    ObservedType lhsObservedType() const { return ObservedType((m_bits >> lhsObservedTypeShift) & observedTypeMask); }
+    ObservedType rhsObservedType() const { return ObservedType((m_bits >> rhsObservedTypeShift) & observedTypeMask); }
     void setLhsObservedType(ObservedType type)
     {
         BinaryArithProfileBase bits = m_bits;

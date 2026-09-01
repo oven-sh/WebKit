@@ -28,6 +28,8 @@
 #if ENABLE(FTL_JIT)
 
 #include "FTLJITCode.h"
+#include <limits>
+#include <wtf/Atomics.h>
 #include <wtf/FixedVector.h>
 
 namespace JSC { namespace FTL {
@@ -48,12 +50,24 @@ public:
     
     void initializeEntryBuffer(VM&, unsigned numCalleeLocals);
     ScratchBuffer* entryBuffer() const { return m_entryBuffer; }
-    
+
+    // UNGIL §A.1.6 (ANNEX A16, U-T4b): gilOff-mode compilations leave
+    // m_entryBuffer null and store a process-wide ScratchBufferRegistry index
+    // here — the JITCode-RESIDENT entry buffer becomes a per-lite registry
+    // index, so concurrent loop OSR entries into one entry CodeBlock each
+    // fill and read back their OWN thread's buffer. UINT_MAX = unset (every
+    // GIL-on / flag-off compilation).
+    unsigned entryBufferBakedIndex() const { return m_entryBufferBakedIndex; }
+
     void setBytecodeIndex(BytecodeIndex value) { m_bytecodeIndex = value; }
     BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
     
-    void countEntryFailure() { m_entryFailureCount++; }
-    unsigned entryFailureCount() const { return m_entryFailureCount; }
+    // THREADS §5.7.1 (TSAN-TRIAGE family 2): the entry-failure count is bumped from the
+    // FTL OSR-entry slow path by any of N mutators racing into the same entry CodeBlock
+    // and read by the retry heuristic; relaxed atomic add/load on the plain field, lost
+    // counts benign (advisory retry datum). Flag-off semantics/codegen unchanged.
+    void countEntryFailure() { WTF::atomicExchangeAdd(&m_entryFailureCount, 1u, std::memory_order_relaxed); }
+    unsigned entryFailureCount() const { return WTF::atomicLoad(const_cast<unsigned*>(&m_entryFailureCount), std::memory_order_relaxed); }
     
     ForOSREntryJITCode* ftlForOSREntry() final;
 
@@ -65,7 +79,8 @@ public:
 
 private:
     FixedVector<DFG::FlushFormat> m_argumentFlushFormats;
-    ScratchBuffer* m_entryBuffer; // Only for OSR entry code blocks.
+    ScratchBuffer* m_entryBuffer { nullptr }; // Only for OSR entry code blocks; null when gilOff (see entryBufferBakedIndex()).
+    unsigned m_entryBufferBakedIndex { std::numeric_limits<unsigned>::max() }; // UNGIL A16 (U-T4b).
     BytecodeIndex m_bytecodeIndex;
     unsigned m_entryFailureCount;
 };

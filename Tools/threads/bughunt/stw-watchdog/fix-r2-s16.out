@@ -1,0 +1,21 @@
+run 1: rc=0 3.3s PASS
+run 2: rc=0 3.3s PASS
+run 3: rc=0 3.4s PASS
+run 4: rc=0 3.4s PASS
+run 5: rc=0 2.9s PASS
+run 6: rc=0 3.4s PASS
+run 7: rc=0 3.5s PASS
+run 8: rc=0 3.4s PASS
+run 9: rc=0 3.7s PASS
+run 10: rc=0 3.6s PASS
+run 11: rc=0 3.3s PASS
+run 12: rc=0 3.4s PASS
+run 13: rc=0 3.2s PASS
+run 14: rc=0 3.3s PASS
+run 15: rc=0 3.2s PASS
+run 16: rc=0 3.2s PASS
+run 17: rc=0 3.2s PASS
+run 18: rc=0 3.4s PASS
+run 19: rc=0 3.3s PASS
+run 20: rc=0 3.5s PASS
+SUMMARY tag=fix-r2-s16 N=2 scale=0.0625 runs=20 pass=20 abort134=0 segv=0 timeout=0 other=0

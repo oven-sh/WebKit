@@ -1,0 +1,10 @@
+./campaign.sh: line 15: 831652 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 1: rc=134 30.1s WATCHDOG-ABORT
+run 2: rc=0 0.5s PASS
+./campaign.sh: line 15: 833198 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 3: rc=134 30.1s WATCHDOG-ABORT
+run 4: rc=0 0.5s PASS
+run 5: rc=0 0.4s PASS
+./campaign.sh: line 15: 834698 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 6: rc=134 30.1s WATCHDOG-ABORT
+SUMMARY tag=exp-revert-check N=4 scale=1 runs=6 pass=3 abort134=3 segv=0 timeout=0 other=0

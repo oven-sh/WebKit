@@ -38,6 +38,7 @@
 #include <JavaScriptCore/InternalFieldTuple.h>
 #endif
 #include <wtf/FixedVector.h>
+#include <wtf/Lock.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/WeakPtr.h>
 
@@ -695,7 +696,16 @@ public:
     RuntimeFlags m_runtimeFlags;
     WeakPtr<ConsoleClient> m_consoleClient;
     std::optional<unsigned> m_stackTraceLimit;
-    Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
+    // Leaf lock guarding the Weak slot below (TSAN triage §8.36 function-ctor-cache).
+    // This per-global Function-constructor source cache is a pure cache, not blessed
+    // racy by SPEC-ungil §K: with useThreadGIL=false, N threads can run
+    // new Function(...) against the same global concurrently, and Weak::set
+    // (swap + WeakImpl deallocate of the old impl) racing a lock-free Weak::get is a
+    // torn/freed WeakImpl* read (UAF). The lock covers only the slot read/write; the
+    // FunctionExecutable* loaded under the lock stays alive via the caller's stack
+    // reference (conservative scan), so the cell can be inspected outside the lock.
+    Lock m_functionConstructorExecutableCacheLock;
+    Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor WTF_GUARDED_BY_LOCK(m_functionConstructorExecutableCacheLock);
     
     // Added for "bun test". NaN (the default) means no override is active.
     // Using NaN as the sentinel keeps jsDateNow() non-NaN by construction,
@@ -749,6 +759,22 @@ public:
 #if ASSERT_ENABLED
     const JSGlobalObject* m_globalObjectAtDebuggerEntry { nullptr };
 #endif
+
+    // THREADS (SCALEBENCH §37 R1): per-realm cached instance Structures for the
+    // Thread/Lock/Condition host constructors. Before this cache, constructLock
+    // (and friends) called JSLockObject::createStructure on EVERY `new Lock()`,
+    // so K shard locks => K distinct base StructureIDs at the
+    // `shards[s].lock.hold(...)` GetById; after 8 AccessCases the IC hits
+    // maxAccessVariantListSize, the megamorphic fold is gated off under
+    // useJSThreads (MegamorphicCache fills are no-ops, MegamorphicCache.h), so
+    // addAccessCase returns GaveUp and Repatch.cpp permanently repatches the
+    // slow-path to operationGetByIdGaveUp (4.45% W=16 self). With one cached
+    // Structure per realm the IC stays monomorphic. Only ever set inside the
+    // `if (Options::useJSThreads())` install block in init(), so flag-off these
+    // stay null and untouched (no JIT-baked offsets live past this point).
+    WriteBarrierStructureID m_lockObjectStructure;
+    WriteBarrierStructureID m_conditionObjectStructure;
+    WriteBarrierStructureID m_threadObjectStructure;
 
     const GlobalObjectMethodTable* m_globalObjectMethodTable;
 
@@ -1064,6 +1090,16 @@ public:
     Structure* proxyObjectStructure() const { return m_proxyObjectStructure.get(this); }
     Structure* callableProxyObjectStructure() const { return m_callableProxyObjectStructure.get(this); }
     Structure* proxyRevokeStructure() const { return m_proxyRevokeStructure.get(this); }
+    // THREADS: see m_lockObjectStructure above. Set once from
+    // create{Lock,Condition,Thread}Property under Options::useJSThreads();
+    // never read flag-off (the host constructors that read them are only
+    // installed under the same flag).
+    Structure* lockObjectStructure() const { return m_lockObjectStructure.get(); }
+    Structure* conditionObjectStructure() const { return m_conditionObjectStructure.get(); }
+    Structure* threadObjectStructure() const { return m_threadObjectStructure.get(); }
+    void setLockObjectStructure(VM& vm, Structure* structure) { m_lockObjectStructure.set(vm, this, structure); }
+    void setConditionObjectStructure(VM& vm, Structure* structure) { m_conditionObjectStructure.set(vm, this, structure); }
+    void setThreadObjectStructure(VM& vm, Structure* structure) { m_threadObjectStructure.set(vm, this, structure); }
     Structure* disposableStackStructure() const { return m_disposableStackStructure.get(this); }
     Structure* asyncDisposableStackStructure() const { return m_asyncDisposableStackStructure.get(this); }
     Structure* restParameterStructure() const { return arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous); }
@@ -1244,7 +1280,20 @@ public:
         
     void haveABadTime(VM&);
 
-    void notifyArrayBufferDetaching();
+private:
+    // The landed haveABadTime body (watchpoint fire + structure flip + heap
+    // conversion walk). GIL-off this runs ONLY inside the §K.5 Class-4
+    // thread-granular stop requested by haveABadTime (SPEC-ungil ANNEX
+    // HBT/HBT2-HBT4; AB-10).
+    void haveABadTimeImpl(VM&);
+
+public:
+    void notifyArrayBufferDetaching()
+    {
+        if (!m_arrayBufferDetachWatchpointSet->isStillValid())
+            return;
+        notifyArrayBufferDetachingSlow();
+    }
 
     void clearStructureCache(VM&);
         
@@ -1355,7 +1404,9 @@ public:
     void installMapPrototypeWatchpoint(MapPrototype*);
     void installSetPrototypeWatchpoint(SetPrototype*);
     void tryInstallArrayBufferSpeciesWatchpoint(ArrayBufferSharingMode);
+    void tryInstallArrayBufferSpeciesWatchpointImpl(ArrayBufferSharingMode); // THREADS lazy-species-install-race sibling (§35-R1): gilOff routes the public entry through STW; this is the unchanged body.
     void tryInstallTypedArraySpeciesWatchpoint(TypedArrayType);
+    void tryInstallTypedArraySpeciesWatchpointImpl(TypedArrayType); // THREADS lazy-species-install-race: gilOff routes the public entry through STW; this is the unchanged body.
     void installTypedArrayIteratorProtocolWatchpoint(JSObject* prototype, TypedArrayType);
     void installTypedArrayConstructorSpeciesWatchpoint(JSTypedArrayViewConstructor*);
     void installTypedArrayPrototypeIteratorProtocolWatchpoint(JSTypedArrayViewPrototype*);
@@ -1429,6 +1480,20 @@ ALWAYS_INLINE VM& getVM(JSGlobalObject* globalObject)
 {
     return globalObject->vm();
 }
+
+// UNGIL §K.1 per-lite realm duplicate of m_regExpGlobalData (AUD1.K2/SD19;
+// banner + definition in JSGlobalObject.cpp). Resolves the CURRENT thread's
+// RegExp legacy-statics stream: the in-object member for flag-off / GIL-on /
+// the gilOff main carrier (byte-identical to regExpGlobalData()), and the
+// per-(global, lite) copy for gilOff non-main-carrier threads. ALL runtime
+// (C++) consumers of the match-result stream MUST route through the
+// ALWAYS_INLINE threadRegExpGlobalData() wrapper in RegExpGlobalDataInlines.h
+// (AUD1.K2 consumer re-point; the wrapper's flag-off fast path is a
+// read-only Config-page test so flag-off match paths stay call-free); this
+// out-of-line slow path runs only when gilOffWithProcessGate() is true. The
+// DFG/FTL inline RecordRegExpCachedResult emission is the A16-ext jit slice
+// and still targets the in-object stream.
+JS_EXPORT_PRIVATE RegExpGlobalData& threadRegExpGlobalDataSlow(JSGlobalObject*);
 
 } // namespace JSC
 

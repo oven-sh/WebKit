@@ -36,7 +36,9 @@
 #include "DFGOSRExitCompilerCommon.h"
 #include "DFGOperations.h"
 #include "DFGSpeculativeJIT.h"
+#include "DFGThunks.h"
 #include "FrameTracers.h"
+#include "JSThreadsSafepoint.h"
 #include "InlineCallFrame.h"
 #include "JSCJSValueInlines.h"
 #include "OperandsInlines.h"
@@ -153,8 +155,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
         vm.setDoesGCExpectation(true, DoesGCCheck::Special::DFGOSRExit);
     }
 
-    if (vm.callFrameForCatch)
-        RELEASE_ASSERT(vm.callFrameForCatch == callFrame);
+    // UNGIL §A.1.3: read through the mode-split accessor — gilOff the live
+    // callFrameForCatch is the current lite's, not the inert VM block's
+    // (genericUnwind publishes catch state per-lite; same idiom as
+    // operationCompileFTLOSRExit).
+    if (vm.group3Primitives().callFrameForCatch)
+        RELEASE_ASSERT(vm.group3Primitives().callFrameForCatch == callFrame);
 
     CodeBlock* codeBlock = callFrame->codeBlock();
     ASSERT(codeBlock);
@@ -164,19 +170,107 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
     // really be profitable.
     DeferGCForAWhile deferGC(vm);
 
-    uint32_t exitIndex = vm.osrExitIndex;
-    OSRExit& exit = codeBlock->jitCode()->dfg()->m_osrExit[exitIndex];
+    // UNGIL §A.1.3 (U-T4a): the exit-generation thunk publishes the exit
+    // index through the exiting thread's lite when gilOff (mode-split read;
+    // GIL-on this is the VM-block word, bit-identical to today).
+    uint32_t exitIndex = vm.group3Primitives().osrExitIndex;
+    // SCALEBENCH §36 jitcode-refptr-bounce-14pct: cache the DFG::JITCode* once
+    // via the raw accessor (the by-value jitCode() was four `lock incl/decl`
+    // pairs on the shared-CodeBlock refcount per traversal; gilOff every exit
+    // traverses here forever). codeBlock is conservatively-live on this stack
+    // and pins m_jitCode; flag-off output-identical.
+    DFG::JITCode* dfgJIT = codeBlock->jitCodeRawPtr()->dfg();
+    OSRExit& exit = dfgJIT->m_osrExit[exitIndex];
 
-    ASSERT(!vm.callFrameForCatch || exit.m_kind == GenericUnwind);
+    // DW-1 instrumentation (deepwater LEDGER row 1): GIL-off, every DFG exit
+    // traverses this operation (the rel32 repatch is suppressed — U-T4b
+    // below), so this records, per exit, the sort-comparator pc-recovery
+    // tuple the ramp is about to stash into the recovery frame. The
+    // comparator-return trampoline slow path cross-checks it
+    // (llint_slow_path_array_sort_comparator_return). GIL-on: not recorded
+    // and not consumed; behavior and codegen unchanged.
+    if (vm.gilOff()) [[unlikely]] {
+        recordSortComparatorOSRExitStashIfApplicable(vm, codeBlock, exit, exitIndex);
+        // SCALEBENCH §36 dfg-osrexit-genlock-dclp-precheck (FLAT-GAP-EVIDENCE
+        // round 2 §(2)/§R2): U-T4b means the steady state for an
+        // already-compiled exit is "land here, return the published ramp".
+        // The U-T4a existing-ramp short-circuit lives AFTER the
+        // dfgOSRExitGenerationLock tryLock spin AND after the per-traversal
+        // variableEventStream.reconstruct() below — eu-stack on a W=32
+        // slow-mode rep shows 22% of JS threads at __sched_yield inside that
+        // spin (the exit fires INSIDE the held shard lock, so every spinning
+        // thread is a stalled critical section: 2.2× park inflation, +850 ms
+        // phaseA bimodal). Do the lock-free DCLP read FIRST: m_exits[i] is
+        // initialized to the process-singleton osrExitGenerationThunk
+        // (DFGPlan.cpp:834) and overwritten exactly once by setExitCode under
+        // dfgOSRExitGenerationLock; setExitCode writes m_executableMemory
+        // first, storeStoreFence, then relaxed-atomic publishes m_codePtr (the
+        // single tagged word the JIT-emitted unlinked dispatch ALSO reads
+        // lock-free, DFGJITCompiler.cpp:147) LAST, so a non-thunk codePtr
+        // implies the ramp's executable memory is fully constructed
+        // (FINALIZE_CODE's LinkBuffer fence) and held live by the m_exits
+        // slot's own RefPtr. The thunk codePtr is cached in a function-static
+        // (process-lifetime CTI stub; thread-safe static-local init avoids
+        // the per-traversal JITThunks lock). Same value the under-lock check
+        // returned; DW-1 record above already ran (matching the under-lock
+        // early return's ordering). gilOff-only arm; flag-off byte-identical.
+        static void* const s_osrExitGenerationThunkCodePtr =
+            vm.getCTIStub(osrExitGenerationThunkGenerator).retaggedCode<OSRExitPtrTag>().taggedPtr();
+        void* publishedCodePtr = codeBlock->dfgJITData()->exitCodePtrConcurrent(exitIndex);
+        if (publishedCodePtr && publishedCodePtr != s_osrExitGenerationThunkCodePtr) [[likely]] {
+            WTF::loadLoadFence(); // pairs with FINALIZE_CODE's publish + setExitCode()'s internal storeStoreFence.
+            vm.group3Primitives().osrExitJumpDestination = publishedCodePtr;
+            return;
+        }
+    }
+
+    ASSERT(!vm.group3Primitives().callFrameForCatch || exit.m_kind == GenericUnwind); // UNGIL §A.1.3 mode split.
     EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() || !exit.isOSRExitDueToException());
-    
+
     // Compute the value recoveries.
     Operands<ValueRecovery> operands;
-    codeBlock->jitCode()->dfg()->variableEventStream.reconstruct(codeBlock, exit.m_codeOrigin, codeBlock->jitCode()->dfg()->minifiedDFG, exit.m_streamIndex, operands);
+    dfgJIT->variableEventStream.reconstruct(codeBlock, exit.m_codeOrigin, dfgJIT->minifiedDFG, exit.m_streamIndex, operands);
 
     SpeculationRecovery* recovery = nullptr;
     if (exit.m_recoveryIndex != UINT_MAX)
-        recovery = &codeBlock->jitCode()->dfg()->m_speculationRecovery[exit.m_recoveryIndex];
+        recovery = &dfgJIT->m_speculationRecovery[exit.m_recoveryIndex];
+
+    // UNGIL U-T4a (DFG sibling of ftlOSRExitGenerationLock, same rank and
+    // discipline): gilOff, N threads can fire the SAME not-yet-compiled exit
+    // concurrently; the exit ramp must be compiled and published exactly once
+    // (concurrent setExitCode + repatchJump on one site is a code-patching
+    // race). Coarse process-wide lock — exit-stub compilation is a
+    // once-per-exit slow path; acquired with no other JSC lock held, OUTER to
+    // everything the compile below acquires. GIL-on never takes it (flag-off
+    // identity).
+    static Lock dfgOSRExitGenerationLock;
+    bool generationLockHeld = false;
+    auto unlockGenerationLock = makeScopeExit([&] {
+        if (generationLockHeld) [[unlikely]]
+            dfgOSRExitGenerationLock.unlock();
+    });
+    if (vm.gilOff()) [[unlikely]] {
+        // FIX-2 class-(2) acquisition (same shape as GILOffCompilationLocker,
+        // DFGPlan.cpp): a contended waiter here holds heap access, so it must
+        // stay visible to the GIL-off §A.3 stop fan — a blocking Locker can
+        // deadlock a pending stop against the lock holder and trip the 30s
+        // watchdog.
+        while (!dfgOSRExitGenerationLock.tryLock()) {
+            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+                continue; // Parked across a window: re-validate (retry tryLock).
+            handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
+            Thread::yield();
+        }
+        generationLockHeld = true;
+        auto osrExitThunk = vm.getCTIStub(osrExitGenerationThunkGenerator).retagged<OSRExitPtrTag>();
+        const auto& existing = codeBlock->dfgJITData()->exitCode(exitIndex);
+        if (existing.executableMemory() && existing.executableMemory() != osrExitThunk.executableMemory()) {
+            // A racing thread compiled and published this exit while we were
+            // contending for the lock: reuse its ramp.
+            vm.group3Primitives().osrExitJumpDestination = existing.code().taggedPtr();
+            return;
+        }
+    }
 
     MacroAssemblerCodeRef<OSRExitPtrTag> exitCode;
     {
@@ -185,8 +279,25 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
         if (exit.m_kind == GenericUnwind) {
             // We are acting as a defacto op_catch because we arrive here from genericUnwind().
             // So, we must restore our call frame and stack pointer.
-            jit.restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm.topEntryFrame);
-            jit.loadPtr(vm.addressOfCallFrameForCatch(), GPRInfo::callFrameRegister);
+            if (vm.gilOff()) [[unlikely]] {
+                // UNGIL §A.1.3 (U-T4b): topEntryFrame and callFrameForCatch
+                // are per-lite Group-3 state GIL-off, and this exit ramp is
+                // cached on a shared CodeBlock — it runs on whichever thread
+                // unwinds, so resolve the CURRENT lite instead of baking
+                // &vm's inert words. All registers are dead at catch entry
+                // (defacto op_catch), so a caller-save base (regT3) with the
+                // plain skip list restores every VM callee save; no
+                // scratch-restore dance needed. Rematerialize the lite
+                // (§A.1.2) after the restore clobbers regT3 as buffer base.
+                jit.loadVMLite(GPRInfo::regT3);
+                jit.loadPtr(CCallHelpers::Address(GPRInfo::regT3, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topEntryFrame())), GPRInfo::regT3);
+                jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBufferImpl(GPRInfo::regT3, RegisterSet::stackRegisters());
+                jit.loadVMLite(GPRInfo::regT3);
+                jit.loadPtr(CCallHelpers::Address(GPRInfo::regT3, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_callFrameForCatch())), GPRInfo::callFrameRegister);
+            } else {
+                jit.restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm.topEntryFrame);
+                jit.loadPtr(vm.addressOfCallFrameForCatch(), GPRInfo::callFrameRegister);
+            }
         }
         jit.addPtr(
             CCallHelpers::TrustedImm32(codeBlock->stackPointerOffset() * sizeof(Register)),
@@ -214,13 +325,30 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
                 exitIndex, exit.m_dfgNodeIndex, toCString(exit.m_codeOrigin).data(),
                 toCString(exit.m_kind).data(), toCString(*codeBlock).data(),
                 toCString(ignoringContext<DumpContext>(operands)).data());
+        // SCALEBENCH §36 dfg-osrexit-genlock-dclp-precheck: pair with the
+        // gilOff lock-free reader's loadLoadFence above (and the JIT-emitted
+        // unlinked-DFG farJump that reads m_codePtr directly). LinkBuffer's
+        // performFinalization already issued a crossModifyingCodeFence for
+        // i-cache coherence; this fence orders the slot's m_codePtr store
+        // after the ramp's executable-memory writes for d-side readers.
+        // Once-per-exit-compile; flag-off output-identical.
+        WTF::storeStoreFence();
         codeBlock->dfgJITData()->setExitCode(exitIndex, exitCode);
     }
 
-    if (exit.codeLocationForRepatch())
+    // U-T4b rationale (see ftlOSRExitGenerationLock's comment): gilOff, other
+    // mutators may be concurrently EXECUTING the exit jump, and repatchJump
+    // rewrites an unaligned rel32 on x86_64 with no atomicity guarantee
+    // (torn fetch -> wild jump). Keep the jump pointing at the generation
+    // thunk; the thunk re-enters here, the recheck above finds the published
+    // ramp, and the per-lite osrExitJumpDestination farJump completes the
+    // data-only protocol. GIL-on keeps today's repatch.
+    if (exit.codeLocationForRepatch() && !vm.gilOff())
         MacroAssembler::repatchJump(exit.codeLocationForRepatch(), CodeLocationLabel<OSRExitPtrTag>(exitCode.code()));
 
-    vm.osrExitJumpDestination = exitCode.code().taggedPtr();
+    // UNGIL §A.1.3 (U-T4a): publish through the exiting thread's lite when
+    // gilOff — the thunk's farJump reads the per-lite word.
+    vm.group3Primitives().osrExitJumpDestination = exitCode.code().taggedPtr();
 }
 
 IGNORE_WARNINGS_BEGIN("frame-address")
@@ -266,6 +394,55 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMaterializeOSRExitSideState, void, (V
 }
 
 IGNORE_WARNINGS_END
+
+#if USE(JSVALUE64)
+// UNGIL §A.1.6 (ANNEX A16) — U-T4a helpers (DFG siblings of FTLSaveRestore's
+// materializeBakedScratchBuffer*Pointer; duplicated locally so DFG does not
+// depend on an ENABLE(FTL_JIT) TU). Each materializes via the CURRENT lite —
+// clobbers only `dest`; loads are address-dependent against the
+// release-publishing install (VMLite::ensureScratchBufferAtIndex).
+static void materializePerLiteScratchBuffer(CCallHelpers& jit, unsigned bakedIndex, GPRReg dest)
+{
+    ASSERT(bakedIndex < VMLite::maxScratchSegments * VMLite::scratchSegmentSize);
+    jit.loadVMLite(dest);
+    jit.loadPtr(
+        CCallHelpers::Address(
+            dest,
+            static_cast<int32_t>(VMLite::offsetOfScratchSegments() + static_cast<ptrdiff_t>(bakedIndex >> VMLite::scratchSegmentShift) * sizeof(void*))),
+        dest);
+    jit.loadPtr(
+        CCallHelpers::Address(
+            dest,
+            static_cast<int32_t>(static_cast<ptrdiff_t>(bakedIndex & (VMLite::scratchSegmentSize - 1)) * sizeof(void*))),
+        dest);
+}
+
+static void materializePerLiteScratchData(CCallHelpers& jit, unsigned bakedIndex, GPRReg dest)
+{
+    materializePerLiteScratchBuffer(jit, bakedIndex, dest);
+    jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, m_buffer))), dest);
+}
+
+// The per-arch reserved macro-assembler temp — the same register the
+// baked-absolute form's synthesized addressing already clobbers, so using it
+// as an explicit base changes no call site's live-range assumptions (the
+// GPR-save loop below runs with EVERY allocatable register still live).
+static GPRReg osrExitReservedScratchGPR(CCallHelpers& jit)
+{
+#if CPU(ARM64)
+    UNUSED_PARAM(jit);
+    return CCallHelpers::memoryTempRegister;
+#elif CPU(X86_64)
+    return jit.scratchRegister();
+#else
+    // App. R5: no gilOff support on this platform; the perLiteScratch mode
+    // below is unreachable (vm.gilOff() is never true here).
+    UNUSED_PARAM(jit);
+    RELEASE_ASSERT_NOT_REACHED();
+    return InvalidGPRReg;
+#endif
+}
+#endif // USE(JSVALUE64)
 
 void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const Operands<ValueRecovery>& operands, SpeculationRecovery* recovery, uint32_t osrExitIndex)
 {
@@ -434,8 +611,58 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
     // Save all state from GPRs into the scratch buffer.
 
     const size_t scratchBufferSize = sizeof(EncodedJSValue) * operands.size();
-    ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(scratchBufferSize);
-    EncodedJSValue* scratch = scratchBuffer ? static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer()) : nullptr;
+
+    // UNGIL §A.1.6 (ANNEX A16, U-T4a — the DFG half of FTL's U-T4b fix):
+    // this compiled exit ramp is published on a shared CodeBlock and runs on
+    // whichever thread takes the exit. gilOff, a baked absolute scratch
+    // buffer would let two threads exiting through the SAME ramp interleave
+    // their saved state (the loser recovers the other thread's values —
+    // surfaced as cross-object property reads in
+    // JSTests/threads/jit/spawned-thread-butterfly-stress.js), so the ramp
+    // bakes only a process-wide ScratchBufferRegistry INDEX and resolves the
+    // CURRENT lite's buffer at each use (rematerialization per §A.1.2).
+    // GIL-on / flag-off keeps today's baked-absolute emission byte-for-byte.
+    const bool perLiteScratch = vm.gilOff() && scratchBufferSize;
+    unsigned bakedScratchIndex = std::numeric_limits<unsigned>::max();
+    ScratchBuffer* scratchBuffer = nullptr;
+    EncodedJSValue* scratch = nullptr;
+    if (perLiteScratch) [[unlikely]]
+        bakedScratchIndex = vm.allocateBakedScratchBufferIndex(scratchBufferSize);
+    else {
+        scratchBuffer = vm.scratchBufferForSize(scratchBufferSize);
+        scratch = scratchBuffer ? static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer()) : nullptr;
+    }
+
+#if USE(JSVALUE64)
+    // Materializes a pointer to scratch slot `index` into `dest` (which must
+    // be a register that is free at the call site).
+    auto materializeScratchSlotPointer = [&](GPRReg dest, size_t index) {
+        if (perLiteScratch) [[unlikely]] {
+            materializePerLiteScratchData(jit, bakedScratchIndex, dest);
+            if (index)
+                jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(index * sizeof(EncodedJSValue))), dest);
+        } else
+            jit.move(AssemblyHelpers::TrustedImmPtr(scratch + index), dest);
+    };
+    // 64-bit store/load of scratch slot `index` using only the reserved
+    // assembler temp as base — safe while every allocatable GPR is live.
+    auto store64ToScratch = [&](GPRReg src, size_t index) {
+        if (perLiteScratch) [[unlikely]] {
+            GPRReg baseGPR = osrExitReservedScratchGPR(jit);
+            materializePerLiteScratchData(jit, bakedScratchIndex, baseGPR);
+            jit.store64(src, CCallHelpers::Address(baseGPR, static_cast<int32_t>(index * sizeof(EncodedJSValue))));
+        } else
+            jit.store64(src, scratch + index);
+    };
+    auto load64FromScratch = [&](size_t index, GPRReg dest) {
+        if (perLiteScratch) [[unlikely]] {
+            GPRReg baseGPR = osrExitReservedScratchGPR(jit);
+            materializePerLiteScratchData(jit, bakedScratchIndex, baseGPR);
+            jit.load64(CCallHelpers::Address(baseGPR, static_cast<int32_t>(index * sizeof(EncodedJSValue))), dest);
+        } else
+            jit.load64(scratch + index, dest);
+    };
+#endif
 
     for (size_t index = 0; index < operands.size(); ++index) {
         const ValueRecovery& recovery = operands[index];
@@ -446,7 +673,7 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         case InGPR:
         case UnboxedInt52InGPR:
         case UnboxedStrictInt52InGPR:
-            jit.store64(recovery.gpr(), scratch + index);
+            store64ToScratch(recovery.gpr(), index);
             break;
 
         default:
@@ -464,7 +691,11 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         switch (recovery.technique()) {
         case UnboxedDoubleInFPR:
         case InFPR:
+#if USE(JSVALUE64)
+            materializeScratchSlotPointer(GPRInfo::regT0, index);
+#else
             jit.move(AssemblyHelpers::TrustedImmPtr(scratch + index), GPRInfo::regT0);
+#endif
             jit.storeDouble(recovery.fpr(), MacroAssembler::Address(GPRInfo::regT0));
             break;
 
@@ -496,34 +727,42 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         case CellDisplacedInJSStack:
         case BooleanDisplacedInJSStack:
             jit.loadValue(AssemblyHelpers::addressFor(recovery.virtualRegister()), JSRInfo::jsRegT10);
+#if USE(JSVALUE64)
+            store64ToScratch(JSRInfo::jsRegT10.payloadGPR(), index);
+#else
             jit.storeValue(JSRInfo::jsRegT10, scratch + index);
+#endif
             break;
 
         case Constant: {
             if (index >= firstTmpToRestoreEarly) {
                 ASSERT(operands.operandForIndex(index).isTmp());
                 jit.move(AssemblyHelpers::TrustedImm64(JSValue::encode(recovery.constant())), GPRInfo::regT0);
-                jit.store64(GPRInfo::regT0, scratch + index);
+                store64ToScratch(GPRInfo::regT0, index);
             }
             break;
         }
 
         case UnboxedInt32InGPR:
-            jit.load64(scratch + index, GPRInfo::regT0);
+            load64FromScratch(index, GPRInfo::regT0);
             jit.zeroExtend32ToWord(GPRInfo::regT0, GPRInfo::regT0);
             jit.or64(GPRInfo::numberTagRegister, GPRInfo::regT0);
-            jit.store64(GPRInfo::regT0, scratch + index);
+            store64ToScratch(GPRInfo::regT0, index);
             break;
 
         case Int32DisplacedInJSStack:
             jit.load64(AssemblyHelpers::addressFor(recovery.virtualRegister()), GPRInfo::regT0);
             jit.zeroExtend32ToWord(GPRInfo::regT0, GPRInfo::regT0);
             jit.or64(GPRInfo::numberTagRegister, GPRInfo::regT0);
-            jit.store64(GPRInfo::regT0, scratch + index);
+            store64ToScratch(GPRInfo::regT0, index);
             break;
 
         case UnboxedDoubleInFPR:
+#if USE(JSVALUE64)
+            materializeScratchSlotPointer(GPRInfo::regT1, index);
+#else
             jit.move(AssemblyHelpers::TrustedImmPtr(scratch + index), GPRInfo::regT1);
+#endif
             jit.loadDouble(MacroAssembler::Address(GPRInfo::regT1), FPRInfo::fpRegT0);
             jit.purifyNaN(FPRInfo::fpRegT0, FPRInfo::fpRegT0);
             jit.boxDouble(FPRInfo::fpRegT0, GPRInfo::regT0);
@@ -531,7 +770,11 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
             break;
 
         case DoubleDisplacedInJSStack:
+#if USE(JSVALUE64)
+            materializeScratchSlotPointer(GPRInfo::regT1, index);
+#else
             jit.move(AssemblyHelpers::TrustedImmPtr(scratch + index), GPRInfo::regT1);
+#endif
             jit.loadDouble(AssemblyHelpers::addressFor(recovery.virtualRegister()), FPRInfo::fpRegT0);
             jit.purifyNaN(FPRInfo::fpRegT0, FPRInfo::fpRegT0);
             jit.boxDouble(FPRInfo::fpRegT0, GPRInfo::regT0);
@@ -539,29 +782,29 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
             break;
 
         case UnboxedInt52InGPR:
-            jit.load64(scratch + index, GPRInfo::regT0);
+            load64FromScratch(index, GPRInfo::regT0);
             jit.rshift64(AssemblyHelpers::TrustedImm32(JSValue::int52ShiftAmount), GPRInfo::regT0);
             jit.boxInt52(GPRInfo::regT0, GPRInfo::regT0, GPRInfo::regT1, FPRInfo::fpRegT0);
-            jit.store64(GPRInfo::regT0, scratch + index);
+            store64ToScratch(GPRInfo::regT0, index);
             break;
 
         case Int52DisplacedInJSStack:
             jit.load64(AssemblyHelpers::addressFor(recovery.virtualRegister()), GPRInfo::regT0);
             jit.rshift64(AssemblyHelpers::TrustedImm32(JSValue::int52ShiftAmount), GPRInfo::regT0);
             jit.boxInt52(GPRInfo::regT0, GPRInfo::regT0, GPRInfo::regT1, FPRInfo::fpRegT0);
-            jit.store64(GPRInfo::regT0, scratch + index);
+            store64ToScratch(GPRInfo::regT0, index);
             break;
 
         case UnboxedStrictInt52InGPR:
-            jit.load64(scratch + index, GPRInfo::regT0);
+            load64FromScratch(index, GPRInfo::regT0);
             jit.boxInt52(GPRInfo::regT0, GPRInfo::regT0, GPRInfo::regT1, FPRInfo::fpRegT0);
-            jit.store64(GPRInfo::regT0, scratch + index);
+            store64ToScratch(GPRInfo::regT0, index);
             break;
 
         case StrictInt52DisplacedInJSStack:
             jit.load64(AssemblyHelpers::addressFor(recovery.virtualRegister()), GPRInfo::regT0);
             jit.boxInt52(GPRInfo::regT0, GPRInfo::regT0, GPRInfo::regT1, FPRInfo::fpRegT0);
-            jit.store64(GPRInfo::regT0, scratch + index);
+            store64ToScratch(GPRInfo::regT0, index);
             break;
 
         default:
@@ -576,6 +819,13 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         jit.move(CCallHelpers::TrustedImmPtr(scratchBuffer->addressOfActiveLength()), GPRInfo::regT0);
         jit.storePtr(CCallHelpers::TrustedImm32(scratchBufferSize), CCallHelpers::Address(GPRInfo::regT0));
     }
+#if USE(JSVALUE64)
+    else if (perLiteScratch) [[unlikely]] {
+        // Same GC-retention publication, against the CURRENT lite's buffer.
+        materializePerLiteScratchBuffer(jit, bakedScratchIndex, GPRInfo::regT0);
+        jit.storePtr(CCallHelpers::TrustedImm32(scratchBufferSize), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, u.m_activeLength))));
+    }
+#endif
 
     if constexpr (validateDFGDoesGC) {
         if (Options::validateDoesGC()) {
@@ -589,7 +839,25 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
             // ramp without calling compileOSRExit() first.
             DoesGCCheck check;
             check.u.encoded = DoesGCCheck::encode(true, DoesGCCheck::Special::DFGOSRExit);
-            jit.store64(CCallHelpers::TrustedImm64(check.u.encoded), vm.addressOfDoesGC());
+            if (vm.gilOff()) [[unlikely]] {
+                // UNGIL AB18-C: operationCompileOSRExit only runs on the FIRST
+                // exit from this site; every subsequent exit takes this
+                // compiled ramp directly. A baked &m_doesGC store here would
+                // leave the exiting thread's lite slot holding the last
+                // per-node expectation (frequently expect-no-GC), so the
+                // materialization below would reproduce the original
+                // "DoesGC failed @ D@xx" abort on any repeated exit — write
+                // the CURRENT thread's lite slot instead. regT0 is a free
+                // ramp temp here (clobbered at the activeLength publish above,
+                // rebuilt below). Two imm32 stores for uniformity with the
+                // per-node split: this Special encoding fits imm32 today only
+                // by encoding accident (nodeIndex == 0), and an imm64 store
+                // through a scratch base is a wild store on x86_64.
+                jit.loadVMLite(GPRInfo::regT0);
+                jit.store32(CCallHelpers::TrustedImm32(check.u.other), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.other))));
+                jit.store32(CCallHelpers::TrustedImm32(check.u.nodeIndex), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.nodeIndex))));
+            } else
+                jit.store64(CCallHelpers::TrustedImm64(check.u.encoded), vm.addressOfDoesGC());
         }
     }
     
@@ -617,8 +885,20 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
     }
 
     if (inlineStackContainsActiveCheckpoint) {
+#if USE(JSVALUE64)
+        if (perLiteScratch) [[unlikely]] {
+            // Registers are free here (state lives in the scratch buffer /
+            // stack); materialize the CURRENT lite's tmp slice pointer.
+            materializeScratchSlotPointer(GPRInfo::regT3, operands.tmpIndex(0));
+            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), GPRInfo::regT3);
+        } else {
+            EncodedJSValue* tmpScratch = scratch + operands.tmpIndex(0);
+            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), CCallHelpers::TrustedImmPtr(tmpScratch));
+        }
+#else
         EncodedJSValue* tmpScratch = scratch + operands.tmpIndex(0);
         jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), CCallHelpers::TrustedImmPtr(tmpScratch));
+#endif
         jit.prepareCallOperation(vm);
         jit.move(AssemblyHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeOSRExitSideState)), GPRInfo::nonArgGPR0);
         jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
@@ -631,7 +911,10 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
     constexpr GPRReg undefinedGPR = GPRInfo::regT4;
     bool undefinedGPRIsInitialized = false;
 
-    jit.move(CCallHelpers::TrustedImmPtr(scratch), srcBufferGPR);
+    if (perLiteScratch) [[unlikely]]
+        materializePerLiteScratchData(jit, bakedScratchIndex, srcBufferGPR);
+    else
+        jit.move(CCallHelpers::TrustedImmPtr(scratch), srcBufferGPR);
     jit.move(CCallHelpers::framePointerRegister, destBufferGPR);
     CCallHelpers::CopySpooler spooler(CCallHelpers::CopySpooler::BufferRegs::AllowModification, jit, srcBufferGPR, destBufferGPR, GPRInfo::regT0, GPRInfo::regT1);
     for (size_t index = 0; index < operands.size(); ++index) {
@@ -691,6 +974,12 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
         jit.move(CCallHelpers::TrustedImmPtr(scratchBuffer->addressOfActiveLength()), GPRInfo::regT0);
         jit.storePtr(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(GPRInfo::regT0));
     }
+#if USE(JSVALUE64)
+    else if (perLiteScratch) [[unlikely]] {
+        materializePerLiteScratchBuffer(jit, bakedScratchIndex, GPRInfo::regT0);
+        jit.storePtr(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, u.m_activeLength))));
+    }
+#endif
 
     // Now that things on the stack are recovered, do the arguments recovery. We assume that arguments
     // recoveries don't recursively refer to each other. But, we don't try to assume that they only

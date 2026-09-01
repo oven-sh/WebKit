@@ -65,7 +65,11 @@ public:
         inline const FixedVector<JSCell*>& dependencies(bool mayBeCancelled = false);
         inline JSObject* scriptExecutionOwner();
 
-        inline void cancel();
+        // Out-of-line (was TU-private inline): AsyncTicket's §E.4 settle-tail
+        // retirement (ThreadManager.cpp) cancels the ticket after the settle
+        // task so the realm's weak-ticket visitor stops marking
+        // target+dependencies (MC-DOS S4).
+        JS_EXPORT_PRIVATE void cancel();
         // We should not modify dependencies unless it is legitimate to do so during the end of GC.
         inline void cancelAndClear();
         bool isCancelled() const { return m_isCancelled; }

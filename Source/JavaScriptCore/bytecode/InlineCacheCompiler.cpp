@@ -83,6 +83,24 @@ static constexpr bool traceHandlerExecution = false;
 static constexpr bool traceHandlerStats = false || ICStatsInternal::traceHandlerChains;
 }
 
+#if USE(JSVALUE64)
+// B4-getbyid-optimize-never-settles-giloff: spine layout used by the
+// segmented-aware ArrayLength stub below (mirrors DFGSegmentedSpineInternal in
+// DFGSpeculativeJIT.cpp). The static_asserts hard-fail any layout drift, so
+// the duplicated constants cannot silently diverge.
+namespace ICCompilerSegmentedSpineInternal {
+static constexpr ptrdiff_t spineOffsetOfOutOfLineFragmentCount = OBJECT_OFFSETOF(ButterflySpine, outOfLineFragmentCount);
+static constexpr ptrdiff_t spineOffsetOfFragments = static_cast<ptrdiff_t>(sizeof(ButterflySpine));
+// Segmented predicate: top16 == 0xffff (SPEC-objectmodel §2). butterflyTagMask
+// occupies exactly the high 16 bits (ConcurrentButterfly.h static_assert), so
+// the unsigned-compare floor IS the tag mask.
+static constexpr uint64_t segmentedFloor = butterflyTagMask;
+static_assert(spineOffsetOfOutOfLineFragmentCount == 0, "B4: emitted offsets assume the frozen ButterflySpine layout");
+static_assert(spineOffsetOfFragments == 32, "B4: emitted offsets assume the frozen ButterflySpine layout");
+static_assert(segmentedFloor == 0xffff000000000000ULL, "B4: tagged>=segmentedFloor <=> top16==0xffff");
+} // namespace ICCompilerSegmentedSpineInternal
+#endif
+
 template<typename... Args>
 static void NODELETE traceHandler(CCallHelpers& jit, ICEvent::Kind kind, Args&&... args)
 {
@@ -1185,6 +1203,12 @@ const ScalarRegisterSet& InlineCacheCompiler::calculateLiveRegistersForCallAndEx
         m_needsToRestoreRegistersIfException = m_liveRegistersToPreserveAtExceptionHandlingCallSite.numberOfSetRegisters() > 0;
         if (m_needsToRestoreRegistersIfException) {
             RELEASE_ASSERT(JSC::JITCode::isOptimizingJIT(m_jit->codeBlock()->jitType()));
+            // Handler ICs never need this: Baseline and DFG handler-IC sites have no
+            // live registers beyond the fixed data-IC conventions, and FTL handler-IC
+            // sites (useHandlerICInFTL) late-clobber every volatile register so B3
+            // spills all live state across the IC; compileHandler() refuses to cache
+            // (GaveUp) in the should-be-impossible case where the unwind exit for an
+            // FTL handler-IC call site still reports live registers.
             ASSERT(!useHandlerIC());
         }
 
@@ -1305,7 +1329,11 @@ void InlineCacheCompiler::emitExplicitExceptionHandler()
 {
     restoreScratch();
     m_jit->pushToSave(GPRInfo::regT0);
-    m_jit->loadPtr(&m_vm.topEntryFrame, GPRInfo::regT0);
+    // UNGIL §A.1.3 (U-T4): mode-keyed — GIL-off the stub is shared by all
+    // threads and topEntryFrame is per-lite Group-3 state (the VM-block word
+    // is inert spare storage; doVMEntry publishes per-lite). GIL-on/flag-off:
+    // loadPtr(&vm.topEntryFrame), byte-identical to the prior emission.
+    m_jit->loadTopEntryFrame(m_vm, GPRInfo::regT0);
     m_jit->copyCalleeSavesToEntryFrameCalleeSavesBuffer(GPRInfo::regT0);
     m_jit->popToRestore(GPRInfo::regT0);
 
@@ -1315,7 +1343,11 @@ void InlineCacheCompiler::emitExplicitExceptionHandler()
         // at from genericUnwind. Therefore we must model what genericUnwind
         // does here. I.e, set callFrameForCatch and copy callee saves.
 
-        m_jit->storePtr(GPRInfo::callFrameRegister, m_vm.addressOfCallFrameForCatch());
+        // UNGIL §A.1.3: mode-keyed — GIL-off every downstream catch consumer
+        // (genericUnwind, baseline op_catch, the OSR-exit ramps) reads the
+        // per-lite callFrameForCatch; publish through the CURRENT lite.
+        // GIL-on/flag-off: the legacy absolute store, byte-identical.
+        m_jit->emitPublishCallFrameForCatch(m_vm);
         // We don't need to insert a new exception handler in the table
         // because we're doing a manual exception check here. i.e, we'll
         // never arrive here from genericUnwind().
@@ -2028,7 +2060,9 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
 
         CCallHelpers::JumpList failAndIgnore;
 
-        jit.loadPtr(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratch2GPR);
+        // SPEC-jit section 5.5 (Task 8): butterfly WRITE choke point; the
+        // shape guard above pins Int32/Contiguous/Double (never AS).
+        failAndIgnore.append(jit.loadButterflyForWrite(baseGPR, scratch2GPR, scratch3GPR, CCallHelpers::ConcurrentButterflyShape::KnownNonArrayStorage));
         jit.load32(CCallHelpers::Address(scratch2GPR, Butterfly::offsetOfPublicLength()), scratch3GPR);
         failAndIgnore.append(jit.branch32(CCallHelpers::Above, valueRegs.payloadGPR(), scratch3GPR));
 
@@ -2461,7 +2495,8 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
 
             preserveReusedRegisters();
 
-            jit.loadPtr(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratchGPR);
+            // SPEC-jit section 5.5 (Task 8): AS READ choke point (SW=1 AS => locked slow path, I20).
+            failAndIgnore.append(jit.loadButterflyForRead(baseGPR, scratchGPR, CCallHelpers::ConcurrentButterflyShape::KnownArrayStorage));
             failAndIgnore.append(jit.branch32(CCallHelpers::AboveOrEqual, propertyGPR, CCallHelpers::Address(scratchGPR, ArrayStorage::vectorLengthOffset())));
 
             jit.zeroExtend32ToWord(propertyGPR, scratch2GPR);
@@ -2496,7 +2531,8 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
 
             preserveReusedRegisters();
 
-            jit.loadPtr(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratchGPR);
+            // SPEC-jit section 5.5 (Task 8): READ choke point; shape pinned Int32/Double/Contiguous.
+            failAndIgnore.append(jit.loadButterflyForRead(baseGPR, scratchGPR, CCallHelpers::ConcurrentButterflyShape::KnownNonArrayStorage));
             failAndIgnore.append(jit.branch32(CCallHelpers::AboveOrEqual, propertyGPR, CCallHelpers::Address(scratchGPR, Butterfly::offsetOfPublicLength())));
             jit.zeroExtend32ToWord(propertyGPR, scratch2GPR);
             if (accessCase.m_type == AccessCase::IndexedDoubleLoad || accessCase.m_type == AccessCase::IndexedDoubleInHit) {
@@ -2559,7 +2595,10 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
 
             preserveReusedRegisters();
 
-            jit.loadPtr(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratchGPR);
+            // SPEC-jit section 5.5 (Task 8): AS WRITE choke point - only the
+            // owner (SW=0) stores inline; everything else takes the locked
+            // generic path (AS-rule (b)/I20).
+            failAndIgnore.append(jit.loadButterflyForWrite(baseGPR, scratchGPR, scratch2GPR, CCallHelpers::ConcurrentButterflyShape::KnownArrayStorage));
             failAndIgnore.append(jit.branch32(CCallHelpers::AboveOrEqual, propertyGPR, CCallHelpers::Address(scratchGPR, ArrayStorage::vectorLengthOffset())));
 
             jit.zeroExtend32ToWord(propertyGPR, scratch2GPR);
@@ -2590,7 +2629,8 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
 
             preserveReusedRegisters();
 
-            jit.loadPtr(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratchGPR);
+            // SPEC-jit section 5.5 (Task 8): WRITE choke point; shape pinned Int32/Double/Contiguous.
+            failAndIgnore.append(jit.loadButterflyForWrite(baseGPR, scratchGPR, scratch2GPR, CCallHelpers::ConcurrentButterflyShape::KnownNonArrayStorage));
             isOutOfBounds.append(jit.branch32(CCallHelpers::AboveOrEqual, propertyGPR, CCallHelpers::Address(scratchGPR, Butterfly::offsetOfPublicLength())));
             storeResult = jit.label();
             switch (accessCase.m_type) {
@@ -3253,7 +3293,10 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
 
         GPRReg storageGPR = propertyOwnerGPR;
         if (!isInlineOffset(accessCase.m_offset)) {
-            jit.loadPtr(CCallHelpers::Address(propertyOwnerGPR, JSObject::butterflyOffset()), scratchGPR);
+            // SPEC-jit section 5.5 (Task 8): READ choke point (conservative
+            // MaybeArrayStorage form: SW=1 => generic path; see the Task 8
+            // inventory in INTEGRATE-jit.md).
+            m_failAndIgnore.append(jit.loadButterflyForRead(propertyOwnerGPR, scratchGPR, CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage));
             storageGPR = scratchGPR;
         }
 
@@ -3331,7 +3374,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
             InlineCacheCompiler::emitDataICPrepareForCall(jit);
         jit.makeSpaceOnStackForCCall();
 
-        jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
+        jit.emitPublishTopCallFrameForHostCall(vm); // UNGIL §A.1.3 mode split (per-lite GIL-off; absolute store GIL-on, byte-identical).
 
         // getter: EncodedJSValue (*GetValueFunc)(JSGlobalObject*, EncodedJSValue thisValue, PropertyName);
         // setter: bool (*PutValueFunc)(JSGlobalObject*, EncodedJSValue thisObject, EncodedJSValue value, PropertyName);
@@ -3458,7 +3501,8 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
 
                 GPRReg storageGPR = propertyOwnerGPR;
                 if (!isInlineOffset(accessCase.m_offset)) {
-                    jit.loadPtr(CCallHelpers::Address(propertyOwnerGPR, JSObject::butterflyOffset()), scratchGPR);
+                    // SPEC-jit section 5.5 (Task 8): READ choke point (conservative form).
+                    m_failAndIgnore.append(jit.loadButterflyForRead(propertyOwnerGPR, scratchGPR, CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage));
                     storageGPR = scratchGPR;
                 }
 
@@ -3613,6 +3657,17 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
                     JSObject::offsetOfInlineStorage() +
                     offsetInInlineStorage(accessCase.m_offset) * sizeof(JSValue)));
         } else {
+            if (Options::useJSThreads()) [[unlikely]] {
+                // SPEC-jit section 5.5 (Task 8): this compiled-per-case
+                // Replace form has no spare register for the owner-tag
+                // compare (base may already live in scratchGPR via the
+                // global-proxy/poly-proto paths). Flag-on the hot Replace
+                // shape dispatches through the shared putByIdReplaceHandler
+                // (which carries the predicate); this rare form always
+                // defers to the generic path (INTEGRATE-jit.md Task 8).
+                m_failAndIgnore.append(jit.jump());
+                return;
+            }
             jit.loadPtr(CCallHelpers::Address(base, JSObject::butterflyOffset()), scratchGPR);
             jit.storeValue(
                 valueRegs,
@@ -3654,6 +3709,11 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     case AccessCase::IndexedTrueKeyTransition:
     case AccessCase::IndexedFalseKeyTransition: {
         ASSERT(!accessCase.viaGlobalProxy());
+        // SPEC-jit section 5.5 (Task 8): generated transitions are illegal
+        // flag-on until the structures' transitionThreadLocal/writeThreadLocal
+        // sets exist and are watched (OM E4); Repatch's tryCachePutBy gates
+        // creation, so this case must be unreachable under useJSThreads.
+        RELEASE_ASSERT(!Options::useJSThreads());
         // AccessCase::createTransition() should have returned null if this wasn't true.
         RELEASE_ASSERT(GPRInfo::numberOfRegisters >= 6 || !accessCase.structure()->outOfLineCapacity() || accessCase.structure()->outOfLineCapacity() == accessCase.newStructure()->outOfLineCapacity());
 
@@ -3808,6 +3868,10 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     }
 
     case AccessCase::Delete: {
+        // SPEC-jit section 5.5 (Task 8): deletes are transitions; flag-on
+        // they require the locked/quarantined OM path. Repatch's
+        // tryCacheDeleteBy gates creation under useJSThreads.
+        RELEASE_ASSERT(!Options::useJSThreads());
         ASSERT(accessCase.structure()->transitionWatchpointSetHasBeenInvalidated());
         ASSERT(accessCase.newStructure()->transitionKind() == TransitionKind::PropertyDeletion);
         ASSERT(baseGPR != scratchGPR);
@@ -3831,6 +3895,10 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     }
 
     case AccessCase::SetPrivateBrand: {
+        // SPEC-jit section 5.5 (Task 8): structure-only transition (OM N2);
+        // flag-on it requires the locked header-CAS path. Repatch gates
+        // creation under useJSThreads.
+        RELEASE_ASSERT(!Options::useJSThreads());
         ASSERT(accessCase.structure()->transitionWatchpointSetHasBeenInvalidated());
         ASSERT(accessCase.newStructure()->transitionKind() == TransitionKind::SetBrand);
 
@@ -3856,7 +3924,107 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     }
 
     case AccessCase::ArrayLength: {
-        jit.loadPtr(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratchGPR);
+#if USE(JSVALUE64)
+        if (Options::useJSThreads()) [[unlikely]] {
+            // B4-getbyid-optimize-never-settles-giloff (SCALEBENCH §28
+            // postingsChecksum docIds/tfs .length): the previous
+            // loadButterflyForRead routed segmented butterflies to
+            // m_failAndIgnore. failAndIgnore's contract is "transient
+            // unpatchable state — bump countdown so the slow path does NOT
+            // try to repatch". But once an array goes segmented under
+            // sharedGCHeap that state is PERMANENT for the object, so every
+            // call: stub increments countdown -> slow path
+            // operationGetByIdOptimize -> considerRepatchingCacheImpl
+            // decrements countdown -> net zero -> never reaches the
+            // cool-down/give-up trigger -> m_slowOperation stays at the
+            // *Optimize variant for the lifetime of the program (the +772M
+            // cycle / 5.2% delta vs the GIL-on profile, where this stub HITS
+            // through the plain butterfly load and the Optimize C-call is
+            // never re-entered). Fix the publish, not the gate: read
+            // publicLength inline for both flat AND segmented arms (mirrors
+            // SpeculativeJIT::compileGetArrayLengthSegmentedAware /
+            // emitLoadSegmentedPublicLength). The only residual
+            // failAndIgnore arms are the conservative SW=1 flat
+            // MaybeArrayStorage case (rare; AS-rule / I20 sound superset)
+            // and the pre-existing length>=2^31 bail — both genuinely
+            // transient/unpatchable per object, so the countdown semantics
+            // remain correct. Flag-off: this branch is dead and the legacy
+            // arm below emits byte-identical code (loadButterflyForRead
+            // flag-off is a single plain loadPtr).
+            using namespace ICCompilerSegmentedSpineInternal;
+
+            auto allocator = makeDefaultScratchAllocator(scratchGPR);
+            GPRReg scratch2GPR = allocator.allocateScratchGPR();
+            ScratchRegisterAllocator::PreservedState preservedState = allocator.preserveReusedRegistersByPushing(jit, ScratchRegisterAllocator::ExtraStackSpace::NoExtraSpace);
+
+            CCallHelpers::JumpList failAndIgnore;
+
+            // Tagged butterfly word. ArrayLength's guard (generateWithGuard)
+            // is an indexingType check, not a structureID check, so there is
+            // no live structureIDGPR to thread; emit the R7 structureID
+            // re-load + xor/add address dependency by hand so the butterfly
+            // load is ordered after the header word the guard observed
+            // (identical to loadButterflyForRead -> loadButterflyWith
+            // StructureDependency with structureIDGPR==InvalidGPRReg, and to
+            // the cited DFG mirror compileGetArrayLengthSegmentedAware).
+            // x86-64 is TSO: plain load there, so bench-host codegen is
+            // unchanged; flag-off never reaches this block.
+#if CPU(ARM64)
+            jit.load32(CCallHelpers::Address(baseGPR, JSCell::structureIDOffset()), scratchGPR);
+            // Dest reg MUST differ from src: EOR Xn,Xn,Xn is a recognized
+            // zeroing idiom on ARM64 and breaks the address dependency this
+            // sequence exists to establish. Mirrors the canonical
+            // SpeculativeJIT::emitButterflyLoadWithStructureDependency.
+            jit.xor64(scratchGPR, scratchGPR, scratch2GPR);
+            jit.addPtr(baseGPR, scratch2GPR);
+            jit.loadPtr(CCallHelpers::Address(scratch2GPR, JSObject::butterflyOffset()), scratchGPR);
+#else
+            jit.loadPtr(CCallHelpers::Address(baseGPR, JSObject::butterflyOffset()), scratchGPR);
+#endif
+            auto segmented = jit.branch64(CCallHelpers::AboveOrEqual, scratchGPR, CCallHelpers::TrustedImm64(static_cast<int64_t>(segmentedFloor)));
+
+            // Flat arm: SW=1 with possible ArrayStorage shape stays the
+            // conservative failAndIgnore (sound superset, AS-rule / I20 —
+            // identical to loadButterflyForRead(MaybeArrayStorage,
+            // InvalidGPRReg)); SW=0 masks and reads the IndexingHeader.
+            failAndIgnore.append(jit.branchTest64(CCallHelpers::Signed, scratchGPR, scratchGPR));
+            jit.maskButterflyTag(scratchGPR);
+            jit.load32(CCallHelpers::Address(scratchGPR, ArrayStorage::lengthOffset()), scratchGPR);
+            auto flatDone = jit.jump();
+
+            // Segmented arm: spine* = mask(tagged); publicLength is C4-shared
+            // at fragments()[outOfLineFragmentCount] slot 0 low32 (same byte
+            // position as the flat IndexingHeader's). The guard above proved
+            // IsArray && IndexingShapeMask, so indexedFragmentCount > 0 and
+            // the indexed-fragment-0 dereference is in-bounds by construction
+            // (ButterflySpine: indexedFragmentCount==0 only when the flat
+            // butterfly had no IndexingHeader). Spine fields are immutable
+            // after publication (I6); the address dependency on the tagged
+            // word orders the fragment-pointer load.
+            segmented.link(&jit);
+            jit.maskButterflyTag(scratchGPR);
+            jit.load32(CCallHelpers::Address(scratchGPR, spineOffsetOfOutOfLineFragmentCount), scratch2GPR);
+            jit.loadPtr(CCallHelpers::BaseIndex(scratchGPR, scratch2GPR, CCallHelpers::TimesEight, spineOffsetOfFragments), scratchGPR);
+            jit.load32(CCallHelpers::Address(scratchGPR, 0), scratchGPR);
+
+            flatDone.link(&jit);
+            failAndIgnore.append(jit.branch32(CCallHelpers::LessThan, scratchGPR, CCallHelpers::TrustedImm32(0)));
+            jit.boxInt32(scratchGPR, valueRegs);
+            allocator.restoreReusedRegistersByPopping(jit, preservedState);
+            succeed();
+
+            if (allocator.didReuseRegisters()) {
+                failAndIgnore.link(&jit);
+                allocator.restoreReusedRegistersByPopping(jit, preservedState);
+                m_failAndIgnore.append(jit.jump());
+            } else
+                m_failAndIgnore.append(failAndIgnore);
+            return;
+        }
+#endif
+        // SPEC-jit section 5.5 (Task 8): READ choke point (conservative
+        // MaybeArrayStorage form - ArrayLength is reachable for AS arrays).
+        m_failAndIgnore.append(jit.loadButterflyForRead(baseGPR, scratchGPR, CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage));
         jit.load32(CCallHelpers::Address(scratchGPR, ArrayStorage::lengthOffset()), scratchGPR);
         m_failAndIgnore.append(
             jit.branch32(CCallHelpers::LessThan, scratchGPR, CCallHelpers::TrustedImm32(0)));
@@ -4698,6 +4866,20 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
     // If the resulting set of cases is so big that we would stop caching and this is InstanceOf,
     // then we want to generate the generic InstanceOf and then stop.
     if (cases.size() >= Options::maxAccessVariantListSize() || m_propertyCache.canBeMegamorphic) {
+        // AUD1.K4 row II.19 (SPEC-ungil §K.1): codegen hygiene, NOT a
+        // safety closure — the cache's fill paths already no-op under
+        // useJSThreads (MegamorphicCache::fillsDisabledUnderJSThreads(),
+        // pre-existing) and the inline probes bail, so a gilOff
+        // MegamorphicCache-consulting AccessCase could only build an
+        // always-miss stub. Refuse those forms instead of generating dead
+        // code; see canUseMegamorphicGetByIdExcludingIndex. The
+        // canUseMegamorphic* predicates already refuse the by-id arms; this
+        // gate also covers the Indexed* arms below, which have no uid to
+        // consult a predicate for. InstanceOfMegamorphic is exempt: it is a
+        // generic prototype walk and never touches the MegamorphicCache.
+        // Flag-off and GIL-on generation unchanged.
+        if (vm().gilOffWithProcessGate() && m_propertyCache.accessType != AccessType::InstanceOf) [[unlikely]]
+            return nullptr;
         switch (m_propertyCache.accessType) {
         case AccessType::InstanceOf:
             return AccessCase::create(vm(), codeBlock, AccessCase::InstanceOfMegamorphic, nullptr);
@@ -5183,7 +5365,12 @@ AccessGenerationResult InlineCacheCompiler::compile(const GCSafeConcurrentJSLock
 
         InlineCacheCompiler::SpillState spillState = this->spillStateForJSCall();
         ASSERT(!spillState.isEmpty());
-        jit.loadPtr(vm().addressOfCallFrameForCatch(), GPRInfo::callFrameRegister);
+        // UNGIL §A.1.3: this label is a real exception-handler table entry
+        // reached FROM genericUnwind, which GIL-off publishes
+        // callFrameForCatch through the unwinding thread's lite
+        // (JITExceptions.cpp). Mode-keyed load; GIL-on/flag-off the legacy
+        // absolute load, byte-identical.
+        jit.loadCallFrameForCatch(vm(), GPRInfo::callFrameRegister);
         if (m_propertyCache.isHandlerIC()) {
             ASSERT(!JITCode::isBaselineCode(m_jitType));
             jit.loadPtr(CCallHelpers::Address(GPRInfo::jitDataRegister, BaselineJITData::offsetOfStackOffset()), m_scratchGPR);
@@ -5254,15 +5441,26 @@ AccessGenerationResult InlineCacheCompiler::compile(const GCSafeConcurrentJSLock
     return finishCodeGeneration(WTF::move(stub));
 }
 
+#if CPU(ADDRESS64)
+
+// SPEC-jit section 5.5 (Task 8): the out-of-line branch goes through the
+// butterfly READ choke point; predicate failures (segmented / shared-written)
+// fall through to the next handler and ultimately the generic path. For the
+// own-property form the just-compared structureID is still live in
+// scratch1GPR (emitDataICCheckStructure), giving the R7/F7 ARM64 address
+// dependency; the holder form reads an immutable handler-published pointer.
+// structureIDGPR: pass the register still holding the just-compared
+// structureID (R7/F7 ARM64 address dependency) when it survives to this
+// point, else InvalidGPRReg (gap recorded in the Task 8 inventory).
 template<bool ownProperty>
-static void loadHandlerImpl(CCallHelpers& jit, JSValueRegs baseJSR, JSValueRegs resultJSR, GPRReg scratch1GPR, GPRReg scratch2GPR)
+static void loadHandlerImpl(VM&, CCallHelpers& jit, CCallHelpers::JumpList& fallThrough, JSValueRegs baseJSR, JSValueRegs resultJSR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR, GPRReg structureIDGPR)
 {
     jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch2GPR);
     if constexpr (ownProperty)
-        jit.loadProperty(baseJSR.payloadGPR(), scratch2GPR, resultJSR);
+        jit.loadProperty(baseJSR.payloadGPR(), scratch2GPR, resultJSR, scratch3GPR, fallThrough, structureIDGPR);
     else {
         jit.loadPtr(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfHolder()), scratch1GPR);
-        jit.loadProperty(scratch1GPR, scratch2GPR, resultJSR);
+        jit.loadProperty(scratch1GPR, scratch2GPR, resultJSR, scratch3GPR, fallThrough);
     }
 }
 
@@ -5275,6 +5473,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByIdLoadHandlerImpl()
     using BaselineJITRegisters::GetById::baseJSR;
     using BaselineJITRegisters::GetById::scratch1GPR;
     using BaselineJITRegisters::GetById::scratch2GPR;
+    using BaselineJITRegisters::GetById::scratch3GPR;
     using BaselineJITRegisters::GetById::resultJSR;
 
     InlineCacheCompiler::emitDataICPrologue(jit);
@@ -5283,7 +5482,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByIdLoadHandlerImpl()
     CCallHelpers::JumpList fallThrough;
 
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
-    loadHandlerImpl<ownProperty>(jit, baseJSR, resultJSR, scratch1GPR, scratch2GPR);
+    loadHandlerImpl<ownProperty>(vm, jit, fallThrough, baseJSR, resultJSR, scratch1GPR, scratch2GPR, scratch3GPR, ownProperty ? scratch1GPR : InvalidGPRReg);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -5350,7 +5549,7 @@ static void customGetterHandlerImpl(VM& vm, CCallHelpers& jit, JSValueRegs baseJ
     // to make some space here.
     InlineCacheCompiler::emitDataICPrepareForCall(jit);
     jit.makeSpaceOnStackForCCall();
-    jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
+    jit.emitPublishTopCallFrameForHostCall(vm); // UNGIL §A.1.3 mode split (per-lite GIL-off; absolute store GIL-on, byte-identical).
 
     // EncodedJSValue (*GetValueFunc)(JSGlobalObject*, EncodedJSValue thisValue, PropertyName);
     jit.loadPtr(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfGlobalObject()), scratch1GPR);
@@ -5454,12 +5653,14 @@ static void getterCallFromGetterSetterImpl(CCallHelpers& jit, JSValueRegs baseJS
     InlineCacheCompiler::emitDataICRestoreAfterCall(jit);
 }
 
-static void getterHandlerImpl(CCallHelpers& jit, JSValueRegs baseJSR, JSValueRegs resultJSR, GPRReg propertyCacheGPR, GPRReg scratch1GPR, GPRReg scratch2GPR)
+static void getterHandlerImpl(VM&, CCallHelpers& jit, CCallHelpers::JumpList& fallThrough, JSValueRegs baseJSR, JSValueRegs resultJSR, GPRReg propertyCacheGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     jit.loadPtr(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfHolder()), scratch1GPR);
     jit.moveConditionally64(CCallHelpers::Equal, scratch1GPR, CCallHelpers::TrustedImm32(0), baseJSR.payloadGPR(), scratch1GPR, scratch1GPR);
     jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch2GPR);
-    jit.loadProperty(scratch1GPR, scratch2GPR, JSValueRegs { scratch1GPR });
+    // SPEC-jit section 5.5 (Task 8): GetterSetter cell load through the READ
+    // choke point (scratch3GPR carries the tagged butterfly word).
+    jit.loadProperty(scratch1GPR, scratch2GPR, JSValueRegs { scratch1GPR }, scratch3GPR, fallThrough);
     getterCallFromGetterSetterImpl(jit, baseJSR, resultJSR, propertyCacheGPR, scratch1GPR);
 }
 
@@ -5471,6 +5672,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> getByIdGetterHandler()
     using BaselineJITRegisters::GetById::propertyCacheGPR;
     using BaselineJITRegisters::GetById::scratch1GPR;
     using BaselineJITRegisters::GetById::scratch2GPR;
+    using BaselineJITRegisters::GetById::scratch3GPR;
     using BaselineJITRegisters::GetById::resultJSR;
 
     InlineCacheCompiler::emitDataICPrologue(jit);
@@ -5480,7 +5682,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> getByIdGetterHandler()
 
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
 
-    getterHandlerImpl(jit, baseJSR, resultJSR, propertyCacheGPR, scratch1GPR, scratch2GPR);
+    getterHandlerImpl(vm, jit, fallThrough, baseJSR, resultJSR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -5650,6 +5852,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> putByIdReplaceHandler()
     using BaselineJITRegisters::PutById::propertyCacheGPR;
     using BaselineJITRegisters::PutById::scratch1GPR;
     using BaselineJITRegisters::PutById::scratch2GPR;
+    using BaselineJITRegisters::PutById::scratch3GPR;
 
     InlineCacheCompiler::emitDataICPrologue(jit);
     traceHandler(jit, ICEvent::PutByIdReplaceHandler);
@@ -5659,7 +5862,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> putByIdReplaceHandler()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
 
     jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
-    jit.storeProperty(valueJSR, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
+    // SPEC-jit section 5.5 (Task 8): WRITE choke point (scratch2 = storage,
+    // scratch3 = TID-tag scratch); failures fall through to the next handler
+    // and ultimately the generic locked path.
+    jit.storeProperty(valueJSR, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR, scratch3GPR, fallThrough);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -5674,6 +5880,15 @@ MacroAssemblerCodeRef<JITThunkPtrTag> putByIdReplaceHandler()
 template<bool allocating, bool reallocating>
 static void transitionHandlerImpl(VM& vm, CCallHelpers& jit, CCallHelpers::JumpList& allocationFailure, JSValueRegs baseJSR, JSValueRegs valueJSR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR, GPRReg scratch4GPR)
 {
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): generated transitions are illegal
+        // flag-on (no transitionThreadLocal/writeThreadLocal sets to watch
+        // yet; OM E4). bytecode/Repatch.cpp gates transition-handler
+        // creation, so this shared thunk is unreachable; trap rather than
+        // emit an unguarded butterfly install if it ever runs.
+        jit.breakpoint();
+        return;
+    }
     if constexpr (!allocating) {
         JIT_COMMENT(jit, "storeProperty");
         jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
@@ -5854,7 +6069,7 @@ static void customSetterHandlerImpl(VM& vm, CCallHelpers& jit, JSValueRegs baseJ
     // to make some space here.
     InlineCacheCompiler::emitDataICPrepareForCall(jit);
     jit.makeSpaceOnStackForCCall();
-    jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
+    jit.emitPublishTopCallFrameForHostCall(vm); // UNGIL §A.1.3 mode split (per-lite GIL-off; absolute store GIL-on, byte-identical).
 
     // bool (*PutValueFunc)(JSGlobalObject*, EncodedJSValue thisObject, EncodedJSValue value, PropertyName);
     jit.loadPtr(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfGlobalObject()), scratch1GPR);
@@ -5916,12 +6131,14 @@ MacroAssemblerCodeRef<JITThunkPtrTag> putByIdCustomValueHandler(VM& vm)
 }
 
 template<bool isStrict>
-static void setterHandlerImpl(CCallHelpers& jit, JSValueRegs baseJSR, JSValueRegs valueJSR, GPRReg propertyCacheGPR, GPRReg scratch1GPR, GPRReg scratch2GPR)
+static void setterHandlerImpl(VM&, CCallHelpers& jit, CCallHelpers::JumpList& fallThrough, JSValueRegs baseJSR, JSValueRegs valueJSR, GPRReg propertyCacheGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
 {
     jit.loadPtr(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfHolder()), scratch1GPR);
     jit.moveConditionally64(CCallHelpers::Equal, scratch1GPR, CCallHelpers::TrustedImm32(0), baseJSR.payloadGPR(), scratch1GPR, scratch1GPR);
     jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch2GPR);
-    jit.loadProperty(scratch1GPR, scratch2GPR, JSValueRegs { scratch1GPR });
+    // SPEC-jit section 5.5 (Task 8): GetterSetter cell load through the READ
+    // choke point (scratch3GPR carries the tagged butterfly word).
+    jit.loadProperty(scratch1GPR, scratch2GPR, JSValueRegs { scratch1GPR }, scratch3GPR, fallThrough);
 
     jit.transfer32(CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfCallSiteIndex()), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
 
@@ -5993,6 +6210,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByIdSetterHandlerImpl()
     using BaselineJITRegisters::PutById::propertyCacheGPR;
     using BaselineJITRegisters::PutById::scratch1GPR;
     using BaselineJITRegisters::PutById::scratch2GPR;
+    using BaselineJITRegisters::PutById::scratch3GPR;
 
     InlineCacheCompiler::emitDataICPrologue(jit);
     traceHandler(jit, isStrict ? ICEvent::PutByIdStrictSetterHandler : ICEvent::PutByIdSloppySetterHandler);
@@ -6001,7 +6219,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByIdSetterHandlerImpl()
 
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
 
-    setterHandlerImpl<isStrict>(jit, baseJSR, valueJSR, propertyCacheGPR, scratch1GPR, scratch2GPR);
+    setterHandlerImpl<isStrict>(vm, jit, fallThrough, baseJSR, valueJSR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6081,10 +6299,17 @@ MacroAssemblerCodeRef<JITThunkPtrTag> deleteByIdDeleteHandler()
 
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
 
-    jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
-    jit.moveTrustedValue(JSValue(), JSValueRegs { scratch3GPR });
-    jit.storeProperty(JSValueRegs { scratch3GPR }, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
-    jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewStructureID()), CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()));
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): deletes are structure transitions
+        // with slot clearing; flag-on they require the locked/quarantined OM
+        // path. Repatch gates delete-handler creation; defend in depth here.
+        fallThrough.append(jit.jump());
+    } else {
+        jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
+        jit.moveTrustedValue(JSValue(), JSValueRegs { scratch3GPR });
+        jit.storeProperty(JSValueRegs { scratch3GPR }, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
+        jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewStructureID()), CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()));
+    }
 
     jit.move(MacroAssembler::TrustedImm32(true), resultJSR.payloadGPR());
     InlineCacheCompiler::emitDataICEpilogue(jit);
@@ -6188,6 +6413,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByValLoadHandlerImpl()
     using BaselineJITRegisters::GetByVal::propertyJSR;
     using BaselineJITRegisters::GetByVal::scratch1GPR;
     using BaselineJITRegisters::GetByVal::scratch2GPR;
+    using BaselineJITRegisters::GetByVal::scratch3GPR;
     using BaselineJITRegisters::GetByVal::resultJSR;
 
     InlineCacheCompiler::emitDataICPrologue(jit);
@@ -6198,7 +6424,9 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByValLoadHandlerImpl()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyJSR, scratch1GPR));
 
-    loadHandlerImpl<ownProperty>(jit, baseJSR, resultJSR, scratch1GPR, scratch2GPR);
+    // R7 note: scratch1GPR no longer holds the structureID (the uid check
+    // reused it) - ARM64 dependency gap recorded in the Task 8 inventory.
+    loadHandlerImpl<ownProperty>(vm, jit, fallThrough, baseJSR, resultJSR, scratch1GPR, scratch2GPR, scratch3GPR, InvalidGPRReg);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6307,6 +6535,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByValNonStringPrimitiveKeyLoadHa
     using BaselineJITRegisters::GetByVal::propertyJSR;
     using BaselineJITRegisters::GetByVal::scratch1GPR;
     using BaselineJITRegisters::GetByVal::scratch2GPR;
+    using BaselineJITRegisters::GetByVal::scratch3GPR;
     using BaselineJITRegisters::GetByVal::resultJSR;
 
     InlineCacheCompiler::emitDataICPrologue(jit);
@@ -6317,7 +6546,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByValNonStringPrimitiveKeyLoadHa
     fallThrough.append(emitNonStringPrimitiveKeyCheck<keyType>(jit, propertyJSR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
 
-    loadHandlerImpl<ownProperty>(jit, baseJSR, resultJSR, scratch1GPR, scratch2GPR);
+    loadHandlerImpl<ownProperty>(vm, jit, fallThrough, baseJSR, resultJSR, scratch1GPR, scratch2GPR, scratch3GPR, ownProperty ? scratch1GPR : InvalidGPRReg);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6391,8 +6620,15 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByValNonStringPrimitiveKeyReplac
     fallThrough.append(emitNonStringPrimitiveKeyCheck<keyType>(jit, propertyJSR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
 
-    jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
-    jit.storeProperty(valueJSR, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): no spare GPR in the PutByVal
+        // register file for the owner-tag compare; flag-on defer to the
+        // generic path (Task 8 inventory).
+        fallThrough.append(jit.jump());
+    } else {
+        jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
+        jit.storeProperty(valueJSR, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
+    }
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6577,6 +6813,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByValGetterHandlerImpl()
     using BaselineJITRegisters::GetByVal::propertyCacheGPR;
     using BaselineJITRegisters::GetByVal::scratch1GPR;
     using BaselineJITRegisters::GetByVal::scratch2GPR;
+    using BaselineJITRegisters::GetByVal::scratch3GPR;
     using BaselineJITRegisters::GetByVal::resultJSR;
 
     InlineCacheCompiler::emitDataICPrologue(jit);
@@ -6587,7 +6824,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByValGetterHandlerImpl()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyJSR, scratch1GPR));
 
-    getterHandlerImpl(jit, baseJSR, resultJSR, propertyCacheGPR, scratch1GPR, scratch2GPR);
+    getterHandlerImpl(vm, jit, fallThrough, baseJSR, resultJSR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6630,8 +6867,15 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByValReplaceHandlerImpl()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyJSR, scratch1GPR));
 
-    jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
-    jit.storeProperty(valueJSR, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): no spare GPR in the PutByVal
+        // register file for the owner-tag compare; flag-on defer to the
+        // generic path (Task 8 inventory).
+        fallThrough.append(jit.jump());
+    } else {
+        jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
+        jit.storeProperty(valueJSR, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
+    }
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -6884,7 +7128,14 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByValSetterHandlerImpl()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyJSR, scratch1GPR));
 
-    setterHandlerImpl<isStrict>(jit, baseJSR, valueJSR, propertyCacheGPR, scratch1GPR, scratch2GPR);
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): the PutByVal register file has no
+        // spare GPR for the read-choke storage scratch (profileGPR must stay
+        // intact on the next-handler path), so flag-on this shared setter
+        // handler always defers to the generic path (Task 8 inventory).
+        fallThrough.append(jit.jump());
+    } else
+        setterHandlerImpl<isStrict>(vm, jit, fallThrough, baseJSR, valueJSR, propertyCacheGPR, scratch1GPR, scratch2GPR, InvalidGPRReg);
     InlineCacheCompiler::emitDataICEpilogue(jit);
     jit.ret();
 
@@ -7000,10 +7251,16 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> deleteByValDeleteHandlerImpl()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseJSR.payloadGPR(), scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyJSR, scratch1GPR));
 
-    jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
-    jit.moveTrustedValue(JSValue(), JSValueRegs { scratch3GPR });
-    jit.storeProperty(JSValueRegs { scratch3GPR }, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
-    jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewStructureID()), CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()));
+    if (Options::useJSThreads()) [[unlikely]] {
+        // SPEC-jit section 5.5 (Task 8): deletes require the locked /
+        // quarantined OM path flag-on; Repatch gates creation, defend here.
+        fallThrough.append(jit.jump());
+    } else {
+        jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfOffset()), scratch1GPR);
+        jit.moveTrustedValue(JSValue(), JSValueRegs { scratch3GPR });
+        jit.storeProperty(JSValueRegs { scratch3GPR }, baseJSR.payloadGPR(), scratch1GPR, scratch2GPR);
+        jit.transfer32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfNewStructureID()), CCallHelpers::Address(baseJSR.payloadGPR(), JSCell::structureIDOffset()));
+    }
 
     jit.move(MacroAssembler::TrustedImm32(true), resultJSR.payloadGPR());
     InlineCacheCompiler::emitDataICEpilogue(jit);
@@ -7146,6 +7403,20 @@ AccessGenerationResult InlineCacheCompiler::compileHandler(const GCSafeConcurren
 
     if (!accessCase.couldStillSucceed())
         return AccessGenerationResult::MadeNoChanges;
+
+#if ENABLE(FTL_JIT)
+    if (m_jitType == JITType::FTLJIT) {
+        // FTL handler-IC sites late-clobber every volatile register, so B3 must
+        // spill all live state to the stack across the IC and the unwind exit for
+        // this call site should never report live registers. Handler stubs are
+        // shared across code blocks and cannot implement the per-site
+        // spill/restore + makeshift-catch-handler protocol the repatching ICs
+        // use, so if this invariant unexpectedly fails, refuse to cache rather
+        // than generate a stub that cannot restore those registers.
+        if (codeBlock->jitCode()->liveRegistersToPreserveAtExceptionHandlingCallSite(codeBlock, m_propertyCache.callSiteIndex).numberOfSetRegisters())
+            return AccessGenerationResult::GaveUp;
+    }
+#endif
 
     // Now add things to the new list. Note that at this point, we will still have old cases that
     // may be replaced by the new ones. That's fine. We will sort that out when we regenerate.

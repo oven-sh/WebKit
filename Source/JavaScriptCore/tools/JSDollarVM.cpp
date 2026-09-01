@@ -68,6 +68,7 @@
 #include "PropertyInlineCacheClearingWatchpoint.h"
 #include "Scribble.h"
 #include "ShadowChicken.h"
+#include "SharedHeapTestHarness.h"
 #include "Snippet.h"
 #include "SnippetParams.h"
 #include "Strong.h"
@@ -2560,6 +2561,10 @@ JSC_DEFINE_HOST_FUNCTION(functionCpuClflush, (JSGlobalObject*, CallFrame* callFr
     if (JSArrayBufferView* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0)))
         toFlush.append(std::bit_cast<char*>(view->vector()) + offset);
     else if (JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0))) {
+        // THREADS-INTEGRATE(objectmodel) §10.7: skip the butterfly flush
+        // lines on tagged words (never deref as flat).
+        if (object->mayBeSegmentedButterfly()) [[unlikely]]
+            return JSValue::encode(jsBoolean(false));
         switch (object->indexingType()) {
         case ALL_INT32_INDEXING_TYPES:
         case ALL_CONTIGUOUS_INDEXING_TYPES:
@@ -2776,6 +2781,31 @@ JSC_DEFINE_HOST_FUNCTION(functionGCSweepAsynchronously, (JSGlobalObject* globalO
     DollarVMAssertScope assertScope;
     globalObject->vm().heap.collectNow(Async, CollectionScope::Full);
     return JSValue::encode(jsUndefined());
+}
+
+// THREADS-INTEGRATE(heap) manifest 8: JS entry point for the shared-heap
+// test harness (SPEC-heap.md §12.1; the JSTests/threads/heap-*.js corpus).
+// Per-scenario option gating lives inside SharedHeapTestHarness::run()
+// (heap/SharedHeapTestHarness.h contract) — do NOT add any
+// Options::useSharedGCHeap() gating here. Returns a Boolean (never
+// undefined): heap-option-off.js asserts `=== true`. Argument coercion:
+// name via toWTFString, counts via toUInt32 (missing/NaN -> 0; run()
+// treats unknown names and degenerate counts per its own contract).
+// Caller contract (run()): main VM mutator thread, API lock held —
+// exactly what a $vm call site guarantees.
+// Usage: $vm.sharedHeapTest(name, threads, iters)
+JSC_DEFINE_HOST_FUNCTION(functionSharedHeapTest, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String scenarioName = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    unsigned threads = callFrame->argument(1).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    unsigned iters = callFrame->argument(2).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    return JSValue::encode(jsBoolean(SharedHeapTestHarness::run(vm.heap, scenarioName, threads, iters)));
 }
 
 // Dumps the hashes of all subspaces currently registered with the VM.
@@ -3286,6 +3316,30 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateProxy, (JSGlobalObject* globalObject, Cal
         return JSValue::encode(jsUndefined());
     Structure* structure = JSGlobalProxy::createStructure(vm, target, target->getPrototypeDirect());
     return JSValue::encode(JSGlobalProxy::create(vm, structure, target));
+}
+
+// Re-runs JSGlobalObject::resetPrototype on an ALREADY-INITIALIZED global —
+// the engine path JSGlobalContextSetPrototype takes (JSContextRef.cpp), and
+// the only post-init writer of m_globalThis (setGlobalThis). Test driver for
+// the UNGIL K4 §VIII.9 NEGATIVE test
+// (JSTests/threads/vmstate/globalthis-postpublication-negative.js): a
+// post-init m_globalThis rewrite after the VM's first cross-thread entry
+// must fail-stop in ASSERT builds under effective GIL-off
+// (jsThreadsAssertNoPostInitWriteAfterFirstCrossThreadEntry, VMLite.cpp).
+// Usage: $vm.resetPrototypeOfGlobalObject(global, prototype)
+JSC_DEFINE_HOST_FUNCTION(functionResetPrototypeOfGlobalObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    JSGlobalObject* target = dynamicDowncast<JSGlobalObject>(callFrame->argument(0));
+    if (!target) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    JSValue prototype = callFrame->argument(1);
+    if (!prototype.isObject())
+        prototype = jsNull();
+    target->resetPrototype(vm, prototype);
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCreateRuntimeArray, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -4069,6 +4123,10 @@ JSC_DEFINE_HOST_FUNCTION(functionDeltaBetweenButterflies, (JSGlobalObject*, Call
     if (!a || !b)
         return JSValue::encode(jsNumber(PNaN));
 
+    // THREADS-INTEGRATE(objectmodel) §10.7: tagged words have no flat
+    // butterfly pointer to subtract.
+    if (a->mayBeSegmentedButterfly() || b->mayBeSegmentedButterfly()) [[unlikely]]
+        return JSValue::encode(jsNumber(PNaN));
     ptrdiff_t delta = std::bit_cast<char*>(a->butterfly()) - std::bit_cast<char*>(b->butterfly());
     if (delta < 0)
         return JSValue::encode(jsNumber(PNaN));
@@ -4414,6 +4472,23 @@ JSC_DEFINE_HOST_FUNCTION(functionUseFTLJIT, (JSGlobalObject*, CallFrame*))
 {
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsBoolean(Options::useFTLJIT()));
+}
+
+// Returns the EFFECTIVE threads-GIL mode (the post-U0-validation value of
+// Options::useThreadGIL(): with only --useJSThreads=1 the U0 activation
+// checklist forces the GIL back ON unless useVMLite,
+// useSharedAtomStringTable, useSharedGCHeap AND useThreadGILOffUnsafe are
+// all enabled, so this reflects the serialization mode the VM actually
+// runs under, not the raw command line). Mode-derived premise probe for
+// the threads corpus: behavioral cooperative-GIL detection (spawn a
+// thread, watch for progress against a spinning main thread under a
+// deadline) can misfire on a saturated host and silently premise-skip a
+// GIL-off lane (JSTests/threads/cve/mc-aint-poll-resume-stale-elided.js).
+// Usage: $vm.useThreadGIL()
+JSC_DEFINE_HOST_FUNCTION(functionUseThreadGIL, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsBoolean(Options::useThreadGIL()));
 }
 
 // Returns true if Gigacage is enabled.
@@ -5521,6 +5596,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "triggerMemoryPressure"_s, functionTriggerMemoryPressure, 0);
     addFunction(vm, alwaysAllow, "gc"_s, functionGC, 0);
     addFunction(vm, alwaysAllow, "gcSweepAsynchronously"_s, functionGCSweepAsynchronously, 0);
+    addFunction(vm, alwaysAllow, "sharedHeapTest"_s, functionSharedHeapTest, 3);
     addFunction(vm, alwaysAllow, "edenGC"_s, functionEdenGC, 0);
     addFunction(vm, alwaysAllow, "dumpSubspaceHashes"_s, functionDumpSubspaceHashes, 0);
 
@@ -5554,6 +5630,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "createGlobalObject"_s, functionCreateGlobalObject, 0);
     addFunction(vm, allowIfNotFuzz, "createGlobalProxy"_s, functionCreateProxy, 1);
+    addFunction(vm, allowIfNotFuzz, "resetPrototypeOfGlobalObject"_s, functionResetPrototypeOfGlobalObject, 2);
     addFunction(vm, allowIfNotFuzz, "createRuntimeArray"_s, functionCreateRuntimeArray, 0);
 
     addFunction(vm, allowIfNotFuzz, "createImpureGetter"_s, functionCreateImpureGetter, 1);
@@ -5659,6 +5736,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "useJIT"_s, functionUseJIT, 0);
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
+    addFunction(vm, alwaysAllow, "useThreadGIL"_s, functionUseThreadGIL, 0);
     addFunction(vm, alwaysAllow, "isGigacageEnabled"_s, functionIsGigacageEnabled, 0);
 
     addFunction(vm, allowIfNotFuzz, "toCacheableDictionary"_s, functionToCacheableDictionary, 1);

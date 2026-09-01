@@ -41,7 +41,7 @@ class StackManager {
 public:
     class Mirror : public BasicRawSentinelNode<Mirror> {
     public:
-        void* softStackLimit() const { return m_softStackLimit; }
+        void* softStackLimit() const { return m_softStackLimit.loadRelaxed(); }
         void* trapAwareSoftStackLimit() const LIFETIME_BOUND { return m_trapAwareSoftStackLimit.loadRelaxed(); }
 
         static constexpr ptrdiff_t offsetOfSoftStackLimit()
@@ -51,7 +51,12 @@ public:
 
     private:
         Atomic<void*> m_trapAwareSoftStackLimit { nullptr };
-        void* m_softStackLimit { nullptr };
+        // V7: written by the owning StackManager under m_mirrorLock; read
+        // lock-free by C++ (e.g. JSWebAssemblyInstance::softStackLimit) and
+        // by generated code via offsetOfSoftStackLimit() — relaxed atomic
+        // keeps the word raw-readable at the same offset (layout
+        // static_assert below).
+        Atomic<void*> m_softStackLimit { nullptr };
 
         friend class LLIntOffsetsExtractor;
         friend class StackManager;
@@ -64,7 +69,7 @@ public:
     CONCURRENT_SAFE void requestStop();
     CONCURRENT_SAFE void cancelStop();
 
-    void* softStackLimit() const { return m_softStackLimit; }
+    void* softStackLimit() const { return m_softStackLimit.loadRelaxed(); }
     void* trapAwareSoftStackLimit() const LIFETIME_BOUND { return m_trapAwareSoftStackLimit.loadRelaxed(); }
 
     void setStackSoftLimit(void* newLimit);
@@ -74,7 +79,11 @@ public:
         return OBJECT_OFFSETOF(StackManager, m_softStackLimit);
     }
 
-    void** addressOfSoftStackLimit() { return &m_softStackLimit; }
+    // Generated code reads the word through this raw pointer (and through
+    // offsetOfSoftStackLimit() above); the relaxed-atomic conversion keeps
+    // size/offset identical (static_asserts below), so the baked pointer
+    // load is unchanged and hardware-atomic.
+    void** addressOfSoftStackLimit() { return reinterpret_cast<void**>(&m_softStackLimit); }
 
 #if ENABLE(C_LOOP)
     void* cloopStackLimit() { return m_cloopStackLimit; }
@@ -98,12 +107,33 @@ private:
     static ALWAYS_INLINE void* stopRequestMarker() { return reinterpret_cast<void*>(StopRequestMarkerValue); }
 
     Atomic<void*> m_trapAwareSoftStackLimit { nullptr };
-    void* m_softStackLimit { nullptr };
+    // V7: the VM-level word is written by CARRIER entries
+    // (VM::updateStackLimits) and read (a) lock-free by no-lite C++ fallback
+    // readers and the per-lite null-fallback chain
+    // (softStackLimitForCurrentThread / softStackLimitForCurrentThreadGilOffSlow,
+    // VM::updateStackLimits' pre-read), (b) by generated code via the raw
+    // pointer/offset accessors above, and (c) under m_mirrorLock by
+    // cancelStop / registerMirror / the mirror fanouts. Relaxed atomic closes
+    // the unlocked readers; the store now also happens under m_mirrorLock
+    // (setStackSoftLimit) so the lock pairs with the locked readers and the
+    // m_trapAwareSoftStackLimit restore in cancelStop observes a consistent
+    // snapshot.
+    Atomic<void*> m_softStackLimit { nullptr };
 
     Lock m_mirrorLock;
     SentinelLinkedList<Mirror, BasicRawSentinelNode<Mirror>> m_mirrors WTF_GUARDED_BY_LOCK(m_mirrorLock);
 
 #if ENABLE(C_LOOP)
+    // Read by the LLInt cloop stack checks. Flag-off (and GIL-on) the carrier
+    // VM's instance is read via the VMCLoopStackLimitOffset chained const;
+    // GIL-off the per-lite instance (VMTraps inside VMLite::threadContext) is
+    // read via VMLiteCLoopStackLimitOffset (both consts are built from the
+    // raw member through the LLIntOffsetsExtractor friendship below — no
+    // offsetOf accessor needed). Per-lite, the slot is single-writer/
+    // single-reader (the owning thread, via
+    // CLoopStack::publishTargetStackManager routing); cross-thread stop
+    // delivery uses m_trapAwareSoftStackLimit under m_mirrorLock, never this
+    // slot.
     void* m_cloopStackLimit { nullptr };
 
     // m_cloopStack must be declared after the m_mirrors list because CLoopStack
@@ -115,5 +145,7 @@ private:
 };
 
 static_assert(sizeof(Atomic<void*>) == sizeof(void*), "m_trapAwareSoftStackLimit relies on this invariant");
+static_assert(sizeof(Atomic<void*>) == sizeof(void*), "baked JIT/LLInt loads through offsetOfSoftStackLimit()/addressOfSoftStackLimit() rely on m_softStackLimit staying one raw pointer word");
+static_assert(std::atomic<void*>::is_always_lock_free);
 
 } // namespace JSC

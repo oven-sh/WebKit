@@ -45,6 +45,14 @@ struct YieldData {
     JSInstructionStream::Offset point { 0 };
     VirtualRegister argument { 0 };
     FastBitVector liveness;
+    // SPEC-ungil §N.5: offset of the op_put_internal_field(State, SuspendedX)
+    // emitted by BytecodeGenerator::emitGeneratorStateChange immediately
+    // before this op_yield, when it could be identified. gilOffProcess, that
+    // store is the resume-claim UNCLAIM and must be the LAST publication of
+    // the suspension — run() moves it after the frame-save sequence (the
+    // landed order stores the suspend state BEFORE the OpPutToScope saves, so
+    // a rival claimant could resume into a half-saved frame).
+    std::optional<JSInstructionStream::Offset> stateStorePoint;
 };
 
 class BytecodeGeneratorification {
@@ -67,6 +75,7 @@ public:
         , m_generatorFrameSymbolTable(codeBlock->vm(), generatorFrameSymbolTable)
         , m_generatorFrameSymbolTableIndex(generatorFrameSymbolTableIndex)
     {
+        std::optional<JSInstructionStream::Offset> previousPutInternalFieldPoint;
         for (const auto& instruction : m_instructions) {
             switch (instruction->opcodeID()) {
             case op_enter: {
@@ -82,6 +91,12 @@ public:
                 YieldData& data = m_yields[liveCalleeLocalsIndex];
                 data.point = instruction.offset();
                 data.argument = bytecode.m_argument;
+                // emitYieldPoint emits the suspend-state store immediately
+                // before op_yield (only alignment nops can intervene, on
+                // NEEDS_ALIGNED_ACCESS targets — 32-bit-only, where gilOff
+                // fail-stops at VM entry; run() fail-stops gilOff if this
+                // stays nullopt). Validated again in run().
+                data.stateStorePoint = previousPutInternalFieldPoint;
                 break;
             }
 
@@ -100,6 +115,7 @@ public:
             default:
                 break;
             }
+            previousPutInternalFieldPoint = instruction->opcodeID() == op_put_internal_field ? std::optional<JSInstructionStream::Offset>(instruction.offset()) : std::nullopt;
         }
     }
 
@@ -231,10 +247,67 @@ void BytecodeGeneratorification::run()
         });
     }
 
+    // SPEC-ungil §N.5 (gilOffProcess only; derivation identical to
+    // JSCConfig.h Config::finalize() — Options are finalized long before any
+    // code is generatorified, and the byte itself may not be latched yet
+    // during the first VM's construction): the suspend-state store is the
+    // resume-claim UNCLAIM. The landed emission order (state store, THEN the
+    // OpPutToScope frame saves inserted below) lets a rival thread claim the
+    // generator and resume into a half-saved frame. Move the store after the
+    // saves, directly before the op_ret, so the unclaim is the suspension's
+    // LAST publication. GIL-on/flag-off keeps the landed order verbatim.
+    //
+    // Program order alone is NOT the ruled happens-before: the r15 F1
+    // amendment (UNGIL-HANDOUT §N.5) requires the Running->SuspendedX unclaim
+    // to be a store-RELEASE in ALL tiers, pairing with claimGeneratorResume's
+    // acquire CAS. That release half lives in the op_put_internal_field
+    // implementations themselves: gilOffProcess, every tier emits a
+    // store-store fence before the internal-field store (LLInt
+    // LowLevelInterpreter64.asm, Baseline JITPropertyAccess.cpp, DFG
+    // SpeculativeJIT::compilePutInternalField, FTL compilePutInternalField),
+    // so the relocated store below publishes the frame saves on arm64 and is
+    // a compiler barrier in the optimizing tiers.
+    bool gilOffProcess = Options::useJSThreads() && !Options::useThreadGIL()
+        && Options::useVMLite() && Options::useSharedAtomStringTable() && Options::useSharedGCHeap();
+
     for (const YieldData& data : m_yields) {
         VirtualRegister scope = virtualRegisterForArgumentIncludingThis(static_cast<int32_t>(JSGenerator::Argument::Frame));
 
         auto instruction = m_instructions.at(data.point);
+
+        std::optional<OpPutInternalField> stateStoreToMove;
+        if (gilOffProcess) {
+            // FAIL CLOSED (no silent fallback to the known-vulnerable
+            // pre-save unclaim order): gilOffProcess only runs on 64-bit
+            // targets (32-bit fail-stops at VM entry, AB-1), and on 64-bit
+            // emitYieldPoint emits the state store immediately before
+            // op_yield (the NEEDS_ALIGNED_ACCESS nop interleaving is
+            // 32-bit-only). If a future BytecodeGenerator change inserts an
+            // instruction into that window, this deterministic compile-time
+            // crash is the diagnostic — not a silently re-opened race.
+            RELEASE_ASSERT(data.stateStorePoint, data.point);
+            auto stateStoreInstruction = m_instructions.at(*data.stateStorePoint);
+            auto put = stateStoreInstruction->as<OpPutInternalField>();
+            // Validate this really is emitGeneratorStateChange's store: the
+            // generator register (the Generator ARGUMENT for generator /
+            // async-generator / module body modes, a LOCAL VAR for wrapper-
+            // less async functions — BytecodeGenerator.cpp AsyncFunctionMode
+            // arm), field State (index 0 for JSGenerator, JSAsyncGenerator
+            // AND AbstractModuleRecord — static_asserts in
+            // emitGeneratorStateChange/JSGenerator.h). Any mismatch is a
+            // structural change to emitYieldPoint and fail-stops above's
+            // rationale applies.
+            static_assert(!static_cast<unsigned>(JSGenerator::Field::State));
+            RELEASE_ASSERT(put.m_base == m_bytecodeGenerator.generatorRegister()->virtualRegister(), put.m_base.offset());
+            RELEASE_ASSERT(!put.m_index, put.m_index);
+            stateStoreToMove = put;
+            // Remove the early store; an identical one is appended after
+            // the saves below. (A jump targeting the removed instruction
+            // re-resolves to the save fragment — same suspension, so the
+            // behavior is unchanged.)
+            rewriter.replaceBytecodeWithFragment(stateStoreInstruction, [&] (BytecodeRewriter::Fragment&) { });
+        }
+
         // Emit save sequence.
         rewriter.insertFragmentBefore(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
             data.liveness.forEachSetBit([&](size_t index) {
@@ -250,6 +323,11 @@ void BytecodeGeneratorification::run()
                     storage.scopeOffset.offset() // scope offset
                 );
             });
+
+            // §N.5 unclaim: the relocated suspend-state store, ordered after
+            // every frame save (gilOffProcess only; see above).
+            if (stateStoreToMove)
+                fragment.appendInstruction<OpPutInternalField>(stateStoreToMove->m_base, stateStoreToMove->m_index, stateStoreToMove->m_value);
 
             // Insert op_ret just after save sequence.
             fragment.appendInstruction<OpRet>(data.argument);

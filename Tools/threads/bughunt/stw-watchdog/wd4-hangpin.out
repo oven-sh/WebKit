@@ -1,0 +1,35 @@
+run 1: 2s PASS
+run 2: 2s PASS
+run 3: 2s PASS
+run 4: 2s PASS
+./wd4-hangpin.sh: line 13: 1181051 Aborted                 (core dumped) "$JSC" "${FLAGS[@]}" "$DIR/../repro.js" > "$LOG" 2>&1
+run 5: 32s WATCHDOG-ABORT
+./wd4-hangpin.sh: line 13: 1182811 Aborted                 (core dumped) "$JSC" "${FLAGS[@]}" "$DIR/../repro.js" > "$LOG" 2>&1
+run 6: 32s WATCHDOG-ABORT
+run 7: 2s PASS
+run 8: 2s PASS
+run 9: 2s PASS
+run 10: 2s PASS
+run 11: 2s PASS
+run 12: 2s PASS
+run 13: 2s PASS
+run 14: 2s PASS
+run 15: 2s PASS
+run 16: 2s PASS
+run 17: 2s PASS
+run 18: 2s PASS
+run 19: 2s PASS
+run 20: 2s PASS
+./wd4-hangpin.sh: line 13: 1186825 Aborted                 (core dumped) "$JSC" "${FLAGS[@]}" "$DIR/../repro.js" > "$LOG" 2>&1
+run 21: 32s WATCHDOG-ABORT
+run 22: 2s PASS
+run 23: 2s PASS
+run 24: 2s PASS
+./wd4-hangpin.sh: line 13: 1197146 Aborted                 (core dumped) "$JSC" "${FLAGS[@]}" "$DIR/../repro.js" > "$LOG" 2>&1
+run 25: 32s WATCHDOG-ABORT
+run 26: 2s PASS
+run 27: 2s PASS
+run 28: 2s PASS
+run 29: 2s PASS
+run 30: 2s PASS
+SUMMARY wd4 runs=30 pass=26 abort=4 silent_hang=0 other=0

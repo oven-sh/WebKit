@@ -38,6 +38,7 @@
 #include "LinkBuffer.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "VMEntryRecord.h"
+#include "VMLite.h"
 #include "WasmCallingConvention.h"
 #include "WasmContext.h"
 #include <wtf/NeverDestroyed.h>
@@ -281,7 +282,66 @@ MacroAssemblerCodeRef<JSEntryPtrTag> getHostCallReturnValueThunk()
         jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, PreciseAllocation::offsetOfWeakSet() + WeakSet::offsetOfVM() - PreciseAllocation::headerSize()), GPRInfo::regT0);
 
         loadedCase.link(&jit);
+#if CPU(X86_64) || CPU(ARM64)
+        // UNGIL §A.1.3 (K4 table I Group-3 row): encodedHostCallReturnValue is
+        // per-lite Group-2 state. Mirror the llint_get_host_call_return_value asm
+        // op's two-level discriminator: level (i) is decided at emission time —
+        // the gilOffProcess byte is latched in the VM ctor
+        // (Config::latchGILOffProcess(), VM.cpp, AB17g item 2 — strictly
+        // before the m_gilOff designation; the Config::finalize() call later
+        // in the same ctor is a spent-call_once no-op, NOT the carrier of
+        // this ordering) strictly before this lazily-emitted thunk's
+        // first use, and the page is frozen, so a gilOffProcess==0 emission is
+        // byte-identical to the landed thunk (flag-off codegen identity). Level
+        // (ii) at runtime: null lite or lite->gilOff == 0 (a U0b loser VM's
+        // thread) => the VM-block word stays authoritative; gilOff SAME-VM lite
+        // => the CURRENT lite's copy, the word the group3Primitives()-routed
+        // writers (RepatchInlines.h / LLIntSlowPaths.cpp host-call arms)
+        // actually wrote.
+        //
+        // Same-VM guard (lite->vm == regT0, the VM recovered from the callee
+        // cell): restores reader/writer symmetry with the C++ writer selector,
+        // whose lite arm is gated on (lite && lite->vm == this) — without it a
+        // foreign gilOff lite would satisfy the gilOff byte test alone while
+        // the writer fell back to the callee VM's block (stale-value read).
+        // Reachability audit (bughunter round, 2026-06): the divergent state —
+        // VM-B JS executing while a foreign gilOff lite is TLS-current — is
+        // foreclosed by JSLock::didAcquireLock, which on EVERY entry where
+        // cur->vm != m_vm installs a same-VM lite (gilOff carrier branch, or
+        // mainVMLite for a U0b loser — non-null whenever useVMLite() is on,
+        // which gilOffProcess requires). The branch is therefore never-taken
+        // defense-in-depth keeping the reader's discriminator equal to the
+        // writer's by construction, not a behavior change.
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+            jit.loadVMLite(GPRInfo::regT2);
+            auto noLite = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT2);
+            auto gilOnLite = jit.branchTest8(CCallHelpers::Zero, CCallHelpers::Address(GPRInfo::regT2, VMLite::offsetOfGilOff()));
+            auto foreignLite = jit.branchPtr(CCallHelpers::NotEqual, CCallHelpers::Address(GPRInfo::regT2, VMLite::offsetOfVM()), GPRInfo::regT0);
+            jit.loadValue(CCallHelpers::Address(GPRInfo::regT2, VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_encodedHostCallReturnValue()), JSRInfo::returnValueJSR);
+            auto haveValue = jit.jump();
+#if ASSERT_ENABLED
+            // A2-amend round 4: only the FOREIGN-lite face fail-stops in
+            // assert-enabled builds — a taken fallback there would be the
+            // silent cross-thread shared-word read this family eliminates.
+            // The noLite/gilOnLite faces are LEGITIMATE VM-block states (a
+            // U0b loser VM's thread carries a gilOn/main lite) and keep the
+            // VM-block read in all build flavors.
+            foreignLite.link(&jit);
+            jit.breakpoint();
+            noLite.link(&jit);
+            gilOnLite.link(&jit);
+#else
+            noLite.link(&jit);
+            gilOnLite.link(&jit);
+            foreignLite.link(&jit);
+#endif
+            jit.loadValue(CCallHelpers::Address(GPRInfo::regT0, VM::offsetOfEncodedHostCallReturnValue()), JSRInfo::returnValueJSR);
+            haveValue.link(&jit);
+        } else
+            jit.loadValue(CCallHelpers::Address(GPRInfo::regT0, VM::offsetOfEncodedHostCallReturnValue()), JSRInfo::returnValueJSR);
+#else
         jit.loadValue(CCallHelpers::Address(GPRInfo::regT0, VM::offsetOfEncodedHostCallReturnValue()), JSRInfo::returnValueJSR);
+#endif
         jit.emitFunctionEpilogue();
         jit.ret();
 

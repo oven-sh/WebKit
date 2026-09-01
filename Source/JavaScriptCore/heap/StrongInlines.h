@@ -56,6 +56,9 @@ inline void Strong<T, shouldStrongDestructorGrabLock>::set(VM& vm, ExternalType 
     set(value);
 }
 
+// SharedGC (T9): main-VM-only — both assignment operators below resolve the
+// slot's HandleSet (server-owned) to the main VM; see HandleSet::vm()
+// (HandleSet.h).
 template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabLock>
 template <typename U> Strong<T, shouldStrongDestructorGrabLock>& Strong<T, shouldStrongDestructorGrabLock>::operator=(const Strong<U>& other)
 {

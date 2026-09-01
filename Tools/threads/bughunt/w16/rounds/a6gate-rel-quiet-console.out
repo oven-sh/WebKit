@@ -1,0 +1,7 @@
+/tmp/a6gate2b.sh: line 9: 1437616 Aborted                 timeout 2400 WebKitBuild/Release/bin/jsc $GILOFF Tools/threads/scalebench/js/bench.js -- 16 > $log 2>&1
+QREL-1 rc=134
+/tmp/a6gate2b.sh: line 9: 1440651 Trace/breakpoint trap   timeout 2400 WebKitBuild/Release/bin/jsc $GILOFF Tools/threads/scalebench/js/bench.js -- 16 > $log 2>&1
+QREL-2 rc=133
+/tmp/a6gate2b.sh: line 9: 1442663 Trace/breakpoint trap   timeout 2400 WebKitBuild/Release/bin/jsc $GILOFF Tools/threads/scalebench/js/bench.js -- 16 > $log 2>&1
+QREL-3 rc=133
+GATE2B-DONE

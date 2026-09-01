@@ -1,0 +1,183 @@
+[New LWP 1223789]
+[New LWP 1223788]
+[New LWP 1223787]
+[New LWP 1223786]
+[New LWP 1223782]
+
+This GDB supports auto-downloading debuginfo from the following URLs:
+  <https://debuginfod.elfutils.org/>
+Enable debuginfod for this session? (y or [n]) [answered N; input not from terminal]
+Debuginfod has been disabled.
+To make this setting permanent, add 'set debuginfod enabled off' to .gdbinit.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib64/libthread_db.so.1".
+0x00007f09f188837a in __futex_abstimed_wait_common () from /lib64/libc.so.6
+
+Thread 6 (Thread 0x7f09e97ff640 (LWP 1223782) "jsc-bughunt-exp"):
+#0  0x00007f09f188837a in __futex_abstimed_wait_common () from /lib64/libc.so.6
+#1  0x00007f09f188aabf in pthread_cond_timedwait@@GLIBC_2.3.2 () from /lib64/libc.so.6
+#2  0x00005581342665f8 in timed_wait (cond=0x7f09e980e8e8, mutex=0x7f09e980e8c0, absolute_timeout_in_milliseconds=<optimized out>) at /root/WebKit/Source/bmalloc/libpas/src/libpas/pas_scavenger.c:167
+#3  scavenger_thread_main (arg=<optimized out>) at /root/WebKit/Source/bmalloc/libpas/src/libpas/pas_scavenger.c:405
+#4  0x00007f09f188b2ea in start_thread () from /lib64/libc.so.6
+#5  0x00007f09f1910b40 in clone3 () from /lib64/libc.so.6
+
+Thread 5 (Thread 0x7f09f1afd640 (LWP 1223786) "JS Thread"):
+#0  0x00007f09f188837a in __futex_abstimed_wait_common () from /lib64/libc.so.6
+#1  0x00007f09f188aabf in pthread_cond_timedwait@@GLIBC_2.3.2 () from /lib64/libc.so.6
+#2  0x00005581340c747a in WTF::ThreadCondition::timedWait (this=0x7f09e72201b0, mutex=..., absoluteTime=...) at /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:727
+#3  0x0000558134089714 in WTF::ParkingLot::parkConditionallyImpl (address=0x558136516138 <JSC::s_jsThreadsParkCondition>, validation=..., beforeSleep=..., timeout=...) at /root/WebKit/Source/WTF/wtf/ParkingLot.cpp:593
+#4  0x0000558132ad1aeb in WTF::ParkingLot::parkConditionally<WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#1}, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#2}>(void const*, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#1} const&, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#2} const&, WTF::TimeWithDynamicClockType const&) (address=0x558136516138 <JSC::s_jsThreadsParkCondition>, validation=..., beforeSleep=..., timeout=...) at WTF/Headers/wtf/ParkingLot.h:82
+#5  WTF::Condition::waitUntilUnchecked<WTF::Lock> (this=0x558136516138 <JSC::s_jsThreadsParkCondition>, lock=..., timeout=...) at WTF/Headers/wtf/Condition.h:192
+#6  0x000055813393cda2 in WTF::Condition::waitUntil (lock=..., timeout=..., this=<optimized out>) at WTF/Headers/wtf/Condition.h:77
+#7  WTF::Condition::waitFor (lock=..., relativeTimeout=..., this=<optimized out>) at WTF/Headers/wtf/Condition.h:116
+#8  JSC::jsThreadsParkForStopWindow (vm=...) at /root/WebKit/Source/JavaScriptCore/runtime/VMManager.cpp:429
+#9  0x00005581331e70d6 in JSC::GCClient::Heap::acquireHeapAccess (this=0x7f09e58c0000) at /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:6121
+#10 0x00005581339202a9 in JSC::threadMain (vm=..., state=...) at /root/WebKit/Source/JavaScriptCore/runtime/ThreadObject.cpp:211
+#11 JSC::constructThread(JSC::JSGlobalObject*, JSC::CallFrame*)::$_0::operator()() (this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/runtime/ThreadObject.cpp:468
+#12 WTF::Detail::CallableWrapper<(lambda at /root/WebKit/Source/JavaScriptCore/runtime/ThreadObject.cpp:467:35), void>::call(void) (this=<optimized out>) at WTF/Headers/wtf/Function.h:59
+#13 0x0000558134090c5e in WTF::Function<void()>::operator() (this=<optimized out>) at /root/WebKit/Source/WTF/wtf/Function.h:103
+#14 WTF::Thread::entryPoint (newThreadContext=0x7f09e70154e0) at /root/WebKit/Source/WTF/wtf/Threading.cpp:312
+#15 0x00005581340c6de6 in WTF::wtfThreadEntryPoint (context=0x7f09e72201d8) at /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:264
+#16 0x00007f09f188b2ea in start_thread () from /lib64/libc.so.6
+#17 0x00007f09f1910b40 in clone3 () from /lib64/libc.so.6
+
+Thread 4 (Thread 0x7f09e8dfe640 (LWP 1223787) "JS Thread"):
+#0  0x00007f09f188837a in __futex_abstimed_wait_common () from /lib64/libc.so.6
+#1  0x00007f09f188aabf in pthread_cond_timedwait@@GLIBC_2.3.2 () from /lib64/libc.so.6
+#2  0x00005581340c747a in WTF::ThreadCondition::timedWait (this=0x7f09e72d8230, mutex=..., absoluteTime=...) at /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:727
+#3  0x0000558134089714 in WTF::ParkingLot::parkConditionallyImpl (address=0x7f09e8dfd61f, validation=..., beforeSleep=..., timeout=...) at /root/WebKit/Source/WTF/wtf/ParkingLot.cpp:593
+#4  0x0000558132ad1aeb in WTF::ParkingLot::parkConditionally<WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#1}, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#2}>(void const*, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#1} const&, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#2} const&, WTF::TimeWithDynamicClockType const&) (address=0x7f09e8dfd61f, validation=..., beforeSleep=..., timeout=...) at /root/WebKit/Source/WTF/wtf/ParkingLot.h:82
+#5  WTF::Condition::waitUntilUnchecked<WTF::Lock> (this=this@entry=0x7f09e8dfd61f, lock=..., timeout=...) at /root/WebKit/Source/WTF/wtf/Condition.h:192
+#6  0x000055813408fece in WTF::Condition::waitUntil (this=0x7f09e8dfd61f, lock=..., timeout=...) at /root/WebKit/Source/WTF/wtf/Condition.h:77
+#7  WTF::Condition::waitFor (this=0x7f09e8dfd61f, lock=..., relativeTimeout=...) at /root/WebKit/Source/WTF/wtf/Condition.h:116
+#8  WTF::sleep (value=...) at /root/WebKit/Source/WTF/wtf/Seconds.cpp:115
+#9  0x0000558132bc8a6d in JSC::bughuntStopAwareLockAcquire (lock=...) at /root/WebKit/Source/JavaScriptCore/bytecode/Repatch.cpp:507
+#10 JSC::tryCachePutBy (globalObject=0x7f09e5180088, baseValue=..., propertyName=..., putByKind=JSC::PutByKind::ByIdSloppy, codeBlock=<optimized out>, oldStructure=<optimized out>, slot=..., propertyCache=..., isNonStringPrimitiveKey=<optimized out>) at /root/WebKit/Source/JavaScriptCore/bytecode/Repatch.cpp:1262
+#11 JSC::repatchPutBy (globalObject=globalObject@entry=0x7f09e5180088, codeBlock=codeBlock@entry=0x7f09e50e42c0, baseValue=..., oldStructure=oldStructure@entry=0x7f0801014480, propertyName=propertyName@entry=..., slot=..., propertyCache=..., putByKind=JSC::PutByKind::ByIdSloppy, isNonStringPrimitiveKey=<optimized out>) at /root/WebKit/Source/JavaScriptCore/bytecode/Repatch.cpp:1629
+#12 0x000055813330ba1e in operationPutByIdSloppyOptimize (encodedValue=<optimized out>, encodedBase=<optimized out>, propertyCache=0x7f09e5046170) at /root/WebKit/Source/JavaScriptCore/jit/JITOperations.cpp:1499
+#13 0x00007f09a4c24024 in ?? ()
+#14 0x00007f09e8dfd890 in ?? ()
+#15 0x00007f09a4c4027f in ?? ()
+#16 0x00007f09e70a8880 in ?? ()
+#17 0x00007f09e50461f8 in ?? ()
+#18 0xfffe000000000000 in ?? ()
+#19 0xfffe000000000002 in ?? ()
+#20 0x00007f09e8dfd890 in ?? ()
+#21 0x00007f09a4c401eb in ?? ()
+#22 0x00007f09e50e43a0 in ?? ()
+#23 0x00007f09e59a8140 in ?? ()
+#24 0x0000002400000001 in ?? ()
+#25 0x00007f09e59b0180 in ?? ()
+#26 0x00007f09e59b0180 in ?? ()
+#27 0xfffe000000000000 in ?? ()
+#28 0x000000000000000a in ?? ()
+#29 0x00007f09e72fc128 in ?? ()
+#30 0x00007f09e59a8140 in ?? ()
+#31 0x000000000000000a in ?? ()
+#32 0x00007f09e7150680 in ?? ()
+#33 0x00007f09e8dfdaf0 in ?? ()
+#34 0x0000000000000001 in ?? ()
+#35 0x0000000000000003 in ?? ()
+#36 0x00007f09e8dfd920 in ?? ()
+#37 0x0000558133bc0b89 in llint_call_javascript ()
+#38 0x00007f09e50e42c0 in ?? ()
+#39 0x00007f09e50a2aa0 in ?? ()
+
+Thread 3 (Thread 0x7f09e8d7d640 (LWP 1223788) "JS Thread"):
+#0  0x00007f09f188837a in __futex_abstimed_wait_common () from /lib64/libc.so.6
+#1  0x00007f09f188a8d2 in pthread_cond_wait@@GLIBC_2.3.2 () from /lib64/libc.so.6
+#2  0x00005581340c7434 in WTF::ThreadCondition::wait (this=<optimized out>, mutex=...) at /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:697
+#3  0x00005581340c7434 in WTF::ThreadCondition::timedWait (this=0x7f09e72402d8, mutex=..., absoluteTime=...)
+#4  0x0000558134089714 in WTF::ParkingLot::parkConditionallyImpl (address=0x7f09e50e42d0, validation=..., beforeSleep=..., timeout=...) at /root/WebKit/Source/WTF/wtf/ParkingLot.cpp:593
+#5  0x0000558134087504 in WTF::ParkingLot::parkConditionally<WTF::ParkingLot::compareAndPark<unsigned char, unsigned char>(WTF::Atomic<unsigned char> const*, unsigned char)::{lambda()#1}, WTF::ParkingLot::compareAndPark<unsigned char, unsigned char>(WTF::Atomic<unsigned char> const*, unsigned char)::{lambda()#2}>(void const*, WTF::ParkingLot::compareAndPark<unsigned char, unsigned char>(WTF::Atomic<unsigned char> const*, unsigned char)::{lambda()#1} const&, WTF::ParkingLot::compareAndPark<unsigned char, unsigned char>(WTF::Atomic<unsigned char> const*, unsigned char)::{lambda()#2} const&, WTF::TimeWithDynamicClockType const&) (address=0x7f09e50e42d0, validation=..., beforeSleep=..., timeout=...) at /root/WebKit/Source/WTF/wtf/ParkingLot.h:82
+#6  WTF::ParkingLot::compareAndPark<unsigned char, unsigned char> (address=0x7f09e50e42d0, expected=<optimized out>) at /root/WebKit/Source/WTF/wtf/ParkingLot.h:94
+#7  WTF::LockAlgorithm<unsigned char, 1, 2, WTF::EmptyLockHooks<unsigned char> >::lockSlow (lock=...) at /root/WebKit/Source/WTF/wtf/LockAlgorithmInlines.h:161
+#8  0x0000558132bbaa1a in WTF::Lock::lock (this=0x7f09e50e42d0) at WTF/Headers/wtf/Lock.h:71
+#9  WTF::Locker<WTF::Lock>::Locker (lock=..., this=<optimized out>) at WTF/Headers/wtf/Locker.h:87
+#10 std::_Construct<WTF::Locker<WTF::Lock>, WTF::Lock&> (__args=..., __p=<optimized out>) at /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/bits/stl_construct.h:119
+#11 std::_Optional_payload_base<WTF::Locker<WTF::Lock> >::_M_construct<WTF::Lock&> (__args=..., this=<optimized out>) at /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/optional:274
+#12 std::_Optional_base_impl<WTF::Locker<WTF::Lock>, std::_Optional_base<WTF::Locker<WTF::Lock>, false, false> >::_M_construct<WTF::Lock&> (__args=..., this=<optimized out>) at /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/optional:455
+#13 std::optional<WTF::Locker<WTF::Lock> >::emplace<WTF::Lock&> (__args=..., this=<optimized out>) at /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/optional:916
+#14 JSC::ConcurrentJSLockerBase::ConcurrentJSLockerBase (lockable=..., this=<optimized out>) at JavaScriptCore/PrivateHeaders/JavaScriptCore/ConcurrentJSLock.h:44
+#15 JSC::ConcurrentJSLocker::ConcurrentJSLocker (lockable=..., this=<optimized out>) at JavaScriptCore/PrivateHeaders/JavaScriptCore/ConcurrentJSLock.h:113
+#16 JSC::PropertyInlineCacheClearingWatchpoint::fireInternal (this=0x7f09e7096900, vm=...) at /root/WebKit/Source/JavaScriptCore/bytecode/PropertyInlineCacheClearingWatchpoint.cpp:58
+#17 0x0000558132be30b6 in JSC::Watchpoint::fire (vm=..., detail=..., this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:137
+#18 JSC::WatchpointSet::fireAllWatchpoints (this=this@entry=0x7f09e70968e0, vm=..., detail=...) at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:496
+#19 0x0000558132be2d03 in JSC::WatchpointSet::fireAllNow (this=0x7f09e70968e0, vm=..., detail=...) at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:392
+#20 JSC::WatchpointSet::fireAllUnderClassAStop (this=0x7f09e70968e0, vm=..., detail=...) at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:354
+#21 0x0000558132bbab08 in JSC::WatchpointSet::fireAll<JSC::StringFireDetail> (this=0x7f09e70968e0, fireDetails=..., vm=...) at JavaScriptCore/PrivateHeaders/JavaScriptCore/Watchpoint.h:301
+#22 JSC::StructureTransitionPropertyInlineCacheClearingWatchpoint::fireInternal (this=<optimized out>, vm=...) at /root/WebKit/Source/JavaScriptCore/bytecode/PropertyInlineCacheClearingWatchpoint.cpp:69
+#23 0x0000558132be30b6 in JSC::Watchpoint::fire (vm=..., detail=..., this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:137
+#24 JSC::WatchpointSet::fireAllWatchpoints (this=<optimized out>, vm=..., detail=...) at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:496
+#25 0x0000558132be3f14 in JSC::WatchpointSet::fireAllNow (this=0x7f09e72402d8, vm=..., detail=...) at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:392
+#26 JSC::WatchpointSet::drainClassAFireQueue () at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:321
+#27 JSC::WatchpointSet::fireAllUnderClassAStop(JSC::VM&, JSC::FireDetail const&)::$_0::operator()() const (this=<optimized out>) at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:375
+#28 WTF::ScopedLambdaFunctor<void (), (lambda at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:374:73)>::implFunction(void *) (argument=<optimized out>) at WTF/Headers/wtf/ScopedLambda.h:106
+#29 0x000055813393d478 in WTF::ScopedLambda<void ()>::operator()<>() const (this=0x7f09e8d7c598) at WTF/Headers/wtf/ScopedLambda.h:58
+#30 JSC::jsThreadsThreadGranularStopTheWorldAndRun (vm=..., work=...) at /root/WebKit/Source/JavaScriptCore/runtime/VMManager.cpp:701
+#31 0x0000558132bac128 in JSC::JSThreadsSafepoint::stopTheWorldAndRun (vm=..., work=...) at /root/WebKit/Source/JavaScriptCore/bytecode/JSThreadsSafepoint.cpp:327
+#32 0x0000558132be2da0 in JSC::WatchpointSet::fireAllUnderClassAStop (this=0x7f09e7096560, vm=..., detail=...) at /root/WebKit/Source/JavaScriptCore/bytecode/Watchpoint.cpp:374
+#33 0x0000558132bd013b in JSC::WatchpointSet::fireAll<JSC::FireDetail const> (this=0x7f09e7096560, vm=..., fireDetails=...) at JavaScriptCore/PrivateHeaders/JavaScriptCore/Watchpoint.h:301
+#34 JSC::WatchpointSet::invalidate (this=0x7f09e7096560, vm=..., detail=...) at JavaScriptCore/PrivateHeaders/JavaScriptCore/Watchpoint.h:320
+#35 JSC::InlineWatchpointSet::invalidate (this=<optimized out>, vm=..., detail=...) at JavaScriptCore/PrivateHeaders/JavaScriptCore/Watchpoint.h:503
+#36 0x0000558132bc6b31 in JSC::AccessGenerationResult::fireWatchpoints (vm=..., this=<optimized out>) at JavaScriptCore/PrivateHeaders/JavaScriptCore/InlineCacheCompiler.h:101
+#37 JSC::fireWatchpointsAndClearStubIfNeeded (vm=..., propertyCache=..., codeBlock=0x7f09e50e42c0, result=...) at /root/WebKit/Source/JavaScriptCore/bytecode/Repatch.cpp:515
+#38 JSC::tryCacheGetBy (globalObject=<optimized out>, codeBlock=0x7f09e50e42c0, baseValue=..., propertyName=..., slot=..., propertyCache=..., kind=<optimized out>, isNonStringPrimitiveKey=<optimized out>) at /root/WebKit/Source/JavaScriptCore/bytecode/Repatch.cpp:963
+#39 JSC::repatchGetBy (globalObject=globalObject@entry=0x7f09e5180088, codeBlock=codeBlock@entry=0x7f09e50e42c0, baseValue=..., propertyName=propertyName@entry=..., slot=..., propertyCache=..., kind=<optimized out>, isNonStringPrimitiveKey=<optimized out>) at /root/WebKit/Source/JavaScriptCore/bytecode/Repatch.cpp:974
+
+Thread 2 (Thread 0x7f09e8cfc640 (LWP 1223789) "JS Thread"):
+#0  0x00007f09f188837a in __futex_abstimed_wait_common () from /lib64/libc.so.6
+#1  0x00007f09f188aabf in pthread_cond_timedwait@@GLIBC_2.3.2 () from /lib64/libc.so.6
+#2  0x00005581340c747a in WTF::ThreadCondition::timedWait (this=0x7f09e7268230, mutex=..., absoluteTime=...) at /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:727
+#3  0x0000558134089714 in WTF::ParkingLot::parkConditionallyImpl (address=0x558136516138 <JSC::s_jsThreadsParkCondition>, validation=..., beforeSleep=..., timeout=...) at /root/WebKit/Source/WTF/wtf/ParkingLot.cpp:593
+#4  0x0000558132ad1aeb in WTF::ParkingLot::parkConditionally<WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#1}, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#2}>(void const*, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#1} const&, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#2} const&, WTF::TimeWithDynamicClockType const&) (address=0x558136516138 <JSC::s_jsThreadsParkCondition>, validation=..., beforeSleep=..., timeout=...) at WTF/Headers/wtf/ParkingLot.h:82
+#5  WTF::Condition::waitUntilUnchecked<WTF::Lock> (this=0x558136516138 <JSC::s_jsThreadsParkCondition>, lock=..., timeout=...) at WTF/Headers/wtf/Condition.h:192
+#6  0x000055813393cda2 in WTF::Condition::waitUntil (lock=..., timeout=..., this=<optimized out>) at WTF/Headers/wtf/Condition.h:77
+#7  WTF::Condition::waitFor (lock=..., relativeTimeout=..., this=<optimized out>) at WTF/Headers/wtf/Condition.h:116
+#8  JSC::jsThreadsParkForStopWindow (vm=...) at /root/WebKit/Source/JavaScriptCore/runtime/VMManager.cpp:429
+#9  0x00005581331e70d6 in JSC::GCClient::Heap::acquireHeapAccess (this=0x7f09e5960000) at /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:6121
+#10 0x0000558132bc8a8f in JSC::bughuntStopAwareLockAcquire (lock=...) at /root/WebKit/Source/JavaScriptCore/bytecode/Repatch.cpp:509
+#11 JSC::tryCachePutBy (globalObject=0x7f09e5180088, baseValue=..., propertyName=..., putByKind=JSC::PutByKind::ByIdSloppy, codeBlock=<optimized out>, oldStructure=<optimized out>, slot=..., propertyCache=..., isNonStringPrimitiveKey=<optimized out>) at /root/WebKit/Source/JavaScriptCore/bytecode/Repatch.cpp:1262
+#12 JSC::repatchPutBy (globalObject=globalObject@entry=0x7f09e5180088, codeBlock=codeBlock@entry=0x7f09e50e42c0, baseValue=..., oldStructure=oldStructure@entry=0x7f0801010480, propertyName=propertyName@entry=..., slot=..., propertyCache=..., putByKind=JSC::PutByKind::ByIdSloppy, isNonStringPrimitiveKey=<optimized out>) at /root/WebKit/Source/JavaScriptCore/bytecode/Repatch.cpp:1629
+#13 0x000055813330ba1e in operationPutByIdSloppyOptimize (encodedValue=<optimized out>, encodedBase=<optimized out>, propertyCache=0x7f09e5046170) at /root/WebKit/Source/JavaScriptCore/jit/JITOperations.cpp:1499
+#14 0x00007f09a4c24024 in ?? ()
+#15 0x00007f09e8cfb890 in ?? ()
+#16 0x00007f09a4c4027f in ?? ()
+#17 0x00007f09e70a8880 in ?? ()
+#18 0x00007f09e50461f8 in ?? ()
+#19 0xfffe000000000000 in ?? ()
+#20 0xfffe000000000002 in ?? ()
+#21 0x00007f09e8cfb890 in ?? ()
+#22 0x00007f09a4c401eb in ?? ()
+#23 0x00007f09e50e43a0 in ?? ()
+#24 0x00007f09e5984140 in ?? ()
+#25 0x0000002400000001 in ?? ()
+#26 0x00007f09e5990180 in ?? ()
+#27 0x00007f09e5990180 in ?? ()
+#28 0xfffe000000000000 in ?? ()
+#29 0x000000000000000a in ?? ()
+#30 0x00007f09e72ac128 in ?? ()
+#31 0x00007f09e5984140 in ?? ()
+#32 0x000000000000000a in ?? ()
+#33 0x00007f09e7150680 in ?? ()
+#34 0x00007f09e8cfbaf0 in ?? ()
+#35 0x0000000000000001 in ?? ()
+#36 0x0000000000000003 in ?? ()
+#37 0x00007f09e8cfb920 in ?? ()
+#38 0x0000558133bc0b89 in llint_call_javascript ()
+#39 0x00007f09e50e42c0 in ?? ()
+
+Thread 1 (Thread 0x7f09f1edd980 (LWP 1223779) "jsc-bughunt-exp"):
+#0  0x00007f09f188837a in __futex_abstimed_wait_common () from /lib64/libc.so.6
+#1  0x00007f09f188aabf in pthread_cond_timedwait@@GLIBC_2.3.2 () from /lib64/libc.so.6
+#2  0x00005581340c747a in WTF::ThreadCondition::timedWait (this=0x7f09e7029db0, mutex=..., absoluteTime=...) at /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:727
+#3  0x0000558134089714 in WTF::ParkingLot::parkConditionallyImpl (address=0x7f09e705aa29, validation=..., beforeSleep=..., timeout=...) at /root/WebKit/Source/WTF/wtf/ParkingLot.cpp:593
+#4  0x0000558132ad1aeb in WTF::ParkingLot::parkConditionally<WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#1}, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#2}>(void const*, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#1} const&, WTF::Condition::waitUntilUnchecked<WTF::Lock>(WTF::Lock&, WTF::TimeWithDynamicClockType const&)::{lambda()#2} const&, WTF::TimeWithDynamicClockType const&) (address=0x7f09e705aa29, validation=..., beforeSleep=..., timeout=...) at WTF/Headers/wtf/ParkingLot.h:82
+#5  WTF::Condition::waitUntilUnchecked<WTF::Lock> (this=this@entry=0x7f09e705aa29, lock=..., timeout=...) at WTF/Headers/wtf/Condition.h:192
+#6  0x000055813391b626 in WTF::Condition::waitUntil (this=0x7f09e705aa29, lock=..., timeout=...) at WTF/Headers/wtf/Condition.h:77
+#7  JSC::threadProtoFuncJoin (globalObject=0x7f09e5180088, callFrame=<optimized out>) at /root/WebKit/Source/JavaScriptCore/runtime/ThreadObject.cpp:543
+#8  0x00007f09a4c0c037 in ?? ()
+#9  0x00007ffeb2013a60 in ?? ()
+#10 0x0000558133be3f5c in llint_op_call ()
+#11 0x0000000000000000 in ?? ()
+[Inferior 1 (process 1223779) detached]

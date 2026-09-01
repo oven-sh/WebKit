@@ -154,7 +154,80 @@ void Location::restoreInto(MacroAssembler& jit, char* savedRegisters, GPRReg res
         RELEASE_ASSERT_NOT_REACHED();
         return;
     }
-    
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// UNGIL §A.1.6 (ANNEX A16, U-T4b): base-register form of the above — same
+// sequence with every savedRegisters absolute load rewritten to
+// Address(savedRegistersBaseGPR, savedRegistersOffset + regOffset). See the
+// header comment for the register-disjointness contract.
+void Location::restoreInto(MacroAssembler& jit, GPRReg savedRegistersBaseGPR, ptrdiff_t savedRegistersOffset, GPRReg result, unsigned numFramesToPop) const
+{
+    if (involvesGPR() && RegisterSet::stackRegisters().contains(gpr(), IgnoreVectors)) {
+        // Make the result GPR contain the appropriate stack register.
+        if (numFramesToPop) {
+            jit.move(MacroAssembler::framePointerRegister, result);
+
+            for (unsigned i = numFramesToPop - 1; i--;)
+                jit.loadPtr(MacroAssembler::Address(result), result);
+
+            if (gpr() == MacroAssembler::framePointerRegister)
+                jit.loadPtr(MacroAssembler::Address(result), result);
+            else
+                jit.addPtr(MacroAssembler::TrustedImmPtr(sizeof(void*) * 2), result);
+        } else
+            jit.move(gpr(), result);
+    }
+
+    if (isGPR()) {
+        if (RegisterSet::stackRegisters().contains(gpr(), IgnoreVectors)) {
+            // Already restored into result.
+        } else {
+            ASSERT(result != savedRegistersBaseGPR);
+            jit.load64(MacroAssembler::Address(savedRegistersBaseGPR, static_cast<int32_t>(savedRegistersOffset + offsetOfGPR(gpr()))), result);
+        }
+
+        if (addend())
+            jit.add64(MacroAssembler::TrustedImm32(addend()), result);
+        return;
+    }
+
+    if (isFPR()) {
+        ASSERT(result != savedRegistersBaseGPR);
+        jit.load64(MacroAssembler::Address(savedRegistersBaseGPR, static_cast<int32_t>(savedRegistersOffset + offsetOfFPR(fpr()))), result);
+        ASSERT(!addend());
+        return;
+    }
+
+    switch (kind()) {
+    case Register:
+        // B3 used some register that we don't know about!
+        dataLogLn("Unrecognized location: ", *this);
+        RELEASE_ASSERT_NOT_REACHED();
+        return;
+
+    case Indirect:
+        if (RegisterSet::stackRegisters().contains(gpr(), IgnoreVectors)) {
+            // The stack register is already recovered into result.
+            jit.load64(MacroAssembler::Address(result, offset()), result);
+            return;
+        }
+
+        ASSERT(result != savedRegistersBaseGPR);
+        jit.load64(MacroAssembler::Address(savedRegistersBaseGPR, static_cast<int32_t>(savedRegistersOffset + offsetOfGPR(gpr()))), result);
+        jit.load64(MacroAssembler::Address(result, offset()), result);
+        return;
+
+    case Constant:
+        jit.move(MacroAssembler::TrustedImm64(constant()), result);
+        return;
+
+    case Unprocessed:
+        RELEASE_ASSERT_NOT_REACHED();
+        return;
+    }
+
     RELEASE_ASSERT_NOT_REACHED();
 }
 

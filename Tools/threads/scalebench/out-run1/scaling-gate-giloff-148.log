@@ -1,0 +1,38 @@
+scaling-gate: jsc        = Tools/threads/scalebench/out/jsc-giloff
+scaling-gate: mode       = REPORT-ONLY (host is noisy/shared; recording, not gating)
+scaling-gate: runs/cell  = 3 (median)
+scaling-gate: threads    = 1 2 4 8
+scaling-gate: work scale = 1
+scaling-gate: serial-identity tolerance = 5%
+
+== map-heavy ==
+  threads       T(N) ms     ideal ms    speedup
+  1            2277.849     2277.849      1.00x
+  2            4391.359     2277.849      1.04x
+  4            8227.055     2277.849      1.11x
+  8           16113.294     2277.849      1.13x
+  serial identity: T(1) flag-on 2277.849 ms vs flag-off 2288.808 ms (-0.48% vs +/-5%) ok
+  threshold: speedup(4) = 1.11x vs floor 2.8x VIOLATION
+  threshold: speedup(8) = 1.13x vs floor 4.5x VIOLATION
+
+== raytrace-like ==
+  threads       T(N) ms     ideal ms    speedup
+  1           10226.614    10226.614      1.00x
+  2           30087.779    10226.614      0.68x
+  4           61110.752    10226.614      0.67x
+  8          126483.579    10226.614      0.65x
+  serial identity: T(1) flag-on 10226.614 ms vs flag-off 10182.481 ms (0.43% vs +/-5%) ok
+  threshold: speedup(4) = 0.67x vs floor 2.8x VIOLATION
+  threshold: speedup(8) = 0.65x vs floor 4.5x VIOLATION
+
+== richards-like ==
+scaling-gate: /root/WebKit/JSTests/threads/scaling/richards-like.js (N=4, flag=on) FAILED:
+    | JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+    | JSThreads stop-the-world failed to reach a stopped world within 30.000000s. Pending Class-A fire context: 0x7f9b3d1a83c0 (WatchpointSet Class-A fire). Either an escaped lock-holding direct fireAll caller (SPEC-jit annex App. 5.6(c) bucket iii; Task-11 audit table in docs/threads/INTEGRATE-jit.md / manifest M6), or a mutator parked in a native wait that holds heap access without an access-release bracket or per-quantum parkSitePollAndParkForStopTheWorld poll (FIX-2 banner, mechanisms (1)/(2)). All stopTheWorldAndRun requesters publish a ClassAStopWatchdogContext (watchpoint fire / CodeBlock jettison / OM transition stop / Debugger STW), so a nil context here means the wedged requester is NOT this thread, or a new context-less call site escaped review.
+    |   entered lite 0x7f9b3b040000 tid=16384 clientHeap=0x7f9b3b40d7c8 hasHeapAccess=false
+    |   entered lite 0x7f9b3b2a0000 tid=1 clientHeap=0x7f9b3b1a2400 hasHeapAccess=true  <== NON-QUIESCENT (blocking the stop)
+    |   entered lite 0x7f9b3b2e0000 tid=2 clientHeap=0x7f9b3b3e0000 hasHeapAccess=true  <== NON-QUIESCENT (blocking the stop)
+    |   entered lite 0x7f9b3b360000 tid=4 [requester/conductor — exempt] clientHeap=0x7f9b3b820000 hasHeapAccess=false
+    |   entered lite 0x7f9b3bbe0000 tid=3 clientHeap=0x7f9b3ba60000 hasHeapAccess=true  <== NON-QUIESCENT (blocking the stop)
+    | timeout: the monitored command dumped core
+scaling-gate: error: workload richards-like failed at N=4 (wrong answers are never noise)

@@ -372,6 +372,15 @@ void SamplingProfiler::timerLoop()
 void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 {
     ASSERT(m_lock.isLocked());
+    // UNGIL AB-22 (recorded residue of IU obligation 1): GIL-off the raw VM
+    // member below is NEVER written (entry records are per-lite), so this
+    // gate is constantly false and the profiler is deliberately DORMANT on a
+    // gilOff VM — it samples nothing rather than suspend-and-walk a thread
+    // whose Group-3 state it cannot resolve (the per-lite registry-resolve +
+    // WhileTargetSuspendedScope wiring is the open U-T8d .cpp half; see
+    // SamplingProfiler.h:323-360). The AUD1.K1 carrier-only v1 capture
+    // therefore does NOT yet deliver carrier samples gilOff. GIL-on:
+    // byte-identical (the member is the live record).
     if (m_vm.entryScope) {
         auto [ nowTime, timestamp ] = m_stopwatch->elapsedTimeAndTimestamp();
 
@@ -765,6 +774,15 @@ void SamplingProfiler::pause()
 void SamplingProfiler::noticeCurrentThreadAsJSCExecutionThreadWithLock()
 {
     ASSERT(m_lock.isLocked());
+    // UNGIL §A.1.7 / AUD1.K1 (the SamplingProfiler.cpp half of U-T8d's
+    // bind-consult, wired by the review round): GIL-off a SPAWNED TS thread
+    // must never bind as m_jscExecutionThread — takeSample suspends and
+    // walks the bound thread, and suspending a free-running parallel
+    // mutator's stack is exactly the SD18 "spawned unsampled" refusal.
+    // Keep the existing binding instead. GIL-on/flag-off the predicate is
+    // constantly true: today's rebind-on-acquisition is byte-identical.
+    if (!shouldBindCurrentThreadAsJSCExecutionThread()) [[unlikely]]
+        return;
     m_jscExecutionThread = &Thread::currentSingleton();
 }
 
@@ -783,7 +801,12 @@ void SamplingProfiler::noticeJSLockAcquisition()
 void SamplingProfiler::noticeVMEntry()
 {
     Locker locker { m_lock };
-    ASSERT(m_vm.entryScope);
+    // UNGIL IU obligation 1 (raw-consumer re-point; AB-22): noticeVMEntry
+    // runs on the entering thread, so the mode-split accessor resolves the
+    // CURRENT lite's record GIL-off (the raw member is never written there
+    // and this ASSERT would fire on the first gilOff VM entry). GIL-on:
+    // byte-identical.
+    ASSERT(m_vm.currentThreadEntryScope());
     noticeCurrentThreadAsJSCExecutionThreadWithLock();
     createThreadIfNecessary();
 }

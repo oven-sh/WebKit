@@ -74,6 +74,7 @@ public:
     bool isKnownToBeLiveDuringGC(AbstractSlotVisitor&) final;
     bool iterateCodeBlocksForGC(AbstractSlotVisitor&, NOESCAPE const Function<void(CodeBlock*)>&) final;
     bool checkLivenessAndVisitChildren(AbstractSlotVisitor&) final;
+    void iterateCodeBlocksForFinalizeRoots(NOESCAPE const Function<void(CodeBlock*)>&) final;
 
 
     bool canTierUpAndOSREnter() const { return !m_tierUpAndOSREnterBytecodes.isEmpty(); }

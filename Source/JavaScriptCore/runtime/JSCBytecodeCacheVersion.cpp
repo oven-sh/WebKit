@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSCBytecodeCacheVersion.h"
 
+#include "Options.h"
 #include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
 #include <wtf/NeverDestroyed.h>
@@ -52,6 +53,26 @@ static constexpr bool verbose = false;
 
 static uint32_t byteCodeCacheVersion = 0;
 
+// SPEC-ungil §N.5 / §A.1.3: gilOffProcess bytecode is MODE-KEYED — the
+// @gilOffProcess constant is baked into UnlinkedCodeBlock constant pools and
+// BytecodeGeneratorification emits a different generator-body instruction
+// stream (the relocated suspend-state unclaim) when the derivation is true.
+// A disk bytecode cache built in one mode replayed into a process in the
+// other mode would silently carry the wrong shape (e.g. a flag-off cache in a
+// GIL-off process disables the entire §N.5 resume-claim protection). The
+// derivation is process-immutable (Options latched before any VM exists), so
+// partitioning the cache version on it makes cross-mode replay impossible.
+// Derivation MUST stay identical to JSCConfig.h Config::finalize() /
+// VM::isGILOffProcess() / BytecodeIntrinsicRegistry.
+static uint32_t mixInGILOffProcessDerivation(uint32_t version)
+{
+    bool gilOffProcess = Options::useJSThreads() && !Options::useThreadGIL()
+        && Options::useVMLite() && Options::useSharedAtomStringTable() && Options::useSharedGCHeap();
+    if (gilOffProcess)
+        version ^= 0x47494C30; // 'GIL0'
+    return version;
+}
+
 void dangerouslyOverrideJSCBytecodeCacheVersion(uint32_t version)
 {
     byteCodeCacheVersion = version;
@@ -61,12 +82,12 @@ uint32_t computeJSCBytecodeCacheVersion()
 {
 #if USE(BUN_JSC_ADDITIONS)
     if (byteCodeCacheVersion != 0) {
-        return byteCodeCacheVersion;
+        return mixInGILOffProcessDerivation(byteCodeCacheVersion);
     }
 
     static constexpr uint32_t precomputedCacheVersion = SuperFastHash::computeHash(__TIMESTAMP__);
     byteCodeCacheVersion = precomputedCacheVersion;
-    return precomputedCacheVersion;
+    return mixInGILOffProcessDerivation(precomputedCacheVersion);
 #else
     UNUSED_VARIABLE(JSCBytecodeCacheVersionInternal::verbose);
     static LazyNeverDestroyed<uint32_t> cacheVersion;
@@ -174,7 +195,7 @@ uint32_t computeJSCBytecodeCacheVersion()
         cacheVersion.construct(precomputedCacheVersion);
 #endif
     });
-    return cacheVersion.get();
+    return mixInGILOffProcessDerivation(cacheVersion.get());
 #endif
 }
 

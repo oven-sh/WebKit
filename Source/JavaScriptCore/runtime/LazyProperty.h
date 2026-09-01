@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <wtf/Atomics.h>
+
 #include "Heap.h"
 
 namespace JSC {
@@ -82,22 +84,28 @@ public:
     
     ElementType* getConcurrently() const
     {
-        uintptr_t pointer = m_pointer;
+        // THREADS: relaxed atomic load — racy-by-design vs setMayBeNull's release
+        // publication on another mutator (stale/lazy reads return null).
+        uintptr_t pointer = WTF::atomicLoad(const_cast<uintptr_t*>(&m_pointer), std::memory_order_relaxed);
         if (pointer & lazyTag)
             return nullptr;
         return std::bit_cast<ElementType*>(pointer);
     }
 
-    bool isInitialized() const { return !(m_pointer & lazyTag); }
+    bool isInitialized() const { return !(WTF::atomicLoad(const_cast<uintptr_t*>(&m_pointer), std::memory_order_relaxed) & lazyTag); }
 
     ElementType* getInitializedOnMainThread(const OwnerType* owner) const
     {
-        if (m_pointer & lazyTag) [[unlikely]] {
+        // THREADS: snapshot with a relaxed atomic load; another mutator's
+        // setMayBeNull (release store) may publish concurrently. Pointer
+        // dependency orders the element reads on all supported targets.
+        uintptr_t pointer = WTF::atomicLoad(const_cast<uintptr_t*>(&m_pointer), std::memory_order_relaxed);
+        if (pointer & lazyTag) [[unlikely]] {
             ASSERT(!isCompilationThread());
-            FuncType func = *std::bit_cast<FuncType*>(m_pointer & ~(lazyTag | initializingTag));
+            FuncType func = *std::bit_cast<FuncType*>(pointer & ~(lazyTag | initializingTag));
             return func(Initializer(const_cast<OwnerType*>(owner), *const_cast<LazyProperty*>(this)));
         }
-        return std::bit_cast<ElementType*>(m_pointer);
+        return std::bit_cast<ElementType*>(pointer);
     }
     
     void setMayBeNull(VM&, const OwnerType* owner, ElementType*);

@@ -250,7 +250,7 @@ ALWAYS_INLINE JSValue RegExpObject::execInline(JSGlobalObject* globalObject, JSS
     if (globalOrSticky)
         setLastIndex(globalObject, result.end);
     RETURN_IF_EXCEPTION(scope, { });
-    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, result, /* oneCharacterMatch */ false);
+    threadRegExpGlobalData(globalObject).recordMatch(vm, globalObject, regExp, string, result, /* oneCharacterMatch */ false);
     return array;
 }
 
@@ -269,7 +269,7 @@ ALWAYS_INLINE MatchResult RegExpObject::matchInline(JSGlobalObject* globalObject
     RegExp* regExp = this->regExp();
     if (!regExp->global() && !regExp->sticky()) {
         scope.release();
-        return globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, input, 0);
+        return threadRegExpGlobalData(globalObject).performMatch(globalObject, regExp, string, input, 0);
     }
 
     if (lastIndex == UINT_MAX) {
@@ -278,7 +278,7 @@ ALWAYS_INLINE MatchResult RegExpObject::matchInline(JSGlobalObject* globalObject
         return MatchResult::failed();
     }
     
-    MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, input, lastIndex);
+    MatchResult result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExp, string, input, lastIndex);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
     setLastIndex(globalObject, result.end);
@@ -313,7 +313,7 @@ JSValue collectMatches(VM& vm, JSGlobalObject* globalObject, JSString* string, S
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, s, 0);
+    MatchResult result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExp, string, s, 0);
     RETURN_IF_EXCEPTION(scope, { });
     if (!result)
         return jsNull();
@@ -335,7 +335,7 @@ JSValue collectMatches(VM& vm, JSGlobalObject* globalObject, JSString* string, S
         }
         if (!length)
             end = fixEnd(end);
-        result = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, s, end);
+        result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExp, string, s, end);
         if (scope.exception()) [[unlikely]] {
             hasException = true;
             return;
@@ -363,7 +363,7 @@ JSValue collectMatches(VM& vm, JSGlobalObject* globalObject, JSString* string, S
                 // will leave the cached result in the state it ought to have had just before the
                 // OOM! On the other hand, if this loop concludes that the result is small enough,
                 // then the iterate() loop below will overwrite the cached result anyway.
-                result = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, s, end);
+                result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExp, string, s, end);
                 RETURN_IF_EXCEPTION(scope, { });
             } while (result);
             
@@ -466,7 +466,7 @@ ALWAYS_INLINE JSValue collectGlobalAtomMatches(JSGlobalObject* globalObject, JSS
 
     scope.release();
     MatchResult matchResult { lastResult, lastResult + pattern.length() };
-    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, matchResult, oneCharacterMatch);
+    threadRegExpGlobalData(globalObject).recordMatch(vm, globalObject, regExp, string, matchResult, oneCharacterMatch);
 
     return array;
 }

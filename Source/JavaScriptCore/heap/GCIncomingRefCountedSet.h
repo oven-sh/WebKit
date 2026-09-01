@@ -27,6 +27,8 @@
 
 #include "CollectionScope.h"
 #include "GCIncomingRefCounted.h"
+#include <wtf/Atomics.h>
+#include <wtf/Lock.h>
 
 namespace JSC {
 
@@ -45,12 +47,42 @@ public:
     bool addReference(JSCell*, T*);
     
     void sweep(VM&, CollectionScope);
-    
-    size_t size() const { return m_bytes; };
-    
+
+    size_t size() const { return m_bytes.loadRelaxed(); };
+
+    // The lock guarding both this set's vector AND every member object's
+    // incoming-reference storage. READERS of that storage that run outside
+    // this set's API (ArrayBuffer::notifyDetaching /
+    // refreshAfterWasmMemoryGrow walking numberOfIncomingReferences() /
+    // incomingReferenceAt()) must snapshot under this lock — see
+    // Heap::arrayBufferIncomingReferencesLock() and the GCIncomingRefCounted.h
+    // invariant comment.
+    Lock& lock() LIFETIME_BOUND { return m_lock; }
+
 private:
-    Vector<T*> m_vector;
-    size_t m_bytes;
+    // Shared-heap (GIL-off): N mutators reach addReference() concurrently via
+    // Heap::addReference (e.g. ArrayBuffer wrapper allocation slow paths), GC
+    // end-phase work (sweep / lastChanceToFinalize) walks the same set, and
+    // ordinary mutator paths READ a member object's incoming-reference
+    // storage (ArrayBuffer detach / wasm-grow refresh). Upstream assumed a
+    // single mutator; unsynchronized Vector appends here (and to each
+    // object's incoming-reference storage) raced realloc-vs-move against the
+    // lock-free readers and produced a UAF, so the invariant is: ALL access
+    // — mutation AND reads — to m_vector and to per-object incoming-reference
+    // storage happens under m_lock.
+    // LOCK RANK: strict leaf at heap rank — nothing but allocation (bmalloc)
+    // and mark-bit reads happens under it; no other lock is acquired while it
+    // is held, and it never safepoints. Flag-off this lock is uncontended
+    // (single mutator) and the guarded paths are cold slow paths (wrapper
+    // construction, GC end-phase, detach, wasm grow), so semantics are
+    // unchanged; the flag-off-identity waiver for the added uncontended
+    // acquire/release is recorded in docs/threads/TSAN-TRIAGE.md §3.27.
+    mutable Lock m_lock;
+    Vector<T*> m_vector WTF_GUARDED_BY_LOCK(m_lock);
+    // Byte count is read lock-free by Heap accounting (size()); writers update
+    // it under m_lock, readers use a relaxed load (monotonic-ish advisory
+    // counter for GC pacing; a momentarily stale value is harmless).
+    Atomic<size_t> m_bytes;
 };
 
 } // namespace JSC

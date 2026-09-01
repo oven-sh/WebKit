@@ -40,6 +40,7 @@
 #include "SlotVisitorInlines.h"
 #include "StopIfNecessaryTimer.h"
 #include "VM.h"
+#include <wtf/Atomics.h>
 #include <wtf/ListDump.h>
 #include <wtf/Lock.h>
 #include <wtf/StdLibExtras.h>
@@ -109,6 +110,11 @@ void SlotVisitor::didStartMarking()
         }
     }
 
+    // SharedGC (T9): conductor-context OK — all vm() uses in this file
+    // (heapProfiler here, Integrity::auditCell, assertValidCell) run in
+    // marker context (conductor or its parallel helpers, world stopped once
+    // shared); see the tag at AbstractSlotVisitor::vm()
+    // (AbstractSlotVisitorInlines.h).
     if (HeapProfiler* heapProfiler = vm().heapProfiler())
         m_heapAnalyzer = heapProfiler->activeHeapAnalyzer();
 
@@ -118,7 +124,7 @@ void SlotVisitor::didStartMarking()
 void SlotVisitor::reset()
 {
     AbstractSlotVisitor::reset();
-    m_bytesVisited = 0;
+    WTF::atomicStore(&m_bytesVisited, static_cast<size_t>(0), std::memory_order_relaxed);
     m_heapAnalyzer = nullptr;
     RELEASE_ASSERT(!m_currentCell);
 }
@@ -287,8 +293,8 @@ ALWAYS_INLINE void SlotVisitor::appendToMarkStack(ContainerType& container, JSCe
 
     container.noteMarked();
     
-    m_visitCount++;
-    m_bytesVisited += container.cellSize();
+    WTF::atomicStore(&m_visitCount, WTF::atomicLoad(&m_visitCount, std::memory_order_relaxed) + 1, std::memory_order_relaxed); // Single-writer counters; see AbstractSlotVisitor::visitCount().
+    WTF::atomicStore(&m_bytesVisited, WTF::atomicLoad(&m_bytesVisited, std::memory_order_relaxed) + container.cellSize(), std::memory_order_relaxed);
 
     m_collectorStack.append(cell);
 }
@@ -318,10 +324,10 @@ void SlotVisitor::noteLiveAuxiliaryCell(HeapCell* cell)
     container.assertValidCell(vm(), cell);
     container.noteMarked();
     
-    m_visitCount++;
+    WTF::atomicStore(&m_visitCount, WTF::atomicLoad(&m_visitCount, std::memory_order_relaxed) + 1, std::memory_order_relaxed); // Single-writer counter; see AbstractSlotVisitor::visitCount().
 
     size_t cellSize = container.cellSize();
-    m_bytesVisited += cellSize;
+    WTF::atomicStore(&m_bytesVisited, WTF::atomicLoad(&m_bytesVisited, std::memory_order_relaxed) + cellSize, std::memory_order_relaxed);
     m_nonCellVisitCount += cellSize;
 }
 
@@ -457,7 +463,11 @@ void SlotVisitor::donateKnownParallel()
 
 void SlotVisitor::updateMutatorIsStopped(const AbstractLocker&)
 {
-    m_mutatorIsStopped = (m_heap.worldIsStopped() & m_canOptimizeForStoppedMutator);
+    // Written under m_rightToRun (or with the world stopped); read lock-free
+    // by the collector poll in hasAcknowledgedThatTheMutatorIsResumed(). The
+    // load-bearing happens-before is the m_rightToRun handshake; the relaxed
+    // atomic makes the lock-free poll well-defined.
+    WTF::atomicStore(&m_mutatorIsStopped, m_heap.worldIsStopped() && m_canOptimizeForStoppedMutator, std::memory_order_relaxed);
 }
 
 void SlotVisitor::updateMutatorIsStopped()
@@ -469,12 +479,12 @@ void SlotVisitor::updateMutatorIsStopped()
 
 bool SlotVisitor::hasAcknowledgedThatTheMutatorIsResumed() const
 {
-    return !m_mutatorIsStopped;
+    return !WTF::atomicLoad(const_cast<bool*>(&m_mutatorIsStopped), std::memory_order_relaxed);
 }
 
 bool SlotVisitor::mutatorIsStoppedIsUpToDate() const
 {
-    return m_mutatorIsStopped == (m_heap.worldIsStopped() & m_canOptimizeForStoppedMutator);
+    return WTF::atomicLoad(const_cast<bool*>(&m_mutatorIsStopped), std::memory_order_relaxed) == (m_heap.worldIsStopped() && m_canOptimizeForStoppedMutator);
 }
 
 void SlotVisitor::optimizeForStoppedMutator()
@@ -525,8 +535,48 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
             break;
         
         m_rightToRun.safepoint();
+        if (m_isDrainingFromSharedHelper) [[unlikely]]
+            helperDrainPauseCheckpointIfRequested();
         donateKnownParallel();
     }
+}
+
+// SPEC-congc §9.1(2) checkpoint (b) (CG-3a; ANNEX CGP1): the helper
+// drain-batch safepoint. On ShouldPause the helper donates ALL local work (a
+// paused helper holds no local work), does active--, paused++, notifyAll,
+// parks until the flag clears, then active++ and resumes draining —
+// granularity is one drained batch (the CG-I12 bound). The lock-free read
+// below is a HINT only (relaxed atomic, paired with the Heap.h writer
+// contract's atomicStore): a missed set is caught at the next batch boundary
+// or at the checkpoint-(a) wait; any positive is re-confirmed under
+// m_markingMutex before acting. m_rightToRun stays held across the park —
+// sound because the pause runs only between stop windows (the conductor is
+// blocked at its WND-open GCL acquire, so no resumeThePeriphery() loop can
+// be spinning on this visitor's rightToRun) and a §A.3 window needs no
+// helper rightToRun (CG-I16). Flag-off
+// (!useConcurrentSharedGCMarking): never entered —
+// m_isDrainingFromSharedHelper is only set when the C1 option byte is on
+// (option-byte-first at the drainFromShared drain entry, FIX-V5B-F1
+// pattern), so flag-off helpers pay only the per-batch test of their own
+// visitor line in drain() and never load the shared Heap line here.
+void SlotVisitor::helperDrainPauseCheckpointIfRequested()
+{
+    ASSERT(m_isDrainingFromSharedHelper);
+    ASSERT(Options::useConcurrentSharedGCMarking());
+    if (!WTF::atomicLoad(&m_heap.m_parallelMarkersShouldPause, std::memory_order_relaxed)) [[likely]]
+        return;
+
+    Locker locker { m_heap.m_markingMutex };
+    if (!m_heap.m_parallelMarkersShouldPause)
+        return;
+    donateAll(locker);
+    m_heap.m_numberOfActiveParallelMarkers--;
+    m_heap.m_pausedParallelMarkers++;
+    m_heap.m_markingConditionVariable.notifyAll();
+    while (m_heap.m_parallelMarkersShouldPause)
+        m_heap.m_markingConditionVariable.wait(m_heap.m_markingMutex);
+    m_heap.m_pausedParallelMarkers--;
+    m_heap.m_numberOfActiveParallelMarkers++;
 }
 
 size_t SlotVisitor::performIncrementOfDraining(size_t bytesRequested)
@@ -604,7 +654,13 @@ bool SlotVisitor::didReachTermination()
 
 bool SlotVisitor::didReachTermination(const AbstractLocker& locker)
 {
+    // SPEC-congc CG-I22 (CG-3a; ANNEX CGP1): a paused helper is in NEITHER
+    // counter, so without the m_pausedParallelMarkers conjunct a §9.1(2)
+    // pause with empty shared stacks would read as (false) termination and
+    // let the conductor's waitForTermination exit mid-foreign-stop. Flag-off
+    // the counter is always zero (nothing sets ShouldPause).
     return !m_heap.m_numberOfActiveParallelMarkers
+        && !m_heap.m_pausedParallelMarkers
         && !hasWork(locker);
 }
 
@@ -631,16 +687,29 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 m_heap.m_numberOfActiveParallelMarkers--;
             m_heap.m_numberOfWaitingParallelMarkers++;
             
+            // F17 (CG-3a; ANNEX CGD2.1 BINDING — cited in
+            // docs/threads/INTEGRATE-congc.md): every return path below
+            // leaves the waiting counter it entered above. The landed code
+            // leaked the increment on all four exits; with the §9.1(2) pause
+            // predicate (active == 0 && waiting == 0) that leak is a
+            // guaranteed wedge from the first cycle end onward. Flag-off
+            // delta = the stealSomeCellsFrom denominator and one diagnostic
+            // dataLog only — ruled BENIGN-DELTA under CG-I0 by CGD2.1 (the
+            // mode-split alternative was rejected there: divergent counter
+            // semantics per mode is the F17 trap class itself).
             if (sharedDrainMode == MainDrain) {
                 while (true) {
-                    if (hasElapsed(timeout))
+                    if (hasElapsed(timeout)) {
+                        m_heap.m_numberOfWaitingParallelMarkers--; // F17.
                         return SharedDrainResult::TimedOut;
+                    }
 
                     if (didReachTermination(locker)) {
-                        // No marker needs waking here. There is no work which can be processed in the helpers.
+                        m_heap.m_markingConditionVariable.notifyAll();
+                        m_heap.m_numberOfWaitingParallelMarkers--; // F17.
                         return SharedDrainResult::Done;
                     }
-                    
+
                     if (hasWork(locker))
                         break;
 
@@ -649,9 +718,11 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             } else {
                 ASSERT(sharedDrainMode == HelperDrain);
 
-                if (hasElapsed(timeout))
+                if (hasElapsed(timeout)) {
+                    m_heap.m_numberOfWaitingParallelMarkers--; // F17.
                     return SharedDrainResult::TimedOut;
-                
+                }
+
                 if (didReachTermination(locker)) {
                     // This is necessary to wake up MainDrain side.
                     m_heap.m_markingConditionVariable.notifyAll();
@@ -673,16 +744,61 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 auto isReady = [&] () -> bool {
                     return hasWork(locker)
                         || m_heap.m_bonusVisitorTask
-                        || m_heap.m_parallelMarkersShouldExit;
+                        || m_heap.m_parallelMarkersShouldExit
+                        || m_heap.m_parallelMarkersShouldPause; // §9.1(2) checkpoint (a) wake-up (CG-3a; ANNEX CGP1).
                 };
 
                 m_heap.m_markingConditionVariable.waitUntil(m_heap.m_markingMutex, timeout, isReady);
 
-                if (m_heap.m_parallelMarkersShouldExit)
-                    return SharedDrainResult::Done;
+                // SPEC-congc §9.1(2) checkpoint (a) (CG-3a; ANNEX CGP1): a
+                // woken waiting helper leaves its counter for the paused one
+                // — waiting--, paused++, notifyAll (the pausing conductor
+                // waits on this same condvar for active == 0 && waiting ==
+                // 0), park until !ShouldPause, then waiting++ and
+                // re-evaluate the work wait. All transitions share
+                // m_markingMutex, so the §9.1(2) predicate never observes a
+                // transient and no wakeup is lost. ShouldPause also gates a
+                // fresh helper's FIRST waiting++ here: the increment at loop
+                // top is moved to paused under the same critical section, so
+                // the predicate is stable once reached. The outer while
+                // re-checks after the re-armed wait (a back-to-back foreign
+                // stop can re-set the flag before this helper finds work).
+                // Flag-off: dead (nothing sets ShouldPause).
+                while (m_heap.m_parallelMarkersShouldPause) {
+                    m_heap.m_numberOfWaitingParallelMarkers--;
+                    m_heap.m_pausedParallelMarkers++;
+                    m_heap.m_markingConditionVariable.notifyAll();
+                    while (m_heap.m_parallelMarkersShouldPause)
+                        m_heap.m_markingConditionVariable.wait(m_heap.m_markingMutex);
+                    m_heap.m_pausedParallelMarkers--;
+                    m_heap.m_numberOfWaitingParallelMarkers++;
+                    // SPEC-congc CG-I22 corollary: this paused->waiting
+                    // re-entry is the only counter transition that can flip
+                    // didReachTermination false->true (the pause itself keeps
+                    // the m_pausedParallelMarkers conjunct false), and the
+                    // resume-half notifyAll above predates it — so without a
+                    // notify here the conductor parked in waitForTermination
+                    // (infinite timeout via waitBetweenSharedGCWindows) is
+                    // never re-woken once the LAST paused helper re-enters
+                    // with no work left: a deterministic termination wedge.
+                    // Mirror the HelperDrain termination path (notify + stop
+                    // timer for the mutator-has-the-conn case). Flag-off:
+                    // dead (nothing sets ShouldPause).
+                    if (didReachTermination(locker)) {
+                        m_heap.m_markingConditionVariable.notifyAll();
+                        m_heap.m_stopIfNecessaryTimer->scheduleSoon();
+                    }
+                    m_heap.m_markingConditionVariable.waitUntil(m_heap.m_markingMutex, timeout, isReady);
+                }
 
-                if (!hasWork(locker) && m_heap.m_bonusVisitorTask)
+                if (!hasWork(locker)
+                    && m_heap.m_bonusVisitorTask)
                     bonusTask = m_heap.m_bonusVisitorTask;
+
+                if (m_heap.m_parallelMarkersShouldExit) {
+                    m_heap.m_numberOfWaitingParallelMarkers--; // F17 — taken by EVERY helper at EVERY cycle end.
+                    return SharedDrainResult::Done;
+                }
             }
             
             if (!bonusTask && isEmpty()) {
@@ -713,9 +829,23 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             }
         } else {
             RELEASE_ASSERT(!isEmpty());
+            // ANNEX CGP1 participant-set marker (F14): only HelperDrain
+            // visitors take the per-batch §9.1(2) checkpoint (b) inside
+            // drain(); MainDrain slices (in-window conductor fixpoint
+            // drains) and C4 assist visitors take none. Option-byte-first
+            // (FIX-V5B-F1 pattern, same as Heap.h
+            // sharedGCBarrierStateIsPerClient): the C1 stage flag is tested
+            // ONCE per drainFromShared drain entry, so with
+            // useConcurrentSharedGCMarking off the field stays false, the
+            // per-batch test in drain() reads only this visitor's own line,
+            // and the shared Heap line (m_parallelMarkersShouldPause sits
+            // next to the m_markingMutex-protected marker counters) is
+            // never touched by the checkpoint path.
+            m_isDrainingFromSharedHelper = (sharedDrainMode == HelperDrain) && Options::useConcurrentSharedGCMarking();
             drain(timeout);
+            m_isDrainingFromSharedHelper = false;
         }
-        
+
         isActive = true;
     }
 }

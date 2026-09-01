@@ -27,14 +27,18 @@
 
 #include "CompilationResult.h"
 #include "DeferredSourceDump.h"
-#include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
 
 class CodeBlock;
 
-class DeferredCompilationCallback : public RefCounted<DeferredCompilationCallback> {
+// THREADS: ThreadSafeRefCounted — the callback is ref'd/deref'd both by a Thread
+// mutator completing ready plans (JITWorklist::completeAllReadyPlansForVM) and by
+// the compiler thread's plan teardown; a plain refcount would corrupt under that
+// concurrency. Cold path: no measurable codegen impact flag-off.
+class DeferredCompilationCallback : public ThreadSafeRefCounted<DeferredCompilationCallback> {
 protected:
     DeferredCompilationCallback();
 

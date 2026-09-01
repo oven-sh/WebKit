@@ -130,6 +130,78 @@ JSBigInt* JSBigInt::createWithLength(JSGlobalObject* globalObject, unsigned leng
     return createWithLength(globalObject, globalObject->vm(), length);
 }
 
+// M1-bigint-u64-fastpath, Layer (a). The hot DFG/FTL operation*HeapBigInt path
+// for the scalebench BigInt phases (pc1+2 = 49% of W=16 wall) calls into the
+// arithmetic *Impl functions with two single-digit operands and pays for: a
+// ThrowScope ctor, a Vector<Digit,16> stack object, the textbook/comba inner
+// loop, normalize(), and tryCreateFromImpl()'s memcpySpan into a fresh cell.
+// This helper collapses all of that to one tryAllocateCell + two stores when
+// the result is known to fit in <=2 digits. It is deliberately scope-free so
+// callers can invoke it BEFORE their DECLARE_THROW_SCOPE.
+//
+// Normalization invariant: a JSBigInt of length N has digit(N-1) != 0, and the
+// canonical zero is the cached length-0 constant. We honour both: hi==0 drops
+// to a 1-digit cell, lo==0 && hi==0 returns the cached zero (sign is ignored
+// for zero, matching tryCreateFromImpl which normalizes the empty span).
+ALWAYS_INLINE JSBigInt* JSBigInt::createFromDigitInline(VM& vm, Digit lo, Digit hi, bool sign)
+{
+    if (!hi) {
+        if (!lo) {
+            JSBigInt* zero = vm.heapBigIntConstantZero.get();
+            ASSERT(zero && !zero->length() && !zero->sign());
+            return zero;
+        }
+        auto* cell = tryAllocateCell<JSBigInt>(vm, allocationSize(1));
+        // allocationSize(1) is a tiny fixed-size cell; failure here means the
+        // process is unrecoverably OOM. The slow path would have thrown an
+        // OutOfMemoryError — for the fast path we crash rather than re-introduce
+        // a ThrowScope. This is the documented contract of createFromDigit().
+        RELEASE_ASSERT(cell);
+        JSBigInt* bigInt = new (NotNull, cell) JSBigInt(vm, vm.bigIntStructure.get(), 1);
+        bigInt->finishCreation(vm);
+        bigInt->setDigit(0, lo);
+        bigInt->setSign(sign);
+        return bigInt;
+    }
+    auto* cell = tryAllocateCell<JSBigInt>(vm, allocationSize(2));
+    RELEASE_ASSERT(cell);
+    JSBigInt* bigInt = new (NotNull, cell) JSBigInt(vm, vm.bigIntStructure.get(), 2);
+    bigInt->finishCreation(vm);
+    bigInt->setDigit(0, lo);
+    bigInt->setDigit(1, hi);
+    bigInt->setSign(sign);
+    return bigInt;
+}
+
+JSBigInt* JSBigInt::createFromDigit(VM& vm, Digit lo, Digit hi, bool sign)
+{
+    return createFromDigitInline(vm, lo, hi, sign);
+}
+
+#if ASSERT_ENABLED
+// Debug cross-check for the single-digit fast paths: confirms the produced
+// JSBigInt encodes exactly (sign ? -mag : mag). This is a structural check on
+// createFromDigitInline rather than a re-run of the textbook slow path; the
+// slow-path comparison is exercised by the JSTests/stress BigInt corpus.
+static bool NODELETE validateSingleDigitFastPath(JSBigInt* fast, UInt128 mag, bool sign)
+{
+    if constexpr (sizeof(JSBigInt::Digit) != 8)
+        return true;
+    JSBigInt::Digit lo = static_cast<JSBigInt::Digit>(mag);
+    JSBigInt::Digit hi = static_cast<JSBigInt::Digit>(mag >> 64);
+    unsigned len = hi ? 2u : (lo ? 1u : 0u);
+    if (fast->length() != len)
+        return false;
+    if (len && fast->sign() != sign)
+        return false;
+    if (len >= 1 && fast->digit(0) != lo)
+        return false;
+    if (len >= 2 && fast->digit(1) != hi)
+        return false;
+    return true;
+}
+#endif
+
 inline JSBigInt* JSBigInt::createFrom(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, int32_t value)
 {
     if (!value)
@@ -2733,6 +2805,22 @@ template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::multiplyImpl(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
     VM& vm = globalObject->vm();
+
+    // M1-bigint-u64-fastpath: 1-digit * 1-digit in registers. Both digits are
+    // non-zero by the normalization invariant, so the product is non-zero and
+    // fits in two digits. This bypasses the ThrowScope, the comba dispatch and
+    // the trailing-zero trim below; the produced cell is bit-identical to the
+    // one the general path would have built.
+    if constexpr (sizeof(Digit) == 8) {
+        if (x.length() == 1 && y.length() == 1) {
+            UInt128 product = static_cast<UInt128>(x.digit(0)) * static_cast<UInt128>(y.digit(0));
+            bool resultSign = x.sign() != y.sign();
+            JSBigInt* result = createFromDigitInline(vm, static_cast<Digit>(product), static_cast<Digit>(product >> 64), resultSign);
+            ASSERT(validateSingleDigitFastPath(result, product, resultSign));
+            return result;
+        }
+    }
+
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (x.length() < y.length())
@@ -5007,6 +5095,32 @@ JSValue JSBigInt::dec(JSGlobalObject* globalObject, JSBigInt* x)
 template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::addImpl(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
+    // M1-bigint-u64-fastpath: 1-digit + 1-digit. Same-sign sums the magnitudes
+    // (carry into a second digit is the only overflow case); opposite-sign
+    // subtracts the smaller magnitude from the larger, sign of the larger wins.
+    // This skips absoluteAdd/absoluteSub's ThrowScope + tryAllocateCell-of-
+    // length-2 + addTextbook loop + trailing-zero trim.
+    if constexpr (sizeof(Digit) == 8) {
+        if (x.length() == 1 && y.length() == 1) {
+            VM& vm = globalObject->vm();
+            Digit xd = x.digit(0);
+            Digit yd = y.digit(0);
+            bool xs = x.sign();
+            bool ys = y.sign();
+            if (xs == ys) {
+                UInt128 sum = static_cast<UInt128>(xd) + static_cast<UInt128>(yd);
+                JSBigInt* result = createFromDigitInline(vm, static_cast<Digit>(sum), static_cast<Digit>(sum >> 64), xs);
+                ASSERT(validateSingleDigitFastPath(result, sum, xs));
+                return result;
+            }
+            if (xd == yd)
+                return createZero(vm);
+            if (xd > yd)
+                return createFromDigitInline(vm, xd - yd, 0, xs);
+            return createFromDigitInline(vm, yd - xd, 0, ys);
+        }
+    }
+
     bool xSign = x.sign();
 
     // x + y == x + y
@@ -5042,6 +5156,30 @@ JSValue JSBigInt::add(JSGlobalObject* globalObject, int32_t x, JSBigInt* y)
 template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::subImpl(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
+    // M1-bigint-u64-fastpath: 1-digit - 1-digit. Mirror of the addImpl fast
+    // path with the y sign flipped: opposite signs add magnitudes (sign = xs),
+    // same signs subtract (sign of the larger magnitude, flipped if y wins).
+    if constexpr (sizeof(Digit) == 8) {
+        if (x.length() == 1 && y.length() == 1) {
+            VM& vm = globalObject->vm();
+            Digit xd = x.digit(0);
+            Digit yd = y.digit(0);
+            bool xs = x.sign();
+            bool ys = y.sign();
+            if (xs != ys) {
+                UInt128 sum = static_cast<UInt128>(xd) + static_cast<UInt128>(yd);
+                JSBigInt* result = createFromDigitInline(vm, static_cast<Digit>(sum), static_cast<Digit>(sum >> 64), xs);
+                ASSERT(validateSingleDigitFastPath(result, sum, xs));
+                return result;
+            }
+            if (xd == yd)
+                return createZero(vm);
+            if (xd > yd)
+                return createFromDigitInline(vm, xd - yd, 0, xs);
+            return createFromDigitInline(vm, yd - xd, 0, !xs);
+        }
+    }
+
     bool xSign = x.sign();
     if (xSign != y.sign()) {
         // x - (-y) == x + y
@@ -5078,6 +5216,27 @@ template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::bitwiseAndImpl(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
     VM& vm = globalObject->vm();
+
+    // M1-bigint-u64-fastpath: 1-digit & 1-digit via two's-complement Int128.
+    // The signed legs below document the identity
+    //   (-x) & (-y) == -(((x-1) | (y-1)) + 1)
+    // and similar; mapping each operand to its mathematical value in Int128 and
+    // applying the native & yields the same result for the full input range
+    // (|x|,|y| < 2^64). The result magnitude can reach 2^64 (e.g.
+    // -(2^64-1) & -(2^64-2) = -2^64), hence the two-digit allocator.
+    if constexpr (sizeof(Digit) == 8) {
+        if (x.length() == 1 && y.length() == 1) {
+            Int128 xv = x.sign() ? -static_cast<Int128>(x.digit(0)) : static_cast<Int128>(x.digit(0));
+            Int128 yv = y.sign() ? -static_cast<Int128>(y.digit(0)) : static_cast<Int128>(y.digit(0));
+            Int128 rv = xv & yv;
+            bool resultSign = rv < 0;
+            UInt128 mag = resultSign ? static_cast<UInt128>(-rv) : static_cast<UInt128>(rv);
+            JSBigInt* result = createFromDigitInline(vm, static_cast<Digit>(mag), static_cast<Digit>(mag >> 64), resultSign);
+            ASSERT(validateSingleDigitFastPath(result, mag, resultSign));
+            return result;
+        }
+    }
+
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto xSpan = x.digits();
@@ -5142,6 +5301,24 @@ template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::bitwiseOrImpl(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
     VM& vm = globalObject->vm();
+
+    // M1-bigint-u64-fastpath: 1-digit | 1-digit via two's-complement Int128.
+    // For |x|,|y| < 2^64 the result magnitude is < 2^64 (OR never widens past
+    // the wider operand in two's-complement), so the high digit is always zero.
+    if constexpr (sizeof(Digit) == 8) {
+        if (x.length() == 1 && y.length() == 1) {
+            Int128 xv = x.sign() ? -static_cast<Int128>(x.digit(0)) : static_cast<Int128>(x.digit(0));
+            Int128 yv = y.sign() ? -static_cast<Int128>(y.digit(0)) : static_cast<Int128>(y.digit(0));
+            Int128 rv = xv | yv;
+            bool resultSign = rv < 0;
+            UInt128 mag = resultSign ? static_cast<UInt128>(-rv) : static_cast<UInt128>(rv);
+            ASSERT(!(mag >> 64));
+            JSBigInt* result = createFromDigitInline(vm, static_cast<Digit>(mag), 0, resultSign);
+            ASSERT(validateSingleDigitFastPath(result, mag, resultSign));
+            return result;
+        }
+    }
+
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto xSpan = x.digits();
@@ -5214,6 +5391,25 @@ template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::bitwiseXorImpl(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
     VM& vm = globalObject->vm();
+
+    // M1-bigint-u64-fastpath: 1-digit ^ 1-digit via two's-complement Int128.
+    // The mixed-sign identity x ^ (-y) == -((x ^ (y-1)) + 1) can produce a
+    // magnitude of exactly 2^64 (e.g. 1n ^ -(2^64-1)n), so the two-digit
+    // allocator is required even though the common positive^positive case is
+    // always single-digit.
+    if constexpr (sizeof(Digit) == 8) {
+        if (x.length() == 1 && y.length() == 1) {
+            Int128 xv = x.sign() ? -static_cast<Int128>(x.digit(0)) : static_cast<Int128>(x.digit(0));
+            Int128 yv = y.sign() ? -static_cast<Int128>(y.digit(0)) : static_cast<Int128>(y.digit(0));
+            Int128 rv = xv ^ yv;
+            bool resultSign = rv < 0;
+            UInt128 mag = resultSign ? static_cast<UInt128>(-rv) : static_cast<UInt128>(rv);
+            JSBigInt* result = createFromDigitInline(vm, static_cast<Digit>(mag), static_cast<Digit>(mag >> 64), resultSign);
+            ASSERT(validateSingleDigitFastPath(result, mag, resultSign));
+            return result;
+        }
+    }
+
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto xSpan = x.digits();
@@ -5982,6 +6178,25 @@ template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::leftShiftByAbsolute(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
     VM& vm = globalObject->vm();
+
+    // M1-bigint-u64-fastpath: 1-digit << small. Callers (leftShiftImpl /
+    // signedRightShiftImpl) have already handled x==0 and y==0, so both digits
+    // are non-zero here. We only take the fast path when the shift amount is
+    // < digitBits so the result provably fits in two digits; larger shifts fall
+    // through to the general path which handles the multi-digit zero-fill and
+    // the maxLength range check.
+    if constexpr (sizeof(Digit) == 8) {
+        if (x.length() == 1 && y.length() == 1) {
+            Digit shift = y.digit(0);
+            if (shift < digitBits) {
+                UInt128 r = static_cast<UInt128>(x.digit(0)) << static_cast<unsigned>(shift);
+                JSBigInt* result = createFromDigitInline(vm, static_cast<Digit>(r), static_cast<Digit>(r >> 64), x.sign());
+                ASSERT(validateSingleDigitFastPath(result, r, x.sign()));
+                return result;
+            }
+        }
+    }
+
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto optionalShift = toShiftAmount(y);
@@ -6035,6 +6250,35 @@ template <typename BigIntImpl1, typename BigIntImpl2>
 JSBigInt::ImplResult JSBigInt::rightShiftByAbsolute(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)
 {
     VM& vm = globalObject->vm();
+
+    // M1-bigint-u64-fastpath: 1-digit >> 1-digit. BigInt right-shift is an
+    // arithmetic shift on the infinite two's-complement representation, i.e.
+    // floor division by 2^shift. For non-negative x that is a plain logical
+    // shift; for negative x we add one to the magnitude when any low bit was
+    // shifted out (mustRoundDown below). When the entire digit is shifted out
+    // the result collapses to 0 / -1 exactly as rightShiftByMaximum() would
+    // produce. The general path's Vector + absoluteAddOne + tryCreateFromImpl
+    // are skipped entirely.
+    if constexpr (sizeof(Digit) == 8) {
+        if (x.length() == 1 && y.length() == 1) {
+            Digit shift = y.digit(0);
+            Digit xd = x.digit(0);
+            bool xs = x.sign();
+            if (shift >= digitBits) {
+                if (!xs)
+                    return createZero(vm);
+                return createFromDigitInline(vm, 1, 0, true);
+            }
+            Digit q = xd >> static_cast<unsigned>(shift);
+            if (xs && (xd & ((static_cast<Digit>(1) << static_cast<unsigned>(shift)) - 1)))
+                q += 1;
+            // For xs==true, q is never zero: if xd < 2^shift the mask test adds
+            // one, otherwise xd >> shift >= 1. So sign is never set on zero.
+            ASSERT(!xs || q);
+            return createFromDigitInline(vm, q, 0, xs);
+        }
+    }
+
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto xSpan = x.digits();

@@ -1,0 +1,12 @@
+diff --git a/Sources/Fuzzilli/Profiles/Profile.swift b/Sources/Fuzzilli/Profiles/Profile.swift
+index 4b5b8e9..df0b121 100644
+--- a/Sources/Fuzzilli/Profiles/Profile.swift
++++ b/Sources/Fuzzilli/Profiles/Profile.swift
+@@ -50,6 +50,7 @@ public let profiles = [
+     "qtjs": qtjsProfile,
+     "qjs": qjsProfile,
+     "jsc": jscProfile,
++    "jscthreads": jscThreadsProfile,
+     "spidermonkey": spidermonkeyProfile,
+     "v8": v8Profile,
+     "v8Sandbox": v8SandboxProfile,

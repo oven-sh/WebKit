@@ -28,6 +28,7 @@
 
 #if ENABLE(DFG_JIT)
 
+#include "JSThreadsSafepoint.h"
 #include "MacroAssembler.h"
 #include "Options.h"
 
@@ -35,6 +36,8 @@ namespace JSC { namespace DFG {
 
 void JumpReplacement::fire()
 {
+    // SPEC-jit I2: code patching only world-stopped when useJSThreads is on.
+    JSThreadsSafepoint::assertPatchingIsSafe();
     dataLogLnIf(Options::dumpDisassembly(),
         "Firing jump replacement watchpoint from ", RawPointer(m_source.dataLocation()),
         " to ", RawPointer(m_destination.dataLocation()));
@@ -43,6 +46,16 @@ void JumpReplacement::fire()
 
 void JumpReplacement::installVMTrapBreakpoint()
 {
+    // SPEC-jit I2 / M2b (review round 4, R4-3): this rewrites a REACHABLE
+    // invalidation point with a VM-halt instruction from the VMTraps
+    // signal-sender thread — asynchronous cross-thread code patching while
+    // mutators may be executing the patched code, which I2 forbids outside a
+    // stop-the-world window. The design defense is M2b forcing
+    // Options::usePollingTraps() under useJSThreads (deferred to the Task-14
+    // handoff; docs/threads/INTEGRATE-jit.md M2b). Until M2b lands, fail fast
+    // here instead of silently violating I2. Same guard at the caller,
+    // DFG::CommonData::installVMTrapBreakpoints.
+    RELEASE_ASSERT(!Options::useJSThreads() || Options::usePollingTraps());
     dataLogLnIf(Options::dumpDisassembly(),
         "Inserting VMTrap breakpoint at ", RawPointer(m_source.dataLocation()));
 #if ENABLE(SIGNAL_BASED_VM_TRAPS)

@@ -409,14 +409,43 @@ void JITCode::setOSREntryBlock(VM& vm, const JSCell* owner, CodeBlock* osrEntryB
 }
 
 void JITCode::clearOSREntryBlockAndResetThresholds(CodeBlock *dfgCodeBlock)
-{ 
-    ASSERT(m_osrEntryBlock);
+{
+    CodeBlock* entry = m_osrEntryBlock.get();
+    if (Options::useJSThreads()) [[unlikely]] {
+        // P0-osr-entry-toctou (SCALEBENCH.md §27): with the GIL off, two mutators
+        // can reach failedOSREntry for the same DFG JITCode concurrently. The
+        // winner runs m_osrEntryBlock.clear() below; the loser would deref null
+        // here past the (Debug-only) ASSERT. The loser no-ops: osrEntryRetry,
+        // the entry trigger and the threshold were already reset by the winner,
+        // and WriteBarrier::clear() is idempotent. Callers (DFGOperations
+        // failedOSREntry, FTL::prepareOSREntry) snapshot osrEntryBlock() into a
+        // local before calling but the TOCTOU between that snapshot and this
+        // call is absorbed here. Flag-off the snapshot+ASSERT+deref below is
+        // exactly today's path.
+        if (!entry) [[unlikely]]
+            return;
+    }
+    ASSERT(entry);
 
-    BytecodeIndex osrEntryBytecode = m_osrEntryBlock->jitCode()->ftlForOSREntry()->bytecodeIndex();
+    BytecodeIndex osrEntryBytecode = entry->jitCode()->ftlForOSREntry()->bytecodeIndex();
     m_osrEntryBlock.clear();
     osrEntryRetry = 0;
-    tierUpEntryTriggers.set(osrEntryBytecode, JITCode::TriggerReason::DontTrigger);
+    setTierUpEntryTrigger(osrEntryBytecode, JITCode::TriggerReason::DontTrigger);
     setOptimizationThresholdBasedOnCompilationResult(dfgCodeBlock, CompilationResult::CompilationDeferred);
+}
+
+void JITCode::setTierUpEntryTrigger(BytecodeIndex bytecodeIndex, TriggerReason reason)
+{
+    // DFG-1, flag-gated (I22): flag-off this is today's unlocked single-mutator
+    // in-place value write (keys are structurally immutable post-link). Flag-on
+    // the lock release also supplies the release edge ordering setOSREntryBlock
+    // before the CompilationDone publication (see DFGJITCode.h).
+    std::optional<Locker<Lock>> threadsLocker;
+    if (Options::useJSThreads()) [[unlikely]]
+        threadsLocker.emplace(m_tierUpTriggersLock);
+    auto it = tierUpEntryTriggers.find(bytecodeIndex);
+    RELEASE_ASSERT(it != tierUpEntryTriggers.end()); // Key set at link time (DFGJITCompiler); insert here would rehash under JIT-embedded trigger addresses.
+    it->value = reason;
 }
 #endif // ENABLE(FTL_JIT)
 

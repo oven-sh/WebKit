@@ -59,12 +59,25 @@
 #include "ResourceExhaustion.h"
 #include "VMTrapsInlines.h"
 #include <wtf/Assertions.h>
+#include <wtf/Lock.h>
 
 IGNORE_WARNINGS_BEGIN("frame-address")
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace FTL {
+
+// UNGIL U-T4b: gilOff, N threads can traverse the SAME not-yet-generated lazy
+// slow path's patchable jump concurrently; LazySlowPath::generate must run
+// exactly once (it RELEASE_ASSERTs !m_stub and publishes m_stub). Sibling of
+// ftlOSRExitGenerationLock (FTLOSRExitCompiler.cpp) with the same rank: held
+// across stub generation, so it is OUTER to codeBlock->m_lock,
+// LinkBuffer/executable-allocator locks, and (if a generator allocates
+// scratch) the ScratchBufferRegistry -> VMLiteRegistry -> per-lite
+// scratchBufferLock chain. Acquired only from the generation thunk's
+// operation call with no other JSC lock held; never nested with
+// ftlOSRExitGenerationLock; GIL-on never takes it (flag-off identity).
+static Lock ftlLazySlowPathGenerationLock;
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPopulateObjectInOSR, void, (JSGlobalObject* globalObject, ExitTimeObjectMaterialization* materialization, EncodedJSValue* encodedValue, EncodedJSValue* values))
 {
@@ -955,15 +968,61 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTypeOfObjectAsTypeofType, UCPUStrictI
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLLazySlowPath, void*, (CallFrame* callFrame, unsigned index))
 {
     VM& vm = callFrame->deprecatedVM();
-    // Don't need an ActiveScratchBufferScope here because we DeferGCForAWhile.
+    // Don't need an ActiveScratchBufferScope here: the !gilOff arm does
+    // DeferGCForAWhile, and the gilOff fast path neither allocates nor hits a
+    // safepoint (see the §41 defer-hoist-lazyslow comment in that arm).
+
+    if (vm.gilOff()) [[unlikely]] {
+        // UNGIL U-T4b / T8: the gilOff repatch skip (FTLLazySlowPath.cpp)
+        // means EVERY traversal of this slow path lands here forever. The
+        // stub is write-once: do textbook double-checked publication so the
+        // steady state is one acquire-load and zero locks. The global
+        // generation lock is taken only for the first-compile race; losers
+        // re-check under the lock. generate() release-stores the tagged code
+        // pointer after the stub (and its executable memory) is fully
+        // constructed, so a non-null acquire-load here is safe to tail-call.
+        //
+        // SCALEBENCH §41 defer-hoist-lazyslow: at 46.6M traversals/run the
+        // steady state is just the acquire-load below — it cannot allocate
+        // and there is no safepoint on this path, so the "pointers in evil
+        // places" are safe without a DeferGCForAWhile guard. Constructing
+        // that guard up front cost 2× Heap::deferralDepthSlot() (isSharedServer
+        // atomic + client-TLS + identity compare + RMW) per traversal. Hoist
+        // it: only pay it under the generation lock for the one-time
+        // generate() call. The codeBlock/jitCode loads are pure reads (see
+        // the jitCodeRawPtr rationale in the !gilOff arm below).
+        CodeBlock* codeBlock = callFrame->codeBlock();
+        JITCode* jitCode = codeBlock->jitCodeRawPtr()->ftl();
+        LazySlowPath& lazySlowPath = *jitCode->lazySlowPaths[index];
+        if (void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently())
+            return stubCodePtr;
+        Locker locker { ftlLazySlowPathGenerationLock };
+        if (void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently())
+            return stubCodePtr;
+        // We cannot GC across generate(). We've got pointers in evil places.
+        DeferGCForAWhile deferGC(vm);
+        lazySlowPath.generate(codeBlock);
+        void* stubCodePtr = lazySlowPath.stubCodePtrConcurrently();
+        ASSERT(stubCodePtr);
+        return stubCodePtr;
+    }
 
     // We cannot GC. We've got pointers in evil places.
     DeferGCForAWhile deferGC(vm);
 
     CodeBlock* codeBlock = callFrame->codeBlock();
-    JITCode* jitCode = codeBlock->jitCode()->ftl();
+    // SCALEBENCH §36 jitcode-refptr-bounce-14pct: gilOff U-T4b leaves the
+    // patchable jump unpatched, so this operation runs on EVERY FTL slow-path
+    // traversal forever; perf annotate puts 76% of this function's 13% W=16
+    // self time on the `lock incl 0x8(jitCode)` from the by-value jitCode()
+    // (FLAT-GAP-EVIDENCE round 2 §(1)). codeBlock is conservatively-live on
+    // this stack and pins its JITCode; raw read is the same pointer the
+    // by-value temporary held. Flag-off output-identical (one fewer
+    // inc/dec on a single-threaded refcount).
+    JITCode* jitCode = codeBlock->jitCodeRawPtr()->ftl();
 
     LazySlowPath& lazySlowPath = *jitCode->lazySlowPaths[index];
+
     lazySlowPath.generate(codeBlock);
 
     return lazySlowPath.stub().code().taggedPtr();

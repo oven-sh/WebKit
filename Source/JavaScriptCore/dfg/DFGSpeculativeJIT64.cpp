@@ -1024,7 +1024,7 @@ void SpeculativeJIT::emitCall(Node* node)
             auto emitCallTarget = [&]() {
                 emitFunctionPrologue();
                 emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
-                storePtr(GPRInfo::callFrameRegister, &vm().topCallFrame);
+                emitPublishTopCallFrameForHostCall(vm()); // UNGIL §A.1.3 mode split (direct native call: the callee and its throws read the per-lite word GIL-off).
                 if (calleeScope)
                     move(CCallHelpers::TrustedImmPtr(calleeScope), GPRInfo::argumentGPR0);
                 else {
@@ -1037,7 +1037,12 @@ void SpeculativeJIT::emitCall(Node* node)
                     CCallHelpers::callOperation<OperationPtrTag>(vmEntryHostFunction);
                 } else
                     CCallHelpers::callOperation<HostFunctionPtrTag>(nativeFunction);
-                loadPtr(vm().addressOfException(), GPRInfo::regT2);
+                // UNGIL §A.1.3 (U-T4): mode-keyed — GIL-off the host wrote the
+                // CURRENT lite's exception word; the raw VM-block read always
+                // sees null and silently misses the throw (same bug family as
+                // the nativeForGenerator thunk check). GIL-on/flag-off
+                // loadException emits the legacy AbsoluteAddress load.
+                loadException(vm(), GPRInfo::regT2);
                 branchTestPtr(NonZero, GPRInfo::regT2).linkThunk(CodeLocationLabel(vm().getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>()), this);
                 emitFunctionEpilogue();
             };
@@ -1069,7 +1074,13 @@ void SpeculativeJIT::emitCall(Node* node)
             return;
         }
 
-        auto* callLinkInfo = jitCode()->common.m_directCallLinkInfos.add(m_currentNode->origin.semantic, DirectCallLinkInfo::UseDataIC::No, m_graph.m_codeBlock, executable);
+        // SPEC-jit section 5.8 (Task 7): with shared-memory threads, direct
+        // calls must be data ICs (UseDataIC::No fast paths patch machine code
+        // in place, forbidden under concurrent execution; I2/I3). The slow
+        // cases the data-IC fast path returns are already handled below.
+        // THREADS-INTEGRATE(jit)
+        auto directCallUseDataIC = Options::useJSThreads() ? DirectCallLinkInfo::UseDataIC::Yes : DirectCallLinkInfo::UseDataIC::No;
+        auto* callLinkInfo = jitCode()->common.m_directCallLinkInfos.add(m_currentNode->origin.semantic, directCallUseDataIC, m_graph.m_codeBlock, executable);
         callLinkInfo->setCallType(callType);
         callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
 
@@ -1104,7 +1115,11 @@ void SpeculativeJIT::emitCall(Node* node)
 
             slowPath = label();
             slowCases.link(this);
-            if (isX86())
+            // Data-IC slow cases arrive via a branch, not the patched near
+            // call, so there is no return address to pop; the pop only
+            // services the !isDataIC() (code-patching) entry. A
+            // DirectCallLinkInfo is one or the other. THREADS-INTEGRATE(jit)
+            if (isX86() && !callLinkInfo->isDataIC())
                 pop(selectScratchGPR(calleeGPR));
 
             callOperation(operationLinkDirectCall, CCallHelpers::TrustedImmPtr(callLinkInfo), calleeGPR);
@@ -2696,6 +2711,200 @@ void SpeculativeJIT::compileMapGet(Node* node)
         RELEASE_ASSERT_NOT_REACHED();
 }
 
+// ===========================================================================
+// T3-jit-segmented-arraymode: segmented-aware GetByVal for the dense
+// contiguous shapes. Self-contained (no GetButterfly storage child); both
+// the flat arm and the segmented arm are inline. Reads need NO TID/SW
+// gating (frozen READ predicate, §5.5): the shape is KnownNonArrayStorage
+// (CheckArray-guaranteed) so the only excluded tag is segmented, and that
+// is exactly what we dispatch on. Clobberize/DoesGC/AbstractInterpreter
+// are unchanged for the InBounds / *SaneChain speculations (no operation
+// call on those arms); the OutOfBounds speculation already clobberTop()s,
+// so its no-exit operation call is sound.
+// ===========================================================================
+
+void SpeculativeJIT::compileGetByValSegmentedAwareContiguous(Node* node, const ScopedLambda<std::tuple<JSValueRegs, DataFormat>(DataFormat, bool)>& prefix)
+{
+    ASSERT(Options::useJSThreads());
+    ASSERT(node->arrayMode().needsSegmentedAwareCodegen());
+    ASSERT(node->arrayMode().type() == Array::Int32 || node->arrayMode().type() == Array::Contiguous);
+
+    ArrayMode arrayMode = node->arrayMode();
+    SpeculateCellOperand base(this, m_graph.varArgChild(node, 0));
+    SpeculateStrictInt32Operand property(this, m_graph.varArgChild(node, 1));
+    GPRTemporary storage(this);
+    GPRTemporary scratch(this);
+    GPRTemporary slot(this);
+
+    GPRReg baseReg = base.gpr();
+    GPRReg propertyReg = property.gpr();
+    GPRReg storageReg = storage.gpr();
+    GPRReg scratchReg = scratch.gpr();
+    GPRReg slotReg = slot.gpr();
+
+    if (!m_compileOkay)
+        return;
+
+    JSValueRegs resultRegs;
+    DataFormat format;
+    constexpr bool needsFlush = false;
+    // OutOfBounds (effectful) can return anything via the proto chain, so the
+    // preferred format must be DataFormatJS there — exactly today's split.
+    DataFormat preferred = (arrayMode.type() == Array::Int32 && arrayMode.isInBounds()) ? DataFormatJSInt32 : DataFormatJS;
+    std::tie(resultRegs, format) = prefix(preferred, needsFlush);
+    GPRReg resultReg = resultRegs.gpr();
+
+    JumpList slowCases; // OutOfBounds-only no-exit operation call.
+
+    emitButterflyLoadWithStructureDependency(baseReg, storageReg, scratchReg);
+    Jump segmented = branch64(AboveOrEqual, storageReg, TrustedImm64(static_cast<int64_t>(JSC::butterflyTagMask)));
+
+    // ---- Flat arm: identical to today's path (mask + bound + load). ----
+    maskButterflyTag(storageReg);
+    JumpList flatPastLength;
+    flatPastLength.append(branch32(AboveOrEqual, propertyReg, Address(storageReg, Butterfly::offsetOfPublicLength())));
+    load64(BaseIndex(storageReg, propertyReg, TimesEight), resultReg);
+    Jump flatLoaded = jump();
+
+    // ---- Segmented arm: spine→fragment→slot inline (§4.1). ----
+    segmented.link(this);
+    maskButterflyTag(storageReg); // -> spine*
+    emitLoadSegmentedPublicLength(storageReg, slotReg, scratchReg);
+    JumpList segPastLength;
+    segPastLength.append(branch32(AboveOrEqual, propertyReg, slotReg));
+    JumpList segOOB; // index < publicLength but >= THIS spine's vectorLength (stale spine, §4.4 T2 race)
+    emitSegmentedSpineSlotResolve(storageReg, propertyReg, slotReg, scratchReg, segOOB);
+    load64(Address(slotReg, 0), resultReg);
+    flatLoaded.link(this);
+
+    // Hole / past-length convergence — same semantics as today's path.
+    if (arrayMode.isInBoundsSaneChain()) {
+        ASSERT(arrayMode.type() == Array::Contiguous);
+        speculationCheck(OutOfBounds, JSValueRegs(), nullptr, flatPastLength);
+        speculationCheck(OutOfBounds, JSValueRegs(), nullptr, segPastLength);
+        speculationCheck(OutOfBounds, JSValueRegs(), nullptr, segOOB);
+        Jump notHole = branchIfNotEmpty(resultReg);
+        move(TrustedImm64(JSValue::encode(jsUndefined())), resultReg);
+        notHole.link(this);
+        jsValueResult(resultReg, node, format);
+        return;
+    }
+    if (arrayMode.isInBounds()) {
+        speculationCheck(OutOfBounds, JSValueRegs(), nullptr, flatPastLength);
+        speculationCheck(OutOfBounds, JSValueRegs(), nullptr, segPastLength);
+        speculationCheck(OutOfBounds, JSValueRegs(), nullptr, segOOB);
+        speculationCheck(LoadFromHole, JSValueRegs(), nullptr, branchIfEmpty(resultReg));
+        jsValueResult(resultReg, node, format);
+        return;
+    }
+    if (arrayMode.isOutOfBoundsSaneChain()) {
+        Jump notEmpty = branchIfNotEmpty(resultReg);
+        flatPastLength.link(this);
+        segPastLength.link(this);
+        segOOB.link(this);
+        speculationCheck(NegativeIndex, JSValueRegs(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
+        move(TrustedImm64(JSValue::encode(jsUndefined())), resultReg);
+        notEmpty.link(this);
+        jsValueResult(resultReg, node, format);
+        return;
+    }
+    // OutOfBounds (effectful) — already clobberTop in Clobberize.
+    slowCases.append(flatPastLength);
+    slowCases.append(segPastLength);
+    slowCases.append(segOOB);
+    slowCases.append(branchIfEmpty(resultReg));
+    addSlowPathGenerator(slowPathCall(slowCases, this, operationGetByValObjectInt, resultReg, LinkableConstant::globalObject(*this, node), baseReg, propertyReg));
+    jsValueResult(resultReg, node, format);
+}
+
+void SpeculativeJIT::compileGetByValSegmentedAwareDouble(Node* node, const ScopedLambda<std::tuple<JSValueRegs, DataFormat>(DataFormat, bool)>& prefix)
+{
+    ASSERT(Options::useJSThreads());
+    ASSERT(node->arrayMode().needsSegmentedAwareCodegen());
+    ASSERT(node->arrayMode().type() == Array::Double);
+
+    ArrayMode arrayMode = node->arrayMode();
+    SpeculateCellOperand base(this, m_graph.varArgChild(node, 0));
+    SpeculateStrictInt32Operand property(this, m_graph.varArgChild(node, 1));
+    GPRTemporary storage(this);
+    GPRTemporary scratch(this);
+    GPRTemporary slot(this);
+    FPRTemporary result(this);
+
+    GPRReg baseReg = base.gpr();
+    GPRReg propertyReg = property.gpr();
+    GPRReg storageReg = storage.gpr();
+    GPRReg scratchReg = scratch.gpr();
+    GPRReg slotReg = slot.gpr();
+    FPRReg resultReg = result.fpr();
+
+    if (!m_compileOkay)
+        return;
+
+    JSValueRegs resultRegs;
+    DataFormat format;
+    constexpr bool needsFlush = false;
+    std::tie(resultRegs, format) = prefix(DataFormatDouble, needsFlush);
+
+    emitButterflyLoadWithStructureDependency(baseReg, storageReg, scratchReg);
+    Jump segmented = branch64(AboveOrEqual, storageReg, TrustedImm64(static_cast<int64_t>(JSC::butterflyTagMask)));
+
+    // ---- Flat arm. ----
+    maskButterflyTag(storageReg);
+    JumpList pastLength;
+    pastLength.append(branch32(AboveOrEqual, propertyReg, Address(storageReg, Butterfly::offsetOfPublicLength())));
+    loadDouble(BaseIndex(storageReg, propertyReg, TimesEight), resultReg);
+    Jump loaded = jump();
+
+    // ---- Segmented arm (R-DOUBLE §4.7: shared Double stays Double). ----
+    segmented.link(this);
+    maskButterflyTag(storageReg);
+    emitLoadSegmentedPublicLength(storageReg, slotReg, scratchReg);
+    pastLength.append(branch32(AboveOrEqual, propertyReg, slotReg));
+    JumpList segOOB;
+    emitSegmentedSpineSlotResolve(storageReg, propertyReg, slotReg, scratchReg, segOOB);
+    loadDouble(Address(slotReg, 0), resultReg);
+    loaded.link(this);
+
+    if (arrayMode.isInBounds()) {
+        speculationCheck(OutOfBounds, JSValueRegs(), nullptr, pastLength);
+        speculationCheck(OutOfBounds, JSValueRegs(), nullptr, segOOB);
+        if (!arrayMode.isInBoundsSaneChain())
+            speculationCheck(LoadFromHole, JSValueRegs(), nullptr, branchIfNaN(resultReg));
+        if (format == DataFormatJS) {
+            boxDouble(resultReg, resultRegs);
+            jsValueResult(resultRegs, node);
+        } else {
+            ASSERT(format == DataFormatDouble && !resultRegs);
+            doubleResult(resultReg, node);
+        }
+        return;
+    }
+
+    // OutOfBounds / OutOfBoundsSaneChain: route past-length, segOOB, and NaN
+    // (hole) to a no-exit boxed-result operation call. The boxed result is
+    // forced to JS format (the prefix may have requested Double but a
+    // past-length read can produce undefined; today's non-segmented Double
+    // OutOfBounds path takes the same boxed JS-result shape).
+    JumpList slowCases;
+    slowCases.append(pastLength);
+    slowCases.append(segOOB);
+    slowCases.append(branchIfNaN(resultReg));
+    if (!resultRegs) {
+        // Prefix returned no JS regs (DataFormatDouble); fall back to boxing
+        // through slotReg into a boxed JS result. The OutOfBounds Double mode
+        // is already DataFormatJS at the FixupPhase result-format level, so
+        // resultRegs is set in practice; defend anyway.
+        boxDouble(resultReg, JSValueRegs(slotReg));
+        addSlowPathGenerator(slowPathCall(slowCases, this, operationGetByValObjectInt, JSValueRegs(slotReg), LinkableConstant::globalObject(*this, node), baseReg, propertyReg));
+        jsValueResult(slotReg, node);
+        return;
+    }
+    boxDouble(resultReg, resultRegs);
+    addSlowPathGenerator(slowPathCall(slowCases, this, operationGetByValObjectInt, resultRegs, LinkableConstant::globalObject(*this, node), baseReg, propertyReg));
+    jsValueResult(resultRegs, node);
+}
+
 void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<JSValueRegs, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
 {
     switch (node->arrayMode().type()) {
@@ -2806,6 +3015,22 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
     }
     case Array::Int32:
     case Array::Contiguous: {
+        // T3-jit-segmented-arraymode: storage child intentionally UNSET
+        // (FixupPhase::checkArray, gated by consumerHasSegmentedAwareCodegen);
+        // self-contained flat-vs-segmented dispatch — NO OSR-exit on the
+        // segmented tag, both arms inline. Restores DFG residency for the hot
+        // BigInt checksum loops once Phase-A foreign writes segment the ~131k
+        // posting arrays (SCALEBENCH §25 / RUN-3.2). The storage-edge-unset
+        // check makes this compose with callers that still wired a
+        // GetButterfly child (EnumeratorGetByVal, FTL-plan re-entry): those
+        // keep today's flat-only path, and GetButterfly's own
+        // BadIndexingType exit already excludes the segmented case before
+        // control reaches here.
+        if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
+            && !m_graph.varArgChild(node, 2)) [[unlikely]] {
+            compileGetByValSegmentedAwareContiguous(node, prefix);
+            break;
+        }
         if (node->arrayMode().isInBounds()) {
             SpeculateStrictInt32Operand property(this, m_graph.varArgChild(node, 1));
             StorageOperand storage(this, m_graph.varArgChild(node, 2));
@@ -2881,6 +3106,12 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
     }
 
     case Array::Double: {
+        // T3-jit-segmented-arraymode: see Array::Int32/Contiguous above.
+        if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
+            && !m_graph.varArgChild(node, 2)) [[unlikely]] {
+            compileGetByValSegmentedAwareDouble(node, prefix);
+            break;
+        }
         if (node->arrayMode().isInBounds()) {
             SpeculateStrictInt32Operand property(this, m_graph.varArgChild(node, 1));
             StorageOperand storage(this, m_graph.varArgChild(node, 2));
@@ -3057,6 +3288,21 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<J
 
 void SpeculativeJIT::compileRegExpTestInline(Node* node)
 {
+    if (vm().gilOff()) [[unlikely]] {
+        // UNGIL A16 EXTENSION (AUD1.K2/SD19, U-T4b) — FAIL-STOP TRIPWIRE
+        // (sibling of compileRecordRegExpCachedResult): the inline success
+        // path below stores the SHARED in-object RegExpCachedResult stream
+        // (lastRegExp/lastInput/result.start/result.end + reify flip) —
+        // a torn multi-word cross-thread race with an OOB-substring
+        // consequence in leftContext(), uninstrumentable by TSAN. gilOff
+        // compiles must never reach here: DFGStrengthReductionPhase refuses
+        // convertTestToTestInline() when gilOff, so RegExpTest lowers to the
+        // re-pointed operation instead. GIL-on/flag-off emission below is
+        // byte-for-byte unchanged.
+        DFG_CRASH(m_graph, node, "RegExpTestInline gilOff emission requires the lite-resident m_regExpGlobalData copy (A16-ext, not landed)");
+        return;
+    }
+
     RegExp* regExp = uncheckedDowncast<RegExp>(node->cellOperand2()->value());
 
     auto jitCodeBlock = regExp->getRegExpJITCodeBlock();
@@ -3357,7 +3603,38 @@ void SpeculativeJIT::compile(Node* node)
     if constexpr (validateDFGDoesGC) {
         if (Options::validateDoesGC()) {
             bool expectDoesGC = doesGC(m_graph, node);
-            store64(TrustedImm64(DoesGCCheck::encode(expectDoesGC, node->index(), node->op())), vm().addressOfDoesGC());
+            if (vm().gilOff()) [[unlikely]] {
+                // UNGIL AB18-C: this code is cached on a shared CodeBlock and
+                // runs on whichever thread executes it — resolve the CURRENT
+                // thread's lite per use (§A.1.2) and write its doesGC slot.
+                // Scratch discipline: the per-arch reserved macro-assembler
+                // temp, the same register set the GIL-on absolute store64
+                // already clobbers (prepareCallOperation idiom), so no node's
+                // register-allocation assumptions change.
+#if CPU(ARM64)
+                // Cache-invalidating accessor: see AssemblyHelpers::prepareCallOperation.
+                GPRReg scratchGPR = getCachedMemoryTempRegisterIDAndInvalidate();
+#elif CPU(X86_64)
+                GPRReg scratchGPR = scratchRegister(); // r11, already clobbered by the GIL-on absolute store.
+#else
+                // SPEC-jit annex App. R5: no gilOff support on this platform;
+                // loadVMLite fail-stops at emission before the stores are reached.
+                GPRReg scratchGPR = GPRInfo::nonArgGPR0;
+#endif
+                loadVMLite(scratchGPR);
+                // Two imm32 stores, NOT store64(TrustedImm64, Address(scratchGPR)):
+                // on x86_64 a non-sign-extendable imm64 (nodeIndex lives in the
+                // high 32 bits, so that is almost every node) is materialized
+                // THROUGH scratchRegister(), clobbering the lite base — a wild
+                // store. imm32-to-mem needs no scratch on x86_64, and on ARM64
+                // the immediate goes through the data temp, not the base.
+                // Tearing is immaterial: the slot is owner-thread-only.
+                DoesGCCheck check;
+                check.u.encoded = DoesGCCheck::encode(expectDoesGC, node->index(), node->op());
+                store32(TrustedImm32(check.u.other), Address(scratchGPR, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.other))));
+                store32(TrustedImm32(check.u.nodeIndex), Address(scratchGPR, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.nodeIndex))));
+            } else
+                store64(TrustedImm64(DoesGCCheck::encode(expectDoesGC, node->index(), node->op())), vm().addressOfDoesGC());
         }
     }
 
@@ -8715,6 +8992,13 @@ void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)
             neg32(scratchGPR);
             signExtend32ToPtr(scratchGPR, scratchGPR);
             loadPtr(Address(baseRegs.payloadGPR(), JSObject::butterflyOffset()), storageGPR);
+            // I14: flag-on the butterfly word is TID-tagged; mask before the
+            // out-of-line property store. FIXME: mask-only is sound while the
+            // GIL serializes mutators; the frozen WRITE predicate for this
+            // site (owner-TID compare, never elided per D9) is deferred to
+            // the choke-routing pass (INTEGRATE-jit.md).
+            if (Options::useJSThreads()) [[unlikely]]
+                maskButterflyTag(storageGPR);
             constexpr intptr_t offsetOfFirstProperty = offsetInButterfly(firstOutOfLineOffset) * static_cast<intptr_t>(sizeof(EncodedJSValue));
             storeValue(valueRegs, BaseIndex(storageGPR, scratchGPR, TimesEight, offsetOfFirstProperty));
             doneCases.append(jump());

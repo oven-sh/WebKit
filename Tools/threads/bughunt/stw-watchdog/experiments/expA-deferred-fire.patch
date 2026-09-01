@@ -1,0 +1,44 @@
+# Experiment A (H1 / H-arb-1 probe) — route the Repatch.cpp:1360
+# didCachePropertyReplacement Class-A fire through the landed M6.1 deferral so
+# the stop-the-world is requested only AFTER codeBlock->m_lock is released.
+# Applied to jarred/threads working tree 2026-06-10; binary snapshot kept at
+# WebKitBuild/Release/bin/jsc-bughunt-expA.
+# Result: 0/110 watchdog aborts (repro4 x30, richards N=4 s16 noFTL x25,
+# N=2 s16 x40, N=8 s16 x15) vs control 4/5 aborts same session.
+#
+# NOTE: hand-written patch (git unavailable in this run); hunks are exact
+# old->new text of the three edits.
+
+--- a/Source/JavaScriptCore/runtime/Structure.h
+@@ didCachePropertyReplacement declaration @@
+-    void didCachePropertyReplacement(VM&, PropertyOffset);
++    void didCachePropertyReplacement(VM&, PropertyOffset, DeferredWatchpointFire* = nullptr); // BUGHUNT H1 probe: deferred param threaded through (NOT FOR LANDING in this form)
+
+--- a/Source/JavaScriptCore/runtime/StructureInlines.h
+@@ inline Structure::didCachePropertyReplacement @@
+-inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset)
+-{
+-    ASSERT(isValidOffset(offset));
+-    firePropertyReplacementWatchpointSet(vm, offset, "Did cache property replacement");
+-}
++inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset, DeferredWatchpointFire* deferred)
++{
++    ASSERT(isValidOffset(offset));
++    firePropertyReplacementWatchpointSet(vm, offset, "Did cache property replacement", deferred); // BUGHUNT H1 probe
++}
+
+--- a/Source/JavaScriptCore/bytecode/Repatch.cpp
+@@ tryCachePutBy, before the GCSafeConcurrentJSLocker scope (line ~1236) @@
+     Identifier ident = Identifier::fromUid(vm, propertyName.uid());
++    // BUGHUNT H1 probe (NOT FOR LANDING in this form): deferred-fire holder
++    // declared BEFORE the locker scope so its dtor (which runs the Class-A
++    // fire) executes strictly AFTER GCSafeConcurrentJSLocker has released
++    // codeBlock->m_lock (locals destroy in reverse construction order; the
++    // locker dtor calls unlockEarly()). Routes the Repatch:1360
++    // didCachePropertyReplacement fire through the landed M6.1 deferral.
++    DeferredStructureTransitionWatchpointFire bughuntDeferredReplaceFire(vm, oldStructure);
+     {
+         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, globalObject->vm());
+@@ tryCachePutBy ExistingProperty branch (line ~1360) @@
+-                oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
++                oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset(), &bughuntDeferredReplaceFire); // BUGHUNT H1 probe: fire deferred past m_lock release

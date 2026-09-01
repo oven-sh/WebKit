@@ -62,6 +62,21 @@ static JSC_DECLARE_HOST_FUNCTION(callWebAssemblyFunction);
 JSC_DEFINE_HOST_FUNCTION(callWebAssemblyFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
+
+    // UNGIL SD7/§I item (2) interim (AB-15): a spawned Thread can receive a
+    // carrier-created exported wasm function through the shared heap and call
+    // it. Wasm execution is carrier-only in v1 (§I) — its stack-limit reads
+    // are VM-level/carrier-published (AB-17 §A.2.2 premise (b)), so running
+    // it on a spawned thread would check the wrong stack. Refuse here, the
+    // single cold JS->wasm entry (the warm IC is disabled under useJSThreads
+    // in jsCallICEntrypoint()), so the call fails deterministically instead
+    // of silently running against the carrier's limits.
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (throwIfWebAssemblyRefusedOnSpawnedThread(globalObject, scope)) [[unlikely]]
+            return encodedJSValue();
+    }
+
     WebAssemblyFunction* wasmFunction = uncheckedDowncast<WebAssemblyFunction>(callFrame->jsCallee());
 
     if (wasmFunction->instance()->taintedness() >= SourceTaintedOrigin::IndirectlyTainted)

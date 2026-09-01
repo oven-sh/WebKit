@@ -38,6 +38,12 @@ namespace JSC {
 
 ALWAYS_INLINE void* LocalAllocator::allocate(JSC::Heap& heap, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
+    // SharedGC (T9): any-client OK — heap.vm() is the main VM (deviation 3)
+    // from every client incl. standalone (§12.1 allocateForClient routes
+    // here with the SERVER heap). verifyCanGC() reads validation flags only;
+    // sanitizeStackForVM() in the slow-path lambda self-guards (no-op unless
+    // the CALLING thread holds the main VM's API lock), so secondary /
+    // standalone client threads skip it.
     VM& vm = heap.vm();
     if constexpr (validateDFGDoesGC)
         vm.verifyCanGC();

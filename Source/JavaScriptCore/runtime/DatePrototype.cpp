@@ -324,17 +324,21 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToISOString, (JSGlobalObject* globalObject
         return throwVMTypeError(globalObject, scope);
 
     Integrity::auditStructureID(thisDateObj->structureID());
-    if (!std::isfinite(thisDateObj->internalNumber()))
+    // Snapshot the internal time value ONCE; every component below (gregorian fields and
+    // ms-of-second) must derive from this single load, or a concurrent setTime can pair
+    // one timestamp's seconds with another's milliseconds (SPEC-ungil §N.3).
+    double milli = thisDateObj->internalNumber();
+    if (!std::isfinite(milli))
         return throwVMError(globalObject, scope, createRangeError(globalObject, "Invalid Date"_s));
 
-    const GregorianDateTime* gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
+    const GregorianDateTime* gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache, milli);
     if (!gregorianDateTime)
         return JSValue::encode(jsNontrivialString(vm, String("Invalid Date"_s)));
 
     // https://tc39.es/ecma262/#sec-date-time-string-format
 
     // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
-    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
+    int ms = static_cast<int>(fmod(milli, msPerSecond));
     if (ms < 0)
         ms += msPerSecond;
 
@@ -710,8 +714,8 @@ static EncodedJSValue setNewValueFromTimeArgs(JSGlobalObject* globalObject, Call
     double ms = milli - secs * msPerSecond;
 
     const GregorianDateTime* other = inputTimeType == TimeType::UTCTime
-        ? thisDateObj->gregorianDateTimeUTC(cache)
-        : thisDateObj->gregorianDateTime(cache);
+        ? thisDateObj->gregorianDateTimeUTC(cache, milli)
+        : thisDateObj->gregorianDateTime(cache, milli);
     if (!other) {
         applyToNumberToOtherwiseIgnoredArguments(globalObject, callFrame, numArgsToUse);
         RETURN_IF_EXCEPTION(scope, { });
@@ -757,8 +761,8 @@ static EncodedJSValue setNewValueFromDateArgs(JSGlobalObject* globalObject, Call
     else { 
         ms = milli - floor(milli / msPerSecond) * msPerSecond; 
         const GregorianDateTime* other = inputTimeType == TimeType::UTCTime
-            ? thisDateObj->gregorianDateTimeUTC(cache)
-            : thisDateObj->gregorianDateTime(cache);
+            ? thisDateObj->gregorianDateTimeUTC(cache, milli)
+            : thisDateObj->gregorianDateTime(cache, milli);
         if (!other) {
             applyToNumberToOtherwiseIgnoredArguments(globalObject, callFrame, numArgsToUse);
             RETURN_IF_EXCEPTION(scope, { });
@@ -877,7 +881,7 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncSetYear, (JSGlobalObject* globalObject, Ca
     else {
         double secs = floor(milli / msPerSecond);
         ms = milli - secs * msPerSecond;
-        if (const GregorianDateTime* other = thisDateObj->gregorianDateTime(cache))
+        if (const GregorianDateTime* other = thisDateObj->gregorianDateTime(cache, milli))
             gregorianDateTime = *other;
     }
 

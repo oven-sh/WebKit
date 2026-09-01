@@ -30,6 +30,8 @@
 
 #include "AssemblyHelpersSpoolers.h"
 #include "DFGOSRExitCompilerCommon.h"
+#include "FTLJITCode.h"
+#include "FTLLazySlowPath.h"
 #include "FTLOSRExitCompiler.h"
 #include "FTLOperations.h"
 #include "FTLSaveRestore.h"
@@ -49,9 +51,20 @@ enum class FrameAndStackAdjustmentRequirement {
 };
 
 static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
-    VM& vm, CodePtr<CFunctionPtrTag> generationFunction, PtrTag resultTag, const char* name, unsigned extraPopsToRestore, FrameAndStackAdjustmentRequirement frameAndStackAdjustmentRequirement)
+    VM& vm, CodePtr<CFunctionPtrTag> generationFunction, PtrTag resultTag, const char* name, unsigned extraPopsToRestore, FrameAndStackAdjustmentRequirement frameAndStackAdjustmentRequirement,
+    void (*thinPrefix)(AssemblyHelpers&) = nullptr)
 {
     AssemblyHelpers jit(nullptr);
+
+    // SCALEBENCH §42 thin-thunk: gilOff-only fast prefix that bypasses the
+    // saveAllRegisters / operation-call / restoreAllRegisters body when the
+    // steady-state answer is already published (lazy slow path's
+    // m_stubCodePtr). nullptr for OSR-exit and for GIL-on, so flag-off /
+    // GIL-on emit the IDENTICAL byte sequence below (no prefix → first
+    // emitted instruction is the pushToSave(framePointerRegister) that
+    // upstream emits today).
+    if (thinPrefix) [[unlikely]]
+        thinPrefix(jit);
 
     if (frameAndStackAdjustmentRequirement == FrameAndStackAdjustmentRequirement::Needed) {
         // This needs to happen before we use the scratch buffer because this function also uses the scratch buffer.
@@ -78,10 +91,31 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
     } while (stackMisalignment % stackAlignmentBytes());
     jit.subPtr(MacroAssembler::TrustedImm32(numberOfRequiredPops * pushToSaveByteOffset), stackPointerRegister);
 
-    ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(requiredScratchMemorySizeInBytes());
-    char* buffer = static_cast<char*>(scratchBuffer->dataBuffer());
-    
-    saveAllRegisters(jit, buffer);
+    // UNGIL §A.1.6 (ANNEX A16, U-T4b): the generation thunk is shared by all
+    // threads of this VM. gilOff, two threads firing exits concurrently would
+    // clobber each other's full register dump in a baked buffer, so the
+    // gilOff-mode thunk bakes a process-wide ScratchBufferRegistry INDEX and
+    // resolves the CURRENT lite's buffer per use (loadVMLite -> segment ->
+    // [index]; rematerialized per §A.1.2). GIL-on/flag-off keeps the baked
+    // address byte-for-byte.
+    const bool bakedIndexMode = vm.gilOff();
+    unsigned bakedIndex = std::numeric_limits<unsigned>::max();
+    char* buffer = nullptr;
+    if (bakedIndexMode) [[unlikely]]
+        bakedIndex = vm.allocateBakedScratchBufferIndex(requiredScratchMemorySizeInBytes());
+    else {
+        ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(requiredScratchMemorySizeInBytes());
+        buffer = static_cast<char*>(scratchBuffer->dataBuffer());
+    }
+    auto materializeBufferBase = scopedLambda<void(AssemblyHelpers&, GPRReg)>(
+        [&] (AssemblyHelpers& jit, GPRReg dest) {
+            materializeBakedScratchBufferDataPointer(jit, bakedIndex, dest);
+        });
+
+    if (bakedIndexMode) [[unlikely]]
+        saveAllRegisters(jit, materializeBufferBase);
+    else
+        saveAllRegisters(jit, buffer);
 
     jit.loadPtr(CCallHelpers::Address(framePointerRegister), GPRInfo::argumentGPR0);
     jit.peek(
@@ -118,7 +152,10 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
     UNUSED_PARAM(resultTag);
 #endif
 
-    restoreAllRegisters(jit, buffer);
+    if (bakedIndexMode) [[unlikely]]
+        restoreAllRegisters(jit, materializeBufferBase);
+    else
+        restoreAllRegisters(jit, buffer);
 
     jit.ret();
     
@@ -133,11 +170,116 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
         vm, operationCompileFTLOSRExit, OSRExitPtrTag, "FTL OSR exit generation thunk", extraPopsToRestore, FrameAndStackAdjustmentRequirement::Needed);
 }
 
+// SCALEBENCH §42 thin-thunk (GILOFF-TAX-EVIDENCE.md §#1, residual #2):
+// gilOff-dedicated thin prefix for the FTL lazy-slow-path steady state.
+//
+// Rationale: gilOff (UNGIL U-T4b, FTLLazySlowPath.cpp:73-87) leaves the
+// patchable jump UNPATCHED, so EVERY traversal — 36.4 M of them on intcs W=1
+// after the §42 TLC-slot fix took CompleteSubspace allocations off this path
+// — runs the full genericGenerationThunkGenerator body: saveAllRegisters
+// (full scalar dump to a per-lite scratch buffer), a real C call into
+// operationCompileFTLLazySlowPath, restoreAllRegisters, ret. perf attributes
+// ~910 ms of intcs W=1 self time (~25 ns/traversal) to that one ~1.5 KB JIT
+// range; the operation body's only steady-state work is the T8
+// stubCodePtrConcurrently() acquire-load (FTLOperations.cpp:987).
+//
+// This prefix replays JUST that acquire-load in JIT code: callFrame →
+// codeBlock → m_jitCode (ConcurrentJITCodePtr; one raw word, JITCode.h:428)
+// → FTL::JITCode::lazySlowPaths[index] → m_stubCodePtr. Non-null (steady
+// state after first compile) → restore the two spilled scratches, pop the
+// late-path's index push (the same push the full body's extraPopsToRestore=1
+// removes), tail-jump to the stub. Null → restore both scratches and FALL
+// THROUGH to today's full body with sp at exactly its on-entry layout, so
+// first-compile / race-loser semantics are byte-for-byte the existing
+// double-checked-publication path under ftlLazySlowPathGenerationLock.
+//
+// Register discipline: at thunk entry every FTL-live register is live EXCEPT
+// macroClobberedGPRs, which the lazySlowPath() patchpoint explicitly clobbers
+// (FTLLowerDFGToB3.cpp:25544 result->clobber(RegisterSet::macroClobberedGPRs())).
+// We spill exactly two ordinary GPRs for the load chain and use
+// GPRInfo::patchpointScratchRegister (= the one register the patchpoint
+// contract guarantees is dead: r11 / ip0 / x30) only as the final jump
+// target, after both spills are restored — the only instructions between its
+// load and the farJump are popToRestore (raw post-index ldr / pop) which
+// touch no macro temp.
+//
+// Orthogonal to the §42 iso-TLC-slot fix: that removes the dominant MakeRope
+// traversals; this cheapens whatever lazy-slow-path traversals REMAIN
+// (write-barrier slow paths, iso-subspace allocations until iso-TLC lands,
+// every other lazySlowPath() consumer in FTLLowerDFGToB3.cpp). gilOff-gated:
+// GIL-on never reaches this function (lazySlowPathGenerationThunkGenerator
+// passes nullptr) so the GIL-on / flag-off thunk is byte-identical.
+static void emitLazySlowPathThinPrefix(AssemblyHelpers& jit)
+{
+    using MA = AssemblyHelpers;
+    constexpr GPRReg scratch0 = GPRInfo::regT2;
+    constexpr GPRReg scratch1 = GPRInfo::regT3;
+    constexpr GPRReg targetGPR = GPRInfo::patchpointScratchRegister;
+    static_assert(scratch0 != scratch1 && scratch0 != targetGPR && scratch1 != targetGPR);
+    static_assert(scratch0 != GPRInfo::callFrameRegister && scratch1 != GPRInfo::callFrameRegister);
+    constexpr ptrdiff_t pushToSaveByteOffset = MacroAssembler::pushToSaveByteOffset();
+
+    // On entry: [sp + 0] = the late path's pushToSaveImmediateWithoutTouchingRegisters(index)
+    // (FTLLowerDFGToB3.cpp:25572). cfr = the executing FTL frame = callFrame.
+    jit.pushToSave(scratch0);
+    jit.pushToSave(scratch1);
+    // [sp + 0]              = scratch1 saved
+    // [sp + pushToSaveByteOffset]   = scratch0 saved
+    // [sp + 2*pushToSaveByteOffset] = index (low 32 bits)
+
+    // index → scratch0
+    jit.load32(MA::Address(MacroAssembler::stackPointerRegister, 2 * pushToSaveByteOffset), scratch0);
+    // codeBlock → scratch1
+    jit.loadPtr(MA::Address(GPRInfo::callFrameRegister, static_cast<int>(CallFrameSlot::codeBlock) * static_cast<int>(sizeof(Register))), scratch1);
+    // FTL::JITCode* → scratch1 (ConcurrentJITCodePtr is one JITCode* word at
+    // jitCodeOffset(); FTL::JITCode is single-inheritance from JSC::JITCode so
+    // the base pointer is the derived pointer — same identity
+    // operationCompileFTLLazySlowPath relies on via jitCodeRawPtr()->ftl()).
+    static_assert(sizeof(ConcurrentJITCodePtr) == sizeof(JSC::JITCode*));
+    jit.loadPtr(MA::Address(scratch1, CodeBlock::jitCodeOffset()), scratch1);
+    // lazySlowPaths.data() → scratch1
+    static_assert(sizeof(std::unique_ptr<LazySlowPath>) == sizeof(LazySlowPath*));
+    constexpr ptrdiff_t lazySlowPathsBufferOffset = OBJECT_OFFSETOF(JITCode, lazySlowPaths) + Vector<std::unique_ptr<LazySlowPath>>::dataMemoryOffset();
+    jit.loadPtr(MA::Address(scratch1, lazySlowPathsBufferOffset), scratch1);
+    // lazySlowPaths[index] (LazySlowPath*) → scratch1
+    jit.loadPtr(MA::BaseIndex(scratch1, scratch0, MA::ScalePtr), scratch1);
+    // m_stubCodePtr (acquire) → scratch1. x86_64 TSO: plain load IS acquire.
+    // ARM64: ldar pairs with generate()'s release-store so a non-null read
+    // here observes a fully-constructed stub (data side; i-cache coherence is
+    // the existing T8 contract — same as the C++ acquire-load fast path this
+    // mirrors, FTLOperations.cpp:987).
+#if CPU(ARM64)
+    jit.loadAcq64(MA::Address(scratch1, LazySlowPath::offsetOfStubCodePtr()), scratch1);
+#else
+    jit.loadPtr(MA::Address(scratch1, LazySlowPath::offsetOfStubCodePtr()), scratch1);
+#endif
+    auto needGenerate = jit.branchTestPtr(MA::Zero, scratch1);
+
+    // Steady state: tail-call the already-generated stub. Park the target in
+    // the patchpoint-dead scratch, restore both spills and the index push so
+    // sp is exactly what a directly-repatched jump would have seen, then go.
+    jit.move(scratch1, targetGPR);
+    jit.popToRestore(scratch1);
+    jit.popToRestore(scratch0);
+    jit.addPtr(MA::TrustedImm32(pushToSaveByteOffset), MacroAssembler::stackPointerRegister); // drop index push (= extraPopsToRestore=1).
+    jit.farJump(targetGPR, JITStubRoutinePtrTag);
+
+    // First compile (or publication race): restore and fall through to the
+    // full saveAllRegisters / operationCompileFTLLazySlowPath body with sp at
+    // its on-entry [index] layout.
+    needGenerate.link(&jit);
+    jit.popToRestore(scratch1);
+    jit.popToRestore(scratch0);
+}
+
 MacroAssemblerCodeRef<JITThunkPtrTag> lazySlowPathGenerationThunkGenerator(VM& vm)
 {
     unsigned extraPopsToRestore = 1;
+    // SCALEBENCH §42 thin-thunk: gilOff-only thin prefix; GIL-on / flag-off
+    // pass no prefix and emit the byte-identical upstream thunk.
     return genericGenerationThunkGenerator(
-        vm, operationCompileFTLLazySlowPath, JITStubRoutinePtrTag, "FTL lazy slow path generation thunk", extraPopsToRestore, FrameAndStackAdjustmentRequirement::NotNeeded);
+        vm, operationCompileFTLLazySlowPath, JITStubRoutinePtrTag, "FTL lazy slow path generation thunk", extraPopsToRestore, FrameAndStackAdjustmentRequirement::NotNeeded,
+        vm.gilOff() ? emitLazySlowPathThinPrefix : nullptr);
 }
 
 static void registerClobberCheck(AssemblyHelpers& jit, RegisterSet dontClobber)

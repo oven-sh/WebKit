@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <wtf/Atomics.h>
+
 #include "Structure.h"
 #include <wtf/TZoneMalloc.h>
 
@@ -217,8 +219,25 @@ public:
 
     JS_EXPORT_PRIVATE void age(CollectionScope);
 
+    // SPEC-jit §5.5 (Task 8) / AUD1.K4 (K4.II.19, BINDING per-lite — lite
+    // slots NOT YET LANDED, so the whole row stays DARK; see the A16
+    // activation checklist in VMLite.cpp): with useJSThreads the inline
+    // fast paths already bail (loadMegamorphicProperty /
+    // storeMegamorphicProperty / hasMegamorphicProperty), so a fill is
+    // never read back — but the fills themselves are multi-word entry
+    // writes including a RefPtr<UniquedStringImpl> reassignment, and N
+    // mutators landing on one entry double-deref the displaced uid (UAF).
+    // Until the per-lite copies exist, every fill is a no-op flag-on.
+    // Flag-off: one predicted-false byte test on these already-slow paths.
+    ALWAYS_INLINE static bool fillsDisabledUnderJSThreads()
+    {
+        return Options::useJSThreads();
+    }
+
     void initAsMiss(StructureID structureID, UniquedStringImpl* uid)
     {
+        if (fillsDisabledUnderJSThreads()) [[unlikely]]
+            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
         auto& entry = m_loadCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -230,6 +249,8 @@ public:
 
     void initAsHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
+        if (fillsDisabledUnderJSThreads()) [[unlikely]]
+            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
         auto& entry = m_loadCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -252,6 +273,8 @@ public:
 
     void initAsTransition(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t offset, bool reallocating)
     {
+        if (fillsDisabledUnderJSThreads()) [[unlikely]]
+            return;
         uint32_t primaryIndex = MegamorphicCache::storeCachePrimaryHash(oldStructureID, uid) & storeCachePrimaryMask;
         auto& entry = m_storeCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -263,6 +286,8 @@ public:
 
     void initAsReplace(StructureID structureID, UniquedStringImpl* uid, uint16_t offset)
     {
+        if (fillsDisabledUnderJSThreads()) [[unlikely]]
+            return;
         uint32_t primaryIndex = MegamorphicCache::storeCachePrimaryHash(structureID, uid) & storeCachePrimaryMask;
         auto& entry = m_storeCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -274,6 +299,8 @@ public:
 
     void initAsHasHit(StructureID structureID, UniquedStringImpl* uid)
     {
+        if (fillsDisabledUnderJSThreads()) [[unlikely]]
+            return;
         uint32_t primaryIndex = MegamorphicCache::hasCachePrimaryHash(structureID, uid) & hasCachePrimaryMask;
         auto& entry = m_hasCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -285,6 +312,8 @@ public:
 
     void initAsHasMiss(StructureID structureID, UniquedStringImpl* uid)
     {
+        if (fillsDisabledUnderJSThreads()) [[unlikely]]
+            return;
         uint32_t primaryIndex = MegamorphicCache::hasCachePrimaryHash(structureID, uid) & hasCachePrimaryMask;
         auto& entry = m_hasCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -294,12 +323,17 @@ public:
         m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, m_epoch, false);
     }
 
-    uint16_t epoch() const { return m_epoch; }
+    uint16_t epoch() const { return WTF::atomicLoad(const_cast<uint16_t*>(&m_epoch), std::memory_order_relaxed); } // THREADS: advisory cache epoch; racy bumps tolerated (stale entries just miss/revalidate).
 
     void bumpEpoch()
     {
-        ++m_epoch;
-        if (m_epoch == invalidEpoch) [[unlikely]]
+        // THREADS: atomic RMW — a LOST bump would be a missed invalidation
+        // (an entry stamped with the new epoch by a racing filler would
+        // survive this bump), so unlike the advisory profiling counters this
+        // one must not drop increments. Invalidation slow path only; no
+        // codegen impact on cache hits.
+        uint16_t epoch = static_cast<uint16_t>(WTF::atomicExchangeAdd(&m_epoch, static_cast<uint16_t>(1), std::memory_order_relaxed) + 1);
+        if (epoch == invalidEpoch) [[unlikely]]
             clearEntries();
     }
 

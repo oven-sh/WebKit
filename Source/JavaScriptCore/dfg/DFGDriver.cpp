@@ -37,15 +37,22 @@
 #include "Options.h"
 #include "ThunkGenerators.h"
 #include "TypeProfilerLog.h"
+#include <wtf/Atomics.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace JSC { namespace DFG {
 
-static unsigned numCompilations;
+// TSAN family 5 code-lifecycle (docs/threads/TSAN-TRIAGE.md §3.5; r3 residual
+// "DFG::compileImpl self"): this debug/stats counter is the only word
+// compileImpl itself writes, and with N mutators every thread that triggers a
+// DFG/FTL compile increments it concurrently. Statistics-only datum (§5.7
+// racy-profiling tolerance class); relaxed atomic increment. Flag-off
+// semantics unchanged (single-threaded increment behaves identically).
+static Atomic<unsigned> numCompilations;
 
 unsigned getNumCompilations()
 {
-    return numCompilations;
+    return numCompilations.loadRelaxed();
 }
 
 #if ENABLE(DFG_JIT)
@@ -75,8 +82,8 @@ static CompilationResult compileImpl(
         break;
     }
     
-    numCompilations++;
-    
+    numCompilations.exchangeAdd(1, std::memory_order_relaxed);
+
     ASSERT(codeBlock);
     ASSERT(codeBlock->alternative());
     ASSERT(JITCode::isBaselineCode(codeBlock->alternative()->jitType()));

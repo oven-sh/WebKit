@@ -53,7 +53,32 @@ void CodeBlockSet::clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM& vm)
     ASSERT(vm.heap.isInPhase(CollectorPhase::End));
     m_currentlyExecuting.clear();
     m_codeBlocks.removeIf([&](CodeBlock* codeBlock) {
-        return !vm.heap.isMarked(codeBlock);
+        if (vm.heap.isMarked(codeBlock))
+            return false;
+        // TSAN-TRIAGE §17.2 row 17 (closeout review): flag-on, unlink the
+        // dead block's incoming calls HERE, in the End phase while the world
+        // is stopped, instead of waiting for the lazy-sweep destructor.
+        // Rationale: ~CodeBlock runs on an allocation-path sweep AFTER the
+        // world resumes (the IncrementalSweeper is disabled in shared mode),
+        // so between resume and sweep a sibling mutator can still call
+        // through a still-linked CallLinkInfo and load this dead cell's
+        // pointer — a pointer acquired AFTER the conservative scan, hence
+        // not pinned by it. Such a straggler races the sweep and, once the
+        // IsoSubspace slot is recycled, binds the baseline prologue's
+        // loadPairPtr(offsetOfJITData, offsetOfMetadataTable) to the NEW
+        // occupant's fields (the silent wrong-metadata class). Unlinking
+        // inside the stop closes that acquisition window: any thread still
+        // able to enter this block after resume must have held the pointer
+        // at scan time, which conservatively marks the cell — contradiction,
+        // so it cannot be dead. The AB18-B / rows 7/8/16 field-keeping leaks
+        // remain as defense-in-depth for non-CLI entry vectors. The
+        // destructor's own unlinkOrUpgradeIncomingCalls then drains an empty
+        // list (no-op). World-stopped repatching has precedent in row 2
+        // (resetStubAsJumpInAccess). Flag-off: byte-identical (unlink stays
+        // at destructor time). THREADS-INTEGRATE(jit)
+        if (Options::useJSThreads()) [[unlikely]]
+            codeBlock->unlinkOrUpgradeIncomingCalls(vm, nullptr);
+        return true;
     });
 }
 

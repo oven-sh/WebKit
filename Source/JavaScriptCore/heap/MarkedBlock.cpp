@@ -70,6 +70,10 @@ MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAlloca
     return new Handle(heap, alignedMemoryAllocator, blockSpace);
 }
 
+// SharedGC (T9): any-client OK — blocks are server-owned; heap.vm() stamps
+// the main VM (deviation 3) into the WeakSet/header at construction (see
+// MarkedBlock::vm(), MarkedBlock.h). Construction runs under MSPL once
+// shared (tryAllocateBlock, §5.2(3)); the stamp itself is thread-neutral.
 MarkedBlock::Handle::Handle(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator, void* blockSpace)
     : m_alignedMemoryAllocator(alignedMemoryAllocator)
     , m_weakSet(heap.vm())
@@ -111,6 +115,18 @@ MarkedBlock::Header::Header(VM& vm, Handle& handle)
     , m_markingVersion(MarkedSpace::nullVersion)
     , m_newlyAllocatedVersion(MarkedSpace::nullVersion)
 {
+    // TSAN r12 (report 3, residual-2 "HeapCell::vm on recycled MarkedBlock"):
+    // publication choke point — pairs with the HAPPENS_AFTER in
+    // MarkedBlock::vmConcurrentProbe() (NOT plain vm(); narrowed at the
+    // thread-closeout final review — see the probe accessor's comment for why
+    // the universal getter must stay unannotated).
+    // The header's const-init writes (m_vm is `VM* const`,
+    // it cannot become an atomic) are ordered before any cross-thread cell
+    // probe by the block hand-out protocol (directory locks / consume-style
+    // cell publication), which TSAN cannot fully model; stale probes of a
+    // RECYCLED block are blessed by the wave-7 staleness adjudication. No-op
+    // outside TSAN.
+    TSAN_ANNOTATE_HAPPENS_BEFORE(this);
 }
 
 MarkedBlock::Header::~Header() = default;
@@ -277,6 +293,11 @@ inline void MarkedBlock::setupTestForDumpInfoAndCrash() { }
 
 void MarkedBlock::aboutToMarkSlow(HeapVersion markingVersion, HeapCell* cell)
 {
+    // SharedGC (T8 audit, I5b): marker-helper path. Once shared, marking runs
+    // only inside the stop window (deviation 4; I11 note), and every
+    // directory-bit access below (isAllocated read, setIsMarkingNotEmpty)
+    // holds the bitvector lock — safe against addBlock's m_bits resize even
+    // though helpers don't hold MSPL.
     ASSERT(vm().heap.objectSpace().isMarking());
     setupTestForDumpInfoAndCrash();
 
@@ -342,6 +363,114 @@ void MarkedBlock::aboutToMarkSlow(HeapVersion markingVersion, HeapCell* cell)
 #endif
 }
 
+void MarkedBlock::sharedGCWindowWitnessSnapshot(HeapVersion markingVersion, bool markingVersionJustBumped, Vector<HeapCell*>& candidates)
+{
+    // SharedGC "Wlr" read protocol (round-7 F1): the Wlr core marking
+    // constraint runs on the conductor while parallel marker helpers
+    // concurrently execute aboutToMarkSlow() above, which under
+    // header().m_lock clears the whole marks bitmap (clearAll), can fold
+    // marks into m_newlyAllocated (setAndClear) AND bump
+    // m_newlyAllocatedVersion mid-marking, then storeStoreFence + version
+    // store. The previous Wlr loop hoisted areMarksStale() once per block
+    // and read isMarkedRaw()/isNewlyAllocatedStale() lock-free and
+    // dependency-free, violating the documented protocol (see the isMarked()
+    // comment in MarkedBlock.h) and racing all of those writes — TSAN-dirty,
+    // and on weak memory models a load-load reorder could pair a current
+    // version with a pre-clear stale marks word. Take the SAME header lock
+    // for the whole per-block snapshot so the witness judgment is one
+    // consistent view; the caller appends the candidates to the visitor only
+    // AFTER this lock is dropped (appendJSCellOrAuxiliary can re-enter this
+    // lock via aboutToMark -> aboutToMarkSlow). Lock order matches
+    // aboutToMarkSlow: header lock outer, directory bitvector lock inner.
+    //
+    // Soundness lemma (previously UNSTATED, load-bearing for the old racy
+    // reads; recorded here because the EVIDENCE.md §13 stale-mark-skip
+    // narrowing candidate depends on it): a window-witnessed cell always has
+    // stale mark bit == 0 — it came off a sweep-built free list and only
+    // unmarked cells are free-listed — and its NA bit is stamped pre-stop
+    // (MarkedBlock::Handle::stopAllocating, happens-before marking per Wlr
+    // lemma L1) and is never CLEARED during marking. Under the lock the
+    // snapshot is correct without the lemma; any narrowing keyed on STALE
+    // mark bits must keep both this lock protocol and this lemma, or it
+    // silently reopens the under-retention hole. The §13 stale-marked-
+    // survivor skip below (T4) is such a narrowing — note that the lemma as
+    // stated is only true of free lists built by MarksNotStale sweeps, so
+    // the skip is additionally gated on the LAST-ERA predicate (see its
+    // comment): blocks that could have been stale-swept-and-recycled get no
+    // skip.
+    Locker locker { header().m_lock };
+    bool naCurrent = !isNewlyAllocatedStale();
+    BlockDirectory* directory = handle().directory();
+    bool allocBit;
+    {
+        Locker bitLocker { directory->bitvectorLock() };
+        allocBit = directory->isAllocated(&handle());
+    }
+    if (!naCurrent && !allocBit)
+        return;
+    bool marksStale = areMarksStale(markingVersion);
+    // EVIDENCE.md §13 narrowing (T4-shared-gc-window-retention) — the
+    // LAST-ERA predicate. The naive form of the §13 skip ("stale mark 1 =>
+    // prior-cycle survivor") is UNSOUND in general: a MarksStale-mode sweep
+    // builds its free list IGNORING the stale marks word and does NOT clear
+    // it (specializedSweep's stale legs derive liveness from NA only, and
+    // only aboutToMarkSlow ever clearAll()s m_marks), so a block recycled
+    // from an OLDER era can hand out window cells whose ancient mark bits
+    // are still 1. The stale-bit-zero lemma above therefore only holds for
+    // blocks whose stale marks date to the IMMEDIATELY-PRECEDING marking
+    // era:
+    //   - while the previous era's version was current, every sweep of a
+    //     version-current block ran MarksNotStale and excluded marked cells
+    //     from its free list, so a cell marked in that era was never
+    //     free-listed (sticky marks keep it reserved across the era's eden
+    //     cycles);
+    //   - a block whose marks predate that era (version older, or
+    //     nullVersion: fresh / post-wraparound-flush) may have been
+    //     stale-swept and recycled during the era — its raw mark bits prove
+    //     nothing, so it gets NO skip (full retention, the conservative
+    //     direction);
+    //   - the era boundary is this FULL cycle's version bump, which happened
+    //     inside THIS stop window (markingVersionJustBumped — eden cycles
+    //     never license the skip: their "stale" blocks all predate the
+    //     current era and may have been stale-recycled mid-era).
+    // nextVersion(blockVersion) == markingVersion is the exact
+    // "immediate predecessor" test, using the same wraparound arithmetic as
+    // the version bump itself; the explicit nullVersion exclusion keeps
+    // fresh blocks out even though nextVersion(nullVersion) is defined.
+    // Read under this header lock like every other field of the judgment.
+    bool staleMarksAreLastEras = markingVersionJustBumped
+        && header().m_markingVersion != MarkedSpace::nullVersion
+        && MarkedSpace::nextVersion(header().m_markingVersion) == markingVersion;
+    handle().forEachCell(
+        [&] (size_t, HeapCell* cell, HeapCell::Kind) -> IterationStatus {
+            if (!marksStale && isMarkedRaw(cell))
+                return IterationStatus::Continue;
+            bool isNA = naCurrent && isNewlyAllocated(cell);
+            if (!isNA) {
+                if (!allocBit)
+                    return IterationStatus::Continue; // No window witness: genuinely dead.
+                // §13 skip, licensed by the LAST-ERA predicate above: this
+                // cell was marked live during the immediately-preceding era,
+                // was therefore never on any free list since (NotStale
+                // sweeps reserve marked cells; no stale sweep of this block
+                // can have run between the era's end and this stop — the
+                // bump happened inside this stop window), so it was NOT
+                // handed out this mutator window and carries no window
+                // witness. If it is live this cycle, real root/heap tracing
+                // marks it in the fixpoint; if it is dead, retaining it was
+                // the pure over-retention that made full-collection
+                // reclamation of window-consumed blocks degrade to ~zero
+                // (rss profile: 12.4GB marked-live committed vs ~378MB true
+                // live). The NA leg above is deliberately NOT narrowed
+                // (proven to reintroduce the under-marking hole).
+                if (marksStale && staleMarksAreLastEras && isMarkedRaw(cell))
+                    return IterationStatus::Continue;
+            }
+            candidates.append(cell);
+            return IterationStatus::Continue;
+        });
+}
+
 void MarkedBlock::resetAllocated()
 {
     header().m_newlyAllocated.clearAll();
@@ -361,6 +490,10 @@ void MarkedBlock::resetMarks()
     header().m_markingVersion = MarkedSpace::nullVersion;
 }
 
+// SharedGC (T9): the vm() uses in assertMarksNotStale/areMarksStale/isMarked
+// below are thread-agnostic round-trips to the SERVER's marking version
+// (block -> main VM -> vm.heap == server, deviation 3) — conductor-context
+// OK and reachable from any client/marker thread.
 #if ASSERT_ENABLED
 void MarkedBlock::assertMarksNotStale()
 {
@@ -385,6 +518,12 @@ bool MarkedBlock::isMarked(const void* p)
 
 void MarkedBlock::Handle::didConsumeFreeList()
 {
+    // SharedGC (T8 audit, I5b): called from LocalAllocator::didConsumeFreeList
+    // — including the call at the top of allocateSlowCase BEFORE MSPL is
+    // taken — and from stopAllocating paths. Safe without MSPL: the bit
+    // writes below hold the directory's bitvector lock (addBlock's m_bits
+    // resize also holds it), and m_isFreeListed/handle state are confined to
+    // the handle's owner (I1: this thread holds the block via inUse).
     Locker locker { blockHeader().m_lock };
     if (MarkedBlockInternal::verbose)
         dataLog(RawPointer(this), ": MarkedBlock::Handle::didConsumeFreeList!\n");
@@ -407,6 +546,8 @@ void MarkedBlock::clearHasAnyMarked()
 
 void MarkedBlock::noteMarkedSlow()
 {
+    // SharedGC (T8 audit, I5b): marker-helper path; bit write under the
+    // bitvector lock (see aboutToMarkSlow).
     BlockDirectory* directory = handle().directory();
     Locker locker { directory->bitvectorLock() };
     directory->setIsMarkingRetired(&handle(), true);
@@ -461,7 +602,19 @@ void MarkedBlock::Handle::didRemoveFromDirectory()
 {
     ASSERT(m_index != std::numeric_limits<unsigned>::max());
     ASSERT(m_directory);
-    
+
+    // T2-bimodal32: drop the destructible hint when the block leaves its
+    // directory (steal/shrink) so a later didAddToDirectory into a fresh slot
+    // — whose directory bits start cleared — never sees a stale-true hint.
+    // removeBlock runs under BVL + MSPL-exclusive/world-stopped, so no
+    // lock-free hint reader is concurrent; gated isSharedServer() &&
+    // gilOffProcess (matching every other hint touch — see the
+    // Handle::setIsDestructible comment) to keep flag-off / W=1 codegen
+    // unchanged and the hint inert wherever ISS is not process-lifetime
+    // sticky.
+    if (m_directory->heap().isSharedServer() && g_jscConfig.gilOffProcess) [[unlikely]]
+        WTF::atomicStore(&m_isDestructibleHint, false, std::memory_order_relaxed);
+
     m_index = std::numeric_limits<unsigned>::max();
     m_directory = nullptr;
     blockHeader().m_subspace = nullptr;
@@ -470,6 +623,8 @@ void MarkedBlock::Handle::didRemoveFromDirectory()
 #if ASSERT_ENABLED
 void MarkedBlock::assertValidCell(VM& vm, HeapCell* cell) const
 {
+    // SharedGC (T9): conductor-context OK — identity check against the one
+    // main VM (every block on the shared server stamps the same VM).
     RELEASE_ASSERT(&vm == &this->vm());
     RELEASE_ASSERT(const_cast<MarkedBlock*>(this)->handle().cellAlign(cell) == cell);
 }
@@ -596,6 +751,24 @@ void MarkedBlock::Handle::recommitPages()
 
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
+    // SharedGC (T8 audit, I5b): legal shared-mode contexts — allocation slow
+    // paths and synchronous sweeps under MSPL, or the conductor while the
+    // world is stopped for all clients (the IncrementalSweeper is disabled
+    // once shared). The assert below enforces exactly that; the lock-free
+    // isInUse/isDestructible/isEmpty reads in this function and the
+    // specializedSweep bit flips (which take the bitvector lock) are sound in
+    // those contexts.
+    //
+    // Review round 4 — the m_weakSet.sweep() below: when shared, mutator-
+    // concurrent (MSPL-held, world running) callers NEVER reach this with a
+    // weak-bearing block — the weak-bearing carve-out skips such blocks at
+    // all three MSPL sweep sites (LocalAllocator::tryAllocateIn, the steal
+    // path, BlockDirectory::sweep) because MSPL does not exclude the
+    // lock-free WeakSet::deallocate or weak finalizer-vs-owner lifetime
+    // races. Weak-bearing blocks are therefore weak-swept only world-stopped
+    // (conducted cycles) or at teardown (Heap::lastChanceToFinalize: MSPL
+    // held AND no other mutator left). WeakSet::sweep asserts the lock/stop
+    // half of this protocol.
     SweepingScope sweepingScope(*heap());
     m_directory->assertIsMutatorOrMutatorIsStopped();
     ASSERT(m_directory->isInUse(this));

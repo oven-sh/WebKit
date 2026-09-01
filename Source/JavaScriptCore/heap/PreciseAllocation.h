@@ -75,6 +75,8 @@ public:
     void lastChanceToFinalize();
     
     JSC::Heap* heap() const LIFETIME_BOUND { return m_weakSet.heap(); }
+    // SharedGC (T9): conductor-context OK — server-owned; main VM via the
+    // WeakSet (see WeakSet::vm(), WeakSet.h).
     VM& vm() const { return m_weakSet.vm(); }
     WeakSet& weakSet() LIFETIME_BOUND { return m_weakSet; }
 

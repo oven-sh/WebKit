@@ -1,0 +1,5 @@
+host precondition:
+ 16:18:38 up 23 days,  9:01,  0 users,  load average: 5.81, 6.30, 7.47
+pinned-3 rc=124 bytes=260 FAIL
+pinned-1 rc=124 bytes=260 FAIL
+pinned-2 rc=124 bytes=260 FAIL

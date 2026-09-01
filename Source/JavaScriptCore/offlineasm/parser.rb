@@ -777,15 +777,15 @@ class Parser
                 codeOrigin = @tokens[@idx].codeOrigin
                 name = @tokens[@idx].string
                 @idx += 1
-                if (not final and @idx == @tokens.size) or (final and @tokens[@idx] =~ final)
+                if @tokens[@idx].is_a? Annotation
+                    list << Instruction.new(codeOrigin, name, [], @tokens[@idx].string)
+                    @annotation = nil
+                    @idx += 2 # Consume the newline as well.
+                elsif (not final and @idx == @tokens.size) or (final and @tokens[@idx] =~ final)
                     # Zero operand instruction, and it's the last one.
                     list << Instruction.new(codeOrigin, name, [], @annotation)
                     @annotation = nil
                     break
-                elsif @tokens[@idx].is_a? Annotation
-                    list << Instruction.new(codeOrigin, name, [], @tokens[@idx].string)
-                    @annotation = nil
-                    @idx += 2 # Consume the newline as well.
                 elsif @tokens[@idx] == "\n"
                     # Zero operand instruction.
                     list << Instruction.new(codeOrigin, name, [], @annotation)
@@ -797,17 +797,17 @@ class Parser
                     endOfSequence = false
                     loop {
                         operands << parseOperand("while inside of instruction #{name}")
-                        if (not final and @idx == @tokens.size) or (final and @tokens[@idx] =~ final)
+                        if @tokens[@idx].is_a? Annotation
+                            @annotation = @tokens[@idx].string
+                            @idx += 2 # Consume the newline as well.
+                            break
+                        elsif (not final and @idx == @tokens.size) or (final and @tokens[@idx] =~ final)
                             # The end of the instruction and of the sequence.
                             endOfSequence = true
                             break
                         elsif @tokens[@idx] == ","
                             # Has another operand.
                             @idx += 1
-                        elsif @tokens[@idx].is_a? Annotation
-                            @annotation = @tokens[@idx].string
-                            @idx += 2 # Consume the newline as well.
-                            break
                         elsif @tokens[@idx] == "\n"
                             # The end of the instruction.
                             @idx += 1

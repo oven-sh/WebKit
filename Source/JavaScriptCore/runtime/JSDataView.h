@@ -27,6 +27,7 @@
 
 #include "DataView.h"
 #include "JSArrayBufferView.h"
+#include <wtf/ThreadSanitizerSupport.h>
 
 namespace JSC {
 
@@ -80,11 +81,28 @@ public:
         return byteLengthRaw();
     }
     
-    ArrayBuffer* possiblySharedBuffer() const { return m_buffer; }
+    // GIL-off (TSAN residual 2, JSDataView m_buffer): the word is written
+    // once in the constructor and is immutable afterwards, but a DataView is
+    // consume-published across Threads (and its cell can be a recycled
+    // MarkedBlock address still probed by stale lock-free readers), so both
+    // the init store and these reads are relaxed atomics on the single
+    // pointer word. Codegen identical to the plain accesses; staleness is
+    // impossible for a live view (immutable after construction).
+    // TSAN r13 (report 1): the HAPPENS_AFTER pairs with the HAPPENS_BEFORE at
+    // the end of the constructor — the view is consume-published (or its
+    // recycled precise-allocation cell is stale-probed), and TSAN otherwise
+    // pairs this atomic probe with the new owner's allocation. No-op outside
+    // TSAN.
+    ArrayBuffer* possiblySharedBuffer() const
+    {
+        TSAN_ANNOTATE_HAPPENS_AFTER(this);
+        return WTF::atomicLoad(const_cast<ArrayBuffer**>(&m_buffer), std::memory_order_relaxed);
+    }
     ArrayBuffer* unsharedBuffer() const
     {
-        RELEASE_ASSERT(!m_buffer->isShared());
-        return m_buffer;
+        ArrayBuffer* buffer = possiblySharedBuffer();
+        RELEASE_ASSERT(!buffer->isShared());
+        return buffer;
     }
     static constexpr ptrdiff_t offsetOfBuffer() { return OBJECT_OFFSETOF(JSDataView, m_buffer); }
     

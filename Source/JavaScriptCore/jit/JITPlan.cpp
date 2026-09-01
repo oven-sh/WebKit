@@ -161,6 +161,15 @@ bool JITPlan::checkLivenessAndVisitChildren(AbstractSlotVisitor& visitor)
     return true;
 }
 
+void JITPlan::iterateCodeBlocksForFinalizeRoots(NOESCAPE const Function<void(CodeBlock*)>& func)
+{
+    // See the header comment: unconditional — the finalizing mutator will
+    // dereference this CodeBlock after its park points, so liveness gating
+    // here would re-open the mid-finalize sweep this exists to close.
+    ASSERT(m_codeBlock);
+    func(m_codeBlock);
+}
+
 bool JITPlan::isInSafepoint() const
 {
     return m_thread && m_thread->safepoint();

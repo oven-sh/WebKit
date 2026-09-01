@@ -96,6 +96,18 @@ public:
     virtual bool iterateCodeBlocksForGC(AbstractSlotVisitor&, NOESCAPE const Function<void(CodeBlock*)>&);
     virtual bool checkLivenessAndVisitChildren(AbstractSlotVisitor&);
 
+    // UNGIL AB18-R1-B: GC roots for a plan CLAIMED FOR FINALIZE (removed from
+    // JITWorklist::m_plans, install not yet published). Unlike
+    // iterateCodeBlocksForGC this does NOT consult isKnownToBeLiveDuringGC:
+    // the finalizing mutator holds native references to these CodeBlocks and
+    // touches them after any in-finalize park point (the
+    // GILOffCompilationLocker contended spin and the reallyAdd
+    // watchpoint-fire stop window both release heap access GIL-off, so a
+    // sibling-conducted shared GC can run mid-finalize). They are roots
+    // regardless of owner-executable liveness for exactly as long as the
+    // claim is held.
+    virtual void iterateCodeBlocksForFinalizeRoots(NOESCAPE const Function<void(CodeBlock*)>&);
+
     bool NODELETE isInSafepoint() const;
     bool NODELETE safepointKeepsDependenciesLive() const;
 

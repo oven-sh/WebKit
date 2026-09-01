@@ -53,7 +53,16 @@ inline Structure* Structure::storedPrototypeStructure() const
 
 ALWAYS_INLINE JSValue Structure::storedPrototype(const JSObject* object) const
 {
-    ASSERT(isCompilationThread() || Thread::mayBeGCThread() || object->structure() == this);
+    // The object->structure() == this conjunct is a SINGLE-MUTATOR staleness
+    // tripwire: it assumes nobody re-tags the object's structureID between
+    // the caller's sample and this read. Under useJSThreads shared objects a
+    // racing foreign transition legitimately installs a new structureID
+    // while a reader walks with its SAMPLED structure — exactly what
+    // SPEC-objectmodel M7/I24 license (the reader orders or re-checks before
+    // any offset-bearing storage deref; the sampled structure's own
+    // m_prototype is immutable, so this read is stable). Flag-off: assert
+    // unchanged.
+    ASSERT(isCompilationThread() || Thread::mayBeGCThread() || Options::useJSThreads() || object->structure() == this);
     if (hasMonoProto())
         return storedPrototype();
     return object->getDirect(knownPolyProtoOffset);
@@ -61,7 +70,9 @@ ALWAYS_INLINE JSValue Structure::storedPrototype(const JSObject* object) const
 
 ALWAYS_INLINE JSObject* Structure::storedPrototypeObject(const JSObject* object) const
 {
-    ASSERT(isCompilationThread() || Thread::mayBeGCThread() || object->structure() == this);
+    // See storedPrototype(object) above: sampled-structure readers are legal
+    // under useJSThreads (SPEC-objectmodel M7/I24); flag-off unchanged.
+    ASSERT(isCompilationThread() || Thread::mayBeGCThread() || Options::useJSThreads() || object->structure() == this);
     if (hasMonoProto())
         return storedPrototypeObject();
     JSValue proto = object->getDirect(knownPolyProtoOffset);
@@ -90,6 +101,21 @@ ALWAYS_INLINE PropertyOffset Structure::get(VM& vm, PropertyName propertyName, u
 
     if (m_seenProperties.ruleOut(CompactPtr<UniquedStringImpl>::encode(propertyName.uid())))
         return invalidOffset;
+
+    // SPEC-objectmodel L6(iii)/I37 (Task 3c): flag-on, the mutator uncached
+    // WALK must hold m_lock across the table read so that locked mutations
+    // (dictionary adds/rehashes, L3/L6) and table steals
+    // (takePropertyTableOrCloneIfPinned) cannot tear it. getConcurrently is
+    // exactly that walk: it never materializes (no allocation), resolves the
+    // transition chain entries first, and reads any found table under its
+    // owning Structure's m_lock. The m_seenProperties fast negative above
+    // stays: it is a single-word filter, immutable after publication for
+    // non-dictionary structures, and dictionary readers/writers are ordered
+    // by the L3 cell lock. Callers must NOT hold this structure's m_lock
+    // (the in-tree under-lock asserts query the table directly instead).
+    // Flag-off: today's code, bit-identical (I22).
+    if (Options::useJSThreads()) [[unlikely]]
+        return getConcurrently(propertyName.uid(), attributes);
 
     PropertyTable* propertyTable = ensurePropertyTableIfNotEmpty(vm);
     if (!propertyTable)

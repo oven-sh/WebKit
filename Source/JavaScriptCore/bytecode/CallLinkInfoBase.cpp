@@ -35,6 +35,29 @@
 
 namespace JSC {
 
+void CallLinkInfoBase::removeOnDestruction()
+{
+    // AB17c F4 (precondition 11), amended AB17e: see the declaration comment.
+    // The recursive lock admits the sweep-from-inside-a-locked-linker path.
+    // gilOff the lock is taken UNCONDITIONALLY (no unlocked isOnList()
+    // pre-check): acquiring it blocks until any in-flight drain loop —
+    // which holds the lock across its ENTIRE {takeFrom, begin,
+    // unlinkOrUpgrade} traversal and keeps using a node after its in-loop
+    // remove() — has finished with this object; only the under-lock
+    // isOnList() re-check is authoritative. The mode gate is the inline
+    // Config-page byte (g_jscConfig.gilOffProcess), not the 5-Options
+    // VM::isGILOffProcess() re-derivation: this runs on every gilOff
+    // call-link teardown.
+    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        Locker locker { CallLinkInfo::s_callLinkSerializationLock };
+        if (isOnList())
+            remove();
+        return;
+    }
+    if (isOnList())
+        remove();
+}
+
 void CallLinkInfoBase::unlinkOrUpgrade(VM& vm, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock)
 {
     switch (callSiteType()) {

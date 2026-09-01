@@ -27,6 +27,7 @@
 
 #include "ProtoCallFrame.h"
 #include "RegisterInlines.h"
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
@@ -57,14 +58,22 @@ inline void ProtoCallFrame::setCallee(JSObject* callee)
     calleeValue = callee;
 }
 
+// THREADS (TSAN r11 report 32): a CachedCall/MicrotaskCall registered on a
+// CodeBlock's incoming-call list has its proto frame's codeBlock slot READ
+// AND REWRITTEN by the locked jettison drain on a sibling Thread
+// (CachedCall::unlinkOrUpgradeImpl) while the owning thread initializes or
+// reads it. Relaxed atomic accesses on the one Register word keep the
+// pairing defined (identical codegen); ordering comes from the
+// release-published entry address (CachedCall.h) and the drain lock.
 inline CodeBlock* ProtoCallFrame::codeBlock() const
 {
-    return codeBlockValue.Register::codeBlock();
+    static_assert(sizeof(codeBlockValue) == sizeof(CodeBlock*));
+    return WTF::atomicLoad(const_cast<CodeBlock**>(std::bit_cast<CodeBlock* const*>(&codeBlockValue)), std::memory_order_relaxed);
 }
 
 inline void ProtoCallFrame::setCodeBlock(CodeBlock* codeBlock)
 {
-    codeBlockValue = codeBlock;
+    WTF::atomicStore(std::bit_cast<CodeBlock**>(&codeBlockValue), codeBlock, std::memory_order_relaxed);
 }
 
 } // namespace JSC

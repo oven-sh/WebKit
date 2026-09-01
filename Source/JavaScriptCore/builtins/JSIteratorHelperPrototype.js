@@ -32,10 +32,30 @@ function next()
         @throwTypeError("|this| should be an iterator helper");
 
     var generator = @getIteratorHelperInternalField(this, @iteratorHelperFieldGenerator);
-    var state = @getGeneratorInternalField(generator, @generatorFieldState);
+    // SPEC-ungil §N.5 claim (annex N7 row R8) — see GeneratorPrototype.js
+    // next(): GIL-off the check-then-resume must be ONE atomic claim;
+    // @generatorResume's epilogue publishes against the claim token.
+    var state;
+    if (@gilOffProcess)
+        state = @claimGeneratorResume(generator);
+    else
+        state = @getGeneratorInternalField(generator, @generatorFieldState);
     if (state === @GeneratorStateExecuting)
         @throwTypeError("Generator is executing");
 
+    if (@gilOffProcess) {
+        // §N.5 claim-leak guard — see GeneratorPrototype.js next(): publish
+        // the claim if the call into @generatorResume throws before its
+        // protected region (e.g. prologue stack-overflow), else the helper's
+        // generator is bricked as permanently "executing". Idempotent: the
+        // CAS only ever clears OUR token.
+        try {
+            return @generatorResume(generator, state, @undefined, @GeneratorResumeModeNormal);
+        } catch (error) {
+            @publishGeneratorResume(generator);
+            throw error;
+        }
+    }
     return @generatorResume(generator, state, @undefined, @GeneratorResumeModeNormal);
 }
 
@@ -48,8 +68,15 @@ function return()
         @throwTypeError("|this| should be an iterator helper");
 
     var generator = @getIteratorHelperInternalField(this, @iteratorHelperFieldGenerator);
-    var state = @getGeneratorInternalField(generator, @generatorFieldState);
+    // §N.5 claim — see next() above.
+    var state;
+    if (@gilOffProcess)
+        state = @claimGeneratorResume(generator);
+    else
+        state = @getGeneratorInternalField(generator, @generatorFieldState);
     if (state === @GeneratorStateInit) {
+        // GIL-off we hold the claim (the field holds our token); this store
+        // is the unclaim-to-terminal (Completed is never claimed).
         @putGeneratorInternalField(generator, @generatorFieldState, @GeneratorStateCompleted);
 
         var underlyingIterator = @getIteratorHelperInternalField(this, @iteratorHelperFieldUnderlyingIterator);
@@ -62,5 +89,14 @@ function return()
     if (state === @GeneratorStateExecuting)
         @throwTypeError("Generator is executing");
 
+    if (@gilOffProcess) {
+        // §N.5 claim-leak guard — see next() above.
+        try {
+            return @generatorResume(generator, state, @undefined, @GeneratorResumeModeReturn);
+        } catch (error) {
+            @publishGeneratorResume(generator);
+            throw error;
+        }
+    }
     return @generatorResume(generator, state, @undefined, @GeneratorResumeModeReturn);
 }

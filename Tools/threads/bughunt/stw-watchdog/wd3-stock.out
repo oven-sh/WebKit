@@ -1,0 +1,32 @@
+run 1: rc=0 0.5s PASS
+./campaign.sh: line 15: 1179779 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 2: rc=134 30.1s WATCHDOG-ABORT
+./campaign.sh: line 15: 1181430 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 3: rc=134 30.1s WATCHDOG-ABORT
+run 4: rc=0 0.5s PASS
+run 5: rc=0 0.5s PASS
+run 6: rc=0 0.5s PASS
+run 7: rc=0 0.5s PASS
+./campaign.sh: line 15: 1183255 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 8: rc=134 30.1s WATCHDOG-ABORT
+./campaign.sh: line 15: 1185140 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 9: rc=134 30.1s WATCHDOG-ABORT
+run 10: rc=0 0.6s PASS
+run 11: rc=0 0.5s PASS
+./campaign.sh: line 15: 1190183 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 12: rc=134 30.1s WATCHDOG-ABORT
+./campaign.sh: line 15: 1197193 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 13: rc=134 30.1s WATCHDOG-ABORT
+run 14: rc=0 0.6s PASS
+./campaign.sh: line 15: 1198947 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 15: rc=134 30.1s WATCHDOG-ABORT
+./campaign.sh: line 15: 1200865 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 16: rc=134 30.1s WATCHDOG-ABORT
+run 17: rc=0 0.6s PASS
+./campaign.sh: line 15: 1202498 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 18: rc=134 30.1s WATCHDOG-ABORT
+./campaign.sh: line 15: 1204257 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 19: rc=134 30.1s WATCHDOG-ABORT
+./campaign.sh: line 15: 1205884 Aborted                 timeout -k 10 "$TIMEOUT" "$JSC" "${FLAGS[@]}" "${EXTRA[@]}" -e "globalThis.SCALING_THREADS=$N; globalThis.SCALING_WORK_SCALE=$SCALE;" "$SCRIPT" > "$LOG" 2>&1
+run 20: rc=134 30.1s WATCHDOG-ABORT
+SUMMARY tag=wd3-stock N=4 scale=1 runs=20 pass=9 abort134=11 segv=0 timeout=0 other=0

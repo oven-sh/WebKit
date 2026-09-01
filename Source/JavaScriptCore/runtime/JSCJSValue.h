@@ -27,6 +27,7 @@
 #include "PureNaN.h"
 #include <atomic>
 #include <cmath>
+#include <wtf/Atomics.h>
 #include <wtf/Forward.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/HashTraits.h>
@@ -986,21 +987,26 @@ private:
     JSValue m_value;
 };
 
+// JS value words are intentionally racy under shared-heap threading (object-model
+// ground truth): other mutators may load/store them concurrently. Plain C++
+// accesses to such words are data races (UB); these accessors use relaxed atomics,
+// which are codegen-identical to plain 64-bit loads/stores, so single-threaded
+// (flag-off) behavior and code generation are unchanged.
+
 ALWAYS_INLINE JSValue JSValue::decodeConcurrent(const EncodedJSValue* encodedJSValue)
 {
-    return JSValue::decode(*encodedJSValue);
+    return JSValue::decode(std::bit_cast<const WTF::Atomic<EncodedJSValue>*>(encodedJSValue)->loadRelaxed());
 }
 
 ALWAYS_INLINE void updateEncodedJSValueConcurrent(EncodedJSValue& dest, EncodedJSValue value)
 {
-    dest = value;
+    std::bit_cast<WTF::Atomic<EncodedJSValue>*>(&dest)->storeRelaxed(value);
 }
 
 ALWAYS_INLINE void clearEncodedJSValueConcurrent(EncodedJSValue& dest)
 {
-    dest = JSValue::encode(JSValue());
+    std::bit_cast<WTF::Atomic<EncodedJSValue>*>(&dest)->storeRelaxed(JSValue::encode(JSValue()));
 }
-
 #if USE(BIGINT32)
 inline int32_t JSValue::bigInt32AsInt32() const
 {

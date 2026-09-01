@@ -29,6 +29,7 @@
 #include "SlotVisitor.h"
 #include "VM.h"
 #include "WriteBarrier.h"
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
@@ -58,7 +59,15 @@ public:
 protected:
     void clear()
     {
-        m_allocator = Allocator();
+        // With shared CodeBlocks (useJSThreads) this profile can be cleared
+        // while another mutator or compiler thread concurrently reads it
+        // (advisory state, SPEC-ungil §5.7 racy-profiling tolerance). Store
+        // m_allocator with a relaxed atomic so the racing access is defined;
+        // a reader that sees the old allocator with the cleared structure
+        // (or vice versa) just takes the profile slow path. m_structure
+        // accesses flow through WriteBarrier's concurrent accessors. Relaxed
+        // atomics compile to plain stores, so flag-off codegen is unchanged.
+        WTF::atomicStore(&m_allocator, Allocator(), std::memory_order_relaxed);
         m_structure.clear();
         ASSERT(isNull());
     }

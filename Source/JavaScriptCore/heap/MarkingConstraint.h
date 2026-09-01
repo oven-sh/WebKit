@@ -30,6 +30,7 @@
 #include "ConstraintVolatility.h"
 #include "JSExportMacros.h"
 #include <limits.h>
+#include <wtf/Atomics.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/SharedTask.h>
@@ -60,7 +61,7 @@ public:
     
     JS_EXPORT_PRIVATE void NODELETE resetStats();
     
-    JS_EXPORT_PRIVATE size_t lastVisitCount() const { return m_lastVisitCount; }
+    JS_EXPORT_PRIVATE size_t lastVisitCount() const { return WTF::atomicLoad(const_cast<size_t*>(&m_lastVisitCount), std::memory_order_relaxed); }
     
     // The following functions are only used by the real GC via the MarkingConstraintSolver.
     // Hence, we only need the SlotVisitor version.

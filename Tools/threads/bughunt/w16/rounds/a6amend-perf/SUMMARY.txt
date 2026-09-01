@@ -1,0 +1,23 @@
+host precondition:
+ 18:09:48 up 23 days, 10:52,  0 users,  load average: 5.99, 9.07, 8.80
+base-1 checksum=33602058 ms=312 
+cur-1 checksum=33602058 ms=306 
+base-2 checksum=33602058 ms=307 
+cur-2 checksum=33602058 ms=314 
+base-3 checksum=33602058 ms=309 
+cur-3 checksum=33602058 ms=309 
+base-4 checksum=33602058 ms=310 
+cur-4 checksum=33602058 ms=307 
+base-5 checksum=33602058 ms=314 
+cur-5 checksum=33602058 ms=314 
+base-6 checksum=33602058 ms=314 
+cur-6 checksum=33602058 ms=308 
+base-7 checksum=33602058 ms=310 
+cur-7 checksum=33602058 ms=309 
+base-8 checksum=33602058 ms=312 
+cur-8 checksum=33602058 ms=310 
+base-9 checksum=33602058 ms=311 
+cur-9 checksum=33602058 ms=308 
+base-10 checksum=33602058 ms=310 
+cur-10 checksum=33602058 ms=311 
+A6AMEND-PERF-DONE

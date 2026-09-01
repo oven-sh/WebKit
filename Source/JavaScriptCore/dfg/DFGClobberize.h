@@ -39,6 +39,161 @@
 
 namespace JSC { namespace DFG {
 
+// checktraps-dejank-invalidation-point, amend round 2 (AUDIT-checktraps P10b/
+// P10c closure, option (iii)): GIL-off, a node whose slow path can PARK on a
+// heap-access-release edge — a GC-heap allocation blocking on a shared-GC
+// handshake, the F8 (SPEC-congc §A.3.2b) gated acquireHeapAccess resume, a
+// class-2 transition-wait / compilation-lock spin
+// (parkSitePollAndParkForStopTheWorld) — must clobber heap facts, because
+// such parks carry NO invalidation point at their rejoin (and the
+// allocation-path ones carry no conductor-heap-fact-rewrite epoch check
+// either), yet the §A.3.2 stop predicate counts the parked (access-released)
+// thread as quiescent, so a §A.3 heap-fact window (haveABadTime butterfly
+// nuking, Class-A structure retags, debugger JS) can complete OVER the park.
+// A heap fact hoisted or CSE'd across the node would then be consumed stale
+// at the rejoin with nothing to cut it off (the jettison such a window
+// triggers only fires invalidation points; the consumption sits between the
+// rejoin and the next IP). Until the AHA resume edge gets its own epoch
+// check + rejoin discipline (closure options (i)/(ii) in
+// docs/threads/AUDIT-checktraps.md §4 P10c; Heap.cpp, outside that change's
+// ownership), these nodes simply clobber the heap GIL-off: jank contained to
+// parkable slow paths, never unsound — and no worse than the pre-change
+// state, where the CheckTraps poll clobber killed hoisting out of every
+// polling loop anyway. Flag-off and GIL-on this predicate is constant false
+// (flag-off byte-identical codegen LAW; GIL-on the mutator holds the GIL
+// across the slow path, so no §A.3 window can complete over it).
+//
+// SINGLE SOURCE OF TRUTH: this predicate is consumed by clobberize() (the
+// pre-switch write(Heap)) AND by
+// AbstractInterpreter::executeEffects (didFoldClobberStructures(), which
+// keeps the DFGCFAPhase AI-clobberize agreement assert satisfied without
+// destroying in-block AI precision — the in-block exposure predates this
+// change and is recorded as P10c-R in the audit) AND by
+// clobbersExitState() (DFGClobbersExitState.cpp), which SKIPS exactly the
+// injected pre-switch write: it models cross-thread visibility over a park,
+// not an observable mutation by the node itself, so it must not flip the
+// node's exit-state answer away from the flag-off model (phases like
+// DFGTierUpCheckInjectionPhase insert predicate nodes with a preserved
+// origin and rely on that). The skip depends on the pre-switch write being
+// the FIRST write clobberize() reports; keep it ahead of the switch. Any op
+// added here affects all three automatically; never gate the sides
+// differently.
+//
+// Phantom* allocation nodes are deliberately ABSENT: they emit no code (the
+// allocation was sunk; materialization happens at OSR exit), so there is no
+// runtime park site under them.
+inline bool jsThreadsParkableSlowPathClobbersHeapFacts(Graph& graph, Node* node)
+{
+    UNUSED_PARAM(graph);
+    if (!Options::useJSThreads() || Options::useThreadGIL()) [[likely]]
+        return false;
+    switch (node->op()) {
+    // GC-heap allocations modeled with write(HeapObjectCount) (the
+    // allocation-class widening the audit's P10c row charters).
+    case PushWithScope:
+    case CreateActivation:
+    case CreateDirectArguments:
+    case CreateScopedArguments:
+    case CreateClonedArguments:
+    case CallObjectConstructor:
+    case ToThis:
+    case ArraySlice:
+    case ArrayConcatArray:
+    case ArrayConcatAppendOne:
+    case AllocatePropertyStorage:
+    case ReallocatePropertyStorage:
+    case NewArrayWithSize:
+    case NewArrayWithSizeAndStructure:
+    case NewButterflyWithSize:
+    case ArraySortCompact:
+    case MaterializeNewArrayWithButterfly:
+    case NewArrayWithButterfly:
+    case NewArrayWithSpread:
+    case NewArray:
+    case NewArrayBuffer:
+    case CreateRest:
+    case ObjectCreate:
+    case NewObject:
+    case NewInternalFieldObject:
+    case NewPromise:
+    case NewRegExp:
+    case NewStringObject:
+    case NewMap:
+    case NewSet:
+    case NewWeakMap:
+    case NewWeakSet:
+    case MaterializeNewObject:
+    case MaterializeNewInternalFieldObject:
+    case MaterializeCreateActivation:
+    case NewFunction:
+    case NewGeneratorFunction:
+    case NewAsyncGeneratorFunction:
+    case NewAsyncFunction:
+    case NewBoundFunction:
+    // GC-cell allocators modeled pure (JSRopeString / JSString): the RESULT
+    // stays PureValue-CSE-able (pure matches are not invalidated by heap
+    // writes), but heap facts must not cross the allocation.
+    case MakeRope:
+    case MakeAtomString:
+    case StrCat:
+    // Butterfly (ArrayStorage) allocation on the conversion path.
+    case Arrayify:
+    case ArrayifyToStructure:
+    // HashMap storage allocation / rehash.
+    case SetAdd:
+    case MapSet:
+    case MapOrSetDelete:
+    case WeakSetAdd:
+    case WeakMapSet:
+    // P10b: the tier-up service path can reach class-2 parks — Worklist plan
+    // completion / installCode takes the gilOff compilation lock, whose wait
+    // loop alternates parkSitePollAndParkForStopTheWorld with
+    // handleTrapsForCurrentThreadIfNeeded (ScriptExecutable.cpp,
+    // GILOffCompilationLocker). Those park primitives are epoch-bracketed
+    // and jettison on overlap, but the rejoin back into this node carries no
+    // invalidation point, so a hoisted fact consumed between the rejoin and
+    // the next poll's IP (up to one loop iteration) is not provably cut off.
+    // Cost containment: these nodes exist ONLY in DFG-tier plans, and LICM
+    // runs only in FTL-mode plans (which never see CheckTierUp*), so the
+    // loop-hoisting de-jank is unaffected; this only pessimizes DFG-local
+    // CSE across tier-up checks.
+    case CheckTierUpInLoop:
+    case CheckTierUpAtReturn:
+    case CheckTierUpAndOSREnter:
+        return true;
+
+    // Leg-dependent cases. Legs that already clobber top need no help; the
+    // listed legs are the ones modeled precisely.
+    case NewTypedArray:
+    case NewTypedArrayBuffer:
+        return node->child1().useKind() == Int32Use || node->child1().useKind() == Int52RepUse;
+    case Spread:
+        return node->child1()->op() == PhantomNewArrayBuffer || node->child1()->op() == PhantomCreateRest;
+    case NewSymbol:
+        return !node->child1() || node->child1().useKind() == StringUse;
+    case NewRegExpUntyped:
+        return node->child1().useKind() == StringUse && node->child2().useKind() == StringUse;
+    case CompareEq:
+    case CompareLess:
+    case CompareLessEq:
+    case CompareGreater:
+    case CompareGreaterEq:
+        // The string-compare leg can resolve ropes / allocate.
+        return node->isBinaryUseKind(StringUse);
+    case NewResolvedPromise:
+        return node->isResolvedValueKnownNonThenable();
+    case MultiPutByOffset:
+        // Transitioning / storage-reallocating variants run a runtime slow
+        // path that can allocate property storage AND park in the
+        // JSObjectInlines transition-wait spin (P10b). Plain-replace
+        // variants are inline stores with no parkable slow path.
+        return node->multiPutByOffsetData().writesStructures() || node->multiPutByOffsetData().reallocatesStorage();
+
+    default:
+        return false;
+    }
+}
+
 template<typename ReadFunctor, typename WriteFunctor, typename DefFunctor>
 void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFunctor& write, const DefFunctor& def)
 {
@@ -130,6 +285,17 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         read(World);
         write(Heap);
     };
+
+    // checktraps-dejank-invalidation-point, amend round 2: GIL-off, parkable
+    // slow paths clobber heap facts (see the predicate's comment above for
+    // the full soundness argument). This pre-switch write is processed
+    // before any def() the node's own case emits, so the node's own results
+    // (e.g. NewArray's ArrayLengthLoc def) stay CSE-able while every PRIOR
+    // heap-fact availability is killed. The abstract interpreter consumes
+    // the SAME predicate (didFoldClobberStructures()), keeping the
+    // DFGCFAPhase AI-clobberize agreement assert green.
+    if (jsThreadsParkableSlowPathClobbersHeapFacts(graph, node)) [[unlikely]]
+        write(Heap);
 
     // Since Fixup can widen our ArrayModes based on profiling from other nodes we pessimistically assume
     // all nodes with an ArrayMode can clobber top. We allow some nodes like CheckArray because they can
@@ -266,9 +432,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case Int52Rep:
     case BooleanToNumber:
     case FiatInt52:
-    case MakeRope:
-    case MakeAtomString:
-    case StrCat:
     case ValueToInt32:
     case GetExecutable:
     case BottomValue:
@@ -593,9 +756,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CheckBadValue:
     case Return:
     case Unreachable:
-    case CheckTierUpInLoop:
-    case CheckTierUpAtReturn:
-    case CheckTierUpAndOSREnter:
     case LoopHint:
     case ProfileType:
     case ProfileControlFlow:
@@ -611,6 +771,26 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         write(SideState);
         return;
         
+    case CheckTierUpInLoop:
+    case CheckTierUpAtReturn:
+    case CheckTierUpAndOSREnter:
+        // AUDIT-checktraps P10b (amend round 2): the tier-up service path can
+        // reach class-2 parks — Worklist plan completion / installCode takes
+        // the gilOff compilation lock, whose wait loop alternates
+        // parkSitePollAndParkForStopTheWorld with
+        // handleTrapsForCurrentThreadIfNeeded (ScriptExecutable.cpp,
+        // GILOffCompilationLocker). Those park primitives are epoch-bracketed
+        // and jettison on overlap, but the rejoin back into this node carries
+        // no invalidation point, so a hoisted fact consumed between the
+        // rejoin and the next poll's IP (up to one loop iteration) is not
+        // provably cut off. The GIL-off heap-fact clobber comes from the
+        // pre-switch jsThreadsParkableSlowPathClobbersHeapFacts() write; see
+        // the predicate's CheckTierUp* comment for the cost-containment
+        // argument (DFG-only nodes; FTL/LICM never sees them). Flag-off/
+        // GIL-on: predicate is false, unchanged model.
+        write(SideState);
+        return;
+
     case StoreBarrier:
         read(JSCell_cellState);
         write(JSCell_cellState);
@@ -624,6 +804,131 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CheckTraps:
         read(InternalState);
         write(InternalState);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // UNGIL §K.5 / SPEC-jit I21 (AB-10 closure): flag-on, the polling
+            // CheckTraps is a PARK SITE — a mutator that traps here parks for
+            // the whole §A.3 thread-granular window (or a Mode-machine stop),
+            // during which the conductor may rewrite ANY heap fact this code
+            // hoisted: haveABadTime converts every fast-indexing butterfly to
+            // (SlowPut)ArrayStorage, Class-A fires retag structures, debugger
+            // services run arbitrary JS.
+            //
+            // checktraps-dejank-invalidation-point: GIL-off, the park-site
+            // hazard is enforced by PRECISE JETTISON + an invalidation point
+            // instead of a clobberWorld haymaker. CheckTraps codegen emits an
+            // InvalidationPoint-shaped jump-replacement watchpoint at the
+            // poll's rejoin (DFG SpeculativeJIT::compileCheckTraps / FTL
+            // compileCheckTraps), and every conductor-side heap-fact rewrite
+            // that can occur inside a stop window bumps the conductor
+            // heap-fact rewrite epoch (JSThreadsSafepoint::
+            // noteConductorHeapFactRewrite) IN-WINDOW, BEFORE the stopped
+            // world resumes — the wrapped-work closure in
+            // stopTheWorldAndRun's gilOff reroute, except pure
+            // code-lifecycle jettisons, plus context-edge bumps and explicit
+            // bumps at haveABadTimeImpl and the debugger-break service (the
+            // bump-edge law and full site table: BUMP-EDGE LAW comment in
+            // bytecode/JSThreadsSafepoint.cpp and
+            // docs/threads/AUDIT-checktraps.md). A mutator
+            // whose park in VMTraps::handleTraps overlapped a bump jettisons
+            // its own on-stack optimizing-JIT code on resume, which fires
+            // this node's invalidation point, so execution OSR-exits at the
+            // poll BEFORE any hoisted heap fact (CheckArray/GetButterfly/
+            // structure) is reused against the rewritten heap. Hence heap
+            // facts legally survive the poll at compile time: model the node
+            // exactly like InvalidationPoint below, plus the poll's own
+            // InternalState traffic.
+            //
+            // ORDER IS LOAD-BEARING: write(Watchpoint_fire) precedes the
+            // def(). The write kills any InvalidationPointLoc availability
+            // established by an earlier InvalidationPoint/CheckTraps
+            // (including this node's own def reaching around a loop
+            // backedge), so CSE can never replace THIS CheckTraps with an
+            // earlier invalidation point and silently DELETE the poll — a
+            // dropped poll is a missed safepoint (STW watchdog timeout /
+            // GIL never yielded). A later plain InvalidationPoint may be
+            // CSE'd into this node (the def): that is sound because codegen
+            // emits a real watchpoint label here whenever this def is
+            // emitted (gate must match: useJSThreads && !useThreadGIL &&
+            // node->origin.exitOK at all three sites + AI).
+            //
+            // GIL-on flag-on keeps the conservative model: the GIL park/
+            // hand-off edges are not all routed through handleTraps' epoch
+            // check, so invalidation coverage is not proven there; clobbering
+            // is trivially correct. Flag-off this whole branch is dead
+            // (byte-identical codegen LAW).
+            if (!Options::useThreadGIL() && node->origin.exitOK) {
+                write(Watchpoint_fire);
+                write(SideState);
+                // AUDIT-checktraps §7.1 INTERIM DEFAULT (amend round 2),
+                // pending the threads memory-model ruling on poll-bounded
+                // visibility of plain writes: keep USER-VISIBLE MUTABLE DATA
+                // non-hoistable across the poll. Without these writes, LICM
+                // may legally hoist a loop-invariant plain-field/element/
+                // global/closure-var load out of a hot GIL-off loop, so a
+                // spin-on-plain-flag loop (no Atomics) hangs — a user-visible
+                // semantic regression the old read(World)/write(Heap) model
+                // de-facto prevented. This is the "write(NamedProperties)-
+                // grade clobber / partial de-jank" outcome §7.1 anticipates
+                // for a YES ruling; if the ruling lands NO (plain reads may
+                // be hoisted), delete this block and adjust the corpus. The
+                // de-jank this change targets is preserved for the SHAPE
+                // facts that ARE precise-jettison-covered: structure,
+                // indexing type, typeinfo remain hoistable across polls,
+                // guarded by the invalidation point + precise jettison. The
+                // butterfly POINTER and vectorLength are NOT hoistable —
+                // see the JSObject_butterfly write below (Tier-B B3).
+                // (IndexedProperties is the supertype of all element-like
+                // heaps: the four indexed kinds, DirectArguments, Scope, and
+                // TypedArray properties — plain typed-array element reads
+                // stay poll-bounded too, because in this design plain
+                // (non-SAB) ArrayBuffers are shareable across Threads and
+                // get no coverage from the ECMA SAB memory model.)
+                write(NamedProperties);
+                write(IndexedProperties);
+                write(Butterfly_publicLength);
+                // Tier-B B3 / map-MC-JIT.md S2(a) (B3-JIT-POLL-CLOBBER-LINT):
+                // the BUTTERFLY POINTER itself MUST NOT survive the poll in
+                // unregistered code. The precise-jettison story above covers
+                // structure/indexingType — every falsifier of those goes
+                // through a stop window and bumps the conductor heap-fact
+                // rewrite epoch (arms (b)/(c) of map-MC-JIT.md S2). It does
+                // NOT cover arm (a): a foreign flat->segmented conversion +
+                // growth on an object whose TTL sets are already fired is a
+                // lock-free, NO-STW operation (OM 4.2) — no epoch bump, no
+                // jettison — yet it re-tags the butterfly word and (via the
+                // aliased fragment-0-slot-0 = flat IndexingHeader) grows the
+                // live publicLength past the frozen flat-era vectorLength
+                // (OM I9b). A LICM-hoisted (stale) masked flat base + a
+                // re-loaded (fresh) publicLength is then a heap OOB
+                // (CVE-2019-5782 / CVE-2021-2388 analog;
+                // JSTests/threads/cve/mc-jit-stale-base-grow-oob.js). Writing
+                // JSObject_butterfly + Butterfly_vectorLength here forces
+                // SAME-SNAPSHOT {base, publicLength, vectorLength} per poll
+                // boundary — the sufficient condition for S3's
+                // immune-by-construction BCE argument — so any staleness is
+                // memory-safe (old allocation kept live by conservative scan,
+                // never shrunk in place; jit R2 / OM I7). Structure /
+                // indexingType remain hoistable: the de-jank's chief win
+                // (CheckArray/CheckStructure surviving the poll) is intact.
+                // The validateButterflyTagDisciplineForGraph lint (declared
+                // below; SPEC-jit I14/I21(b) Task-13) cross-checks that no
+                // GetButterfly result is consumed across this clobber.
+                write(JSObject_butterfly);
+                write(Butterfly_vectorLength);
+                write(Absolute);
+                write(JSMapFields);
+                write(JSSetFields);
+                write(JSWeakMapFields);
+                write(JSWeakSetFields);
+                write(JSInternalFields);
+                write(JSDateFields);
+                write(RegExpObject_lastIndex);
+                def(HeapLocation(InvalidationPointLoc, Watchpoint_fire), LazyNode(node));
+                return;
+            }
+            read(World);
+            write(Heap);
+        }
         return;
 
     case InvalidationPoint:
@@ -1079,6 +1384,12 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case GetByValMegamorphic: {
         ArrayMode mode = node->arrayMode();
         LocationKind indexedPropertyLoc = indexedPropertyLocForResultType(node->result());
+        // T3-jit-segmented-arraymode: when the segmented bit is set, the DFG
+        // backend re-loads the tagged butterfly word directly (no GetButterfly
+        // child), so this node itself reads JSObject_butterfly. Flag-off
+        // byte-identical (the bit is never set without useJSThreads).
+        if (mode.mayBeSegmentedButterfly())
+            read(JSObject_butterfly);
         switch (mode.type()) {
         case Array::SelectUsingPredictions:
         case Array::Unprofiled:
@@ -1289,6 +1600,9 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case PutByValDirectResolved:
     case PutByValMegamorphic: {
         ArrayMode mode = node->arrayMode();
+        // T3-jit-segmented-arraymode: see GetByVal above.
+        if (mode.mayBeSegmentedButterfly())
+            read(JSObject_butterfly);
         Node* base = graph.varArgChild(node, 0).node();
         Node* index = graph.varArgChild(node, 1).node();
         Node* value = graph.varArgChild(node, 2).node();
@@ -1593,6 +1907,13 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         
     case GetButterfly:
         read(JSObject_butterfly);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit section 5.5 / Task 9: flag-on, GetButterfly emits the
+            // read predicate (structureID for the ARM64 R7/F7 dependency,
+            // indexing byte for the AS-rule SW test).
+            read(JSCell_structureID);
+            read(JSCell_indexingType);
+        }
         def(HeapLocation(ButterflyLoc, JSObject_butterfly, node->child1()), LazyNode(node));
         return;
 
@@ -1697,6 +2018,8 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         write(JSCell_indexingType);
         write(JSObject_butterfly);
         write(Watchpoint_fire);
+        // Allocates the (ArrayStorage) butterfly: GC-parkable GIL-off
+        // (AUDIT-checktraps P10c).
         return;
         
     case GetIndexedPropertyStorage:
@@ -1788,6 +2111,12 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case MultiGetByOffset: {
         read(JSCell_structureID);
         read(JSObject_butterfly);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit section 5.5 / Task 10: flag-on, the FTL lowering emits
+            // the read predicate (indexing byte for the conservative AS-rule
+            // SW test on prototype-base / MaybeArrayStorage cases).
+            read(JSCell_indexingType);
+        }
         AbstractHeap heap(NamedProperties, node->multiGetByOffsetData().identifierNumber);
         read(heap);
         auto location = node->hasDoubleResult() ? NamedPropertyDoubleLoc : NamedPropertyLoc;
@@ -1801,12 +2130,28 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case MultiPutByOffset: {
         read(JSCell_structureID);
         read(JSObject_butterfly);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit section 5.5 / Task 10: flag-on write predicate
+            // (indexing byte for the AS-rule arm on MaybeArrayStorage plans).
+            read(JSCell_indexingType);
+        }
         AbstractHeap heap(NamedProperties, node->multiPutByOffsetData().identifierNumber);
         write(heap);
         if (node->multiPutByOffsetData().writesStructures())
             write(JSCell_structureID);
         if (node->multiPutByOffsetData().reallocatesStorage())
             write(JSObject_butterfly);
+        // AUDIT-checktraps P10b/P10c: a transitioning or storage-reallocating
+        // variant runs a runtime slow path that can (a) allocate property
+        // storage from the GC heap — a GC-parkable allocation — and (b) park
+        // in the JSObjectInlines transition-wait spin
+        // (parkSitePollAndParkForStopTheWorld), whose rejoin carries no
+        // invalidation point. Both park classes admit a §A.3 heap-fact
+        // window completing over them, so those variants clobber heap facts
+        // GIL-off via jsThreadsParkableSlowPathClobbersHeapFacts (the
+        // pre-switch central clobber above). Non-transitioning,
+        // non-reallocating variants are plain stores with no parkable slow
+        // path and keep the precise model.
         auto location = node->child2().useKind() == DoubleRepUse ? NamedPropertyDoubleLoc : NamedPropertyLoc;
         if (graph.m_planStage >= PlanStage::LICMAndLater)
             def(HeapLocation(location, heap, node->child1(), &node->multiPutByOffsetData()), LazyNode(node->child2().node()));
@@ -1818,6 +2163,11 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case MultiDeleteByOffset: {
         read(JSCell_structureID);
         read(JSObject_butterfly);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit section 5.5 / Task 10: flag-on write predicate
+            // (indexing byte for the AS-rule arm on MaybeArrayStorage plans).
+            read(JSCell_indexingType);
+        }
         AbstractHeap heap(NamedProperties, node->multiDeleteByOffsetData().identifierNumber);
         write(heap);
         if (node->multiDeleteByOffsetData().writesStructures()) {
@@ -1833,6 +2183,16 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         unsigned identifierNumber = node->storageAccessData().identifierNumber;
         AbstractHeap heap(NamedProperties, identifierNumber);
         write(heap);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // SPEC-jit section 5.5 / Task 9: flag-on, out-of-line PutByOffset
+            // re-loads the tagged butterfly from the base object (plus the
+            // structureID for the ARM64 R7/F7 dependency and possibly the
+            // indexing byte for the AS-rule test) and runs the frozen write
+            // predicate in the same poll-free window as the store.
+            read(JSObject_butterfly);
+            read(JSCell_structureID);
+            read(JSCell_indexingType);
+        }
         auto location = node->child3().useKind() == DoubleRepUse ? NamedPropertyDoubleLoc : NamedPropertyLoc;
         if (graph.m_planStage >= PlanStage::LICMAndLater)
             def(HeapLocation(location, heap, node->child2(), &node->storageAccessData()), LazyNode(node->child3().node()));
@@ -1850,6 +2210,12 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case Array::Contiguous:
         case Array::ArrayStorage:
         case Array::SlowPutArrayStorage:
+            // T3-jit-segmented-arraymode: when the segmented bit is set, the
+            // DFG backend re-loads the tagged butterfly word directly (no
+            // GetButterfly child), so this node itself reads JSObject_butterfly.
+            // Flag-off byte-identical (the bit is never set).
+            if (mode.mayBeSegmentedButterfly())
+                read(JSObject_butterfly);
             read(Butterfly_publicLength);
             def(HeapLocation(ArrayLengthLoc, Butterfly_publicLength, node->child1()), LazyNode(node));
             return;
@@ -2022,8 +2388,14 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         return;
 
     case NewButterflyWithSize:
+        read(HeapObjectCount);
+        write(HeapObjectCount);
+        // FIXME: In this phase we say the Array is where the length of the array is def'd but this differs from ObjectAllocationSinking.
+        return;
+
     case PhantomNewArrayWithButterfly:
     case PhantomNewButterflyWithSize: {
+        // No code, no park site (see jsThreadsParkableSlowPathClobbersHeapFacts).
         read(HeapObjectCount);
         write(HeapObjectCount);
         // FIXME: In this phase we say the Array is where the length of the array is def'd but this differs from ObjectAllocationSinking.
@@ -2052,6 +2424,8 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
         }
         read(JSObject_butterfly);
+        if (Options::useJSThreads()) [[unlikely]]
+            read(JSCell_structureID); // SPEC-jit section 5.5 / Task 10 (ARM64 R7/F7 dependency)
         read(Butterfly_publicLength);
         read(sourceHeap);
         read(HeapObjectCount);
@@ -2074,6 +2448,8 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
         }
         read(JSObject_butterfly);
+        if (Options::useJSThreads()) [[unlikely]]
+            read(JSCell_structureID); // SPEC-jit section 5.5 / Task 10 (ARM64 R7/F7 dependency)
         read(Butterfly_publicLength);
         read(IndexedContiguousProperties);
         write(IndexedContiguousProperties);
@@ -2298,18 +2674,23 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case NewSet:
     case NewWeakMap:
     case NewWeakSet:
-    case PhantomNewObject:
     case MaterializeNewObject:
+    case MaterializeNewInternalFieldObject:
+    case MaterializeCreateActivation:
+        read(HeapObjectCount);
+        write(HeapObjectCount);
+        return;
+
+    case PhantomNewObject:
     case PhantomNewFunction:
     case PhantomNewGeneratorFunction:
     case PhantomNewAsyncFunction:
     case PhantomNewAsyncGeneratorFunction:
     case PhantomNewInternalFieldObject:
-    case MaterializeNewInternalFieldObject:
     case PhantomNewPromise:
     case PhantomCreateActivation:
-    case MaterializeCreateActivation:
     case PhantomNewRegExp:
+        // No code, no park site (see jsThreadsParkableSlowPathClobbersHeapFacts).
         read(HeapObjectCount);
         write(HeapObjectCount);
         return;
@@ -2440,7 +2821,14 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case ToString:
     case CallStringConstructor:
         switch (node->child1().useKind()) {
+        // KnownCellUse / KnownInt32Use arise from FixupPhase's final
+        // check-hoisting pass (fixupChecksInBlock): when this node sits in an
+        // ExitInvalid stretch, the CellUse/Int32Use type check is hoisted to
+        // the closest exitOK point and the edge is strengthened to its Known
+        // form. Semantics are unchanged — the check still runs, just earlier —
+        // so each Known kind is treated exactly like its checked counterpart.
         case CellUse:
+        case KnownCellUse:
         case UntypedUse:
             clobberTop();
             return;
@@ -2458,6 +2846,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
 
         case StringOrOtherUse:
         case Int32Use:
+        case KnownInt32Use:
         case Int52RepUse:
         case DoubleRepUse:
         case NotCellUse:
@@ -2610,6 +2999,9 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         Edge& mapEdge = node->child1();
         Edge& keyEdge = node->child2();
         write(JSSetFields);
+        // Allocates/rehashes hash-map storage cells: GC-parkable GIL-off
+        // (AUDIT-checktraps P10c). Same for MapSet/MapOrSetDelete/
+        // WeakSetAdd/WeakMapSet below.
         def(HeapLocation(MapEntryValueLoc, JSSetFields, mapEdge, keyEdge), LazyNode(node));
         return;
     }
@@ -2829,6 +3221,24 @@ bool accessesOverlap(Graph&, Node*, AbstractHeap);
 bool writesOverlap(Graph&, Node*, AbstractHeap);
 
 bool clobbersHeap(Graph&, Node*);
+
+// SPEC-jit I14 + I21(b) Task-13 lint (Tier-B B3 / MC-JIT S2). Walks the
+// finalized DFG/FTL graph just before backend codegen and asserts:
+//   (a) I14: every node that dereferences a butterfly storage pointer takes
+//       its storage edge from a tag-masking (or tag-zero-by-construction)
+//       producer;
+//   (b) I21(b) poll-placement: no GetButterfly result is consumed across a
+//       JSObject_butterfly-clobbering boundary (CheckTraps poll, parkable
+//       slow path, or any explicit butterfly write). With CheckTraps' GIL-off
+//       clobberize entry above writing JSObject_butterfly, CSE/LICM enforce
+//       (b) by construction; the lint is a regression guard so a future
+//       de-jank that re-widens the poll's preserved-heap set is caught
+//       immediately under JSC_validateButterflyTagDiscipline=1.
+// Forward "available expressions" dataflow over GetButterfly defs.
+// Flag-off: tag is always zero, function is a no-op (byte-identical LAW).
+// Defined in dfg/DFGSpeculativeJIT.cpp; called from both backends just
+// before codegen (SpeculativeJIT::compileBody / FTL LowerDFGToB3::lower).
+void validateButterflyTagDisciplineForGraph(Graph&);
 
 // We would have used bind() for these, but because of the overlaoding that we are doing,
 // it's quite a bit of clearer to just write this out the traditional way.

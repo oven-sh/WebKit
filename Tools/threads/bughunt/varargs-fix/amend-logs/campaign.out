@@ -1,0 +1,6 @@
+Tools/threads/bughunt/varargs-fix/amend-campaign.sh: line 18: 3703246 Trace/breakpoint trap   timeout -k 10 "$to" "$jsc" "${FLAGS[@]}" "$@" > "$LOG" 2>&1
+Tools/threads/bughunt/varargs-fix/amend-campaign.sh: line 18: 3705242 Trace/breakpoint trap   timeout -k 10 "$to" "$jsc" "${FLAGS[@]}" "$@" > "$LOG" 2>&1
+Tools/threads/bughunt/varargs-fix/amend-campaign.sh: line 18: 3708770 Trace/breakpoint trap   timeout -k 10 "$to" "$jsc" "${FLAGS[@]}" "$@" > "$LOG" 2>&1
+Tools/threads/bughunt/varargs-fix/amend-campaign.sh: line 18: 3715366 Trace/breakpoint trap   timeout -k 10 "$to" "$jsc" "${FLAGS[@]}" "$@" > "$LOG" 2>&1
+Tools/threads/bughunt/varargs-fix/amend-campaign.sh: line 18: 3719118 Aborted                 timeout -k 10 "$to" "$jsc" "${FLAGS[@]}" "$@" > "$LOG" 2>&1
+Tools/threads/bughunt/varargs-fix/amend-campaign.sh: line 18: 3722267 Aborted                 timeout -k 10 "$to" "$jsc" "${FLAGS[@]}" "$@" > "$LOG" 2>&1

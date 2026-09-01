@@ -27,6 +27,7 @@
 #include "StructureChain.h"
 
 #include "JSCInlines.h"
+#include <wtf/Atomics.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -52,7 +53,20 @@ StructureChain* StructureChain::create(VM& vm, JSObject* head)
     size_t bytes = Checked<size_t>(size) * sizeof(StructureID);
     void* vector = vm.auxiliarySpace().allocate(vm, bytes, nullptr, AllocationFailureMode::Assert);
     static_assert(!StructureID().bits(), "Make sure the value we're going to memcpy below matches the default StructureID");
-    memset(vector, 0, bytes);
+    // TSAN family structure-fields (r4 residual "StructureChain::create x
+    // StructureID/canCachePropertyNameEnumerator"): this auxiliary block can
+    // be recycled storage of a previously-published chain whose lanes foreign
+    // mutators (canCachePropertyNameEnumerator walks) and concurrent marking
+    // (visitChildrenImpl below) still read with relaxed atomics. Flag-on,
+    // zero the lanes with relaxed atomic 32-bit stores so the writer side of
+    // those pairs is C++-defined too; a reader observing the zero just hits
+    // its sentinel/decline exit. Flag-off keeps today's memset (identical
+    // behavior, no codegen change, per the flag-off rule).
+    if (Options::useJSThreads()) [[unlikely]] {
+        for (size_t i = 0; i < size; ++i)
+            WTF::atomicStore(static_cast<uint32_t*>(vector) + i, 0u, std::memory_order_relaxed);
+    } else
+        memset(vector, 0, bytes);
     StructureChain* chain = new (NotNull, allocateCell<StructureChain>(vm)) StructureChain(vm, vm.structureChainStructure.get(), static_cast<StructureID*>(vector));
     chain->finishCreation(vm, head);
     return chain;
@@ -62,11 +76,24 @@ void StructureChain::finishCreation(VM& vm, JSObject* head)
 {
     Base::finishCreation(vm);
     size_t i = 0;
+    static_assert(sizeof(StructureID) == sizeof(uint32_t));
     for (JSObject* current = head; current; current = current->structure()->storedPrototypeObject(current)) {
         Structure* structure = current->structure();
-        m_vector.get()[i++] = structure->id();
+        // TSAN family structure-fields: once the caller publishes this chain
+        // (Structure::m_cachedPrototypeChain, written lock-free by
+        // prototypeChain in StructureInlines.h), the StructureID lanes are
+        // read by foreign mutators and concurrent marking; relaxed atomic
+        // 32-bit stores (identical str/mov codegen) keep the word accesses
+        // C++-defined against those readers on recycled auxiliary memory.
+        WTF::atomicStore(reinterpret_cast<uint32_t*>(m_vector.get() + i), structure->id().bits(), std::memory_order_relaxed);
+        ++i;
         vm.writeBarrier(this);
     }
+    // UG §K publication: order the vector lanes (and the memset sentinel tail
+    // written in create()) before the caller's lock-free publish store of the
+    // chain pointer. Gated so flag-off codegen is unchanged (no arm64 dmb).
+    if (Options::useJSThreads()) [[unlikely]]
+        WTF::storeStoreFence();
 }
 
 template<typename Visitor>
@@ -76,8 +103,13 @@ void StructureChain::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.markAuxiliary(thisObject->m_vector.get());
-    for (auto* current = thisObject->m_vector.get(); *current; ++current) {
-        StructureID structureID = *current;
+    // Relaxed atomic lane loads: concurrent marking walks the vector while a
+    // mutator may be (re)writing lanes of a chain occupying recycled
+    // auxiliary memory (finishCreation above). Same ldr/mov codegen.
+    for (auto* current = thisObject->m_vector.get();; ++current) {
+        StructureID structureID = std::bit_cast<StructureID>(WTF::atomicLoad(reinterpret_cast<uint32_t*>(current), std::memory_order_relaxed));
+        if (!structureID)
+            break;
         Structure* structure = structureID.decode();
         visitor.appendUnbarriered(structure);
     }

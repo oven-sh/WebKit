@@ -497,6 +497,7 @@ set(WTF_PUBLIC_HEADERS
     text/OrdinalNumber.h
     text/ParsingUtilities.h
     text/RapidHash.h
+    text/SharedAtomStringTable.h
     text/StringBuffer.h
     text/StringBuilder.h
     text/StringBuilderInternals.h
@@ -690,6 +691,7 @@ set(WTF_SOURCES
     text/CStringView.cpp
     text/ExternalStringImpl.cpp
     text/LineEnding.cpp
+    text/SharedAtomStringTable.cpp
     text/StringBuffer.cpp
     text/StringBuilder.cpp
     text/StringBuilderJSON.cpp
@@ -825,9 +827,9 @@ set(WTF_PRIVATE_INCLUDE_DIRECTORIES
 
 set(WTF_LIBRARIES
     ${CMAKE_DL_LIBS}
-    ICU::data
     ICU::i18n
     ICU::uc
+    ICU::data
 )
 
 set(WTF_FRAMEWORKS bmalloc)

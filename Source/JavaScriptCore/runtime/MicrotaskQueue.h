@@ -28,9 +28,11 @@
 #include "JSCJSValue.h"
 #include "Microtask.h"
 #include "SlotVisitorMacros.h"
+#include <atomic>
 #include <wtf/CompactPointerTuple.h>
 #include <wtf/Compiler.h>
 #include <wtf/Deque.h>
+#include <wtf/Lock.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/SentinelLinkedList.h>
@@ -212,6 +214,46 @@ private:
     size_t m_markedBefore { 0 };
 };
 
+// UNGIL §E.1 (TSAN family 30, microtask-queue): m_isScheduledToRun /
+// m_isPerformingMicrotaskCheckpoint are advisory scheduling flags that GIL-off
+// get READ from foreign threads against the carrier's default queue (e.g.
+// JSGlobalObject::queueMicrotaskSlow probes isPerformingMicrotaskCheckpoint()
+// before the per-lite reroute decision) while the OWNER writes them plainly
+// (the SetForScope in performMicrotaskCheckpoint, enqueue's scheduling probe).
+// Mixed plain access is UB; this wrapper makes EVERY access a relaxed atomic.
+// Copy construction/assignment are defined (relaxed load + relaxed store) so
+// the existing SetForScope in performMicrotaskCheckpoint compiles unchanged.
+// Relaxed suffices: a stale read only biases a scheduling/reentry heuristic
+// and never gates queue-STORAGE access — storage HB comes from the foreign
+// inbox lock below. Flag-off: relaxed bool load/store compiles to the same
+// plain byte moves as before — semantics and codegen unchanged.
+class RelaxedAtomicBool {
+public:
+    constexpr RelaxedAtomicBool() = default;
+    constexpr RelaxedAtomicBool(bool value)
+        : m_value(value)
+    { }
+    RelaxedAtomicBool(const RelaxedAtomicBool& other)
+        : m_value(other.load())
+    { }
+    RelaxedAtomicBool& operator=(const RelaxedAtomicBool& other)
+    {
+        store(other.load());
+        return *this;
+    }
+    RelaxedAtomicBool& operator=(bool value)
+    {
+        store(value);
+        return *this;
+    }
+    operator bool() const { return load(); }
+
+private:
+    bool load() const { return m_value.load(std::memory_order_relaxed); }
+    void store(bool value) { m_value.store(value, std::memory_order_relaxed); }
+    std::atomic<bool> m_value { false };
+};
+
 class MicrotaskQueue : public BasicRawSentinelNode<MicrotaskQueue>, public RefCounted<MicrotaskQueue> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(MicrotaskQueue, JS_EXPORT_PRIVATE);
     WTF_MAKE_NONCOPYABLE(MicrotaskQueue);
@@ -222,9 +264,25 @@ public:
     inline void enqueue(QueuedTask&&);
     JS_EXPORT_PRIVATE void enqueueSlow(QueuedTask&&);
 
+    // UNGIL §E.1/§E.4 (TSAN family 30, microtask-queue): the ONLY legal way a
+    // thread that does not OWN this queue may hand it a task GIL-off. The
+    // task lands in a lock-guarded side inbox (never the owner's plain
+    // Deques); the owner splices the inbox into m_queue at its next drain
+    // (drainImpl), under the same lock — the lock release(enqueuer)/
+    // acquire(owner) pair is the happens-before that publishes the
+    // QueuedTask's words to the owner before it dequeues/runs/frees them.
+    // Service cadence is the owner's next drain (the AB-20/AB-23/AB-25
+    // service-request word); no foreign scheduling/debugger side effects run
+    // here (those are owner-thread state). Flag-off: never called.
+    JS_EXPORT_PRIVATE void enqueueFromForeignThread(QueuedTask&&);
+
     bool isEmpty() const
     {
-        return m_queue.isEmpty();
+        if (!m_queue.isEmpty())
+            return false;
+        if (m_acceptsForeignTasks) [[unlikely]]
+            return !hasForeignTasksSlow();
+        return true;
     }
 
     size_t size() const { return m_queue.size(); }
@@ -233,6 +291,11 @@ public:
     {
         m_queue.clear();
         m_toKeep.clear();
+        // GIL-off termination/forbidden-execution clears also drop pending
+        // foreign tasks (SD17-adjacent: residue is dropped, published
+        // settlements stay visible). Flag-off: branch not taken.
+        if (m_acceptsForeignTasks) [[unlikely]]
+            clearForeignTasksSlow();
     }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -267,8 +330,10 @@ protected:
     {
         setIsScheduledToRun(true);
     }
-    bool m_isScheduledToRun { false };
-    bool m_isPerformingMicrotaskCheckpoint { false };
+    // RelaxedAtomicBool (not plain bool): see the class comment above —
+    // cross-thread advisory reads GIL-off; flag-off codegen-identical.
+    RelaxedAtomicBool m_isScheduledToRun { false };
+    RelaxedAtomicBool m_isPerformingMicrotaskCheckpoint { false };
 
 private:
     JS_EXPORT_PRIVATE std::pair<JSGlobalObject*, bool> drainWithUseCallOnEachMicrotask(JSGlobalObject* currentGlobalObject, VM&, TopExceptionScope&);
@@ -286,8 +351,27 @@ private:
     template<bool useCallOnEachMicrotask>
     std::pair<JSGlobalObject*, bool> drainImpl(JSGlobalObject*, VM&, TopExceptionScope&);
 
+    // Foreign-inbox helpers (UNGIL §E.1/§E.4; see enqueueFromForeignThread).
+    // takeForeignTasks: owner-only — splice the inbox into m_queue under the
+    // lock; returns whether anything was spliced. hasForeignTasksSlow /
+    // clearForeignTasksSlow: locked probes used by isEmpty()/clear().
+    bool takeForeignTasks();
+    JS_EXPORT_PRIVATE bool hasForeignTasksSlow() const;
+    JS_EXPORT_PRIVATE void clearForeignTasksSlow();
+
     MarkedMicrotaskDeque m_queue;
     MarkedMicrotaskDeque m_toKeep;
+
+    // UNGIL §E.1/§E.4 foreign-enqueue inbox. m_acceptsForeignTasks is set
+    // ONCE in the constructor (GIL-off process => true) and never changes;
+    // flag-off it is false and every inbox branch is a single
+    // never-taken predicted test, leaving the landed single-Deque shape
+    // byte-equivalent in behavior. The inbox is the only MicrotaskQueue
+    // storage a non-owner thread may touch (under m_foreignTasksLock —
+    // a leaf: nothing is acquired under it).
+    bool m_acceptsForeignTasks { false };
+    mutable Lock m_foreignTasksLock;
+    Deque<QueuedTask> m_foreignTasks WTF_GUARDED_BY_LOCK(m_foreignTasksLock);
 };
 
 JS_EXPORT_PRIVATE void runMicrotaskWithDebugger(JSGlobalObject*, VM&, QueuedTask&);

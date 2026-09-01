@@ -50,19 +50,35 @@ public:
     void* freeList() const { return m_freeList; }
 
 private:
-    VM& m_vm;
     void* m_stackLimit;
     void* m_freeList { nullptr };
+    RegExp** m_executingRegExpSlot { nullptr };
     MatchFrom m_matchFrom;
 };
 
 inline MatchingContextHolder::MatchingContextHolder(VM& vm, RegExp* regExp, MatchFrom matchFrom)
-    : m_vm(vm)
-    , m_matchFrom(matchFrom)
+    : m_matchFrom(matchFrom)
 {
     if (matchFrom == MatchFrom::VMThread) {
-        m_stackLimit = vm.softStackLimit();
-        vm.m_executingRegExp = regExp;
+        m_stackLimit = vm.softStackLimitForCurrentThreadSlow(); // UNGIL §A.2.2 (AB-17): per-thread limit GIL-off.
+        // UNGIL AUD1.K2 sub-item / SamplingProfiler.h Group-4 row: GIL-off,
+        // "executing RegExp" is per-thread state and lives in the CURRENT
+        // lite's Group-4 slot (VMLite::executingRegExp) — N mutators writing
+        // the single VM member was a write-write race (TSAN regexp-shared
+        // family). The slot is resolved ONCE here and cached so the dtor's
+        // clear targets the same word by construction (lite installation is
+        // stable across a match; un-install happens only at VM exit).
+        // Flag-off/GIL-on keeps the VM member byte-identically (the profiler
+        // GIL-on reader and VMLite.h's "deliberately NOT in VMLitePrimitives"
+        // note both name the VM member as the GIL-on storage side); the
+        // GIL-off profiler reader half (SamplingProfiler.cpp lite-resolved
+        // reads) is the PENDING U-T8d wiring recorded in SamplingProfiler.h.
+        m_executingRegExpSlot = &vm.m_executingRegExp;
+        if (vm.gilOffWithProcessGate()) [[unlikely]] {
+            if (VMLite* lite = VMLite::currentIfExists(); lite && lite->vm == &vm)
+                m_executingRegExpSlot = &lite->executingRegExp;
+        }
+        *m_executingRegExpSlot = regExp;
     } else {
         StackBounds stack = Thread::currentSingleton().stack();
         m_stackLimit = stack.recursionLimit(Options::reservedZoneSize());
@@ -72,7 +88,7 @@ inline MatchingContextHolder::MatchingContextHolder(VM& vm, RegExp* regExp, Matc
 inline MatchingContextHolder::~MatchingContextHolder()
 {
     if (m_matchFrom == MatchFrom::VMThread)
-        m_vm.m_executingRegExp = nullptr;
+        *m_executingRegExpSlot = nullptr;
 }
 
 } } // namespace JSC::Yarr

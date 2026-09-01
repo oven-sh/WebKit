@@ -1,0 +1,2 @@
+JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+{"impl":"js","threads":16,"phaseA_ms":3332151.72,"phaseB_ms":183165.46,"phaseC_ms":8221.74,"total_ms":8237626.24,"checksumA":"b3e65a6855b9bdeb","postings":4158957,"checksumA2":"39c33392b2a4c5b2","checksumB":"c4bdd580f85ee058","checksumC":"af028188d7a56a96","docsIngested":30800,"tokensProcessed":4579072,"writesDone":2800}

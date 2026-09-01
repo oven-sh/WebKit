@@ -4308,7 +4308,6 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_isGeneratedFromCache(true)
     , m_hasCapturedVariables(false)
     , m_isCached(false)
-    , m_singletonHasBeenInvalidated(false)
     , m_features(0)
     , m_lexicallyScopedFeatures(NoLexicallyScopedFeatures)
     , m_unlinkedCodeBlockForCall()

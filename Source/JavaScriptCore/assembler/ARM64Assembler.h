@@ -2691,6 +2691,17 @@ public:
     }
 #endif
 
+#if OS(LINUX)
+    // MRS dst, TPIDR_EL0 (S3_3_C13_C0_2): the ELF thread pointer. Same encoding
+    // shape as TPIDRRO_EL0 above with op2 = 2 instead of 3. Used for the
+    // initial-exec TLS load of g_jscButterflyTIDTag (SPEC-jit-annex App. R5;
+    // SPEC-jit R5/Task 1b).
+    void mrs_TPIDR_EL0(RegisterID dst)
+    {
+        insn(0xd53bd040 | dst);
+    }
+#endif
+
     template<int datasize>
     ALWAYS_INLINE void orn(RegisterID rd, RegisterID rn, RegisterID rm)
     {

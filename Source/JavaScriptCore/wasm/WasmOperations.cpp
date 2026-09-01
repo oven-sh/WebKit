@@ -1206,9 +1206,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmUnwind, void*, (JSWebAssemblyInst
     VM& vm = instance->vm();
     WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
     genericUnwind(vm, callFrame);
-    ASSERT(!!vm.callFrameForCatch);
-    ASSERT(!!vm.targetMachinePCForThrow);
-    return vm.targetMachinePCForThrow;
+    // UNGIL §A.1.3 (K4 table I Group-2/3 rows): genericUnwind publishes the
+    // unwind words via group3Primitives() (per-lite GIL-off); a raw VM-block
+    // read here is the literal A4 wild-pc pattern (stale shared word as a
+    // jump target). Wasm is force-disabled GIL-off (Options.cpp recomputeDependentOptions),
+    // so this is reader/writer symmetry by construction; GIL-on/flag-off
+    // group3Primitives() IS the VM block — byte-identical. Same disposition
+    // as operationWasmRetrieveAndClearExceptionIfCatchable.
+    auto& primitives = vm.group3Primitives();
+    ASSERT(!!primitives.callFrameForCatch);
+    ASSERT(!!primitives.targetMachinePCForThrow);
+    return primitives.targetMachinePCForThrow;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationConvertToI64, int64_t, (JSWebAssemblyInstance* instance, EncodedJSValue v))
@@ -1615,9 +1623,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmThrow, void*, (JSWebAssemblyInsta
     throwException(globalObject, throwScope, exception);
 
     genericUnwind(vm, callFrame);
-    ASSERT(!!vm.callFrameForCatch);
-    ASSERT(!!vm.targetMachinePCForThrow);
-    return vm.targetMachinePCForThrow;
+    // UNGIL §A.1.3 (K4 table I Group-2/3 rows): per-lite unwind-word read;
+    // see operationWasmUnwind. Foreclosed today by the useWasm GIL-off
+    // force-disable; reroute keeps reader/writer symmetry regardless.
+    auto& primitives = vm.group3Primitives();
+    ASSERT(!!primitives.callFrameForCatch);
+    ASSERT(!!primitives.targetMachinePCForThrow);
+    return primitives.targetMachinePCForThrow;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmRethrow, void*, (JSWebAssemblyInstance* instance, EncodedJSValue encodedThrownValue))
@@ -1634,9 +1646,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmRethrow, void*, (JSWebAssemblyIns
     throwException(globalObject, throwScope, thrownValue);
 
     genericUnwind(vm, callFrame);
-    ASSERT(!!vm.callFrameForCatch);
-    ASSERT(!!vm.targetMachinePCForThrow);
-    return vm.targetMachinePCForThrow;
+    // UNGIL §A.1.3 (K4 table I Group-2/3 rows): per-lite unwind-word read;
+    // see operationWasmUnwind. Foreclosed today by the useWasm GIL-off
+    // force-disable; reroute keeps reader/writer symmetry regardless.
+    auto& primitives = vm.group3Primitives();
+    ASSERT(!!primitives.callFrameForCatch);
+    ASSERT(!!primitives.targetMachinePCForThrow);
+    return primitives.targetMachinePCForThrow;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmToJSException, void*, (JSWebAssemblyInstance* instance, Wasm::ExceptionType type))
@@ -1681,8 +1697,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmRetrieveAndClearExceptionIfCatcha
 
     RELEASE_ASSERT(!!throwScope.exception());
 
-    vm.callFrameForCatch = nullptr;
-    auto* jumpTarget = std::exchange(vm.targetMachinePCAfterCatch, nullptr);
+    // UNGIL §A.1.3 (K4 table I Group-2 rows): callFrameForCatch /
+    // targetMachinePCAfterCatch are per-lite state; the unwind writer
+    // (JITExceptions.cpp genericUnwind) stores them via group3Primitives(),
+    // so a raw VM-block read-and-clear here would consume the wrong storage
+    // on a spawned lite. Wasm is currently force-disabled GIL-off, so this
+    // is reader/writer symmetry by construction, not a reachable-bug fix;
+    // GIL-on / flag-off group3Primitives() IS the VM block — byte-identical.
+    auto& primitives = vm.group3Primitives();
+    primitives.callFrameForCatch = nullptr;
+    auto* jumpTarget = std::exchange(primitives.targetMachinePCAfterCatch, nullptr);
 
     Exception* exception = throwScope.exception();
     JSValue thrownValue = exception->value();

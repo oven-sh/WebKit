@@ -471,11 +471,21 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useZombieMode, false, Normal, "debugging option to scribble over dead objects with 0xbadbeef0"_s) \
     v(Bool, useImmortalObjects, false, Normal, "debugging option to keep all objects alive forever"_s) \
     v(Bool, sweepSynchronously, false, Normal, "debugging option to sweep all dead objects synchronously at GC end before resuming mutator"_s) \
+    v(Bool, validateFreeListStructure, false, Normal, "structurally validate LocalAllocator FreeLists (bounds/alignment/cycle within the owning MarkedBlock) at refill and stopAllocating; bounds-checks before every decode so corruption is reported, never dereferenced"_s) \
     v(Unsigned, maxSingleAllocationSize, 0, Configurable, "debugging option to limit individual allocations to a max size (0 = limit not set, N = limit size in bytes)"_s) \
     \
     v(GCLogLevel, logGC, GCLogging::None, Normal, "debugging option to log GC activity (0 = None, 1 = Basic, 2 = Verbose)"_s) \
     v(Bool, useGC, true, Normal, nullptr) \
     v(Bool, useGlobalGC, false, Normal, nullptr) \
+    v(Bool, useSharedGCHeap, false, Normal, "Multiple GCClient::Heaps (threads) share one server JSC::Heap"_s) \
+    v(Bool, verboseSharedGCHeap, false, Normal, nullptr) \
+    v(Bool, useConcurrentSharedGCMarking, false, Normal, "C1: concurrent marking between shared-GC stop windows (SPEC-congc sec 7.1)"_s) \
+    v(Bool, useSharedGCCollectorThread, false, Normal, "C2: collector-thread conductor for the shared GC (SPEC-congc sec 7.2)"_s) \
+    v(Bool, useSharedGCIncrementalSweep, false, Normal, "C3: incremental + mutator-concurrent sweeping under the shared GC (SPEC-congc sec 7.3)"_s) \
+    v(Bool, useSharedGCMutatorAssist, false, Normal, "C4: incremental mutator assist under the shared GC (SPEC-congc sec 7.4)"_s) \
+    v(Unsigned, sharedGCMutatorMarkStackDonationThreshold, 510, Normal, "CMS donation threshold in cells (SPEC-congc sec 5.2(ii)); default = one MarkStackArray segment, (4KB - segment header) / sizeof(const JSCell*) (GCSegmentedArray.h CapacityFromSize, release shape)"_s) \
+    v(Double, sharedGCEdenSurvivalFullTriggerRatio, 3.0, Normal, "Shared-GC N-mutator floating-garbage bound (SCALEBENCH sec 25 / T5-rss / sec 27 R1 / sec 31 T1-sibint): when isSharedServer() with >=2 DISTINCT ALLOCATING CLIENTS THIS CYCLE and post-eden heap size exceeds sizeAfterLastFullCollect * effectiveRatio, force the next collection Full. This option is the UPPER BOUND; the effective ratio is W-adaptive: min(this, 2.0 + 0.5*(allocatingClients-2)) -> 2.0 at 2, 2.5 at 3, 3.0 (this default) at >=4. Gating on distinct-allocating (not registered) clients means a serial section with W-1 siblings parked at a JS barrier sees count==1 and never fires -> all-Eden, the W=1 schedule (sec 31: collapses the 1.55x sibling-interference Full-GC train). 3.0 admits ~2 floating live-sets before a Full; the 2-allocator floor of 2.0 closes the sec-27 +10.3% RSS regression at <1% wall cost. 0 disables."_s) \
+    v(Unsigned, sharedGCMaxSiblingMarkingAssists, 0, Normal, "GIL-off sibling-marking-assist admission cap (SCALEBENCH sec 31 / T4-sibling-assist-admission-cap / offcpu16 row #3): max siblings admitted into Heap::gilOffSiblingAssistMarking per marking phase; over-cap siblings stay parked at the stop-window stripe condvar instead of churning drainFromShared's isReady wait. 0 = auto = max(0, numberOfGCMarkers - heapHelperPool().numberOfThreads()) i.e. fill to numberOfGCMarkers total drainers and no more. W=1 / flag-off: unreachable (sibling-park branch only)."_s) \
     v(Bool, gcAtEnd, false, Normal, "If true, the jsc CLI will do a GC before exiting"_s) \
     v(Bool, forceGCSlowPaths, false, Normal, "If true, we will force all JIT fast allocations down their slow paths."_s) \
     v(Bool, forceDidDeferGCWork, false, Normal, "If true, we will force all DeferGC destructions to perform a GC."_s) \
@@ -547,6 +557,9 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Unsigned, seedOfVMRandomForFuzzer, 0, Normal, "0 means not fuzzing this; use a cryptographically random seed"_s) \
     v(Bool, useRandomizingFuzzerAgent, false, Normal, nullptr) \
+    v(Unsigned, randomYieldPeriod, 0, Normal, "If non-zero, the RaceAmplifier injects a randomized sched_yield/short sleep on average once every this many visits per thread to instrumented slow-path sites. 0 disables (default; zero cost when off)."_s) \
+    v(Unsigned, randomYieldSeed, 0, Normal, "Seed for the RaceAmplifier's per-thread PRNGs. 0 (default) picks a cryptographically random seed and dataLogs it so the run can be replayed with --randomYieldSeed=<seed>."_s) \
+    v(Unsigned, randomYieldMaxMicroseconds, 100, Normal, "Upper bound, in microseconds, for the short sleeps the RaceAmplifier injects (about 1 in 4 perturbations sleep; the rest sched_yield)."_s) \
     v(Unsigned, seedOfRandomizingFuzzerAgent, 1, Normal, nullptr) \
     v(Bool, dumpFuzzerAgentPredictions, false, Normal, nullptr) \
     v(Bool, useDoublePredictionFuzzerAgent, false, Normal, nullptr) \
@@ -722,6 +735,26 @@ bool hasCapacityToUseLargeGigacage();
     FOR_EACH_JSC_WEB_PREFERENCE_OPTION(v) \
     /* Restricted so some app doesn't set this environment variable and start using it. */ \
     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
+    v(Bool, useJSThreads, false, Normal, "enable shared-memory Thread/Lock/Condition/ThreadLocal API. SECURITY (CVE-B15 / docs/threads/cve/map-MC-SPEC.md): enabling this flag is a high-resolution-timer capability grant equivalent to native code execution for confidentiality purposes, INDEPENDENT of useSharedArrayBuffer -- a spawned Thread spinning Atomics.add on a plain shared object is a no-permission sub-microsecond clock. No in-process secret is confidentiality-protected from JS running under this flag (Spectre v1/v2 structural; no index masking, no retpolines, zero gigacage on Windows/musl-mimalloc). Embedders MUST NOT enable for semi-trusted / multi-tenant code in-process; multi-tenant = multi-process isolation."_s) \
+    v(Bool, useThreadedLLIntICs, true, Normal, "kill switch: threaded LLInt metadata caches under useJSThreads"_s) \
+    v(Bool, useThreadedBaselineICs, true, Normal, "kill switch: threaded Baseline/stub ICs under useJSThreads"_s) \
+    v(Bool, useThreadedDFG, true, Normal, "kill switch: threaded DFG support under useJSThreads"_s) \
+    v(Bool, useThreadedFTL, true, Normal, "kill switch: threaded FTL support under useJSThreads"_s) \
+    v(Bool, validateButterflyTagDiscipline, false, Normal, "validate that every generated butterfly access masks or proves the tag (SPEC-jit I14)"_s) \
+    v(Bool, useJSThreadsUnlockHandlerICInFTL, false, Normal, "unlock the FTL handler-IC force-disable for bring-up (SPEC-jit M2a)"_s) \
+    v(Bool, forceSegmentedButterflies, false, Normal, "stress: every butterfly allocation/transition publishes a segmented butterfly (SPEC-objectmodel sec 9.6)"_s) \
+    v(Bool, forceButterflySWBit, false, Normal, "stress: treat every butterfly write as a foreign shared write (SW DCAS + writeThreadLocal fire; SPEC-objectmodel sec 9.6)"_s) \
+    v(Bool, verifyConcurrentButterfly, false, Normal, "debug-assert every concurrent-butterfly tag decode (I2/I3), the butterfly() flatness contract, and run the ConcurrentButterfly self-tests"_s) \
+    v(Unsigned, maxJSThreads, 32766, Normal, nullptr) \
+    v(Size, maxJSThreadHeapBytes, 0, Normal, "per-JS-thread soft shared-heap allocation quota under useSharedGCHeap (0 = disabled). INERT STUB: chartered design only, no enforcement yet (SPEC-heap ANNEX B / CVE-B13 / MC-DOS S3). When implemented: bounds a client's gross allocation since the last completed GC cycle; exceed -> ReturnNull-mode slow-path allocations fail + per-lite VMTraps checkpoint raises RangeError on the offending client (Assert-mode allocations never null -> never RELEASE_ASSERT) with per-thread attribution. Availability-only knob; flag-off byte-identical."_s) \
+    v(Unsigned, jsThreadGILTimeSliceMs, 0, Normal, "reserved, inert in phase 1 (SPEC-api Deviation 9)"_s) \
+    v(Unsigned, jsThreadStackSizeKB, 0, Normal, nullptr) \
+    v(Bool, logJSLockContention, false, Normal, "SCALEBENCH S2-parallel-cpu-waste instrumentation (useJSThreads only): at process exit, dataLog per-JS-Lock {acquires, spinIters, parks} from Lock.prototype.hold's acquire path plus the process-wide ThreadAtomics property-RMW retry totals. Off = zero acquire-path overhead (every counter bump is gated on this flag)."_s) \
+    v(Bool, useThreadGIL, false, Normal, "serialize all JS Thread execution under a global lock (default flipped OFF at UNGIL U-T14; U0 option validation forces it back ON unless useVMLite, useSharedAtomStringTable, useSharedGCHeap AND useThreadGILOffUnsafe are all enabled)"_s) \
+    v(Bool, useThreadGILOffUnsafe, false, Normal, "DEVELOPMENT ONLY: permit the GIL-off (N-parallel-mutator) configuration even though the UNGIL activation checklist (INTEGRATE-ungil.md AB list) is not fully landed; without this flag U0 option validation forces useThreadGIL=1 AND the gilRemovalPreconditionsMet() tripwire (CVE-B6, ThreadManager attachSpawnedThreadGCClient) fail-stops second-mutator attach"_s) \
+    v(Bool, useSharedAtomStringTable, false, Normal, "process-global shared atom string table"_s) \
+    v(Bool, useVMLite, false, Normal, "per-thread VMLite carriers (Phase A: inert)"_s) \
+    v(Bool, useStructureAllocationLock, false, Normal, "serialize Structure cell allocation + ID-creating transitions"_s) \
     /* Not sourced from UnifiedWebPreferences.yaml: force-enabled via the cross-origin-isolation path and consumed in WebCore. */ \
     v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \

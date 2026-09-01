@@ -28,13 +28,16 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "JSCConfig.h"
 #include "JSCInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "JSWebAssemblyInstance.h"
 #include "Options.h"
 #include "WasmFaultSignalHandler.h"
 #include "WasmLimits.h"
 #include "WeakGCSetInlines.h"
 #include <bmalloc/Gigacage.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/DataLog.h>
 #include <wtf/FastMalloc.h>
@@ -389,6 +392,63 @@ Expected<PageCount, GrowFailReason> Memory::grow(VM& vm, PageCount delta)
 
         memcpySpan(unsafeMakeSpan(static_cast<uint8_t*>(newMemory), desiredSize), m_handle->mutableSpan());
         Ref newHandle = adoptRef(*new BufferMemoryHandle(newMemory, desiredSize, desiredSize, initial(), maximum(), sharingMode(), MemoryMode::BoundsChecking));
+
+        // ===== GIL-off relocating-grow stop conduction (annex N6 arm 4) =====
+        //
+        // SPEC-ungil annex N6 arm 4 / SPEC-heap §10: a relocating
+        // BoundsChecking grow REPLACES the {base, length} pair that every TA
+        // / DataView fast path reads as TWO unordered loads. Store ordering
+        // alone cannot close that torn read, so the relocation MUST publish
+        // under a heap §10 stop: every other mutator parks at a safepoint
+        // with no live cached base into the old mapping, the new
+        // {base,length} is installed (handle swap + per-instance cache +
+        // ArrayBufferContents/view refresh via success() ->
+        // growSuccessCallback -> refreshAfterWasmMemoryGrow), then the world
+        // resumes. The old mapping is additionally quarantined to the NEXT
+        // stop by refreshAfterWasmMemoryGrow's gilOff arm
+        // (runtime/ArrayBuffer.cpp), covering captured/hoisted bases.
+        //
+        // Allocation + memcpy stay OUTSIDE the stop (expensive; the closure
+        // contract forbids JS-heap allocation, and these are native pages
+        // only). Writes from other threads landing in the OLD mapping between
+        // memcpy and the stop are LOST — annex N6 admits torn VALUES on a
+        // racy non-shared write; the invariant guaranteed is memory safety
+        // (no {post-grow length, pre-grow base} pairing reaches a reader).
+        //
+        // Caller contract for stopTheWorldAndRun: this thread is the entered
+        // mutator that called memory.grow / ArrayBuffer.resize; no §7-ranked
+        // or cell lock is held here (m_handle->lock() is taken only INSIDE
+        // success(), leaf-ranked). Nested Class-A fires reached from
+        // success() (e.g. detach watchpoints on the fixed-length path) take
+        // stopTheWorldAndRun's R1.h already-stopped inline path.
+        //
+        // Flag-off / GIL-on: g_jscConfig.gilOffProcess is the Config-frozen
+        // (useJSThreads && !useThreadGIL && U0-trio) byte; false there, so
+        // the landed straight-line publish below is byte-identical.
+        //
+        // Closes CVE-AUDIT Tier-B B4 (MC-GROW S5b / MC-LIFE S6); discharges
+        // the U-T13 OPEN DEPENDENCY recorded in
+        // ArrayBufferContents::refreshAfterWasmMemoryGrow.
+        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+            Ref<BufferMemoryHandle> retiredHandle = m_handle.copyRef(); // keep the old mapping alive across the swap; the contents-side quarantine (if any) takes its own ref.
+            Expected<PageCount, GrowFailReason> result = oldPageCount;
+            JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "Wasm BoundsChecking relocating grow (annex N6 arm 4 / MC-GROW S5b)");
+            JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+                m_handle->transferAnchors(newHandle.get());
+                m_handle = WTF::move(newHandle);
+                ASSERT(basePointer() == newMemory);
+                result = success();
+            }));
+            // retiredHandle drops here, AFTER the stop. If a resizable
+            // non-shared buffer is associated, refreshAfterWasmMemoryGrow's
+            // gilOff arm has already quarantined another ref to the same
+            // handle (released at the NEXT stop). If no JS buffer/view
+            // exists, no other mutator can hold this base (spawned wasm
+            // execution is refused; instances were re-cached inside the
+            // stop), so dropping post-stop is the correct lifetime.
+            return result;
+        }
+
         m_handle->transferAnchors(newHandle.get());
         m_handle = WTF::move(newHandle);
 

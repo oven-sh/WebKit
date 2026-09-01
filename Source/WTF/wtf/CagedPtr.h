@@ -31,6 +31,7 @@
 #include <wtf/RawPtrTraits.h>
 
 #include <climits>
+#include <wtf/Atomics.h>
 
 namespace WTF {
 
@@ -39,25 +40,43 @@ class CagedPtr {
 public:
     static constexpr Gigacage::Kind kind = passedKind;
 
+    // THREADS/TSAN: constructor stores are relaxed atomics too — a CagedPtr
+    // embedded in a GC cell can be constructed at a recycled address that
+    // stale readers on other threads still probe with atomic loads.
     CagedPtr() : CagedPtr(nullptr) { }
     CagedPtr(std::nullptr_t)
-        : m_ptr(nullptr)
-    { }
+    {
+        typename PtrTraits::StorageType storage { nullptr };
+        WTF::atomicStore(&m_ptr, storage, std::memory_order_relaxed);
+    }
 
     CagedPtr(T* ptr)
-        : m_ptr(ptr)
-    { }
+    {
+        typename PtrTraits::StorageType storage { ptr };
+        WTF::atomicStore(&m_ptr, storage, std::memory_order_relaxed);
+    }
+
+    // THREADS/TSAN: the storage word is read and written with relaxed atomics —
+    // a detaching/resizing thread may legally race readers on other threads
+    // (JSC ArrayBuffer detach/transfer under shared-heap Threads); staleness is
+    // handled by the callers' protocols, the atomics only make the accesses
+    // defined. Codegen is a plain mov on x86-64/arm64.
+    typename PtrTraits::StorageType loadStorageRelaxed() const
+    {
+        return WTF::atomicLoad(const_cast<typename PtrTraits::StorageType*>(&m_ptr), std::memory_order_relaxed);
+    }
 
     T* get() const LIFETIME_BOUND
     {
-        ASSERT(m_ptr);
-        T* ptr = PtrTraits::unwrap(m_ptr);
+        typename PtrTraits::StorageType storage = loadStorageRelaxed();
+        ASSERT(storage);
+        T* ptr = PtrTraits::unwrap(storage);
         return Gigacage::caged(kind, ptr);
     }
 
     T* getMayBeNull() const LIFETIME_BOUND
     {
-        T* ptr = PtrTraits::unwrap(m_ptr);
+        T* ptr = PtrTraits::unwrap(loadStorageRelaxed());
         if (!ptr)
             return nullptr;
         return Gigacage::caged(kind, ptr);
@@ -65,7 +84,7 @@ public:
 
     T* getUnsafe() const LIFETIME_BOUND
     {
-        T* ptr = PtrTraits::unwrap(m_ptr);
+        T* ptr = PtrTraits::unwrap(loadStorageRelaxed());
         return Gigacage::cagedMayBeNull(kind, ptr);
     }
 
@@ -77,30 +96,30 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     CagedPtr(CagedPtr& other)
-        : m_ptr(other.m_ptr)
     {
+        WTF::atomicStore(&m_ptr, other.loadStorageRelaxed(), std::memory_order_relaxed);
     }
 
     CagedPtr& operator=(const CagedPtr& ptr)
     {
-        m_ptr = ptr.m_ptr;
+        WTF::atomicStore(&m_ptr, ptr.loadStorageRelaxed(), std::memory_order_relaxed);
         return *this;
     }
 
     CagedPtr(CagedPtr&& other)
-        : m_ptr(PtrTraits::exchange(other.m_ptr, nullptr))
     {
+        WTF::atomicStore(&m_ptr, PtrTraits::exchange(other.m_ptr, nullptr), std::memory_order_relaxed);
     }
 
     CagedPtr& operator=(CagedPtr&& ptr)
     {
-        m_ptr = PtrTraits::exchange(ptr.m_ptr, nullptr);
+        WTF::atomicStore(&m_ptr, PtrTraits::exchange(ptr.m_ptr, nullptr), std::memory_order_relaxed);
         return *this;
     }
 
     bool operator==(const CagedPtr& other) const
     {
-        bool result = m_ptr == other.m_ptr;
+        bool result = loadStorageRelaxed() == other.loadStorageRelaxed();
         ASSERT(result == (getUnsafe() == other.getUnsafe()));
         return result;
     }
@@ -112,7 +131,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     T* rawBits() const
     {
-        return std::bit_cast<T*>(m_ptr);
+        return std::bit_cast<T*>(loadStorageRelaxed());
     }
     
 protected:

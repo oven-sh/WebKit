@@ -1,0 +1,45 @@
+JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==2799254==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000fff (pc 0x559c922ad531 bp 0x7b6c5d5753f0 sp 0x7b6c5d5753b0 T23)
+==2799254==The signal is caused by a WRITE memory access.
+==2799254==Hint: address points to the zero page.
+    #0 0x559c922ad531 in std::__atomic_base<unsigned char>::store(unsigned char, std::memory_order) /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/bits/atomic_base.h:477:2
+    #1 0x559c922ad531 in WTF::Atomic<unsigned char>::store(unsigned char, std::memory_order) /root/WebKit/WebKitBuild/Debug/WTF/Headers/wtf/Atomics.h:67:102
+    #2 0x559c959062a0 in WTF::Atomic<unsigned char>::storeRelaxed(unsigned char) /root/WebKit/WebKitBuild/Debug/WTF/Headers/wtf/Atomics.h:69:50
+    #3 0x559c95904bdb in bool JSC::trySetIndexQuicklyForTypedArrayViewConcurrent<JSC::Uint8Adaptor>(JSC::JSGenericTypedArrayView<JSC::Uint8Adaptor>*, unsigned int, JSC::JSValue) /root/WebKit/Source/JavaScriptCore/runtime/JSObject.cpp:614:68
+    #4 0x559c958a9c7d in JSC::trySetIndexQuicklyForTypedArrayConcurrent(JSC::JSObject*, unsigned int, JSC::JSValue, JSC::ArrayProfile*) /root/WebKit/Source/JavaScriptCore/runtime/JSObject.cpp:658:5
+    #5 0x559c958a10e9 in JSC::JSObject::trySetIndexQuicklyConcurrent(JSC::VM&, unsigned int, JSC::JSValue, JSC::ArrayProfile*) /root/WebKit/Source/JavaScriptCore/runtime/JSObject.cpp:930:16
+    #6 0x559c9327f476 in JSC::JSObject::trySetIndexQuickly(JSC::VM&, unsigned int, JSC::JSValue, JSC::ArrayProfile*) /root/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSObject.h:628:20
+    #7 0x559c94835ffc in JSC::putByVal(JSC::JSGlobalObject*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::ArrayProfile*, JSC::ECMAMode) /root/WebKit/Source/JavaScriptCore/jit/JITOperations.cpp:1707:25
+    #8 0x559c94837462 in operationPutByValSloppyGeneric /root/WebKit/Source/JavaScriptCore/jit/JITOperations.cpp:2032:5
+    #9 0x7b6c62a5363f  (<unknown module>)
+
+==2799254==Register values:
+rax = 0x0000000000000fff  rbx = 0x00007b6c5d575420  rcx = 0x0000000000000f5a  rdx = 0x0000000000000fff  
+rdi = 0x0000000000000000  rsi = 0x000000000000ffff  rbp = 0x00007b6c5d5753f0  rsp = 0x00007b6c5d5753b0  
+ r8 = 0x0000000000000000   r9 = 0x00007fffffffff01  r10 = 0x00007fffffffff01  r11 = 0x00000f6e0baa6a01  
+r12 = 0xf3f8f2f2f2f8f2f2  r13 = 0x00007c9caca212a0  r14 = 0xfffe000000000000  r15 = 0xfffe000000000002  
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /root/WebKit/WebKitBuild/Debug/WTF/Headers/wtf/Atomics.h:67:102 in WTF::Atomic<unsigned char>::store(unsigned char, std::memory_order)
+Thread T23 (JS Thread) created by T0 here:
+    #0 0x559c92108d91 in pthread_create /home/runner/work/llvm-project/llvm-project/compiler-rt/lib/asan/asan_interceptors.cpp:250:3
+    #1 0x559c97d534c3 in WTF::Thread::establishHandle(WTF::Thread::NewThreadContext&, WTF::StackAllocationSpecification, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy) /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:354:17
+    #2 0x559c97c4d00b in WTF::Thread::create(WTF::ASCIILiteral, WTF::Function<void ()>&&, WTF::ThreadType, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy, WTF::StackAllocationSpecification) /root/WebKit/Source/WTF/wtf/Threading.cpp:330:32
+    #3 0x559c95ed1764 in JSC::constructThread(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/ThreadObject.cpp:467:5
+    #4 0x7b6c62a08116  (<unknown module>)
+    #5 0x559c969f78e0 in llint_op_construct LowLevelInterpreter.cpp
+    #6 0x559c969f74b0 in llint_op_call LowLevelInterpreter.cpp
+    #7 0x559c969f8afa in llint_op_call_ignore_result LowLevelInterpreter.cpp
+    #8 0x559c969f74b0 in llint_op_call LowLevelInterpreter.cpp
+    #9 0x559c969d0055 in llint_call_javascript LowLevelInterpreter.cpp
+    #10 0x559c94619f61 in JSC::Interpreter::executeProgram(JSC::SourceCode const&, JSC::JSGlobalObject*, JSC::JSObject*) /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:1258:28
+    #11 0x559c9508a381 in JSC::evaluate(JSC::JSGlobalObject*, JSC::SourceCode const&, JSC::JSValue, WTF::NakedPtr<JSC::Exception>&) /root/WebKit/Source/JavaScriptCore/runtime/Completion.cpp:145:37
+    #12 0x559c922c490a in runWithOptions(GlobalObject*, CommandLine&, bool&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:3957:35
+    #13 0x559c9220915b in jscmain(int, char**)::$_0::operator()(JSC::VM&, GlobalObject*, bool&) const /root/WebKit/Source/JavaScriptCore/jsc.cpp:4686:13
+    #14 0x559c92170e99 in int runJSC<jscmain(int, char**)::$_0>(CommandLine const&, bool, jscmain(int, char**)::$_0 const&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4472:13
+    #15 0x559c9216adc2 in jscmain(int, char**) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4679:18
+    #16 0x559c9216a6e2 in main /root/WebKit/Source/JavaScriptCore/jsc.cpp:3715:15
+    #17 0x7f6cad62a60f in __libc_start_call_main (/lib64/libc.so.6+0x2a60f) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609)
+
+==2799254==ABORTING

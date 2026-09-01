@@ -33,6 +33,7 @@
 #include "DFGPlan.h"
 #include "InlineCallFrame.h"
 #include "JSCJSValueInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "TrackedReferences.h"
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -62,21 +63,29 @@ bool CommonData::invalidateLinkedCode()
         return true;
     }
 
-    if (!m_isStillValid)
+    if (!m_isStillValid.load(std::memory_order_relaxed))
         return false;
 
-    if (m_hasVMTrapsBreakpointsInstalled) [[unlikely]] {
+    if (m_hasVMTrapsBreakpointsInstalled.load(std::memory_order_relaxed)) [[unlikely]] {
         Locker locker { pcCodeBlockMapLock };
         auto& map = pcCodeBlockMap();
         for (auto& jumpReplacement : m_jumpReplacements)
             map.remove(jumpReplacement.dataLocation());
-        m_hasVMTrapsBreakpointsInstalled = false;
+        m_hasVMTrapsBreakpointsInstalled.store(false, std::memory_order_relaxed);
     }
+
+    // SPEC-jit I2/section 5.3: with shared-memory threads enabled, linked code
+    // is invalidated only inside a stop-the-world window (JSThreadsSafepoint
+    // closure or GC stop) - never while another mutator may be executing it.
+    if (!m_jumpReplacements.isEmpty())
+        JSThreadsSafepoint::assertPatchingIsSafe();
 
     for (unsigned i = m_jumpReplacements.size(); i--;)
         m_jumpReplacements[i].fire();
 
-    m_isStillValid = false;
+    // Relaxed per TSAN-TRIAGE §3.5: validity is advisory off-owner; the
+    // authoritative transition happens inside the STW window asserted above.
+    m_isStillValid.store(false, std::memory_order_relaxed);
     return true;
 }
 
@@ -84,7 +93,7 @@ CommonData::~CommonData()
 {
     if (m_isUnlinked)
         return;
-    if (m_hasVMTrapsBreakpointsInstalled) [[unlikely]] {
+    if (m_hasVMTrapsBreakpointsInstalled.load(std::memory_order_relaxed)) [[unlikely]] {
         Locker locker { pcCodeBlockMapLock };
         auto& map = pcCodeBlockMap();
         for (auto& jumpReplacement : m_jumpReplacements)
@@ -94,11 +103,19 @@ CommonData::~CommonData()
 
 void CommonData::installVMTrapBreakpoints(CodeBlock* owner)
 {
+    // SPEC-jit I2 / M2b (review round 4, R4-3): runs on the VMTraps
+    // signal-sender thread and asynchronously patches reachable invalidation
+    // points (JumpReplacement::installVMTrapBreakpoint) — forbidden by I2
+    // while any other mutator may execute the code. M2b's deferred hunk forces
+    // usePollingTraps under useJSThreads (async breakpoint patching = I2
+    // violation); until it is applied, fail fast here. Listed in the Task-11
+    // audit / M2b notes in docs/threads/INTEGRATE-jit.md.
+    RELEASE_ASSERT(!Options::useJSThreads() || Options::usePollingTraps());
     ASSERT(!m_isUnlinked);
     Locker locker { pcCodeBlockMapLock };
-    if (!m_isStillValid || m_hasVMTrapsBreakpointsInstalled)
+    if (!m_isStillValid.load(std::memory_order_relaxed) || m_hasVMTrapsBreakpointsInstalled.load(std::memory_order_relaxed))
         return;
-    m_hasVMTrapsBreakpointsInstalled = true;
+    m_hasVMTrapsBreakpointsInstalled.store(true, std::memory_order_relaxed);
 
     auto& map = pcCodeBlockMap();
 #if !defined(NDEBUG)

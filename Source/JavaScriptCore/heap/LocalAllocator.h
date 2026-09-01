@@ -59,6 +59,13 @@ public:
 
     // Intended for diagnostics only (rdar://157153895)
     bool isFreeListedCell(const void*) const;
+    // SharedGC Wlr T2: the block this allocator was bump-allocating from at
+    // the §10 step-5 stopAllocating() flush (the one whose newlyAllocated
+    // bitmap that flush stamped), or null if the allocator's free list was
+    // already exhausted at park time. Conductor-read while
+    // worldIsStoppedForAllClients() only — the field is owner-thread-mutated
+    // outside the stop window (I2) and frozen inside it.
+    MarkedBlock::Handle* lastActiveBlock() const { return m_lastActiveBlock; }
 
 private:
     friend class BlockDirectory;
@@ -67,6 +74,7 @@ private:
     JS_EXPORT_PRIVATE void* allocateSlowCase(Heap&, size_t, GCDeferralContext*, AllocationFailureMode);
     void didConsumeFreeList();
     void* tryAllocateWithoutCollecting(size_t);
+    void* tryAllocateFromOwnDirectory(size_t); // T7-mspl-per-directory: cursor-only, no cross-directory steal.
     void* tryAllocateIn(MarkedBlock::Handle*, size_t);
     void* allocateIn(MarkedBlock::Handle*, size_t cellSize);
     ALWAYS_INLINE void doTestCollectionsIfNeeded(Heap&, GCDeferralContext*);

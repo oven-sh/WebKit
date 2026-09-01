@@ -32,10 +32,12 @@
 #include "JSFunction.h"
 #include "JSGlobalObject.h"
 #include "LazyProperty.h"
+#include "Options.h"
 #include "PropertySlot.h"
 #include "PutPropertySlot.h"
 #include "TypeError.h"
 #include <wtf/Assertions.h>
+#include <wtf/RecursiveLockAdapter.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -430,6 +432,54 @@ struct HashTable {
 JS_EXPORT_PRIVATE bool setUpStaticFunctionSlot(VM&, const ClassInfo*, const HashTableValue*, JSObject* thisObject, PropertyName, PropertySlot&);
 JS_EXPORT_PRIVATE void reifyStaticAccessor(VM&, const HashTableValue&, JSObject& thisObject, PropertyName);
 
+// UNGIL IT-6: serializes lazy static-property reification across lites — every path
+// that calls reifyStaticProperty (setUpStaticFunctionSlot, the reifyStaticProperties
+// batch below, and JSObject::reifyAllStaticProperties via the deletion path) takes
+// this lock, so concurrent putDirect on a shared object's static slots cannot
+// interleave. Recursive because lazy initializers reached from reifyStaticProperty
+// (LazyClassStructure::constructor, PropertyCallback, builtin generators) can
+// re-enter static lookup on another object on the same thread.
+//
+// Lock discipline (§LK long-hold entry): the lock is held across allocation and
+// arbitrary lazy initializers, so (a) no GC conductor and no holder of heap-internal
+// locks may acquire it, and (b) no thread may BLOCK on it while holding heap access —
+// the contended path parks access-released (lockStaticPropertyReificationLockContended)
+// so a collection triggered by the holder can stop the world without waiting on a
+// parked waiter, and every caller re-checks its precondition after acquisition.
+JS_EXPORT_PRIVATE RecursiveLock& staticPropertyReificationLock();
+JS_EXPORT_PRIVATE void lockStaticPropertyReificationLockContended(VM&);
+JS_EXPORT_PRIVATE bool staticPropertyAlreadyReified(VM&, JSObject&, const PropertyName&);
+
+// Scoped acquisition gated on the lite-threading predicate: with useJSThreads=0
+// (single-threaded embedders, shipped flag-off multi-VM configs) this takes no lock
+// at all and the reification paths behave exactly as before IT-6. The fast path is an
+// uncontended tryLock (also taken on same-thread recursion); the contended path
+// blocks with heap access released.
+class StaticPropertyReificationLocker {
+public:
+    explicit StaticPropertyReificationLocker(VM& vm)
+    {
+        if (!Options::useJSThreads())
+            return;
+        m_locked = true;
+        if (staticPropertyReificationLock().tryLock())
+            return;
+        lockStaticPropertyReificationLockContended(vm);
+    }
+
+    ~StaticPropertyReificationLocker()
+    {
+        if (m_locked)
+            staticPropertyReificationLock().unlock();
+    }
+
+    StaticPropertyReificationLocker(const StaticPropertyReificationLocker&) = delete;
+    StaticPropertyReificationLocker& operator=(const StaticPropertyReificationLocker&) = delete;
+
+private:
+    bool m_locked { false };
+};
+
 inline BuiltinGenerator HashTableValue::builtinAccessorGetterGenerator() const
 {
     ASSERT(m_attributes & PropertyAttribute::Accessor);
@@ -481,6 +531,40 @@ inline bool getStaticPropertySlotFromTable(VM& vm, const ClassInfo* classInfo, c
 
 inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObj)
 {
+    // UNGIL IT-6: taken here — not only in setUpStaticFunctionSlot — so that every
+    // reification path, including JSObject::reifyAllStaticProperties (reached via the
+    // deleteProperty path, outside Lookup.*), serializes under the same lock. The lock
+    // is recursive, so the batch holders and setUpStaticFunctionSlot nest harmlessly.
+    StaticPropertyReificationLocker reificationLocker(vm);
+    // S45-DUPLICATE-PROPERTY-NAME: make reification idempotent under the lock.
+    // JSObject::reifyAllStaticProperties probes getDirectOffset UNLOCKED before
+    // calling here, and the batch reifyStaticProperties template never pre-
+    // probes — for those callers the locker above is the first serialization
+    // point, so two lites can both observe "not present", both arrive here,
+    // and the loser would re-putDirect a name the winner just installed
+    // (wasted JSFunction allocation + spurious didReplaceProperty /
+    // replacement-watchpoint fire on a freshly-installed slot; under the §4.2
+    // StayFlatShared gate that is also a second locked header publish).
+    // Re-probe HERE, after the lock is held, and skip when the uid is already
+    // own. setUpStaticFunctionSlot already takes this lock and re-probes under
+    // it (UNGIL IT-6) before calling here, so for that caller this re-probe is
+    // redundant-but-harmless (recursive lock, cold path). Gated on the same
+    // predicate as the locker (useJSThreads) so flag-off codegen is byte-
+    // identical: with the flag off every caller's pre-probe is authoritative
+    // (single-threaded) and this body runs exactly once per name as before.
+    //
+    // Investigation note (SCALEBENCH §45 residual #2): the reported
+    // `describe(Object) -> {…hasOwn:75,hasOwn:76,…}` and post-worker `keys:78`
+    // / `from:72` "duplicates" turned out to be the PRIVATE builtin symbols
+    // (`@hasOwn` at 76, `@keys` at 71, `@from` at 70) which describe() prints
+    // without the `@` distinguisher — distinct uids, not duplicate offsets for
+    // one uid. putDirectInternal's structure->get() replace leg already
+    // prevents same-uid duplicates. This re-probe is therefore the TOCTOU
+    // closure (avoid the redundant install), not a duplicate-uid fix.
+    if (Options::useJSThreads()) [[unlikely]] {
+        if (staticPropertyAlreadyReified(vm, thisObj, propertyName))
+            return;
+    }
     if (value.attributes() & PropertyAttribute::Builtin) {
         if (value.attributes() & PropertyAttribute::Accessor)
             reifyStaticAccessor(vm, value, thisObj, propertyName);
@@ -569,6 +653,9 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
 template<typename ArrayType>
 inline void reifyStaticProperties(VM& vm, const ClassInfo* classInfo, const ArrayType& values, JSObject& thisObj)
 {
+    // UNGIL IT-6: held across the whole batch so a concurrent lazy reifier on another
+    // lite cannot interleave putDirects on the same object mid-batch.
+    StaticPropertyReificationLocker reificationLocker(vm);
     BatchedTransitionOptimizer transitionOptimizer(vm, &thisObj);
     for (auto& value : values) {
         if (value.m_key.isNull())

@@ -26,7 +26,9 @@
 #include "config.h"
 #include "IsoCellSet.h"
 
+#include "IsoCellSetInlines.h"
 #include "MarkedBlockInlines.h"
+#include <wtf/Atomics.h>
 
 namespace JSC {
 
@@ -58,14 +60,20 @@ Ref<SharedTask<MarkedBlock::Handle*()>> IsoCellSet::parallelNotEmptyMarkedBlockS
         
         MarkedBlock::Handle* run() final
         {
-            if (m_done)
+            // m_done is read here without m_lock by design (fast path); the
+            // transition to true happens under m_lock below. Relaxed atomic
+            // makes the monotonic-flag race well-defined.
+            if (m_done.load(std::memory_order_relaxed))
                 return nullptr;
+            // SharedGC (T8 audit, I5b): parallel constraint/marking helper —
+            // runs only inside the stop window once shared (deviation 4), so
+            // this lock-free bit scan sees a stable m_bits.
             m_directory.assertIsMutatorOrMutatorIsStopped();
             Locker locker { m_lock };
             auto bits = m_directory.markingNotEmptyBitsView() & m_set.m_blocksWithBits;
             m_index = bits.findBit(m_index, true);
             if (m_index >= m_directory.m_blocks.size()) {
-                m_done = true;
+                m_done.store(true, std::memory_order_relaxed);
                 return nullptr;
             }
             return m_directory.m_blocks[m_index++];
@@ -76,7 +84,7 @@ Ref<SharedTask<MarkedBlock::Handle*()>> IsoCellSet::parallelNotEmptyMarkedBlockS
         BlockDirectory& m_directory;
         size_t m_index { 0 };
         Lock m_lock;
-        bool m_done { false };
+        Atomic<bool> m_done { false };
     };
     
     return adoptRef(*new Task(*this));
@@ -88,8 +96,28 @@ NEVER_INLINE WTF::BitSet<MarkedBlock::atomsPerBlock>* IsoCellSet::addSlow(unsign
     auto& bitsPtrRef = m_bits[blockIndex];
     auto* bits = bitsPtrRef.get();
     if (!bits) {
-        bitsPtrRef = makeUnique<WTF::BitSet<MarkedBlock::atomsPerBlock>>();
-        bits = bitsPtrRef.get();
+        // GIL-off (TSAN family gc-marking-residual, wave-5 residual): the read
+        // side (isoCellSetBitsPointerConcurrently, IsoCellSetInlines.h) was
+        // converted to an atomic load in wave 4, but this lazy-segment
+        // publication was still a PLAIN unique_ptr assignment ordered only by
+        // a storeStoreFence — a one-sided data race against the concurrent
+        // atomic readers, and the fence is invisible to TSAN, so the freshly
+        // zero-initialized BitSet words had no modeled happens-before edge
+        // either (the "x BitSet load" report). Publish with a RELEASE store
+        // into the unique_ptr's pointer word; it pairs with the consume load
+        // on the read side to order the BitSet's construction before any
+        // concurrent bit access. All mutation of m_bits[] slots remains
+        // serialized by m_bitvectorLock, so releasing the unique_ptr into the
+        // slot transfers ownership without a competing writer.
+        static_assert(sizeof(std::unique_ptr<WTF::BitSet<MarkedBlock::atomsPerBlock>>) == sizeof(WTF::BitSet<MarkedBlock::atomsPerBlock>*));
+        auto newBits = makeUnique<WTF::BitSet<MarkedBlock::atomsPerBlock>>();
+        bits = newBits.get();
+        WTF::atomicStore(std::bit_cast<WTF::BitSet<MarkedBlock::atomsPerBlock>**>(&bitsPtrRef), newBits.release(), std::memory_order_release);
+        // Keep the fence: it orders the pointer publication above before the
+        // m_blocksWithBits publication below (the sweepToFreeList protocol
+        // reads m_blocksWithBits, loadLoadFences, then expects m_bits to be
+        // non-null). A release store only orders EARLIER stores; it does not
+        // stop this later store from being reordered before it.
         WTF::storeStoreFence();
         m_blocksWithBits[blockIndex] = true;
     }
@@ -119,17 +147,36 @@ void IsoCellSet::sweepToFreeList(MarkedBlock::Handle* block)
         return;
     
     WTF::loadLoadFence();
-    
-    if (!m_bits[block->index()]) {
+
+    // GIL-off (TSAN-DEEP-08, gc-marking-residual family): addSlow() RELEASE-
+    // publishes the per-block BitSet into the unique_ptr's pointer word; the
+    // wave-4/5 acquire-side helper (isoCellSetBitsPointerConcurrently) was wired
+    // into add/remove/contains/forEach but this function was missed and still
+    // dereferenced m_bits via plain unique_ptr accessors. Under TSAN that left
+    // no modeled happens-before from the BitSet's construction on a HeapHelper
+    // thread to the concurrentFilter word accesses below, so BitSet.h:407/410
+    // were reported against the makeUnique malloc. On hardware the publication
+    // is already correct (storeStoreFence in addSlow + the loadLoadFence above
+    // order m_blocksWithBits -> pointer -> words), and the plain-store fast path
+    // in concurrentFilter only fires on words containing zero allocated cell
+    // heads — words no concurrent add() can target — so no membership bit can
+    // be lost. Load through the helper so TSAN sees the acquire that pairs with
+    // addSlow's release. Keep the loadLoadFence above: the helper's non-TSAN
+    // path is relaxed + dependentLoadLoadFence(), which orders only address-
+    // dependent loads and does NOT order the independent m_blocksWithBits read
+    // at the top of this function before this pointer load.
+    auto* bits = isoCellSetBitsPointerConcurrently(m_bits[block->index()]);
+
+    if (!bits) {
         dataLog("FATAL: for block index ", block->index(), ":\n");
         dataLog("Blocks with bits says: ", !!m_blocksWithBits[block->index()], "\n");
-        dataLog("Bits says: ", RawPointer(m_bits[block->index()].get()), "\n");
+        dataLog("Bits says: ", RawPointer(bits), "\n");
         RELEASE_ASSERT_NOT_REACHED();
     }
-    
+
     if (block->block().hasAnyNewlyAllocated()) {
         // The newlyAllocated() bits are a superset of the marks() bits.
-        m_bits[block->index()]->concurrentFilter(block->block().newlyAllocated());
+        bits->concurrentFilter(block->block().newlyAllocated());
         return;
     }
 
@@ -143,8 +190,8 @@ void IsoCellSet::sweepToFreeList(MarkedBlock::Handle* block)
         m_bits[block->index()] = nullptr;
         return;
     }
-    
-    m_bits[block->index()]->concurrentFilter(block->block().marks());
+
+    bits->concurrentFilter(block->block().marks());
 }
 
 } // namespace JSC

@@ -53,7 +53,14 @@ void ArrayAllocationProfile::updateProfile()
     // So for now, we update the allocation profile only from the main thread.
     
     ASSERT(!isCompilationThread());
-    Storage storage = std::exchange(m_storage, Storage(nullptr, m_storage.type()));
+    // Under useJSThreads multiple mutators can race here on a shared
+    // CodeBlock. The whole profile word is accessed via relaxed atomics (see
+    // the class comment in ArrayAllocationProfile.h): the exchange below
+    // atomically claims lastArray (so at most one racing thread sees a given
+    // array), and the trailing setTypeRelaxed can lose a racing update, which
+    // at worst "forgets" a profile observation — sound, per the comment above
+    // and SPEC-ungil §5.7.
+    Storage storage = m_storage.exchangeTupleRelaxed(Storage(nullptr, m_storage.typeRelaxed()));
     JSArray* lastArray = storage.pointer();
     IndexingTypeAndVectorLength current = storage.type();
     if (!lastArray)
@@ -67,7 +74,7 @@ void ArrayAllocationProfile::updateProfile()
             indexingType |= CopyOnWrite;
         }
         unsigned largestSeenVectorLength = std::min(std::max(current.vectorLength(), lastArray->getVectorLength()), BASE_CONTIGUOUS_VECTOR_LEN_MAX);
-        m_storage.setType(IndexingTypeAndVectorLength(indexingType, largestSeenVectorLength));
+        m_storage.setTypeRelaxed(IndexingTypeAndVectorLength(indexingType, largestSeenVectorLength));
     }
 }
 

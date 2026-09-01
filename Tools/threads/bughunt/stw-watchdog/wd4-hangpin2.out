@@ -1,0 +1,63 @@
+run 1: 2s PASS
+run 2: 2s PASS
+run 3: 2s PASS
+run 4: 2s PASS
+run 5: 2s PASS
+run 6: 2s PASS
+run 7: 2s PASS
+run 8: 66s SILENT-HANG (bt: /root/WebKit/Tools/threads/bughunt/stw-watchdog/bts/wd4-hang-run8-pid1209253.bt)
+run 9: 2s PASS
+run 10: 2s PASS
+run 11: 2s PASS
+run 12: 2s PASS
+run 13: 2s PASS
+run 14: 2s PASS
+run 15: 2s PASS
+run 16: 2s PASS
+run 17: 2s PASS
+run 18: 2s PASS
+./wd4-hangpin.sh: line 13: 1214559 Aborted                 (core dumped) "$JSC" "${FLAGS[@]}" "$DIR/../repro.js" > "$LOG" 2>&1
+run 19: 32s WATCHDOG-ABORT
+run 20: 2s PASS
+run 21: 2s PASS
+run 22: 65s SILENT-HANG (bt: /root/WebKit/Tools/threads/bughunt/stw-watchdog/bts/wd4-hang-run22-pid1216566.bt)
+run 23: 2s PASS
+run 24: 2s PASS
+run 25: 2s PASS
+run 26: 2s PASS
+run 27: 2s PASS
+./wd4-hangpin.sh: line 13: 1220761 Aborted                 (core dumped) "$JSC" "${FLAGS[@]}" "$DIR/../repro.js" > "$LOG" 2>&1
+run 28: 32s WATCHDOG-ABORT
+run 29: 2s PASS
+run 30: 2s PASS
+run 31: 2s PASS
+run 32: 2s PASS
+run 33: 2s PASS
+run 34: 2s PASS
+run 35: 2s PASS
+run 36: 2s PASS
+run 37: 2s PASS
+run 38: 2s PASS
+run 39: 2s PASS
+run 40: 66s SILENT-HANG (bt: /root/WebKit/Tools/threads/bughunt/stw-watchdog/bts/wd4-hang-run40-pid1223779.bt)
+run 41: 2s PASS
+run 42: 2s PASS
+run 43: 2s PASS
+run 44: 2s PASS
+run 45: 2s PASS
+run 46: 2s PASS
+run 47: 65s SILENT-HANG (bt: /root/WebKit/Tools/threads/bughunt/stw-watchdog/bts/wd4-hang-run47-pid1228135.bt)
+run 48: 66s SILENT-HANG (bt: /root/WebKit/Tools/threads/bughunt/stw-watchdog/bts/wd4-hang-run48-pid1231808.bt)
+run 49: 2s PASS
+run 50: 2s PASS
+run 51: 68s SILENT-HANG (bt: /root/WebKit/Tools/threads/bughunt/stw-watchdog/bts/wd4-hang-run51-pid1235690.bt)
+run 52: 65s SILENT-HANG (bt: /root/WebKit/Tools/threads/bughunt/stw-watchdog/bts/wd4-hang-run52-pid1239917.bt)
+run 53: 2s PASS
+run 54: 2s PASS
+run 55: 2s PASS
+run 56: 2s PASS
+run 57: 2s PASS
+run 58: 66s SILENT-HANG (bt: /root/WebKit/Tools/threads/bughunt/stw-watchdog/bts/wd4-hang-run58-pid1244414.bt)
+run 59: 2s PASS
+run 60: 2s PASS
+SUMMARY wd4 runs=60 pass=50 abort=2 silent_hang=8 other=0

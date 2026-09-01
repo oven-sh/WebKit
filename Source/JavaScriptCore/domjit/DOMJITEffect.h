@@ -44,6 +44,11 @@ struct Effect {
         return { readRange, HeapRange::none() };
     }
 
+#if ENABLE(DFG_JIT)
+    // DFG::AbstractHeapKind only exists when the DFG is compiled in
+    // (dfg/DFGAbstractHeap.h is empty under ENABLE_C_LOOP / no-JIT builds);
+    // these abstract-heap-kind effects are only consumed by
+    // dfg/DFGClobberize.h anyway.
     constexpr static Effect forReadKinds(DFG::AbstractHeapKind read1 = DFG::InvalidAbstractHeap, DFG::AbstractHeapKind read2 = DFG::InvalidAbstractHeap, DFG::AbstractHeapKind read3 = DFG::InvalidAbstractHeap, DFG::AbstractHeapKind read4 = DFG::InvalidAbstractHeap)
     {
         return { HeapRange::none(), HeapRange::none(), HeapRange::none(), { read1, read2, read3, read4 } };
@@ -58,6 +63,7 @@ struct Effect {
     {
         return { HeapRange::none(), HeapRange::none(), HeapRange::none(), { reads[0], reads[1], reads[2], reads[3] }, { writes[0], writes[1], writes[2], writes[3] } };
     }
+#endif
 
     constexpr static Effect forReadWrite(HeapRange readRange, HeapRange writeRange)
     {
@@ -86,18 +92,23 @@ struct Effect {
 
     constexpr bool isTop() const
     {
-        return domWrites == HeapRange::top() ||
-            writes[0] == DFG::Heap ||
-            writes[1] == DFG::Heap ||
-            writes[2] == DFG::Heap ||
-            writes[3] == DFG::Heap;
+        return domWrites == HeapRange::top()
+#if ENABLE(DFG_JIT)
+            || writes[0] == DFG::Heap
+            || writes[1] == DFG::Heap
+            || writes[2] == DFG::Heap
+            || writes[3] == DFG::Heap
+#endif
+            ;
     }
 
     HeapRange domReads { HeapRange::top() };
     HeapRange domWrites { HeapRange::top() };
     HeapRange def { HeapRange::top() };
+#if ENABLE(DFG_JIT)
     DFG::AbstractHeapKind reads[4] { DFG::InvalidAbstractHeap };
     DFG::AbstractHeapKind writes[4] { DFG::InvalidAbstractHeap };
+#endif
 };
 
 }

@@ -5647,6 +5647,11 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
 #if ENABLE(WEBASSEMBLY)
         case WasmFunctionIntrinsic: {
+            // UNGIL SD7/§I item (2) interim (AB-15): no CallWasm
+            // encouragement under useJSThreads (see
+            // DFGStrengthReductionPhase.cpp — the conversion is disabled).
+            if (Options::useJSThreads()) [[unlikely]]
+                return CallOptimizationResult::DidNothing;
             if (callOp != Call && !(callOp == TailCall && !allInlineFramesAreTailCalls()))
                 return CallOptimizationResult::DidNothing;
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
@@ -7406,6 +7411,25 @@ void ByteCodeParser::handleGetById(
         }
     }
 
+    if (Options::useJSThreads()) [[unlikely]] {
+        // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / SCALEBENCH.md §44
+        // backstop: compileGetButterfly under useJSThreads routes the
+        // segmented-butterfly check to speculationCheck(BadIndexingType)
+        // (DFGSpeculativeJIT.cpp compileGetButterfly). If a foreign-TID
+        // structure transition has segmented the base's butterfly for life,
+        // the CheckStructure + GetButterfly + GetByOffset fast path below
+        // OSR-exits forever and the recompile re-emits the same body. Mirror
+        // the BadCache/BadConstantCache exit-site idiom: once this bytecode
+        // has recorded a BadIndexingType exit, fall back to the GetById IC
+        // node so the next compile converges in one shot. Covers both the
+        // single-variant load() path and MultiGetByOffset. Flag-off this
+        // block is dead and codegen is byte-identical.
+        if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIndexingType)) {
+            set(destination, addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+            return;
+        }
+    }
+
     ASSERT(type == AccessType::GetById || type == AccessType::GetByIdDirect ||  !getByStatus.makesCalls());
     if (!getByStatus.isSimple() || !getByStatus.numVariants() || !Options::useAccessInlining()) {
         set(destination,
@@ -7792,6 +7816,23 @@ void ByteCodeParser::handleCheckTraps()
 {
     if (Options::usePollingTraps() || m_graph.m_plan.isUnlinked()) {
         addToGraph(CheckTraps);
+        // SPEC-jit I21 (AB-10 closure): flag-on, every DFG/FTL poll is immediately
+        // followed by an invalidation point, so a mutator parked at the poll while
+        // the window's work JETTISONED this code block resumes into the patched
+        // exit instead of running stale elided code. (useJSThreads forces
+        // usePollingTraps, M2b, so we always reach this arm flag-on; unlinked
+        // plans cannot carry invalidation points and keep the CheckTraps-only
+        // form — they are not used flag-on.)
+        if (Options::useJSThreads() && !m_graph.m_plan.isUnlinked()) [[unlikely]] {
+            // The flag-on CheckTraps clobbers the heap (a park admits a foreign
+            // stop window), hence ClobbersExit; exiting to the same bytecode
+            // after the poll is sound (the poll has no JS-observable effect and
+            // re-executes on re-entry), so re-validate the exit origin for the
+            // invalidation point.
+            m_exitOK = true;
+            addToGraph(ExitOK);
+            addToGraph(InvalidationPoint);
+        }
         return;
     }
     // With signal-based traps this InvalidationPoint is also where VMTraps::tryInstallTrapBreakpoints()
@@ -7870,7 +7911,20 @@ void ByteCodeParser::handlePutById(
                 }
             }
         }
-        
+
+        if (Options::useJSThreads()) [[unlikely]] {
+            // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Tasks 9/10: no
+            // inlined transition sequences flag-on (see the Transition case
+            // below); MultiPutByOffset transition variants would lower to the
+            // same machinery in the FTL.
+            for (unsigned variantIndex = putByStatus.numVariants(); variantIndex--;) {
+                if (putByStatus[variantIndex].kind() == PutByVariant::Transition) {
+                    emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+                    return;
+                }
+            }
+        }
+
         if (m_graph.compilation()) [[unlikely]]
             m_graph.compilation()->noticeInlinedPutById();
 
@@ -7904,6 +7958,19 @@ void ByteCodeParser::handlePutById(
     }
     
     case PutByVariant::Transition: {
+        if (Options::useJSThreads()) [[unlikely]] {
+            // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Task 9: the inlined
+            // transition sequence (AllocatePropertyStorage / PutByOffset /
+            // NukeStructureAndSetButterfly / PutStructure) implements transition
+            // semantics in JIT'd code, which section 5.5 forbids until the E4
+            // transition predicate (TTL sets valid+watched + PA bit test +
+            // owner-tag compare) is emitted around it. Route through the
+            // generic PutById IC: the OM's C++ paths perform the transition
+            // under its regime rules (R3 slow-path rule).
+            emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+            return;
+        }
+
         addToGraph(FilterPutByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addPutByStatus(currentCodeOrigin(), putByStatus)), base);
 
         addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.oldStructure())), unwrapped);
@@ -8045,7 +8112,18 @@ void ByteCodeParser::handlePutPrivateNameById(
             addToGraph(PutPrivateNameById, OpInfo(identifier), OpInfo(privateFieldPutKind), base, value);
             return;
         }
-        
+
+        if (Options::useJSThreads()) [[unlikely]] {
+            // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Tasks 9/10: no
+            // inlined transition sequences flag-on (see below).
+            for (unsigned variantIndex = putByStatus.numVariants(); variantIndex--;) {
+                if (putByStatus[variantIndex].kind() == PutByVariant::Transition) {
+                    addToGraph(PutPrivateNameById, OpInfo(identifier), OpInfo(privateFieldPutKind), base, value);
+                    return;
+                }
+            }
+        }
+
         if (m_graph.compilation()) [[unlikely]]
             m_graph.compilation()->noticeInlinedPutById();
     
@@ -8081,8 +8159,16 @@ void ByteCodeParser::handlePutPrivateNameById(
     
     case PutByVariant::Transition: {
         ASSERT(privateFieldPutKind.isDefine());
+        if (Options::useJSThreads()) [[unlikely]] {
+            // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Task 9: no inlined
+            // transition sequence flag-on (see handlePutById's Transition
+            // case); the generic op performs the transition via the OM's C++
+            // paths (R3).
+            addToGraph(PutPrivateNameById, OpInfo(identifier), OpInfo(privateFieldPutKind), base, value);
+            return;
+        }
         addToGraph(FilterPutByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addPutByStatus(currentCodeOrigin(), putByStatus)), base);
-    
+
         addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.oldStructure())), base);
         if (!check(variant.conditionSet())) {
             addToGraph(PutPrivateNameById, OpInfo(identifier), OpInfo(privateFieldPutKind), base, value);
@@ -10143,7 +10229,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
             RELEASE_ASSERT(!m_currentBlock->size() || (m_graph.compilation() && m_currentBlock->size() == 1 && m_currentBlock->at(0)->op() == CountExecution));
 
-            ValueProfileAndVirtualRegisterBuffer* buffer = bytecode.metadata(codeBlock).m_buffer;
+            ValueProfileAndVirtualRegisterBuffer* buffer = WTF::atomicLoad(&bytecode.metadata(codeBlock).m_buffer, std::memory_order_acquire); // THREADS: pairs with the release publish.
 
             if (!buffer) {
                 NEXT_OPCODE(op_catch); // This catch has yet to execute. Note: this load can be racy with the main thread.
@@ -11146,7 +11232,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             Node* enumerator = get(bytecode.m_enumerator);
             Node* mode = get(bytecode.m_mode);
 
-            auto seenModes = OptionSet<JSPropertyNameEnumerator::Flag>::fromRaw(metadata.m_enumeratorMetadata);
+            auto seenModes = OptionSet<JSPropertyNameEnumerator::Flag>::fromRaw(WTF::atomicLoad(const_cast<uint8_t*>(&metadata.m_enumeratorMetadata), std::memory_order_relaxed)); // THREADS: relaxed profiling read.
 
             if (!seenModes)
                 addToGraph(ForceOSRExit);
@@ -11183,7 +11269,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             Node* mode = get(bytecode.m_mode);
             Node* enumerator = get(bytecode.m_enumerator);
 
-            auto seenModes = OptionSet<JSPropertyNameEnumerator::Flag>::fromRaw(metadata.m_enumeratorMetadata);
+            auto seenModes = OptionSet<JSPropertyNameEnumerator::Flag>::fromRaw(WTF::atomicLoad(const_cast<uint8_t*>(&metadata.m_enumeratorMetadata), std::memory_order_relaxed)); // THREADS: relaxed profiling read.
             if (!seenModes)
                 addToGraph(ForceOSRExit);
 
@@ -11284,7 +11370,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             addVarArgChild(get(bytecode.m_index));
             addVarArgChild(get(bytecode.m_mode));
             addVarArgChild(get(bytecode.m_enumerator));
-            set(bytecode.m_dst, addToGraph(Node::VarArg, EnumeratorInByVal, OpInfo(arrayMode.asWord()), OpInfo(metadata.m_enumeratorMetadata)));
+            set(bytecode.m_dst, addToGraph(Node::VarArg, EnumeratorInByVal, OpInfo(arrayMode.asWord()), OpInfo(WTF::atomicLoad(const_cast<uint8_t*>(&metadata.m_enumeratorMetadata), std::memory_order_relaxed))));
 
             NEXT_OPCODE(op_enumerator_in_by_val);
         }
@@ -11299,7 +11385,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             addVarArgChild(get(bytecode.m_index));
             addVarArgChild(get(bytecode.m_mode));
             addVarArgChild(get(bytecode.m_enumerator));
-            set(bytecode.m_dst, addToGraph(Node::VarArg, EnumeratorHasOwnProperty, OpInfo(arrayMode.asWord()), OpInfo(metadata.m_enumeratorMetadata)));
+            set(bytecode.m_dst, addToGraph(Node::VarArg, EnumeratorHasOwnProperty, OpInfo(arrayMode.asWord()), OpInfo(WTF::atomicLoad(const_cast<uint8_t*>(&metadata.m_enumeratorMetadata), std::memory_order_relaxed))));
 
             NEXT_OPCODE(op_enumerator_has_own_property);
         }
@@ -11316,7 +11402,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             Node* mode = get(bytecode.m_mode);
             Node* enumerator = get(bytecode.m_enumerator);
 
-            auto seenModes = OptionSet<JSPropertyNameEnumerator::Flag>::fromRaw(metadata.m_enumeratorMetadata);
+            auto seenModes = OptionSet<JSPropertyNameEnumerator::Flag>::fromRaw(WTF::atomicLoad(const_cast<uint8_t*>(&metadata.m_enumeratorMetadata), std::memory_order_relaxed)); // THREADS: relaxed profiling read.
             if (!seenModes)
                 addToGraph(ForceOSRExit);
 
@@ -11879,7 +11965,7 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
     CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
     auto bytecode = currentInstruction->as<OpIteratorOpen>();
     auto& metadata = bytecode.metadata(codeBlock);
-    uint32_t seenModes = metadata.m_iterationMetadata.seenModes;
+    uint32_t seenModes = CommonSlowPaths::loadIterationModeSeenModesConcurrently(metadata.m_iterationMetadata); // THREADS §5.7.7 relaxed profiling read.
 
     JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObjectFor(currentCodeOrigin());
 
@@ -12513,7 +12599,7 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
     CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
     auto bytecode = currentInstruction->as<OpIteratorNext>();
     auto& metadata = bytecode.metadata(codeBlock);
-    uint32_t seenModes = metadata.m_iterationMetadata.seenModes;
+    uint32_t seenModes = CommonSlowPaths::loadIterationModeSeenModesConcurrently(metadata.m_iterationMetadata); // THREADS §5.7.7 relaxed profiling read.
 
     JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObjectFor(currentCodeOrigin());
 
@@ -13625,6 +13711,25 @@ auto ByteCodeParser::handleArraySort(Node* callee, Operand resultOperand, CallVa
     //            of committing the actual result to the input array.
 
     UNUSED_PARAM(resultOperand);
+
+    // The comparator OSR-exit recovery contract (DFGOSRExitCompilerCommon's
+    // arraySortComparatorReturnTrampoline + llint_slow_path_array_sort_comparator_return)
+    // re-dispatches the host call instruction and supports exactly
+    // {op_call, op_call_ignore_result, op_tail_call}. handleIntrinsicCall's
+    // isOpcodeShape<OpCallShape> gate also admits op_iterator_open / op_iterator_next
+    // (reachable here via BoundFunctionCallIntrinsic expansion of a bound sort, which
+    // grows argumentCountIncludingThis past the argc < 2 rejection below) as well as
+    // varargs / direct-eval shapes. Refuse to host the intrinsic at any opcode outside
+    // the recovery set so the contract stays exact: an OSR exit inside the inlined
+    // comparator must always recover to a plain call site it can re-dispatch.
+    switch (m_currentInstruction->opcodeID()) {
+    case op_call:
+    case op_call_ignore_result:
+    case op_tail_call:
+        break;
+    default:
+        return CallOptimizationResult::DidNothing;
+    }
 
     if (argumentCountIncludingThis < 2)
         return CallOptimizationResult::DidNothing;

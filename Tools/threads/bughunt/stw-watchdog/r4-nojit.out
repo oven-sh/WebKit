@@ -1,0 +1,26 @@
+run 1: rc=0 6.8s PASS
+run 2: rc=0 6.8s PASS
+run 3: rc=0 6.7s PASS
+run 4: rc=0 6.6s PASS
+run 5: rc=0 6.9s PASS
+run 6: rc=0 6.6s PASS
+run 7: rc=0 6.7s PASS
+run 8: rc=0 6.8s PASS
+run 9: rc=0 6.6s PASS
+run 10: rc=0 6.7s PASS
+run 11: rc=0 6.5s PASS
+run 12: rc=0 6.7s PASS
+run 13: rc=0 6.9s PASS
+run 14: rc=0 6.7s PASS
+run 15: rc=0 6.1s PASS
+run 16: rc=0 6.6s PASS
+run 17: rc=0 7.5s PASS
+run 18: rc=0 6.9s PASS
+run 19: rc=0 6.9s PASS
+run 20: rc=0 6.7s PASS
+run 21: rc=0 6.8s PASS
+run 22: rc=0 6.6s PASS
+run 23: rc=0 6.6s PASS
+run 24: rc=0 6.3s PASS
+run 25: rc=0 6.9s PASS
+SUMMARY tag=r4-nojit N=4 scale=0.0625 runs=25 pass=25 abort134=0 segv=0 timeout=0 other=0

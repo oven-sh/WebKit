@@ -1,0 +1,48 @@
+JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==2625375==ERROR: AddressSanitizer: SEGV on unknown address 0x7bc78d8f3000 (pc 0x557072bb0d90 bp 0x7ffd36dcb6c0 sp 0x7ffd36dcb670 T0)
+==2625375==The signal is caused by a READ memory access.
+    #0 0x557072bb0d90 in JSC::copyMemory(void*, void const*, unsigned long) /root/WebKit/Source/JavaScriptCore/heap/MachineStackMarker.cpp:128:21
+    #1 0x557072bb0f9a in JSC::MachineThreads::tryCopyCooperativelyParkedThreadStack(WTF::Thread&, JSC::CurrentThreadState&, void*, unsigned long, unsigned long*) /root/WebKit/Source/JavaScriptCore/heap/MachineStackMarker.cpp:209:9
+    #2 0x557072bb1c8d in JSC::MachineThreads::tryCopyOtherThreadStacks(WTF::AbstractLocker const&, void*, unsigned long, unsigned long*, WTF::Thread&, WTF::ScopedLambda<JSC::CurrentThreadState* (WTF::Thread&)> const*) /root/WebKit/Source/JavaScriptCore/heap/MachineStackMarker.cpp:262:21
+    #3 0x557072bb24ab in JSC::MachineThreads::gatherConservativeRoots(JSC::ConservativeRoots&, JSC::JITStubRoutineSet&, JSC::CodeBlockSet&, JSC::CurrentThreadState*, WTF::Thread*, WTF::ScopedLambda<JSC::CurrentThreadState* (WTF::Thread&)> const*) /root/WebKit/Source/JavaScriptCore/heap/MachineStackMarker.cpp:350:13
+    #4 0x5570729ab75f in JSC::Heap::gatherStackRoots(JSC::ConservativeRoots&) /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:1181:23
+    #5 0x557072adba2a in _ZZN3JSC4Heap18addCoreConstraintsEvEN3$_1clINS_11SlotVisitorEEEDaRT_ /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:4473:9
+    #6 0x557072adb650 in WTF::Detail::CallableWrapper<JSC::Heap::addCoreConstraints()::$_1, void, JSC::SlotVisitor&>::call(JSC::SlotVisitor&) /root/WebKit/WebKitBuild/Debug/WTF/Headers/wtf/Function.h:59:39
+    #7 0x557072c31339 in WTF::Function<void (JSC::SlotVisitor&)>::operator()(JSC::SlotVisitor&) const /root/WebKit/WebKitBuild/Debug/WTF/Headers/wtf/Function.h:103:35
+    #8 0x557072c31250 in JSC::MarkingConstraintExecutorPair::execute(JSC::SlotVisitor&) /root/WebKit/Source/JavaScriptCore/heap/MarkingConstraintExecutorPair.h:45:42
+    #9 0x557072c0bf50 in void JSC::SimpleMarkingConstraint::executeImplImpl<JSC::SlotVisitor>(JSC::SlotVisitor&) /root/WebKit/Source/JavaScriptCore/heap/SimpleMarkingConstraint.cpp:49:17
+    #10 0x557072c0bf1c in JSC::SimpleMarkingConstraint::executeImpl(JSC::SlotVisitor&) /root/WebKit/Source/JavaScriptCore/heap/SimpleMarkingConstraint.cpp:53:67
+    #11 0x557072bc32ed in JSC::MarkingConstraint::execute(JSC::SlotVisitor&) /root/WebKit/Source/JavaScriptCore/heap/MarkingConstraint.cpp:60:5
+    #12 0x557072bfc950 in JSC::MarkingConstraintSolver::runExecutionThread(JSC::SlotVisitor&, JSC::MarkingConstraintSolver::SchedulerPreference, WTF::ScopedLambda<std::optional<unsigned int> ()>) /root/WebKit/Source/JavaScriptCore/heap/MarkingConstraintSolver.cpp:235:25
+    #13 0x557072c1820e in JSC::MarkingConstraintSolver::execute(JSC::MarkingConstraintSolver::SchedulerPreference, WTF::ScopedLambda<std::optional<unsigned int> ()>)::$_0::operator()(JSC::SlotVisitor&) const /root/WebKit/Source/JavaScriptCore/heap/MarkingConstraintSolver.cpp:65:42
+    #14 0x557072c18110 in WTF::SharedTaskFunctor<void (JSC::SlotVisitor&), JSC::MarkingConstraintSolver::execute(JSC::MarkingConstraintSolver::SchedulerPreference, WTF::ScopedLambda<std::optional<unsigned int> ()>)::$_0>::run(JSC::SlotVisitor&) /root/WebKit/WebKitBuild/Debug/WTF/Headers/wtf/SharedTask.h:91:16
+    #15 0x5570729cf53c in JSC::Heap::runTaskInParallel(WTF::RefPtr<WTF::SharedTask<void (JSC::SlotVisitor&)>, WTF::RawPtrTraits<WTF::SharedTask<void (JSC::SlotVisitor&)>>, WTF::DefaultRefDerefTraits<WTF::SharedTask<void (JSC::SlotVisitor&)>>>) /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:5378:11
+    #16 0x557072bfc1e6 in void JSC::Heap::runFunctionInParallel<JSC::MarkingConstraintSolver::execute(JSC::MarkingConstraintSolver::SchedulerPreference, WTF::ScopedLambda<std::optional<unsigned int> ()>)::$_0>(JSC::MarkingConstraintSolver::execute(JSC::MarkingConstraintSolver::SchedulerPreference, WTF::ScopedLambda<std::optional<unsigned int> ()>)::$_0 const&) /root/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/JavaScriptCore/Heap.h:1156:9
+    #17 0x557072bfbc9c in JSC::MarkingConstraintSolver::execute(JSC::MarkingConstraintSolver::SchedulerPreference, WTF::ScopedLambda<std::optional<unsigned int> ()>) /root/WebKit/Source/JavaScriptCore/heap/MarkingConstraintSolver.cpp:64:16
+    #18 0x557072bfd194 in JSC::MarkingConstraintSolver::drain(WTF::BitVector&) /root/WebKit/Source/JavaScriptCore/heap/MarkingConstraintSolver.cpp:95:5
+    #19 0x557072bc4c59 in JSC::MarkingConstraintSet::executeConvergenceImpl(JSC::SlotVisitor&) /root/WebKit/Source/JavaScriptCore/heap/MarkingConstraintSet.cpp:109:16
+    #20 0x557072bc499c in JSC::MarkingConstraintSet::executeConvergence(JSC::SlotVisitor&) /root/WebKit/Source/JavaScriptCore/heap/MarkingConstraintSet.cpp:83:19
+    #21 0x5570729b6069 in JSC::Heap::runFixpointPhase(JSC::GCConductor) /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:2167:43
+    #22 0x5570729b3686 in JSC::Heap::runCurrentPhase(JSC::GCConductor, JSC::CurrentThreadState*) /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:1957:18
+    #23 0x557072acf607 in JSC::Heap::collectInMutatorThread()::$_0::operator()(JSC::CurrentThreadState&) const /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:2868:52
+    #24 0x557072acf530 in WTF::ScopedLambdaFunctor<void (JSC::CurrentThreadState&), JSC::Heap::collectInMutatorThread()::$_0>::implFunction(void*, JSC::CurrentThreadState&) /root/WebKit/WebKitBuild/Debug/WTF/Headers/wtf/ScopedLambda.h:106:16
+    #25 0x557072bb2907 in void WTF::ScopedLambda<void (JSC::CurrentThreadState&)>::operator()<JSC::CurrentThreadState&>(JSC::CurrentThreadState&) const /root/WebKit/WebKitBuild/Debug/WTF/Headers/wtf/ScopedLambda.h:58:16
+    #26 0x557072bb2852 in JSC::callWithCurrentThreadState(WTF::ScopedLambda<void (JSC::CurrentThreadState&)> const&) /root/WebKit/Source/JavaScriptCore/heap/MachineStackMarker.cpp:363:5
+    #27 0x5570729c23d3 in JSC::Heap::collectInMutatorThread() /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:2880:13
+    #28 0x5570729e3741 in JSC::Heap::conductSharedCollection(JSC::GCClient::Heap&) /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:6690:9
+    #29 0x5570729b2b90 in JSC::Heap::runSharedGCElection(unsigned long) /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:5940:17
+    #30 0x5570729b12a9 in JSC::Heap::collectSync(JSC::GCRequest) /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:1853:9
+    #31 0x5570729b152d in JSC::Heap::collectNow(JSC::Synchronousness, JSC::GCRequest) /root/WebKit/Source/JavaScriptCore/heap/Heap.cpp:1768:9
+    #32 0x557070a1f539 in functionGCAndSweep(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/jsc.cpp:1830:13
+    #33 0x7bc78f808036  (<unknown module>)
+
+==2625375==Register values:
+rax = 0x00007bc78d8f3000  rbx = 0x00007ffd36dcb760  rcx = 0x00007bc78d8f3008  rdx = 0x00007bc77f5dd618  
+rdi = 0x0000000000000008  rsi = 0x00000000010b0df0  rbp = 0x00007ffd36dcb6c0  rsp = 0x00007ffd36dcb670  
+ r8 = 0x0000000002162000   r9 = 0x00007bc7d85f5f20  r10 = 0x00007fffffffff01  r11 = 0x0000000000000201  
+r12 = 0x00007da7d97e1a90  r13 = 0x00007d77d980fab0  r14 = 0xfffe000000000000  r15 = 0xfffe000000000002  
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /root/WebKit/Source/JavaScriptCore/heap/MachineStackMarker.cpp:128:21 in JSC::copyMemory(void*, void const*, unsigned long)
+==2625375==ABORTING

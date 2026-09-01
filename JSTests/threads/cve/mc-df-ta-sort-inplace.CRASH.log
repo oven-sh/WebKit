@@ -1,0 +1,102 @@
+JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+[RaceAmplifier] enabled: period=64 seed=2542127574 maxSleepUs=100
+=================================================================
+==2704917==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x7cd92104ea7c at pc 0x559d95d36507 bp 0x7ffff4918740 sp 0x7ffff4918738
+READ of size 4 at 0x7cd92104ea7c thread T0
+    #0 0x559d95d36506 in bool __gnu_cxx::__ops::_Val_less_iter::operator()<int, int*>(int&, int*) const /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/bits/predefined_ops.h:98:24
+    #1 0x559d95d36331 in void std::__unguarded_linear_insert<int*, __gnu_cxx::__ops::_Val_less_iter>(int*, __gnu_cxx::__ops::_Val_less_iter) /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/bits/stl_algo.h:1757:14
+    #2 0x559d95d361d9 in void std::__unguarded_insertion_sort<int*, __gnu_cxx::__ops::_Iter_less_iter>(int*, int*, __gnu_cxx::__ops::_Iter_less_iter) /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/bits/stl_algo.h:1798:2
+    #3 0x559d95d34eb6 in void std::__final_insertion_sort<int*, __gnu_cxx::__ops::_Iter_less_iter>(int*, int*, __gnu_cxx::__ops::_Iter_less_iter) /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/bits/stl_algo.h:1818:4
+    #4 0x559d95d34dcd in void std::__sort<int*, __gnu_cxx::__ops::_Iter_less_iter>(int*, int*, __gnu_cxx::__ops::_Iter_less_iter) /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/bits/stl_algo.h:1908:4
+    #5 0x559d95d344e1 in void std::sort<int*>(int*, int*) /usr/lib/gcc/x86_64-amazon-linux/14/../../../../include/c++/14/bits/stl_algo.h:4772:7
+    #6 0x559d95d318b5 in JSC::JSGenericTypedArrayView<JSC::Int32Adaptor>::sort() /root/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSGenericTypedArrayViewInlines.h:981:9
+    #7 0x559d95e6f458 in long JSC::genericTypedArrayViewProtoFuncSortImpl<JSC::JSGenericTypedArrayView<JSC::Int32Adaptor>>(JSC::VM&, JSC::JSGlobalObject*, JSC::JSGenericTypedArrayView<JSC::Int32Adaptor>*, JSC::JSValue) /root/WebKit/Source/JavaScriptCore/runtime/JSGenericTypedArrayViewPrototypeFunctions.h:1744:39
+    #8 0x559d95e40690 in long JSC::genericTypedArrayViewProtoFuncSort<JSC::JSGenericTypedArrayView<JSC::Int32Adaptor>>(JSC::VM&, JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/JSGenericTypedArrayViewPrototypeFunctions.h:1847:5
+    #9 0x559d95e3fa98 in JSC::typedArrayViewProtoFuncSort(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/JSTypedArrayViewPrototypeFunctions3.cpp:42:5
+    #10 0x7b08d70493bf  (<unknown module>)
+
+0x7cd92104ea7c is located 4 bytes before 2048-byte region [0x7cd92104ea80,0x7cd92104f280)
+allocated by thread T4 (JS Thread) here:
+    #0 0x559d907b2c94 in malloc /home/runner/work/llvm-project/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:67:3
+    #1 0x559d9686194b in bmalloc::SystemHeap::malloc(unsigned long, bmalloc::FailureAction) /root/WebKit/Source/bmalloc/bmalloc/SystemHeap.cpp:170:20
+    #2 0x559d9686267a in pas_system_heap_malloc_compact /root/WebKit/Source/bmalloc/bmalloc/SystemHeap.cpp:320:24
+    #3 0x559d96a3827b in pas_system_heap_allocate(unsigned long, unsigned long, pas_allocation_mode) /root/WebKit/Source/bmalloc/libpas/src/libpas/pas_system_heap.h:146:15
+    #4 0x559d96a24ae6 in pas_try_allocate_common_impl_slow(__pas_heap_ref*, pas_heap_ref_kind, unsigned long, unsigned long, pas_allocation_mode, pas_heap_config, pas_heap_runtime_config*, pas_allocator_counts*, pas_size_lookup_mode) /root/WebKit/Source/bmalloc/libpas/src/libpas/pas_try_allocate_common.h:174:18
+    #5 0x559d96a1b013 in bmalloc_heap_config_specialized_try_allocate_common_impl_slow /root/WebKit/Source/bmalloc/libpas/src/libpas/bmalloc_heap_config.c:43:1
+    #6 0x559d96941d87 in bmalloc_try_allocate_auxiliary_impl_impl_slow(__pas_heap_ref*, unsigned long, unsigned long, pas_allocation_mode) /root/WebKit/Source/bmalloc/libpas/src/libpas/bmalloc_heap_inlines.h:48:1
+    #7 0x559d9693d524 in pas_try_allocate_common_impl(__pas_heap_ref*, unsigned long, unsigned long, pas_allocation_mode, pas_heap_config, pas_allocator_counts*, pas_allocation_result (*)(pas_allocation_result), pas_allocation_result (*)(__pas_heap_ref*, unsigned long, unsigned long, pas_allocation_mode), pas_local_allocator_result) /root/WebKit/Source/bmalloc/libpas/src/libpas/pas_try_allocate_common.h:282:12
+    #8 0x559d9693cfd9 in bmalloc_try_allocate_auxiliary_impl_impl(__pas_heap_ref*, unsigned long, unsigned long, pas_allocation_mode, pas_local_allocator_result) /root/WebKit/Source/bmalloc/libpas/src/libpas/bmalloc_heap_inlines.h:48:1
+    #9 0x559d969386f4 in pas_try_allocate_primitive_impl_casual_case(pas_primitive_heap_ref*, unsigned long, unsigned long, pas_allocation_mode, pas_heap_config, pas_heap_runtime_config*, pas_allocation_result (*)(__pas_heap_ref*, unsigned long, unsigned long, pas_allocation_mode, pas_local_allocator_result)) /root/WebKit/Source/bmalloc/libpas/src/libpas/pas_try_allocate_primitive.h:127:12
+    #10 0x559d968e33d7 in bmalloc_try_allocate_auxiliary_impl_casual_case(pas_primitive_heap_ref*, unsigned long, unsigned long, pas_allocation_mode) /root/WebKit/Source/bmalloc/libpas/src/libpas/bmalloc_heap_inlines.h:48:1
+    #11 0x559d968debda in bmalloc_try_allocate_auxiliary_with_alignment_casual /root/WebKit/Source/bmalloc/libpas/src/libpas/bmalloc_heap.c:55:19
+    #12 0x559d96255754 in bmalloc_try_allocate_auxiliary_inline(pas_primitive_heap_ref*, unsigned long, pas_allocation_mode) /root/WebKit/WebKitBuild/Debug/bmalloc/Headers/bmalloc/bmalloc_heap_inlines.h:88:12
+    #13 0x559d96173b5f in bmalloc::api::tryMalloc(unsigned long, bmalloc::CompactAllocationMode, bmalloc::HeapKind) /root/WebKit/WebKitBuild/Debug/bmalloc/Headers/bmalloc/bmalloc.h:68:12
+    #14 0x559d96173b5f in Gigacage::tryMalloc(Gigacage::Kind, unsigned long) /root/WebKit/Source/WTF/wtf/FastMalloc.cpp:678:20
+    #15 0x559d935259ad in JSC::ArrayBufferContents::tryAllocate(unsigned long, unsigned int, JSC::ArrayBufferContents::InitializationPolicy) /root/WebKit/Source/JavaScriptCore/runtime/ArrayBuffer.cpp:662:16
+    #16 0x559d935278e8 in JSC::ArrayBuffer::tryCreate(std::span<unsigned char const, 18446744073709551615ul>) /root/WebKit/Source/JavaScriptCore/runtime/ArrayBuffer.cpp:789:14
+    #17 0x559d93a805c1 in JSC::JSArrayBufferView::slowDownAndWasteMemory() /root/WebKit/Source/JavaScriptCore/runtime/JSArrayBufferView.cpp:301:18
+    #18 0x559d9087afb3 in JSC::ArrayBuffer* JSC::JSArrayBufferView::possiblySharedBufferImpl<(JSC::JSArrayBufferView::Requester)0>() /root/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSArrayBufferViewInlinesLight.h:75:16
+    #19 0x559d9087a084 in JSC::JSArrayBufferView::possiblySharedBuffer() /root/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSArrayBufferViewInlinesLight.h:83:12
+    #20 0x559d9154ecd9 in JSC::DFG::ArrayBufferViewWatchpointAdaptor::add(JSC::CodeBlock*, JSC::JSArrayBufferView*, JSC::DFG::WatchpointCollector&)::$_0::operator()(JSC::CodeBlockJettisoningWatchpoint&) const /root/WebKit/Source/JavaScriptCore/dfg/DFGDesiredWatchpoints.cpp:45:42
+    #21 0x559d915023e3 in bool JSC::DFG::WatchpointCollector::addWatchpoint<JSC::DFG::ArrayBufferViewWatchpointAdaptor::add(JSC::CodeBlock*, JSC::JSArrayBufferView*, JSC::DFG::WatchpointCollector&)::$_0>(JSC::DFG::ArrayBufferViewWatchpointAdaptor::add(JSC::CodeBlock*, JSC::JSArrayBufferView*, JSC::DFG::WatchpointCollector&)::$_0 const&) /root/WebKit/Source/JavaScriptCore/dfg/DFGDesiredWatchpoints.h:79:20
+    #22 0x559d9150227c in JSC::DFG::ArrayBufferViewWatchpointAdaptor::add(JSC::CodeBlock*, JSC::JSArrayBufferView*, JSC::DFG::WatchpointCollector&) /root/WebKit/Source/JavaScriptCore/dfg/DFGDesiredWatchpoints.cpp:39:22
+    #23 0x559d91505c5d in JSC::DFG::GenericDesiredWatchpoints<JSC::JSArrayBufferView*, JSC::DFG::ArrayBufferViewWatchpointAdaptor>::reallyAdd(JSC::CodeBlock*, JSC::DFG::WatchpointCollector&) /root/WebKit/Source/JavaScriptCore/dfg/DFGDesiredWatchpoints.h:214:18
+    #24 0x559d91506836 in JSC::DFG::DesiredWatchpoints::reallyAdd(JSC::CodeBlock*, JSC::DFG::DesiredIdentifiers&, JSC::DFG::CommonData*) /root/WebKit/Source/JavaScriptCore/dfg/DFGDesiredWatchpoints.cpp:218:24
+    #25 0x559d91b358bb in JSC::DFG::Plan::reallyAdd(JSC::DFG::CommonData*) /root/WebKit/Source/JavaScriptCore/dfg/DFGPlan.cpp:611:24
+    #26 0x559d91b3672a in JSC::DFG::Plan::finalize()::$_0::operator()() const /root/WebKit/Source/JavaScriptCore/dfg/DFGPlan.cpp:671:14
+    #27 0x559d91b35d41 in JSC::DFG::Plan::finalize() /root/WebKit/Source/JavaScriptCore/dfg/DFGPlan.cpp:654:32
+    #28 0x559d92faae5d in JSC::JITWorklist::completeAllReadyPlansForVM(JSC::VM&, JSC::JITCompilationKey) /root/WebKit/Source/JavaScriptCore/jit/JITWorklist.cpp:308:15
+    #29 0x559d92ee2fa4 in operationOptimize /root/WebKit/Source/JavaScriptCore/jit/JITOperations.cpp:3189:76
+    #30 0x7b08d7047011  (<unknown module>)
+
+Thread T4 (JS Thread) created by T0 here:
+    #0 0x559d90796d91 in pthread_create /home/runner/work/llvm-project/llvm-project/compiler-rt/lib/asan/asan_interceptors.cpp:250:3
+    #1 0x559d963e14c3 in WTF::Thread::establishHandle(WTF::Thread::NewThreadContext&, WTF::StackAllocationSpecification, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy) /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:354:17
+    #2 0x559d962db00b in WTF::Thread::create(WTF::ASCIILiteral, WTF::Function<void ()>&&, WTF::ThreadType, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy, WTF::StackAllocationSpecification) /root/WebKit/Source/WTF/wtf/Threading.cpp:330:32
+    #3 0x559d9455f764 in JSC::constructThread(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/ThreadObject.cpp:467:5
+    #4 0x7b08d7008116  (<unknown module>)
+    #5 0x559d950858e0 in llint_op_construct LowLevelInterpreter.cpp
+    #6 0x559d950854b0 in llint_op_call LowLevelInterpreter.cpp
+    #7 0x559d9505e055 in llint_call_javascript LowLevelInterpreter.cpp
+    #8 0x559d92ca7f61 in JSC::Interpreter::executeProgram(JSC::SourceCode const&, JSC::JSGlobalObject*, JSC::JSObject*) /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:1258:28
+    #9 0x559d93718381 in JSC::evaluate(JSC::JSGlobalObject*, JSC::SourceCode const&, JSC::JSValue, WTF::NakedPtr<JSC::Exception>&) /root/WebKit/Source/JavaScriptCore/runtime/Completion.cpp:145:37
+    #10 0x559d9095290a in runWithOptions(GlobalObject*, CommandLine&, bool&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:3957:35
+    #11 0x559d9089715b in jscmain(int, char**)::$_0::operator()(JSC::VM&, GlobalObject*, bool&) const /root/WebKit/Source/JavaScriptCore/jsc.cpp:4686:13
+    #12 0x559d907fee99 in int runJSC<jscmain(int, char**)::$_0>(CommandLine const&, bool, jscmain(int, char**)::$_0 const&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4472:13
+    #13 0x559d907f8dc2 in jscmain(int, char**) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4679:18
+    #14 0x559d907f86e2 in main /root/WebKit/Source/JavaScriptCore/jsc.cpp:3715:15
+    #15 0x7f0921c2a60f in __libc_start_call_main (/lib64/libc.so.6+0x2a60f) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow /root/WebKit/WebKitBuild/Debug/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSGenericTypedArrayViewInlines.h:981:9 in JSC::JSGenericTypedArrayView<JSC::Int32Adaptor>::sort()
+Shadow bytes around the buggy address:
+  0x7cd92104e780: fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+  0x7cd92104e800: fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd fd
+  0x7cd92104e880: fd fd fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x7cd92104e900: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x7cd92104e980: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+=>0x7cd92104ea00: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa[fa]
+  0x7cd92104ea80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7cd92104eb00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7cd92104eb80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7cd92104ec00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7cd92104ec80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==2704917==ABORTING

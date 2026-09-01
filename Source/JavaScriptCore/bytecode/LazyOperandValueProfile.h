@@ -107,6 +107,15 @@ template<> struct HashTraits<JSC::LazyOperandValueProfileKey> : public GenericHa
 
 namespace JSC {
 
+// THREADS §5.7.4: the racy words of a lazy operand profile (spec-fail bucket and
+// prediction) are inherited from ValueProfileBase, whose relaxed-atomic concurrent
+// accessors (loadBucketConcurrently / storeBucketConcurrently / predictionConcurrently /
+// storePredictionConcurrently) must be used for all cross-thread C++ accesses.
+// Construction included: the ValueProfileBase constructor initializes the bucket and
+// prediction words via those relaxed helpers, so appending a profile to the holder's
+// ConcurrentVector never performs a plain store to a word a compiler thread reads
+// atomically. m_operand and m_key are written once at profile creation (under the
+// holder's ConcurrentJSLock) and immutable afterwards.
 struct LazyOperandValueProfile : public MinimalValueProfile {
     LazyOperandValueProfile()
         : MinimalValueProfile()

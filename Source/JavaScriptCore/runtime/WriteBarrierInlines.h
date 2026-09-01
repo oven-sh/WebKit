@@ -51,7 +51,13 @@ inline void WriteBarrierBase<T, Traits>::setMayBeNull(VM& vm, const JSCell* owne
 template <typename T, typename Traits>
 inline void WriteBarrierBase<T, Traits>::setEarlyValue(VM& vm, const JSCell* owner, T* value)
 {
-    Traits::exchange(this->m_cell, value);
+    // GIL-off (TSAN r12 reports 6/8/9/10/13): the slot is probed concurrently
+    // through the relaxed-atomic cell() accessor (see the comment there); the
+    // plain Traits::exchange store raced those probes. Route through the same
+    // relaxed atomic store — codegen identical to the plain exchange, and the
+    // OM ground truth already blesses the cross-thread value race (probed
+    // cells are revalidated).
+    this->storeCell(value);
     vm.writeBarrier(owner, static_cast<JSCell*>(value));
 }
 
@@ -79,11 +85,16 @@ inline void WriteBarrierStructureID::setMayBeNull(VM& vm, const JSCell* owner, S
 
 inline void WriteBarrierStructureID::setEarlyValue(VM& vm, const JSCell* owner, Structure* value)
 {
+    // GIL-off (TSAN r15, richards-like): two Threads racing
+    // initializeProfile read/write this slot lock-free
+    // (cachedPolyProtoStructure vs setCachedPolyProtoStructure); same
+    // relaxed-store ruling as setWithoutWriteBarrier (WriteBarrier.h) —
+    // identical plain 32-bit store outside TSAN.
     if (!value) {
-        m_structureID = { };
+        StructureID::relaxedStore(&m_structureID, StructureID());
         return;
     }
-    m_structureID = StructureID::encode(value);
+    StructureID::relaxedStore(&m_structureID, StructureID::encode(value));
     vm.writeBarrier(owner, reinterpret_cast<JSCell*>(value));
 }
 

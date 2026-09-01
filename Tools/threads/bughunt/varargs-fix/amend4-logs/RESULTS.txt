@@ -1,0 +1,37 @@
+hammerD run 1: rc=0 mismatches=0
+hammerD run 2: rc=0 mismatches=0
+hammerD run 3: rc=0 mismatches=0
+hammerD run 4: rc=0 mismatches=0
+hammerD run 5: rc=0 mismatches=0
+hammerD run 6: rc=0 mismatches=0
+hammerD run 7: rc=0 mismatches=0
+hammerD run 8: rc=0 mismatches=0
+hammerD run 9: rc=0 mismatches=0
+hammerD run 10: rc=0 mismatches=0
+hammerE run 1: rc=0
+hammerE run 2: rc=0
+hammerE run 3: rc=0
+flagoff release rc=0
+flagoff debug rc=0
+reproA run 1: rc=0
+reproA run 2: rc=0
+reproA run 3: rc=0
+reproA run 4: rc=0
+reproA run 5: rc=0
+reproA run 6: rc=0
+reproA run 7: rc=0
+reproA run 8: rc=0
+reproA run 9: rc=0
+reproA run 10: rc=0
+releaseC run 1: rc=133 timeout: the monitored command dumped core
+releaseC run 2: rc=0 {"impl":"js","threads":16,"phaseA_ms":24310.86,"phaseB_ms":12477.16,"phaseC_ms":645.06,"total_ms":47434.84,"checksumA":"
+releaseC run 3: rc=0 {"impl":"js","threads":16,"phaseA_ms":24368.4,"phaseB_ms":12096.6,"phaseC_ms":63
+releaseC run 4: rc=0 {"impl":"js","threads":16,"phaseA_ms":23755.24,"phaseB_ms":12215.34,"phaseC_ms":
+releaseC run 5: rc=133 timeout: the monitored command dumped core
+releaseC run 6: rc=133 timeout: the monitored command dumped core
+releaseC run 7: rc=133 timeout: the monitored command dumped core
+releaseC run 8: rc=133 timeout: the monitored command dumped core
+releaseC run 9: rc=133 timeout: the monitored command dumped core
+releaseC run 10: rc=134 timeout: the monitored command dumped core
+smokeB run 1: rc=0
+smokeB run 2: rc=0

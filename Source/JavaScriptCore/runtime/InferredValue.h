@@ -27,6 +27,8 @@
 
 #include "JSScope.h"
 #include "VM.h"
+#include <atomic>
+#include <wtf/Lock.h>
 
 namespace JSC {
 
@@ -48,7 +50,7 @@ public:
     //        you will have been notified that the watchpoint was fired.
     JSCellType* inferredValue()
     {
-        uintptr_t data = m_data;
+        uintptr_t data = m_data.load(std::memory_order_relaxed);
         if (isFat(data))
             return fat(data)->inferredValue();
         return std::bit_cast<JSCellType*>(data & ValueMask);
@@ -72,7 +74,7 @@ public:
     // state if you also add a watchpoint.
     WatchpointState state() const
     {
-        uintptr_t data = m_data;
+        uintptr_t data = m_data.load(std::memory_order_relaxed);
         if (isFat(data))
             return fat(data)->state();
         return decodeState(data);
@@ -92,14 +94,41 @@ public:
         return !hasBeenInvalidated();
     }
     
+    // AB18-H: GIL-off, this routes through inflate() -> WatchpointSet::add().
+    // WatchpointSet::add()'s own GIL-off concurrency (plain m_state store and
+    // unlocked m_set mutation in Watchpoint.cpp) is NOT covered by this
+    // change; it is a separate AB18 follow-up item. This change only makes
+    // the InferredValue-side transitions (thin word, fat m_value/m_state)
+    // race-free among notifyWrite/invalidate/inflate callers.
     void add(Watchpoint*);
-    
+
     void invalidate(VM& vm, const FireDetail& detail)
     {
+        if (vm.gilOff()) [[unlikely]] {
+            // AB18-H: CAS retry loop on the thin word. A plain store here
+            // could overwrite a fat pointer published by a concurrent
+            // inflateSlow(), leaking the fat set and silently dropping every
+            // Watchpoint registered on it (no jettison on a real fire). If
+            // we observe (or lose the CAS to) a fat pointer, re-dispatch to
+            // the fat set's serialized invalidate.
+            uintptr_t data = m_data.load(std::memory_order_acquire);
+            for (;;) {
+                if (isFat(data)) {
+                    fat(data)->invalidate(vm, detail);
+                    return;
+                }
+                if (decodeState(data) == IsInvalidated)
+                    return;
+                // Thin sets have no watchers (add() inflates first), so
+                // invalidation is just the terminal state transition.
+                if (m_data.compare_exchange_weak(data, encodeState(IsInvalidated), std::memory_order_acq_rel, std::memory_order_acquire))
+                    return;
+            }
+        }
         if (isFat())
             fat()->invalidate(vm, detail);
         else
-            m_data = encodeState(IsInvalidated);
+            m_data.store(encodeState(IsInvalidated), std::memory_order_relaxed);
     }
     
     bool isBeingWatched() const
@@ -130,22 +159,71 @@ private:
     public:
         InferredValueWatchpointSet(WatchpointState state, JSCellType* value)
             : WatchpointSet(state)
-            , m_value(value)
         {
+            // TSAN r12 (splay-like flicker): initialize via a relaxed STORE,
+            // not the Atomic value constructor — the value constructor is a
+            // plain store (wave-5 precedent, Watchpoint.cpp), and it runs
+            // AFTER the base constructor's HAPPENS_BEFORE annotation, so it
+            // paired against compiler-thread inferredValue() probes. Re-issue
+            // the publication annotation after the member is initialized.
+            m_value.store(value, std::memory_order_relaxed);
+            TSAN_ANNOTATE_HAPPENS_BEFORE(this);
         }
 
-        JSCellType* inferredValue() const { return m_value; }
+        // May be called from compiler threads; a stale value is already part
+        // of the contract (see class comment), so relaxed is sufficient.
+        // TSAN r11 (reports 25/28): the HAPPENS_AFTER pairs with the
+        // HAPPENS_BEFORE at the end of the WatchpointSet constructor (this
+        // class derives from it) — same consume-publication shape as
+        // state(); see Watchpoint.cpp. `this` aliases the base for TSAN's
+        // address-keyed annotation map (single-inheritance first base).
+        JSCellType* inferredValue() const
+        {
+            TSAN_ANNOTATE_HAPPENS_AFTER(this);
+            return m_value.load(std::memory_order_relaxed);
+        }
 
         void invalidate(VM& vm, const FireDetail& detail)
         {
-            m_value = nullptr;
+            if (vm.gilOff()) [[unlikely]] {
+                invalidateGILOff(vm, detail);
+                return;
+            }
+            m_value.store(nullptr, std::memory_order_relaxed);
             WatchpointSet::invalidate(vm, detail);
         }
 
         void notifyWriteSlow(VM&, JSCell* owner, JSCellType*, const FireDetail&);
 
     private:
-        JSCellType* m_value;
+        // AB18-H (V3): GIL-off, N mutators may notifyWrite/invalidate this
+        // set concurrently. All GIL-off transition *decisions* are made under
+        // m_gilOffLock so that startWatching()'s IsWatched store and
+        // WatchpointSet::invalidate()'s IsInvalidated store are never an
+        // unordered pair of plain stores. The lock is held only across plain
+        // memory operations -- never across WatchpointSet::invalidate(),
+        // which blocks for the Class-A coalescing fire (SPEC-jit 5.6) -- so
+        // a thread parked on the lock can never stall a stop-the-world.
+        //
+        // IsInvalidated is terminal: once m_gilOffInvalidationPending is set
+        // (always under the lock, before the lock is released), every later
+        // gilOff notifyWriteSlow sees the flag under the same lock and joins
+        // the invalidation instead of calling startWatching(). The Class-A
+        // coalescing fire queue makes the joined WatchpointSet::invalidate()
+        // idempotent, and every joiner returns only after the fire has run.
+        void invalidateGILOff(VM& vm, const FireDetail& detail)
+        {
+            {
+                Locker locker { m_gilOffLock };
+                m_gilOffInvalidationPending.store(true, std::memory_order_release);
+                m_value.store(nullptr, std::memory_order_relaxed);
+            }
+            WatchpointSet::invalidate(vm, detail);
+        }
+
+        std::atomic<JSCellType*> m_value;
+        Lock m_gilOffLock;
+        std::atomic<bool> m_gilOffInvalidationPending { false };
     };
 
     static constexpr uintptr_t IsThinFlag        = 1;
@@ -167,8 +245,8 @@ private:
         return (static_cast<uintptr_t>(state) << StateShift) | IsThinFlag;
     }
     
-    bool isThin() const { return isThin(m_data); }
-    bool isFat() const { return isFat(m_data); };
+    bool isThin() const { return isThin(m_data.load(std::memory_order_relaxed)); }
+    bool isFat() const { return isFat(m_data.load(std::memory_order_relaxed)); };
     
     static InferredValueWatchpointSet* fat(uintptr_t data)
     {
@@ -178,13 +256,13 @@ private:
     InferredValueWatchpointSet* fat()
     {
         ASSERT(isFat());
-        return fat(m_data);
+        return fat(m_data.load(std::memory_order_relaxed));
     }
-    
+
     const InferredValueWatchpointSet* fat() const
     {
         ASSERT(isFat());
-        return fat(m_data);
+        return fat(m_data.load(std::memory_order_relaxed));
     }
     
     InferredValueWatchpointSet* inflate()
@@ -199,23 +277,81 @@ private:
 
     void notifyWriteSlow(VM&, JSCell* owner, JSCellType*, const FireDetail&);
     void notifyWriteSlow(VM&, JSCell* owner, JSCellType*, const char* reason);
-    
-    uintptr_t m_data;
+
+    // AB18-H: the thin word is the single GIL-off linearization point.
+    // Thin-state transitions and the thin->fat inflate are CASes; GIL-on
+    // paths use relaxed loads/stores (plain-equivalent codegen).
+    std::atomic<uintptr_t> m_data;
 };
 
 template<typename JSCellType>
 void InferredValue<JSCellType>::InferredValueWatchpointSet::notifyWriteSlow(VM& vm, JSCell* owner, JSCellType* value, const FireDetail& detail)
 {
+    if (vm.gilOff()) [[unlikely]] {
+        // AB18-H (V3): all transition decisions under m_gilOffLock; the
+        // blocking Class-A fire (WatchpointSet::invalidate) runs after the
+        // lock is dropped. See invalidateGILOff() for the full protocol.
+        bool joinInvalidation = false;
+        {
+            Locker locker { m_gilOffLock };
+            if (m_gilOffInvalidationPending.load(std::memory_order_acquire)) {
+                // A concurrent invalidation is in flight (its fire may not
+                // have flipped m_state yet). Join it below, outside the
+                // lock; the coalescing fire queue makes the join idempotent
+                // and we return only after the fire is complete. Never
+                // startWatching() past this point: IsInvalidated must stay
+                // terminal (Watchpoint.h monotonicity contract relied on by
+                // the DFG watch-then-optimize protocol).
+                joinInvalidation = true;
+            } else {
+                switch (state()) {
+                case ClearWatchpoint:
+                    m_value.store(value, std::memory_order_relaxed);
+                    vm.writeBarrier(owner, value);
+                    // Safe: lock held and no invalidation pending, so no
+                    // concurrent IsInvalidated store can exist; any later
+                    // gilOff invalidate orders after our IsWatched store via
+                    // the lock.
+                    startWatching();
+                    return;
+
+                case IsWatched: {
+                    JSCellType* current = m_value.load(std::memory_order_relaxed);
+                    if (current == value)
+                        return;
+                    // Mismatch (or, defensively, a cleared value): begin the
+                    // invalidation while holding the lock, fire after
+                    // releasing it. Cannot call invalidate() here -- the
+                    // lock is not recursive.
+                    m_gilOffInvalidationPending.store(true, std::memory_order_release);
+                    m_value.store(nullptr, std::memory_order_relaxed);
+                    joinInvalidation = true;
+                    break;
+                }
+
+                case IsInvalidated:
+                    // Reachable GIL-off: notifyWrite()'s unlocked fast-path
+                    // state() check raced an invalidation that completed
+                    // before we took the lock. Nothing to do.
+                    return;
+                }
+            }
+        }
+        if (joinInvalidation)
+            WatchpointSet::invalidate(vm, detail);
+        return;
+    }
+
     switch (state()) {
     case ClearWatchpoint:
-        m_value = value;
+        m_value.store(value, std::memory_order_relaxed);
         vm.writeBarrier(owner, value);
         startWatching();
         return;
 
     case IsWatched:
-        ASSERT(!!m_value);
-        if (m_value == value)
+        ASSERT(!!m_value.load(std::memory_order_relaxed));
+        if (m_value.load(std::memory_order_relaxed) == value)
             return;
         invalidate(vm, detail);
         return;
@@ -231,7 +367,50 @@ void InferredValue<JSCellType>::InferredValueWatchpointSet::notifyWriteSlow(VM& 
 template<typename JSCellType>
 void InferredValue<JSCellType>::notifyWriteSlow(VM& vm, JSCell* owner, JSCellType* value, const FireDetail& detail)
 {
-    uintptr_t data = m_data;
+    if (vm.gilOff()) [[unlikely]] {
+        // AB18-H (V3): CAS retry loop with the thin word as the single
+        // linearization point. ClearWatchpoint -> (IsWatched, value) is ONE
+        // atomic step, so there is no window in which another thread can
+        // observe a value without IsWatched or vice versa, and a concurrent
+        // inflateSlow() either snapshots the word before or after the whole
+        // transition. If the word is (or becomes) fat, re-dispatch to the
+        // fat set's lock-serialized slow path.
+        uintptr_t data = m_data.load(std::memory_order_acquire);
+        for (;;) {
+            if (isFat(data)) {
+                fat(data)->notifyWriteSlow(vm, owner, value, detail);
+                return;
+            }
+            switch (decodeState(data)) {
+            case ClearWatchpoint: {
+                uintptr_t desired = (std::bit_cast<uintptr_t>(value) & ValueMask) | encodeState(IsWatched);
+                if (m_data.compare_exchange_weak(data, desired, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                    vm.writeBarrier(owner, value);
+                    return;
+                }
+                continue; // 'data' was refreshed by the failed CAS.
+            }
+
+            case IsWatched: {
+                if (std::bit_cast<JSCellType*>(data & ValueMask) == value)
+                    return;
+                // Thin sets have no watchers (add() inflates first), so
+                // invalidation is just the terminal state transition.
+                if (m_data.compare_exchange_weak(data, encodeState(IsInvalidated), std::memory_order_acq_rel, std::memory_order_acquire))
+                    return;
+                continue;
+            }
+
+            case IsInvalidated:
+                // Reachable GIL-off: notifyWrite()'s fast-path state() check
+                // raced an invalidation that completed. Nothing to do.
+                return;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    uintptr_t data = m_data.load(std::memory_order_relaxed);
     if (isFat(data)) {
         fat(data)->notifyWriteSlow(vm, owner, value, detail);
         return;
@@ -239,8 +418,8 @@ void InferredValue<JSCellType>::notifyWriteSlow(VM& vm, JSCell* owner, JSCellTyp
 
     switch (state()) {
     case ClearWatchpoint:
-        ASSERT(decodeState(m_data) != IsInvalidated);
-        m_data = (std::bit_cast<uintptr_t>(value) & ValueMask) | encodeState(IsWatched);
+        ASSERT(decodeState(m_data.load(std::memory_order_relaxed)) != IsInvalidated);
+        m_data.store((std::bit_cast<uintptr_t>(value) & ValueMask) | encodeState(IsWatched), std::memory_order_relaxed);
         vm.writeBarrier(owner, value);
         return;
 
@@ -274,13 +453,28 @@ void InferredValue<JSCellType>::add(Watchpoint* watchpoint)
 template<typename JSCellType>
 auto InferredValue<JSCellType>::inflateSlow() -> InferredValueWatchpointSet*
 {
-    ASSERT(isThin());
+    // AB18-H: CAS-publish retry loop, unconditional (GIL-on the CAS succeeds
+    // on the first iteration with the same observable behavior as before;
+    // this is an out-of-line slow path, so no flag-off fast-path codegen is
+    // affected). GIL-off, two mutators can race to inflate: exactly one fat
+    // set wins the CAS. The loser's set was never published and never
+    // received a Watchpoint -- add() only runs against the set inflate()
+    // returns -- so no watchpoint list can split across two fat sets, and
+    // deref() frees the refcount-1 loser. A concurrent thin-word transition
+    // (notifyWriteSlow/invalidate CAS) also fails our CAS; we rebuild from
+    // the fresh snapshot, so a fat set is only ever born with a
+    // (state, value) pair that was atomically current.
     ASSERT(!isCompilationThread());
-    uintptr_t data = m_data;
-    InferredValueWatchpointSet* fat = adoptRef(new InferredValueWatchpointSet(decodeState(m_data), std::bit_cast<JSCellType*>(data & ValueMask))).leakRef();
-    WTF::storeStoreFence();
-    m_data = std::bit_cast<uintptr_t>(fat);
-    return fat;
+    uintptr_t data = m_data.load(std::memory_order_acquire);
+    for (;;) {
+        if (isFat(data))
+            return fat(data); // Lost an inflate race; adopt the winner's set.
+        InferredValueWatchpointSet* fatSet = adoptRef(new InferredValueWatchpointSet(decodeState(data), std::bit_cast<JSCellType*>(data & ValueMask))).leakRef();
+        WTF::storeStoreFence();
+        if (m_data.compare_exchange_strong(data, std::bit_cast<uintptr_t>(fatSet), std::memory_order_acq_rel, std::memory_order_acquire))
+            return fatSet;
+        fatSet->deref(); // 'data' was refreshed by the failed CAS; retry.
+    }
 }
 
 template<typename JSCellType>

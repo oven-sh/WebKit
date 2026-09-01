@@ -131,6 +131,7 @@ set(TestWTF_SOURCES
     Tests/WTF/SegmentedVector.cpp
     Tests/WTF/SentinelLinkedList.cpp
     Tests/WTF/SetForScope.cpp
+    Tests/WTF/SharedAtomStringTable.cpp
     Tests/WTF/Signals.cpp
     Tests/WTF/SparseBitVector.cpp
     Tests/WTF/StackTraceTest.cpp
