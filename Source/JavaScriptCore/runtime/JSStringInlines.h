@@ -464,23 +464,32 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     do {
         JSString* currentFiber = workQueue.takeLast();
 
-        if (currentFiber->isRope()) {
+        // One m_fiber snapshot per node decides rope/substring and supplies
+        // fiber0 or the resolved impl; a concurrent resolver can republish any
+        // reachable fiber between two reads. fiber1/fiber2 and the substring
+        // base/offset live in m_compactFibers, which resolution never clears.
+        uintptr_t currentBits = currentFiber->fiberConcurrently();
+        if (currentBits & isRopeInPointer) {
             JSRopeString* currentFiberAsRope = static_cast<JSRopeString*>(currentFiber);
-            if (currentFiberAsRope->isSubstring()) {
+            if (currentBits & isSubstringInPointer) {
                 ASSERT(!currentFiberAsRope->substringBase()->isRope());
-                StringView view = *currentFiberAsRope->substringBase()->valueInternal().impl();
+                StringView view = *currentFiberAsRope->substringBase()->getValueImpl();
                 unsigned offset = currentFiberAsRope->substringOffset();
                 unsigned length = currentFiberAsRope->length();
                 position -= length;
                 view.substring(offset, length).getCharacters(unsafeMakeSpan(position, end - position));
                 continue;
             }
-            for (size_t i = 0; i < JSRopeString::s_maxInternalRopeLength && currentFiberAsRope->fiber(i); ++i)
-                workQueue.append(currentFiberAsRope->fiber(i));
+            workQueue.append(std::bit_cast<JSString*>(currentBits & stringMask));
+            if (JSString* nestedFiber1 = currentFiberAsRope->fiber1()) {
+                workQueue.append(nestedFiber1);
+                if (JSString* nestedFiber2 = currentFiberAsRope->fiber2())
+                    workQueue.append(nestedFiber2);
+            }
             continue;
         }
 
-        StringView view = *currentFiber->valueInternal().impl();
+        StringView view = *std::bit_cast<StringImpl*>(currentBits);
         position -= view.length();
         view.getCharacters(unsafeMakeSpan(position, end - position));
     } while (!workQueue.isEmpty());
@@ -500,23 +509,30 @@ inline void JSRopeString::resolveToBuffer(JSString* fiber0, JSString* fiber1, JS
     // This allows clang to make these calls tail-calls, constructing significantly efficient rope resolution here.
     static_assert(3 == JSRopeString::s_maxInternalRopeLength);
 
+    // One m_fiber snapshot per fiber decides rope/substring and supplies that
+    // fiber's own fiber0 or its resolved impl; a concurrent resolver can
+    // republish any reachable fiber between two reads. fiber1/fiber2 and the
+    // substring base/offset live in m_compactFibers, which resolution never
+    // clears.
+
     // 3 fibers.
     if (fiber2) {
-        if (fiber0->isRope()) {
+        uintptr_t bits0 = fiber0->fiberConcurrently();
+        if (bits0 & isRopeInPointer) {
             auto* rope0 = static_cast<const JSRopeString*>(fiber0);
             auto rope0Length = rope0->length();
-            if (rope0->isSubstring()) {
-                StringView view0 = *rope0->substringBase()->valueInternal().impl();
+            if (bits0 & isSubstringInPointer) {
+                StringView view0 = *rope0->substringBase()->getValueImpl();
                 unsigned offset = rope0->substringOffset();
                 view0.substring(offset, rope0Length).getCharacters(buffer);
             } else {
                 if (std::bit_cast<uint8_t*>(currentStackPointer()) < stackLimit) [[unlikely]]
                     MUST_TAIL_CALL return JSRopeString::resolveToBufferSlow(fiber0, fiber1, fiber2, buffer, stackLimit);
-                resolveToBuffer(rope0->fiber0(), rope0->fiber1(), rope0->fiber2(), buffer.first(rope0Length), stackLimit);
+                resolveToBuffer(std::bit_cast<JSString*>(bits0 & stringMask), rope0->fiber1(), rope0->fiber2(), buffer.first(rope0Length), stackLimit);
             }
             skip(buffer, rope0Length);
         } else {
-            StringView view0 = fiber0->valueInternal().impl();
+            StringView view0 = std::bit_cast<StringImpl*>(bits0);
             view0.getCharacters(buffer);
             skip(buffer, view0.length());
         }
@@ -528,8 +544,10 @@ inline void JSRopeString::resolveToBuffer(JSString* fiber0, JSString* fiber1, JS
 
     // 2 fibers.
     if (fiber1) [[likely]] {
-        if (fiber0->isRope()) {
-            if (fiber1->isRope()) {
+        uintptr_t bits0 = fiber0->fiberConcurrently();
+        uintptr_t bits1 = fiber1->fiberConcurrently();
+        if (bits0 & isRopeInPointer) {
+            if (bits1 & isRopeInPointer) {
                 if (std::bit_cast<uint8_t*>(currentStackPointer()) < stackLimit) [[unlikely]]
                     MUST_TAIL_CALL return JSRopeString::resolveToBufferSlow(fiber0, fiber1, fiber2, buffer, stackLimit);
 
@@ -543,9 +561,9 @@ inline void JSRopeString::resolveToBuffer(JSString* fiber0, JSString* fiber1, JS
                 auto rope1Buffer = buffer.subspan(rope0Length);
 
                 bool rope0Resolved = false;
-                if (rope0->isSubstring()) {
+                if (bits0 & isSubstringInPointer) {
                     {
-                        StringView view = *rope0->substringBase()->valueInternal().impl();
+                        StringView view = *rope0->substringBase()->getValueImpl();
                         unsigned offset = rope0->substringOffset();
                         view.substring(offset, rope0Length).getCharacters(rope0Buffer);
                     }
@@ -556,103 +574,110 @@ inline void JSRopeString::resolveToBuffer(JSString* fiber0, JSString* fiber1, JS
                     rope0Resolved = true;
                 }
 
-                if (rope1->isSubstring()) {
+                if (bits1 & isSubstringInPointer) {
                     {
-                        StringView view = *rope1->substringBase()->valueInternal().impl();
+                        StringView view = *rope1->substringBase()->getValueImpl();
                         unsigned offset = rope1->substringOffset();
                         view.substring(offset, rope1Length).getCharacters(rope1Buffer);
                     }
                     if (rope0Resolved)
                         return;
-                    MUST_TAIL_CALL return resolveToBuffer(rope0->fiber0(), rope0->fiber1(), rope0->fiber2(), rope0Buffer, stackLimit);
+                    MUST_TAIL_CALL return resolveToBuffer(std::bit_cast<JSString*>(bits0 & stringMask), rope0->fiber1(), rope0->fiber2(), rope0Buffer, stackLimit);
                 }
 
                 if (rope0Resolved)
-                    MUST_TAIL_CALL return resolveToBuffer(rope1->fiber0(), rope1->fiber1(), rope1->fiber2(), rope1Buffer, stackLimit);
+                    MUST_TAIL_CALL return resolveToBuffer(std::bit_cast<JSString*>(bits1 & stringMask), rope1->fiber1(), rope1->fiber2(), rope1Buffer, stackLimit);
 
                 // We resolve short rope first. Our heuristic is that longer rope can potentially have deeper nestings.
                 // Thus we would like to resolve that nestings in a tail-call form to avoid deeply nested call stacks.
                 const JSRopeString* shortRope;
                 const JSRopeString* longRope;
+                uintptr_t shortBits;
+                uintptr_t longBits;
                 std::span<CharacterType> shortBuffer;
                 std::span<CharacterType> longBuffer;
 
                 if (rope0Length < rope1Length) {
                     shortRope = rope0;
                     longRope = rope1;
+                    shortBits = bits0;
+                    longBits = bits1;
                     shortBuffer = rope0Buffer;
                     longBuffer = rope1Buffer;
                 } else {
                     shortRope = rope1;
                     longRope = rope0;
+                    shortBits = bits1;
+                    longBits = bits0;
                     shortBuffer = rope1Buffer;
                     longBuffer = rope0Buffer;
                 }
 
-                resolveToBuffer(shortRope->fiber0(), shortRope->fiber1(), shortRope->fiber2(), shortBuffer, stackLimit);
+                resolveToBuffer(std::bit_cast<JSString*>(shortBits & stringMask), shortRope->fiber1(), shortRope->fiber2(), shortBuffer, stackLimit);
                 if (rope0 == rope1) {
                     memcpySpan(longBuffer, shortBuffer);
                     return;
                 }
-                MUST_TAIL_CALL return resolveToBuffer(longRope->fiber0(), longRope->fiber1(), longRope->fiber2(), longBuffer, stackLimit);
+                MUST_TAIL_CALL return resolveToBuffer(std::bit_cast<JSString*>(longBits & stringMask), longRope->fiber1(), longRope->fiber2(), longBuffer, stackLimit);
             }
 
             auto* rope0 = static_cast<const JSRopeString*>(fiber0);
             auto rope0Length = rope0->length();
             {
-                StringView view1 = fiber1->valueInternal().impl();
+                StringView view1 = std::bit_cast<StringImpl*>(bits1);
                 view1.getCharacters(buffer.subspan(rope0Length));
             }
-            if (rope0->isSubstring()) {
-                StringView view0 = *rope0->substringBase()->valueInternal().impl();
+            if (bits0 & isSubstringInPointer) {
+                StringView view0 = *rope0->substringBase()->getValueImpl();
                 unsigned offset = rope0->substringOffset();
 
                 view0.substring(offset, rope0Length).getCharacters(buffer);
                 return;
             }
-            MUST_TAIL_CALL return resolveToBuffer(rope0->fiber0(), rope0->fiber1(), rope0->fiber2(), buffer.first(rope0Length), stackLimit);
+            MUST_TAIL_CALL return resolveToBuffer(std::bit_cast<JSString*>(bits0 & stringMask), rope0->fiber1(), rope0->fiber2(), buffer.first(rope0Length), stackLimit);
         }
 
-        if (fiber1->isRope()) {
+        if (bits1 & isRopeInPointer) {
             auto* rope1 = static_cast<const JSRopeString*>(fiber1);
             auto rope1Length = rope1->length();
             {
-                StringView view0 = fiber0->valueInternal().impl();
+                StringView view0 = std::bit_cast<StringImpl*>(bits0);
                 view0.getCharacters(buffer);
                 skip(buffer, view0.length());
             }
-            if (rope1->isSubstring()) {
-                StringView view1 = *rope1->substringBase()->valueInternal().impl();
+            if (bits1 & isSubstringInPointer) {
+                StringView view1 = *rope1->substringBase()->getValueImpl();
                 unsigned offset = rope1->substringOffset();
                 view1.substring(offset, rope1Length).getCharacters(buffer);
                 return;
             }
-            MUST_TAIL_CALL return resolveToBuffer(rope1->fiber0(), rope1->fiber1(), rope1->fiber2(), buffer.first(rope1Length), stackLimit);
+            MUST_TAIL_CALL return resolveToBuffer(std::bit_cast<JSString*>(bits1 & stringMask), rope1->fiber1(), rope1->fiber2(), buffer.first(rope1Length), stackLimit);
         }
 
-        StringView view0 = fiber0->valueInternal().impl();
+        StringView view0 = std::bit_cast<StringImpl*>(bits0);
         view0.getCharacters(buffer);
-        StringView view1 = fiber1->valueInternal().impl();
+        StringView view1 = std::bit_cast<StringImpl*>(bits1);
         view1.getCharacters(buffer.subspan(view0.length()));
         return;
     }
 
     // 1 fiber.
-    if (!fiber0->isRope()) {
-        StringView view0 = fiber0->valueInternal().impl();
+    uintptr_t bits0 = fiber0->fiberConcurrently();
+    if (!(bits0 & isRopeInPointer)) {
+        StringView view0 = std::bit_cast<StringImpl*>(bits0);
         view0.getCharacters(buffer);
         return;
     }
 
     auto* rope0 = static_cast<const JSRopeString*>(fiber0);
     auto rope0Length = rope0->length();
-    if (rope0->isSubstring()) {
-        StringView view0 = *rope0->substringBase()->valueInternal().impl();
+    if (bits0 & isSubstringInPointer) {
+        StringView view0 = *rope0->substringBase()->getValueImpl();
         unsigned offset = rope0->substringOffset();
         view0.substring(offset, rope0Length).getCharacters(buffer);
         return;
     }
-    MUST_TAIL_CALL return resolveToBuffer(rope0->fiber0(), rope0->fiber1(), rope0->fiber2(), buffer.first(rope0Length), stackLimit);
+    MUST_TAIL_CALL return resolveToBuffer(std::bit_cast<JSString*>(bits0 & stringMask), rope0->fiber1(), rope0->fiber2(), buffer.first(rope0Length), stackLimit);
 #else
     return JSRopeString::resolveToBufferSlow(fiber0, fiber1, fiber2, buffer, stackLimit);
 #endif
@@ -703,13 +728,24 @@ inline JSString* jsAtomString(JSGlobalObject* globalObject, VM& vm, JSString* st
     auto createFromRope = [&](VM& vm, auto& buffer) {
         auto impl = AtomStringImpl::add(buffer);
         size_t sizeToReport = impl->hasOneRef() ? impl->cost() : 0;
-        StringImpl* expectedImpl = impl.get();
+        if (vm.gilOff()) [[unlikely]] {
+            // GIL-off: convertToNonRope is idempotent, and a concurrent plain
+            // resolver (resolveRope) may have published a non-atom impl with
+            // the same contents first. The returned cell is cached as the
+            // atom for this key and consumed as SpecStringIdent, so it must
+            // hold an atom: publish ours over a non-atom winner, and report
+            // memory only when the cell took our impl.
+            StringImpl* expectedImpl = impl.get();
+            ropeString->convertToNonRope(String { impl.copyRef() });
+            StringImpl* publishedImpl = ropeString->getValueImpl();
+            if (publishedImpl == expectedImpl)
+                vm.heap.reportExtraMemoryAllocated(ropeString, sizeToReport);
+            else if (!publishedImpl->isAtom())
+                ropeString->swapToAtomString(vm, WTF::move(impl));
+            return ropeString;
+        }
         ropeString->convertToNonRope(String { WTF::move(impl) });
-        // GIL-off: convertToNonRope is idempotent; on a lost publish race our
-        // impl was dropped, so do not report memory the cell does not hold.
-        // GIL-on: the comparison is always true.
-        if (ropeString->valueInternal().impl() == expectedImpl)
-            vm.heap.reportExtraMemoryAllocated(ropeString, sizeToReport);
+        vm.heap.reportExtraMemoryAllocated(ropeString, sizeToReport);
         return ropeString;
     };
 
@@ -772,38 +808,41 @@ inline JSString* jsAtomString(JSGlobalObject* globalObject, VM& vm, JSString* s1
     // which stress this jsAtomString significantly.
     auto resolveWith2Fibers = [&](JSString* fiber0, JSString* fiber1, auto buffer) {
         uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimitForCurrentThreadSlow());
-        if (fiber0->isRope()) {
-            if (fiber1->isRope())
+        // One m_fiber snapshot per fiber (see JSRopeString::resolveToBuffer).
+        uintptr_t bits0 = fiber0->fiberConcurrently();
+        uintptr_t bits1 = fiber1->fiberConcurrently();
+        if (bits0 & JSString::isRopeInPointer) {
+            if (bits1 & JSString::isRopeInPointer)
                 return JSRopeString::resolveToBufferSlow(fiber0, fiber1, nullptr, buffer, stackLimit);
 
             auto* rope0 = static_cast<const JSRopeString*>(fiber0);
-            StringView view1 = fiber1->valueInternal().impl();
+            StringView view1 = std::bit_cast<StringImpl*>(bits1);
             view1.getCharacters(buffer.subspan(rope0->length()));
-            if (rope0->isSubstring()) {
-                StringView view0 = *rope0->substringBase()->valueInternal().impl();
+            if (bits0 & JSRopeString::isSubstringInPointer) {
+                StringView view0 = *rope0->substringBase()->getValueImpl();
                 unsigned offset = rope0->substringOffset();
                 view0.substring(offset, rope0->length()).getCharacters(buffer);
                 return;
             }
-            return JSRopeString::resolveToBuffer(rope0->fiber0(), rope0->fiber1(), rope0->fiber2(), buffer.first(rope0->length()), stackLimit);
+            return JSRopeString::resolveToBuffer(std::bit_cast<JSString*>(bits0 & JSRopeString::stringMask), rope0->fiber1(), rope0->fiber2(), buffer.first(rope0->length()), stackLimit);
         }
 
-        if (fiber1->isRope()) {
-            StringView view0 = fiber0->valueInternal().impl();
+        if (bits1 & JSString::isRopeInPointer) {
+            StringView view0 = std::bit_cast<StringImpl*>(bits0);
             view0.getCharacters(buffer);
             auto* rope1 = static_cast<const JSRopeString*>(fiber1);
-            if (rope1->isSubstring()) {
-                StringView view1 = *rope1->substringBase()->valueInternal().impl();
+            if (bits1 & JSRopeString::isSubstringInPointer) {
+                StringView view1 = *rope1->substringBase()->getValueImpl();
                 unsigned offset = rope1->substringOffset();
                 view1.substring(offset, rope1->length()).getCharacters(buffer.subspan(view0.length()));
                 return;
             }
-            return JSRopeString::resolveToBuffer(rope1->fiber0(), rope1->fiber1(), rope1->fiber2(), buffer.subspan(view0.length(), rope1->length()), stackLimit);
+            return JSRopeString::resolveToBuffer(std::bit_cast<JSString*>(bits1 & JSRopeString::stringMask), rope1->fiber1(), rope1->fiber2(), buffer.subspan(view0.length(), rope1->length()), stackLimit);
         }
 
-        StringView view0 = fiber0->valueInternal().impl();
+        StringView view0 = std::bit_cast<StringImpl*>(bits0);
         view0.getCharacters(buffer);
-        StringView view1 = fiber1->valueInternal().impl();
+        StringView view1 = std::bit_cast<StringImpl*>(bits1);
         view1.getCharacters(buffer.subspan(view0.length()));
     };
 

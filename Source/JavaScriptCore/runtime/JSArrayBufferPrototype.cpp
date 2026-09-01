@@ -36,13 +36,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-// Defined in ArrayBuffer.cpp (GIL-off detached-flag side table, SPEC-ungil
-// annex N6 arm 1). During the detach->stop window isDetached() (!m_data)
-// still reads false outside ArrayBuffer.cpp, so spec-ordered error paths
-// must consult the flag. No header declaration until ArrayBuffer.h lands
-// the detached-flag member (recorded U-T13 gap).
-bool isArrayBufferDetachedGILOff(ArrayBuffer*);
-
 static JSC_DECLARE_HOST_FUNCTION(arrayBufferProtoFuncSlice);
 static JSC_DECLARE_HOST_FUNCTION(arrayBufferProtoFuncResize);
 static JSC_DECLARE_HOST_FUNCTION(arrayBufferProtoFuncTransfer);
@@ -310,15 +303,16 @@ enum class CopyAndDetachMode {
     PreserveResizability,
     FixedLength
 };
-// transferTo() fails for exactly two reasons: a racing detach/transfer already
-// won the N6 arm-1 flag (ArrayBuffer.cpp:974 — the flag is set BEFORE the
-// length=0 publish, so it is observable here), or allocation failed. The
-// racing-loser case must linearize as "already detached" => TypeError (the
-// only outcome any sequential interleaving produces, SPEC-ungil annex N7 R10);
-// only genuine allocation failure stays RangeError.
+// transferTo() fails for exactly two reasons: a racing detach/transfer on
+// another thread already detached the source (GIL-off; ArrayBuffer::detach
+// sets the sticky flag isDetached() reads before it publishes the zero
+// length, and a transferTo that lost that race fails rather than producing a
+// second transferee), or allocation failed. The racing loser is "already
+// detached" => TypeError, the only outcome any sequential interleaving
+// produces; only genuine allocation failure is RangeError.
 static void throwTransferFailedError(JSGlobalObject* globalObject, ThrowScope& scope, ArrayBuffer* impl)
 {
-    if (impl->isDetached() || isArrayBufferDetachedGILOff(impl)) {
+    if (impl->isDetached()) {
         throwTypeError(globalObject, scope, "Receiver is detached"_s);
         return;
     }
@@ -333,7 +327,7 @@ static JSArrayBuffer* arrayBufferCopyAndDetach(JSGlobalObject* globalObject, JSA
     ASSERT(arrayBuffer->impl()->sharingMode() == ArrayBufferSharingMode::Default);
     bool isResizable = arrayBuffer->isResizableOrGrowableShared();
 
-    if (arrayBuffer->impl()->isDetached() || isArrayBufferDetachedGILOff(arrayBuffer->impl())) [[unlikely]] {
+    if (arrayBuffer->impl()->isDetached()) [[unlikely]] {
         throwVMTypeError(globalObject, scope, "Receiver is detached"_s);
         return nullptr;
     }

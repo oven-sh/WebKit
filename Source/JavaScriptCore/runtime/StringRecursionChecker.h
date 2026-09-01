@@ -40,31 +40,19 @@ private:
     JSValue NODELETE emptyString();
     JSValue performCheck();
 
-    // TSAN r0 family vm-string-caches (UG §K: VM-level caches are NOT blessed
-    // racy): the recursion-detection state used to live solely on the shared
-    // VM (stringRecursionCheckFirstObject, a plain JSObject*, and
-    // stringRecursionCheckVisitedObjects, a non-concurrent hash set). Under
-    // GIL-off, two lites running toString/JSON.stringify/join concurrently
-    // raced on both (plain read/write of firstObject at performCheck and the
-    // ~StringRecursionChecker reset; concurrent add/remove corrupting the
-    // hash set's buckets across a rehash). The state tracks recursion along a
-    // SINGLE thread's call stack, so per-thread is the semantically correct
-    // scope — sharing it across lites also produced spurious "" early returns
-    // when two threads stringified the same object. GIL-off routes to a
-    // per-thread instance (each thread touches only its own thread_local
-    // state, so no cross-thread access remains and no ordering is needed);
-    // flag-off keeps the VM members untouched behind one predicted-false
-    // Config-page test (same mode-split shape as VM::liveNumericStrings()).
-    // Lifetime: entries exist only while a checker for them is on this
-    // thread's stack (the destructor removes them), matching the VM-member
-    // set's invariant — the raw JSObject* pointers are kept live by the
-    // conservatively-scanned stack frames of the active recursion; neither
-    // copy of the state is (or needs to be) visited by GC.
+    // The recursion state describes one thread's call stack, so with JS
+    // threads on it lives in a thread_local: GIL-on threads interleave inside
+    // a stringification whenever a callback parks (join, contended Lock.hold,
+    // Condition.wait, Atomics.wait), and a shared set would make another
+    // thread's in-progress object look like a cycle on this one. Entries
+    // exist only while a checker for them is on this thread's stack, so the
+    // raw JSObject* pointers are kept live by the active frames and the set
+    // is never visited by GC. Flag-off keeps the VM members.
     struct PerThreadState {
         JSObject* firstObject { nullptr };
         UncheckedKeyHashSet<JSObject*> visitedObjects;
     };
-    static PerThreadState& gilOffPerThreadState()
+    static PerThreadState& perThreadState()
     {
         static thread_local PerThreadState state;
         return state;
@@ -72,9 +60,8 @@ private:
 
     JSGlobalObject* m_globalObject;
     JSObject* m_thisObject;
-    // Slots selected once in performCheck() (per-thread under GIL-off, the
-    // shared VM members otherwise); the destructor must undo its registration
-    // in the SAME state the constructor used.
+    // Slots selected once in performCheck(); the destructor must undo its
+    // registration in the same state the constructor used.
     JSObject** m_firstObjectSlot { nullptr };
     UncheckedKeyHashSet<JSObject*>* m_visitedObjects { nullptr };
     JSValue m_earlyReturnValue;
@@ -88,8 +75,8 @@ inline JSValue StringRecursionChecker::performCheck()
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return throwStackOverflowError();
 
-    if (vm.gilOffWithProcessGate()) [[unlikely]] {
-        auto& state = gilOffPerThreadState();
+    if (Options::useJSThreads()) [[unlikely]] {
+        auto& state = perThreadState();
         m_firstObjectSlot = &state.firstObject;
         m_visitedObjects = &state.visitedObjects;
     } else {
