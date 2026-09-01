@@ -37,6 +37,11 @@
 #include "JSModuleRecord.h"
 #include "ModuleGraphInstance.h"
 #include "JSPromise.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "InternalFieldTuple.h"
+#include "JSAsyncFunctionGenerator.h"
+#include "JSPromiseCombinatorsGlobalContext.h"
+#endif
 #include "ObjectConstructor.h"
 #include "SyntheticModuleRecord.h"
 #include "VMTrapsInlines.h"
@@ -1173,7 +1178,7 @@ void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject, ModuleGrap
     JSPromise* promise = nullptr;
     if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(this); cyclic && instance) {
 #if USE(BUN_JSC_ADDITIONS)
-        promise = cyclic->evaluate(globalObject, -1, instance);
+        promise = cyclic->evaluate(globalObject, nullptr, instance);
 #else
         promise = cyclic->evaluate(globalObject, instance);
 #endif
@@ -1269,7 +1274,7 @@ JS_EXPORT_PRIVATE JSValue AbstractModuleRecord::evaluate(JSGlobalObject* globalO
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder)
+JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject, JSPromise* dynamicImportPromise)
 #else
 JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
 #endif
@@ -1288,7 +1293,7 @@ JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
 
     if (auto* cyclicRecord = dynamicDowncast<CyclicModuleRecord>(this))
 #if USE(BUN_JSC_ADDITIONS)
-        return wrap(cyclicRecord->evaluate(globalObject, referrerAsyncOrder));
+        return wrap(cyclicRecord->evaluate(globalObject, dynamicImportPromise));
 #else
         return wrap(cyclicRecord->evaluate(globalObject));
 #endif
@@ -1328,7 +1333,128 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, int64_t referrerAsyncOrder, ModuleGraphInstance* instance)
+static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
+{
+    auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
+        UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+        Vector<AbstractModuleRecord*, 8> work;
+        work.append(module);
+        while (!work.isEmpty()) {
+            AbstractModuleRecord* current = work.takeLast();
+            if (current == dependency)
+                return true;
+            if (!seen.add(current).isNewEntry)
+                continue;
+            for (auto& parent : current->asyncParentModules())
+                work.append(parent.get());
+        }
+        return false;
+    };
+
+    auto cellOf = [](JSValue value) -> JSCell* {
+        if (value.isEmpty() || !value.isCell())
+            return nullptr;
+        return value.asCell();
+    };
+
+    auto unwrapContext = [&](JSValue value) -> JSCell* {
+        JSCell* cell = cellOf(value);
+        if (auto* tuple = cell ? dynamicDowncast<InternalFieldTuple>(cell) : nullptr)
+            return cellOf(tuple->getInternalField(0));
+        return cell;
+    };
+
+    UncheckedKeyHashSet<JSPromise*> seen;
+    Vector<JSPromise*, 16> work;
+    work.append(importPromise);
+    bool found = false;
+
+    auto follow = [&](JSValue value) {
+        if (JSCell* cell = cellOf(value)) {
+            if (auto* promise = dynamicDowncast<JSPromise>(cell))
+                work.append(promise);
+        }
+    };
+
+    auto visitReaction = [&](InternalMicrotask task, JSValue cell, JSValue context) -> bool {
+        switch (task) {
+        case InternalMicrotask::AsyncFunctionResume:
+        case InternalMicrotask::AsyncGeneratorDriverResume: {
+            JSCell* driver = unwrapContext(context);
+            if (!driver)
+                break;
+            if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(driver))
+                follow(generator->context());
+            else if (auto* module = dynamicDowncast<AbstractModuleRecord>(driver))
+                found = resumesDependency(module);
+            break;
+        }
+        case InternalMicrotask::AsyncModuleExecutionResume: {
+            JSCell* driver = unwrapContext(context);
+            if (auto* module = driver ? dynamicDowncast<AbstractModuleRecord>(driver) : nullptr)
+                found = resumesDependency(module);
+            break;
+        }
+        case InternalMicrotask::PromiseAllResolveJob:
+        case InternalMicrotask::PromiseAllSettledResolveJob: {
+            JSCell* contextCell = cellOf(cell);
+            if (auto* globalContext = contextCell ? dynamicDowncast<JSPromiseCombinatorsGlobalContext>(contextCell) : nullptr)
+                follow(globalContext->promise());
+            break;
+        }
+        case InternalMicrotask::None:
+        case InternalMicrotask::PromiseResolveThenableJobFast:
+        case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotaskFast:
+        case InternalMicrotask::PromiseResolveThenableJob:
+        case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask:
+        case InternalMicrotask::PromiseResolveWithoutHandlerJob:
+        case InternalMicrotask::PromiseFulfillWithoutHandlerJob:
+        case InternalMicrotask::PromiseFinallyReactionJob:
+        case InternalMicrotask::PromiseFinallyAwaitJob:
+        case InternalMicrotask::PromiseReactionJob:
+        case InternalMicrotask::ModuleLoadStep:
+        case InternalMicrotask::ModuleLoadTopSettled:
+        case InternalMicrotask::ModuleLoadTopRejected:
+        case InternalMicrotask::ModuleLoadSpecifierTransform:
+        case InternalMicrotask::ModuleLoadCombinedLoadSettled:
+        case InternalMicrotask::ModuleLoadCombinedStateSettled:
+        case InternalMicrotask::ModuleLoadLinkEvaluateSettled:
+        case InternalMicrotask::ModuleLoadReturnRecord:
+        case InternalMicrotask::ModuleLoadReturnModuleKey:
+        case InternalMicrotask::ModuleLoadStoreError:
+        case InternalMicrotask::ImportModuleNamespace:
+        case InternalMicrotask::DynamicImportLoadSettled:
+        case InternalMicrotask::DynamicImportEvaluateSettled:
+        case InternalMicrotask::DynamicImportDeferLoadSettled:
+        case InternalMicrotask::DynamicImportDeferDependencySettled:
+        case InternalMicrotask::ModuleGraphInstanceLoadSettled:
+        case InternalMicrotask::ModuleGraphInstanceEvaluateSettled:
+        case InternalMicrotask::ModuleGraphInstanceDependencySettled:
+            follow(cell);
+            break;
+        default:
+            break;
+        }
+        return !found;
+    };
+
+    constexpr size_t maxPromises = 4096;
+    while (!work.isEmpty() && !found) {
+        JSPromise* promise = work.takeLast();
+        if (promise->status() != JSPromise::Status::Pending)
+            continue;
+        if (!seen.add(promise).isNewEntry)
+            continue;
+        if (seen.size() > maxPromises)
+            return false;
+        promise->forEachPendingReaction(visitReaction);
+    }
+    return found;
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, JSPromise* dynamicImportPromise, ModuleGraphInstance* instance)
 #else
 unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Vector<AbstractModuleRecord*, 8>& stack, unsigned index, ModuleGraphInstance* instance)
 #endif
@@ -1408,7 +1534,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
         RETURN_IF_EXCEPTION(scope, invalid);
         // 12.a. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
 #if USE(BUN_JSC_ADDITIONS)
-        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder, instance);
+        unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, dynamicImportPromise, instance);
 #else
         unsigned result = requiredModule->innerModuleEvaluation(globalObject, stack, index, instance);
 #endif
@@ -1456,16 +1582,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // 12.b.v. If requiredModule.[[AsyncEvaluationOrder]] is an integer, then
             if (cyclic->asyncEvaluationOrder(instance).hasOrder()) {
 #if USE(BUN_JSC_ADDITIONS)
-                // Spec says wait on this dep. That's a guaranteed deadlock when
-                // the dep is the very module whose TLA continuation called the
-                // dynamic import() that started this Evaluate(): the dep can
-                // only finish after the import() promise settles, which is
-                // waiting on us. referrerAsyncOrder is that module's
-                // asyncEvaluationOrder(), captured at the import() call site
-                // (-1 when the referrer was not EvaluatingAsync). It is a
-                // VM-unique identity, so equality is exact — siblings that
-                // happen to be EvaluatingAsync (#30259, #30634) never match.
-                if (cyclic->asyncEvaluationOrder(instance).order() != referrerAsyncOrder) {
+                if (!dynamicImportPromise || !importPromiseGatesAsyncDependency(dynamicImportPromise, cyclic)) {
 #endif
                 // 12.b.v.1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
                 module->setPendingAsyncDependencies(instance, module->pendingAsyncDependencies(instance).value() + 1);

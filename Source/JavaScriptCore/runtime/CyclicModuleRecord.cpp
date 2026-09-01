@@ -593,7 +593,7 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder, ModuleGraphInstance* instance)
+JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, JSPromise* dynamicImportPromise, ModuleGraphInstance* instance)
 #else
 JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, ModuleGraphInstance* instance)
 #endif
@@ -638,7 +638,7 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, ModuleGrap
     module->setTopLevelCapability(vm, instance, capability);
     // 8. Let result be Completion(InnerModuleEvaluation(module, stack, 0)).
 #if USE(BUN_JSC_ADDITIONS)
-    module->innerModuleEvaluation(globalObject, stack, 0, referrerAsyncOrder, instance);
+    module->innerModuleEvaluation(globalObject, stack, 0, dynamicImportPromise, instance);
 #else
     module->innerModuleEvaluation(globalObject, stack, 0, instance);
 #endif

@@ -98,7 +98,7 @@ public:
     // APIs to control the module loader.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSSourceCode*);
-    JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { });
+    JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, const String& referrer = { });
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     // Module graph instances (prototype): link a fetched module graph without
     // evaluating it, so it can serve as the template for instantiateIntoGraphInstance.
@@ -114,9 +114,8 @@ public:
     JS_EXPORT_PRIVATE static JSPromise* instantiateLoadedModuleIntoGraphInstance(JSGlobalObject*, const Identifier& key, ModuleGraphInstance*, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript, bool deferred = false);
     static JSObject* createGraphInstanceImportContext(JSGlobalObject*, ModuleGraphInstance*, const Identifier& key, ScriptFetchParameters::Type, bool deferred);
 #endif
-    JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
+    JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false);
 #if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);
 #endif
 
     // Platform dependent hooked APIs.

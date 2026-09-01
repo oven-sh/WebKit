@@ -339,6 +339,36 @@ JSValue JSPromise::asyncStackTraceContext() const
     return { };
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSPromise::forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>& callback) const
+{
+    ASSERT(status() == Status::Pending);
+    switch (inlineReactionKind()) {
+    case InlineReactionKind::None: {
+        for (auto* reaction = uncheckedDowncast<JSPromiseReaction>(payloadCell()); reaction; reaction = reaction->next()) {
+            JSValue contextOrHandler;
+            if (auto* slim = dynamicDowncast<JSSlimPromiseReaction>(reaction))
+                contextOrHandler = slim->handlerOrContext();
+            else
+                contextOrHandler = uncheckedDowncast<JSFullPromiseReaction>(reaction)->context();
+            if (!callback(reaction->internalMicrotask(), reaction->promise(), contextOrHandler))
+                return;
+        }
+        return;
+    }
+    case InlineReactionKind::InternalMicrotask: {
+        JSCell* cell = payloadCell();
+        callback(inlineReactionMicrotask(), cell ? JSValue(cell) : jsUndefined(), m_slot.get());
+        return;
+    }
+    case InlineReactionKind::FulfillHandler:
+    case InlineReactionKind::RejectHandler:
+        callback(InternalMicrotask::None, JSValue(inlineHandlerResultPromise()), m_slot.get());
+        return;
+    }
+}
+#endif
+
 void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue onFulfilled, JSValue onRejected, JSValue promiseOrCapability)
 {
     bool fulfilledCallable = onFulfilled.isCallable();

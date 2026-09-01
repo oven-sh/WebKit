@@ -29,6 +29,9 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/Microtask.h>
 #include <wtf/CompactPointerTuple.h>
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/ScopedLambda.h>
+#endif
 
 namespace JSC {
 
@@ -113,6 +116,10 @@ public:
     }
 
     JSValue asyncStackTraceContext() const;
+
+#if USE(BUN_JSC_ADDITIONS)
+    void forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>&) const;
+#endif
 
     JS_EXPORT_PRIVATE static JSPromise* resolvedPromise(JSGlobalObject*, JSValue);
     JS_EXPORT_PRIVATE static JSPromise* rejectedPromise(JSGlobalObject*, JSValue);
