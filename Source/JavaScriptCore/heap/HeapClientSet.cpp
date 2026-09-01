@@ -65,7 +65,11 @@ void HeapClientSet::add(GCClient::Heap& client) WTF_IGNORES_THREAD_SAFETY_ANALYS
             // sticky switch FIRST, with no HCS lock held (it takes
             // *m_threadLock, rank 5, outer to our rank 6) — quiesce the
             // legacy GC protocol, set sticky ISS (I13/I15) — then loop to
-            // insert via the shared branch below.
+            // insert via the shared branch below. In a GIL-off process only
+            // the designated server VM may ever hold a second client, so the
+            // designation check fail-stops a loser VM reaching this trigger
+            // before the sticky switch's inner I13 CAS would.
+            server.verifyStickySharedServerDesignation();
             server.noteSharedServerSticky();
             continue;
         }

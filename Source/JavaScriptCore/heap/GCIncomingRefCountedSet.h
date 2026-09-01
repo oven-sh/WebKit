@@ -51,32 +51,27 @@ public:
     size_t size() const { return m_bytes.loadRelaxed(); };
 
     // The lock guarding both this set's vector AND every member object's
-    // incoming-reference storage. READERS of that storage that run outside
-    // this set's API (ArrayBuffer::notifyDetaching /
-    // refreshAfterWasmMemoryGrow walking numberOfIncomingReferences() /
-    // incomingReferenceAt()) must snapshot under this lock — see
+    // incoming-reference storage against concurrent mutators. Readers of that
+    // storage outside this set's API (ArrayBuffer::notifyDetaching /
+    // refreshAfterWasmMemoryGrow) snapshot the cell list under it — see
     // Heap::arrayBufferIncomingReferencesLock() and the GCIncomingRefCounted.h
     // invariant comment.
     Lock& lock() LIFETIME_BOUND { return m_lock; }
 
 private:
-    // Shared-heap (GIL-off): N mutators reach addReference() concurrently via
-    // Heap::addReference (e.g. ArrayBuffer wrapper allocation slow paths), GC
-    // end-phase work (sweep / lastChanceToFinalize) walks the same set, and
-    // ordinary mutator paths READ a member object's incoming-reference
-    // storage (ArrayBuffer detach / wasm-grow refresh). Upstream assumed a
-    // single mutator; unsynchronized Vector appends here (and to each
-    // object's incoming-reference storage) raced realloc-vs-move against the
-    // lock-free readers and produced a UAF, so the invariant is: ALL access
-    // — mutation AND reads — to m_vector and to per-object incoming-reference
-    // storage happens under m_lock.
-    // LOCK RANK: strict leaf at heap rank — nothing but allocation (bmalloc)
-    // and mark-bit reads happens under it; no other lock is acquired while it
-    // is held, and it never safepoints. Flag-off this lock is uncontended
-    // (single mutator) and the guarded paths are cold slow paths (wrapper
-    // construction, GC end-phase, detach, wasm grow), so semantics are
-    // unchanged; the flag-off-identity waiver for the added uncontended
-    // acquire/release is recorded in docs/threads/TSAN-TRIAGE.md §3.27.
+    // GIL-off, N mutators reach addReference() concurrently (ArrayBuffer
+    // wrapper construction) while others read a member object's
+    // incoming-reference storage (detach / wasm-grow refresh); an
+    // unsynchronized Vector append there races realloc against the readers.
+    // So under g_jscConfig.gilOffProcess every mutator access — the append
+    // and the readers' snapshot — holds m_lock. With the GIL, and flag-off,
+    // one mutator runs at a time and the lock is never taken. GC end-phase
+    // sweep and teardown walk the set with every mutator stopped and hold no
+    // lock: deleting a member object from there runs ~ArrayBuffer, which
+    // takes other locks and embedder destructors.
+    // LOCK RANK: strict leaf — only a Vector append / copy (bmalloc) happens
+    // under it; no other lock is acquired while it is held, and it never
+    // safepoints.
     mutable Lock m_lock;
     Vector<T*> m_vector WTF_GUARDED_BY_LOCK(m_lock);
     // Byte count is read lock-free by Heap accounting (size()); writers update

@@ -37,12 +37,21 @@ namespace JSC {
 
 GCSafepointEpoch::~GCSafepointEpoch()
 {
-    // Server teardown. Every client has detached (HeapClientSet's dtor
-    // asserts the registry is empty) and this heap will never reach another
-    // safepoint, so safepoint-deferred destruction degenerates to immediate
-    // destruction: drain whatever is still retired. Destroy outside
-    // m_retireLock — destroy thunks may themselves retire(), and those
-    // late-retired items must drain too.
+    // Backstop for items retired after Heap::lastChanceToFinalize's drains.
+    // By now the object space is freed, so such an item's destroy thunk must
+    // not touch heap memory; anything that does must have been drained there.
+    drainForTeardown();
+}
+
+void GCSafepointEpoch::drainForTeardown()
+{
+    // Server teardown: this heap will never reach another safepoint, so
+    // safepoint-deferred destruction degenerates to immediate destruction.
+    // Heap::lastChanceToFinalize runs this while MarkedBlocks and WeakBlocks
+    // are still alive, because destroy thunks may write into them (a retired
+    // Weak<> clears its WeakImpl). Destroy outside m_retireLock — destroy
+    // thunks may themselves retire(), and those late-retired items must drain
+    // too.
     RELEASE_ASSERT(m_reclaimerBracketHolder.load() == nullptr);
     while (true) {
         Vector<RetiredItem> toDestroy;

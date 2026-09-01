@@ -30,6 +30,7 @@
 #include "HeapCell.h"
 #include <wtf/DoublyLinkedList.h>
 #include <wtf/HashCountedSet.h>
+#include <wtf/Lock.h>
 #include <wtf/SentinelLinkedList.h>
 #include <wtf/SinglyLinkedList.h>
 
@@ -92,6 +93,12 @@ public:
     template<bool isCellOnly>
     void writeBarrier(HandleSlot, JSValue);
 
+    // GIL-off arms of the strongHandle* wrappers below: the same operations under m_strongLock.
+    JS_EXPORT_PRIVATE HandleSlot allocateSlow();
+    JS_EXPORT_PRIVATE void deallocateSlow(HandleSlot);
+    template<bool isCellOnly>
+    JS_EXPORT_PRIVATE void writeBarrierSlow(HandleSlot, JSValue);
+
     unsigned NODELETE protectedGlobalObjectCount();
 
     template<typename Functor> void forEachStrongHandle(const Functor&, const HashCountedSet<JSCell*>& skipSet);
@@ -107,30 +114,17 @@ private:
 
     VM& m_vm;
     bool m_gilOff { false }; // Stamped from vm.gilOff() in the ctor; immutable (see gilOff()).
+    // Leaf lock: GIL-off it serializes m_strongList / m_freeList mutation and the statistics walks
+    // of m_strongList. It is never held across user JS and nothing but malloc is acquired under it,
+    // so it is legal to take from destructors running inside the sweep. The GC root scan
+    // (visitStrongHandles) runs inside the stop-the-world with every mutator parked and takes no lock.
+    Lock m_strongLock;
     DoublyLinkedList<HandleBlock> m_blockList;
 
     using NodeList = SentinelLinkedList<Node, BasicRawSentinelNode<Node>>;
     NodeList m_strongList;
     SinglyLinkedList<Node> m_freeList;
 };
-
-// UNGIL §F.3 (U-T8 seams, wired by the review fix; RE-INLINED by the
-// flag-off codegen review round): GIL-off, Strong allocate / free /
-// set-slot traffic is inherently cross-thread (AsyncTicket Strongs settled
-// and destroyed off-owner, ThreadObject completion Strongs, SD15 handoff
-// records created on spawned threads), and two threads mutating
-// m_freeList/m_strongList unlocked is heap corruption — so Strong.h /
-// StrongInlines.h route their three call-site shapes through the
-// strongHandle* wrappers (defined inline at the bottom of this header).
-// Each wrapper tests the HandleSet's cached gilOff byte and falls through
-// to the EXISTING inline list/free-list ops, so flag-off codegen is the
-// pre-ungil inline shape plus one predicted-false byte test — no cross-TU
-// call. Only the gilOff arm goes out of line, to the locked *Slow entry
-// points below (HandleSet.cpp, m_strongLock).
-JS_EXPORT_PRIVATE HandleSlot strongHandleAllocateSlow(HandleSet&);
-JS_EXPORT_PRIVATE void strongHandleDeallocateSlow(HandleSet&, HandleSlot);
-template<bool isCellOnly>
-JS_EXPORT_PRIVATE void strongHandleWriteBarrierSlow(HandleSet&, HandleSlot, JSValue);
 
 inline HandleSet* HandleSet::heapFor(HandleSlot handle)
 {
@@ -177,14 +171,24 @@ inline HandleSet* HandleNode::handleSet()
 
 template<typename Functor> void HandleSet::forEachStrongHandle(const Functor& functor, const HashCountedSet<JSCell*>& skipSet)
 {
-    for (Node& node : m_strongList) {
-        JSValue value = *node.slot();
-        if (!value || !value.isCell())
-            continue;
-        if (skipSet.contains(value.asCell()))
-            continue;
-        functor(value.asCell());
+    auto walk = [&] {
+        for (Node& node : m_strongList) {
+            JSValue value = *node.slot();
+            if (!value || !value.isCell())
+                continue;
+            if (skipSet.contains(value.asCell()))
+                continue;
+            functor(value.asCell());
+        }
+    };
+    // Statistics walk outside the GC stop: GIL-off, Strong set-slot/free
+    // traffic from other threads splices m_strongList concurrently.
+    if (gilOff()) [[unlikely]] {
+        Locker locker { m_strongLock };
+        walk();
+        return;
     }
+    walk();
 }
 
 template<bool isCellOnly>
@@ -216,21 +220,21 @@ inline void HandleSet::writeBarrier(HandleSlot slot, JSValue value)
 #endif
 }
 
-// §F.3 Strong-mutation wrappers (see the seam comment above the class).
-// GIL-on / flag-off: one predicted-false byte test, then the same inline
-// bodies the pre-ungil call sites compiled to. GIL-off: the locked slow
-// path (HandleSet.cpp).
+// Strong allocate / free / set-slot (Strong.h, StrongInlines.h) go through these wrappers.
+// GIL-off, Strongs are created, settled and destroyed on foreign threads, so two threads can
+// mutate m_freeList / m_strongList at once; that arm goes out of line and takes m_strongLock.
+// GIL-on and flag-off compile to the inline list operations plus one predicted-false byte test.
 ALWAYS_INLINE HandleSlot strongHandleAllocate(HandleSet& set)
 {
     if (set.gilOff()) [[unlikely]]
-        return strongHandleAllocateSlow(set);
+        return set.allocateSlow();
     return set.allocate();
 }
 
 ALWAYS_INLINE void strongHandleDeallocate(HandleSet& set, HandleSlot slot)
 {
     if (set.gilOff()) [[unlikely]] {
-        strongHandleDeallocateSlow(set, slot);
+        set.deallocateSlow(slot);
         return;
     }
     set.deallocate(slot);
@@ -240,7 +244,7 @@ template<bool isCellOnly>
 ALWAYS_INLINE void strongHandleWriteBarrier(HandleSet& set, HandleSlot slot, JSValue value)
 {
     if (set.gilOff()) [[unlikely]] {
-        strongHandleWriteBarrierSlow<isCellOnly>(set, slot, value);
+        set.writeBarrierSlow<isCellOnly>(slot, value);
         return;
     }
     set.writeBarrier<isCellOnly>(slot, value);

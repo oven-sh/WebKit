@@ -160,9 +160,19 @@ template<typename Functor> inline void Heap::forEachCodeBlockIgnoringJITPlans(co
 
 template<typename Functor> inline void Heap::forEachProtectedCell(const Functor& functor)
 {
-    for (auto& pair : m_protectedValues)
-        functor(pair.key);
-    m_handleSet.forEachStrongHandle(functor, m_protectedValues);
+    auto walk = [&] {
+        for (auto& pair : m_protectedValues)
+            functor(pair.key);
+        m_handleSet.forEachStrongHandle(functor, m_protectedValues);
+    };
+    // Statistics path: GIL-off, other mutators may be in protect()/unprotect()
+    // while this walks the set (the strong-handle walk takes its own leaf).
+    if (vm().gilOff()) [[unlikely]] {
+        Locker locker { m_protectedValuesLock };
+        walk();
+        return;
+    }
+    walk();
 }
 
 #if USE(FOUNDATION)
@@ -201,14 +211,20 @@ inline void Heap::decrementDeferralDepth()
 inline void Heap::decrementDeferralDepthAndGCIfNeeded()
 {
     ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped || worldIsStoppedForAllClients());
-    unsigned& depth = deferralDepthSlot();
-    ASSERT(depth);
-    depth--;
+    // The depth and the deferred-GC hint route identically (per-client once
+    // the server is shared, so one client closing its scope can neither
+    // observe nor swallow another client's pending hint); resolve both with
+    // a single routing test so the flag-off path pays it once.
+    unsigned* depth = &m_deferralDepth;
+    bool* didDeferGCWork = &m_didDeferGCWork;
+    if (Options::useSharedGCHeap() && isSharedServer()) [[unlikely]] {
+        depth = &deferralDepthSlot();
+        didDeferGCWork = &didDeferGCWorkSlot();
+    }
+    ASSERT(*depth);
+    (*depth)--;
 
-    // SharedGC (review round 4): per-client hint once ISS (didDeferGCWorkSlot
-    // routes like deferralDepthSlot) — one client closing its scope can
-    // neither observe nor swallow another client's pending hint.
-    if (didDeferGCWorkSlot() || Options::forceDidDeferGCWork()) [[unlikely]] {
+    if (*didDeferGCWork || Options::forceDidDeferGCWork()) [[unlikely]] {
         decrementDeferralDepthAndGCIfNeededSlow();
         
         // Here are the possible relationships between m_deferralDepth and m_didDeferGCWork.
@@ -279,15 +295,14 @@ void Heap::forEachSlotVisitor(const Func& func)
     func(*m_mutatorSlotVisitor);
     for (auto& visitor : m_parallelSlotVisitors)
         func(*visitor);
-    // T1-gc-siblings-mark: include the lazily-grown sibling-assist visitors
-    // so didStartMarking / endMarking()'s reset / updateMutatorIsStopped /
-    // bytesVisited etc. cover them. The mayGrow bit is sticky-set ONLY by
-    // the conductor (runBeginPhase, gilOff-gated) BEFORE any sibling can
-    // grow the vector (assistEnabled is still false at that point), so a
-    // false read here cannot race a growth — flag-off the bit is never set
-    // and this branch is dead (byte-identical iteration). The lock
-    // serializes against gilOffSiblingAssistMarking()'s lazy creation; no
-    // caller's func acquires a lock, so no rank inversion.
+    // T1-gc-siblings-mark: include the sibling-assist visitors so
+    // didStartMarking / endMarking()'s reset / updateMutatorIsStopped /
+    // bytesVisited / the MarkingConstraintSolver snapshot cover them. The
+    // conductor sticky-sets the mayGrow bit before it first populates the
+    // pool (runBeginPhase, gilOff-gated) and is the only thread that grows
+    // it, so a false read here never skips a non-empty pool — flag-off the
+    // bit is never set and this branch is dead (byte-identical iteration).
+    // No caller's func acquires a lock, so no rank inversion.
     if (m_siblingSlotVisitorPoolMayGrow.load(std::memory_order_relaxed)) [[unlikely]] {
         Locker locker { m_parallelSlotVisitorLock };
         for (auto& visitor : m_siblingSlotVisitors)
@@ -307,8 +322,7 @@ ALWAYS_INLINE VM& Heap::vm() const
     //   - Heap.cpp runSharedGCElection() (follower trap poll): guarded by
     //     `!client->m_isStandalone` before calling client->vm() — OK.
     //   - GCClient::IsoSubspace: no vm() use at all (ctor takes only the
-    //     server BlockDirectory; allocateForClient() routes through
-    //     client.server()) — standalone-safe by construction.
+    //     server BlockDirectory) — standalone-safe by construction.
     //   - VM-taking entry points (CompleteSubspace::allocate(VM&),
     //     GCClient::IsoSubspace::allocate(VM&), `vm.clientHeap` accesses in
     //     Heap.cpp attach/forwarding) go VM->client, never client->vm(), so

@@ -35,16 +35,10 @@
 #include "RaceAmplifier.h"
 #include "ResourceExhaustion.h"
 #include "SuperSampler.h"
+#include "VMManager.h"
 #include <cstring>
 
 namespace JSC {
-
-// UNGIL §A.3 (U-T5) cross-TU seams — defined in runtime/VMManager.cpp;
-// declaration pattern matches heap/Heap.cpp:151 and
-// bytecode/JSThreadsSafepoint.cpp:71/77 (VMManager.h is outside the writable
-// file set). Signatures must stay byte-identical.
-bool jsThreadsThreadGranularWorldIsStopped(); // §A.3.2 post-quiescence depth.
-bool jsThreadsCurrentThreadIsStopConductor(); // §A.3.3 tenure check.
 
 #if ASSERT_ENABLED
 // SharedGC (§5.2(4)): stop/resume/prepare/teardown may mutate an allocator's
@@ -267,27 +261,10 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
                 if (void* result = static_cast<IsoSubspace*>(subspace)->tryAllocateLowerTierPrecise(cellSize))
                     return result;
             }
-
-            ASSERT(!subspace->isPreciseOnly());
-            ASSERT_WITH_MESSAGE(cellSize == m_directory->cellSize(), "non-preciseOnly allocations should match allocator's the size class");
-            // B2-serial-eden-block-churn (b): bias toward OWN-directory retained-
-            // empty REUSE before minting a fresh page. tryAllocateFromOwnDirectory
-            // above scanned canAllocateBits; emptyBits additionally covers blocks
-            // the canAllocate cursor cannot see (addBlock'd-then-consumed blocks
-            // and mid-cycle swept-to-empty blocks — see findOwnEmptyBlockForRefill).
-            // Stripe-safe: own-directory only — we hold m_refillLock + the shared
-            // facade side; the in-lock sweep inside tryAllocateIn is the SAME I5b
-            // license as the cursor leg above. tryAllocateIn handles both decline
-            // shapes itself (weak-bearing carve-out -> didFinishUsingBlock; stale
-            // isEmpty on a now-full block -> unsweepWithNoNewlyAllocated path),
-            // so a null result leaves no inUse leak and we fall through to the
-            // fresh-block leg unchanged. Reached only when isSharedServer() (the
-            // enclosing branch); flag-off byte-identical.
-            if (MarkedBlock::Handle* block = m_directory->findOwnEmptyBlockForRefill()) {
-                if (void* result = tryAllocateIn(block, cellSize))
-                    return result;
-            }
         }
+
+        ASSERT(!subspace->isPreciseOnly());
+        ASSERT_WITH_MESSAGE(cellSize == m_directory->cellSize(), "non-preciseOnly allocations should match allocator's the size class");
 
         // ---- M2-alloc-tax-residual (c): try cross-subspace steal BEFORE
         // fresh-mint. The legacy (!isSharedServer) path does steal-before-fresh
@@ -318,23 +295,17 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
             // Manual scope (tryLock has no RAII form): unlock on every exit.
             if (MarkedBlock::Handle* block = subspace->findEmptyBlockToSteal()) {
                 RELEASE_ASSERT(block->alignedMemoryAllocator() == subspace->alignedMemoryAllocator());
-                // Weak-bearing carve-out (same as the legacy steal in
-                // tryAllocateWithoutCollecting / tryAllocateIn): decline a
-                // block carrying Dead-but-unfinalized WeakImpls — sweeping it
-                // here (world running) would race the owning client's
-                // lock-free Weak<> teardown. Clear inUse on its OWN
-                // directory and let fresh-mint proceed.
-                if (!heap.worldIsStoppedForAllClients() && block->weakSet().head()) [[unlikely]] {
-                    block->directory()->didFinishUsingBlock(block);
-                } else {
-                    RaceAmplifier::perturb(); // Same I8 amplifier site as the legacy steal.
-                    block->sweep(nullptr);
-                    block->removeFromDirectory();
-                    m_directory->addBlock(block);
-                    void* result = allocateIn(block, cellSize);
-                    heap.mutatorSlowPathLock().unlock();
-                    return result;
-                }
+                // BlockDirectory::findEmptyBlockToSteal steps past weak-bearing
+                // blocks while the world runs, so the sweep below only ever
+                // sees an empty WeakSet.
+                ASSERT(heap.worldIsStoppedForAllClients() || !block->weakSet().head());
+                RaceAmplifier::perturb(); // Same I8 amplifier site as the legacy steal.
+                block->sweep(nullptr);
+                block->removeFromDirectory();
+                m_directory->addBlock(block);
+                void* result = allocateIn(block, cellSize);
+                heap.mutatorSlowPathLock().unlock();
+                return result;
             }
             heap.mutatorSlowPathLock().unlock();
         }
@@ -460,22 +431,12 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
         if (MarkedBlock::Handle* block = m_directory->m_subspace->findEmptyBlockToSteal()) {
             RELEASE_ASSERT(block->alignedMemoryAllocator() == m_directory->m_subspace->alignedMemoryAllocator());
 
-            // SharedGC (review round 4) — weak-bearing carve-out (rationale
-            // at tryAllocateIn below / WeakSet::sweep): an EMPTY block can
-            // still carry Dead-but-unfinalized WeakImpls; sweeping it here
-            // (MSPL-held, world running) would run their finalizers
-            // concurrently with the owning client's lock-free Weak<>
-            // teardown. Decline the steal (clear inUse on the block's OWN
-            // directory — findEmptyBlockToSteal set it there, which may not
-            // be m_directory) and fall through to fresh-block allocation;
-            // the block is reclaimed by the next world-stopped sweep.
-            {
-                JSC::Heap& heap = m_directory->markedSpace().heap();
-                if (heap.isSharedServer() && !heap.worldIsStoppedForAllClients() && block->weakSet().head()) [[unlikely]] {
-                    block->directory()->didFinishUsingBlock(block);
-                    return nullptr;
-                }
-            }
+            // When shared (MSPL held, world running), a weak-bearing block
+            // must not be swept here (rationale at tryAllocateIn /
+            // WeakSet::sweep); BlockDirectory::findEmptyBlockToSteal steps
+            // past such blocks, so the sweep below only ever sees an empty
+            // WeakSet.
+            ASSERT(!m_directory->heap().isSharedServer() || m_directory->heap().worldIsStoppedForAllClients() || !block->weakSet().head());
 
             // T10 amplifier hook (AMPLIFIER.md): widen the steal window (I8)
             // — the block is chosen but not yet swept/re-homed. Deliberately
@@ -521,8 +482,8 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
     // Reading weakSet().head() is stable here: WeakSet::allocate mutates it
     // only under MSPL, which we hold (weak-mutation protocol,
     // WeakSet::sweep). Unreachable via allocateIn(): fresh blocks have no
-    // WeakBlocks and the steal path pre-checks the same predicate under the
-    // same MSPL hold.
+    // WeakBlocks and BlockDirectory::findEmptyBlockToSteal skips blocks that
+    // fail the same predicate under the same MSPL hold.
     {
         JSC::Heap& heap = m_directory->markedSpace().heap();
         if (heap.isSharedServer() && !heap.worldIsStoppedForAllClients() && block->weakSet().head()) [[unlikely]] {

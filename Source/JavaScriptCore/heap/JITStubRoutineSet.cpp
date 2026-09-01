@@ -48,6 +48,7 @@ JITStubRoutineSet::~JITStubRoutineSet()
         if (!routine->m_isJettisoned) {
             // Inform the deref() routine that it should delete this stub as soon as the ref count reaches zero.
             routine->m_isJettisoned = true;
+            routine->m_isInJITStubRoutineSet = false;
             return;
         }
 
@@ -82,6 +83,7 @@ void JITStubRoutineSet::add(GCAwareJITStubRoutine* routine)
 
 ALWAYS_INLINE void JITStubRoutineSet::addImpl(GCAwareJITStubRoutine* routine)
 {
+    routine->m_isInJITStubRoutineSet = true;
     if (routine->m_isCodeImmutable) {
         m_immutableCodeRoutines.append(routine);
         return;
@@ -171,6 +173,7 @@ void JITStubRoutineSet::deleteUnmarkedJettisonedStubRoutines(VM& vm)
         if (stub->m_ownerIsDead) {
             // Inform the deref() routine that it should delete this stub as soon as the ref count reaches zero.
             stub->m_isJettisoned = true;
+            stub->m_isInJITStubRoutineSet = false;
             return true;
         }
 
