@@ -91,7 +91,7 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     auto& metadata = bytecode.metadata(codeBlock);
-    ResolveType resolveType = metadata.m_resolveType;
+    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
 
     // ModuleVar does not keep the scope register value alive in DFG.
     ASSERT(resolveType != ModuleVar);
@@ -101,6 +101,10 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
     case GlobalPropertyWithVarInjectionChecks:
     case UnresolvedProperty:
     case UnresolvedPropertyWithVarInjectionChecks: {
+        // Flag-on, op_resolve_scope metadata is frozen after CodeBlock linking;
+        // see slow_path_resolve_scope in runtime/CommonSlowPaths.cpp.
+        if (Options::useJSThreads()) [[unlikely]]
+            break;
         if (resolvedScope->isGlobalObject()) {
             JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(resolvedScope);
             bool hasProperty = globalObject->hasProperty(globalObject, ident);

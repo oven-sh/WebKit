@@ -80,9 +80,9 @@ bool JITFinalizer::finalize()
     // through m_jitData + storeStoreFence, invisible to TSAN), and its
     // lockless slow-path reads (callSiteIndex, m_bufferedStructures variant /
     // StructureID vector buffers) would otherwise pair against this thread's
-    // allocation/ctor writes of the still-live JITData ButterflyArray block
-    // (leaked flag-on in ~CodeBlock per SPEC-jit §5.3/I7 — never freed, so no
-    // UAF is maskable here). No-op outside TSAN builds.
+    // allocation/ctor writes of the JITData ButterflyArray block, which
+    // stays live for as long as the CodeBlock is reachable. No-op outside
+    // TSAN builds.
     for (auto& propertyCache : data->propertyInlineCaches())
         TSAN_ANNOTATE_HAPPENS_BEFORE(&propertyCache);
     // Same audit, CallLinkInfo arm: the JITData's OptimizingCallLinkInfos

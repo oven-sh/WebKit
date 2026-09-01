@@ -2168,6 +2168,43 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_ifAbruptCloseIterator(Bytecode
     JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME(JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS)
 #undef JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS
 
+static JSValue bytecodeIntrinsicConstantValue(const BytecodeIntrinsicNode* node, BytecodeGenerator& generator)
+{
+#define JSC_BYTECODE_INTRINSIC_CONSTANT_VALUE(name) \
+    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_##name) \
+        return generator.vm().bytecodeIntrinsicRegistry().name##Value(generator);
+    JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME(JSC_BYTECODE_INTRINSIC_CONSTANT_VALUE)
+#undef JSC_BYTECODE_INTRINSIC_CONSTANT_VALUE
+    return JSValue();
+}
+
+TriState BytecodeIntrinsicNode::constantBooleanValue(BytecodeGenerator& generator) const
+{
+    if (m_type != Type::Constant || m_entry.type() != BytecodeIntrinsicRegistry::Type::Emitter)
+        return TriState::Indeterminate;
+    JSValue constant = bytecodeIntrinsicConstantValue(this, generator);
+    if (!constant)
+        return TriState::Indeterminate;
+    return constant.pureToBoolean();
+}
+
+void BytecodeIntrinsicNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, Label& trueTarget, Label& falseTarget, FallThroughMode fallThroughMode)
+{
+    TriState value = constantBooleanValue(generator);
+    if (value == TriState::Indeterminate) {
+        ExpressionNode::emitBytecodeInConditionContext(generator, trueTarget, falseTarget, fallThroughMode);
+        return;
+    }
+
+    if (needsDebugHook()) [[unlikely]]
+        generator.emitDebugHook(this);
+
+    if (value == TriState::True && fallThroughMode == FallThroughMeansFalse)
+        generator.emitJump(trueTarget);
+    else if (value == TriState::False && fallThroughMode == FallThroughMeansTrue)
+        generator.emitJump(falseTarget);
+}
+
 // ------------------------------ FunctionCallBracketNode ----------------------------------
 
 RegisterID* FunctionCallBracketNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
@@ -4299,6 +4336,26 @@ void IfElseNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     if (generator.shouldBeConcernedWithCompletionValue()) {
         if (m_ifBlock->hasEarlyBreakOrContinue() || (m_elseBlock && m_elseBlock->hasEarlyBreakOrContinue()))
             generator.emitLoad(dst, jsUndefined());
+    }
+
+    // A builtin branching on a registry constant (e.g. @gilOffProcess) gets only
+    // the live arm: no jump, no dead code, no exception handlers for the other arm.
+    if (m_condition->isBytecodeIntrinsicNode()) {
+        TriState condition = static_cast<BytecodeIntrinsicNode*>(m_condition)->constantBooleanValue(generator);
+        if (condition != TriState::Indeterminate) {
+            if (m_condition->needsDebugHook()) [[unlikely]]
+                generator.emitDebugHook(m_condition);
+            if (condition == TriState::True) {
+                generator.emitProfileControlFlow(m_ifBlock->startOffset());
+                generator.emitNodeInTailPosition(dst, m_ifBlock);
+            } else if (m_elseBlock) {
+                generator.emitProfileControlFlow(m_ifBlock->endOffset() + (m_ifBlock->isBlock() ? 1 : 0));
+                generator.emitNodeInTailPosition(dst, m_elseBlock);
+            }
+            StatementNode* endingBlock = m_elseBlock ? m_elseBlock : m_ifBlock;
+            generator.emitProfileControlFlow(endingBlock->endOffset() + (endingBlock->isBlock() ? 1 : 0));
+            return;
+        }
     }
 
     Ref<Label> beforeThen = generator.newLabel();

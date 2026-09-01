@@ -1089,6 +1089,11 @@ namespace JSC {
         BytecodeIntrinsicRegistry::Entry entry() const { return m_entry; }
         const Identifier& identifier() const { return m_ident; }
 
+        // Truthiness of the registry constant a bare @name denotes, so a builtin
+        // branching on one folds like a literal. Indeterminate for intrinsic calls,
+        // link-time constants, and constants whose truthiness needs a runtime check.
+        TriState constantBooleanValue(BytecodeGenerator&) const;
+
 #define JSC_DECLARE_BYTECODE_INTRINSIC_FUNCTIONS(name) RegisterID* emit_intrinsic_##name(BytecodeGenerator&, RegisterID*);
         JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(JSC_DECLARE_BYTECODE_INTRINSIC_FUNCTIONS)
         JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME(JSC_DECLARE_BYTECODE_INTRINSIC_FUNCTIONS)
@@ -1096,6 +1101,7 @@ namespace JSC {
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        void emitBytecodeInConditionContext(BytecodeGenerator&, Label& trueTarget, Label& falseTarget, FallThroughMode) final;
 
         bool isFunctionCall() const final { return m_type == Type::Function; }
 
