@@ -987,11 +987,14 @@ private:
     JSValue m_value;
 };
 
-// JS value words are intentionally racy under shared-heap threading (object-model
-// ground truth): other mutators may load/store them concurrently. Plain C++
-// accesses to such words are data races (UB); these accessors use relaxed atomics,
-// which are codegen-identical to plain 64-bit loads/stores, so single-threaded
-// (flag-off) behavior and code generation are unchanged.
+#if TSAN_ENABLED
+
+// JS value words are intentionally racy under shared-heap threading: other mutators
+// may load and store them concurrently. Under TSAN these accessors are relaxed atomics
+// so those races are not reported. Non-TSAN builds take the plain branch below: a
+// relaxed atomic is the same single mov in isolation, but LLVM neither vectorizes nor
+// idiom-recognizes loops over atomics, so every WriteBarrier<Unknown> fill/copy/clear
+// loop in the flag-off engine would lose its SIMD or memset/memcpy lowering.
 
 ALWAYS_INLINE JSValue JSValue::decodeConcurrent(const EncodedJSValue* encodedJSValue)
 {
@@ -1007,6 +1010,28 @@ ALWAYS_INLINE void clearEncodedJSValueConcurrent(EncodedJSValue& dest)
 {
     std::bit_cast<WTF::Atomic<EncodedJSValue>*>(&dest)->storeRelaxed(JSValue::encode(JSValue()));
 }
+
+#else
+
+// Plain accesses. An aligned JSValue word is a single load/store on every supported target.
+
+ALWAYS_INLINE JSValue JSValue::decodeConcurrent(const EncodedJSValue* encodedJSValue)
+{
+    return JSValue::decode(*encodedJSValue);
+}
+
+ALWAYS_INLINE void updateEncodedJSValueConcurrent(EncodedJSValue& dest, EncodedJSValue value)
+{
+    dest = value;
+}
+
+ALWAYS_INLINE void clearEncodedJSValueConcurrent(EncodedJSValue& dest)
+{
+    dest = JSValue::encode(JSValue());
+}
+
+#endif
+
 #if USE(BIGINT32)
 inline int32_t JSValue::bigInt32AsInt32() const
 {

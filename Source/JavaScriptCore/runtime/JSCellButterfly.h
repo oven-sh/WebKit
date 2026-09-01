@@ -91,19 +91,27 @@ public:
         IndexingType indexingType = array->indexingType() & IndexingShapeMask;
         unsigned length = array->length();
 
-        // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — the
-        // copy-on-write reuse and the Contiguous/Int32/Double fast loops below
-        // deref array->butterfly() through the flat-only accessor (§9.5
-        // CONTRACT). When the array may be in the segmented regime, skip them
-        // and take the generic getDirectIndex() loop, which routes through the
-        // regime-dispatching read paths (tryGetIndexQuicklyConcurrent /
-        // getOwnPropertySlotByIndex). Constant false flag-off (I22).
-        bool maySegment = array->mayBeSegmentedButterfly();
+        // Flag-on the butterfly word is loaded once and every flat dereference
+        // below comes from that load: a foreign flat-to-segmented conversion
+        // can land between two loads, and the flat-only butterfly() accessor
+        // would then decode the ButterflySpine as element storage. A segmented
+        // (or not yet installed) word leaves `butterfly` null and takes the
+        // generic getDirectIndex() loop, which dispatches on the regime itself.
+        // Flag-off the word is the plain butterfly pointer.
+        Butterfly* butterfly = nullptr;
+#if USE(JSVALUE64)
+        if (Options::useJSThreads()) [[unlikely]] {
+            uint64_t word = array->taggedButterflyWord();
+            if (!isSegmentedButterfly(word))
+                butterfly = untaggedButterfly(word);
+        } else
+#endif
+            butterfly = array->butterfly();
 
         // FIXME: JSCellButterfly::createFromArray should support re-using non contiguous indexing types as well.
-        if (!maySegment && isCopyOnWrite(indexingType)) {
+        if (butterfly && isCopyOnWrite(indexingType)) {
             if (hasContiguous(indexingType))
-                return JSCellButterfly::fromButterfly(array->butterfly());
+                return JSCellButterfly::fromButterfly(butterfly);
         }
 
         JSCellButterfly* result = JSCellButterfly::tryCreate(vm, vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous), length);
@@ -115,19 +123,31 @@ public:
         if (!length)
             return result;
 
-        if (!maySegment && (indexingType == ContiguousShape || indexingType == Int32Shape)) {
-            for (unsigned i = 0; i < length; i++) {
-                JSValue value = array->butterfly()->contiguous().at(array, i).get();
+        unsigned copyLength = length;
+#if USE(JSVALUE64)
+        if (Options::useJSThreads() && butterfly && (indexingType == ContiguousShape || indexingType == Int32Shape || indexingType == DoubleShape)) [[unlikely]] {
+            // `length` was read from a word a racing owner resize may have
+            // replaced since; the snapshot owns only [0, vectorLength) and the
+            // slots past it are holes.
+            copyLength = std::min(length, butterfly->vectorLength());
+            for (unsigned i = copyLength; i < length; i++)
+                result->setIndex(vm, i, jsUndefined());
+        }
+#endif
+
+        if (butterfly && (indexingType == ContiguousShape || indexingType == Int32Shape)) {
+            for (unsigned i = 0; i < copyLength; i++) {
+                JSValue value = butterfly->contiguous().at(array, i).get();
                 value = !!value ? value : jsUndefined();
                 result->setIndex(vm, i, value);
             }
             return result;
         }
 
-        if (!maySegment && indexingType == DoubleShape) {
+        if (butterfly && indexingType == DoubleShape) {
             ASSERT(Options::allowDoubleShape());
-            for (unsigned i = 0; i < length; i++) {
-                double d = array->butterfly()->contiguousDouble().at(array, i);
+            for (unsigned i = 0; i < copyLength; i++) {
+                double d = butterfly->contiguousDouble().at(array, i);
                 JSValue value = std::isnan(d) ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, d);
                 result->setIndex(vm, i, value);
             }

@@ -462,11 +462,14 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     // §8.9 wave 3: TSAN-relaxed scalar init instead of member-init-list plain
     // stores — see the 7-argument constructor above for the full rationale.
     // The reads of `previous`'s fields are TSAN-relaxed too: `previous` is a
-    // published structure whose same words are concurrently written nowhere
-    // (post-ctor immutable) but whose own construction may not be
-    // TSAN-visible to this thread. m_seenProperties stays in the init list:
-    // its copy reads the source word with a relaxed load, and the member's
-    // own storage is written via ConcurrentCtorMember's deferred-ctor
+    // published structure whose own construction may not be TSAN-visible to
+    // this thread. Its m_seenProperties and m_propertyHash are not immutable:
+    // a pinned source updates both under its m_lock on every in-place add, so
+    // the copies taken here are provisional and are re-copied under that lock
+    // when the source's table is stolen or cloned for this transition
+    // (copySeenPropertiesAndPropertyHashFrom). m_seenProperties stays in the
+    // init list: its copy reads the source word with a relaxed load, and the
+    // member's own storage is written via ConcurrentCtorMember's deferred-ctor
     // relaxed stores (§10.9 fixShape (1) — the r3 70-report key was the
     // TinyBloomFilter NSDMI's std::atomic-constructor plain store, which the
     // union wrapper now skips). m_prototype's EarlyInit ctor stores through
@@ -973,7 +976,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     transition->m_transitionPropertyName = propertyName.uid();
     transition->setTransitionPropertyAttributes(attributes);
     transition->setTransitionKind(TransitionKind::PropertyAddition);
-    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm, transition));
     transition->setMaxOffset(vm, structure->maxOffset());
 
     offset = transition->add(vm, propertyName, attributes);
@@ -1095,17 +1098,20 @@ Structure* Structure::addPropertyTransitionToExistingStructureConcurrently(Struc
     // hasBeenDictionary() is checked first to match Impl's early-nullptr;
     // it's a monotonic-true bitfield so a lock-free read is safe (false→true
     // race just falls through to the locked Impl which returns nullptr).
-    // Flag-off byte-identical: this function is reached only via the
-    // useJSThreads reroute in addPropertyTransitionToExistingStructure
-    // (StructureInlines.h), so flag-off codegen is unchanged.
+    // Besides the useJSThreads reroute in addPropertyTransitionToExistingStructure
+    // (StructureInlines.h), Repatch.cpp (tryCachePutBy) and PutByStatus.cpp
+    // call this directly in both flag states, so the precheck is gated:
+    // flag-off keeps the base's lock-then-lookup sequence (I22).
     ASSERT(!structure->isDictionary());
     ASSERT(structure->isObject());
     offset = invalidOffset;
-    if (!structure->hasBeenDictionary()) [[likely]] {
-        if (Structure* existingTransition = structure->m_transitionTable.tryGetSingleSlotConcurrently(uid, attributes, TransitionKind::PropertyAddition)) [[likely]] {
-            validateOffset(existingTransition->transitionOffset(), existingTransition->inlineCapacity());
-            offset = existingTransition->transitionOffset();
-            return existingTransition;
+    if (Options::useJSThreads()) [[unlikely]] {
+        if (!structure->hasBeenDictionary()) [[likely]] {
+            if (Structure* existingTransition = structure->m_transitionTable.tryGetSingleSlotConcurrently(uid, attributes, TransitionKind::PropertyAddition)) [[likely]] {
+                validateOffset(existingTransition->transitionOffset(), existingTransition->inlineCapacity());
+                offset = existingTransition->transitionOffset();
+                return existingTransition;
+            }
         }
     }
     ConcurrentJSLocker locker(structure->m_lock);
@@ -1176,7 +1182,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory() & ~CopyOnWrite);
     transition->m_transitionPropertyName = propertyName.uid();
     transition->setTransitionKind(TransitionKind::PropertyDeletion);
-    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm, transition));
     transition->setMaxOffset(vm, structure->maxOffset());
 
     offset = transition->remove(vm, propertyName);
@@ -1247,7 +1253,7 @@ Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JS
             structureAllocationLocker.emplace(vm);
         transition = Structure::create(vm, structure, &deferred);
     }
-    PropertyTable* table = structure->copyPropertyTableForPinning(vm);
+    PropertyTable* table = structure->copyPropertyTableForPinning(vm, transition);
     transition->pin(Locker { transition->m_lock }, vm, table);
     transition->fireTTLWatchpointSetsAfterPinning(vm, structure); // SPEC-objectmodel F3
     transition->m_prototype.set(vm, transition, prototype);
@@ -1295,7 +1301,7 @@ Structure* Structure::changeGlobalProxyTargetTransition(VM& vm, Structure* struc
 
     transition->setRealm(vm, globalObject);
 
-    PropertyTable* table = structure->copyPropertyTableForPinning(vm);
+    PropertyTable* table = structure->copyPropertyTableForPinning(vm, transition);
     transition->pin(Locker { transition->m_lock }, vm, table);
     transition->fireTTLWatchpointSetsAfterPinning(vm, structure); // SPEC-objectmodel F3
     transition->setMaxOffset(vm, structure->maxOffset());
@@ -1395,7 +1401,7 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
     transition->m_transitionPropertyName = propertyName.uid();
     transition->setTransitionPropertyAttributes(attributes);
     transition->setTransitionKind(TransitionKind::PropertyAttributeChange);
-    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm, transition));
     transition->setMaxOffset(vm, structure->maxOffset());
 
     offset = transition->attributeChange(vm, propertyName, attributes);
@@ -1454,7 +1460,7 @@ Structure* Structure::toDictionaryTransition(VM& vm, Structure* structure, Dicti
         transition = Structure::create(vm, structure, deferred);
     }
 
-    PropertyTable* table = structure->copyPropertyTableForPinning(vm);
+    PropertyTable* table = structure->copyPropertyTableForPinning(vm, transition);
     transition->pin(Locker { transition->m_lock }, vm, table);
     transition->fireTTLWatchpointSetsAfterPinning(vm, structure); // SPEC-objectmodel F3
     transition->setMaxOffset(vm, structure->maxOffset());
@@ -1495,34 +1501,41 @@ Structure* Structure::becomePrototypeTransition(VM& vm, Structure* structure, De
     return nonPropertyTransition(vm, structure, TransitionKind::BecomePrototype, deferred);
 }
 
-PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm)
+PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm, Structure* transition)
 {
     // This must always return a property table. It can't return null.
 
-    // SPEC-objectmodel L6(ii)/I37 (Task 3c): flag-on, the STEAL and the
-    // pinned-table CLONE of this PUBLISHED table both run under the SOURCE's
-    // m_lock, so they cannot interleave with a locked walk or mutation of the
-    // table (a lock-free copy() races a concurrent locked add/rehash and
-    // tears). GCSafe locker = m_lock + DeferGC: copy() allocates a
-    // PropertyTable cell under the lock — O1's sanctioned DeferGC form. The
+    // Flag-on, the STEAL and the pinned-table CLONE of this PUBLISHED table
+    // both run under the SOURCE's m_lock, so they cannot interleave with a
+    // locked walk or mutation of the table (a lock-free copy() races a
+    // concurrent locked add/rehash and tears). GCSafe locker = m_lock +
+    // DeferGC: copy() allocates a PropertyTable cell under the lock. The
     // stolen/cloned/materialized result is PRIVATE to the not-yet-published
     // transition; the caller may mutate it lock-free until its new Structure
-    // publishes (L6). Flag-off: today's code — clone without the lock (I22).
+    // publishes. Flag-off: clone without the lock.
     if (Options::useJSThreads()) [[unlikely]] {
         {
             GCSafeConcurrentJSLocker locker(m_lock, vm);
             if (PropertyTable* result = propertyTableOrNull()) {
+                transition->copySeenPropertiesAndPropertyHashFrom(locker, *this);
                 if (isPinnedPropertyTable())
                     return result->copy(vm, result->size() + 1);
                 setPropertyTable(vm, nullptr);
                 return result;
             }
         }
-        // Nothing to steal: rebuild from the transition chain. O1 on
-        // materialize: it opens with a function-scope DeferGC and takes each
-        // chain structure's m_lock itself — never call it holding m_lock.
+        // Nothing to steal: rebuild from the transition chain. Materialize
+        // opens with a function-scope DeferGC and takes each chain
+        // structure's m_lock itself — never call it holding m_lock. This
+        // structure may have been pinned and mutated in place meanwhile (the
+        // rebuild then copied its fresh table), so the filter and hash are
+        // re-copied afterwards; the filter only grows, so a copy taken after
+        // the rebuild covers every key the rebuilt table holds.
         bool setPropertyTable = false;
-        return materializePropertyTable(vm, setPropertyTable);
+        PropertyTable* result = materializePropertyTable(vm, setPropertyTable);
+        ConcurrentJSLocker locker(m_lock);
+        transition->copySeenPropertiesAndPropertyHashFrom(locker, *this);
+        return result;
     }
 
     PropertyTable* result = propertyTableOrNull();
@@ -1595,7 +1608,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
 
         ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze);
 
-        PropertyTable* table = structure->copyPropertyTableForPinning(vm);
+        PropertyTable* table = structure->copyPropertyTableForPinning(vm, transition);
         transition->pinForCaching(Locker { transition->m_lock }, vm, table);
         transition->fireTTLWatchpointSetsAfterPinning(vm, structure); // SPEC-objectmodel F3
         transition->setMaxOffset(vm, structure->maxOffset());
@@ -1611,7 +1624,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         transition->setHasNonConfigurableProperties(true);
         transition->setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
     } else {
-        transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+        transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm, transition));
         transition->setMaxOffset(vm, structure->maxOffset());
         checkOffset(transition->maxOffset(), transition->inlineCapacity());
     }
@@ -1714,8 +1727,8 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     // not SW/segmented) was unsound: foreign READS fire no watchpoint and
     // never flip SW, so an object other threads only READ always classified
     // unshared - yet the flag-on dictionary read path is lock-free
-    // (getDirectConcurrent / locationForOutOfLineOffsetConcurrent take no
-    // cell lock for non-AS shapes), so a foreign reader holding a
+    // (locationForOutOfLineOffsetConcurrent takes no cell lock for non-AS
+    // shapes), so a foreign reader holding a
     // just-resolved offset could read a zeroed/moved slot, or chase a
     // nulled-out butterfly and crash on a pure read race. Read-only foreign
     // sharing is UNDETECTABLE, so the only sound flag-on choice is the stop;
@@ -1733,7 +1746,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
         ASSERT(table);
         values.grow(table->size());
     }
-    Structure* result = flattenDictionaryStructureImpl(vm, object, values);
+    Structure* result = flattenDictionaryStructureImpl(vm, object, values, nullptr);
     // Flag-off the impl never bails (its revalidation is flag-on gated), and
     // flag-on this point is unreachable (routed above).
     RELEASE_ASSERT(result);
@@ -1758,21 +1771,72 @@ bool Structure::flattenTriggerIsShared(JSObject* object) const
     return butterflySharedWrite(word) || isSegmentedButterfly(word);
 }
 
+// Mirrors the shrink decision of flattenDictionaryStructureImpl and the sizing
+// of JSObject::shiftButterflyAfterFlattening. The word is loaded once and
+// dereferenced only when flat (JSObject::butterfly() contract).
+Structure::FlattenShrinkPlan Structure::flattenShrinkPlan(JSObject* object)
+{
+    ASSERT(Options::useJSThreads());
+    FlattenShrinkPlan plan;
+    uint64_t word = object->taggedButterflyWord();
+    if (isSegmentedButterfly(word))
+        return plan; // Segmented storage never shrinks or shifts.
+    Butterfly* butterfly = untaggedButterfly(word);
+    if (!butterfly)
+        return plan;
+
+    size_t outOfLineCapacityBefore = outOfLineCapacity();
+    size_t outOfLineCapacityAfter = outOfLineCapacityBefore;
+    if (isUncacheableDictionary()) {
+        PropertyTable* table = propertyTableOrNull();
+        ASSERT(table);
+        PropertyOffset maxOffset = invalidOffset;
+        if (unsigned propertyCount = table->size())
+            maxOffset = offsetForPropertyNumber(propertyCount - 1, m_inlineCapacity);
+        outOfLineCapacityAfter = outOfLineCapacity(maxOffset);
+    }
+    if (outOfLineCapacityBefore == outOfLineCapacityAfter)
+        return plan;
+    bool hasIndexingHeader = this->hasIndexingHeader(object);
+    if (!outOfLineCapacityAfter && !hasIndexingHeader)
+        return plan; // The butterfly is dropped, not shifted.
+
+    plan.needsShift = true;
+    plan.outOfLineCapacityAfter = outOfLineCapacityAfter;
+    plan.hasIndexingHeader = hasIndexingHeader;
+    if (hasIndexingHeader) {
+        plan.preCapacity = butterfly->indexingHeader()->preCapacity(this);
+        plan.indexingPayloadSizeInBytes = butterfly->indexingHeader()->indexingPayloadSizeInBytes(this);
+    }
+    return plan;
+}
+
 Structure* Structure::flattenDictionaryStructureUnderStop(VM& vm, JSObject* object)
 {
     ASSERT(Options::useJSThreads());
 
-    // O4: stop-window closures never allocate - the scratch buffer is
-    // pre-allocated out here and re-validated inside; a refit (racing
-    // cell-locked dictionary edit between pre-allocation and stop entry, L3/L4)
+    // O4: stop-window closures never allocate - the scratch buffer and the
+    // shrunk butterfly the impl's shift leg publishes are pre-allocated out
+    // here and re-validated inside; a refit (racing cell-locked dictionary or
+    // indexed-storage edit between pre-allocation and stop entry, L3/L4)
     // RESTARTs the whole operation.
     while (true) {
         Vector<JSValue> values;
-        if (isUncacheableDictionary()) {
-            PropertyTable* table = propertyTableOrNull();
-            ASSERT(table);
-            values.grow(table->size());
+        FlattenShrinkPlan plan;
+        {
+            // L3/L4: dictionary-mode storage is read under the cell lock, which
+            // is released before the stop is requested (O2).
+            Locker cellLocker { object->cellLock() };
+            if (isUncacheableDictionary()) {
+                PropertyTable* table = propertyTableOrNull();
+                ASSERT(table);
+                values.grow(table->size());
+            }
+            plan = flattenShrinkPlan(object);
         }
+        Butterfly* shrunkButterfly = nullptr;
+        if (plan.needsShift)
+            shrunkButterfly = Butterfly::createUninitialized(vm, object, plan.preCapacity, plan.outOfLineCapacityAfter, plan.hasIndexingHeader, plan.indexingPayloadSizeInBytes);
 
         Structure* result = nullptr;
         bool needsRefit = false;
@@ -1781,6 +1845,17 @@ Structure* Structure::flattenDictionaryStructureUnderStop(VM& vm, JSObject* obje
         // (lock spans are bounded and never held across a safepoint - O2 - so
         // no stopped mutator can be parked while holding them).
         jsThreadsStopTheWorldAndRun(vm, scopedLambda<void()>([&] {
+            // The caller's isDictionary() / object->structure() == this checks
+            // ran before the stop was requested. GIL-off, a racing flattener
+            // can have won its own stop first (leaving this structure
+            // non-dictionary), or the object can have moved to another
+            // structure; in both cases there is nothing here left to flatten,
+            // and flattening a structure the object no longer has would stamp
+            // the stale StructureID back onto it.
+            if (!isDictionary() || object->structure() != this) {
+                result = this;
+                return;
+            }
             if (isUncacheableDictionary()) {
                 PropertyTable* table = propertyTableOrNull();
                 ASSERT(table);
@@ -1789,11 +1864,15 @@ Structure* Structure::flattenDictionaryStructureUnderStop(VM& vm, JSObject* obje
                     return;
                 }
             }
+            if (flattenShrinkPlan(object) != plan) {
+                needsRefit = true;
+                return;
+            }
             // Evaluate the trigger's sharedness BEFORE the impl runs (the impl
             // may null out the butterfly word; the TTL-set clauses are
             // monotone either way).
             bool triggerIsShared = flattenTriggerIsShared(object);
-            result = flattenDictionaryStructureImpl(vm, object, values);
+            result = flattenDictionaryStructureImpl(vm, object, values, shrunkButterfly);
 
             // F3: fire both sets on the result (== this for flatten), in the
             // SAME stop, when the TRIGGER is shared. Review round 2: ALL
@@ -1818,7 +1897,7 @@ Structure* Structure::flattenDictionaryStructureUnderStop(VM& vm, JSObject* obje
     }
 }
 
-Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, Vector<JSValue>& values)
+Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, Vector<JSValue>& values, Butterfly* preallocatedShrunkButterfly)
 {
     checkOffsetConsistency();
     ASSERT(isDictionary());
@@ -1941,7 +2020,7 @@ Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, V
         // first CopiedBlock::blockSize bytes, we'll get the wrong answer if we try to mask the base back to
         // the CopiedBlock header. To prevent this case we need to memmove the Butterfly down.
         else
-            object->shiftButterflyAfterFlattening(locker, vm, this, afterOutOfLineCapacity);
+            object->shiftButterflyAfterFlattening(locker, vm, this, afterOutOfLineCapacity, preallocatedShrunkButterfly);
     }
 
     WTF::storeStoreFence();
@@ -2145,17 +2224,14 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     return result.iterator->value.get();
 }
 
-WatchpointSet* Structure::firePropertyReplacementWatchpointSet(VM& vm, PropertyOffset offset, const char* reason, DeferredWatchpointFire* deferred)
+WatchpointSet* Structure::firePropertyReplacementWatchpointSet(VM& vm, PropertyOffset offset, const char* reason)
 {
     ASSERT(!isCompilationThread());
     auto* structure = this;
     auto* watchpointSet = structure->ensurePropertyReplacementWatchpointSet(vm, offset);
     if (watchpointSet && watchpointSet->state() == IsWatched) {
         StructureRareData* rareData = structure->rareData();
-        if (deferred)
-            watchpointSet->fireAllSlow(vm, deferred); // Invalidates now; fires at scope exit (SPEC-jit §5.6 deferral).
-        else
-            watchpointSet->fireAll(vm, reason);
+        watchpointSet->fireAll(vm, reason);
         if (!Options::useJSThreads()) [[likely]] {
             // Flag-off: single mutator inside the VM, the plain counter is
             // exact; preserve today's codegen per the project rule.
@@ -2256,23 +2332,28 @@ PropertyTableStatisticsExitLogger::~PropertyTableStatisticsExitLogger()
 
 #endif
 
-PropertyTable* Structure::copyPropertyTableForPinning(VM& vm)
+PropertyTable* Structure::copyPropertyTableForPinning(VM& vm, Structure* transition)
 {
-    // SPEC-objectmodel L6(ii)/I37 (Task 3c): flag-on, the CLONE of this
-    // PUBLISHED table runs under the SOURCE's m_lock (a lock-free clone races
-    // a concurrent locked add/rehash and tears). GCSafe locker = m_lock +
-    // DeferGC: clone() allocates under the lock — O1's sanctioned DeferGC
-    // form. The clone is private to the caller until publication. O1 on the
-    // materialize fallback: it opens with DeferGC and locks per-structure
-    // itself — never call it holding m_lock. Flag-off: today's code (I22).
+    // Flag-on, the CLONE of this PUBLISHED table runs under the SOURCE's
+    // m_lock (a lock-free clone races a concurrent locked add/rehash and
+    // tears). GCSafe locker = m_lock + DeferGC: clone() allocates under the
+    // lock. The clone is private to the caller until publication. The
+    // materialize fallback opens with DeferGC and locks per-structure itself;
+    // never call it holding m_lock. Flag-off: clone without the lock.
     if (Options::useJSThreads()) [[unlikely]] {
         {
             GCSafeConcurrentJSLocker locker(m_lock, vm);
-            if (PropertyTable* table = propertyTableOrNull())
+            if (PropertyTable* table = propertyTableOrNull()) {
+                transition->copySeenPropertiesAndPropertyHashFrom(locker, *this);
                 return PropertyTable::clone(vm, *table);
+            }
         }
+        // See takePropertyTableOrCloneIfPinned for the post-rebuild re-copy.
         bool setPropertyTable = false;
-        return materializePropertyTable(vm, setPropertyTable);
+        PropertyTable* result = materializePropertyTable(vm, setPropertyTable);
+        ConcurrentJSLocker locker(m_lock);
+        transition->copySeenPropertiesAndPropertyHashFrom(locker, *this);
+        return result;
     }
 
     if (PropertyTable* table = propertyTableOrNull())
@@ -2801,17 +2882,18 @@ void Structure::setCachedPropertyNameEnumerator(VM& vm, JSPropertyNameEnumerator
     if (rareData()->cachedPropertyNameEnumerator())
         return; // A racing installer won under the lock; keep its entry.
     // Re-validate the caller's chain snapshot now that we hold m_lock. GIL-off,
-    // Structure::prototypeChain() (StructureInlines.h) clears and re-creates
-    // m_cachedPrototypeChain WITHOUT taking m_lock, so a concurrent for-in on a
-    // sibling thread can have replaced it with a distinct-but-equivalent
+    // a sibling thread's Structure::prototypeChain() (StructureInlines.h) can
+    // have replaced m_cachedPrototypeChain with a distinct-but-equivalent
     // StructureChain after our caller (propertyNameEnumerator,
-    // JSPropertyNameEnumeratorInlines.h) computed `chain`. The safe move is the
-    // same as the loser path above: decline to cache when the snapshot is
-    // observed superseded at lock entry. Note this is only a check at lock
-    // entry, not a happens-before with prototypeChain()'s lock-free writer —
-    // it can republish during the install below. That residual window is
-    // benign: `chain` is consumed only as a StructureID list for transition
-    // watchpoint installs (no chain pointer is stored), and a
+    // JSPropertyNameEnumeratorInlines.h) computed `chain`: its
+    // clearCachedPrototypeChain step takes m_lock, but the republish store of
+    // the new chain that follows it is lock-free. The safe move is the same
+    // as the loser path above: decline to cache when the snapshot is observed
+    // superseded at lock entry. Because that republish store takes no lock,
+    // this is only a check at lock entry, not a happens-before with the
+    // writer — it can still land during the install below. That residual
+    // window is benign: `chain` is consumed only as a StructureID list for
+    // transition watchpoint installs (no chain pointer is stored), and a
     // content-divergent snapshot fails propertyNameEnumeratorShouldWatch into
     // the traversing-validated path where readers re-validate every use.
     // Identity: single-threaded / GIL-on, prototypeChain() returned
@@ -2984,7 +3066,7 @@ Structure* Structure::setBrandTransition(VM& vm, Structure* structure, Symbol* b
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory());
     transition->m_transitionPropertyName = &brand->uid();
     transition->setTransitionPropertyAttributes(0);
-    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
+    transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm, transition));
     transition->setMaxOffset(vm, structure->maxOffset());
     checkOffset(transition->maxOffset(), transition->inlineCapacity());
 

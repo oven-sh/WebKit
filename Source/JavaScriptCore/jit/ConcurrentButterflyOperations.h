@@ -25,13 +25,11 @@
 
 #pragma once
 
-#include "JSCJSValue.h"
-#include "OperationResult.h"
+#include "JSExportMacros.h"
+#include <cstdint>
+#include <wtf/Platform.h>
 
 namespace JSC {
-
-class JSObject;
-class VM;
 
 // ===========================================================================
 // P5: per-thread butterfly TID tag (SPEC-jit R5/P5; THREAD.md regime-1
@@ -61,8 +59,6 @@ extern "C" __attribute__((tls_model("initial-exec"))) thread_local uint64_t g_js
 // Task 1b (App. R5). Windows: unsupported flag-on (D8).
 extern "C" thread_local uint64_t g_jscButterflyTIDTag;
 #endif
-
-ALWAYS_INLINE uint64_t butterflyTIDTagForCurrentThread() { return g_jscButterflyTIDTag; }
 
 // Install the current thread's pre-shifted TID tag (and, first time through,
 // register the CS3 VMLite hook so lazy VM-lite installs / multi-VM switches /
@@ -109,55 +105,5 @@ JS_EXPORT_PRIVATE uint32_t butterflyTIDTagTLSKey();
 // via the INTEGRATE-jit.md hunk (runtime/** is not jit-ownable); also run by
 // the 3-thread test path on every P5 init.
 JS_EXPORT_PRIVATE void assertButterflyTIDTagCoherent();
-
-#if ENABLE(JIT)
-
-// ===========================================================================
-// R3: JIT-operation shims over the object-model workstream's helpers
-// (runtime/ConcurrentButterfly.h, SPEC-objectmodel section 9). Thin
-// JSC_DEFINE_JIT_OPERATION wrappers; the JIT never implements butterfly
-// regime semantics itself (SPEC-jit section 5.5).
-//
-// Task 8 disposition: the LLInt and Baseline/IC choke points
-// (LowLevelInterpreter64.asm threadedButterfly*Predicate macros;
-// CCallHelpers::loadButterflyForRead/ForWrite) route EVERY predicate failure
-// to the op's EXISTING generic slow path, whose C++ object access goes
-// through the OM's regime-aware paths once OM Tasks 4-8 land - so these
-// dedicated shims stay unreferenced by Task 8 emission. They are the
-// DFG/FTL tail-call form (Tasks 9/10), at which point the bodies forward to
-// the OM helpers (segmentedOutOfLineSlot / ensureSharedWriteBit / locked AS
-// ops). Until then they are unreachable asserts.
-// THREADS-INTEGRATE(jit): forwarding bodies are completed against
-// runtime/ConcurrentButterfly.h definitions (OM Tasks 4-8) when both
-// workstreams' .cpps are in one tree (declaration-only today => referencing
-// them now would be an undefined symbol); signatures below are the frozen
-// call-side contract.
-// ===========================================================================
-
-// Segmented (regime-2) out-of-line property access: dependent load/store
-// through the spine (SPEC-jit section 5.5 read/write predicate, top16 ==
-// 0xFFFF case). `offset` is a PropertyOffset into out-of-line storage.
-JSC_DECLARE_JIT_OPERATION(operationSegmentedButterflyLoad, EncodedJSValue, (VM*, JSObject*, int32_t offset));
-JSC_DECLARE_JIT_OPERATION(operationSegmentedButterflyStore, void, (VM*, JSObject*, int32_t offset, EncodedJSValue));
-
-// Segmented indexed-element access (array variants of the above).
-JSC_DECLARE_JIT_OPERATION(operationSegmentedButterflyIndexedLoad, EncodedJSValue, (VM*, JSObject*, uint32_t index));
-JSC_DECLARE_JIT_OPERATION(operationSegmentedButterflyIndexedStore, void, (VM*, JSObject*, uint32_t index, EncodedJSValue));
-
-// First foreign write to a flat non-ArrayStorage butterfly: sets the SW bit
-// via the OM's fire-then-DCAS protocol (forwards to
-// ensureSharedWriteBit(VM&, ...)). The caller then performs its store
-// (write predicate case (4), non-AS arm).
-JSC_DECLARE_JIT_OPERATION(operationButterflyEnsureSharedWrite, void, (VM*, JSObject*));
-
-// Locked ArrayStorage/SlowPut ops (AS-rule, SPEC-jit section 5.5 / OM I31):
-// AS never segments; flag-on, any access reachable with SW=1 takes the cell
-// lock. The store variant of case (4) fires F1, flips SW, and performs the
-// write ITSELF under the cell lock / per-event-STW regime - the JIT must
-// NEVER ensure-SW-then-store inline for AS shapes (I20).
-JSC_DECLARE_JIT_OPERATION(operationSharedArrayStorageLoad, EncodedJSValue, (VM*, JSObject*, uint32_t index));
-JSC_DECLARE_JIT_OPERATION(operationSharedArrayStorageStore, void, (VM*, JSObject*, uint32_t index, EncodedJSValue));
-
-#endif // ENABLE(JIT)
 
 } // namespace JSC

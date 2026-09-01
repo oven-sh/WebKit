@@ -47,19 +47,11 @@
 #include "JSCell.h"
 #include "Options.h"
 #include "PropertyOffset.h"
-#include <atomic>
-#include <type_traits>
+#include "VMLite.h" // currentButterflyTID(): returns 0 on the main thread and never notTTLTID.
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>
-
-#if __has_include("VMLite.h")
-// currentButterflyTID(): SOLE provider is SPEC-vmstate §6.7 (VMLite.h; NOT
-// re-declared while present - ODR/dllimport). Returns 0 on the main thread and
-// never notTTLTID.
-#include "VMLite.h"
-#endif
 
 #if COMPILER(MSVC) && !COMPILER(CLANG)
 #include <intrin.h>
@@ -70,15 +62,6 @@ namespace JSC {
 class Butterfly;
 struct ButterflySpine; // §4.1 layout; defined in Butterfly.h (objectmodel Task 4).
 struct ButterflyFragment; // §4.1; defined in Butterfly.h (objectmodel Task 4).
-
-#if !__has_include("VMLite.h")
-// THREADS-INTEGRATE(objectmodel): interim shim per SPEC-objectmodel §9.1 -
-// vmstate W3 has not landed VMLite.h yet, so until it does every thread is
-// treated as the main thread (TID 0). The INTEGRATE doc records the swap: when
-// VMLite.h appears, the __has_include above picks it up and this shim compiles
-// away. Same pattern as the §10.6 STW stub.
-ALWAYS_INLINE uint16_t currentButterflyTID() { return 0; }
-#endif
 
 using ButterflyTID = uint16_t; // 15-bit TID space (§2; 2^15 lifetime cap, no recycling this milestone).
 
@@ -102,55 +85,25 @@ static_assert((static_cast<uint64_t>(notTTLTID) << butterflyTIDShift) == butterf
 enum class ButterflyRegime : uint8_t {
     None, // all-zero word: no out-of-line storage (§2.1)
     Flat, // payload != 0, TID != notTTLTID, SW = 0: today's layout, owner transitions lock-free (§3)
-    FlatShared, // payload != 0, TID != notTTLTID, SW = 1: flat, shared-written; any transition => segmented (§3)
+    FlatShared, // payload != 0, TID != notTTLTID, SW = 1: flat, shared-written; any transition => segmented (§3), except the gilOff StayFlatShared case (see trySegmentedTransition)
     Segmented, // TID == notTTLTID, SW = 1, payload = ButterflySpine* (§4)
 };
 
-// ===== §9.6 option probes =====
-//
-// Options::useJSThreads() is already landed (OptionsList.h). The other three
-// §9.6 entries (forceSegmentedButterflies, forceButterflySWBit,
-// verifyConcurrentButterfly) belong to shared OptionsList.h (integration
-// manifest entry 1, NOT implementer-editable). So this header compiles dark
-// either way, the accessors below detect the option's presence by SFINAE:
-// absent => constant false (today's behavior); once manifest entry 1 lands the
-// real option is picked up automatically with no source change here.
-// THREADS-INTEGRATE(objectmodel): exact OptionsList.h text is in
-// docs/threads/INTEGRATE-objectmodel.md.
-
-namespace ConcurrentButterflyInternal {
-
-#define JSC_CONCURRENT_BUTTERFLY_OPTION_PROBE(name) \
-    template<typename T = ::JSC::Options, typename = void> \
-    struct OptionProbe_##name { \
-        static ALWAYS_INLINE bool get() { return false; } \
-    }; \
-    template<typename T> \
-    struct OptionProbe_##name<T, std::void_t<decltype(T::name())>> { \
-        static ALWAYS_INLINE bool get() { return static_cast<bool>(T::name()); } \
-    };
-
-JSC_CONCURRENT_BUTTERFLY_OPTION_PROBE(verifyConcurrentButterfly)
-JSC_CONCURRENT_BUTTERFLY_OPTION_PROBE(forceSegmentedButterflies)
-JSC_CONCURRENT_BUTTERFLY_OPTION_PROBE(forceButterflySWBit)
-
-#undef JSC_CONCURRENT_BUTTERFLY_OPTION_PROBE
-
-} // namespace ConcurrentButterflyInternal
+// ===== §9.6 options (verify + stress modes) =====
 
 ALWAYS_INLINE bool verifyConcurrentButterflyEnabled()
 {
-    return ConcurrentButterflyInternal::OptionProbe_verifyConcurrentButterfly<>::get();
+    return Options::verifyConcurrentButterfly();
 }
 
 ALWAYS_INLINE bool forceSegmentedButterfliesEnabled()
 {
-    return ConcurrentButterflyInternal::OptionProbe_forceSegmentedButterflies<>::get();
+    return Options::forceSegmentedButterflies();
 }
 
 ALWAYS_INLINE bool forceButterflySWBitEnabled()
 {
-    return ConcurrentButterflyInternal::OptionProbe_forceButterflySWBit<>::get();
+    return Options::forceButterflySWBit();
 }
 
 // ===== §9.1 encode/decode =====
@@ -404,18 +357,14 @@ ALWAYS_INLINE bool concurrentButterflyAtomicsAreLockFree(void* sampleCell)
 #endif
 }
 
-// ===== §9.3 spine/fragment operations (frozen signatures) =====
+// ===== §9.3 spine/fragment operations =====
 //
-// Declarations only at Task 2: the ButterflySpine/ButterflyFragment layout (§4.1)
-// lands with Task 4 (Butterfly.h/ButterflyInlines.h) and the definitions of
-// these functions land with Tasks 4/5 (ButterflyInlines.h/ConcurrentButterfly.cpp).
-// Nothing calls them flag-off (I22), and segmented words cannot exist before
-// Task 5 publishes the first spine, so declaring ahead is sound. Task 2's
-// JSObject accessors (locationForOffset / quickly-family / length()) dispatch
-// to the *IfWithinBounds/*IfReadable variants below.
+// The ButterflySpine/ButterflyFragment layout (§4.1) is in Butterfly.h;
+// fragment-level access goes through the ButterflySpine members. Nothing here
+// is reached flag-off (I22). JSObject's accessors (locationForOffset /
+// quickly-family / length()) dispatch to the *IfWithinBounds/*IfReadable
+// variants below.
 
-JS_EXPORT_PRIVATE ButterflyFragment* spineOutOfLineFragment(ButterflySpine*, unsigned fragmentIndex);
-JS_EXPORT_PRIVATE ButterflyFragment* spineIndexedFragment(ButterflySpine*, unsigned fragmentIndex);
 JS_EXPORT_PRIVATE WriteBarrierBase<Unknown>* segmentedOutOfLineSlot(ButterflySpine*, PropertyOffset); // pre: I33 bound
 WriteBarrierBase<Unknown>* segmentedIndexedSlot(ButterflySpine*, unsigned index); // pre: C4 (index < spine->vectorLength); ALWAYS_INLINE in ConcurrentButterflyInlines.h (T2-segmented-accessors-inline)
 uint32_t segmentedPublicLength(ButterflySpine*); // fragment 0 slot 0, low half (C4: shared across spines); ALWAYS_INLINE in ConcurrentButterflyInlines.h
@@ -590,9 +539,11 @@ JS_EXPORT_PRIVATE void shrinkButterflyForSetLengthConcurrent(VM&, JSObjectWithBu
 // aliasedAllocationBase (if set), markAuxiliaries every fragment outside
 // [aliasedBase, aliasedBase + aliasedSize), value-visits out-of-line slots
 // only up to outOfLineSize (HIGH-end slots per the descending §4.1 equation)
-// and indexed slots per C4/I33 (bound = min(publicLength, the SAME spine's
-// vectorLength); fragment 0 slot 0 - the frozen flat IndexingHeader - skipped;
-// Double shapes never value-visited, §4.7; AS never appears, I31), then
+// and indexed slots up to the SAME spine's vectorLength - the storage bound,
+// not the min(publicLength, vectorLength) access bound: a dense store racing a
+// truncating setSegmentedPublicLength lands in [publicLength, vectorLength) and
+// must still be marked (fragment 0 slot 0 - the frozen flat IndexingHeader -
+// skipped; Double shapes never value-visited, §4.7; AS never appears, I31), then
 // re-loads the structureID and compares it against the caller's EARLY id (and
 // re-compares maxOffset). Returns the matched Structure*, or nullptr on any
 // detected race - the caller reports didRace (the object is revisited).
@@ -613,7 +564,15 @@ Structure* visitSegmentedButterfly(Visitor&, JSObjectWithButterfly*, ButterflySp
 //     suffices) or copy-grow (fresh flat allocation); expected SW=0; a SW flip
 //     against a copied payload is taxonomy (b2) => RESTART (I21);
 //   - Flat, foreign or SW=1 (after the step-0 F2 stop): routed to §4.2
-//     (convertToSegmentedButterfly) - never converts holding the cell lock;
+//     (convertToSegmentedButterfly) - never converts holding the cell lock.
+//     Exception (StayFlatShared, gilOff only): a property-only transition on
+//     a butterfly with no indexing header, unchanged outOfLineCapacity and
+//     unchanged indexing mode reuses the flat allocation under the cell lock
+//     and publishes {newStructure, (installerTID, SW=1)}; the slot already
+//     exists, so readers' slot addresses stay data-dependent on the same
+//     word, and the step-0 F2 fire has already invalidated writeThreadLocal
+//     on source and target (I12). GIL-on still converts, so the two modes
+//     leave such an object in different regimes;
 //   - Segmented: §4.3 proper - spine reuse, or replacement spine
 //     (copy + append fresh fragments; aliasedAllocationBase/Size copied
 //     VERBATIM, I7; spineEpoch incremented).
@@ -654,18 +613,11 @@ JS_EXPORT_PRIVATE bool tryArrayStoragePropertyTransition(VM&, JSObjectWithButter
 // inlineOffset == invalidOffset means no value store (pure reshape).
 JS_EXPORT_PRIVATE bool tryStructureOnlyTransition(VM&, JSObject*, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue);
 
-// Frozen §9.3 signatures (=§4.3 / N2 locked path). These drivers anchor the
-// source on the object's settled structure at entry (spinning past a
-// mid-publication nuked StructureID, M5) and retry the try* core through every
-// recoverable RESTART (step-0 firing, refits, taxonomy (a)-(c)/(b2), racing
-// resizes/conversions). If a racing transition changes the SOURCE structure,
-// the supplied target no longer applies and proceeding would lose the racer's
-// property (I21): callers that can lose that race MUST use the try* forms from
-// their own §2 dispatch loop - the void drivers RELEASE_ASSERT it (sole
-// exception: the race published exactly newStructure, in which case the value
-// is stored into the now-existing slot - SAB last-writer-wins).
-JS_EXPORT_PRIVATE void segmentedTransition(VM&, JSObjectWithButterfly*, Structure*, PropertyOffset, JSValue); // = §4.3
-JS_EXPORT_PRIVATE void structureOnlyTransition(VM&, JSObject*, Structure*, PropertyOffset inlineOffset, JSValue); // N2 locked path
+// The try* cores above are the only entry into the transition protocol: a
+// racing transition that changes the SOURCE structure invalidates the
+// caller's target (proceeding would drop the racer's property, I21), so every
+// caller retries from its own §2 dispatch loop, recomputing the target from
+// the fresh source (JSObjectInlines.h tryPutDirectTransitionConcurrent).
 
 // Frozen §9.3 signature; defined in ConcurrentButterfly.cpp (Task 7). The §3
 // foreign-first-write handler: ensures the object's butterfly word carries
@@ -679,7 +631,9 @@ JS_EXPORT_PRIVATE void structureOnlyTransition(VM&, JSObject*, Structure*, Prope
 // path); the I36 PA carve-out (cell-locked 64-bit CAS flip, no 16B DCAS);
 // and R-DOUBLE (§4.7): shared ContiguousDouble stays Double - the flip is
 // shape-blind, with no reboxing and no sharing-onset stop beyond the F1 fire.
-// putDirectConcurrent (Task 6) dispatches its foreign-SW=0 write through it.
+// The flag-on existing-slot write paths (the putDirectInternal replace leg,
+// the indexed setters, ensureLength's publicLength bump) route their foreign
+// SW=0 writes through it before the plain store lands.
 JS_EXPORT_PRIVATE void ensureSharedWriteBit(VM&, JSObjectWithButterfly*); // §3 foreign write (F1+R-DOUBLE+§4.8)
 
 // §4.8 driver (review round 3): the flag-on route for BOTH the owner's
@@ -703,29 +657,16 @@ JS_EXPORT_PRIVATE bool ensureSegmentedOutOfLineCapacity(VM&, JSObjectWithButterf
 
 // ===== §10.6 stop-the-world veneer + world-stopped witness (manifest entry 6) =====
 //
-// Declarations only here (Task 3 consumes them from Structure.cpp's §9.4 fire
-// functions and the F3/flatten-under-stop wiring); the DEFINITIONS are owned by
-// runtime/ConcurrentButterfly.cpp (Task 5), per SPEC-objectmodel manifest
-// entry 6:
+// Declarations only here (Structure.cpp's §9.4 fire functions and the
+// F3/flatten-under-stop wiring consume them); the DEFINITIONS are in
+// runtime/ConcurrentButterfly.cpp:
 //
-//   - jsThreadsStopTheWorldAndRun: DELEGATES to
-//     JSThreadsSafepoint::stopTheWorldAndRun (jit CS6 preferred option), whose
-//     entry checks RELEASE_ASSERT the caller holds the API lock and that at most
-//     one VM is entered (phase-1 GIL). The owned witness is raised INSIDE the
-//     delegated closure (not around the call) so the delegate's worldIsStopped()
-//     early-return can never be triggered by our own witness and its
-//     single-mutator RELEASE_ASSERTs always execute on the outermost call
-//     (adversarial-review round 1 fix). At integration manifest M4 the body
-//     becomes the real VMManager STWR (+ CS2 GC-conductor bracket).
-//     THREADS-INTEGRATE(objectmodel)
-//   - g_jsThreadsStubWorldStopped: the pre-M4 witness; under the GIL it is
-//     written unraced. SPEC-jit section 5.6 disjunct 4 reads it (see
-//     JSThreadsSafepoint.cpp) once JSC_OM_PROVIDES_JSTHREADS_STUB_WITNESS is
-//     defined alongside the Task 5 definition.
+//   - jsThreadsStopTheWorldAndRun: delegates to
+//     JSThreadsSafepoint::stopTheWorldAndRun (GIL-on inline stub under the
+//     caller's API lock; gilOff thread-granular window), which raises its own
+//     world-stopped witness around the closure.
 //   - butterflyWorldIsStopped: the predicate the §9.4 fire functions
-//     RELEASE_ASSERT (I13). It is `g_jsThreadsStubWorldStopped ||
-//     JSThreadsSafepoint::worldIsStopped(vm)`; at M4 integration it becomes the
-//     jit predicate alone.
+//     RELEASE_ASSERT (I13); it is JSThreadsSafepoint::worldIsStopped(vm).
 //
 // Caller contract for the veneer (GT11): entered mutator; no §6-ranked lock
 // (SAL / JSCellLock / Structure::m_lock) held; the closure must not allocate in
@@ -733,27 +674,13 @@ JS_EXPORT_PRIVATE bool ensureSegmentedOutOfLineCapacity(VM&, JSObjectWithButterf
 
 class VM;
 
-// Advertises the pre-M4 stub witness to SPEC-jit section 5.6 disjunct 4:
-// bytecode/JSThreadsSafepoint.cpp includes this header and reads
-// g_jsThreadsStubWorldStopped iff this macro is defined (jit CS6). The Task 5
-// veneer ALSO delegates to JSThreadsSafepoint::stopTheWorldAndRun (the CS6
-// preferred option), so the disjunct is redundant-but-harmless; both are
-// deleted together at M4 integration.
-#define JSC_OM_PROVIDES_JSTHREADS_STUB_WITNESS 1
-
-// std::atomic<bool>: read cross-thread by JSThreadsSafepoint::worldIsStopped()
-// (disjunct 4) and by compiler/GC threads through butterflyWorldIsStopped() -
-// matching the jit side's atomic depth-counter discipline (no TSAN hit; the
-// implicit conversion keeps `if (g_jsThreadsStubWorldStopped)` readers valid).
-extern JS_EXPORT_PRIVATE std::atomic<bool> g_jsThreadsStubWorldStopped; // defined in ConcurrentButterfly.cpp (Task 5)
-
-JS_EXPORT_PRIVATE void jsThreadsStopTheWorldAndRun(VM&, const ScopedLambda<void()>&); // defined in ConcurrentButterfly.cpp (Task 5)
-JS_EXPORT_PRIVATE bool butterflyWorldIsStopped(VM&); // defined in ConcurrentButterfly.cpp (Task 5)
+JS_EXPORT_PRIVATE void jsThreadsStopTheWorldAndRun(VM&, const ScopedLambda<void()>&); // defined in ConcurrentButterfly.cpp
+JS_EXPORT_PRIVATE bool butterflyWorldIsStopped(VM&); // defined in ConcurrentButterfly.cpp
 
 // ===== §9.6 stress mode: forceSegmentedButterflies (Task 10) =====
 //
-// When Options::forceSegmentedButterflies() is on (manifest entry 1), every
-// butterfly allocation/transition must end up publishing a SEGMENTED butterfly,
+// When Options::forceSegmentedButterflies() is on, every butterfly
+// allocation/transition must end up publishing a SEGMENTED butterfly,
 // so the spine/fragment machinery (§4) and the (notTTLTID, 1) dispatch rows run
 // on single-threaded workloads. Enforcement points (all in owned files):
 //

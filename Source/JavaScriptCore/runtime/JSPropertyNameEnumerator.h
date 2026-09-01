@@ -80,8 +80,8 @@ public:
         // read; its writers are already relaxed-atomic). The lane read below
         // goes through WriteBarrier::get(), which is already a relaxed atomic
         // load (WriteBarrier.h cell()), pairing with finishCreation's set().
-        // TSAN r12 (reports 12/13): see concurrentRelaxedLoad below — pairs
-        // with finishCreation's HAPPENS_BEFORE.
+        // The HAPPENS_AFTER pairs with finishCreation's HAPPENS_BEFORE; see
+        // concurrentRelaxedLoad below.
         TSAN_ANNOTATE_HAPPENS_AFTER(this);
         WriteBarrier<JSString>* names = WTF::atomicLoad(m_propertyNames.slot(), std::memory_order_relaxed);
         return names[index].get();
@@ -130,22 +130,14 @@ public:
 private:
     friend class LLIntOffsetsExtractor;
 
-    // TSAN family structure-fields (r4 residual "slow_path_enumerator_next" /
-    // "JSPropertyNameEnumerator finishCreation/reads"): the enumerator is
-    // immutable once published, but its IsoSubspace cell can be RECYCLED into
-    // a new enumerator while a foreign mutator still holds a stale pointer
-    // (cleared rare-data cache); the constructor's plain init stores then
-    // pair with these lock-free accessor reads. Relaxed atomic single-word
-    // loads (identical ldr/mov codegen) make the reader side C++-defined; a
-    // stale snapshot is re-validated by the cachedStructureID check on every
-    // fast path, per OM ground truth. NOTE: the matching writer-side relaxed
-    // stores belong in JSPropertyNameEnumerator.cpp (constructor init list +
-    // m_flags merges), owned separately.
-    // TSAN r12 (reports 11/12/14): the HAPPENS_AFTER pairs with the
-    // HAPPENS_BEFORE at the end of finishCreation — the enumerator (and its
-    // fastMalloc'd names buffer) is consume-published, and a stale probe of
-    // a RECYCLED cell otherwise pairs against the new owner's allocation /
-    // init writes (blessed staleness; re-validated by cachedStructureID).
+    // The enumerator is immutable once published, but its IsoSubspace cell can
+    // be recycled into a new enumerator while a foreign thread still holds a
+    // stale pointer from a cleared StructureRareData cache, so the constructor's
+    // relaxed atomic stores pair with these relaxed atomic loads and every fast
+    // path re-validates the snapshot against cachedStructureID(). The
+    // HAPPENS_AFTER pairs with the HAPPENS_BEFORE at the end of finishCreation,
+    // which publishes the cell and its names buffer; without it TSAN would
+    // report a benign stale probe of a recycled cell as a race.
     uint32_t concurrentRelaxedLoad(const uint32_t& word) const
     {
         TSAN_ANNOTATE_HAPPENS_AFTER(this);
