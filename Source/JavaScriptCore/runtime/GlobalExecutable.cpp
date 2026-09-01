@@ -70,13 +70,6 @@ void GlobalExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(GlobalExecutable);
 
-CodeBlock* GlobalExecutable::replaceCodeBlockWith(VM& vm, CodeBlock* newCodeBlock)
-{
-    CodeBlock* oldCodeBlock = codeBlock();
-    m_codeBlock.setMayBeNull(vm, this, newCodeBlock);
-    return oldCodeBlock;
-}
-
 void GlobalExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
     jettisonCodeBlockEdgeIfDead(vm, m_codeBlock);

@@ -35,6 +35,7 @@
 #include "Register.h"
 #include <atomic>
 #include <memory>
+#include <wtf/Atomics.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -51,39 +52,24 @@ namespace JSC {
     class LLIntOffsetsExtractor;
     struct CLoopStackThreadExitRetirer;
 
-    // Phase-1 GIL threads (docs/threads/TSAN.md, "Shared CLoopStack vs. parked
-    // threads"): the CLoop used to keep every JS thread's interpreter frames on
-    // one shared stack. A thread that parked (join, cond.wait, Atomics.wait,
-    // blocked lock.hold) left its frames in that shared stack, and the next GIL
-    // holder's interpreter SP walked below them and clobbered them; the parked
-    // thread then crashed on resume (intermittent SEGV in CLoop::execute).
+    // Each JS thread gets its own stack segment (ThreadState below), created
+    // lazily on first use and keyed by WTF::Thread uid: threads handing the
+    // GIL around park and resume in arbitrary order, so a parked thread's
+    // interpreter frames must live in a reservation no other thread's
+    // interpreter SP can walk into. Segments are retired at thread exit
+    // (thread-local destructor) and reused by later threads, so the number of
+    // live PageReservations is bounded by the peak number of concurrently
+    // live JS threads, not by the total spawned.
     //
-    // Each JS thread now gets its own stack segment (ThreadState below), created
-    // lazily on first use and keyed by WTF::Thread uid, so a parked thread's
-    // frames live in a reservation no other thread ever touches. Segments are
-    // retired at thread exit (thread-local destructor) and reused by later
-    // threads, so the number of live PageReservations is bounded by the peak
-    // number of concurrently live JS threads, not by the total spawned.
-    //
-    // The LLInt asm stack checks (LowLevelInterpreter64.asm:213/729 and the
-    // prologue check via StackManager::m_trapAwareSoftStackLimit) compare sp
-    // against the single published StackManager::m_cloopStackLimit slot. With
-    // per-thread segments that slot must hold the *running* thread's limit, so
-    // every in-scope hook that runs on the current thread (segment lookup,
-    // setCurrentStackPointer before each native/slow-path call,
-    // currentStackPointer at CLoop entry, ensureCapacityFor in the stack-check
-    // slow paths) republishes the current segment's limit when it is stale.
-    //
-    // FIXME(threads): there is a residual window right after a GIL re-acquire at
-    // a park site: until the resumed thread hits one of the hooks above, asm
-    // stack checks compare against the previous holder's limit. A wrongly
-    // failing check self-corrects (slow path -> ensureCapacityFor republishes);
-    // a wrongly passing check can only hurt if the thread then recurses through
-    // the rest of its committed region (>= the soft reserved zone) with no
-    // native/slow-path call at all before any check fails. The complete fix is
-    // a republish hook in the GIL re-acquire path (GILDroppedSection's
-    // destructor, runtime/LockObject.cpp), which is outside this fix item's
-    // file scope; see docs/threads/INTEGRATE-api.md landed deviations.
+    // The LLInt asm stack checks compare sp against the single published
+    // StackManager::m_cloopStackLimit / m_trapAwareSoftStackLimit slot, which
+    // must therefore hold the *running* thread's limit. The slot is
+    // republished at every point where the running thread can have changed
+    // or a limit can have moved: JSLock acquisition (JSLock::didAcquireLock,
+    // which every park resume and every fresh entry passes through), CLoop
+    // entry (currentStackPointer), before each native/slow-path call
+    // (setCurrentStackPointer), the stack-check slow path (ensureCapacityFor)
+    // and segment lookup (threadStateSlow).
     class CLoopStack {
         WTF_MAKE_NONCOPYABLE(CLoopStack);
     public:
@@ -111,6 +97,11 @@ namespace JSC {
         // so it can also republish the stack limit at CLoop (re)entry.
         void* currentStackPointer() const;
         void setCurrentStackPointer(void* sp); // Defined in CLoopStackInlines.h.
+
+        // Republishes the calling thread's segment limit if the thread has a
+        // segment; never creates one. Called when this thread acquires the
+        // JSLock, since the slot then still holds the previous holder's limit.
+        void publishCurrentThreadStackLimit();
 
         size_t size() const;
 
@@ -158,9 +149,7 @@ namespace JSC {
         // whose extra owner-VM/pre-latch terms could diverge from the asm
         // side and silently split publish slot from read slot.
         StackManager& publishTargetStackManager() const;
-        // Single republish hook used by all five C++ publish sites
-        // (threadStateSlow, currentStackPointer, setSoftReservedZoneSize,
-        // setCurrentStackPointer, ensureCapacityFor).
+        // Single republish hook used by every C++ publish site.
         void publishStackLimit(ThreadState&) const;
         VM& vm() const;
 
@@ -173,6 +162,7 @@ namespace JSC {
         }
         ThreadState& threadStateSlow() const; // Finds/reuses/creates the current thread's segment, caches it, and republishes the stack limit.
         ThreadState* threadStateIfExists() const; // Never creates; never publishes.
+        ThreadState* findThreadState(uint32_t threadUid) const WTF_REQUIRES_LOCK(m_lock);
 
         void retireSegmentsForThread(uint32_t threadUid);
 
@@ -200,8 +190,12 @@ namespace JSC {
         static void addToCommittedByteCount(long);
 
         mutable Lock m_lock;
+        // A stack is registered in the process-wide live-stack registry (see
+        // CLoopStack.cpp) exactly while this is non-empty.
         mutable Vector<std::unique_ptr<ThreadState>, 4> m_threadStates WTF_GUARDED_BY_LOCK(m_lock);
-        ptrdiff_t m_softReservedZoneSizeInRegisters;
+        // Written by setSoftReservedZoneSize on whichever thread handles a
+        // stack overflow while other threads read it lock-free.
+        Atomic<ptrdiff_t> m_softReservedZoneSizeInRegisters { 0 };
 
         friend class LLIntOffsetsExtractor;
         friend struct CLoopStackThreadExitRetirer;

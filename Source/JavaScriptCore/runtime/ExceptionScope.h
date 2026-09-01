@@ -158,11 +158,14 @@ bool ExceptionScope::tryClearException()
     return true;
 }
 
-/* UNGIL obligation-10 audit: the NeedExceptionHandling bit lives in the
-   CURRENT thread's trap word GIL-off (VM::trapsForCurrentThread() — the
-   same storage domain as the per-lite m_exception word), so both the
-   bit<->word assert and the poll gate read the current thread's view.
-   Flag-off/GIL-on both compile to the same single VM-word reads as before. */
+/* The NeedExceptionHandling bit lives in the same storage as the m_exception
+   word it mirrors: the current thread's lite trap word GIL-off, the VM trap
+   word GIL-on and flag-off, so the bit<->word assert and the poll gate read
+   the current thread's view. The poll gate selects that word through
+   VM::gilOffWithProcessGate(), so flag-off every expansion pays one
+   predicted-not-taken g_jscConfig.gilOffProcess byte test and a cold
+   lite-dispatch block ahead of the VM-word test that used to be the whole
+   check; it is not byte-identical to the pre-threads macro. */
 #define RETURN_IF_EXCEPTION(scope__, value__) do { \
         SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = (scope__).vm(); \
         EXCEPTION_ASSERT(!!(scope__).exception() == vm.trapsForCurrentThread().needHandling(JSC::VMTraps::NeedExceptionHandling)); \

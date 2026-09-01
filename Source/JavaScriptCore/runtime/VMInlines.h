@@ -56,20 +56,17 @@ inline ActiveScratchBufferScope::~ActiveScratchBufferScope()
         m_scratchBuffer->setActiveLength(0);
 }
 
-// UNGIL §A.2.2 (AB-17 item 3, C++-reader leg only): GIL-off, the soft stack
-// limit is per-thread state on the current lite; the VM-level word serves
-// only no-lite threads. This helper reads the PLAIN per-lite soft limit
-// (StackManager::m_softStackLimit, dual-published by VM::updateStackLimits
-// from the entering thread's own StackBounds) — deliberately NOT the
-// trap-aware word: it changes which thread's OVERFLOW limit a C++ reader
-// compares against, never trap observability. Trap delivery is the per-lite
-// trap-aware word's job (item-3c stop fan + item-3b servicing dispatch, both
-// LANDED in the AB-17 change, as is the LLInt/JIT generated-code reroute —
-// those sites now read the per-lite word GIL-off; see the ACTIVATION
-// CHECKLIST — STATUS block in VMTraps.h).
+// GIL-off, the soft stack limit is per-thread state on the current lite; the
+// VM-level word serves only no-lite threads. This reads the plain per-lite
+// soft limit (published by VM::updateStackLimits from the entering thread's
+// own StackBounds), not the trap-aware word: it selects which thread's
+// overflow limit a C++ reader compares against and never affects trap
+// delivery, which goes through the per-lite trap-aware word. The mode test is
+// the same Config-page gate as VM::softStackLimitForCurrentThreadSlow, so
+// flag-off hot readers never touch the VM member line.
 ALWAYS_INLINE void* softStackLimitForCurrentThread(const VM& vm)
 {
-    if (vm.gilOff()) [[unlikely]] {
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
         VMLite* lite = VMLite::currentIfExists();
         if (lite && lite->gilOff && lite->vm == &vm) {
             // Null until this thread's first VMEntryScope publish; fall back
