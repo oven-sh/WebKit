@@ -393,6 +393,7 @@ public:
     MutatorState mutatorState() const { return m_mutatorState; }
     std::optional<CollectionScope> collectionScope() const { return m_collectionScope; }
     std::optional<CollectionScope> lastCollectionScope() const { return m_lastCollectionScope; }
+    MonotonicTime lastGCEndTime() const { return m_lastGCEndTime; }
     bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
     bool worldIsStopped() const { return m_worldIsStopped; }
     bool worldIsRunning() const { return !worldIsStopped(); }
