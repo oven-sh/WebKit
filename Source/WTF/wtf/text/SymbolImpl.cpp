@@ -27,6 +27,7 @@
 #include <wtf/text/SymbolImpl.h>
 
 #include <wtf/text/SymbolRegistry.h>
+#include <atomic>
 
 namespace WTF {
 
@@ -93,12 +94,15 @@ RegisteredSymbolImpl::RegisteredSymbolImpl(std::span<const char16_t> characters,
 // symbolized StringImpl* keys means that we don't need them to match any other
 // string (in fact, that's exactly the oposite of what we want!), and the
 // normal hash would lead to lots of conflicts.
+//
+// Symbols are created from any thread that runs JS (Workers, and JS threads
+// sharing one VM), so the counter is atomic: a lost increment would hand two
+// live symbols the same hash.
 unsigned SymbolImpl::nextHashForSymbol()
 {
-    static unsigned s_nextHashForSymbol = 0;
-    s_nextHashForSymbol += 1 << s_flagCount;
-    s_nextHashForSymbol |= 1u << 31;
-    return s_nextHashForSymbol;
+    static std::atomic<unsigned> s_nextHashForSymbol { 0 };
+    unsigned next = s_nextHashForSymbol.fetch_add(1u << s_flagCount, std::memory_order_relaxed) + (1u << s_flagCount);
+    return next | (1u << 31);
 }
 
 Ref<SymbolImpl> SymbolImpl::create(StringImpl& rep)
