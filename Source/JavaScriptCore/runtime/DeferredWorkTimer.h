@@ -72,7 +72,7 @@ public:
         JS_EXPORT_PRIVATE void cancel();
         // We should not modify dependencies unless it is legitimate to do so during the end of GC.
         inline void cancelAndClear();
-        bool isCancelled() const { return m_isCancelled; }
+        bool isCancelled() const { return m_isCancelled.load(std::memory_order_relaxed); }
 
     private:
         inline TicketData(WorkType, JSObject* scriptExecutionOwner, Vector<JSCell*>&& dependencies);
@@ -80,7 +80,10 @@ public:
         WorkType m_type;
         FixedVector<JSCell*> m_dependencies;
         JSObject* m_scriptExecutionOwner { nullptr };
-        bool m_isCancelled { false };
+        // GIL-off, cancel() runs on the cancelling thread with no DWT lock
+        // held while the carrier reads the flag under m_taskLock; relaxed
+        // atomics keep that a stale read rather than a data race.
+        std::atomic<bool> m_isCancelled { false };
     };
 
     using Ticket = TicketData*;

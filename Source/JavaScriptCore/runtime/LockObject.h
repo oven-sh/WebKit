@@ -31,7 +31,7 @@
 namespace JSC {
 
 class CallFrame;
-class EntryFrame;
+struct EntryFrame;
 class ExceptionScope;
 
 // Native state backing a JS Lock (SPEC-api 5.3). Non-recursive; sync holds
@@ -102,10 +102,25 @@ public:
     // poll cadence, now demoted to a backstop.
     std::atomic<unsigned> m_syncHoldParkers { 0 };
 
-    // Wake one waiter parked in the contended sync lock.hold loop, if any.
-    // Call AFTER m_lock.unlock(); never throws, never blocks beyond the
-    // ParkingLot bucket lock. No-op when nobody is parked.
+    // True while a release that found contended-hold parkers has not yet been
+    // matched by a parker's acquisition: the release->resumed window counted
+    // in jsThreadNoteParkResumptionPending (below). Set by
+    // wakeOneSyncHoldParker; taken (exchange to false) by the parker whose
+    // tryLock succeeds, or by the last parker leaving the loop. At most one
+    // window is open per lock, since a second release needs an acquisition
+    // first.
+    std::atomic<bool> m_parkResumptionPending { false };
+
+    // Wake one waiter parked in the contended sync lock.hold loop, if any,
+    // opening its park-resumption window first. Call AFTER m_lock.unlock();
+    // never throws, never blocks beyond the ParkingLot bucket lock. No-op
+    // when nobody is parked.
     void wakeOneSyncHoldParker();
+
+    // Parker side of m_parkResumptionPending: returns true iff a window was
+    // open, which the caller then closes with jsThreadNoteParkResumptionDone
+    // once it is back under the GIL.
+    bool takeParkResumptionWindow() { return m_parkResumptionPending.exchange(false, std::memory_order_seq_cst); }
 
     // Release the sync hold the current thread owns (no pump).
     void releaseSyncHold()
@@ -119,9 +134,12 @@ public:
     }
 
     // R: after any m_lock release, schedule the async-acquirer pump if needed.
+    // Call with no rank 1-3 lock held: GIL-off with a spawned head registrant
+    // the pump runs inline on the caller (see schedPumpLocked).
     void releasePump(VM&);
 
     // A-failure path: enqueue an async acquirer FIFO and schedule the pump.
+    // Same locking precondition as releasePump.
     void enqueueAsyncAcquirer(Ref<AsyncTicket>&&, VM&);
 
     // Async release: clear the live async hold and unlock (callable from any
@@ -137,7 +155,12 @@ public:
 private:
     NativeLockState() = default;
 
-    void schedPumpLocked(VM&) WTF_REQUIRES_LOCK(m_queueLock);
+    // Marks the pump pending and either dispatches it to the head ticket's
+    // vm.runLoop() (returns false) or, GIL-off with a spawned head
+    // registrant, leaves it to the caller to run pump() once m_queueLock is
+    // dropped (returns true): that run loop belongs to the main thread, which
+    // never services it while parked in join(), and pump() runs no JS.
+    bool schedPumpLocked(VM&) WTF_REQUIRES_LOCK(m_queueLock);
 };
 
 class JSLockObject final : public JSDestructibleObject {
@@ -181,21 +204,6 @@ JS_EXPORT_PRIVATE void dumpJSLockContentionStats();
 // ConditionObject.cpp for asyncWait re-acquisition.
 void settleLockGrant(NativeLockState&, AsyncTicket&);
 
-// D9 park-poll predicate, shared by every GIL-dropped park site. A parked
-// thread can never observe vm.hasTerminationRequest() alone: that flag is
-// only set by VMTraps::handleTraps(), which runs on a mutator EXECUTING JS
-// under the GIL — watchdog firing (NeedWatchdogCheck), VM::notifyNeedTermination,
-// and the shell's SIGTERM path only set trap BITS. Polling the flag at a
-// park site therefore never observes a termination raised while everyone is
-// parked (the watchdog-hang / SIGTERM-immune failure mode). Poll the trap
-// bits directly. NeedWatchdogCheck is deliberately treated as terminal at a
-// park: Watchdog::shouldTerminate()'s CPU-deadline deferral is meaningless
-// for a parked thread (it burns ~no CPU, so deferral == unkillable park),
-// the wall timer only fires at/after the deadline, and shouldTerminate()
-// itself asserts the API lock so it cannot be consulted from a dropped
-// section. Recorded as a D9 amendment in docs/threads/INTEGRATE-api.md.
-JS_EXPORT_PRIVATE bool jsThreadParkTerminationRequested(VM&);
-
 // Phase-1 GIL stub fairness primitive: release the GIL, yield, and
 // reacquire it, WITHOUT JSLock::DropAllLocks. DropAllLocks participates in
 // JSLock's strict-LIFO m_lockDropDepth protocol (JSLock::grabAllLocks spins
@@ -216,19 +224,22 @@ void jsThreadGILHandoffYield(VM&);
 // Phase-1 completion-ordering primitives (the 5.2 yield-point contract vs
 // the SPEC-api 4.6.1 completion drain; regression test
 // JSTests/threads/api/park-no-microtask-drain.js): a process-global count of
-// threads inside a "park -> resumed" window of the GIL stub's
+// threads inside a "released/notified -> resumed" window of the GIL stub's
 // lock-reacquisition parks — contended sync lock.hold parkers (counted from
-// park entry) and sync cond.wait waiters (counted from the notify()-side
-// Notified flip, which is what makes the window visible BEFORE the notifier
-// can reach its completion sequence). A completing thread must not run its
-// 4.6.1 shared-queue microtask drain while such a window is open: the woken
+// the holder's release that frees them, NativeLockState::m_parkResumptionPending)
+// and sync cond.wait waiters (counted from the notify()-side Notified flip).
+// Both openings happen on the releasing/notifying thread BEFORE the parker
+// can wake, so the window is visible before that thread can reach its
+// completion sequence, and neither is open while a parker merely waits
+// behind a long-lived holder. A completing thread must not run its 4.6.1
+// shared-queue microtask drain while such a window is open: the woken
 // parker would observe the drain inside its blocking host call, the exact
 // D11 violation the test asserts against. The completion sequence calls
 // jsThreadYieldForPendingParkResumptions, which yields the GIL until the
 // count drains to zero — bounded by a progress-reset deadline (see the
-// definition) so a parker pinned behind an unrelated long-lived holder can
-// only delay, never deadlock, completion. Process-global is correct for
-// phase 1: a single shared VM (5.2).
+// definition) so a parker pinned behind a barging holder can only delay,
+// never deadlock, completion. Process-global is correct for phase 1: a
+// single shared VM (5.2).
 void jsThreadNoteParkResumptionPending();
 void jsThreadNoteParkResumptionDone();
 void jsThreadYieldForPendingParkResumptions(VM&);

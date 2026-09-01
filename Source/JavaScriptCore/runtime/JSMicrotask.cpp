@@ -206,7 +206,7 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     protoCallFrame.init(newCodeBlock, calleeGlobalObject, asObject(functionObject), thisValue, context, sizeof...(args) + 1, argArray.data());
 
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->generatedJITCodeForCall().ptr());
+        ASSERT(vm.gilOff() || jitCode == functionExecutable->generatedJITCodeForCall().ptr());
         return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
     }
 
@@ -566,14 +566,11 @@ static bool NODELETE isSuspendYieldState(int32_t state)
 // Host hook @claimAsyncGeneratorResume(generator, value, mode, promise) is
 // defined here — not JSGlobalObject.cpp — because every other writer of the
 // queue cluster (the continuations + asyncGeneratorDequeueAndIsEmpty) lives
-// in this TU; the link-time-constant registration (BuiltinNames.h,
-// LinkTimeConstant.h, JSGlobalObject.cpp initLater) for BOTH hook names
-// remains the recorded cross-file integration dependency for this landing.
-// @publishAsyncGeneratorResume is retained as a no-op so that dependency's
-// hook-name set is unchanged. GIL-off, ALL driving — initial AND continuation
-// — runs through the C++ asyncGeneratorResumeNext below (the JS-side
-// @asyncGeneratorResumeNext + @asyncGeneratorQueueDequeue* helpers are the
-// flag-off path only), so every dequeue is a locked
+// in this TU; its link-time-constant registration lives in BuiltinNames.h,
+// LinkTimeConstant.h and JSGlobalObject.cpp. GIL-off, ALL driving — initial
+// AND continuation — runs through the C++ asyncGeneratorResumeNext below (the
+// JS-side @asyncGeneratorResumeNext + @asyncGeneratorQueueDequeue* helpers
+// are the flag-off path only), so every dequeue is a locked
 // asyncGeneratorDequeueAndIsEmpty.
 //
 // Flag-off byte-identical: every call site is behind the @gilOffProcess
@@ -585,7 +582,6 @@ static bool NODELETE isSuspendYieldState(int32_t state)
 static void asyncGeneratorResumeNext(JSGlobalObject*, JSAsyncGenerator*);
 
 JSC_DECLARE_HOST_FUNCTION(claimAsyncGeneratorResume);
-JSC_DECLARE_HOST_FUNCTION(publishAsyncGeneratorResume);
 
 JSC_DEFINE_HOST_FUNCTION(claimAsyncGeneratorResume, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -620,15 +616,6 @@ JSC_DEFINE_HOST_FUNCTION(claimAsyncGeneratorResume, (JSGlobalObject* globalObjec
     }
     // !shouldDrive: ECMA-262 AsyncGeneratorEnqueue — request enqueued, pending
     // promise returned, NO TypeError; the active driver chain drains it.
-    return encodedJSUndefined();
-}
-
-JSC_DEFINE_HOST_FUNCTION(publishAsyncGeneratorResume, (JSGlobalObject*, CallFrame*))
-{
-    // Retained as a no-op for the recorded cross-file link-time-constant
-    // registration dependency (BOTH hook names registered as a pair). The
-    // wasEmpty/nowEmpty scheme has no separate publish step: driver-ship
-    // retires inside asyncGeneratorDequeueAndIsEmpty's locked nowEmpty edge.
     return encodedJSUndefined();
 }
 
