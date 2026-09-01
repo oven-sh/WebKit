@@ -23,9 +23,10 @@ function makeBuffer(bytes, opts) {
 
 // --- Arm A: N threads race transfer() on ONE buffer ---
 // The detached-buffer side table must let EXACTLY ONE racer move ownership
-// into the quarantine; every winner's copy must carry intact sentinel bytes
-// (the copy reads a stale-but-safe mapping); losers throw TypeError or
-// observe byteLength 0. No crash, no torn copy.
+// into the quarantine, and only that racer gets a transferee: a transferTo
+// whose detach lost the flag fails as "already detached". The winner's copy
+// must carry intact sentinel bytes (the copy reads a stale-but-safe mapping);
+// losers throw TypeError. No crash, no torn copy.
 for (let round = 0; round < 20; ++round) {
     const ab = makeBuffer(4096);
     const results = joinAll(spawnN(THREADS, () => {
@@ -44,13 +45,10 @@ for (let round = 0; round < 20; ++round) {
         }
     }));
     const winners = results.reduce((a, b) => a + b, 0);
-    if (winners < 1)
-        throw new Error("no transfer() winner in round " + round);
+    if (winners !== 1)
+        throw new Error("expected exactly one transfer() winner in round " + round + ", got " + winners);
     if (ab.byteLength !== 0)
         throw new Error("source not detached after race");
-    // Note: >1 winner is a JS-visible nondeterminism question, not a memory-
-    // safety one (N6: "only the JS-visible outcome of the race is
-    // nondeterministic"); we record but do not fail on it under GIL-off.
 }
 
 // --- Arm B: detach storm vs reader threads ---

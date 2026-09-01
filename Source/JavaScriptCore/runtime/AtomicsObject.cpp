@@ -35,17 +35,10 @@
 #include "ThreadManager.h"
 #include "TypedArrayController.h"
 #include "WaiterListManager.h"
-#include <wtf/HashSet.h>
-#include <wtf/NeverDestroyed.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
-
-// Defined in ArrayBuffer.cpp (GIL-off detached-flag side table, SPEC-ungil
-// annex N6 arm 1); declared locally until ArrayBuffer.h lands the
-// detached-flag member (recorded U-T13 gap).
-bool isArrayBufferDetachedGILOff(ArrayBuffer*);
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(AtomicsObject);
 
@@ -159,6 +152,25 @@ static uint64_t validateAtomicAccess(JSGlobalObject* globalObject, VM& vm, JSArr
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint64_t accessIndex = 0;
     size_t length = typedArrayView->length();
+    if (vm.gilOff()) [[unlikely]] {
+        // A concurrent GIL-off detach (SPEC-ungil annex N6 arm 1) sets the
+        // buffer's sticky detached flag, then publishes length 0, and jettisons
+        // the view's vector only later, so the length read above can observe 0
+        // while the view's isDetached() still reads false. A detach observed
+        // through its length publish must surface as the detached TypeError,
+        // never as an out-of-bounds RangeError; the fence orders the length
+        // load before the flag loads. The check runs before ToIndex: no user
+        // code runs between validateTypedArray and here, so only a concurrent
+        // detach can trip it, and a detach performed by user code inside
+        // ToIndex keeps the spec-mandated RangeError (ValidateAtomicAccess
+        // snapshots the length first). GIL-on there is no concurrent detach.
+        WTF::loadLoadFence();
+        if (typedArrayView->isDetached()
+            || (isWastefulTypedArray(typedArrayView->mode()) && typedArrayView->existingBufferInButterfly()->isDetached())) {
+            throwTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
+            return 0;
+        }
+    }
     if (accessIndexValue.isUInt32()) [[likely]]
         accessIndex = accessIndexValue.asUInt32();
     else {
@@ -167,23 +179,6 @@ static uint64_t validateAtomicAccess(JSGlobalObject* globalObject, VM& vm, JSArr
     }
 
     if (accessIndex >= length) {
-        if (useJSThreadsEnabled()) [[unlikely]] {
-            // SPEC-ungil annex N6 arm 1: DETACH sets the side-table flag, then
-            // publishes length=0 (seq_cst); the view's vector is jettisoned only
-            // later, so a racing length-tracking view can observe length 0 while
-            // isDetached() still reads false. No sequential interleaving yields
-            // RangeError here for an index the live buffer covers — a detach
-            // observed via its length publish must surface as the detached
-            // TypeError. The flag-before-length ordering makes this re-check
-            // race-correct. Gated on threads mode: threads-off, a detach during
-            // accessIndexValue.toIndex (user valueOf) must keep the spec-mandated
-            // RangeError (ValidateAtomicAccess snapshots length before ToIndex).
-            if (typedArrayView->isDetached()
-                || (isWastefulTypedArray(typedArrayView->mode()) && isArrayBufferDetachedGILOff(typedArrayView->existingBufferInButterfly()))) {
-                throwTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
-                return 0;
-            }
-        }
         throwRangeError(globalObject, scope, "Access index out of bounds for atomic access."_s);
         return 0;
     }
@@ -520,18 +515,6 @@ JSC_DEFINE_HOST_FUNCTION(atomicsFuncSub, (JSGlobalObject* globalObject, CallFram
 }
 
 
-// D8 (docs/threads/INTEGRATE-api.md): per-VM single-flight gate for the
-// GIL-dropped typed-array sync Atomics.wait below — waitSyncImpl uses the one
-// per-VM vm.syncWaiter() node, which must never be enqueued twice
-// concurrently. Process-global (multiple VMs each get their own slot); only
-// touched on the already-slow, flag-gated sync-wait path.
-static Lock syncTAWaitGateLock;
-static UncheckedKeyHashSet<VM*>& vmsWithSyncTAWaitInFlight() WTF_REQUIRES_LOCK(syncTAWaitGateLock)
-{
-    static NeverDestroyed<UncheckedKeyHashSet<VM*>> set;
-    return set;
-}
-
 template<typename ValueType, typename JSArrayType>
 JSValue atomicsWaitImpl(JSGlobalObject* globalObject, JSArrayType* typedArray, uint64_t accessIndex, ValueType expectedValue, JSValue timeoutValue, AtomicsWaitType type)
 {
@@ -560,46 +543,21 @@ JSValue atomicsWaitImpl(JSGlobalObject* globalObject, JSArrayType* typedArray, u
         // the JSLock (the phase-1 GIL) would starve every Thread for the
         // duration of the wait — and deadlock outright if the matching
         // Atomics.notify must come from a spawned Thread (they can never
-        // acquire the GIL while we hold it). Spawned Threads themselves are
-        // gated off this path entirely (4.5 step 1a above); for the
-        // main/embedder thread we park with the GIL dropped, mirroring the
-        // property-path wait (ThreadAtomics.cpp). The waiter's typed array
-        // and SAB stay conservatively rooted: this thread remains registered
+        // acquire the GIL while we hold it). So we park with the GIL
+        // dropped, mirroring the property-path wait (ThreadAtomics.cpp):
+        // GIL-on, spawned Threads are gated off this path (4.5 step 1a
+        // above) and the main/embedder thread releases the JSLock; GIL-off,
+        // a spawned Thread arrives through GILDroppedSection's spawned arm
+        // (heap access released, token kept). The waiter's typed array and
+        // SAB stay conservatively rooted: this thread remains registered
         // with the heap's machine-thread list while parked, exactly as at
         // the other GILDroppedSection park sites (join, cond.wait,
-        // lock.hold). Flag off, this branch is dead and today's body below
-        // runs textually unchanged (I1).
-        //
-        // D8 single-flight gate (docs/threads/INTEGRATE-api.md "Landed
-        // deviations"): waitSyncImpl parks the ONE per-VM vm.syncWaiter()
-        // intrusive-list node. Stock JSC guarantees at most one thread of a
-        // VM is ever inside a sync wait (it parks holding the API lock);
-        // dropping the GIL here removes that guarantee for NON-spawned
-        // threads — the 4.5-1a gate above excludes only spawned Threads, so
-        // two embedder threads (or main + one embedder thread) sharing this
-        // VM under the GIL could otherwise BOTH reach waitSync and
-        // double-insert the same Waiter node (native heap corruption plus
-        // crossed wakeups). Unreachable in the jsc shell (exactly one
-        // non-spawned thread; $262 agents use separate VMs), but a real trap
-        // for the Bun embedding this fork targets. A second concurrent
-        // non-spawned sync TA wait on the same VM therefore throws, like the
-        // 1a gate. Lifted with D4 at the post-GIL re-freeze (Dev 12), when
-        // per-wait waiter nodes replace vm.syncWaiter().
-        {
-            Locker gateLocker { syncTAWaitGateLock };
-            if (!vmsWithSyncTAWaitInFlight().add(&vm).isNewEntry) {
-                throwTypeError(globalObject, scope, "Atomics.wait is already in progress on another thread sharing this VM"_s);
-                return { };
-            }
-        }
-        {
-            GILDroppedSection droppedSection(vm);
-            result = WaiterListManager::singleton().waitSync(vm, ptr, expectedValue, timeout);
-        }
-        {
-            Locker gateLocker { syncTAWaitGateLock };
-            vmsWithSyncTAWaitInFlight().remove(&vm);
-        }
+        // lock.hold). Concurrent sync waits on one VM each park on their own
+        // per-wait node (waitSyncImpl), so no single-flight gate is needed.
+        // Flag off, this branch is dead and today's body below runs
+        // textually unchanged (I1).
+        GILDroppedSection droppedSection(vm);
+        result = WaiterListManager::singleton().waitSync(vm, ptr, expectedValue, timeout);
     } else
         result = WaiterListManager::singleton().waitSync(vm, ptr, expectedValue, timeout);
     switch (result) {
@@ -632,14 +590,15 @@ JSC_DEFINE_HOST_FUNCTION(atomicsFuncWait, (JSGlobalObject* globalObject, CallFra
                 RETURN_IF_EXCEPTION(scope, { });
                 RELEASE_AND_RETURN(scope, JSValue::encode(atomicsWaitOnProperty(globalObject, asObject(base), propertyKey, callFrame->argument(2), callFrame->argument(3))));
             }
-            // SPEC-api 4.5 step 1a (GIL-phase-only; I21): a cross-Thread sync
-            // typed-array wait parks holding the GIL (G30) and would deadlock
-            // the whole VM, so it is gated off on spawned Threads, before
-            // today's body and with no side effects. Applies ONLY when arg0 is
-            // a view (step 1); non-object arguments fall through to today's
-            // body and its errors unchanged (step 3). Lifted at the post-GIL
-            // re-freeze (Deviation 12).
-            if (ThreadManager::isJSThreadCurrent())
+            // SPEC-api 4.5 step 1a (I21): GIL-on, a sync typed-array wait
+            // from a spawned Thread is refused before today's body and with
+            // no side effects. Applies ONLY when arg0 is a view (step 1);
+            // non-object arguments fall through to today's body and its
+            // errors unchanged (step 3). GIL-off the gate is lifted: the wait
+            // parks through GILDroppedSection's spawned arm with heap access
+            // released, so it blocks neither the other Threads nor a
+            // stop-the-world.
+            if (!vm.gilOff() && ThreadManager::isJSThreadCurrent())
                 return throwVMTypeError(globalObject, scope, "Atomics.wait cannot be called from the current thread."_s);
         }
     }
@@ -798,11 +757,11 @@ JSC_DEFINE_HOST_FUNCTION(atomicsFuncNotify, (JSGlobalObject* globalObject, CallF
     switch (typedArrayView->type()) {
     case Int32ArrayType: {
         int32_t* ptr = uncheckedDowncast<JSInt32Array>(typedArrayView)->typedVector() + accessIndex;
-        return JSValue::encode(jsNumber(WaiterListManager::singleton().notifyWaiter(ptr, count)));
+        return JSValue::encode(jsNumber(WaiterListManager::singleton().notifyWaiter(vm, ptr, count)));
     }
     case BigInt64ArrayType: {
         int64_t* ptr = uncheckedDowncast<JSBigInt64Array>(typedArrayView)->typedVector() + accessIndex;
-        return JSValue::encode(jsNumber(WaiterListManager::singleton().notifyWaiter(ptr, count)));
+        return JSValue::encode(jsNumber(WaiterListManager::singleton().notifyWaiter(vm, ptr, count)));
     }
     default:
         RELEASE_ASSERT_NOT_REACHED();

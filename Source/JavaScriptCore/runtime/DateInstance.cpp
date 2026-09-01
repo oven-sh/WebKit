@@ -55,8 +55,9 @@ static DateCache::UseSharedCache useSharedCacheFor(PlainGregorianDateTime cached
 // from one thread's snapshot of the time value and stored here could land after another
 // thread's setInternalNumber() marked the words stale, leaving a breakdown that no longer
 // matches m_internalNumber with nothing to invalidate it. So GIL-off these functions
-// compute from the caller's snapshot `milli` through the DateCache (whose cross-instance
-// memo is serialized on its own lock) and never write m_cachedGregorianDateTime{,UTC}:
+// compute from the caller's snapshot `milli` through the DateCache (which GIL-off runs on
+// the calling thread's own instance, JSDateMath.h live()) and never write
+// m_cachedGregorianDateTime{,UTC}:
 // the words stay "never computed" for the life of the process, the inline fast paths here
 // and in the DFG/FTL always miss into this slow path, and DateCache is never told a local
 // breakdown was cached (so the time-zone-change sweep of the Date space never runs GIL-off).

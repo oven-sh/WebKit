@@ -83,17 +83,16 @@ public:
 
     const String& pattern() const LIFETIME_BOUND { return m_patternString; }
 
-    // THREADS: relaxed atomic — recompile paths re-run the YarrPattern parse into a
-    // LOCAL error code under cellLock() and publish the result with a relaxed store,
-    // so lock-free readers here never see a mid-parse transient.
-    bool isValid() const { return !Yarr::hasError(WTF::atomicLoad(const_cast<Yarr::ErrorCode*>(&m_constructionErrorCode), std::memory_order_relaxed)); }
-    ASCIILiteral errorMessage() const { return Yarr::errorMessage(m_constructionErrorCode); }
-    JSObject* errorToThrow(JSGlobalObject* globalObject) { return Yarr::errorToThrow(globalObject, m_constructionErrorCode); }
-    void reset()
-    {
-        m_state = NotCompiled;
-        m_constructionErrorCode = Yarr::ErrorCode::NoError;
-    }
+    // m_constructionErrorCode is written under cellLock() (compile paths parse into a
+    // local and publish the final value) and read lock-free, so every access goes
+    // through constructionErrorCode(): a relaxed atomic on one byte.
+    bool isValid() const { return !Yarr::hasError(constructionErrorCode()); }
+    ASCIILiteral errorMessage() const { return Yarr::errorMessage(constructionErrorCode()); }
+    JSObject* errorToThrow(JSGlobalObject* globalObject) { return Yarr::errorToThrow(globalObject, constructionErrorCode()); }
+    // Drops a soft (recoverable) parse error so the next match re-parses. Takes the
+    // cellLock and only acts while m_state is still ParseError, so a stale caller
+    // never clobbers code another thread compiled in the meantime.
+    void reset();
 
     JS_EXPORT_PRIVATE int match(JSGlobalObject*, StringView, unsigned startOffset, std::span<int> ovector);
 
@@ -209,6 +208,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 #endif
 
+    // m_atom is a pure function of the immutable pattern and flags: the first
+    // successful parse sets it and nothing replaces or clears it afterwards, so
+    // lock-free readers may hold the returned reference across a whole match.
     bool hasValidAtom() const { return !m_atom.isNull(); }
     const String& atom() const LIFETIME_BOUND { return m_atom; }
     Yarr::SpecificPattern specificPattern() const { return WTF::atomicLoad(const_cast<Yarr::SpecificPattern*>(&m_specificPattern), std::memory_order_relaxed); } // THREADS: advisory matcher hint; racy vs cellLock'd recompile by design.
@@ -238,6 +240,8 @@ private:
         ByteCode,
         NotCompiled
     };
+
+    Yarr::ErrorCode constructionErrorCode() const { return WTF::atomicLoad(const_cast<Yarr::ErrorCode*>(&m_constructionErrorCode), std::memory_order_relaxed); }
 
     void byteCodeCompileIfNecessary(VM*);
 

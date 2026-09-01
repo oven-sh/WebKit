@@ -30,6 +30,7 @@
 #include "RegExpCache.h"
 
 #include "HeapCellInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "StrongInlines.h"
 #include "WeakInlines.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -124,25 +125,39 @@ void RegExpCache::addToStrongCache(RegExp* regExp)
         m_nextEntryInStrongCache = 0;
 }
 
-void RegExpCache::deleteAllCode()
+void RegExpCache::deleteAllCode(VM& vm)
 {
-    Vector<RegExp*> liveRegExps;
-    {
-        Locker locker { m_lock };
-        m_strongCache.fill(nullptr);
-        m_nextEntryInStrongCache = 0;
-        liveRegExps.reserveInitialCapacity(m_weakCache.size());
-        for (auto& [key, weakHandle] : m_weakCache) {
-            if (RegExp* regExp = weakHandle.get())
-                liveRegExps.append(regExp);
+    auto clearCode = [&] {
+        Vector<RegExp*> liveRegExps;
+        {
+            Locker locker { m_lock };
+            m_strongCache.fill(nullptr);
+            m_nextEntryInStrongCache = 0;
+            liveRegExps.reserveInitialCapacity(m_weakCache.size());
+            for (auto& [key, weakHandle] : m_weakCache) {
+                if (RegExp* regExp = weakHandle.get())
+                    liveRegExps.append(regExp);
+            }
         }
+        // deleteCode() takes the RegExp cellLock; it must run OUTSIDE m_lock
+        // (RegExp::compile holds cellLock when calling addToStrongCache, so the
+        // process-wide order is cellLock -> m_lock). The snapshotted cells stay
+        // alive: this thread holds heap access and reaches no safepoint before
+        // the clear, and GIL-off the stop window forbids GC initiation.
+        for (auto* regExp : liveRegExps)
+            regExp->deleteCode();
+    };
+    if (vm.gilOff()) [[unlikely]] {
+        // matchInline runs the Yarr code and the bytecode pattern lock-free,
+        // and the idle decision in VM::whenIdle is not exclusive GIL-off (a
+        // thread may enter right after it), so the clear runs with every other
+        // mutator stopped: none is mid-match and none can enter until the
+        // window closes. Nested inside the debugger's window it runs inline.
+        JSThreadsSafepoint::ClassAStopWatchdogContext watchdogContext(this, "RegExpCache deleteAllCode");
+        JSThreadsSafepoint::stopTheWorldAndRun(vm, scopedLambdaRef<void()>(clearCode));
+        return;
     }
-    // deleteCode() takes the RegExp cellLock; it must run OUTSIDE m_lock
-    // (RegExp::compile holds cellLock when calling addToStrongCache, so the
-    // process-wide order is cellLock -> m_lock; the caller runs from the
-    // mutator with heap access, keeping the snapshotted cells alive).
-    for (auto* regExp : liveRegExps)
-        regExp->deleteCode();
+    clearCode();
 }
 
 template<typename Visitor>

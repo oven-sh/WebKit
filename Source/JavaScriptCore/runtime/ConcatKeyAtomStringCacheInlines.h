@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/Atomics.h>
 #include <wtf/ThreadSanitizerSupport.h>
 
 #include "CodeBlock.h"
@@ -43,7 +44,10 @@ inline JSString* ConcatKeyAtomStringCache::getOrInsert(VM& vm, JSString* s0, JSS
     // JIT'd code; the real ordering is code installation). No-op outside TSAN.
     TSAN_ANNOTATE_HAPPENS_AFTER(this);
     JSString* variable = nullptr;
-    switch (m_mode) {
+    // Read lock-free while the Megamorphic transition below stores under
+    // m_lock; a stale value is harmless (the locked re-check catches it), so a
+    // relaxed byte load suffices and is the same instruction as a plain load.
+    switch (WTF::atomicLoad(&m_mode, std::memory_order_relaxed)) {
     case Mode::Variable0: {
         variable = s0;
         break;
@@ -114,7 +118,7 @@ inline JSString* ConcatKeyAtomStringCache::getOrInsert(VM& vm, JSString* s0, JSS
             size_t size = m_cache.size();
             if (size == maxCapacity) [[unlikely]] {
                 m_cache.clear();
-                m_mode = Mode::Megamorphic;
+                WTF::atomicStore(&m_mode, Mode::Megamorphic, std::memory_order_relaxed);
                 return result;
             }
             auto addResult = m_cache.add(atomStringImpl, result);

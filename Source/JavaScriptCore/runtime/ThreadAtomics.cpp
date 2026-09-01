@@ -43,45 +43,24 @@
 
 namespace JSC {
 
-// UNGIL same-library seams (U-T11; the currentThreadHoldsEntryToken pattern —
-// redeclared here, not in any header, matching WaiterListManager.cpp): the
-// §A.2.4 rule-4 PARK-LITE D9 poll predicates (VMTraps.cpp), the §J.3
-// captured-lite record (JSLock.cpp), and the annex-W W1 parked-carrier
-// watchdog service episode (JSLock.cpp).
-bool parkLitePollTerminationRequested(VM&, VMLite* parkLite);
-bool parkLitePollWatchdogCheckRequested(VM&, VMLite* parkLite);
-VMLite* capturedParkLiteOfCurrentThreadIfAny(VM&);
-bool reacquireParkedCarrierAndServiceWatchdogCheck(VM&);
-
-// ---------------- S2-parallel-cpu-waste instrumentation ----------------
+// ---------------- property-RMW contention instrumentation ----------------
 //
-// Process-wide property-Atomics RMW retry counters (declared in
-// ThreadAtomics.h). Bumped only under Options::logJSLockContention() so the
-// off-option / flag-off path is one predicted-not-taken branch. The bench
-// (Tools/threads/scalebench/js/bench.js) does Atomics.add(counters, '…', 1)
-// on a SINGLE shared object every doc/query; at W=16 that is ~W writers on
-// the same inline slot. The CAS-retry burn for that shape lives INSIDE
-// atomicSlotLockFreeLoop (ConcurrentButterfly.cpp), which loops internally on
-// CAS failure and never escapes Restart — so g_threadAtomicsRMWRestarts here
-// captures STRUCTURAL restarts only, and g_threadAtomicsSlotCASRetries is
-// the hook for that loop's fall-through-and-retry arm — DEFINED here,
-// INCREMENTED THERE (one-liner, owned by the ConcurrentButterfly implementer
-// slot; reads 0 until landed). dumpThreadAtomicsRMWStats() is called from
-// LockObject.cpp's atexit dump so both halves of the S2 instrumentation
-// report together.
+// Process-wide property-Atomics RMW counters (declared in ThreadAtomics.h).
+// Bumped only under Options::logJSLockContention() so the off-option /
+// flag-off path is one predicted-not-taken branch. g_threadAtomicsRMWRestarts
+// counts STRUCTURAL restarts only (AtomicSlotStatus::Restart escaping the
+// §9.5 accessor); the per-slot CAS retries of atomicSlotLockFreeLoop
+// (ConcurrentButterfly.cpp) loop inside the accessor and are not counted.
+// dumpThreadAtomicsRMWStats() is called from LockObject.cpp's atexit dump.
 std::atomic<uint64_t> g_threadAtomicsRMWCalls { 0 };
 std::atomic<uint64_t> g_threadAtomicsRMWRestarts { 0 };
-std::atomic<uint64_t> g_threadAtomicsSlotCASRetries { 0 };
 
 void dumpThreadAtomicsRMWStats()
 {
     uint64_t calls = g_threadAtomicsRMWCalls.load(std::memory_order_relaxed);
     uint64_t restarts = g_threadAtomicsRMWRestarts.load(std::memory_order_relaxed);
-    uint64_t casRetries = g_threadAtomicsSlotCASRetries.load(std::memory_order_relaxed);
     dataLogLn("[logJSLockContention] ThreadAtomics property-RMW: calls=", calls,
-        " outerRestarts=", restarts,
-        " slotCASRetries=", casRetries,
-        casRetries ? "" : " (slotCASRetries hook not yet wired in ConcurrentButterfly.cpp::atomicSlotLockFreeLoop)");
+        " outerRestarts=", restarts);
 }
 
 // ---------------- own-data-property helpers ----------------
@@ -495,25 +474,40 @@ static bool canUseConditionalIndexedMissingAdd(JSObject* object)
 //   3. AS in-vector: locked fill - the same one-locked-window store the
 //      I31-routed in-vector arm of
 //      putDirectIndexBeyondVectorLengthWithArrayStorage uses;
-//   4. AS beyond-vector, no map: dense-enough indexes grow the vector
-//      OUTSIDE the lock and re-dispatch into arm 3; sparse-worthy indexes
-//      (or growth failure) allocate a map OUTSIDE the lock and install it
-//      install-if-absent under the lock (allocateSparseIndexMap
+//   4. AS beyond-vector, no map: allocate a map OUTSIDE the lock and
+//      install it install-if-absent under the lock (allocateSparseIndexMap
 //      unconditionally REPLACES m_sparseMap, which would orphan a racing
 //      define's whole map - never used here);
 //   5. AS with map: the conditional add + publish described above, then the
 //      same I21 map-identity revalidation as JSObject.cpp's flag-on
 //      map->putDirect sites (a racing map replacement orphans the entry =>
 //      lost race; the restart re-derives and re-stores on the live map);
-//   6. non-AS shapes the quick store rejected (beyond-vector dense, blank
-//      sparse-worthy/slow-put) convert to ArrayStorage and re-dispatch into
-//      arms 3-5. Deliberately NOT putByIndexBeyondVectorLengthWithoutAttributes:
-//      its sparse terminal is putEntry, which CALLS a racing accessor's
-//      setter - wrong for Atomics.store, which must restart and throw. The
-//      AS arm's conditional add is the only sparse terminal this helper
-//      permits. Shape conservatism is deliberate and JS-unobservable: a
-//      beyond-vector Atomics.store add takes ArrayStorage rather than
-//      growing the dense shape (GIL-on/flag-off paths untouched).
+//      the AS length is bumped only after the publish succeeded, so a
+//      rolled-back add leaves the length untouched;
+//   6. dense shapes the quick store rejected: a value the shape cannot hold
+//      relabels it (convertInt32ForValue / convertDoubleToContiguous, the
+//      flag-on per-event-stop relabels); a vector-worthy index grows the
+//      dense vector through ensureLength (the flag-on §4.4 driver the
+//      generic putByIndexBeyondVectorLengthWithoutAttributes uses) and
+//      re-dispatches into arm 1. The dense shape must be kept: an element
+//      parked in an AS sparse map makes every later Atomics op on the
+//      array throw (the AS probe rejects mapped storage) while GIL-on
+//      stays dense;
+//   7. everything else (sparse-worthy dense indexes, blank sparse-worthy/
+//      slow-put) converts to ArrayStorage and re-dispatches into arms 3-5.
+//      Deliberately NOT putByIndexBeyondVectorLengthWithoutAttributes: its
+//      sparse terminal is putEntry, which CALLS a racing accessor's setter -
+//      wrong for Atomics.store, which must restart and throw. The AS arm's
+//      conditional add is the only sparse terminal this helper permits.
+//
+// AS arm lock discipline: the first foreign write to an (owner, SW=0) AS
+// word fires writeThreadLocal and publishes SW=1 under a per-event stop
+// BEFORE the cell lock is taken (the owner's unlocked SW=0 fast paths and
+// the JIT's elided write predicates are sound only while no foreign write
+// has landed; the cell lock alone does not order against them), and the
+// locked window runs under a DeferGC: map->add reports extra memory after
+// a rehash, which polls for a collection, and a stop taken while holding
+// this cell's lock deadlocks on the cell's own visit.
 //
 // Known residual (narrowed, recorded): a racing preventExtensions can still
 // be overtaken between the post-add isStructureExtensible re-check and the
@@ -556,6 +550,13 @@ ASCIILiteral JSObject::putDirectIndexForAtomicsMissingAdd(JSGlobalObject* global
 
         if (hasAnyArrayStorage(type)) {
             {
+                uint64_t probeWord = taggedButterflyWord();
+                if ((probeWord & butterflyPointerMask) && !butterflySharedWrite(probeWord)
+                    && butterflyWriterIsForeign(probeWord)) // incl. §9.6 forceButterflySWBit
+                    ensureSharedWriteBit(vm, static_cast<JSObjectWithButterfly*>(this)); // No lock held: this may park in a stop.
+            }
+            {
+                DeferGC deferGC(vm);
                 Locker locker { cellLock() };
                 ArrayStorage* storage = arrayStorageOrNull();
                 if (!storage)
@@ -596,8 +597,6 @@ ASCIILiteral JSObject::putDirectIndexForAtomicsMissingAdd(JSGlobalObject* global
                         return { };
                     }
                 }
-                if (i >= storage->length())
-                    storage->setLength(i + 1); // LikePutDirect semantics: no length-writability gate.
                 SparseArrayValueMap* map = storage->m_sparseMap.get();
                 if (!map) {
                     if (pendingMap) {
@@ -637,10 +636,10 @@ ASCIILiteral JSObject::putDirectIndexForAtomicsMissingAdd(JSGlobalObject* global
                 }
                 if (map) {
                     // (5) Conditional sparse add + publish, ONE object-cellLock
-                    // window (see the protocol comment above). map->add only
-                    // fastMallocs (no GC allocation, no JS), so it is
-                    // wrappable under the cell lock (O1) - the exact call
-                    // defineOwnIndexedProperty makes under this same lock.
+                    // window (see the protocol comment above). map->add does
+                    // no GC allocation and runs no JS; its extra-memory report
+                    // may poll for a collection, which the DeferGC above
+                    // defers past this lock.
                     SparseArrayValueMap::AddResult result = map->add(this, i);
                     if (!result.isNewEntry)
                         return "lost indexed-add race (existing sparse entry)"_s; // NEVER write a foreign entry.
@@ -660,6 +659,11 @@ ASCIILiteral JSObject::putDirectIndexForAtomicsMissingAdd(JSGlobalObject* global
                     ArrayStorage* freshStorage = arrayStorageOrNull();
                     if (!freshStorage || freshStorage->m_sparseMap.get() != map) [[unlikely]]
                         return "lost indexed-publish race (sparse map replaced)"_s;
+                    // Length last, once the element is published (the order
+                    // defineOwnIndexedProperty uses): every lost-race return
+                    // above leaves the length as it found it.
+                    if (i >= freshStorage->length())
+                        freshStorage->setLength(i + 1); // LikePutDirect semantics: no length-writability gate.
                     return { };
                 }
             }
@@ -670,6 +674,49 @@ ASCIILiteral JSObject::putDirectIndexForAtomicsMissingAdd(JSGlobalObject* global
         if (hasUndecided(type)) {
             convertUndecidedForValue(vm, value);
             continue;
+        }
+
+        if ((hasInt32(type) || hasDouble(type) || hasContiguous(type)) && !indexingShouldBeSparse()) {
+            // (6) Dense word the quick store refused: the value does not fit
+            // the shape, or i is at/beyond vectorLength. Same policy as the
+            // flag-on putByIndexBeyondVectorLengthWithoutAttributes: relabel
+            // for the value, grow vector-worthy indexes through ensureLength
+            // and retry arm (1); only sparse-worthy indexes fall through to
+            // ArrayStorage.
+            if (hasInt32(type) && !value.isInt32()) {
+                convertInt32ForValue(vm, value);
+                continue;
+            }
+            if (hasDouble(type) && (!value.isNumber() || std::isnan(value.asNumber()))) {
+                convertDoubleToContiguous(vm);
+                continue;
+            }
+            uint64_t word = taggedButterflyWord();
+            if (!(word & butterflyPointerMask)) [[unlikely]]
+                continue; // E5 None-first: a racing first install has not published its word yet; re-dispatch.
+            unsigned vectorLength;
+            unsigned publicLength;
+            if (isSegmentedButterfly(word)) [[unlikely]] {
+                ButterflySpine* spine = butterflySpine(word);
+                vectorLength = segmentedVectorLength(spine);
+                publicLength = segmentedPublicLength(spine);
+            } else {
+                Butterfly* flat = untaggedButterfly(word);
+                vectorLength = flat->vectorLength();
+                publicLength = flat->publicLength();
+            }
+            // min(publicLength, vectorLength) bounds the dense element count;
+            // the estimate only picks the layout, never soundness.
+            bool sparseWorthy = i > MAX_STORAGE_VECTOR_INDEX
+                || (i >= MIN_SPARSE_ARRAY_INDEX && !isDenseEnoughForVector(i, std::min(publicLength, vectorLength)))
+                || indexIsSufficientlyBeyondLengthForSparseMap(i, vectorLength);
+            if (!sparseWorthy) {
+                if (!ensureLength(vm, i + 1)) {
+                    throwOutOfMemoryError(globalObject, scope);
+                    return ASCIILiteral { };
+                }
+                continue; // Grown (or a racer grew, relabelled or converted for us): retry the quick store on the fresh shape.
+            }
         }
 
         if (!hasIndexedProperties(type)
@@ -683,7 +730,7 @@ ASCIILiteral JSObject::putDirectIndexForAtomicsMissingAdd(JSGlobalObject* global
             continue;
         }
 
-        // (6) Everything else: take ArrayStorage and re-dispatch into the AS
+        // (7) Everything else: take ArrayStorage and re-dispatch into the AS
         // arm. ensureArrayStorageSlow is the §4.6 stop-routed flag-on
         // converter and self-handles a racing AS install (loser leg).
         ArrayStorage* storage = indexingShouldBeSparse()
@@ -1110,6 +1157,12 @@ public:
     Kind kind;
     std::atomic<uint8_t> state { Waiting }; // flipped exactly once, under the list lock
     Condition condition; // sync
+    // Async: set before the waiter is published, owned by the waiter only
+    // while it is enqueued. notify, the timeout timer and the teardown sweep
+    // take it in the list-lock critical section that dequeues and flips the
+    // waiter, so a dequeued node that the finite-timeout timer closure still
+    // references (until the timer fires) pins neither the ticket nor
+    // anything it roots.
     RefPtr<AsyncTicket> ticket; // async
 
 private:
@@ -1206,10 +1259,19 @@ public:
         // via lastChanceToFinalize — where this finalizer clears every
         // surviving Strong under the JSLock, before the VM's HandleSet is
         // destroyed (the 5.10 / VM-UAF class ~AsyncTicket RELEASE_ASSERTs
-        // against). Public Heap API only, same pattern as
-        // registerThreadStateFinalizer (ThreadObject.cpp); registered
-        // outside m_lock so the rank-2 table lock never nests heap-internal
-        // locks.
+        // against). The CFinalizer overload is deliberate: it runs inline at
+        // sweep time, while the dead cell's address is still unique. The
+        // LambdaFinalizer overload (registerThreadStateFinalizer,
+        // ThreadObject.cpp) is drained GIL-off after the world resumes, when
+        // the address may already belong to a fresh cell whose list this
+        // address-keyed sweep would remove. Inside a shared-GC stop window
+        // the sweep therefore runs on the conductor; there the dead cell
+        // owns no list (a live list roots its cell), so the in-window body
+        // takes only m_lock and prunes m_sweepFinalizerCells — no listLock,
+        // no Strong. m_lock is never held across a stop poll by any mutator
+        // (findOrCreateList / findList / removeListIfEmpty do only
+        // fastMalloc and Strong work under it). Registered outside m_lock
+        // so the rank-2 table lock never nests heap-internal locks.
         if (registerSweepFinalizer) {
             vm.heap.addFinalizer(object, +[](JSCell* cell) {
                 PropertyWaiterTable::singleton().sweepCellAtFinalization(cell);
@@ -1241,7 +1303,7 @@ public:
             });
         }
         for (auto& list : sweptLists) {
-            Vector<Ref<PropertyWaiter>> abandonedAsync;
+            Vector<Ref<AsyncTicket>> abandonedTickets;
             {
                 Locker listLocker { list->listLock };
                 Deque<Ref<PropertyWaiter>> kept;
@@ -1249,9 +1311,10 @@ public:
                     Ref<PropertyWaiter> waiter = list->waiters.takeFirst();
                     if (waiter->kind == PropertyWaiter::Kind::Async) {
                         waiter->state.store(PropertyWaiter::TimedOut, std::memory_order_release);
-                        if (waiter->ticket)
-                            waiter->ticket->state.store(PropertyWaiter::TimedOut, std::memory_order_release);
-                        abandonedAsync.append(WTF::move(waiter));
+                        if (RefPtr<AsyncTicket> ticket = WTF::move(waiter->ticket)) {
+                            ticket->state.store(PropertyWaiter::TimedOut, std::memory_order_release);
+                            abandonedTickets.append(ticket.releaseNonNull());
+                        }
                     } else
                         kept.append(WTF::move(waiter));
                 }
@@ -1260,10 +1323,8 @@ public:
             // Settle would be a no-op (the ticket is cancelled at DWT
             // shutdown, or about to be); clear the promise Strong here,
             // under the JSLock — mirroring the D5 timer-task bailout.
-            for (auto& waiter : abandonedAsync) {
-                if (waiter->ticket)
-                    waiter->ticket->promise().clear();
-            }
+            for (auto& ticket : abandonedTickets)
+                ticket->promise().clear();
             list->cellProtect.clear();
             list->uidProtect = nullptr;
         }
@@ -1669,7 +1730,13 @@ JSValue atomicsWaitAsyncOnProperty(JSGlobalObject* globalObject, JSObject* objec
 
         // Promise + ticket are created once and reused across restart
         // iterations (each restart abandons only its waiter NODE; the
-        // registration itself was never observable).
+        // registration itself was never observable). The registration is
+        // UNCOUNTED for §E.3 keepalive (ThreadManager.h keepalive banner):
+        // the finite-timeout timer below fires on the VM run loop, which a
+        // main thread parked in join() never turns, so a counted ticket
+        // would hold a spawned registrant's drain loop open for a turn that
+        // may never come. A notify or timeout after the registrant closed
+        // settles through the main fallback (api 4.6.2).
         if (!promise) {
             promise = JSPromise::create(vm, globalObject->promiseStructure());
             ticket = AsyncTicket::create(globalObject, promise, { object });
@@ -1713,28 +1780,29 @@ JSValue atomicsWaitAsyncOnProperty(JSGlobalObject* globalObject, JSObject* objec
             // ref-counted and outlives the VM, so a dispatched task can run
             // after embedder VM teardown — nothing else guarantees the VM
             // outlives this timer (same rationale as constructThread's
-            // protectedVM capture, ThreadObject.cpp). If DWT shutdown
-            // already cancelled the ticket, bail out before touching VM
-            // state beyond the lock (the JSLockHolder also keeps the
-            // ticket's Strong-clearing destructor path lock-correct).
+            // protectedVM capture, ThreadObject.cpp). The closure lives
+            // until the timer fires: dispatchAfter's wrapper holds a Ref to
+            // its own DispatchTimer, so stop() alone would leak the closure,
+            // and the run loop fires through a raw TimerBase&, so destroying
+            // the timer from a notifier thread is unsound. The closure
+            // therefore captures no ticket: the ticket stays on the waiter
+            // and is taken by whoever dequeues it, so a notified waiter pins
+            // only this small closure (VM, list shell, waiter node, uid) for
+            // the remainder of the timeout.
             JSCell* cell = object;
-            vm.runLoop().dispatchAfter(timeout, [protectedVM = Ref { vm }, list = WTF::move(list), waiter = WTF::move(waiter), ticket = ticket.copyRef(), cell, uid = RefPtr<UniquedStringImpl> { uid }] {
+            vm.runLoop().dispatchAfter(timeout, [protectedVM = Ref { vm }, list = WTF::move(list), waiter = WTF::move(waiter), cell, uid = RefPtr<UniquedStringImpl> { uid }] {
                 VM& timerVM = protectedVM.get();
                 JSLockHolder locker(timerVM);
-                if (ticket->isCancelled()) {
-                    // DWT VM-shutdown cancelPendingWork ran: settle() would
-                    // be a no-op, so clear the ticket's promise Strong HERE,
-                    // under the lock — this lambda may hold the last Ref and
-                    // a still-set Strong must never be destroyed off-lock
-                    // (SPEC-api 5.10; ~AsyncTicket asserts it).
-                    ticket->promise().clear();
-                    return;
-                }
-                bool wasWaiting = false;
+                RefPtr<AsyncTicket> ticket;
+                bool cancelled = false;
                 {
                     Locker listLocker { list->listLock };
-                    if (waiter->state.load(std::memory_order_acquire) == PropertyWaiter::Waiting) {
-                        wasWaiting = true;
+                    if (waiter->state.load(std::memory_order_acquire) != PropertyWaiter::Waiting)
+                        return; // Notified or swept: the dequeuer took the ticket and settles (or cleared) it.
+                    ticket = waiter->ticket;
+                    ASSERT(ticket);
+                    cancelled = ticket->isCancelled();
+                    if (!cancelled) {
                         // 5.6 timer task: Waiting => findAndRemove (must succeed:
                         // dequeued <=> flipped, both under the list lock), then
                         // TimedOut; ticket state mirrors 5.5 Waiting->TimedOut.
@@ -1743,11 +1811,19 @@ JSValue atomicsWaitAsyncOnProperty(JSGlobalObject* globalObject, JSObject* objec
                         });
                         ASSERT_UNUSED(removed, removed);
                         waiter->state.store(PropertyWaiter::TimedOut, std::memory_order_release);
+                        waiter->ticket = nullptr;
                         ticket->state.store(PropertyWaiter::TimedOut, std::memory_order_release);
                     }
                 }
-                if (!wasWaiting)
+                if (cancelled) {
+                    // DWT VM-shutdown cancelPendingWork ran: settle() would
+                    // be a no-op, so clear the ticket's promise Strong HERE,
+                    // under the lock (a still-set Strong must never be
+                    // destroyed off-lock, SPEC-api 5.10; ~AsyncTicket asserts
+                    // it). The waiter stays enqueued for the teardown sweep.
+                    ticket->promise().clear();
                     return;
+                }
                 PropertyWaiterTable::singleton().removeListIfEmpty(cell, uid.get());
                 ticket->settle([](DeferredWorkTimer::Ticket dwtTicket) {
                     JSPromise* promise = uncheckedDowncast<JSPromise>(dwtTicket->target());
@@ -1797,11 +1873,12 @@ JSValue atomicsNotifyOnProperty(JSGlobalObject* globalObject, JSObject* object, 
                     waiter->state.store(PropertyWaiter::Notified, std::memory_order_release);
                     if (waiter->kind == PropertyWaiter::Kind::Sync)
                         waiter->condition.notifyOne();
-                    else if (waiter->ticket) {
+                    else if (RefPtr<AsyncTicket> ticket = WTF::move(waiter->ticket)) {
                         // F4 notify: flip the ticket Notified under the list
-                        // lock (5.5 Waiting->Notified); collect, settle later.
-                        waiter->ticket->state.store(PropertyWaiter::Notified, std::memory_order_release);
-                        asyncWoken.append(*waiter->ticket);
+                        // lock (5.5 Waiting->Notified); take it off the
+                        // dequeued waiter, settle after the drop.
+                        ticket->state.store(PropertyWaiter::Notified, std::memory_order_release);
+                        asyncWoken.append(ticket.releaseNonNull());
                     }
                     woken++;
                 }

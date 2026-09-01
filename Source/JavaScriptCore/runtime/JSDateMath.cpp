@@ -76,7 +76,6 @@
 #include "ExceptionHelpers.h"
 #include "IntlObject.h"
 #include "Lexer.h"
-#include "JSCConfig.h"
 #include "VM.h"
 #include <limits>
 #include <wtf/DateMath.h>
@@ -98,37 +97,15 @@ namespace JSDateMathInternal {
 static constexpr bool verbose = false;
 }
 
-// GIL-off (g_jscConfig.gilOffProcess latch, fixed before any spawned thread runs JS):
-// vm.dateCache is shared by N mutator threads, and every cache it embeds (DSTCache
-// entries + epoch + m_before/m_after, YearMonthDayCache, parse-string cache,
-// the cross-instance breakdown memo, ICU time zone cache, display-name caches) is multi-word and was
-// mutated lock-free — torn results, not blessed by SPEC-ungil (§K rules it; UG §K.2:
-// cold/keyed VM caches whose hits must be shared get a leaf Lock). Every public
-// DateCache entry point acquires m_lock through this RAII helper; private helpers
-// assume the lock. GIL-on / flag-off: the GIL is the serializer and the lock is
-// skipped entirely, so flag-off semantics are unchanged. The condition is a
-// process-lifetime latch, so acquire/release pairing is always consistent.
-// Conditional acquisition defeats clang thread-safety analysis, hence the
-// WTF_IGNORES_THREAD_SAFETY_ANALYSIS annotations.
-class DateCacheLocker {
-    WTF_MAKE_NONCOPYABLE(DateCacheLocker);
-public:
-    explicit DateCacheLocker(Lock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
-        : m_lock(lock)
-    {
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
-            m_lock.lock();
-    }
-
-    ~DateCacheLocker() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
-    {
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
-            m_lock.unlock();
-    }
-
-private:
-    Lock& m_lock;
-};
+// GIL-off per-thread DateCache — see live() in JSDateMath.h. Only the calling thread
+// ever touches its instance, so none of the caches need ordering; the instance holds
+// no GC cells or VM state (the ICU calendar and Strings die with the thread), so no
+// ~VM walk entry is needed. Same shape as VM::gilOffPerThreadNumericStrings().
+DateCache& DateCache::gilOffPerThreadCache()
+{
+    static thread_local DateCache cache;
+    return cache;
+}
 
 class OpaqueICUTimeZone {
     WTF_MAKE_TZONE_ALLOCATED(OpaqueICUTimeZone);
@@ -360,7 +337,11 @@ LocalTimeOffset DateCache::DSTCache::localTimeOffset(DateCache& dateCache, int64
 
 double DateCache::gregorianDateTimeToMS(int32_t year, int32_t month, int32_t monthDay, int32_t hour, int32_t minute, int32_t second, double milliseconds, TimeType inputTimeType)
 {
-    DateCacheLocker locker { m_lock };
+    return live().gregorianDateTimeToMSImpl(year, month, monthDay, hour, minute, second, milliseconds, inputTimeType);
+}
+
+ALWAYS_INLINE double DateCache::gregorianDateTimeToMSImpl(int32_t year, int32_t month, int32_t monthDay, int32_t hour, int32_t minute, int32_t second, double milliseconds, TimeType inputTimeType)
+{
     double day = dateToDaysFrom1970(year, month, monthDay);
     double ms = timeToMS(hour, minute, second, milliseconds);
     double localTimeResult = (day * WTF::msPerDay) + ms;
@@ -372,13 +353,17 @@ double DateCache::gregorianDateTimeToMS(int32_t year, int32_t month, int32_t mon
 
 double DateCache::localTimeToMS(double milliseconds, TimeType inputTimeType)
 {
-    DateCacheLocker locker { m_lock };
+    return live().localTimeToMSImpl(milliseconds, inputTimeType);
+}
+
+ALWAYS_INLINE double DateCache::localTimeToMSImpl(double milliseconds, TimeType inputTimeType)
+{
     if (inputTimeType == TimeType::LocalTime && std::isfinite(milliseconds))
         return milliseconds - localTimeOffset(static_cast<int64_t>(milliseconds), inputTimeType).offset;
     return milliseconds;
 }
 
-std::tuple<int32_t, int32_t, int32_t> DateCache::yearMonthDayFromDaysWithCacheAssumingLock(int32_t days)
+ALWAYS_INLINE std::tuple<int32_t, int32_t, int32_t> DateCache::yearMonthDayFromDaysWithCache(int32_t days)
 {
     if (m_yearMonthDayCache) {
         // Check conservatively if the given 'days' has
@@ -398,7 +383,6 @@ std::tuple<int32_t, int32_t, int32_t> DateCache::yearMonthDayFromDaysWithCacheAs
 }
 
 // input is UTC
-// Assumes m_lock is held when gilOffProcess (called from msToGregorianDateTime).
 ALWAYS_INLINE PlainGregorianDateTime DateCache::computeGregorianDateTime(double millisecondsFromEpoch, TimeType outputTimeType)
 {
     LocalTimeOffset localTime;
@@ -412,7 +396,7 @@ ALWAYS_INLINE PlainGregorianDateTime DateCache::computeGregorianDateTime(double 
     WTF::Int64Milliseconds timeClipped(static_cast<int64_t>(millisecondsFromEpoch));
     int32_t days = WTF::msToDays(timeClipped);
     int32_t timeInDayMS = WTF::timeInDay(timeClipped, days);
-    auto [year, month, day] = yearMonthDayFromDaysWithCacheAssumingLock(days);
+    auto [year, month, day] = yearMonthDayFromDaysWithCache(days);
     int32_t hour = timeInDayMS / (60 * 60 * 1000);
     int32_t minute = (timeInDayMS / (60 * 1000)) % 60;
     int32_t second = (timeInDayMS / 1000) % 60;
@@ -421,7 +405,11 @@ ALWAYS_INLINE PlainGregorianDateTime DateCache::computeGregorianDateTime(double 
 
 PlainGregorianDateTime DateCache::msToGregorianDateTime(double millisecondsFromEpoch, TimeType outputTimeType, UseSharedCache useSharedCache)
 {
-    DateCacheLocker locker { m_lock };
+    return live().msToGregorianDateTimeImpl(millisecondsFromEpoch, outputTimeType, useSharedCache);
+}
+
+ALWAYS_INLINE PlainGregorianDateTime DateCache::msToGregorianDateTimeImpl(double millisecondsFromEpoch, TimeType outputTimeType, UseSharedCache useSharedCache)
+{
     if (useSharedCache == UseSharedCache::No)
         return computeGregorianDateTime(millisecondsFromEpoch, outputTimeType);
 
@@ -437,15 +425,15 @@ PlainGregorianDateTime DateCache::msToGregorianDateTime(double millisecondsFromE
 
 double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& date)
 {
+    return live().parseDateImpl(globalObject, vm, date);
+}
+
+ALWAYS_INLINE double DateCache::parseDateImpl(JSGlobalObject* globalObject, VM& vm, const String& date)
+{
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    {
-        // Scoped: the string munging / UTF-8 conversion / throw paths below allocate,
-        // and we must not allocate, throw, or park while holding the DateCache leaf lock.
-        DateCacheLocker locker { m_lock };
-        if (date == m_cachedDateString)
-            return m_cachedDateStringValue;
-    }
+    if (date == m_cachedDateString)
+        return m_cachedDateStringValue;
 
     // V8's date parser (and useful web compat) treats every ECMAScript WhiteSpace code point as a
     // separator: TAB/VT/FF/SP, NBSP, BOM, and every Unicode Zs character including the
@@ -478,13 +466,13 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
         return std::numeric_limits<double>::quiet_NaN();
     }
 
-    auto parseDateImpl = [this] (auto dateString) {
+    auto parse = [this] (auto dateString) {
         if (Options::useV8DateParser()) {
             bool local = false;
             double value = v8::ParseDateTimeString(dateString.data(), dateString.size(), local);
 
             if (local)
-                value -= localTimeOffsetTakingLock(static_cast<int64_t>(value), TimeType::LocalTime).offset;
+                value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
 
             return v8::TimeClip(value);
         }
@@ -494,33 +482,36 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
             value = WTF::parseDate(dateString, isLocalTime);
 
         if (isLocalTime && std::isfinite(value))
-            value -= localTimeOffsetTakingLock(static_cast<int64_t>(value), TimeType::LocalTime).offset;
+            value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
 
         return value;
     };
 
-    // FIXME: expectedString is UTF-8 but parseDateImpl requires Latin1. Which is correct?
-    double value = parseDateImpl(byteCast<Latin1Character>(expectedString.value().span()));
-    {
-        DateCacheLocker locker { m_lock };
-        // StringImpl refcounting is atomic, so cross-thread adoption of `date` into the
-        // shared cache (and the displaced string's deref) is safe under the lock.
-        m_cachedDateString = date;
-        m_cachedDateStringValue = value;
-    }
+    // FIXME: expectedString is UTF-8 but parse requires Latin1. Which is correct?
+    double value = parse(byteCast<Latin1Character>(expectedString.value().span()));
+    m_cachedDateString = date;
+    m_cachedDateStringValue = value;
     return value;
 }
 
 // https://tc39.es/ecma402/#sec-defaulttimezone
 TimeZone DateCache::defaultTimeZone()
 {
-    DateCacheLocker locker { m_lock };
+    return live().defaultTimeZoneImpl();
+}
+
+ALWAYS_INLINE TimeZone DateCache::defaultTimeZoneImpl()
+{
     return timeZoneCache()->m_canonicalTimeZone;
 }
 
 String DateCache::timeZoneDisplayName(bool isDST)
 {
-    DateCacheLocker locker { m_lock };
+    return live().timeZoneDisplayNameImpl(isDST);
+}
+
+ALWAYS_INLINE String DateCache::timeZoneDisplayNameImpl(bool isDST)
+{
     if (m_timeZoneStandardDisplayNameCache.isNull()) {
         auto& timeZoneCache = *this->timeZoneCache();
         CString language = defaultLanguage().utf8();
@@ -606,12 +597,6 @@ ALWAYS_INLINE LocalTimeOffset DateCache::localTimeOffset(int64_t millisecondsFro
     return m_caches[static_cast<unsigned>(inputTimeType)].localTimeOffset(*this, millisecondsFromEpoch, inputTimeType);
 }
 
-LocalTimeOffset DateCache::localTimeOffsetTakingLock(int64_t millisecondsFromEpoch, TimeType inputTimeType)
-{
-    DateCacheLocker locker { m_lock };
-    return localTimeOffset(millisecondsFromEpoch, inputTimeType);
-}
-
 void DateCache::timeZoneCacheSlow()
 {
     ASSERT(!m_timeZoneCache);
@@ -630,7 +615,11 @@ void DateCache::timeZoneCacheSlow()
 
 void DateCache::clearForTimeZoneChange()
 {
-    DateCacheLocker locker { m_lock };
+    live().clearForTimeZoneChangeImpl();
+}
+
+void DateCache::clearForTimeZoneChangeImpl()
+{
     m_timeZoneCache.reset();
     for (auto& cache : m_caches)
         cache.reset();
@@ -641,7 +630,7 @@ void DateCache::clearForTimeZoneChange()
     m_cachedDateStringValue = std::numeric_limits<double>::quiet_NaN();
     m_timeZoneStandardDisplayNameCache = String();
     m_timeZoneDSTDisplayNameCache = String();
-    m_cachedTimeZoneID.store(WTF::lastTimeZoneID(), std::memory_order_relaxed);
+    m_cachedTimeZoneID = WTF::lastTimeZoneID();
 }
 
 } // namespace JSC
