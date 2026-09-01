@@ -248,13 +248,13 @@ JSString* JSFunction::toString(JSGlobalObject* globalObject)
     if (inherits<JSBoundFunction>()) {
         JSBoundFunction* function = uncheckedDowncast<JSBoundFunction>(this);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSValue string = jsMakeNontrivialString(globalObject, "function "_s, function->nameString(vm), "() {\n    [native code]\n}"_s);
+        JSValue string = jsMakeNontrivialString(globalObject, "function "_s, function->nameString(vm), "() { [native code] }"_s);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return asString(string);
     } else if (inherits<JSRemoteFunction>()) {
         JSRemoteFunction* function = uncheckedDowncast<JSRemoteFunction>(this);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSValue string = jsMakeNontrivialString(globalObject, "function "_s, function->nameString(), "() {\n    [native code]\n}"_s);
+        JSValue string = jsMakeNontrivialString(globalObject, "function "_s, function->nameString(), "() { [native code] }"_s);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return asString(string);
     }
