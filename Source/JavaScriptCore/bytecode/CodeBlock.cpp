@@ -2421,8 +2421,13 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     // Baseline code is cached on the UnlinkedCodeBlock so a re-created CodeBlock can reuse it; when this block dies of
     // old age that cache would keep the machine code alive for as long as the unlinked code lives. Drop it: another
     // CodeBlock still using the same code holds its own reference, and the next baseline compile repopulates it.
-    if (reason == Profiler::JettisonDueToOldAge && jitType() == JITType::BaselineJIT && Options::useBaselineJITCodeSharing() && unlinkedCodeBlock()->m_unlinkedBaselineCode == m_jitCode)
-        unlinkedCodeBlock()->m_unlinkedBaselineCode = nullptr;
+    // The same goes for the baseline block an aged-out DFG/FTL block was keeping as its OSR-exit target: it is not
+    // jettisoned itself, it just dies unmarked in this collection.
+    if (reason == Profiler::JettisonDueToOldAge && Options::useBaselineJITCodeSharing()) {
+        CodeBlock* baseline = JSC::JITCode::isOptimizingJIT(jitType()) ? baselineAlternative() : this;
+        if (baseline->jitType() == JITType::BaselineJIT && (baseline == this || !vm.heap.isMarked(baseline)) && baseline->unlinkedCodeBlock()->m_unlinkedBaselineCode == baseline->m_jitCode)
+            baseline->unlinkedCodeBlock()->m_unlinkedBaselineCode = nullptr;
+    }
 #endif
 
 #if ENABLE(DFG_JIT)
