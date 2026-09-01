@@ -60,17 +60,25 @@ JSPropertyNameEnumerator::JSPropertyNameEnumerator(VM& vm, Structure* structure,
     : JSCell(vm, vm.propertyNameEnumeratorStructure.get())
     , m_propertyNames(propertyNamesBuffer, WriteBarrierEarlyInit)
     , m_cachedStructureID(structure, WriteBarrierEarlyInit)
-    , m_indexedLength(indexedLength)
-    , m_endStructurePropertyIndex(numberStructureProperties)
-    , m_endGenericPropertyIndex(propertyNamesSize)
-    , m_cachedInlineCapacity(structure ? structure->inlineCapacity() : 0)
 {
+    // THREADS/TSAN: relaxed stores — the cell address may be GC-recycled, so
+    // even constructor writes must be atomic to pair with stale readers'
+    // concurrentRelaxedLoad probes.
+    WTF::atomicStore(&m_indexedLength, indexedLength, std::memory_order_relaxed);
+    WTF::atomicStore(&m_endStructurePropertyIndex, numberStructureProperties, std::memory_order_relaxed);
+    WTF::atomicStore(&m_endGenericPropertyIndex, propertyNamesSize, std::memory_order_relaxed);
+    WTF::atomicStore(&m_cachedInlineCapacity, structure ? structure->inlineCapacity() : 0u, std::memory_order_relaxed);
+    // THREADS/TSAN: compute locally, publish with one relaxed store — the cell's
+    // address may be GC-recycled, so even constructor writes must be atomic to
+    // pair with stale readers' relaxed loads (flags() is concurrentRelaxedLoad).
+    uint32_t flags = 0;
     if (m_indexedLength)
-        m_flags |= JSPropertyNameEnumerator::IndexedMode;
+        flags |= JSPropertyNameEnumerator::IndexedMode;
     if (m_endStructurePropertyIndex)
-        m_flags |= JSPropertyNameEnumerator::OwnStructureMode;
+        flags |= JSPropertyNameEnumerator::OwnStructureMode;
     if (m_endGenericPropertyIndex - m_endStructurePropertyIndex)
-        m_flags |= JSPropertyNameEnumerator::GenericMode;
+        flags |= JSPropertyNameEnumerator::GenericMode;
+    WTF::atomicStore(&m_flags, flags, std::memory_order_relaxed);
 }
 
 void JSPropertyNameEnumerator::finishCreation(VM& vm, RefPtr<PropertyNameArray>&& identifiers)
@@ -83,6 +91,11 @@ void JSPropertyNameEnumerator::finishCreation(VM& vm, RefPtr<PropertyNameArray>&
         const Identifier& identifier = vector[i];
         m_propertyNames.get()[i].set(vm, this, jsString(vm, identifier.string()));
     }
+    // TSAN r12 (reports 11/12/14): publication choke point — pairs with the
+    // HAPPENS_AFTER in concurrentRelaxedLoad/propertyNameAtIndex (header).
+    // The enumerator is immutable after this point and consume-published;
+    // TSAN cannot model that edge. No-op outside TSAN.
+    TSAN_ANNOTATE_HAPPENS_BEFORE(this);
 }
 
 template<typename Visitor>

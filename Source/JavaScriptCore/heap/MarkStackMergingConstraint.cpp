@@ -34,6 +34,19 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MarkStackMergingConstraint);
 
+// SPEC-congc §5.2 / ANNEX CGA1 row A21 (F32; CG-2): when C1R
+// (Heap::sharedGCBarrierStateIsPerClient()) this constraint covers the
+// SERVER m_mutatorMarkStack — whose remaining producers under C1R are the
+// F31/CGD4.5 conductor-context barrier appends (null-client, in-window,
+// WSAC single-writer; the stack KEEPS multi-producer mode, F44) — plus
+// m_raceMarkStack, exactly as written below. The per-client CMSes
+// (GCClient::Heap::m_mutatorMarkStack) are deliberately NOT read here: CMS
+// work is accounted exclusively via the §5.2(i) WND-open drain into
+// m_sharedMutatorMarkStack (Heap::openSharedGCStopWindow), which the
+// shared-stack hasWork/didReachTermination accounting already counts, and
+// which — NORMATIVE — precedes the window's first constraint-solver pass.
+// !C1R (incl. all flags off): every CMS is null and this file is today's
+// code byte-for-byte (CG-I0).
 MarkStackMergingConstraint::MarkStackMergingConstraint(JSC::Heap& heap)
     : MarkingConstraint("Msm"_s, "Mark Stack Merging"_s, ConstraintVolatility::GreyedByExecution)
     , m_heap(heap)

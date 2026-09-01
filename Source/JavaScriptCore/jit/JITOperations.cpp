@@ -91,6 +91,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "TypeProfilerLog.h"
 #include "VMInlines.h"
 #include "VMTrapsInlines.h"
+#include <wtf/ThreadSanitizerSupport.h>
 
 IGNORE_WARNINGS_BEGIN("frame-address")
 
@@ -106,13 +107,39 @@ ALWAYS_INLINE ICSlowPathCallFrameTracer::ICSlowPathCallFrameTracer(VM& vm, CallF
     UNUSED_PARAM(vm);
     UNUSED_PARAM(callFrame);
     ASSERT(callFrame);
-    ASSERT(reinterpret_cast<void*>(callFrame) < reinterpret_cast<void*>(vm.topEntryFrame));
+    // TSAN §4.4 retired-artifact audit (TSAN-RESULTS residual 1, closed
+    // 2026-06-09): pairs with the TSAN_ANNOTATE_HAPPENS_BEFORE on this
+    // PropertyInlineCache at its publication point (the m_jitData install in
+    // CodeBlock::setupWithUnlinkedBaselineCode / DFG::JITFinalizer::finalize).
+    // The propertyCache pointer arrives here materialized by JIT'd code, so
+    // the real ordering edge (payload init -> storeStoreFence -> m_jitData
+    // store -> dependent loads in the emitted IC path) is invisible to TSAN.
+    // Lifetime is proven, not assumed: the audit (AS AMENDED at the closeout
+    // final review — TSAN-TRIAGE §17.2, incl. the row-16 MetadataTable
+    // ref-escape in ~CodeBlock that closed the one bypass the original table
+    // missed) showed every flag-on deallocation path of the containing
+    // DFG::JITData / BaselineJITData is either pre-publication
+    // (single-thread: JITData::tryCreate failure) or leaked in ~CodeBlock per
+    // SPEC-jit §5.3/I7, and every displaced handler chain rides
+    // RetiredJITArtifacts, which flag-on never frees
+    // (epochCoversEveryJSThread, RetiredJITArtifacts.cpp) — the block TSAN
+    // pairs the read with is live. No-op outside TSAN builds.
+    TSAN_ANNOTATE_HAPPENS_AFTER(propertyCache);
+    // UNGIL §A.1.3 mode split (U-T4): GIL-off, doVMEntry publishes topEntryFrame
+    // and prepareCallOperation (AssemblyHelpers.h:121, emission side already
+    // converted) stores the frame pointer through the current thread's
+    // VMLitePrimitives; the raw VM-block words are inert spare storage. GIL-on
+    // this selects the VM block — bit-identical to the old direct access.
+    VMLitePrimitives& primitives = vm.group3Primitives();
+    ASSERT(reinterpret_cast<void*>(callFrame) < reinterpret_cast<void*>(primitives.topEntryFrame));
     assertStackPointerIsAligned();
     // If ASSERT_ENABLED and USE(BUILTIN_FRAME_ADDRESS), prepareCallOperation() will put the frame pointer into vm.topCallFrame.
     // We can ensure here that a call to prepareCallOperation() (or its equivalent) is not missing by comparing vm.topCallFrame to
     // the result of __builtin_frame_address which is passed in as callFrame.
-    ASSERT(vm.topCallFrame == callFrame);
-    vm.topCallFrame = callFrame;
+    // UNGIL §A.1.3: compare against the mode-selected storage that the
+    // converted prepareCallOperation emission actually wrote.
+    ASSERT(primitives.topCallFrame == callFrame);
+    primitives.topCallFrame = callFrame;
     callFrame->setCallSiteIndex(propertyCache->callSiteIndex);
 }
 
@@ -143,7 +170,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationThrowStackOverflowErrorFromThunk, voi
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwStackOverflowError(globalObject, scope);
     genericUnwind(vm, callFrame);
-    ASSERT(vm.targetMachinePCForThrow);
+    ASSERT(vm.group3Primitives().targetMachinePCForThrow); // UNGIL §A.1.3 mode split: GIL-off the raw VM word is inert; group3Primitives() reads the word genericUnwind actually wrote (GIL-on it aliases the VM block via mainVMLitePrimitives()).
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationThrowOutOfMemoryError, void, (VM* vmPointer))
@@ -218,6 +245,12 @@ static inline UGPRPair materializeTargetCode(VM& vm, JSFunction* targetFunction)
             FunctionExecutable* functionExecutable = static_cast<FunctionExecutable*>(executable);
             functionExecutable->prepareForExecution<FunctionExecutable>(vm, targetFunction, scope, CodeSpecializationKind::CodeForCall, codeBlockSlot);
             RETURN_IF_EXCEPTION(throwScope, encodeResult(nullptr, nullptr));
+            if (vm.gilOff()) [[unlikely]] {
+                // ANNEX CBI item 3 (AB17c F4): matched (entrypoint,
+                // CodeBlock) pair derived through the one CodeBlock
+                // snapshot — see bytecode/RepatchInlines.h linkFor.
+                return encodeResult(codeBlockSlot->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), codeBlockSlot);
+            }
         }
         return encodeResult(executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), codeBlockSlot);
     }
@@ -364,7 +397,7 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
     if (!baseValue.isObject()) [[unlikely]] {
         if (!baseValue.isString()) [[unlikely]] {
             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
             RELEASE_AND_RETURN(scope, baseValue.get(globalObject, uid, slot));
         }
 
@@ -378,7 +411,7 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
     while (true) {
         if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != ArrayType && object->type() != JSFunctionType && object->type() != DerivedStringObjectType && object != globalObject->arrayPrototype()) [[unlikely]] {
             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
             bool hasProperty = object->getNonIndexPropertySlot(globalObject, uid, slot);
             RETURN_IF_EXCEPTION(scope, { });
             if (hasProperty)
@@ -400,7 +433,7 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
                 else {
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                            repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                            repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
                     }
                 }
             } else if constexpr (kind == GetByKind::ById) {
@@ -419,7 +452,7 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
                 }
             } else {
                 if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                    repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                    repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
             }
             RELEASE_AND_RETURN(scope, slot.getValue(globalObject, uid));
         }
@@ -441,7 +474,7 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
                     return jsUndefined();
             }
             if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
             return jsUndefined();
         }
         object = asObject(prototype);
@@ -708,7 +741,7 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
     if (!baseValue.isObject()) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
             dataLogLnIf(verbose, " ", __LINE__);
-            repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ById);
+            repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ById);
         }
         throwException(globalObject, scope, createInvalidInParameterError(globalObject, baseValue));
         return jsUndefined();
@@ -722,7 +755,7 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
         if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != ArrayType && object->type() != JSFunctionType && object != globalObject->arrayPrototype()) [[unlikely]] {
             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
                 dataLogLnIf(verbose, " ", __LINE__);
-                repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ById);
+                repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ById);
             }
             RELEASE_AND_RETURN(scope, jsBoolean(object->getNonIndexPropertySlot(globalObject, uid, slot)));
         }
@@ -742,7 +775,7 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
                             dataLogLnIf(verbose, " ", __LINE__);
-                            repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ById);
+                            repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ById);
                         }
                     }
                     dataLogLnIf(verbose, " ", __LINE__);
@@ -750,7 +783,7 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
             } else {
                 if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
                     dataLogLnIf(verbose, " ", __LINE__);
-                    repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ById);
+                    repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ById);
                 }
             }
             return jsBoolean(true);
@@ -774,7 +807,7 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
             }
             if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
                 dataLogLnIf(verbose, " ", __LINE__);
-                repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ById);
+                repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ById);
             }
             return jsBoolean(false);
         }
@@ -884,7 +917,7 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
     if (!baseValue.isObject() || !CacheableIdentifier::isCacheableIdentifierCell(subscript)) [[unlikely]] {
         dataLogLnIf(verbose, " ", __LINE__);
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
-            repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
+            repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
         }
         RELEASE_AND_RETURN(scope, jsBoolean(CommonSlowPaths::opInByVal(globalObject, baseValue, subscript, profile)));
     }
@@ -897,7 +930,7 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
     if (!canUseMegamorphicInById(vm, uid)) [[unlikely]] {
         dataLogLnIf(verbose, " ", __LINE__);
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
-            repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
+            repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
         }
         if (profile)
             profile->observeStructure(baseObject->structure());
@@ -912,7 +945,7 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
         if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != ArrayType && object->type() != JSFunctionType && object != globalObject->arrayPrototype()) [[unlikely]] {
             dataLogLnIf(verbose, " ", __LINE__);
             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
-                repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
+                repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
             }
             RELEASE_AND_RETURN(scope, jsBoolean(object->getNonIndexPropertySlot(globalObject, uid, slot)));
         }
@@ -932,14 +965,14 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         dataLogLnIf(verbose, " ", __LINE__);
                         if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
-                            repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
+                            repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
                         }
                     }
                 }
             } else {
                 dataLogLnIf(verbose, " ", __LINE__);
                 if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
-                    repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
+                    repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
                 }
             }
             return jsBoolean(true);
@@ -964,7 +997,7 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
 
             dataLogLnIf(verbose, " ", __LINE__);
             if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
-                repatchInBySlowPathCall(callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
+                repatchInBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, InByKind::ByVal);
             }
             return jsBoolean(false);
         }
@@ -1157,7 +1190,7 @@ ALWAYS_INLINE static void putMegamorphic(JSGlobalObject* globalObject, VM& vm, C
 
     if (!slot.isCacheablePut() || !oldStructure->propertyAccessesAreCacheable() || !canUseMegamorphicPutFastPath(oldStructure)) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+            repatchPutBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
         return;
     }
     ASSERT(slot.base() == baseObject);
@@ -1179,7 +1212,7 @@ ALWAYS_INLINE static void putMegamorphic(JSGlobalObject* globalObject, VM& vm, C
 
     if (oldStructure->mayBePrototype() || (newStructure->previousID() != oldStructure) || !newStructure->propertyAccessesAreCacheable()) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+            repatchPutBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
         return;
     }
 
@@ -1198,7 +1231,7 @@ ALWAYS_INLINE static void putByIdMegamorphic(JSGlobalObject* globalObject, VM& v
 
     if (!baseValue.isObject()) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+            repatchPutBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
         scope.release();
         baseValue.put(globalObject, uid, value, slot);
         return;
@@ -2005,7 +2038,7 @@ ALWAYS_INLINE static void putByValMegamorphic(JSGlobalObject* globalObject, VM& 
 
     if (!baseValue.isObject() || !CacheableIdentifier::isCacheableIdentifierCell(subscript)) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+            repatchPutBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
         scope.release();
         putByVal(globalObject, baseValue, subscript, value, profile, isStrict ? ECMAMode::strict() : ECMAMode::sloppy());
         return;
@@ -2019,7 +2052,7 @@ ALWAYS_INLINE static void putByValMegamorphic(JSGlobalObject* globalObject, VM& 
     UniquedStringImpl* uid = propertyName.impl();
     if (!canUseMegamorphicPutById(vm, uid)) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+            repatchPutBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
         scope.release();
         baseValue.put(globalObject, uid, value, slot);
         return;
@@ -2448,7 +2481,11 @@ JSC_DEFINE_JIT_OPERATION(operationCallDirectEvalStrictTaintedByWithScope, Encode
 JSC_DEFINE_JIT_OPERATION(operationPolymorphicCall, UCPURegister, (CallFrame* calleeFrame, CallLinkInfo* callLinkInfo))
 {
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
-    VM& vm = owner->vm();
+    // vmConcurrentProbe: owner may sit on a freshly (re-)handed-out
+    // MarkedBlock (residual-2 recycled-block class); the TSAN-only
+    // HAPPENS_AFTER pairs with the MarkedBlock::Header ctor's BEFORE.
+    // Identical codegen to vm() outside TSAN builds.
+    VM& vm = owner->vmConcurrentProbe();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVMInCallSlowPath(vm);
     ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
@@ -2471,7 +2508,11 @@ JSC_DEFINE_JIT_OPERATION(operationPolymorphicCall, UCPURegister, (CallFrame* cal
 JSC_DEFINE_JIT_OPERATION(operationVirtualCall, UCPURegister, (CallFrame* calleeFrame, CallLinkInfo* callLinkInfo))
 {
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
-    VM& vm = owner->vm();
+    // vmConcurrentProbe: owner may sit on a freshly (re-)handed-out
+    // MarkedBlock (residual-2 recycled-block class); the TSAN-only
+    // HAPPENS_AFTER pairs with the MarkedBlock::Header ctor's BEFORE.
+    // Identical codegen to vm() outside TSAN builds.
+    VM& vm = owner->vmConcurrentProbe();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVMInCallSlowPath(vm);
     ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
@@ -2489,7 +2530,11 @@ JSC_DEFINE_JIT_OPERATION(operationVirtualCall, UCPURegister, (CallFrame* calleeF
 JSC_DEFINE_JIT_OPERATION(operationDefaultCall, UCPURegister, (CallFrame* calleeFrame, CallLinkInfo* callLinkInfo))
 {
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
-    VM& vm = owner->vm();
+    // vmConcurrentProbe: owner may sit on a freshly (re-)handed-out
+    // MarkedBlock (residual-2 recycled-block class); the TSAN-only
+    // HAPPENS_AFTER pairs with the MarkedBlock::Header ctor's BEFORE.
+    // Identical codegen to vm() outside TSAN builds.
+    VM& vm = owner->vmConcurrentProbe();
     NativeCallFrameTracer tracer(vm, calleeFrame);
     sanitizeStackForVMInCallSlowPath(vm);
     ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK(calleeFrame);
@@ -2961,8 +3006,23 @@ JSC_DEFINE_JIT_OPERATION(operationHandleTraps, UnusedPtr, (JSGlobalObject* globa
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(vm.traps().needHandling(VMTraps::AsyncEvents));
-    vm.traps().handleTraps(VMTraps::AsyncEvents);
+    // UNGIL §A.2.2 item 3b (AB-17): GIL-off dispatch services the current
+    // lite's instance too. GIL-on: the landed unconditional form.
+    // AB18-G / Bench item I3: gate via gilOffWithProcessGate() rather than the
+    // raw m_gilOff load — m_gilOff shares a VM cache line with the
+    // concurrently fetch_or'd m_entryScopeServicesRawBits, so a flag-off
+    // mutator's load here can take a cross-core coherence miss after a
+    // collector/watchdog RFO (performance-only false sharing; m_gilOff is
+    // immutable post-ctor). The gate reads only the frozen read-only Config
+    // page and returns exactly m_gilOff in every reachable state (equivalence
+    // proof obligations beside its definition in VM.h), so this is
+    // behavior-identical in all modes.
+    if (vm.gilOffWithProcessGate()) [[unlikely]]
+        handleTrapsForCurrentThreadIfNeeded(vm);
+    else {
+        ASSERT(vm.traps().needHandling(VMTraps::AsyncEvents));
+        vm.traps().handleTraps(VMTraps::AsyncEvents);
+    }
     OPERATION_RETURN(scope, nullptr);
 }
 
@@ -3089,12 +3149,38 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
         vm, JITCompilationKey(codeBlock, Options::forceUnlinkedDFG() ? JITCompilationMode::UnlinkedDFG : JITCompilationMode::DFG));
 
     if (worklistState == JITWorklist::Compiling) {
-        CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("compiling"));
-        // We cannot be in the process of asynchronous compilation and also have an optimized
-        // replacement.
-        RELEASE_ASSERT(!codeBlock->hasOptimizedReplacement());
-        codeBlock->setOptimizationThresholdBasedOnCompilationResult(CompilationResult::CompilationDeferred);
-        OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+        // UNGIL §5.7.2 (AB18-B): GIL-off, "Compiling" is a stale snapshot. Between
+        // completeAllReadyPlansForVM() above and here, the concurrent compiler can finish the
+        // plan and another mutator's completeAllReadyPlansForVM() can complete it and install
+        // the DFG replacement for this same CodeBlock. The single-mutator invariant
+        // "Compiling implies no replacement" does not hold; if a replacement is already
+        // installed, treat this exactly like the Compiled state and fall through to the
+        // OSR-consideration paths below.
+        // AB18-G / Bench item I3: hasOptimizedReplacement() is evaluated first so
+        // the flag-off path never touches the contended VM cache line holding
+        // m_gilOff (shared with the fetch_or'd m_entryScopeServicesRawBits), and
+        // the gilOff term uses the Config-page gate (gilOffWithProcessGate() ==
+        // m_gilOff in every reachable state; proof in VM.h). The reorder is sound:
+        // both operands are side-effect-free reads, and GIL-on already evaluates
+        // hasOptimizedReplacement() unconditionally in the RELEASE_ASSERT below,
+        // so the reachable assert states are unchanged in both modes — the swap
+        // only changes which cheap read short-circuits.
+        if (codeBlock->hasOptimizedReplacement() && vm.gilOffWithProcessGate()) [[unlikely]] {
+            CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("compiling, but another mutator installed the replacement; treating as compiled"));
+            worklistState = JITWorklist::Compiled;
+        } else {
+            CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("compiling"));
+            // GIL-on: we cannot be in the process of asynchronous compilation and also have an
+            // optimized replacement. GIL-off the replacement can still appear in the window
+            // after the check above; setOptimizationThresholdBasedOnCompilationResult's
+            // Deferred-with-replacement tolerance (CodeBlock.cpp) absorbs that.
+            // gilOffWithProcessGate() here for the same off-the-contended-line
+            // reason; equal-or-stricter is safe because gate-false while
+            // m_gilOff-true is statically impossible (see VM.h proof).
+            RELEASE_ASSERT(vm.gilOffWithProcessGate() || !codeBlock->hasOptimizedReplacement());
+            codeBlock->setOptimizationThresholdBasedOnCompilationResult(CompilationResult::CompilationDeferred);
+            OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+        }
     }
 
     if (worklistState == JITWorklist::Compiled) {
@@ -3146,6 +3232,18 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
             dataLogLnIf(Options::verboseOSR(),
                 "Delaying optimization for ", *codeBlock,
                 " because of insufficient profiling.");
+            OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+        }
+
+        // THREADS §5.7.2 (SPEC-jit Task 12): serialize the Baseline->DFG trigger. Only the
+        // winner of the 0->1 CAS may run newReplacement()+DFG::compile(); losers defer and
+        // stay in Baseline. Duplicate enqueues racing through the latch-free window are
+        // cancelled by JITWorklist::enqueue's dedup backstop (§5.7.3).
+        CodeBlock::TierUpEdgeLocker tierUpLocker(codeBlock, CodeBlock::TierUpEdge::BaselineToDFG);
+        if (!tierUpLocker.won()) [[unlikely]] {
+            CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("tier-up already in flight"));
+            dataLogLnIf(Options::verboseOSR(), "Choosing not to optimize ", *codeBlock, " yet, because another thread's tier-up is in flight.");
+            codeBlock->setOptimizationThresholdBasedOnCompilationResult(CompilationResult::CompilationDeferred);
             OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
         }
 
@@ -3250,11 +3348,13 @@ JSC_DEFINE_JIT_OPERATION(operationTryOSREnterAtCatchAndValueProfile, UGPRPair, (
         break;
     }
 
+    // THREADS (TSAN r12 report 4): the buffer comes back through an acquire load pairing with the release publish in
+    // ensureCatchLivenessIsComputedForBytecodeIndexSlow.
     auto* buffer = codeBlock->ensureCatchLivenessIsComputedForBytecodeIndex(bytecodeIndex);
     if (!buffer)
         OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
     buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
-        profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
+        profile.storeBucketConcurrently(0, JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue())); // THREADS §5.7.4
     });
 
     OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
@@ -3395,7 +3495,7 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject
         }
 
         metadata.m_iterableProfile.observeStructureID(array->structureID());
-        metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | mode;
+        CommonSlowPaths::mergeIterationModeSeenModesConcurrently(metadata.m_iterationMetadata, mode); // THREADS §5.7.7 relaxed profiling word.
 
         JSValue value;
         bool hasNext = arrayIterator->next(globalObject, value);
@@ -3418,7 +3518,7 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject
             mode = IterationMode::FastMapEntries;
             break;
         }
-        metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | mode;
+        CommonSlowPaths::mergeIterationModeSeenModesConcurrently(metadata.m_iterationMetadata, mode); // THREADS §5.7.7 relaxed profiling word.
 
         auto result = mapIterator->nextWithAdvance(vm);
         bool done = result.key.isEmpty();
@@ -3452,7 +3552,7 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject
             mode = IterationMode::FastSetEntries;
             break;
         }
-        metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | mode;
+        CommonSlowPaths::mergeIterationModeSeenModesConcurrently(metadata.m_iterationMetadata, mode); // THREADS §5.7.7 relaxed profiling word.
 
         JSValue nextKey = setIterator->nextWithAdvance(vm);
         bool done = nextKey.isEmpty();
@@ -3473,7 +3573,7 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject
     }
 
     if (auto* stringIterator = dynamicDowncast<JSStringIterator>(iterator)) {
-        metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastString;
+        CommonSlowPaths::mergeIterationModeSeenModesConcurrently(metadata.m_iterationMetadata, IterationMode::FastString); // THREADS §5.7.7 relaxed profiling word.
         JSString* nextValue = stringIterator->nextWithAdvance(globalObject, vm);
         OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
         bool done = !nextValue;
@@ -3723,7 +3823,7 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
 
     if (!baseValue.isObject() || !CacheableIdentifier::isCacheableIdentifierCell(subscript)) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+            repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
         if (kind == GetByKind::ByVal)
             RELEASE_AND_RETURN(scope, getByVal(globalObject, callFrame, profile, baseValue, subscript));
         RELEASE_AND_RETURN(scope, getByValWithThis(globalObject, callFrame, profile, baseValue, subscript, thisValue));
@@ -3745,7 +3845,7 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
 
     if (!canUseMegamorphicGetByIdExcludingIndex(vm, uid)) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-            repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+            repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
         if (kind == GetByKind::ByVal)
             RELEASE_AND_RETURN(scope, getByVal(globalObject, callFrame, profile, baseValue, subscript));
         RELEASE_AND_RETURN(scope, getByValWithThis(globalObject, callFrame, profile, baseValue, subscript, thisValue));
@@ -3754,7 +3854,7 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
     if (auto index = parseIndex(*uid); index) [[unlikely]] {
         if (!baseObject->structure()->isCacheableDictionary() || index.value() >= 100) {
             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
         }
         if (kind == GetByKind::ByVal)
             RELEASE_AND_RETURN(scope, getByVal(globalObject, callFrame, profile, baseValue, subscript));
@@ -3768,7 +3868,7 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
     while (true) {
         if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != ArrayType && object->type() != JSFunctionType && object != globalObject->arrayPrototype()) [[unlikely]] {
             if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
             bool result = object->getNonIndexPropertySlot(globalObject, uid, slot);
             RETURN_IF_EXCEPTION(scope, { });
             if (result)
@@ -3790,12 +3890,12 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
                 else {
                     if (baseObject->structure()->hasBeenFlattenedBefore()) [[unlikely]] {
                         if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                            repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                            repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
                     }
                 }
             } else {
                 if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                    repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                    repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
             }
             RELEASE_AND_RETURN(scope, slot.getValue(globalObject, uid));
         }
@@ -3818,7 +3918,7 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
             }
 
             if (shouldGiveUp && propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
-                repatchGetBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
+                repatchGetBySlowPathCall(vm, callFrame->codeBlock(), *propertyCache, kind);
             return jsUndefined();
         }
         object = asObject(prototype);
@@ -4622,14 +4722,14 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
             if (hasProperty) {
                 ConcurrentJSLocker locker(codeBlock->m_lock);
-                metadata.m_resolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
+                WTF::atomicStore(&metadata.m_resolveType, static_cast<ResolveType>(needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty), std::memory_order_relaxed); // THREADS: lock-free readers load this atomically.
                 metadata.m_globalObject.set(vm, codeBlock, globalObject);
                 metadata.m_globalLexicalBindingEpoch = globalObject->globalLexicalBindingEpoch();
             }
         } else if (resolvedScope->isGlobalLexicalEnvironment()) {
             JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(resolvedScope);
             ConcurrentJSLocker locker(codeBlock->m_lock);
-            metadata.m_resolveType = needsVarInjectionChecks(resolveType) ? GlobalLexicalVarWithVarInjectionChecks : GlobalLexicalVar;
+            WTF::atomicStore(&metadata.m_resolveType, static_cast<ResolveType>(needsVarInjectionChecks(resolveType) ? GlobalLexicalVarWithVarInjectionChecks : GlobalLexicalVar), std::memory_order_relaxed); // THREADS: lock-free readers load this atomically.
             metadata.m_globalLexicalEnvironment.set(vm, codeBlock, globalLexicalEnvironment);
         }
         break;
@@ -4679,7 +4779,13 @@ JSC_DEFINE_JIT_OPERATION(operationGetFromScope, EncodedJSValue, (JSGlobalObject*
             }
         }
 
-        CommonSlowPaths::tryCacheGetFromScopeGlobal(globalObject, codeBlock, vm, bytecode, environment, slot, ident);
+        // SPEC-jit §5.5 (review round 1): flag-on, scope metadata is FROZEN
+        // after CodeBlock linking - the {m_getPutInfo, m_structureID,
+        // m_operand} triple is rewritten by tryCache* as three plain stores
+        // that the LLInt/Baseline fast paths read unsynchronized. See
+        // llint/LLIntSlowPaths.cpp slow_path_get_from_scope.
+        if (!Options::useJSThreads()) [[likely]]
+            CommonSlowPaths::tryCacheGetFromScopeGlobal(globalObject, codeBlock, vm, bytecode, environment, slot, ident);
 
         if (!result)
             return slot.getValue(globalObject, ident);
@@ -4738,7 +4844,10 @@ JSC_DEFINE_JIT_OPERATION(operationPutToScope, void, (JSGlobalObject* globalObjec
     
     OPERATION_RETURN_IF_EXCEPTION(scope);
 
-    CommonSlowPaths::tryCachePutToScopeGlobal(globalObject, codeBlock, bytecode, jsScope, slot, ident);
+    // SPEC-jit §5.5 (review round 1): scope metadata frozen post-link flag-on;
+    // see operationGetFromScope above.
+    if (!Options::useJSThreads()) [[likely]]
+        CommonSlowPaths::tryCachePutToScopeGlobal(globalObject, codeBlock, bytecode, jsScope, slot, ident);
     OPERATION_RETURN(scope);
 }
 
@@ -4788,6 +4897,23 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationReallocateButterflyAndTransition, voi
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
 
+    // SPEC-jit I15/section 4.4(b): this native slow path holds a handler-
+    // allocation pointer across a possible safepoint (the butterfly
+    // reallocation below can GC/park). Take a Ref BEFORE any safepoint so a
+    // concurrent IC reset retiring this node (section 5.1) cannot lead to an
+    // epoch-expiry free while we are parked. The payload is frozen at publish
+    // (I4) and the refcount is thread-safe (section 4.5), so this is sound
+    // from any mutator.
+    // FLAG-OFF IDENTITY (I1): the refcount is ThreadSafeRefCounted, so the
+    // unconditional Ref added a lock-prefixed ref/deref pair to every
+    // reallocating put-transition — the transition-heavy-constructor hot
+    // path — with threads off. Single-threaded there is no concurrent IC
+    // reset, so skipping the Ref flag-off is exactly today's (pre-round-8)
+    // behavior.
+    RefPtr<const InlineCacheHandler> protectedHandler;
+    if (Options::useJSThreads()) [[unlikely]]
+        protectedHandler = handler;
+
     size_t newSize = handler->newSize() / sizeof(JSValue);
     size_t oldSize = handler->oldSize() / sizeof(JSValue);
     PropertyOffset offset = handler->offset();
@@ -4826,7 +4952,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationLookupExceptionHandler, void, (VM* vm
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     genericUnwind(vm, callFrame);
-    ASSERT(vm.targetMachinePCForThrow);
+    ASSERT(vm.group3Primitives().targetMachinePCForThrow); // UNGIL §A.1.3 mode split (see operationThrowStackOverflowErrorFromThunk).
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationLookupExceptionHandlerFromCallerFrame, void, (VM* vmPointer))
@@ -4837,7 +4963,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationLookupExceptionHandlerFromCallerFrame
     ASSERT(callFrame->isZombieFrame());
     ASSERT(vm.hasPendingTerminationException() || uncheckedDowncast<ErrorInstance>(vm.exceptionForInspection()->value().asCell())->isStackOverflowError());
     genericUnwind(vm, callFrame);
-    ASSERT(vm.targetMachinePCForThrow);
+    ASSERT(vm.group3Primitives().targetMachinePCForThrow); // UNGIL §A.1.3 mode split (see operationThrowStackOverflowErrorFromThunk).
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationVMHandleException, void, (VM* vmPointer))

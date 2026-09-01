@@ -188,7 +188,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorDollar, (JSGlobalObject* globalObject,
         return throwVMTypeError(globalObject, scope, "RegExp.$N getters require RegExp constructor as |this|"_s);
     unsigned N = propertyName.uid()->at(1) - '0';
     ASSERT(N >= 1 && N <= 9);
-    RELEASE_AND_RETURN(scope, JSValue::encode(globalObject->regExpGlobalData().getBackref(globalObject, N)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(threadRegExpGlobalData(globalObject).getBackref(globalObject, N)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(regExpConstructorInput, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
@@ -197,7 +197,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorInput, (JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.input getter requires RegExp constructor as |this|"_s);
-    return JSValue::encode(globalObject->regExpGlobalData().input());
+    return JSValue::encode(threadRegExpGlobalData(globalObject).input());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(regExpConstructorMultiline, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
@@ -206,7 +206,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorMultiline, (JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.multiline getter require RegExp constructor as |this|"_s);
-    return JSValue::encode(jsBoolean(globalObject->regExpGlobalData().multiline()));
+    return JSValue::encode(jsBoolean(threadRegExpGlobalData(globalObject).multiline()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(regExpConstructorLastMatch, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
@@ -215,7 +215,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorLastMatch, (JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.lastMatch getter require RegExp constructor as |this|"_s);
-    RELEASE_AND_RETURN(scope, JSValue::encode(globalObject->regExpGlobalData().getBackref(globalObject, 0)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(threadRegExpGlobalData(globalObject).getBackref(globalObject, 0)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(regExpConstructorLastParen, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
@@ -224,7 +224,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorLastParen, (JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.lastParen getter require RegExp constructor as |this|"_s);
-    RELEASE_AND_RETURN(scope, JSValue::encode(globalObject->regExpGlobalData().getLastParen(globalObject)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(threadRegExpGlobalData(globalObject).getLastParen(globalObject)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(regExpConstructorLeftContext, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
@@ -233,7 +233,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorLeftContext, (JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.leftContext getter require RegExp constructor as |this|"_s);
-    RELEASE_AND_RETURN(scope, JSValue::encode(globalObject->regExpGlobalData().getLeftContext(globalObject)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(threadRegExpGlobalData(globalObject).getLeftContext(globalObject)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(regExpConstructorRightContext, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
@@ -242,7 +242,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorRightContext, (JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.rightContext getter require RegExp constructor as |this|"_s);
-    RELEASE_AND_RETURN(scope, JSValue::encode(globalObject->regExpGlobalData().getRightContext(globalObject)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(threadRegExpGlobalData(globalObject).getRightContext(globalObject)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setRegExpConstructorInput, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName))
@@ -256,7 +256,7 @@ JSC_DEFINE_CUSTOM_SETTER(setRegExpConstructorInput, (JSGlobalObject* globalObjec
     auto* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
-    globalObject->regExpGlobalData().setInput(globalObject, string);
+    threadRegExpGlobalData(globalObject).setInput(globalObject, string);
     return true;
 }
 
@@ -271,7 +271,7 @@ JSC_DEFINE_CUSTOM_SETTER(setRegExpConstructorMultiline, (JSGlobalObject* globalO
     bool multiline = JSValue::decode(value).toBoolean(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
-    globalObject->regExpGlobalData().setMultiline(multiline);
+    threadRegExpGlobalData(globalObject).setMultiline(multiline);
     return true;
 }
 

@@ -98,9 +98,15 @@ public:
 
     JSString* asStringConcurrently() const;
 
+    // THREADS/TSAN: the executable/rare-data word is read by compiler threads
+    // and other mutators while the owner installs rare data (release after
+    // storeStoreFence) or the constructor initializes it on recycled cell
+    // memory — all accesses are relaxed atomics (plain mov codegen).
+    uintptr_t executableOrRareDataConcurrently() const { return WTF::atomicLoad(const_cast<uintptr_t*>(&m_executableOrRareData), std::memory_order_relaxed); }
+
     ExecutableBase* executable() const
     {
-        uintptr_t executableOrRareData = m_executableOrRareData;
+        uintptr_t executableOrRareData = executableOrRareDataConcurrently();
         if (executableOrRareData & rareDataTag)
             return std::bit_cast<FunctionRareData*>(executableOrRareData & ~rareDataTag)->executable();
         return std::bit_cast<ExecutableBase*>(executableOrRareData);
@@ -135,7 +141,7 @@ public:
 
     FunctionRareData* ensureRareData(VM& vm)
     {
-        uintptr_t executableOrRareData = m_executableOrRareData;
+        uintptr_t executableOrRareData = executableOrRareDataConcurrently();
         if (!(executableOrRareData & rareDataTag)) [[unlikely]]
             return allocateRareData(vm);
         return std::bit_cast<FunctionRareData*>(executableOrRareData & ~rareDataTag);
@@ -145,7 +151,7 @@ public:
 
     FunctionRareData* rareData() const
     {
-        uintptr_t executableOrRareData = m_executableOrRareData;
+        uintptr_t executableOrRareData = executableOrRareDataConcurrently();
         if (executableOrRareData & rareDataTag)
             return std::bit_cast<FunctionRareData*>(executableOrRareData & ~rareDataTag);
         return nullptr;

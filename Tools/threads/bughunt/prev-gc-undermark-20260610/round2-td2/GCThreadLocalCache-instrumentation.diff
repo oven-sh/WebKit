@@ -1,0 +1,35 @@
+--- Source/JavaScriptCore/heap/GCThreadLocalCache.cpp	2026-06-10 09:25:38.333906443 +0000
++++ Tools/threads/bughunt/round2-td2/GCThreadLocalCache.cpp	2026-06-10 09:25:29.003903000 +0000
+@@ -38,6 +38,8 @@
+ #include <wtf/ThreadSpecific.h>
+ 
+ namespace JSC {
++
++void bughuntSetFLContext(const char*); // BUGHUNT TD-R2-2 (defined in LocalAllocator.cpp)
+ namespace GCClient {
+ 
+ // --- §10A.1 current-client TLS (server -> client seam) ---
+@@ -223,8 +225,10 @@
+ {
+     // §10 step 5 flush: conductor-side while the world is stopped for all
+     // clients (I2 exception), or the owner thread itself.
++    bughuntSetFLContext("tlcflush"); // BUGHUNT TD-R2-2: per-client step-5 flush
+     for (LocalAllocator* allocator : m_perDirectory.values())
+         allocator->stopAllocating();
++    bughuntSetFLContext("other"); // BUGHUNT TD-R2-2
+ }
+ 
+ void GCThreadLocalCache::resumeAllocating()
+@@ -259,10 +263,12 @@
+     // inUse == false (I9; LocalAllocator::stopAllocating returns the current
+     // block via MarkedBlock::Handle::stopAllocating, clearing inUse).
+     MutatorSlowPathLocker mutatorSlowPathLocker(m_server);
++    bughuntSetFLContext("tlcSAFG"); // BUGHUNT TD-R2-2 site (c): teardown
+     for (auto& entry : m_perDirectory) {
+         entry.value->stopAllocatingForGood();
+         entry.key->detachLocalAllocator(*entry.value);
+     }
++    bughuntSetFLContext("other"); // BUGHUNT TD-R2-2
+ }
+ 
+ } // namespace GCClient

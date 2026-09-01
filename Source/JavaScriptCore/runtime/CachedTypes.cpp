@@ -4954,8 +4954,6 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     : Base(decoder.vm(), decoder.vm().unlinkedFunctionExecutableStructure.get())
     , m_hasCapturedVariables(false)
     , m_isCached(false)
-    , m_singletonHasBeenInvalidated(false)
-    , m_isGeneratedFromCache(true)
     , m_features(0)
     , m_lexicallyScopedFeatures(NoLexicallyScopedFeatures)
     , m_isClass(false)

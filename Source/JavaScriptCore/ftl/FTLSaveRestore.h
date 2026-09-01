@@ -32,6 +32,7 @@
 #include "FPRInfo.h"
 #include "GPRInfo.h"
 #include "Reg.h"
+#include <wtf/ScopedLambda.h>
 
 namespace JSC {
 
@@ -51,6 +52,40 @@ size_t NODELETE offsetOfFPR(FPRReg);
 void saveAllRegisters(AssemblyHelpers& jit, char* scratchMemory);
 
 void restoreAllRegisters(AssemblyHelpers& jit, char* scratchMemory);
+
+// ---- UNGIL §A.1.6 (ANNEX A16, BINDING) — U-T4b FTL/OSR emission helpers.
+// GIL-off, a scratch-buffer ADDRESS baked into shared code would be used by N
+// threads at once. Every baked site instead bakes a process-wide
+// ScratchBufferRegistry INDEX and emits the frozen addressing sequence
+//     loadVMLite -> segment -> [index] (-> + offsetof(ScratchBuffer, m_buffer))
+// against the CURRENT thread's VMLite. Rematerialization is the correctness
+// carrier (§A.1.2): callers may (and do) re-emit this sequence per use. The
+// install/backfill contract (VM::allocateBakedScratchBufferIndex /
+// VMLite::backfillBakedScratchBuffers) guarantees a buffer exists at
+// (lite, index) before any code emitted against the index runs, so the
+// emitted loads are not null-checked. The two loads are address-dependent
+// (segment pointer feeds the entry load), which orders them against the
+// release-publishing install on all supported targets.
+// Each helper clobbers ONLY `dest`.
+
+// dest <- ScratchBuffer* at (current lite, bakedIndex).
+void materializeBakedScratchBufferPointer(AssemblyHelpers&, unsigned bakedIndex, GPRReg dest);
+// dest <- that buffer's dataBuffer().
+void materializeBakedScratchBufferDataPointer(AssemblyHelpers&, unsigned bakedIndex, GPRReg dest);
+
+// gilOff variants of save/restoreAllRegisters: instead of baking the scratch
+// base as an immediate, `materializeBase` emits code producing it in the GPR
+// it is handed (it must clobber only that GPR). Emitted code is otherwise
+// identical to the char* forms.
+void saveAllRegisters(AssemblyHelpers&, const WTF::ScopedLambda<void(AssemblyHelpers&, GPRReg)>& materializeBase);
+void restoreAllRegisters(AssemblyHelpers&, const WTF::ScopedLambda<void(AssemblyHelpers&, GPRReg)>& materializeBase);
+
+// gilOff replacement for
+// AssemblyHelpers::restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm.topEntryFrame):
+// identical restore sequence, but topEntryFrame is the CURRENT lite's
+// per-thread slot (UNGIL §A.1.3 Group-3 rerouting) instead of the baked
+// &vm.topEntryFrame.
+void restoreCalleeSavesFromCurrentVMLiteEntryFrameCalleeSavesBuffer(AssemblyHelpers&);
 
 } } // namespace JSC::FTL
 

@@ -168,6 +168,9 @@ JSArrayBufferView::JSArrayBufferView(VM& vm, ConstructionContext& context)
     , m_byteOffset(context.byteOffset())
     , m_mode(context.mode())
 {
+    // THREADS-INTEGRATE(objectmodel) §10.7 (audited, no guard): this is
+    // ConstructionContext::butterfly() — a context-owned fresh allocation for
+    // the view under construction, not a JSObject's tagged word. Statically flat.
     setButterfly(vm, context.butterfly());
     m_vector.setWithoutBarrier(context.vector());
 }
@@ -270,7 +273,11 @@ void JSArrayBufferView::detachFromArrayBuffer()
 
 ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
 {
-    ASSERT(!hasArrayBuffer());
+    // r47: flag-on, the caller's m_mode==Fast/Oversize observation is a relaxed
+    // load that may already be stale by the time we get here (a racing thread
+    // may have published the wastage transition); the cell-locked re-check
+    // below is the witness instead. Flag-off the original entry assert holds.
+    ASSERT(Options::useJSThreads() || !hasArrayBuffer());
 
     // We play this game because we want this to be callable even from places that
     // don't have access to CallFrame* or the VM, and we only allocate so little
@@ -287,6 +294,93 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     Heap* heap = Heap::heap(this);
     VM& vm = heap->vm();
     DeferGCForAWhile deferGC(vm);
+
+#if USE(JSVALUE64)
+    // r47 (FUZZ.md §47, SCALEBENCH.md §47-NEW-residual; manifest-7 audit
+    // comment at JSObjectInlines.h:93): a worker reading .buffer / Atomics-
+    // validating a Fast/OversizeTypedArray created on another thread reaches
+    // here with a foreign-TID butterfly word, so the unconditional setButterfly
+    // below trips storeTaggedButterflyWordConcurrent's owner-TID RELEASE_ASSERT
+    // (r47-001). Independently the publication ORDER is wrong for concurrent
+    // readers: setButterfly(createOrGrowArrayRight(...)) publishes a butterfly
+    // whose IndexingHeader::arrayBuffer slot is still uninitialized (ASAN
+    // poison), then fills it under the cell lock - any concurrent
+    // existingBufferInButterfly() between those two steps derefs 0xbebebebe
+    // (r47-002 SEGV in DeferrableRefCountedBase::ref). Flag-on form, with the
+    // legacy block left byte-identical for flag-off:
+    //   (a) build the wastage butterfly in a LOCAL and fill its arrayBuffer
+    //       slot BEFORE any publication, with a storeStoreFence so concurrent
+    //       readers see arrayBuffer-then-butterfly;
+    //   (b) publish via a tag-PRESERVING cell-locked seq_cst CAS (the §4.6
+    //       AS-COPY shape, ala publishArrayStorageButterflyLocked), open-coded
+    //       because typed-array views are NonArray-indexing so casButterfly()'s
+    //       I31 hasAnyArrayStorage shape witness does not apply. Under the cell
+    //       lock no actor moves a typed-array view's butterfly word (no E4
+    //       element resize, no §4.4 indexed CAS, no §4.2/§4.3 segmented
+    //       conversion; named-property adds serialize on this same lock via
+    //       classifyConcurrentLockedAdd), so CAS failure is a logic error;
+    //   (c) storeStoreFence before the m_mode flip; the paired loadLoadFence
+    //       lives in existingBufferInButterfly() so a relaxed
+    //       m_mode==Wasteful observation orders before the butterfly +
+    //       arrayBuffer reads.
+    // The cell-locked re-check makes the transition idempotent: two threads
+    // may both observe a stale m_mode==Fast/Oversize and enter; the loser
+    // returns the winner's buffer instead of double-adopting (Oversize) or
+    // leaking (Fast) a second ArrayBuffer.
+    if (Options::useJSThreads()) [[unlikely]] {
+        RefPtr<ArrayBuffer> buffer;
+        {
+            Locker locker { cellLock() };
+            if (hasArrayBuffer())
+                return existingBufferInButterfly();
+            // Re-checked under the lock; the !hasIndexingHeader witness below
+            // is only sound AFTER that re-check (a racing winner's m_mode flip
+            // makes hasIndexingHeader() true on the loser's pre-lock probe).
+            RELEASE_ASSERT(!hasIndexingHeader());
+            Structure* structure = this->structure();
+
+            switch (m_mode) {
+            case FastTypedArray:
+                buffer = ArrayBuffer::tryCreate(span());
+                if (!buffer)
+                    return nullptr;
+                break;
+            case OversizeTypedArray:
+                buffer = ArrayBuffer::createAdopted(span());
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+                break;
+            }
+            RELEASE_ASSERT(buffer);
+
+            Butterfly* newButterfly = Butterfly::createOrGrowArrayRight(
+                butterfly(), vm, this, structure,
+                structure->outOfLineCapacity(), false, 0, 0);
+            newButterfly->indexingHeader()->setArrayBuffer(buffer.get());
+            WTF::storeStoreFence(); // (a) arrayBuffer slot before butterfly word.
+
+            // (b) tag-preserving cell-locked CAS publication. None word => N3
+            // first install (currentTID, SW=0); otherwise preserve TID/SW
+            // verbatim - never re-stamp a foreign installer's tag.
+            Atomic<uint64_t>* word = std::bit_cast<Atomic<uint64_t>*>(butterflyAddress());
+            uint64_t expected = word->load(std::memory_order_seq_cst);
+            RELEASE_ASSERT(!isSegmentedButterfly(expected));
+            uint64_t desired = (expected & butterflyPointerMask)
+                ? encodeButterfly(newButterfly, butterflyTID(expected), butterflySharedWrite(expected))
+                : encodeButterfly(newButterfly, currentButterflyTID(), false);
+            uint64_t observed = word->compareExchangeStrong(expected, desired, std::memory_order_seq_cst);
+            RELEASE_ASSERT(observed == expected);
+            vm.writeBarrier(this);
+
+            m_vector.setWithoutBarrier(buffer->data());
+            WTF::storeStoreFence(); // (c) butterfly + vector before m_mode (pairs with existingBufferInButterfly's loadLoadFence).
+            m_mode = WastefulTypedArray;
+        }
+        heap->addReference(this, buffer.get());
+        return buffer.unsafeGet();
+    }
+#endif
 
     RELEASE_ASSERT(!hasIndexingHeader());
     Structure* structure = this->structure();

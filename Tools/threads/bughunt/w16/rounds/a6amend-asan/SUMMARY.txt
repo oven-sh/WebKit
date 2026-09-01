@@ -1,0 +1,20 @@
+host precondition:
+ 16:59:54 up 23 days,  9:42,  0 users,  load average: 7.15, 7.44, 9.18
+  no foreign Limp jsc
+pinned-smoke-3 rc=0 bytes=534 PASS
+pinned-smoke-2 rc=0 bytes=534 PASS
+pinned-smoke-1 rc=0 bytes=535 PASS
+pinned-smoke-6 rc=0 bytes=534 PASS
+pinned-smoke-4 rc=0 bytes=535 PASS
+pinned-smoke-5 rc=0 bytes=534 PASS
+pinned-smoke-9 rc=0 bytes=533 PASS
+pinned-smoke-7 rc=0 bytes=535 PASS
+pinned-smoke-8 rc=0 bytes=534 PASS
+pinned-smoke-10 rc=0 bytes=535 PASS
+nojit-smoke-2 rc=0 bytes=537 PASS
+nojit-smoke-1 rc=0 bytes=538 PASS
+nojit-smoke-3 rc=0 bytes=537 PASS
+nojit-smoke-4 rc=0 bytes=538 PASS
+A6AMEND-ASAN-SMOKE-DONE
+fullsize-1 rc=124 bytes=261 TIMEOUT
+A6AMEND-ASAN-DONE

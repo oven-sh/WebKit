@@ -1,0 +1,54 @@
+hammerD run 1: rc=0 1s PASS
+hammerD run 2: rc=0 1s PASS
+hammerD run 3: rc=0 0s PASS
+hammerD run 4: rc=0 1s PASS
+hammerD run 5: rc=0 1s PASS
+hammerD run 6: rc=0 1s PASS
+hammerD run 7: rc=0 0s PASS
+hammerD run 8: rc=0 1s PASS
+hammerD run 9: rc=0 1s PASS
+hammerD run 10: rc=0 0s PASS
+LEGSUMMARY hammerD pass=10 fail=0
+hammerE run 1: rc=0 20s PASS
+hammerE run 2: rc=0 20s PASS
+hammerE run 3: rc=0 20s PASS
+hammerE run 4: rc=0 20s PASS
+hammerE run 5: rc=0 19s PASS
+LEGSUMMARY hammerE pass=5 fail=0
+flagoffF run 1: rc=3 0s FAIL
+flagoffF run 2: rc=3 0s FAIL
+LEGSUMMARY flagoffF pass=0 fail=2
+releaseC run 1: rc=0 63s PASS
+releaseC run 2: rc=133 41s FAIL
+releaseC run 3: rc=133 32s FAIL
+releaseC run 4: rc=0 47s PASS
+releaseC run 5: rc=0 47s PASS
+releaseC run 6: rc=133 48s FAIL
+releaseC run 7: rc=0 47s PASS
+releaseC run 8: rc=133 31s FAIL
+releaseC run 9: rc=0 49s PASS
+releaseC run 10: rc=0 47s PASS
+LEGSUMMARY releaseC pass=6 fail=4
+reproA run 1: rc=0 151s PASS
+reproA run 2: rc=0 150s PASS
+reproA run 3: rc=0 150s PASS
+reproA run 4: rc=0 150s PASS
+reproA run 5: rc=0 151s PASS
+reproA run 6: rc=0 150s PASS
+reproA run 7: rc=0 151s PASS
+reproA run 8: rc=0 151s PASS
+reproA run 9: rc=0 151s PASS
+reproA run 10: rc=0 151s PASS
+LEGSUMMARY reproA pass=10 fail=0
+smokeB run 1: rc=0 435s PASS
+smokeB run 2: rc=0 435s PASS
+smokeB run 3: rc=0 444s PASS
+smokeB run 4: rc=0 474s PASS
+smokeB run 5: rc=0 459s PASS
+smokeB run 6: rc=0 442s PASS
+smokeB run 7: rc=0 441s PASS
+smokeB run 8: rc=0 450s PASS
+smokeB run 9: rc=0 482s PASS
+smokeB run 10: rc=0 456s PASS
+LEGSUMMARY smokeB pass=10 fail=0
+SUMMARY done

@@ -40,6 +40,10 @@ public:
     HeapProfiler(VM&);
     ~HeapProfiler();
 
+    // SharedGC (T9): main-VM-only — the profiler is owned by the main VM
+    // (vm().ensureHeapProfiler()); snapshot building runs on that VM's
+    // mutator under the API lock / PreventCollectionScope. Used by
+    // HeapSnapshotBuilder.cpp and BunV8HeapSnapshotBuilder.cpp.
     VM& vm() const { return m_vm; }
 
     HeapSnapshot* NODELETE mostRecentSnapshot();

@@ -1,0 +1,42 @@
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==3565905==ERROR: AddressSanitizer: ABRT on unknown address 0x000000366951 (pc 0x7f4559a8d02c bp 0x0000003669f3 sp 0x7b4558cd8b90 T5)
+    #0 0x7f4559a8d02c in __pthread_kill_implementation (/lib64/libc.so.6+0x8d02c) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609)
+    #1 0x7f4559a3fb85 in gsignal (/lib64/libc.so.6+0x3fb85) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609)
+    #2 0x7f4559a29872 in abort (/lib64/libc.so.6+0x29872) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609)
+    #3 0x5630ebf9789c in WTFCrashWithInfo(int, char const*, char const*) /root/WebKit/WebKitBuild/Fuzz/WTF/Headers/wtf/Assertions.h:1022:5
+    #4 0x5630ebfddd7d in JSC::JSObject::storeTaggedButterflyWordConcurrent(JSC::VM&, JSC::Butterfly*) /root/WebKit/WebKitBuild/Fuzz/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSObjectInlines.h
+    #5 0x5630ef23f343 in JSC::JSObject::setButterflyConcurrent(JSC::VM&, JSC::Butterfly*) /root/WebKit/WebKitBuild/Fuzz/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSObjectInlines.h:153:9
+    #6 0x5630ef256f33 in JSC::JSObject::setButterfly(JSC::VM&, JSC::Butterfly*) /root/WebKit/WebKitBuild/Fuzz/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSObjectInlines.h:337:9
+    #7 0x5630ef256f33 in JSC::JSArrayBufferView::slowDownAndWasteMemory() /root/WebKit/Source/JavaScriptCore/runtime/JSArrayBufferView.cpp:322:5
+    #8 0x5630ebfec083 in JSC::ArrayBuffer* JSC::JSArrayBufferView::possiblySharedBufferImpl<(JSC::JSArrayBufferView::Requester)0>() /root/WebKit/WebKitBuild/Fuzz/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSArrayBufferViewInlinesLight.h:75:16
+    #9 0x5630ef255aa0 in JSC::JSArrayBufferView::possiblySharedBuffer() /root/WebKit/WebKitBuild/Fuzz/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSArrayBufferViewInlinesLight.h:83:12
+    #10 0x5630ef255aa0 in JSC::JSArrayBufferView::possiblySharedJSBuffer(JSC::JSGlobalObject*) /root/WebKit/Source/JavaScriptCore/runtime/JSArrayBufferView.cpp:257:31
+    #11 0x5630f1e2db25 in JSC::typedArrayViewProtoGetterFuncBuffer(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/JSTypedArrayViewPrototypeFunctions3.cpp:64:5
+    #12 0x5630f0c08aa0 in vmEntryToNative (/root/WebKit/WebKitBuild/Fuzz/bin/jsc+0x51e1aa0)
+
+==3565905==Register values:
+rax = 0x0000000000000000  rbx = 0x00007b4558cdb640  rcx = 0x00007f4559a8d02c  rdx = 0x0000000000000006  
+rdi = 0x0000000000366951  rsi = 0x00000000003669f3  rbp = 0x00000000003669f3  rsp = 0x00007b4558cd8b90  
+ r8 = 0x00007b4558cd8c60   r9 = 0x00007fffffffff01  r10 = 0x0000000000000008  r11 = 0x0000000000000246  
+r12 = 0x0000000000000006  r13 = 0x00007e1558e17fe8  r14 = 0x0000ffffffffffff  r15 = 0x00000ac61eb045c8  
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: ABRT (/lib64/libc.so.6+0x8d02c) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609) in __pthread_kill_implementation
+Thread T5 (JS Thread) created by T0 here:
+    #0 0x5630ebf3c0d1 in pthread_create /home/runner/work/llvm-project/llvm-project/compiler-rt/lib/asan/asan_interceptors.cpp:250:3
+    #1 0x5630f233f789 in WTF::Thread::establishHandle(WTF::Thread::NewThreadContext&, WTF::StackAllocationSpecification, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy) /root/WebKit/Source/WTF/wtf/posix/ThreadingPOSIX.cpp:354:17
+    #2 0x5630f21f0003 in WTF::Thread::create(WTF::ASCIILiteral, WTF::Function<void ()>&&, WTF::ThreadType, WTF::ThreadQOS, WTF::ThreadSchedulingPolicy, WTF::StackAllocationSpecification) /root/WebKit/Source/WTF/wtf/Threading.cpp:330:32
+    #3 0x5630f00eed67 in JSC::constructThread(JSC::JSGlobalObject*, JSC::CallFrame*) /root/WebKit/Source/JavaScriptCore/runtime/ThreadObject.cpp:475:5
+    #4 0x7b450fc0c0f7  (<unknown module>)
+    #5 0x5630f0c2baa6 in llint_op_construct LowLevelInterpreter.cpp
+    #6 0x5630f0c0819a in llint_call_javascript LowLevelInterpreter.cpp
+    #7 0x5630ee0a00ba in JSC::Interpreter::executeProgram(JSC::SourceCode const&, JSC::JSGlobalObject*, JSC::JSObject*) /root/WebKit/Source/JavaScriptCore/interpreter/Interpreter.cpp:1258:28
+    #8 0x5630eee06e83 in JSC::evaluate(JSC::JSGlobalObject*, JSC::SourceCode const&, JSC::JSValue, WTF::NakedPtr<JSC::Exception>&) /root/WebKit/Source/JavaScriptCore/runtime/Completion.cpp:145:37
+    #9 0x5630ebfa6bb1 in runWithOptions(GlobalObject*, CommandLine&, bool&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:3957:35
+    #10 0x5630ebfa6bb1 in jscmain(int, char**)::$_0::operator()(JSC::VM&, GlobalObject*, bool&) const /root/WebKit/Source/JavaScriptCore/jsc.cpp:4686:13
+    #11 0x5630ebfa6bb1 in int runJSC<jscmain(int, char**)::$_0>(CommandLine const&, bool, jscmain(int, char**)::$_0 const&) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4472:13
+    #12 0x5630ebfa6bb1 in jscmain(int, char**) /root/WebKit/Source/JavaScriptCore/jsc.cpp:4679:18
+    #13 0x5630ebfa473c in main /root/WebKit/Source/JavaScriptCore/jsc.cpp:3715:15
+    #14 0x7f4559a2a60f in __libc_start_call_main (/lib64/libc.so.6+0x2a60f) (BuildId: f272aa838db85055a63d6886f3ca9646107c1609)
+
+==3565905==ABORTING

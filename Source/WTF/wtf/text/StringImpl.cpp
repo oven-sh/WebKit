@@ -37,6 +37,7 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/ExternalStringImpl.h>
 #include <wtf/text/ParsingUtilities.h>
+#include <wtf/text/SharedAtomStringTable.h>
 #include <wtf/text/StringBuffer.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/SymbolImpl.h>
@@ -129,6 +130,14 @@ StringImpl::~StringImpl()
 
     if (isAtom()) {
         ASSERT(!isSymbol());
+        // Shared-atom-table mode (SPEC-vmstate §4.4.5): dying table atoms
+        // never reach this arm. They flow deref() -> derefSharedZero() ->
+        // AtomStringImpl::removeDeadAtom(), which removes the shard entry and
+        // clears isAtom under the shard lock BEFORE calling destroy() — the
+        // destructor must never touch the table in shared mode. This arm is
+        // reachable in shared mode only for atoms destroyed without a
+        // preceding zero-refcount transition (direct destroy() callers);
+        // AtomStringImpl::remove's shared arm handles that conditionally.
         if (length())
             AtomStringImpl::remove(static_cast<AtomStringImpl*>(this));
     } else if (isSymbol()) {
@@ -162,6 +171,33 @@ void StringImpl::destroy(StringImpl* stringImpl)
 {
     stringImpl->~StringImpl();
     StringImplMalloc::free(stringImpl);
+}
+
+NEVER_INLINE void StringImpl::derefSharedZero()
+{
+    // Shared-atom-table mode only (SPEC-vmstate §4.4.3): the refcount just hit
+    // zero, which is final — this thread uniquely owns the string, and no
+    // table hit can revive it (tryRefAtom() fails at 0).
+    ASSERT(sharedAtomStringTableEnabled());
+    ASSERT(!hasAtLeastOneRef());
+    ASSERT(!isStatic());
+
+    if (!isAtom() || !length()) {
+        // Non-atoms — including symbols: the registry holds strong references
+        // (SymbolRegistry.cpp), so the destructor's symbol arm runs
+        // single-owner here (SPEC-vmstate §1.8) — and zero-length strings take
+        // today's destruction path.
+        destroy(this);
+        return;
+    }
+
+    // A live-table atom must be unhooked from its shard before destruction:
+    // removeDeadAtom() locks shardForHash(existingHash()), removes the entry
+    // only on pointer identity (a racing add may already have replaced it with
+    // a fresh atom for the same characters), clears isAtom under the shard
+    // lock, then destroys the string — so the destructor's legacy isAtom()
+    // removal arm is skipped and never touches the table (SPEC-vmstate §4.4.5).
+    AtomStringImpl::removeDeadAtom(static_cast<AtomStringImpl*>(this));
 }
 
 Ref<StringImpl> StringImpl::createWithoutCopyingNonEmpty(std::span<const char16_t> characters)

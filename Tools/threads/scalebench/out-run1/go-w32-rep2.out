@@ -1,0 +1,1 @@
+{"impl":"go","threads":32,"phaseA_ms":229.957,"phaseB_ms":51.055,"phaseC_ms":12.194,"total_ms":372.718,"checksumA":"b3e65a6855b9bdeb","postings":4158957,"checksumA2":"39c33392b2a4c5b2","checksumB":"c4bdd580f85ee058","checksumC":"af028188d7a56a96","docsIngested":30800,"tokensProcessed":4579072,"writesDone":2800}

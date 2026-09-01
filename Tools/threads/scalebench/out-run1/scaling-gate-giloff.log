@@ -1,0 +1,24 @@
+scaling-gate: jsc        = Tools/threads/scalebench/out/jsc-giloff
+scaling-gate: mode       = REPORT-ONLY (host is noisy/shared; recording, not gating)
+scaling-gate: runs/cell  = 3 (median)
+scaling-gate: threads    = 1 2 4 8 16 32 64
+scaling-gate: work scale = 1
+scaling-gate: serial-identity tolerance = 5%
+
+== map-heavy ==
+  threads       T(N) ms     ideal ms    speedup
+  1            2269.249     2269.249      1.00x
+  2            4473.145     2269.249      1.01x
+  4            7716.472     2269.249      1.18x
+  8           18043.769     2269.249      1.01x
+  16          33504.957     2269.249      1.08x
+  32          67774.420     2269.249      1.07x
+  64         119454.950     2269.249      1.22x
+  serial identity: T(1) flag-on 2269.249 ms vs flag-off 2272.807 ms (-0.16% vs +/-5%) ok
+  threshold: speedup(4) = 1.18x vs floor 2.8x VIOLATION
+  threshold: speedup(8) = 1.01x vs floor 4.5x VIOLATION
+
+== raytrace-like ==
+scaling-gate: /root/WebKit/JSTests/threads/scaling/raytrace-like.js (N=16, flag=on) FAILED:
+    | JSC: disabling useWasm under GIL-off (wasm glue still reads the raw VM-block exception word; not yet audited for UNGIL §A.1.3 COMPILED-FOR-VM; see AB-17 status block in VMEntryScope.cpp).
+scaling-gate: error: workload raytrace-like failed at N=16 (wrong answers are never noise)

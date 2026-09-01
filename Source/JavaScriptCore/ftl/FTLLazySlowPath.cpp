@@ -28,6 +28,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "CodeBlock.h"
 #include "LinkBuffer.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -69,7 +70,21 @@ void LazySlowPath::generate(CodeBlock* codeBlock)
     LinkBuffer linkBuffer(jit, codeBlock, LinkBuffer::Profile::FTLThunk, JITCompilationMustSucceed);
     m_stub = FINALIZE_CODE_FOR(codeBlock, linkBuffer, JITStubRoutinePtrTag, nullptr, "Lazy slow path call stub");
 
-    MacroAssembler::repatchJump(m_patchableJump, CodeLocationLabel<JITStubRoutinePtrTag>(m_stub.code()));
+    // UNGIL U-T4b: gilOff, other mutators may be concurrently EXECUTING the
+    // patchable jump; repatchJump rewrites an unaligned rel32 on x86_64 with
+    // no atomicity guarantee (cross-modifying code; ISB1 only licenses
+    // in-stop patching). Leave the jump pointing at the generation thunk —
+    // operationCompileFTLLazySlowPath returns this stub for every subsequent
+    // traversal, and the thunk tail-calls it; the protocol stays data-only.
+    // T8: instead of re-acquiring ftlLazySlowPathGenerationLock on every such
+    // traversal, release-publish the tagged code pointer here so the
+    // operation's lock-free acquire-load fast path observes a fully
+    // constructed stub (write-once double-checked publication). GIL-on keeps
+    // the repatch byte-for-byte and never touches m_stubCodePtr.
+    if (!codeBlock->vm().gilOff()) [[likely]]
+        MacroAssembler::repatchJump(m_patchableJump, CodeLocationLabel<JITStubRoutinePtrTag>(m_stub.code()));
+    else
+        m_stubCodePtr.store(m_stub.code().taggedPtr(), std::memory_order_release);
 }
 
 } } // namespace JSC::FTL

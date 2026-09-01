@@ -177,17 +177,23 @@ static SuspendResumeRequest pendingSuspendResumeRequestForCurrentThread()
 
 void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
 {
-    // sigsuspend() below always sets errno to EINTR, and the interrupted code may be about to read its own.
-    auto restoreErrno = makeScopeExit([savedErrno = errno] {
-        errno = savedErrno;
-    });
+    // sem_post can set errno on failure and sigsuspend always returns -1 with
+    // errno set to EINTR, so the handler must preserve the interrupted thread's
+    // errno across every exit path (POSIX requires signal handlers not to
+    // modify errno; TSAN reports "signal handler spoils errno" otherwise).
+    int savedErrno = errno;
 
     // Touching a global variable atomic types from signal handlers is allowed.
-    //
-    // Anything but a suspend request for this thread is not for this invocation: either nobody
-    // asked (the signal came from outside of suspend() and resume()), or it is the resume request,
-    // which the sigsuspend() loop of the suspended invocation below consumes.
-    if (pendingSuspendResumeRequestForCurrentThread() != SuspendResumeRequest::Suspend)
+    Thread* thread = targetThread.load();
+
+    if (thread->m_suspendCount) {
+        // This is signal handler invocation that is intended to be used to resume sigsuspend.
+        // So this handler invocation itself should not process.
+        //
+        // When signal comes, first, the system calls signal handler. And later, sigsuspend will be resumed. Signal handler invocation always precedes.
+        // So, the problem never happens that suspended.store(true, ...) will be executed before the handler is called.
+        // http://pubs.opengroup.org/onlinepubs/009695399/functions/sigsuspend.html
+        errno = savedErrno;
         return;
 
     // The request names this thread, so targetThread is this thread's own, live Thread. suspend()
@@ -205,6 +211,7 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
         // In this case, we back off the suspension and retry a bit later.
         thread->m_platformRegisters = nullptr;
         globalSemaphoreForSuspendResume->post();
+        errno = savedErrno;
         return;
     }
 
@@ -240,6 +247,8 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
 
     // Allow resume caller to see that this thread is resumed.
     globalSemaphoreForSuspendResume->post();
+
+    errno = savedErrno;
 }
 
 #endif // !OS(DARWIN)

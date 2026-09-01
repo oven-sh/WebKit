@@ -28,6 +28,8 @@
 
 #include "InlineCallFrame.h"
 #include "JSCInlines.h"
+#include "Options.h"
+#include <wtf/Atomics.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -211,17 +213,31 @@ bool ClonedArguments::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(object);
     VM& vm = globalObject->vm();
 
-    if (!thisObject->specialsMaterialized()) {
-        FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(thisObject->m_callee->executable());
+    // THREADS (AUD1.N3 RESOLVED-4): snapshot m_callee ONCE — it doubles as
+    // the not-yet-materialized flag, and a foreign materializeSpecials() can
+    // clear it between a specialsMaterialized() check and a m_callee->
+    // dereference (the old shape null-deref'd on that interleaving). A
+    // non-null snapshot answers from the synthetic (unmaterialized) path;
+    // the values it hands out are identical to the ones materialization
+    // puts, so either side of the race is a legal linearization.
+    JSFunction* callee = thisObject->m_callee.get();
+    if (callee) {
+        FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(callee->executable());
         bool isStrictMode = executable->isInStrictContext();
 
         if (ident == vm.propertyNames->callee) {
             if (isStrictMode || executable->usesNonSimpleParameterList()) {
+                // The realm's throwTypeErrorArgumentsCalleeGetterSetter (and
+                // arrayProtoValuesFunction below) are eagerly first-touched
+                // at JSGlobalObject::init() time under useJSThreads() (see
+                // JSGlobalObject.cpp), so these LazyProperty get()s are plain
+                // non-null loads on every thread — no §K.3/LZ1 first-touch
+                // race or wait loop is needed here.
                 slot.setGetterSlot(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor, thisObject->realm()->throwTypeErrorArgumentsCalleeGetterSetter());
                 return true;
             }
             // This happens when ClonedArguments is created for non strict functions via `func.arguments` access.
-            slot.setValue(thisObject, 0, thisObject->m_callee.get());
+            slot.setValue(thisObject, 0, callee);
             return true;
         }
 
@@ -229,6 +245,13 @@ bool ClonedArguments::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
             slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::DontEnum), thisObject->realm()->arrayProtoValuesFunction());
             return true;
         }
+    } else if (Options::useJSThreads()) [[unlikely]] {
+        // Null m_callee == specials materialized. Pairs with the
+        // storeStoreFence before m_callee.clear() in materializeSpecials():
+        // order the structure/butterfly reads in Base::getOwnPropertySlot
+        // after the flag load so a foreign materializer's puts are visible
+        // (RESOLVED-4 reader-acquire half — no lost callee/@@iterator).
+        WTF::loadLoadFence();
     }
 
     return Base::getOwnPropertySlot(thisObject, globalObject, ident, slot);
@@ -282,19 +305,48 @@ bool ClonedArguments::defineOwnProperty(JSObject* object, JSGlobalObject* global
 
 void ClonedArguments::materializeSpecials(JSGlobalObject* globalObject)
 {
-    RELEASE_ASSERT(!specialsMaterialized());
     VM& vm = globalObject->vm();
-    
-    FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(m_callee->executable());
+
+    // THREADS (AUD1.N3 RESOLVED-4): snapshot the flag word once. GIL-off, a
+    // foreign materializer can complete between the caller's unfenced
+    // specialsMaterialized() check and here; losing that way is fine — the
+    // winner's puts plus its release publication are exactly what we needed.
+    // GIL-on (including useJSThreads=0) no other mutator can run in that
+    // check-to-entry window (no safepoint between them), so a null snapshot
+    // here is the same caller bug the old
+    // RELEASE_ASSERT(!specialsMaterialized()) caught — keep catching it.
+    JSFunction* callee = m_callee.get();
+    if (!callee) {
+        RELEASE_ASSERT(vm.gilOff());
+        WTF::loadLoadFence(); // Pairs with the winner's storeStoreFence below.
+        return;
+    }
+
+    FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(callee->executable());
     bool isStrictMode = executable->isInStrictContext();
-    
+
+    // GIL-off, two threads can both reach here with a non-null snapshot and
+    // run the puts below concurrently. That is deliberate, per the RESOLVED-4
+    // ruling: the materialize-properties half "follows OM property rules" —
+    // same-key concurrent adds are serialized by the SPEC-objectmodel
+    // transition/put protocol (no lost properties), and every racer computes
+    // IDENTICAL values (same executable => same strictness path; the
+    // getter-setter and @@iterator values are per-realm singletons, eagerly
+    // initialized under useJSThreads()), so the racing stores are idempotent.
+    // Each racer release-publishes the flag only AFTER ITS OWN puts, so any
+    // reader that observes the cleared flag has a happens-before edge to at
+    // least one complete set of puts.
     if (isStrictMode || executable->usesNonSimpleParameterList())
         putDirectAccessor(globalObject, vm.propertyNames->callee, this->realm()->throwTypeErrorArgumentsCalleeGetterSetter(), PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor);
     else
-        putDirect(vm, vm.propertyNames->callee, JSValue(m_callee.get()));
+        putDirect(vm, vm.propertyNames->callee, JSValue(callee));
 
     putDirect(vm, vm.propertyNames->iteratorSymbol, this->realm()->arrayProtoValuesFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
-    
+
+    // RESOLVED-4 release half: the cleared flag word must become visible only
+    // after the puts above. Flag-off this costs one predictable branch.
+    if (Options::useJSThreads()) [[unlikely]]
+        WTF::storeStoreFence();
     m_callee.clear();
 }
 
@@ -302,6 +354,13 @@ void ClonedArguments::materializeSpecialsIfNecessary(JSGlobalObject* globalObjec
 {
     if (!specialsMaterialized())
         materializeSpecials(globalObject);
+    else if (Options::useJSThreads()) [[unlikely]] {
+        // RESOLVED-4 reader-acquire half: callers fall through to Base::
+        // put/deleteProperty/defineOwnProperty reads of the materialized
+        // properties; order those after the (set-by-a-foreign-thread) flag
+        // load. Pairs with the storeStoreFence in materializeSpecials().
+        WTF::loadLoadFence();
+    }
 }
 
 template<typename Visitor>
@@ -320,7 +379,9 @@ void ClonedArguments::copyToArguments(JSGlobalObject* globalObject, JSValue* fir
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    switch (this->indexingType()) {
+    // THREADS-INTEGRATE(objectmodel) §10.7: tagged/segmented word — fall to
+    // the generic per-index copy loop (default case).
+    switch (this->mayBeSegmentedButterfly() ? NonArray : this->indexingType()) {
     case ALL_CONTIGUOUS_INDEXING_TYPES: {
         auto& butterfly = *this->butterfly();
         auto data = butterfly.contiguous().data();

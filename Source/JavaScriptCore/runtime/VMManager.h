@@ -274,6 +274,7 @@ public:
     JS_EXPORT_PRIVATE static void NODELETE setWasmDebuggerOnStop(StopTheWorldCallback);
     JS_EXPORT_PRIVATE static void NODELETE setWasmDebuggerOnResume(PostResumeCallback);
     JS_EXPORT_PRIVATE static void NODELETE setMemoryDebuggerCallback(StopTheWorldCallback);
+    JS_EXPORT_PRIVATE static void setGCParkCallbacks(void (*willPark)(VM&), void (*didResume)(VM&));
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE static void setJSDebuggerCallback(StopTheWorldCallback);
 #endif
@@ -440,5 +441,11 @@ private:
     VM& m_vm;
     std::optional<StopTheWorldEvent> m_event;
 };
+// Cheap seq_cst probe of the STW stop word (UNGIL §U20 SB1): true when a
+// stop-the-world has been requested against this VM and mutators must reach a
+// safepoint promptly. Exposed for bounded-spin sites that hold heap access and
+// must bail to their parking slow path (which honours the stop) instead of
+// spinning through a pending stop.
+JS_EXPORT_PRIVATE bool jsThreadsStopPendingFor(VM&);
 
 } // namespace JSC

@@ -84,6 +84,7 @@ public:
     // a runtime option and its default value is small (400 bytes).
     inline JSC::Heap* heap() const; // Defined in HeapCellInlines.h
     inline VM& vm() const; // Defined in HeapCellInlines.h
+    inline VM& vmConcurrentProbe() const; // TSAN-annotated stale-probe variant; defined in HeapCellInlines.h.
     
     size_t cellSize() const;
     CellAttributes cellAttributes() const;

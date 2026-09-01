@@ -1,0 +1,112 @@
+MC-TEAR.S6b — async-generator resume-head claim — SUSCEPTIBLE (confirmed)
+=========================================================================
+
+Test:    JSTests/threads/cve/mc-prim-async-generator-resume-claim.js
+Config:  GIL-off (--useJSThreads=1 --useThreadGIL=0 --useVMLite=1
+         --useSharedAtomStringTable=1 --useSharedGCHeap=1
+         --useThreadGILOffUnsafe=1 --useDollarVM=1)
+Date:    2026-06-15
+
+---------------------------------------------------------------
+1. Debug (ASAN) build — 15/15 SIGABRT (exit 134), no amplifier
+---------------------------------------------------------------
+Signature (every run identical):
+
+  ASSERTION FAILED: JS assertion failed at line 10 in:
+  function (generator, resumeMode)
+  {
+      ...
+      while (true) {
+          var state = @getAsyncGeneratorInternalField(generator, @generatorFieldState);
+          @assert(state !== @AsyncGeneratorStateExecuting,
+                  "Async generator should not be in executing state");
+      ...
+  }
+  false
+  /root/WebKit/Source/JavaScriptCore/runtime/JSGlobalObject.cpp(499)
+        : JSC::EncodedJSValue JSC::assertCall(JSGlobalObject *, CallFrame *)
+
+i.e. Source/JavaScriptCore/builtins/AsyncGeneratorPrototype.js:37 fired —
+the ONE assertion in the file that names the §N.5 invariant ("never
+re-entered while Executing"). Two mutators both reached
+asyncGeneratorResumeNext on the SAME generator: one wrote Executing at
+:78 and entered the body call at :81; the other re-read state at :35 and
+tripped :37.
+
+---------------------------------------------------------------
+2. Release build — 10/10 SIGSEGV (exit 139), no amplifier
+---------------------------------------------------------------
+Log per run (only the wasm-disable banner, then core):
+
+  JSC: disabling useWasm under GIL-off ...
+  timeout: the monitored command dumped core
+
+With the @assert stripped, BOTH mutators proceed past :78 and call
+@generatorFieldNext at :81 against the SAME @generatorFieldFrame /
+suspend-point index. Concurrent resumption of one generator frame is the
+torn {state, frame} → type-confusion outcome the verdict predicted; in
+practice it segfaults immediately (100% repro, sub-second).
+
+---------------------------------------------------------------
+3. Replay
+---------------------------------------------------------------
+  # Debug assertion (deterministic, no amplifier needed)
+  WebKitBuild/Debug/bin/jsc \
+      --useJSThreads=1 --useThreadGIL=0 --useVMLite=1 \
+      --useSharedAtomStringTable=1 --useSharedGCHeap=1 \
+      --useThreadGILOffUnsafe=1 --useDollarVM=1 \
+      JSTests/threads/cve/mc-prim-async-generator-resume-claim.js
+
+  # Release segfault
+  WebKitBuild/Release/bin/jsc <same flags> <same test>
+
+---------------------------------------------------------------
+4. Diagnosis vs the governing invariant (§N.5 resume-head claim)
+---------------------------------------------------------------
+Governing invariant (SPEC-ungil §N.5, landed for sync generators /
+iterator helpers): the resume head is a CLAIM — exactly one mutator may
+transition state out of a Suspended* value into Executing; the loser
+takes a defined arm (TypeError "Generator is executing" or
+ConcurrentAccessError). The {state, resumeValue, resumeMode, frame,
+queue} cluster is published atomically by the claim winner.
+
+Async-generator path has NO such claim:
+
+  AsyncGeneratorPrototype.js
+    next()  :116  -> @asyncGeneratorQueueEnqueue(this, ...)   // C++
+                 -> @asyncGeneratorResumeNext(this, mode)     // builtin
+  asyncGeneratorResumeNext()
+    :35  state = plain @get @generatorFieldState
+    :37  @assert(state !== Executing)          (Debug-only)
+    :45  resumeValue = plain @get
+    :78  plain @put state := Executing         (NO CAS, NO loser arm)
+    :81  body call uses plain @get of @generatorFieldFrame
+
+  runtime/JSGlobalObject.cpp:1194 asyncGeneratorQueueEnqueue
+    -> JSAsyncGenerator::enqueue()        JSAsyncGenerator.cpp:82-118
+       isQueueEmpty()  plain read         (no cell lock, no CAS)
+       setResumeValue/Mode/Promise/Queue  plain writes
+    -> isExecutionState()                 JSAsyncGenerator.h:176-184
+       plain read of state()              (TOCTOU vs the other thread's :78)
+
+So two GIL-off threads calling agen.next() on a Suspended generator can
+BOTH see state==SuspendedYield in enqueue's isExecutionState() and at
+:35, BOTH write Executing at :78, and BOTH enter the body at :81. Queue
+linkage (JSAsyncGenerator.cpp:84-117 circular list) is also racing
+concurrently with no lock — a separate torn-publication hazard on the
+same surface.
+
+Consistent with: test header //@ threadsExpectFail("gilOff"); recorded
+deferral SPEC-ungil-history.md "§N.5 LANDED SHAPE" supersession entry
+(async arm not landed); CVE-AUDIT-STATUS.md item 3.
+
+---------------------------------------------------------------
+5. Verdict
+---------------------------------------------------------------
+SUSCEPTIBLE. 100% repro Debug (assert) and Release (SIGSEGV) with no
+amplification. Fix is the already-chartered §N.5 async resume-head
+claim/publish (CAS state Suspended*→Executing with loser arm) covering
+AsyncGeneratorPrototype.js:35-98 + the JSAsyncGenerator
+enqueue/isExecutionState/dequeue cluster, OR an owner-affinity
+ConcurrentAccessError ruling for cross-thread async-generator resume
+(the test's alternative pass arm).

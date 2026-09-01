@@ -166,12 +166,15 @@ EncodedJSValue getData(JSGlobalObject* globalObject, CallFrame* callFrame)
     std::array<uint8_t, dataSize> rawBytes { };
     uint8_t* dataPtr = static_cast<uint8_t*>(dataView->vector()) + byteOffset;
 
+    // THREADS: relaxed atomic byte loads — DataView lanes over a (possibly
+    // shared/resizable) buffer are intentionally racy data words (SAB
+    // semantics); the atomics only make the racing access defined.
     if (needToFlipBytesIfLittleEndian(littleEndian)) {
         for (unsigned i = dataSize; i--;)
-            rawBytes[i] = *dataPtr++;
+            rawBytes[i] = WTF::atomicLoad(dataPtr++, std::memory_order_relaxed);
     } else {
         for (unsigned i = 0; i < dataSize; i++)
-            rawBytes[i] = *dataPtr++;
+            rawBytes[i] = WTF::atomicLoad(dataPtr++, std::memory_order_relaxed);
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(Adaptor::toJSValue(globalObject, std::bit_cast<typename Adaptor::Type>(rawBytes))));
@@ -212,12 +215,13 @@ EncodedJSValue setData(JSGlobalObject* globalObject, CallFrame* callFrame)
 
     uint8_t* dataPtr = static_cast<uint8_t*>(dataView->vector()) + byteOffset;
 
+    // THREADS: relaxed atomic byte stores (see getData above).
     if (needToFlipBytesIfLittleEndian(littleEndian)) {
         for (unsigned i = dataSize; i--;)
-            *dataPtr++ = rawBytes[i];
+            WTF::atomicStore(dataPtr++, rawBytes[i], std::memory_order_relaxed);
     } else {
         for (unsigned i = 0; i < dataSize; i++)
-            *dataPtr++ = rawBytes[i];
+            WTF::atomicStore(dataPtr++, rawBytes[i], std::memory_order_relaxed);
     }
 
     return JSValue::encode(jsUndefined());

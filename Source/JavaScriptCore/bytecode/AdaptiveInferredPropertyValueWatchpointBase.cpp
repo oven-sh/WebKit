@@ -65,10 +65,22 @@ void AdaptiveInferredPropertyValueWatchpointBase::fire(VM& vm, const FireDetail&
     // One of the watchpoints fired, but the other one didn't. Make sure that neither of them are
     // in any set anymore. This simplifies things by allowing us to reinstall the watchpoints
     // wherever from scratch.
-    if (m_structureWatchpoint.isOnList())
-        m_structureWatchpoint.remove();
-    if (m_propertyWatchpoint.isOnList())
-        m_propertyWatchpoint.remove();
+    if (Options::useJSThreads()) [[unlikely]] {
+        // AB18-G: these unlink from sets (per-Structure transition /
+        // replacement sets) that other mutators can concurrently add() to;
+        // the check-and-remove must be one critical section under the
+        // membership lock (see Watchpoint.h).
+        Locker locker { g_watchpointMembershipLock };
+        if (m_structureWatchpoint.isOnList())
+            m_structureWatchpoint.remove();
+        if (m_propertyWatchpoint.isOnList())
+            m_propertyWatchpoint.remove();
+    } else {
+        if (m_structureWatchpoint.isOnList())
+            m_structureWatchpoint.remove();
+        if (m_propertyWatchpoint.isOnList())
+            m_propertyWatchpoint.remove();
+    }
 
     if (!isValid())
         return;

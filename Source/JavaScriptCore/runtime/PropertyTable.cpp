@@ -26,6 +26,7 @@
 #include "config.h"
 #include "PropertyTable.h"
 
+#include "HeapInlines.h"
 #include "JSCJSValueInlines.h"
 #include <wtf/MathExtras.h>
 
@@ -60,29 +61,39 @@ PropertyTable* PropertyTable::clone(VM& vm, unsigned initialCapacity, const Prop
 
 PropertyTable::PropertyTable(VM& vm, unsigned initialCapacity)
     : JSCell(vm, vm.propertyTableStructure.get())
-    , m_indexSize(sizeForCapacity(initialCapacity))
-    , m_indexMask(m_indexSize - 1)
-    , m_indexVector()
-    , m_keyCount(0)
-    , m_deletedCount(0)
 {
-    ASSERT(isPowerOfTwo(m_indexSize));
+    // TSAN: header words are stored with the relaxed accessors even during
+    // construction — the cell address may be GC-recycled while stale readers
+    // still probe it with concurrentRelaxedLoad (the table itself stays
+    // private until its Structure publishes it, L6).
+    concurrentRelaxedStore(m_indexSize, sizeForCapacity(initialCapacity));
+    concurrentRelaxedStore(m_indexMask, indexSize() - 1);
+    concurrentRelaxedStore(m_keyCount, 0u);
+    concurrentRelaxedStore(m_deletedCount, 0u);
+    ASSERT(isPowerOfTwo(indexSize()));
     bool isCompact = tableCapacity() < UINT8_MAX;
-    m_indexVector = allocateZeroedIndexVector(isCompact, m_indexSize);
+    concurrentRelaxedStore(m_indexVector, allocateZeroedIndexVector(isCompact, indexSize()));
     ASSERT(isCompact == this->isCompact());
 }
 
+// TSAN family 25 (§3.25): the clone source `other` can be a published table
+// (its in-place mutators hold the owning Structure's m_lock, which the clone
+// path also holds or the table is private, L6) - read its header words via
+// the relaxed accessors to pair correctly with its relaxed-store writers.
+// The new table itself is private until its Structure publishes it (L6), so
+// plain init-list stores into *this* are fine.
 PropertyTable::PropertyTable(VM& vm, const PropertyTable& other)
     : JSCell(vm, vm.propertyTableStructure.get())
-    , m_indexSize(other.m_indexSize)
-    , m_indexMask(other.m_indexMask)
-    , m_indexVector(allocateIndexVector(other.isCompact(), other.m_indexSize))
-    , m_keyCount(other.m_keyCount)
-    , m_deletedCount(other.m_deletedCount)
 {
+    // TSAN: see the first constructor — relaxed stores even during construction.
+    concurrentRelaxedStore(m_indexSize, other.indexSize());
+    concurrentRelaxedStore(m_indexMask, other.indexMask());
+    concurrentRelaxedStore(m_indexVector, allocateIndexVector(other.isCompact(), other.indexSize()));
+    concurrentRelaxedStore(m_keyCount, other.keyCount());
+    concurrentRelaxedStore(m_deletedCount, other.deletedCount());
     ASSERT(isPowerOfTwo(m_indexSize));
     ASSERT(isCompact() == other.isCompact());
-    memcpy(std::bit_cast<void*>(m_indexVector & indexVectorMask), std::bit_cast<void*>(other.m_indexVector & indexVectorMask), dataSize(isCompact()));
+    memcpy(std::bit_cast<void*>(m_indexVector & indexVectorMask), std::bit_cast<void*>(other.indexVector() & indexVectorMask), dataSize(isCompact()));
 
     forEachProperty([&](auto& entry) {
         entry.key()->ref();
@@ -93,20 +104,30 @@ PropertyTable::PropertyTable(VM& vm, const PropertyTable& other)
     Vector<PropertyOffset>* otherDeletedOffsets = other.m_deletedOffsets.get();
     if (otherDeletedOffsets)
         m_deletedOffsets = makeUnique<Vector<PropertyOffset>>(*otherDeletedOffsets);
+    concurrentRelaxedStore(m_deletedOffsetCount, m_deletedOffsets ? unsigned(m_deletedOffsets->size()) : 0u);
+
+    // SPEC-objectmodel §6 (Task 9): clones inherit the Quarantined list with
+    // its stamps verbatim (the slots they describe are copied along with the
+    // table) and the cached epoch slot - clones live in the same server heap
+    // (Structures never migrate across heaps), so the slot stays correct.
+    if (Vector<QuarantinedDeletedOffset>* otherQuarantined = other.m_quarantinedDeletedOffsets.get())
+        m_quarantinedDeletedOffsets = makeUnique<Vector<QuarantinedDeletedOffset>>(*otherQuarantined);
+    concurrentRelaxedStore(m_quarantinedDeletedOffsetCount, m_quarantinedDeletedOffsets ? unsigned(m_quarantinedDeletedOffsets->size()) : 0u);
+    m_quarantineEpochSlot = concurrentRelaxedLoad(other.m_quarantineEpochSlot);
 }
 
 PropertyTable::PropertyTable(VM& vm, unsigned initialCapacity, const PropertyTable& other)
     : JSCell(vm, vm.propertyTableStructure.get())
-    , m_indexSize(sizeForCapacity(initialCapacity))
-    , m_indexMask(m_indexSize - 1)
-    , m_indexVector()
-    , m_keyCount(0)
-    , m_deletedCount(0)
 {
-    ASSERT(isPowerOfTwo(m_indexSize));
-    ASSERT(initialCapacity >= other.m_keyCount);
+    // TSAN: see the first constructor — relaxed stores even during construction.
+    concurrentRelaxedStore(m_indexSize, sizeForCapacity(initialCapacity));
+    concurrentRelaxedStore(m_indexMask, indexSize() - 1);
+    concurrentRelaxedStore(m_keyCount, 0u);
+    concurrentRelaxedStore(m_deletedCount, 0u);
+    ASSERT(isPowerOfTwo(indexSize()));
+    ASSERT(initialCapacity >= other.keyCount());
     bool isCompact = other.isCompact() && tableCapacity() < UINT8_MAX;
-    m_indexVector = allocateZeroedIndexVector(isCompact, m_indexSize);
+    concurrentRelaxedStore(m_indexVector, allocateZeroedIndexVector(isCompact, indexSize()));
     ASSERT(this->isCompact() == isCompact);
 
     withIndexVector([&](auto* vector) {
@@ -123,6 +144,13 @@ PropertyTable::PropertyTable(VM& vm, unsigned initialCapacity, const PropertyTab
     Vector<PropertyOffset>* otherDeletedOffsets = other.m_deletedOffsets.get();
     if (otherDeletedOffsets)
         m_deletedOffsets = makeUnique<Vector<PropertyOffset>>(*otherDeletedOffsets);
+    concurrentRelaxedStore(m_deletedOffsetCount, m_deletedOffsets ? unsigned(m_deletedOffsets->size()) : 0u);
+
+    // SPEC-objectmodel §6 (Task 9): see the copy constructor above.
+    if (Vector<QuarantinedDeletedOffset>* otherQuarantined = other.m_quarantinedDeletedOffsets.get())
+        m_quarantinedDeletedOffsets = makeUnique<Vector<QuarantinedDeletedOffset>>(*otherQuarantined);
+    concurrentRelaxedStore(m_quarantinedDeletedOffsetCount, m_quarantinedDeletedOffsets ? unsigned(m_quarantinedDeletedOffsets->size()) : 0u);
+    m_quarantineEpochSlot = concurrentRelaxedLoad(other.m_quarantineEpochSlot);
 }
 
 void PropertyTable::finishCreation(VM& vm)
@@ -153,20 +181,36 @@ PropertyTable::~PropertyTable()
         entry.key()->deref();
         return IterationStatus::Continue;
     });
-    destroyIndexVector(m_indexVector);
+    destroyIndexVector(indexVector());
+    // T3 (flag-on): replaced vectors still in quarantine die with the table.
+    // Safe even against lock-free probes: the cell is only swept once
+    // unreachable, and any probing mutator holds the table pointer in a
+    // register/stack slot the conservative scan roots.
+    if (m_quarantinedIndexVectors) {
+        for (const QuarantinedIndexVector& quarantined : *m_quarantinedIndexVectors)
+            destroyIndexVector(quarantined.indexVector);
+    }
 }
 
 void PropertyTable::seal()
 {
+    // T3: wholesale in-place attribute edit — bracket it so lock-free probes
+    // (Structure::getConcurrently's seqlock fast path) cannot validate a
+    // half-applied snapshot. Callers reach here on a freshly pinned table of
+    // a transition that can already be discoverable, so treat it as published.
+    beginConcurrentEdit();
     forEachPropertyMutable([&](auto& entry) {
         if (!PropertyName(entry.key()).isPrivateName())
             entry.setAttributes(entry.attributes() | static_cast<unsigned>(PropertyAttribute::DontDelete));
         return IterationStatus::Continue;
     });
+    bumpConcurrentEditCount();
 }
 
 void PropertyTable::freeze()
 {
+    // T3: see seal() above.
+    beginConcurrentEdit();
     forEachPropertyMutable([&](auto& entry) {
         if (!PropertyName(entry.key()).isPrivateName()) {
             if (!(entry.attributes() & PropertyAttribute::Accessor))
@@ -176,6 +220,7 @@ void PropertyTable::freeze()
         }
         return IterationStatus::Continue;
     });
+    bumpConcurrentEditCount();
 }
 
 bool PropertyTable::isSealed() const
@@ -210,8 +255,110 @@ bool PropertyTable::isFrozen() const
     return result;
 }
 
+// SPEC-objectmodel §6 (Task 9): quarantine a deleted out-of-line offset.
+// Caller context: reached from Structure::remove (StructureInlines.h) /
+// the materialize replay (Structure.cpp) via addDeletedOffset; the table
+// mutation holds the Structure's m_lock or the table is still thread-private
+// (L6). The registry lock inside butterflyQuarantineEpochSlot() is a leaf
+// under it (heap §6 ranking); nothing here allocates in the GC heap (O1 -
+// Vector growth is fastMalloc).
+void PropertyTable::quarantineDeletedOffset(PropertyOffset offset)
+{
+    ASSERT(Options::useJSThreads());
+    // Inline and out-of-line offsets are both quarantined (objectmodel
+    // review round 2, INTEGRATE-objectmodel.md §54).
+
+    // Cache the OWNING server heap's epoch slot at first quarantine (§6).
+    // Heap::heap(this) is the server heap this PropertyTable cell lives in -
+    // with a shared GC server, every client VM of that server maps to the
+    // same slot, which is exactly the r13 per-server-heap keying.
+    // The cached pointer is written under the table's serialization but read
+    // lock-free elsewhere (stable address) - relaxed accesses (§3.25).
+    WTF::Atomic<uint64_t>* epochSlot = concurrentRelaxedLoad(m_quarantineEpochSlot);
+    if (!epochSlot) {
+        epochSlot = &butterflyQuarantineEpochSlot(*Heap::heap(this));
+        concurrentRelaxedStore(m_quarantineEpochSlot, epochSlot);
+    }
+
+    if (!m_quarantinedDeletedOffsets)
+        m_quarantinedDeletedOffsets = makeUnique<Vector<QuarantinedDeletedOffset>>();
+    // Stamp = the heap's epoch AT deletion. Promotion requires stamp <
+    // current, i.e. at least one full world-stopped window (one epoch bump)
+    // strictly after this point - which flushes every reader that could hold
+    // a stale offset/slot pointer (I18, with I34's no-poll rule).
+    m_quarantinedDeletedOffsets->append(QuarantinedDeletedOffset { offset, epochSlot->load(std::memory_order_seq_cst) });
+    // TSAN family 25 quarantine counters: keep the relaxed mirror in sync
+    // under the same serialization the list edit holds.
+    concurrentRelaxedStore(m_quarantinedDeletedOffsetCount, unsigned(m_quarantinedDeletedOffsets->size()));
+}
+
+// T3 (flag-on): deferred free of a replaced index vector. A lock-free probe
+// (Structure::getConcurrently fast path / PropertyTable::findConcurrently)
+// may have loaded m_indexVector immediately before rehash swapped it and may
+// still be walking the old allocation; probes never poll safepoints, so a
+// crossed owning-heap epoch (bumped only while the world is stopped) proves
+// no probe can still hold the pointer — the identical I18/I34 argument the
+// deleted-offset quarantine above rests on. Runs under the caller's table
+// serialization (m_lock or table-private, L6); the epoch-slot registry lock
+// is a leaf under it; Vector growth is fastMalloc (O1-clean).
+void PropertyTable::quarantineIndexVector(uintptr_t indexVector)
+{
+    ASSERT(Options::useJSThreads());
+    WTF::Atomic<uint64_t>* epochSlot = concurrentRelaxedLoad(m_quarantineEpochSlot);
+    if (!epochSlot) {
+        epochSlot = &butterflyQuarantineEpochSlot(*Heap::heap(this));
+        concurrentRelaxedStore(m_quarantineEpochSlot, epochSlot);
+    }
+    uint64_t currentEpoch = epochSlot->load(std::memory_order_seq_cst);
+
+    if (!m_quarantinedIndexVectors)
+        m_quarantinedIndexVectors = makeUnique<Vector<QuarantinedIndexVector>>();
+    // Opportunistic sweep: anything stamped strictly before the current
+    // epoch has had a full world-stopped window since it was unpublished.
+    // This bounds the list to the vectors retired since the last epoch bump
+    // (geometric sizes, so memory overhead stays within ~1x of the live
+    // vector); the destructor frees whatever remains.
+    m_quarantinedIndexVectors->removeAllMatching([&](const QuarantinedIndexVector& quarantined) {
+        if (quarantined.epoch >= currentEpoch)
+            return false; // No epoch bump since it was unpublished yet (I18).
+        destroyIndexVector(quarantined.indexVector);
+        return true;
+    });
+    m_quarantinedIndexVectors->append(QuarantinedIndexVector { indexVector, currentEpoch });
+}
+
+// SPEC-objectmodel §9.4 (frozen): promote quarantined offsets whose stamp
+// predates the owning heap's current epoch onto the Reusable list (§6 "lazy
+// promotion"; takeDeletedOffset draws only from Reusable). Runs under the
+// caller's table serialization (m_lock or table-private, L6).
+void PropertyTable::releaseQuarantinedSlots(uint64_t currentEpoch)
+{
+    ASSERT(Options::useJSThreads());
+    if (!m_quarantinedDeletedOffsets)
+        return;
+    m_quarantinedDeletedOffsets->removeAllMatching([&](QuarantinedDeletedOffset& entry) {
+        if (entry.epoch >= currentEpoch)
+            return false; // No epoch bump since the deletion yet (I18).
+        if (!m_deletedOffsets)
+            m_deletedOffsets = makeUnique<Vector<PropertyOffset>>();
+        ASSERT(!m_deletedOffsets->contains(entry.offset));
+        m_deletedOffsets->append(entry.offset);
+        return true;
+    });
+    // TSAN family 25 quarantine counters: resync both relaxed mirrors after
+    // promotion (runs under the caller's table serialization).
+    concurrentRelaxedStore(m_quarantinedDeletedOffsetCount, unsigned(m_quarantinedDeletedOffsets->size()));
+    concurrentRelaxedStore(m_deletedOffsetCount, m_deletedOffsets ? unsigned(m_deletedOffsets->size()) : 0u);
+}
+
 PropertyOffset PropertyTable::renumberPropertyOffsets(JSObject* object, unsigned inlineCapacity, Vector<JSValue>& values)
 {
+    // T3: flag-on this only runs under the §10.6 stop (flattenDictionary-
+    // Structure bails otherwise), so no lock-free probe can be in flight —
+    // but bracket the in-place offset rewrite anyway: it is cheap, keeps the
+    // "every probe-visible mutation is bracketed" invariant auditable, and
+    // protects any future caller that is not under a stop.
+    beginConcurrentEdit();
     ASSERT(values.size() == size());
     unsigned i = 0;
     PropertyOffset offset = invalidOffset;
@@ -223,6 +370,7 @@ PropertyOffset PropertyTable::renumberPropertyOffsets(JSObject* object, unsigned
         return IterationStatus::Continue;
     });
     clearDeletedOffsets();
+    bumpConcurrentEditCount(); // T3: close the bracket opened above.
     return offset;
 }
 

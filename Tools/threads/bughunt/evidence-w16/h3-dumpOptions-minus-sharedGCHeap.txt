@@ -1,0 +1,10 @@
+Modified JSC options:
+   dumpOptions=1 (default: 0)
+   useJIT=false (default: true)
+   useSharedGCHeap=false (default: false)
+   useJSThreads=true (default: false)
+   useThreadGIL=true (default: false)
+   useThreadGILOffUnsafe=true (default: false)
+   useSharedAtomStringTable=true (default: false)
+   useVMLite=true (default: false)
+alive
