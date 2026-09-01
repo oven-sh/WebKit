@@ -51,27 +51,10 @@
 #include "TypedArrayType.h"
 #include "VMLite.h"
 #include "VMLiteShared.h"
-#include <wtf/Atomics.h>
-#include <wtf/DataLog.h>
 #include <wtf/MainThread.h>
-#include <wtf/RawPointer.h>
 #include <wtf/StackAllocation.h>
 
 namespace JSC {
-
-// UNGIL §A.2.4 rule 4 / annex W W1 (AB-17 item 4) — park-lite predicates and
-// the W1 carrier service episode. Same-library seams (consumers redeclare;
-// the predicates of record live in VMTraps.cpp, the episode helper and the
-// captured-lite accessor in JSLock.cpp). GIL-on,
-// parkLitePollTerminationRequested(vm, nullptr) is byte-equivalent to the
-// landed jsThreadParkTerminationRequested (watchdog-check folded in);
-// GIL-off it is termination-ONLY against the PARK lite's word, and the
-// watchdog-check bit is serviced by the W1 episode instead of being treated
-// as a termination verdict.
-bool parkLitePollTerminationRequested(VM&, VMLite* parkLite);
-bool parkLitePollWatchdogCheckRequested(VM&, VMLite* parkLite);
-VMLite* capturedParkLiteOfCurrentThreadIfAny(VM&);
-bool reacquireParkedCarrierAndServiceWatchdogCheck(VM&);
 
 const ClassInfo JSThread::s_info = { "Thread"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSThread) };
 
@@ -105,6 +88,10 @@ void JSThread::destroy(JSCell* cell)
 
 bool jsThreadsCanBlockOnCurrentThread(VM& vm)
 {
+    // GIL-off a spawned Thread may always park synchronously; only
+    // main/embedder threads are subject to the embedder's policy.
+    if (vm.gilOff() && ThreadManager::isJSThreadCurrent()) [[unlikely]]
+        return true;
     return vm.m_typedArrayController->isAtomicsWaitAllowedOnCurrentThread();
 }
 
@@ -241,65 +228,6 @@ static void threadMain(VM& vm, Ref<ThreadState> state)
         NakedPtr<Exception> exception;
         JSValue callResult = JSC::call(globalObject, function, callData, jsUndefined(), args, exception);
 
-        // AB18-I publish-side guard (applied per the review round, NOT the
-        // original single-domain proposal): JSC::call's NakedPtr capture
-        // (CallData.cpp) reads and clears the CURRENT lite's group-3
-        // exception word through its own TopExceptionScope. Re-reading that
-        // SAME per-lite word here would be dead code — two sequenced
-        // same-thread reads of one word are coherent, and no foreign writer
-        // of another thread's per-lite word exists (VM::setException asserts
-        // the API lock; the only async-flavored clear is the current-thread,
-        // termination-only deferral). So the V1 lost-throw signature requires
-        // the exception to live in a DIFFERENT storage domain than the one
-        // the capture read — the U-T4 class: a not-yet-rerouted GIL-off path
-        // storing into (or a lite-selection change redirecting the capture
-        // away from) the inert VM-block spare word. Before allowing
-        // Phase::Finished, read BOTH domains — this thread's per-lite word
-        // AND the VM-block spare word (GIL-off the main carrier never
-        // installs m_mainVMLite, so the VM block is inert spare storage; a
-        // non-null value there is exactly the unrerouted-path evidence) —
-        // and fold a residual NON-TERMINATION exception into the capture so
-        // a recorded throw can never be published as Finished. A residual
-        // TERMINATION exception is deliberately left in place for the drain
-        // loop's vm.hasTerminationRequest() arm, which takes the TERM1.3
-        // Failed publication with the fresh "Thread terminated" error.
-        //
-        // The [AB18-I] log line is the verify round's diagnostic: if the V1
-        // loss reproduces WITH a line, the line names the losing domain (and
-        // whether the lite changed across the call); if it reproduces with NO
-        // line, both domains were already null at fn-return — the consumed-
-        // before-capture variant — and the hunt moves to the throw/unwind-
-        // side U-T4 audit (Interpreter::unwind / genericUnwind storage
-        // selection, DFG/FTL OSR-exit + exception-handler entry checks,
-        // vmEntryToJavaScript epilogue, LLInt catch/clear paths).
-        //
-        // GIL-on (incl. flag-off) this block is never entered, so identity
-        // holds byte-for-byte.
-        if (gilOff && !exception) {
-            Exception* perLiteResidual = WTF::atomicLoad(&lite->primitives.m_exception, std::memory_order_relaxed);
-            Exception* vmBlockResidual = WTF::atomicLoad(&vm.mainVMLitePrimitives().m_exception, std::memory_order_relaxed);
-            VMLite* currentLite = VMLite::currentIfExists();
-            if (perLiteResidual || vmBlockResidual || currentLite != lite.get()) [[unlikely]] {
-                dataLogLn("[AB18-I] fn-return residual exception state: perLiteWord=", RawPointer(perLiteResidual),
-                    " vmBlockWord=", RawPointer(vmBlockResidual),
-                    " currentLite=", RawPointer(currentLite),
-                    " entryLite=", RawPointer(lite.get()),
-                    " tid=", state->tid);
-                Exception* residual = perLiteResidual ? perLiteResidual : vmBlockResidual;
-                if (residual && !vm.isTerminationException(residual)) {
-                    exception = residual;
-                    // Consume the folded word ourselves: the clearException()
-                    // in the Failed arm below clears only the CURRENT lite's
-                    // word and would leave a VM-block residual set for a
-                    // later reader to double-fold.
-                    if (perLiteResidual)
-                        WTF::atomicStore(&lite->primitives.m_exception, static_cast<Exception*>(nullptr), std::memory_order_relaxed);
-                    else
-                        WTF::atomicStore(&vm.mainVMLitePrimitives().m_exception, static_cast<Exception*>(nullptr), std::memory_order_relaxed);
-                }
-            }
-        }
-
         state->fnSlot.clear();
         state->argSlots.clear();
 
@@ -428,7 +356,8 @@ JSC_DEFINE_HOST_FUNCTION(constructThread, (JSGlobalObject* globalObject, CallFra
     // which can run JS / throw — keep it BEFORE allocateSpawnedThreadState so a
     // throw cannot leak a forever-Running entry in ThreadManager::m_threads
     // (counted against maxJSThreads, I17). Everything after the allocation is
-    // infallible up to Thread::create. Flag-off this function is unreachable.
+    // infallible up to Thread::tryCreate, whose failure arm unregisters the
+    // entry itself. Flag-off this function is unreachable.
     Structure* structure = globalObject->threadObjectStructure();
     ASSERT(structure);
     JSValue newTarget = callFrame->newTarget();
@@ -437,13 +366,12 @@ JSC_DEFINE_HOST_FUNCTION(constructThread, (JSGlobalObject* globalObject, CallFra
         RETURN_IF_EXCEPTION(scope, { });
     }
 
-    // UNGIL U0b (AB-11 migration): the VM-aware overload licenses spawns
-    // from the m_gilOff winner VM and refuses loser VMs (null -> RangeError
-    // below). It also requests a full collection when an exhausted winner
-    // spawn left a Sealed rebias snapshot (SD9 liveness), so the RangeError
-    // window closes without organic allocation pressure. Flag-off/GIL-on:
-    // identical to the VM-blind form (both reduce to
-    // allocateSpawnedThreadStateInternal()).
+    // UNGIL U0b: the allocation licenses spawns from the m_gilOff winner VM
+    // and refuses loser VMs (null -> RangeError below). It also requests a
+    // full collection when an exhausted winner spawn left a Sealed rebias
+    // snapshot (SD9 liveness), so the RangeError window closes without
+    // organic allocation pressure. Flag-off/GIL-on: the plain cap check +
+    // TID allocation.
     RefPtr<ThreadState> state = ThreadManager::singleton().allocateSpawnedThreadState(vm);
     if (!state)
         return throwVMRangeError(globalObject, scope, "too many live Threads (or thread-ID space exhausted)"_s);
@@ -472,9 +400,21 @@ JSC_DEFINE_HOST_FUNCTION(constructThread, (JSGlobalObject* globalObject, CallFra
     // guarantees the VM outlives this thread. If the embedder drops its last
     // ref while we are running (e.g. main script exits without join()), the
     // VM must stay alive until threadMain returns or this is a use-after-free.
-    Thread::create("JS Thread"_s, [state = Ref { *state }, protectedVM = Ref { vm }]() mutable {
+    RefPtr<Thread> nativeThread = Thread::tryCreate("JS Thread"_s, [state = Ref { *state }, protectedVM = Ref { vm }]() mutable {
         threadMain(protectedVM.get(), WTF::move(state));
-    }, ThreadType::JavaScript, Thread::QOS::UserInitiated, Thread::defaultSchedulingPolicy, stackSpecification)->detach();
+    }, ThreadType::JavaScript, Thread::QOS::UserInitiated, Thread::defaultSchedulingPolicy, stackSpecification);
+    if (!nativeThread) [[unlikely]] {
+        // The OS refused the thread (maxJSThreads is above typical process
+        // limits). Undo the registration so the entry stops counting against
+        // the cap, and drop the roots: the cell is unreachable from JS, so its
+        // finalizer hook releases the ThreadState.
+        state->fnSlot.clear();
+        state->argSlots.clear();
+        state->jsThread.clear();
+        ThreadManager::singleton().unregisterThread(*state);
+        return throwVMRangeError(globalObject, scope, "could not create a native thread for Thread"_s);
+    }
+    nativeThread->detach();
 
     return JSValue::encode(thread);
 }
@@ -726,7 +666,7 @@ JSC_DEFINE_CUSTOM_GETTER(threadIdGetter, (JSGlobalObject* globalObject, EncodedJ
 // initializer, so nothing here ever forces a lazy slot (G25/G29).
 static bool isSpeciesProtectedBuiltin(JSObject* object)
 {
-    JSGlobalObject* global = object->globalObject();
+    JSGlobalObject* global = object->realm(); // realmless receivers were excluded by the caller
     const void* pointer = static_cast<const void*>(object);
 
     // Eager pairs (plain WriteBarrier slots). void* compares: some of these
@@ -828,6 +768,11 @@ static bool restrictReceiverStaysOnHookedPaths(JSObject* object)
 // Dev 8/11 excluded receivers (=> TypeError "cannot restrict this object").
 static bool isExcludedRestrictReceiver(JSObject* object)
 {
+    // Realmless structures (WebAssembly GC structs and arrays): there is no
+    // global whose species slots could be compared against, and the 5.7.1
+    // Structure transitions are undefined on a WebAssemblyGCStructure.
+    if (!object->realmMayBeNull())
+        return true;
     // Global objects (GlobalObjectType is in the environment range),
     // environment/scope objects.
     if (object->isEnvironment() || object->isWithScope())
@@ -936,40 +881,39 @@ JSC_DEFINE_HOST_FUNCTION(threadFuncRestrict, (JSGlobalObject* globalObject, Call
 
 // ---------------- ConcurrentAccessError ----------------
 
-static Structure* concurrentAccessErrorStructure(JSGlobalObject* globalObject, VM& vm)
-{
-    JSValue constructor = globalObject->getDirect(vm, Identifier::fromString(vm, "ConcurrentAccessError"_s));
-    if (constructor && constructor.isObject()) {
-        JSValue prototype = asObject(constructor)->getDirect(vm, vm.propertyNames->prototype);
-        if (prototype && prototype.isObject())
-            return ErrorInstance::createStructure(vm, globalObject, prototype);
-    }
-    return globalObject->errorStructure();
-}
-
+// The per-realm instance Structure is stamped once in
+// createConcurrentAccessErrorProperty, like every other error type's
+// errorStructure(ErrorType): engine-thrown and constructed instances share
+// one shape, and the engine's throws do not depend on the writable global
+// binding. The null fallback only covers a realm created without the
+// constructor installed.
 Exception* throwConcurrentAccessError(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral message)
 {
     VM& vm = globalObject->vm();
-    Structure* structure = concurrentAccessErrorStructure(globalObject, vm);
-    ErrorInstance* error = ErrorInstance::create(vm, structure, String { message }, jsUndefined());
+    Structure* structure = globalObject->concurrentAccessErrorStructure();
+    if (!structure) [[unlikely]]
+        structure = globalObject->errorStructure();
+    ErrorInstance* error = ErrorInstance::create(vm, structure, String { message }, JSValue());
     return throwException(globalObject, scope, error);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callConcurrentAccessError, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    VM& vm = globalObject->vm();
-    Structure* structure = concurrentAccessErrorStructure(globalObject, vm);
-    return JSValue::encode(ErrorInstance::create(globalObject, structure, callFrame->argument(0), callFrame->argument(1)));
+    Structure* structure = globalObject->concurrentAccessErrorStructure();
+    ASSERT(structure);
+    return JSValue::encode(ErrorInstance::create(globalObject, structure, callFrame->argument(0), callFrame->argument(1), nullptr, TypeNothing, ErrorType::Error, false));
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructConcurrentAccessError, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue prototype = callFrame->jsCallee()->get(globalObject, vm.propertyNames->prototype);
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, concurrentAccessErrorStructure, newTarget, callFrame->jsCallee());
     RETURN_IF_EXCEPTION(scope, { });
-    Structure* structure = prototype.isObject() ? ErrorInstance::createStructure(vm, globalObject, prototype) : concurrentAccessErrorStructure(globalObject, vm);
-    RELEASE_AND_RETURN(scope, JSValue::encode(ErrorInstance::create(globalObject, structure, callFrame->argument(0), callFrame->argument(1))));
+    ASSERT(structure);
+    bool isSubclass = newTarget != callFrame->jsCallee();
+    RELEASE_AND_RETURN(scope, JSValue::encode(ErrorInstance::create(globalObject, structure, callFrame->argument(0), callFrame->argument(1), nullptr, TypeNothing, ErrorType::Error, false, isSubclass ? newTarget : nullptr)));
 }
 
 // ---------------- property factories ----------------
@@ -1008,7 +952,12 @@ JSValue createConcurrentAccessErrorProperty(VM& vm, JSObject* globalObjectArg)
     prototype->putDirect(vm, vm.propertyNames->name, jsNontrivialString(vm, "ConcurrentAccessError"_s), static_cast<unsigned>(PropertyAttribute::DontEnum));
     prototype->putDirect(vm, vm.propertyNames->message, jsEmptyString(vm), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
+    globalObject->setConcurrentAccessErrorStructure(vm, ErrorInstance::createStructure(vm, globalObject, prototype));
+
+    // An Error subclass in the NativeError shape: the constructor inherits
+    // from %Error%, not Function.prototype.
     JSFunction* constructor = JSFunction::create(vm, globalObject, 1, "ConcurrentAccessError"_s, callConcurrentAccessError, ImplementationVisibility::Public, NoIntrinsic, constructConcurrentAccessError);
+    constructor->setPrototypeDirect(vm, globalObject->errorConstructor());
     constructor->putDirect(vm, vm.propertyNames->prototype, prototype, static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     prototype->putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     return constructor;

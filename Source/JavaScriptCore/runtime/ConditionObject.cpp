@@ -40,20 +40,6 @@
 
 namespace JSC {
 
-// UNGIL §A.2.4 rule 4 / annex W W1 (AB-17 item 4) — park-lite predicates and
-// the W1 carrier service episode. Same-library seams (consumers redeclare;
-// the predicates of record live in VMTraps.cpp, the episode helper and the
-// captured-lite accessor in JSLock.cpp). GIL-on,
-// parkLitePollTerminationRequested(vm, nullptr) is byte-equivalent to the
-// landed jsThreadParkTerminationRequested (watchdog-check folded in);
-// GIL-off it is termination-ONLY against the PARK lite's word, and the
-// watchdog-check bit is serviced by the W1 episode instead of being treated
-// as a termination verdict.
-bool parkLitePollTerminationRequested(VM&, VMLite* parkLite);
-bool parkLitePollWatchdogCheckRequested(VM&, VMLite* parkLite);
-VMLite* capturedParkLiteOfCurrentThreadIfAny(VM&);
-bool reacquireParkedCarrierAndServiceWatchdogCheck(VM&);
-
 const ClassInfo JSConditionObject::s_info = { "Condition"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSConditionObject) };
 
 static JSC_DECLARE_HOST_FUNCTION(callCondition);
@@ -337,6 +323,16 @@ JSC_DEFINE_HOST_FUNCTION(conditionProtoFuncAsyncWait, (JSGlobalObject* globalObj
         // that arm (escalated to the spec owner in the D12 entry).
         if (asyncHolder && asyncHolder->grantWithFunction && !lock.asyncGrantRunByCurrentThread())
             asyncHolder = nullptr;
+        // (b) is unvalidated consumption: CAS the holder ticket's consumed
+        // flag here, under m_queueLock, so exactly one consumer ever runs
+        // asyncReleaseInternal for this grant. GIL-off, a release() call or
+        // another asyncWait on a foreign thread can win the CAS between the
+        // validation above and the release below; the loser must treat the
+        // lock as not held rather than unlock m_lock a second time. An
+        // outstanding release fn called later loses the CAS and throws the
+        // 4.2 Error.
+        if (asyncHolder && !asyncHolder->tryConsume())
+            asyncHolder = nullptr;
     }
     if (!syncHeld && !asyncHolder)
         return throwVMTypeError(globalObject, scope, "Condition.prototype.asyncWait requires the lock to be held"_s);
@@ -372,10 +368,8 @@ JSC_DEFINE_HOST_FUNCTION(conditionProtoFuncAsyncWait, (JSGlobalObject* globalObj
         lock.releaseSyncHold();
         lock.releasePump(vm);
     } else {
-        // (b) is unvalidated consumption: CAS the holder ticket's consumed
-        // flag; an outstanding release fn called later loses the CAS and
-        // throws the 4.2 Error. Then run the 5.5a async-release sequence.
-        asyncHolder->tryConsume();
+        // (b): the ticket was consumed during validation; run the 5.5a
+        // async-release sequence now that the waiter is enqueued.
         lock.asyncReleaseInternal(*asyncHolder, vm);
     }
     return JSValue::encode(promise);

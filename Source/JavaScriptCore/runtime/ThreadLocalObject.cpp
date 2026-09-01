@@ -27,6 +27,7 @@
 #include "ThreadLocalObject.h"
 
 #include "CustomGetterSetter.h"
+#include "InternalFunction.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "ThreadObject.h"
@@ -69,9 +70,18 @@ JSC_DEFINE_HOST_FUNCTION(constructThreadLocal, (JSGlobalObject* globalObject, Ca
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue prototype = callFrame->jsCallee()->get(globalObject, vm.propertyNames->prototype);
-    RETURN_IF_EXCEPTION(scope, { });
-    Structure* structure = JSThreadLocalObject::createStructure(vm, globalObject, prototype.isObject() ? prototype : jsNull());
+    // Per-realm cached instance Structure (stamped in createThreadLocalProperty),
+    // so every ThreadLocal shares one StructureID and the `.value` accessor
+    // site stays monomorphic; subclassing honors newTarget through
+    // createSubclassStructure like constructLock. Only installed under
+    // useJSThreads.
+    Structure* structure = globalObject->threadLocalObjectStructure();
+    ASSERT(structure);
+    JSValue newTarget = callFrame->newTarget();
+    if (newTarget != callFrame->jsCallee()) [[unlikely]] {
+        structure = InternalFunction::createSubclassStructure(globalObject, asObject(newTarget), structure);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return JSValue::encode(JSThreadLocalObject::create(vm, structure));
 }
 
@@ -129,6 +139,8 @@ JSValue createThreadLocalProperty(VM& vm, JSObject* globalObjectArg)
     JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(globalObjectArg);
     JSObject* prototype = constructEmptyObject(globalObject);
     prototype->putDirectCustomAccessor(vm, Identifier::fromString(vm, "value"_s), CustomGetterSetter::create(vm, threadLocalValueGetter, threadLocalValueSetter), static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor));
+
+    globalObject->setThreadLocalObjectStructure(vm, JSThreadLocalObject::createStructure(vm, globalObject, prototype));
 
     JSFunction* constructor = JSFunction::create(vm, globalObject, 0, "ThreadLocal"_s, callThreadLocal, ImplementationVisibility::Public, NoIntrinsic, constructThreadLocal);
     constructor->putDirect(vm, vm.propertyNames->prototype, prototype, static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));

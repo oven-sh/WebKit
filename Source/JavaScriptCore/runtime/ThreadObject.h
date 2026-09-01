@@ -92,7 +92,8 @@ JS_EXPORT_PRIVATE Exception* throwConcurrentAccessError(JSGlobalObject*, ThrowSc
 JS_EXPORT_PRIVATE JSThread* ensureJSThreadForState(JSGlobalObject*, ThreadState&);
 
 // G11: may the current thread block (join / contended hold / cond.wait /
-// property Atomics.wait)?
+// property Atomics.wait)? A spawned Thread under GIL-off always may; other
+// threads follow the embedder's isAtomicsWaitAllowedOnCurrentThread policy.
 bool jsThreadsCanBlockOnCurrentThread(VM&);
 
 } // namespace JSC
