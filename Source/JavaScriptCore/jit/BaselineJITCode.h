@@ -107,7 +107,7 @@ public:
     JITCodeMap m_jitCodeMap;
     JITConstantPool m_constantPool;
     std::unique_ptr<PCToCodeOriginMap> m_pcToCodeOriginMap;
-    // End time of the collection in which a CodeBlock running this code last died; UnlinkedCodeBlock's cached copy is
+    // The collection in which a CodeBlock running this code last died (Heap::lastGCBoundaryTime); UnlinkedCodeBlock's cached copy is
     // released once no CodeBlock has used it for a while (Heap::releaseUnusedSharedBaselineCode).
     MonotonicTime m_ownerWentAwayAt;
 private:
