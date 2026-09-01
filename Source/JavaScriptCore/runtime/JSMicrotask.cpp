@@ -1656,7 +1656,9 @@ static void moduleGraphInstanceLoadSettled(JSGlobalObject* globalObject, VM& vm,
     RETURN_IF_EXCEPTION(scope, void());
     auto type = static_cast<ScriptFetchParameters::Type>(context->getDirect(vm, vm.propertyNames->type).asInt32());
     bool deferred = context->getDirect(vm, vm.propertyNames->builtinNames().deferPrivateName()).isTrue();
-    JSPromise* namespacePromise = JSModuleLoader::instantiateLoadedModuleIntoGraphInstance(globalObject, key, instance, type, deferred);
+    // resultPromise is the import() promise the importing code awaits: the
+    // evaluation's top-level-await deadlock check needs it.
+    JSPromise* namespacePromise = JSModuleLoader::instantiateLoadedModuleIntoGraphInstance(globalObject, key, instance, type, deferred, resultPromise);
     if (scope.exception()) [[unlikely]] {
         resultPromise->rejectWithCaughtException(vm, scope);
         return;

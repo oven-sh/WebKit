@@ -499,7 +499,7 @@ JSObject* JSModuleLoader::createGraphInstanceImportContext(JSGlobalObject* globa
     return context;
 }
 
-JSPromise* JSModuleLoader::instantiateLoadedModuleIntoGraphInstance(JSGlobalObject* globalObject, const Identifier& key, ModuleGraphInstance* instance, ScriptFetchParameters::Type type, bool deferred)
+JSPromise* JSModuleLoader::instantiateLoadedModuleIntoGraphInstance(JSGlobalObject* globalObject, const Identifier& key, ModuleGraphInstance* instance, ScriptFetchParameters::Type type, bool deferred, JSPromise* dynamicImportPromise)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -517,13 +517,21 @@ JSPromise* JSModuleLoader::instantiateLoadedModuleIntoGraphInstance(JSGlobalObje
     auto phase = deferred ? AbstractModuleRecord::ModulePhase::Defer : AbstractModuleRecord::ModulePhase::Evaluation;
     auto* sourceRecord = dynamicDowncast<JSModuleRecord>(record);
     if (!sourceRecord) {
+        if (is<CyclicModuleRecord>(record)) {
+            // As for a static import (JSModuleRecord::createInstanceEnvironment):
+            // only Source Text Module Records can be instantiated per instance,
+            // and sharing the primary's copy of another Cyclic Module Record
+            // (WebAssembly) would hand out a namespace nobody evaluated.
+            throwTypeError(globalObject, scope, makeString("Module '"_s, key.string(), "' cannot be instantiated into a module graph instance (only JavaScript and synthetic modules can)"_s));
+            return nullptr;
+        }
         // Synthetic modules: an environment in the instance when they carry
         // per-instance state, otherwise shared with the primary graph.
         JSModuleNamespaceObject* ns = record->getModuleNamespace(globalObject, instance, phase);
         RETURN_IF_EXCEPTION(scope, nullptr);
         RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, ns));
     }
-    JSPromise* evaluated = sourceRecord->instantiateIntoGraphInstanceAsync(globalObject, instance, phase);
+    JSPromise* evaluated = sourceRecord->instantiateIntoGraphInstanceAsync(globalObject, instance, phase, dynamicImportPromise);
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSObject* context = createGraphInstanceImportContext(globalObject, instance, key, type, deferred);
     context->putDirect(vm, vm.propertyNames->value, sourceRecord);

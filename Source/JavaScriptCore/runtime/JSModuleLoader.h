@@ -111,7 +111,7 @@ public:
     JS_EXPORT_PRIVATE static JSPromise* importIntoGraphInstance(JSGlobalObject*, JSString* specifier, JSValue parameters, const SourceOrigin& referrer, ModuleGraphInstance*, bool deferred = false);
     JS_EXPORT_PRIVATE static JSPromise* loadModuleForGraphInstance(JSGlobalObject*, const Identifier& key, RefPtr<ScriptFetchParameters>&&, ModuleGraphInstance*);
     // Resolves with the instance's namespace object once its (possibly asynchronous) evaluation completes.
-    JS_EXPORT_PRIVATE static JSPromise* instantiateLoadedModuleIntoGraphInstance(JSGlobalObject*, const Identifier& key, ModuleGraphInstance*, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript, bool deferred = false);
+    JS_EXPORT_PRIVATE static JSPromise* instantiateLoadedModuleIntoGraphInstance(JSGlobalObject*, const Identifier& key, ModuleGraphInstance*, ScriptFetchParameters::Type = ScriptFetchParameters::Type::JavaScript, bool deferred = false, JSPromise* dynamicImportPromise = nullptr);
     static JSObject* createGraphInstanceImportContext(JSGlobalObject*, ModuleGraphInstance*, const Identifier& key, ScriptFetchParameters::Type, bool deferred);
 #endif
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false);

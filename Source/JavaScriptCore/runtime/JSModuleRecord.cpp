@@ -446,7 +446,7 @@ JSModuleEnvironment* JSModuleRecord::instantiateIntoGraphInstance(JSGlobalObject
     return env;
 }
 
-JSPromise* JSModuleRecord::instantiateIntoGraphInstanceAsync(JSGlobalObject* globalObject, ModuleGraphInstance* instance, ModulePhase phase)
+JSPromise* JSModuleRecord::instantiateIntoGraphInstanceAsync(JSGlobalObject* globalObject, ModuleGraphInstance* instance, ModulePhase phase, JSPromise* dynamicImportPromise)
 {
     ModuleGraphInstance::BusyScope busy(globalObject, instance);
     VM& vm = globalObject->vm();
@@ -472,7 +472,7 @@ JSPromise* JSModuleRecord::instantiateIntoGraphInstanceAsync(JSGlobalObject* glo
             if (!cyclic)
                 continue;
 #if USE(BUN_JSC_ADDITIONS)
-            JSPromise* promise = cyclic->evaluate(globalObject, nullptr, instance);
+            JSPromise* promise = cyclic->evaluate(globalObject, dynamicImportPromise, instance);
 #else
             JSPromise* promise = cyclic->evaluate(globalObject, instance);
 #endif
@@ -502,8 +502,9 @@ JSPromise* JSModuleRecord::instantiateIntoGraphInstanceAsync(JSGlobalObject* glo
         return result;
     }
 #if USE(BUN_JSC_ADDITIONS)
-    JSPromise* promise = CyclicModuleRecord::evaluate(globalObject, nullptr, instance);
+    JSPromise* promise = CyclicModuleRecord::evaluate(globalObject, dynamicImportPromise, instance);
 #else
+    UNUSED_PARAM(dynamicImportPromise);
     JSPromise* promise = CyclicModuleRecord::evaluate(globalObject, instance);
 #endif
     if (scope.exception()) [[unlikely]] {

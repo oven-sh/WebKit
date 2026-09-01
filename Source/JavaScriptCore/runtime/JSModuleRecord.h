@@ -89,7 +89,10 @@ public:
     // (throws for top-level await) and returns this module's environment in the
     // instance; the asynchronous form returns the evaluation promise.
     JS_EXPORT_PRIVATE JSModuleEnvironment* instantiateIntoGraphInstance(JSGlobalObject*, ModuleGraphInstance*, ModulePhase = ModulePhase::Evaluation);
-    JS_EXPORT_PRIVATE JSPromise* instantiateIntoGraphInstanceAsync(JSGlobalObject*, ModuleGraphInstance*, ModulePhase = ModulePhase::Evaluation);
+    // `dynamicImportPromise` is the import() promise this evaluation settles,
+    // when there is one, for the top-level-await deadlock check in
+    // innerModuleEvaluation (BUN_JSC_ADDITIONS); null otherwise.
+    JS_EXPORT_PRIVATE JSPromise* instantiateIntoGraphInstanceAsync(JSGlobalObject*, ModuleGraphInstance*, ModulePhase = ModulePhase::Evaluation, JSPromise* dynamicImportPromise = nullptr);
     // ExecuteModule against this record's environment in `instance`.
     void executeInstance(JSGlobalObject*, ModuleRecordInstance*, JSPromise* capability);
     JSValue evaluateInstance(JSGlobalObject*, ModuleRecordInstance*, JSValue sentValue, JSValue resumeMode);
