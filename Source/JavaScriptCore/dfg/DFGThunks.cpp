@@ -40,25 +40,24 @@
 #include "ProbeContext.h"
 #include "VMLite.h"
 
-namespace JSC {
+namespace JSC { namespace DFG {
 
-// UNGIL U-T3 emitter (defined in jit/AssemblyHelpers.cpp). Self-declaration,
-// mirroring FTLOSRExitCompiler.cpp's pattern — no header owns this form yet.
-void loadVMLite(AssemblyHelpers&, GPRReg);
-
-namespace DFG {
-
-// UNGIL §A.1.6 (ANNEX A16) — U-T4a, DFG half of the FTL U-T4b fix
-// (FTLSaveRestore.cpp materializeBakedScratchBufferDataPointer; duplicated
-// locally so DFG does not depend on an ENABLE(FTL_JIT) TU). Resolves the
-// CURRENT lite's ScratchBuffer for a process-wide ScratchBufferRegistry
-// index and leaves its dataBuffer() pointer in `dest`. Clobbers only `dest`;
-// the loads are address-dependent against the release-publishing install
-// (VMLite::ensureScratchBufferAtIndex).
+// Leaves the CURRENT lite's ScratchBuffer dataBuffer() address for a baked
+// ScratchBufferRegistry index in `dest` and writes no other register (the DFG
+// twin of FTLSaveRestore.cpp's materializeBakedScratchBufferDataPointer, kept
+// local so DFG does not depend on an ENABLE(FTL_JIT) TU). dest may be a
+// macro-assembler temp — the thunk below passes ARM64's memoryTempRegister —
+// so every offset addressed off dest must be an ldr immediate; an unencodable
+// offset would make load64 materialize it through that same temp and clobber
+// the base. The loads are address-dependent against the release-publishing
+// install in VMLite::ensureScratchBufferAtIndex.
 static void materializePerLiteScratchBufferDataPointer(CCallHelpers& jit, unsigned bakedIndex, GPRReg dest)
 {
+    // 32760 is the largest 64-bit ldr unsigned immediate on ARM64.
+    static_assert(static_cast<size_t>(VMLite::offsetOfScratchSegments()) + (VMLite::maxScratchSegments - 1) * sizeof(void*) <= 32760);
+    static_assert((VMLite::scratchSegmentSize - 1) * sizeof(void*) <= 32760);
     ASSERT(bakedIndex < VMLite::maxScratchSegments * VMLite::scratchSegmentSize);
-    loadVMLite(jit, dest);
+    jit.loadVMLite(dest);
     jit.loadPtr(
         CCallHelpers::Address(
             dest,
@@ -93,14 +92,12 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
     const bool perLiteMode = vm.gilOff();
 
     size_t scratchSize = sizeof(EncodedJSValue) * (GPRInfo::numberOfRegisters + FPRInfo::numberOfRegisters);
-    // A2-amend round 4: one extra trailing slot in perLiteMode carrying the
-    // same-VM-validated address of the osrExitJumpDestination word (per-lite
-    // copy, or VM-block fallback in Release). The validation must run where
-    // free GPRs exist (after the register dump): bufferGPR is the x86_64
-    // assembler scratch (r11), and a branchPtr against a TrustedImmPtr
-    // materializes the immediate INTO r11 — using bufferGPR as the compare
-    // base there self-clobbers (this exact bug shipped in the first cut of
-    // this guard: always-foreign compare => Debug trap / Release wild jump).
+    // perLiteMode adds one trailing slot holding the address of the current
+    // lite's osrExitJumpDestination word, validated as belonging to this VM.
+    // The validation needs a free GPR besides bufferGPR, so it runs after the
+    // register dump: bufferGPR is the assembler scratch, which a branchPtr
+    // against a TrustedImmPtr clobbers to materialize the immediate, so it
+    // cannot also be the compare base.
     const ptrdiff_t validatedDestinationSlotOffset = scratchSize;
     unsigned bakedIndex = std::numeric_limits<unsigned>::max();
     EncodedJSValue* buffer = nullptr;
@@ -166,37 +163,27 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 
 #if USE(JSVALUE64)
     if (perLiteMode) [[unlikely]] {
-        // Same-VM guard (K4 table-I Group-3 row addendum; A2-amend round 4 —
-        // the one sibling Group-3 reader/writer pair the round-3 audit
-        // missed): osrExitIndex / osrExitJumpDestination are consumed and
-        // published by operationCompileOSRExit through VM::group3Primitives(),
-        // whose lite arm requires lite->vm == &vm (this thunk is keyed per-VM
-        // in vm.jitStubs, so &vm is an emission-time immediate). A foreign
-        // gilOff lite would make this store invisible to that read, and the
-        // final indirect farJump through a foreign/stale per-lite word is a
-        // wild PC (the A4 face). Validate ONCE here, where the register dump
-        // above has freed regT0 (restored by the load spooler later), and
-        // stash the validated destination word ADDRESS in the extra scratch
-        // slot; the post-restore jump (only bufferGPR free there, and on
-        // x86_64 bufferGPR doubles as the branchPtr immediate scratch) then
-        // needs no compare. Never-taken under JSLock::didAcquireLock; ASSERT
-        // builds fail-stop instead of silently diverging (family disposition).
-        loadVMLite(jit, GPRInfo::regT0);
+        // operationCompileOSRExit reads osrExitIndex and publishes
+        // osrExitJumpDestination through VM::group3Primitives(), which uses
+        // the current lite only when lite->vm == &vm (this thunk is keyed per
+        // VM in vm.jitStubs, so &vm is an emission-time immediate). A foreign
+        // lite would hide the store below from that read and turn the final
+        // indirect jump through its destination word into a wild PC, so the
+        // lite is validated once here, where the register dump has freed
+        // regT0, and the validated word's address is stashed in the trailing
+        // scratch slot for the post-restore jump, which has no register left
+        // to compare with. The foreign arm is never taken under
+        // JSLock::didAcquireLock; because the word feeds an indirect jump it
+        // traps in every build flavor rather than jumping anywhere.
+        jit.loadVMLite(GPRInfo::regT0);
         auto foreignLite = jit.branchPtr(CCallHelpers::NotEqual, CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(VMLite::offsetOfVM())), CCallHelpers::TrustedImmPtr(&vm));
         jit.store32(GPRInfo::numberTagRegister, CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_osrExitIndex())));
         jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_osrExitJumpDestination())), GPRInfo::regT0);
         auto destinationResolved = jit.jump();
         foreignLite.link(&jit);
-        // A4-amend (control-flow-integrity tightening): the validated word
-        // feeds the final indirect farJump, so the foreign-lite arm
-        // fail-stops in ALL build flavors — a Release writer-symmetry
-        // fallback to the shared VM-block destination word would narrow
-        // the A4 wild-pc window, not close it. Never-taken under
-        // JSLock::didAcquireLock; deterministic trap at a known PC beats a
-        // narrowed wild jump.
         jit.breakpoint();
         destinationResolved.link(&jit);
-        materializePerLiteScratchBufferDataPointer(jit, bakedIndex, bufferGPR); // The guard block clobbered the x86_64 scratch (== bufferGPR).
+        materializePerLiteScratchBufferDataPointer(jit, bakedIndex, bufferGPR); // The compare above clobbered the assembler scratch, which is bufferGPR.
         jit.storePtr(GPRInfo::regT0, CCallHelpers::Address(bufferGPR, static_cast<int32_t>(validatedDestinationSlotOffset)));
     }
 #endif
@@ -239,11 +226,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
     // reserved temp (bufferGPR) may be clobbered for the indirection.
 #if USE(JSVALUE64)
     if (perLiteMode) [[unlikely]] {
-        // Jump through the same-VM-validated destination word address stashed
-        // by the guard block above (per-lite copy, or the VM-block word in
-        // the Release foreign-lite fallback). Only bufferGPR may be clobbered
-        // here — every real register was just restored — which is exactly why
-        // the validation could not live here (see the guard block comment).
+        // Jump through the per-lite destination word whose validated address
+        // the guard block above stashed in the trailing scratch slot. Every
+        // real register was just restored, so only bufferGPR may be clobbered
+        // here, which is why the validation could not live here.
         materializePerLiteScratchBufferDataPointer(jit, bakedIndex, bufferGPR);
         jit.loadPtr(CCallHelpers::Address(bufferGPR, static_cast<int32_t>(validatedDestinationSlotOffset)), bufferGPR);
         jit.farJump(CCallHelpers::Address(bufferGPR), OSRExitPtrTag);
@@ -307,7 +293,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrEntryThunkGenerator(VM& vm)
         // is done; only regT1 [target PC] and callFrameRegister are live), so
         // a caller-save base with the plain skip list restores every VM
         // callee save — same shape as the DFGOSRExit.cpp GenericUnwind
-        // gilOff arm. ARM64: regT3 is not the data temp (loadVMLite contract).
+        // gilOff arm.
         jit.loadVMLite(GPRInfo::regT3);
         jit.loadPtr(MacroAssembler::Address(GPRInfo::regT3, static_cast<int32_t>(VMLite::offsetOfPrimitives() + VMLitePrimitives::offsetOf_topEntryFrame())), GPRInfo::regT3);
         jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBufferImpl(GPRInfo::regT3, RegisterSet::stackRegisters());

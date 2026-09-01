@@ -368,9 +368,7 @@ ALWAYS_INLINE void concurrentCodePtrStore(CodePtr<tag>& slot, CodePtr<tag> value
 // but every load is a consume-ordered atomic and every replace is a release
 // exchange. Refcounting discipline is identical to RefPtr; the displaced
 // value is deref'd after the exchange. Lifetime of the loaded pointer is the
-// code-lifecycle protocol's concern (epoch reclamation / isShared()
-// immortality premise — see FunctionExecutable::codeBlockWithEntrypointFor),
-// not this class's.
+// code-lifecycle protocol's concern, not this class's.
 class ConcurrentJITCodePtr {
 public:
     ConcurrentJITCodePtr()
@@ -411,13 +409,6 @@ public:
 
     ConcurrentJITCodePtr& operator=(Ref<JITCode>&& newCode) { return *this = RefPtr<JITCode>(WTF::move(newCode)); }
     ConcurrentJITCodePtr& operator=(std::nullptr_t) { return *this = RefPtr<JITCode>(); }
-
-    // Retract-and-take, for handing the displaced code to retirement
-    // (RetiredJITArtifacts) instead of dropping it.
-    RefPtr<JITCode> take()
-    {
-        return adoptRef(WTF::atomicExchange(&m_ptr, static_cast<JITCode*>(nullptr), std::memory_order_release));
-    }
 
 private:
     JITCode* loadConsume() const { return WTF::atomicLoad(const_cast<JITCode**>(&m_ptr), JITCodePointerConsumeOrder); }

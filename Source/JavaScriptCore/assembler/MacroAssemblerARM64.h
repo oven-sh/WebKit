@@ -5901,6 +5901,14 @@ public:
         m_assembler.dmbISH();
     }
 
+    // The JIT-code counterpart of WTF::crossModifyingCodeFence(): a context
+    // synchronization event, so that code written and cache-flushed by another
+    // thread is fetched by this PE only after the ISB completes.
+    void crossModifyingCodeFence()
+    {
+        m_assembler.isb();
+    }
+
     void loadAcq8SignedExtendTo32(Address address, RegisterID dest)
     {
         loadAcq8(address, dest);
@@ -6439,24 +6447,36 @@ public:
 #endif // ENABLE(FAST_TLS_JIT)
 
 #if OS(LINUX)
-    // ELF initial-exec TLS load: TPIDR_EL0 + ldr at a constant offset, baked
-    // as an immediate at emission. The offset comes from
-    // JSC::butterflyTIDTagELFTLSOffset() (jit/ConcurrentButterflyOperations.h),
-    // RELEASE_ASSERTed thread-invariant (SPEC-jit-annex App. R5; SPEC-jit
-    // R5/Task 1b). The offset is materialized through dst itself, so no
-    // macro scratch register is needed for encodable offsets; load64 falls
-    // back to the data temp for unencodable ones, hence dst must not be the
-    // data temp (mirrors loadFromTLS64 above).
+    // ELF initial-exec TLS load: TPIDR_EL0 plus a constant, thread-invariant
+    // offset baked at emission (JSC::butterflyTIDTagELFTLSOffset() /
+    // currentVMLiteELFTLSOffset()). The offset is folded into dst with add/sub
+    // immediates and the ldr's own immediate (the :tprel_hi12:/:tprel_lo12:
+    // form), so no macro scratch register is touched: callers may pass any
+    // GPR as dst, including the macro temps, and may emit this under
+    // DisallowMacroScratchRegisterUsage.
     void loadFromELFTLS64(intptr_t offset, RegisterID dst)
     {
-        RELEASE_ASSERT(offset == static_cast<intptr_t>(static_cast<int32_t>(offset)));
+        RELEASE_ASSERT(!(offset & 7) && offset > -(1 << 24) && offset < (1 << 24));
         m_assembler.mrs_TPIDR_EL0(dst);
-        load64(Address(dst, static_cast<int32_t>(offset)), dst);
+        uint32_t magnitude = static_cast<uint32_t>(offset < 0 ? -offset : offset);
+        uint32_t high = magnitude >> 12;
+        uint32_t low = magnitude & 0xfff;
+        if (offset < 0) {
+            if (high)
+                m_assembler.sub<64>(dst, dst, UInt12(high), 12);
+            if (low)
+                m_assembler.sub<64>(dst, dst, UInt12(low));
+            m_assembler.ldr<64>(dst, dst, 0u);
+            return;
+        }
+        if (high)
+            m_assembler.add<64>(dst, dst, UInt12(high), 12);
+        m_assembler.ldr<64>(dst, dst, low);
     }
 
     static bool loadFromELFTLS64NeedsMacroScratchRegister()
     {
-        return true;
+        return false;
     }
 #endif // OS(LINUX)
     

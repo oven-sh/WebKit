@@ -39,47 +39,26 @@
 
 namespace JSC { namespace DFG {
 
-// checktraps-dejank-invalidation-point, amend round 2 (AUDIT-checktraps P10b/
-// P10c closure, option (iii)): GIL-off, a node whose slow path can PARK on a
-// heap-access-release edge — a GC-heap allocation blocking on a shared-GC
-// handshake, the F8 (SPEC-congc §A.3.2b) gated acquireHeapAccess resume, a
-// class-2 transition-wait / compilation-lock spin
-// (parkSitePollAndParkForStopTheWorld) — must clobber heap facts, because
-// such parks carry NO invalidation point at their rejoin (and the
-// allocation-path ones carry no conductor-heap-fact-rewrite epoch check
-// either), yet the §A.3.2 stop predicate counts the parked (access-released)
-// thread as quiescent, so a §A.3 heap-fact window (haveABadTime butterfly
-// nuking, Class-A structure retags, debugger JS) can complete OVER the park.
-// A heap fact hoisted or CSE'd across the node would then be consumed stale
-// at the rejoin with nothing to cut it off (the jettison such a window
-// triggers only fires invalidation points; the consumption sits between the
-// rejoin and the next IP). Until the AHA resume edge gets its own epoch
-// check + rejoin discipline (closure options (i)/(ii) in
-// docs/threads/AUDIT-checktraps.md §4 P10c; Heap.cpp, outside that change's
-// ownership), these nodes simply clobber the heap GIL-off: jank contained to
-// parkable slow paths, never unsound — and no worse than the pre-change
-// state, where the CheckTraps poll clobber killed hoisting out of every
-// polling loop anyway. Flag-off and GIL-on this predicate is constant false
-// (flag-off byte-identical codegen LAW; GIL-on the mutator holds the GIL
-// across the slow path, so no §A.3 window can complete over it).
+// GIL-off, a node whose slow path can park on a heap-access release (a GC
+// allocation blocking on the shared-GC handshake, the gated acquireHeapAccess
+// resume, a transition-wait or compilation-lock spin) must clobber heap
+// facts: the parked thread counts as quiescent, so a stop-the-world window
+// (haveABadTime, structure retags, debugger JS) can complete over the park,
+// and the rejoin carries no invalidation point or epoch check that would cut
+// off a fact hoisted, CSE'd or propagated across the node. Flag-off and
+// GIL-on this predicate is constant false: flag-off codegen is unchanged,
+// and GIL-on the mutator holds the GIL across the slow path.
 //
-// SINGLE SOURCE OF TRUTH: this predicate is consumed by clobberize() (the
-// pre-switch write(Heap)) AND by
-// AbstractInterpreter::executeEffects (didFoldClobberStructures(), which
-// keeps the DFGCFAPhase AI-clobberize agreement assert satisfied without
-// destroying in-block AI precision — the in-block exposure predates this
-// change and is recorded as P10c-R in the audit) AND by
-// clobbersExitState() (DFGClobbersExitState.cpp), which SKIPS exactly the
-// injected pre-switch write: it models cross-thread visibility over a park,
-// not an observable mutation by the node itself, so it must not flip the
-// node's exit-state answer away from the flag-off model (phases like
-// DFGTierUpCheckInjectionPhase insert predicate nodes with a preserved
-// origin and rely on that). The skip depends on the pre-switch write being
-// the FIRST write clobberize() reports; keep it ahead of the switch. Any op
-// added here affects all three automatically; never gate the sides
-// differently.
+// Three consumers share this predicate and must never be gated differently:
+// clobberize() emits a pre-switch write(Heap); AbstractInterpreter::
+// executeEffects calls clobberStructures() so ConstantFoldingPhase keeps a
+// CheckStructure/CheckArray that follows the park; clobbersExitState() skips
+// exactly that injected write (it models cross-thread visibility, not an
+// observable mutation by the node, and phases like TierUpCheckInjection
+// insert predicate nodes with a preserved origin). The skip relies on the
+// injected write being the FIRST write clobberize() reports.
 //
-// Phantom* allocation nodes are deliberately ABSENT: they emit no code (the
+// Phantom* allocation nodes are deliberately absent: they emit no code (the
 // allocation was sunk; materialization happens at OSR exit), so there is no
 // runtime park site under them.
 inline bool jsThreadsParkableSlowPathClobbersHeapFacts(Graph& graph, Node* node)
@@ -286,14 +265,12 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         write(Heap);
     };
 
-    // checktraps-dejank-invalidation-point, amend round 2: GIL-off, parkable
-    // slow paths clobber heap facts (see the predicate's comment above for
-    // the full soundness argument). This pre-switch write is processed
-    // before any def() the node's own case emits, so the node's own results
-    // (e.g. NewArray's ArrayLengthLoc def) stay CSE-able while every PRIOR
-    // heap-fact availability is killed. The abstract interpreter consumes
-    // the SAME predicate (didFoldClobberStructures()), keeping the
-    // DFGCFAPhase AI-clobberize agreement assert green.
+    // GIL-off, parkable slow paths clobber heap facts (see the predicate's
+    // comment above). This pre-switch write is processed before any def()
+    // the node's own case emits, so the node's own results (e.g. NewArray's
+    // ArrayLengthLoc def) stay CSE-able while every prior heap-fact
+    // availability is killed. The abstract interpreter consumes the same
+    // predicate with clobberStructures().
     if (jsThreadsParkableSlowPathClobbersHeapFacts(graph, node)) [[unlikely]]
         write(Heap);
 
@@ -920,6 +897,14 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                 // GetButterfly result is consumed across this clobber.
                 write(JSObject_butterfly);
                 write(Butterfly_vectorLength);
+                // Typed-array view fields (vector, length, byteOffset) and the
+                // other MiscFields-defined facts must be re-loaded after every
+                // poll: a foreign detach or transfer zeroes the view under only
+                // its cell lock, and the old mapping it quarantines is released
+                // at the next stop, which this poll may be parked in. A hoisted
+                // {vector, length} pair would otherwise survive the poll and
+                // index freed memory.
+                write(MiscFields);
                 write(Absolute);
                 write(JSMapFields);
                 write(JSSetFields);

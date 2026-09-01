@@ -2220,13 +2220,16 @@ void JIT::emit_op_enumerator_put_by_val(const JSInstruction* currentInstruction)
 
     // Otherwise it's out of line
     outOfLineAccess.link(this);
+    JumpList threadedOutOfLineStore;
     if (Options::useJSThreads()) [[unlikely]] {
-        // SPEC-jit section 5.5 (Task 8): the out-of-line store needs the
-        // WRITE choke point, but every spare GPR here must survive onto the
-        // generic put_by_val IC path; route out-of-line own-structure puts
-        // through the mismatch/generic route instead (the IC carries the
-        // predicate). Inline stores above are cell-internal and stay fast.
-        structureMismatch.append(jump());
+        // The out-of-line store needs the butterfly write predicate, but every
+        // spare GPR here must survive onto the generic put_by_val IC, so the
+        // store goes straight to that IC (which carries the predicate) with the
+        // property name still in propertyGPR. It must not join structureMismatch:
+        // scratch2GPR holds the index here, not the mode word the IndexedMode
+        // test below reads, and the structure did match. Inline stores above
+        // are cell-internal and stay fast.
+        threadedOutOfLineStore.append(jump());
     } else {
         sub32(Address(scratch1GPR, JSPropertyNameEnumerator::cachedInlineCapacityOffset()), scratch2GPR);
         neg32(scratch2GPR);
@@ -2246,6 +2249,7 @@ void JIT::emit_op_enumerator_put_by_val(const JSInstruction* currentInstruction)
     emitGetVirtualRegister(index, propertyGPR);
 
     isNotIndexed.link(this);
+    threadedOutOfLineStore.link(this);
     emitArrayProfilingSiteWithCellAndProfile(baseGPR, profileGPR, scratch1GPR);
 
     ECMAMode ecmaMode = bytecode.m_ecmaMode;

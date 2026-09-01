@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSExportMacros.h"
+#include "Options.h"
 #include <wtf/Atomics.h>
 #include <wtf/DebugHeap.h>
 #include <wtf/FastMalloc.h>
@@ -276,7 +277,14 @@ public:
     // As a convenience, this will ignore 0. That's because code paths in the DFG
     // that create speculation watchpoints may choose to bail out if speculation
     // had already been terminated.
-    void NODELETE add(Watchpoint*);
+    // Returns false only flag-on, when the set is already IsInvalidated: a fire
+    // on another mutator (a deferred fire's claim, a Class-B fire, a thin
+    // InlineWatchpointSet fire that raced the inflation) has already
+    // invalidated the watched fact, and the watchpoint is not linked because
+    // nothing would ever fire it. The caller must then treat the fact as not
+    // watchable: fail the compilation, skip the cache, or run the handler it
+    // would have run on a fire.
+    bool NODELETE add(Watchpoint*);
     
     // Force the watchpoint set to behave as if it was being watched even if no
     // watchpoints have been installed. This will result in invalidation if the
@@ -285,11 +293,17 @@ public:
     // set watchpoints that we believe will actually be fired.
     void startWatching()
     {
-        ASSERT(m_state.loadRelaxed() != IsInvalidated);
+        ASSERT(Options::useJSThreads() || m_state.loadRelaxed() != IsInvalidated);
         if (m_state.loadRelaxed() == IsWatched)
             return;
         WTF::storeStoreFence();
-        m_state.storeRelaxed(IsWatched);
+        if (Options::useJSThreads()) [[unlikely]] {
+            // IsInvalidated is terminal: a fire on another mutator may have
+            // reached it since the check above, and a plain store would re-arm
+            // the set over that fire.
+            m_state.compareExchangeStrong(ClearWatchpoint, IsWatched);
+        } else
+            m_state.storeRelaxed(IsWatched);
         WTF::storeStoreFence();
     }
 
@@ -316,6 +330,15 @@ public:
     
     void invalidate(VM& vm, const FireDetail& detail)
     {
+        if (Options::useJSThreads()) [[unlikely]] {
+            // Another mutator's add() can arm the set right up to the moment
+            // the terminal state is claimed, so claim it by CAS and fire
+            // whenever the claim finds the set armed; a watchpoint linked to
+            // an IsInvalidated set would otherwise never fire.
+            while (m_state.compareExchangeStrong(ClearWatchpoint, IsInvalidated) == IsWatched)
+                fireAll(vm, detail);
+            return;
+        }
         if (state() == IsWatched)
             fireAll(vm, detail);
         m_state.storeRelaxed(IsInvalidated);
@@ -358,19 +381,24 @@ private:
     // flag-on it runs only world-stopped (Class A) or for Class-B fires.
     void fireAllNow(VM&, const FireDetail&);
 
-    // SPEC-jit section 5.6 Class-A protocol: (1) world already stopped =>
-    // fire inline; (2) else enqueue on the coalescing queue and request a stop
-    // via JSThreadsSafepoint::stopTheWorldAndRun; (3) the draining closure
-    // re-checks state() == IsWatched (I11); (4) runs the existing fire body;
-    // (5) jettisons triggered by watchpoints run in the SAME closure (they hit
-    // CodeBlock::jettison's R1.h already-stopped path); (6) on return the fire
-    // is COMPLETE (synchronous completion; RELEASE_ASSERTed).
+    // SPEC-jit section 5.6 Class-A protocol: (1) enqueue on the coalescing
+    // queue; (2) request a stop via JSThreadsSafepoint::stopTheWorldAndRun,
+    // whose already-stopped path runs the closure inline for a caller that is
+    // already world-stopped (a GC's stopped window, an outer closure, a nested
+    // fire) after its own foreign-thread and GC-conduction guards; (3) the
+    // draining closure re-checks state() == IsWatched (I11); (4) runs the
+    // existing fire body; (5) jettisons triggered by watchpoints run in the
+    // SAME closure (they hit CodeBlock::jettison's already-stopped path); (6)
+    // on return the fire is COMPLETE (synchronous completion; RELEASE_ASSERTed).
     void fireAllUnderClassAStop(VM&, const FireDetail&);
 
-    // Coalescing (REQUIRED, section 5.6): drains EVERY queued Class-A fire in
-    // one stop; concurrent losers' stopTheWorldAndRun returns only after their
-    // queued fire ran (either in the winner's stop or their own).
-    static void drainClassAFireQueue();
+    // Coalescing (REQUIRED, section 5.6): drains EVERY queued Class-A fire of
+    // the given VM in one stop; concurrent losers' stopTheWorldAndRun returns
+    // only after their queued fire ran (either in the winner's stop or their
+    // own). Records enqueued by other VMs stay queued: a stop covers only the
+    // mutators of the VM it was requested for, and each such record's
+    // requester is blocked in a stop of its own VM that services it.
+    static void drainClassAFireQueue(VM&);
 
     friend class InlineWatchpointSet;
 
@@ -443,7 +471,7 @@ public:
     // See comment about state() in Watchpoint above.
     WatchpointState state() const
     {
-        uintptr_t data = m_data.loadRelaxed();
+        uintptr_t data = m_data.load(dataLoadOrder);
         if (isFat(data))
             return consumeFat(data)->state();
         return decodeState(data);
@@ -463,16 +491,25 @@ public:
         return !hasBeenInvalidated();
     }
     
-    void add(Watchpoint*);
+    bool add(Watchpoint*); // See WatchpointSet::add for the false case.
     
     void startWatching()
     {
-        if (isFat()) {
-            protect(fat())->startWatching();
-            return;
+        uintptr_t data = m_data.load(dataLoadOrder);
+        for (;;) {
+            if (isFat(data)) {
+                protect(consumeFat(data))->startWatching();
+                return;
+            }
+            if (decodeState(data) == IsInvalidated) {
+                // Only flag-on: a fire on another mutator reached the terminal
+                // state after the caller's own check.
+                ASSERT(Options::useJSThreads());
+                return;
+            }
+            if (tryStoreThinState(data, IsWatched))
+                return;
         }
-        ASSERT(decodeState(m_data.loadRelaxed()) != IsInvalidated);
-        setThinState(IsWatched);
     }
 
     // SPEC-jit section 5.6 interception note: the fat case delegates to
@@ -482,34 +519,47 @@ public:
     // machine code can only depend on a set through a Watchpoint (DFG/FTL
     // DesiredWatchpoints inflate at finalization), so a thin fire cannot
     // invalidate any code. Compile-time-only consumers use the
-    // isStillValid()/re-check pattern, which the plain invalidating store
-    // (plus fence) already serves, exactly as today.
+    // isStillValid()/re-check pattern, which the invalidating store (plus
+    // fence) already serves, exactly as today. Flag-on the store is a CAS
+    // (tryStoreThinState): an inflation racing this fire either publishes
+    // its fat set first, and the fire is re-dispatched to it, or observes the
+    // invalidated word and builds the fat set already invalidated, so the
+    // installer's add() refuses.
     template <typename T>
     void fireAll(VM& vm, T fireDetails)
     {
-        if (isFat()) {
-            protect(fat())->fireAll(vm, fireDetails);
-            return;
+        uintptr_t data = m_data.load(dataLoadOrder);
+        for (;;) {
+            if (isFat(data)) {
+                protect(consumeFat(data))->fireAll(vm, fireDetails);
+                return;
+            }
+            if (decodeState(data) == ClearWatchpoint)
+                return;
+            if (tryStoreThinState(data, IsInvalidated))
+                break;
         }
-        if (decodeState(m_data.loadRelaxed()) == ClearWatchpoint)
-            return;
-        setThinState(IsInvalidated);
         WTF::storeStoreFence();
     }
 
     void invalidate(VM& vm, const FireDetail& detail)
     {
-        if (isFat())
-            protect(fat())->invalidate(vm, detail);
-        else
-            setThinState(IsInvalidated);
+        uintptr_t data = m_data.load(dataLoadOrder);
+        for (;;) {
+            if (isFat(data)) {
+                protect(consumeFat(data))->invalidate(vm, detail);
+                return;
+            }
+            if (tryStoreThinState(data, IsInvalidated))
+                return;
+        }
     }
 
     // SPEC-jit section 5.6 / I10. Thin: the construction-time classification
     // bit; fat: the inflated set's bit (transferred at inflateSlow).
     bool invalidatesCompiledCode() const
     {
-        uintptr_t data = m_data.loadRelaxed();
+        uintptr_t data = m_data.load(dataLoadOrder);
         if (isFat(data))
             return consumeFat(data)->invalidatesCompiledCode();
         return !(data & ClassBFlag);
@@ -519,18 +569,18 @@ public:
     
     void touch(VM& vm, const FireDetail& detail)
     {
-        if (isFat()) {
-            protect(fat())->touch(vm, detail);
-            return;
+        uintptr_t data = m_data.load(dataLoadOrder);
+        for (;;) {
+            if (isFat(data)) {
+                protect(consumeFat(data))->touch(vm, detail);
+                return;
+            }
+            if (decodeState(data) == IsInvalidated)
+                return;
+            WTF::storeStoreFence();
+            if (tryStoreThinState(data, decodeState(data) == ClearWatchpoint ? IsWatched : IsInvalidated))
+                break;
         }
-        uintptr_t data = m_data.loadRelaxed();
-        if (decodeState(data) == IsInvalidated)
-            return;
-        WTF::storeStoreFence();
-        if (decodeState(data) == ClearWatchpoint)
-            setThinState(IsWatched);
-        else
-            setThinState(IsInvalidated);
         WTF::storeStoreFence();
     }
     
@@ -573,7 +623,7 @@ public:
     //   the assumptions that the DFG thread used are still valid when the DFG code is installed.
     bool isBeingWatched() const
     {
-        uintptr_t data = m_data.loadRelaxed();
+        uintptr_t data = m_data.load(dataLoadOrder);
         if (isFat(data))
             return consumeFat(data)->isBeingWatched();
         return false;
@@ -599,17 +649,43 @@ private:
     // pointer is arbitrary; never consult ClassBFlag unless isThin()).
     static constexpr uintptr_t ClassBFlag        = 8;
 
+    // inflateSlow publishes the fat pointer with a release CAS. Every load a
+    // reader makes through that pointer is address-dependent on the word it
+    // loaded from m_data, and the word is never compared against another
+    // value, so every supported CPU orders those loads after the publish
+    // with no fence or acquire (the dependency ensurePointer relies on). TSAN
+    // cannot see an address dependency, so under TSAN alone the word is
+    // loaded acquire.
+#if TSAN_ENABLED
+    static constexpr std::memory_order dataLoadOrder = std::memory_order_acquire;
+#else
+    static constexpr std::memory_order dataLoadOrder = std::memory_order_relaxed;
+#endif
+
     static bool isThin(uintptr_t data) { return data & IsThinFlag; }
     static bool isFat(uintptr_t data) { return !isThin(data); }
 
-    // Every thin state store preserves the classification bit (I10).
-    // Thin-state stores require the owner's serialization (as before); only
-    // the word access itself is (relaxed) atomic so concurrent lock-free
-    // readers are defined C++ (triage 3.6).
-    void setThinState(WatchpointState state)
+    // Every thin state store preserves the classification bit (I10). Flag-off
+    // this is the plain store of the single mutator. Flag-on the word is
+    // written by CAS because it is shared by every mutator: a concurrent
+    // inflateSlow may have published a fat pointer, or a concurrent thin fire
+    // may have advanced the state, and a plain store would overwrite either
+    // (orphaning every watchpoint on the fat set, or re-arming a fired set).
+    // Returns false with `data` refreshed to the current word when it changed
+    // underneath; the caller re-dispatches on that word.
+    bool tryStoreThinState(uintptr_t& data, WatchpointState state)
     {
-        ASSERT(isThin());
-        m_data.storeRelaxed(encodeState(state) | (m_data.loadRelaxed() & ClassBFlag));
+        ASSERT(isThin(data));
+        uintptr_t desired = encodeState(state) | (data & ClassBFlag);
+        if (!Options::useJSThreads()) [[likely]] {
+            m_data.storeRelaxed(desired);
+            return true;
+        }
+        uintptr_t prior = m_data.compareExchangeStrong(data, desired);
+        if (prior == data)
+            return true;
+        data = prior;
+        return false;
     }
 
     static WatchpointState decodeState(uintptr_t data)
@@ -623,40 +699,33 @@ private:
         return (static_cast<uintptr_t>(state) << StateShift) | IsThinFlag;
     }
     
-    bool isThin() const { return isThin(m_data.loadRelaxed()); }
-    bool isFat() const { return isFat(m_data.loadRelaxed()); };
+    bool isThin() const { return isThin(m_data.load(dataLoadOrder)); }
+    bool isFat() const { return isFat(m_data.load(dataLoadOrder)); };
     
     static WatchpointSet* fat(uintptr_t data)
     {
         return std::bit_cast<WatchpointSet*>(data);
     }
 
-    // TSAN wave 5 (triage 12.6, REOPENED family 9): consume-ordered read of
-    // the fat pointer. inflateSlow publishes the fat pointer with a release
-    // CAS, but lock-free readers load m_data RELAXED — without an ordering
-    // edge on the reader side, the WatchpointSet's construction writes are not
-    // ordered before the dereference and a compiler thread can observe a
-    // mid-init set. Dependency::fence(data).consume(...) carries an address
-    // dependency from the m_data load to every load through the returned
-    // pointer (the mythical C++ consume), pairing with the release publish at
-    // zero ordering cost: a compiler fence on TSO, a self-eor on ARM. No
-    // acquire load, so flag-off fast paths keep plain loads.
+    // The fat pointer as loaded from m_data. Loads through it are ordered
+    // after inflateSlow's release publish by the address dependency on
+    // `data` alone (see dataLoadOrder); no fence is issued here.
     static WatchpointSet* consumeFat(uintptr_t data)
     {
         ASSERT(isFat(data));
-        return Dependency::fence(data).consume(fat(data));
+        return fat(data);
     }
 
     WatchpointSet* fat()
     {
-        uintptr_t data = m_data.loadRelaxed();
+        uintptr_t data = m_data.load(dataLoadOrder);
         ASSERT(isFat(data));
         return consumeFat(data);
     }
 
     const WatchpointSet* fat() const
     {
-        uintptr_t data = m_data.loadRelaxed();
+        uintptr_t data = m_data.load(dataLoadOrder);
         ASSERT(isFat(data));
         return consumeFat(data);
     }
@@ -690,48 +759,6 @@ public:
     }
 
     JS_EXPORT_PRIVATE void NODELETE takeWatchpointsToFire(WatchpointSet*);
-
-    // B5 / GIL-removal precondition 10 (docs/threads/cve/map-MC-CODE.md S6):
-    // gilOff EAGER fire entry point. The deferring caller, AFTER dropping
-    // every lock that motivated the deferral (SAL / cell locks) but BEFORE it
-    // PUBLISHES the watched-fact mutation (the setStructure / structureID
-    // store), calls this with the same FireDetail the scope-exit fire would
-    // have used. gilOff Class-A pending: runs the full Class-A
-    // stop-the-world fire NOW, so every CodeBlock that elided a check on the
-    // claimed source set is jettisoned BEFORE any other mutator can observe
-    // the about-to-be-published fact — closing the publication-before-fire
-    // window the scope-exit form left open. After this returns the holder is
-    // drained (state() != IsWatched) and the dtor's scope-exit fire is a
-    // no-op. Flag-off / GIL-on / Class-B / nothing-claimed: no-op (the
-    // dtor's fire stays the firing point — flag-off behaviour byte-identical).
-    //
-    // Adaptive-watchpoint cost (gilOff only, recorded): firing BEFORE the
-    // object's structureID is updated means an adaptive watchpoint observes
-    // the OLD structure, finds the source set already IsInvalidated, and
-    // takes its conservative path (jettison / give up) instead of
-    // re-installing on the new structure. Correctness > the gilOff re-adapt
-    // optimisation; the flag-off adapt-after-publish ordering is unchanged.
-    //
-    // Caller contract: must be a valid §A.3 stop-request point (no rank-3
-    // lock held, no SAL, may DeferGC) — exactly the same contract the
-    // scope-exit ~DeferredWatchpointFire fire already meets at every site.
-    JS_EXPORT_PRIVATE void fireEarlyForGILOff(VM&, const FireDetail&);
-
-    // B5 audit aid: true iff this holder has CLAIMED a Class-A source set
-    // whose fire has not yet run. NB this reads the stack-local HOLDER's
-    // (relaxed) state — it is a same-thread predicate only, not a
-    // cross-thread acquire. Cross-thread consumers do not see the holder;
-    // the release-publish of the deferred-fire fact is the claim CAS in
-    // WatchpointSet::fireAllSlow(VM&, DeferredWatchpointFire*) (seq_cst CAS
-    // on the SOURCE set's m_state, IsWatched -> IsInvalidated): any consumer
-    // that may re-use a not-yet-jettisoned code pointer either acquire-loads
-    // the source set's state() and observes IsInvalidated, or rides the §A.3
-    // stop barrier (every Class-A consumer in this tree does the latter — see
-    // the S6 audit in docs/threads/cve/map-MC-CODE.md).
-    bool hasClassAFirePending() const
-    {
-        return m_watchpointsToFire.state() == IsWatched && m_watchpointsToFire.invalidatesCompiledCode();
-    }
 
 protected:
     WatchpointSet& watchpointsToFire() { return m_watchpointsToFire; }

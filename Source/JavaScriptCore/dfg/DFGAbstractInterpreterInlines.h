@@ -424,24 +424,18 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     
     m_state.createValueForNode(node);
 
-    // checktraps-dejank-invalidation-point, amend round 2 (AUDIT-checktraps
-    // P10b/P10c): GIL-off, parkable slow paths clobber heap facts in
-    // clobberize (pre-switch write(Heap) gated on the SAME predicate — see
-    // its comment in DFGClobberize.h). The abstract interpreter accounts for
-    // that write with didFoldClobberStructures(): this keeps the DFGCFAPhase
-    // AI-clobberize agreement assert (didClobberOrFolded() must match
-    // writesOverlap(JSCell_structureID)) satisfied WITHOUT destroying
-    // in-block AI precision. Soundness note: the clobberize write closes the
-    // code-motion widening this change introduced (LICM/CSE across parkable
-    // slow paths); AI's in-block structure propagation across the same parks
-    // is a PRE-EXISTING straight-line exposure that predates this change and
-    // is tracked as P10c-R in the audit (systemic closure = the AHA-edge
-    // epoch check, option (ii)). Placed before the switch, so a case that
-    // later calls clobberWorld()/clobberStructures() simply overrides the
-    // folded state, and fresh result values set by the case keep their
-    // precision. Flag-off/GIL-on the predicate is constant false.
+    // GIL-off, a node whose slow path can park on a heap-access release
+    // writes Heap in clobberize (see jsThreadsParkableSlowPathClobbersHeapFacts
+    // in DFGClobberize.h): another thread may retag structures or convert
+    // butterflies while this thread is parked, and the resume edge carries no
+    // invalidation point, so no structure or array-mode fact may be carried
+    // across the node. Clobbering here (not didFoldClobberStructures()) is
+    // what stops ConstantFoldingPhase from removing a CheckStructure or
+    // CheckArray that follows the park. Placed before the switch so the
+    // node's own result keeps its precision. Flag-off and GIL-on the
+    // predicate is constant false.
     if (jsThreadsParkableSlowPathClobbersHeapFacts(m_graph, node)) [[unlikely]]
-        didFoldClobberStructures();
+        clobberStructures();
     
     switch (node->op()) {
     case JSConstant:

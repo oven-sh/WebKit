@@ -29,6 +29,7 @@
 #include <wtf/Forward.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/RecursiveLockAdapter.h>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC {
@@ -36,47 +37,52 @@ namespace JSC {
 class VM;
 
 // JSThreadsSafepoint (SPEC-jit R1): the single safepoint primitive consumed by
-// code jettison (SPEC-jit section 5.3) and Class-A watchpoint fires (section 5.6)
-// under shared-memory threads. The real mechanics are a veneer over the
-// VMManager stop-the-world machinery plus integration manifest M4
-// (requester-as-conductor arbitration, StopReason::JSThreads, GC serialization
-// via Heap::JSThreadsStopScope, and a resume-path ISB on every mutator leaving
-// notifyVMStop).
+// code jettison (SPEC-jit section 5.3), Class-A watchpoint fires (section 5.6),
+// object-model transition stops, haveABadTime and the debugger's STW walk
+// under shared-memory threads. stopTheWorldAndRun has two live paths, chosen
+// by the target VM's mode:
 //
-// INTERIM STUB until M4 lands (SPEC-jit Task 1; mirrors SPEC-objectmodel
-// manifest entry 6): stopTheWorldAndRun RELEASE_ASSERTs that at most one VM is
-// concurrently entered (the phase-1 GIL guarantees this) and runs `work` inline
-// on the caller's stack. worldIsStopped() reports true inside that closure and
-// while the object-model workstream's interim stub witness is raised, so every
-// world-stopped assert (I2/I8 and the OM fire asserts) is exercised with today's
-// single-mutator builds and with the GIL'd Thread() stub.
+//  - GIL-on (vm.gilOff() false; the shipping shape): an inline stub. The
+//    caller holds this VM's JSLock, so no other thread of this VM executes JS,
+//    and no other VM can execute this VM's code (CodeBlocks, Structures and
+//    watchpoint sets belong to one VM; every client of a shared server belongs
+//    to the VM whose heap it is). `work` therefore runs inline on the caller's
+//    stack with no stop requested. Other VMs in the process (Workers, jsc
+//    $.agent) may be entered concurrently and patch their own code under
+//    their own JSLock, exactly as flag-off. R1.i/CS2: when the server heap the
+//    caller's client attaches to (vm.clientHeap.server()) is shared, the stub
+//    releases THIS client's heap access (GCClient::Heap::releaseHeapAccess)
+//    and holds Heap::JSThreadsStopScope on that server (the rank-2 GC
+//    conductor lock) across `work`, so a shared-mode GC can neither start nor
+//    be mid-cycle while the closure patches code. F5: an instruction-stream
+//    barrier (crossModifyingCodeFence) on the closing edge of the closure.
 //
-// Already live ahead of M4 (SPEC-jit Task 5, section 5.3):
-//  - R1.h: a caller that is already world-stopped runs `work` inline without
-//    re-requesting, with the witness raised across the closure;
-//  - R1.i/CS2: when the SERVER heap the caller's client attaches to
-//    (vm.clientHeap.server() — NOT the VM's own, possibly idle, heap member;
-//    R4-1) is a shared server, the requesting path releases THIS client's
-//    heap access (GCClient::Heap::releaseHeapAccess) and holds
-//    Heap::JSThreadsStopScope on that server (the rank-2 GC conductor lock)
-//    across `work`, so a shared-mode GC can neither start nor be mid-cycle
-//    while the closure patches code;
-//  - F5 (stub form): an instruction-stream barrier (crossModifyingCodeFence)
-//    on the closing edge of the closure — the single-mutator stand-in for the
-//    per-mutator ISB that M4's NVS resume tail issues (R1.d).
+//  - GIL-off (vm.gilOff() true): every request is rerouted to the §A.3
+//    thread-granular conductor (jsThreadsThreadGranularStopTheWorldAndRun in
+//    runtime/VMManager.cpp: requester arbitration, quiescence of every entered
+//    lite of the VM, GC serialization via Heap::JSThreadsStopScope, and the
+//    resume-path ISB on every parked mutator). The wait loops there and the
+//    Heap::JSThreadsStopScope watchdog constructor call
+//    watchdogAssertStopProgress, so the stop watchdog fail-stop below is live.
+//
+// Common to both: R1.h — a caller that is already world-stopped (a GC's
+// stopped window, an outer stopTheWorldAndRun closure, an open thread-granular
+// window) runs `work` inline without re-requesting, with the witness raised
+// across the closure; see stopTheWorldAndRun's guards for which evidence
+// licenses that on a non-conductor thread.
 //
 // CodeBlock::jettison is the section 5.3 choke point: every flag-on jettison
 // with reason != JettisonDueToOldAge routes its entire body through
 // stopTheWorldAndRun (reoptimization, watchpoint-fire and debugger triggers
 // alike), so callers of jettison never need their own stop.
 //
-// Caller contract (unchanged when M4 lands): caller is an entered mutator and
-// holds NO lock from the SPEC-jit section 7 order and no cell lock; `work` runs
-// with every mutator stopped and must neither allocate in the JS heap nor
-// re-enter the VM. The requesting path additionally requires the caller's heap
-// access to be releasable (no allocation in flight). An already-world-stopped
-// caller (R1.h path) is exempt from the entered-mutator requirement: its
-// safety argument is the enclosing stop.
+// Caller contract: caller is an entered mutator and holds NO lock from the
+// SPEC-jit section 7 order and no cell lock; `work` runs with every mutator
+// stopped and must neither allocate in the JS heap nor re-enter the VM. The
+// requesting path additionally requires the caller's heap access to be
+// releasable (no allocation in flight). An already-world-stopped caller (R1.h
+// path) is exempt from the entered-mutator requirement: its safety argument is
+// the enclosing stop.
 namespace JSThreadsSafepoint {
 
 // Stop every mutator, run `work` on the caller's own stack, resume.
@@ -86,51 +92,48 @@ namespace JSThreadsSafepoint {
 // without re-requesting (R1.h).
 JS_EXPORT_PRIVATE void stopTheWorldAndRun(VM&, const ScopedLambda<void()>& work);
 
-// True while no other mutator can be executing JS. Disjuncts per SPEC-jit
-// section 5.6: VMManager world mode is Stopped, OR the shared GC heap reports
-// worldIsStoppedForAllClients() (once the heap workstream lands), OR the legacy
-// per-VM GC stop (vm.heap.worldIsStopped()), OR (pre-M4 only) an interim stub
-// witness is raised.
+// True while no mutator that can execute this VM's code is running JS other
+// than the caller. Disjuncts per SPEC-jit section 5.6, each scoped to that
+// VM: the calling thread is inside a GIL-on stub closure or an
+// AlreadyStoppedWorldWitnessScope, OR a §A.3 thread-granular window targeting
+// this VM is open with its predicate satisfied, OR the VMManager world mode is
+// Stopped, OR the legacy per-VM GC stop (vm.heap.worldIsStopped()), OR the
+// server this VM's client attaches to reports worldIsStoppedForAllClients().
+// Every consumer runs on the thread doing the patching or firing.
 JS_EXPORT_PRIVATE bool worldIsStopped(VM&);
 
-// VM-less conservative form for patching sites that have no VM in scope
-// (DFG::CommonData::invalidateLinkedCode, DFG::JumpReplacement::fire). Covers
-// the VMManager mode and the interim stub witnesses only; it cannot consult
-// per-heap state, so it is strictly weaker than worldIsStopped(VM&) and is used
-// for asserts only.
+// VM-less form for patching sites that have no VM in scope
+// (DFG::CommonData::invalidateLinkedCode, DFG::JumpReplacement::fire): the
+// process-global stub witness (some thread is inside a stub closure or witness
+// scope), any open §A.3 window, or Mode::Stopped. It cannot consult per-heap
+// state and cannot tell which VM a witness belongs to, so it is used for
+// asserts only.
 JS_EXPORT_PRIVATE bool worldIsStopped();
 
-// ===== Pre-M4 already-stopped witness scope (review round 3, R3-1/R3-11) =====
+// ===== Already-stopped witness scope =====
 //
-// RAII over the interim stub's process-global world-stopped witness for a
-// caller whose own evidence that the world is stopped is ALREADY established
+// RAII over the process-global world-stopped witness for a caller whose own
+// evidence that the world is stopped is ALREADY established
 // (worldIsStopped(vm) is true) but possibly only via per-heap state that the
 // VM-less worldIsStopped() consumers (the patching asserts in
 // DFG::CommonData::invalidateLinkedCode / DFG::JumpReplacement::fire) cannot
 // see. The constructor:
-//   1. if no process-global witness holds yet, RELEASE_ASSERTs that the
-//      per-heap evidence in fact covers every mutator in the process (the
-//      R2-4 tripwire, with the R3-11 shared-server scoping: entered VMs that
-//      are clients of a shared server currently stopped-for-all-clients are
-//      parked by that stop and do not count); then
-//   2. raises the global stub depth witness.
+//   1. if no process-global witness holds yet, RELEASE_ASSERTs that at most
+//      one VM attached to the caller's server heap is entered — the per-heap
+//      evidence parks every client of that server, so this is the only way
+//      a mutator able to execute the caller's code could still be running;
+//      independent VMs in the process are not counted; then
+//   2. raises the global and the per-thread stub depth witness.
 // The destructor issues the F5 instruction-stream barrier
 // (crossModifyingCodeFence) and lowers the witness. Nests freely.
 //
-// Users: stopTheWorldAndRun's R1.h already-stopped path, and
-// WatchpointSet::fireAllUnderClassAStop branch (1) — the inline fire on
-// already-stopped evidence, which previously ran with neither the tripwire
-// nor the witness (review round 3, R3-1). Deleted at M4 with the rest of the
-// stub counter.
+// User: stopTheWorldAndRun's R1.h already-stopped path, which is also how a
+// Class-A watchpoint fire reached on already-stopped evidence runs (its drain
+// is the `work` closure).
 //
-// NOTE (R3-4): the constructor's entered-VM count is a SAMPLED tripwire, not
-// a structural guarantee — nothing stops a thread from entering another VM
-// right after the count. The structural enforcement point pre-M4 is VM entry
-// itself: manifest M7 (docs/threads/INTEGRATE-jit.md) adds a process-global
-// entered-VM counter to VMEntryScope that RELEASE_ASSERTs sole-entry under
-// useJSThreads, making a second concurrent entry crash deterministically on
-// the ENTERING thread regardless of timing. Until M7 is applied, flag-on with
-// more than one concurrently-enterable VM is an unsupported configuration.
+// The constructor's count is a SAMPLED tripwire for the structural fact that
+// every server has at most one VM attached (VM::clientHeap and every spawned
+// or carrier client attach to vm.heap), not the soundness mechanism.
 class AlreadyStoppedWorldWitnessScope {
     WTF_MAKE_NONCOPYABLE(AlreadyStoppedWorldWitnessScope);
 public:
@@ -163,12 +166,12 @@ ALWAYS_INLINE void assertPatchingIsSafe()
 // into a deterministic crash NAMING the escaped set.
 //
 // Usage: the requester publishes a context (RAII, per-thread, nests) before
-// calling stopTheWorldAndRun; the requester's wait loop calls
-// watchdogAssertStopProgress(requestStart) on every iteration while awaiting
-// Mode::Stopped. Pre-M4 the interim stub never waits, so the watchdog is
-// dormant by construction; M4's real parking loop MUST call it.
-// THREADS-INTEGRATE(jit): wire watchdogAssertStopProgress into the
-// requester-side wait loop when M4 replaces the stub.
+// calling stopTheWorldAndRun; every wait loop on the way to a stopped world
+// calls watchdogAssertStopProgress(requestStart) on each iteration. Callers:
+// the §A.3 conductor loops in runtime/VMManager.cpp and the
+// Heap::JSThreadsStopScope watchdog constructor, which the GIL-on stub enters
+// whenever the caller's server heap is shared. Any new wait on the requesting
+// path MUST call it too.
 //
 // The context is thread-local: a wedged requester times out on its own thread
 // and names the set IT was firing, so concurrent requesters cannot
@@ -185,8 +188,9 @@ private:
 };
 
 // RELEASE_ASSERTs (crashing with the published context) if the stop requested
-// at `requestStart` has not completed within a generous timeout. Safe to call
-// repeatedly from the wait loop; cheap when under the timeout. When the
+// at `requestStart` has not completed within Options::jsThreadsStopWatchdogMs()
+// (0 disables the fail-stop and lets the requester wait indefinitely). Safe to
+// call repeatedly from the wait loop; cheap when under the timeout. When the
 // requester passes its target VM (the §A.3 thread-granular conductor loop
 // does), the timeout dump also re-runs the §A.3.2 predicate walk and NAMES
 // every entered lite of that VM with its access state — so a timeout
@@ -204,6 +208,45 @@ JS_EXPORT_PRIVATE void watchdogAssertStopProgress(MonotonicTime requestStart, VM
 // again. Must be called with no rank-3 lock held. No-op GIL-on.
 JS_EXPORT_PRIVATE bool parkSitePollAndParkForStopTheWorld(VM&);
 
+// ===== Conductor heap-fact rewrite epoch =====
+//
+// GIL-off, DFG/FTL CheckTraps is compiled as an invalidation point at the
+// poll's rejoin rather than a heap clobber (DFGClobberize.h), so a heap fact
+// hoisted across the poll (butterfly, structure, indexing type) is only valid
+// if no stop window rewrote it while the mutator was parked there. Every stop
+// window that may rewrite such a fact bumps this process-global epoch; a
+// mutator whose park in VMTraps::handleTraps or
+// parkSitePollAndParkForStopTheWorld overlapped a bump jettisons its own
+// on-stack optimizing-JIT code on resume, which fires the invalidation points
+// so the poll OSR-exits before reusing any hoisted fact.
+//
+// Bump edge: the load-bearing bump is IN-WINDOW, after `work` and before the
+// stopped world resumes, on both legs of stopTheWorldAndRun. A publication-time
+// bump alone is unsound: a mutator parked BY the window samples the epoch after
+// the trap bits that park it are set, hence after any bump made at publication,
+// and would compare equal on resume. The ClassAStopWatchdogContext constructor
+// and destructor bump as entry and exit edges (covering mutators already inside
+// handleTraps at publication), and JSGlobalObject::haveABadTimeImpl and the
+// NeedDebuggerBreak service bump explicitly because GIL-on publishes no window.
+// A false-positive bump only costs a jettison; a missed bump at a window that
+// rewrites heap facts is a correctness bug.
+JS_EXPORT_PRIVATE uint64_t conductorHeapFactRewriteEpoch();
+JS_EXPORT_PRIVATE void noteConductorHeapFactRewrite();
+
+// RAII, thread-local, nests: while open on this thread, neither the
+// ClassAStopWatchdogContext edges nor stopTheWorldAndRun's in-window bump
+// touch the epoch. Only for stop windows that rewrite code and no heap fact:
+// CodeBlock::jettison opens it around its stop so reoptimization does not
+// cascade into an on-stack jettison of every parked mutator's code. A
+// heap-fact-rewriting window whose nested jettisons open this scope is still
+// covered by its own outer in-window bump.
+class PureCodeLifecycleStopWindowScope {
+    WTF_MAKE_NONCOPYABLE(PureCodeLifecycleStopWindowScope);
+public:
+    JS_EXPORT_PRIVATE PureCodeLifecycleStopWindowScope();
+    JS_EXPORT_PRIVATE ~PureCodeLifecycleStopWindowScope();
+};
+
 // ===== GIL-removal tripwire (review round 1) =====
 //
 // The jit workstream ships several KNOWN GIL-SOUND-ONLY gaps (consolidated
@@ -211,10 +254,10 @@ JS_EXPORT_PRIVATE bool parkSitePollAndParkForStopTheWorld(VM&);
 // DFG64/FTL array-element store predicates, the LLInt monomorphic-call record
 // form, the MultiDeleteByOffset flag-on bail, allocation tagging, the ARM64
 // R7 dest==base residue, the deferred Class-A fire fact-publication ordering
-// (precondition 10 — B5: MECHANISM landed,
-// DeferredWatchpointFire::fireEarlyForGILOff + the release claim-CAS in
-// WatchpointSet::fireAllSlow(VM&, DeferredWatchpointFire*); per-site Task-11
-// "fact published before fire?" classification is the residual),
+// (precondition 10: the release claim-CAS in WatchpointSet::fireAllSlow(VM&,
+// DeferredWatchpointFire*) publishes the invalidation before the caller
+// publishes its mutation, but every deferring site still fires only at scope
+// exit, after publishing),
 // the segmented-butterfly (regime 2) fast paths, and the slow-path
 // call-linking writer-writer serialization (precondition 11 — AB18-D:
 // LANDED). The mechanical tripwire is WIRED at the gilOff SPAWNED-thread
@@ -248,5 +291,55 @@ constexpr bool gilRemovalPreconditionsMetValue = false;
 ALWAYS_INLINE constexpr bool gilRemovalPreconditionsMet() { return gilRemovalPreconditionsMetValue; }
 
 } // namespace JSThreadsSafepoint
+
+// ===== GIL-off compilation lock =====
+//
+// GIL-off threads of one VM share Executables, UnlinkedCodeBlocks, the
+// CodeCache and installed CodeBlocks, but CodeBlock creation, installation and
+// tier-up finalization were written for a single mutator. One process-wide
+// recursive lock serializes them: prepareForExecution, unlinkedCodeBlockFor,
+// the CodeCache lookup/insert pairs and DFG::Plan::finalize all take it
+// through GILOffCompilationLocker. It is recursive because
+// prepareForExecutionImpl holds it across installCode and Plan::finalize holds
+// it across the callback's installCode. At most one gilOff VM exists per
+// process, so the lock couples no GIL-on thread.
+// Defined in runtime/ScriptExecutable.cpp.
+JS_EXPORT_PRIVATE RecursiveLock& gilOffCompilationLock();
+
+// Contended acquisition. A thread blocked in a raw lock() is invisible to the
+// gilOff stop protocol: if the holder parks at a safepoint inside the locked
+// region, the stop never completes and the holder never resumes. The contended
+// path therefore spins on tryLock(), parking on the thread-granular stop word
+// first (it cannot throw or run JS, and it works under a caller's DeferTraps
+// scope, where trap servicing is a no-op) and servicing only NeedStopTheWorld
+// traps between attempts.
+JS_EXPORT_PRIVATE void lockGILOffCompilationLockContended(VM&);
+
+// Scoped acquisition gated on the caller's predicate (vm.gilOffWithProcessGate()
+// at every site): flag-off and GIL-on pay one predicted-untaken branch and take
+// no lock. The fast path is an uncontended tryLock, which also covers
+// same-thread recursion.
+class GILOffCompilationLocker {
+    WTF_MAKE_NONCOPYABLE(GILOffCompilationLocker);
+public:
+    GILOffCompilationLocker(VM& vm, bool shouldLock)
+        : m_shouldLock(shouldLock)
+    {
+        if (!m_shouldLock) [[likely]]
+            return;
+        if (gilOffCompilationLock().tryLock()) [[likely]]
+            return;
+        lockGILOffCompilationLockContended(vm);
+    }
+
+    ~GILOffCompilationLocker()
+    {
+        if (m_shouldLock) [[unlikely]]
+            gilOffCompilationLock().unlock();
+    }
+
+private:
+    bool m_shouldLock;
+};
 
 } // namespace JSC

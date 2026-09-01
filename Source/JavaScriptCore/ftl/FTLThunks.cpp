@@ -96,8 +96,12 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
     // clobber each other's full register dump in a baked buffer, so the
     // gilOff-mode thunk bakes a process-wide ScratchBufferRegistry INDEX and
     // resolves the CURRENT lite's buffer per use (loadVMLite -> segment ->
-    // [index]; rematerialized per §A.1.2). GIL-on/flag-off keeps the baked
-    // address byte-for-byte.
+    // [index]; rematerialized per §A.1.2). The index is the request's size
+    // class, so the dump shares the lite's buffer with every same-class site
+    // just as GIL-on sites share the VM's buffer; it survives the generation
+    // call because generation only bakes indices and addresses, it never
+    // writes a scratch buffer. GIL-on/flag-off keeps the baked address
+    // byte-for-byte.
     const bool bakedIndexMode = vm.gilOff();
     unsigned bakedIndex = std::numeric_limits<unsigned>::max();
     char* buffer = nullptr;
@@ -245,9 +249,8 @@ static void emitLazySlowPathThinPrefix(AssemblyHelpers& jit)
     jit.loadPtr(MA::BaseIndex(scratch1, scratch0, MA::ScalePtr), scratch1);
     // m_stubCodePtr (acquire) → scratch1. x86_64 TSO: plain load IS acquire.
     // ARM64: ldar pairs with generate()'s release-store so a non-null read
-    // here observes a fully-constructed stub (data side; i-cache coherence is
-    // the existing T8 contract — same as the C++ acquire-load fast path this
-    // mirrors, FTLOperations.cpp:987).
+    // here observes a fully-constructed stub (data side; same pairing as the
+    // C++ acquire-load fast path this mirrors in operationCompileFTLLazySlowPath).
 #if CPU(ARM64)
     jit.loadAcq64(MA::Address(scratch1, LazySlowPath::offsetOfStubCodePtr()), scratch1);
 #else
@@ -262,6 +265,14 @@ static void emitLazySlowPathThinPrefix(AssemblyHelpers& jit)
     jit.popToRestore(scratch1);
     jit.popToRestore(scratch0);
     jit.addPtr(MA::TrustedImm32(pushToSaveByteOffset), MacroAssembler::stackPointerRegister); // drop index push (= extraPopsToRestore=1).
+#if CPU(ARM64)
+    // Instruction side: the stub was written and cache-flushed by whichever
+    // thread generated it; that flush's ISB synchronized only the generating
+    // PE. The executing PE needs its own context synchronization, ordered
+    // after the acquire-load above (control dependency + ISB), before the
+    // branch fetches the stub.
+    jit.crossModifyingCodeFence();
+#endif
     jit.farJump(targetGPR, JITStubRoutinePtrTag);
 
     // First compile (or publication race): restore and fall through to the

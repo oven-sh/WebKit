@@ -59,6 +59,14 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
     
     auto instruction = profiledBlock->instructions().at(bytecodeIndex.offset());
 
+    // The LLInt slow paths publish and clear these cache words with relaxed
+    // atomic stores and no m_lock while this runs on a compiler thread, so the
+    // snapshots here are relaxed loads. A stale id is tolerated: the offset is
+    // recomputed from the Structure below.
+    auto loadStructureID = [](StructureID& field) {
+        return WTF::atomicLoad(&field, std::memory_order_relaxed);
+    };
+
     StructureID structureID;
     const Identifier* identifier = nullptr;
     switch (instruction->opcodeID()) {
@@ -66,9 +74,9 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
         auto& metadata = instruction->as<OpGetById>().metadata(profiledBlock);
         // FIXME: We should not just bail if we see a get_by_id_proto_load.
         // https://bugs.webkit.org/show_bug.cgi?id=158039
-        if (metadata.m_modeMetadata.mode != GetByIdMode::Default)
+        if (metadata.m_modeMetadata.loadModeConcurrently() != GetByIdMode::Default)
             return GetByStatus(NoInformation, false);
-        structureID = metadata.m_modeMetadata.defaultMode.structureID;
+        structureID = loadStructureID(metadata.m_modeMetadata.defaultMode.structureID);
 
         identifier = &(profiledBlock->identifier(instruction->as<OpGetById>().m_property));
         break;
@@ -78,21 +86,21 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
         auto& metadata = instruction->as<OpGetLength>().metadata(profiledBlock);
         // FIXME: We should not just bail if we see a get_by_id_proto_load.
         // https://bugs.webkit.org/show_bug.cgi?id=158039
-        if (metadata.m_modeMetadata.mode != GetByIdMode::Default)
+        if (metadata.m_modeMetadata.loadModeConcurrently() != GetByIdMode::Default)
             return GetByStatus(NoInformation, false);
-        structureID = metadata.m_modeMetadata.defaultMode.structureID;
+        structureID = loadStructureID(metadata.m_modeMetadata.defaultMode.structureID);
 
         identifier = &vm.propertyNames->length;
         break;
     }
 
     case op_try_get_by_id:
-        structureID = instruction->as<OpTryGetById>().metadata(profiledBlock).m_cache.structureID;
+        structureID = loadStructureID(instruction->as<OpTryGetById>().metadata(profiledBlock).m_cache.structureID);
         identifier = &(profiledBlock->identifier(instruction->as<OpTryGetById>().m_property));
         break;
 
     case op_get_by_id_direct:
-        structureID = instruction->as<OpGetByIdDirect>().metadata(profiledBlock).m_cache.structureID;
+        structureID = loadStructureID(instruction->as<OpGetByIdDirect>().metadata(profiledBlock).m_cache.structureID);
         identifier = &(profiledBlock->identifier(instruction->as<OpGetByIdDirect>().m_property));
         break;
 
@@ -110,9 +118,9 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
 
         // FIXME: We should not just bail if we see a get_by_id_proto_load.
         // https://bugs.webkit.org/show_bug.cgi?id=158039
-        if (metadata.m_modeMetadata.mode != GetByIdMode::Default)
+        if (metadata.m_modeMetadata.loadModeConcurrently() != GetByIdMode::Default)
             return GetByStatus(NoInformation, false);
-        structureID = metadata.m_modeMetadata.defaultMode.structureID;
+        structureID = loadStructureID(metadata.m_modeMetadata.defaultMode.structureID);
         identifier = &vm.propertyNames->next;
         break;
     }
@@ -120,15 +128,15 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
     case op_iterator_next: {
         auto& metadata = instruction->as<OpIteratorNext>().metadata(profiledBlock);
         if (bytecodeIndex.checkpoint() == OpIteratorNext::getDone) {
-            if (metadata.m_doneModeMetadata.mode != GetByIdMode::Default)
+            if (metadata.m_doneModeMetadata.loadModeConcurrently() != GetByIdMode::Default)
                 return GetByStatus(NoInformation, false);
-            structureID = metadata.m_doneModeMetadata.defaultMode.structureID;
+            structureID = loadStructureID(metadata.m_doneModeMetadata.defaultMode.structureID);
             identifier = &vm.propertyNames->done;
         } else {
             ASSERT(bytecodeIndex.checkpoint() == OpIteratorNext::getValue);
-            if (metadata.m_valueModeMetadata.mode != GetByIdMode::Default)
+            if (metadata.m_valueModeMetadata.loadModeConcurrently() != GetByIdMode::Default)
                 return GetByStatus(NoInformation, false);
-            structureID = metadata.m_valueModeMetadata.defaultMode.structureID;
+            structureID = loadStructureID(metadata.m_valueModeMetadata.defaultMode.structureID);
             identifier = &vm.propertyNames->value;
         }
         break;
@@ -138,15 +146,15 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
         auto& metadata = instruction->as<OpInstanceof>().metadata(profiledBlock);
         switch (bytecodeIndex.checkpoint()) {
         case OpInstanceof::getHasInstance:
-            if (metadata.m_hasInstanceModeMetadata.mode != GetByIdMode::Default)
+            if (metadata.m_hasInstanceModeMetadata.loadModeConcurrently() != GetByIdMode::Default)
                 return GetByStatus(NoInformation, false);
-            structureID = metadata.m_hasInstanceModeMetadata.defaultMode.structureID;
+            structureID = loadStructureID(metadata.m_hasInstanceModeMetadata.defaultMode.structureID);
             identifier = &vm.propertyNames->hasInstanceSymbol;
             break;
         case OpInstanceof::getPrototype:
-            if (metadata.m_prototypeModeMetadata.mode != GetByIdMode::Default)
+            if (metadata.m_prototypeModeMetadata.loadModeConcurrently() != GetByIdMode::Default)
                 return GetByStatus(NoInformation, false);
-            structureID = metadata.m_prototypeModeMetadata.defaultMode.structureID;
+            structureID = loadStructureID(metadata.m_prototypeModeMetadata.defaultMode.structureID);
             identifier = &vm.propertyNames->prototype;
             break;
         default:

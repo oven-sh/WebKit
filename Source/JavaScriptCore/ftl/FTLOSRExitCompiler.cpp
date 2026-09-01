@@ -45,36 +45,13 @@
 #include "ProbeContext.h"
 #include "VMLite.h"
 #include <limits>
-#include <wtf/Lock.h>
 #include <wtf/ScopedLambda.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-namespace JSC {
-
-// UNGIL U-T3 emitter (defined in jit/AssemblyHelpers.cpp). Self-declaration,
-// mirroring that TU's own pattern — no header owns this form yet.
-void loadVMLite(AssemblyHelpers&, GPRReg);
-
-namespace FTL {
+namespace JSC { namespace FTL {
 
 using namespace DFG;
-
-// UNGIL U-T4b: gilOff, N threads can fire the SAME not-yet-compiled exit
-// concurrently; exit.m_code must be published exactly once.
-// Coarse process-wide lock — exit-stub compilation is a once-per-exit slow
-// path. Lock RANK (NOT a leaf — it is held across the whole of compileStub):
-// OUTERMOST of everything compileStub acquires, i.e. OUTER to
-// codeBlock->m_lock (ConcurrentJSLocker, getArrayProfile),
-// ScratchBufferRegistry::m_lock -> VMLiteRegistry lock -> per-lite
-// scratchBufferLock (via VM::allocateBakedScratchBufferIndex, §LK.6 chain),
-// and LinkBuffer/executable-allocator locks. It is acquired ONLY from the
-// exit-generation thunk's operation call with no other JSC lock held, and
-// must never be taken while holding any of the above. GIL-on never takes it
-// (flag-off identity). Sibling with the same rank:
-// ftlLazySlowPathGenerationLock (FTLOperations.cpp); the two are never
-// nested. Rank recorded in INTEGRATE-ungil.md (U-T4b entry).
-static Lock ftlOSRExitGenerationLock;
 
 // UNGIL §A.1.6 (ANNEX A16, U-T4b): addressing of the exit's scratch memory,
 // in both modes. GIL-on (baked == false): today's baked absolute pointers,
@@ -245,7 +222,7 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
             // thread that exits here — resolve the CURRENT lite.
             RELEASE_ASSERT(vm.group3Primitives().callFrameForCatch); // The first time we hit this exit, like at all other times, this field should be non-null.
             restoreCalleeSavesFromCurrentVMLiteEntryFrameCalleeSavesBuffer(jit);
-            loadVMLite(jit, MacroAssembler::framePointerRegister);
+            jit.loadVMLite(MacroAssembler::framePointerRegister);
             jit.loadPtr(
                 CCallHelpers::Address(
                     MacroAssembler::framePointerRegister,
@@ -367,7 +344,7 @@ static void compileStub(VM& vm, unsigned exitID, JITCode* jitCode, OSRExit& exit
                 // is a wild store on x86_64).
                 DoesGCCheck check;
                 check.u.encoded = DoesGCCheck::encode(true, DoesGCCheck::Special::FTLOSRExit);
-                loadVMLite(jit, GPRInfo::regT0);
+                jit.loadVMLite(GPRInfo::regT0);
                 jit.store32(CCallHelpers::TrustedImm32(check.u.other), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.other))));
                 jit.store32(CCallHelpers::TrustedImm32(check.u.nodeIndex), CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(VMLite::offsetOfDoesGC() + OBJECT_OFFSETOF(DoesGCCheck, u.nodeIndex))));
             } else
@@ -921,19 +898,25 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
     }
 
     if (vm.gilOff()) [[unlikely]] {
-        // UNGIL U-T4b: N threads can race to compile the SAME exit. Compile
-        // exactly once under the generation lock; losers reuse the winner's
-        // stub. We deliberately do NOT repatch the exit jump in this mode:
-        // other mutators may be concurrently EXECUTING that jump, and
-        // MacroAssembler::repatchJump rewrites an unaligned rel32 on x86_64
-        // with no atomicity guarantee (torn fetch -> wild jump); ISB1 only
-        // licenses patching performed inside a stop. The jump keeps pointing
-        // at the generation thunk, which calls back here and tail-calls our
-        // return value — the protocol stays data-only. Exits are rare and
-        // trigger reoptimization, so the extra thunk round-trips are noise.
-        Locker locker { ftlOSRExitGenerationLock };
+        // N threads can race to compile the SAME exit. Compile exactly once
+        // under the generation lock shared with the DFG exit compiler; losers
+        // reuse the winner's stub. We deliberately do NOT repatch the exit
+        // jump in this mode: other mutators may be concurrently EXECUTING that
+        // jump, and MacroAssembler::repatchJump rewrites an unaligned rel32 on
+        // x86_64 with no atomicity guarantee (torn fetch -> wild jump). The
+        // jump keeps pointing at the generation thunk, which calls back here
+        // and tail-calls our return value — the protocol stays data-only.
+        // Exits are rare and trigger reoptimization, so the extra thunk
+        // round-trips are noise.
+        OSRExitGenerationLocker locker(vm);
         if (!exit.m_code)
             compileStub(vm, exitID, jitCode, exit, codeBlock);
+        else {
+            // The stub was compiled and finalized on another thread (or on an
+            // earlier traversal); the executing PE needs its own context
+            // synchronization before the thunk far-jumps into it.
+            WTF::crossModifyingCodeFence();
+        }
         return exit.m_code.code().taggedPtr();
     }
 

@@ -1664,42 +1664,6 @@ FrozenValue* Graph::freezeStrong(JSValue value)
     return result;
 }
 
-FrozenValue* Graph::freezeWithValidatedStructure(JSValue value, Structure* structure)
-{
-    // SPEC-objectmodel M5/M7 (threads): freeze() re-decodes the cell header
-    // (FrozenValue::freeze -> asCell()->structure(); is<CodeBlock> -> the
-    // classInfo walk). On a compiler thread that second decode is a TOCTOU
-    // against the caller's structureID().decontaminate() validation — a
-    // mutator transition (M8 transiently-nuked StructureID) or cell recycle
-    // landing between the validation and the re-decode is the original
-    // mergeOSREntryValue failure. This variant decodes NOTHING: the caller
-    // passes the validated {value, structure} snapshot (structure null iff
-    // value is not a cell) and every Structure-derived fact comes from it.
-    RELEASE_ASSERT(!m_plan.isInSafepoint());
-    if (!value) [[unlikely]] {
-        ASSERT(!structure);
-        return FrozenValue::emptySingleton();
-    }
-    ASSERT(value.isCell() == !!structure);
-
-    // The freeze() CodeBlock guard, evaluated against the snapshot instead
-    // of re-decoding the racy header.
-    RELEASE_ASSERT(!structure || !structure->classInfoForCells()->isSubClassOf(CodeBlock::info()));
-
-    auto result = m_frozenValueMap.add(JSValue::encode(value), nullptr);
-    if (!result.isNewEntry) [[likely]]
-        return result.iterator->value;
-
-    if (value.isUInt32())
-        m_uint32ValuesInUse.append(value.asUInt32());
-
-    FrozenValue frozenValue(value, structure, WeakValue, FrozenValue::ValidatedStructure);
-    if (structure)
-        registerStructure(structure);
-
-    return result.iterator->value = &m_frozenValues.alloc(frozenValue);
-}
-
 void Graph::convertToConstant(Node* node, FrozenValue* value)
 {
     if (value->structure())

@@ -3745,18 +3745,36 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
                     base,
                     JSObject::offsetOfInlineStorage() +
                     offsetInInlineStorage(accessCase.m_offset) * sizeof(JSValue)));
-        } else {
-            if (Options::useJSThreads()) [[unlikely]] {
-                // SPEC-jit section 5.5 (Task 8): this compiled-per-case
-                // Replace form has no spare register for the owner-tag
-                // compare (base may already live in scratchGPR via the
-                // global-proxy/poly-proto paths). Flag-on the hot Replace
-                // shape dispatches through the shared putByIdReplaceHandler
-                // (which carries the predicate); this rare form always
-                // defers to the generic path (INTEGRATE-jit.md Task 8).
+        } else if (Options::useJSThreads()) [[unlikely]] {
+            // The out-of-line store takes the butterfly write predicate. base may
+            // be scratchGPR (the unwrapped global-proxy target) and must survive
+            // for the barrier below, so the storage and TID scratches come from a
+            // fresh allocator. A predicate failure takes the generic path without
+            // repatching; a stub that always failed here would never let the IC
+            // settle, since every hit would bump the countdown the slow path
+            // then decrements.
+            auto allocator = makeDefaultScratchAllocator(scratchGPR);
+            GPRReg storageGPR = allocator.allocateScratchGPR();
+            GPRReg tidScratchGPR = allocator.allocateScratchGPR();
+            ScratchRegisterAllocator::PreservedState preservedState = allocator.preserveReusedRegistersByPushing(jit, ScratchRegisterAllocator::ExtraStackSpace::NoExtraSpace);
+
+            CCallHelpers::JumpList failAndIgnore;
+            failAndIgnore.append(jit.loadButterflyForWrite(base, storageGPR, tidScratchGPR, CCallHelpers::ConcurrentButterflyShape::MaybeArrayStorage));
+            jit.storeValue(
+                valueRegs,
+                CCallHelpers::Address(
+                    storageGPR, offsetInButterfly(accessCase.m_offset) * sizeof(JSValue)));
+            allocator.restoreReusedRegistersByPopping(jit, preservedState);
+
+            if (allocator.didReuseRegisters()) {
+                auto stored = jit.jump();
+                failAndIgnore.link(&jit);
+                allocator.restoreReusedRegistersByPopping(jit, preservedState);
                 m_failAndIgnore.append(jit.jump());
-                return;
-            }
+                stored.link(&jit);
+            } else
+                m_failAndIgnore.append(failAndIgnore);
+        } else {
             jit.loadPtr(CCallHelpers::Address(base, JSObject::butterflyOffset()), scratchGPR);
             jit.storeValue(
                 valueRegs,
@@ -3798,10 +3816,11 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     case AccessCase::IndexedTrueKeyTransition:
     case AccessCase::IndexedFalseKeyTransition: {
         ASSERT(!accessCase.viaGlobalProxy());
-        // SPEC-jit section 5.5 (Task 8): generated transitions are illegal
-        // flag-on until the structures' transitionThreadLocal/writeThreadLocal
-        // sets exist and are watched (OM E4); Repatch's tryCachePutBy gates
-        // creation, so this case must be unreachable under useJSThreads.
+        // A generated transition needs the transition predicate (compile-time
+        // transitionThreadLocal validity plus the runtime thread-tag /
+        // shared-write test), which this compiler does not emit; tryCachePutBy
+        // refuses to create Transition cases under useJSThreads, so this case
+        // must be unreachable flag-on.
         RELEASE_ASSERT(!Options::useJSThreads());
         // AccessCase::createTransition() should have returned null if this wasn't true.
         RELEASE_ASSERT(GPRInfo::numberOfRegisters >= 6 || !accessCase.structure()->outOfLineCapacity() || accessCase.structure()->outOfLineCapacity() == accessCase.newStructure()->outOfLineCapacity());
@@ -4015,31 +4034,15 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     case AccessCase::ArrayLength: {
 #if USE(JSVALUE64)
         if (Options::useJSThreads()) [[unlikely]] {
-            // B4-getbyid-optimize-never-settles-giloff (SCALEBENCH §28
-            // postingsChecksum docIds/tfs .length): the previous
-            // loadButterflyForRead routed segmented butterflies to
-            // m_failAndIgnore. failAndIgnore's contract is "transient
-            // unpatchable state — bump countdown so the slow path does NOT
-            // try to repatch". But once an array goes segmented under
-            // sharedGCHeap that state is PERMANENT for the object, so every
-            // call: stub increments countdown -> slow path
-            // operationGetByIdOptimize -> considerRepatchingCacheImpl
-            // decrements countdown -> net zero -> never reaches the
-            // cool-down/give-up trigger -> m_slowOperation stays at the
-            // *Optimize variant for the lifetime of the program (the +772M
-            // cycle / 5.2% delta vs the GIL-on profile, where this stub HITS
-            // through the plain butterfly load and the Optimize C-call is
-            // never re-entered). Fix the publish, not the gate: read
-            // publicLength inline for both flat AND segmented arms (mirrors
-            // SpeculativeJIT::compileGetArrayLengthSegmentedAware /
-            // emitLoadSegmentedPublicLength). The only residual
-            // failAndIgnore arms are the conservative SW=1 flat
-            // MaybeArrayStorage case (rare; AS-rule / I20 sound superset)
-            // and the pre-existing length>=2^31 bail — both genuinely
-            // transient/unpatchable per object, so the countdown semantics
-            // remain correct. Flag-off: this branch is dead and the legacy
-            // arm below emits byte-identical code (loadButterflyForRead
-            // flag-off is a single plain loadPtr).
+            // failAndIgnore bumps the countdown that the slow path's repatch
+            // attempt decrements, so a state the stub never handles keeps the
+            // site at the Optimize operation forever. Both a segmented word
+            // and a flat SW=1 word are permanent for the object (SW is
+            // monotonic), so both arms read publicLength inline; the only
+            // failAndIgnore arms left are the SW=1 ArrayStorage/SlowPut
+            // shapes, whose reads belong to the cell-locked regime, and the
+            // length >= 2^31 bail. Flag-off never reaches this block; the
+            // legacy arm below emits the plain butterfly load.
             using namespace ICCompilerSegmentedSpineInternal;
 
             auto allocator = makeDefaultScratchAllocator(scratchGPR);
@@ -4048,22 +4051,15 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
 
             CCallHelpers::JumpList failAndIgnore;
 
-            // Tagged butterfly word. ArrayLength's guard (generateWithGuard)
-            // is an indexingType check, not a structureID check, so there is
-            // no live structureIDGPR to thread; emit the R7 structureID
-            // re-load + xor/add address dependency by hand so the butterfly
-            // load is ordered after the header word the guard observed
-            // (identical to loadButterflyForRead -> loadButterflyWith
-            // StructureDependency with structureIDGPR==InvalidGPRReg, and to
-            // the cited DFG mirror compileGetArrayLengthSegmentedAware).
-            // x86-64 is TSO: plain load there, so bench-host codegen is
-            // unchanged; flag-off never reaches this block.
+            // Tagged butterfly word. The ArrayLength guard is an indexingType
+            // check, not a structureID check, so there is no live structureID
+            // register: re-load it and make the butterfly load address-dependent
+            // on it (the zero from eor plus the base), ordering the load after
+            // the header word the guard observed, as
+            // SpeculativeJIT::emitButterflyLoadWithStructureDependency does.
+            // x86-64 is TSO and needs only the plain load.
 #if CPU(ARM64)
             jit.load32(CCallHelpers::Address(baseGPR, JSCell::structureIDOffset()), scratchGPR);
-            // Dest reg MUST differ from src: EOR Xn,Xn,Xn is a recognized
-            // zeroing idiom on ARM64 and breaks the address dependency this
-            // sequence exists to establish. Mirrors the canonical
-            // SpeculativeJIT::emitButterflyLoadWithStructureDependency.
             jit.xor64(scratchGPR, scratchGPR, scratch2GPR);
             jit.addPtr(baseGPR, scratch2GPR);
             jit.loadPtr(CCallHelpers::Address(scratch2GPR, JSObject::butterflyOffset()), scratchGPR);
@@ -4072,11 +4068,15 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
 #endif
             auto segmented = jit.branch64(CCallHelpers::AboveOrEqual, scratchGPR, CCallHelpers::TrustedImm64(static_cast<int64_t>(segmentedFloor)));
 
-            // Flat arm: SW=1 with possible ArrayStorage shape stays the
-            // conservative failAndIgnore (sound superset, AS-rule / I20 —
-            // identical to loadButterflyForRead(MaybeArrayStorage,
-            // InvalidGPRReg)); SW=0 masks and reads the IndexingHeader.
-            failAndIgnore.append(jit.branchTest64(CCallHelpers::Signed, scratchGPR, scratchGPR));
+            // Flat arm: the read predicate sends only SW=1 ArrayStorage/SlowPut
+            // words to the locked generic path; every other flat word masks
+            // the tag and reads the IndexingHeader. scratch2GPR is free here.
+            auto notSharedWritten = jit.branchTest64(CCallHelpers::PositiveOrZero, scratchGPR, scratchGPR);
+            jit.load8(CCallHelpers::Address(baseGPR, JSCell::indexingTypeAndMiscOffset()), scratch2GPR);
+            jit.and32(CCallHelpers::TrustedImm32(IndexingShapeMask), scratch2GPR);
+            jit.sub32(CCallHelpers::TrustedImm32(ArrayStorageShape), scratch2GPR);
+            failAndIgnore.append(jit.branch32(CCallHelpers::BelowOrEqual, scratch2GPR, CCallHelpers::TrustedImm32(SlowPutArrayStorageShape - ArrayStorageShape)));
+            notSharedWritten.link(&jit);
             jit.maskButterflyTag(scratchGPR);
             jit.load32(CCallHelpers::Address(scratchGPR, ArrayStorage::lengthOffset()), scratchGPR);
             auto flatDone = jit.jump();
@@ -5008,7 +5008,7 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
 #if USE(JSVALUE64)
         case AccessType::GetById:
         case AccessType::GetByIdWithThis: {
-            auto identifier = m_propertyCache.m_identifier;
+            auto identifier = m_propertyCache.identifier();
             unsigned numberOfUndesiredMegamorphicAccessVariants = 0;
             for (auto& accessCase : cases) {
                 if (accessCase->type() != AccessCase::Load && accessCase->type() != AccessCase::Miss)
@@ -5056,7 +5056,7 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
 #endif
         case AccessType::PutByIdStrict:
         case AccessType::PutByIdSloppy: {
-            auto identifier = m_propertyCache.m_identifier;
+            auto identifier = m_propertyCache.identifier();
             bool allAreSimpleReplaceOrTransition = true;
             for (auto& accessCase : cases) {
                 if (accessCase->type() != AccessCase::Replace && accessCase->type() != AccessCase::Transition) {
@@ -5121,7 +5121,7 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
         }
 #if USE(JSVALUE64)
         case AccessType::InById: {
-            auto identifier = m_propertyCache.m_identifier;
+            auto identifier = m_propertyCache.identifier();
             unsigned numberOfUndesiredMegamorphicAccessVariants = 0;
             for (auto& accessCase : cases) {
                 if (accessCase->type() != AccessCase::InHit && accessCase->type() != AccessCase::InMiss)
@@ -8482,7 +8482,11 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
     MacroAssemblerCodeRef<JITStubRoutinePtrTag> code = FINALIZE_CODE_FOR(codeBlock, linkBuffer, JITStubRoutinePtrTag, categoryName(m_propertyCache.accessType), "%s", toCString("Access stub handler for ", *codeBlock, " ", m_propertyCache.codeOrigin, ": ", listDump(keys)).data());
 
     if (statelessType) {
-        auto stub = createPreCompiledICJITStubRoutine(WTF::move(code), vm, codeBlock);
+        // This stub is shared by every CodeBlock that later hits the same
+        // stateless case (getStatelessStub above), so no single CodeBlock is
+        // its owner: the SharedJITStubSet's Ref keeps it alive for the VM's
+        // lifetime, like the keyed shared stubs below.
+        auto stub = createPreCompiledICJITStubRoutine(WTF::move(code), vm, nullptr);
         connectWatchpointSets(stub.get(), WTF::move(m_conditions), WTF::move(additionalWatchpointSets));
         dataLogLnIf(InlineCacheCompilerInternal::verbose, "Installing ", m_propertyCache.accessType, " / ", accessCase.m_type);
         vm.m_sharedJITStubs->setStatelessStub(statelessType.value(), Ref { stub });

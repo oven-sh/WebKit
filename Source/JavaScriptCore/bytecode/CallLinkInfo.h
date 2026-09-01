@@ -50,6 +50,7 @@ struct UnlinkedCallLinkInfo;
 class CCallHelpers;
 class ExecutableBase;
 class FunctionCodeBlock;
+class Heap;
 class JSFunction;
 class OptimizingCallLinkInfo;
 class PolymorphicCallStubRoutine;
@@ -99,6 +100,12 @@ struct CallLinkRecord {
     uintptr_t comparand { 0 }; // Callee cell, or sentinel: bit 0 (CallLinkInfo::polymorphicCalleeMask) = always-call.
     CodePtr<JSEntryPtrTag> target { }; // Entrypoint (monomorphic/virtual/stub/direct).
     CodeBlock* codeBlockToTransfer { nullptr }; // Stored to the callee frame by the fast path.
+    // The heap holding codeBlockToTransfer's publish-time pin
+    // (Heap::pinRetiredCallLinkRecordCodeBlock); null when nothing is pinned.
+    // Whoever frees the record — the epoch holder or the owning
+    // CallLinkInfo's destructor — releases that pin, so a callee is retained
+    // only while some record still names it. Not read by JIT'd code.
+    JSC::Heap* pinHeap { nullptr };
 
     static constexpr ptrdiff_t offsetOfComparand() { return OBJECT_OFFSETOF(CallLinkRecord, comparand); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(CallLinkRecord, target); }
@@ -109,8 +116,19 @@ struct CallLinkRecord {
 static_assert(CallLinkRecord::offsetOfComparand() == 0);
 static_assert(CallLinkRecord::offsetOfTarget() == 8);
 static_assert(CallLinkRecord::offsetOfCodeBlockToTransfer() == 16);
-static_assert(sizeof(CallLinkRecord) == 24);
+static_assert(sizeof(CallLinkRecord) == 32);
 #endif
+
+// Frees a record that no mutator can reach any more (its owning CallLinkInfo
+// is being destroyed), releasing the record's CodeBlock pin first. Flag-off
+// m_record is always null, so only the null test remains.
+void destroyUnreachableCallLinkRecordSlow(CallLinkRecord*);
+ALWAYS_INLINE void destroyUnreachableCallLinkRecord(CallLinkRecord* record)
+{
+    if (!record) [[likely]]
+        return;
+    destroyUnreachableCallLinkRecordSlow(record);
+}
 
 class CallLinkInfo : public CallLinkInfoBase {
 public:
@@ -141,15 +159,18 @@ public:
     // relink push and the per-node work of the non-STW
     // ScriptExecutable::installCode drain). ONE lock, not per-CodeBlock pairs:
     // call linking is a rare slow path, and a single lock is deadlock-free by
-    // construction (holders never reach a safepoint poll). AB17c F4: now a
-    // RECURSIVE lock — destruction-context removers (~CallLinkInfoBase on a
-    // lazy-sweep mutator, reachable from allocation inside a LOCKED linker,
-    // e.g. linkPolymorphicCallImpl's stub allocation sweeping a dying
-    // CodeBlock) must also serialize on it, and the recursive acquire is the
-    // only deadlock-free way to admit them. The takeFrom HEAD-rewrite
-    // residual was closed by the AB18-C locker in
-    // CodeBlock::unlinkOrUpgradeIncomingCalls. Static member: no layout
-    // change.
+    // construction (holders never reach a safepoint poll). Recursive because
+    // one thread nests acquisitions: the CodeBlock::unlinkOrUpgradeIncomingCalls
+    // drain holds it across its whole traversal while the per-node
+    // PolymorphicCallNode::unlinkOrUpgradeImpl, CallLinkInfo::unlinkOrUpgradeImpl
+    // and setVirtualCall re-acquire it, and the destruction-context removers
+    // (CallLinkInfoBase::removeOnDestruction, ~CallLinkInfo) take it
+    // unconditionally. Nothing under this lock may allocate a GC cell: every
+    // allocation on the locked paths is fastMalloc (stub routines, records,
+    // pin-set entries). A cell allocation could block on an allocator stripe
+    // held by another mutator whose sweep is running ~CallLinkInfo and
+    // waiting for this lock — a deadlock no safepoint could break. Static
+    // member: no layout change.
     static RecursiveLock s_callLinkSerializationLock;
 
 
@@ -270,11 +291,12 @@ public:
         // setStub's release publish). Acquire pairs with that release store
         // and orders the ctor's slot/header/vptr writes before every
         // field read through the returned pointer — this is the existing
-        // concurrent-accessor fix shape, not a lock. The LLInt polymorphic
-        // thunk's m_record->m_stub load pair (LowLevelInterpreter.asm) still
-        // has no address/acquire dependency — that remains the IT-8
-        // weak-memory residual; this change does NOT close it (asm is
-        // outside TSAN's view; covered by the object-model protocol tests).
+        // concurrent-accessor fix shape, not a lock. The JIT'd polymorphic
+        // thunks (ThunkGenerators.cpp, LowLevelInterpreter.asm) load m_stub
+        // through a CallLinkInfo pointer the fast path made
+        // address-dependent on the record it dispatched through
+        // (emitFastPathImpl / callLinkInfoDependsOnRecord), so they observe
+        // the stub stored before that record was published, or a newer one.
         if (Options::useJSThreads()) [[unlikely]] {
             if (mode() != Mode::Polymorphic)
                 return nullptr;
@@ -332,17 +354,17 @@ public:
     void setCallType(CallType callType)
     {
         // TSAN wave 5 (calllink): relaxed RMW (load + store) preserving the
-        // Type bit. The byte is write-once before this CallLinkInfo is
-        // reachable by other lites, so the non-atomic RMW shape is sufficient;
-        // each individual access is atomic so racing stale readers are
-        // defined behavior, not UB.
-        uint8_t packed = loadCallTypeAndType();
-        WTF::atomicStore(&m_callTypeAndType, static_cast<uint8_t>((packed & ~callTypeBitsMask) | (static_cast<uint8_t>(callType) & callTypeBitsMask)), std::memory_order_relaxed);
+        // Type and Mode bits. The call type is write-once before this
+        // CallLinkInfo is reachable by other lites, so the non-atomic RMW
+        // shape is sufficient; each individual access is atomic so racing
+        // stale readers are defined behavior, not UB.
+        uint8_t packed = loadCallTypeAndMode();
+        WTF::atomicStore(&m_callTypeAndMode, static_cast<uint8_t>((packed & ~callTypeBitsMask) | (static_cast<uint8_t>(callType) & callTypeBitsMask)), std::memory_order_relaxed);
     }
 
     CallType callType() const
     {
-        return static_cast<CallType>(loadCallTypeAndType() & callTypeBitsMask);
+        return static_cast<CallType>(loadCallTypeAndMode() & callTypeBitsMask);
     }
 
     static constexpr ptrdiff_t offsetOfMaxArgumentCountIncludingThisForVarargs()
@@ -447,9 +469,9 @@ public:
 
     // TSAN wave 5 (calllink): relaxed-atomic read of the packed
     // callType+type byte (see specializationKind() / the field comment).
-    Type type() const { return static_cast<Type>((loadCallTypeAndType() >> typeBitShift) & 1); }
+    Type type() const { return static_cast<Type>((loadCallTypeAndMode() >> typeBitShift) & 1); }
 
-    Mode mode() const { return static_cast<Mode>(m_mode.loadRelaxed()); }
+    Mode mode() const { return static_cast<Mode>((loadCallTypeAndMode() >> modeBitShift) & modeBitsMask); }
 
     // TSAN wave 4 (calllink, ruling: concurrent-accessor): m_owner reads can
     // run on threads with no TSAN-visible happens-before against the owning
@@ -502,21 +524,21 @@ protected:
     // V7 code-lifecycle: this used to be ONE packed bit-field word, so every
     // flag write was a plain RMW of the whole word. gilOff, a lock-free
     // slow-path setSeen() on lite A could load the word, lose lite B's
-    // concurrent (locked) setStub()/setVirtualCall() m_mode update, and store
+    // concurrent (locked) setStub()/setVirtualCall() mode update, and store
     // the stale mode back — a LOST mode publication, not just a TSAN report
-    // (see CallLinkInfo.cpp publishRecord comment block). Split into
-    // independent memory locations: the write-once identity fields share a
-    // byte of their own (m_type at construction, m_callType at
-    // initialize/setUpCall, both before this CallLinkInfo is reachable by
-    // other lites; wave 5 made that byte's accesses relaxed-atomic — see
-    // m_callTypeAndType below); the monotone flags become a relaxed-atomic flag byte
-    // (RMWs via exchangeOr/exchangeAnd so visitWeak's writers cannot erase a
-    // racing slow-path setSeen and vice versa); m_mode becomes its own atomic
-    // byte. m_mode readers tolerate staleness: the record they gate is
-    // published via publishRecord's fence + atomic exchange, and m_stub is
-    // never unpublished flag-on (clearStub keep-published rule). Packing
-    // m_callType/m_type into one byte keeps sizeof(CallLinkInfo) unchanged
-    // (the frozen "+8B per call op" D7 budget note below still holds).
+    // (see CallLinkInfo.cpp publishRecord comment block). The monotone flags
+    // therefore live in their own relaxed-atomic byte (RMWs via
+    // exchangeOr/exchangeAnd, so visitWeak's writers cannot erase a racing
+    // slow-path setSeen and vice versa). The mode shares m_callTypeAndMode
+    // with the identity bits: every mode writer is serialized (the GIL, or
+    // s_callLinkSerializationLock gilOff) and the identity bits are write-once
+    // before this CallLinkInfo is reachable by other lites, so storeMode's
+    // relaxed load/modify/store cannot lose a concurrent write. Mode readers
+    // tolerate staleness: the record they gate is published via
+    // publishRecord's fence + atomic exchange, and m_stub is never unpublished
+    // flag-on (clearStub keep-published rule). Three bytes here, as in the
+    // pre-threads bit-field layout, keep sizeof(CallLinkInfo) at that layout
+    // plus m_record (the "+8B per call op" D7 budget note below).
     static constexpr uint8_t hasSeenShouldRepatchFlag = 1 << 0;
     static constexpr uint8_t hasSeenClosureFlag = 1 << 1;
     static constexpr uint8_t clearedByGCFlag = 1 << 2;
@@ -527,23 +549,31 @@ protected:
     // was a plain byte RMW racing the lock-free compiler-thread readers
     // (specializationKind/type/callMode via CallLinkStatus) across metadata-
     // buffer/allocator reuse. Repacked into one manually-masked byte accessed
-    // exclusively through relaxed atomics (loadCallTypeAndType/
-    // storeCallTypeAndType/setCallType). Same size, same write-once
-    // discipline; flag-off codegen unchanged (relaxed byte moves).
+    // exclusively through relaxed atomics (loadCallTypeAndMode/
+    // storeCallTypeAndType/setCallType/storeMode). Flag-off codegen matches
+    // the bit-field accesses (relaxed byte moves plus the same masking).
     static constexpr uint8_t callTypeBitsMask = 0b1111;
     static constexpr unsigned typeBitShift = 4;
-    uint8_t m_callTypeAndType { static_cast<uint8_t>(CallType::None) }; // bits 0-3: CallType, write-once before publication; bit 4: Type, write-once at construction.
+    static constexpr unsigned modeBitShift = 5;
+    static constexpr uint8_t modeBitsMask = 0b11;
+    static_assert(static_cast<uint8_t>(Mode::Virtual) <= modeBitsMask);
+    uint8_t m_callTypeAndMode { static_cast<uint8_t>(CallType::None) }; // bits 0-3: CallType, write-once before publication; bit 4: Type, write-once at construction; bits 5-6: Mode, rewritten by the serialized link transitions.
 
-    uint8_t loadCallTypeAndType() const
+    uint8_t loadCallTypeAndMode() const
     {
-        return WTF::atomicLoad(const_cast<uint8_t*>(&m_callTypeAndType), std::memory_order_relaxed);
+        return WTF::atomicLoad(const_cast<uint8_t*>(&m_callTypeAndMode), std::memory_order_relaxed);
     }
+    // Whole-byte initialization, before publication: identity bits plus Mode::Init.
     void storeCallTypeAndType(CallType callType, Type type)
     {
-        WTF::atomicStore(&m_callTypeAndType, static_cast<uint8_t>((static_cast<uint8_t>(callType) & callTypeBitsMask) | (static_cast<uint8_t>(type) << typeBitShift)), std::memory_order_relaxed);
+        WTF::atomicStore(&m_callTypeAndMode, static_cast<uint8_t>((static_cast<uint8_t>(callType) & callTypeBitsMask) | (static_cast<uint8_t>(type) << typeBitShift) | (static_cast<uint8_t>(Mode::Init) << modeBitShift)), std::memory_order_relaxed);
+    }
+    void storeMode(Mode mode)
+    {
+        uint8_t packed = loadCallTypeAndMode();
+        WTF::atomicStore(&m_callTypeAndMode, static_cast<uint8_t>((packed & ~(modeBitsMask << modeBitShift)) | (static_cast<uint8_t>(mode) << modeBitShift)), std::memory_order_relaxed);
     }
 
-    Atomic<uint8_t> m_mode { static_cast<uint8_t>(Mode::Init) }; // Mode
     uint8_t m_maxArgumentCountIncludingThisForVarargs { 0 }; // For varargs: the profiled maximum number of arguments. For direct: the number of stack slots allocated for arguments.
     uint32_t m_slowPathCount { 0 };
 
@@ -636,7 +666,7 @@ public:
         // sweep), so no JIT'd frame can still hold the record pointer (I16);
         // inline delete is sound here, unlike replacement/unlink which must go
         // through RetiredJITArtifacts.
-        delete m_record.exchange(nullptr);
+        destroyUnreachableCallLinkRecord(m_record.exchange(nullptr));
     }
 
     void setCallType(CallType callType)
@@ -715,11 +745,10 @@ private:
     // SPEC-jit section 5.8 (direct calls are data-IC-only flag-on, I3): record
     // publish/unlink mirroring CallLinkInfo::publishRecord/clearRecord. Direct
     // records carry no comparand (the fast path skips the comparand check).
-    // No-ops flag-off. The VM& is the retiring mutator's VM (R4-2:
-    // RetiredJITArtifacts resolves the epoch heap from it) — it must NOT be
-    // derived from m_owner, which may be a dead cell by the time a drain
-    // reaches this node through a callee's incoming-calls list (the
-    // retireOptimizedJITCode leak keeps the node alive past its owner).
+    // No-ops flag-off. The VM& is the retiring mutator's VM (RetiredJITArtifacts
+    // resolves the epoch heap from it) — it must NOT be derived from m_owner,
+    // which may be an unmarked, not yet swept cell by the time a drain reaches
+    // this node through a callee's incoming-calls list.
     void publishRecord(VM&, CodePtr<JSEntryPtrTag> target, CodeBlock* codeBlockToTransfer);
     void clearRecord(VM&);
     void retireRecord(VM&, CallLinkRecord*);
@@ -730,7 +759,7 @@ private:
     // TSAN wave 5 (calllink, ruling: concurrent-accessor): m_callType (4 bits)
     // and m_useDataIC (1 bit) were plain bit-fields sharing this byte —
     // repacked into one manually-masked byte accessed exclusively through
-    // relaxed atomics (see CallLinkInfo::m_callTypeAndType for the full
+    // relaxed atomics (see CallLinkInfo::m_callTypeAndMode for the full
     // rationale). Same size; write-once before publication; flag-off codegen
     // unchanged (relaxed byte moves).
     static constexpr uint8_t callTypeBitsMask = 0b1111;
@@ -806,14 +835,11 @@ inline JSCell* CallLinkInfo::ownerForSlowPath(CallFrame* calleeFrame)
     // chain-head store -> dependent loads in the stub) is invisible to TSAN
     // and the ctor's plain init stores (incl. the DataOnlyCallLinkInfo
     // memset) would otherwise pair against this thread's later owner() load
-    // / setMonomorphicCallee store. Lifetime is proven by the audit AS
-    // AMENDED at the closeout final review (TSAN-TRIAGE §17.2 incl. row 16):
-    // every flag-on deallocation of a published handler routes through
-    // RetiredJITArtifacts::retireHandlerChain (which flag-on never frees —
-    // epochCoversEveryJSThread); §5.8 records ride retireCallLinkRecord;
-    // metadata-embedded DataOnlyCallLinkInfos are leaked with their
-    // MetadataTable by ~CodeBlock's flag-on ref-escape (row 16 — previously
-    // a bypass: the table teardown ran their destructors inline); and
+    // / setMonomorphicCallee store. Lifetime: every flag-on deallocation of a
+    // published handler routes through RetiredJITArtifacts::retireHandlerChain
+    // (epoch-deferred); §5.8 records ride retireCallLinkRecord; the
+    // metadata-embedded DataOnlyCallLinkInfos die with their MetadataTable in
+    // ~CodeBlock, whose code no thread can still be executing; and
     // ~CallLinkInfo otherwise runs only for unreachable owners under
     // s_callLinkSerializationLock. No-op outside TSAN builds.
     TSAN_ANNOTATE_HAPPENS_AFTER(this);

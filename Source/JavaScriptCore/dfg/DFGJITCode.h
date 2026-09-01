@@ -173,9 +173,8 @@ public:
 
     void setExitCode(unsigned exitIndex, MacroAssemblerCodeRef<OSRExitPtrTag> code)
     {
-        // TSAN family osr-exit-coderef (TSAN-TRIAGE §20.3.5): GIL-off, the
-        // SCALEBENCH-bimodal lock-free DCLP probe in operationCompileOSRExit
-        // reads m_exits[i].m_codePtr without dfgOSRExitGenerationLock; this is
+        // GIL-off, the lock-free DCLP probe in operationCompileOSRExit reads
+        // m_exits[i].m_codePtr without the OSR exit generation lock; this is
         // the publishing writer (under that lock). Decompose the move-assign so
         // m_executableMemory lands first (the slot's own RefPtr is the liveness
         // anchor once m_codePtr publishes non-thunk), storeStoreFence, then
@@ -252,16 +251,6 @@ public:
     void finalizeUnconditionally()
     {
         m_dummyArrayProfile.clear();
-    }
-
-    // Destroys (and thereby disarms) the privately-owned jettisoning
-    // watchpoints. Mirrors DFGCommonData::clearWatchpoints(). Used when the
-    // owning CodeBlock leaks this JITData under useJSThreads (SPEC-jit 5.3 /
-    // I7): the leaked shell must not keep armed watchpoints whose m_owner
-    // points at a destructed CodeBlock cell.
-    void clearWatchpoints()
-    {
-        m_watchpoints = FixedVector<CodeBlockJettisoningWatchpoint>();
     }
 
 private:

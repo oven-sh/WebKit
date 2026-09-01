@@ -38,7 +38,6 @@
 #include "DFGSpeculativeJIT.h"
 #include "DFGThunks.h"
 #include "FrameTracers.h"
-#include "JSThreadsSafepoint.h"
 #include "InlineCallFrame.h"
 #include "JSCJSValueInlines.h"
 #include "OperandsInlines.h"
@@ -182,43 +181,30 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
     DFG::JITCode* dfgJIT = codeBlock->jitCodeRawPtr()->dfg();
     OSRExit& exit = dfgJIT->m_osrExit[exitIndex];
 
-    // DW-1 instrumentation (deepwater LEDGER row 1): GIL-off, every DFG exit
-    // traverses this operation (the rel32 repatch is suppressed — U-T4b
-    // below), so this records, per exit, the sort-comparator pc-recovery
-    // tuple the ramp is about to stash into the recovery frame. The
-    // comparator-return trampoline slow path cross-checks it
-    // (llint_slow_path_array_sort_comparator_return). GIL-on: not recorded
-    // and not consumed; behavior and codegen unchanged.
     if (vm.gilOff()) [[unlikely]] {
-        recordSortComparatorOSRExitStashIfApplicable(vm, codeBlock, exit, exitIndex);
-        // SCALEBENCH §36 dfg-osrexit-genlock-dclp-precheck (FLAT-GAP-EVIDENCE
-        // round 2 §(2)/§R2): U-T4b means the steady state for an
-        // already-compiled exit is "land here, return the published ramp".
-        // The U-T4a existing-ramp short-circuit lives AFTER the
-        // dfgOSRExitGenerationLock tryLock spin AND after the per-traversal
-        // variableEventStream.reconstruct() below — eu-stack on a W=32
-        // slow-mode rep shows 22% of JS threads at __sched_yield inside that
-        // spin (the exit fires INSIDE the held shard lock, so every spinning
-        // thread is a stalled critical section: 2.2× park inflation, +850 ms
-        // phaseA bimodal). Do the lock-free DCLP read FIRST: m_exits[i] is
-        // initialized to the process-singleton osrExitGenerationThunk
-        // (DFGPlan.cpp:834) and overwritten exactly once by setExitCode under
-        // dfgOSRExitGenerationLock; setExitCode writes m_executableMemory
+        // gilOff never repatches the exit jump, so every exit of an
+        // already-compiled ramp lands here: the lock-free read of the
+        // published ramp comes first, ahead of the generation lock and the
+        // per-traversal variableEventStream.reconstruct() below. m_exits[i]
+        // is initialized to the process-singleton osrExitGenerationThunk
+        // (DFGPlan.cpp) and overwritten exactly once by setExitCode under the
+        // OSRExitGenerationLocker; setExitCode writes m_executableMemory
         // first, storeStoreFence, then relaxed-atomic publishes m_codePtr (the
-        // single tagged word the JIT-emitted unlinked dispatch ALSO reads
-        // lock-free, DFGJITCompiler.cpp:147) LAST, so a non-thunk codePtr
-        // implies the ramp's executable memory is fully constructed
-        // (FINALIZE_CODE's LinkBuffer fence) and held live by the m_exits
-        // slot's own RefPtr. The thunk codePtr is cached in a function-static
-        // (process-lifetime CTI stub; thread-safe static-local init avoids
-        // the per-traversal JITThunks lock). Same value the under-lock check
-        // returned; DW-1 record above already ran (matching the under-lock
-        // early return's ordering). gilOff-only arm; flag-off byte-identical.
+        // single tagged word the JIT-emitted unlinked dispatch also reads
+        // lock-free, DFGJITCompiler.cpp) last, so a non-thunk codePtr implies
+        // the ramp's executable memory is fully constructed and held live by
+        // the m_exits slot's own RefPtr. The thunk codePtr is cached in a
+        // function-static (process-lifetime CTI stub; thread-safe static-local
+        // init avoids the per-traversal JITThunks lock).
         static void* const s_osrExitGenerationThunkCodePtr =
             vm.getCTIStub(osrExitGenerationThunkGenerator).retaggedCode<OSRExitPtrTag>().taggedPtr();
         void* publishedCodePtr = codeBlock->dfgJITData()->exitCodePtrConcurrent(exitIndex);
         if (publishedCodePtr && publishedCodePtr != s_osrExitGenerationThunkCodePtr) [[likely]] {
             WTF::loadLoadFence(); // pairs with FINALIZE_CODE's publish + setExitCode()'s internal storeStoreFence.
+            // The ramp may have been compiled and finalized on another thread;
+            // the executing PE needs its own context synchronization before
+            // the thunk far-jumps into it.
+            WTF::crossModifyingCodeFence();
             vm.group3Primitives().osrExitJumpDestination = publishedCodePtr;
             return;
         }
@@ -235,38 +221,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
     if (exit.m_recoveryIndex != UINT_MAX)
         recovery = &dfgJIT->m_speculationRecovery[exit.m_recoveryIndex];
 
-    // UNGIL U-T4a (DFG sibling of ftlOSRExitGenerationLock, same rank and
-    // discipline): gilOff, N threads can fire the SAME not-yet-compiled exit
-    // concurrently; the exit ramp must be compiled and published exactly once
-    // (concurrent setExitCode + repatchJump on one site is a code-patching
-    // race). Coarse process-wide lock — exit-stub compilation is a
-    // once-per-exit slow path; acquired with no other JSC lock held, OUTER to
-    // everything the compile below acquires. GIL-on never takes it (flag-off
-    // identity).
-    static Lock dfgOSRExitGenerationLock;
-    bool generationLockHeld = false;
-    auto unlockGenerationLock = makeScopeExit([&] {
-        if (generationLockHeld) [[unlikely]]
-            dfgOSRExitGenerationLock.unlock();
-    });
+    // gilOff, N threads can fire the SAME not-yet-compiled exit concurrently;
+    // the exit ramp must be compiled and published exactly once, under the
+    // generation lock shared with the FTL exit compiler (see
+    // OSRExitGenerationLocker). GIL-on never takes it.
+    std::optional<OSRExitGenerationLocker> generationLocker;
     if (vm.gilOff()) [[unlikely]] {
-        // FIX-2 class-(2) acquisition (same shape as GILOffCompilationLocker,
-        // DFGPlan.cpp): a contended waiter here holds heap access, so it must
-        // stay visible to the GIL-off §A.3 stop fan — a blocking Locker can
-        // deadlock a pending stop against the lock holder and trip the 30s
-        // watchdog.
-        while (!dfgOSRExitGenerationLock.tryLock()) {
-            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
-                continue; // Parked across a window: re-validate (retry tryLock).
-            handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
-            Thread::yield();
-        }
-        generationLockHeld = true;
+        generationLocker.emplace(vm);
         auto osrExitThunk = vm.getCTIStub(osrExitGenerationThunkGenerator).retagged<OSRExitPtrTag>();
         const auto& existing = codeBlock->dfgJITData()->exitCode(exitIndex);
         if (existing.executableMemory() && existing.executableMemory() != osrExitThunk.executableMemory()) {
             // A racing thread compiled and published this exit while we were
-            // contending for the lock: reuse its ramp.
+            // contending for the lock: reuse its ramp, with the executing PE's
+            // own context synchronization before the thunk far-jumps into it.
+            WTF::crossModifyingCodeFence();
             vm.group3Primitives().osrExitJumpDestination = existing.code().taggedPtr();
             return;
         }
@@ -336,13 +304,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
         codeBlock->dfgJITData()->setExitCode(exitIndex, exitCode);
     }
 
-    // U-T4b rationale (see ftlOSRExitGenerationLock's comment): gilOff, other
-    // mutators may be concurrently EXECUTING the exit jump, and repatchJump
-    // rewrites an unaligned rel32 on x86_64 with no atomicity guarantee
-    // (torn fetch -> wild jump). Keep the jump pointing at the generation
-    // thunk; the thunk re-enters here, the recheck above finds the published
-    // ramp, and the per-lite osrExitJumpDestination farJump completes the
-    // data-only protocol. GIL-on keeps today's repatch.
+    // gilOff, other mutators may be concurrently EXECUTING the exit jump, and
+    // repatchJump rewrites an unaligned rel32 on x86_64 with no atomicity
+    // guarantee (torn fetch -> wild jump). Keep the jump pointing at the
+    // generation thunk; the thunk re-enters here, the recheck above finds the
+    // published ramp, and the per-lite osrExitJumpDestination farJump
+    // completes the data-only protocol. GIL-on keeps today's repatch.
     if (exit.codeLocationForRepatch() && !vm.gilOff())
         MacroAssembler::repatchJump(exit.codeLocationForRepatch(), CodeLocationLabel<OSRExitPtrTag>(exitCode.code()));
 
@@ -423,16 +390,16 @@ static void materializePerLiteScratchData(CCallHelpers& jit, unsigned bakedIndex
     jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, m_buffer))), dest);
 }
 
-// The per-arch reserved macro-assembler temp — the same register the
-// baked-absolute form's synthesized addressing already clobbers, so using it
-// as an explicit base changes no call site's live-range assumptions (the
-// GPR-save loop below runs with EVERY allocatable register still live).
+// Base register for scratch-slot accesses emitted while every allocatable GPR
+// is still live: the macro-assembler's own scratch temp (ARM64 ip0, x86_64
+// r11), which no DFG value occupies at an exit. scratchRegister() also
+// invalidates the assembler's cached-immediate tracking for it, which the
+// direct loads into it below would otherwise leave stale. Slot offsets are
+// folded into the final load/store, whose unencodable-offset fallback on
+// ARM64 indexes through the memory temp (ip1), never through this base.
 static GPRReg osrExitReservedScratchGPR(CCallHelpers& jit)
 {
-#if CPU(ARM64)
-    UNUSED_PARAM(jit);
-    return CCallHelpers::memoryTempRegister;
-#elif CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64)
     return jit.scratchRegister();
 #else
     // App. R5: no gilOff support on this platform; the perLiteScratch mode
@@ -703,20 +670,26 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
             jit.move(AssemblyHelpers::TrustedImmPtr(scratch + index), dest);
     };
     // 64-bit store/load of scratch slot `index` using only the reserved
-    // assembler temp as base — safe while every allocatable GPR is live.
+    // assembler temp as base — safe while every allocatable GPR is live. The
+    // slot's offset from the ScratchBuffer is applied in the access itself so
+    // the base never has to absorb an immediate.
+    auto scratchSlotOffset = [](size_t index) {
+        return static_cast<int32_t>(OBJECT_OFFSETOF(ScratchBuffer, m_buffer) + index * sizeof(EncodedJSValue));
+    };
     auto store64ToScratch = [&](GPRReg src, size_t index) {
         if (perLiteScratch) [[unlikely]] {
             GPRReg baseGPR = osrExitReservedScratchGPR(jit);
-            materializePerLiteScratchData(jit, bakedScratchIndex, baseGPR);
-            jit.store64(src, CCallHelpers::Address(baseGPR, static_cast<int32_t>(index * sizeof(EncodedJSValue))));
+            ASSERT(src != baseGPR);
+            materializePerLiteScratchBuffer(jit, bakedScratchIndex, baseGPR);
+            jit.store64(src, CCallHelpers::Address(baseGPR, scratchSlotOffset(index)));
         } else
             jit.store64(src, scratch + index);
     };
     auto load64FromScratch = [&](size_t index, GPRReg dest) {
         if (perLiteScratch) [[unlikely]] {
             GPRReg baseGPR = osrExitReservedScratchGPR(jit);
-            materializePerLiteScratchData(jit, bakedScratchIndex, baseGPR);
-            jit.load64(CCallHelpers::Address(baseGPR, static_cast<int32_t>(index * sizeof(EncodedJSValue))), dest);
+            materializePerLiteScratchBuffer(jit, bakedScratchIndex, baseGPR);
+            jit.load64(CCallHelpers::Address(baseGPR, scratchSlotOffset(index)), dest);
         } else
             jit.load64(scratch + index, dest);
     };
